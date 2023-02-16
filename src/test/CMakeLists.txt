@@ -156,6 +156,7 @@ add_executable(test_navio
   span_tests.cpp
   streams_tests.cpp
   sync_tests.cpp
+  threadpool_tests.cpp
   timedata_tests.cpp
   torcontrol_tests.cpp
   transaction_tests.cpp
