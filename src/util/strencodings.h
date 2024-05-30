@@ -12,6 +12,7 @@
 #include <span.h>
 #include <util/string.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -376,5 +377,19 @@ std::string Capitalize(std::string str);
  *                                 if ToIntegral is false, str is empty, trailing whitespace or overflow
  */
 std::optional<uint64_t> ParseByteUnits(std::string_view str, ByteUnit default_multiplier);
+
+struct AsciiCaseInsensitiveKeyEqual {
+    bool operator()(std::string_view s1, std::string_view s2) const
+    {
+        return ToLower(s1) == ToLower(s2);
+    }
+};
+
+struct AsciiCaseInsensitiveHash {
+    size_t operator()(std::string_view s) const
+    {
+        return std::hash<std::string>{}(ToLower(s));
+    }
+};
 
 #endif // BITCOIN_UTIL_STRENCODINGS_H
