@@ -491,7 +491,7 @@ CNode* CConnman::ConnectNode(CAddress addrConnect, const char *pszDest, bool fCo
                 addr_bind = CAddress{conn.me, NODE_NONE};
             }
         } else if (use_proxy) {
-            sock = CreateSock(proxy.proxy.GetSAFamily());
+            sock = CreateSock(proxy.proxy.GetSAFamily(), SOCK_STREAM, IPPROTO_TCP);
             if (!sock) {
                 return nullptr;
             }
@@ -500,7 +500,7 @@ CNode* CConnman::ConnectNode(CAddress addrConnect, const char *pszDest, bool fCo
                                             *sock, nConnectTimeout, proxyConnectionFailed);
         } else {
             // no proxy needed (none set for target network)
-            sock = CreateSock(addrConnect.GetSAFamily());
+            sock = CreateSock(addrConnect.GetSAFamily(), SOCK_STREAM, IPPROTO_TCP);
             if (!sock) {
                 return nullptr;
             }
@@ -513,7 +513,7 @@ CNode* CConnman::ConnectNode(CAddress addrConnect, const char *pszDest, bool fCo
             addrman.Attempt(addrConnect, fCountFailure);
         }
     } else if (pszDest && GetNameProxy(proxy)) {
-        sock = CreateSock(proxy.proxy.GetSAFamily());
+        sock = CreateSock(proxy.proxy.GetSAFamily(), SOCK_STREAM, IPPROTO_TCP);
         if (!sock) {
             return nullptr;
         }
@@ -3008,7 +3008,7 @@ bool CConnman::BindListenPort(const CService& addrBind, bilingual_str& strError,
         return false;
     }
 
-    std::unique_ptr<Sock> sock = CreateSock(addrBind.GetSAFamily());
+    std::unique_ptr<Sock> sock = CreateSock(addrBind.GetSAFamily(), SOCK_STREAM, IPPROTO_TCP);
     if (!sock) {
         strError = strprintf(Untranslated("Couldn't open socket for incoming connections (socket returned error %s)"), NetworkErrorString(WSAGetLastError()));
         LogPrintLevel(BCLog::NET, BCLog::Level::Error, "%s\n", strError.original);
