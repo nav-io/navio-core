@@ -211,6 +211,7 @@ BLSCT_CPP = \
   blsct/arith/elements.cpp \
   blsct/arith/mcl/mcl_g1point.cpp \
   blsct/arith/mcl/mcl_scalar.cpp \
+	blsct/bech32_mod.cpp \
   blsct/building_block/g_h_gi_hi_zero_verifier.cpp \
   blsct/building_block/generator_deriver.cpp \
   blsct/building_block/imp_inner_prod_arg.cpp \
@@ -221,6 +222,7 @@ BLSCT_CPP = \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
   blsct/external_api/blsct.cpp \
+	blsct/key_io.cpp \
   blsct/pos/helpers.cpp \
   blsct/pos/pos.cpp \
   blsct/pos/proof_logic.cpp \
@@ -1430,6 +1432,10 @@ libblsct_a_SOURCES = \
   crypto/sha256_x86_shani.cpp \
   crypto/sha256.cpp \
   blsct/external_api/blsct.cpp \
+  support/cleanse.cpp \
+  support/lockedpool.cpp \
+	uint256.cpp \
+	util/strencodings.cpp \
   $(BLSCT_CPP)
 libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS)
