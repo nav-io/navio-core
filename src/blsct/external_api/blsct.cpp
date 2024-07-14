@@ -274,6 +274,10 @@ BlsctTokenId* gen_default_token_id() {
     return blsct_token_id;
 }
 
+void dispose_token_id(const BlsctTokenId* blsct_token_id) {
+    delete[] blsct_token_id;
+}
+
 BlsctRpRetVal* build_range_proof(
     const void* vp_uint64_vs,
     const size_t num_uint64_vs,
@@ -343,6 +347,12 @@ BlsctRpRetVal* build_range_proof(
     return new BlsctRpRetVal {
         BLSCT_EXCEPTION,
     };
+}
+
+void dispose_range_proof(
+    const BlsctRangeProof* blsct_range_proof
+) {
+    delete[] blsct_range_proof;
 }
 
 BlsctBoolRetVal* verify_range_proofs(
