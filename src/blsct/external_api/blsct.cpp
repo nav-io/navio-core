@@ -239,7 +239,7 @@ void dispose_double_pub_key(const BlsctDoublePubKey* blsct_dpk)
     if (blsct_dpk != nullptr) delete[] blsct_dpk;
 }
 
-BlsctRetVal* gen_token_id_with_subid(
+BlsctTokenId* gen_token_id_with_subid(
     const uint64_t token,
     const uint64_t subid
 ) {
@@ -254,14 +254,10 @@ BlsctRetVal* gen_token_id_with_subid(
     NEW(BlsctTokenId, blsct_token_id);
     SERIALIZE_AND_COPY_WITH_STREAM(token_id, blsct_token_id);
 
-    return new BlsctRetVal {
-        RetValType::TokenIdent,
-        BLSCT_SUCCESS,
-        blsct_token_id,
-    };
+    return blsct_token_id;
 }
 
-BlsctRetVal* gen_token_id(
+BlsctTokenId* gen_token_id(
     const uint64_t token
 ) {
     return gen_token_id_with_subid(
@@ -270,16 +266,12 @@ BlsctRetVal* gen_token_id(
     );
 }
 
-BlsctRetVal* gen_default_token_id() {
+BlsctTokenId* gen_default_token_id() {
     TokenId token_id;
     NEW(BlsctTokenId, blsct_token_id);
     SERIALIZE_AND_COPY_WITH_STREAM(token_id, blsct_token_id);
 
-    return new BlsctRetVal {
-        RetValType::TokenIdent,
-        BLSCT_SUCCESS,
-        blsct_token_id,
-    };
+    return blsct_token_id;
 }
 
 BlsctRpRetVal* build_range_proof(
@@ -321,12 +313,12 @@ BlsctRpRetVal* build_range_proof(
         TokenId token_id;
         {
             DataStream st{};
-            std::vector<uint8_t> token_id_vec(
-                *blsct_token_id, *blsct_token_id + TOKEN_ID_SIZE
-            );
-            st << token_id_vec;
+            for(size_t i=0; i<TOKEN_ID_SIZE; ++i) {
+                st << ((uint8_t*) blsct_token_id)[i];
+            }
             token_id.Unserialize(st);
         }
+
 
         // range_proof to blsct_range_proof
         auto range_proof = g_rpl->Prove(

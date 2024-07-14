@@ -326,16 +326,16 @@ void dispose_double_pub_key(
     const BlsctDoublePubKey* blsct_dpk
 );
 
-BlsctRetVal* gen_token_id_with_subid(
+BlsctTokenId* gen_token_id_with_subid(
     const uint64_t token,
     const uint64_t subid
 );
 
-BlsctRetVal* gen_token_id(
+BlsctTokenId* gen_token_id(
     const uint64_t token
 );
 
-BlsctRetVal* gen_default_token_id();
+BlsctTokenId* gen_default_token_id();
 
 void dispose_token_id(BlsctTokenId* blsct_token_id);
 
