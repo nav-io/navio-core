@@ -1,3 +1,4 @@
+#include "blsct.h"
 #include <crypto/common.h>
 #include <blsct/bech32_mod.h>
 #include <blsct/common.h>
@@ -80,15 +81,80 @@ bool set_chain(enum Chain chain)
     return true;
 }
 
+BlsctRetVal* error(
+    BLSCT_RESULT result
+) {
+    MALLOC(BlsctRetVal, p);
+    p->result = result;
+    p->value = nullptr;
+    return p;
+}
+
+BlsctRetVal* succ(
+    void* value
+) {
+    MALLOC(BlsctRetVal, p);
+    p->result = BLSCT_SUCCESS;
+    p->value = value;
+    return p;
+}
+
+BlsctBoolRetVal* err_bool(
+    const BLSCT_RESULT result
+) {
+    MALLOC(BlsctBoolRetVal, p);
+    p->result = result;
+    p->value = false;
+    return p;
+}
+
+BlsctBoolRetVal* succ_bool(
+    const bool value
+) {
+    MALLOC(BlsctBoolRetVal, p);
+    p->result = BLSCT_SUCCESS;
+    p->value = value;
+    return p;
+}
+
+void dispose_ret_val(BlsctRetVal* rv) {
+    if (rv->value != nullptr) free(rv->value);
+    free(rv);
+}
+
+void dispose_bool_ret_val(BlsctBoolRetVal* rv) {
+    free(rv);
+}
+
+void dispose_scalar(BlsctScalar* x) {
+    free(x);
+}
+
+void dispose_point(BlsctPoint* x) {
+    free(x);
+}
+
+void dispose_token_id(BlsctTokenId* x) {
+    free(x);
+}
+
+void dispose_public_key(BlsctPubKey* x) {
+    free(x);
+}
+
+void dispose_double_pub_key(BlsctDoublePubKey* x) {
+    free(x);
+}
+
 BlsctPoint* gen_random_point() {
-    NEW(BlsctPoint, blsct_point);
+    MALLOC(BlsctPoint, blsct_point);
     auto x = Point::Rand();
     SERIALIZE_AND_COPY(x, blsct_point);
     return blsct_point;
 }
 
 BlsctScalar* gen_random_scalar() {
-    NEW(BlsctScalar, blsct_scalar);
+    MALLOC(BlsctScalar, blsct_scalar);
     auto x = Scalar::Rand(true);
     SERIALIZE_AND_COPY(x, blsct_scalar);
     return blsct_scalar;
@@ -98,24 +164,9 @@ BlsctScalar* gen_scalar(
     const uint64_t n
 ) {
     Scalar scalar_n(n);
-    NEW(BlsctScalar, blsct_scalar);
+    MALLOC(BlsctScalar, blsct_scalar);
     SERIALIZE_AND_COPY(scalar_n, blsct_scalar);
     return blsct_scalar;
-}
-
-void dispose_point(BlsctPoint* blsct_point)
-{
-    if (blsct_point != nullptr) delete[] blsct_point;
-}
-
-void dispose_scalar(BlsctScalar* blsct_scalar)
-{
-    if (blsct_scalar != nullptr) delete[] blsct_scalar;
-}
-
-void dispose_public_key(BlsctPubKey* blsct_pub_key)
-{
-    if (blsct_pub_key != nullptr) delete[] blsct_pub_key;
 }
 
 uint64_t scalar_to_uint64(BlsctScalar* blsct_scalar)
@@ -129,7 +180,7 @@ BlsctPubKey* gen_random_public_key() {
     auto vec = Point::Rand().GetVch();
     blsct::PublicKey pub_key(vec);
 
-    NEW(BlsctPubKey, blsct_pub_key);
+    MALLOC(BlsctPubKey, blsct_pub_key);
     SERIALIZE_AND_COPY(pub_key, blsct_pub_key);
 
     return blsct_pub_key;
@@ -140,10 +191,7 @@ BlsctRetVal* decode_address(
 ) {
     try {
         if (strlen(blsct_enc_addr) != ENCODED_DPK_STR_SIZE) {
-            return new BlsctRetVal {
-                RetValType::DecAddr,
-                BLSCT_BAD_DPK_SIZE,
-            };
+            return err(BLSCT_BAD_DPK_SIZE);
         }
         std::string enc_addr(blsct_enc_addr);
         auto maybe_dpk = blsct::DecodeDoublePublicKey(g_chain, enc_addr);
@@ -151,57 +199,43 @@ BlsctRetVal* decode_address(
             auto dpk = maybe_dpk.value();
             if (dpk.IsValid()) {
                 auto buf = dpk.GetVch();
-                uint8_t* dec_addr = new uint8_t[DOUBLE_PUBLIC_KEY_SIZE];
+                MALLOC(BlsctDoublePubKey, dec_addr);
                 std::memcpy(dec_addr, &buf[0], DOUBLE_PUBLIC_KEY_SIZE);
 
-                return new BlsctRetVal {
-                    RetValType::DecAddr,
-                    BLSCT_SUCCESS,
-                    dec_addr,
-                };
+                return succ(dec_addr);
             }
         }
     } catch(...) {}
 
-    return new BlsctRetVal {
-        RetValType::DecAddr,
-        BLSCT_EXCEPTION,
-    };
+    return err(BLSCT_EXCEPTION);
 }
 
-BlsctStrRetVal* encode_address(
+BlsctRetVal* encode_address(
     const void* void_blsct_dpk,
     const enum AddressEncoding encoding
 ) {
+    if (encoding != Bech32 && encoding != Bech32M) {
+        return err(BLSCT_UNKNOWN_ENCODING);
+    }
     try {
         UNVOID(BlsctDoublePubKey, blsct_dpk);
 
-        if (encoding != Bech32 && encoding != Bech32M) {
-            return new BlsctStrRetVal {
-                BLSCT_UNKNOWN_ENCODING,
-            };
-        }
-        auto bech32_encoding = encoding == Bech32 ?
-            bech32_mod::Encoding::BECH32 : bech32_mod::Encoding::BECH32M;
-
         auto blsct_dpk_u8 = U8C(blsct_dpk, BlsctDoublePubKey);
-        std::vector<uint8_t> dpk_vec(blsct_dpk_u8, blsct_dpk_u8 + blsct::DoublePublicKey::SIZE);
+        std::vector<uint8_t> dpk_vec(blsct_dpk_u8, blsct_dpk_u8 + sizeof(BlsctDoublePubKey));
         auto dpk = blsct::DoublePublicKey(dpk_vec);
 
-        auto enc_addr = new char[ENCODED_DPK_STR_BUF_SIZE];
+        auto bech32_encoding = encoding == Bech32 ?
+            bech32_mod::Encoding::BECH32 : bech32_mod::Encoding::BECH32M;
         auto enc_dpk_str = EncodeDoublePublicKey(g_chain, bech32_encoding, dpk);
-        std::memcpy(enc_addr, enc_dpk_str.c_str(), ENCODED_DPK_STR_BUF_SIZE);
-        enc_addr[ENCODED_DPK_STR_BUF_SIZE - 1] = 0;  // null-terminate c-str
+        size_t BUF_SIZE = enc_dpk_str.size() + 1;
+        MALLOC_BYTES(char, enc_addr, BUF_SIZE);
+        std::memcpy(enc_addr, enc_dpk_str.c_str(), BUF_SIZE);
 
-        return new BlsctStrRetVal {
-            BLSCT_SUCCESS,
-            enc_addr,
-        };
+        return succ(enc_addr);
+
     } catch(...) {}
 
-    return new BlsctStrRetVal {
-        BLSCT_EXCEPTION,
-    };
+    return err(BLSCT_EXCEPTION);
 }
 
 BlsctRetVal* gen_double_pub_key(
@@ -223,20 +257,11 @@ BlsctRetVal* gen_double_pub_key(
     pk1.SetVch(blsct_pk1_vec);
     pk2.SetVch(blsct_pk2_vec);
 
-    NEW(BlsctDoublePubKey, blsct_dpk);
+    MALLOC(BlsctDoublePubKey, blsct_dpk);
     blsct::DoublePublicKey dpk(pk1, pk2);
     SERIALIZE_AND_COPY(dpk, blsct_dpk);
 
-    return new BlsctRetVal {
-        RetValType::DoublePubKey,
-        BLSCT_SUCCESS,
-        blsct_dpk,
-    };
-}
-
-void dispose_double_pub_key(const BlsctDoublePubKey* blsct_dpk)
-{
-    if (blsct_dpk != nullptr) delete[] blsct_dpk;
+    return succ(blsct_dpk);
 }
 
 BlsctTokenId* gen_token_id_with_subid(
@@ -251,7 +276,7 @@ BlsctTokenId* gen_token_id_with_subid(
         n >>= 8; // Shift the value right by 8 bits to process the next byte
     }
     TokenId token_id(token_uint256, subid);
-    NEW(BlsctTokenId, blsct_token_id);
+    MALLOC(BlsctTokenId, blsct_token_id);
     SERIALIZE_AND_COPY_WITH_STREAM(token_id, blsct_token_id);
 
     return blsct_token_id;
@@ -268,40 +293,32 @@ BlsctTokenId* gen_token_id(
 
 BlsctTokenId* gen_default_token_id() {
     TokenId token_id;
-    NEW(BlsctTokenId, blsct_token_id);
+    MALLOC(BlsctTokenId, blsct_token_id);
     SERIALIZE_AND_COPY_WITH_STREAM(token_id, blsct_token_id);
 
     return blsct_token_id;
 }
 
-void dispose_token_id(const BlsctTokenId* blsct_token_id) {
-    delete[] blsct_token_id;
-}
-
-BlsctRpRetVal* build_range_proof(
-    const void* vp_uint64_vs,
-    const size_t num_uint64_vs,
+BlsctRetVal* build_range_proof(
+    const void* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
-    const char* blsct_message,
-    const size_t blsct_message_size,
+    const char* blsct_msg,
     const BlsctTokenId* blsct_token_id
 ) {
     try {
-        auto uint64_vs = static_cast<const std::vector<uint64_t>*>(vp_uint64_vs);
+        auto uint64_vec = static_cast<const std::vector<uint64_t>*>(vp_uint64_vec);
         // uint64_t to Scalar
         Scalars vs;
-        for (uint64_t uint64_v : *uint64_vs) {
-            if (uint64_v > INT64_MAX) {
-                return new BlsctRpRetVal {
-                    BLSCT_VALUE_OUTSIDE_THE_RANGE,
-                };
+        for (uint64_t v : *uint64_vec) {
+            if (v > INT64_MAX) {
+                return err(BLSCT_VALUE_OUTSIDE_THE_RANGE);
             }
-            Mcl::Scalar x(static_cast<int64_t>(uint64_v));
+            Mcl::Scalar x(static_cast<int64_t>(v));
             vs.Add(x);
         }
 
         // blsct_nonce to nonce
-        Mcl::Point nonce;
+        Mcl::Point nonce = Mcl::Point::GetBasePoint();
         auto blsct_nonce_u8 = U8C(blsct_nonce, BlsctPoint);
         std::vector<uint8_t> ser_point(
             blsct_nonce_u8, blsct_nonce_u8 + POINT_SIZE
@@ -309,50 +326,28 @@ BlsctRpRetVal* build_range_proof(
         nonce.SetVch(ser_point);
 
         // blsct_message to message
-        std::vector<uint8_t> message(
-            blsct_message, blsct_message + blsct_message_size + 1 // +1 for null term
-        );
+        std::string msg(blsct_msg);
+        std::vector<uint8_t> msg_vec(msg.begin(), msg.end());
 
         // blsct_token_id to token_id
         TokenId token_id;
-        {
-            DataStream st{};
-            for(size_t i=0; i<TOKEN_ID_SIZE; ++i) {
-                st << ((uint8_t*) blsct_token_id)[i];
-            }
-            token_id.Unserialize(st);
-        }
-
+        auto blsct_token_id_u8 = U8C(blsct_token_id, BlsctTokenId);
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id_u8, TOKEN_ID_SIZE, token_id);
 
         // range_proof to blsct_range_proof
         auto range_proof = g_rpl->Prove(
             vs,
             nonce,
-            message,
+            msg_vec,
             token_id
         );
-        NEW(BlsctRangeProof, blsct_range_proof);
-        {
-            DataStream st{};
-            range_proof.Serialize(st);
-            std::memcpy(blsct_range_proof, st.data(), st.size());
-        }
-        return new BlsctRpRetVal {
-            BLSCT_SUCCESS,
-            blsct_range_proof,
-        };
+        MALLOC(BlsctRangeProof, blsct_range_proof);
+        SERIALIZE_AND_COPY_WITH_STREAM(range_proof, blsct_range_proof);
+        return succ(blsct_range_proof);
 
     } catch(...) {}
 
-    return new BlsctRpRetVal {
-        BLSCT_EXCEPTION,
-    };
-}
-
-void dispose_range_proof(
-    const BlsctRangeProof* blsct_range_proof
-) {
-    delete[] blsct_range_proof;
+    return err(BLSCT_EXCEPTION);
 }
 
 BlsctBoolRetVal* verify_range_proofs(
@@ -368,26 +363,21 @@ BlsctBoolRetVal* verify_range_proofs(
             range_proof_w_seeds.push_back(rp_w_seed);
         }
         bool is_valid = g_rpl->Verify(range_proof_w_seeds);
+        return succ_bool(is_valid);
 
-        return new BlsctBoolRetVal {
-            BLSCT_SUCCESS,
-            is_valid,
-        };
     } catch(...) {}
 
-    return new BlsctBoolRetVal {
-        BLSCT_EXCEPTION,
-    };
+    return err_bool(BLSCT_EXCEPTION);
 }
 
-/*
-void blsct_gen_out_point(
+BlsctOutPoint* blsct_gen_out_point(
     const char* tx_id_c_str,
-    const uint32_t n,
-    BlsctOutPoint blsct_out_point
+    const uint32_t n
 ) {
-    // txid is 32 bytes, and represented as hex string of size 64
+    MALLOC(BlsctOutPoint, blsct_out_point);
+
     std::string tx_id_str(tx_id_c_str, 64);
+
     auto tx_id = TxidFromString(tx_id_str);
     COutPoint out_point { tx_id, n };
 
@@ -395,8 +385,10 @@ void blsct_gen_out_point(
         out_point,
         blsct_out_point
     );
+    return blsct_out_point;
 }
 
+/*
 static blsct::PrivateKey blsct_scalar_to_priv_key(
     const BlsctScalar blsct_scalar
 ) {

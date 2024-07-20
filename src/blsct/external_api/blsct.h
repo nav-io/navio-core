@@ -27,7 +27,7 @@
 #define KEY_ID_SIZE 20
 #define POINT_SIZE 48
 #define SCALAR_SIZE 32
-#define RANGE_PROOF_SIZE 1019  // needs to be at least 1019
+#define RANGE_PROOF_SIZE 1315  // needs to be at least 1315
 #define PRIVATE_KEY_SIZE 32
 #define TOKEN_ID_SIZE 40  // uint256 + uint64_t = 32 + 8 = 40
 #define UINT256_SIZE 32
@@ -109,7 +109,8 @@
 
 #define BLSCT_COPY(src, dest) std::memcpy(dest, src, sizeof(dest))
 
-#define NEW(T, name) T* name = reinterpret_cast<T*>(new T);
+#define MALLOC(T, name) T* name = (T*) malloc(sizeof(T))
+#define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
 
 #define U8C(name, T) reinterpret_cast<uint8_t*>(const_cast<T*>(name))
 
@@ -259,34 +260,40 @@ typedef struct {
 
 ///// BEG new pointer-based API
 
-enum RetValType {
-  DecAddr,
-  DoublePubKey,
-  EncAddr,
-  TokenIdent,
-};
-
-/* value will not be set unless the result is BLSCT_SUCCESS */
 typedef struct {
-  RetValType type;
   BLSCT_RESULT result;
   void* value;
 } BlsctRetVal;
 
 typedef struct {
   BLSCT_RESULT result;
-  char* value;
-} BlsctStrRetVal;
-
-typedef struct {
-  BLSCT_RESULT result;
   bool value;
 } BlsctBoolRetVal;
 
-typedef struct {
-  BLSCT_RESULT result;
-  BlsctRangeProof* value;
-} BlsctRpRetVal;
+BlsctRetVal* err(
+    BLSCT_RESULT result
+);
+
+BlsctRetVal* succ(
+    void* value
+);
+
+BlsctBoolRetVal* err_bool(
+    BLSCT_RESULT result
+);
+
+BlsctBoolRetVal* succ_bool(
+    bool value
+);
+
+// memory disposition
+void dispose_ret_val(BlsctRetVal* rv);
+void dispose_bool_ret_val(BlsctBoolRetVal* rv);
+void dispose_scalar(BlsctScalar* x);
+void dispose_point(BlsctPoint* x);
+void dispose_token_id(BlsctTokenId* x);
+void dispose_public_key(BlsctPubKey* x);
+void dispose_double_pub_key(BlsctDoublePubKey* x);
 
 // library initialization
 void init();
@@ -295,10 +302,6 @@ bool set_chain(enum Chain chain);
 // point/scalar generation/disposition
 BlsctPoint* gen_random_point();
 BlsctScalar* gen_random_scalar();
-
-void dispose_point(BlsctPoint* blsct_point);
-void dispose_scalar(BlsctScalar* blsct_scalar);
-void dispose_public_key(BlsctPubKey* blsct_pub_key);
 
 BlsctScalar* gen_scalar(const uint64_t n);
 
@@ -312,7 +315,7 @@ BlsctRetVal* decode_address(
   const char* blsct_enc_addr
 );
 
-BlsctStrRetVal* encode_address(
+BlsctRetVal* encode_address(
   const void* void_blsct_dpk,
   const enum AddressEncoding encoding
 );
@@ -320,10 +323,6 @@ BlsctStrRetVal* encode_address(
 BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk1,
     const BlsctPubKey* blsct_pk2
-);
-
-void dispose_double_pub_key(
-    const BlsctDoublePubKey* blsct_dpk
 );
 
 BlsctTokenId* gen_token_id_with_subid(
@@ -337,23 +336,21 @@ BlsctTokenId* gen_token_id(
 
 BlsctTokenId* gen_default_token_id();
 
-void dispose_token_id(const BlsctTokenId* blsct_token_id);
-
-BlsctRpRetVal* build_range_proof(
-    const void* vp_uint64_vs,
-    const size_t num_uint64_vs,
+BlsctRetVal* build_range_proof(
+    const void* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
-    const char* blsct_message,
-    const size_t blsct_message_size,
+    const char* blsct_msg,
     const BlsctTokenId* blsct_token_id
-);
-
-void dispose_range_proof(
-    const BlsctRangeProof* blsct_range_proof
 );
 
 BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs
+);
+
+// txid is 32 bytes and represented as 64-char hex str
+BlsctOutPoint* blsct_gen_out_point(
+    const char* tx_id_c_str,
+    const uint32_t n
 );
 
 ///// END new pointer-based API
