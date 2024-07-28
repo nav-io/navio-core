@@ -66,6 +66,7 @@
 #define BLSCT_OUT_AMOUNT_ERROR 15
 #define BLSCT_BAD_OUT_TYPE 16
 #define BLSCT_MEMO_TOO_LONG 17
+#define BLSCT_MEM_ALLOC_FAILED 18
 
 #define TRY_DEFINE_MCL_POINT_FROM(src, dest) \
     Point dest; \
@@ -111,6 +112,13 @@
 
 #define MALLOC(T, name) T* name = (T*) malloc(sizeof(T))
 #define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
+#define RETURN_IF_MEM_ALLOC_FAILED(name) \
+if (name == nullptr) { \
+    printf("Failed to allocate memory"); \
+    return nullptr; \
+}
+#define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
+if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
@@ -256,20 +264,20 @@ typedef struct {
   size_t out_amount_err_index; // holds the first index of the tx_out whose amount exceeds the maximum
 } BlsctTxRetVal;
 
-BlsctRetVal* err(
-    BLSCT_RESULT result
-);
-
 BlsctRetVal* succ(
     void* value
 );
 
-BlsctBoolRetVal* err_bool(
+BlsctRetVal* err(
     BLSCT_RESULT result
 );
 
 BlsctBoolRetVal* succ_bool(
     bool value
+);
+
+BlsctBoolRetVal* err_bool(
+    BLSCT_RESULT result
 );
 
 typedef struct {
