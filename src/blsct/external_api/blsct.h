@@ -32,25 +32,26 @@
 #define TOKEN_ID_SIZE 40  // uint256 + uint64_t = 32 + 8 = 40
 #define UINT256_SIZE 32
 #define VIEW_TAG_SIZE 8
-#define UINT16_SIZE 2
-#define CTXOUT_BLSCT_DATA_SIZE \
-        POINT_SIZE * 3 + \
-        RANGE_PROOF_SIZE + \
-        UINT16_SIZE
-#define NORMAL_CSCRIPT_SIZE 1
-#define OP_SIZE 1
-#define STAKED_COMMITMENT_CSCRIPT_SIZE \
-        OP_SIZE * 3 + \
-        RANGE_PROOF_SIZE
-#define CTXOUT_SIZE CAMOUNT_SIZE + \
-        CSCRIPT_SIZE + \
-        CTXOUT_BLSCT_DATA_SIZE + \
-        TOKEN_ID_SIZE
-#define UNSIGNED_OUTPUT_SIZE SCALAR_SIZE * 3 + CTXOUT_SIZE
+// #define UINT16_SIZE 2
+// #define CTXOUT_BLSCT_DATA_SIZE \
+//         POINT_SIZE * 3 + \
+//         RANGE_PROOF_SIZE + \
+//         UINT16_SIZE
+// #define NORMAL_CSCRIPT_SIZE 1
+// #define OP_SIZE 1
+// #define STAKED_COMMITMENT_CSCRIPT_SIZE \
+//         OP_SIZE * 3 + \
+//         RANGE_PROOF_SIZE
+// #define CTXOUT_SIZE CAMOUNT_SIZE + \
+//         CSCRIPT_SIZE + \
+//         CTXOUT_BLSCT_DATA_SIZE + \
+//         TOKEN_ID_SIZE
+// #define UNSIGNED_OUTPUT_SIZE SCALAR_SIZE * 3 + CTXOUT_SIZE
 #define OUT_POINT_SIZE 36
 #define SIGNATURE_SIZE 96
 #define SCRIPT_SIZE 28
-#define MEMO_BUF_SIZE 100
+#define MAX_MEMO_LEN 100
+#define MEMO_BUF_SIZE MAX_MEMO_LEN + 1
 
 /* return codes */
 #define BLSCT_RESULT uint8_t
@@ -61,11 +62,10 @@
 #define BLSCT_UNKNOWN_ENCODING 11
 #define BLSCT_VALUE_OUTSIDE_THE_RANGE 12
 #define BLSCT_DID_NOT_RUN_TO_COMPLETION 13
-#define BLSCT_BUFFER_TOO_SMALL 14
-#define BLSCT_IN_AMOUNT_ERROR 15
-#define BLSCT_OUT_AMOUNT_ERROR 16
-#define BLSCT_BAD_OUT_TYPE 17
-#define BLSCT_MEMO_TOO_LONG 18
+#define BLSCT_IN_AMOUNT_ERROR 14
+#define BLSCT_OUT_AMOUNT_ERROR 15
+#define BLSCT_BAD_OUT_TYPE 16
+#define BLSCT_MEMO_TOO_LONG 17
 
 #define TRY_DEFINE_MCL_POINT_FROM(src, dest) \
     Point dest; \
@@ -85,7 +85,7 @@
 
 #define UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(src, src_size, dest) \
 { \
-    Span buf(reinterpret_cast<uint8_t*>(src), src_size); \
+    Span buf(U8C(src), src_size); \
     DataStream st{}; \
     st << buf; \
     dest.Unserialize(st); \
@@ -112,9 +112,9 @@
 #define MALLOC(T, name) T* name = (T*) malloc(sizeof(T))
 #define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
 
-#define U8C(name, T) reinterpret_cast<uint8_t*>(const_cast<T*>(name))
+#define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
-#define VOID(T, name) reinterpret_cast<void*>(name)
+#define VOID(name) reinterpret_cast<void*>(name)
 
 #define UNVOID(T, name) const T* name = reinterpret_cast<const T*>(void_##name)
 
@@ -159,34 +159,6 @@ typedef uint8_t BlsctUint256[UINT256_SIZE];
 typedef uint8_t BlsctViewTag[VIEW_TAG_SIZE];
 typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
 typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
-
-/* holds both request (in) and result (out) */
-typedef struct {
-    BlsctRangeProof range_proof; /* in */
-    BlsctPoint nonce; /* in */
-    bool is_succ; /* out */
-    uint64_t amount;  /* out */
-    char msg[range_proof::Setup::max_message_size]; /* out */
-    size_t msg_size; /* out */
-} BlsctAmountRecoveryRequest;
-
-typedef struct {
-    uint64_t amount;
-    uint64_t gamma;
-    BlsctScalar spending_key;
-    BlsctTokenId token_id;
-    BlsctOutPoint out_point;
-    bool rbf;
-} BlsctTxIn;
-
-typedef struct {
-    BlsctSubAddr dest;
-    uint64_t amount;
-    char memo[MEMO_BUF_SIZE];  /* contains a c-str */
-    BlsctTokenId token_id;
-    TxOutputType output_type;
-    uint64_t min_stake;
-} BlsctTxOut;
 
 typedef struct {
     uint8_t script[SCRIPT_SIZE];
@@ -270,6 +242,20 @@ typedef struct {
   bool value;
 } BlsctBoolRetVal;
 
+typedef struct {
+  BLSCT_RESULT result;
+  void* value;  // = std::vector<BlsctAmountRecoveryResult>
+} BlsctAmountsRetVal;
+
+typedef struct {
+  BLSCT_RESULT result;
+  uint8_t* ser_tx;
+  size_t ser_tx_size;
+
+  size_t in_amount_err_index; // holds the first index of the tx_in whose amount exceeds the maximum
+  size_t out_amount_err_index; // holds the first index of the tx_out whose amount exceeds the maximum
+} BlsctTxRetVal;
+
 BlsctRetVal* err(
     BLSCT_RESULT result
 );
@@ -286,9 +272,39 @@ BlsctBoolRetVal* succ_bool(
     bool value
 );
 
+typedef struct {
+  BlsctRangeProof range_proof;
+  BlsctPoint nonce;
+} BlsctAmountRecoveryReq;
+
+typedef struct {
+  bool is_succ;
+  char* msg;
+  uint64_t amount;
+} BlsctAmountRecoveryResult;
+
+typedef struct {
+    uint64_t amount;
+    uint64_t gamma;
+    BlsctScalar spending_key;
+    BlsctTokenId token_id;
+    BlsctOutPoint out_point;
+    bool rbf;
+} BlsctTxIn;
+
+typedef struct {
+    BlsctSubAddr dest;
+    uint64_t amount;
+    char memo_c_str[MEMO_BUF_SIZE];
+    BlsctTokenId token_id;
+    TxOutputType output_type;
+    uint64_t min_stake;
+} BlsctTxOut;
+
 // memory disposition
 void dispose_ret_val(BlsctRetVal* rv);
 void dispose_bool_ret_val(BlsctBoolRetVal* rv);
+void dispose_amounts_ret_val(BlsctAmountsRetVal* rv);
 void dispose_scalar(BlsctScalar* x);
 void dispose_point(BlsctPoint* x);
 void dispose_token_id(BlsctTokenId* x);
@@ -306,7 +322,7 @@ BlsctScalar* gen_random_scalar();
 BlsctScalar* gen_scalar(const uint64_t n);
 
 // type convertion
-uint64_t scalar_to_uint64(BlsctScalar* blsct_scalar);
+uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
 
 // public key generation
 BlsctPubKey* gen_random_public_key();
@@ -347,21 +363,49 @@ BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs
 );
 
+BlsctAmountRecoveryReq* gen_recover_amount_req(
+    const void* vp_blsct_range_proof,
+    const void* vp_blsct_nonce
+);
+
+// returns a structure whose value field is
+// a vector of the same size as the input vector
+BlsctAmountsRetVal* recover_amount(
+    void* vp_amt_recovery_req_vec
+);
+
 // txid is 32 bytes and represented as 64-char hex str
-BlsctOutPoint* blsct_gen_out_point(
+BlsctOutPoint* gen_out_point(
     const char* tx_id_c_str,
     const uint32_t n
+);
+
+BlsctTxIn* build_tx_in(
+    uint64_t amount,
+    uint64_t gamma,
+    BlsctScalar* spending_key,
+    BlsctTokenId* token_id,
+    BlsctOutPoint* out_point,
+    bool rbf
+);
+
+BlsctRetVal* build_tx_out(
+    BlsctSubAddr* blsct_dest,
+    uint64_t amount,
+    char* memo_c_str,
+    BlsctTokenId* blsct_token_id,
+    TxOutputType output_type,
+    uint64_t min_stake
+);
+
+BlsctTxRetVal* build_tx(
+    const void* void_tx_ins,
+    const void* void_tx_outs
 );
 
 ///// END new pointer-based API
 
 /*
-void blsct_gen_out_point(
-    const char* tx_id_c_str,
-    const uint32_t n,
-    BlsctOutPoint blsct_out_point
-);
-
 void blsct_uint64_to_blsct_uint256(
     const uint64_t n,
     BlsctUint256 uint256
@@ -426,15 +470,6 @@ void blsct_gen_priv_key(
     BlsctScalar blsct_priv_key
 );
 
-// attempts to recover all requests in the given request array
-// and returns the recovery results in the same request array
-// returns failure if exception is thrown and success otherwise
-//
-BLSCT_RESULT blsct_recover_amount(
-    BlsctAmountRecoveryRequest blsct_amount_recovery_reqs[],
-    const size_t num_reqs
-);
-
 void blsct_sign_message(
     const BlsctPrivKey blsct_priv_key,
     const uint8_t* blsct_msg,
@@ -447,37 +482,6 @@ bool blsct_verify_msg_sig(
     const uint8_t* blsct_msg,
     const size_t blsct_msg_size,
     const BlsctSignature blsct_signature
-);
-
-void blsct_build_tx_in(
-    const uint64_t amount,
-    const uint64_t gamma,
-    const BlsctScalar spending_key,
-    const BlsctTokenId token_id,
-    const BlsctOutPoint out_point,
-    const bool rbf,
-    BlsctTxIn* const tx_in
-);
-
-BLSCT_RESULT blsct_build_tx_out(
-    const BlsctSubAddr blsct_dest,
-    const uint64_t amount,
-    const char* memo,  // should point to c-str
-    const BlsctTokenId blsct_token_id,
-    const TxOutputType output_type,
-    const uint64_t min_stake,
-    BlsctTxOut* const tx_out
-);
-
-BLSCT_RESULT blsct_build_tx(
-    const BlsctTxIn blsct_tx_ins[],
-    const size_t num_blsct_tx_ins,
-    const BlsctTxOut blsct_tx_outs[],
-    const size_t num_blsct_tx_outs,
-    uint8_t* ser_tx,
-    size_t* ser_tx_size, // [in] size of serialized_tx buffer [out] size of the generated serialized tx
-    size_t* in_amount_err_index, // holds the first index of the tx_in whose amount exceeds the maximum
-    size_t* out_amount_err_index // holds the first index of the tx_out whose amount exceeds the maximum
 );
 
 void blsct_deserialize_tx(

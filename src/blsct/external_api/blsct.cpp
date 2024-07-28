@@ -169,7 +169,7 @@ BlsctScalar* gen_scalar(
     return blsct_scalar;
 }
 
-uint64_t scalar_to_uint64(BlsctScalar* blsct_scalar)
+uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar)
 {
     Scalar scalar;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
@@ -220,7 +220,7 @@ BlsctRetVal* encode_address(
     try {
         UNVOID(BlsctDoublePubKey, blsct_dpk);
 
-        auto blsct_dpk_u8 = U8C(blsct_dpk, BlsctDoublePubKey);
+        auto blsct_dpk_u8 = U8C(blsct_dpk);
         std::vector<uint8_t> dpk_vec(blsct_dpk_u8, blsct_dpk_u8 + sizeof(BlsctDoublePubKey));
         auto dpk = blsct::DoublePublicKey(dpk_vec);
 
@@ -242,8 +242,8 @@ BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk1,
     const BlsctPubKey* blsct_pk2
 ) {
-    auto blsct_pk1_u8 = U8C(blsct_pk1, BlsctPubKey);
-    auto blsct_pk2_u8 = U8C(blsct_pk2, BlsctPubKey);
+    auto blsct_pk1_u8 = U8C(blsct_pk1);
+    auto blsct_pk2_u8 = U8C(blsct_pk2);
 
     blsct::PublicKey pk1, pk2;
     std::vector<uint8_t> blsct_pk1_vec {
@@ -319,7 +319,7 @@ BlsctRetVal* build_range_proof(
 
         // blsct_nonce to nonce
         Mcl::Point nonce = Mcl::Point::GetBasePoint();
-        auto blsct_nonce_u8 = U8C(blsct_nonce, BlsctPoint);
+        auto blsct_nonce_u8 = U8C(blsct_nonce);
         std::vector<uint8_t> ser_point(
             blsct_nonce_u8, blsct_nonce_u8 + POINT_SIZE
         );
@@ -331,7 +331,7 @@ BlsctRetVal* build_range_proof(
 
         // blsct_token_id to token_id
         TokenId token_id;
-        auto blsct_token_id_u8 = U8C(blsct_token_id, BlsctTokenId);
+        auto blsct_token_id_u8 = U8C(blsct_token_id);
         UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id_u8, TOKEN_ID_SIZE, token_id);
 
         // range_proof to blsct_range_proof
@@ -370,7 +370,100 @@ BlsctBoolRetVal* verify_range_proofs(
     return err_bool(BLSCT_EXCEPTION);
 }
 
-BlsctOutPoint* blsct_gen_out_point(
+BlsctAmountRecoveryReq* gen_recover_amount_req(
+    const void* vp_blsct_range_proof,
+    const void* vp_blsct_nonce
+) {
+    auto req = new BlsctAmountRecoveryReq;
+    BLSCT_COPY(vp_blsct_range_proof, req->range_proof);
+    BLSCT_COPY(vp_blsct_nonce, req->nonce);
+    return req;
+}
+
+BlsctAmountsRetVal* recover_amount(
+    void* vp_amt_recovery_req_vec
+) {
+    MALLOC(BlsctAmountsRetVal, rv);
+    try {
+        auto amt_recovery_req_vec =
+            static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
+
+        // construct AmountRecoveryRequest vector
+        std::vector<bulletproofs::AmountRecoveryRequest<Mcl>> reqs;
+
+        for (auto ar_req: *amt_recovery_req_vec) {
+            bulletproofs::RangeProof<Mcl> range_proof;
+            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.range_proof, RANGE_PROOF_SIZE, range_proof);
+
+            Mcl::Point nonce;
+            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.nonce, POINT_SIZE, nonce);
+
+            auto req = bulletproofs::AmountRecoveryRequest<Mcl>::of(
+                range_proof,
+                nonce
+            );
+            reqs.push_back(req);
+        }
+
+        // attempt to recover amount for each request
+        auto recovery_results = g_rpl->RecoverAmounts(reqs);
+
+        // return error if it failed in the middle
+        if (!recovery_results.is_completed) {
+            rv->result = BLSCT_DID_NOT_RUN_TO_COMPLETION;
+            return rv;
+        }
+
+        // prepare a vector to return initially making all the requests as failed
+        auto result_vec = new std::vector<BlsctAmountRecoveryResult>;
+        result_vec->resize(amt_recovery_req_vec->size());
+        for(auto result: *result_vec) {
+            result.is_succ = false;
+        }
+
+        // write successful recovery results to the return vector
+        for(size_t i=0; i<recovery_results.amounts.size(); ++i) {
+            // get a successfully recovered amount
+            auto amount = recovery_results.amounts[i];
+
+            // get the result corresponding to the successful result from the vector
+            auto& result = result_vec->at(amount.id);
+
+            // mark the result as success and set the amount
+            result.is_succ = true;
+            result.amount = amount.amount;
+
+            // set the recovered message and the size to the result
+            result.msg = (char*) malloc(amount.message.size() + 1);
+            std::memcpy(
+                result.msg,
+                amount.message.c_str(),
+                amount.message.size() + 1
+            );
+        }
+
+        rv->result = BLSCT_SUCCESS;
+        rv->value = VOID(result_vec);
+        return rv;
+
+    } catch(...) {}
+
+    rv->result = BLSCT_EXCEPTION;
+    return rv;
+}
+
+void dispose_amounts_ret_val(BlsctAmountsRetVal* rv)
+{
+    auto result_vec = static_cast<const std::vector<BlsctAmountRecoveryResult>*>(rv->value);
+
+    for(auto res: *result_vec) {
+        free(res.msg);
+    }
+    delete result_vec;
+    free(rv);
+}
+
+BlsctOutPoint* gen_out_point(
     const char* tx_id_c_str,
     const uint32_t n
 ) {
@@ -388,18 +481,192 @@ BlsctOutPoint* blsct_gen_out_point(
     return blsct_out_point;
 }
 
-/*
-static blsct::PrivateKey blsct_scalar_to_priv_key(
-    const BlsctScalar blsct_scalar
+BlsctTxIn* build_tx_in(
+    uint64_t amount,
+    uint64_t gamma,
+    BlsctScalar* spending_key,
+    BlsctTokenId* token_id,
+    BlsctOutPoint* out_point,
+    bool rbf
 ) {
+    MALLOC(BlsctTxIn, tx_in);
+
+    tx_in->amount = amount;
+    tx_in->gamma = gamma;
+    BLSCT_COPY(spending_key, tx_in->spending_key);
+    BLSCT_COPY(token_id, tx_in->token_id);
+    BLSCT_COPY(out_point, tx_in->out_point);
+    tx_in->rbf = rbf;
+
+    return tx_in;
+}
+
+BlsctRetVal* build_tx_out(
+    BlsctSubAddr* blsct_dest,
+    uint64_t amount,
+    char* in_memo_c_str,
+    BlsctTokenId* blsct_token_id,
+    TxOutputType output_type,
+    uint64_t min_stake
+) {
+    MALLOC(BlsctTxOut, tx_out);
+
+    BLSCT_COPY(blsct_dest, tx_out->dest);
+    tx_out->amount = amount;
+
+    // copy memo to tx_out
+    size_t in_memo_c_str_len = std::strlen(in_memo_c_str);
+    if (in_memo_c_str_len > MAX_MEMO_LEN) {
+        return err(BLSCT_MEMO_TOO_LONG);
+    }
+    std::memcpy(tx_out->memo_c_str, in_memo_c_str, in_memo_c_str_len + 1);
+
+    BLSCT_COPY(blsct_token_id, tx_out->token_id);
+    tx_out->output_type = output_type;
+    tx_out->min_stake = min_stake;
+
+    return succ(tx_out);
+}
+
+static blsct::PrivateKey blsct_scalar_to_priv_key(
+    const BlsctScalar* blsct_scalar
+) {
+    // unserialize blsct_scalar to Scalar
     Scalar scalar;
-    std::vector<uint8_t> vec {blsct_scalar, blsct_scalar + Scalar::SERIALIZATION_SIZE};
+    auto u8_blsct_scalar = U8C(blsct_scalar);
+    std::vector<uint8_t> vec {u8_blsct_scalar, u8_blsct_scalar + SCALAR_SIZE};
     scalar.SetVch(vec);
 
+    // build private key from the scalar
     blsct::PrivateKey priv_key(scalar);
     return priv_key;
 }
 
+BlsctTxRetVal* build_tx(
+    const void* void_tx_ins,
+    const void* void_tx_outs
+) {
+    UNVOID(std::vector<BlsctTxIn>, tx_ins);
+    UNVOID(std::vector<BlsctTxOut>, tx_outs);
+
+    blsct::TxFactoryBase psbt;
+    MALLOC(BlsctTxRetVal, rv);
+
+    for (size_t i=0; i<tx_ins->size(); ++i) {
+        // unserialize tx_in fields and add to TxFactoryBase
+        const BlsctTxIn& tx_in = tx_ins->at(i);
+
+        // check if the amount is within the range
+        // amount is uint64_t and not serialized
+        if (tx_in.amount > std::numeric_limits<int64_t>::max()) {
+            rv->result = BLSCT_IN_AMOUNT_ERROR;
+            rv->in_amount_err_index = i;
+            return rv;
+        }
+
+        // gamma is uint64_t and not serialized
+        Scalar gamma(tx_in.gamma);
+
+        // unserialize spending_key
+        blsct::PrivateKey spending_key =
+            blsct_scalar_to_priv_key(&tx_in.spending_key);
+
+        // unserialize token_id
+        TokenId token_id;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            tx_in.token_id, TOKEN_ID_SIZE, token_id
+        );
+
+        // unserialize out_point
+        COutPoint out_point;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            tx_in.out_point, OUT_POINT_SIZE, out_point
+        );
+
+        // add all to TxFactoryBase
+        psbt.AddInput(
+            tx_in.amount,
+            gamma,
+            spending_key,
+            token_id,
+            out_point
+        );
+    }
+
+    for (size_t i=0; i<tx_outs->size(); ++i) {
+        // unserialize tx_out fields and add to TxFactoryBase
+        const BlsctTxOut& tx_out = tx_outs->at(i);
+
+        // check if the amount is within the range
+        // amount is uint64_t and not serialized
+        if (tx_out.amount > std::numeric_limits<int64_t>::max()) {
+            rv->result = BLSCT_OUT_AMOUNT_ERROR;
+            rv->out_amount_err_index = i;
+            return rv;
+        }
+
+        // unserialize destination
+        blsct::DoublePublicKey dest;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            tx_out.dest, DOUBLE_PUBLIC_KEY_SIZE, dest
+        );
+
+        // create memo std::string from memo c_str
+        std::string memo_str(tx_out.memo_c_str);
+
+        // unserialize token_id
+        TokenId token_id;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            tx_out.token_id, TOKEN_ID_SIZE, token_id
+        );
+
+        // create out_type from blsct::TxOutputType
+        blsct::CreateOutputType out_type;
+        if (tx_out.output_type == TxOutputType::Normal) {
+            out_type = blsct::CreateOutputType::NORMAL;
+        } else if (tx_out.output_type == TxOutputType::StakedCommitment) {
+            out_type = blsct::CreateOutputType::STAKED_COMMITMENT;
+        } else {
+            rv->result = BLSCT_BAD_OUT_TYPE;
+            return rv;
+        }
+
+        // add all to TxFactoryBase
+        psbt.AddOutput(
+            dest,
+            tx_out.amount,
+            memo_str,
+            token_id,
+            out_type,
+            tx_out.min_stake
+        );
+    }
+
+    // build tx
+    blsct::DoublePublicKey change_amt_dest;
+    auto maybe_tx = psbt.BuildTx(change_amt_dest);
+    if (!maybe_tx.has_value()) {
+        rv->result = BLSCT_FAILURE;
+        return rv;
+    }
+    auto tx = maybe_tx.value();
+
+    // serialize tx
+    DataStream st{};
+    TransactionSerParams params { .allow_witness = true };
+    ParamsStream ps {params, st};
+    tx.Serialize(ps);
+
+    // copy serialize tx to the result
+    rv->result = BLSCT_SUCCESS;
+    rv->ser_tx_size = st.size();
+    rv->ser_tx = (uint8_t*) malloc(st.size());
+    std::memcpy(rv->ser_tx, st.data(), st.size());
+
+    return rv;
+}
+
+/*
 void blsct_gen_random_priv_key(
     BlsctScalar blsct_priv_key
 ) {
@@ -503,70 +770,6 @@ bool blsct_decode_token_id(
     blsct_token_id_de->subid = token_id.subid;
 
     return is_token_within_uint64_range;
-}
-
-BLSCT_RESULT blsct_recover_amount(
-    BlsctAmountRecoveryRequest blsct_amount_recovery_reqs[],
-    const size_t num_reqs
-) {
-    try {
-        // build AmountRecoveryRequests
-        std::vector<bulletproofs::AmountRecoveryRequest<Mcl>> reqs;
-
-        for(size_t i=0; i<num_reqs; ++i) {
-            auto& r = blsct_amount_recovery_reqs[i];
-
-            Mcl::Point nonce;
-            blsct_nonce_to_nonce(r.nonce, nonce);
-
-            bulletproofs::RangeProof<Mcl> range_proof;
-            blsct_range_proof_to_range_proof(
-                r.range_proof,
-                range_proof
-            );
-
-            auto req = bulletproofs::AmountRecoveryRequest<Mcl>::of(
-                range_proof,
-                nonce
-            );
-            reqs.push_back(req);
-        }
-
-        auto recovery_results = g_rpl->RecoverAmounts(reqs);
-
-        // initially mark all the requests as failed
-        for(size_t i=0; i<num_reqs; ++i) {
-            blsct_amount_recovery_reqs[i].is_succ = false;
-        }
-
-        if (!recovery_results.run_to_completion) {
-            return BLSCT_DID_NOT_RUN_TO_COMPLETION;
-        }
-
-        // write successful recovery results to corresponding requests
-        for(size_t i=0; i<recovery_results.successful_results.size(); ++i) {
-            auto result = recovery_results.successful_results[i];
-
-            // pick up the request correspnding to the recovery result
-            auto& req = blsct_amount_recovery_reqs[result.idx];
-            req.is_succ = true;
-
-            // copy recoverted amount to request
-            req.amount = result.amount;
-
-            // copy the recovered message and message size to request
-            std::memcpy(
-                req.msg,
-                result.message.c_str(),
-                result.message.size()
-            );
-            req.msg_size = result.message.size();
-        }
-        return BLSCT_SUCCESS;
-
-    } catch(...) {}
-
-    return BLSCT_EXCEPTION;
 }
 
 void blsct_priv_key_to_pub_key(
@@ -779,164 +982,6 @@ BLSCT_RESULT blsct_calc_priv_spending_key(
         address
     );
     SERIALIZE_AND_COPY(priv_spending_key, blsct_priv_spending_key);
-
-    return BLSCT_SUCCESS;
-}
-
-void blsct_build_tx_in(
-    const uint64_t amount,
-    const uint64_t gamma,
-    const BlsctScalar spending_key,
-    const BlsctTokenId token_id,
-    const BlsctOutPoint out_point,
-    const bool rbf,
-    BlsctTxIn* const tx_in
-) {
-    tx_in->amount = amount;
-    tx_in->gamma = gamma;
-    tx_in->rbf = rbf;
-
-    BLSCT_COPY(spending_key, tx_in->spending_key);
-    BLSCT_COPY(token_id, tx_in->token_id);
-    BLSCT_COPY(out_point, tx_in->out_point);
-}
-
-BLSCT_RESULT blsct_build_tx_out(
-    const BlsctSubAddr blsct_dest,
-    const uint64_t amount,
-    const char* memo,
-    const BlsctTokenId blsct_token_id,
-    const TxOutputType output_type,
-    const uint64_t min_stake,
-    BlsctTxOut* const tx_out
-) {
-    tx_out->amount = amount;
-
-    // +1 for null terminator
-    size_t memo_len = std::strlen(memo);
-    if (memo_len + 1 > MEMO_BUF_SIZE) {
-        return BLSCT_MEMO_TOO_LONG;
-    }
-    // copy the memo including the null terminator
-    std::memcpy(tx_out->memo, memo, memo_len + 1);
-
-    tx_out->output_type = output_type;
-    tx_out->min_stake = min_stake;
-
-    BLSCT_COPY(blsct_dest, tx_out->dest);
-    BLSCT_COPY(blsct_token_id, tx_out->token_id);
-
-    return BLSCT_SUCCESS;
-}
-
-BLSCT_RESULT blsct_build_tx(
-    const BlsctTxIn blsct_tx_ins[],
-    const size_t num_blsct_tx_ins,
-    const BlsctTxOut blsct_tx_outs[],
-    const size_t num_blsct_tx_outs,
-    uint8_t* ser_tx,
-    size_t* ser_tx_size,
-    size_t* in_amount_err_index,
-    size_t* out_amount_err_index
-) {
-    blsct::TxFactoryBase psbt;
-
-    for (size_t i=0; i<num_blsct_tx_ins; ++i) {
-        auto& tx_in = blsct_tx_ins[i];
-
-        if (tx_in.amount > std::numeric_limits<int64_t>::max()) {
-            *in_amount_err_index = i;
-            return BLSCT_IN_AMOUNT_ERROR;
-        }
-
-        Scalar gamma(tx_in.gamma);
-
-        blsct::PrivateKey spending_key =
-            blsct_scalar_to_priv_key(tx_in.spending_key);
-
-        TokenId token_id;
-        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-            tx_in.token_id, TOKEN_ID_SIZE, token_id
-        );
-
-        COutPoint out_point;
-        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-            tx_in.out_point, OUT_POINT_SIZE, out_point
-        );
-
-        psbt.AddInput(
-            tx_in.amount,
-            gamma,
-            spending_key,
-            token_id,
-            out_point
-        );
-    }
-
-    for (size_t i=0; i<num_blsct_tx_outs; ++i) {
-        auto& tx_out = blsct_tx_outs[i];
-
-        if (tx_out.amount > std::numeric_limits<int64_t>::max()) {
-            *out_amount_err_index = i;
-            return BLSCT_OUT_AMOUNT_ERROR;
-        }
-
-        blsct::DoublePublicKey dest;
-        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-            tx_out.dest, DOUBLE_PUBLIC_KEY_SIZE, dest
-        );
-
-        std::string memo(tx_out.memo);
-
-        TokenId token_id;
-        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-            tx_out.token_id, TOKEN_ID_SIZE, token_id
-        );
-
-        blsct::CreateOutputType out_type;
-        if (tx_out.output_type == TxOutputType::Normal) {
-            out_type = blsct::CreateOutputType::NORMAL;
-        } else if (tx_out.output_type == TxOutputType::StakedCommitment) {
-            out_type = blsct::CreateOutputType::STAKED_COMMITMENT;
-        } else {
-            return BLSCT_BAD_OUT_TYPE;
-        }
-        psbt.AddOutput(
-            dest,
-            tx_out.amount,
-            tx_out.memo,
-            token_id,
-            out_type,
-            tx_out.min_stake
-        );
-    }
-
-    blsct::DoublePublicKey change_dest;
-    auto maybe_tx = psbt.BuildTx(change_dest);
-
-    if (!maybe_tx.has_value()) {
-        return BLSCT_FAILURE;
-    }
-    auto tx = maybe_tx.value();
-
-    DataStream st{};
-    TransactionSerParams params { .allow_witness = true };
-    ParamsStream ps {params, st};
-    tx.Serialize(ps);
-
-    // if provided buffer is not large enough to store the
-    // serialized tx, return error with the required buffer size
-    if (st.size() > *ser_tx_size) {
-        *ser_tx_size = st.size();
-        return BLSCT_BUFFER_TOO_SMALL;
-    }
-    // return the serialized tx with the size
-
-    // this line gets the following warning, but the warning can be safely ignored
-    // warning: stack protector not protecting local variables: variable length buffer [-Wstack-protector]
-    std::memcpy(ser_tx, st.data(), st.size());
-
-    *ser_tx_size = st.size();
 
     return BLSCT_SUCCESS;
 }
