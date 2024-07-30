@@ -126,7 +126,6 @@ BlsctBoolRetVal* err_bool(
 }
 
 void dispose_ret_val(BlsctRetVal* rv) {
-    if (rv->value != nullptr) free(rv->value);
     free(rv);
 }
 
@@ -150,7 +149,7 @@ void dispose_public_key(BlsctPubKey* x) {
     if (x != nullptr) free(x);
 }
 
-void dispose_double_pub_key(BlsctDoublePubKey* x) {
+void dispose_double_pub_key(void* x) {
     if (x != nullptr) free(x);
 }
 
