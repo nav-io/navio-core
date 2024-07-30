@@ -310,14 +310,17 @@ typedef struct {
 } BlsctTxOut;
 
 // memory disposition
+
+// does not dispose rv.value
 void dispose_ret_val(BlsctRetVal* rv);
+
 void dispose_bool_ret_val(BlsctBoolRetVal* rv);
 void dispose_amounts_ret_val(BlsctAmountsRetVal* rv);
 void dispose_scalar(BlsctScalar* x);
 void dispose_point(BlsctPoint* x);
 void dispose_token_id(BlsctTokenId* x);
 void dispose_public_key(BlsctPubKey* x);
-void dispose_double_pub_key(BlsctDoublePubKey* x);
+void dispose_double_pub_key(void* x);
 
 // library initialization
 void init();
