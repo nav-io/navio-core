@@ -125,32 +125,18 @@ BlsctBoolRetVal* err_bool(
     return p;
 }
 
-void dispose_ret_val(BlsctRetVal* rv) {
+void free_obj(void* x) {
+    if (x != nullptr) free(x);
+}
+
+void free_amounts_ret_val(BlsctAmountsRetVal* rv) {
+    auto result_vec = static_cast<const std::vector<BlsctAmountRecoveryResult>*>(rv->value);
+
+    for(auto res: *result_vec) {
+        free(res.msg);
+    }
+    delete result_vec;
     free(rv);
-}
-
-void dispose_bool_ret_val(BlsctBoolRetVal* rv) {
-    if (rv != nullptr) free(rv);
-}
-
-void dispose_scalar(BlsctScalar* x) {
-    if (x != nullptr) free(x);
-}
-
-void dispose_point(BlsctPoint* x) {
-    if (x != nullptr) free(x);
-}
-
-void dispose_token_id(BlsctTokenId* x) {
-    if (x != nullptr) free(x);
-}
-
-void dispose_public_key(BlsctPubKey* x) {
-    if (x != nullptr) free(x);
-}
-
-void dispose_double_pub_key(void* x) {
-    if (x != nullptr) free(x);
 }
 
 BlsctPoint* gen_random_point() {
@@ -472,17 +458,6 @@ BlsctAmountsRetVal* recover_amount(
 
     rv->result = BLSCT_EXCEPTION;
     return rv;
-}
-
-void dispose_amounts_ret_val(BlsctAmountsRetVal* rv)
-{
-    auto result_vec = static_cast<const std::vector<BlsctAmountRecoveryResult>*>(rv->value);
-
-    for(auto res: *result_vec) {
-        free(res.msg);
-    }
-    delete result_vec;
-    free(rv);
 }
 
 BlsctOutPoint* gen_out_point(
