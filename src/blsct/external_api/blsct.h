@@ -52,6 +52,7 @@
 #define SCRIPT_SIZE 28
 #define MAX_MEMO_LEN 100
 #define MEMO_BUF_SIZE MAX_MEMO_LEN + 1
+#define TXID_STR_LEN UINT256_SIZE * 2
 
 /* return codes */
 #define BLSCT_RESULT uint8_t
@@ -311,7 +312,7 @@ typedef struct {
 
 // memory disposition
 void free_obj(void* x);
-void free_amounts_ret_val(BlsctAmountsRetVal* rv);
+void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 
 // library initialization
 void init();
@@ -383,21 +384,25 @@ BlsctOutPoint* gen_out_point(
 );
 
 BlsctTxIn* build_tx_in(
-    uint64_t amount,
-    uint64_t gamma,
-    BlsctScalar* spending_key,
-    BlsctTokenId* token_id,
-    BlsctOutPoint* out_point,
-    bool rbf
+    const uint64_t amount,
+    const uint64_t gamma,
+    const BlsctScalar* spending_key,
+    const BlsctTokenId* token_id,
+    const BlsctOutPoint* out_point,
+    const bool rbf
+);
+
+BlsctSubAddr* dpk_to_sub_addr(
+    const void* blsct_dpk
 );
 
 BlsctRetVal* build_tx_out(
-    BlsctSubAddr* blsct_dest,
-    uint64_t amount,
-    char* memo_c_str,
-    BlsctTokenId* blsct_token_id,
-    TxOutputType output_type,
-    uint64_t min_stake
+    const BlsctSubAddr* blsct_dest,
+    const uint64_t amount,
+    const char* memo_c_str,
+    const BlsctTokenId* blsct_token_id,
+    const TxOutputType output_type,
+    const uint64_t min_stake
 );
 
 BlsctTxRetVal* build_tx(

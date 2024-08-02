@@ -412,7 +412,8 @@ BlsctAmountsRetVal* recover_amount(
             reqs.push_back(req);
         }
 
-        // attempt to recover amount for each request
+        // try recover amount for all requests
+        // vector containing only the successful results is returned
         auto recovery_results = g_rpl->RecoverAmounts(reqs);
 
         // return error if it failed in the middle
@@ -421,33 +422,41 @@ BlsctAmountsRetVal* recover_amount(
             return rv;
         }
 
-        // prepare a vector to return initially making all the requests as failed
+        // the vector to return has the same size as the request vector
         auto result_vec = new(std::nothrow) std::vector<BlsctAmountRecoveryResult>;
         RETURN_ERR_IF_MEM_ALLOC_FAILED(result_vec);
         result_vec->resize(amt_recovery_req_vec->size());
+
+        // mark all the results as failed
         for(auto result: *result_vec) {
             result.is_succ = false;
         }
 
-        // write successful recovery results to the return vector
+        // write successful recovery results to the corresponding
+        // index of the return vector
         for(size_t i=0; i<recovery_results.amounts.size(); ++i) {
-            // get a successfully recovered amount
-            auto amount = recovery_results.amounts[i];
+            // get the successful recovery result
+            auto succ_res = recovery_results.amounts[i];
 
-            // get the result corresponding to the successful result from the vector
-            auto& result = result_vec->at(amount.id);
+            // get the entry of the return vector corresponding
+            // to the successful result
+            auto& result = result_vec->at(succ_res.id);
 
             // mark the result as success and set the amount
             result.is_succ = true;
-            result.amount = amount.amount;
 
-            // set the recovered message and the size to the result
-            result.msg = (char*) malloc(amount.message.size() + 1);
+            // write amount to the result
+            result.amount = succ_res.amount;
+
+            // write message to the result
+            result.msg = (char*) malloc(succ_res.message.size() + 1);
             std::memcpy(
                 result.msg,
-                amount.message.c_str(),
-                amount.message.size() + 1
+                succ_res.message.c_str(),
+                succ_res.message.size() + 1
             );
+
+            // gamma is omitted since it's a scalar
         }
 
         rv->result = BLSCT_SUCCESS;
@@ -462,15 +471,15 @@ BlsctAmountsRetVal* recover_amount(
 
 BlsctOutPoint* gen_out_point(
     const char* tx_id_c_str,
-    const uint32_t n
+    const uint32_t out_index
 ) {
     MALLOC(BlsctOutPoint, blsct_out_point);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_out_point);
 
-    std::string tx_id_str(tx_id_c_str, 64);
+    std::string tx_id_str(tx_id_c_str, TXID_STR_LEN);
 
     auto tx_id = TxidFromString(tx_id_str);
-    COutPoint out_point { tx_id, n };
+    COutPoint out_point { tx_id, out_index };
 
     SERIALIZE_AND_COPY_WITH_STREAM(
         out_point,
@@ -480,12 +489,12 @@ BlsctOutPoint* gen_out_point(
 }
 
 BlsctTxIn* build_tx_in(
-    uint64_t amount,
-    uint64_t gamma,
-    BlsctScalar* spending_key,
-    BlsctTokenId* token_id,
-    BlsctOutPoint* out_point,
-    bool rbf
+    const uint64_t amount,
+    const uint64_t gamma,
+    const BlsctScalar* spending_key,
+    const BlsctTokenId* token_id,
+    const BlsctOutPoint* out_point,
+    const bool rbf
 ) {
     MALLOC(BlsctTxIn, tx_in);
     RETURN_IF_MEM_ALLOC_FAILED(tx_in);
@@ -500,13 +509,35 @@ BlsctTxIn* build_tx_in(
     return tx_in;
 }
 
+BlsctSubAddr* dpk_to_sub_addr(
+    const void* blsct_dpk
+) {
+    // unserialize double public key
+    blsct::DoublePublicKey dpk;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+        blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE, dpk
+    );
+
+    // create sub address from dpk
+    blsct::SubAddress sub_addr(dpk);
+
+    // allocate memory for serialized sub address
+    MALLOC(BlsctSubAddr, blsct_sub_addr);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_sub_addr);
+
+    // serialize sub address
+    SERIALIZE_AND_COPY_WITH_STREAM(sub_addr, blsct_sub_addr);
+
+    return blsct_sub_addr;
+}
+
 BlsctRetVal* build_tx_out(
-    BlsctSubAddr* blsct_dest,
-    uint64_t amount,
-    char* in_memo_c_str,
-    BlsctTokenId* blsct_token_id,
-    TxOutputType output_type,
-    uint64_t min_stake
+    const BlsctSubAddr* blsct_dest,
+    const uint64_t amount,
+    const char* in_memo_c_str,
+    const BlsctTokenId* blsct_token_id,
+    const TxOutputType output_type,
+    const uint64_t min_stake
 ) {
     MALLOC(BlsctTxOut, tx_out);
     RETURN_IF_MEM_ALLOC_FAILED(tx_out);
@@ -735,17 +766,6 @@ void blsct_gen_dpk_with_keys_and_sub_addr_id(
 
     auto dpk = std::get<blsct::DoublePublicKey>(sub_addr.GetDestination());
     SERIALIZE_AND_COPY(dpk, blsct_dpk);
-}
-
-void blsct_dpk_to_sub_addr(
-    const BlsctDoublePubKey blsct_dpk,
-    BlsctSubAddr blsct_sub_addr
-) {
-    blsct::DoublePublicKey dpk;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE, dpk);
-
-    blsct::SubAddress sub_addr(dpk);
-    SERIALIZE_AND_COPY_WITH_STREAM(sub_addr, blsct_sub_addr);
 }
 
 bool blsct_decode_token_id(
