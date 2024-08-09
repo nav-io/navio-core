@@ -248,7 +248,7 @@ void KeyMan::SetHDSeed(const PrivateKey& key)
         throw std::runtime_error(std::string(__func__) + ": AddSpendKey failed");
 
     if (!AddViewKey(viewKey, viewKey.GetPublicKey()))
-        throw std::runtime_error(std::string(__func__) + ": AddKeyPubKey failed");
+        throw std::runtime_error(std::string(__func__) + ": AddViewKey failed");
 
     if (!AddKeyPubKey(tokenKey, tokenKey.GetPublicKey()))
         throw std::runtime_error(std::string(__func__) + ": AddKeyPubKey failed");
@@ -261,7 +261,7 @@ void KeyMan::SetHDSeed(const PrivateKey& key)
     wallet::WalletBatch batch(m_storage.GetDatabase());
 }
 
-bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, bool force)
+bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force)
 {
     if ((CanGenerateKeys() && !force) || m_storage.IsLocked()) {
         return false;
@@ -270,9 +270,16 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, bool force)
     if (seed.size() != 32) {
         SetHDSeed(GenerateNewSeed());
     } else {
-        MclScalar scalarSeed;
-        scalarSeed.SetVch(seed);
-        SetHDSeed(scalarSeed);
+        if (type == IMPORT_MASTER_KEY) {
+            MclScalar scalarSeed;
+            scalarSeed.SetVch(seed);
+            SetHDSeed(scalarSeed);
+        } else if (type == IMPORT_VIEW_KEY) {
+            MclScalar scalarView;
+            scalarView.SetVch(seed);
+            if (!AddViewKey(scalarView, viewKey.GetPublicKey()))
+                throw std::runtime_error(std::string(__func__) + ": AddViewKey failed");
+        }
     }
 
     if (!NewSubAddressPool() || !NewSubAddressPool(-1) || !NewSubAddressPool(-2)) {

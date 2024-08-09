@@ -14,6 +14,7 @@
 #include <blsct/wallet/address.h>
 #include <blsct/wallet/hdchain.h>
 #include <blsct/wallet/helpers.h>
+#include <blsct/wallet/import_wallet_type.h>
 #include <blsct/wallet/keyring.h>
 #include <logging.h>
 #include <wallet/crypter.h>
@@ -34,7 +35,7 @@ public:
     explicit Manager(wallet::WalletStorage& storage) : m_storage(storage) {}
     virtual ~Manager(){};
 
-    virtual bool SetupGeneration(const std::vector<unsigned char>& seed, bool force = false) { return false; }
+    virtual bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force = false) { return false; }
 
     /* Returns true if HD is enabled */
     virtual bool IsHDEnabled() const { return false; }
@@ -72,7 +73,7 @@ public:
     KeyMan(wallet::WalletStorage& storage, int64_t keypool_size)
         : Manager(storage), KeyRing(), m_keypool_size(keypool_size) {}
 
-    bool SetupGeneration(const std::vector<unsigned char>& seed, bool force = false) override;
+    bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false) override;
     bool IsHDEnabled() const override;
 
     /* Returns true if the wallet can generate new keys */
