@@ -828,6 +828,7 @@ RPCHelpMan walletdisplayaddress();
 
 // backup
 RPCHelpMan getblsctseed();
+RPCHelpMan getblsctviewkey();
 RPCHelpMan dumpprivkey();
 RPCHelpMan importprivkey();
 RPCHelpMan importaddress();
@@ -907,6 +908,7 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &getaddressinfo},
         {"wallet", &getbalance},
         {"wallet", &getblsctseed},
+        {"wallet", &getblsctviewkey},
         {"wallet", &getnewaddress},
         {"wallet", &getrawchangeaddress},
         {"wallet", &getreceivedbyaddress},

@@ -458,6 +458,21 @@ blsct::PrivateKey KeyMan::GetMasterSeedKey() const
     return ret;
 }
 
+blsct::PrivateKey KeyMan::GetPrivateViewKey() const
+{
+    if (!IsHDEnabled())
+        throw std::runtime_error(strprintf("%s: the wallet has no HD enabled"));
+
+    auto viewId = m_hd_chain.view_id;
+
+    PrivateKey ret;
+
+    if (!GetKey(viewId, ret))
+        throw std::runtime_error(strprintf("%s: could not access the private view key", __func__));
+
+    return ret;
+}
+
 blsct::PrivateKey KeyMan::GetSpendingKey() const
 {
     if (!fSpendKeyDefined)
