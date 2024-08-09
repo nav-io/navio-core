@@ -713,16 +713,16 @@ RPCHelpMan getblsctseed()
 }
 
 
-RPCHelpMan getblsctviewkey()
+RPCHelpMan getblsctauditkey()
 {
     return RPCHelpMan{
-        "getblsctviewkey",
-        "\nDumps the BLSCT wallet private view key, which can be used to observe the wallet history without being able to spend the transactions.\n"
+        "getblsctauditkey",
+        "\nDumps the BLSCT wallet audit key, which can be used to observe the wallet history without being able to spend the transactions.\n"
         "Note: This command is only compatible with BLSCT wallets.\n",
         {},
         RPCResult{
-            RPCResult::Type::STR, "viewkey", "The BLSCT wallet private view key"},
-        RPCExamples{HelpExampleCli("getblsctviewkey", "") + HelpExampleRpc("getblsctviewkey", "")},
+            RPCResult::Type::STR, "auditkey", "The BLSCT wallet audit key"},
+        RPCExamples{HelpExampleCli("getblsctauditkey", "") + HelpExampleRpc("getblsctauditkey", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -730,9 +730,8 @@ RPCHelpMan getblsctviewkey()
             const CWallet& wallet = *pwallet;
             const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
 
-            auto seed = blsct_km.GetPrivateViewKey();
-
-            return seed.GetScalar().GetString();
+            return strprintf("%s%s", blsct_km.GetPrivateViewKey().GetScalar().GetString(), HexStr(blsct_km.GetPublicSpendingKey().GetVch()));
+            ;
         },
     };
 }

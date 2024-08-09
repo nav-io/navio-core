@@ -36,14 +36,14 @@ static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flag
     wallet_instance->SetMinVersion(FEATURE_LATEST);
     wallet_instance->InitWalletFlags(wallet_creation_flags);
 
-    if (!wallet_instance->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
-        auto spk_man = wallet_instance->GetOrCreateLegacyScriptPubKeyMan();
-        spk_man->SetupGeneration(false);
+    if (!wallet_instance->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
+        if (!wallet_instance->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+            auto spk_man = wallet_instance->GetOrCreateLegacyScriptPubKeyMan();
+            spk_man->SetupGeneration(false);
+        } else {
+            wallet_instance->SetupDescriptorScriptPubKeyMans();
+        }
     } else {
-        wallet_instance->SetupDescriptorScriptPubKeyMans();
-    }
-
-    {
         auto blsct_man = wallet_instance->GetOrCreateBLSCTKeyMan();
 
         if (blsct_man) {
@@ -143,10 +143,6 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         tfm::format(std::cerr, "The -seed option can only be used with the 'create' command.\n");
         return false;
     }
-    if (args.IsArgSet("-viewkey") && command != "create") {
-        tfm::format(std::cerr, "The -viewkey option can only be used with the 'create' command.\n");
-        return false;
-    }
     if (command == "create" && !args.IsArgSet("-wallet")) {
         tfm::format(std::cerr, "Wallet name must be provided when creating a new wallet.\n");
         return false;
@@ -183,14 +179,12 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         }
 
 
-        std::string seed;
+        std::string seed = args.GetArg("-seed", "");
         blsct::SeedType type;
 
-        if (args.IsArgSet("-seed")) {
-            seed = args.GetArg("-seed", "");
+        if (seed.size() == 64) {
             type = blsct::IMPORT_MASTER_KEY;
-        } else if (args.IsArgSet("-viewkey")) {
-            seed = args.GetArg("-seed", "");
+        } else if (seed.size() == 64 + 96) {
             type = blsct::IMPORT_VIEW_KEY;
             options.create_flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
         }
