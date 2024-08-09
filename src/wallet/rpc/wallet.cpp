@@ -354,8 +354,7 @@ static RPCHelpMan createwallet()
             {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Save wallet name to persistent settings and load on startup. True to add wallet to startup list, false to remove, null to leave unchanged."},
             {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true."},
             {"blsct", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a wallet with BLSCT keys."},
-            {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the wallet from the specified seed."},
-            {"viewkey", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the wallet from the specified view key."},
+            {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the wallet from the specified seed (can be a master seed or an audit key)."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -419,10 +418,14 @@ static RPCHelpMan createwallet()
             blsct::SeedType type = blsct::IMPORT_MASTER_KEY;
             if (!request.params[9].isNull() && request.params[9].isStr()) {
                 seed = ParseHex(request.params[9].get_str());
-            } else if (!request.params[10].isNull() && request.params[10].isStr()) {
+            }
+
+            if (seed.size() == 160) {
                 seed = ParseHex(request.params[10].get_str());
                 type = blsct::IMPORT_VIEW_KEY;
                 flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
+            } else if (seed.size() != 64) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Seed must be 64 (master) or 160 (view) characters long");
             }
 
             DatabaseOptions options;
@@ -841,7 +844,7 @@ RPCHelpMan walletdisplayaddress();
 
 // backup
 RPCHelpMan getblsctseed();
-RPCHelpMan getblsctviewkey();
+RPCHelpMan getblsctauditkey();
 RPCHelpMan dumpprivkey();
 RPCHelpMan importprivkey();
 RPCHelpMan importaddress();
@@ -921,7 +924,7 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &getaddressinfo},
         {"wallet", &getbalance},
         {"wallet", &getblsctseed},
-        {"wallet", &getblsctviewkey},
+        {"wallet", &getblsctauditkey},
         {"wallet", &getnewaddress},
         {"wallet", &getrawchangeaddress},
         {"wallet", &getreceivedbyaddress},
