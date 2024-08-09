@@ -722,7 +722,7 @@ RPCHelpMan getblsctviewkey()
         {},
         RPCResult{
             RPCResult::Type::STR, "viewkey", "The BLSCT wallet private view key"},
-        RPCExamples{HelpExampleCli("getblsctviewkey", "") + HelpExampleRpc("getblsctseed", "")},
+        RPCExamples{HelpExampleCli("getblsctviewkey", "") + HelpExampleRpc("getblsctviewkey", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
