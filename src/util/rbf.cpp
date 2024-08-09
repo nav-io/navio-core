@@ -8,7 +8,11 @@
 
 bool SignalsOptInRBF(const CTransaction &tx)
 {
-    for (const CTxIn &txin : tx.vin) {
+    // BLSCT always allows RBF
+    if (tx.IsBLSCT())
+        return true;
+
+    for (const CTxIn& txin : tx.vin) {
         if (txin.nSequence <= MAX_BIP125_RBF_SEQUENCE) {
             return true;
         }

@@ -136,6 +136,7 @@ public:
     CKeyID GetHashId(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey) const;
     CTxDestination GetDestination(const CTxOut& txout) const;
     blsct::PrivateKey GetMasterSeedKey() const;
+    blsct::PrivateKey GetPrivateViewKey() const;
     blsct::PrivateKey GetSpendingKey() const;
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out) const;
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id) const;

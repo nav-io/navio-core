@@ -712,6 +712,32 @@ RPCHelpMan getblsctseed()
     };
 }
 
+
+RPCHelpMan getblsctviewkey()
+{
+    return RPCHelpMan{
+        "getblsctviewkey",
+        "\nDumps the BLSCT wallet private view key, which can be used to observe the wallet history without being able to spend the transactions.\n"
+        "Note: This command is only compatible with BLSCT wallets.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::STR, "viewkey", "The BLSCT wallet private view key"},
+        RPCExamples{HelpExampleCli("getblsctviewkey", "") + HelpExampleRpc("getblsctseed", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            const CWallet& wallet = *pwallet;
+            const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
+
+            auto seed = blsct_km.GetMasterSeedKey();
+
+            return seed.GetScalar().GetString();
+        },
+    };
+}
+
+
 RPCHelpMan dumpwallet()
 {
     return RPCHelpMan{"dumpwallet",

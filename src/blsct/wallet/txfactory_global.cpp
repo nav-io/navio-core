@@ -123,4 +123,14 @@ CTransactionRef AggregateTransactions(const std::vector<CTransactionRef>& txs)
 
     return MakeTransactionRef(ret);
 }
+
+int32_t GetTransactionWeight(const CTransaction& tx)
+{
+    return ::GetSerializeSize(TX_WITH_WITNESS(tx));
+}
+
+int32_t GetTransactioOutputWeight(const CTxOut& out)
+{
+    return ::GetSerializeSize(out);
+}
 } // namespace blsct

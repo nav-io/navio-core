@@ -40,7 +40,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
 
 #ifndef WIN32
 #include <unistd.h>
