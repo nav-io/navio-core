@@ -730,7 +730,7 @@ RPCHelpMan getblsctviewkey()
             const CWallet& wallet = *pwallet;
             const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
 
-            auto seed = blsct_km.GetMasterSeedKey();
+            auto seed = blsct_km.GetPrivateViewKey();
 
             return seed.GetScalar().GetString();
         },
