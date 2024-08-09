@@ -5,6 +5,7 @@
 #ifndef BITCOIN_WALLET_WALLETUTIL_H
 #define BITCOIN_WALLET_WALLETUTIL_H
 
+#include <blsct/wallet/import_wallet_type.h>
 #include <script/descriptor.h>
 #include <util/fs.h>
 
