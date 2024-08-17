@@ -249,8 +249,13 @@ BLSCT_CPP = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/signature.cpp \
+  blsct/wallet/address.cpp \
+  blsct/wallet/helpers.cpp \
+  blsct/wallet/keyman.cpp \
+  blsct/wallet/keyring.cpp \
+  blsct/wallet/txfactory.cpp \
+  blsct/wallet/txfactory_global.cpp \
   blsct/wallet/verification.cpp
-
 
 .PHONY: FORCE check-symbols check-security
 # navio core #
@@ -1425,20 +1430,51 @@ if BUILD_LIBBLSCT_ONLY
 LIBBLSCT = libblsct.a
 noinst_LIBRARIES = $(LIBBLSCT)
 libblsct_a_SOURCES = \
+  blsct/external_api/blsct.cpp \
   crypto/sha256_arm_shani.cpp \
   crypto/sha256_avx2.cpp \
   crypto/sha256_sse4.cpp \
   crypto/sha256_sse41.cpp \
   crypto/sha256_x86_shani.cpp \
   crypto/sha256.cpp \
-  blsct/external_api/blsct.cpp \
+  primitives/transaction.cpp \
   support/cleanse.cpp \
   support/lockedpool.cpp \
-	uint256.cpp \
-	util/strencodings.cpp \
+  uint256.cpp \
+  util/strencodings.cpp \
+  wallet/coincontrol.cpp \
+  wallet/context.cpp \
+  wallet/crypter.cpp \
+  wallet/db.cpp \
+  wallet/dump.cpp \
+  wallet/external_signer_scriptpubkeyman.cpp \
+  wallet/feebumper.cpp \
+  wallet/fees.cpp \
+  wallet/interfaces.cpp \
+  wallet/load.cpp \
+  wallet/receive.cpp \
+  wallet/rpc/addresses.cpp \
+  wallet/rpc/backup.cpp \
+  wallet/rpc/coins.cpp \
+  wallet/rpc/encrypt.cpp \
+  wallet/rpc/spend.cpp \
+  wallet/rpc/signmessage.cpp \
+  wallet/rpc/transactions.cpp \
+  wallet/rpc/util.cpp \
+  wallet/rpc/wallet.cpp \
+  wallet/scriptpubkeyman.cpp \
+  wallet/spend.cpp \
+  wallet/transaction.cpp \
+  wallet/wallet.cpp \
+  wallet/walletdb.cpp \
+  wallet/walletutil.cpp \
+  wallet/coinselection.cpp \
   $(BLSCT_CPP)
+
+	$(libbitcoin_wallet_a_SOURCES)
 libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS)
+libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+
 
 if ENABLE_SSE41
 libblsct_a_CXXFLAGS += $(SSE41_CXXFLAGS)
