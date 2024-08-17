@@ -584,47 +584,46 @@ BlsctTxRetVal* build_tx(
     MALLOC(BlsctTxRetVal, rv);
     RETURN_IF_MEM_ALLOC_FAILED(rv);
 
-    printf("----> 1\n");
-    // for (size_t i=0; i<tx_ins->size(); ++i) {
-    //     // unserialize tx_in fields and add to TxFactoryBase
-    //     const BlsctTxIn& tx_in = tx_ins->at(i);
-    //
-    //     // check if the amount is within the range
-    //     // amount is uint64_t and not serialized
-    //     if (tx_in.amount > std::numeric_limits<int64_t>::max()) {
-    //         rv->result = BLSCT_IN_AMOUNT_ERROR;
-    //         rv->in_amount_err_index = i;
-    //         return rv;
-    //     }
-    //
-    //     // gamma is uint64_t and not serialized
-    //     Scalar gamma(tx_in.gamma);
-    //
-    //     // unserialize spending_key
-    //     blsct::PrivateKey spending_key =
-    //         blsct_scalar_to_priv_key(&tx_in.spending_key);
-    //
-    //     // unserialize token_id
-    //     TokenId token_id;
-    //     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-    //         tx_in.token_id, TOKEN_ID_SIZE, token_id
-    //     );
-    //
-    //     // unserialize out_point
-    //     COutPoint out_point;
-    //     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-    //         tx_in.out_point, OUT_POINT_SIZE, out_point
-    //     );
-    //
-    //     // add all to TxFactoryBase
-    //     psbt.AddInput(
-    //         tx_in.amount,
-    //         gamma,
-    //         spending_key,
-    //         token_id,
-    //         out_point
-    //     );
-    // }
+    for (size_t i=0; i<tx_ins->size(); ++i) {
+        // unserialize tx_in fields and add to TxFactoryBase
+        const BlsctTxIn& tx_in = tx_ins->at(i);
+
+        // check if the amount is within the range
+        // amount is uint64_t and not serialized
+        if (tx_in.amount > std::numeric_limits<int64_t>::max()) {
+            rv->result = BLSCT_IN_AMOUNT_ERROR;
+            rv->in_amount_err_index = i;
+            return rv;
+        }
+
+        // gamma is uint64_t and not serialized
+        Scalar gamma(tx_in.gamma);
+
+        // unserialize spending_key
+        blsct::PrivateKey spending_key =
+            blsct_scalar_to_priv_key(&tx_in.spending_key);
+
+        // unserialize token_id
+        TokenId token_id;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            tx_in.token_id, TOKEN_ID_SIZE, token_id
+        );
+
+        // unserialize out_point
+        COutPoint out_point;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            tx_in.out_point, OUT_POINT_SIZE, out_point
+        );
+
+        // add all to TxFactoryBase
+        psbt.AddInput(
+            tx_in.amount,
+            gamma,
+            spending_key,
+            token_id,
+            out_point
+        );
+    }
 
     // printf("----> 10\n");
     // for (size_t i=0; i<tx_outs->size(); ++i) {
