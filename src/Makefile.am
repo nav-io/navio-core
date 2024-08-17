@@ -1437,7 +1437,11 @@ libblsct_a_SOURCES = \
   crypto/sha256_sse41.cpp \
   crypto/sha256_x86_shani.cpp \
   crypto/sha256.cpp \
+	kernel/naviokernel.cpp \
   primitives/transaction.cpp \
+	script/sign.cpp \
+	script/signingprovider.cpp \
+  rpc/util.cpp \
   support/cleanse.cpp \
   support/lockedpool.cpp \
   uint256.cpp \
@@ -1471,10 +1475,13 @@ libblsct_a_SOURCES = \
   wallet/coinselection.cpp \
   $(BLSCT_CPP)
 
-	$(libbitcoin_wallet_a_SOURCES)
+LIBUNIVALUE_BLSCT = libunivalue_blsct.a
+noinst_LIBRARIES += $(LIBUNIVALUE_BLSCT)
+libunivalue_blsct_a_SOURCES = $(UNIVALUE_LIB_SOURCES_INT) $(UNIVALUE_DIST_HEADERS_INT) $(UNIVALUE_LIB_HEADERS_INT) $(UNIVALUE_TEST_FILES_INT)
+libunivalue_blsct_a_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+
 libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
-
 
 if ENABLE_SSE41
 libblsct_a_CXXFLAGS += $(SSE41_CXXFLAGS)
@@ -1496,7 +1503,7 @@ libblsct_a_CXXFLAGS += $(ARM_SHANI_CXXFLAGS)
 libblsct_a_CPPFLAGS += -DENABLE_ARM_SHANI
 endif
 
-$(LIBBLSCT): $(LIBBLS) $(LIBMCL)
+$(LIBBLSCT): $(LIBBLS) $(LIBMCL) $(LIBUNIVALUE_BLSCT)
 
 CLEANFILES += $(LIBBLSCT) blsct/include/libblsct_a-blsct.o
 endif

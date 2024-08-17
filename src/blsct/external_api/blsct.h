@@ -410,9 +410,19 @@ BlsctTxRetVal* build_tx(
     const void* void_tx_outs
 );
 
+BlsctRetVal* serialize_tx(
+    const void* void_tx
+);
+
 ///// END new pointer-based API
 
 /*
+BlsctRetVal* blsct_deserialize_tx(
+    const uint8_t* ser_tx,
+    const size_t ser_tx_size,
+    BlsctTransaction** const blsct_tx
+);
+
 void blsct_uint64_to_blsct_uint256(
     const uint64_t n,
     BlsctUint256 uint256
