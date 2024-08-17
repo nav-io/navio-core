@@ -16,6 +16,7 @@
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <common/args.h>
+#include <common/url.h>
 #include <memory.h>
 #include <primitives/transaction.h>
 #include <streams.h>
@@ -34,6 +35,9 @@ static std::mutex g_init_mutex;
 static std::mutex g_set_chain_mutex;
 static bulletproofs::RangeProofLogic<Mcl>* g_rpl;
 static bool g_is_little_endian;
+
+const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
+UrlDecodeFn* const URL_DECODE = urlDecode;
 
 extern "C" {
 

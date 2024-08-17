@@ -1431,17 +1431,20 @@ LIBBLSCT = libblsct.a
 noinst_LIBRARIES = $(LIBBLSCT)
 libblsct_a_SOURCES = \
   blsct/external_api/blsct.cpp \
+	common/args.cpp \
+	common/system.cpp \
+	common/url.cpp \
   crypto/sha256_arm_shani.cpp \
   crypto/sha256_avx2.cpp \
   crypto/sha256_sse4.cpp \
   crypto/sha256_sse41.cpp \
   crypto/sha256_x86_shani.cpp \
   crypto/sha256.cpp \
-	kernel/naviokernel.cpp \
   primitives/transaction.cpp \
 	script/sign.cpp \
 	script/signingprovider.cpp \
   rpc/util.cpp \
+	script/interpreter.cpp \
   support/cleanse.cpp \
   support/lockedpool.cpp \
   uint256.cpp \
