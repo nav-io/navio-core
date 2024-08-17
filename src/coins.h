@@ -21,6 +21,9 @@
 #include <functional>
 #include <unordered_map>
 
+const char STAKED_COMMITMENT_UNSPENT = 1;
+const char STAKED_COMMITMENT_SPENT = 0;
+
 /**
  * A UTXO entry.
  *
@@ -157,6 +160,8 @@ using CCoinsMap = std::unordered_map<COutPoint,
 
 using CCoinsMapMemoryResource = CCoinsMap::allocator_type::ResourceType;
 
+using CStakedCommitmentsMap = std::map<MclG1Point, char>;
+
 /** Cursor for iterating over CoinsView state */
 class CCoinsViewCursor
 {
@@ -204,7 +209,7 @@ public:
 
     //! Do a bulk modification (multiple Coin changes + BestBlock change).
     //! The passed mapCoins can be modified.
-    virtual bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, const OrderedElements<MclG1Point>& stakedCommitments, bool erase = true);
+    virtual bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase = true);
 
     //! Get a cursor to iterate over the whole state
     virtual std::unique_ptr<CCoinsViewCursor> Cursor() const;
@@ -231,7 +236,7 @@ public:
     OrderedElements<MclG1Point> GetStakedCommitments() const override;
     std::vector<uint256> GetHeadBlocks() const override;
     void SetBackend(CCoinsView &viewIn);
-    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, const OrderedElements<MclG1Point>& stakedCommitments, bool erase = true) override;
+    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase = true) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override;
     size_t EstimateSize() const override;
 };
@@ -251,7 +256,7 @@ protected:
     mutable uint256 hashBlock;
     mutable CCoinsMapMemoryResource m_cache_coins_memory_resource{};
     mutable CCoinsMap cacheCoins;
-    mutable OrderedElements<MclG1Point> cacheStakedCommitments;
+    mutable CStakedCommitmentsMap cacheStakedCommitments;
 
     /* Cached dynamic memory usage for the inner Coin objects. */
     mutable size_t cachedCoinsUsage{0};
@@ -270,7 +275,7 @@ public:
     uint256 GetBestBlock() const override;
     OrderedElements<MclG1Point> GetStakedCommitments() const override;
     void SetBestBlock(const uint256 &hashBlock);
-    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, const OrderedElements<MclG1Point>& stakedCommitments, bool erase = true) override;
+    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase = true) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override {
         throw std::logic_error("CCoinsViewCache cursor iteration not supported.");
     }

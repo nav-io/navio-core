@@ -64,7 +64,7 @@ public:
     uint256 GetBestBlock() const override;
     OrderedElements<MclG1Point> GetStakedCommitments() const override;
     std::vector<uint256> GetHeadBlocks() const override;
-    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, const OrderedElements<MclG1Point>& stakedCommitments, bool erase = true) override;
+    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase = true) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override;
 
     //! Whether an unsupported database format is used.

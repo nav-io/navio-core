@@ -101,7 +101,7 @@ std::vector<uint256> CCoinsViewDB::GetHeadBlocks() const
     return vhashHeadBlocks;
 }
 
-bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, const OrderedElements<MclG1Point>& stakedCommitments, bool erase)
+bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase)
 {
     CDBBatch batch(*m_db);
     size_t count = 0;
@@ -156,7 +156,21 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, con
     // In the last batch, mark the database as consistent with hashBlock again.
     batch.Erase(DB_HEAD_BLOCKS);
     batch.Write(DB_BEST_BLOCK, hashBlock);
-    batch.Write(DB_STAKED_OUTPUTS, stakedCommitments);
+
+    auto currentStakedCommitments = GetStakedCommitments();
+
+    for (auto& it : stakedCommitments) {
+        if (it.second == STAKED_COMMITMENT_UNSPENT) {
+            currentStakedCommitments.Add(it.first);
+        } else {
+            currentStakedCommitments.Remove(it.first);
+        }
+    }
+
+    batch.Write(DB_STAKED_OUTPUTS, currentStakedCommitments);
+
+    if (erase)
+        stakedCommitments.clear();
 
     LogPrint(BCLog::COINDB, "Writing final batch of %.2f MiB\n", batch.SizeEstimate() * (1.0 / 1048576.0));
     bool ret = m_db->WriteBatch(batch);
