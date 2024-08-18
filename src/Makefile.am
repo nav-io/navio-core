@@ -203,6 +203,7 @@ BLSCT_H = \
   blsct/wallet/keyman.h \
   blsct/wallet/keyring.h \
   blsct/wallet/txfactory.h \
+  blsct/wallet/txfactory_base.h \
   blsct/wallet/txfactory_global.h \
   blsct/wallet/verification.h
 
@@ -717,6 +718,7 @@ libbitcoin_wallet_a_SOURCES = \
   blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
   blsct/wallet/txfactory.cpp \
+  blsct/wallet/txfactory_base.cpp \
   blsct/wallet/txfactory_global.cpp \
   blsct/wallet/verification.cpp \
   wallet/coincontrol.cpp \
