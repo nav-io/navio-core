@@ -628,78 +628,75 @@ BlsctTxRetVal* build_tx(
         );
     }
 
-    // printf("----> 10\n");
-    // for (size_t i=0; i<tx_outs->size(); ++i) {
-    //     // unserialize tx_out fields and add to TxFactoryBase
-    //     const BlsctTxOut& tx_out = tx_outs->at(i);
-    //
-    //     // check if the amount is within the range
-    //     // amount is uint64_t and not serialized
-    //     if (tx_out.amount > std::numeric_limits<int64_t>::max()) {
-    //         rv->result = BLSCT_OUT_AMOUNT_ERROR;
-    //         rv->out_amount_err_index = i;
-    //         return rv;
-    //     }
-    //
-    //     // unserialize destination
-    //     blsct::DoublePublicKey dest;
-    //     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-    //         tx_out.dest, DOUBLE_PUBLIC_KEY_SIZE, dest
-    //     );
-    //
-    //     // create memo std::string from memo c_str
-    //     std::string memo_str(tx_out.memo_c_str);
-    //
-    //     // unserialize token_id
-    //     TokenId token_id;
-    //     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-    //         tx_out.token_id, TOKEN_ID_SIZE, token_id
-    //     );
-    //
-    //     // create out_type from blsct::TxOutputType
-    //     blsct::CreateOutputType out_type;
-    //     if (tx_out.output_type == TxOutputType::Normal) {
-    //         out_type = blsct::CreateOutputType::NORMAL;
-    //     } else if (tx_out.output_type == TxOutputType::StakedCommitment) {
-    //         out_type = blsct::CreateOutputType::STAKED_COMMITMENT;
-    //     } else {
-    //         rv->result = BLSCT_BAD_OUT_TYPE;
-    //         return rv;
-    //     }
-    //
-    //     // add all to TxFactoryBase
-    //     psbt.AddOutput(
-    //         dest,
-    //         tx_out.amount,
-    //         memo_str,
-    //         token_id,
-    //         out_type,
-    //         tx_out.min_stake
-    //     );
-    // }
-    //
-    // printf("----> 100\n");
-    //
-    // // build tx
-    // blsct::DoublePublicKey change_amt_dest;
-    // auto maybe_tx = psbt.BuildTx(change_amt_dest);
-    // if (!maybe_tx.has_value()) {
-    //     rv->result = BLSCT_FAILURE;
-    //     return rv;
-    // }
-    // auto tx = maybe_tx.value();
-    //
-    // // serialize tx
-    // DataStream st{};
-    // TransactionSerParams params { .allow_witness = true };
-    // ParamsStream ps {params, st};
-    // tx.Serialize(ps);
-    //
-    // // copy serialize tx to the result
-    // rv->result = BLSCT_SUCCESS;
-    // rv->ser_tx_size = st.size();
-    // rv->ser_tx = (uint8_t*) malloc(st.size());
-    // std::memcpy(rv->ser_tx, st.data(), st.size());
+    for (size_t i=0; i<tx_outs->size(); ++i) {
+        // unserialize tx_out fields and add to TxFactoryBase
+        const BlsctTxOut& tx_out = tx_outs->at(i);
+
+        // check if the amount is within the range
+        // amount is uint64_t and not serialized
+        if (tx_out.amount > std::numeric_limits<int64_t>::max()) {
+            rv->result = BLSCT_OUT_AMOUNT_ERROR;
+            rv->out_amount_err_index = i;
+            return rv;
+        }
+
+        // unserialize destination
+        blsct::DoublePublicKey dest;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            tx_out.dest, DOUBLE_PUBLIC_KEY_SIZE, dest
+        );
+
+        // create memo std::string from memo c_str
+        std::string memo_str(tx_out.memo_c_str);
+
+        // unserialize token_id
+        TokenId token_id;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            tx_out.token_id, TOKEN_ID_SIZE, token_id
+        );
+
+        // create out_type from blsct::TxOutputType
+        blsct::CreateOutputType out_type;
+        if (tx_out.output_type == TxOutputType::Normal) {
+            out_type = blsct::CreateOutputType::NORMAL;
+        } else if (tx_out.output_type == TxOutputType::StakedCommitment) {
+            out_type = blsct::CreateOutputType::STAKED_COMMITMENT;
+        } else {
+            rv->result = BLSCT_BAD_OUT_TYPE;
+            return rv;
+        }
+
+        // add all to TxFactoryBase
+        psbt.AddOutput(
+            dest,
+            tx_out.amount,
+            memo_str,
+            token_id,
+            out_type,
+            tx_out.min_stake
+        );
+    }
+
+    // build tx
+    blsct::DoublePublicKey change_amt_dest;
+    auto maybe_tx = psbt.BuildTx(change_amt_dest);
+    if (!maybe_tx.has_value()) {
+        rv->result = BLSCT_FAILURE;
+        return rv;
+    }
+    auto tx = maybe_tx.value();
+
+    // serialize tx
+    DataStream st{};
+    TransactionSerParams params { .allow_witness = true };
+    ParamsStream ps {params, st};
+    tx.Serialize(ps);
+
+    // copy serialize tx to the result
+    rv->result = BLSCT_SUCCESS;
+    rv->ser_tx_size = st.size();
+    rv->ser_tx = (uint8_t*) malloc(st.size());
+    std::memcpy(rv->ser_tx, st.data(), st.size());
 
     return rv;
 }
