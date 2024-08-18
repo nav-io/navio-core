@@ -204,6 +204,7 @@ BLSCT_H = \
   blsct/wallet/keyman.h \
   blsct/wallet/keyring.h \
   blsct/wallet/txfactory.h \
+  blsct/wallet/txfactory_base.h \
   blsct/wallet/txfactory_global.h \
   blsct/wallet/verification.h
 
@@ -254,6 +255,7 @@ BLSCT_CPP = \
   blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
   blsct/wallet/txfactory.cpp \
+  blsct/wallet/txfactory_base.cpp \
   blsct/wallet/txfactory_global.cpp \
   blsct/wallet/verification.cpp
 
@@ -724,6 +726,7 @@ libbitcoin_wallet_a_SOURCES = \
   blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
   blsct/wallet/txfactory.cpp \
+  blsct/wallet/txfactory_base.cpp \
   blsct/wallet/txfactory_global.cpp \
   blsct/wallet/verification.cpp \
   wallet/coincontrol.cpp \
@@ -1441,6 +1444,7 @@ libblsct_a_SOURCES = \
   crypto/sha256_x86_shani.cpp \
   crypto/sha256.cpp \
   primitives/transaction.cpp \
+	script/script.cpp \
 	script/sign.cpp \
 	script/signingprovider.cpp \
   rpc/util.cpp \
@@ -1448,6 +1452,7 @@ libblsct_a_SOURCES = \
   support/cleanse.cpp \
   support/lockedpool.cpp \
   uint256.cpp \
+	util/rbf.cpp \
   util/strencodings.cpp \
   wallet/coincontrol.cpp \
   wallet/context.cpp \

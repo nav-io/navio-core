@@ -13,8 +13,7 @@
 #include <blsct/signature.h>
 #include <blsct/wallet/address.h>
 #include <blsct/wallet/helpers.h>
-#include <blsct/wallet/txfactory.h>
-#include <blsct/wallet/txfactory_global.h>
+#include <blsct/wallet/txfactory_base.h>
 #include <common/args.h>
 #include <common/url.h>
 #include <memory.h>

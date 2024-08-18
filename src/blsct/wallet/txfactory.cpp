@@ -3,7 +3,6 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/wallet/txfactory.h>
-#include <wallet/fees.h>
 
 using T = Mcl;
 using Point = T::Point;
