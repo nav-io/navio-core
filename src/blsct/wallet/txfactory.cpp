@@ -95,6 +95,8 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     coins_params.include_staked_commitment = (type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE);
     coins_params.token_id = token_id;
 
+    LOCK(wallet->cs_wallet);
+
     AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
 
     if (type == CreateTransactionType::STAKED_COMMITMENT) {
