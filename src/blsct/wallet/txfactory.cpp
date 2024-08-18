@@ -79,8 +79,6 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         std::vector<Signature> txSigs = outputSignatures;
 
         for (auto& in_ : vInputs) {
-            auto tokenFee = (in_.first == TokenId() ? nFee : 0);
-
             for (auto& in : in_.second) {
                 tx.vin.push_back(in.in);
                 gammaAcc = gammaAcc + in.gamma;
@@ -134,7 +132,6 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const blsct::DoublePublicKey& changeDestination, const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake)
 {
     auto tx = blsct::TxFactoryBase();
-    CAmount inAmount = 0;
 
     if (type == STAKED_COMMITMENT) {
         CAmount inputFromStakedCommitments = 0;
@@ -142,8 +139,6 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
         for (const auto& output : inputCandidates) {
             if (output.is_staked_commitment)
                 inputFromStakedCommitments += output.amount;
-            if (!output.is_staked_commitment)
-                inAmount += output.amount;
 
             tx.AddInput(output.amount, output.gamma, output.spendingKey, output.token_id, COutPoint(output.outpoint.hash, output.outpoint.n));
         }
@@ -225,10 +220,9 @@ TxFactory::BuildTx()
     return TxFactoryBase::BuildTx(std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value()));
 }
 
-void TxFactoryBase::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet)
+void TxFactoryBase::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates)
 {
-    LOCK(wallet->cs_wallet);
-
+    AssertLockHeld(wallet->cs_wallet);
     for (const wallet::COutput& output : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params).All()) {
         auto tx = wallet->GetWalletTx(output.outpoint.hash);
 
@@ -244,6 +238,8 @@ void TxFactoryBase::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* bl
 
 void TxFactoryBase::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates)
 {
+    AssertLockHeld(wallet->cs_wallet);
+
     wallet::CoinFilterParams coins_params;
     coins_params.min_amount = 0;
     coins_params.only_blsct = true;
@@ -260,6 +256,8 @@ void TxFactoryBase::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* bl
 
 std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake)
 {
+    LOCK(wallet->cs_wallet);
+
     std::vector<InputCandidates> inputCandidates;
 
     TxFactoryBase::AddAvailableCoins(wallet, blsct_km, token_id, type, inputCandidates);

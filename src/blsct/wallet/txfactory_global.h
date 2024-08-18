@@ -15,7 +15,7 @@ using Points = Elements<Point>;
 using Scalar = T::Scalar;
 using Scalars = Elements<Scalar>;
 
-#define BLSCT_DEFAULT_FEE 50
+#define BLSCT_DEFAULT_FEE 125
 
 namespace blsct {
 struct UnsignedOutput {
