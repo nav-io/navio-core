@@ -200,6 +200,7 @@ BLSCT_H = \
   blsct/wallet/address.h \
   blsct/wallet/hdchain.h \
   blsct/wallet/helpers.h \
+  blsct/wallet/import_wallet_type.h \
   blsct/wallet/keyman.h \
   blsct/wallet/keyring.h \
   blsct/wallet/txfactory.h \

@@ -29,25 +29,25 @@ static void WalletToolReleaseWallet(CWallet* wallet)
     delete wallet;
 }
 
-static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flags)
+static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flags, const std::vector<unsigned char>& seed, const blsct::SeedType& type)
 {
     LOCK(wallet_instance->cs_wallet);
 
     wallet_instance->SetMinVersion(FEATURE_LATEST);
     wallet_instance->InitWalletFlags(wallet_creation_flags);
 
-    if (!wallet_instance->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
-        auto spk_man = wallet_instance->GetOrCreateLegacyScriptPubKeyMan();
-        spk_man->SetupGeneration(false);
+    if (!wallet_instance->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
+        if (!wallet_instance->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+            auto spk_man = wallet_instance->GetOrCreateLegacyScriptPubKeyMan();
+            spk_man->SetupGeneration(false);
+        } else {
+            wallet_instance->SetupDescriptorScriptPubKeyMans();
+        }
     } else {
-        wallet_instance->SetupDescriptorScriptPubKeyMans();
-    }
-
-    {
         auto blsct_man = wallet_instance->GetOrCreateBLSCTKeyMan();
 
         if (blsct_man) {
-            blsct_man->SetupGeneration();
+            blsct_man->SetupGeneration(seed, type);
         }
     }
 
@@ -55,7 +55,7 @@ static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flag
     wallet_instance->TopUpKeyPool();
 }
 
-static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::path& path, DatabaseOptions options)
+static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::path& path, DatabaseOptions options, const std::vector<unsigned char>& seed, const blsct::SeedType& type)
 {
     DatabaseStatus status;
     bilingual_str error;
@@ -100,7 +100,7 @@ static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::pa
         }
     }
 
-    if (options.require_create) WalletCreate(wallet_instance.get(), options.create_flags);
+    if (options.require_create) WalletCreate(wallet_instance.get(), options.create_flags, seed, type);
 
     return wallet_instance;
 }
@@ -139,6 +139,10 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         tfm::format(std::cerr, "The -legacy option can only be used with the 'create' command.\n");
         return false;
     }
+    if (args.IsArgSet("-seed") && command != "create") {
+        tfm::format(std::cerr, "The -seed option can only be used with the 'create' command.\n");
+        return false;
+    }
     if (command == "create" && !args.IsArgSet("-wallet")) {
         tfm::format(std::cerr, "Wallet name must be provided when creating a new wallet.\n");
         return false;
@@ -174,7 +178,18 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             options.require_format = DatabaseFormat::SQLITE;
         }
 
-        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options);
+
+        std::string seed = args.GetArg("-seed", "");
+        blsct::SeedType type;
+
+        if (seed.size() == 64) {
+            type = blsct::IMPORT_MASTER_KEY;
+        } else if (seed.size() == 64 + 96) {
+            type = blsct::IMPORT_VIEW_KEY;
+            options.create_flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
+        }
+
+        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type);
         if (wallet_instance) {
             WalletShowInfo(wallet_instance.get());
             wallet_instance->Close();
@@ -183,7 +198,7 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         DatabaseOptions options;
         ReadDatabaseArgs(args, options);
         options.require_existing = true;
-        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options);
+        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, {}, blsct::IMPORT_MASTER_KEY);
         if (!wallet_instance) return false;
         WalletShowInfo(wallet_instance.get());
         wallet_instance->Close();
