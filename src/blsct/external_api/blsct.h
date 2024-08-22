@@ -410,10 +410,6 @@ BlsctTxRetVal* build_tx(
     const void* void_tx_outs
 );
 
-BlsctRetVal* serialize_tx(
-    const void* void_tx
-);
-
 ///// END new pointer-based API
 
 /*
