@@ -52,6 +52,7 @@ struct UnsignedInput {
     Scalar value;
     Scalar gamma;
     PrivateKey sk;
+    bool is_staked_commitment;
 };
 
 struct Amounts {
