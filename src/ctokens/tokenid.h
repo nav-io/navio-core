@@ -10,9 +10,6 @@
 #include <tinyformat.h>
 #include <uint256.h>
 
-const uint256 stakedCommitmentToken = uint256();
-const uint64_t stakedCommitmentSubId = 1;
-
 class TokenId
 {
 public:
@@ -20,11 +17,6 @@ public:
     uint64_t subid;
 
     TokenId(const uint256& t = uint256(), const uint64_t& i = std::numeric_limits<uint64_t>::max()) : token(t), subid(i) {}
-
-    static TokenId StakedCommitment()
-    {
-        return TokenId(stakedCommitmentToken, stakedCommitmentSubId);
-    }
 
     void SetNull()
     {
@@ -34,12 +26,7 @@ public:
 
     bool IsNull() const { return token == uint256() && subid == std::numeric_limits<uint64_t>::max(); }
 
-    bool IsStakedCommitment() const
-    {
-        return token == stakedCommitmentToken && subid == stakedCommitmentSubId;
-    }
-
-    std::string ToString() const { return strprintf("%s%s", token.ToString(), strprintf("#%d", subid)); }
+    std::string ToString() const { return strprintf("%s%s", token.ToString(), subid == std::numeric_limits<uint64_t>::max() ? "" : strprintf("#%d", subid)); }
 
     friend bool operator==(const TokenId& a, const TokenId& b) { return a.token == b.token && a.subid == b.subid; }
 
