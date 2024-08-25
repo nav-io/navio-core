@@ -245,6 +245,7 @@ typedef struct {
 typedef struct {
   BLSCT_RESULT result;
   void* value;
+  size_t value_size;
 } BlsctRetVal;
 
 typedef struct {
@@ -267,7 +268,8 @@ typedef struct {
 } BlsctTxRetVal;
 
 BlsctRetVal* succ(
-    void* value
+    void* value,
+    size_t value_size
 );
 
 BlsctRetVal* err(
@@ -319,18 +321,20 @@ void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 void init();
 bool set_chain(enum Chain chain);
 
-// point/scalar generation/disposition
-BlsctPoint* gen_random_point();
-BlsctScalar* gen_random_scalar();
+// point
+BlsctRetVal* gen_random_point();
 
-BlsctScalar* gen_scalar(const uint64_t n);
+// scalar
+BlsctRetVal* gen_random_scalar();
+BlsctRetVal* gen_scalar(const uint64_t n);
 
 // type convertion
 uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
 
 // public key generation
-BlsctPubKey* gen_random_public_key();
+BlsctRetVal* gen_random_public_key();
 
+// address
 BlsctRetVal* decode_address(
   const char* blsct_enc_addr
 );
@@ -340,22 +344,25 @@ BlsctRetVal* encode_address(
   const enum AddressEncoding encoding
 );
 
+// double public key
 BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk1,
     const BlsctPubKey* blsct_pk2
 );
 
-BlsctTokenId* gen_token_id_with_subid(
+// token id
+BlsctRetVal* gen_token_id_with_subid(
     const uint64_t token,
     const uint64_t subid
 );
 
-BlsctTokenId* gen_token_id(
+BlsctRetVal* gen_token_id(
     const uint64_t token
 );
 
-BlsctTokenId* gen_default_token_id();
+BlsctRetVal* gen_default_token_id();
 
+// range proof
 BlsctRetVal* build_range_proof(
     const void* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
@@ -367,6 +374,7 @@ BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs
 );
 
+// amount recovery
 BlsctAmountRecoveryReq* gen_recover_amount_req(
     const void* vp_blsct_range_proof,
     const void* vp_blsct_nonce
@@ -378,13 +386,14 @@ BlsctAmountsRetVal* recover_amount(
     void* vp_amt_recovery_req_vec
 );
 
+// out point
 // txid is 32 bytes and represented as 64-char hex str
-BlsctOutPoint* gen_out_point(
+BlsctRetVal* gen_out_point(
     const char* tx_id_c_str,
     const uint32_t n
 );
 
-BlsctTxIn* build_tx_in(
+BlsctRetVal* build_tx_in(
     const uint64_t amount,
     const uint64_t gamma,
     const BlsctScalar* spending_key,
@@ -393,7 +402,7 @@ BlsctTxIn* build_tx_in(
     const bool rbf
 );
 
-BlsctSubAddr* dpk_to_sub_addr(
+BlsctRetVal* dpk_to_sub_addr(
     const void* blsct_dpk
 );
 
@@ -421,13 +430,16 @@ const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx);
 
 const size_t get_tx_ins_size(const std::vector<CTxIn>* tx_ins);
 
-const CTxIn* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i);
+const BlsctRetVal* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i);
 
 const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx);
 
 const size_t get_tx_outs_size(const std::vector<CTxOut>* tx_ins);
 
-const CTxOut* get_tx_out(const std::vector<CTxOut>* tx_ins, const size_t i);
+const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_ins, const size_t i);
+
+
+//const Scalar* get_tx_in_amount(const CTxIn* tx_in);
 
 ///// END new pointer-based API
 
