@@ -12,6 +12,7 @@
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/arith/elements.h>
 #include <blsct/range_proof/setup.h>
+#include <primitives/transaction.h>
 #include <cstdint>
 #include <stdint.h>
 #include <stdbool.h>
@@ -410,6 +411,24 @@ BlsctTxRetVal* build_tx(
     const void* void_tx_outs
 );
 
+// must free the returned object after use
+CMutableTransaction* deserialize_tx(
+    const uint8_t* ser_tx,
+    const size_t ser_tx_size
+);
+
+const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx);
+
+const size_t get_tx_ins_size(const std::vector<CTxIn>* tx_ins);
+
+const CTxIn* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i);
+
+const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx);
+
+const size_t get_tx_outs_size(const std::vector<CTxOut>* tx_ins);
+
+const CTxOut* get_tx_out(const std::vector<CTxOut>* tx_ins, const size_t i);
+
 ///// END new pointer-based API
 
 /*
@@ -495,12 +514,6 @@ bool blsct_verify_msg_sig(
     const uint8_t* blsct_msg,
     const size_t blsct_msg_size,
     const BlsctSignature blsct_signature
-);
-
-void blsct_deserialize_tx(
-    const uint8_t* ser_tx,
-    const size_t ser_tx_size,
-    BlsctTransaction** const blsct_tx
 );
 
 void blsct_dispose_tx(

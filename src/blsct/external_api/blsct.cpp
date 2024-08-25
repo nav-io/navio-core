@@ -701,6 +701,57 @@ BlsctTxRetVal* build_tx(
     return rv;
 }
 
+CMutableTransaction* deserialize_tx(
+    const uint8_t* ser_tx,
+    const size_t ser_tx_size
+) {
+    CMutableTransaction* tx = static_cast<CMutableTransaction*>(
+        malloc(sizeof(CMutableTransaction))
+    );
+    DataStream st{};
+    TransactionSerParams params { .allow_witness = true };
+    ParamsStream ps {params, st};
+
+    for(size_t i=0; i<ser_tx_size; ++i) {
+        ps << ser_tx[i];
+    }
+    tx->Unserialize(ps);
+
+    return tx;
+}
+
+const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx) {
+    return &tx->vin;
+}
+
+const size_t get_tx_ins_size(const std::vector<CTxIn>* tx_ins) {
+    return tx_ins->size();
+}
+
+const CTxIn* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i) {
+    auto tx_in = &tx_ins->at(i);
+    auto tx_in_size = sizeof(*tx_in);
+    auto buf = static_cast<CTxIn*>(malloc(tx_in_size));
+    std::memcpy(buf, tx_in, tx_in_size);
+    return buf;
+}
+
+const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx) {
+    return &tx->vout;
+}
+
+const size_t get_tx_outs_size(const std::vector<CTxOut>* tx_outs) {
+    return tx_outs->size();
+}
+
+const CTxOut* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i) {
+    auto tx_out = &tx_outs->at(i);
+    auto tx_out_size = sizeof(*tx_out);
+    auto buf = static_cast<CTxOut*>(malloc(tx_out_size));
+    std::memcpy(buf, tx_out, tx_out_size);
+    return buf;
+}
+
 /*
 void blsct_gen_random_priv_key(
     BlsctScalar blsct_priv_key
