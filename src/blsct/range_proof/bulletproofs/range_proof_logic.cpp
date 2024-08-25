@@ -14,9 +14,11 @@
 #include <blsct/range_proof/bulletproofs/range_proof_logic.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/msg_amt_cipher.h>
+#include <future>
 #include <optional>
 #include <stdexcept>
 #include <variant>
+#include <vector>
 
 namespace bulletproofs {
 
@@ -248,102 +250,86 @@ bool RangeProofLogic<T>::VerifyProofs(
     using Scalar = typename T::Scalar;
     using Scalars = Elements<Scalar>;
 
+    // Vector to hold future results from async tasks
+    std::vector<std::future<bool>> futures;
+
+    // Launch a verification task for each proof transcript in parallel
     for (const RangeProofWithTranscript<T>& p : proof_transcripts) {
-        if (p.proof.Ls.Size() != p.proof.Rs.Size()) return false;
+        futures.emplace_back(std::async(std::launch::async, [this, &p, max_mn]() -> bool {
+            if (p.proof.Ls.Size() != p.proof.Rs.Size()) return false;
 
-        const range_proof::Generators<T> gens = m_common.Gf().GetInstance(p.proof.seed);
-        G_H_Gi_Hi_ZeroVerifier<T> verifier(max_mn);
+            const range_proof::Generators<T> gens = m_common.Gf().GetInstance(p.proof.seed);
+            G_H_Gi_Hi_ZeroVerifier<T> verifier(max_mn);
 
-        auto num_rounds = range_proof::Common<T>::GetNumRoundsExclLast(p.proof.Vs.Size());
-        Scalar weight_y = Scalar::Rand();
-        Scalar weight_z = Scalar::Rand();
+            auto num_rounds = range_proof::Common<T>::GetNumRoundsExclLast(p.proof.Vs.Size());
+            Scalar weight_y = Scalar::Rand();
+            Scalar weight_z = Scalar::Rand();
 
-        Scalars z_pows_from_2 = Scalars::FirstNPow(p.z, p.num_input_values_power_2 + 1, 2); // z^2, z^3, ... // VectorPowers(pd.z, M+3);
-        Scalar y_pows_sum = Scalars::FirstNPow(p.y, p.concat_input_values_in_bits).Sum();   // VectorPowerSum(p.y, MN);
+            Scalars z_pows_from_2 = Scalars::FirstNPow(p.z, p.num_input_values_power_2 + 1, 2); // z^2, z^3, ...
+            Scalar y_pows_sum = Scalars::FirstNPow(p.y, p.concat_input_values_in_bits).Sum();
 
-        //////// (65)
-        // g^t_hat * h^tau_x = V^(z^2) * g^delta_yz * T1^x * T2^(x^2)
-        // g^(t_hat - delta_yz) = h^(-tau_x) * V^(z^2) * T1^x * T2^(x^2)
+            //////// (65)
+            verifier.AddNegativeH(p.proof.tau_x * weight_y);
 
-        // LHS (65)
-        verifier.AddNegativeH(p.proof.tau_x * weight_y); // LHS (65)
+            Scalar delta_yz = p.z * y_pows_sum - (z_pows_from_2[0] * y_pows_sum);
+            for (size_t i = 1; i <= p.num_input_values_power_2; ++i) {
+                delta_yz = delta_yz - z_pows_from_2[i] * m_common.InnerProd1x2Pows64();
+            }
 
-        // delta(y,z) in (39)
-        // = (z - z^2)*<1^n, y^n> - z^3<1^n,2^n>
-        // = z*<1^n, y^n> (1) - z^2*<1^n, y^n> (2) - z^3<1^n,2^n> (3)
-        Scalar delta_yz =
-            p.z * y_pows_sum                   // (1)
-            - (z_pows_from_2[0] * y_pows_sum); // (2)
-        for (size_t i = 1; i <= p.num_input_values_power_2; ++i) {
-            // multiply z^3, z^4, ..., z^(mn+3)
-            delta_yz = delta_yz - z_pows_from_2[i] * m_common.InnerProd1x2Pows64(); // (3)
-        }
+            verifier.AddNegativeG((p.proof.t_hat - delta_yz) * weight_y);
 
-        // g part of LHS in (65) where delta_yz on RHS is moved to LHS
-        // g^t_hat ... = ... g^delta_yz
-        // g^(t_hat - delta_yz) = ...
-        verifier.AddNegativeG((p.proof.t_hat - delta_yz) * weight_y);
+            for (size_t i = 0; i < p.proof.Vs.Size(); ++i) {
+                verifier.AddPoint(LazyPoint<T>(p.proof.Vs[i] - (gens.G * p.proof.min_value), z_pows_from_2[i] * weight_y));
+            }
 
-        // V^(z^2) in RHS (65)
-        for (size_t i = 0; i < p.proof.Vs.Size(); ++i) {
-            verifier.AddPoint(LazyPoint<T>(p.proof.Vs[i] - (gens.G * p.proof.min_value), z_pows_from_2[i] * weight_y)); // multiply z^2, z^3, ...
-        }
+            verifier.AddPoint(LazyPoint<T>(p.proof.T1, p.x * weight_y));
+            verifier.AddPoint(LazyPoint<T>(p.proof.T2, p.x.Square() * weight_y));
 
-        // T1^x and T2^(x^2) in RHS (65)
-        verifier.AddPoint(LazyPoint<T>(p.proof.T1, p.x * weight_y));          // T1^x
-        verifier.AddPoint(LazyPoint<T>(p.proof.T2, p.x.Square() * weight_y)); // T2^(x^2)
+            //////// (66)
+            verifier.AddPoint(LazyPoint<T>(p.proof.A, weight_z));
+            verifier.AddPoint(LazyPoint<T>(p.proof.S, p.x * weight_z));
 
-        //////// (66)
-        // P = A * S^x * g^(-z) * (h')^(z * y^n + z^2 * 2^n)
-        // exponents of g and (h') are created in a loop later
+            //////// (67), (68)
+            auto gen_exps = ImpInnerProdArg::GenGeneratorExponents<T>(num_rounds, p.xs);
 
-        // A and S^x in RHS (66)
-        verifier.AddPoint(LazyPoint<T>(p.proof.A, weight_z));       // A
-        verifier.AddPoint(LazyPoint<T>(p.proof.S, p.x * weight_z)); // S^x
+            ImpInnerProdArg::LoopWithYPows<Mcl>(p.concat_input_values_in_bits, p.y,
+                                                [&](const size_t& i, const Scalar& y_pow, const Scalar& y_inv_pow) {
+                                                    Scalar gi_exp = p.proof.a * gen_exps[i];
+                                                    Scalar hi_exp = p.proof.b * y_inv_pow * gen_exps[p.concat_input_values_in_bits - 1 - i];
 
-        //////// (67), (68)
-        auto gen_exps = ImpInnerProdArg::GenGeneratorExponents<T>(num_rounds, p.xs);
+                                                    gi_exp = gi_exp + p.z;
 
-        // for all bits of concat input values, do:
-        ImpInnerProdArg::LoopWithYPows<Mcl>(p.concat_input_values_in_bits, p.y,
-                                            [&](const size_t& i, const Scalar& y_pow, const Scalar& y_inv_pow) {
-                                                // g^a * h^b (16)
-                                                Scalar gi_exp = p.proof.a * gen_exps[i]; // g^a in (16) is distributed to each generator
-                                                Scalar hi_exp = p.proof.b *
-                                                                y_inv_pow *
-                                                                gen_exps[p.concat_input_values_in_bits - 1 - i]; // h^b in (16) is distributed to each generator. y_inv_pow to turn generator to (h')
+                                                    Scalar tmp = z_pows_from_2[i / range_proof::Setup::num_input_value_bits] *
+                                                                 m_common.TwoPows64()[i % range_proof::Setup::num_input_value_bits];
 
-                                                gi_exp = gi_exp + p.z; // g^(-z) in RHS (66)
+                                                    hi_exp = hi_exp - (tmp + p.z * y_pow) * y_inv_pow;
 
-                                                // ** z^2 * 2^n in (h')^(z * y^n + z^2 * 2^n) in RHS (66)
-                                                Scalar tmp =
-                                                    z_pows_from_2[i / range_proof::Setup::num_input_value_bits] *       // skipping the first 2 powers. different z_pow is assigned to each number
-                                                    m_common.TwoPows64()[i % range_proof::Setup::num_input_value_bits]; // power of 2 corresponding to i-th bit of the number being processed
+                                                    verifier.SetGiExp(i, (gi_exp * weight_z).Negate());
+                                                    verifier.SetHiExp(i, (hi_exp * weight_z).Negate());
+                                                });
 
-                                                // ** z * y^n in (h')^(z * y^n + z^2 * 2^n) (66)
-                                                hi_exp = hi_exp - (tmp + p.z * y_pow) * y_inv_pow;
+            verifier.AddNegativeH(p.proof.mu * weight_z);
+            auto x_invs = p.xs.Invert();
 
-                                                verifier.SetGiExp(i, (gi_exp * weight_z).Negate()); // (16) g^a moved to LHS
-                                                verifier.SetHiExp(i, (hi_exp * weight_z).Negate()); // (16) h^b moved to LHS
-                                            });
+            for (size_t i = 0; i < num_rounds; ++i) {
+                verifier.AddPoint(LazyPoint<T>(p.proof.Ls[i], p.xs[i].Square() * weight_z));
+                verifier.AddPoint(LazyPoint<T>(p.proof.Rs[i], x_invs[i].Square() * weight_z));
+            }
 
-        verifier.AddNegativeH(p.proof.mu * weight_z); // ** h^mu (67) RHS
-        auto x_invs = p.xs.Invert();
+            verifier.AddPositiveG((p.proof.t_hat - p.proof.a * p.proof.b) * p.c_factor * weight_z);
 
-        // add L and R of all rounds to RHS (66) which equals P to generate the P of the final round on LHS (16)
-        for (size_t i = 0; i < num_rounds; ++i) {
-            verifier.AddPoint(LazyPoint<T>(p.proof.Ls[i], p.xs[i].Square() * weight_z));
-            verifier.AddPoint(LazyPoint<T>(p.proof.Rs[i], x_invs[i].Square() * weight_z));
-        }
+            bool res = verifier.Verify(
+                gens.G,
+                gens.H,
+                gens.GetGiSubset(max_mn),
+                gens.GetHiSubset(max_mn));
+            return res;
+        }));
+    }
 
-        verifier.AddPositiveG((p.proof.t_hat - p.proof.a * p.proof.b) * p.c_factor * weight_z);
-
-        bool res = verifier.Verify(
-            gens.G,
-            gens.H,
-            gens.GetGiSubset(max_mn),
-            gens.GetHiSubset(max_mn));
-        if (!res) return false;
+    // Wait for all threads to finish and collect results
+    for (auto& fut : futures) {
+        if (!fut.get()) return false;
     }
 
     return true;
@@ -446,7 +432,7 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
         auto msg_amt = maybe_msg_amt.value();
 
         auto x = range_proof::RecoveredData<T>(
-            i,
+            req.id,
             msg_amt.amount,
             req.nonce.GetHashWithSalt(100), // gamma for vs[0]
             msg_amt.msg);

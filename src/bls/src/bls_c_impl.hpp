@@ -12,6 +12,9 @@
 #define BLS_MULTI_VERIFY_THREAD
 #endif
 
+#include <future>
+#include <thread>
+#include <vector>
 
 inline void Gmul(G1& z, const G1& x, const Fr& y) { G1::mul(z, x, y); }
 inline void Gmul(G2& z, const G2& x, const Fr& y) { G2::mul(z, x, y); }
@@ -440,30 +443,90 @@ int blsAggregateVerifyNoCheck(const blsSignature *sig, const blsPublicKey *pubVe
 	if (n == 0) return 0;
 #if 1 // 1.1 times faster
 	GT e;
-	const char *msg = (const char*)msgVec;
-	const size_t N = 16;
-	G1 g1Vec[N+1];
-	G2 g2Vec[N+1];
+	const char* msg = (const char*)msgVec;
+	constexpr size_t N = 16;
+	G1 g1Vec[N + 1];
+	G2 g2Vec[N + 1];
 	bool initE = true;
+
+	std::vector<std::future<GT>> futuresMiller;
+	std::vector<std::future<bool>> futures;
+	size_t numThreads = std::thread::hardware_concurrency();
 
 	while (n > 0) {
 		size_t m = mcl::fp::min_<size_t>(n, N);
-		for (size_t i = 0; i < m; i++) {
-			g1Vec[i] = *cast(&pubVec[i].v);
-			if (g1Vec[i].isZero()) return 0;
-			hashAndMapToG(g2Vec[i], &msg[i * msgSize], msgSize);
+
+		// Lambda function to compute g1Vec and g2Vec in parallel
+		auto computeVectors = [&](size_t start, size_t end) {
+			for (size_t i = start; i < end; ++i) {
+				g1Vec[i] = *cast(&pubVec[i].v);
+				if (g1Vec[i].isZero()) return false; // Indicate failure to main thread
+				hashAndMapToG(g2Vec[i], &msg[i * msgSize], msgSize);
+			}
+			return true;
+		};
+
+		// Divide work among threads
+		size_t chunkSize = m / numThreads;
+		futures.clear();
+
+		// Launch threads to compute g1Vec and g2Vec
+		for (size_t t = 0; t < numThreads; ++t) {
+			size_t start = t * chunkSize;
+			size_t end = (t == numThreads - 1) ? m : (t + 1) * chunkSize;
+			futures.emplace_back(std::async(std::launch::async, computeVectors, start, end));
 		}
+
+		// Check for any failures in thread execution
+		for (auto& fut : futures) {
+			if (!fut.get()) return 0; // If any thread found a zero vector, return 0
+		}
+
 		pubVec += m;
 		msg += m * msgSize;
 		n -= m;
+
 		if (n == 0) {
 			g1Vec[m] = getBasePoint();
 			G2::neg(g2Vec[m], *cast(&sig->v));
 			m++;
 		}
-		millerLoopVec(e, g1Vec, g2Vec, m, initE);
-		initE = false;
+
+		// Prepare for parallel miller loop
+		auto millerLoopTask = [&](size_t start, size_t end, bool initE) {
+			GT localE;
+			millerLoopVec(localE, g1Vec + start, g2Vec + start, end - start, initE);
+			return localE;
+		};
+
+		// Launch threads to execute miller loop in parallel
+		futuresMiller.clear(); 
+		size_t mlChunkSize = m / numThreads;        // Divide miller loop work among threads
+		std::vector<GT> partialResults(numThreads); // To store partial results
+
+		for (size_t t = 0; t < numThreads; ++t) {
+			size_t start = t * mlChunkSize;
+			size_t end = (t == numThreads - 1) ? m : (t + 1) * mlChunkSize;
+			futuresMiller.emplace_back(std::async(std::launch::async, millerLoopTask, start, end, true));
+		}
+
+		// Combine results from each thread
+		for (size_t t = 0; t < numThreads; ++t) {
+				partialResults[t] = futuresMiller[t].get();
+		}
+
+		if (initE)
+			e = partialResults[0];
+
+		// Combine partial results into final result e
+		for (size_t t = initE ? 1 : 0; t < numThreads; ++t) {
+			e *= partialResults[t]; // Combine partial results
+		}
+
+		initE = false; // Ensure next iteration is not initialized
 	}
+
+	// Final exponentiation outside the loop
 	BN::finalExp(e, e);
 	return e.isOne();
 #else

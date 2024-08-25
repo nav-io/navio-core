@@ -36,7 +36,7 @@ bool operator==(const Coin &a, const Coin &b) {
 class CCoinsViewTest : public CCoinsView
 {
     uint256 hashBestBlock_;
-    CStakedCommitmentsMap cacheStakedCommitments_;
+    CStakedCommitmentsMap deltaStakedCommitments_;
     std::map<COutPoint, Coin> map_;
 
 public:
@@ -72,7 +72,7 @@ public:
             hashBestBlock_ = hashBlock;
 
         for (auto& it : stakedCommitments) {
-            cacheStakedCommitments_[it.first] = it.second;
+            deltaStakedCommitments_[it.first] = it.second;
         };
         if (erase)
             stakedCommitments.clear();

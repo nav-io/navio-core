@@ -520,7 +520,7 @@ RPCHelpMan listtransactions()
                 // iterate backwards until we have nCount items to return:
                 for (CWallet::TxItems::const_reverse_iterator it = txOrdered.rbegin(); it != txOrdered.rend(); ++it) {
                     CWalletTx* const pwtx = (*it).second;
-                    ListTransactions(*pwallet, *pwtx, 0, 100000000, true, ret, filter, filter_label);
+                    ListTransactions(*pwallet, *pwtx, 1, 100000000, true, ret, filter, filter_label);
                     if ((int)ret.size() >= (nCount + nFrom)) break;
                 }
             }
