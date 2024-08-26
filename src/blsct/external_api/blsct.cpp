@@ -729,7 +729,7 @@ const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx) {
     return &tx->vin;
 }
 
-const size_t get_tx_ins_size(const std::vector<CTxIn>* tx_ins) {
+size_t get_tx_ins_size(const std::vector<CTxIn>* tx_ins) {
     return tx_ins->size();
 }
 
@@ -745,7 +745,7 @@ const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx) {
     return &tx->vout;
 }
 
-const size_t get_tx_outs_size(const std::vector<CTxOut>* tx_outs) {
+size_t get_tx_outs_size(const std::vector<CTxOut>* tx_outs) {
     return tx_outs->size();
 }
 
@@ -756,6 +756,38 @@ const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i
     std::memcpy(tx_out_copy, tx_out, tx_out_size);
     return succ(tx_out_copy, tx_out_size);
 }
+
+uint64_t get_tx_out_value(const CTxOut* tx_out) {
+    return tx_out->nValue;
+}
+
+const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
+    std::memcpy(copy, &tx_out->tokenId, TOKEN_ID_SIZE);
+    return copy;
+}
+
+// const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out) {
+//     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+//     std::memcpy(copy, tx_out->spendingKey, POINT_SIZE);
+//     return copy;
+// }
+//
+// const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out) {
+//     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+//     std::memcpy(copy, tx_out->ephemeralKey, POINT_SIZE);
+//     return copy;
+// }
+//
+// const BlsctPoint* get_tx_out_binding_key(const CTxOut* tx_out) {
+//     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+//     std::memcpy(copy, tx_out->bindingKey, POINT_SIZE);
+//     return copy;
+// }
+//
+// const uint16_t get_tx_out_view_tag(const CTxOut* tx_out) {
+//     return tx->viewTag;
+// }
 
 /*
 void blsct_gen_random_priv_key(
