@@ -428,16 +428,31 @@ CMutableTransaction* deserialize_tx(
 
 const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx);
 
-const size_t get_tx_ins_size(const std::vector<CTxIn>* tx_ins);
+size_t get_tx_ins_size(const std::vector<CTxIn>* tx_ins);
 
 const BlsctRetVal* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i);
 
 const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx);
 
-const size_t get_tx_outs_size(const std::vector<CTxOut>* tx_ins);
+size_t get_tx_outs_size(const std::vector<CTxOut>* tx_outs);
 
-const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_ins, const size_t i);
+const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i);
 
+// TxOut
+uint64_t get_tx_out_value(const CTxOut* tx_out);
+
+const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out);
+
+// BlsctData
+// const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_ins, const size_t i);
+//
+// const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out);
+//
+// const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out);
+//
+// const BlsctPoint* get_tx_out_binding_key(const CTxOut* tx_out);
+//
+// const uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
 
 //const Scalar* get_tx_in_amount(const CTxIn* tx_in);
 
