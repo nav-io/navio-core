@@ -193,6 +193,19 @@ BlsctRetVal* gen_random_public_key() {
     return succ(blsct_pub_key, PUBLIC_KEY_SIZE);
 }
 
+const char* point_to_hex(const BlsctPoint* blsct_point) {
+    Point point;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
+    auto hex = point.GetString();
+
+    size_t BUF_SIZE = hex.size() + 1;
+    MALLOC_BYTES(char, hex_buf, BUF_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(hex_buf);
+    std::memcpy(hex_buf, hex.c_str(), BUF_SIZE); // also copies null at the end
+
+    return hex_buf;
+}
+
 BlsctRetVal* decode_address(
     const char* blsct_enc_addr
 ) {
@@ -238,7 +251,7 @@ BlsctRetVal* encode_address(
         size_t BUF_SIZE = enc_dpk_str.size() + 1;
         MALLOC_BYTES(char, enc_addr, BUF_SIZE);
         RETURN_ERR_IF_MEM_ALLOC_FAILED(enc_addr);
-        std::memcpy(enc_addr, enc_dpk_str.c_str(), BUF_SIZE);
+        std::memcpy(enc_addr, enc_dpk_str.c_str(), BUF_SIZE); // also copies null at the end
 
         return succ(enc_addr, BUF_SIZE);
 
@@ -309,6 +322,18 @@ BlsctRetVal* gen_default_token_id() {
     SERIALIZE_AND_COPY_WITH_STREAM(token_id, blsct_token_id);
 
     return succ(blsct_token_id, TOKEN_ID_SIZE);
+}
+
+uint64_t get_token_id_token(const BlsctTokenId* blsct_token_id) {
+    TokenId token_id;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id, TOKEN_ID_SIZE, token_id);
+    return token_id.token.GetUint64(0);
+}
+
+uint64_t get_token_id_subid(const BlsctTokenId* blsct_token_id) {
+    TokenId token_id;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id, TOKEN_ID_SIZE, token_id);
+    return token_id.subid;
 }
 
 BlsctRetVal* build_range_proof(
@@ -767,6 +792,38 @@ const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out) {
     return copy;
 }
 
+const BlsctScript* get_tx_out_script_pubkey(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &tx_out->scriptPubKey, SCRIPT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = tx_out->blsctData.spendingKey.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = tx_out->blsctData.ephemeralKey.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = tx_out->blsctData.blindingKey.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const uint16_t get_tx_out_view_tag(const CTxOut* tx_out) {
+    return tx_out->blsctData.viewTag;
+}
+
+// range proof
 // const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out) {
 //     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
 //     std::memcpy(copy, tx_out->spendingKey, POINT_SIZE);
@@ -783,10 +840,6 @@ const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out) {
 //     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
 //     std::memcpy(copy, tx_out->bindingKey, POINT_SIZE);
 //     return copy;
-// }
-//
-// const uint16_t get_tx_out_view_tag(const CTxOut* tx_out) {
-//     return tx->viewTag;
 // }
 
 /*

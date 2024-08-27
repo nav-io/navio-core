@@ -162,6 +162,7 @@ typedef uint8_t BlsctDoublePubKey[DOUBLE_PUBLIC_KEY_SIZE];
 typedef char BlsctAddrStr[ENCODED_DPK_STR_BUF_SIZE];
 typedef uint8_t BlsctRangeProof[RANGE_PROOF_SIZE];
 typedef uint8_t BlsctScalar[SCALAR_SIZE];
+typedef uint8_t BlsctScript[SCRIPT_SIZE];
 typedef uint8_t BlsctSubAddr[SUBADDRESS_SIZE];
 typedef uint8_t BlsctSubAddrId[SUBADDRESS_ID_SIZE];
 typedef uint8_t BlsctTokenId[TOKEN_ID_SIZE];
@@ -170,6 +171,7 @@ typedef uint8_t BlsctViewTag[VIEW_TAG_SIZE];
 typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
 typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
 
+/*
 typedef struct {
     uint8_t script[SCRIPT_SIZE];
     size_t size;
@@ -239,6 +241,7 @@ typedef struct {
     uint64_t token;
     uint64_t subid;
 } BlsctTokenIdDe;
+*/
 
 ///// BEG new pointer-based API
 
@@ -323,12 +326,11 @@ bool set_chain(enum Chain chain);
 
 // point
 BlsctRetVal* gen_random_point();
+const char* point_to_hex(const BlsctPoint* blsct_point);
 
 // scalar
 BlsctRetVal* gen_random_scalar();
 BlsctRetVal* gen_scalar(const uint64_t n);
-
-// type convertion
 uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
 
 // public key generation
@@ -361,6 +363,10 @@ BlsctRetVal* gen_token_id(
 );
 
 BlsctRetVal* gen_default_token_id();
+
+uint64_t get_token_id_token(const BlsctTokenId* blsct_token_id);
+
+uint64_t get_token_id_subid(const BlsctTokenId* blsct_token_id);
 
 // range proof
 BlsctRetVal* build_range_proof(
@@ -443,18 +449,16 @@ uint64_t get_tx_out_value(const CTxOut* tx_out);
 
 const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out);
 
-// BlsctData
-// const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_ins, const size_t i);
-//
-// const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out);
-//
-// const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out);
-//
-// const BlsctPoint* get_tx_out_binding_key(const CTxOut* tx_out);
-//
-// const uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
+const BlsctScript* get_tx_out_script_pubkey(const CTxOut* tx_out);
 
-//const Scalar* get_tx_in_amount(const CTxIn* tx_in);
+const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out);
+
+const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out);
+
+const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out);
+
+const uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
+
 
 ///// END new pointer-based API
 
