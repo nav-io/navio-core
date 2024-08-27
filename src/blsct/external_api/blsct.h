@@ -447,6 +447,8 @@ const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i
 // TxOut
 uint64_t get_tx_out_value(const CTxOut* tx_out);
 
+const BlsctScript* get_tx_out_script_pub_key(const CTxOut* tx_out);
+
 const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out);
 
 const BlsctScript* get_tx_out_script_pubkey(const CTxOut* tx_out);
@@ -459,6 +461,15 @@ const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out);
 
 const uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
 
+const BlsctPoint* get_tx_out_range_proof_A(const CTxOut* tx_out);
+const BlsctPoint* get_tx_out_range_proof_S(const CTxOut* tx_out);
+const BlsctPoint* get_tx_out_range_proof_T1(const CTxOut* tx_out);
+const BlsctPoint* get_tx_out_range_proof_T2(const CTxOut* tx_out);
+
+const BlsctScalar* get_tx_out_range_proof_mu(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_a(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_b(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_t_hat(const CTxOut* tx_out);
 
 ///// END new pointer-based API
 
