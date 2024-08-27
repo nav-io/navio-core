@@ -786,6 +786,12 @@ uint64_t get_tx_out_value(const CTxOut* tx_out) {
     return tx_out->nValue;
 }
 
+const BlsctScript* get_tx_out_script_pub_key(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &tx_out->scriptPubKey, SCRIPT_SIZE);
+    return copy;
+}
+
 const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out) {
     auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
     std::memcpy(copy, &tx_out->tokenId, TOKEN_ID_SIZE);
@@ -823,24 +829,63 @@ const uint16_t get_tx_out_view_tag(const CTxOut* tx_out) {
     return tx_out->blsctData.viewTag;
 }
 
-// range proof
-// const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out) {
-//     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-//     std::memcpy(copy, tx_out->spendingKey, POINT_SIZE);
-//     return copy;
-// }
-//
-// const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out) {
-//     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-//     std::memcpy(copy, tx_out->ephemeralKey, POINT_SIZE);
-//     return copy;
-// }
-//
-// const BlsctPoint* get_tx_out_binding_key(const CTxOut* tx_out) {
-//     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-//     std::memcpy(copy, tx_out->bindingKey, POINT_SIZE);
-//     return copy;
-// }
+//// range proof
+
+const BlsctPoint* get_tx_out_range_proof_A(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = tx_out->blsctData.rangeProof.A.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_tx_out_range_proof_S(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = tx_out->blsctData.rangeProof.S.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_tx_out_range_proof_T1(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = tx_out->blsctData.rangeProof.T1.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_tx_out_range_proof_T2(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = tx_out->blsctData.rangeProof.T2.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctScalar* get_tx_out_range_proof_mu(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
+    auto org = tx_out->blsctData.rangeProof.mu.GetVch();
+    std::memcpy(copy, &org[0], SCALAR_SIZE);
+    return copy;
+}
+
+const BlsctScalar* get_tx_out_range_proof_a(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
+    auto org = tx_out->blsctData.rangeProof.a.GetVch();
+    std::memcpy(copy, &org[0], SCALAR_SIZE);
+    return copy;
+}
+
+const BlsctScalar* get_tx_out_range_proof_b(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
+    auto org = tx_out->blsctData.rangeProof.b.GetVch();
+    std::memcpy(copy, &org[0], SCALAR_SIZE);
+    return copy;
+}
+
+const BlsctScalar* get_tx_out_range_proof_t_hat(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
+    auto org = tx_out->blsctData.rangeProof.t_hat.GetVch();
+    std::memcpy(copy, &org[0], SCALAR_SIZE);
+    return copy;
+}
 
 /*
 void blsct_gen_random_priv_key(
