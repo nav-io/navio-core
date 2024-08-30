@@ -23,8 +23,13 @@ class CoinbaseCategoryTest(BitcoinTestFramework):
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
 
-    def assert_category(self, category, address, txid, skip):
-        assert_array_result(self.nodes[0].listtransactions(skip=skip),
+    def assert_category(self, category, address, txid, skip, pending=False):
+        if not pending:
+            assert_array_result(self.nodes[0].listtransactions(skip=skip),
+                            {"address": address},
+                            {"category": category})
+        else:
+            assert_array_result(self.nodes[0].listpendingtransactions(skip=skip),
                             {"address": address},
                             {"category": category})
         assert_array_result(self.nodes[0].listsinceblock()["transactions"],
@@ -57,7 +62,7 @@ class CoinbaseCategoryTest(BitcoinTestFramework):
         # Orphan block that paid to address
         self.nodes[0].invalidateblock(hash)
         # Coinbase transaction is now orphaned
-        self.assert_category("orphan", address, txid, 100)
+        self.assert_category("orphan", address, txid, 100, True)
 
 if __name__ == '__main__':
     CoinbaseCategoryTest().main()

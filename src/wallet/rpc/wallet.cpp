@@ -418,14 +418,14 @@ static RPCHelpMan createwallet()
             blsct::SeedType type = blsct::IMPORT_MASTER_KEY;
             if (!request.params[9].isNull() && request.params[9].isStr()) {
                 seed = ParseHex(request.params[9].get_str());
-            }
 
-            if (seed.size() == 160) {
-                seed = ParseHex(request.params[10].get_str());
-                type = blsct::IMPORT_VIEW_KEY;
-                flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
-            } else if (seed.size() != 64) {
-                throw JSONRPCError(RPC_WALLET_ERROR, "Seed must be 64 (master) or 160 (view) characters long");
+                if (seed.size() == 160) {
+                    seed = ParseHex(request.params[10].get_str());
+                    type = blsct::IMPORT_VIEW_KEY;
+                    flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
+                } else if (seed.size() != 64) {
+                    throw JSONRPCError(RPC_WALLET_ERROR, "Seed must be 64 (master) or 160 (view) characters long");
+                }
             }
 
             DatabaseOptions options;

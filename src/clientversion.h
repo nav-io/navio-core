@@ -40,6 +40,7 @@ extern const std::string CLIENT_NAME;
 
 std::string FormatFullVersion();
 std::string FormatSubVersion(const std::string& name, int nClientVersion, const std::vector<std::string>& comments);
+std::string FormatSubVersion(const std::string& name, const std::string& strClientVersion, const std::vector<std::string>& comments);
 
 std::string CopyrightHolders(const std::string& strPrefix);
 
