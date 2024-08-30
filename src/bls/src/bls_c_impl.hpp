@@ -452,6 +452,8 @@ int blsAggregateVerifyNoCheck(const blsSignature *sig, const blsPublicKey *pubVe
 	std::vector<std::future<GT>> futuresMiller;
 	std::vector<std::future<bool>> futures;
 	size_t numThreads = std::thread::hardware_concurrency();
+	
+	futures.reserve(numThreads);
 
 	while (n > 0) {
 		size_t m = mcl::fp::min_<size_t>(n, N);
