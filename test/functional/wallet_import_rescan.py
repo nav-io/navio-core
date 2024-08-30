@@ -82,10 +82,13 @@ class Variant(collections.namedtuple("Variant", "call data address_type rescan p
             )
             assert_equal(response, [{"success": True}])
 
-    def check(self, txid=None, amount=None, confirmation_height=None):
+    def check(self, txid=None, amount=None, confirmation_height=None, pending=False):
         """Verify that listtransactions/listreceivedbyaddress return expected values."""
 
-        txs = self.node.listtransactions(label=self.label, count=10000, include_watchonly=True)
+        if pending:
+                txs = self.node.listpendingtransactions(label=self.label, count=10000, include_watchonly=True)
+        else:
+            txs = self.node.listtransactions(label=self.label, count=10000, include_watchonly=True)
         current_height = self.node.getblockcount()
         assert_equal(len(txs), self.expected_txs)
 
@@ -323,7 +326,7 @@ class ImportRescanTest(BitcoinTestFramework):
                 assert_equal(variant.node.gettransaction(variant.child_txid)['confirmations'], 0)
                 variant.amount_received = variant.initial_amount
                 variant.expected_txs = 1
-                variant.check(variant.initial_txid, variant.initial_amount, 0)
+                variant.check(variant.initial_txid, variant.initial_amount, 0, True)
             else:
                 variant.amount_received = 0
                 variant.expected_txs = 0
