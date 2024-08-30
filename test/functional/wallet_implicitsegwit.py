@@ -31,7 +31,7 @@ def send_a_to_b(receive_node, send_node):
 
 def check_implicit_transactions(implicit_keys, implicit_node):
     # The implicit segwit node allows conversion all possible ways
-    txs = implicit_node.listtransactions(None, 99999)
+    txs = implicit_node.listpendingtransactions(None, 99999)
     for a in address_types:
         pubkey = implicit_keys[a]
         for b in address_types:

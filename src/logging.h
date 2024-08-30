@@ -71,7 +71,7 @@ enum LogFlags : uint64_t {
     SCAN = (1 << 28),
     TXPACKAGES = (1 << 29),
     DANDELION = (1 << 30),
-    ALL = ~(uint64_t)0,
+    ALL = ~(uint32_t)0,
 };
     enum class Level {
         Trace = 0, // High-volume or detailed logging for development/debugging
