@@ -14,7 +14,7 @@ bool CCoinsView::GetCoin(const COutPoint& outpoint, Coin& coin) const { return f
 uint256 CCoinsView::GetBestBlock() const { return uint256(); }
 OrderedElements<MclG1Point> CCoinsView::GetStakedCommitments() const { return OrderedElements<MclG1Point>(); };
 std::vector<uint256> CCoinsView::GetHeadBlocks() const { return std::vector<uint256>(); }
-bool CCoinsView::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, const OrderedElements<MclG1Point>& stakedCommitments, bool erase) { return false; }
+bool CCoinsView::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase) { return false; }
 std::unique_ptr<CCoinsViewCursor> CCoinsView::Cursor() const { return nullptr; }
 
 bool CCoinsView::HaveCoin(const COutPoint& outpoint) const
@@ -30,7 +30,7 @@ uint256 CCoinsViewBacked::GetBestBlock() const { return base->GetBestBlock(); }
 OrderedElements<MclG1Point> CCoinsViewBacked::GetStakedCommitments() const { return base->GetStakedCommitments(); };
 std::vector<uint256> CCoinsViewBacked::GetHeadBlocks() const { return base->GetHeadBlocks(); }
 void CCoinsViewBacked::SetBackend(CCoinsView &viewIn) { base = &viewIn; }
-bool CCoinsViewBacked::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, const OrderedElements<MclG1Point>& stakedCommitments, bool erase) { return base->BatchWrite(mapCoins, hashBlock, stakedCommitments, erase); }
+bool CCoinsViewBacked::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase) { return base->BatchWrite(mapCoins, hashBlock, stakedCommitments, erase); }
 std::unique_ptr<CCoinsViewCursor> CCoinsViewBacked::Cursor() const { return base->Cursor(); }
 size_t CCoinsViewBacked::EstimateSize() const { return base->EstimateSize(); }
 
@@ -113,7 +113,7 @@ void CCoinsViewCache::AddCoin(const COutPoint& outpoint, Coin&& coin, bool possi
            (bool)it->second.coin.IsCoinBase());
     if (it->second.coin.out.IsStakedCommitment()) {
         GetStakedCommitments();
-        cacheStakedCommitments.Add(it->second.coin.out.blsctData.rangeProof.Vs[0]);
+        cacheStakedCommitments[it->second.coin.out.blsctData.rangeProof.Vs[0]] = STAKED_COMMITMENT_UNSPENT;
         LogPrint(BCLog::POPS, "%s: Adding staked commitment %s from height %d\n", __func__, HexStr(it->second.coin.out.blsctData.rangeProof.Vs[0].GetVch()), (uint32_t)it->second.coin.nHeight);
     }
 }
@@ -168,7 +168,7 @@ bool CCoinsViewCache::SpendCoin(const COutPoint& outpoint, Coin* moveout)
 
 void CCoinsViewCache::RemoveStakedCommitment(const MclG1Point& commitment) {
     LogPrint(BCLog::POPS, "%s: Removing staked commitment %s\n", __func__, HexStr(commitment.GetVch()));
-    cacheStakedCommitments.Remove(commitment);
+    cacheStakedCommitments[commitment] = STAKED_COMMITMENT_SPENT;
 }
 
 const Coin& CCoinsViewCache::AccessCoin(const COutPoint& outpoint) const
@@ -203,10 +203,17 @@ uint256 CCoinsViewCache::GetBestBlock() const
 
 OrderedElements<MclG1Point> CCoinsViewCache::GetStakedCommitments() const
 {
-    if (cacheStakedCommitments.Empty()) {
-        cacheStakedCommitments = base->GetStakedCommitments();
+    auto ret = base->GetStakedCommitments();
+
+    for (auto& it : cacheStakedCommitments) {
+        if (it.second == STAKED_COMMITMENT_UNSPENT) {
+            ret.Add(it.first);
+        } else {
+            ret.Remove(it.first);
+        }
     }
-    return cacheStakedCommitments;
+
+    return ret;
 };
 
 
@@ -215,7 +222,7 @@ void CCoinsViewCache::SetBestBlock(const uint256& hashBlockIn)
     hashBlock = hashBlockIn;
 }
 
-bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn, const OrderedElements<MclG1Point>& cacheStakedCommitmentsIn, bool erase)
+bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn, CStakedCommitmentsMap& cacheStakedCommitmentsIn, bool erase)
 {
     for (CCoinsMap::iterator it = mapCoins.begin();
             it != mapCoins.end();
@@ -285,14 +292,19 @@ bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn
         }
     }
     hashBlock = hashBlockIn;
-    cacheStakedCommitments = cacheStakedCommitmentsIn;
+    for (auto& it : cacheStakedCommitmentsIn) {
+        cacheStakedCommitments[it.first] = it.second;
+    };
+    if (erase)
+        cacheStakedCommitmentsIn.clear();
+
     return true;
 }
 
 bool CCoinsViewCache::Flush() {
-    bool fOk = base->BatchWrite(cacheCoins, hashBlock, GetStakedCommitments(), /*erase=*/true);
+    bool fOk = base->BatchWrite(cacheCoins, hashBlock, cacheStakedCommitments, /*erase=*/true);
     if (fOk) {
-        if (!cacheCoins.empty() && !cacheStakedCommitments.Empty()) {
+        if (!cacheCoins.empty() || cacheStakedCommitments.size() != 0) {
             /* BatchWrite must erase all cacheCoins elements when erase=true. */
             throw std::logic_error("Not all cached coins were erased");
         }
@@ -304,7 +316,7 @@ bool CCoinsViewCache::Flush() {
 
 bool CCoinsViewCache::Sync()
 {
-    bool fOk = base->BatchWrite(cacheCoins, hashBlock, GetStakedCommitments(), /*erase=*/false);
+    bool fOk = base->BatchWrite(cacheCoins, hashBlock, cacheStakedCommitments, /*erase=*/false);
     // Instead of clearing `cacheCoins` as we would in Flush(), just clear the
     // FRESH/DIRTY flags of any coin that isn't spent.
     for (auto it = cacheCoins.begin(); it != cacheCoins.end(); ) {

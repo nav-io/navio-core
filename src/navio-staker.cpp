@@ -350,18 +350,35 @@ static UniValue CallRPC(BaseRequestHandler* rh, const std::string& strMethod, co
         }
     } else if (response.status == HTTP_SERVICE_UNAVAILABLE) {
         throw std::runtime_error(strprintf("Server response: %s", response.body));
-    } else if (response.status >= 400 && response.status != HTTP_BAD_REQUEST && response.status != HTTP_NOT_FOUND && response.status != HTTP_INTERNAL_SERVER_ERROR)
+    } else if (response.status >= 400 && response.status != HTTP_BAD_REQUEST && response.status != HTTP_NOT_FOUND && response.status != HTTP_INTERNAL_SERVER_ERROR) {
         throw std::runtime_error(strprintf("server returned HTTP error %d", response.status));
-    else if (response.body.empty())
+    } else if (response.body.empty()) {
         throw std::runtime_error("no response from server");
+    }
 
-    // Parse reply
     UniValue valReply(UniValue::VSTR);
-    if (!valReply.read(response.body))
+    if (!valReply.read(response.body)) {
         throw std::runtime_error("couldn't parse reply from server");
-    const UniValue& reply = rh->ProcessReply(valReply);
-    if (reply.empty())
+    }
+
+    UniValue reply = rh->ProcessReply(valReply);
+    if (reply.empty()) {
         throw std::runtime_error("expected reply to have result, error and id properties");
+    }
+
+    if (strMethod != "loadwallet") {
+        const UniValue& error = reply.find_value("error");
+        if (!error.isNull() && error["code"].getInt<int>() == RPC_WALLET_NOT_FOUND) {
+            auto loadwallet_reply = CallRPC(rh, "loadwallet", /* args=*/{rpcwallet->data()}, rpcwallet);
+            const UniValue& error = loadwallet_reply.find_value("error");
+
+            if (!error.isNull() && error["code"].getInt<int>() != RPC_WALLET_ALREADY_LOADED) {
+                return loadwallet_reply;
+            }
+
+            reply = CallRPC(rh, strMethod, args, rpcwallet);
+        }
+    }
 
     return reply;
 }
@@ -377,17 +394,17 @@ static UniValue CallRPC(BaseRequestHandler* rh, const std::string& strMethod, co
  */
 static UniValue ConnectAndCallRPC(BaseRequestHandler* rh, const std::string& strMethod, const std::vector<std::string>& args, const std::optional<std::string>& rpcwallet = {})
 {
-    UniValue response(UniValue::VOBJ);
+    UniValue reply(UniValue::VOBJ);
     // Execute and handle connection failures with -rpcwait.
-    const bool fWait = gArgs.GetBoolArg("-rpcwait", false);
+    const bool fWait = gArgs.GetBoolArg("-rpcwait", true);
     const int timeout = gArgs.GetIntArg("-rpcwaittimeout", DEFAULT_WAIT_CLIENT_TIMEOUT);
     const auto deadline{std::chrono::steady_clock::now() + 1s * timeout};
 
     do {
         try {
-            response = CallRPC(rh, strMethod, args, rpcwallet);
+            reply = CallRPC(rh, strMethod, args, rpcwallet);
             if (fWait) {
-                const UniValue& error = response.find_value("error");
+                const UniValue& error = reply.find_value("error");
                 if (!error.isNull() && error["code"].getInt<int>() == RPC_IN_WARMUP) {
                     throw CConnectionFailed("server in warmup");
                 }
@@ -401,7 +418,7 @@ static UniValue ConnectAndCallRPC(BaseRequestHandler* rh, const std::string& str
             }
         }
     } while (fWait);
-    return response;
+    return reply;
 }
 
 /** Parse UniValue error to update the message to print to std::cerr and the code to return. */
@@ -425,7 +442,7 @@ static void ParseError(const UniValue& error, std::string& strPrint, int& nRet)
     } else {
         strPrint = "error: " + error.write();
     }
-    nRet = abs(error["code"].getInt<int>());
+    nRet = error["code"].getInt<int>();
 }
 
 static std::string rpcPass;
@@ -522,31 +539,99 @@ bool TestSetup()
 
     try {
         UniValue reply = ConnectAndCallRPC(rh.get(), "listwallets", /* args=*/{});
-
-        // Parse reply
-        const UniValue& error = reply.find_value("error");
+        UniValue error = reply.find_value("error");
 
         std::string strError;
         int nRet;
 
-        if (error.isNull()) {
-            LogPrintf("%s: [%s] Test connection to RPC: OK\n", __func__, walletName);
+        if (!error.isNull()) {
+            ParseError(error, strError, nRet);
+            LogPrintf("%s: [%s] Could not connect to RPC node: (%s)\n", __func__, walletName, strError);
+            return false;
+        }
 
-            reply = ConnectAndCallRPC(rh.get(), "loadwallet", /* args=*/{walletName});
+        LogPrintf("%s: [%s] Test connection to RPC: OK\n", __func__, walletName);
+
+        reply = ConnectAndCallRPC(rh.get(), "loadwallet", /* args=*/{walletName});
+        error = reply.find_value("error");
+
+        strError.clear();
+        nRet = 0;
+
+        if (!error.isNull()) {
+            ParseError(error, strError, nRet);
+        }
+
+        if (nRet != RPC_WALLET_ALREADY_LOADED) {
+            LogPrintf("%s: [%s] Could not load wallet (%s)\n", __func__, walletName, strError);
+            return false;
+        }
+
+        LogPrintf("%s: [%s] Test load wallet: OK\n", __func__, walletName);
+
+        reply = ConnectAndCallRPC(rh.get(), "getwalletinfo", /* args=*/{}, walletName);
+        UniValue result = reply.find_value("result");
+        error = reply.find_value("error");
+
+        strError.clear();
+        nRet = 0;
+
+        if (!error.isNull()) {
+            ParseError(error, strError, nRet);
+            LogPrintf("%s: [%s] Could not get wallet info (%s)\n", __func__, walletName, strError);
+            return false;
+        }
+
+        if (!result["blsct"].get_bool()) {
+            LogPrintf("%s: [%s] Wallet is not of type blsct\n", __func__, walletName);
+            return false;
+        }
+
+        if (!result["unlocked_until"].isNull() && result["unlocked_until"].get_real() == 0) {
+            LogPrintf("%s: [%s] Wallet is locked. Testing password.\n", __func__, walletName);
+
+            mustUnlockWallet = true;
+
+            reply = ConnectAndCallRPC(rh.get(), "walletpassphrase", /* args=*/{walletPassphrase, "1"}, walletName);
 
             const UniValue& error = reply.find_value("error");
 
             strError.clear();
             nRet = 0;
 
-            if (!error.isNull()) {
+            if (error.isNull()) {
+                LogPrintf("%s: [%s] Wallet passphrase test: OK\n", __func__, walletName);
+            } else {
                 ParseError(error, strError, nRet);
+                LogPrintf("%s: [%s] Could not unlock wallet (%s)\n", __func__, walletName, strError);
+
+                return false;
+            }
+        }
+
+        if (coinbase_dest == "") {
+            reply = ConnectAndCallRPC(rh.get(), "getaddressesbylabel", /* args=*/{"Staking"}, walletName);
+
+            const UniValue& result = reply.find_value("result");
+            const UniValue& error = reply.find_value("error");
+
+            if (error.isNull() && result.isObject()) {
+                const UniValue& array = result.get_obj();
+
+                for (auto& it : array.getKeys()) {
+                    const UniValue& obj = array.find_value(it);
+
+                    if (obj.isObject()) {
+                        if (obj.get_obj().find_value("purpose").get_str() == "receive") {
+                            coinbase_dest = it;
+                            break;
+                        }
+                    }
+                }
             }
 
-            if (error.isNull() || nRet == 35) {
-                LogPrintf("%s: [%s] Test load wallet: OK\n", __func__, walletName);
-
-                reply = ConnectAndCallRPC(rh.get(), "getwalletinfo", /* args=*/{}, walletName);
+            if (coinbase_dest == "") {
+                reply = ConnectAndCallRPC(rh.get(), "getnewaddress", /* args=*/{"Staking", "blsct"}, walletName);
 
                 const UniValue& result = reply.find_value("result");
                 const UniValue& error = reply.find_value("error");
@@ -554,96 +639,22 @@ bool TestSetup()
                 strError.clear();
                 nRet = 0;
 
-                if (!error.isNull()) {
-                    ParseError(error, strError, nRet);
-                }
-
-                if (error.isNull()) {
-                    if (!result["blsct"].get_bool()) {
-                        LogPrintf("%s: [%s] Wallet is not of type blsct\n", __func__, walletName);
-                        return false;
-                    }
-
-                    if (!result["unlocked_until"].isNull() && result["unlocked_until"].get_real() == 0) {
-                        LogPrintf("%s: [%s] Wallet is locked. Testing password.\n", __func__, walletName);
-
-                        mustUnlockWallet = true;
-
-                        reply = ConnectAndCallRPC(rh.get(), "walletpassphrase", /* args=*/{walletPassphrase, "1"}, walletName);
-
-                        const UniValue& error = reply.find_value("error");
-
-                        strError.clear();
-                        nRet = 0;
-
-                        if (error.isNull()) {
-                            LogPrintf("%s: [%s] Wallet passphrase test: OK\n", __func__, walletName);
-                        } else {
-                            ParseError(error, strError, nRet);
-                            LogPrintf("%s: [%s] Could not unlock wallet (%s)\n", __func__, walletName, strError);
-
-                            return false;
-                        }
-                    }
-
-                    if (coinbase_dest == "") {
-                        reply = ConnectAndCallRPC(rh.get(), "getaddressesbylabel", /* args=*/{"Staking"}, walletName);
-
-                        const UniValue& result = reply.find_value("result");
-                        const UniValue& error = reply.find_value("error");
-
-                        if (error.isNull() && result.isObject()) {
-                            const UniValue& array = result.get_obj();
-
-                            for (auto& it : array.getKeys()) {
-                                const UniValue& obj = array.find_value(it);
-
-                                if (obj.isObject()) {
-                                    if (obj.get_obj().find_value("purpose").get_str() == "receive") {
-                                        coinbase_dest = it;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (coinbase_dest == "") {
-                            reply = ConnectAndCallRPC(rh.get(), "getnewaddress", /* args=*/{"Staking", "blsct"}, walletName);
-
-                            const UniValue& result = reply.find_value("result");
-                            const UniValue& error = reply.find_value("error");
-
-                            strError.clear();
-                            nRet = 0;
-
-                            if (error.isNull() || !result.isStr()) {
-                                coinbase_dest = result.get_str();
-                            } else {
-                                ParseError(error, strError, nRet);
-                                LogPrintf("%s: [%s] Could not get an address for rewards from wallet (%s)\n", __func__, walletName, strError);
-
-                                return false;
-                            }
-                        }
-                    }
-
-                    LogPrintf("%s: [%s] Rewards address: %s\n", __func__, walletName, coinbase_dest);
-
-                    return true;
+                if (error.isNull() || !result.isStr()) {
+                    coinbase_dest = result.get_str();
                 } else {
-                    LogPrintf("%s: [%s] Could not get wallet info (%s)\n", __func__, walletName, strError);
+                    ParseError(error, strError, nRet);
+                    LogPrintf("%s: [%s] Could not get an address for rewards from wallet (%s)\n", __func__, walletName, strError);
+
                     return false;
                 }
-            } else {
-                LogPrintf("%s: [%s] Could not load wallet (%s)\n", __func__, walletName, strError);
-                return false;
             }
-        } else {
-            LogPrintf("%s: [%s] Could not connect to RPC node: %s\n", __func__, walletName, error.getValStr());
-            return false;
         }
+
+        LogPrintf("%s: [%s] Rewards address: (%s)\n", __func__, walletName, coinbase_dest);
+
+        return true;
     } catch (const std::exception& e) {
-        LogPrintf("%s: [%s] error: %s\n", __func__, walletName, e.what());
+        LogPrintf("%s: [%s] error: (%s)\n", __func__, walletName, e.what());
         return false;
     }
 
@@ -715,9 +726,18 @@ std::string EncodeHexBlock(const CBlock& block)
 
 std::vector<StakedCommitment> GetStakedCommitments(const std::unique_ptr<BaseRequestHandler>& rh)
 {
-    const UniValue& reply_staked = ConnectAndCallRPC(rh.get(), "liststakedcommitments", /* args=*/{}, walletName);
+    const UniValue& response = ConnectAndCallRPC(rh.get(), "liststakedcommitments", /* args=*/{}, walletName);
+    const UniValue& error = response.find_value("error");
+    const UniValue& result = response.find_value("result");
 
-    const UniValue& result = reply_staked.find_value("result");
+    std::string strError;
+    auto nRet = 0;
+
+    if (!error.isNull()) {
+        ParseError(error, strError, nRet);
+        LogPrintf("%s: [%s] Could not load stake commitments (%s)\n", __func__, walletName, strError);
+        return std::vector<StakedCommitment> {};
+    }
 
     return UniValueArrayToStakedCommitmentsMine(result.get_array());
 }
@@ -859,11 +879,9 @@ MAIN_FUNCTION
         return EXIT_FAILURE;
     }
 
-    int ret = EXIT_FAILURE;
-
     Setup();
     if (!TestSetup())
-        return ret;
+        return EXIT_FAILURE;
 
     Loop();
 

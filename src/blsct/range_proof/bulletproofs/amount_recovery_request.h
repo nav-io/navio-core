@@ -33,7 +33,8 @@ struct AmountRecoveryRequest
 
     static AmountRecoveryRequest<T> of(
         const RangeProofWithSeed<T>& proof,
-        const range_proof::GammaSeed<T>& nonce);
+        const range_proof::GammaSeed<T>& nonce,
+        const size_t& id = 0);
 };
 
 } // namespace bulletproofs
