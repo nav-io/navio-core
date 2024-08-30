@@ -36,7 +36,7 @@ struct LogCategory {
 };
 
 namespace BCLog {
-enum LogFlags : uint64_t {
+enum LogFlags : uint32_t {
     NONE = 0,
     NET = (1 << 0),
     TOR = (1 << 1),
