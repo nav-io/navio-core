@@ -53,7 +53,8 @@
 #define SCRIPT_SIZE 28
 #define MAX_MEMO_LEN 100
 #define MEMO_BUF_SIZE MAX_MEMO_LEN + 1
-#define TXID_STR_LEN UINT256_SIZE * 2
+#define TX_ID_SIZE UINT256_SIZE
+#define TX_ID_STR_LEN TX_ID_SIZE * 2
 
 /* return codes */
 #define BLSCT_RESULT uint8_t
@@ -167,6 +168,7 @@ typedef uint8_t BlsctSubAddr[SUBADDRESS_SIZE];
 typedef uint8_t BlsctSubAddrId[SUBADDRESS_ID_SIZE];
 typedef uint8_t BlsctTokenId[TOKEN_ID_SIZE];
 typedef uint8_t BlsctUint256[UINT256_SIZE];
+typedef uint8_t BlsctTxId[TX_ID_SIZE];
 typedef uint8_t BlsctViewTag[VIEW_TAG_SIZE];
 typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
 typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
@@ -444,6 +446,17 @@ size_t get_tx_outs_size(const std::vector<CTxOut>* tx_outs);
 
 const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i);
 
+// TxIn
+const BlsctScript* get_tx_in_script_sig(const CTxIn* tx_in);
+
+uint32_t get_tx_in_sequence(const CTxIn* tx_in);
+
+const BlsctScript* get_tx_in_script_witness(const CTxIn* tx_in);
+
+const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in);
+
+uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in);
+
 // TxOut
 uint64_t get_tx_out_value(const CTxOut* tx_out);
 
@@ -459,7 +472,7 @@ const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out);
 
 const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out);
 
-const uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
+uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
 
 const BlsctPoint* get_tx_out_range_proof_A(const CTxOut* tx_out);
 const BlsctPoint* get_tx_out_range_proof_S(const CTxOut* tx_out);

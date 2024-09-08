@@ -509,7 +509,7 @@ BlsctRetVal* gen_out_point(
     MALLOC(BlsctOutPoint, blsct_out_point);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_out_point);
 
-    std::string tx_id_str(tx_id_c_str, TXID_STR_LEN);
+    std::string tx_id_str(tx_id_c_str, TX_ID_STR_LEN);
 
     auto tx_id = TxidFromString(tx_id_str);
     COutPoint out_point { tx_id, out_index };
@@ -750,6 +750,7 @@ CMutableTransaction* deserialize_tx(
     return tx;
 }
 
+// tx in
 const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx) {
     return &tx->vin;
 }
@@ -766,6 +767,33 @@ const BlsctRetVal* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i) {
     return succ(tx_in_copy, tx_in_size);
 }
 
+const BlsctScript* get_tx_in_script_sig(const CTxIn* tx_in) {
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &tx_in->scriptSig, SCRIPT_SIZE);
+    return copy;
+}
+
+uint32_t get_tx_in_sequence(const CTxIn* tx_in) {
+    return tx_in->nSequence;
+}
+
+const BlsctScript* get_tx_in_script_witness(const CTxIn* tx_in) {
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &tx_in->scriptWitness, SCRIPT_SIZE);
+    return copy;
+}
+
+const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in) {
+    auto copy = static_cast<BlsctTxId*>(malloc(TX_ID_SIZE));
+    std::memcpy(copy, &tx_in->prevout.hash, TX_ID_SIZE);
+    return copy;
+}
+
+uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in) {
+    return tx_in->prevout.n;
+}
+
+// tx out
 const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx) {
     return &tx->vout;
 }
@@ -825,7 +853,7 @@ const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out) {
     return copy;
 }
 
-const uint16_t get_tx_out_view_tag(const CTxOut* tx_out) {
+uint16_t get_tx_out_view_tag(const CTxOut* tx_out) {
     return tx_out->blsctData.viewTag;
 }
 
