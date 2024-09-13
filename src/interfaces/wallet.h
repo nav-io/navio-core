@@ -6,6 +6,7 @@
 #define BITCOIN_INTERFACES_WALLET_H
 
 #include <addresstype.h>
+#include <blsct/wallet/import_wallet_type.h>
 #include <consensus/amount.h>
 #include <interfaces/chain.h>
 #include <pubkey.h>
@@ -323,7 +324,7 @@ class WalletLoader : public ChainClient
 {
 public:
     //! Create new wallet.
-    virtual util::Result<std::unique_ptr<Wallet>> createWallet(const std::string& name, const SecureString& passphrase, uint64_t wallet_creation_flags, std::vector<bilingual_str>& warnings) = 0;
+    virtual util::Result<std::unique_ptr<Wallet>> createWallet(const std::string& name, const SecureString& passphrase, const std::vector<unsigned char>& seed, const blsct::SeedType& type, uint64_t wallet_creation_flags, std::vector<bilingual_str>& warnings) = 0;
 
     //! Load existing wallet.
     virtual util::Result<std::unique_ptr<Wallet>> loadWallet(const std::string& name, std::vector<bilingual_str>& warnings) = 0;

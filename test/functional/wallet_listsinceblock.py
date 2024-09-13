@@ -54,7 +54,7 @@ class ListSinceBlockTest(BitcoinTestFramework):
         self.log.info("Test no blockhash")
         txid = self.nodes[2].sendtoaddress(self.nodes[0].getnewaddress(), 1)
         self.sync_all()
-        assert_array_result(self.nodes[0].listtransactions(), {"txid": txid}, {
+        assert_array_result(self.nodes[0].listpendingtransactions(), {"txid": txid}, {
             "category": "receive",
             "amount": 1,
             "confirmations": 0,

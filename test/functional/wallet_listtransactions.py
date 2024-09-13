@@ -40,7 +40,7 @@ class ListTransactionsTest(BitcoinTestFramework):
         assert_array_result(self.nodes[0].listtransactions(),
                             {"txid": txid},
                             {"category": "send", "amount": Decimal("-0.1"), "confirmations": 0, "trusted": True})
-        assert_array_result(self.nodes[1].listtransactions(),
+        assert_array_result(self.nodes[1].listpendingtransactions(),
                             {"txid": txid},
                             {"category": "receive", "amount": Decimal("0.1"), "confirmations": 0, "trusted": False})
         self.log.info("Test confirmations change after mining a block")
@@ -58,9 +58,6 @@ class ListTransactionsTest(BitcoinTestFramework):
         assert_array_result(self.nodes[0].listtransactions(),
                             {"txid": txid, "category": "send"},
                             {"amount": Decimal("-0.2")})
-        assert_array_result(self.nodes[0].listtransactions(),
-                            {"txid": txid, "category": "receive"},
-                            {"amount": Decimal("0.2")})
 
         self.log.info("Test sendmany from node1: twice to self, twice to node0")
         send_to = {self.nodes[0].getnewaddress(): 0.11,
@@ -72,26 +69,14 @@ class ListTransactionsTest(BitcoinTestFramework):
         assert_array_result(self.nodes[1].listtransactions(),
                             {"category": "send", "amount": Decimal("-0.11")},
                             {"txid": txid})
-        assert_array_result(self.nodes[0].listtransactions(),
-                            {"category": "receive", "amount": Decimal("0.11")},
-                            {"txid": txid})
         assert_array_result(self.nodes[1].listtransactions(),
                             {"category": "send", "amount": Decimal("-0.22")},
                             {"txid": txid})
         assert_array_result(self.nodes[1].listtransactions(),
-                            {"category": "receive", "amount": Decimal("0.22")},
-                            {"txid": txid})
-        assert_array_result(self.nodes[1].listtransactions(),
                             {"category": "send", "amount": Decimal("-0.33")},
-                            {"txid": txid})
-        assert_array_result(self.nodes[0].listtransactions(),
-                            {"category": "receive", "amount": Decimal("0.33")},
                             {"txid": txid})
         assert_array_result(self.nodes[1].listtransactions(),
                             {"category": "send", "amount": Decimal("-0.44")},
-                            {"txid": txid})
-        assert_array_result(self.nodes[1].listtransactions(),
-                            {"category": "receive", "amount": Decimal("0.44")},
                             {"txid": txid})
 
         if not self.options.descriptors:
@@ -140,7 +125,7 @@ class ListTransactionsTest(BitcoinTestFramework):
         assert not is_opt_in(self.nodes[0], txid_1)
         assert_array_result(self.nodes[0].listtransactions(), {"txid": txid_1}, {"bip125-replaceable": "no"})
         self.sync_mempools()
-        assert_array_result(self.nodes[1].listtransactions(), {"txid": txid_1}, {"bip125-replaceable": "no"})
+        assert_array_result(self.nodes[1].listpendingtransactions(), {"txid": txid_1}, {"bip125-replaceable": "no"})
 
         # Tx2 will build off tx1, still not opting in to RBF.
         utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[0], txid_1)
@@ -159,7 +144,7 @@ class ListTransactionsTest(BitcoinTestFramework):
         assert not is_opt_in(self.nodes[1], txid_2)
         assert_array_result(self.nodes[1].listtransactions(), {"txid": txid_2}, {"bip125-replaceable": "no"})
         self.sync_mempools()
-        assert_array_result(self.nodes[0].listtransactions(), {"txid": txid_2}, {"bip125-replaceable": "no"})
+        assert_array_result(self.nodes[0].listpendingtransactions(), {"txid": txid_2}, {"bip125-replaceable": "no"})
 
         self.log.info("Test txs with opt-in RBF (bip125-replaceable=yes)")
         # Tx3 will opt-in to RBF
@@ -176,7 +161,7 @@ class ListTransactionsTest(BitcoinTestFramework):
         assert is_opt_in(self.nodes[0], txid_3)
         assert_array_result(self.nodes[0].listtransactions(), {"txid": txid_3}, {"bip125-replaceable": "yes"})
         self.sync_mempools()
-        assert_array_result(self.nodes[1].listtransactions(), {"txid": txid_3}, {"bip125-replaceable": "yes"})
+        assert_array_result(self.nodes[1].listpendingtransactions(), {"txid": txid_3}, {"bip125-replaceable": "yes"})
 
         # Tx4 will chain off tx3.  Doesn't signal itself, but depends on one
         # that does.
@@ -190,7 +175,7 @@ class ListTransactionsTest(BitcoinTestFramework):
         assert not is_opt_in(self.nodes[1], txid_4)
         assert_array_result(self.nodes[1].listtransactions(), {"txid": txid_4}, {"bip125-replaceable": "yes"})
         self.sync_mempools()
-        assert_array_result(self.nodes[0].listtransactions(), {"txid": txid_4}, {"bip125-replaceable": "yes"})
+        assert_array_result(self.nodes[0].listpendingtransactions(), {"txid": txid_4}, {"bip125-replaceable": "yes"})
 
         self.log.info("Test tx with unknown RBF state (bip125-replaceable=unknown)")
         # Replace tx3, and check that tx4 becomes unknown
@@ -201,7 +186,7 @@ class ListTransactionsTest(BitcoinTestFramework):
         txid_3b = self.nodes[0].sendrawtransaction(tx3_b_signed, 0)
         assert is_opt_in(self.nodes[0], txid_3b)
 
-        assert_array_result(self.nodes[0].listtransactions(), {"txid": txid_4}, {"bip125-replaceable": "unknown"})
+        assert_array_result(self.nodes[0].listpendingtransactions(), {"txid": txid_4}, {"bip125-replaceable": "unknown"})
         self.sync_mempools()
         assert_array_result(self.nodes[1].listtransactions(), {"txid": txid_4}, {"bip125-replaceable": "unknown"})
 

@@ -200,6 +200,7 @@ BLSCT_H = \
   blsct/wallet/address.h \
   blsct/wallet/hdchain.h \
   blsct/wallet/helpers.h \
+  blsct/wallet/import_wallet_type.h \
   blsct/wallet/keyman.h \
   blsct/wallet/keyring.h \
   blsct/wallet/txfactory.h \
@@ -560,7 +561,6 @@ libbitcoin_node_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/wallet/verification.cpp \
   blsct/signature.cpp \
-  blsct/wallet/verification.cpp \
   chain.cpp \
   chainparams.cpp \
   consensus/tx_verify.cpp \

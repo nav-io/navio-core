@@ -253,6 +253,8 @@ bool RangeProofLogic<T>::VerifyProofs(
     // Vector to hold future results from async tasks
     std::vector<std::future<bool>> futures;
 
+    futures.reserve(proof_transcripts.size());
+
     // Launch a verification task for each proof transcript in parallel
     for (const RangeProofWithTranscript<T>& p : proof_transcripts) {
         futures.emplace_back(std::async(std::launch::async, [this, &p, max_mn]() -> bool {

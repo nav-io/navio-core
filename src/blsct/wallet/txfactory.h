@@ -28,9 +28,12 @@ class TxFactoryBase
 {
 protected:
     CMutableTransaction tx;
-    std::map<TokenId, std::vector<UnsignedOutput>> vOutputs;
-    std::map<TokenId, std::vector<UnsignedInput>> vInputs;
-    std::map<TokenId, Amounts> nAmounts;
+    std::map<TokenId, std::vector<UnsignedOutput>>
+        vOutputs;
+    std::map<TokenId, std::vector<UnsignedInput>>
+        vInputs;
+    std::map<TokenId, Amounts>
+        nAmounts;
 
 public:
     TxFactoryBase(){};

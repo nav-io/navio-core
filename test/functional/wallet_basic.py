@@ -672,7 +672,7 @@ class WalletTest(BitcoinTestFramework):
         # Test gettransaction response with different arguments.
         self.log.info("Testing gettransaction response with different arguments...")
         self.nodes[0].setlabel(change, 'baz')
-        baz = self.nodes[0].listtransactions(label="baz", count=1)[0]
+        baz = self.nodes[0].listpendingtransactions(label="baz", count=1)[0]
         expected_receive_vout = {"label":    "baz",
                                  "address":  baz["address"],
                                  "amount":   baz["amount"],

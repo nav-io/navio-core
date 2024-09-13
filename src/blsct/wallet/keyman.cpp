@@ -248,7 +248,7 @@ void KeyMan::SetHDSeed(const PrivateKey& key)
         throw std::runtime_error(std::string(__func__) + ": AddSpendKey failed");
 
     if (!AddViewKey(viewKey, viewKey.GetPublicKey()))
-        throw std::runtime_error(std::string(__func__) + ": AddKeyPubKey failed");
+        throw std::runtime_error(std::string(__func__) + ": AddViewKey failed");
 
     if (!AddKeyPubKey(tokenKey, tokenKey.GetPublicKey()))
         throw std::runtime_error(std::string(__func__) + ": AddKeyPubKey failed");
@@ -261,13 +261,39 @@ void KeyMan::SetHDSeed(const PrivateKey& key)
     wallet::WalletBatch batch(m_storage.GetDatabase());
 }
 
-bool KeyMan::SetupGeneration(bool force)
+bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force)
 {
     if ((CanGenerateKeys() && !force) || m_storage.IsLocked()) {
         return false;
     }
 
-    SetHDSeed(GenerateNewSeed());
+    if (seed.size() == 32) {
+        if (type == IMPORT_MASTER_KEY) {
+            MclScalar scalarSeed;
+            scalarSeed.SetVch(seed);
+            SetHDSeed(scalarSeed);
+        }
+    } else if (seed.size() == 80) {
+        if (type == IMPORT_VIEW_KEY) {
+            std::vector<unsigned char> viewVch(seed.begin(), seed.begin() + 32);
+            std::vector<unsigned char> spendingVch(seed.begin() + 32, seed.end());
+
+            MclScalar scalarView;
+            scalarView.SetVch(viewVch);
+
+            MclG1Point pointSpending;
+            pointSpending.SetVch(spendingVch);
+
+            if (!AddViewKey(scalarView, PrivateKey(scalarView).GetPublicKey()))
+                throw std::runtime_error(std::string(__func__) + ": AddViewKey failed");
+
+            if (!AddSpendKey(pointSpending))
+                throw std::runtime_error(std::string(__func__) + ": AddSpendKey failed");
+        }
+    } else {
+        SetHDSeed(GenerateNewSeed());
+    }
+
     if (!NewSubAddressPool() || !NewSubAddressPool(-1) || !NewSubAddressPool(-2)) {
         return false;
     }
@@ -460,17 +486,15 @@ blsct::PrivateKey KeyMan::GetMasterSeedKey() const
 
 blsct::PrivateKey KeyMan::GetPrivateViewKey() const
 {
-    if (!IsHDEnabled())
-        throw std::runtime_error(strprintf("%s: the wallet has no HD enabled"));
+    if (!fViewKeyDefined)
+        throw std::runtime_error(strprintf("%s: the wallet has no view key available"));
 
-    auto viewId = m_hd_chain.view_id;
+    return viewKey;
+}
 
-    PrivateKey ret;
-
-    if (!GetKey(viewId, ret))
-        throw std::runtime_error(strprintf("%s: could not access the private view key", __func__));
-
-    return ret;
+blsct::PublicKey KeyMan::GetPublicSpendingKey() const
+{
+    return spendPublicKey;
 }
 
 blsct::PrivateKey KeyMan::GetSpendingKey() const
