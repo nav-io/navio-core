@@ -307,6 +307,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "createwallet", 6, "load_on_startup"},
     { "createwallet", 7, "external_signer"},
     { "createwallet", 8, "blsct"},
+    { "createwallet", 9, "seed"},
     { "restorewallet", 2, "load_on_startup"},
     { "loadwallet", 1, "load_on_startup"},
     { "unloadwallet", 1, "load_on_startup"},
