@@ -419,11 +419,11 @@ static RPCHelpMan createwallet()
             if (!request.params[9].isNull() && request.params[9].isStr()) {
                 seed = ParseHex(request.params[9].get_str());
 
-                if (seed.size() == 160) {
+                if (seed.size() == 80) {
                     seed = ParseHex(request.params[10].get_str());
                     type = blsct::IMPORT_VIEW_KEY;
                     flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
-                } else if (seed.size() != 64) {
+                } else if (seed.size() != 32) {
                     throw JSONRPCError(RPC_WALLET_ERROR, "Seed must be 64 (master) or 160 (view) characters long");
                 }
             }
