@@ -706,8 +706,13 @@ RPCHelpMan getblsctseed()
             const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
 
             auto seed = blsct_km.GetMasterSeedKey();
+            auto strSeed = seed.GetScalar().GetString();
 
-            return seed.GetScalar().GetString();
+            if (strSeed.length() < 64) {
+                strSeed.insert(0, 64 - strSeed.length(), '0');
+            }
+
+            return strSeed;
         },
     };
 }
@@ -730,8 +735,18 @@ RPCHelpMan getblsctauditkey()
             const CWallet& wallet = *pwallet;
             const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
 
-            return strprintf("%s%s", blsct_km.GetPrivateViewKey().GetScalar().GetString(), HexStr(blsct_km.GetPublicSpendingKey().GetVch()));
-            ;
+            auto strViewKey = blsct_km.GetPrivateViewKey().GetScalar().GetString();
+            auto strSpendingKey = HexStr(blsct_km.GetPublicSpendingKey().GetVch());
+
+            if (strViewKey.length() < 64) {
+                strViewKey.insert(0, 64 - strViewKey.length(), '0');
+            }
+
+            if (strSpendingKey.length() < 96) {
+                strSpendingKey.insert(0, 96 - strSpendingKey.length(), '0');
+            }
+
+            return strprintf("%s%s", strViewKey, strSpendingKey);
         },
     };
 }

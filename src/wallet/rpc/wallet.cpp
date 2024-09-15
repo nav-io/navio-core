@@ -420,7 +420,6 @@ static RPCHelpMan createwallet()
                 seed = ParseHex(request.params[9].get_str());
 
                 if (seed.size() == 80) {
-                    seed = ParseHex(request.params[10].get_str());
                     type = blsct::IMPORT_VIEW_KEY;
                     flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
                 } else if (seed.size() != 32) {
