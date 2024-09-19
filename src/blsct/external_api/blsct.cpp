@@ -915,37 +915,63 @@ const BlsctScalar* get_tx_out_range_proof_t_hat(const CTxOut* tx_out) {
     return copy;
 }
 
+const BlsctSignature* sign_message(
+    const BlsctScalar* blsct_priv_key,
+    const char* blsct_msg
+) {
+    Scalar scalar_priv_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+        blsct_priv_key, SCALAR_SIZE, scalar_priv_key
+    );
+    auto priv_key = blsct::PrivateKey(scalar_priv_key);
+
+    std::string msg_str(blsct_msg);
+    blsct::Message msg(msg_str.begin(), msg_str.end());
+    blsct::Signature sig = priv_key.Sign(msg);
+
+    BlsctSignature* blsct_sig = static_cast<BlsctSignature*>(
+        malloc(SIGNATURE_SIZE)
+    );
+    SERIALIZE_AND_COPY(sig, blsct_sig);
+
+    return blsct_sig;
+}
+
+bool verify_msg_sig(
+    const BlsctPubKey *blsct_pub_key,
+    const char* blsct_msg,
+    const BlsctSignature* blsct_signature
+) {
+    blsct::PublicKey pub_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_pub_key, PUBLIC_KEY_SIZE, pub_key);
+
+    std::string msg_str(blsct_msg);
+    blsct::Message msg(msg_str.begin(), msg_str.end());
+
+    blsct::Signature signature;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_signature, SIGNATURE_SIZE, signature);
+
+    return pub_key.Verify(msg, signature);
+}
+
+BlsctPubKey* scalar_to_pub_key(
+    const BlsctScalar* blsct_scalar
+) {
+    Scalar scalar;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+        blsct_scalar, SCALAR_SIZE, scalar
+    );
+    auto priv_key = blsct::PrivateKey(scalar);
+    auto pub_key = priv_key.GetPublicKey();
+
+    BlsctPubKey* blsct_pub_key = static_cast<BlsctPubKey*>(
+        malloc(PUBLIC_KEY_SIZE)
+    );
+    SERIALIZE_AND_COPY(pub_key, blsct_pub_key);
+    return blsct_pub_key;
+}
+
 /*
-void blsct_gen_random_priv_key(
-    BlsctScalar blsct_priv_key
-) {
-    Scalar priv_key = Scalar::Rand();
-    SERIALIZE_AND_COPY(priv_key, blsct_priv_key);
-}
-
-void blsct_gen_priv_key(
-    const uint8_t priv_key[PRIVATE_KEY_SIZE],
-    BlsctScalar blsct_priv_key
-) {
-    std::vector<uint8_t> vec { priv_key, priv_key + PRIVATE_KEY_SIZE };
-    Scalar tmp(vec);
-    SERIALIZE_AND_COPY(tmp, blsct_priv_key);
-}
-
-void blsct_uint64_to_blsct_uint256(
-    const uint64_t n,
-    BlsctUint256 blsct_uint256
-) {
-    std::memset(blsct_uint256, 0, UINT256_SIZE);
-    uint64_t tmp = n;
-
-    // BlsctUint256 is little-endian
-    for (size_t i=0; i<8; ++i) {
-        blsct_uint256[g_is_little_endian ? i : 32 - i] =
-            static_cast<uint8_t>(tmp & 0xFF);
-        tmp >>= 8;
-    }
-}
 
 bool blsct_is_valid_point(BlsctPoint blsct_point)
 {
@@ -955,7 +981,7 @@ bool blsct_is_valid_point(BlsctPoint blsct_point)
     return p.IsValid();
 }
 
-void blsjct_hash_byte_str_to_public_key(
+void blsct_hash_byte_str_to_public_key(
     const char* src_str,
     const size_t src_str_size,
     BlsctPubKey blsct_pub_key
@@ -983,65 +1009,6 @@ void blsct_gen_dpk_with_keys_and_sub_addr_id(
 
     auto dpk = std::get<blsct::DoublePublicKey>(sub_addr.GetDestination());
     SERIALIZE_AND_COPY(dpk, blsct_dpk);
-}
-
-bool blsct_decode_token_id(
-    const BlsctTokenId blsct_token_id,
-    BlsctTokenIdDe* blsct_token_id_de
-) {
-    TokenId token_id;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-        blsct_token_id,
-        TOKEN_ID_SIZE,
-        token_id
-    );
-    auto& token = token_id.token;
-    blsct_token_id_de->token = token.GetUint64(0);
-
-    bool is_token_within_uint64_range = true;
-    for (auto it = token.begin() + 8; it != token.end(); ++it) {
-        if (*it != 0) {
-            is_token_within_uint64_range = false;
-            blsct_token_id_de->token = std::numeric_limits<uint64_t>::max();
-        }
-    }
-    blsct_token_id_de->subid = token_id.subid;
-
-    return is_token_within_uint64_range;
-}
-
-void blsct_priv_key_to_pub_key(
-    const BlsctPrivKey blsct_priv_key,
-    BlsctPubKey blsct_pub_key
-) {
-    blsct::PrivateKey priv_key;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-        blsct_priv_key, PRIVATE_KEY_SIZE, priv_key
-    );
-    auto pub_key = priv_key.GetPublicKey();
-    SERIALIZE_AND_COPY(pub_key, blsct_pub_key);
-}
-
-static inline bool from_blsct_point_to_mcl_point(
-    const BlsctPoint blsct_point,
-    Point& point
-) {
-    std::vector<uint8_t> vec(
-        blsct_point,
-        blsct_point + Point::SERIALIZATION_SIZE
-    );
-    return point.SetVch(vec);
-}
-
-static inline void from_blsct_scalar_to_mcl_scalar(
-    const BlsctScalar blsct_scalar,
-    Scalar& scalar
-) {
-    std::vector<uint8_t> vec(
-        blsct_scalar,
-        blsct_scalar + Scalar::SERIALIZATION_SIZE
-    );
-    scalar.SetVch(vec);
 }
 
 BLSCT_RESULT blsct_derive_sub_addr(
@@ -1224,203 +1191,6 @@ BLSCT_RESULT blsct_calc_priv_spending_key(
     return BLSCT_SUCCESS;
 }
 
-void blsct_deserialize_tx(
-    const uint8_t* ser_tx,
-    const size_t ser_tx_size,
-    BlsctTransaction** const blsct_tx
-) {
-    // deserialize CMutableTransaction
-    CMutableTransaction tx;
-    DataStream st{};
-    TransactionSerParams params { .allow_witness = true };
-    ParamsStream ps {params, st};
-
-    for (size_t i=0; i<ser_tx_size; ++i) {
-        ps << ser_tx[i];
-    }
-    tx.Unserialize(ps);
-
-    // construct BlsctTransaction from CMutableTransaction
-    *blsct_tx = new BlsctTransaction;
-
-    (*blsct_tx)->version = tx.nVersion;
-    (*blsct_tx)->lock_time = tx.nLockTime;
-
-    // tx signature
-    SERIALIZE_AND_COPY(tx.txSig, (*blsct_tx)->tx_sig);
-
-    // CTxIn
-    (*blsct_tx)->num_ins = tx.vin.size();
-    (*blsct_tx)->ins = new BlsctCTxIn[tx.vin.size()];
-
-    for (size_t i=0; i<tx.vin.size(); ++i) {
-        auto& in = (*blsct_tx)->ins[i];
-        auto& tx_in = tx.vin[i];
-
-        in.sequence = tx_in.nSequence;
-
-        // prev out
-        in.prev_out.n = tx_in.prevout.n;
-        std::memcpy(
-            in.prev_out.hash,
-            tx_in.prevout.hash.data(),
-            UINT256_SIZE
-        );
-
-        // script_sig
-        in.script_sig.size = tx_in.scriptSig.size();
-        std::memcpy(
-            in.script_sig.script,
-            tx_in.scriptSig.data(),
-            tx_in.scriptSig.size()
-        );
-
-        // script witness
-        in.script_witness.size = tx_in.scriptWitness.stack.size();
-        in.script_witness.stack = new BlsctVector[in.script_witness.size];
-
-        for (size_t i=0; i<in.script_witness.size; ++i) {
-            auto& dest = in.script_witness.stack[i];
-            auto& src = tx_in.scriptWitness.stack[i];
-
-            dest.size = src.size();
-            dest.buf = new uint8_t[dest.size];
-            std::memcpy(dest.buf, &src[0], dest.size);
-        }
-    }
-
-    // CTxOut
-    (*blsct_tx)->num_outs = tx.vout.size();
-    (*blsct_tx)->outs = new BlsctCTxOut[tx.vout.size()];
-
-    for (size_t i=0; i<tx.vout.size(); ++i) {
-        auto& out = (*blsct_tx)->outs[i];
-        auto& tx_out = tx.vout[i];
-
-        // value
-        out.value = tx_out.nValue;
-
-        // script_pubkey
-        out.script_pubkey.size = tx_out.scriptPubKey.size();
-        std::memcpy(
-            out.script_pubkey.script,
-            tx_out.scriptPubKey.data(),
-            tx_out.scriptPubKey.size()
-        );
-
-        // token_id
-        SERIALIZE_AND_COPY_WITH_STREAM(tx_out.tokenId, out.token_id);
-
-        // blsct_data
-        if (!tx_out.IsBLSCT()) {
-            out.blsct_data = nullptr;
-            continue;
-        }
-        out.blsct_data = new BlsctBlsctData();
-        auto& blsct_data = *out.blsct_data;
-
-        blsct_data.view_tag = tx_out.blsctData.viewTag;
-
-        SERIALIZE_AND_COPY(
-            tx_out.blsctData.spendingKey,
-            blsct_data.spending_key
-        );
-        SERIALIZE_AND_COPY(
-            tx_out.blsctData.ephemeralKey,
-            blsct_data.ephemeral_key
-        );
-        SERIALIZE_AND_COPY(
-            tx_out.blsctData.blindingKey,
-            blsct_data.blinding_key
-        );
-
-        // range_proof
-        auto& tx_range_proof = tx_out.blsctData.rangeProof;
-        auto& range_proof = blsct_data.range_proof;
-
-        SERIALIZE_AND_COPY(tx_range_proof.A, range_proof.A);
-        SERIALIZE_AND_COPY(tx_range_proof.S, range_proof.S);
-        SERIALIZE_AND_COPY(tx_range_proof.T1, range_proof.T1);
-        SERIALIZE_AND_COPY(tx_range_proof.T2, range_proof.T2);
-        SERIALIZE_AND_COPY(tx_range_proof.mu, range_proof.mu);
-        SERIALIZE_AND_COPY(tx_range_proof.tau_x, range_proof.tau_x);
-        SERIALIZE_AND_COPY(tx_range_proof.a, range_proof.a);
-        SERIALIZE_AND_COPY(tx_range_proof.b, range_proof.b);
-        SERIALIZE_AND_COPY(tx_range_proof.t_hat, range_proof.t_hat);
-    }
-}
-
-void blsct_dispose_tx(
-    BlsctTransaction** const blsct_tx
-) {
-    auto& tx = *(*blsct_tx);
-
-    if (tx.ins) {
-        // dispose memory dynamically allocated to script_witness
-        for (size_t i=0; i<tx.num_ins; ++i) {
-            auto& in = tx.ins[i];
-
-            for (size_t j=0; j<in.script_witness.size; ++j) {
-                auto& vec = in.script_witness.stack[j];
-                delete[] vec.buf;
-                vec.buf = nullptr;
-            }
-            delete[] in.script_witness.stack;
-            in.script_witness.stack = nullptr;
-        }
-
-        delete[] tx.ins;
-        tx.ins = nullptr;
-    }
-    if (tx.outs) {
-        for (size_t i=0; i<tx.num_outs; ++i) {
-            auto& out = tx.outs[i];
-            // dispose memory conditionally allocated to blsct_data
-            if (out.blsct_data != nullptr) {
-                delete out.blsct_data;
-                out.blsct_data = nullptr;
-            }
-        }
-        delete[] tx.outs;
-        tx.outs = nullptr;
-    }
-    delete *blsct_tx;
-    *blsct_tx = nullptr;
-}
-
-void blsct_sign_message(
-    const BlsctPrivKey blsct_priv_key,
-    const uint8_t* blsct_msg,
-    const size_t blsct_msg_size,
-    BlsctSignature blsct_signature
-) {
-    blsct::PrivateKey priv_key;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-        blsct_priv_key, PRIVATE_KEY_SIZE, priv_key
-    );
-
-    blsct::Message msg {blsct_msg, blsct_msg + blsct_msg_size};
-    blsct::Signature sig = priv_key.Sign(msg);
-
-    SERIALIZE_AND_COPY(sig, blsct_signature);
-}
-
-bool blsct_verify_msg_sig(
-    const BlsctPubKey blsct_pub_key,
-    const uint8_t* blsct_msg,
-    const size_t blsct_msg_size,
-    const BlsctSignature blsct_signature
-) {
-    blsct::PublicKey pub_key;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_pub_key, PUBLIC_KEY_SIZE, pub_key);
-
-    blsct::Message msg {blsct_msg, blsct_msg + blsct_msg_size};
-
-    blsct::Signature signature;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_signature, SIGNATURE_SIZE, signature);
-
-    return pub_key.Verify(msg, signature);
-}
 */
 
 } // extern "C"
