@@ -29,7 +29,6 @@
 #define POINT_SIZE 48
 #define SCALAR_SIZE 32
 #define RANGE_PROOF_SIZE 1315  // needs to be at least 1315
-#define PRIVATE_KEY_SIZE 32
 #define TOKEN_ID_SIZE 40  // uint256 + uint64_t = 32 + 8 = 40
 #define UINT256_SIZE 32
 #define VIEW_TAG_SIZE 8
@@ -157,7 +156,6 @@ using Scalars = Elements<Scalar>;
 
 typedef uint8_t BlsctKeyId[KEY_ID_SIZE];  // serialization of CKeyID which is based on uint160
 typedef uint8_t BlsctPoint[POINT_SIZE];
-typedef uint8_t BlsctPrivKey[PRIVATE_KEY_SIZE];
 typedef uint8_t BlsctPubKey[PUBLIC_KEY_SIZE];
 typedef uint8_t BlsctDoublePubKey[DOUBLE_PUBLIC_KEY_SIZE];
 typedef char BlsctAddrStr[ENCODED_DPK_STR_BUF_SIZE];
@@ -484,28 +482,29 @@ const BlsctScalar* get_tx_out_range_proof_a(const CTxOut* tx_out);
 const BlsctScalar* get_tx_out_range_proof_b(const CTxOut* tx_out);
 const BlsctScalar* get_tx_out_range_proof_t_hat(const CTxOut* tx_out);
 
+const BlsctSignature* sign_message(
+    const BlsctScalar* blsct_priv_key,
+    const char* blsct_msg
+);
+
+bool verify_msg_sig(
+    const BlsctPubKey* blsct_pub_key,
+    const char* blsct_msg,
+    const BlsctSignature* blsct_signature
+);
+
+BlsctPubKey* scalar_to_pub_key(
+    const BlsctScalar* blsct_scalar
+);
+
 ///// END new pointer-based API
 
 /*
-BlsctRetVal* blsct_deserialize_tx(
-    const uint8_t* ser_tx,
-    const size_t ser_tx_size,
-    BlsctTransaction** const blsct_tx
-);
 
-void blsct_uint64_to_blsct_uint256(
-    const uint64_t n,
-    BlsctUint256 uint256
-);
 
 // Point/Scalar generation functions
 
 bool blsct_is_valid_point(BlsctPoint blsct_point);
-
-bool blsct_from_point_to_blsct_point(
-    const Point& point,
-    BlsctPoint blsct_point
-);
 
 //
 // [in] src_str: source byte string
@@ -515,11 +514,6 @@ bool blsct_from_point_to_blsct_point(
 void blsct_hash_byte_str_to_public_key(
     const char* src_str,
     const size_t src_str_size,
-    BlsctPubKey blsct_pub_key
-);
-
-void blsct_priv_key_to_pub_key(
-    const BlsctPrivKey blsct_priv_key,
     BlsctPubKey blsct_pub_key
 );
 
@@ -534,45 +528,6 @@ void blsct_gen_dpk_with_keys_and_sub_addr_id(
 void blsct_dpk_to_sub_addr(
     const BlsctDoublePubKey blsct_dpk,
     BlsctSubAddr blsct_sub_addr
-);
-
-// returns false and set uint64 max to token if token > uint64_t max
-//
-bool blsct_decode_token_id(
-    const BlsctTokenId blsct_token_id,
-    BlsctTokenIdDe* blsct_token_id_de
-);
-
-// [out] blsct_priv_key
-//
-void blsct_gen_random_priv_key(
-    BlsctScalar blsct_priv_key
-);
-
-// [in] byte string of size 32
-// [out] blsct_priv_key
-//
-void blsct_gen_priv_key(
-    const uint8_t priv_key[PRIVATE_KEY_SIZE],
-    BlsctScalar blsct_priv_key
-);
-
-void blsct_sign_message(
-    const BlsctPrivKey blsct_priv_key,
-    const uint8_t* blsct_msg,
-    const size_t blsct_msg_size,
-    BlsctSignature blsct_signature
-);
-
-bool blsct_verify_msg_sig(
-    const BlsctPubKey blsct_pub_key,
-    const uint8_t* blsct_msg,
-    const size_t blsct_msg_size,
-    const BlsctSignature blsct_signature
-);
-
-void blsct_dispose_tx(
-    BlsctTransaction** const blsct_tx
 );
 
 // helper functions to build a transaction
