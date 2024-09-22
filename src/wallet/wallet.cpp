@@ -2971,6 +2971,7 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
     // Load wallet
     bool rescan_required = false;
     DBErrors nLoadWalletRet = walletInstance->LoadWallet();
+
     if (nLoadWalletRet != DBErrors::LOAD_OK) {
         if (nLoadWalletRet == DBErrors::CORRUPT) {
             error = strprintf(_("Error loading %s: Wallet corrupted"), walletFile);
@@ -3012,7 +3013,7 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
     }
 
     // This wallet is in its first run if there are no ScriptPubKeyMans and it isn't blank or no privkeys
-    const bool fFirstRun = walletInstance->m_spk_managers.empty() &&
+    const bool fFirstRun = ((walletInstance->m_spk_managers.empty() && !walletInstance->IsWalletFlagSet(WALLET_FLAG_BLSCT)) || !walletInstance->GetOrCreateBLSCTKeyMan()->CanGenerateKeys()) &&
                            !walletInstance->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS) &&
                            !walletInstance->IsWalletFlagSet(WALLET_FLAG_BLANK_WALLET);
     if (fFirstRun) {

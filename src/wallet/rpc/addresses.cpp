@@ -37,7 +37,7 @@ RPCHelpMan getnewaddress()
 
             LOCK(pwallet->cs_wallet);
 
-            if (!pwallet->CanGetAddresses()) {
+            if ((!pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT) && !pwallet->CanGetAddresses()) || (pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT) && !pwallet->GetOrCreateBLSCTKeyMan()->CanGenerateKeys())) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error: This wallet has no available keys");
             }
 
