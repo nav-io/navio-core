@@ -206,6 +206,19 @@ const char* point_to_hex(const BlsctPoint* blsct_point) {
     return hex_buf;
 }
 
+const char* scalar_to_hex(const BlsctScalar* blsct_scalar) {
+    Scalar scalar;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
+    auto hex = scalar.GetString();
+
+    size_t BUF_SIZE = hex.size() + 1;
+    MALLOC_BYTES(char, hex_buf, BUF_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(hex_buf);
+    std::memcpy(hex_buf, hex.c_str(), BUF_SIZE); // also copies null at the end
+
+    return hex_buf;
+}
+
 BlsctRetVal* decode_address(
     const char* blsct_enc_addr
 ) {
@@ -971,6 +984,96 @@ BlsctPubKey* scalar_to_pub_key(
     return blsct_pub_key;
 }
 
+BlsctScalar* from_seed_to_child_key(
+    const BlsctScalar* blsct_seed
+) {
+    Scalar seed;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_seed, SCALAR_SIZE, seed);
+
+    auto child_key = blsct::FromSeedToChildKey(seed);
+    BlsctScalar* blsct_child_key = static_cast<BlsctScalar*>(
+        malloc(SCALAR_SIZE)
+    );
+    SERIALIZE_AND_COPY(child_key, blsct_child_key);
+
+    return blsct_child_key;
+}
+
+BlsctScalar* from_child_key_to_blinding_key(
+    const BlsctScalar* blsct_child_key
+) {
+    Scalar child_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_child_key, SCALAR_SIZE, child_key);
+
+    Scalar blinding_key = blsct::FromChildToBlindingKey(child_key);
+    BlsctScalar* blsct_blinding_key = static_cast<BlsctScalar*>(
+        malloc(SCALAR_SIZE)
+    );
+    SERIALIZE_AND_COPY(blinding_key, blsct_blinding_key);
+
+    return blsct_blinding_key;
+}
+
+BlsctScalar* from_child_key_to_token_key(
+    const BlsctScalar* blsct_child_key
+) {
+    Scalar child_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_child_key, SCALAR_SIZE, child_key);
+
+    auto token_key = blsct::FromChildToTokenKey(child_key);
+    BlsctScalar* blsct_token_key = static_cast<BlsctScalar*>(
+        malloc(SCALAR_SIZE)
+    );
+    SERIALIZE_AND_COPY(token_key, blsct_token_key);
+
+    return blsct_token_key;
+}
+
+BlsctScalar* from_child_key_to_tx_key(
+    const BlsctScalar* blsct_child_key
+) {
+    Scalar child_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_child_key, SCALAR_SIZE, child_key);
+
+    auto tx_key = blsct::FromChildToTransactionKey(child_key);
+    BlsctScalar* blsct_tx_key = static_cast<BlsctScalar*>(
+        malloc(SCALAR_SIZE)
+    );
+    SERIALIZE_AND_COPY(tx_key, blsct_tx_key);
+
+    return blsct_tx_key;
+}
+
+BlsctScalar* from_tx_key_to_view_key(
+    const BlsctScalar* blsct_tx_key
+) {
+    Scalar tx_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_tx_key, SCALAR_SIZE, tx_key);
+
+    auto view_key = blsct::FromTransactionToViewKey(tx_key);
+    BlsctScalar* blsct_view_key = static_cast<BlsctScalar*>(
+        malloc(SCALAR_SIZE)
+    );
+    SERIALIZE_AND_COPY(view_key, blsct_view_key);
+
+    return blsct_view_key;
+}
+
+BlsctScalar* from_tx_key_to_spend_key(
+    const BlsctScalar* blsct_tx_key
+) {
+    Scalar tx_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_tx_key, SCALAR_SIZE, tx_key);
+
+    auto spending_key = blsct::FromTransactionToSpendKey(tx_key);
+    BlsctScalar* blsct_spending_key = static_cast<BlsctScalar*>(
+        malloc(SCALAR_SIZE)
+    );
+    SERIALIZE_AND_COPY(spending_key, blsct_spending_key);
+
+    return blsct_spending_key;
+}
+
 /*
 
 bool blsct_is_valid_point(BlsctPoint blsct_point)
@@ -1057,83 +1160,6 @@ BLSCT_RESULT blsct_calculate_nonce(
 
     auto nonce = blsct::CalculateNonce(blinding_pub_key, view_key);
     SERIALIZE_AND_COPY(nonce, blsct_nonce);
-
-    return BLSCT_SUCCESS;
-}
-
-BLSCT_RESULT blsct_from_seed_to_child_key(
-    const BlsctScalar blsct_seed,
-    BlsctScalar blsct_child_key
-) {
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_seed, seed);
-
-    auto child_key = blsct::FromSeedToChildKey(seed);
-    SERIALIZE_AND_COPY(child_key, blsct_child_key);
-
-    return BLSCT_SUCCESS;
-}
-
-BLSCT_RESULT blsct_from_child_key_to_tx_key(
-    const BlsctScalar blsct_child_key,
-    BlsctScalar blsct_tx_key
-) {
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_child_key, child_key);
-
-    auto tx_key = blsct::FromChildToTransactionKey(child_key);
-    SERIALIZE_AND_COPY(tx_key, blsct_tx_key);
-
-    return BLSCT_SUCCESS;
-}
-
-BLSCT_RESULT blsct_from_child_key_to_master_blinding_key(
-    const BlsctScalar blsct_child_key,
-    BlsctScalar blsct_master_blinding_key
-) {
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_child_key, child_key);
-
-    Scalar master_blinding_key =
-        blsct::FromChildToMasterBlindingKey(child_key);
-
-    SERIALIZE_AND_COPY(master_blinding_key, blsct_master_blinding_key);
-
-    return BLSCT_SUCCESS;
-};
-
-BLSCT_RESULT blsct_from_child_key_to_token_key(
-    const BlsctScalar blsct_child_key,
-    BlsctScalar blsct_token_key
-) {
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_child_key, child_key);
-
-    auto token_key = blsct::FromChildToTokenKey(child_key);
-    SERIALIZE_AND_COPY(token_key, blsct_token_key);
-
-    return BLSCT_SUCCESS;
-}
-
-BLSCT_RESULT blsct_from_tx_key_to_view_key(
-    const BlsctScalar blsct_tx_key,
-    BlsctPrivKey blsct_view_key
-) {
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_tx_key, tx_key);
-
-    auto scalar_view_key =
-        blsct::FromTransactionToViewKey(tx_key);
-    blsct::PrivateKey view_key(scalar_view_key);
-
-    SERIALIZE_AND_COPY(scalar_view_key, blsct_view_key);
-
-    return BLSCT_SUCCESS;
-}
-
-BLSCT_RESULT blsct_from_tx_key_to_spending_key(
-    const BlsctScalar blsct_tx_key,
-    BlsctScalar blsct_spending_key
-) {
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_tx_key, tx_key);
-
-    auto spending_key = blsct::FromTransactionToSpendingKey(tx_key);
-    SERIALIZE_AND_COPY(spending_key, blsct_spending_key);
 
     return BLSCT_SUCCESS;
 }
