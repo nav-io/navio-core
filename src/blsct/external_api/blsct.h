@@ -22,8 +22,8 @@
 /* constants */
 #define PUBLIC_KEY_SIZE 48
 #define DOUBLE_PUBLIC_KEY_SIZE PUBLIC_KEY_SIZE * 2
-#define SUBADDRESS_SIZE DOUBLE_PUBLIC_KEY_SIZE
-#define SUBADDRESS_ID_SIZE 16
+#define SUB_ADDR_SIZE DOUBLE_PUBLIC_KEY_SIZE
+#define SUB_ADDR_ID_SIZE 16
 #define ENCODED_DPK_STR_SIZE 165
 #define ENCODED_DPK_STR_BUF_SIZE ENCODED_DPK_STR_SIZE + 1 /* 1 for c-str null termination */
 #define KEY_ID_SIZE 20
@@ -163,8 +163,8 @@ typedef char BlsctAddrStr[ENCODED_DPK_STR_BUF_SIZE];
 typedef uint8_t BlsctRangeProof[RANGE_PROOF_SIZE];
 typedef uint8_t BlsctScalar[SCALAR_SIZE];
 typedef uint8_t BlsctScript[SCRIPT_SIZE];
-typedef uint8_t BlsctSubAddr[SUBADDRESS_SIZE];
-typedef uint8_t BlsctSubAddrId[SUBADDRESS_ID_SIZE];
+typedef uint8_t BlsctSubAddr[SUB_ADDR_SIZE];
+typedef uint8_t BlsctSubAddrId[SUB_ADDR_ID_SIZE];
 typedef uint8_t BlsctTokenId[TOKEN_ID_SIZE];
 typedef uint8_t BlsctUint256[UINT256_SIZE];
 typedef uint8_t BlsctTxId[TX_ID_SIZE];
@@ -507,7 +507,7 @@ BlsctPubKey* scalar_to_pub_key(
 //         +--------> token key (scalar)
 //         +--------> tx key (scalar)
 //                     +----> view key (scalar)
-//                     +----> spend key (scalar)
+//                     +----> spending key (scalar)
 
 // from seed
 BlsctScalar* from_seed_to_child_key(
@@ -532,57 +532,69 @@ BlsctScalar* from_tx_key_to_view_key(
     const BlsctScalar* blsct_tx_key
 );
 
-BlsctScalar* from_tx_key_to_spend_key(
+BlsctScalar* from_tx_key_to_spending_key(
     const BlsctScalar* blsct_tx_key
 );
 
-// BLSCT_RESULT blsct_calc_priv_spending_key(
-//     const BlsctPoint blsct_blinding_pub_key,
-//     const BlsctPoint blsct_spending_key,
-//     const BlsctScalar blsct_view_key,
-//     const int64_t& account,
-//     const uint64_t& address,
-//     BlsctScalar blsct_priv_spending_key
-// );
-//
-// BLSCT_RESULT blsct_derive_sub_addr(
-//     const BlsctPrivKey blsct_view_key,
-//     const BlsctPubKey blsct_spend_key,
-//     const BlsctSubAddrId blsct_sub_addr_id,
-//     BlsctSubAddr blsct_sub_addr
-// );
-//
-// BLSCT_RESULT blsct_calculate_nonce(
-//     const BlsctPoint blsct_blinding_pub_key,
-//     const BlsctScalar blsct_view_key,
-//     BlsctPoint blect_nonce
-// );
-//
-// BLSCT_RESULT blsct_calculate_view_tag(
-//     const BlsctPoint blinding_pub_key,
-//     const BlsctScalar view_key,
-//     BlsctViewTag blsct_view_tag
-// );
-//
-// BLSCT_RESULT blsct_calculate_hash_id(
-//     const BlsctPoint blsct_blinding_pub_key,
-//     const BlsctPoint blsct_spending_key,
-//     const BlsctScalar blsct_view_key,
-//     BlsctKeyId blsct_hash_id
-// );
-//
-// void blsct_gen_dpk_with_keys_and_sub_addr_id(
-//     const BlsctPrivKey blsct_view_key,
-//     const BlsctPubKey blsct_spending_key,
-//     const int64_t account,
-//     const uint64_t address,
-//     BlsctDoublePubKey dpk
-// );
-//
-// void blsct_dpk_to_sub_addr(
-//     const BlsctDoublePubKey blsct_dpk,
-//     BlsctSubAddr blsct_sub_addr
-// );
+// from multiple keys and other info
+BlsctScalar* calc_priv_spending_key(
+    const BlsctPubKey* blsct_blinding_pub_key,
+    const BlsctScalar* blsct_view_key,
+    const BlsctScalar* blsct_spending_key,
+    const int64_t account,
+    const uint64_t address
+);
+
+// blsct/wallet/helpers delegators
+uint64_t calc_view_tag(
+    const BlsctPubKey* blinding_pub_key,
+    const BlsctScalar* view_key
+);
+
+BlsctKeyId* calc_hash_id(
+    const BlsctPubKey* blsct_blinding_pub_key,
+    const BlsctPubKey* blsct_spending_pub_key,
+    const BlsctScalar* blsct_view_key
+);
+
+const char* get_key_id_hex(
+    const BlsctKeyId* blsct_key_id
+);
+
+BlsctPoint* calc_nonce(
+    const BlsctPubKey* blsct_blinding_pub_key,
+    const BlsctScalar* view_key
+);
+
+BlsctSubAddr* derive_sub_address(
+    const BlsctScalar* blsct_view_key,
+    const BlsctPubKey* blsct_spending_pub_key,
+    const BlsctSubAddrId* blsct_sub_addr_id
+);
+
+BlsctSubAddrId* gen_sub_addr_id(
+    const int64_t account,
+    const uint64_t address
+);
+
+int64_t get_sub_addr_id_account(
+    const BlsctSubAddrId* blsct_sub_addr_id
+);
+
+uint64_t get_sub_addr_id_address(
+    const BlsctSubAddrId* blsct_sub_addr_id
+);
+
+bool is_valid_point(
+    const BlsctPoint* blsct_point
+);
+
+BlsctDoublePubKey* gen_dpk_with_keys_and_sub_addr_id(
+    const BlsctScalar* blsct_view_key,
+    const BlsctPubKey* blsct_spending_pub_key,
+    const int64_t account,
+    const uint64_t address
+);
 
 #ifdef __cplusplus
 } // extern "C"

@@ -1059,7 +1059,7 @@ BlsctScalar* from_tx_key_to_view_key(
     return blsct_view_key;
 }
 
-BlsctScalar* from_tx_key_to_spend_key(
+BlsctScalar* from_tx_key_to_spending_key(
     const BlsctScalar* blsct_tx_key
 ) {
     Scalar tx_key;
@@ -1074,150 +1074,205 @@ BlsctScalar* from_tx_key_to_spend_key(
     return blsct_spending_key;
 }
 
-/*
-
-bool blsct_is_valid_point(BlsctPoint blsct_point)
-{
-    std::vector<uint8_t> ser_point {blsct_point, blsct_point + POINT_SIZE};
-    Point p;
-    p.SetVch(ser_point);
-    return p.IsValid();
-}
-
-void blsct_hash_byte_str_to_public_key(
-    const char* src_str,
-    const size_t src_str_size,
-    BlsctPubKey blsct_pub_key
-) {
-    std::vector<uint8_t> src_vec {src_str, src_str + src_str_size};
-    auto point = Point::HashAndMap(src_vec);
-    SERIALIZE_AND_COPY(point, blsct_pub_key);
-}
-
-void blsct_gen_dpk_with_keys_and_sub_addr_id(
-    const BlsctPrivKey blsct_view_key,
-    const BlsctPubKey blsct_spending_key,
+BlsctScalar* calc_priv_spending_key(
+    const BlsctPubKey* blsct_blinding_pub_key,
+    const BlsctScalar* blsct_view_key,
+    const BlsctScalar* blsct_spending_key,
     const int64_t account,
-    const uint64_t address,
-    BlsctDoublePubKey blsct_dpk
+    const uint64_t address
 ) {
-    blsct::PrivateKey view_key;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, PRIVATE_KEY_SIZE, view_key);
+    blsct::PublicKey blinding_pub_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_blinding_pub_key, PUBLIC_KEY_SIZE, blinding_pub_key);
 
-    blsct::PublicKey spending_key;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_spending_key, PUBLIC_KEY_SIZE, spending_key);
+    Scalar view_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, SCALAR_SIZE, view_key);
 
-    blsct::SubAddressIdentifier sub_addr_id { account, address };
-    blsct::SubAddress sub_addr(view_key, spending_key, sub_addr_id);
-
-    auto dpk = std::get<blsct::DoublePublicKey>(sub_addr.GetDestination());
-    SERIALIZE_AND_COPY(dpk, blsct_dpk);
-}
-
-BLSCT_RESULT blsct_derive_sub_addr(
-    const BlsctPrivKey blsct_view_key,
-    const BlsctPubKey blsct_spend_key,
-    const BlsctSubAddrId blsct_sub_addr_id,
-    BlsctSubAddr blsct_sub_addr
-) {
-    blsct::PrivateKey view_key;
-    UNSERIALIZE_AND_COPY_WITH_STREAM(
-        blsct_view_key,
-        blsct::PrivateKey::SIZE,
-        view_key
-    );
-
-    blsct::PublicKey spend_key;
-    UNSERIALIZE_AND_COPY_WITH_STREAM(
-        blsct_spend_key,
-        blsct::PublicKey::SIZE,
-        spend_key
-    );
-
-    blsct::SubAddressIdentifier sub_addr_id;
-    UNSERIALIZE_AND_COPY_WITH_STREAM(
-        blsct_sub_addr_id,
-        blsct::SubAddressIdentifier::SIZE,
-        sub_addr_id
-    );
-
-    auto sub_addr = blsct::DeriveSubAddress(view_key, spend_key, sub_addr_id);
-    SERIALIZE_AND_COPY_WITH_STREAM(
-        sub_addr,
-        blsct_sub_addr
-    );
-
-    return BLSCT_SUCCESS;
-}
-
-BLSCT_RESULT blsct_calculate_nonce(
-    const BlsctPoint blsct_blinding_pub_key,
-    const BlsctScalar blsct_view_key,
-    BlsctPoint blsct_nonce
-) {
-    TRY_DEFINE_MCL_POINT_FROM(blsct_blinding_pub_key, blinding_pub_key);
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_view_key, view_key);
-
-    auto nonce = blsct::CalculateNonce(blinding_pub_key, view_key);
-    SERIALIZE_AND_COPY(nonce, blsct_nonce);
-
-    return BLSCT_SUCCESS;
-}
-
-BLSCT_RESULT blsct_calculate_view_tag(
-    const BlsctPoint blsct_blinding_pub_key,
-    const BlsctScalar blsct_view_key,
-    BlsctViewTag blsct_view_tag
-) {
-    TRY_DEFINE_MCL_POINT_FROM(blsct_blinding_pub_key, blinding_pub_key);
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_view_key, view_key);
-
-    *blsct_view_tag = blsct::CalculateViewTag(blinding_pub_key, view_key);
-
-    return BLSCT_SUCCESS;
-}
-
-BLSCT_RESULT blsct_calculate_hash_id(
-    const BlsctPoint blsct_blinding_pub_key,
-    const BlsctPoint blsct_spending_key,
-    const BlsctScalar blsct_view_key,
-    BlsctKeyId blsct_hash_id
-) {
-    TRY_DEFINE_MCL_POINT_FROM(blsct_blinding_pub_key, blinding_pub_key);
-    TRY_DEFINE_MCL_POINT_FROM(blsct_spending_key, spending_key);
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_view_key, view_key);
-
-    auto hash_id = blsct::CalculateHashId(blinding_pub_key, spending_key, view_key);
-    SERIALIZE_AND_COPY_WITH_STREAM(hash_id, blsct_hash_id);
-
-    return BLSCT_SUCCESS;
-}
-
-BLSCT_RESULT blsct_calc_priv_spending_key(
-    const BlsctPoint blsct_blinding_pub_key,
-    const BlsctPoint blsct_spending_key,
-    const BlsctScalar blsct_view_key,
-    const int64_t& account,
-    const uint64_t& address,
-    BlsctScalar blsct_priv_spending_key
-) {
-    TRY_DEFINE_MCL_POINT_FROM(blsct_blinding_pub_key, blinding_pub_key);
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_view_key, view_key);
-    TRY_DEFINE_MCL_SCALAR_FROM(blsct_spending_key, spending_key);
+    Scalar spending_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_spending_key, SCALAR_SIZE, spending_key);
 
     auto priv_spending_key = blsct::CalculatePrivateSpendingKey(
-        blinding_pub_key,
+        blinding_pub_key.GetG1Point(),
         view_key,
         spending_key,
         account,
         address
     );
+    BlsctScalar* blsct_priv_spending_key = static_cast<BlsctScalar*>(
+        malloc(SCALAR_SIZE)
+    );
     SERIALIZE_AND_COPY(priv_spending_key, blsct_priv_spending_key);
 
-    return BLSCT_SUCCESS;
+    return blsct_priv_spending_key;
 }
 
-*/
+uint64_t calc_view_tag(
+    const BlsctPubKey* blsct_blinding_pub_key,
+    const BlsctScalar* blsct_view_key
+) {
+    blsct::PublicKey blinding_pub_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_blinding_pub_key, PUBLIC_KEY_SIZE, blinding_pub_key);
+
+    Scalar view_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, SCALAR_SIZE, view_key);
+
+    return blsct::CalculateViewTag(
+        blinding_pub_key.GetG1Point(),
+        view_key
+    );
+}
+
+BlsctKeyId* calc_hash_id(
+    const BlsctPubKey* blsct_blinding_pub_key,
+    const BlsctPubKey* blsct_spending_pub_key,
+    const BlsctScalar* blsct_view_key
+) {
+    blsct::PublicKey blinding_pub_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_blinding_pub_key, PUBLIC_KEY_SIZE, blinding_pub_key);
+
+    blsct::PublicKey spending_pub_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_spending_pub_key, PUBLIC_KEY_SIZE, spending_pub_key);
+
+    Scalar view_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, SCALAR_SIZE, view_key);
+
+    auto hash_id = blsct::CalculateHashId(
+        blinding_pub_key.GetG1Point(),
+        spending_pub_key.GetG1Point(),
+        view_key
+    );
+    BlsctKeyId* blsct_hash_id = static_cast<BlsctKeyId*>(
+        malloc(KEY_ID_SIZE)
+    );
+    SERIALIZE_AND_COPY_WITH_STREAM(hash_id, blsct_hash_id);
+
+    return blsct_hash_id;
+}
+
+const char* get_key_id_hex(
+    const BlsctKeyId* blsct_key_id
+) {
+    CKeyID key_id;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_key_id, KEY_ID_SIZE, key_id);
+
+    auto hex = key_id.GetHex();
+
+    size_t BUF_SIZE = hex.size() + 1;
+    MALLOC_BYTES(char, hex_buf, BUF_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(hex_buf);
+    std::memcpy(hex_buf, hex.c_str(), BUF_SIZE); // also copies null at the end
+
+    return hex_buf;
+}
+
+BlsctPoint* calc_nonce(
+    const BlsctPubKey* blsct_blinding_pub_key,
+    const BlsctScalar* blsct_view_key
+) {
+    blsct::PublicKey blinding_pub_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_blinding_pub_key, PUBLIC_KEY_SIZE, blinding_pub_key);
+
+    Scalar view_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, SCALAR_SIZE, view_key);
+
+    auto nonce = blsct::CalculateNonce(
+        blinding_pub_key.GetG1Point(),
+        view_key
+    );
+    BlsctPoint* blsct_nonce = static_cast<BlsctPoint*>(
+        malloc(POINT_SIZE)
+    );
+    SERIALIZE_AND_COPY(nonce, blsct_nonce);
+
+    return blsct_nonce;
+}
+
+BlsctSubAddr* derive_sub_address(
+    const BlsctScalar* blsct_view_key,
+    const BlsctPubKey* blsct_spending_pub_key,
+    const BlsctSubAddrId* blsct_sub_addr_id
+) {
+    Scalar view_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, SCALAR_SIZE, view_key);
+
+    blsct::PublicKey spending_pub_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_spending_pub_key, PUBLIC_KEY_SIZE, spending_pub_key);
+
+    blsct::SubAddressIdentifier sub_addr_id;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_sub_addr_id, SUB_ADDR_ID_SIZE, sub_addr_id);
+
+    auto sub_addr = blsct::DeriveSubAddress(view_key, spending_pub_key, sub_addr_id);
+    BlsctSubAddr* blsct_sub_addr = static_cast<BlsctSubAddr*>(
+        malloc(SUB_ADDR_SIZE)
+    );
+    SERIALIZE_AND_COPY_WITH_STREAM(sub_addr, blsct_sub_addr);
+
+    return blsct_sub_addr;
+}
+
+BlsctSubAddrId* gen_sub_addr_id(
+    const int64_t account,
+    const uint64_t address
+) {
+    blsct::SubAddressIdentifier sub_addr_id;
+    sub_addr_id.account = account;
+    sub_addr_id.address = address;
+
+    BlsctSubAddrId* blsct_sub_addr_id = static_cast<BlsctSubAddrId*>(
+        malloc(SUB_ADDR_ID_SIZE)
+    );
+    SERIALIZE_AND_COPY_WITH_STREAM(sub_addr_id, blsct_sub_addr_id);
+
+    return blsct_sub_addr_id;
+}
+
+int64_t get_sub_addr_id_account(
+    const BlsctSubAddrId* blsct_sub_addr_id
+) {
+    blsct::SubAddressIdentifier sub_addr_id;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_sub_addr_id, SUB_ADDR_ID_SIZE, sub_addr_id);
+    return sub_addr_id.account;
+}
+
+uint64_t get_sub_addr_id_address(
+    const BlsctSubAddrId* blsct_sub_addr_id
+) {
+    blsct::SubAddressIdentifier sub_addr_id;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_sub_addr_id, SUB_ADDR_ID_SIZE, sub_addr_id);
+    return sub_addr_id.address;
+}
+
+bool is_valid_point(
+    const BlsctPoint* blsct_point
+) {
+    Point point;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
+
+    return point.IsValid();
+}
+
+BlsctDoublePubKey* gen_dpk_with_keys_and_sub_addr_id(
+    const BlsctScalar* blsct_view_key,
+    const BlsctPubKey* blsct_spending_pub_key,
+    const int64_t account,
+    const uint64_t address
+) {
+    Scalar view_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, SCALAR_SIZE, view_key);
+
+    blsct::PublicKey spending_pub_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_spending_pub_key, PUBLIC_KEY_SIZE, spending_pub_key);
+
+    blsct::SubAddressIdentifier sub_addr_id { account, address };
+    blsct::SubAddress sub_addr(view_key, spending_pub_key, sub_addr_id);
+
+    auto dpk = std::get<blsct::DoublePublicKey>(sub_addr.GetDestination());
+    BlsctDoublePubKey* blsct_dpk = static_cast<BlsctDoublePubKey*>(
+        malloc(DOUBLE_PUBLIC_KEY_SIZE)
+    );
+    SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
+
+    return blsct_dpk;
+}
 
 } // extern "C"
 
