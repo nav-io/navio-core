@@ -1437,6 +1437,7 @@ libblsct_a_SOURCES = \
 	common/args.cpp \
 	common/system.cpp \
 	common/url.cpp \
+  crypto/hmac_sha256.cpp \
   crypto/sha256_arm_shani.cpp \
   crypto/sha256_avx2.cpp \
   crypto/sha256_sse4.cpp \

@@ -13,6 +13,7 @@
 #include <blsct/arith/elements.h>
 #include <blsct/range_proof/setup.h>
 #include <primitives/transaction.h>
+#include <tinyformat.h>
 #include <cstdint>
 #include <stdint.h>
 #include <stdbool.h>
@@ -332,6 +333,7 @@ const char* point_to_hex(const BlsctPoint* blsct_point);
 BlsctRetVal* gen_random_scalar();
 BlsctRetVal* gen_scalar(const uint64_t n);
 uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
+const char* scalar_to_hex(const BlsctScalar* blsct_scalar);
 
 // public key generation
 BlsctRetVal* gen_random_public_key();
@@ -497,40 +499,7 @@ BlsctPubKey* scalar_to_pub_key(
     const BlsctScalar* blsct_scalar
 );
 
-///// END new pointer-based API
-
-/*
-
-
-// Point/Scalar generation functions
-
-bool blsct_is_valid_point(BlsctPoint blsct_point);
-
-//
-// [in] src_str: source byte string
-// [in] src_str_size: the size of the source byte string
-// [out] public_key: randomly generated Public key
-//
-void blsct_hash_byte_str_to_public_key(
-    const char* src_str,
-    const size_t src_str_size,
-    BlsctPubKey blsct_pub_key
-);
-
-void blsct_gen_dpk_with_keys_and_sub_addr_id(
-    const BlsctPrivKey blsct_view_key,
-    const BlsctPubKey blsct_spending_key,
-    const int64_t account,
-    const uint64_t address,
-    BlsctDoublePubKey dpk
-);
-
-void blsct_dpk_to_sub_addr(
-    const BlsctDoublePubKey blsct_dpk,
-    BlsctSubAddr blsct_sub_addr
-);
-
-// helper functions to build a transaction
+// key derivation functions
 
 // seed (scalar)
 //  +---> child key (scalar)
@@ -538,78 +507,82 @@ void blsct_dpk_to_sub_addr(
 //         +--------> token key (scalar)
 //         +--------> tx key (scalar)
 //                     +----> view key (scalar)
-//                     +----> spending key (scalar)
-
-// key derivation functions
+//                     +----> spend key (scalar)
 
 // from seed
-BLSCT_RESULT blsct_from_seed_to_child_key(
-    const BlsctScalar blsct_seed,
-    BlsctScalar blsct_child_key
+BlsctScalar* from_seed_to_child_key(
+    const BlsctScalar* blsct_seed
 );
 
 // from child_key
-BLSCT_RESULT blsct_from_child_key_to_tx_key(
-    const BlsctScalar blsct_child_key,
-    BlsctScalar blsct_to_tx_key
+BlsctScalar* from_child_key_to_blinding_key(
+    const BlsctScalar* blsct_child_key
 );
 
-BLSCT_RESULT blsct_from_child_key_to_master_blinding_key(
-    const BlsctScalar blsct_child_key,
-    BlsctScalar blsct_master_blinding_key
+BlsctScalar* from_child_key_to_token_key(
+    const BlsctScalar* blsct_child_key
 );
 
-BLSCT_RESULT blsct_from_child_key_to_token_key(
-    const BlsctScalar blsct_child_key,
-    BlsctScalar blsct_token_key
+BlsctScalar* from_child_key_to_tx_key(
+    const BlsctScalar* blsct_child_key
 );
 
-// from tx_key
-BLSCT_RESULT blsct_from_tx_key_to_view_key(
-    const BlsctScalar blsct_tx_key,
-    BlsctPrivKey blsct_view_key
+// from tx key
+BlsctScalar* from_tx_key_to_view_key(
+    const BlsctScalar* blsct_tx_key
 );
 
-BLSCT_RESULT blsct_from_tx_key_to_spending_key(
-    const BlsctScalar blsct_tx_key,
-    BlsctScalar blsct_spending_key
+BlsctScalar* from_tx_key_to_spend_key(
+    const BlsctScalar* blsct_tx_key
 );
 
-BLSCT_RESULT blsct_calc_priv_spending_key(
-    const BlsctPoint blsct_blinding_pub_key,
-    const BlsctPoint blsct_spending_key,
-    const BlsctScalar blsct_view_key,
-    const int64_t& account,
-    const uint64_t& address,
-    BlsctScalar blsct_priv_spending_key
-);
-
-BLSCT_RESULT blsct_derive_sub_addr(
-    const BlsctPrivKey blsct_view_key,
-    const BlsctPubKey blsct_spend_key,
-    const BlsctSubAddrId blsct_sub_addr_id,
-    BlsctSubAddr blsct_sub_addr
-);
-
-BLSCT_RESULT blsct_calculate_nonce(
-    const BlsctPoint blsct_blinding_pub_key,
-    const BlsctScalar blsct_view_key,
-    BlsctPoint blect_nonce
-);
-
-BLSCT_RESULT blsct_calculate_view_tag(
-    const BlsctPoint blinding_pub_key,
-    const BlsctScalar view_key,
-    BlsctViewTag blsct_view_tag
-);
-
-BLSCT_RESULT blsct_calculate_hash_id(
-    const BlsctPoint blsct_blinding_pub_key,
-    const BlsctPoint blsct_spending_key,
-    const BlsctScalar blsct_view_key,
-    BlsctKeyId blsct_hash_id
-);
-*/
+// BLSCT_RESULT blsct_calc_priv_spending_key(
+//     const BlsctPoint blsct_blinding_pub_key,
+//     const BlsctPoint blsct_spending_key,
+//     const BlsctScalar blsct_view_key,
+//     const int64_t& account,
+//     const uint64_t& address,
+//     BlsctScalar blsct_priv_spending_key
+// );
+//
+// BLSCT_RESULT blsct_derive_sub_addr(
+//     const BlsctPrivKey blsct_view_key,
+//     const BlsctPubKey blsct_spend_key,
+//     const BlsctSubAddrId blsct_sub_addr_id,
+//     BlsctSubAddr blsct_sub_addr
+// );
+//
+// BLSCT_RESULT blsct_calculate_nonce(
+//     const BlsctPoint blsct_blinding_pub_key,
+//     const BlsctScalar blsct_view_key,
+//     BlsctPoint blect_nonce
+// );
+//
+// BLSCT_RESULT blsct_calculate_view_tag(
+//     const BlsctPoint blinding_pub_key,
+//     const BlsctScalar view_key,
+//     BlsctViewTag blsct_view_tag
+// );
+//
+// BLSCT_RESULT blsct_calculate_hash_id(
+//     const BlsctPoint blsct_blinding_pub_key,
+//     const BlsctPoint blsct_spending_key,
+//     const BlsctScalar blsct_view_key,
+//     BlsctKeyId blsct_hash_id
+// );
+//
+// void blsct_gen_dpk_with_keys_and_sub_addr_id(
+//     const BlsctPrivKey blsct_view_key,
+//     const BlsctPubKey blsct_spending_key,
+//     const int64_t account,
+//     const uint64_t address,
+//     BlsctDoublePubKey dpk
+// );
+//
+// void blsct_dpk_to_sub_addr(
+//     const BlsctDoublePubKey blsct_dpk,
+//     BlsctSubAddr blsct_sub_addr
+// );
 
 #ifdef __cplusplus
 } // extern "C"
