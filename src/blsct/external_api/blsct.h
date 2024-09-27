@@ -33,21 +33,6 @@
 #define TOKEN_ID_SIZE 40  // uint256 + uint64_t = 32 + 8 = 40
 #define UINT256_SIZE 32
 #define VIEW_TAG_SIZE 8
-// #define UINT16_SIZE 2
-// #define CTXOUT_BLSCT_DATA_SIZE \
-//         POINT_SIZE * 3 + \
-//         RANGE_PROOF_SIZE + \
-//         UINT16_SIZE
-// #define NORMAL_CSCRIPT_SIZE 1
-// #define OP_SIZE 1
-// #define STAKED_COMMITMENT_CSCRIPT_SIZE \
-//         OP_SIZE * 3 + \
-//         RANGE_PROOF_SIZE
-// #define CTXOUT_SIZE CAMOUNT_SIZE + \
-//         CSCRIPT_SIZE + \
-//         CTXOUT_BLSCT_DATA_SIZE + \
-//         TOKEN_ID_SIZE
-// #define UNSIGNED_OUTPUT_SIZE SCALAR_SIZE * 3 + CTXOUT_SIZE
 #define OUT_POINT_SIZE 36
 #define SIGNATURE_SIZE 96
 #define SCRIPT_SIZE 28
@@ -129,7 +114,6 @@ if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
 
 #define UNVOID(T, name) const T* name = reinterpret_cast<const T*>(void_##name)
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -171,80 +155,6 @@ typedef uint8_t BlsctTxId[TX_ID_SIZE];
 typedef uint8_t BlsctViewTag[VIEW_TAG_SIZE];
 typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
 typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
-
-/*
-typedef struct {
-    uint8_t script[SCRIPT_SIZE];
-    size_t size;
-} BlsctScript;
-
-typedef struct {
-    BlsctPoint A;
-    BlsctPoint S;
-    BlsctPoint T1;
-    BlsctPoint T2;
-    BlsctScalar mu;
-    BlsctScalar tau_x;
-
-    BlsctScalar a;
-    BlsctScalar b;
-    BlsctScalar t_hat;
-} BlsctRangeProofDe;
-
-typedef struct {
-    BlsctPoint spending_key;
-    BlsctPoint ephemeral_key;
-    BlsctPoint blinding_key;
-    BlsctRangeProofDe range_proof;
-    uint16_t view_tag;
-} BlsctBlsctData;
-
-typedef struct {
-    int64_t value;
-    BlsctScript script_pubkey;
-    BlsctBlsctData* blsct_data;
-    BlsctTokenId token_id;
-} BlsctCTxOut;
-
-typedef struct {
-    BlsctUint256 hash; // Txid
-    uint32_t n;
-} BlsctCOutPoint;
-
-typedef struct {
-    uint8_t* buf;
-    size_t size;
-} BlsctVector;
-
-typedef struct {
-    BlsctVector* stack;
-    size_t size;
-} BlsctScriptWitness;
-
-typedef struct {
-    BlsctCOutPoint prev_out;
-    BlsctScript script_sig;
-    uint32_t sequence;
-    BlsctScriptWitness script_witness;
-} BlsctCTxIn;
-
-typedef struct {
-    int32_t version;
-    uint32_t lock_time;
-    BlsctSignature tx_sig;
-    BlsctCTxIn* ins;
-    size_t num_ins;
-    BlsctCTxOut* outs;
-    size_t num_outs;
-} BlsctTransaction;
-
-typedef struct {
-    uint64_t token;
-    uint64_t subid;
-} BlsctTokenIdDe;
-*/
-
-///// BEG new pointer-based API
 
 typedef struct {
   BLSCT_RESULT result;
