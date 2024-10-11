@@ -165,6 +165,8 @@ public:
 
     bool OutputIsChange(const CTxOut& out) const;
 
+    int64_t GetTimeFirstKey() const;
+
     /** Keypool has new keys */
     boost::signals2::signal<void()>
         NotifyCanGetAddressesChanged;

@@ -3642,6 +3642,7 @@ void CWallet::SetupBLSCTKeyMan()
     }
     auto mblsctkm = std::unique_ptr<blsct::KeyMan>(new blsct::KeyMan(*this, m_keypool_size));
     m_blsct_key_manager = std::move(mblsctkm);
+    MaybeUpdateBirthTime(m_blsct_key_manager->GetTimeFirstKey());
 }
 
 const CKeyingMaterial& CWallet::GetEncryptionKey() const

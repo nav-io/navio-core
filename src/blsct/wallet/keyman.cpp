@@ -879,4 +879,10 @@ bool KeyMan::OutputIsChange(const CTxOut& out) const
 
     return false;
 }
+
+int64_t KeyMan::GetTimeFirstKey() const
+{
+    LOCK(cs_KeyStore);
+    return nTimeFirstKey;
+}
 } // namespace blsct
