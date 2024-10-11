@@ -93,7 +93,7 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_test, TestingSetup)
     auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
 
     for (auto& res : result.amounts) {
-        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00304125) * COIN) fFoundChange = true;
+        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00292125) * COIN) fFoundChange = true;
     }
 
     BOOST_CHECK(fFoundChange);
@@ -151,7 +151,7 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
 
     for (auto& res : result.amounts) {
-        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00304125) * COIN) fFoundChange = true;
+        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00292125) * COIN) fFoundChange = true;
     }
 
     BOOST_CHECK(fFoundChange);
@@ -165,7 +165,7 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     uint32_t nChangePosition = 0;
 
     for (auto& res : wtx->blsctRecoveryData) {
-        if (res.second.message == "Change" && res.second.amount == (1000 - 900 - 0.00304125) * COIN) {
+        if (res.second.message == "Change" && res.second.amount == (1000 - 900 - 0.00292125) * COIN) {
             nChangePosition = res.second.id;
             fFoundChange = true;
             break;
@@ -189,8 +189,8 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     auto finalTx2 = tx2.BuildTx();
     wallet->transactionAddedToMempool(MakeTransactionRef(finalTx2.value()));
 
-    BOOST_CHECK(wallet->GetDebit(CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == (1000 - 900 - 0.00304125) * COIN);
-    BOOST_CHECK(TxGetCredit(*wallet, CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == (1000 - 900 - 0.00304125 - 50 - 0.00304125) * COIN);
+    BOOST_CHECK(wallet->GetDebit(CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == (1000 - 900 - 0.00292125) * COIN);
+    BOOST_CHECK(TxGetCredit(*wallet, CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == (1000 - 900 - 0.00292125 - 50 - 0.00292125) * COIN);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
