@@ -35,7 +35,7 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
 
     setMemProof = SetProver::Prove(setup, staked_commitments, sigma, m, f, eta_fiat_shamir, eta_phi);
 
-    auto kernel_hash = CalculateKernelHash(prev_time, stake_modifier, setMemProof.phi, time);
+    auto kernel_hash = CalculateKernelHash(prev_time, stake_modifier, time);
     uint256 min_value = CalculateMinValue(kernel_hash, next_target);
 
     range_proof::GammaSeed<Arith> gamma_seed(Scalars({f}));
@@ -55,7 +55,7 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
 
 ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target) const
 {
-    return Verify(staked_commitments, eta_fiat_shamir, eta_phi, CalculateKernelHash(prev_time, stake_modifier, setMemProof.phi, time), next_target);
+    return Verify(staked_commitments, eta_fiat_shamir, eta_phi, CalculateKernelHash(prev_time, stake_modifier, time), next_target);
 }
 
 ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernel_hash, const unsigned int& next_target) const

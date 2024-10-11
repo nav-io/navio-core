@@ -74,7 +74,7 @@ BOOST_AUTO_TEST_CASE(test_range_proof_prove_verify_one_value)
     auto p = rpl.Prove(vs, nonce, msg.second, token_id);
 
     auto is_valid = rpl.Verify(
-        std::vector<bulletproofs_plus::RangeProofWithSeed<T>>{p});
+        std::vector<bulletproofs_plus::RangeProofWithSeed<T>>{bulletproofs_plus::RangeProofWithSeed<T>(p, token_id)});
     BOOST_CHECK(is_valid);
 }
 
@@ -93,8 +93,9 @@ BOOST_AUTO_TEST_CASE(test_range_proof_recovery_one_value)
 
     RangeProofLogic rpl;
     auto p = rpl.Prove(vs, nonce, msg.second, token_id);
+    bulletproofs_plus::RangeProofWithSeed<T> proofWithSeed = {p, token_id};
 
-    auto req = bulletproofs_plus::AmountRecoveryRequest<T>::of(p, nonce);
+    auto req = bulletproofs_plus::AmountRecoveryRequest<T>::of(proofWithSeed, nonce);
     auto reqs = std::vector<bulletproofs_plus::AmountRecoveryRequest<T>> { req };
     auto result = rpl.RecoverAmounts(reqs);
 
