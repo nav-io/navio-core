@@ -6,13 +6,14 @@
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
 #include <blsct/building_block/fiat_shamir.h>
-#include <blsct/building_block/weighted_inner_prod_arg.h>
-#include <blsct/building_block/lazy_points.h>
 #include <blsct/building_block/g_h_gi_hi_zero_verifier.h>
+#include <blsct/building_block/lazy_points.h>
+#include <blsct/building_block/weighted_inner_prod_arg.h>
 #include <blsct/common.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/msg_amt_cipher.h>
+#include <future>
 #include <tinyformat.h>
 
 // Bulletproofs+ implementation based on
@@ -405,107 +406,117 @@ bool RangeProofLogic<T>::VerifyProofs(
     using Scalar = typename T::Scalar;
     using Scalars = Elements<Scalar>;
 
+    // Vector to hold future results from async tasks
+    std::vector<std::future<bool>> futures;
+
+    // Atomic flag to signal abort
+    std::atomic<bool> abort_flag(false);
+
+    futures.reserve(proof_transcripts.size());
+
     for (const RangeProofWithTranscript<T>& pt : proof_transcripts) {
-        if (pt.proof.Ls.Size() != pt.proof.Rs.Size()) return false;
+        futures.emplace_back(std::async(std::launch::async, [this, &pt, max_mn]() -> bool {
+            if (abort_flag.load()) return false; // Early exit if another task has already failed
 
-        range_proof::Generators<T> gens = m_common.Gf().GetInstance(pt.proof.seed);
+            if (pt.proof.Ls.Size() != pt.proof.Rs.Size()) return false;
 
-        auto gs = gens.GetGiSubset(pt.mn);
-        auto hs = gens.GetHiSubset(pt.mn);
-        auto h = gens.H;
-        auto g = gens.G;
+            range_proof::Generators<T> gens = m_common.Gf().GetInstance(pt.proof.seed);
 
-        auto [
-            two_pows,
-            y_asc_pows_mn,
-            y_desc_pows_mn,
-            z_asc_by_2_pows,
-            y_to_mn_plus_1
-        ] = RangeProofLogic<T>::ComputePowers(pt.y, pt.z, pt.m, pt.n);
+            auto gs = gens.GetGiSubset(pt.mn);
+            auto hs = gens.GetHiSubset(pt.mn);
+            auto h = gens.H;
+            auto g = gens.G;
 
-        // Compute: z^2 * 1, ..., z^2 * 2^n-1, z^4 * 1, ..., z^4 * 2^n-1, z^6 * 1, ...
-        Scalars z_times_two_pows;
-        {
-            for (auto z_pow: z_asc_by_2_pows.m_vec) {
-                for (auto two_pow: two_pows.m_vec) {
-                    z_times_two_pows.Add(z_pow * two_pow);
+            auto [two_pows,
+                  y_asc_pows_mn,
+                  y_desc_pows_mn,
+                  z_asc_by_2_pows,
+                  y_to_mn_plus_1] = RangeProofLogic<T>::ComputePowers(pt.y, pt.z, pt.m, pt.n);
+
+            // Compute: z^2 * 1, ..., z^2 * 2^n-1, z^4 * 1, ..., z^4 * 2^n-1, z^6 * 1, ...
+            Scalars z_times_two_pows;
+            {
+                for (auto z_pow : z_asc_by_2_pows.m_vec) {
+                    for (auto two_pow : two_pows.m_vec) {
+                        z_times_two_pows.Add(z_pow * two_pow);
+                    }
                 }
             }
-        }
 
-        // Compute scalars for verification
-        auto [
-            e_squares,
-            e_inv_squares,
-            s_vec
-        ] = RangeProofLogic<T>::ComputeVeriScalars(pt.es, pt.mn);
+            // Compute scalars for verification
+            auto [e_squares,
+                  e_inv_squares,
+                  s_vec] = RangeProofLogic<T>::ComputeVeriScalars(pt.es, pt.mn);
 
-        Scalars s_prime_vec = s_vec.Reverse();
-        Scalar inv_final_e = pt.e_last_round.Invert();
-        Scalar final_e_sq = pt.e_last_round.Square();
-        Scalar inv_final_e_sq = final_e_sq.Invert();
-        Scalar r_prime_inv_final_e_y = pt.proof.r_prime * inv_final_e * pt.y;
-        Scalar s_prime_inv_final_e = pt.proof.s_prime * inv_final_e;
-        Scalars inv_y_asc_pows_mn = Scalars::FirstNPow(pt.y.Invert(), pt.mn, 1); // skip first 1
+            Scalars s_prime_vec = s_vec.Reverse();
+            Scalar inv_final_e = pt.e_last_round.Invert();
+            Scalar final_e_sq = pt.e_last_round.Square();
+            Scalar inv_final_e_sq = final_e_sq.Invert();
+            Scalar r_prime_inv_final_e_y = pt.proof.r_prime * inv_final_e * pt.y;
+            Scalar s_prime_inv_final_e = pt.proof.s_prime * inv_final_e;
+            Scalars inv_y_asc_pows_mn = Scalars::FirstNPow(pt.y.Invert(), pt.mn, 1); // skip first 1
 
-        // Compute generator exponents
-        Scalars gs_exp;
-        {
-            Scalar minus_z = pt.z.Negate();
-            for (size_t i=0; i<pt.mn; ++i) {
-                Scalar s = s_vec[i];
-                Scalar inv_y_pow = inv_y_asc_pows_mn[i];
-                gs_exp.Add(minus_z + s.Negate() * inv_y_pow * r_prime_inv_final_e_y);
+            // Compute generator exponents
+            Scalars gs_exp;
+            {
+                Scalar minus_z = pt.z.Negate();
+                for (size_t i = 0; i < pt.mn; ++i) {
+                    Scalar s = s_vec[i];
+                    Scalar inv_y_pow = inv_y_asc_pows_mn[i];
+                    gs_exp.Add(minus_z + s.Negate() * inv_y_pow * r_prime_inv_final_e_y);
+                }
             }
-        }
 
-        Scalars hs_exp;
-        {
-            Scalar neg_s_prime_inv_final_e = s_prime_inv_final_e.Negate();
-            for (size_t i=0; i<pt.mn; ++i) {
-                Scalar rev_s = s_vec[pt.mn - 1 - i];
-                Scalar z_times_two_pow = z_times_two_pows[i];
-                Scalar y_pow_desc = y_desc_pows_mn[i];
-                hs_exp.Add(
-                    neg_s_prime_inv_final_e * rev_s + z_times_two_pow * y_pow_desc + pt.z
-                );
+            Scalars hs_exp;
+            {
+                Scalar neg_s_prime_inv_final_e = s_prime_inv_final_e.Negate();
+                for (size_t i = 0; i < pt.mn; ++i) {
+                    Scalar rev_s = s_vec[pt.mn - 1 - i];
+                    Scalar z_times_two_pow = z_times_two_pows[i];
+                    Scalar y_pow_desc = y_desc_pows_mn[i];
+                    hs_exp.Add(
+                        neg_s_prime_inv_final_e * rev_s + z_times_two_pow * y_pow_desc + pt.z);
+                }
             }
-        }
 
-        Scalar g_exp =
-            pt.proof.r_prime.Negate()
-            * pt.proof.s_prime
-            * pt.y
-            * inv_final_e_sq
-            + (
-                y_asc_pows_mn.Sum() * (pt.z + pt.z.Square().Negate())
-                + y_to_mn_plus_1.Negate() * pt.z * two_pows.Sum() * z_asc_by_2_pows.Sum()
-            );
-        Scalar h_exp = pt.proof.delta_prime.Negate() * inv_final_e_sq;
+            Scalar g_exp =
+                pt.proof.r_prime.Negate() * pt.proof.s_prime * pt.y * inv_final_e_sq + (y_asc_pows_mn.Sum() * (pt.z + pt.z.Square().Negate()) + y_to_mn_plus_1.Negate() * pt.z * two_pows.Sum() * z_asc_by_2_pows.Sum());
+            Scalar h_exp = pt.proof.delta_prime.Negate() * inv_final_e_sq;
 
-        Scalars vs_exp;
-        {
-            for (auto x: z_asc_by_2_pows.m_vec) {
-                vs_exp.Add(x * y_to_mn_plus_1);
+            Scalars vs_exp;
+            {
+                for (auto x : z_asc_by_2_pows.m_vec) {
+                    vs_exp.Add(x * y_to_mn_plus_1);
+                }
             }
-        }
 
-        LazyPoints<T> lp;
-        lp.Add(pt.proof.A);
-        lp.Add(pt.proof.A_wip, pt.e_last_round.Invert());
-        lp.Add(pt.proof.B, pt.e_last_round.Square().Invert());
-        lp.Add(g, g_exp);
-        lp.Add(h, h_exp);
-        lp.Add(pt.proof.Ls, static_cast<const Scalars&>(e_squares));
-        lp.Add(pt.proof.Rs, e_inv_squares);
-        lp.Add(gs, gs_exp);
-        lp.Add(hs, hs_exp);
+            LazyPoints<T> lp;
+            lp.Add(pt.proof.A);
+            lp.Add(pt.proof.A_wip, pt.e_last_round.Invert());
+            lp.Add(pt.proof.B, pt.e_last_round.Square().Invert());
+            lp.Add(g, g_exp);
+            lp.Add(h, h_exp);
+            lp.Add(pt.proof.Ls, static_cast<const Scalars&>(e_squares));
+            lp.Add(pt.proof.Rs, e_inv_squares);
+            lp.Add(gs, gs_exp);
+            lp.Add(hs, hs_exp);
 
-        for (size_t i = 0; i < pt.proof.Vs.Size(); ++i) {
-            lp.Add(LazyPoint<T>(pt.proof.Vs[i] - (gens.G * pt.proof.min_value), vs_exp[i]));
-        }
+            for (size_t i = 0; i < pt.proof.Vs.Size(); ++i) {
+                lp.Add(LazyPoint<T>(pt.proof.Vs[i] - (gens.G * pt.proof.min_value), vs_exp[i]));
+            }
 
-        if (!lp.Sum().IsZero()) return false;
+            if (!lp.Sum().IsZero()) {
+                abort_flag.store(true); // Signal abort if verification fails
+                return false;
+            }
+
+            return true;
+        }));
+    }
+
+    // Wait for all threads to finish and collect results
+    for (auto& fut : futures) {
+        if (!fut.get()) return false;
     }
 
     return true;
