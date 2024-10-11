@@ -541,13 +541,13 @@ blsct::PrivateKey KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const SubAd
 
 using Arith = Mcl;
 
-bulletproofs::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std::vector<CTxOut>& outs)
+bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std::vector<CTxOut>& outs)
 {
     if (!fViewKeyDefined || !viewKey.IsValid())
-        return bulletproofs::AmountRecoveryResult<Arith>::failure();
+        return bulletproofs_plus::AmountRecoveryResult<Arith>::failure();
 
-    bulletproofs::RangeProofLogic<Arith> rp;
-    std::vector<bulletproofs::AmountRecoveryRequest<Arith>> reqs;
+    bulletproofs_plus::RangeProofLogic<Arith> rp;
+    std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
     reqs.reserve(outs.size());
 
     for (size_t i = 0; i < outs.size(); i++) {
@@ -555,8 +555,8 @@ bulletproofs::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std::vect
         if (out.blsctData.viewTag != CalculateViewTag(out.blsctData.blindingKey, viewKey.GetScalar()))
             continue;
         auto nonce = CalculateNonce(out.blsctData.blindingKey, viewKey.GetScalar());
-        bulletproofs::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
-        reqs.push_back(bulletproofs::AmountRecoveryRequest<Arith>::of(proof, nonce, i));
+        bulletproofs_plus::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
+        reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Arith>::of(proof, nonce, i));
     }
 
     return rp.RecoverAmounts(reqs);

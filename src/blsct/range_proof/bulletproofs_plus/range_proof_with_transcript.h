@@ -20,19 +20,18 @@ class RangeProofWithTranscript
 
 public:
     RangeProofWithTranscript(
-        const RangeProof<T>& proof,
+        const RangeProofWithSeed<T>& proof,
         const Scalar& y,
         const Scalar& z,
         const Scalar& e_last_round,
         const Scalars& es,
         const size_t& m,
         const size_t& n,
-        const size_t& mn
-    ): proof{proof}, y{y}, z{z}, e_last_round(e_last_round), es{es}, m{m}, n{n}, mn{mn} {}
+        const size_t& mn) : proof{proof}, y{y}, z{z}, e_last_round(e_last_round), es{es}, m{m}, n{n}, mn{mn} {}
 
-    static RangeProofWithTranscript<T> Build(const RangeProof<T>& proof);
+    static RangeProofWithTranscript<T> Build(const RangeProofWithSeed<T>& proof);
 
-    const RangeProof<T> proof;
+    const RangeProofWithSeed<T> proof;
     const Scalar y;
     const Scalar z;
     const Scalar e_last_round;

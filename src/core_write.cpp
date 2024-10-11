@@ -168,7 +168,7 @@ void ScriptToUniv(const CScript& script, UniValue& out, bool include_hex, bool i
     out.pushKV("type", GetTxnOutputType(type));
 }
 
-void RangeProofToUniv(const bulletproofs::RangeProof<Mcl>& rp, UniValue& entry, const bool& extended)
+void RangeProofToUniv(const bulletproofs_plus::RangeProof<Mcl>& rp, UniValue& entry, const bool& extended)
 {
     UniValue Vs{UniValue::VARR};
     for (size_t i = 0; i < rp.Vs.Size(); i++) {
@@ -189,14 +189,13 @@ void RangeProofToUniv(const bulletproofs::RangeProof<Mcl>& rp, UniValue& entry, 
         }
         entry.pushKV("Rs", Rs);
         entry.pushKV("A", HexStr(rp.A.GetVch()));
-        entry.pushKV("S", HexStr(rp.S.GetVch()));
-        entry.pushKV("T1", HexStr(rp.T1.GetVch()));
-        entry.pushKV("T2", HexStr(rp.T2.GetVch()));
+        entry.pushKV("A_wip", HexStr(rp.A_wip.GetVch()));
+        entry.pushKV("B", HexStr(rp.B.GetVch()));
+        entry.pushKV("r_prime", HexStr(rp.r_prime.GetVch()));
+        entry.pushKV("s_prime", HexStr(rp.s_prime.GetVch()));
+        entry.pushKV("delta_prime", HexStr(rp.delta_prime.GetVch()));
+        entry.pushKV("alpha_hat", HexStr(rp.alpha_hat.GetVch()));
         entry.pushKV("tau_x", HexStr(rp.tau_x.GetVch()));
-        entry.pushKV("mu", HexStr(rp.mu.GetVch()));
-        entry.pushKV("a", HexStr(rp.a.GetVch()));
-        entry.pushKV("b", HexStr(rp.b.GetVch()));
-        entry.pushKV("t_hat", HexStr(rp.t_hat.GetVch()));
     }
 }
 

@@ -6,7 +6,7 @@
 #define TXFACTORY_GLOBAL_H
 
 #include <blsct/double_public_key.h>
-#include <blsct/range_proof/bulletproofs/range_proof_logic.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <primitives/transaction.h>
 
 using T = Mcl;

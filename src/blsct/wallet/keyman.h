@@ -8,9 +8,9 @@
 #include <blsct/double_public_key.h>
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
-#include <blsct/range_proof/bulletproofs/amount_recovery_request.h>
-#include <blsct/range_proof/bulletproofs/amount_recovery_result.h>
-#include <blsct/range_proof/bulletproofs/range_proof_logic.h>
+#include <blsct/range_proof/bulletproofs_plus/amount_recovery_request.h>
+#include <blsct/range_proof/bulletproofs_plus/amount_recovery_result.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/wallet/address.h>
 #include <blsct/wallet/hdchain.h>
 #include <blsct/wallet/helpers.h>
@@ -142,7 +142,7 @@ public:
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out) const;
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id) const;
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id) const;
-    bulletproofs::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
+    bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
 
     /** SubAddress keypool */
     void LoadSubAddress(const CKeyID& hashId, const SubAddressIdentifier& index);

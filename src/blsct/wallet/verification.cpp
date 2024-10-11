@@ -5,8 +5,8 @@
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/pos/pos.h>
 #include <blsct/public_keys.h>
-#include <blsct/range_proof/bulletproofs/range_proof.h>
-#include <blsct/range_proof/bulletproofs/range_proof_logic.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/range_proof/generators.h>
 #include <blsct/wallet/verification.h>
 #include <util/strencodings.h>
@@ -19,8 +19,8 @@ bool VerifyTx(const CTransaction& tx, const CCoinsViewCache& view, TxValidationS
     }
 
     range_proof::GeneratorsFactory<Mcl> gf;
-    bulletproofs::RangeProofLogic<Mcl> rp;
-    std::vector<bulletproofs::RangeProofWithSeed<Mcl>> vProofs;
+    bulletproofs_plus::RangeProofLogic<Mcl> rp;
+    std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> vProofs;
     std::vector<Message> vMessages;
     std::vector<PublicKey> vPubKeys;
     MclG1Point balanceKey;
@@ -46,11 +46,11 @@ bool VerifyTx(const CTransaction& tx, const CCoinsViewCache& view, TxValidationS
     }
 
     CAmount nFee = 0;
-    bulletproofs::RangeProofWithSeed<Mcl> stakedCommitmentRangeProof;
+    bulletproofs_plus::RangeProofWithSeed<Mcl> stakedCommitmentRangeProof;
 
     for (auto& out : tx.vout) {
         if (out.IsBLSCT()) {
-            bulletproofs::RangeProofWithSeed<Mcl> proof{out.blsctData.rangeProof, out.tokenId};
+            bulletproofs_plus::RangeProofWithSeed<Mcl> proof{out.blsctData.rangeProof, out.tokenId};
             auto out_hash = out.GetHash();
 
             vPubKeys.emplace_back(out.blsctData.ephemeralKey);
@@ -63,7 +63,7 @@ bool VerifyTx(const CTransaction& tx, const CCoinsViewCache& view, TxValidationS
                 stakedCommitmentRangeProof.Vs.Clear();
                 stakedCommitmentRangeProof.Vs.Add(out.blsctData.rangeProof.Vs[0]);
 
-                proof = bulletproofs::RangeProofWithSeed<Mcl>{stakedCommitmentRangeProof, TokenId(), minStake};
+                proof = bulletproofs_plus::RangeProofWithSeed<Mcl>{stakedCommitmentRangeProof, TokenId(), minStake};
 
                 vProofs.push_back(proof);
             }

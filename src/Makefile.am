@@ -867,13 +867,15 @@ libbitcoin_consensus_a_SOURCES = \
   blsct/range_proof/bulletproofs/range_proof.cpp \
   blsct/range_proof/bulletproofs/range_proof_logic.cpp \
   blsct/range_proof/bulletproofs/range_proof_with_transcript.cpp \
+  blsct/range_proof/bulletproofs_plus/amount_recovery_result.cpp \
+  blsct/range_proof/bulletproofs_plus/amount_recovery_request.cpp \
   blsct/range_proof/bulletproofs_plus/range_proof.cpp \
+  blsct/range_proof/bulletproofs_plus/range_proof_logic.cpp \
+  blsct/range_proof/bulletproofs_plus/range_proof_with_transcript.cpp \
   blsct/range_proof/common.cpp \
   blsct/range_proof/generators.cpp \
   blsct/range_proof/proof_base.cpp \
   blsct/range_proof/msg_amt_cipher.cpp \
-  blsct/range_proof/bulletproofs/range_proof.cpp \
-  blsct/range_proof/bulletproofs_plus/range_proof.cpp \
   blsct/range_proof/bulletproofs_plus/util.cpp \
   blsct/set_mem_proof/set_mem_proof.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \

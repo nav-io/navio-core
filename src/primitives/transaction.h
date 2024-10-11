@@ -9,7 +9,7 @@
 #include <attributes.h>
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/private_key.h>
-#include <blsct/range_proof/bulletproofs/range_proof.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/generators.h>
 #include <blsct/signature.h>
 #include <consensus/amount.h>
@@ -162,7 +162,7 @@ public:
     MclG1Point spendingKey;
     MclG1Point ephemeralKey;
     MclG1Point blindingKey;
-    bulletproofs::RangeProof<Mcl> rangeProof;
+    bulletproofs_plus::RangeProof<Mcl> rangeProof;
     uint16_t viewTag;
 
     CTxOutBLSCTData()
@@ -293,12 +293,12 @@ public:
 
     bool IsStakedCommitment() const
     {
-        bulletproofs::RangeProofWithSeed<Mcl> dummy;
+        bulletproofs_plus::RangeProofWithSeed<Mcl> dummy;
 
         return GetStakedCommitmentRangeProof(dummy);
     }
 
-    bool GetStakedCommitmentRangeProof(bulletproofs::RangeProofWithSeed<Mcl>& rangeProof) const
+    bool GetStakedCommitmentRangeProof(bulletproofs_plus::RangeProofWithSeed<Mcl>& rangeProof) const
     {
         if (!IsBLSCT())
             return false;

@@ -74,8 +74,7 @@ BOOST_AUTO_TEST_CASE(test_range_proof_prove_verify_one_value)
     auto p = rpl.Prove(vs, nonce, msg.second, token_id);
 
     auto is_valid = rpl.Verify(
-        std::vector<bulletproofs_plus::RangeProof<T>> { p }
-    );
+        std::vector<bulletproofs_plus::RangeProofWithSeed<T>>{p});
     BOOST_CHECK(is_valid);
 }
 
@@ -273,7 +272,7 @@ static void RunTestCase(
     auto token_id = GenTokenId();
     auto nonce = GenNonce();
 
-    std::vector<bulletproofs_plus::RangeProof<T>> proofs;
+    std::vector<bulletproofs_plus::RangeProofWithSeed<T>> proofs;
     RangeProofLogic rpl;
 
     // calculate proofs
@@ -385,7 +384,7 @@ BOOST_AUTO_TEST_CASE(test_range_proof_number_of_input_values)
 BOOST_AUTO_TEST_CASE(test_range_proof_validate_proofs_by_sizes)
 {
     auto gen_valid_proof_wo_value_commitments = [](size_t num_inputs) {
-        bulletproofs_plus::RangeProof<T> p;
+        bulletproofs_plus::RangeProofWithSeed<T> p;
         auto n = blsct::Common::GetFirstPowerOf2GreaterOrEqTo(num_inputs);
         for (size_t i=0; i<n; ++i) {
             p.Vs.Add(MclG1Point::GetBasePoint());
@@ -400,31 +399,31 @@ BOOST_AUTO_TEST_CASE(test_range_proof_validate_proofs_by_sizes)
 
     {
         // no proof should validate fine
-        std::vector<bulletproofs_plus::RangeProof<T>> proofs;
+        std::vector<bulletproofs_plus::RangeProofWithSeed<T>> proofs;
         BOOST_CHECK_NO_THROW(range_proof::Common<T>::ValidateProofsBySizes(proofs));
     }
     {
         // no value commitment
-        bulletproofs_plus::RangeProof<T> p;
-        std::vector<bulletproofs_plus::RangeProof<T>> proofs { p };
+        bulletproofs_plus::RangeProofWithSeed<T> p;
+        std::vector<bulletproofs_plus::RangeProofWithSeed<T>> proofs{p};
         BOOST_CHECK_THROW(range_proof::Common<T>::ValidateProofsBySizes(proofs), std::runtime_error);
     }
     {
         // minimum number of value commitments
         auto p = gen_valid_proof_wo_value_commitments(1);
-        std::vector<bulletproofs_plus::RangeProof<T>> proofs { p };
+        std::vector<bulletproofs_plus::RangeProofWithSeed<T>> proofs{p};
         BOOST_CHECK_NO_THROW(range_proof::Common<T>::ValidateProofsBySizes(proofs));
     }
     {
         // maximum number of value commitments
         auto p = gen_valid_proof_wo_value_commitments(range_proof::Setup::max_input_values);
-        std::vector<bulletproofs_plus::RangeProof<T>> proofs { p };
+        std::vector<bulletproofs_plus::RangeProofWithSeed<T>> proofs{p};
         BOOST_CHECK_NO_THROW(range_proof::Common<T>::ValidateProofsBySizes(proofs));
     }
     {
         // number of value commitments exceeding maximum
         auto p = gen_valid_proof_wo_value_commitments(range_proof::Setup::max_input_values + 1);
-        std::vector<bulletproofs_plus::RangeProof<T>> proofs { p };
+        std::vector<bulletproofs_plus::RangeProofWithSeed<T>> proofs{p};
         BOOST_CHECK_THROW(range_proof::Common<T>::ValidateProofsBySizes(proofs), std::runtime_error);
     }
 }

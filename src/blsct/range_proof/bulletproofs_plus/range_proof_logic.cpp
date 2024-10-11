@@ -204,11 +204,12 @@ std::tuple<
 
 template <typename T>
 RangeProof<T> RangeProofLogic<T>::Prove(
-    Elements<typename T::Scalar>& vs,
-    typename T::Point& nonce,
+    Elements<typename T::Scalar> vs,
+    const range_proof::GammaSeed<T>& nonce,
     const std::vector<uint8_t>& message,
-    const TokenId& token_id
-) {
+    const Seed& seed,
+    const typename T::Scalar& minValue)
+{
     using Scalar = typename T::Scalar;
     using Scalars = Elements<Scalar>;
 
@@ -218,26 +219,45 @@ RangeProof<T> RangeProofLogic<T>::Prove(
         blsct::Common::GetFirstPowerOf2GreaterOrEqTo(vs.Size());
 
     RangeProof<T> proof;
-    proof.token_id = token_id;
 
     const size_t m = num_input_values_power_of_2;
     const size_t n = range_proof::Setup::num_input_value_bits;
     const size_t mn = m * n;
 
+    auto vsOriginal = vs;
+
+    // apply minValue
+    if (!minValue.IsZero()) {
+        for (size_t i = 0; i < vs.Size(); ++i) {
+            vs[i] = vs[i] - minValue;
+        }
+    }
+
     // generate gammas
     Scalars gammas;
-    for (size_t i = 0; i < num_input_values_power_of_2; ++i) {
-        auto hash = nonce.GetHashWithSalt(100 + i);
-        gammas.Add(hash);
+    if (std::holds_alternative<Point>(nonce.seed)) {
+        for (size_t i = 0; i < num_input_values_power_of_2; ++i) {
+            auto hash = nonce.GetHashWithSalt(100 + i);
+            gammas.Add(hash);
+        }
+    } else if (std::holds_alternative<Scalars>(nonce.seed)) {
+        auto vec = std::get<Scalars>(nonce.seed);
+        if (vs.Size() != vec.Size()) {
+            throw std::runtime_error(strprintf("%s: size of vs does not match size of gammas", __func__));
+        }
+        for (size_t i = 0; i < vec.Size(); ++i) {
+            gammas.Add(vec[i]);
+        }
     }
 
     // make the number of input values a power of 2 w/ 0s if needed
     while (vs.Size() < num_input_values_power_of_2) {
         vs.Add(Scalar(0));
+        vsOriginal.Add(Scalar(0));
     }
 
     // get generators for the token_id
-    range_proof::Generators<T> gens = m_common.Gf().GetInstance(token_id);
+    range_proof::Generators<T> gens = m_common.Gf().GetInstance(seed);
     auto gs = gens.GetGiSubset(mn);
     auto hs = gens.GetHiSubset(mn);
     auto h = gens.H;
@@ -250,7 +270,7 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
 
     // Calculate value commitments directly form the input values
     for (size_t i = 0; i < vs.Size(); ++i) {
-        auto V = (g * vs[i]) + (h * gammas[i]);
+        auto V = (g * vsOriginal[i]) + (h * gammas[i]);
         proof.Vs.Add(V);
         fiat_shamir << V;
     }
@@ -260,7 +280,7 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
 
     // Commitment to aL and aR (obfuscated with alpha)
     Scalar nonce_alpha = nonce.GetHashWithSalt(1);
-    Scalar alpha = range_proof::MsgAmtCipher<T>::ComputeAlpha(message, vs[0], nonce_alpha);
+    Scalar alpha = range_proof::MsgAmtCipher<T>::ComputeAlpha(message, vsOriginal[0], nonce_alpha);
 
     Scalar tau1 = nonce.GetHashWithSalt(2);
     Scalar tau2 = nonce.GetHashWithSalt(3);
@@ -371,11 +391,11 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
     return proof;
 }
 template RangeProof<Mcl> RangeProofLogic<Mcl>::Prove(
-    Elements<Mcl::Scalar>&,
-    Mcl::Point&,
+    Elements<Mcl::Scalar>,
+    const range_proof::GammaSeed<Mcl>&,
     const std::vector<uint8_t>&,
-    const TokenId&
-);
+    const Seed&,
+    const Mcl::Scalar&);
 
 template <typename T>
 bool RangeProofLogic<T>::VerifyProofs(
@@ -388,7 +408,7 @@ bool RangeProofLogic<T>::VerifyProofs(
     for (const RangeProofWithTranscript<T>& pt : proof_transcripts) {
         if (pt.proof.Ls.Size() != pt.proof.Rs.Size()) return false;
 
-        range_proof::Generators<T> gens = m_common.Gf().GetInstance(pt.proof.token_id);
+        range_proof::Generators<T> gens = m_common.Gf().GetInstance(pt.proof.seed);
 
         auto gs = gens.GetGiSubset(pt.mn);
         auto hs = gens.GetHiSubset(pt.mn);
@@ -480,7 +500,10 @@ bool RangeProofLogic<T>::VerifyProofs(
         lp.Add(pt.proof.Rs, e_inv_squares);
         lp.Add(gs, gs_exp);
         lp.Add(hs, hs_exp);
-        lp.Add(pt.proof.Vs, vs_exp);
+
+        for (size_t i = 0; i < pt.proof.Vs.Size(); ++i) {
+            lp.Add(LazyPoint<T>(pt.proof.Vs[i] - (gens.G * pt.proof.min_value), vs_exp[i]));
+        }
 
         if (!lp.Sum().IsZero()) return false;
     }
@@ -494,14 +517,14 @@ template bool RangeProofLogic<Mcl>::VerifyProofs(
 
 template <typename T>
 bool RangeProofLogic<T>::Verify(
-    const std::vector<RangeProof<T>>& proofs
-) {
+    const std::vector<RangeProofWithSeed<T>>& proofs)
+{
     range_proof::Common<T>::ValidateProofsBySizes(proofs);
 
     std::vector<RangeProofWithTranscript<T>> proof_transcripts;
     size_t max_num_rounds = 0;
 
-    for (const RangeProof<T>& proof: proofs) {
+    for (const RangeProofWithSeed<T>& proof : proofs) {
         // update max # of rounds and sum of all V bits
         max_num_rounds = std::max(max_num_rounds, proof.Ls.Size());
 
@@ -518,8 +541,7 @@ bool RangeProofLogic<T>::Verify(
     );
 }
 template bool RangeProofLogic<Mcl>::Verify(
-    const std::vector<RangeProof<Mcl>>&
-);
+    const std::vector<RangeProofWithSeed<Mcl>>&);
 
 template <typename T>
 AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
@@ -532,7 +554,7 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
     std::vector<range_proof::RecoveredData<T>> xs;
 
     for (const AmountRecoveryRequest<T>& req: reqs) {
-        range_proof::Generators<T> gens = m_common.Gf().GetInstance(req.token_id);
+        range_proof::Generators<T> gens = m_common.Gf().GetInstance(req.seed);
         Point g = gens.G;
         Point h = gens.H;
 

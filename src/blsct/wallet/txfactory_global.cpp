@@ -2,7 +2,6 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/range_proof/bulletproofs/range_proof.h>
 #include <blsct/wallet/txfactory_global.h>
 
 using T = Mcl;
@@ -45,7 +44,7 @@ Signature UnsignedOutput::GetSignature() const
 
 UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId, const Scalar& blindingKey, const CreateTransactionType& type, const CAmount& minStake)
 {
-    bulletproofs::RangeProofLogic<T> rp;
+    bulletproofs_plus::RangeProofLogic<T> rp;
     auto ret = UnsignedOutput();
 
     ret.out.nValue = 0;

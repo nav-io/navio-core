@@ -11,8 +11,8 @@ using Point = Arith::Point;
 using Scalar = Arith::Scalar;
 using Points = Elements<Point>;
 using Scalars = Elements<Scalar>;
-using RangeProof = bulletproofs::RangeProof<Arith>;
-using RangeProver = bulletproofs::RangeProofLogic<Arith>;
+using RangeProof = bulletproofs_plus::RangeProof<Arith>;
+using RangeProver = bulletproofs_plus::RangeProofLogic<Arith>;
 using SetProof = SetMemProof<Arith>;
 using SetProver = SetMemProofProver<Arith>;
 
@@ -106,8 +106,8 @@ bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint256
     range_proof_with_value.Vs.Add(phi);
 
     RangeProver rp;
-    std::vector<bulletproofs::RangeProofWithSeed<Arith>> proofs;
-    bulletproofs::RangeProofWithSeed<Arith> proof{range_proof_with_value, eta_phi, (CAmount)min_value.GetUint64(0)};
+    std::vector<bulletproofs_plus::RangeProofWithSeed<Arith>> proofs;
+    bulletproofs_plus::RangeProofWithSeed<Arith> proof{range_proof_with_value, eta_phi, (CAmount)min_value.GetUint64(0)};
 
     proofs.emplace_back(proof);
 
