@@ -26,7 +26,7 @@ BENCHMARKS =
 
 BLS_INCLUDES=-I$(srcdir)/bls/include -I$(srcdir)/bls/mcl/include -I$(srcdir)/bls/mcl/src
 
-BITCOIN_INCLUDES=-I$(builddir) -I$(srcdir)/$(MINISKETCH_INCLUDE_DIR_INT) -I$(srcdir)/secp256k1/include $(BLS_INCLUDES) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+BITCOIN_INCLUDES=-I$(builddir) -I$(srcdir)/$(MINISKETCH_INCLUDE_DIR_INT) -I$(srcdir)/secp256k1/include $(BLS_INCLUDES) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT) -I$(srcdir)/blsct/external_api
 
 LIBBITCOIN_NODE=libbitcoin_node.a
 LIBBITCOIN_COMMON=libbitcoin_common.a
@@ -943,6 +943,7 @@ libbitcoin_common_a_SOURCES = \
   blsct/building_block/weighted_inner_prod_arg.cpp \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
+  blsct/key_io.cpp \
   blsct/private_key.cpp \
   blsct/public_key.cpp \
   blsct/public_keys.cpp \

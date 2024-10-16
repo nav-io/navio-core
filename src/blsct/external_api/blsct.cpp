@@ -1,4 +1,4 @@
-#include "blsct.h"
+#include <blsct.h>
 #include <crypto/common.h>
 #include <blsct/bech32_mod.h>
 #include <blsct/common.h>
@@ -699,11 +699,11 @@ BlsctTxRetVal* build_tx(
         );
 
         // create out_type from blsct::TxOutputType
-        blsct::CreateOutputType out_type;
+        blsct::CreateTransactionType out_type;
         if (tx_out.output_type == TxOutputType::Normal) {
-            out_type = blsct::CreateOutputType::NORMAL;
+            out_type = blsct::CreateTransactionType::NORMAL;
         } else if (tx_out.output_type == TxOutputType::StakedCommitment) {
-            out_type = blsct::CreateOutputType::STAKED_COMMITMENT;
+            out_type = blsct::CreateTransactionType::STAKED_COMMITMENT;
         } else {
             rv->result = BLSCT_BAD_OUT_TYPE;
             return rv;

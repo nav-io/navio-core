@@ -13,6 +13,7 @@
 #include <blsct/public_keys.h>
 #include <blsct/signature.h>
 #include <boost/test/unit_test.hpp>
+#include <blsct/external_api/blsct.h>
 
 BOOST_FIXTURE_TEST_SUITE(keys_tests, BasicTestingSetup)
 
@@ -21,39 +22,13 @@ using Scalar = MclScalar;
 
 BOOST_AUTO_TEST_CASE(blsct_size_definitions)
 {
-/*
-#define SUBADDRESS_SIZE DOUBLE_PUBLIC_KEY_SIZE
-#define SUBADDRESS_ID_SIZE 16
-#define ENCODED_DPK_STR_SIZE 165
-#define ENCODED_DPK_STR_BUF_SIZE ENCODED_DPK_STR_SIZE + 1 // 1 for c-str null termination
-#define KEY_ID_SIZE 20
-#define VIEW_TAG_SIZE 8
-        // #define UINT16_SIZE 2
-        // #define CTXOUT_BLSCT_DATA_SIZE \
-        //         POINT_SIZE * 3 + \
-        //         RANGE_PROOF_SIZE + \
-        //         UINT16_SIZE
-        // #define NORMAL_CSCRIPT_SIZE 1
-        // #define OP_SIZE 1
-        // #define STAKED_COMMITMENT_CSCRIPT_SIZE \
-        //         OP_SIZE * 3 + \
-        //         RANGE_PROOF_SIZE
-        // #define CTXOUT_SIZE CAMOUNT_SIZE + \
-        //         CSCRIPT_SIZE + \
-        //         CTXOUT_BLSCT_DATA_SIZE + \
-        //         TOKEN_ID_SIZE
-        // #define UNSIGNED_OUTPUT_SIZE SCALAR_SIZE * 3 + CTXOUT_SIZE
-#define SIGNATURE_SIZE 96
-#define SCRIPT_SIZE 28
-#define MEMO_BUF_SIZE 100
-*/
     BOOST_CHECK_EQUAL(
         sizeof(blsct::PublicKey),
         PUBLIC_KEY_SIZE
     );
     BOOST_CHECK_EQUAL(
         sizeof(blsct::PrivateKey),
-        PRIVATE_KEY_SIZE
+        SCALAR_SIZE
     );
     BOOST_CHECK_EQUAL(
         sizeof(uint256),
@@ -72,7 +47,7 @@ BOOST_AUTO_TEST_CASE(blsct_size_definitions)
         DOUBLE_PUBLIC_KEY_SIZE
     );
     BOOST_CHECK_EQUAL(
-        sizeof(bulletproofs::RangeProof<Mcl>>,
+        sizeof(bulletproofs::RangeProof<Mcl>),
         RANGE_PROOF_SIZE
     );
     BOOST_CHECK_EQUAL(

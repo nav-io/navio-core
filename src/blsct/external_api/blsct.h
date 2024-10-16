@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 /* constants */
 #define PUBLIC_KEY_SIZE 48
@@ -102,7 +103,7 @@
 #define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
 #define RETURN_IF_MEM_ALLOC_FAILED(name) \
 if (name == nullptr) { \
-    printf("Failed to allocate memory"); \
+    fprintf(stderr, "Failed to allocate memory\n"); \
     return nullptr; \
 }
 #define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
