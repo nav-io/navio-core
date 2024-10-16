@@ -408,7 +408,7 @@ BlsctBoolRetVal* verify_range_proofs(
 
         std::vector<bulletproofs::RangeProofWithSeed<Mcl>> range_proof_w_seeds;
 
-        for(auto rp: *range_proofs) {
+        for(const auto& rp: *range_proofs) {
             auto rp_w_seed = bulletproofs::RangeProofWithSeed<Mcl>(rp);
             range_proof_w_seeds.push_back(rp_w_seed);
         }
