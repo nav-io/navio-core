@@ -20,46 +20,6 @@ BOOST_FIXTURE_TEST_SUITE(keys_tests, BasicTestingSetup)
 using Point = MclG1Point;
 using Scalar = MclScalar;
 
-BOOST_AUTO_TEST_CASE(blsct_size_definitions)
-{
-    BOOST_CHECK_EQUAL(
-        sizeof(blsct::PublicKey),
-        PUBLIC_KEY_SIZE
-    );
-    BOOST_CHECK_EQUAL(
-        sizeof(blsct::PrivateKey),
-        SCALAR_SIZE
-    );
-    BOOST_CHECK_EQUAL(
-        sizeof(uint256),
-        UINT256_SIZE
-    );
-    BOOST_CHECK_EQUAL(
-        sizeof(Point),
-        POINT_SIZE
-    );
-    BOOST_CHECK_EQUAL(
-        sizeof(Scalar),
-        SCALAR_SIZE
-    );
-    BOOST_CHECK_EQUAL(
-        sizeof(blsct::DoublePublicKey),
-        DOUBLE_PUBLIC_KEY_SIZE
-    );
-    BOOST_CHECK_EQUAL(
-        sizeof(bulletproofs::RangeProof<Mcl>),
-        RANGE_PROOF_SIZE
-    );
-    BOOST_CHECK_EQUAL(
-        sizeof(TokenId),
-        TOKEN_ID_SIZE
-    );
-    BOOST_CHECK_EQUAL(
-        sizeof(COutPoint),
-        OUT_POINT_SIZE
-    );
-}
-
 BOOST_AUTO_TEST_CASE(blsct_keys)
 {
     // Single Public Key

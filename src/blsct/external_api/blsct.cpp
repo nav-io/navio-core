@@ -1,5 +1,3 @@
-#include <blsct.h>
-#include <crypto/common.h>
 #include <blsct/bech32_mod.h>
 #include <blsct/common.h>
 #include <blsct/double_public_key.h>
@@ -16,6 +14,7 @@
 #include <blsct/wallet/txfactory_base.h>
 #include <common/args.h>
 #include <common/url.h>
+#include <crypto/common.h>
 #include <memory.h>
 #include <primitives/transaction.h>
 #include <streams.h>
