@@ -103,7 +103,7 @@
 #define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
 #define RETURN_IF_MEM_ALLOC_FAILED(name) \
 if (name == nullptr) { \
-    fprintf(stderr, "Failed to allocate memory\n"); \
+    fputs("Failed to allocate memory\n", stderr); \
     return nullptr; \
 }
 #define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
