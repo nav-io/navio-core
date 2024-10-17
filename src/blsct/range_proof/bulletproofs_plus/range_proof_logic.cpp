@@ -400,9 +400,8 @@ template RangeProof<Mcl> RangeProofLogic<Mcl>::Prove(
 
 template <typename T>
 bool RangeProofLogic<T>::VerifyProofs(
-    const std::vector<RangeProofWithTranscript<T>>& proof_transcripts,
-    const size_t& max_mn
-) {
+    const std::vector<RangeProofWithTranscript<T>>& proof_transcripts)
+{
     using Scalar = typename T::Scalar;
     using Scalars = Elements<Scalar>;
 
@@ -415,7 +414,7 @@ bool RangeProofLogic<T>::VerifyProofs(
     futures.reserve(proof_transcripts.size());
 
     for (const RangeProofWithTranscript<T>& pt : proof_transcripts) {
-        futures.emplace_back(std::async(std::launch::async, [this, &pt, max_mn]() -> bool {
+        futures.emplace_back(std::async(std::launch::async, [this, &pt, &abort_flag]() -> bool {
             if (abort_flag.load()) return false; // Early exit if another task has already failed
 
             if (pt.proof.Ls.Size() != pt.proof.Rs.Size()) return false;
@@ -522,8 +521,7 @@ bool RangeProofLogic<T>::VerifyProofs(
     return true;
 }
 template bool RangeProofLogic<Mcl>::VerifyProofs(
-    const std::vector<RangeProofWithTranscript<Mcl>>&,
-    const size_t&
+    const std::vector<RangeProofWithTranscript<Mcl>>&
 );
 
 template <typename T>
@@ -544,12 +542,9 @@ bool RangeProofLogic<T>::Verify(
         proof_transcripts.push_back(proof_transcript);
     }
 
-    const size_t max_mn = 1ull << max_num_rounds;
 
     return VerifyProofs(
-        proof_transcripts,
-        max_mn
-    );
+        proof_transcripts);
 }
 template bool RangeProofLogic<Mcl>::Verify(
     const std::vector<RangeProofWithSeed<Mcl>>&);

@@ -102,9 +102,7 @@ private:
     static size_t GetNumLeadingZeros(const uint32_t& n);
 
     bool VerifyProofs(
-        const std::vector<RangeProofWithTranscript<T>>& proof_transcripts,
-        const size_t& max_mn
-    );
+        const std::vector<RangeProofWithTranscript<T>>& proof_transcripts);
 
     range_proof::Common<T> m_common;
 };
