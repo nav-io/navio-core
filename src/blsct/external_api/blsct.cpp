@@ -505,7 +505,7 @@ BlsctAmountsRetVal* recover_amount(
         }
 
         rv->result = BLSCT_SUCCESS;
-        rv->value = VOID(result_vec);
+        rv->value = TO_VOID(result_vec);
         return rv;
 
     } catch(...) {}

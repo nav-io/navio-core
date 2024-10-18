@@ -111,7 +111,7 @@ if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
-#define VOID(name) reinterpret_cast<void*>(name)
+#define TO_VOID(name) reinterpret_cast<void*>(name)
 
 #define UNVOID(T, name) const T* name = reinterpret_cast<const T*>(void_##name)
 

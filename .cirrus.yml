@@ -174,7 +174,7 @@ task:
     - fallocate -l 16G /swapfile_ci && chmod 600 /swapfile_ci && mkswap /swapfile_ci && swapon /swapfile_ci && ( echo '/swapfile_ci none swap sw 0 0' | tee -a /etc/fstab )
   persistent_worker:
     labels:
-      type: medium
+      type: large
   env:
     FILE_ENV: "./ci/test/00_setup_env_native_fuzz.sh"
 
