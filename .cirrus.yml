@@ -112,7 +112,8 @@ compute_credits_template: &CREDITS_TEMPLATE
 #   << : *GLOBAL_TASK_TEMPLATE
 #   persistent_worker:
 #     labels:
-#       type: small env:
+#       type: small
+#   env:
 #     FILE_ENV: "./ci/test/00_setup_env_win64.sh"
 #
 # task:
@@ -168,11 +169,18 @@ compute_credits_template: &CREDITS_TEMPLATE
 
 task:
   name: 'fuzzer,address,undefined,integer, no depends'
-  << : *GLOBAL_TASK_TEMPLATE
-  container:
-    image: ubuntu-2404
-    cpu: 3
-    memory: 16G
+  << : *BASE_TEMPLATE
+  swap_script:
+    j
+    - fallocate -l 28G /swap
+    - chmod 600 /swap
+    - mkswap /swap
+    - swapon /swap
+    - (echo '/swap none swap sw 0 0' | tee -a /etc/fstab)
+  << : *MAIN_TEMPLATE
+  persistent_worker:
+    labels:
+      type: medium
   env:
     FILE_ENV: "./ci/test/00_setup_env_native_fuzz.sh"
 
