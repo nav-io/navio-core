@@ -170,13 +170,6 @@ compute_credits_template: &CREDITS_TEMPLATE
 task:
   name: 'fuzzer,address,undefined,integer, no depends'
   << : *BASE_TEMPLATE
-  swap_script:
-    j
-    - fallocate -l 28G /swap
-    - chmod 600 /swap
-    - mkswap /swap
-    - swapon /swap
-    - (echo '/swap none swap sw 0 0' | tee -a /etc/fstab)
   << : *MAIN_TEMPLATE
   persistent_worker:
     labels:
