@@ -170,12 +170,9 @@ task:
   name: 'fuzzer,address,undefined,integer, no depends'
   << : *GLOBAL_TASK_TEMPLATE
   container:
-    image: debian:bookworm
+    image: ubuntu-2404
     cpu: 3
     memory: 16G
-  persistent_worker:
-    labels:
-      type: medium
   env:
     FILE_ENV: "./ci/test/00_setup_env_native_fuzz.sh"
 
