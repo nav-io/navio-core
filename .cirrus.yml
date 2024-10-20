@@ -171,6 +171,7 @@ task:
   name: 'fuzzer,address,undefined,integer, no depends'
   << : *BASE_TEMPLATE
   << : *MAIN_TEMPLATE
+
   persistent_worker:
     labels:
       type: medium
