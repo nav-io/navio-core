@@ -10,6 +10,7 @@
 #define NAVIO_BLSCT_ARITH_MCL_MCL_H
 
 #include <blsct/arith/mcl/mcl_g1point.h>
+#include <blsct/arith/mcl/mcl_init.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
 #include <blsct/arith/mcl/mcl_util.h>
 
@@ -21,6 +22,7 @@ struct Mcl {
     using Scalar = MclScalar;
     using Point = MclG1Point;
     using Util = MclUtil;
+    using Init = MclInit;
 };
 
 #endif // NAVIO_BLSCT_ARITH_MCL_MCL_H

@@ -5,7 +5,7 @@ We made modification to bech32 implementation of Bitcoin so that it worked with 
 
 To accomplish that, we replaced the 6-degree generator polynomial originally used by bech32 by an 8-degree one as [Bitcoin Cash's cashaddr implementation](https://github.com/bitcoin-cash-node/bitcoin-cash-node/blob/master/src/cashaddr.cpp) and [Jamtis](https://gist.github.com/tevador/50160d160d24cfc6c52ae02eb3d17024) of Monero have done.
 
-In order to find an 8-degree polynomial for our need, we followed the Jamtis polynomial search procedure which is explained in detail in [this document](https://gist.github.com/tevador/5b3fbbd0877a3412ede07263c6b2663d) with a little modificaiton to meet our requirements.
+In order to find an 8-degree polynomial for our need, we followed the Jamtis polynomial search procedure which is explained in detail in [this document](https://gist.github.com/tevador/5b3fbbd0877a3412ede07263c6b2663d) with a little modification to meet our requirements.
 
 Here are the requirements we had:
 

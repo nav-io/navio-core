@@ -72,10 +72,9 @@ compute_credits_template: &CREDITS_TEMPLATE
 task:
   name: 'lint'
   << : *BASE_TEMPLATE
-  container:
-    image: debian:bookworm
-    cpu: 1
-    memory: 1G
+  persistent_worker:
+    labels:
+      type: small
   # For faster CI feedback, immediately schedule the linters
   << : *CREDITS_TEMPLATE
   test_runner_cache:

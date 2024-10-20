@@ -56,6 +56,7 @@ public:
 
     Point GetG1Point() const;
     std::vector<unsigned char> GetVch() const;
+    bool SetVch(const std::vector<unsigned char> vec);
 
     bool operator<(const PublicKey& b) const
     {

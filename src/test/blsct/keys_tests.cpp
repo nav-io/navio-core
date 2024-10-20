@@ -13,6 +13,7 @@
 #include <blsct/public_keys.h>
 #include <blsct/signature.h>
 #include <boost/test/unit_test.hpp>
+#include <blsct/external_api/blsct.h>
 
 BOOST_FIXTURE_TEST_SUITE(keys_tests, BasicTestingSetup)
 
