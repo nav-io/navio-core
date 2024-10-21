@@ -1447,9 +1447,11 @@ libblsct_a_SOURCES = \
   crypto/sha256_sse41.cpp \
   crypto/sha256_x86_shani.cpp \
   crypto/sha256.cpp \
+  hash.cpp \
   primitives/transaction.cpp \
   rpc/util.cpp \
   script/interpreter.cpp \
+  script/miniscript.cpp \
   script/script.cpp \
   script/sign.cpp \
   script/signingprovider.cpp \
@@ -1458,6 +1460,7 @@ libblsct_a_SOURCES = \
   uint256.cpp \
   util/rbf.cpp \
   util/strencodings.cpp \
+  util/time.cpp \
   wallet/coincontrol.cpp \
   wallet/context.cpp \
   wallet/crypter.cpp \
@@ -1491,8 +1494,9 @@ LIBUNIVALUE_BLSCT = libunivalue_blsct.a
 noinst_LIBRARIES += $(LIBUNIVALUE_BLSCT)
 libunivalue_blsct_a_SOURCES = $(UNIVALUE_LIB_SOURCES_INT) $(UNIVALUE_DIST_HEADERS_INT) $(UNIVALUE_LIB_HEADERS_INT) $(UNIVALUE_TEST_FILES_INT)
 libunivalue_blsct_a_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+libunivalue_blsct_a_CXXFLAGS = $(AM_CXXFLAGS) -fPIC
 
-libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) -fPIC
 libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
 
 if ENABLE_SSE41
