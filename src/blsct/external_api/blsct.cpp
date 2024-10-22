@@ -750,6 +750,9 @@ CMutableTransaction* deserialize_tx(
     CMutableTransaction* tx = static_cast<CMutableTransaction*>(
         malloc(sizeof(CMutableTransaction))
     );
+    CMutableTransaction empty_tx;
+    std::memcpy(tx, &empty_tx, sizeof(CMutableTransaction));
+
     DataStream st{};
     TransactionSerParams params { .allow_witness = true };
     ParamsStream ps {params, st};
