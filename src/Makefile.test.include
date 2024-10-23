@@ -95,7 +95,7 @@ BITCOIN_TESTS =\
   test/blsct/building_block/lazy_points_tests.cpp \
   test/blsct/common_tests.cpp \
   test/blsct/eip_2333/bls12_381_keygen_tests.cpp \
-	test/blsct/external_api/blsct_tests.cpp \
+	test/blsct/external_api/external_api_tests.cpp \
   test/blsct/keys_tests.cpp \
   test/blsct/range_proof/range_proof_common_tests.cpp \
   test/blsct/range_proof/generators_tests.cpp \
