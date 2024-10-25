@@ -1455,6 +1455,7 @@ libblsct_a_SOURCES = \
   script/script_error.cpp \
   script/sign.cpp \
   script/signingprovider.cpp \
+	sync.cpp \
   support/cleanse.cpp \
   support/lockedpool.cpp \
   uint256.cpp \
