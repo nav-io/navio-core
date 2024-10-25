@@ -1452,6 +1452,7 @@ libblsct_a_SOURCES = \
   script/interpreter.cpp \
   script/miniscript.cpp \
   script/script.cpp \
+  script/script_error.cpp \
   script/sign.cpp \
   script/signingprovider.cpp \
   support/cleanse.cpp \
