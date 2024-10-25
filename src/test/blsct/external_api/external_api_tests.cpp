@@ -25,6 +25,16 @@
 
 BOOST_FIXTURE_TEST_SUITE(external_api_tests, BasicTestingSetup)
 
+uint8_t hex_to_uint(char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    } else if (c >= 'a' && c <= 'f') {
+        return 10 + (c - 'a');
+    } else {
+        throw std::invalid_argument("Unexpected hex char found");
+    }
+}
+
 // This test checks if there is any structural change in
 // CMutableTransaction and its dependencies
 BOOST_AUTO_TEST_CASE(test_cmutable_transaction_sizes)
@@ -82,8 +92,9 @@ BOOST_AUTO_TEST_CASE(test_cmutable_transaction_sizes)
     ParamsStream ps {params, st};
 
     for (size_t i = 0; i < tx_hex.length(); i += 2) {
-        std::string byte_str = tx_hex.substr(i, 2);
-        ps << static_cast<uint8_t>(std::stoi(byte_str, nullptr, 16));
+        auto high = hex_to_uint(tx_hex[i]);
+        auto low = hex_to_uint(tx_hex[i + 1]);
+        ps << ((high << 4) | low);
     }
 
     CMutableTransaction tx;
