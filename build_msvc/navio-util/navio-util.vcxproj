@@ -3,6 +3,7 @@
   <Import Project="..\common.init.vcxproj" />
   <PropertyGroup Label="Globals">
     <ProjectGuid>{57A04EC9-542A-4E40-83D0-AC3BE1F36805}</ProjectGuid>
+    <GenerateDebugInformation>false</GenerateDebugInformation>
   </PropertyGroup>
   <PropertyGroup Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
