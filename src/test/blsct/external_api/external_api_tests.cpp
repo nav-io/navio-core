@@ -79,7 +79,6 @@ BOOST_AUTO_TEST_CASE(test_cmutable_transaction_sizes)
     ParamsStream ps {params, st};
     tx->Serialize(ps);
     auto hex = HexStr(st);
-
     printf("%s\n", hex.c_str());
     */
 
