@@ -2,16 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-// #include <boost/test/unit_test.hpp>
-// #include <test/util/setup_common.h>
-// #include <blsct/wallet/txfactory.h>
-// #include <test/util/random.h>
-// #include <txdb.h>
-// #include <wallet/receive.h>
-// #include <wallet/test/util.h>
-// #include <wallet/wallet.h>
 #include <util/strencodings.h>
-
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <test/util/random.h>
@@ -20,6 +11,7 @@
 #include <wallet/receive.h>
 #include <wallet/test/util.h>
 #include <wallet/wallet.h>
+#include <iostream>
 
 #include <boost/test/unit_test.hpp>
 
@@ -79,7 +71,7 @@ BOOST_AUTO_TEST_CASE(test_cmutable_transaction_sizes)
     ParamsStream ps {params, st};
     tx->Serialize(ps);
     auto hex = HexStr(st);
-    printf("%s\n", hex.c_str());
+    std::cout << hex << std::endl;
     */
 
     // in case there is a structural change in CMutableTransaction,
