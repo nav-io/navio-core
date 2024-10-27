@@ -3,8 +3,6 @@
   <Import Project="..\common.init.vcxproj" />
   <PropertyGroup Label="Globals">
     <ProjectGuid>{57A04EC9-542A-4E40-83D0-AC3BE1F36805}</ProjectGuid>
-    <!-- Disabling PDB generation to resolve an issue with the BLS library's PDB handling -->
-    <GenerateDebugInformation>false</GenerateDebugInformation>
   </PropertyGroup>
   <PropertyGroup Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -12,7 +10,10 @@
   </PropertyGroup>
   <ItemGroup>
     <ClCompile Include="..\..\src\bitcoin-util.cpp" />
-  </ItemGroup>
+    <!-- Disabling PDB generation to resolve an issue with the BLS library's PDB handling -->
+    <ClCompile>
+      <DebugInformationFormat>None</DebugInformationFormat>
+    </ClCompile>
   <ItemGroup>
     <ProjectReference Include="..\libbitcoin_consensus\libbitcoin_consensus.vcxproj">
       <Project>{2b384fa8-9ee1-4544-93cb-0d733c25e8ce}</Project>
