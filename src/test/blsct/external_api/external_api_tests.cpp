@@ -38,6 +38,7 @@ BOOST_AUTO_TEST_CASE(test_cmutable_transaction_sizes)
     DataStream st{ParseHex(tx_hex)};
     TransactionSerParams params { .allow_witness = true };
     ParamsStream ps {params, st};
+
     CMutableTransaction tx;
 
     try {
