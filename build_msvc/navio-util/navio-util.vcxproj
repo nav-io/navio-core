@@ -13,6 +13,12 @@
     <DebugInformationFormat>None</DebugInformationFormat>
   </PropertyGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\src\bitcoin-util.cpp">
+      <!-- Apply /Zf flag for fast PDB generation -->
+      <MinimalRebuild>true</MinimalRebuild>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
     <ClCompile Include="..\..\src\bitcoin-util.cpp" />
   </ItemGroup>
   <ItemGroup>
