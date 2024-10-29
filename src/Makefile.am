@@ -213,7 +213,7 @@ BLSCT_CPP = \
   blsct/arith/elements.cpp \
   blsct/arith/mcl/mcl_g1point.cpp \
   blsct/arith/mcl/mcl_scalar.cpp \
-	blsct/bech32_mod.cpp \
+  blsct/bech32_mod.cpp \
   blsct/building_block/g_h_gi_hi_zero_verifier.cpp \
   blsct/building_block/generator_deriver.cpp \
   blsct/building_block/imp_inner_prod_arg.cpp \
@@ -223,8 +223,7 @@ BLSCT_CPP = \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
-  blsct/external_api/blsct.cpp \
-	blsct/key_io.cpp \
+  blsct/key_io.cpp \
   blsct/pos/helpers.cpp \
   blsct/pos/pos.cpp \
   blsct/pos/proof_logic.cpp \
@@ -1453,8 +1452,10 @@ libblsct_a_SOURCES = \
   script/interpreter.cpp \
   script/miniscript.cpp \
   script/script.cpp \
+  script/script_error.cpp \
   script/sign.cpp \
   script/signingprovider.cpp \
+  sync.cpp \
   support/cleanse.cpp \
   support/lockedpool.cpp \
   uint256.cpp \
