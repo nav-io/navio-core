@@ -9,10 +9,6 @@
     <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\src\bitcoin-util.cpp">
-    </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
     <ClCompile Include="..\..\src\bitcoin-util.cpp" />
   </ItemGroup>
   <ItemGroup>
