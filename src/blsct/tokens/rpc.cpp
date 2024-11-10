@@ -19,7 +19,8 @@ std::vector<RPCResult> tokenInfoResult = {
     RPCResult{RPCResult::Type::NUM, "maxSupply", "the token max supply"},
 };
 
-void TokenToUniValue(const blsct::TokenEntry& token, UniValue& obj) {
+void TokenToUniValue(UniValue& obj, const blsct::TokenEntry& token)
+{
     obj.pushKV("publicKey", token.info.publicKey.ToString());
     obj.pushKV("type", blsct::TokenTypeToString(token.info.type));
     UniValue metadata{UniValue::VOBJ};
@@ -47,9 +48,8 @@ gettoken()
         RPCResult{RPCResult::Type::OBJ, "", "", tokenInfoResult},
         RPCExamples{HelpExampleCli("gettoken", "ba12afc43322f204fe6236b11a0f85b5d9edcb09f446176c73fe4abe99a17edd")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
-            ChainstateManager& chainman = EnsureAnyChainman(request.context);
-
             LOCK(cs_main);
+            ChainstateManager& chainman = EnsureAnyChainman(request.context);
             Chainstate& active_chainstate = chainman.ActiveChainstate();
 
             CCoinsViewCache* coins_view;
@@ -80,9 +80,8 @@ listtokens()
                                                 }},
         RPCExamples{HelpExampleCli("listtokens", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
-            ChainstateManager& chainman = EnsureAnyChainman(request.context);
-
             LOCK(cs_main);
+            ChainstateManager& chainman = EnsureAnyChainman(request.context);
             Chainstate& active_chainstate = chainman.ActiveChainstate();
 
             CCoinsViewCache* coins_view;

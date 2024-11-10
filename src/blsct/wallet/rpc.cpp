@@ -71,7 +71,22 @@ UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request,
     tokenInfo.nTotalSupply = max_supply;
     tokenInfo.mapMetadata = mapMetadata;
     tokenInfo.type = type;
-    tokenInfo.publicKey = blsct_km->GetTokenKey((HashWriter{} << tokenInfo.mapMetadata << tokenInfo.nTotalSupply).GetHash()).GetPublicKey();
+
+    auto tokenId = (HashWriter{} << tokenInfo.mapMetadata << tokenInfo.nTotalSupply).GetHash();
+
+    {
+        LOCK(cs_main);
+        ChainstateManager& chainman = EnsureAnyChainman(request.context);
+        Chainstate& active_chainstate = chainman.ActiveChainstate();
+
+        CCoinsViewCache* coins_view;
+        coins_view = &active_chainstate.CoinsTip();
+
+        if (coins_view->HaveToken(tokenId))
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Token already exists");
+    }
+
+    tokenInfo.publicKey = blsct_km->GetTokenKey(tokenId).GetPublicKey();
 
     blsct::CreateTransactionData
         transactionData(tokenInfo);
@@ -128,9 +143,176 @@ RPCHelpMan createtoken()
          {"max_supply", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The token max supply."}},
         RPCResult{
             RPCResult::Type::STR_HEX, "tokenId", "the token id"},
-        RPCExamples{HelpExampleRpc("createtoken", "{'name':'Token'} 1000")},
+        RPCExamples{HelpExampleRpc("createtoken", "{\"name\":\"Token\"} 1000")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             return CreateTokenOrNft(self, request, blsct::TOKEN);
+        },
+    };
+}
+
+RPCHelpMan minttoken()
+{
+    return RPCHelpMan{
+        "minttoken",
+        "Mints a certain amount of tokens to an address.\n",
+        {{
+             "token_id",
+             RPCArg::Type::STR_HEX,
+             RPCArg::Optional::NO,
+             "The token id.",
+         },
+         {
+             "address",
+             RPCArg::Type::STR,
+             RPCArg::Optional::NO,
+             "The address where the tokens will be minted.",
+         },
+         {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The token amount to be minted."}},
+        RPCResult{
+            RPCResult::Type::STR_HEX, "hash", "The transaction hash"},
+        RPCExamples{HelpExampleRpc("minttoken", "d46a375d31843d6a303dc7a8c0e0cccaa2d89f442052226fd5337b4d77afcc80 " + BLSCT_EXAMPLE_ADDRESS[0] + " 1000")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // Make sure the results are valid at least up to the most recent block
+            // the user could have gotten from another RPC command prior to now
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            uint256 token_id(ParseHashV(request.params[0], "token_id"));
+            const std::string address = request.params[1].get_str();
+            CAmount mint_amount = AmountFromValue(request.params[2]);
+            blsct::TokenEntry token;
+
+            {
+                LOCK(cs_main);
+                ChainstateManager& chainman = EnsureAnyChainman(request.context);
+                Chainstate& active_chainstate = chainman.ActiveChainstate();
+                CCoinsViewCache* coins_view;
+                coins_view = &active_chainstate.CoinsTip();
+
+                if (!coins_view->GetToken(token_id, token))
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
+
+                auto publicKey = blsct_km->GetTokenKey(token_id).GetPublicKey();
+
+                if (publicKey != token.info.publicKey)
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "You don't own the token");
+            }
+
+            blsct::CreateTransactionData
+                transactionData(token.info, mint_amount, address);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            auto hash = blsct::SendTransaction(*pwallet, transactionData, false);
+
+            UniValue ret{UniValue::VOBJ};
+            ret.pushKV("hash", hash);
+
+            return ret;
+        },
+    };
+}
+
+RPCHelpMan mintnft()
+{
+    return RPCHelpMan{
+        "mintnft",
+        "Mints a NFT to an address.\n",
+        {{
+             "token_id",
+             RPCArg::Type::STR_HEX,
+             RPCArg::Optional::NO,
+             "The token id.",
+         },
+         {
+             "nft_id",
+             RPCArg::Type::AMOUNT,
+             RPCArg::Optional::NO,
+             "The nft id.",
+         },
+         {
+             "address",
+             RPCArg::Type::STR,
+             RPCArg::Optional::NO,
+             "The address where the tokens will be minted.",
+         },
+         {
+             "metadata",
+             RPCArg::Type::OBJ_USER_KEYS,
+             RPCArg::Optional::NO,
+             "The token metadata",
+             {
+                 {"key", RPCArg::Type::STR, RPCArg::Optional::NO, "value"},
+             },
+         }},
+        RPCResult{
+            RPCResult::Type::STR_HEX, "hash", "The transaction hash"},
+        RPCExamples{HelpExampleRpc("mintnft", "d46a375d31843d6a303dc7a8c0e0cccaa2d89f442052226fd5337b4d77afcc80 1 " + BLSCT_EXAMPLE_ADDRESS[0] + " {\"desc\":\"Your first NFT\"}")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // Make sure the results are valid at least up to the most recent block
+            // the user could have gotten from another RPC command prior to now
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            uint256 token_id(ParseHashV(request.params[0], "token_id"));
+            CAmount nft_id = AmountFromValue(request.params[1]);
+            const std::string address = request.params[2].get_str();
+            std::map<std::string, UniValue> metadata;
+            if (!request.params[3].isNull() && !request.params[3].get_obj().empty())
+                request.params[3].get_obj().getObjMap(metadata);
+
+            std::map<std::string, std::string> mapMetadata;
+
+            for (auto& it : metadata) {
+                if (it.second.isNull() || !it.second.isStr() || it.second.get_str().empty())
+                    continue;
+                mapMetadata[it.first] = it.second.get_str();
+            }
+
+            blsct::TokenEntry token;
+
+            {
+                LOCK(cs_main);
+                ChainstateManager& chainman = EnsureAnyChainman(request.context);
+                Chainstate& active_chainstate = chainman.ActiveChainstate();
+                CCoinsViewCache* coins_view;
+                coins_view = &active_chainstate.CoinsTip();
+
+                if (!coins_view->GetToken(token_id, token))
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
+
+                auto publicKey = blsct_km->GetTokenKey(token_id).GetPublicKey();
+
+                if (publicKey != token.info.publicKey)
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "You don't own the token");
+
+                if (token.mapMintedNft.count(nft_id))
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "The NFT is already minted");
+            }
+
+            blsct::CreateTransactionData
+                transactionData(token.info, nft_id, address, mapMetadata);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            auto hash = blsct::SendTransaction(*pwallet, transactionData, false);
+
+            UniValue ret{UniValue::VOBJ};
+            ret.pushKV("hash", hash);
+
+            return ret;
         },
     };
 }
@@ -140,6 +322,8 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
     static const CRPCCommand commands[]{
         {"blsct", &createnft},
         {"blsct", &createtoken},
+        {"blsct", &minttoken},
+        {"blsct", &mintnft},
     };
     return commands;
 }

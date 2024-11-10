@@ -321,6 +321,9 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "createtoken", 1, "max_supply"},
     { "createnft", 0, "metadata"},
     { "createnft", 1, "max_supply"},
+    { "minttoken", 2, "amount"},
+    { "mintnft", 1, "nft_id"},
+    { "mintnft", 3, "metadata"},
 };
 // clang-format on
 
