@@ -128,7 +128,6 @@ bool IsStandardTx(const CTransaction& tx, const std::optional<unsigned>& max_dat
         }
     }
 
-    unsigned int nDataOut = 0;
     TxoutType whichType;
     for (const CTxOut& txout : tx.vout) {
         if (txout.IsBLSCT())
@@ -139,21 +138,16 @@ bool IsStandardTx(const CTransaction& tx, const std::optional<unsigned>& max_dat
             return false;
         }
 
-        if (whichType == TxoutType::NULL_DATA)
-            nDataOut++;
-        else if ((whichType == TxoutType::MULTISIG) && (!permit_bare_multisig)) {
+        // if (whichType == TxoutType::NULL_DATA)
+        //     nDataOut++;
+        //else 
+        if ((whichType == TxoutType::MULTISIG) && (!permit_bare_multisig)) {
             reason = "bare-multisig";
             return false;
         } else if (IsDust(txout, dust_relay_fee)) {
             reason = "dust";
             return false;
         }
-    }
-
-    // only one OP_RETURN txout is permitted
-    if (nDataOut > 1) {
-        reason = "multi-op-return";
-        return false;
     }
 
     return true;

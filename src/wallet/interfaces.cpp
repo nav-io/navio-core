@@ -4,6 +4,7 @@
 
 #include <interfaces/wallet.h>
 
+#include <blsct/wallet/rpc.h>
 #include <common/args.h>
 #include <consensus/amount.h>
 #include <interfaces/chain.h>
@@ -22,11 +23,11 @@
 #include <wallet/context.h>
 #include <wallet/feebumper.h>
 #include <wallet/fees.h>
-#include <wallet/types.h>
 #include <wallet/load.h>
 #include <wallet/receive.h>
 #include <wallet/rpc/wallet.h>
 #include <wallet/spend.h>
+#include <wallet/types.h>
 #include <wallet/wallet.h>
 
 #include <memory>
@@ -576,11 +577,23 @@ public:
     void registerRpcs() override
     {
         for (const CRPCCommand& command : GetWalletRPCCommands()) {
-            m_rpc_commands.emplace_back(command.category, command.name, [this, &command](const JSONRPCRequest& request, UniValue& result, bool last_handler) {
-                JSONRPCRequest wallet_request = request;
-                wallet_request.context = &m_context;
-                return command.actor(wallet_request, result, last_handler);
-            }, command.argNames, command.unique_id);
+            m_rpc_commands.emplace_back(
+                command.category, command.name, [this, &command](const JSONRPCRequest& request, UniValue& result, bool last_handler) {
+                    JSONRPCRequest wallet_request = request;
+                    wallet_request.context = &m_context;
+                    return command.actor(wallet_request, result, last_handler);
+                },
+                command.argNames, command.unique_id);
+            m_rpc_handlers.emplace_back(m_context.chain->handleRpc(m_rpc_commands.back()));
+        }
+        for (const CRPCCommand& command : GetBLSCTWalletRPCCommands()) {
+            m_rpc_commands.emplace_back(
+                command.category, command.name, [this, &command](const JSONRPCRequest& request, UniValue& result, bool last_handler) {
+                    JSONRPCRequest wallet_request = request;
+                    wallet_request.context = &m_context;
+                    return command.actor(wallet_request, result, last_handler);
+                },
+                command.argNames, command.unique_id);
             m_rpc_handlers.emplace_back(m_context.chain->handleRpc(m_rpc_commands.back()));
         }
     }

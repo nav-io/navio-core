@@ -1251,7 +1251,6 @@ MempoolAcceptResult MemPoolAccept::AcceptSingleTransaction(const CTransactionRef
 
     Workspace ws(ptx);
     const std::vector<Wtxid> single_wtxid{ws.m_ptx->GetWitnessHash()};
-
     if (!PreChecks(args, ws)) {
         if (ws.m_state.GetResult() == TxValidationResult::TX_RECONSIDERABLE) {
             // Failed for fee reasons. Provide the effective feerate and which tx was included.
@@ -2069,6 +2068,12 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
         for (size_t o = 0; o < tx.vout.size(); o++) {
             if (tx.vout[o].IsStakedCommitment()) {
                 view.RemoveStakedCommitment(tx.vout[o].blsctData.rangeProof.Vs[0]);
+            }
+            if (tx.vout[o].predicate.size() > 0) {
+                if (!blsct::ExecutePredicate(tx.vout[o].predicate, view, true)) {
+                    error("DisconnectBlock(): Could not revert predicate");
+                    return DISCONNECT_FAILED;
+                }
             }
             if (!tx.vout[o].scriptPubKey.IsUnspendable()) {
                 COutPoint out(hash, o);

@@ -138,11 +138,15 @@ public:
     blsct::PrivateKey GetMasterSeedKey() const;
     blsct::PrivateKey GetPrivateViewKey() const;
     blsct::PublicKey GetPublicSpendingKey() const;
+    blsct::PrivateKey GetMasterTokenKey() const;
     blsct::PrivateKey GetSpendingKey() const;
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out) const;
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id) const;
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id) const;
     bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
+
+    blsct::PrivateKey GetTokenKey(const uint256& tokenId) const;
+    blsct::PrivateKey GetTokenKey(const blsct::PublicKey& tokenPublicKey) const { return GetTokenKey(tokenPublicKey.GetHash()); };
 
     /** SubAddress keypool */
     void LoadSubAddress(const CKeyID& hashId, const SubAddressIdentifier& index);

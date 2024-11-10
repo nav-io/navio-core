@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/wallet/txfactory.h>
+#include <blsct/wallet/rpc.h>
 #include <consensus/validation.h>
 #include <core_io.h>
 #include <key_io.h>
@@ -202,79 +203,6 @@ UniValue SendMoney(CWallet& wallet, const CCoinControl& coin_control, std::vecto
     return tx->GetHash().GetHex();
 }
 
-UniValue SendBLSCTMoney(CWallet& wallet, std::vector<CBLSCTRecipient>& recipients, bool verbose, CAmount minStakeIn = 0)
-{
-    EnsureWalletIsUnlocked(wallet);
-
-    if (recipients.size() == 0)
-        throw JSONRPCError(RPC_INTERNAL_ERROR, "Error: No recipients");
-
-    // This should always try to sign, if we don't have private keys, don't try to do anything here.
-    if (wallet.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Error: Private keys are disabled for this wallet");
-    }
-
-    // Shuffle recipient list
-    std::shuffle(recipients.begin(), recipients.end(), FastRandomContext());
-
-    // Send
-    auto outputType = recipients[0].fStakeCommitment ? blsct::CreateTransactionType::STAKED_COMMITMENT : blsct::CreateTransactionType::NORMAL;
-    auto minStake = recipients[0].fStakeCommitment ? minStakeIn : 0;
-
-    auto res = blsct::TxFactory::CreateTransaction(&wallet, wallet.GetBLSCTKeyMan(), recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), outputType, minStake);
-
-    if (!res) {
-        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
-    }
-
-    const CTransactionRef& tx = MakeTransactionRef(res.value());
-    mapValue_t map_value;
-    wallet.CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
-    if (verbose) {
-        UniValue entry(UniValue::VOBJ);
-        entry.pushKV("txid", tx->GetHash().GetHex());
-        return entry;
-    }
-    return tx->GetHash().GetHex();
-}
-
-
-UniValue UnstakeBLSCT(CWallet& wallet, std::vector<CBLSCTRecipient>& recipients, bool verbose, CAmount minStakeIn = 0)
-{
-    EnsureWalletIsUnlocked(wallet);
-
-    if (recipients.size() == 0)
-        throw JSONRPCError(RPC_INTERNAL_ERROR, "Error: No recipients");
-
-    // This should always try to sign, if we don't have private keys, don't try to do anything here.
-    if (wallet.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Error: Private keys are disabled for this wallet");
-    }
-
-    // Shuffle recipient list
-    std::shuffle(recipients.begin(), recipients.end(), FastRandomContext());
-
-    // Send
-    auto outputType = blsct::CreateTransactionType::STAKED_COMMITMENT_UNSTAKE;
-    auto minStake = minStakeIn;
-
-    auto res = blsct::TxFactory::CreateTransaction(&wallet, wallet.GetBLSCTKeyMan(), recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), outputType, minStake);
-
-    if (!res) {
-        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
-    }
-
-    const CTransactionRef& tx = MakeTransactionRef(res.value());
-    mapValue_t map_value;
-    wallet.CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
-    if (verbose) {
-        UniValue entry(UniValue::VOBJ);
-        entry.pushKV("txid", tx->GetHash().GetHex());
-        return entry;
-    }
-    return tx->GetHash().GetHex();
-}
-
 /**
  * Update coin control with fee estimation based on the given parameters
  *
@@ -365,7 +293,11 @@ RPCHelpMan sendtoblsctaddress()
             ParseBLSCTRecipients(address_amounts, false, sMemo, recipients);
             const bool verbose{request.params[10].isNull() ? false : request.params[10].get_bool()};
 
-            return SendBLSCTMoney(*pwallet, recipients, verbose);
+            blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::NORMAL, 0);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
         },
     };
 }
@@ -417,9 +349,11 @@ RPCHelpMan stakelock()
             ParseBLSCTRecipients(address_amounts, false, "", recipients);
             const bool verbose{request.params[10].isNull() ? false : request.params[10].get_bool()};
 
-            recipients[0].fStakeCommitment = true;
+            blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
 
-            return SendBLSCTMoney(*pwallet, recipients, verbose, Params().GetConsensus().nPePoSMinStakeAmount);
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
         },
     };
 }
@@ -471,7 +405,12 @@ RPCHelpMan stakeunlock()
             ParseBLSCTRecipients(address_amounts, false, "", recipients);
             const bool verbose{request.params[10].isNull() ? false : request.params[10].get_bool()};
 
-            return UnstakeBLSCT(*pwallet, recipients, verbose, Params().GetConsensus().nPePoSMinStakeAmount);
+
+            blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT_UNSTAKE, Params().GetConsensus().nPePoSMinStakeAmount);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
         },
     };
 }

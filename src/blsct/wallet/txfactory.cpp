@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory.h>
 #include <wallet/fees.h>
 
@@ -37,6 +38,53 @@ void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmo
     vOutputs[token_id].push_back(out);
 }
 
+// Create token
+void TxFactoryBase::AddOutput(const Scalar& tokenKey, const blsct::TokenInfo& tokenInfo)
+{
+    UnsignedOutput out;
+
+    out = CreateOutput(tokenKey, tokenInfo);
+
+    TokenId token_id{tokenInfo.publicKey.GetHash()};
+
+    if (vOutputs.count(token_id) == 0)
+        vOutputs[token_id] = std::vector<UnsignedOutput>();
+
+    vOutputs[token_id].push_back(out);
+}
+
+// Mint Token
+
+void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const CAmount& mintAmount)
+{
+    UnsignedOutput out;
+
+    out = CreateOutput(destination.GetKeys(), mintAmount, Scalar::Rand(), tokenKey, tokenPublicKey);
+
+    TokenId token_id{tokenPublicKey.GetHash()};
+
+    if (vOutputs.count(token_id) == 0)
+        vOutputs[token_id] = std::vector<UnsignedOutput>();
+
+    vOutputs[token_id].push_back(out);
+}
+
+// Mint NFT
+
+void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const CAmount& nftId, const std::map<std::string, std::string>& nftMetadata)
+{
+    UnsignedOutput out;
+
+    out = CreateOutput(destination.GetKeys(), Scalar::Rand(), tokenKey, tokenPublicKey, nftId, nftMetadata);
+
+    TokenId token_id{tokenPublicKey.GetHash(), nftId};
+
+    if (vOutputs.count(token_id) == 0)
+        vOutputs[token_id] = std::vector<UnsignedOutput>();
+
+    vOutputs[token_id].push_back(out);
+}
+
 bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, const PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)
 {
     if (vInputs.count(token_id) == 0)
@@ -65,8 +113,16 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
     for (auto& out_ : vOutputs) {
         for (auto& out : out_.second) {
             this->tx.vout.push_back(out.out);
-            outputGammas = outputGammas - out.gamma;
-            outputSignatures.push_back(PrivateKey(out.blindingKey).Sign(out.out.GetHash()));
+            auto outHash = out.out.GetHash();
+
+            if (out.out.IsBLSCT()) {
+                outputGammas = outputGammas - out.gamma;
+                outputSignatures.push_back(PrivateKey(out.blindingKey).Sign(outHash));
+            }
+
+            if (out.type == TX_CREATE_TOKEN || out.type == TX_MINT_TOKEN) {
+                outputSignatures.push_back(PrivateKey(out.tokenKey).Sign(outHash));
+            }
         }
     }
 
@@ -109,7 +165,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
                 mapInputs[in_.first] += in.value.GetUint64();
 
-                if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs + nFee) break;
+                if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs + in_.first.IsNull() ? nFee : 0) break;
             }
         }
 
@@ -137,8 +193,13 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         if (nFee == GetTransactionWeight(CTransaction(tx)) * BLSCT_DEFAULT_FEE) {
             CTxOut fee_out{nFee, CScript(OP_RETURN)};
 
+            auto feeKey = blsct::PrivateKey(MclScalar::Rand());
+            fee_out.predicate = blsct::PayFeePredicate(feeKey.GetPublicKey()).GetVch();
+
             tx.vout.push_back(fee_out);
             txSigs.push_back(PrivateKey(gammaAcc).SignBalance());
+            txSigs.push_back(PrivateKey(feeKey).SignFee());
+
             tx.txSig = Signature::Aggregate(txSigs);
 
             return tx;
@@ -150,11 +211,11 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
     return std::nullopt;
 }
 
-std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const blsct::DoublePublicKey& changeDestination, const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake)
+std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData)
 {
     auto tx = blsct::TxFactoryBase();
 
-    if (type == STAKED_COMMITMENT) {
+    if (transactionData.type == STAKED_COMMITMENT) {
         CAmount inputFromStakedCommitments = 0;
 
         for (const auto& output : inputCandidates) {
@@ -164,19 +225,19 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
             tx.AddInput(output.amount, output.gamma, output.spendingKey, output.token_id, COutPoint(output.outpoint.hash, output.outpoint.n), output.is_staked_commitment);
         }
 
-        if (nAmount + inputFromStakedCommitments < minStake) {
-            throw std::runtime_error(strprintf("A minimum of %s is required to stake", FormatMoney(minStake)));
+        if (transactionData.nAmount + inputFromStakedCommitments < transactionData.minStake) {
+            throw std::runtime_error(strprintf("A minimum of %s is required to stake", FormatMoney(transactionData.minStake)));
         }
 
         bool fSubtractFeeFromAmount = false; // nAmount == inAmount + inputFromStakedCommitments;
 
-        tx.AddOutput(destination, nAmount + inputFromStakedCommitments, sMemo, token_id, type, minStake, fSubtractFeeFromAmount);
+        tx.AddOutput(transactionData.destination, transactionData.nAmount + inputFromStakedCommitments, transactionData.sMemo, transactionData.token_id, transactionData.type, transactionData.minStake, fSubtractFeeFromAmount);
     } else {
         CAmount inputFromStakedCommitments = 0;
 
         for (const auto& output : inputCandidates) {
             if (output.is_staked_commitment) {
-                if (!(type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE || type == CreateTransactionType::STAKED_COMMITMENT))
+                if (!(transactionData.type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE || transactionData.type == CreateTransactionType::STAKED_COMMITMENT))
                     continue;
                 inputFromStakedCommitments += output.amount;
             }
@@ -184,25 +245,32 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
             tx.AddInput(output.amount, output.gamma, output.spendingKey, output.token_id, COutPoint(output.outpoint.hash, output.outpoint.n), output.is_staked_commitment);
         }
 
-        if (type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) {
-            if (inputFromStakedCommitments - nAmount < 0) {
+        if (transactionData.type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) {
+            if (inputFromStakedCommitments - transactionData.nAmount < 0) {
                 throw std::runtime_error(strprintf("Not enough staked coins"));
-            } else if (inputFromStakedCommitments - nAmount < minStake && inputFromStakedCommitments - nAmount > 0) {
-                throw std::runtime_error(strprintf("A minimum of %s is required to stake", FormatMoney(minStake)));
+            } else if (inputFromStakedCommitments - transactionData.nAmount < transactionData.minStake && inputFromStakedCommitments - transactionData.nAmount > 0) {
+                throw std::runtime_error(strprintf("A minimum of %s is required to stake", FormatMoney(transactionData.minStake)));
             }
 
-            if (inputFromStakedCommitments - nAmount > 0) {
+            if (inputFromStakedCommitments - transactionData.nAmount > 0) {
                 // CHANGE
-                tx.AddOutput(destination, inputFromStakedCommitments - nAmount, sMemo, token_id, CreateTransactionType::STAKED_COMMITMENT, minStake, false);
+                tx.AddOutput(transactionData.destination, inputFromStakedCommitments - transactionData.nAmount, transactionData.sMemo, transactionData.token_id, CreateTransactionType::STAKED_COMMITMENT, transactionData.minStake, false);
             }
         }
 
         bool fSubtractFeeFromAmount = false; // type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE;
 
-        tx.AddOutput(destination, nAmount, sMemo, token_id, type, minStake, fSubtractFeeFromAmount);
+        if (transactionData.type == TX_CREATE_TOKEN) {
+            tx.AddOutput(transactionData.tokenKey, transactionData.tokenInfo);
+        } else if (transactionData.type == TX_MINT_TOKEN) {
+            if (!transactionData.token_id.IsNFT())
+                tx.AddOutput(transactionData.tokenKey, transactionData.destination, transactionData.tokenInfo.publicKey, transactionData.nAmount);
+            else
+                tx.AddOutput(transactionData.tokenKey, transactionData.destination, transactionData.tokenInfo.publicKey, transactionData.token_id.subid, transactionData.nftMetadata);
+        }
     }
 
-    return tx.BuildTx(changeDestination, minStake, type);
+    return tx.BuildTx(transactionData.changeDestination, transactionData.minStake, transactionData.type);
 }
 
 bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)
@@ -293,20 +361,30 @@ void TxFactoryBase::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* bl
         coins_params.include_staked_commitment = true;
         AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
     }
+
+    if (type == CreateTransactionType::NORMAL && !token_id.IsNull()) {
+        coins_params.token_id.SetNull();
+        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
+    }
 }
 
-std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake)
+std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)
 {
     LOCK(wallet->cs_wallet);
 
     std::vector<InputCandidates> inputCandidates;
 
-    TxFactoryBase::AddAvailableCoins(wallet, blsct_km, token_id, type, inputCandidates);
+    TxFactoryBase::AddAvailableCoins(wallet, blsct_km, transactionData.token_id, transactionData.type, inputCandidates);
 
-    auto changeType = type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE ? STAKING_ACCOUNT : CHANGE_ACCOUNT;
-    auto changeAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(changeType).value());
+    auto changeType = transactionData.type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE ? STAKING_ACCOUNT : CHANGE_ACCOUNT;
 
-    return TxFactoryBase::CreateTransaction(inputCandidates, changeAddress, destination, nAmount, sMemo, token_id, type, minStake);
+    transactionData.changeDestination = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(changeType).value());
+
+    if (transactionData.type == TX_CREATE_TOKEN || transactionData.type == TX_MINT_TOKEN) {
+        transactionData.tokenKey = blsct_km->GetTokenKey((HashWriter{} << transactionData.tokenInfo.mapMetadata << transactionData.tokenInfo.nTotalSupply).GetHash()).GetScalar();
+    }
+
+    return TxFactoryBase::CreateTransaction(inputCandidates, transactionData);
 }
 
 } // namespace blsct

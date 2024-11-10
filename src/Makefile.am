@@ -197,12 +197,17 @@ BLSCT_H = \
   blsct/set_mem_proof/set_mem_proof_prover.h \
   blsct/set_mem_proof/set_mem_proof_setup.h \
   blsct/signature.h \
+  blsct/tokens/info.h \
+  blsct/tokens/predicate.h \
+  blsct/tokens/predicate_parser.h \
+  blsct/tokens/rpc.h \
   blsct/wallet/address.h \
   blsct/wallet/hdchain.h \
   blsct/wallet/helpers.h \
   blsct/wallet/import_wallet_type.h \
   blsct/wallet/keyman.h \
   blsct/wallet/keyring.h \
+  blsct/wallet/rpc.h \
   blsct/wallet/txfactory.h \
   blsct/wallet/txfactory_global.h \
   blsct/wallet/verification.h
@@ -247,6 +252,7 @@ BLSCT_CPP = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/signature.cpp \
+  blsct/tokens/predicate_parser.cpp \
   blsct/wallet/verification.cpp
 
 
@@ -559,6 +565,7 @@ libbitcoin_node_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
+  blsct/tokens/rpc.cpp \
   blsct/wallet/verification.cpp \
   blsct/signature.cpp \
   chain.cpp \
@@ -716,6 +723,7 @@ libbitcoin_wallet_a_SOURCES = \
   blsct/wallet/helpers.cpp \
   blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
+  blsct/wallet/rpc.cpp \
   blsct/wallet/txfactory.cpp \
   blsct/wallet/txfactory_global.cpp \
   blsct/wallet/verification.cpp \

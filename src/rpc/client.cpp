@@ -316,6 +316,11 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "sendmsgtopeer", 0, "peer_id" },
     { "stop", 0, "wait" },
     { "addnode", 2, "v2transport" },
+    // BLSCT
+    { "createtoken", 0, "metadata"},
+    { "createtoken", 1, "max_supply"},
+    { "createnft", 0, "metadata"},
+    { "createnft", 1, "max_supply"},
 };
 // clang-format on
 

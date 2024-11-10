@@ -170,9 +170,10 @@ public:
     uint256 GetBestBlock() const final { return {}; }
     std::vector<uint256> GetHeadBlocks() const final { return {}; }
     std::unique_ptr<CCoinsViewCursor> Cursor() const final { return {}; }
+    std::unique_ptr<CTokensViewCursor> CursorTokens() const final { return {}; }
     size_t EstimateSize() const final { return m_data.size(); }
 
-    bool BatchWrite(CCoinsMap& data, const uint256&, CStakedCommitmentsMap&, bool erase) final
+    bool BatchWrite(CCoinsMap& data, const uint256&, CStakedCommitmentsMap&, TokensMap&, bool erase) final
     {
         for (auto it = data.begin(); it != data.end(); it = erase ? data.erase(it) : std::next(it)) {
             if (it->second.flags & CCoinsCacheEntry::DIRTY) {

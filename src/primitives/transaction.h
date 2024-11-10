@@ -12,6 +12,7 @@
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/generators.h>
 #include <blsct/signature.h>
+#include <blsct/tokens/predicate.h>
 #include <consensus/amount.h>
 #include <ctokens/tokenid.h>
 #include <prevector.h>
@@ -221,11 +222,13 @@ class CTxOut
 public:
     static const uint32_t BLSCT_MARKER = 0x1 << 0;
     static const uint32_t TOKEN_MARKER = 0x1 << 1;
+    static const uint32_t PREDICATE_MARKER = 0x1 << 2;
 
     CAmount nValue;
     CScript scriptPubKey;
     CTxOutBLSCTData blsctData;
     TokenId tokenId;
+    blsct::VectorPredicate predicate;
 
     CTxOut()
     {
@@ -243,6 +246,8 @@ public:
             nFlags |= BLSCT_MARKER;
         if (!tokenId.IsNull())
             nFlags |= TOKEN_MARKER;
+        if (predicate.size() > 0)
+            nFlags |= PREDICATE_MARKER;
         if (nFlags != 0) {
             ::Serialize(s, std::numeric_limits<CAmount>::max());
             ::Serialize(s, nFlags);
@@ -255,6 +260,8 @@ public:
         }
         if (nFlags & TOKEN_MARKER)
             ::Serialize(s, tokenId);
+        if (nFlags & PREDICATE_MARKER)
+            ::Serialize(s, predicate);
     }
 
     template <typename Stream>
@@ -272,6 +279,9 @@ public:
         }
         if (nFlags & TOKEN_MARKER) {
             ::Unserialize(s, tokenId);
+        }
+        if (nFlags & PREDICATE_MARKER) {
+            ::Unserialize(s, predicate);
         }
     }
 

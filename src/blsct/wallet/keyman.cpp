@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/keyman.h>
 
 namespace blsct {
@@ -484,6 +485,21 @@ blsct::PrivateKey KeyMan::GetMasterSeedKey() const
     return ret;
 }
 
+blsct::PrivateKey KeyMan::GetMasterTokenKey() const
+{
+    if (!IsHDEnabled())
+        throw std::runtime_error(strprintf("%s: the wallet has no HD enabled"));
+
+    auto tokenKeyId = m_hd_chain.token_id;
+
+    PrivateKey ret;
+
+    if (!GetKey(tokenKeyId, ret))
+        throw std::runtime_error(strprintf("%s: could not access the master token key", __func__));
+
+    return ret;
+}
+
 blsct::PrivateKey KeyMan::GetPrivateViewKey() const
 {
     if (!fViewKeyDefined)
@@ -537,6 +553,13 @@ blsct::PrivateKey KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const SubAd
     auto sk = GetSpendingKey();
 
     return CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
+}
+
+blsct::PrivateKey KeyMan::GetTokenKey(const uint256& tokenId) const
+{
+    auto masterTokenKey = GetMasterTokenKey();
+
+    return BLS12_381_KeyGen::derive_child_SK_hash(masterTokenKey.GetScalar(), tokenId);
 }
 
 using Arith = Mcl;

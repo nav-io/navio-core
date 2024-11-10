@@ -23,6 +23,7 @@ static constexpr uint8_t DB_COIN{'C'};
 static constexpr uint8_t DB_BEST_BLOCK{'B'};
 static constexpr uint8_t DB_HEAD_BLOCKS{'H'};
 static constexpr uint8_t DB_STAKED_OUTPUTS{'S'};
+static constexpr uint8_t DB_TOKEN{'T'};
 
 // Keys used in previous version that might still be found in the DB:
 static constexpr uint8_t DB_COINS{'c'};
@@ -46,6 +47,13 @@ struct CoinEntry {
     SERIALIZE_METHODS(CoinEntry, obj) { READWRITE(obj.key, obj.outpoint->hash, VARINT(obj.outpoint->n)); }
 };
 
+struct TokenDbEntry {
+    uint256* tokenId;
+    uint8_t key;
+    explicit TokenDbEntry(const uint256* ptr) : tokenId(const_cast<uint256*>(ptr)), key(DB_TOKEN) {}
+
+    SERIALIZE_METHODS(TokenDbEntry, obj) { READWRITE(obj.key, *(obj.tokenId)); }
+};
 } // namespace
 
 CCoinsViewDB::CCoinsViewDB(DBParams db_params, CoinsViewOptions options) : m_db_params{std::move(db_params)},
@@ -76,6 +84,35 @@ bool CCoinsViewDB::HaveCoin(const COutPoint& outpoint) const
     return m_db->Exists(CoinEntry(&outpoint));
 }
 
+bool CCoinsViewDB::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const
+{
+    return m_db->Read(TokenDbEntry(&tokenId), token);
+};
+
+bool CCoinsViewDB::GetAllTokens(TokensMap& tokensMap) const
+{
+    std::unique_ptr<CTokensViewCursor> pcursor(CursorTokens());
+    assert(pcursor);
+
+    while (pcursor->Valid()) {
+        uint256 key;
+        blsct::TokenEntry token;
+        if (pcursor->GetKey(key) && pcursor->GetValue(token)) {
+            TokenCacheEntry cacheEntry;
+            cacheEntry.token = token;
+            tokensMap[key] = cacheEntry;
+        }
+        pcursor->Next();
+    }
+
+    return true;
+};
+
+bool CCoinsViewDB::HaveToken(const uint256& tokenId) const
+{
+    return m_db->Exists(TokenDbEntry(&tokenId));
+};
+
 uint256 CCoinsViewDB::GetBestBlock() const
 {
     uint256 hashBestChain;
@@ -101,7 +138,7 @@ std::vector<uint256> CCoinsViewDB::GetHeadBlocks() const
     return vhashHeadBlocks;
 }
 
-bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase)
+bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase)
 {
     CDBBatch batch(*m_db);
     size_t count = 0;
@@ -139,6 +176,29 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CSt
         }
         count++;
         it = erase ? mapCoins.erase(it) : std::next(it);
+        if (batch.SizeEstimate() > m_options.batch_write_bytes) {
+            LogPrint(BCLog::COINDB, "Writing partial batch of %.2f MiB\n", batch.SizeEstimate() * (1.0 / 1048576.0));
+            m_db->WriteBatch(batch);
+            batch.Clear();
+            if (m_options.simulate_crash_ratio) {
+                static FastRandomContext rng;
+                if (rng.randrange(m_options.simulate_crash_ratio) == 0) {
+                    LogPrintf("Simulating a crash. Goodbye.\n");
+                    _Exit(0);
+                }
+            }
+        }
+    }
+
+    for (TokensMap::iterator it = tokensMap.begin(); it != tokensMap.end();) {
+        if (it->second.flags > 0) {
+            TokenDbEntry entry(&it->first);
+            if (it->second.IsErased())
+                batch.Erase(entry);
+            else
+                batch.Write(entry, it->second.token);
+        }
+        it = erase ? tokensMap.erase(it) : std::next(it);
         if (batch.SizeEstimate() > m_options.batch_write_bytes) {
             LogPrint(BCLog::COINDB, "Writing partial batch of %.2f MiB\n", batch.SizeEstimate() * (1.0 / 1048576.0));
             m_db->WriteBatch(batch);
@@ -248,6 +308,78 @@ void CCoinsViewDBCursor::Next()
 {
     pcursor->Next();
     CoinEntry entry(&keyTmp.second);
+    if (!pcursor->Valid() || !pcursor->GetKey(entry)) {
+        keyTmp.first = 0; // Invalidate cached key after last record so that Valid() and GetKey() return false
+    } else {
+        keyTmp.first = entry.key;
+    }
+}
+
+/** Specialization of CTokensViewCursor to iterate over tokens of a CCoinsViewDB */
+class CTokensViewDBCursor : public CTokensViewCursor
+{
+public:
+    // Prefer using CCoinsViewDB::Cursor() since we want to perform some
+    // cache warmup on instantiation.
+    CTokensViewDBCursor(CDBIterator* pcursorIn) : CTokensViewCursor(), pcursor(pcursorIn) {}
+    ~CTokensViewDBCursor() = default;
+
+    bool GetKey(uint256& key) const override;
+    bool GetValue(blsct::TokenEntry& coin) const override;
+
+    bool Valid() const override;
+    void Next() override;
+
+private:
+    std::unique_ptr<CDBIterator> pcursor;
+    std::pair<char, uint256> keyTmp;
+
+    friend class CCoinsViewDB;
+};
+
+std::unique_ptr<CTokensViewCursor> CCoinsViewDB::CursorTokens() const
+{
+    auto i = std::make_unique<CTokensViewDBCursor>(
+        const_cast<CDBWrapper&>(*m_db).NewIterator());
+    /* It seems that there are no "const iterators" for LevelDB.  Since we
+       only need read operations on it, use a const-cast to get around
+       that restriction.  */
+    i->pcursor->Seek(DB_TOKEN);
+    // Cache key of first record
+    if (i->pcursor->Valid()) {
+        TokenDbEntry entry(&i->keyTmp.second);
+        i->pcursor->GetKey(entry);
+        i->keyTmp.first = entry.key;
+    } else {
+        i->keyTmp.first = 0; // Make sure Valid() and GetKey() return false
+    }
+    return i;
+}
+
+bool CTokensViewDBCursor::GetKey(uint256& key) const
+{
+    // Return cached key
+    if (keyTmp.first == DB_TOKEN) {
+        key = keyTmp.second;
+        return true;
+    }
+    return false;
+}
+
+bool CTokensViewDBCursor::GetValue(blsct::TokenEntry& coin) const
+{
+    return pcursor->GetValue(coin);
+}
+
+bool CTokensViewDBCursor::Valid() const
+{
+    return keyTmp.first == DB_TOKEN;
+}
+
+void CTokensViewDBCursor::Next()
+{
+    pcursor->Next();
+    TokenDbEntry entry(&keyTmp.second);
     if (!pcursor->Valid() || !pcursor->GetKey(entry)) {
         keyTmp.first = 0; // Invalidate cached key after last record so that Valid() and GetKey() return false
     } else {

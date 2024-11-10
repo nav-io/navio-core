@@ -12,7 +12,7 @@
 #include <util/strencodings.h>
 
 namespace blsct {
-bool VerifyTx(const CTransaction& tx, const CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake)
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake)
 {
     if (!view.HaveInputs(tx)) {
         return state.Invalid(TxValidationResult::TX_MISSING_INPUTS, "bad-inputs-unknown");
@@ -41,6 +41,7 @@ bool VerifyTx(const CTransaction& tx, const CCoinsViewCache& view, TxValidationS
             vPubKeys.emplace_back(coin.out.blsctData.spendingKey);
             auto in_hash = in.GetHash();
             vMessages.emplace_back(in_hash.begin(), in_hash.end());
+
             balanceKey = balanceKey + coin.out.blsctData.rangeProof.Vs[0];
         }
     }
@@ -49,9 +50,35 @@ bool VerifyTx(const CTransaction& tx, const CCoinsViewCache& view, TxValidationS
     bulletproofs_plus::RangeProofWithSeed<Mcl> stakedCommitmentRangeProof;
 
     for (auto& out : tx.vout) {
+        auto out_hash = out.GetHash();
+
+        if (out.predicate.size() > 0) {
+            auto parsedPredicate = ParsePredicate(out.predicate);
+
+            if (parsedPredicate.IsMintTokenPredicate()) {
+                vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
+                vMessages.emplace_back(out_hash.begin(), out_hash.end());
+                range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash()));
+                balanceKey = balanceKey + (gen.G * MclScalar(parsedPredicate.GetAmount()));
+            } else if (parsedPredicate.IsCreateTokenPredicate()) {
+                vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
+                vMessages.emplace_back(out_hash.begin(), out_hash.end());
+            } else if (parsedPredicate.IsMintNftPredicate()) {
+                vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
+                vMessages.emplace_back(out_hash.begin(), out_hash.end());
+                range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash(), parsedPredicate.GetNftId()));
+                balanceKey = balanceKey + (gen.G * MclScalar(1));
+            } else if (out.scriptPubKey.IsFee() && parsedPredicate.IsPayFeePredicate()) {
+                vMessages.emplace_back(blsct::Common::BLSCTFEE);
+                vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
+            }
+
+            if (!ExecutePredicate(parsedPredicate, view))
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-to-execute-predicate");
+        }
+
         if (out.IsBLSCT()) {
             bulletproofs_plus::RangeProofWithSeed<Mcl> proof{out.blsctData.rangeProof, out.tokenId};
-            auto out_hash = out.GetHash();
 
             vPubKeys.emplace_back(out.blsctData.ephemeralKey);
             vMessages.emplace_back(out_hash.begin(), out_hash.end());

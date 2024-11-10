@@ -184,32 +184,27 @@ static RPCHelpMan listwalletdir()
 
 static RPCHelpMan listwallets()
 {
-    return RPCHelpMan{"listwallets",
-                "Returns a list of currently loaded wallets.\n"
-                "For full information on the wallet, use \"getwalletinfo\"\n",
-                {},
-                RPCResult{
-                    RPCResult::Type::ARR, "", "",
-                    {
-                        {RPCResult::Type::STR, "walletname", "the wallet name"},
-                    }
-                },
-                RPCExamples{
-                    HelpExampleCli("listwallets", "")
-            + HelpExampleRpc("listwallets", "")
-                },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    UniValue obj(UniValue::VARR);
+    return RPCHelpMan{
+        "listwallets",
+        "Returns a list of currently loaded wallets.\n"
+        "For full information on the wallet, use \"getwalletinfo\"\n",
+        {},
+        RPCResult{
+            RPCResult::Type::ARR, "", "", {
+                                              {RPCResult::Type::STR, "walletname", "the wallet name"},
+                                          }},
+        RPCExamples{HelpExampleCli("listwallets", "") + HelpExampleRpc("listwallets", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            UniValue obj(UniValue::VARR);
 
-    WalletContext& context = EnsureWalletContext(request.context);
-    for (const std::shared_ptr<CWallet>& wallet : GetWallets(context)) {
-        LOCK(wallet->cs_wallet);
-        obj.push_back(wallet->GetName());
-    }
+            WalletContext& context = EnsureWalletContext(request.context);
+            for (const std::shared_ptr<CWallet>& wallet : GetWallets(context)) {
+                LOCK(wallet->cs_wallet);
+                obj.push_back(wallet->GetName());
+            }
 
-    return obj;
-},
+            return obj;
+        },
     };
 }
 
