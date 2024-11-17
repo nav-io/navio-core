@@ -40,7 +40,7 @@ public:
               const CAmount& nTotalSupply) : type(type), publicKey(publicKey), mapMetadata(mapMetadata), nTotalSupply(nTotalSupply){};
     TokenInfo(){};
 
-    SERIALIZE_METHODS(TokenInfo, obj) { READWRITE(static_cast<unsigned char>(obj.type), obj.publicKey, obj.mapMetadata, obj.nTotalSupply); };
+    SERIALIZE_METHODS(TokenInfo, obj) { READWRITE(Using<CustomUintFormatter<1>>(obj.type), obj.publicKey, obj.mapMetadata, obj.nTotalSupply); };
 
     std::string ToString() const
     {
@@ -68,9 +68,9 @@ public:
 
     bool Mint(const CAmount& amount)
     {
-        if (amount + nSupply > info.nTotalSupply)
+        if (amount + nSupply > info.nTotalSupply || amount + nSupply < 0)
             return false;
-        nSupply += nSupply;
+        nSupply += amount;
         return true;
     };
 

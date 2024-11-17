@@ -180,6 +180,11 @@ struct TokenCacheEntry {
     {
         return flags & ERASE;
     }
+
+    void Erase()
+    {
+        flags |= ERASE;
+    }
 };
 
 using TokensMap = std::map<uint256, TokenCacheEntry>;

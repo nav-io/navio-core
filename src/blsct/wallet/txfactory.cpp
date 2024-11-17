@@ -28,7 +28,7 @@ void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmo
     };
 
     if (nAmounts.count(token_id) == 0)
-        nAmounts[token_id] = {0, 0};
+        nAmounts[token_id] = {0, 0, 0};
 
     nAmounts[token_id].nFromOutputs += nAmount - nFee;
 
@@ -93,7 +93,7 @@ bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, cons
     vInputs[token_id].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), amount, gamma, spendingKey, stakedCommitment});
 
     if (nAmounts.count(token_id) == 0)
-        nAmounts[token_id] = {0, 0};
+        nAmounts[token_id] = {0, 0, 0};
 
     nAmounts[token_id].nFromInputs += amount;
 
@@ -107,8 +107,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
     std::vector<Signature> outputSignatures;
     Scalar outputGammas;
-    CAmount nFee = 0;
-
+    nAmounts[TokenId()].nFromFee = 0;
 
     for (auto& out_ : vOutputs) {
         for (auto& out : out_.second) {
@@ -139,16 +138,14 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             for (auto& in_ : vInputs) {
                 for (auto& in : in_.second) {
                     if (!in.is_staked_commitment) continue;
+                    if (!mapInputs[in_.first]) mapInputs[in_.first] = 0;
+                    if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs) break;
 
                     tx.vin.push_back(in.in);
                     gammaAcc = gammaAcc + in.gamma;
                     txSigs.push_back(in.sk.Sign(in.in.GetHash()));
 
-                    if (!mapInputs[in_.first]) mapInputs[in_.first] = 0;
-
                     mapInputs[in_.first] += in.value.GetUint64();
-
-                    if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs + nFee) break;
                 }
             }
         }
@@ -156,21 +153,18 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         for (auto& in_ : vInputs) {
             for (auto& in : in_.second) {
                 if (in.is_staked_commitment) continue;
+                if (!mapInputs[in_.first]) mapInputs[in_.first] = 0;
+                if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs + nAmounts[in_.first].nFromFee) break;
 
                 tx.vin.push_back(in.in);
                 gammaAcc = gammaAcc + in.gamma;
                 txSigs.push_back(in.sk.Sign(in.in.GetHash()));
-
-                if (!mapInputs[in_.first]) mapInputs[in_.first] = 0;
-
                 mapInputs[in_.first] += in.value.GetUint64();
-
-                if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs + in_.first.IsNull() ? nFee : 0) break;
             }
         }
 
         for (auto& amounts : nAmounts) {
-            auto tokenFee = (amounts.first == TokenId() ? nFee : 0);
+            auto tokenFee = nAmounts[amounts.first].nFromFee;
 
             auto nFromInputs = mapInputs[amounts.first];
 
@@ -190,8 +184,8 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             txSigs.push_back(PrivateKey(changeOutput.blindingKey).Sign(changeOutput.out.GetHash()));
         }
 
-        if (nFee == GetTransactionWeight(CTransaction(tx)) * BLSCT_DEFAULT_FEE) {
-            CTxOut fee_out{nFee, CScript(OP_RETURN)};
+        if (nAmounts[TokenId()].nFromFee == GetTransactionWeight(CTransaction(tx)) * BLSCT_DEFAULT_FEE) {
+            CTxOut fee_out{nAmounts[TokenId()].nFromFee, CScript(OP_RETURN)};
 
             auto feeKey = blsct::PrivateKey(MclScalar::Rand());
             fee_out.predicate = blsct::PayFeePredicate(feeKey.GetPublicKey()).GetVch();
@@ -205,7 +199,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             return tx;
         }
 
-        nFee = GetTransactionWeight(CTransaction(tx)) * BLSCT_DEFAULT_FEE;
+        nAmounts[TokenId()].nFromFee = GetTransactionWeight(CTransaction(tx)) * BLSCT_DEFAULT_FEE;
     }
 
     return std::nullopt;
@@ -291,7 +285,7 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
     vInputs[coin.out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, km->GetSpendingKeyForOutput(coin.out), stakedCommitment});
 
     if (nAmounts.count(coin.out.tokenId) == 0)
-        nAmounts[coin.out.tokenId] = {0, 0};
+        nAmounts[coin.out.tokenId] = {0, 0, 0};
 
     nAmounts[coin.out.tokenId].nFromInputs += recoveredInfo.amounts[0].amount;
 
@@ -317,7 +311,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
     vInputs[out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, km->GetSpendingKeyForOutput(out), stakedCommitment});
 
     if (nAmounts.count(out.tokenId) == 0)
-        nAmounts[out.tokenId] = {0, 0};
+        nAmounts[out.tokenId] = {0, 0, 0};
 
     nAmounts[out.tokenId].nFromInputs += recoveredInfo.amount;
 
@@ -362,7 +356,7 @@ void TxFactoryBase::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* bl
         AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
     }
 
-    if (type == CreateTransactionType::NORMAL && !token_id.IsNull()) {
+    if ((type == CreateTransactionType::NORMAL && !token_id.IsNull()) || type == CreateTransactionType::TX_MINT_TOKEN) {
         coins_params.token_id.SetNull();
         AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
     }

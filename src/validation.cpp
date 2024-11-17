@@ -1104,7 +1104,9 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
     }
 
     if (args.m_chainparams.GetConsensus().fBLSCT) {
-        if (!blsct::VerifyTx(tx, m_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount)) {
+        CCoinsViewCache viewNew(&m_active_chainstate.CoinsTip());
+
+        if (!blsct::VerifyTx(tx, viewNew, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount)) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }
@@ -2071,7 +2073,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
             }
             if (tx.vout[o].predicate.size() > 0) {
                 if (!blsct::ExecutePredicate(tx.vout[o].predicate, view, true)) {
-                    error("DisconnectBlock(): Could not revert predicate");
+                    error("DisconnectBlock(): Could not revert predicate: %s", blsct::PredicateToString(tx.vout[o].predicate));
                     return DISCONNECT_FAILED;
                 }
             }

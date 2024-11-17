@@ -71,7 +71,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const Scalar
 {
     TokenId tokenId{tokenPublicKey.GetHash(), nftId};
 
-    auto ret = CreateOutput(destKeys, 0, "", tokenId, blindingKey, TX_MINT_TOKEN);
+    auto ret = CreateOutput(destKeys, 1, "", tokenId, blindingKey, TX_MINT_TOKEN);
 
     if (tokenId.IsNFT()) {
         ret.out.predicate = MintNftPredicate(tokenPublicKey, nftId, nftMetadata).GetVch();
@@ -103,7 +103,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
         throw std::runtime_error(strprintf("%s: could not get view key from destination address\n", __func__));
     }
 
-    auto nonce = vk * blindingKey;
+    auto nonce = vk * ret.blindingKey;
     nonces.Add(nonce);
 
     ret.value = nAmount;
@@ -126,7 +126,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
         }
         auto p = rp.Prove(vs, nonce, memo, tokenId);
         ret.out.blsctData.rangeProof = p;
-        ret.GenerateKeys(blindingKey, destKeys);
+        ret.GenerateKeys(ret.blindingKey, destKeys);
         HashWriter hash{};
         hash << nonce;
         ret.out.blsctData.viewTag = (hash.GetHash().GetUint64(0) & 0xFFFF);

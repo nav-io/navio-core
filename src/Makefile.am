@@ -566,6 +566,7 @@ libbitcoin_node_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/tokens/rpc.cpp \
+  blsct/wallet/rpc.cpp \
   blsct/wallet/verification.cpp \
   blsct/signature.cpp \
   chain.cpp \

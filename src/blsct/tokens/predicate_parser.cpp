@@ -32,12 +32,31 @@ ParsedPredicate ParsePredicate(const VectorPredicate& vch)
     }
 }
 
+std::string PredicateToString(const VectorPredicate& vch)
+{
+    auto predicate = ParsePredicate(vch);
+
+    std::string ret;
+
+    if (predicate.IsCreateTokenPredicate())
+        ret = "CREATE_TOKEN";
+    else if (predicate.IsMintTokenPredicate())
+        ret = "MINT_TOKEN";
+    else if (predicate.IsMintNftPredicate())
+        ret = "MINT_NFT";
+    else if (predicate.IsPayFeePredicate())
+        ret = "PAY_FEE";
+
+    return ret;
+}
+
 bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, const bool& fDisconnect)
 {
     if (predicate.IsCreateTokenPredicate()) {
         auto hash = predicate.GetPublicKey().GetHash();
 
-        if (!fDisconnect && view.HaveToken(hash)) return false;
+        blsct::TokenEntry token;
+        if (view.GetToken(hash, token) == !fDisconnect) return false;
 
         if (fDisconnect)
             view.EraseToken(hash);
@@ -48,14 +67,10 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
     } else if (predicate.IsMintTokenPredicate()) {
         auto hash = predicate.GetPublicKey().GetHash();
 
-        if (!view.HaveToken(hash))
-            return false;
-
         blsct::TokenEntry token;
 
         if (!view.GetToken(hash, token))
             return false;
-
         if (!token.Mint(predicate.GetAmount() * (1 - 2 * fDisconnect)))
             return false;
 
@@ -65,18 +80,21 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
     } else if (predicate.IsMintNftPredicate()) {
         auto hash = predicate.GetPublicKey().GetHash();
 
-        if (!view.HaveToken(hash))
-            return false;
-
         blsct::TokenEntry token;
 
         if (!view.GetToken(hash, token))
             return false;
 
+        if (predicate.GetNftId() >= token.info.nTotalSupply || predicate.GetNftId() < 0)
+            return false;
+
         if (token.mapMintedNft.contains(predicate.GetNftId()) == !fDisconnect)
             return false;
 
-        token.mapMintedNft[predicate.GetNftId()] = predicate.GetNftMetaData();
+        if (fDisconnect)
+            token.mapMintedNft.erase(predicate.GetNftId());
+        else
+            token.mapMintedNft[predicate.GetNftId()] = predicate.GetNftMetaData();
 
         view.AddToken(hash, std::move(token));
 

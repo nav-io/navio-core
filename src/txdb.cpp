@@ -86,7 +86,8 @@ bool CCoinsViewDB::HaveCoin(const COutPoint& outpoint) const
 
 bool CCoinsViewDB::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const
 {
-    return m_db->Read(TokenDbEntry(&tokenId), token);
+    auto ret = m_db->Read(TokenDbEntry(&tokenId), token);
+    return ret;
 };
 
 bool CCoinsViewDB::GetAllTokens(TokensMap& tokensMap) const

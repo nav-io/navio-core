@@ -71,6 +71,7 @@ struct UnsignedInput {
 struct Amounts {
     CAmount nFromInputs;
     CAmount nFromOutputs;
+    CAmount nFromFee;
 };
 
 CTransactionRef

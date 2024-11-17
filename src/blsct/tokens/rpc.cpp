@@ -17,6 +17,8 @@ std::vector<RPCResult> tokenInfoResult = {
     RPCResult{RPCResult::Type::NUM, "type", "the token type"},
     RPCResult{RPCResult::Type::ANY, "metadata", "the token metadata"},
     RPCResult{RPCResult::Type::NUM, "maxSupply", "the token max supply"},
+    RPCResult{RPCResult::Type::NUM, "currentSupply", "the token current supply"},
+
 };
 
 void TokenToUniValue(UniValue& obj, const blsct::TokenEntry& token)
@@ -29,6 +31,19 @@ void TokenToUniValue(UniValue& obj, const blsct::TokenEntry& token)
     }
     obj.pushKV("metadata", metadata);
     obj.pushKV("maxSupply", token.info.nTotalSupply);
+    if (token.info.type == blsct::TokenType::TOKEN)
+        obj.pushKV("currentSupply", token.nSupply);
+    else if (token.info.type == blsct::TokenType::NFT) {
+        UniValue mintedNft{UniValue::VOBJ};
+        for (auto& it : token.mapMintedNft) {
+            UniValue nftMetadata{UniValue::VOBJ};
+            for (auto& it2 : it.second) {
+                nftMetadata.pushKV(it2.first, it2.second);
+            }
+            mintedNft.pushKV(std::to_string(it.first), nftMetadata);
+        }
+        obj.pushKV("mintedNft", mintedNft);
+    }
 }
 
 RPCHelpMan
@@ -55,7 +70,7 @@ gettoken()
             CCoinsViewCache* coins_view;
             coins_view = &active_chainstate.CoinsTip();
 
-            uint256 tokenId(ParseHashV(request.params[0], "txid"));
+            uint256 tokenId(ParseHashV(request.params[0], "tokenId"));
             blsct::TokenEntry token;
             if (!coins_view->GetToken(tokenId, token))
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");

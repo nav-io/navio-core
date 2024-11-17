@@ -376,7 +376,6 @@ template<typename Stream, typename TxType>
 void UnserializeTransaction(TxType& tx, Stream& s, const TransactionSerParams& params)
 {
     const bool fAllowWitness = params.allow_witness;
-
     s >> tx.nVersion;
     unsigned char flags = 0;
     tx.vin.clear();

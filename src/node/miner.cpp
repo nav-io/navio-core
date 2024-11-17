@@ -231,12 +231,28 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
         addPackageTxs(*m_mempool, nPackagesSelected, nDescendantsUpdated);
     }
 
+    CCoinsViewCache viewNew(&m_chainstate.CoinsTip());
+
     for (const CMutableTransaction& tx : txns) {
+        bool validPredicate = true;
+        CAmount txFees = 0;
+
         for (auto& out : tx.vout) {
+            if (out.predicate.size() > 0) {
+                auto parsedPredicate = blsct::ParsePredicate(out.predicate);
+                if (!ExecutePredicate(parsedPredicate, viewNew)) {
+                    validPredicate = false;
+                    break;
+                }
+            }
             if (out.scriptPubKey.IsFee()) {
-                nFees += out.nValue;
+                txFees += out.nValue;
             }
         }
+
+        if (!validPredicate) continue;
+
+        nFees += txFees;
         pblock->vtx.push_back(MakeTransactionRef(tx));
     }
 

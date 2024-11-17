@@ -65,7 +65,7 @@ UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request,
         mapMetadata[it.first] = it.second.get_str();
     }
 
-    CAmount max_supply = AmountFromValue(request.params[1]);
+    CAmount max_supply = type == blsct::TokenType::TOKEN ? AmountFromValue(request.params[1]) : request.params[1].get_uint64();
 
     blsct::TokenInfo tokenInfo;
     tokenInfo.nTotalSupply = max_supply;
@@ -74,17 +74,14 @@ UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request,
 
     auto tokenId = (HashWriter{} << tokenInfo.mapMetadata << tokenInfo.nTotalSupply).GetHash();
 
-    {
-        LOCK(cs_main);
-        ChainstateManager& chainman = EnsureAnyChainman(request.context);
-        Chainstate& active_chainstate = chainman.ActiveChainstate();
+    std::map<uint256, blsct::TokenEntry> tokens;
+    tokens[tokenId];
+    pwallet->chain().findTokens(tokens);
 
-        CCoinsViewCache* coins_view;
-        coins_view = &active_chainstate.CoinsTip();
+    if (tokens.count(tokenId))
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Token already exists");
 
-        if (coins_view->HaveToken(tokenId))
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Token already exists");
-    }
+    auto token = tokens[tokenId];
 
     tokenInfo.publicKey = blsct_km->GetTokenKey(tokenId).GetPublicKey();
 
@@ -173,6 +170,7 @@ RPCHelpMan minttoken()
         RPCExamples{HelpExampleRpc("minttoken", "d46a375d31843d6a303dc7a8c0e0cccaa2d89f442052226fd5337b4d77afcc80 " + BLSCT_EXAMPLE_ADDRESS[0] + " 1000")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+
             if (!pwallet) return UniValue::VNULL;
 
             // Make sure the results are valid at least up to the most recent block
@@ -186,23 +184,21 @@ RPCHelpMan minttoken()
             uint256 token_id(ParseHashV(request.params[0], "token_id"));
             const std::string address = request.params[1].get_str();
             CAmount mint_amount = AmountFromValue(request.params[2]);
-            blsct::TokenEntry token;
 
-            {
-                LOCK(cs_main);
-                ChainstateManager& chainman = EnsureAnyChainman(request.context);
-                Chainstate& active_chainstate = chainman.ActiveChainstate();
-                CCoinsViewCache* coins_view;
-                coins_view = &active_chainstate.CoinsTip();
+            std::map<uint256, blsct::TokenEntry> tokens;
+            tokens[token_id];
+            pwallet->chain().findTokens(tokens);
 
-                if (!coins_view->GetToken(token_id, token))
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
+            if (!tokens.count(token_id))
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
 
-                auto publicKey = blsct_km->GetTokenKey(token_id).GetPublicKey();
+            auto token = tokens[token_id];
 
-                if (publicKey != token.info.publicKey)
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "You don't own the token");
-            }
+            auto tokenId = (HashWriter{} << token.info.mapMetadata << token.info.nTotalSupply).GetHash();
+            auto publicKey = blsct_km->GetTokenKey(tokenId).GetPublicKey();
+
+            if (publicKey != token.info.publicKey)
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "You don't own the token");
 
             blsct::CreateTransactionData
                 transactionData(token.info, mint_amount, address);
@@ -219,7 +215,7 @@ RPCHelpMan minttoken()
     };
 }
 
-RPCHelpMan mintnft()
+static RPCHelpMan mintnft()
 {
     return RPCHelpMan{
         "mintnft",
@@ -281,26 +277,23 @@ RPCHelpMan mintnft()
                 mapMetadata[it.first] = it.second.get_str();
             }
 
-            blsct::TokenEntry token;
+            std::map<uint256, blsct::TokenEntry> tokens;
+            tokens[token_id];
+            pwallet->chain().findTokens(tokens);
 
-            {
-                LOCK(cs_main);
-                ChainstateManager& chainman = EnsureAnyChainman(request.context);
-                Chainstate& active_chainstate = chainman.ActiveChainstate();
-                CCoinsViewCache* coins_view;
-                coins_view = &active_chainstate.CoinsTip();
+            if (!tokens.count(token_id))
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
 
-                if (!coins_view->GetToken(token_id, token))
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
+            auto token = tokens[token_id];
 
-                auto publicKey = blsct_km->GetTokenKey(token_id).GetPublicKey();
+            auto tokenId = (HashWriter{} << token.info.mapMetadata << token.info.nTotalSupply).GetHash();
+            auto publicKey = blsct_km->GetTokenKey(tokenId).GetPublicKey();
 
-                if (publicKey != token.info.publicKey)
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "You don't own the token");
+            if (publicKey != token.info.publicKey)
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "You don't own the token");
 
-                if (token.mapMintedNft.count(nft_id))
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "The NFT is already minted");
-            }
+            if (token.mapMintedNft.count(nft_id))
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "The NFT is already minted");
 
             blsct::CreateTransactionData
                 transactionData(token.info, nft_id, address, mapMetadata);

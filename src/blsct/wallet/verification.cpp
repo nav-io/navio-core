@@ -51,9 +51,10 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
 
     for (auto& out : tx.vout) {
         auto out_hash = out.GetHash();
+        blsct::ParsedPredicate parsedPredicate;
 
         if (out.predicate.size() > 0) {
-            auto parsedPredicate = ParsePredicate(out.predicate);
+            parsedPredicate = ParsePredicate(out.predicate);
 
             if (parsedPredicate.IsMintTokenPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
@@ -102,7 +103,8 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "more-than-one-fee-output");
             }
             if (out.nValue == 0) continue;
-            nFee = out.nValue;
+            if (parsedPredicate.IsPayFeePredicate())
+                nFee = out.nValue;
             range_proof::Generators<Mcl> gen = gf.GetInstance(out.tokenId);
             balanceKey = balanceKey - (gen.G * MclScalar(out.nValue));
         }

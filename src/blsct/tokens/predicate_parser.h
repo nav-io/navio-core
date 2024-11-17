@@ -108,6 +108,7 @@ struct PayFeePredicate {
 class ParsedPredicate
 {
 public:
+    ParsedPredicate() {}
     ParsedPredicate(CreateTokenPredicate& predicate) : predicate_(predicate) {}
     ParsedPredicate(MintTokenPredicate& predicate) : predicate_(predicate) {}
     ParsedPredicate(MintNftPredicate& predicate) : predicate_(predicate) {}
@@ -185,6 +186,7 @@ private:
 };
 
 ParsedPredicate ParsePredicate(const VectorPredicate& vch);
+std::string PredicateToString(const VectorPredicate& vch);
 bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, const bool& fDisconnect = false);
 bool ExecutePredicate(const VectorPredicate& vch, CCoinsViewCache& view, const bool& fDisconnect = false);
 
