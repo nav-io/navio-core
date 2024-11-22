@@ -1156,7 +1156,7 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
     }
 
     for (auto& txout : wtx.tx->vout) {
-        if (txout.IsBLSCT()) {
+        if (txout.HasBLSCTRangeProof()) {
             auto blsct_man = GetBLSCTKeyMan();
             if (blsct_man) {
                 auto result = blsct_man->RecoverOutputs({wtx.tx->vout});
@@ -1592,7 +1592,7 @@ void CWallet::BlockUntilSyncedToCurrentChain() const
 
 // Note that this function doesn't distinguish between a 0-valued input,
 // and a not-"is mine" (according to the filter) input.
-CAmount CWallet::GetDebit(const CTxIn& txin, const isminefilter& filter) const
+CAmount CWallet::GetDebit(const CTxIn& txin, const isminefilter& filter, const TokenId& token_id) const
 {
     {
         LOCK(cs_wallet);
@@ -1600,8 +1600,8 @@ CAmount CWallet::GetDebit(const CTxIn& txin, const isminefilter& filter) const
         if (mi != mapWallet.end()) {
             const CWalletTx& prev = (*mi).second;
             if (txin.prevout.n < prev.tx->vout.size()) {
-                if (prev.tx->vout[txin.prevout.n].IsBLSCT() && IsMine(prev.tx->vout[txin.prevout.n]) & filter) {
-                    return prev.GetBLSCTRecoveryData(txin.prevout.n).amount;
+                if (prev.tx->vout[txin.prevout.n].HasBLSCTRangeProof() && IsMine(prev.tx->vout[txin.prevout.n]) & filter) {
+                    return prev.tx->vout[txin.prevout.n].tokenId == token_id ? prev.GetBLSCTRecoveryData(txin.prevout.n).amount : 0;
                 } else if (IsMine(prev.tx->vout[txin.prevout.n]) & filter)
                     return prev.tx->vout[txin.prevout.n].nValue;
             }
@@ -1613,7 +1613,7 @@ CAmount CWallet::GetDebit(const CTxIn& txin, const isminefilter& filter) const
 isminetype CWallet::IsMine(const CTxOut& txout) const
 {
     AssertLockHeld(cs_wallet);
-    if (txout.IsBLSCT()) {
+    if (txout.HasBLSCTRangeProof()) {
         auto blsct_man = GetBLSCTKeyMan();
         if (blsct_man) {
             bool mine = blsct_man->IsMine(txout);
@@ -1675,11 +1675,11 @@ bool CWallet::IsFromMe(const CTransaction& tx) const
     return (GetDebit(tx, ISMINE_ALL) > 0);
 }
 
-CAmount CWallet::GetDebit(const CTransaction& tx, const isminefilter& filter) const
+CAmount CWallet::GetDebit(const CTransaction& tx, const isminefilter& filter, const TokenId& token_id) const
 {
     CAmount nDebit = 0;
     for (const CTxIn& txin : tx.vin) {
-        nDebit += GetDebit(txin, filter);
+        nDebit += GetDebit(txin, filter, token_id);
         if (!MoneyRange(nDebit))
             throw std::runtime_error(std::string(__func__) + ": value out of range");
     }

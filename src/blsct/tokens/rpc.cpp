@@ -14,7 +14,7 @@
 std::vector<RPCResult> tokenInfoResult = {
     RPCResult{RPCResult::Type::STR_HEX, "tokenId", "the token id"},
     RPCResult{RPCResult::Type::STR_HEX, "publicKey", "the token public key"},
-    RPCResult{RPCResult::Type::NUM, "type", "the token type"},
+    RPCResult{RPCResult::Type::STR, "type", "the token type"},
     RPCResult{RPCResult::Type::ANY, "metadata", "the token metadata"},
     RPCResult{RPCResult::Type::NUM, "maxSupply", "the token max supply"},
     RPCResult{RPCResult::Type::NUM, "currentSupply", "the token current supply"},

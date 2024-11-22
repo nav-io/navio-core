@@ -2649,8 +2649,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                     if (!blsct::VerifyTx(tx, view, tx_state, 0, params.GetConsensus().nPePoSMinStakeAmount)) {
                         state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                                       tx_state.GetRejectReason(), tx_state.GetDebugMessage());
-                        return error("ConnectBlock(): VerifyTx on transaction %s failed with %s",
-                                     tx.GetHash().ToString(), state.ToString());
+                        return error("ConnectBlock(): VerifyTx on transaction %s %s failed with %s",
+                                     tx.GetHash().ToString(), tx.ToString(), state.ToString());
                     }
                 } else {
                     return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "blsct-tx-not-allowed");

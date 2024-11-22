@@ -130,7 +130,7 @@ bool IsStandardTx(const CTransaction& tx, const std::optional<unsigned>& max_dat
 
     TxoutType whichType;
     for (const CTxOut& txout : tx.vout) {
-        if (txout.IsBLSCT())
+        if (txout.HasBLSCTRangeProof() || txout.HasBLSCTKeys())
             continue;
 
         if (!::IsStandard(txout.scriptPubKey, max_datacarrier_bytes, whichType)) {
@@ -180,7 +180,7 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
     for (unsigned int i = 0; i < tx.vin.size(); i++) {
         const CTxOut& prev = mapInputs.AccessCoin(tx.vin[i].prevout).out;
 
-        if (prev.IsBLSCT()) continue;
+        if (prev.HasBLSCTRangeProof() || prev.HasBLSCTKeys()) continue;
 
         std::vector<std::vector<unsigned char> > vSolutions;
         TxoutType whichType = Solver(prev.scriptPubKey, vSolutions);

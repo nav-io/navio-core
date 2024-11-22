@@ -281,7 +281,9 @@ void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry
             out.pushKV("spendingKey", HexStr(txout.blsctData.spendingKey.GetVch()));
             out.pushKV("blindingKey", HexStr(txout.blsctData.blindingKey.GetVch()));
             UniValue rp(UniValue::VOBJ);
-            RangeProofToUniv(txout.blsctData.rangeProof, rp, extendedRangeProof);
+            if (txout.blsctData.rangeProof.Vs.Size() > 0) {
+                RangeProofToUniv(txout.blsctData.rangeProof, rp, extendedRangeProof);
+            }
             out.pushKV("rangeProof", rp);
             out.pushKV("viewTag", txout.blsctData.viewTag);
             out.pushKV("tokenId", txout.tokenId.ToString());

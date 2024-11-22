@@ -8,10 +8,8 @@
 #include <blsct/public_key.h>
 #include <blsct/tokens/info.h>
 #include <blsct/tokens/predicate.h>
-#include <coins.h>
 
 namespace blsct {
-
 enum PredicateOperation : uint8_t {
     CREATE_TOKEN,
     MINT,
@@ -187,10 +185,6 @@ private:
 
 ParsedPredicate ParsePredicate(const VectorPredicate& vch);
 std::string PredicateToString(const VectorPredicate& vch);
-bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, const bool& fDisconnect = false);
-bool ExecutePredicate(const VectorPredicate& vch, CCoinsViewCache& view, const bool& fDisconnect = false);
-
-
 } // namespace blsct
 
 #endif // NAVIO_BLSCT_TOKENS_PREDICATE_PARSER_H

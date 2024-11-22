@@ -15,19 +15,9 @@ enum TokenType : unsigned char {
     TOKEN = 0,
     NFT = 1
 };
-std::string TokenTypeToString(const TokenType& type)
-{
-    switch (type) {
-    case TOKEN: {
-        return "token";
-    }
-    case NFT: {
-        return "nft";
-    }
-    default:
-        return "unknown";
-    }
-}
+
+std::string TokenTypeToString(const TokenType& type);
+
 class TokenInfo
 {
 public:

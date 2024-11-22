@@ -114,8 +114,10 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             this->tx.vout.push_back(out.out);
             auto outHash = out.out.GetHash();
 
-            if (out.out.IsBLSCT()) {
+            if (out.out.HasBLSCTRangeProof()) {
                 outputGammas = outputGammas - out.gamma;
+            }
+            if (out.out.HasBLSCTKeys()) {
                 outputSignatures.push_back(PrivateKey(out.blindingKey).Sign(outHash));
             }
 
@@ -252,15 +254,18 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
             }
         }
 
-        bool fSubtractFeeFromAmount = false; // type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE;
+        //bool fSubtractFeeFromAmount = false; // type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE;
 
         if (transactionData.type == TX_CREATE_TOKEN) {
             tx.AddOutput(transactionData.tokenKey, transactionData.tokenInfo);
         } else if (transactionData.type == TX_MINT_TOKEN) {
-            if (!transactionData.token_id.IsNFT())
+            if (!transactionData.token_id.IsNFT()) {
                 tx.AddOutput(transactionData.tokenKey, transactionData.destination, transactionData.tokenInfo.publicKey, transactionData.nAmount);
-            else
+            } else {
                 tx.AddOutput(transactionData.tokenKey, transactionData.destination, transactionData.tokenInfo.publicKey, transactionData.token_id.subid, transactionData.nftMetadata);
+            }
+        } else if (transactionData.type == NORMAL) {
+            tx.AddOutput(transactionData.destination, transactionData.nAmount, transactionData.sMemo, transactionData.token_id, transactionData.type);
         }
     }
 

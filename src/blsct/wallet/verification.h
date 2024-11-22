@@ -5,7 +5,7 @@
 #ifndef BLSCT_VERIFICATION_H
 #define BLSCT_VERIFICATION_H
 
-#include <blsct/tokens/predicate_parser.h>
+#include <blsct/tokens/predicate_exec.h>
 #include <chain.h>
 #include <coins.h>
 #include <consensus/validation.h>

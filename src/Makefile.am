@@ -199,6 +199,7 @@ BLSCT_H = \
   blsct/signature.h \
   blsct/tokens/info.h \
   blsct/tokens/predicate.h \
+  blsct/tokens/predicate_exec.h \
   blsct/tokens/predicate_parser.h \
   blsct/tokens/rpc.h \
   blsct/wallet/address.h \
@@ -252,6 +253,8 @@ BLSCT_CPP = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/signature.cpp \
+  blsct/tokens/info.cpp \
+  blsct/tokens/predicate_exec.cpp \
   blsct/tokens/predicate_parser.cpp \
   blsct/wallet/verification.cpp
 

@@ -33,16 +33,20 @@ struct ProofBase {
     void Serialize(Stream& s) const
     {
         ::Serialize(s, Vs);
-        ::Serialize(s, Ls);
-        ::Serialize(s, Rs);
+        if (Vs.Size() > 0) {
+            ::Serialize(s, Ls);
+            ::Serialize(s, Rs);
+        }
     }
 
     template <typename Stream>
     void Unserialize(Stream& s)
     {
         ::Unserialize(s, Vs);
-        ::Unserialize(s, Ls);
-        ::Unserialize(s, Rs);
+        if (Vs.Size() > 0) {
+            ::Unserialize(s, Ls);
+            ::Unserialize(s, Rs);
+        }
     }
 };
 

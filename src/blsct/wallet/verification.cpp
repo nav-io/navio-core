@@ -78,13 +78,14 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-to-execute-predicate");
         }
 
-        if (out.IsBLSCT()) {
-            bulletproofs_plus::RangeProofWithSeed<Mcl> proof{out.blsctData.rangeProof, out.tokenId};
-
+        if (out.HasBLSCTKeys()) {
             vPubKeys.emplace_back(out.blsctData.ephemeralKey);
             vMessages.emplace_back(out_hash.begin(), out_hash.end());
-            vProofs.emplace_back(proof);
+        }
 
+        if (out.HasBLSCTRangeProof()) {
+            bulletproofs_plus::RangeProofWithSeed<Mcl> proof{out.blsctData.rangeProof, out.tokenId};
+            vProofs.emplace_back(proof);
             balanceKey = balanceKey - out.blsctData.rangeProof.Vs[0];
 
             if (out.GetStakedCommitmentRangeProof(stakedCommitmentRangeProof)) {

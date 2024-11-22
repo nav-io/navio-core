@@ -872,11 +872,8 @@ RPCHelpMan encryptwallet();
 
 // spend
 RPCHelpMan sendtoaddress();
-RPCHelpMan sendtoblsctaddress();
 RPCHelpMan sendmany();
 RPCHelpMan settxfee();
-RPCHelpMan stakelock();
-RPCHelpMan stakeunlock();
 RPCHelpMan fundrawtransaction();
 RPCHelpMan bumpfee();
 RPCHelpMan psbtbumpfee();
@@ -958,7 +955,6 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &send},
         {"wallet", &sendmany},
         {"wallet", &sendtoaddress},
-        {"wallet", &sendtoblsctaddress},
         {"wallet", &sethdseed},
         {"wallet", &setlabel},
         {"wallet", &settxfee},
@@ -967,8 +963,6 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &signrawtransactionwithwallet},
         {"wallet", &simulaterawtransaction},
         {"wallet", &sendall},
-        {"wallet", &stakelock},
-        {"wallet", &stakeunlock},
         {"wallet", &unloadwallet},
         {"wallet", &upgradewallet},
         {"wallet", &walletcreatefundedpsbt},

@@ -385,7 +385,7 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             const CTxOut& output = wtx.tx->vout[i];
             const COutPoint outpoint(Txid::FromUint256(txid), i);
 
-            auto nValue = output.IsBLSCT() ? wtx.GetBLSCTRecoveryData(i).amount : output.nValue;
+            auto nValue = output.HasBLSCTRangeProof() ? wtx.GetBLSCTRecoveryData(i).amount : output.nValue;
             if (nValue < params.min_amount || nValue > params.max_amount)
                 continue;
 
@@ -403,7 +403,7 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             if (mine == ISMINE_NO) {
                 continue;
             }
-            if (params.only_blsct && !output.IsBLSCT()) {
+            if (params.only_blsct && !(output.HasBLSCTRangeProof() || output.HasBLSCTKeys())) {
                 continue;
             }
             if (params.include_staked_commitment && !output.IsStakedCommitment()) {

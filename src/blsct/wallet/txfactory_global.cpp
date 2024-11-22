@@ -124,8 +124,12 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
 
             ret.out.scriptPubKey = CScript() << OP_STAKED_COMMITMENT << blsct::Common::DataStreamToVector(ss) << OP_DROP << OP_TRUE;
         }
-        auto p = rp.Prove(vs, nonce, memo, tokenId);
-        ret.out.blsctData.rangeProof = p;
+        if (tokenId.IsNFT()) {
+            ret.out.nValue = nAmount;
+        } else {
+            auto p = rp.Prove(vs, nonce, memo, tokenId);
+            ret.out.blsctData.rangeProof = p;
+        }
         ret.GenerateKeys(ret.blindingKey, destKeys);
         HashWriter hash{};
         hash << nonce;
@@ -150,7 +154,7 @@ CTransactionRef AggregateTransactions(const std::vector<CTransactionRef>& txs)
             ret.vin.push_back(in);
         }
         for (auto& out : tx->vout) {
-            if (out.scriptPubKey.IsFee()) {
+            if (out.IsFee()) {
                 if (out.predicate.size() > 0) {
                     auto parsedPredicate = blsct::ParsePredicate(out.predicate);
                     if (parsedPredicate.IsPayFeePredicate()) {

@@ -431,12 +431,12 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         for i in range(self.num_nodes):
             self.init_wallet(node=i)
 
-    def init_wallet(self, *, node):
+    def init_wallet(self, *, node, blsct=False):
         wallet_name = self.default_wallet_name if self.wallet_names is None else self.wallet_names[node] if node < len(self.wallet_names) else False
         if wallet_name is not False:
             n = self.nodes[node]
             if wallet_name is not None:
-                n.createwallet(wallet_name=wallet_name, descriptors=self.options.descriptors, load_on_startup=True)
+                n.createwallet(wallet_name=wallet_name, descriptors=self.options.descriptors, load_on_startup=True, blsct=blsct)
             n.importprivkey(privkey=n.get_deterministic_priv_key().key, label='coinbase', rescan=True)
 
     def run_test(self):
@@ -445,9 +445,9 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
 
     # Public helper methods. These can be accessed by the subclass test scripts.
 
-    def add_wallet_options(self, parser, *, descriptors=True, legacy=True):
+    def add_wallet_options(self, parser, *, descriptors=True, legacy=True, blsct=True):
         kwargs = {}
-        if descriptors + legacy == 1:
+        if descriptors + legacy + blsct == 1:
             # If only one type can be chosen, set it as default
             kwargs["default"] = descriptors
         group = parser.add_mutually_exclusive_group(
@@ -459,6 +459,9 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         if legacy:
             group.add_argument("--legacy-wallet", action='store_const', const=False, **kwargs,
                                help="Run test using legacy wallets", dest='descriptors')
+        if blsct:
+            group.add_argument("--blsct", action='store_const', const=False, **kwargs,
+                               help="Run test using blsct wallets", dest='blsct')
 
     def add_nodes(self, num_nodes: int, extra_args=None, *, rpchost=None, binary=None, binary_cli=None, versions=None):
         """Instantiate TestNode objects.
@@ -688,6 +691,11 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
 
     def generatetoaddress(self, generator, *args, sync_fun=None, **kwargs):
         blocks = generator.generatetoaddress(*args, invalid_call=False, **kwargs)
+        sync_fun() if sync_fun else self.sync_all()
+        return blocks
+
+    def generatetoblsctaddress(self, generator, *args, sync_fun=None, **kwargs):
+        blocks = generator.generatetoblsctaddress(*args, invalid_call=False, **kwargs)
         sync_fun() if sync_fun else self.sync_all()
         return blocks
 

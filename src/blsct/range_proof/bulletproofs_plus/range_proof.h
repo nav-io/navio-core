@@ -44,28 +44,32 @@ struct RangeProof: public range_proof::ProofBase<T> {
     void Serialize(Stream& s) const
     {
         range_proof::ProofBase<T>::Serialize(s);
-        ::Serialize(s, A);
-        ::Serialize(s, A_wip);
-        ::Serialize(s, B);
-        ::Serialize(s, r_prime);
-        ::Serialize(s, s_prime);
-        ::Serialize(s, delta_prime);
-        ::Serialize(s, alpha_hat);
-        ::Serialize(s, tau_x);
+        if (range_proof::ProofBase<T>::Vs.Size() > 0) {
+            ::Serialize(s, A);
+            ::Serialize(s, A_wip);
+            ::Serialize(s, B);
+            ::Serialize(s, r_prime);
+            ::Serialize(s, s_prime);
+            ::Serialize(s, delta_prime);
+            ::Serialize(s, alpha_hat);
+            ::Serialize(s, tau_x);
+        }
     }
 
     template <typename Stream>
     void Unserialize(Stream& s)
     {
         range_proof::ProofBase<T>::Unserialize(s);
-        ::Unserialize(s, A);
-        ::Unserialize(s, A_wip);
-        ::Unserialize(s, B);
-        ::Unserialize(s, r_prime);
-        ::Unserialize(s, s_prime);
-        ::Unserialize(s, delta_prime);
-        ::Unserialize(s, alpha_hat);
-        ::Unserialize(s, tau_x);
+        if (range_proof::ProofBase<T>::Vs.Size() > 0) {
+            ::Unserialize(s, A);
+            ::Unserialize(s, A_wip);
+            ::Unserialize(s, B);
+            ::Unserialize(s, r_prime);
+            ::Unserialize(s, s_prime);
+            ::Unserialize(s, delta_prime);
+            ::Unserialize(s, alpha_hat);
+            ::Unserialize(s, tau_x);
+        }
     }
 };
 

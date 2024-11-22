@@ -4,6 +4,7 @@
 
 #include <blsct/wallet/rpc.h>
 #include <coins.h>
+#include <core_io.h>
 #include <primitives/transaction.h>
 #include <rpc/server.h>
 #include <rpc/server_util.h>
@@ -11,9 +12,40 @@
 #include <univalue.h>
 #include <util/strencodings.h>
 #include <validation.h>
+#include <wallet/receive.h>
 #include <wallet/rpc/util.h>
 
 namespace blsct {
+static void ParseBLSCTRecipients(const UniValue& address_amounts, const UniValue& subtract_fee_outputs, const std::string& sMemo, std::vector<wallet::CBLSCTRecipient>& recipients)
+{
+    std::set<CTxDestination> destinations;
+    int i = 0;
+    for (const std::string& address : address_amounts.getKeys()) {
+        CTxDestination dest = DecodeDestination(address);
+        if (!IsValidDestination(dest) || dest.index() != 8) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
+        }
+
+        if (destinations.count(dest)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, duplicated address: ") + address);
+        }
+        destinations.insert(dest);
+
+        CAmount amount = AmountFromValue(address_amounts[i++]);
+
+        bool subtract_fee = false;
+        for (unsigned int idx = 0; idx < subtract_fee_outputs.size(); idx++) {
+            const UniValue& addr = subtract_fee_outputs[idx];
+            if (addr.get_str() == address) {
+                subtract_fee = true;
+            }
+        }
+
+        wallet::CBLSCTRecipient recipient = {amount, sMemo, dest, subtract_fee, false};
+        recipients.push_back(recipient);
+    }
+}
+
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose)
 {
     // This should always try to sign, if we don't have private keys, don't try to do anything here.
@@ -139,7 +171,10 @@ RPCHelpMan createtoken()
          },
          {"max_supply", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The token max supply."}},
         RPCResult{
-            RPCResult::Type::STR_HEX, "tokenId", "the token id"},
+            RPCResult::Type::OBJ, "", "", {
+                                              {RPCResult::Type::STR_HEX, "hash", "The broadcasted transaction hash"},
+                                              {RPCResult::Type::STR_HEX, "tokenId", "The token id"},
+                                          }},
         RPCExamples{HelpExampleRpc("createtoken", "{\"name\":\"Token\"} 1000")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             return CreateTokenOrNft(self, request, blsct::TOKEN);
@@ -207,10 +242,7 @@ RPCHelpMan minttoken()
 
             auto hash = blsct::SendTransaction(*pwallet, transactionData, false);
 
-            UniValue ret{UniValue::VOBJ};
-            ret.pushKV("hash", hash);
-
-            return ret;
+            return hash;
         },
     };
 }
@@ -302,10 +334,310 @@ static RPCHelpMan mintnft()
 
             auto hash = blsct::SendTransaction(*pwallet, transactionData, false);
 
-            UniValue ret{UniValue::VOBJ};
-            ret.pushKV("hash", hash);
+            return hash;
+        },
+    };
+}
 
-            return ret;
+RPCHelpMan gettokenbalance()
+{
+    return RPCHelpMan{
+        "gettokenbalance",
+        "\nReturns the total available balance of a token.\n"
+        "The available balance is what the wallet considers currently spendable, and is\n"
+        "thus affected by options which limit spendability such as -spendzeroconfchange.\n",
+        {
+            {"token_id", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The token id"},
+            {"dummy", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Remains for backward compatibility. Must be excluded or set to \"*\"."},
+            {"minconf", RPCArg::Type::NUM, RPCArg::Default{0}, "Only include transactions confirmed at least this many times."},
+            {"include_watchonly", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for watch-only wallets, otherwise false"}, "Also include balance in watch-only addresses (see 'importaddress')"},
+            {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{true}, "(only available if avoid_reuse wallet flag is set) Do not include balance in dirty outputs; addresses are considered dirty if they have previously been used in a transaction."},
+        },
+        RPCResult{
+            RPCResult::Type::STR_AMOUNT, "amount", "The total amount received for this wallet."},
+        RPCExamples{
+            "\nThe total amount in the wallet with 0 or more confirmations\n" + HelpExampleCli("gettokenbalance", "0e8ba9acaef5a91e5933393baf0b1187fae81f158cd9455437378b1796fc893d") +
+            "\nThe total amount in the wallet with at least 6 confirmations\n" + HelpExampleCli("gettokenbalance", "0e8ba9acaef5a91e5933393baf0b1187fae81f158cd9455437378b1796fc893d \"*\" 6") +
+            "\nAs a JSON-RPC call\n" + HelpExampleRpc("gettokenbalance", "\"0e8ba9acaef5a91e5933393baf0b1187fae81f158cd9455437378b1796fc893d\", \"*\", 6")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            const std::shared_ptr<const wallet::CWallet> pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // Make sure the results are valid at least up to the most recent block
+            // the user could have gotten from another RPC command prior to now
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            uint256 token_id(ParseHashV(request.params[0], "token_id"));
+
+            std::map<uint256, blsct::TokenEntry> tokens;
+            tokens[token_id];
+            pwallet->chain().findTokens(tokens);
+
+            if (!tokens.count(token_id))
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
+
+            auto token = tokens[token_id];
+
+            if (token.info.type != blsct::TokenType::TOKEN)
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Wrong token type");
+
+            const auto dummy_value{self.MaybeArg<std::string>(1)};
+            if (dummy_value && *dummy_value != "*") {
+                throw JSONRPCError(RPC_METHOD_DEPRECATED, "dummy first argument must be excluded or set to \"*\".");
+            }
+
+            int min_depth = 0;
+            if (!request.params[2].isNull()) {
+                min_depth = request.params[2].getInt<int>();
+            }
+
+            bool include_watchonly = ParseIncludeWatchonly(request.params[3], *pwallet);
+
+            bool avoid_reuse = GetAvoidReuseFlag(*pwallet, request.params[4]);
+
+            const auto bal = GetBalance(*pwallet, min_depth, avoid_reuse, token_id);
+
+            return ValueFromAmount(bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0));
+        },
+    };
+}
+
+RPCHelpMan sendtoblsctaddress()
+{
+    return RPCHelpMan{
+        "sendtoblsctaddress",
+        "\nSend an amount to a given blsct address." +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The BLSCT address to send to."},
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to send. eg 0.1"},
+            {"memo", RPCArg::Type::STR, RPCArg::Default{""}, "A memo used to store in the transaction.\n"
+                                                             "The recipient will see its value."},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false",
+                      RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+            RPCResult{
+                "if verbose is set to true",
+                RPCResult::Type::OBJ,
+                "",
+                "",
+                {{RPCResult::Type::STR_HEX, "txid", "The transaction id."}},
+            },
+        },
+        RPCExamples{
+            "\nSend 0.1 " + CURRENCY_UNIT + "\n" + HelpExampleCli("sendtoblsctaddress", "\"" + BLSCT_EXAMPLE_ADDRESS[0] + "\" 0.1") +
+            "\nSend 0.1 " + CURRENCY_UNIT + " including \"donation\" as memo in the transaction using positional arguments\n" + HelpExampleCli("sendtoblsctaddress", "\"" + BLSCT_EXAMPLE_ADDRESS[0] + "\" 0.1 \"donation\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // Make sure the results are valid at least up to the most recent block
+            // the user could have gotten from another RPC command prior to now
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            // Wallet comments
+            std::string sMemo;
+            if (!request.params[2].isNull() && !request.params[2].get_str().empty())
+                sMemo = request.params[2].get_str();
+
+            const std::string address = request.params[1].get_str();
+
+            const bool verbose{request.params[3].isNull() ? false : request.params[10].get_bool()};
+
+            blsct::CreateTransactionData transactionData(address, AmountFromValue(request.params[1]), sMemo, TokenId(), blsct::CreateTransactionType::NORMAL, 0);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
+
+RPCHelpMan sendtokentoblsctaddress()
+{
+    return RPCHelpMan{
+        "sendtokentoblsctaddress",
+        "\nSend an amount to tokens to a given blsct address." +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"token_id", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The token id."},
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The BLSCT address to send to."},
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to send. eg 0.1"},
+            {"memo", RPCArg::Type::STR, RPCArg::Default{""}, "A memo used to store in the transaction.\n"
+                                                             "The recipient will see its value."},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false",
+                      RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+            RPCResult{
+                "if verbose is set to true",
+                RPCResult::Type::OBJ,
+                "",
+                "",
+                {{RPCResult::Type::STR_HEX, "txid", "The transaction id."}},
+            },
+        },
+        RPCExamples{
+            "\nSend 0.1 tokens\n" + HelpExampleCli("sendtoblsctaddress", "\"" + BLSCT_EXAMPLE_ADDRESS[0] + "\" 0.1") +
+            "\nSend 0.1 tokens including \"donation\" as memo in the transaction using positional arguments\n" + HelpExampleCli("sendtotokensblsctaddress", "\"" + BLSCT_EXAMPLE_ADDRESS[0] + "\" 0.1 \"donation\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // Make sure the results are valid at least up to the most recent block
+            // the user could have gotten from another RPC command prior to now
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            uint256 token_id(ParseHashV(request.params[0], "token_id"));
+
+            std::map<uint256, blsct::TokenEntry> tokens;
+            tokens[token_id];
+            pwallet->chain().findTokens(tokens);
+
+            if (!tokens.count(token_id))
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
+
+            auto token = tokens[token_id];
+
+            if (token.info.type != blsct::TokenType::TOKEN)
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Wrong token type");
+
+            // Wallet comments
+            std::string sMemo;
+            if (!request.params[3].isNull() && !request.params[3].get_str().empty())
+                sMemo = request.params[3].get_str();
+
+            const std::string address = request.params[1].get_str();
+
+            const bool verbose{request.params[4].isNull() ? false : request.params[11].get_bool()};
+
+            blsct::CreateTransactionData transactionData(address, AmountFromValue(request.params[2]), sMemo, TokenId(token_id), blsct::CreateTransactionType::NORMAL, 0);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
+
+
+RPCHelpMan stakelock()
+{
+    return RPCHelpMan{
+        "stakelock",
+        "\nLock an amount in order to stake it." +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to stake. eg 0.1"},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false",
+                      RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+            RPCResult{
+                "if verbose is set to true",
+                RPCResult::Type::OBJ,
+                "",
+                "",
+                {{RPCResult::Type::STR_HEX, "txid", "The transaction id."}},
+            },
+        },
+        RPCExamples{
+            "\nLock 0.1 " + CURRENCY_UNIT + "\n" + HelpExampleCli("stakelock", "0.1")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // Make sure the results are valid at least up to the most recent block
+            // the user could have gotten from another RPC command prior to now
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            UniValue address_amounts(UniValue::VOBJ);
+            auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Locked Stake");
+            if (!op_dest) {
+                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
+            }
+
+            const std::string address = EncodeDestination(*op_dest);
+            address_amounts.pushKV(address, request.params[0]);
+
+            std::vector<wallet::CBLSCTRecipient> recipients;
+            blsct::ParseBLSCTRecipients(address_amounts, false, "", recipients);
+            const bool verbose{request.params[10].isNull() ? false : request.params[10].get_bool()};
+
+            blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
+
+
+RPCHelpMan stakeunlock()
+{
+    return RPCHelpMan{
+        "stakeunlock",
+        "\nUnlocks an staked amount." +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to unstake. eg 0.1"},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false",
+                      RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+            RPCResult{
+                "if verbose is set to true",
+                RPCResult::Type::OBJ,
+                "",
+                "",
+                {{RPCResult::Type::STR_HEX, "txid", "The transaction id."}},
+            },
+        },
+        RPCExamples{
+            "\nLock 0.1 " + CURRENCY_UNIT + "\n" + HelpExampleCli("stakelock", "0.1")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // Make sure the results are valid at least up to the most recent block
+            // the user could have gotten from another RPC command prior to now
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            UniValue address_amounts(UniValue::VOBJ);
+            auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "");
+            if (!op_dest) {
+                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
+            }
+
+            const std::string address = EncodeDestination(*op_dest);
+            address_amounts.pushKV(address, request.params[0]);
+
+            std::vector<wallet::CBLSCTRecipient> recipients;
+            blsct::ParseBLSCTRecipients(address_amounts, false, "", recipients);
+            const bool verbose{request.params[10].isNull() ? false : request.params[10].get_bool()};
+
+
+            blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT_UNSTAKE, Params().GetConsensus().nPePoSMinStakeAmount);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
         },
     };
 }
@@ -317,6 +649,11 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &createtoken},
         {"blsct", &minttoken},
         {"blsct", &mintnft},
+        {"blsct", &gettokenbalance},
+        {"blsct", &sendtoblsctaddress},
+        {"blsct", &sendtokentoblsctaddress},
+        {"blsct", &stakelock},
+        {"blsct", &stakeunlock},
     };
     return commands;
 }

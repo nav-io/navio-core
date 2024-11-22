@@ -12,7 +12,7 @@
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/generators.h>
 #include <blsct/signature.h>
-#include <blsct/tokens/predicate.h>
+#include <blsct/tokens/predicate_parser.h>
 #include <consensus/amount.h>
 #include <ctokens/tokenid.h>
 #include <prevector.h>
@@ -251,6 +251,8 @@ public:
         if (nFlags != 0) {
             ::Serialize(s, std::numeric_limits<CAmount>::max());
             ::Serialize(s, nFlags);
+            if (nFlags & PREDICATE_MARKER)
+                ::Serialize(s, nValue);
         } else {
             ::Serialize(s, nValue);
         }
@@ -272,6 +274,8 @@ public:
         if (nValue == std::numeric_limits<CAmount>::max()) {
             nValue = 0;
             ::Unserialize(s, nFlags);
+            if (nFlags & PREDICATE_MARKER)
+                ::Unserialize(s, nValue);
         }
         ::Unserialize(s, scriptPubKey);
         if (nFlags & BLSCT_MARKER) {
@@ -296,9 +300,14 @@ public:
         return nValue == -1;
     }
 
-    bool IsBLSCT() const
+    bool HasBLSCTRangeProof() const
     {
         return blsctData.rangeProof.Vs.Size() > 0;
+    }
+
+    bool HasBLSCTKeys() const
+    {
+        return !blsctData.ephemeralKey.IsZero() || !blsctData.blindingKey.IsZero() || !blsctData.spendingKey.IsZero();
     }
 
     bool IsStakedCommitment() const
@@ -310,7 +319,7 @@ public:
 
     bool GetStakedCommitmentRangeProof(bulletproofs_plus::RangeProofWithSeed<Mcl>& rangeProof) const
     {
-        if (!IsBLSCT())
+        if (!HasBLSCTRangeProof())
             return false;
         if (scriptPubKey.size() <= 7) return false;
         if (blsctData.rangeProof.Vs.Size() == 0)
@@ -340,6 +349,17 @@ public:
     friend bool operator!=(const CTxOut& a, const CTxOut& b)
     {
         return !(a == b);
+    }
+
+    bool IsFee() const
+    {
+        blsct::ParsedPredicate parsedPredicate;
+
+        if (predicate.size() > 0) {
+            parsedPredicate = blsct::ParsePredicate(predicate);
+        }
+
+        return parsedPredicate.IsPayFeePredicate();
     }
 
     std::string ToString() const;
