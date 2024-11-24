@@ -15,8 +15,10 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
 
         if (fDisconnect)
             view.EraseToken(hash);
-        else
-            view.AddToken(hash, std::move(predicate.GetTokenInfo()));
+        else {
+            auto info = predicate.GetTokenInfo();
+            view.AddToken(hash, std::move(info));
+        }
 
         return true;
     } else if (predicate.IsMintTokenPredicate()) {
