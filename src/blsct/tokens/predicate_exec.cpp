@@ -50,7 +50,7 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
 
         if (fDisconnect)
             token.mapMintedNft.erase(predicate.GetNftId());
-        else 
+        else
             token.mapMintedNft[predicate.GetNftId()] = predicate.GetNftMetaData();
 
         view.AddToken(hash, std::move(token));
