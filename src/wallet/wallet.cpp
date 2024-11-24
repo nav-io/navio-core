@@ -1155,17 +1155,13 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
         }
     }
 
-    for (auto& txout : wtx.tx->vout) {
-        if (txout.HasBLSCTRangeProof()) {
-            auto blsct_man = GetBLSCTKeyMan();
-            if (blsct_man) {
-                auto result = blsct_man->RecoverOutputs({wtx.tx->vout});
-                if (result.is_completed) {
-                    auto xs = result.amounts;
-                    for (auto& res : xs) {
-                        wtx.blsctRecoveryData[res.id] = res;
-                    }
-                }
+    auto blsct_man = GetBLSCTKeyMan();
+    if (blsct_man) {
+        auto result = blsct_man->RecoverOutputs({wtx.tx->vout});
+        if (result.is_completed) {
+            auto xs = result.amounts;
+            for (auto& res : xs) {
+                wtx.blsctRecoveryData[res.id] = res;
             }
         }
     }
@@ -1613,7 +1609,7 @@ CAmount CWallet::GetDebit(const CTxIn& txin, const isminefilter& filter, const T
 isminetype CWallet::IsMine(const CTxOut& txout) const
 {
     AssertLockHeld(cs_wallet);
-    if (txout.HasBLSCTRangeProof()) {
+    if (txout.HasBLSCTKeys()) {
         auto blsct_man = GetBLSCTKeyMan();
         if (blsct_man) {
             bool mine = blsct_man->IsMine(txout);

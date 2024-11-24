@@ -575,6 +575,7 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
 
     for (size_t i = 0; i < outs.size(); i++) {
         CTxOut out = outs[i];
+        if (!out.HasBLSCTKeys() || !out.HasBLSCTRangeProof()) continue;
         if (out.blsctData.viewTag != CalculateViewTag(out.blsctData.blindingKey, viewKey.GetScalar()))
             continue;
         auto nonce = CalculateNonce(out.blsctData.blindingKey, viewKey.GetScalar());

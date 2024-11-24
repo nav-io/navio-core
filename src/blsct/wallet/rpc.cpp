@@ -61,6 +61,7 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
     }
 
     const CTransactionRef& tx = MakeTransactionRef(res.value());
+
     wallet::mapValue_t map_value;
     wallet.CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
     if (verbose) {
@@ -147,7 +148,10 @@ RPCHelpMan createnft()
          },
          {"max_supply", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The NFT max supply."}},
         RPCResult{
-            RPCResult::Type::STR_HEX, "tokenId", "the token id"},
+            RPCResult::Type::OBJ, "", "", {
+                                              {RPCResult::Type::STR_HEX, "hash", "The broadcasted transaction hash"},
+                                              {RPCResult::Type::STR_HEX, "tokenId", "The token id"},
+                                          }},
         RPCExamples{HelpExampleRpc("createnft", "{'name':'My NFT Collection'} 1000")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             return CreateTokenOrNft(self, request, blsct::NFT);
@@ -295,7 +299,7 @@ static RPCHelpMan mintnft()
             auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
 
             uint256 token_id(ParseHashV(request.params[0], "token_id"));
-            CAmount nft_id = AmountFromValue(request.params[1]);
+            CAmount nft_id = AmountFromValue(request.params[1], 0);
             const std::string address = request.params[2].get_str();
             std::map<std::string, UniValue> metadata;
             if (!request.params[3].isNull() && !request.params[3].get_obj().empty())
@@ -404,6 +408,82 @@ RPCHelpMan gettokenbalance()
     };
 }
 
+RPCHelpMan getnftbalance()
+{
+    return RPCHelpMan{
+        "getnftbalance",
+        "\nReturns the NFTs owned from a collection.\n"
+        "The available balance is what the wallet considers currently spendable, and is\n"
+        "thus affected by options which limit spendability such as -spendzeroconfchange.\n",
+        {
+            {"token_id", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The token id from the collection"},
+            {"dummy", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Remains for backward compatibility. Must be excluded or set to \"*\"."},
+            {"minconf", RPCArg::Type::NUM, RPCArg::Default{0}, "Only include transactions confirmed at least this many times."},
+            {"include_watchonly", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for watch-only wallets, otherwise false"}, "Also include balance in watch-only addresses (see 'importaddress')"},
+            {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{true}, "(only available if avoid_reuse wallet flag is set) Do not include balance in dirty outputs; addresses are considered dirty if they have previously been used in a transaction."},
+        },
+        RPCResult{RPCResult::Type::ANY, "mintedNft", true, "the nfts already minted"},
+        RPCExamples{
+            "\nThe total amount in the wallet with 0 or more confirmations\n" + HelpExampleCli("getnftbalance", "0e8ba9acaef5a91e5933393baf0b1187fae81f158cd9455437378b1796fc893d") +
+            "\nThe total amount in the wallet with at least 6 confirmations\n" + HelpExampleCli("getnftbalance", "0e8ba9acaef5a91e5933393baf0b1187fae81f158cd9455437378b1796fc893d \"*\" 6") +
+            "\nAs a JSON-RPC call\n" + HelpExampleRpc("getnftbalance", "\"0e8ba9acaef5a91e5933393baf0b1187fae81f158cd9455437378b1796fc893d\", \"*\", 6")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            const std::shared_ptr<const wallet::CWallet> pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // Make sure the results are valid at least up to the most recent block
+            // the user could have gotten from another RPC command prior to now
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            uint256 token_id(ParseHashV(request.params[0], "token_id"));
+
+            std::map<uint256, blsct::TokenEntry> tokens;
+            tokens[token_id];
+            pwallet->chain().findTokens(tokens);
+
+            if (!tokens.count(token_id))
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
+
+            auto token = tokens[token_id];
+
+            if (token.info.type != blsct::TokenType::NFT)
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Wrong token type");
+
+            const auto dummy_value{self.MaybeArg<std::string>(1)};
+            if (dummy_value && *dummy_value != "*") {
+                throw JSONRPCError(RPC_METHOD_DEPRECATED, "dummy first argument must be excluded or set to \"*\".");
+            }
+
+            int min_depth = 0;
+            if (!request.params[2].isNull()) {
+                min_depth = request.params[2].getInt<int>();
+            }
+
+            bool include_watchonly = ParseIncludeWatchonly(request.params[3], *pwallet);
+
+            bool avoid_reuse = GetAvoidReuseFlag(*pwallet, request.params[4]);
+
+            UniValue ret(UniValue::VOBJ);
+
+            for (auto& it : token.mapMintedNft) {
+                const auto bal = GetBalance(*pwallet, min_depth, avoid_reuse, TokenId(token_id, it.first));
+
+                if ((bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0)) > 0) {
+                    UniValue metadata(UniValue::VOBJ);
+                    for (auto& md_it : it.second) {
+                        metadata.pushKV(md_it.first, md_it.second);
+                    }
+                    ret.pushKV(strprintf("%llu", it.first), metadata);
+                }
+            }
+
+            return ret;
+        },
+    };
+}
+
 RPCHelpMan sendtoblsctaddress()
 {
     return RPCHelpMan{
@@ -485,8 +565,8 @@ RPCHelpMan sendtokentoblsctaddress()
             },
         },
         RPCExamples{
-            "\nSend 0.1 tokens\n" + HelpExampleCli("sendtoblsctaddress", "\"" + BLSCT_EXAMPLE_ADDRESS[0] + "\" 0.1") +
-            "\nSend 0.1 tokens including \"donation\" as memo in the transaction using positional arguments\n" + HelpExampleCli("sendtotokensblsctaddress", "\"" + BLSCT_EXAMPLE_ADDRESS[0] + "\" 0.1 \"donation\"")},
+            "\nSend 0.1 tokens\n" + HelpExampleCli("sendtokentoblsctaddress", "a685e520f85d111a6c55bd2b8226f6b916a3bcdd3b549c75e0abddc55df70951 \"" + BLSCT_EXAMPLE_ADDRESS[0] + "\" 0.1") +
+            "\nSend 0.1 tokens including \"donation\" as memo in the transaction using positional arguments\n" + HelpExampleCli("sendtotokensblsctaddress", "a685e520f85d111a6c55bd2b8226f6b916a3bcdd3b549c75e0abddc55df70951 \"" + BLSCT_EXAMPLE_ADDRESS[0] + "\" 0.1 \"donation\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -521,6 +601,78 @@ RPCHelpMan sendtokentoblsctaddress()
             const bool verbose{request.params[4].isNull() ? false : request.params[11].get_bool()};
 
             blsct::CreateTransactionData transactionData(address, AmountFromValue(request.params[2]), sMemo, TokenId(token_id), blsct::CreateTransactionType::NORMAL, 0);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
+
+
+RPCHelpMan sendnfttoblsctaddress()
+{
+    return RPCHelpMan{
+        "sendnfttoblsctaddress",
+        "\nSend an NFT to a given blsct address." +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"token_id", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The token id."},
+            {"nft_id", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The nft id."},
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The BLSCT address to send to."},
+            {"memo", RPCArg::Type::STR, RPCArg::Default{""}, "A memo used to store in the transaction.\n"
+                                                             "The recipient will see its value."},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false",
+                      RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+            RPCResult{
+                "if verbose is set to true",
+                RPCResult::Type::OBJ,
+                "",
+                "",
+                {{RPCResult::Type::STR_HEX, "txid", "The transaction id."}},
+            },
+        },
+        RPCExamples{
+            "\nSend NFT\n" + HelpExampleCli("sendnfttoblsctaddress", "a685e520f85d111a6c55bd2b8226f6b916a3bcdd3b549c75e0abddc55df70951 0 \"" + BLSCT_EXAMPLE_ADDRESS[0] + "\"") +
+            "\nSend NFT including \"donation\" as memo in the transaction using positional arguments\n" + HelpExampleCli("sendnfttoblsctaddress", "a685e520f85d111a6c55bd2b8226f6b916a3bcdd3b549c75e0abddc55df70951 0 \"" + BLSCT_EXAMPLE_ADDRESS[0] + "\" \"donation\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // Make sure the results are valid at least up to the most recent block
+            // the user could have gotten from another RPC command prior to now
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            uint256 token_id(ParseHashV(request.params[0], "token_id"));
+            CAmount nft_id(AmountFromValue(request.params[1], 0));
+
+            std::map<uint256, blsct::TokenEntry> tokens;
+            tokens[token_id];
+            pwallet->chain().findTokens(tokens);
+
+            if (!tokens.count(token_id))
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
+
+            auto token = tokens[token_id];
+
+            if (token.info.type != blsct::TokenType::NFT)
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Wrong token type");
+
+            // Wallet comments
+            std::string sMemo;
+            if (!request.params[3].isNull() && !request.params[3].get_str().empty())
+                sMemo = request.params[3].get_str();
+
+            const std::string address = request.params[2].get_str();
+
+            const bool verbose{request.params[4].isNull() ? false : request.params[4].get_bool()};
+
+            blsct::CreateTransactionData transactionData(address, 1, sMemo, TokenId(token_id, nft_id), blsct::CreateTransactionType::NORMAL, 0);
 
             EnsureWalletIsUnlocked(*pwallet);
 
@@ -649,8 +801,10 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &createtoken},
         {"blsct", &minttoken},
         {"blsct", &mintnft},
+        {"blsct", &getnftbalance},
         {"blsct", &gettokenbalance},
         {"blsct", &sendtoblsctaddress},
+        {"blsct", &sendnfttoblsctaddress},
         {"blsct", &sendtokentoblsctaddress},
         {"blsct", &stakelock},
         {"blsct", &stakeunlock},

@@ -170,6 +170,8 @@ bool MclG1Point::IsValid() const
 
 bool MclG1Point::IsZero() const
 {
+    MclG1Point zero;
+    if (std::memcmp(&m_point, &zero.m_point, sizeof(MclG1Point::Underlying)) == 0) return true;
     return mclBnG1_isZero(&m_point);
 }
 

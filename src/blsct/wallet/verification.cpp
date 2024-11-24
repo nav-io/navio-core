@@ -42,7 +42,12 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
             auto in_hash = in.GetHash();
             vMessages.emplace_back(in_hash.begin(), in_hash.end());
 
-            balanceKey = balanceKey + coin.out.blsctData.rangeProof.Vs[0];
+            if (coin.out.HasBLSCTRangeProof())
+                balanceKey = balanceKey + coin.out.blsctData.rangeProof.Vs[0];
+            else {
+                range_proof::Generators<Mcl> gen = gf.GetInstance(coin.out.tokenId);
+                balanceKey = balanceKey + (gen.G * MclScalar(coin.out.nValue));
+            }
         }
     }
 
@@ -97,15 +102,13 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
                 vProofs.push_back(proof);
             }
         } else {
-            if (!out.scriptPubKey.IsUnspendable() && out.nValue > 0) {
-                return state.Invalid(TxValidationResult::TX_CONSENSUS, "spendable-output-with-public-value");
-            }
-            if (nFee > 0 || !MoneyRange(out.nValue)) {
-                return state.Invalid(TxValidationResult::TX_CONSENSUS, "more-than-one-fee-output");
-            }
             if (out.nValue == 0) continue;
-            if (parsedPredicate.IsPayFeePredicate())
+            if (parsedPredicate.IsPayFeePredicate()) {
+                if (nFee > 0 || !MoneyRange(out.nValue)) {
+                    return state.Invalid(TxValidationResult::TX_CONSENSUS, "more-than-one-fee-output");
+                }
                 nFee = out.nValue;
+            }
             range_proof::Generators<Mcl> gen = gf.GetInstance(out.tokenId);
             balanceKey = balanceKey - (gen.G * MclScalar(out.nValue));
         }

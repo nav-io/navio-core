@@ -66,10 +66,12 @@ CTxOut::CTxOut(const CAmount& nValueIn, CScript scriptPubKeyIn, TokenId tokenIdI
 
 std::string CTxOut::ToString() const
 {
-    return strprintf("CTxOut(scriptPubKey=%s%s%s%s%s)", HexStr(scriptPubKey).substr(0, 30),
+    return strprintf("CTxOut(scriptPubKey=%s%s%s%s%s)",
+                     HexStr(scriptPubKey).substr(0, 30),
                      HasBLSCTKeys() ? strprintf(", spendingKey=%s, blindingKey=%s, ephemeralKey=%s", HexStr(blsctData.spendingKey.GetVch()), HexStr(blsctData.blindingKey.GetVch()), HexStr(blsctData.ephemeralKey.GetVch())) : "",
                      tokenId.IsNull() ? "" : strprintf(", tokenId=%s", tokenId.ToString()),
-                     HasBLSCTRangeProof() ? "" : strprintf(", nAmount=%s", FormatMoney(nValue)), predicate.size() > 0 ? strprintf(", predicate=%s", HexStr(predicate)) : "");
+                     HasBLSCTRangeProof() ? "" : strprintf(", nAmount=%s", FormatMoney(nValue)),
+                     predicate.size() > 0 ? strprintf(", predicate=%s", HexStr(predicate)) : "");
 }
 
 uint256 CTxOut::GetHash() const

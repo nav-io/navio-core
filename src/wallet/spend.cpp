@@ -384,10 +384,8 @@ CoinsResult AvailableCoins(const CWallet& wallet,
         for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
             const CTxOut& output = wtx.tx->vout[i];
             const COutPoint outpoint(Txid::FromUint256(txid), i);
-
             auto nValue = output.HasBLSCTRangeProof() ? wtx.GetBLSCTRecoveryData(i).amount : output.nValue;
-            if (nValue < params.min_amount || nValue > params.max_amount)
-                continue;
+            if (nValue < params.min_amount || nValue > params.max_amount) continue;
 
             // Skip manually selected coins (the caller can fetch them directly)
             if (coinControl && coinControl->HasSelected() && coinControl->IsSelected(outpoint))
@@ -415,7 +413,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             if (params.token_id != output.tokenId) {
                 continue;
             }
-
             if (!allow_used_addresses && wallet.IsSpentKey(output.scriptPubKey)) {
                 continue;
             }
@@ -428,7 +425,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
 
             // Filter by spendable outputs only
             if (!spendable && params.only_spendable) continue;
-
             // Obtain script type
             std::vector<std::vector<uint8_t>> script_solutions;
             TxoutType type = Solver(output.scriptPubKey, script_solutions);

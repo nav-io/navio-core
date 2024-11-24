@@ -43,12 +43,12 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
         if (predicate.GetNftId() >= token.info.nTotalSupply || predicate.GetNftId() < 0)
             return false;
 
-        if (token.mapMintedNft.contains(predicate.GetNftId()) == !fDisconnect)
+        if ((token.mapMintedNft.find(predicate.GetNftId()) != token.mapMintedNft.end()) == !fDisconnect)
             return false;
 
         if (fDisconnect)
             token.mapMintedNft.erase(predicate.GetNftId());
-        else
+        else 
             token.mapMintedNft[predicate.GetNftId()] = predicate.GetNftMetaData();
 
         view.AddToken(hash, std::move(token));

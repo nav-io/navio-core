@@ -223,6 +223,7 @@ public:
     static const uint32_t BLSCT_MARKER = 0x1 << 0;
     static const uint32_t TOKEN_MARKER = 0x1 << 1;
     static const uint32_t PREDICATE_MARKER = 0x1 << 2;
+    static const uint32_t TRANSPARENT_VALUE_MARKER = 0x1 << 3;
 
     CAmount nValue;
     CScript scriptPubKey;
@@ -242,16 +243,18 @@ public:
     {
         uint64_t nFlags = 0;
 
-        if (blsctData.rangeProof.Vs.Size() > 0)
+        if (blsctData.rangeProof.Vs.Size() > 0 || HasBLSCTKeys())
             nFlags |= BLSCT_MARKER;
         if (!tokenId.IsNull())
             nFlags |= TOKEN_MARKER;
+        if ((tokenId.IsNFT() || predicate.size() > 0) && nValue > 0)
+            nFlags |= TRANSPARENT_VALUE_MARKER;
         if (predicate.size() > 0)
             nFlags |= PREDICATE_MARKER;
         if (nFlags != 0) {
             ::Serialize(s, std::numeric_limits<CAmount>::max());
             ::Serialize(s, nFlags);
-            if (nFlags & PREDICATE_MARKER)
+            if (nFlags & TRANSPARENT_VALUE_MARKER)
                 ::Serialize(s, nValue);
         } else {
             ::Serialize(s, nValue);
@@ -274,7 +277,7 @@ public:
         if (nValue == std::numeric_limits<CAmount>::max()) {
             nValue = 0;
             ::Unserialize(s, nFlags);
-            if (nFlags & PREDICATE_MARKER)
+            if (nFlags & TRANSPARENT_VALUE_MARKER)
                 ::Unserialize(s, nValue);
         }
         ::Unserialize(s, scriptPubKey);
