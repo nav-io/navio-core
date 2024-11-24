@@ -200,7 +200,6 @@ template <typename T>
 void Elements<T>::ConfirmIndexInsideRange(const uint32_t& index) const
 {
     if (index >= m_vec.size()) {
-        assert(0);
         auto s = strprintf("index %d is out of range [0..%d]", index, m_vec.size() - 1ul);
         throw std::runtime_error(s);
     }

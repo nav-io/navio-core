@@ -120,7 +120,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
             stakeRp.Vs.Clear();
 
             DataStream ss{};
-            ss << stakeRp;
+            ss << Using<bulletproofs_plus::RangeProofUncompressed<T>>(stakeRp);
 
             ret.out.scriptPubKey = CScript() << OP_STAKED_COMMITMENT << blsct::Common::DataStreamToVector(ss) << OP_DROP << OP_TRUE;
         }

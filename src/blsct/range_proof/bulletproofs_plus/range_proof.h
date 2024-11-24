@@ -105,6 +105,14 @@ struct RangeProofWithSeed : public RangeProof<T> {
     typename T::Scalar min_value;
 };
 
+template <typename T>
+struct RangeProofUncompressed {
+    FORMATTER_METHODS(RangeProof<T>, obj)
+    {
+        READWRITE(Using<range_proof::ProofBaseUncompressed<T>>(obj), obj.A, obj.A_wip, obj.B, obj.r_prime, obj.s_prime, obj.delta_prime, obj.alpha_hat, obj.tau_x);
+    }
+};
+
 } // namespace bulletproofs_plus
 
 #endif // NAVIO_BLSCT_RANGE_PROOF_BULLETPROOFS_PLUS_RANGE_PROOF_H

@@ -50,6 +50,11 @@ struct ProofBase {
     }
 };
 
+template <typename T>
+struct ProofBaseUncompressed {
+    FORMATTER_METHODS(ProofBase<T>, obj) { READWRITE(obj.Vs, obj.Ls, obj.Rs); }
+};
+
 } // namespace range_proof
 
 #endif // NAVIO_BLSCT_RANGE_PROOF_PROOF_BASE_H
