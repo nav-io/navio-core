@@ -70,7 +70,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
 
 // Mint NFT
 
-void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const CAmount& nftId, const std::map<std::string, std::string>& nftMetadata)
+void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata)
 {
     UnsignedOutput out;
 

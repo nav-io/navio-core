@@ -67,7 +67,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
     return ret;
 }
 
-UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey, const CAmount& nftId, const std::map<std::string, std::string>& nftMetadata)
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata)
 {
     TokenId tokenId{tokenPublicKey.GetHash(), nftId};
 

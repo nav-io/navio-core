@@ -63,11 +63,11 @@ struct MintTokenPredicate {
 
 struct MintNftPredicate {
     blsct::PublicKey publicKey;
-    CAmount nftId;
+    uint64_t nftId;
     std::map<std::string, std::string> nftMetadata;
 
     MintNftPredicate(){};
-    MintNftPredicate(const blsct::PublicKey& publicKey, const CAmount& nftId, const std::map<std::string, std::string>& nftMetadata) : publicKey(publicKey), nftId(nftId), nftMetadata(nftMetadata){};
+    MintNftPredicate(const blsct::PublicKey& publicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata) : publicKey(publicKey), nftId(nftId), nftMetadata(nftMetadata){};
 
     SERIALIZE_METHODS(MintNftPredicate, obj)
     {
@@ -164,7 +164,7 @@ public:
             throw std::ios_base::failure("wrong predicate type");
     }
 
-    CAmount GetNftId() const
+    uint64_t GetNftId() const
     {
         if (IsMintNftPredicate())
             return std::get<MintNftPredicate>(predicate_).nftId;

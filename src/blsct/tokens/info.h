@@ -48,13 +48,13 @@ class TokenEntry
 public:
     TokenInfo info;
     CAmount nSupply;
-    std::map<CAmount, std::map<std::string, std::string>> mapMintedNft;
+    std::map<uint64_t, std::map<std::string, std::string>> mapMintedNft;
 
     TokenEntry(){};
     TokenEntry(const TokenInfo& info,
                const CAmount& nSupply = 0) : info(info), nSupply(nSupply){};
     TokenEntry(const TokenInfo& info,
-               const std::map<CAmount, std::map<std::string, std::string>>& mapMintedNft) : info(info), mapMintedNft(mapMintedNft){};
+               const std::map<uint64_t, std::map<std::string, std::string>>& mapMintedNft) : info(info), mapMintedNft(mapMintedNft){};
 
     bool Mint(const CAmount& amount)
     {

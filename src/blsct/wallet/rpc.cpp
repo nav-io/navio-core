@@ -299,7 +299,7 @@ static RPCHelpMan mintnft()
             auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
 
             uint256 token_id(ParseHashV(request.params[0], "token_id"));
-            CAmount nft_id = AmountFromValue(request.params[1], 0);
+            uint64_t nft_id = request.params[1].get_uint64();
             const std::string address = request.params[2].get_str();
             std::map<std::string, UniValue> metadata;
             if (!request.params[3].isNull() && !request.params[3].get_obj().empty())
@@ -649,7 +649,7 @@ RPCHelpMan sendnfttoblsctaddress()
             LOCK(pwallet->cs_wallet);
 
             uint256 token_id(ParseHashV(request.params[0], "token_id"));
-            CAmount nft_id(AmountFromValue(request.params[1], 0));
+            uint64_t nft_id(request.params[1].get_uint64());
 
             std::map<uint256, blsct::TokenEntry> tokens;
             tokens[token_id];
