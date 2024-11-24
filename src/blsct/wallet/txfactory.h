@@ -7,6 +7,7 @@
 
 #include <blsct/arith/elements.h>
 #include <blsct/wallet/keyman.h>
+#include <blsct/wallet/txfactory_base.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <policy/fees.h>
 #include <rpc/protocol.h>

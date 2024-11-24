@@ -26,7 +26,7 @@ BENCHMARKS =
 
 BLS_INCLUDES=-I$(srcdir)/bls/include -I$(srcdir)/bls/mcl/include -I$(srcdir)/bls/mcl/src
 
-BITCOIN_INCLUDES=-I$(builddir) -I$(srcdir)/$(MINISKETCH_INCLUDE_DIR_INT) -I$(srcdir)/secp256k1/include $(BLS_INCLUDES) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+BITCOIN_INCLUDES=-I$(builddir) -I$(srcdir)/$(MINISKETCH_INCLUDE_DIR_INT) -I$(srcdir)/secp256k1/include $(BLS_INCLUDES) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT) -I$(srcdir)/blsct/external_api
 
 LIBBITCOIN_NODE=libbitcoin_node.a
 LIBBITCOIN_COMMON=libbitcoin_common.a
@@ -169,6 +169,7 @@ BLSCT_H = \
   blsct/double_public_key.h \
   blsct/eip_2333/bls12_381_keygen.h \
   blsct/external_api/blsct.h \
+  blsct/key_io.h \
   blsct/private_key.h \
   blsct/public_key.h \
   blsct/public_keys.h \
@@ -210,6 +211,7 @@ BLSCT_H = \
   blsct/wallet/keyring.h \
   blsct/wallet/rpc.h \
   blsct/wallet/txfactory.h \
+  blsct/wallet/txfactory_base.h \
   blsct/wallet/txfactory_global.h \
   blsct/wallet/verification.h
 
@@ -217,6 +219,7 @@ BLSCT_CPP = \
   blsct/arith/elements.cpp \
   blsct/arith/mcl/mcl_g1point.cpp \
   blsct/arith/mcl/mcl_scalar.cpp \
+  blsct/bech32_mod.cpp \
   blsct/building_block/g_h_gi_hi_zero_verifier.cpp \
   blsct/building_block/generator_deriver.cpp \
   blsct/building_block/imp_inner_prod_arg.cpp \
@@ -226,7 +229,7 @@ BLSCT_CPP = \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
-  blsct/external_api/blsct.cpp \
+  blsct/key_io.cpp \
   blsct/pos/helpers.cpp \
   blsct/pos/pos.cpp \
   blsct/pos/proof_logic.cpp \
@@ -256,8 +259,14 @@ BLSCT_CPP = \
   blsct/tokens/info.cpp \
   blsct/tokens/predicate_exec.cpp \
   blsct/tokens/predicate_parser.cpp \
+  blsct/wallet/address.cpp \
+  blsct/wallet/helpers.cpp \
+  blsct/wallet/keyman.cpp \
+  blsct/wallet/keyring.cpp \
+  blsct/wallet/txfactory.cpp \
+  blsct/wallet/txfactory_base.cpp \
+  blsct/wallet/txfactory_global.cpp \
   blsct/wallet/verification.cpp
-
 
 .PHONY: FORCE check-symbols check-security
 # navio core #
@@ -729,6 +738,7 @@ libbitcoin_wallet_a_SOURCES = \
   blsct/wallet/keyring.cpp \
   blsct/wallet/rpc.cpp \
   blsct/wallet/txfactory.cpp \
+  blsct/wallet/txfactory_base.cpp \
   blsct/wallet/txfactory_global.cpp \
   blsct/wallet/verification.cpp \
   wallet/coincontrol.cpp \
@@ -947,6 +957,7 @@ libbitcoin_common_a_SOURCES = \
   blsct/building_block/weighted_inner_prod_arg.cpp \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
+  blsct/key_io.cpp \
   blsct/private_key.cpp \
   blsct/public_key.cpp \
   blsct/public_keys.cpp \
@@ -1437,16 +1448,71 @@ if BUILD_LIBBLSCT_ONLY
 LIBBLSCT = libblsct.a
 noinst_LIBRARIES = $(LIBBLSCT)
 libblsct_a_SOURCES = \
+  blsct/external_api/blsct.cpp \
+  common/args.cpp \
+  common/system.cpp \
+  common/url.cpp \
+  crypto/hmac_sha256.cpp \
+  crypto/ripemd160.cpp \
   crypto/sha256_arm_shani.cpp \
   crypto/sha256_avx2.cpp \
   crypto/sha256_sse4.cpp \
   crypto/sha256_sse41.cpp \
   crypto/sha256_x86_shani.cpp \
   crypto/sha256.cpp \
-  blsct/external_api/blsct.cpp \
+  hash.cpp \
+  primitives/transaction.cpp \
+  rpc/util.cpp \
+  script/interpreter.cpp \
+  script/miniscript.cpp \
+  script/script.cpp \
+  script/script_error.cpp \
+  script/sign.cpp \
+  script/signingprovider.cpp \
+  sync.cpp \
+  support/cleanse.cpp \
+  support/lockedpool.cpp \
+  uint256.cpp \
+  util/rbf.cpp \
+  util/strencodings.cpp \
+  util/time.cpp \
+  wallet/coincontrol.cpp \
+  wallet/context.cpp \
+  wallet/crypter.cpp \
+  wallet/db.cpp \
+  wallet/dump.cpp \
+  wallet/external_signer_scriptpubkeyman.cpp \
+  wallet/feebumper.cpp \
+  wallet/fees.cpp \
+  wallet/interfaces.cpp \
+  wallet/load.cpp \
+  wallet/receive.cpp \
+  wallet/rpc/addresses.cpp \
+  wallet/rpc/backup.cpp \
+  wallet/rpc/coins.cpp \
+  wallet/rpc/encrypt.cpp \
+  wallet/rpc/spend.cpp \
+  wallet/rpc/signmessage.cpp \
+  wallet/rpc/transactions.cpp \
+  wallet/rpc/util.cpp \
+  wallet/rpc/wallet.cpp \
+  wallet/scriptpubkeyman.cpp \
+  wallet/spend.cpp \
+  wallet/transaction.cpp \
+  wallet/wallet.cpp \
+  wallet/walletdb.cpp \
+  wallet/walletutil.cpp \
+  wallet/coinselection.cpp \
   $(BLSCT_CPP)
-libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS)
+
+LIBUNIVALUE_BLSCT = libunivalue_blsct.a
+noinst_LIBRARIES += $(LIBUNIVALUE_BLSCT)
+libunivalue_blsct_a_SOURCES = $(UNIVALUE_LIB_SOURCES_INT) $(UNIVALUE_DIST_HEADERS_INT) $(UNIVALUE_LIB_HEADERS_INT) $(UNIVALUE_TEST_FILES_INT)
+libunivalue_blsct_a_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+libunivalue_blsct_a_CXXFLAGS = $(AM_CXXFLAGS) -fPIC
+
+libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) -fPIC
+libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
 
 if ENABLE_SSE41
 libblsct_a_CXXFLAGS += $(SSE41_CXXFLAGS)
@@ -1468,7 +1534,7 @@ libblsct_a_CXXFLAGS += $(ARM_SHANI_CXXFLAGS)
 libblsct_a_CPPFLAGS += -DENABLE_ARM_SHANI
 endif
 
-$(LIBBLSCT): $(LIBBLS) $(LIBMCL)
+$(LIBBLSCT): $(LIBBLS) $(LIBMCL) $(LIBUNIVALUE_BLSCT)
 
 CLEANFILES += $(LIBBLSCT) blsct/include/libblsct_a-blsct.o
 endif

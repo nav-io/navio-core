@@ -56,6 +56,11 @@ std::vector<unsigned char> PublicKey::GetVch() const
     return point.GetVch();
 }
 
+bool PublicKey::SetVch(const std::vector<unsigned char> vec)
+{
+    return point.SetVch(vec);
+}
+
 blsPublicKey PublicKey::ToBlsPublicKey() const
 {
     blsPublicKey bls_pk{point.GetUnderlying()};

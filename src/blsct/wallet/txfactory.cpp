@@ -4,7 +4,6 @@
 
 #include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory.h>
-#include <wallet/fees.h>
 
 using T = Mcl;
 using Point = T::Point;
