@@ -64,7 +64,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         tokens = self.nodes[0].listtokens()
         assert len(tokens) == 1, "length of tokens is not 1"
 
-        self.log.info(f"Created token: {token["tokenId"]}")
+        self.log.info(f"Created token: {token['tokenId']}")
 
         assert tokens[0]['type'] == 'token', "token type is not token"
         assert tokens[0]['metadata'] == {'name': 'Test'}, "incorrect metadata"

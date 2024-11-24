@@ -41,7 +41,7 @@ void TokenToUniValue(UniValue& obj, const blsct::TokenEntry& token)
             for (auto& it2 : it.second) {
                 nftMetadata.pushKV(it2.first, it2.second);
             }
-            mintedNft.pushKV(std::to_string(it.first), nftMetadata);
+            mintedNft.pushKV(strprintf("%llu", it.first), nftMetadata);
         }
         obj.pushKV("mintedNft", mintedNft);
     }

@@ -214,6 +214,13 @@ public:
     }
 };
 
+struct CTxOutBLSCTDataCompressedForRecovery {
+    FORMATTER_METHODS(CTxOutBLSCTData, obj)
+    {
+        READWRITE(Using<bulletproofs_plus::RangeProofCompressedForRecovery<Mcl>>(obj.rangeProof), obj.spendingKey, obj.blindingKey, obj.ephemeralKey, obj.viewTag);
+    }
+};
+
 /** An output of a transaction.  It contains the public key that the next input
  * must be able to sign with to claim it.
  */
@@ -372,6 +379,13 @@ public:
 
     std::string ToString() const;
     uint256 GetHash() const;
+};
+
+struct CTxOutCompressedForRecovery {
+    FORMATTER_METHODS(CTxOut, obj)
+    {
+        READWRITE(Using<CTxOutBLSCTDataCompressedForRecovery>(obj.blsctData), obj.nValue, obj.scriptPubKey, obj.tokenId, obj.viewTag);
+    }
 };
 
 struct CMutableTransaction;

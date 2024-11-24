@@ -113,6 +113,14 @@ struct RangeProofWithoutVs {
     }
 };
 
+template <typename T>
+struct RangeProofCompressedForRecovery {
+    FORMATTER_METHODS(RangeProof<T>, obj)
+    {
+        READWRITE(Using<range_proof::ProofBase<T>>(obj), obj.A_wip, obj.B, obj.alpha_hat, obj.tau_x);
+    }
+};
+
 } // namespace bulletproofs_plus
 
 #endif // NAVIO_BLSCT_RANGE_PROOF_BULLETPROOFS_PLUS_RANGE_PROOF_H

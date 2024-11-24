@@ -9,6 +9,8 @@
 #include <blsct/tokens/info.h>
 #include <blsct/tokens/predicate.h>
 
+#include <variant>
+
 namespace blsct {
 enum PredicateOperation : uint8_t {
     CREATE_TOKEN,

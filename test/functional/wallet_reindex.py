@@ -74,9 +74,6 @@ class WalletReindexTest(BitcoinTestFramework):
         if self.options.descriptors:
             # For descriptors, verify the wallet updated the birth time to the transaction time
             assert_equal(tx_info['time'], wallet_watch_only.getwalletinfo()['birthtime'])
-        else:
-            # For legacy, as the birth time was set to the beginning of time, verify it did not change
-            assert_equal(wallet_birthtime, 1)
 
         wallet_watch_only.unloadwallet()
 

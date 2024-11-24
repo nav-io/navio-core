@@ -577,7 +577,6 @@ libbitcoin_node_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
-  blsct/tokens/rpc.cpp \
   blsct/wallet/rpc.cpp \
   blsct/wallet/verification.cpp \
   blsct/signature.cpp \
@@ -980,6 +979,8 @@ libbitcoin_common_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/signature.cpp \
+  blsct/tokens/predicate_exec.cpp \
+  blsct/tokens/predicate_parser.cpp \
   blsct/wallet/address.cpp \
   blsct/wallet/txfactory_global.cpp \
   chainparams.cpp \
