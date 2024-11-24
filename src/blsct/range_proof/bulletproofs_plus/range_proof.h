@@ -106,10 +106,10 @@ struct RangeProofWithSeed : public RangeProof<T> {
 };
 
 template <typename T>
-struct RangeProofUncompressed {
+struct RangeProofWithoutVs {
     FORMATTER_METHODS(RangeProof<T>, obj)
     {
-        READWRITE(Using<range_proof::ProofBaseUncompressed<T>>(obj), obj.A, obj.A_wip, obj.B, obj.r_prime, obj.s_prime, obj.delta_prime, obj.alpha_hat, obj.tau_x);
+        READWRITE(Using<range_proof::ProofBaseWithoutVs<T>>(obj), obj.A, obj.A_wip, obj.B, obj.r_prime, obj.s_prime, obj.delta_prime, obj.alpha_hat, obj.tau_x);
     }
 };
 

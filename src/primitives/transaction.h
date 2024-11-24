@@ -339,7 +339,7 @@ public:
             auto commitment = std::vector<unsigned char>(scriptPubKey.begin() + 4, scriptPubKey.end());
 
             DataStream s(MakeByteSpan(commitment));
-            s >> rangeProof;
+            s >> Using<bulletproofs_plus::RangeProofWithoutVs<Mcl>>(rangeProof);
         } catch (...) {
             return false;
         }

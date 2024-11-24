@@ -51,8 +51,8 @@ struct ProofBase {
 };
 
 template <typename T>
-struct ProofBaseUncompressed {
-    FORMATTER_METHODS(ProofBase<T>, obj) { READWRITE(obj.Vs, obj.Ls, obj.Rs); }
+struct ProofBaseWithoutVs {
+    FORMATTER_METHODS(ProofBase<T>, obj) { READWRITE(obj.Ls, obj.Rs); }
 };
 
 } // namespace range_proof
