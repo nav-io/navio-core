@@ -1,15 +1,11 @@
-*The release notes draft is a temporary file that can be added to by anyone. See
-[/doc/developer-notes.md#release-notes](/doc/developer-notes.md#release-notes)
-for the process.*
+27.2 Release Notes
+=====================
 
-*version* Release Notes Draft
-===============================
+Bitcoin Core version 27.2 is now available from:
 
-Bitcoin Core version *version* is now available from:
+  <https://bitcoincore.org/bin/bitcoin-core-27.2/>
 
-  <https://bitcoincore.org/bin/bitcoin-core-*version*/>
-
-This release includes new features, various bug fixes and performance
+This release includes various bug fixes and performance
 improvements, as well as updated translations.
 
 Please report bugs using the issue tracker at GitHub:
@@ -44,56 +40,53 @@ unsupported systems.
 Notable changes
 ===============
 
-P2P and network changes
------------------------
+### P2P
 
-Updated RPCs
-------------
+- #30394 net: fix race condition in self-connect detection
 
+### Init
 
-Changes to wallet related RPCs can be found in the Wallet section below.
+- #30435 init: change shutdown order of load block thread and scheduler
 
-New RPCs
---------
+### RPC
 
-Build System
-------------
+- #30357 Fix cases of calls to FillPSBT errantly returning complete=true
 
-Updated settings
-----------------
+### PSBT
 
+- #29855 psbt: Check non witness utxo outpoint early
 
-Changes to GUI or wallet related settings can be found in the GUI or Wallet section below.
+### Test
 
-New settings
-------------
+- #30552 test: fix constructor of msg_tx
 
-Tools and Utilities
--------------------
+### Doc
 
-Wallet
-------
+- #30504 doc: use proper doxygen formatting for CTxMemPool::cs
 
-GUI changes
------------
+### Build
 
-Low-level changes
-=================
+- #30283 upnp: fix build with miniupnpc 2.2.8
+- #30633 Fixes for GCC 15 compatibility
 
-RPC
----
+### CI
 
-Tests
------
-
-*version* change log
-====================
+- #30193 ci: move ASan job to GitHub Actions from Cirrus CI
+- #30299 ci: remove unused bcc variable from workflow
 
 Credits
 =======
 
 Thanks to everyone who directly contributed to this release:
 
+- Ava Chow
+- Cory Fields
+- Martin Zumsande
+- Matt Whitlock
+- Max Edwards
+- Sebastian Falbesoner
+- Vasil Dimov
+- willcl-ark
 
 As well as to everyone that helped with translations on
 [Transifex](https://www.transifex.com/bitcoin/bitcoin/).

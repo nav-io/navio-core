@@ -9,7 +9,7 @@ print-%: FORCE
 DIST_SUBDIRS = secp256k1
 
 AM_LDFLAGS = $(LIBTOOL_LDFLAGS) $(HARDENED_LDFLAGS) $(GPROF_LDFLAGS) $(SANITIZER_LDFLAGS) $(CORE_LDFLAGS)
-AM_CXXFLAGS = $(DEBUG_CXXFLAGS) $(HARDENED_CXXFLAGS) $(WARN_CXXFLAGS) $(NOWARN_CXXFLAGS) $(ERROR_CXXFLAGS) $(GPROF_CXXFLAGS) $(SANITIZER_CXXFLAGS) $(CORE_CXXFLAGS)
+AM_CXXFLAGS = $(CORE_CXXFLAGS) $(DEBUG_CXXFLAGS) $(HARDENED_CXXFLAGS) $(WARN_CXXFLAGS) $(NOWARN_CXXFLAGS) $(ERROR_CXXFLAGS) $(GPROF_CXXFLAGS) $(SANITIZER_CXXFLAGS)
 AM_CPPFLAGS = $(DEBUG_CPPFLAGS) $(HARDENED_CPPFLAGS) $(CORE_CPPFLAGS)
 AM_LIBTOOLFLAGS = --preserve-dup-deps
 PTHREAD_FLAGS = $(PTHREAD_CFLAGS) $(PTHREAD_LIBS)
@@ -385,6 +385,7 @@ BITCOIN_CORE_H = \
   node/validation_cache_args.h \
   noui.h \
   outputtype.h \
+  policy/v3_policy.h \
   policy/feerate.h \
   policy/fees.h \
   policy/fees_args.h \
@@ -624,6 +625,7 @@ libbitcoin_node_a_SOURCES = \
   node/utxo_snapshot.cpp \
   node/validation_cache_args.cpp \
   noui.cpp \
+  policy/v3_policy.cpp \
   policy/fees.cpp \
   policy/fees_args.cpp \
   policy/packages.cpp \
@@ -775,6 +777,10 @@ libbitcoin_wallet_tool_a_SOURCES = \
 #
 
 # crypto #
+
+# crypto_base contains the unspecialized (unoptimized) versions of our
+# crypto functions. Functions that require custom compiler flags and/or
+# runtime opt-in are omitted.
 crypto_libbitcoin_crypto_base_la_CPPFLAGS = $(AM_CPPFLAGS)
 
 # Specify -static in both CXXFLAGS and LDFLAGS so libtool will only build a
@@ -810,16 +816,13 @@ crypto_libbitcoin_crypto_base_la_SOURCES = \
   crypto/sha1.h \
   crypto/sha256.cpp \
   crypto/sha256.h \
+  crypto/sha256_sse4.cpp \
   crypto/sha3.cpp \
   crypto/sha3.h \
   crypto/sha512.cpp \
   crypto/sha512.h \
   crypto/siphash.cpp \
   crypto/siphash.h
-
-if USE_ASM
-crypto_libbitcoin_crypto_base_la_SOURCES += crypto/sha256_sse4.cpp
-endif
 
 # See explanation for -static in crypto_libbitcoin_crypto_base_la's LDFLAGS and
 # CXXFLAGS above
@@ -993,6 +996,7 @@ libbitcoin_common_a_SOURCES = \
   netbase.cpp \
   net_permissions.cpp \
   outputtype.cpp \
+  policy/v3_policy.cpp \
   policy/feerate.cpp \
   policy/policy.cpp \
   protocol.cpp \
@@ -1324,6 +1328,7 @@ libnaviokernel_la_SOURCES = \
   node/blockstorage.cpp \
   node/chainstate.cpp \
   node/utxo_snapshot.cpp \
+  policy/v3_policy.cpp \
   policy/feerate.cpp \
   policy/packages.cpp \
   policy/policy.cpp \
@@ -1387,11 +1392,8 @@ include_HEADERS = script/navioconsensus.h
 libnavioconsensus_la_SOURCES = support/cleanse.cpp $(crypto_libbitcoin_crypto_base_la_SOURCES) $(libbitcoin_consensus_a_SOURCES)
 
 libnavioconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
-libnavioconsensus_la_LIBADD = \
-  $(LIBBLS) \
-  $(LIBMCL) \
-  $(LIBSECP256K1)
-libnavioconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include $(BLS_INCLUDES) -DBUILD_BITCOIN_INTERNAL
+libnavioconsensus_la_LIBADD = $(LIBBLS) $(LIBMCL) $(LIBSECP256K1)
+libnavioconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include $(BLS_INCLUDES) -DBUILD_BITCOIN_INTERNAL -DDISABLE_OPTIMIZED_SHA256
 libnavioconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
 endif
@@ -1569,6 +1571,7 @@ ipc/capnp/libbitcoin_ipc_a-protocol.$(OBJEXT): $(libbitcoin_ipc_mpgen_input:=.h)
 if BUILD_MULTIPROCESS
 LIBBITCOIN_IPC=libbitcoin_ipc.a
 libbitcoin_ipc_a_SOURCES = \
+  ipc/capnp/common-types.h \
   ipc/capnp/context.h \
   ipc/capnp/init-types.h \
   ipc/capnp/protocol.cpp \

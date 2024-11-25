@@ -3,6 +3,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#if defined(HAVE_CONFIG_H)
+#include <config/bitcoin-config.h>
+#endif
+
 #include <validation.h>
 
 #include <arith_uint256.h>
@@ -31,6 +35,7 @@
 #include <logging/timer.h>
 #include <node/blockstorage.h>
 #include <node/utxo_snapshot.h>
+#include <policy/v3_policy.h>
 #include <policy/policy.h>
 #include <policy/rbf.h>
 #include <policy/settings.h>
@@ -336,7 +341,9 @@ void Chainstate::MaybeUpdateMempoolForReorg(
     // Also updates valid entries' cached LockPoints if needed.
     // If false, the tx is still valid and its lockpoints are updated.
     // If true, the tx would be invalid in the next block; remove this entry and all of its descendants.
-    const auto filter_final_and_mature = [this](CTxMemPool::txiter it)
+    // Note that v3 rules are not applied here, so reorgs may cause violations of v3 inheritance or
+    // topology restrictions.
+    const auto filter_final_and_mature = [&](CTxMemPool::txiter it)
         EXCLUSIVE_LOCKS_REQUIRED(m_mempool->cs, ::cs_main) {
         AssertLockHeld(m_mempool->cs);
         AssertLockHeld(::cs_main);
@@ -593,7 +600,7 @@ private:
     struct Workspace {
         explicit Workspace(const CTransactionRef& ptx) : m_ptx(ptx), m_hash(ptx->GetHash()) {}
         /** Txids of mempool transactions that this transaction directly conflicts with. */
-        std::set<uint256> m_conflicts;
+        std::set<Txid> m_conflicts;
         /** Iterators to mempool entries that this transaction directly conflicts with. */
         CTxMemPool::setEntries m_iters_conflicting;
         /** Iterators to all mempool entries that would be replaced by this transaction, including
@@ -772,9 +779,12 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
                 // check all unconfirmed ancestors; otherwise an opt-in ancestor
                 // might be replaced, causing removal of this descendant.
                 //
-                // If replaceability signaling is ignored due to node setting,
-                // replacement is always allowed.
-                if (!m_pool.m_full_rbf && !SignalsOptInRBF(*ptxConflicting)) {
+                // All V3 transactions are considered replaceable.
+                //
+                // Replaceability signaling of the original transactions may be
+                // ignored due to node setting.
+                const bool allow_rbf{m_pool.m_full_rbf || SignalsOptInRBF(*ptxConflicting) || ptxConflicting->nVersion == 3};
+                if (!allow_rbf) {
                     return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "txn-mempool-conflict");
                 }
 
@@ -877,7 +887,8 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
     // while a tx could be package CPFP'd when entering the mempool, we do not have a DoS-resistant
     // method of ensuring the tx remains bumped. For example, the fee-bumping child could disappear
     // due to a replacement.
-    if (!bypass_limits && ws.m_modified_fees < m_pool.m_min_relay_feerate.GetFee(ws.m_vsize)) {
+    // The only exception is v3 transactions.
+    if (!bypass_limits && ws.m_ptx->nVersion != 3 && ws.m_modified_fees < m_pool.m_min_relay_feerate.GetFee(ws.m_vsize)) {
         // Even though this is a fee-related failure, this result is TX_MEMPOOL_POLICY, not
         // TX_RECONSIDERABLE, because it cannot be bypassed using package validation.
         return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "min relay fee not met",
@@ -959,6 +970,9 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
     }
 
     ws.m_ancestors = *ancestors;
+    if (const auto err_string{SingleV3Checks(ws.m_ptx, ws.m_ancestors, ws.m_conflicts, ws.m_vsize)}) {
+        return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "v3-rule-violation", *err_string);
+    }
 
     // A transaction that spends outputs that would be replaced by it is invalid. Now
     // that we have the set of all ancestors we can detect this
@@ -1324,6 +1338,15 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptMultipleTransactions(const std::
         // updated if package replace-by-fee is allowed in the future.
         assert(!args.m_allow_replacement);
         m_viewmempool.PackageAddTransaction(ws.m_ptx);
+    }
+
+    // At this point we have all in-mempool ancestors, and we know every transaction's vsize.
+    // Run the v3 checks on the package.
+    for (Workspace& ws : workspaces) {
+        if (auto err{PackageV3Checks(ws.m_ptx, ws.m_vsize, txns, ws.m_ancestors)}) {
+            package_state.Invalid(PackageValidationResult::PCKG_POLICY, "v3-violation", err.value());
+            return PackageMempoolAcceptResult(package_state, {});
+        }
     }
 
     // Transactions must meet two minimum feerates: the mempool minimum fee and min relay fee.
@@ -2353,7 +2376,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // Also, currently the rule against blocks more than 2 hours in the future
     // is enforced in ContextualCheckBlockHeader(); we wouldn't want to
     // re-enforce that rule here (at least until we make it impossible for
-    // m_adjusted_time_callback() to go backward).
+    // the clock to go backward).
     if (!CheckBlock(block, state, params.GetConsensus(), !fJustCheck, !fJustCheck)) {
         if (state.GetResult() == BlockValidationResult::BLOCK_MUTATED) {
             // We don't write down blocks to disk if they may have been
@@ -3886,6 +3909,87 @@ static bool CheckBlockHeader(const CBlockHeader& block, BlockValidationState& st
     return true;
 }
 
+static bool CheckMerkleRoot(const CBlock& block, BlockValidationState& state)
+{
+    if (block.m_checked_merkle_root) return true;
+
+    bool mutated;
+    uint256 merkle_root = BlockMerkleRoot(block, &mutated);
+    if (block.hashMerkleRoot != merkle_root) {
+        return state.Invalid(
+            /*result=*/BlockValidationResult::BLOCK_MUTATED,
+            /*reject_reason=*/"bad-txnmrklroot",
+            /*debug_message=*/"hashMerkleRoot mismatch");
+    }
+
+    // Check for merkle tree malleability (CVE-2012-2459): repeating sequences
+    // of transactions in a block without affecting the merkle root of a block,
+    // while still invalidating it.
+    if (mutated) {
+        return state.Invalid(
+            /*result=*/BlockValidationResult::BLOCK_MUTATED,
+            /*reject_reason=*/"bad-txns-duplicate",
+            /*debug_message=*/"duplicate transaction");
+    }
+
+    block.m_checked_merkle_root = true;
+    return true;
+}
+
+/** CheckWitnessMalleation performs checks for block malleation with regard to
+ * its witnesses.
+ *
+ * Note: If the witness commitment is expected (i.e. `expect_witness_commitment
+ * = true`), then the block is required to have at least one transaction and the
+ * first transaction needs to have at least one input. */
+static bool CheckWitnessMalleation(const CBlock& block, bool expect_witness_commitment, BlockValidationState& state)
+{
+    if (expect_witness_commitment) {
+        if (block.m_checked_witness_commitment) return true;
+
+        int commitpos = GetWitnessCommitmentIndex(block);
+        if (commitpos != NO_WITNESS_COMMITMENT) {
+            assert(!block.vtx.empty() && !block.vtx[0]->vin.empty());
+            const auto& witness_stack{block.vtx[0]->vin[0].scriptWitness.stack};
+
+            if (witness_stack.size() != 1 || witness_stack[0].size() != 32) {
+                return state.Invalid(
+                    /*result=*/BlockValidationResult::BLOCK_MUTATED,
+                    /*reject_reason=*/"bad-witness-nonce-size",
+                    /*debug_message=*/strprintf("%s : invalid witness reserved value size", __func__));
+            }
+
+            // The malleation check is ignored; as the transaction tree itself
+            // already does not permit it, it is impossible to trigger in the
+            // witness tree.
+            uint256 hash_witness = BlockWitnessMerkleRoot(block, /*mutated=*/nullptr);
+
+            CHash256().Write(hash_witness).Write(witness_stack[0]).Finalize(hash_witness);
+            if (memcmp(hash_witness.begin(), &block.vtx[0]->vout[commitpos].scriptPubKey[6], 32)) {
+                return state.Invalid(
+                    /*result=*/BlockValidationResult::BLOCK_MUTATED,
+                    /*reject_reason=*/"bad-witness-merkle-match",
+                    /*debug_message=*/strprintf("%s : witness merkle commitment mismatch", __func__));
+            }
+
+            block.m_checked_witness_commitment = true;
+            return true;
+        }
+    }
+
+    // No witness data is allowed in blocks that don't commit to witness data, as this would otherwise leave room for spam
+    for (const auto& tx : block.vtx) {
+        if (tx->HasWitness()) {
+            return state.Invalid(
+                /*result=*/BlockValidationResult::BLOCK_MUTATED,
+                /*reject_reason=*/"unexpected-witness",
+                /*debug_message=*/strprintf("%s : unexpected witness data found", __func__));
+        }
+    }
+
+    return true;
+}
+
 bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW, bool fCheckMerkleRoot)
 {
     // These are checks that are independent of context.
@@ -3904,17 +4008,8 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
     }
 
     // Check the merkle root.
-    if (fCheckMerkleRoot) {
-        bool mutated;
-        uint256 hashMerkleRoot2 = BlockMerkleRoot(block, &mutated);
-        if (block.hashMerkleRoot != hashMerkleRoot2)
-            return state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-txnmrklroot", "hashMerkleRoot mismatch");
-
-        // Check for merkle tree malleability (CVE-2012-2459): repeating sequences
-        // of transactions in a block without affecting the merkle root of a block,
-        // while still invalidating it.
-        if (mutated)
-            return state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-txns-duplicate", "duplicate transaction");
+    if (fCheckMerkleRoot && !CheckMerkleRoot(block, state)) {
+        return false;
     }
 
     // All potential-corruption validation must be done before we do any
@@ -4008,6 +4103,37 @@ bool HasValidProofOfWork(const std::vector<CBlockHeader>& headers, const Consens
             [&](const auto& header) { return header.IsProofOfStake() ? true : CheckProofOfWork(header.GetHash(), header.nBits, consensusParams);});
 }
 
+bool IsBlockMutated(const CBlock& block, bool check_witness_root)
+{
+    BlockValidationState state;
+    if (!CheckMerkleRoot(block, state)) {
+        LogDebug(BCLog::VALIDATION, "Block mutated: %s\n", state.ToString());
+        return true;
+    }
+
+    if (block.vtx.empty() || !block.vtx[0]->IsCoinBase()) {
+        // Consider the block mutated if any transaction is 64 bytes in size (see 3.1
+        // in "Weaknesses in Bitcoin’s Merkle Root Construction":
+        // https://lists.linuxfoundation.org/pipermail/bitcoin-dev/attachments/20190225/a27d8837/attachment-0001.pdf).
+        //
+        // Note: This is not a consensus change as this only applies to blocks that
+        // don't have a coinbase transaction and would therefore already be invalid.
+        return std::any_of(block.vtx.begin(), block.vtx.end(),
+                           [](auto& tx) { return GetSerializeSize(TX_NO_WITNESS(tx)) == 64; });
+    } else {
+        // Theoretically it is still possible for a block with a 64 byte
+        // coinbase transaction to be mutated but we neglect that possibility
+        // here as it requires at least 224 bits of work.
+    }
+
+    if (!CheckWitnessMalleation(block, check_witness_root, state)) {
+        LogDebug(BCLog::VALIDATION, "Block mutated: %s\n", state.ToString());
+        return true;
+    }
+
+    return false;
+}
+
 arith_uint256 CalculateHeadersWork(const std::vector<CBlockHeader>& headers)
 {
     arith_uint256 total_work{0};
@@ -4027,7 +4153,7 @@ arith_uint256 CalculateHeadersWork(const std::vector<CBlockHeader>& headers)
  *  in ConnectBlock().
  *  Note that -reindex-chainstate skips the validation that happens here!
  */
-static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidationState& state, BlockManager& blockman, const ChainstateManager& chainman, const CBlockIndex* pindexPrev, NodeClock::time_point now) EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
+static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidationState& state, BlockManager& blockman, const ChainstateManager& chainman, const CBlockIndex* pindexPrev) EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
 {
     AssertLockHeld(::cs_main);
     assert(pindexPrev != nullptr);
@@ -4061,7 +4187,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "time-too-old", "block's timestamp is too early");
 
     // Check timestamp
-    if (block.Time() > now + std::chrono::seconds{MAX_FUTURE_BLOCK_TIME}) {
+    if (block.Time() > NodeClock::now() + std::chrono::seconds{MAX_FUTURE_BLOCK_TIME}) {
         return state.Invalid(BlockValidationResult::BLOCK_TIME_FUTURE, "time-too-new", "block timestamp too far in the future");
     }
 
@@ -4121,33 +4247,8 @@ static bool ContextualCheckBlock(const CBlock& block, BlockValidationState& stat
     // * There must be at least one output whose scriptPubKey is a single 36-byte push, the first 4 bytes of which are
     //   {0xaa, 0x21, 0xa9, 0xed}, and the following 32 bytes are SHA256^2(witness root, witness reserved value). In case there are
     //   multiple, the last one is used.
-    bool fHaveWitness = false;
-    if (DeploymentActiveAfter(pindexPrev, chainman, Consensus::DEPLOYMENT_SEGWIT)) {
-        int commitpos = GetWitnessCommitmentIndex(block);
-        if (commitpos != NO_WITNESS_COMMITMENT) {
-            bool malleated = false;
-            uint256 hashWitness = BlockWitnessMerkleRoot(block, &malleated);
-            // The malleation check is ignored; as the transaction tree itself
-            // already does not permit it, it is impossible to trigger in the
-            // witness tree.
-            if (block.vtx[0]->vin[0].scriptWitness.stack.size() != 1 || block.vtx[0]->vin[0].scriptWitness.stack[0].size() != 32) {
-                return state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-witness-nonce-size", strprintf("%s : invalid witness reserved value size", __func__));
-            }
-            CHash256().Write(hashWitness).Write(block.vtx[0]->vin[0].scriptWitness.stack[0]).Finalize(hashWitness);
-            if (memcmp(hashWitness.begin(), &block.vtx[0]->vout[commitpos].scriptPubKey[6], 32)) {
-                return state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-witness-merkle-match", strprintf("%s : witness merkle commitment mismatch", __func__));
-            }
-            fHaveWitness = true;
-        }
-    }
-
-    // No witness data is allowed in blocks that don't commit to witness data, as this would otherwise leave room for spam
-    if (!fHaveWitness) {
-      for (const auto& tx : block.vtx) {
-            if (tx->HasWitness()) {
-                return state.Invalid(BlockValidationResult::BLOCK_MUTATED, "unexpected-witness", strprintf("%s : unexpected witness data found", __func__));
-            }
-        }
+    if (!CheckWitnessMalleation(block, DeploymentActiveAfter(pindexPrev, chainman, Consensus::DEPLOYMENT_SEGWIT), state)) {
+        return false;
     }
 
     // After the coinbase witness reserved value and commitment are verified,
@@ -4200,7 +4301,7 @@ bool ChainstateManager::AcceptBlockHeader(const CBlockHeader& block, BlockValida
             LogPrint(BCLog::VALIDATION, "header %s has prev block invalid: %s\n", hash.ToString(), block.hashPrevBlock.ToString());
             return state.Invalid(BlockValidationResult::BLOCK_INVALID_PREV, "bad-prevblk");
         }
-        if (!ContextualCheckBlockHeader(block, state, m_blockman, *this, pindexPrev, m_options.adjusted_time_callback())) {
+        if (!ContextualCheckBlockHeader(block, state, m_blockman, *this, pindexPrev)) {
             LogPrint(BCLog::VALIDATION, "%s: Consensus::ContextualCheckBlockHeader: %s, %s\n", __func__, hash.ToString(), state.ToString());
             return false;
         }
@@ -4497,7 +4598,6 @@ bool TestBlockValidity(BlockValidationState& state,
                        Chainstate& chainstate,
                        const CBlock& block,
                        CBlockIndex* pindexPrev,
-                       const std::function<NodeClock::time_point()>& adjusted_time_callback,
                        bool fCheckPOW,
                        bool fCheckMerkleRoot)
 {
@@ -4511,7 +4611,7 @@ bool TestBlockValidity(BlockValidationState& state,
     indexDummy.phashBlock = &block_hash;
 
     // NOTE: CheckBlockHeader is called by CheckBlock
-    if (!ContextualCheckBlockHeader(block, state, chainstate.m_blockman, chainstate.m_chainman, pindexPrev, adjusted_time_callback()))
+    if (!ContextualCheckBlockHeader(block, state, chainstate.m_blockman, chainstate.m_chainman, pindexPrev))
         return error("%s: Consensus::ContextualCheckBlockHeader: %s", __func__, state.ToString());
     if (!CheckBlock(block, state, chainparams.GetConsensus(), fCheckPOW, fCheckMerkleRoot))
         return error("%s: Consensus::CheckBlock: %s", __func__, state.ToString());
@@ -5129,16 +5229,6 @@ void ChainstateManager::CheckBlockIndex()
     CBlockIndex* pindexFirstAssumeValid = nullptr; // Oldest ancestor of pindex which has BLOCK_ASSUMED_VALID
     while (pindex != nullptr) {
         nNodes++;
-        // Make sure nChainTx sum is correctly computed.
-        unsigned int prev_chain_tx = pindex->pprev ? pindex->pprev->nChainTx : 0;
-        assert((pindex->nChainTx == pindex->nTx + prev_chain_tx)
-               // For testing, allow transaction counts to be completely unset.
-               || (pindex->nChainTx == 0 && pindex->nTx == 0)
-               // For testing, allow this nChainTx to be unset if previous is also unset.
-               || (pindex->nChainTx == 0 && prev_chain_tx == 0 && pindex->pprev)
-               // Transaction counts prior to snapshot are unknown.
-               || pindex->IsAssumedValid());
-
         if (pindexFirstAssumeValid == nullptr && pindex->nStatus & BLOCK_ASSUMED_VALID) pindexFirstAssumeValid = pindex;
         if (pindexFirstInvalid == nullptr && pindex->nStatus & BLOCK_FAILED_VALID) pindexFirstInvalid = pindex;
         if (pindexFirstMissing == nullptr && !(pindex->nStatus & BLOCK_HAVE_DATA)) {
@@ -5221,6 +5311,15 @@ void ChainstateManager::CheckBlockIndex()
             // Checks for not-invalid blocks.
             assert((pindex->nStatus & BLOCK_FAILED_MASK) == 0); // The failed mask cannot be set for blocks without invalid parents.
         }
+        // Make sure nChainTx sum is correctly computed.
+        unsigned int prev_chain_tx = pindex->pprev ? pindex->pprev->nChainTx : 0;
+        assert((pindex->nChainTx == pindex->nTx + prev_chain_tx)
+               // Transaction may be completely unset - happens if only the header was accepted but the block hasn't been processed.
+               || (pindex->nChainTx == 0 && pindex->nTx == 0)
+               // nChainTx may be unset, but nTx set (if a block has been accepted, but one of its predecessors hasn't been processed yet)
+               || (pindex->nChainTx == 0 && prev_chain_tx == 0 && pindex->pprev)
+               // Transaction counts prior to snapshot are unknown.
+               || pindex->IsAssumedValid());
         // Chainstate-specific checks on setBlockIndexCandidates
         for (auto c : GetAll()) {
             if (c->m_chain.Tip() == nullptr) continue;
@@ -6048,7 +6147,6 @@ static ChainstateManager::Options&& Flatten(ChainstateManager::Options&& opts)
     if (!opts.check_block_index.has_value()) opts.check_block_index = opts.chainparams.DefaultConsistencyChecks();
     if (!opts.minimum_chain_work.has_value()) opts.minimum_chain_work = UintToArith256(opts.chainparams.GetConsensus().nMinimumChainWork);
     if (!opts.assumed_valid_block.has_value()) opts.assumed_valid_block = opts.chainparams.GetConsensus().defaultAssumeValid;
-    Assert(opts.adjusted_time_callback);
     return std::move(opts);
 }
 

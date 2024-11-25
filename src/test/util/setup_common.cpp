@@ -2,6 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#if defined(HAVE_CONFIG_H)
+#include <config/bitcoin-config.h>
+#endif
+
 #include <test/util/setup_common.h>
 
 #include <kernel/validation_cache_sizes.h>
@@ -46,7 +50,6 @@
 #include <test/util/net.h>
 #include <test/util/random.h>
 #include <test/util/txmempool.h>
-#include <timedata.h>
 #include <txdb.h>
 #include <txmempool.h>
 #include <util/chaintype.h>
@@ -186,7 +189,6 @@ ChainTestingSetup::ChainTestingSetup(const ChainType chainType, const std::vecto
     const ChainstateManager::Options chainman_opts{
         .chainparams = chainparams,
         .datadir = m_args.GetDataDirNet(),
-        .adjusted_time_callback = GetAdjustedTime,
         .check_block_index = true,
         .notifications = *m_node.notifications,
         .worker_threads_num = 2,

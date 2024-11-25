@@ -11,6 +11,7 @@ import argparse
 import configparser
 import logging
 import os
+import random
 import subprocess
 import sys
 
@@ -24,6 +25,7 @@ def get_fuzz_env(*, target, source_dir):
         'UBSAN_SYMBOLIZER_PATH':symbolizer,
         "ASAN_OPTIONS": "detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1",
         'ASAN_SYMBOLIZER_PATH':symbolizer,
+        'MSAN_SYMBOLIZER_PATH':symbolizer,
     }
 
 
@@ -263,9 +265,13 @@ def generate_corpus(*, fuzz_pool, src_dir, build_dir, corpus_dir, targets):
     for target, t_env in targets:
         target_corpus_dir = corpus_dir / target
         os.makedirs(target_corpus_dir, exist_ok=True)
+        use_value_profile = int(random.random() < .3)
         command = [
             os.path.join(build_dir, 'src', 'test', 'fuzz', 'fuzz'),
-            "-runs=100000",
+            "-rss_limit_mb=8000",
+            "-max_total_time=6000",
+            "-reload=0",
+            f"-use_value_profile={use_value_profile}",
             target_corpus_dir,
         ]
         futures.append(fuzz_pool.submit(job, command, target, t_env))
@@ -347,13 +353,18 @@ def run_once(*, fuzz_pool, corpus, test_list, src_dir, build_dir, using_libfuzze
                 text=True,
             )
             output += result.stderr
-            return output, result
+            return output, result, t
 
         jobs.append(fuzz_pool.submit(job, t, args))
 
+    stats = []
     for future in as_completed(jobs):
-        output, result = future.result()
+        output, result, target = future.result()
         logging.debug(output)
+        if using_libfuzzer:
+            done_stat = [l for l in output.splitlines() if "DONE" in l]
+            assert len(done_stat) == 1
+            stats.append((target, done_stat[0]))
         try:
             result.check_returncode()
         except subprocess.CalledProcessError as e:
@@ -364,6 +375,13 @@ def run_once(*, fuzz_pool, corpus, test_list, src_dir, build_dir, using_libfuzze
             logging.info(f"Target {result.args} failed with exit code {e.returncode}")
             sys.exit(1)
 
+    if using_libfuzzer:
+        print("Summary:")
+        max_len = max(len(t[0]) for t in stats)
+        for t, s in sorted(stats):
+            t = t.ljust(max_len + 1)
+            print(f"{t}{s}")
+
 
 def parse_test_list(*, fuzz_bin):
     test_list_all = subprocess.run(
@@ -372,8 +390,8 @@ def parse_test_list(*, fuzz_bin):
             'PRINT_ALL_FUZZ_TARGETS_AND_ABORT': ''
         },
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
         text=True,
+        check=True,
     ).stdout.splitlines()
     return test_list_all
 

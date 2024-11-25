@@ -9,11 +9,10 @@ import tempfile
 
 BINARIES = [
 'src/naviod',
-'src/bitcoin-cli',
-'src/bitcoin-tx',
-'src/bitcoin-wallet',
-'src/bitcoin-util',
-'src/qt/bitcoin-qt',
+'src/navio-cli',
+'src/navio-tx',
+'src/navio-wallet',
+'src/navio-util',
 ]
 
 # Paths to external utilities.
