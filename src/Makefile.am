@@ -1311,6 +1311,8 @@ libnaviokernel_la_SOURCES = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/signature.cpp \
+  blsct/tokens/predicate_exec.cpp \
+  blsct/tokens/predicate_parser.cpp \
   blsct/wallet/txfactory_global.cpp \
   blsct/wallet/verification.cpp \
   chain.cpp \
