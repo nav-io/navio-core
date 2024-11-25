@@ -16,9 +16,7 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
         if (fDisconnect)
             view.EraseToken(hash);
         else {
-            blsct::TokenInfo info;
-            info = predicate.GetTokenInfo();
-            view.AddToken(hash, std::move(info));
+            view.AddToken(hash, blsct::TokenInfo{predicate.GetTokenInfo()});
         }
 
         return true;
