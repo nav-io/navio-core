@@ -54,6 +54,7 @@
     <CharacterSet>Unicode</CharacterSet>
     <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\$(ProjectName)\</OutDir>
     <IntDir>$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+    <MaxConcurrentBuilds>1</MaxConcurrentBuilds>
   </PropertyGroup>
 
 <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
