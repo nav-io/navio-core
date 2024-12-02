@@ -110,7 +110,7 @@ public:
     bool GetKey(const CKeyID& address, PrivateKey& keyOut) const override;
 
     bool Encrypt(const wallet::CKeyingMaterial& master_key, wallet::WalletBatch* batch);
-    bool CheckDecryptionKey(const wallet::CKeyingMaterial& master_key, bool accept_no_keys);
+    bool CheckDecryptionKey(const wallet::CKeyingMaterial& master_key);
 
     SubAddress GenerateNewSubAddress(const int64_t& account, SubAddressIdentifier& id);
     SubAddress GetSubAddress(const SubAddressIdentifier& id = {0, 0}) const;

@@ -33,7 +33,6 @@ namespace kernel {
 struct ChainstateManagerOpts {
     const CChainParams& chainparams;
     fs::path datadir;
-    const std::function<NodeClock::time_point()> adjusted_time_callback{nullptr};
     std::optional<bool> check_block_index{};
     bool checkpoints_enabled{DEFAULT_CHECKPOINTS_ENABLED};
     bool dandelion_enabled{DEFAULT_DANDELION_ENABLED};

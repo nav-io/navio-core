@@ -30,7 +30,9 @@ bool KeyMan::AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey)
     std::vector<unsigned char> vchCryptedSecret;
     auto keyVch = key.GetScalar().GetVch();
     wallet::CKeyingMaterial vchSecret(keyVch.begin(), keyVch.end());
-    if (!wallet::EncryptSecret(m_storage.GetEncryptionKey(), vchSecret, pubkey.GetHash(), vchCryptedSecret)) {
+    if (!m_storage.WithEncryptionKey([&](const wallet::CKeyingMaterial& encryption_key) {
+            return wallet::EncryptSecret(encryption_key, vchSecret, pubkey.GetHash(), vchCryptedSecret);
+        })) {
         return false;
     }
 
@@ -300,7 +302,7 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
     return true;
 }
 
-bool KeyMan::CheckDecryptionKey(const wallet::CKeyingMaterial& master_key, bool accept_no_keys)
+bool KeyMan::CheckDecryptionKey(const wallet::CKeyingMaterial& master_key)
 {
     {
         LOCK(cs_KeyStore);
@@ -330,8 +332,9 @@ bool KeyMan::CheckDecryptionKey(const wallet::CKeyingMaterial& master_key, bool 
             LogPrintf("The wallet is probably corrupted: Some keys decrypt but not all.\n");
             throw std::runtime_error(std::string(__func__) + ": Error unlocking wallet: some keys decrypt but not all. Your wallet file may be corrupt.");
         }
-        if (keyFail || (!keyPass && !accept_no_keys))
+        if (keyFail || !keyPass) {
             return false;
+        }
         fDecryptionThoroughlyChecked = true;
     }
     return true;
@@ -400,7 +403,9 @@ bool KeyMan::GetKey(const CKeyID& id, PrivateKey& keyOut) const
     if (mi != mapCryptedKeys.end()) {
         const PublicKey& vchPubKey = (*mi).second.first;
         const std::vector<unsigned char>& vchCryptedSecret = (*mi).second.second;
-        return wallet::DecryptKey(m_storage.GetEncryptionKey(), vchCryptedSecret, vchPubKey, keyOut);
+        return m_storage.WithEncryptionKey([&](const wallet::CKeyingMaterial& encryption_key) {
+            return wallet::DecryptKey(encryption_key, vchCryptedSecret, vchPubKey, keyOut);
+        });
     }
     return false;
 }

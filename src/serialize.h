@@ -13,6 +13,7 @@
 #include <span.h>
 
 #include <algorithm>
+#include <concepts>
 #include <cstdint>
 #include <cstring>
 #include <ios>
@@ -56,27 +57,27 @@ template<typename Stream> inline void ser_writedata8(Stream &s, uint8_t obj)
 }
 template<typename Stream> inline void ser_writedata16(Stream &s, uint16_t obj)
 {
-    obj = htole16(obj);
+    obj = htole16_internal(obj);
     s.write(AsBytes(Span{&obj, 1}));
 }
 template<typename Stream> inline void ser_writedata16be(Stream &s, uint16_t obj)
 {
-    obj = htobe16(obj);
+    obj = htobe16_internal(obj);
     s.write(AsBytes(Span{&obj, 1}));
 }
 template<typename Stream> inline void ser_writedata32(Stream &s, uint32_t obj)
 {
-    obj = htole32(obj);
+    obj = htole32_internal(obj);
     s.write(AsBytes(Span{&obj, 1}));
 }
 template<typename Stream> inline void ser_writedata32be(Stream &s, uint32_t obj)
 {
-    obj = htobe32(obj);
+    obj = htobe32_internal(obj);
     s.write(AsBytes(Span{&obj, 1}));
 }
 template<typename Stream> inline void ser_writedata64(Stream &s, uint64_t obj)
 {
-    obj = htole64(obj);
+    obj = htole64_internal(obj);
     s.write(AsBytes(Span{&obj, 1}));
 }
 template<typename Stream> inline uint8_t ser_readdata8(Stream &s)
@@ -89,31 +90,31 @@ template<typename Stream> inline uint16_t ser_readdata16(Stream &s)
 {
     uint16_t obj;
     s.read(AsWritableBytes(Span{&obj, 1}));
-    return le16toh(obj);
+    return le16toh_internal(obj);
 }
 template<typename Stream> inline uint16_t ser_readdata16be(Stream &s)
 {
     uint16_t obj;
     s.read(AsWritableBytes(Span{&obj, 1}));
-    return be16toh(obj);
+    return be16toh_internal(obj);
 }
 template<typename Stream> inline uint32_t ser_readdata32(Stream &s)
 {
     uint32_t obj;
     s.read(AsWritableBytes(Span{&obj, 1}));
-    return le32toh(obj);
+    return le32toh_internal(obj);
 }
 template<typename Stream> inline uint32_t ser_readdata32be(Stream &s)
 {
     uint32_t obj;
     s.read(AsWritableBytes(Span{&obj, 1}));
-    return be32toh(obj);
+    return be32toh_internal(obj);
 }
 template<typename Stream> inline uint64_t ser_readdata64(Stream &s)
 {
     uint64_t obj;
     s.read(AsWritableBytes(Span{&obj, 1}));
-    return le64toh(obj);
+    return le64toh_internal(obj);
 }
 
 
@@ -259,9 +260,14 @@ const Out& AsBase(const In& x)
 // i.e. anything that supports .read(Span<std::byte>) and .write(Span<const std::byte>)
 //
 // clang-format off
-#ifndef CHAR_EQUALS_INT8
-template <typename Stream> void Serialize(Stream&, char) = delete; // char serialization forbidden. Use uint8_t or int8_t
-#endif
+
+// Typically int8_t and char are distinct types, but some systems may define int8_t
+// in terms of char. Forbid serialization of char in the typical case, but allow it if
+// it's the only way to describe an int8_t.
+template<class T>
+concept CharNotInt8 = std::same_as<T, char> && !std::same_as<T, int8_t>;
+
+template <typename Stream, CharNotInt8 V> void Serialize(Stream&, V) = delete; // char serialization forbidden. Use uint8_t or int8_t
 template <typename Stream> void Serialize(Stream& s, std::byte a) { ser_writedata8(s, uint8_t(a)); }
 template<typename Stream> inline void Serialize(Stream& s, int8_t a  ) { ser_writedata8(s, a); }
 template<typename Stream> inline void Serialize(Stream& s, uint8_t a ) { ser_writedata8(s, a); }
@@ -275,9 +281,7 @@ template <typename Stream, BasicByte B, int N> void Serialize(Stream& s, const B
 template <typename Stream, BasicByte B, std::size_t N> void Serialize(Stream& s, const std::array<B, N>& a) { s.write(MakeByteSpan(a)); }
 template <typename Stream, BasicByte B> void Serialize(Stream& s, Span<B> span) { s.write(AsBytes(span)); }
 
-#ifndef CHAR_EQUALS_INT8
-template <typename Stream> void Unserialize(Stream&, char) = delete; // char serialization forbidden. Use uint8_t or int8_t
-#endif
+template <typename Stream, CharNotInt8 V> void Unserialize(Stream&, V) = delete; // char serialization forbidden. Use uint8_t or int8_t
 template <typename Stream> void Unserialize(Stream& s, std::byte& a) { a = std::byte{ser_readdata8(s)}; }
 template<typename Stream> inline void Unserialize(Stream& s, int8_t& a  ) { a = ser_readdata8(s); }
 template<typename Stream> inline void Unserialize(Stream& s, uint8_t& a ) { a = ser_readdata8(s); }
@@ -544,10 +548,10 @@ struct CustomUintFormatter
     {
         if (v < 0 || v > MAX) throw std::ios_base::failure("CustomUintFormatter value out of range");
         if (BigEndian) {
-            uint64_t raw = htobe64(v);
+            uint64_t raw = htobe64_internal(v);
             s.write(AsBytes(Span{&raw, 1}).last(Bytes));
         } else {
-            uint64_t raw = htole64(v);
+            uint64_t raw = htole64_internal(v);
             s.write(AsBytes(Span{&raw, 1}).first(Bytes));
         }
     }
@@ -559,10 +563,10 @@ struct CustomUintFormatter
         uint64_t raw = 0;
         if (BigEndian) {
             s.read(AsWritableBytes(Span{&raw, 1}).last(Bytes));
-            v = static_cast<I>(be64toh(raw));
+            v = static_cast<I>(be64toh_internal(raw));
         } else {
             s.read(AsWritableBytes(Span{&raw, 1}).first(Bytes));
-            v = static_cast<I>(le64toh(raw));
+            v = static_cast<I>(le64toh_internal(raw));
         }
     }
 };
@@ -710,14 +714,12 @@ template<typename Stream, typename C> void Unserialize(Stream& is, std::basic_st
 
 /**
  * prevector
- * prevectors of unsigned char are a special case and are intended to be serialized as a single opaque blob.
  */
 template<typename Stream, unsigned int N, typename T> inline void Serialize(Stream& os, const prevector<N, T>& v);
 template<typename Stream, unsigned int N, typename T> inline void Unserialize(Stream& is, prevector<N, T>& v);
 
 /**
  * vector
- * vectors of unsigned char are a special case and are intended to be serialized as a single opaque blob.
  */
 template<typename Stream, typename T, typename A> inline void Serialize(Stream& os, const std::vector<T, A>& v);
 template<typename Stream, typename T, typename A> inline void Unserialize(Stream& is, std::vector<T, A>& v);
@@ -820,10 +822,9 @@ void Unserialize(Stream& is, std::basic_string<C>& str)
 template <typename Stream, unsigned int N, typename T>
 void Serialize(Stream& os, const prevector<N, T>& v)
 {
-    if constexpr (std::is_same_v<T, unsigned char>) {
+    if constexpr (BasicByte<T>) { // Use optimized version for unformatted basic bytes
         WriteCompactSize(os, v.size());
-        if (!v.empty())
-            os.write(MakeByteSpan(v));
+        if (!v.empty()) os.write(MakeByteSpan(v));
     } else {
         Serialize(os, Using<VectorFormatter<DefaultFormatter>>(v));
     }
@@ -833,7 +834,7 @@ void Serialize(Stream& os, const prevector<N, T>& v)
 template <typename Stream, unsigned int N, typename T>
 void Unserialize(Stream& is, prevector<N, T>& v)
 {
-    if constexpr (std::is_same_v<T, unsigned char>) {
+    if constexpr (BasicByte<T>) { // Use optimized version for unformatted basic bytes
         // Limit size per read so bogus size value won't cause out of memory
         v.clear();
         unsigned int nSize = ReadCompactSize(is);
@@ -856,10 +857,9 @@ void Unserialize(Stream& is, prevector<N, T>& v)
 template <typename Stream, typename T, typename A>
 void Serialize(Stream& os, const std::vector<T, A>& v)
 {
-    if constexpr (std::is_same_v<T, unsigned char>) {
+    if constexpr (BasicByte<T>) { // Use optimized version for unformatted basic bytes
         WriteCompactSize(os, v.size());
-        if (!v.empty())
-            os.write(MakeByteSpan(v));
+        if (!v.empty()) os.write(MakeByteSpan(v));
     } else if constexpr (std::is_same_v<T, bool>) {
         // A special case for std::vector<bool>, as dereferencing
         // std::vector<bool>::const_iterator does not result in a const bool&
@@ -877,7 +877,7 @@ void Serialize(Stream& os, const std::vector<T, A>& v)
 template <typename Stream, typename T, typename A>
 void Unserialize(Stream& is, std::vector<T, A>& v)
 {
-    if constexpr (std::is_same_v<T, unsigned char>) {
+    if constexpr (BasicByte<T>) { // Use optimized version for unformatted basic bytes
         // Limit size per read so bogus size value won't cause out of memory
         v.clear();
         unsigned int nSize = ReadCompactSize(is);

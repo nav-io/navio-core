@@ -23,6 +23,7 @@ implicit-integer-sign-change:secp256k1/
 implicit-signed-integer-truncation:*/include/c++/
 implicit-signed-integer-truncation:leveldb/
 implicit-signed-integer-truncation:secp256k1/
+implicit-signed-integer-truncation,implicit-integer-sign-change:secp256k1_modinv64_posdivsteps_62_var
 implicit-unsigned-integer-truncation:*/include/c++/
 implicit-unsigned-integer-truncation:leveldb/
 implicit-unsigned-integer-truncation:secp256k1/
@@ -54,7 +55,7 @@ unsigned-integer-overflow:MurmurHash3
 unsigned-integer-overflow:CBlockPolicyEstimator::processBlockTx
 unsigned-integer-overflow:TxConfirmStats::EstimateMedianVal
 unsigned-integer-overflow:prevector.h
-unsigned-integer-overflow:script/interpreter.cpp
+unsigned-integer-overflow:EvalScript
 unsigned-integer-overflow:xoroshiro128plusplus.h
 implicit-integer-sign-change:CBlockPolicyEstimator::processBlockTx
 implicit-integer-sign-change:SetStdinEcho
