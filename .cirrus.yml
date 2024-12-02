@@ -153,20 +153,6 @@ task:
     FILE_ENV: "./ci/test/00_setup_env_native_msan.sh"
 
 task:
-  name: 'ASan + LSan + UBSan + integer, no depends, USDT'
-  enable_bpfcc_script:
-    # In the image build step, no external environment variables are available,
-    # so any settings will need to be written to the settings env file:
-    - sed -i "s|\${CIRRUS_CI}|true|g" ./ci/test/00_setup_env_native_asan.sh
-  << : *GLOBAL_TASK_TEMPLATE
-  persistent_worker:
-    labels:
-      type: noble  # Must use this specific worker (needed for USDT functional tests)
-  timeout_in: 300m  # Use longer timeout for the *rare* case where a full build (llvm + msan + depends + ...) needs to be done.
-  env:
-    FILE_ENV: "./ci/test/00_setup_env_native_asan.sh"
-
-task:
   name: 'fuzzer,address,undefined,integer, no depends'
   << : *GLOBAL_TASK_TEMPLATE
   persistent_worker:
