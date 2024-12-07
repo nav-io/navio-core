@@ -8,9 +8,9 @@
 #include <blsct/double_public_key.h>
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
-#include <blsct/range_proof/bulletproofs/amount_recovery_request.h>
-#include <blsct/range_proof/bulletproofs/amount_recovery_result.h>
-#include <blsct/range_proof/bulletproofs/range_proof_logic.h>
+#include <blsct/range_proof/bulletproofs_plus/amount_recovery_request.h>
+#include <blsct/range_proof/bulletproofs_plus/amount_recovery_result.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/wallet/address.h>
 #include <blsct/wallet/hdchain.h>
 #include <blsct/wallet/helpers.h>
@@ -138,11 +138,15 @@ public:
     blsct::PrivateKey GetMasterSeedKey() const;
     blsct::PrivateKey GetPrivateViewKey() const;
     blsct::PublicKey GetPublicSpendingKey() const;
+    blsct::PrivateKey GetMasterTokenKey() const;
     blsct::PrivateKey GetSpendingKey() const;
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out) const;
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id) const;
     blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id) const;
-    bulletproofs::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
+    bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
+
+    blsct::PrivateKey GetTokenKey(const uint256& tokenId) const;
+    blsct::PrivateKey GetTokenKey(const blsct::PublicKey& tokenPublicKey) const { return GetTokenKey(tokenPublicKey.GetHash()); };
 
     /** SubAddress keypool */
     void LoadSubAddress(const CKeyID& hashId, const SubAddressIdentifier& index);
@@ -164,6 +168,8 @@ public:
     int GetSubAddressPoolSize(const int64_t& account) const;
 
     bool OutputIsChange(const CTxOut& out) const;
+
+    int64_t GetTimeFirstKey() const;
 
     /** Keypool has new keys */
     boost::signals2::signal<void()>

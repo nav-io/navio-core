@@ -50,6 +50,7 @@ public:
 
     // Basic scheme
     Signature SignBalance() const;
+    Signature SignFee() const;
 
     // Message augmentation scheme
     Signature Sign(const uint256& msg) const;

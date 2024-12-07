@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/keyman.h>
 
 namespace blsct {
@@ -484,6 +485,21 @@ blsct::PrivateKey KeyMan::GetMasterSeedKey() const
     return ret;
 }
 
+blsct::PrivateKey KeyMan::GetMasterTokenKey() const
+{
+    if (!IsHDEnabled())
+        throw std::runtime_error(strprintf("%s: the wallet has no HD enabled"));
+
+    auto tokenKeyId = m_hd_chain.token_id;
+
+    PrivateKey ret;
+
+    if (!GetKey(tokenKeyId, ret))
+        throw std::runtime_error(strprintf("%s: could not access the master token key", __func__));
+
+    return ret;
+}
+
 blsct::PrivateKey KeyMan::GetPrivateViewKey() const
 {
     if (!fViewKeyDefined)
@@ -539,24 +555,32 @@ blsct::PrivateKey KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const SubAd
     return CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
 }
 
+blsct::PrivateKey KeyMan::GetTokenKey(const uint256& tokenId) const
+{
+    auto masterTokenKey = GetMasterTokenKey();
+
+    return BLS12_381_KeyGen::derive_child_SK_hash(masterTokenKey.GetScalar(), tokenId);
+}
+
 using Arith = Mcl;
 
-bulletproofs::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std::vector<CTxOut>& outs)
+bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std::vector<CTxOut>& outs)
 {
     if (!fViewKeyDefined || !viewKey.IsValid())
-        return bulletproofs::AmountRecoveryResult<Arith>::failure();
+        return bulletproofs_plus::AmountRecoveryResult<Arith>::failure();
 
-    bulletproofs::RangeProofLogic<Arith> rp;
-    std::vector<bulletproofs::AmountRecoveryRequest<Arith>> reqs;
+    bulletproofs_plus::RangeProofLogic<Arith> rp;
+    std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
     reqs.reserve(outs.size());
 
     for (size_t i = 0; i < outs.size(); i++) {
         CTxOut out = outs[i];
+        if (!out.HasBLSCTKeys() || !out.HasBLSCTRangeProof()) continue;
         if (out.blsctData.viewTag != CalculateViewTag(out.blsctData.blindingKey, viewKey.GetScalar()))
             continue;
         auto nonce = CalculateNonce(out.blsctData.blindingKey, viewKey.GetScalar());
-        bulletproofs::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
-        reqs.push_back(bulletproofs::AmountRecoveryRequest<Arith>::of(proof, nonce, i));
+        bulletproofs_plus::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
+        reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Arith>::of(proof, nonce, i));
     }
 
     return rp.RecoverAmounts(reqs);
@@ -878,5 +902,11 @@ bool KeyMan::OutputIsChange(const CTxOut& out) const
     }
 
     return false;
+}
+
+int64_t KeyMan::GetTimeFirstKey() const
+{
+    LOCK(cs_KeyStore);
+    return nTimeFirstKey;
 }
 } // namespace blsct

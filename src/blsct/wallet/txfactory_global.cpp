@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/range_proof/bulletproofs/range_proof.h>
+#include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory_global.h>
 
 using T = Mcl;
@@ -43,10 +43,50 @@ Signature UnsignedOutput::GetSignature() const
     return Signature::Aggregate(txSigs);
 }
 
+UnsignedOutput CreateOutput(const Scalar& tokenKey, const blsct::TokenInfo& tokenInfo)
+{
+    auto ret = CreateOutput(blsct::DoublePublicKey(), 0, "", TokenId(), Scalar::Rand(), TX_CREATE_TOKEN);
+
+    ret.out.predicate = CreateTokenPredicate(tokenInfo).GetVch();
+    ret.tokenKey = tokenKey;
+
+    return ret;
+}
+
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey)
+{
+    TokenId tokenId{tokenPublicKey.GetHash()};
+
+    auto ret = CreateOutput(destKeys, nAmount, "", tokenId, blindingKey, TX_MINT_TOKEN);
+
+    if (!tokenId.IsNFT()) {
+        ret.out.predicate = MintTokenPredicate(tokenPublicKey, nAmount).GetVch();
+    }
+    ret.tokenKey = tokenKey;
+
+    return ret;
+}
+
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata)
+{
+    TokenId tokenId{tokenPublicKey.GetHash(), nftId};
+
+    auto ret = CreateOutput(destKeys, 1, "", tokenId, blindingKey, TX_MINT_TOKEN);
+
+    if (tokenId.IsNFT()) {
+        ret.out.predicate = MintNftPredicate(tokenPublicKey, nftId, nftMetadata).GetVch();
+    }
+    ret.tokenKey = tokenKey;
+
+    return ret;
+}
+
 UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId, const Scalar& blindingKey, const CreateTransactionType& type, const CAmount& minStake)
 {
-    bulletproofs::RangeProofLogic<T> rp;
+    bulletproofs_plus::RangeProofLogic<T> rp;
     auto ret = UnsignedOutput();
+
+    ret.type = type;
 
     ret.out.nValue = 0;
     ret.out.tokenId = tokenId;
@@ -63,7 +103,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
         throw std::runtime_error(strprintf("%s: could not get view key from destination address\n", __func__));
     }
 
-    auto nonce = vk * blindingKey;
+    auto nonce = vk * ret.blindingKey;
     nonces.Add(nonce);
 
     ret.value = nAmount;
@@ -71,27 +111,32 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
 
     std::vector<unsigned char> memo{sMemo.begin(), sMemo.end()};
 
-    ret.out.scriptPubKey = CScript(OP_TRUE);
+    if (nAmount > 0) {
+        ret.out.scriptPubKey = CScript(OP_TRUE);
 
-    if (type == STAKED_COMMITMENT && tokenId.IsNull()) {
-        auto stakeRp = rp.Prove(vs, nonce, {}, tokenId, minStake);
+        if (type == STAKED_COMMITMENT && tokenId.IsNull()) {
+            auto stakeRp = rp.Prove(vs, nonce, {}, tokenId, minStake);
 
-        stakeRp.Vs.Clear();
+            stakeRp.Vs.Clear();
 
-        DataStream ss{};
-        ss << stakeRp;
+            DataStream ss{};
+            ss << Using<bulletproofs_plus::RangeProofWithoutVs<T>>(stakeRp);
 
-        ret.out.scriptPubKey = CScript() << OP_STAKED_COMMITMENT << blsct::Common::DataStreamToVector(ss) << OP_DROP << OP_TRUE;
+            ret.out.scriptPubKey = CScript() << OP_STAKED_COMMITMENT << blsct::Common::DataStreamToVector(ss) << OP_DROP << OP_TRUE;
+        }
+        if (tokenId.IsNFT()) {
+            ret.out.nValue = nAmount;
+        } else {
+            auto p = rp.Prove(vs, nonce, memo, tokenId);
+            ret.out.blsctData.rangeProof = p;
+        }
+        ret.GenerateKeys(ret.blindingKey, destKeys);
+        HashWriter hash{};
+        hash << nonce;
+        ret.out.blsctData.viewTag = (hash.GetHash().GetUint64(0) & 0xFFFF);
+    } else {
+        ret.out.scriptPubKey = CScript(OP_RETURN);
     }
-
-    auto p = rp.Prove(vs, nonce, memo, tokenId);
-    ret.out.blsctData.rangeProof = p;
-
-    HashWriter hash{};
-    hash << nonce;
-
-    ret.GenerateKeys(blindingKey, destKeys);
-    ret.out.blsctData.viewTag = (hash.GetHash().GetUint64(0) & 0xFFFF);
 
     return ret;
 }
@@ -101,6 +146,7 @@ CTransactionRef AggregateTransactions(const std::vector<CTransactionRef>& txs)
     auto ret = CMutableTransaction();
     std::vector<Signature> vSigs;
     CAmount nFee = 0;
+    std::vector<blsct::PublicKey> feePublicKeys;
 
     for (auto& tx : txs) {
         vSigs.push_back(tx->txSig);
@@ -108,15 +154,24 @@ CTransactionRef AggregateTransactions(const std::vector<CTransactionRef>& txs)
             ret.vin.push_back(in);
         }
         for (auto& out : tx->vout) {
-            if (out.scriptPubKey.IsFee()) {
-                nFee += out.nValue;
-                continue;
+            if (out.IsFee()) {
+                if (out.predicate.size() > 0) {
+                    auto parsedPredicate = blsct::ParsePredicate(out.predicate);
+                    if (parsedPredicate.IsPayFeePredicate()) {
+                        feePublicKeys.push_back(parsedPredicate.GetPublicKey());
+                        nFee += out.nValue;
+                        continue;
+                    }
+                }
             }
             ret.vout.push_back(out);
         }
     }
 
-    ret.vout.emplace_back(nFee, CScript{OP_RETURN});
+    CTxOut feeOut(nFee, CScript{OP_RETURN});
+    feeOut.predicate = blsct::PayFeePredicate(blsct::PublicKeys(feePublicKeys).Aggregate()).GetVch();
+
+    ret.vout.emplace_back(feeOut);
 
     ret.txSig = blsct::Signature::Aggregate(vSigs);
     ret.nVersion = CTransaction::BLSCT_MARKER;

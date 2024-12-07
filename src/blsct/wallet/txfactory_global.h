@@ -6,7 +6,9 @@
 #define TXFACTORY_GLOBAL_H
 
 #include <blsct/double_public_key.h>
-#include <blsct/range_proof/bulletproofs/range_proof_logic.h>
+#include <blsct/public_keys.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
+#include <blsct/tokens/info.h>
 #include <primitives/transaction.h>
 
 using T = Mcl;
@@ -18,13 +20,24 @@ using Scalars = Elements<Scalar>;
 #define BLSCT_DEFAULT_FEE 125
 
 namespace blsct {
+enum CreateTransactionType {
+    NORMAL,
+    STAKED_COMMITMENT,
+    STAKED_COMMITMENT_UNSTAKE,
+    TX_CREATE_TOKEN,
+    TX_MINT_TOKEN
+};
+
 struct UnsignedOutput {
     CTxOut out;
     Scalar blindingKey;
     Scalar value;
     Scalar gamma;
+    Scalar tokenKey;
+    CreateTransactionType type;
 
-    void GenerateKeys(Scalar blindingKey, DoublePublicKey destKeys);
+    void
+    GenerateKeys(Scalar blindingKey, DoublePublicKey destKeys);
 
     Signature GetSignature() const;
 
@@ -58,16 +71,14 @@ struct UnsignedInput {
 struct Amounts {
     CAmount nFromInputs;
     CAmount nFromOutputs;
-};
-
-enum CreateTransactionType {
-    NORMAL,
-    STAKED_COMMITMENT,
-    STAKED_COMMITMENT_UNSTAKE
+    CAmount nFromFee;
 };
 
 CTransactionRef
 AggregateTransactions(const std::vector<CTransactionRef>& txs);
+UnsignedOutput CreateOutput(const Scalar& tokenKey, const blsct::TokenInfo& tokenInfo);
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey);
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata);
 UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId = TokenId(), const Scalar& blindingKey = Scalar::Rand(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0);
 int32_t GetTransactionWeight(const CTransaction& tx);
 int32_t GetTransactioOutputWeight(const CTxOut& out);

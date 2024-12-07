@@ -9,6 +9,7 @@
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/building_block/generator_deriver.h>
 #include <blsct/range_proof/proof_base.h>
 #include <ctokens/tokenid.h>
 #include <span.h>
@@ -43,30 +44,80 @@ struct RangeProof: public range_proof::ProofBase<T> {
     void Serialize(Stream& s) const
     {
         range_proof::ProofBase<T>::Serialize(s);
-        ::Serialize(s, token_id);
-        ::Serialize(s, A);
-        ::Serialize(s, A_wip);
-        ::Serialize(s, B);
-        ::Serialize(s, r_prime);
-        ::Serialize(s, s_prime);
-        ::Serialize(s, delta_prime);
-        ::Serialize(s, alpha_hat);
-        ::Serialize(s, tau_x);
+        if (range_proof::ProofBase<T>::Vs.Size() > 0) {
+            ::Serialize(s, A);
+            ::Serialize(s, A_wip);
+            ::Serialize(s, B);
+            ::Serialize(s, r_prime);
+            ::Serialize(s, s_prime);
+            ::Serialize(s, delta_prime);
+            ::Serialize(s, alpha_hat);
+            ::Serialize(s, tau_x);
+        }
     }
 
     template <typename Stream>
     void Unserialize(Stream& s)
     {
         range_proof::ProofBase<T>::Unserialize(s);
-        ::Unserialize(s, token_id);
-        ::Unserialize(s, A);
-        ::Unserialize(s, A_wip);
-        ::Unserialize(s, B);
-        ::Unserialize(s, r_prime);
-        ::Unserialize(s, s_prime);
-        ::Unserialize(s, delta_prime);
-        ::Unserialize(s, alpha_hat);
-        ::Unserialize(s, tau_x);
+        if (range_proof::ProofBase<T>::Vs.Size() > 0) {
+            ::Unserialize(s, A);
+            ::Unserialize(s, A_wip);
+            ::Unserialize(s, B);
+            ::Unserialize(s, r_prime);
+            ::Unserialize(s, s_prime);
+            ::Unserialize(s, delta_prime);
+            ::Unserialize(s, alpha_hat);
+            ::Unserialize(s, tau_x);
+        }
+    }
+};
+
+template <typename T>
+struct RangeProofWithSeed : public RangeProof<T> {
+    RangeProofWithSeed(const RangeProof<T>& proof, const typename GeneratorDeriver<T>::Seed& seed, const typename T::Scalar& min_value) : RangeProof<T>(proof), seed(seed), min_value(min_value){};
+
+    RangeProofWithSeed(const RangeProof<T>& proof, const typename GeneratorDeriver<T>::Seed& seed) : RangeProof<T>(proof), seed(seed), min_value(0){};
+
+    RangeProofWithSeed(const RangeProof<T>& proof) : RangeProof<T>(proof), seed(TokenId()), min_value(0){};
+
+    RangeProofWithSeed(){};
+
+    bool operator==(const RangeProofWithSeed<T>& other) const;
+    bool operator!=(const RangeProofWithSeed<T>& other) const;
+
+    template <typename Stream>
+    void Serialize(Stream& s) const
+    {
+        RangeProof<T>::Serialize(s);
+    }
+
+    template <typename Stream>
+    void Unserialize(Stream& s)
+    {
+        RangeProof<T>::Unserialize(s);
+    }
+
+    // seed to derive generators
+    typename GeneratorDeriver<T>::Seed seed;
+
+    // min value for proof verification
+    typename T::Scalar min_value;
+};
+
+template <typename T>
+struct RangeProofWithoutVs {
+    FORMATTER_METHODS(RangeProof<T>, obj)
+    {
+        READWRITE(Using<range_proof::ProofBaseWithoutVs<T>>(obj), obj.A, obj.A_wip, obj.B, obj.r_prime, obj.s_prime, obj.delta_prime, obj.alpha_hat, obj.tau_x);
+    }
+};
+
+template <typename T>
+struct RangeProofCompressedForRecovery {
+    FORMATTER_METHODS(RangeProof<T>, obj)
+    {
+        READWRITE(Using<range_proof::ProofBase<T>>(obj), obj.A_wip, obj.B, obj.alpha_hat, obj.tau_x);
     }
 };
 

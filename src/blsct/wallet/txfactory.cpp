@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory.h>
 
 using T = Mcl;
@@ -30,7 +31,7 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
     vInputs[coin.out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, km->GetSpendingKeyForOutput(coin.out), stakedCommitment});
 
     if (nAmounts.count(coin.out.tokenId) == 0)
-        nAmounts[coin.out.tokenId] = {0, 0};
+        nAmounts[coin.out.tokenId] = {0, 0, 0};
 
     nAmounts[coin.out.tokenId].nFromInputs += recoveredInfo.amounts[0].amount;
 
@@ -56,7 +57,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
     vInputs[out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, km->GetSpendingKeyForOutput(out), stakedCommitment});
 
     if (nAmounts.count(out.tokenId) == 0)
-        nAmounts[out.tokenId] = {0, 0};
+        nAmounts[out.tokenId] = {0, 0, 0};
 
     nAmounts[out.tokenId].nFromInputs += recoveredInfo.amount;
 
@@ -69,18 +70,24 @@ TxFactory::BuildTx()
     return TxFactoryBase::BuildTx(std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value()));
 }
 
-std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake)
+
+std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)
 {
     LOCK(wallet->cs_wallet);
 
     std::vector<InputCandidates> inputCandidates;
 
-    TxFactoryBase::AddAvailableCoins(wallet, blsct_km, token_id, type, inputCandidates);
+    TxFactoryBase::AddAvailableCoins(wallet, blsct_km, transactionData.token_id, transactionData.type, inputCandidates);
 
-    auto changeType = type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE ? STAKING_ACCOUNT : CHANGE_ACCOUNT;
-    auto changeAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(changeType).value());
+    auto changeType = transactionData.type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE ? STAKING_ACCOUNT : CHANGE_ACCOUNT;
 
-    return TxFactoryBase::CreateTransaction(inputCandidates, changeAddress, destination, nAmount, sMemo, token_id, type, minStake);
+    transactionData.changeDestination = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(changeType).value());
+
+    if (transactionData.type == TX_CREATE_TOKEN || transactionData.type == TX_MINT_TOKEN) {
+        transactionData.tokenKey = blsct_km->GetTokenKey((HashWriter{} << transactionData.tokenInfo.mapMetadata << transactionData.tokenInfo.nTotalSupply).GetHash()).GetScalar();
+    }
+
+    return TxFactoryBase::CreateTransaction(inputCandidates, transactionData);
 }
 
 } // namespace blsct

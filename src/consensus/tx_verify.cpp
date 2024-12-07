@@ -208,7 +208,7 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, TxValidationState& state, 
         txfee = txfee_aux;
     } else {
         for (auto& out : tx.vout) {
-            if (out.scriptPubKey.IsFee())
+            if (out.IsFee())
                 txfee = out.nValue;
         }
     }

@@ -386,19 +386,13 @@ const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out);
 uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
 
 const BlsctPoint* get_tx_out_range_proof_A(const CTxOut* tx_out);
-const BlsctPoint* get_tx_out_range_proof_S(const CTxOut* tx_out);
-const BlsctPoint* get_tx_out_range_proof_T1(const CTxOut* tx_out);
-const BlsctPoint* get_tx_out_range_proof_T2(const CTxOut* tx_out);
-
-const BlsctScalar* get_tx_out_range_proof_mu(const CTxOut* tx_out);
-const BlsctScalar* get_tx_out_range_proof_a(const CTxOut* tx_out);
-const BlsctScalar* get_tx_out_range_proof_b(const CTxOut* tx_out);
-const BlsctScalar* get_tx_out_range_proof_t_hat(const CTxOut* tx_out);
-
-const BlsctSignature* sign_message(
-    const BlsctScalar* blsct_priv_key,
-    const char* blsct_msg
-);
+const BlsctPoint* get_tx_out_range_proof_A_wip(const CTxOut* tx_out);
+const BlsctPoint* get_tx_out_range_proof_B(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_r_prime(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_s_prime(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_delta_prime(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_alpha_hat(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_tau_x(const CTxOut* tx_out);
 
 bool verify_msg_sig(
     const BlsctPubKey* blsct_pub_key,

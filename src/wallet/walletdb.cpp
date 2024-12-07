@@ -1421,8 +1421,8 @@ static DBErrors LoadTxRecords(CWallet* pwallet, DatabaseBatch& batch, std::vecto
                 return false;
             }
             value >> wtx;
-            if (wtx.GetHash() != hash)
-                return false;
+
+            if (wtx.GetHash() != hash) return false;
 
             // Undo serialize changes in 31600
             if (31404 <= wtx.fTimeReceivedIsTxTime && wtx.fTimeReceivedIsTxTime <= 31703)

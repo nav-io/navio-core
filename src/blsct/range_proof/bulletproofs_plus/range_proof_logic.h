@@ -10,10 +10,11 @@
 #include <vector>
 
 #include <blsct/arith/elements.h>
-#include <blsct/range_proof/common.h>
+#include <blsct/building_block/generator_deriver.h>
 #include <blsct/range_proof/bulletproofs_plus/amount_recovery_request.h>
 #include <blsct/range_proof/bulletproofs_plus/amount_recovery_result.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_with_transcript.h>
+#include <blsct/range_proof/common.h>
 #include <blsct/range_proof/recovered_data.h>
 #include <consensus/amount.h>
 #include <ctokens/tokenid.h>
@@ -29,19 +30,19 @@ class RangeProofLogic
 public:
     using Scalar = typename T::Scalar;
     using Point = typename T::Point;
+    using Seed = typename GeneratorDeriver<T>::Seed;
     using Scalars = Elements<Scalar>;
     using Points = Elements<Point>;
 
     RangeProof<T> Prove(
-        Scalars& vs,
-        Point& nonce,
+        Scalars vs,
+        const range_proof::GammaSeed<T>& nonce,
         const std::vector<uint8_t>& message,
-        const TokenId& token_id
-    );
+        const Seed& seed,
+        const typename T::Scalar& minValue = 0);
 
     bool Verify(
-        const std::vector<RangeProof<T>>& proofs
-    );
+        const std::vector<RangeProofWithSeed<T>>& proofs);
 
     AmountRecoveryResult<T> RecoverAmounts(
         const std::vector<AmountRecoveryRequest<T>>& reqs
@@ -101,9 +102,7 @@ private:
     static size_t GetNumLeadingZeros(const uint32_t& n);
 
     bool VerifyProofs(
-        const std::vector<RangeProofWithTranscript<T>>& proof_transcripts,
-        const size_t& max_mn
-    );
+        const std::vector<RangeProofWithTranscript<T>>& proof_transcripts);
 
     range_proof::Common<T> m_common;
 };

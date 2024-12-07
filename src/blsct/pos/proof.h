@@ -8,8 +8,8 @@
 #include <arith_uint256.h>
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/pos/helpers.h>
-#include <blsct/range_proof/bulletproofs/range_proof.h>
-#include <blsct/range_proof/bulletproofs/range_proof_logic.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/set_mem_proof/set_mem_proof.h>
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <uint256.h>
@@ -19,7 +19,7 @@ using Point = Arith::Point;
 using Scalar = Arith::Scalar;
 using Points = Elements<Point>;
 using SetProof = SetMemProof<Arith>;
-using RangeProof = bulletproofs::RangeProof<Arith>;
+using RangeProof = bulletproofs_plus::RangeProof<Arith>;
 
 namespace blsct {
 class ProofOfStake

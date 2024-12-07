@@ -114,7 +114,6 @@ TransactionError BroadcastTransaction(NodeContext& node, const CTransactionRef t
         // transaction entering the mempool.
         promise.get_future().wait();
     }
-
     if (relay) {
         node.peerman->RelayTransaction(txid, wtxid);
     }

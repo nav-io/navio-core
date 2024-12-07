@@ -217,56 +217,51 @@ liststakedcommitments()
 
 RPCHelpMan getbalance()
 {
-    return RPCHelpMan{"getbalance",
-                "\nReturns the total available balance.\n"
-                "The available balance is what the wallet considers currently spendable, and is\n"
-                "thus affected by options which limit spendability such as -spendzeroconfchange.\n",
-                {
-                    {"dummy", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Remains for backward compatibility. Must be excluded or set to \"*\"."},
-                    {"minconf", RPCArg::Type::NUM, RPCArg::Default{0}, "Only include transactions confirmed at least this many times."},
-                    {"include_watchonly", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for watch-only wallets, otherwise false"}, "Also include balance in watch-only addresses (see 'importaddress')"},
-                    {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{true}, "(only available if avoid_reuse wallet flag is set) Do not include balance in dirty outputs; addresses are considered dirty if they have previously been used in a transaction."},
-                },
-                RPCResult{
-                    RPCResult::Type::STR_AMOUNT, "amount", "The total amount in " + CURRENCY_UNIT + " received for this wallet."
-                },
-                RPCExamples{
-            "\nThe total amount in the wallet with 0 or more confirmations\n"
-            + HelpExampleCli("getbalance", "") +
-            "\nThe total amount in the wallet with at least 6 confirmations\n"
-            + HelpExampleCli("getbalance", "\"*\" 6") +
-            "\nAs a JSON-RPC call\n"
-            + HelpExampleRpc("getbalance", "\"*\", 6")
-                },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
-    if (!pwallet) return UniValue::VNULL;
+    return RPCHelpMan{
+        "getbalance",
+        "\nReturns the total available balance.\n"
+        "The available balance is what the wallet considers currently spendable, and is\n"
+        "thus affected by options which limit spendability such as -spendzeroconfchange.\n",
+        {
+            {"dummy", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Remains for backward compatibility. Must be excluded or set to \"*\"."},
+            {"minconf", RPCArg::Type::NUM, RPCArg::Default{0}, "Only include transactions confirmed at least this many times."},
+            {"include_watchonly", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for watch-only wallets, otherwise false"}, "Also include balance in watch-only addresses (see 'importaddress')"},
+            {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{true}, "(only available if avoid_reuse wallet flag is set) Do not include balance in dirty outputs; addresses are considered dirty if they have previously been used in a transaction."},
+        },
+        RPCResult{
+            RPCResult::Type::STR_AMOUNT, "amount", "The total amount in " + CURRENCY_UNIT + " received for this wallet."},
+        RPCExamples{
+            "\nThe total amount in the wallet with 0 or more confirmations\n" + HelpExampleCli("getbalance", "") +
+            "\nThe total amount in the wallet with at least 6 confirmations\n" + HelpExampleCli("getbalance", "\"*\" 6") +
+            "\nAs a JSON-RPC call\n" + HelpExampleRpc("getbalance", "\"*\", 6")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
 
-    // Make sure the results are valid at least up to the most recent block
-    // the user could have gotten from another RPC command prior to now
-    pwallet->BlockUntilSyncedToCurrentChain();
+            // Make sure the results are valid at least up to the most recent block
+            // the user could have gotten from another RPC command prior to now
+            pwallet->BlockUntilSyncedToCurrentChain();
 
-    LOCK(pwallet->cs_wallet);
+            LOCK(pwallet->cs_wallet);
 
-    const auto dummy_value{self.MaybeArg<std::string>(0)};
-    if (dummy_value && *dummy_value != "*") {
-        throw JSONRPCError(RPC_METHOD_DEPRECATED, "dummy first argument must be excluded or set to \"*\".");
-    }
+            const auto dummy_value{self.MaybeArg<std::string>(0)};
+            if (dummy_value && *dummy_value != "*") {
+                throw JSONRPCError(RPC_METHOD_DEPRECATED, "dummy first argument must be excluded or set to \"*\".");
+            }
 
-    int min_depth = 0;
-    if (!request.params[1].isNull()) {
-        min_depth = request.params[1].getInt<int>();
-    }
+            int min_depth = 0;
+            if (!request.params[1].isNull()) {
+                min_depth = request.params[1].getInt<int>();
+            }
 
-    bool include_watchonly = ParseIncludeWatchonly(request.params[2], *pwallet);
+            bool include_watchonly = ParseIncludeWatchonly(request.params[2], *pwallet);
 
-    bool avoid_reuse = GetAvoidReuseFlag(*pwallet, request.params[3]);
+            bool avoid_reuse = GetAvoidReuseFlag(*pwallet, request.params[3]);
 
-    const auto bal = GetBalance(*pwallet, min_depth, avoid_reuse);
+            const auto bal = GetBalance(*pwallet, min_depth, avoid_reuse);
 
-    return ValueFromAmount(bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0));
-},
+            return ValueFromAmount(bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0));
+        },
     };
 }
 

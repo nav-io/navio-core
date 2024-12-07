@@ -67,6 +67,11 @@ Signature PrivateKey::SignBalance() const
     return CoreSign(Common::BLSCTBALANCE);
 }
 
+Signature PrivateKey::SignFee() const
+{
+    return CoreSign(Common::BLSCTFEE);
+}
+
 Signature PrivateKey::Sign(const uint256& msg) const
 {
     return Sign(Message(msg.begin(), msg.end()));

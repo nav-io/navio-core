@@ -184,32 +184,27 @@ static RPCHelpMan listwalletdir()
 
 static RPCHelpMan listwallets()
 {
-    return RPCHelpMan{"listwallets",
-                "Returns a list of currently loaded wallets.\n"
-                "For full information on the wallet, use \"getwalletinfo\"\n",
-                {},
-                RPCResult{
-                    RPCResult::Type::ARR, "", "",
-                    {
-                        {RPCResult::Type::STR, "walletname", "the wallet name"},
-                    }
-                },
-                RPCExamples{
-                    HelpExampleCli("listwallets", "")
-            + HelpExampleRpc("listwallets", "")
-                },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    UniValue obj(UniValue::VARR);
+    return RPCHelpMan{
+        "listwallets",
+        "Returns a list of currently loaded wallets.\n"
+        "For full information on the wallet, use \"getwalletinfo\"\n",
+        {},
+        RPCResult{
+            RPCResult::Type::ARR, "", "", {
+                                              {RPCResult::Type::STR, "walletname", "the wallet name"},
+                                          }},
+        RPCExamples{HelpExampleCli("listwallets", "") + HelpExampleRpc("listwallets", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            UniValue obj(UniValue::VARR);
 
-    WalletContext& context = EnsureWalletContext(request.context);
-    for (const std::shared_ptr<CWallet>& wallet : GetWallets(context)) {
-        LOCK(wallet->cs_wallet);
-        obj.push_back(wallet->GetName());
-    }
+            WalletContext& context = EnsureWalletContext(request.context);
+            for (const std::shared_ptr<CWallet>& wallet : GetWallets(context)) {
+                LOCK(wallet->cs_wallet);
+                obj.push_back(wallet->GetName());
+            }
 
-    return obj;
-},
+            return obj;
+        },
     };
 }
 
@@ -877,11 +872,8 @@ RPCHelpMan encryptwallet();
 
 // spend
 RPCHelpMan sendtoaddress();
-RPCHelpMan sendtoblsctaddress();
 RPCHelpMan sendmany();
 RPCHelpMan settxfee();
-RPCHelpMan stakelock();
-RPCHelpMan stakeunlock();
 RPCHelpMan fundrawtransaction();
 RPCHelpMan bumpfee();
 RPCHelpMan psbtbumpfee();
@@ -963,7 +955,6 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &send},
         {"wallet", &sendmany},
         {"wallet", &sendtoaddress},
-        {"wallet", &sendtoblsctaddress},
         {"wallet", &sethdseed},
         {"wallet", &setlabel},
         {"wallet", &settxfee},
@@ -972,8 +963,6 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &signrawtransactionwithwallet},
         {"wallet", &simulaterawtransaction},
         {"wallet", &sendall},
-        {"wallet", &stakelock},
-        {"wallet", &stakeunlock},
         {"wallet", &unloadwallet},
         {"wallet", &upgradewallet},
         {"wallet", &walletcreatefundedpsbt},

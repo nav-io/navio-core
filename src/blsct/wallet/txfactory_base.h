@@ -10,10 +10,60 @@
 #include <wallet/spend.h>
 
 namespace blsct {
+struct CreateTransactionData {
+    CreateTransactionType type;
+    blsct::TokenInfo tokenInfo;
+    blsct::DoublePublicKey changeDestination;
+    SubAddress destination;
+    CAmount nAmount;
+    std::string sMemo;
+    TokenId token_id;
+    CAmount minStake;
 
-enum class CreateOutputType {
-    NORMAL,
-    STAKED_COMMITMENT
+    Scalar tokenKey;
+    std::map<std::string, std::string> nftMetadata;
+
+    CreateTransactionData(const blsct::DoublePublicKey& changeDestination,
+                          const SubAddress& destination,
+                          const CAmount& nAmount,
+                          const std::string& sMemo,
+                          const TokenId& token_id,
+                          const CreateTransactionType& type,
+                          const CAmount& minStake) : type(type),
+                                                     changeDestination(changeDestination),
+                                                     destination(destination),
+                                                     nAmount(nAmount),
+                                                     sMemo(sMemo),
+                                                     token_id(token_id),
+                                                     minStake(minStake)
+    {
+    }
+
+    CreateTransactionData(const SubAddress& destination,
+                          const CAmount& nAmount,
+                          const std::string& sMemo,
+                          const TokenId& token_id,
+                          const CreateTransactionType& type,
+                          const CAmount& minStake) : type(type),
+                                                     destination(destination),
+                                                     nAmount(nAmount),
+                                                     sMemo(sMemo),
+                                                     token_id(token_id),
+                                                     minStake(minStake) {}
+
+
+    CreateTransactionData(const SubAddress& destination,
+                          const CAmount& nAmount,
+                          const std::string& sMemo) : type(NORMAL),
+                                                      destination(destination),
+                                                      nAmount(nAmount),
+                                                      sMemo(sMemo) {}
+
+    CreateTransactionData(const blsct::TokenInfo& tokenInfo) : type(TX_CREATE_TOKEN), tokenInfo(tokenInfo) {}
+
+    CreateTransactionData(const blsct::TokenInfo& tokenInfo, const CAmount& mintAmount, const SubAddress& destination) : type(TX_MINT_TOKEN), tokenInfo(tokenInfo), destination(destination), nAmount(mintAmount), token_id(TokenId(tokenInfo.publicKey.GetHash())) {}
+
+    CreateTransactionData(const blsct::TokenInfo& tokenInfo, const uint64_t& nftId, const SubAddress& destination, const std::map<std::string, std::string>& nftMetadata) : type(TX_MINT_TOKEN), tokenInfo(tokenInfo), destination(destination), token_id(TokenId(tokenInfo.publicKey.GetHash(), nftId)), nftMetadata(nftMetadata) {}
 };
 
 struct InputCandidates {
@@ -29,20 +79,29 @@ class TxFactoryBase
 {
 protected:
     CMutableTransaction tx;
-    std::map<TokenId, std::vector<UnsignedOutput>> vOutputs;
-    std::map<TokenId, std::vector<UnsignedInput>> vInputs;
-    std::map<TokenId, Amounts> nAmounts;
+    std::map<TokenId, std::vector<UnsignedOutput>>
+        vOutputs;
+    std::map<TokenId, std::vector<UnsignedInput>>
+        vInputs;
+    std::map<TokenId, Amounts>
+        nAmounts;
 
 public:
     TxFactoryBase(){};
 
-    void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = CreateTransactionType::NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false);
+    // Normal transfer
+    void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false);
+    // Create Token
+    void AddOutput(const Scalar& tokenKey, const blsct::TokenInfo& tokenInfo);
+    // Mint Token
+    void AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const CAmount& mintAmount);
+    // Mint NFT
+    void AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata);
     bool AddInput(const CAmount& amount, const MclScalar& gamma, const blsct::PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false);
-    std::optional<CMutableTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = CreateTransactionType::NORMAL, const bool& fSubtractedFee = false);
-    static std::optional<CMutableTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const blsct::DoublePublicKey& changeDestination, const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = CreateTransactionType::NORMAL, const CAmount& minStake = 0);
+    std::optional<CMutableTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false);
+    static std::optional<CMutableTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData);
     static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
     static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
-
 };
 
 } // namespace blsct

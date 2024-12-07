@@ -194,9 +194,6 @@ void Common<T>::ValidateProofsBySizes(
 template void Common<Mcl>::ValidateProofsBySizes(
     const std::vector<bulletproofs::RangeProofWithSeed<Mcl>>&);
 template void Common<Mcl>::ValidateProofsBySizes(
-    const std::vector<bulletproofs_plus::RangeProof<Mcl>>&
-);
-
-
+    const std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>&);
 }
 

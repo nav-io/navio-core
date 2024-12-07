@@ -11,11 +11,14 @@
 #include <util/trace.h>
 
 bool CCoinsView::GetCoin(const COutPoint& outpoint, Coin& coin) const { return false; }
+bool CCoinsView::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const { return false; }
+bool CCoinsView::GetAllTokens(TokensMap& tokensMap) const { return false; };
 uint256 CCoinsView::GetBestBlock() const { return uint256(); }
 OrderedElements<MclG1Point> CCoinsView::GetStakedCommitments() const { return OrderedElements<MclG1Point>(); };
 std::vector<uint256> CCoinsView::GetHeadBlocks() const { return std::vector<uint256>(); }
-bool CCoinsView::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase) { return false; }
+bool CCoinsView::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase) { return false; }
 std::unique_ptr<CCoinsViewCursor> CCoinsView::Cursor() const { return nullptr; }
+std::unique_ptr<CTokensViewCursor> CCoinsView::CursorTokens() const { return nullptr; }
 
 bool CCoinsView::HaveCoin(const COutPoint& outpoint) const
 {
@@ -23,15 +26,26 @@ bool CCoinsView::HaveCoin(const COutPoint& outpoint) const
     return GetCoin(outpoint, coin);
 }
 
+bool CCoinsView::HaveToken(const uint256& tokenId) const
+{
+    blsct::TokenEntry token;
+    return GetToken(tokenId, token);
+}
+
 CCoinsViewBacked::CCoinsViewBacked(CCoinsView* viewIn) : base(viewIn) {}
 bool CCoinsViewBacked::GetCoin(const COutPoint& outpoint, Coin& coin) const { return base->GetCoin(outpoint, coin); }
 bool CCoinsViewBacked::HaveCoin(const COutPoint& outpoint) const { return base->HaveCoin(outpoint); }
+bool CCoinsViewBacked::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const { return base->GetToken(tokenId, token); }
+bool CCoinsViewBacked::GetAllTokens(TokensMap& tokensMap) const { return base->GetAllTokens(tokensMap); };
+bool CCoinsViewBacked::HaveToken(const uint256& tokenId) const { return base->HaveToken(tokenId); }
 uint256 CCoinsViewBacked::GetBestBlock() const { return base->GetBestBlock(); }
 OrderedElements<MclG1Point> CCoinsViewBacked::GetStakedCommitments() const { return base->GetStakedCommitments(); };
 std::vector<uint256> CCoinsViewBacked::GetHeadBlocks() const { return base->GetHeadBlocks(); }
 void CCoinsViewBacked::SetBackend(CCoinsView &viewIn) { base = &viewIn; }
-bool CCoinsViewBacked::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase) { return base->BatchWrite(mapCoins, hashBlock, stakedCommitments, erase); }
+bool CCoinsViewBacked::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase) { return base->BatchWrite(mapCoins, hashBlock, stakedCommitments, tokensMap, erase); }
 std::unique_ptr<CCoinsViewCursor> CCoinsViewBacked::Cursor() const { return base->Cursor(); }
+std::unique_ptr<CTokensViewCursor> CCoinsViewBacked::CursorTokens() const { return base->CursorTokens(); }
+
 size_t CCoinsViewBacked::EstimateSize() const { return base->EstimateSize(); }
 
 CCoinsViewCache::CCoinsViewCache(CCoinsView* baseIn, bool deterministic) :
@@ -118,6 +132,60 @@ void CCoinsViewCache::AddCoin(const COutPoint& outpoint, Coin&& coin, bool possi
     }
 }
 
+TokensMap::iterator CCoinsViewCache::FetchToken(const uint256& tokenId) const
+{
+    TokensMap::iterator it = cacheTokens.find(tokenId);
+    if (it != cacheTokens.end()) {
+        return it;
+    }
+    blsct::TokenEntry tmp;
+    if (!base->GetToken(tokenId, tmp))
+        return cacheTokens.end();
+
+    TokensMap::iterator ret = cacheTokens.emplace(std::piecewise_construct, std::forward_as_tuple(tokenId), std::forward_as_tuple(std::move(tmp))).first;
+    return ret;
+}
+
+bool CCoinsViewCache::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const
+{
+    TokensMap::const_iterator it = FetchToken(tokenId);
+    if (it != cacheTokens.end()) {
+        token = it->second.token;
+        return !it->second.IsErased();
+    }
+    return false;
+}
+
+bool CCoinsViewCache::GetAllTokens(TokensMap& tokensMap) const
+{
+    if (!base->GetAllTokens(tokensMap))
+        return false;
+
+    for (auto& it : cacheTokens) {
+        if (!it.second.IsErased())
+            tokensMap[it.first] = it.second;
+    };
+
+    return true;
+};
+
+void CCoinsViewCache::AddToken(const uint256& tokenId, blsct::TokenEntry&& token)
+{
+    TokensMap::iterator it;
+    bool inserted;
+    std::tie(it, inserted) = cacheTokens.emplace(std::piecewise_construct, std::forward_as_tuple(tokenId), std::tuple<>());
+    it->second.token = std::move(token);
+    it->second.flags |= TokenCacheEntry::WRITE;
+}
+
+void CCoinsViewCache::EraseToken(const uint256& tokenId)
+{
+    TokensMap::iterator it;
+    bool inserted;
+    std::tie(it, inserted) = cacheTokens.emplace(std::piecewise_construct, std::forward_as_tuple(tokenId), std::tuple<>());
+    it->second.flags |= TokenCacheEntry::ERASE;
+}
+
 void CCoinsViewCache::EmplaceCoinInternalDANGER(COutPoint&& outpoint, Coin&& coin)
 {
     cachedCoinsUsage += coin.DynamicMemoryUsage();
@@ -194,6 +262,18 @@ bool CCoinsViewCache::HaveCoinInCache(const COutPoint& outpoint) const
     return (it != cacheCoins.end() && !it->second.coin.IsSpent());
 }
 
+bool CCoinsViewCache::HaveToken(const uint256& tokenId) const
+{
+    TokensMap::const_iterator it = FetchToken(tokenId);
+    return (it != cacheTokens.end() && !it->second.IsErased());
+}
+
+bool CCoinsViewCache::HaveTokenInCache(const uint256& tokenId) const
+{
+    TokensMap::const_iterator it = cacheTokens.find(tokenId);
+    return (it != cacheTokens.end() && !it->second.IsErased());
+}
+
 uint256 CCoinsViewCache::GetBestBlock() const
 {
     if (hashBlock.IsNull())
@@ -222,7 +302,7 @@ void CCoinsViewCache::SetBestBlock(const uint256& hashBlockIn)
     hashBlock = hashBlockIn;
 }
 
-bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn, CStakedCommitmentsMap& cacheStakedCommitmentsIn, bool erase)
+bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn, CStakedCommitmentsMap& cacheStakedCommitmentsIn, TokensMap& cacheTokensIn, bool erase)
 {
     for (CCoinsMap::iterator it = mapCoins.begin();
             it != mapCoins.end();
@@ -297,14 +377,19 @@ bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn
     };
     if (erase)
         cacheStakedCommitmentsIn.clear();
+    for (auto& it : cacheTokensIn) {
+        cacheTokens[it.first] = it.second;
+    };
+    if (erase)
+        cacheTokensIn.clear();
 
     return true;
 }
 
 bool CCoinsViewCache::Flush() {
-    bool fOk = base->BatchWrite(cacheCoins, hashBlock, cacheStakedCommitments, /*erase=*/true);
+    bool fOk = base->BatchWrite(cacheCoins, hashBlock, cacheStakedCommitments, cacheTokens, /*erase=*/true);
     if (fOk) {
-        if (!cacheCoins.empty() || cacheStakedCommitments.size() != 0) {
+        if (!cacheCoins.empty() || cacheStakedCommitments.size() != 0 || cacheTokens.size() != 0) {
             /* BatchWrite must erase all cacheCoins elements when erase=true. */
             throw std::logic_error("Not all cached coins were erased");
         }
@@ -316,7 +401,7 @@ bool CCoinsViewCache::Flush() {
 
 bool CCoinsViewCache::Sync()
 {
-    bool fOk = base->BatchWrite(cacheCoins, hashBlock, cacheStakedCommitments, /*erase=*/false);
+    bool fOk = base->BatchWrite(cacheCoins, hashBlock, cacheStakedCommitments, cacheTokens, /*erase=*/false);
     // Instead of clearing `cacheCoins` as we would in Flush(), just clear the
     // FRESH/DIRTY flags of any coin that isn't spent.
     for (auto it = cacheCoins.begin(); it != cacheCoins.end(); ) {
@@ -423,10 +508,27 @@ static bool ExecuteBackedWrapper(Func func, const std::vector<std::function<void
     }
 }
 
-bool CCoinsViewErrorCatcher::GetCoin(const COutPoint &outpoint, Coin &coin) const {
+bool CCoinsViewErrorCatcher::GetCoin(const COutPoint& outpoint, Coin& coin) const
+{
     return ExecuteBackedWrapper([&]() { return CCoinsViewBacked::GetCoin(outpoint, coin); }, m_err_callbacks);
 }
 
-bool CCoinsViewErrorCatcher::HaveCoin(const COutPoint &outpoint) const {
+bool CCoinsViewErrorCatcher::HaveCoin(const COutPoint& outpoint) const
+{
     return ExecuteBackedWrapper([&]() { return CCoinsViewBacked::HaveCoin(outpoint); }, m_err_callbacks);
+}
+
+bool CCoinsViewErrorCatcher::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const
+{
+    return ExecuteBackedWrapper([&]() { return CCoinsViewBacked::GetToken(tokenId, token); }, m_err_callbacks);
+}
+
+bool CCoinsViewErrorCatcher::GetAllTokens(TokensMap& tokensMap) const
+{
+    return ExecuteBackedWrapper([&]() { return CCoinsViewBacked::GetAllTokens(tokensMap); }, m_err_callbacks);
+}
+
+bool CCoinsViewErrorCatcher::HaveToken(const uint256& tokenId) const
+{
+    return ExecuteBackedWrapper([&]() { return CCoinsViewBacked::HaveToken(tokenId); }, m_err_callbacks);
 }

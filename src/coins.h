@@ -6,6 +6,7 @@
 #ifndef BITCOIN_COINS_H
 #define BITCOIN_COINS_H
 
+#include <blsct/tokens/info.h>
 #include <compressor.h>
 #include <core_memusage.h>
 #include <memusage.h>
@@ -160,6 +161,48 @@ using CCoinsMap = std::unordered_map<COutPoint,
 
 using CCoinsMapMemoryResource = CCoinsMap::allocator_type::ResourceType;
 
+struct TokenCacheEntry {
+    blsct::TokenEntry token;
+    unsigned char flags;
+
+    enum Flags {
+        WRITE = (1 << 0),
+        ERASE = (1 << 1)
+    };
+
+    TokenCacheEntry() : flags(0)
+    {
+    }
+    explicit TokenCacheEntry(blsct::TokenEntry&& token_) : token(std::move(token_)), flags(0) {}
+    TokenCacheEntry(blsct::TokenEntry&& token_, unsigned char flag) : token(std::move(token_)), flags(flag) {}
+
+    bool IsErased() const
+    {
+        return flags & ERASE;
+    }
+
+    void Erase()
+    {
+        flags |= ERASE;
+    }
+};
+
+using TokensMap = std::map<uint256, TokenCacheEntry>;
+
+/** Cursor for iterating over CoinsView tokens state */
+class CTokensViewCursor
+{
+public:
+    CTokensViewCursor() {}
+    virtual ~CTokensViewCursor() {}
+
+    virtual bool GetKey(uint256& key) const = 0;
+    virtual bool GetValue(blsct::TokenEntry& coin) const = 0;
+
+    virtual bool Valid() const = 0;
+    virtual void Next() = 0;
+};
+
 using CStakedCommitmentsMap = std::map<MclG1Point, char>;
 
 /** Cursor for iterating over CoinsView state */
@@ -195,6 +238,10 @@ public:
     //! Just check whether a given outpoint is unspent.
     virtual bool HaveCoin(const COutPoint& outpoint) const;
 
+    virtual bool GetToken(const uint256& tokenId, blsct::TokenEntry& token) const;
+    virtual bool GetAllTokens(TokensMap& tokensMap) const;
+    virtual bool HaveToken(const uint256& tokenId) const;
+
     //! Retrieve the block hash whose state this CCoinsView currently represents
     virtual uint256 GetBestBlock() const;
 
@@ -209,10 +256,11 @@ public:
 
     //! Do a bulk modification (multiple Coin changes + BestBlock change).
     //! The passed mapCoins can be modified.
-    virtual bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase = true);
+    virtual bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true);
 
     //! Get a cursor to iterate over the whole state
     virtual std::unique_ptr<CCoinsViewCursor> Cursor() const;
+    virtual std::unique_ptr<CTokensViewCursor> CursorTokens() const;
 
     //! As we use CCoinsViews polymorphically, have a virtual destructor
     virtual ~CCoinsView() {}
@@ -232,12 +280,17 @@ public:
     CCoinsViewBacked(CCoinsView* viewIn);
     bool GetCoin(const COutPoint& outpoint, Coin& coin) const override;
     bool HaveCoin(const COutPoint& outpoint) const override;
+    bool GetToken(const uint256& tokenId, blsct::TokenEntry& token) const override;
+    bool GetAllTokens(TokensMap& tokensMap) const override;
+    bool HaveToken(const uint256& tokenId) const override;
     uint256 GetBestBlock() const override;
     OrderedElements<MclG1Point> GetStakedCommitments() const override;
     std::vector<uint256> GetHeadBlocks() const override;
     void SetBackend(CCoinsView &viewIn);
-    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase = true) override;
+    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override;
+    std::unique_ptr<CTokensViewCursor> CursorTokens() const override;
+
     size_t EstimateSize() const override;
 };
 
@@ -257,6 +310,7 @@ protected:
     mutable CCoinsMapMemoryResource m_cache_coins_memory_resource{};
     mutable CCoinsMap cacheCoins;
     mutable CStakedCommitmentsMap cacheStakedCommitments;
+    mutable TokensMap cacheTokens;
 
     /* Cached dynamic memory usage for the inner Coin objects. */
     mutable size_t cachedCoinsUsage{0};
@@ -273,12 +327,19 @@ public:
     bool GetCoin(const COutPoint& outpoint, Coin& coin) const override;
     bool HaveCoin(const COutPoint& outpoint) const override;
     uint256 GetBestBlock() const override;
+    bool GetToken(const uint256& tokenId, blsct::TokenEntry& token) const override;
+    bool HaveToken(const uint256& tokenId) const override;
     OrderedElements<MclG1Point> GetStakedCommitments() const override;
     void SetBestBlock(const uint256 &hashBlock);
-    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, bool erase = true) override;
+    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override {
         throw std::logic_error("CCoinsViewCache cursor iteration not supported.");
     }
+    std::unique_ptr<CTokensViewCursor> CursorTokens() const override
+    {
+        throw std::logic_error("CCoinsViewCache token cursor iteration not supported.");
+    }
+    bool GetAllTokens(TokensMap& tokensMap) const override;
 
     void RemoveStakedCommitment(const MclG1Point& commitment);
 
@@ -288,6 +349,8 @@ public:
      * the backing CCoinsView are made.
      */
     bool HaveCoinInCache(const COutPoint& outpoint) const;
+    bool HaveTokenInCache(const uint256& tokenId) const;
+
 
     /**
      * Return a reference to Coin in the cache, or coinEmpty if not found. This is
@@ -301,11 +364,14 @@ public:
      */
     const Coin& AccessCoin(const COutPoint& output) const;
 
+
     /**
      * Add a coin. Set possible_overwrite to true if an unspent version may
      * already exist in the cache.
      */
     void AddCoin(const COutPoint& outpoint, Coin&& coin, bool possible_overwrite);
+    void AddToken(const uint256& tokenId, blsct::TokenEntry&& token);
+    void EraseToken(const uint256& tokenId);
 
     /**
      * Emplace a coin into cacheCoins without performing any checks, marking
@@ -371,6 +437,7 @@ private:
      * memory usage.
      */
     CCoinsMap::iterator FetchCoin(const COutPoint& outpoint) const;
+    TokensMap::iterator FetchToken(const uint256& tokenId) const;
 };
 
 //! Utility function to add all of a transaction's outputs to a cache.
@@ -404,8 +471,11 @@ public:
         m_err_callbacks.emplace_back(std::move(f));
     }
 
-    bool GetCoin(const COutPoint &outpoint, Coin &coin) const override;
+    bool GetCoin(const COutPoint& outpoint, Coin& coin) const override;
     bool HaveCoin(const COutPoint &outpoint) const override;
+    bool GetToken(const uint256& tokenId, blsct::TokenEntry& token) const override;
+    bool GetAllTokens(TokensMap& tokensMap) const override;
+    bool HaveToken(const uint256& tokenId) const override;
 
 private:
     /** A list of callbacks to execute upon leveldb read error. */

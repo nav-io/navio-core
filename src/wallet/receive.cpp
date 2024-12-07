@@ -29,12 +29,13 @@ bool AllInputsMine(const CWallet& wallet, const CTransaction& tx, const isminefi
     return true;
 }
 
-CAmount OutputGetCredit(const CWallet& wallet, const CTxOut& txout, const isminefilter& filter)
+CAmount OutputGetCredit(const CWallet& wallet, const CTxOut& txout, const isminefilter& filter, const TokenId& token_id)
 {
-    if (!txout.IsBLSCT() && !MoneyRange(txout.nValue))
+    if (txout.tokenId != token_id) return 0;
+    if (!txout.HasBLSCTRangeProof() && !MoneyRange(txout.nValue))
         throw std::runtime_error(std::string(__func__) + ": value out of range");
     LOCK(wallet.cs_wallet);
-    if (txout.IsBLSCT()) {
+    if (txout.HasBLSCTRangeProof()) {
         if (wallet.IsMine(txout) & filter) {
             CAmount ret = 0;
             auto blsct_man = wallet.GetBLSCTKeyMan();
@@ -55,11 +56,12 @@ CAmount OutputGetCredit(const CWallet& wallet, const CTxOut& txout, const ismine
         return ((wallet.IsMine(txout) & filter) ? txout.nValue : 0);
 }
 
-CAmount TxGetCredit(const CWallet& wallet, const CTransaction& tx, const isminefilter& filter)
+CAmount TxGetCredit(const CWallet& wallet, const CTransaction& tx, const isminefilter& filter, const TokenId& token_id)
 {
     CAmount nCredit = 0;
     for (const CTxOut& txout : tx.vout)
     {
+        if (txout.tokenId != token_id) continue;
         nCredit += OutputGetCredit(wallet, txout, filter);
         if (!MoneyRange(nCredit))
             throw std::runtime_error(std::string(__func__) + ": value out of range");
@@ -89,29 +91,32 @@ bool ScriptIsChange(const CWallet& wallet, const CScript& script)
     return false;
 }
 
-bool OutputIsChange(const CWallet& wallet, const CTxOut& txout)
+bool OutputIsChange(const CWallet& wallet, const CTxOut& txout, const TokenId& token_id)
 {
-    if (txout.IsBLSCT()) {
+    if (txout.tokenId != token_id) return false;
+    if (txout.HasBLSCTRangeProof()) {
         auto blsct_km = wallet.GetBLSCTKeyMan();
         if (blsct_km) return blsct_km->OutputIsChange(txout);
     }
     return ScriptIsChange(wallet, txout.scriptPubKey);
 }
 
-CAmount OutputGetChange(const CWallet& wallet, const CTxOut& txout)
+CAmount OutputGetChange(const CWallet& wallet, const CTxOut& txout, const TokenId& token_id)
 {
     AssertLockHeld(wallet.cs_wallet);
-    if (!txout.IsBLSCT() && !MoneyRange(txout.nValue))
+    if (txout.tokenId != token_id) return 0;
+    if (!txout.HasBLSCTRangeProof() && !MoneyRange(txout.nValue))
         throw std::runtime_error(std::string(__func__) + ": value out of range");
     return (OutputIsChange(wallet, txout) ? txout.nValue : 0);
 }
 
-CAmount TxGetChange(const CWallet& wallet, const CTransaction& tx)
+CAmount TxGetChange(const CWallet& wallet, const CTransaction& tx, const TokenId& token_id)
 {
     LOCK(wallet.cs_wallet);
     CAmount nChange = 0;
     for (const CTxOut& txout : tx.vout)
     {
+        if (txout.tokenId != token_id) continue;
         nChange += OutputGetChange(wallet, txout);
         if (!MoneyRange(nChange))
             throw std::runtime_error(std::string(__func__) + ": value out of range");
@@ -119,8 +124,11 @@ CAmount TxGetChange(const CWallet& wallet, const CTransaction& tx)
     return nChange;
 }
 
-static CAmount GetCachableAmount(const CWallet& wallet, const CWalletTx& wtx, CWalletTx::AmountType type, const isminefilter& filter)
+static CAmount GetCachableAmount(const CWallet& wallet, const CWalletTx& wtx, CWalletTx::AmountType type, const isminefilter& filter, const TokenId& token_id)
 {
+    if (!token_id.IsNull()) {
+        return type == CWalletTx::DEBIT ? wallet.GetDebit(*wtx.tx, filter, token_id) : TxGetCredit(wallet, *wtx.tx, filter, token_id);
+    }
     auto& amount = wtx.m_amounts[type];
     if (!amount.m_cached[filter]) {
         amount.Set(filter, type == CWalletTx::DEBIT ? wallet.GetDebit(*wtx.tx, filter) : TxGetCredit(wallet, *wtx.tx, filter));
@@ -129,7 +137,7 @@ static CAmount GetCachableAmount(const CWallet& wallet, const CWalletTx& wtx, CW
     return amount.m_value[filter];
 }
 
-CAmount CachedTxGetCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter)
+CAmount CachedTxGetCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter, const TokenId& token_id)
 {
     AssertLockHeld(wallet.cs_wallet);
 
@@ -141,12 +149,12 @@ CAmount CachedTxGetCredit(const CWallet& wallet, const CWalletTx& wtx, const ism
     const isminefilter get_amount_filter{filter & ISMINE_ALL};
     if (get_amount_filter) {
         // GetBalance can assume transactions in mapWallet won't change
-        credit += GetCachableAmount(wallet, wtx, CWalletTx::CREDIT, get_amount_filter);
+        credit += GetCachableAmount(wallet, wtx, CWalletTx::CREDIT, get_amount_filter, token_id);
     }
     return credit;
 }
 
-CAmount CachedTxGetDebit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter)
+CAmount CachedTxGetDebit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter, const TokenId& token_id)
 {
     if (wtx.tx->vin.empty())
         return 0;
@@ -154,32 +162,32 @@ CAmount CachedTxGetDebit(const CWallet& wallet, const CWalletTx& wtx, const ismi
     CAmount debit = 0;
     const isminefilter get_amount_filter{filter & ISMINE_ALL};
     if (get_amount_filter) {
-        debit += GetCachableAmount(wallet, wtx, CWalletTx::DEBIT, get_amount_filter);
+        debit += GetCachableAmount(wallet, wtx, CWalletTx::DEBIT, get_amount_filter, token_id);
     }
     return debit;
 }
 
-CAmount CachedTxGetChange(const CWallet& wallet, const CWalletTx& wtx)
+CAmount CachedTxGetChange(const CWallet& wallet, const CWalletTx& wtx, const TokenId& token_id)
 {
     if (wtx.fChangeCached)
         return wtx.nChangeCached;
-    wtx.nChangeCached = TxGetChange(wallet, *wtx.tx);
+    wtx.nChangeCached = TxGetChange(wallet, *wtx.tx, token_id);
     wtx.fChangeCached = true;
     return wtx.nChangeCached;
 }
 
-CAmount CachedTxGetImmatureCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter)
+CAmount CachedTxGetImmatureCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter, const TokenId& token_id)
 {
     AssertLockHeld(wallet.cs_wallet);
 
     if (wallet.IsTxImmatureCoinBase(wtx) && wallet.IsTxInMainChain(wtx)) {
-        return GetCachableAmount(wallet, wtx, CWalletTx::IMMATURE_CREDIT, filter);
+        return GetCachableAmount(wallet, wtx, CWalletTx::IMMATURE_CREDIT, filter, token_id);
     }
 
     return 0;
 }
 
-CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter)
+CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter, const TokenId& token_id)
 {
     AssertLockHeld(wallet.cs_wallet);
 
@@ -199,8 +207,9 @@ CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, 
     Txid hashTx = wtx.GetHash();
     for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
         const CTxOut& txout = wtx.tx->vout[i];
+        if (txout.tokenId != token_id) continue;
         if (!wallet.IsSpent(COutPoint(hashTx, i)) && (allow_used_addresses || !wallet.IsSpentKey(txout.scriptPubKey))) {
-            nCredit += OutputGetCredit(wallet, txout, filter);
+            nCredit += OutputGetCredit(wallet, txout, filter, token_id);
             if (!MoneyRange(nCredit))
                 throw std::runtime_error(std::string(__func__) + " : value out of range");
         }
@@ -238,7 +247,7 @@ std::vector<StakedCommitmentInfo> GetStakedCommitmentInfo(const CWallet& wallet,
 void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
                         std::list<COutputEntry>& listReceived,
                         std::list<COutputEntry>& listSent, CAmount& nFee, const isminefilter& filter,
-                        bool include_change)
+                        bool include_change, const TokenId& token_id)
 {
     nFee = 0;
     listReceived.clear();
@@ -264,24 +273,25 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
     for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i)
     {
         const CTxOut& txout = wtx.tx->vout[i];
+        if (txout.tokenId != token_id) continue;
         isminetype fIsMine = wallet.IsMine(txout);
         // Only need to handle txouts if AT LEAST one of these is true:
         //   1) they debit from us (sent)
         //   2) the output is to us (received)
         if (nDebit > 0)
         {
-            if (OutputIsChange(wallet, txout) && (txout.IsBLSCT() || !include_change)) continue;
+            if (OutputIsChange(wallet, txout) && (txout.HasBLSCTRangeProof() || !include_change)) continue;
 
         } else if (!(fIsMine & filter))
             continue;
 
-        if (wtx.tx->IsBLSCT() && txout.scriptPubKey.IsFee())
+        if (wtx.tx->IsBLSCT() && txout.IsFee())
             continue;
 
         // In either case, we need to get the destination address
         CTxDestination address;
 
-        if (txout.IsBLSCT()) {
+        if (txout.HasBLSCTRangeProof()) {
             auto blsct_km = wallet.GetBLSCTKeyMan();
             if (!blsct_km) {
                 address = CNoDestination();
@@ -364,7 +374,7 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx)
     return CachedTxIsTrusted(wallet, wtx, trusted_parents);
 }
 
-Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse)
+Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse, const TokenId& token_id)
 {
     Balance ret;
     isminefilter reuse_filter = avoid_reuse ? ISMINE_NO : ISMINE_USED;
@@ -376,9 +386,9 @@ Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse)
             const CWalletTx& wtx = entry.second;
             const bool is_trusted{CachedTxIsTrusted(wallet, wtx, trusted_parents)};
             const int tx_depth{wallet.GetTxDepthInMainChain(wtx)};
-            const CAmount tx_credit_mine{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | reuse_filter)};
-            const CAmount tx_credit_staked_commitment{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_STAKED_COMMITMENT_BLSCT)};
-            const CAmount tx_credit_watchonly{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_WATCH_ONLY | reuse_filter)};
+            const CAmount tx_credit_mine{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | reuse_filter, token_id)};
+            const CAmount tx_credit_staked_commitment{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_STAKED_COMMITMENT_BLSCT, token_id)};
+            const CAmount tx_credit_watchonly{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_WATCH_ONLY | reuse_filter, token_id)};
             if (is_trusted && tx_depth >= min_depth) {
                 ret.m_mine_trusted += tx_credit_mine;
                 ret.m_watchonly_trusted += tx_credit_watchonly;
@@ -388,8 +398,8 @@ Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse)
                 ret.m_mine_untrusted_pending += tx_credit_mine + tx_credit_staked_commitment;
                 ret.m_watchonly_untrusted_pending += tx_credit_watchonly;
             }
-            ret.m_mine_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT);
-            ret.m_watchonly_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_WATCH_ONLY);
+            ret.m_mine_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id);
+            ret.m_watchonly_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_WATCH_ONLY, token_id);
         }
     }
     return ret;
@@ -413,7 +423,7 @@ std::vector<StakedCommitmentInfo> GetStakedCommitmentInfo(const CWallet& wallet)
     return ret;
 }
 
-std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet)
+std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet, const TokenId& token_id)
 {
     std::map<CTxDestination, CAmount> balances;
 
@@ -435,14 +445,31 @@ std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet)
 
             for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
                 const auto& output = wtx.tx->vout[i];
-                CTxDestination addr;
-                if (!wallet.IsMine(output))
-                    continue;
-                if (!ExtractDestination(output.scriptPubKey, addr))
-                    continue;
+                if (output.tokenId != token_id) continue;
 
-                CAmount n = wallet.IsSpent(COutPoint(Txid::FromUint256(walletEntry.first), i)) ? 0 : output.nValue;
-                balances[addr] += n;
+                if (output.HasBLSCTRangeProof()) {
+                    auto blsct_km = wallet.GetBLSCTKeyMan();
+                    CTxDestination address;
+                    if (!blsct_km) {
+                        address = CNoDestination();
+                    } else {
+                        address = blsct_km->GetDestination(output);
+                    }
+
+                    auto recoveryData = wtx.GetBLSCTRecoveryData(i);
+
+                    CAmount n = wallet.IsSpent(COutPoint(Txid::FromUint256(walletEntry.first), i)) ? 0 : recoveryData.amount;
+                    balances[address] += n;
+                } else {
+                    CTxDestination addr;
+                    if (!wallet.IsMine(output))
+                        continue;
+                    if (!ExtractDestination(output.scriptPubKey, addr))
+                        continue;
+
+                    CAmount n = wallet.IsSpent(COutPoint(Txid::FromUint256(walletEntry.first), i)) ? 0 : output.nValue;
+                    balances[addr] += n;
+                }
             }
         }
     }
@@ -450,7 +477,7 @@ std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet)
     return balances;
 }
 
-std::set<std::set<CTxDestination>> GetAddressGroupings(const CWallet& wallet)
+std::set<std::set<CTxDestination>> GetAddressGroupings(const CWallet& wallet, const TokenId& token_id)
 {
     AssertLockHeld(wallet.cs_wallet);
     std::set<std::set<CTxDestination>> groupings;
