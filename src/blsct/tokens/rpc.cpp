@@ -62,7 +62,7 @@ gettoken()
             },
         },
         RPCResult{RPCResult::Type::OBJ, "", "", tokenInfoResult},
-        RPCExamples{HelpExampleCli("gettoken", "ba12afc43322f204fe6236b11a0f85b5d9edcb09f446176c73fe4abe99a17edd")},
+        RPCExamples{HelpExampleCli("gettoken", "ba12afc43322f204fe6236b11a0f85b5d9edcb09f446176c73fe4abe99a17edd") + HelpExampleRpc("gettoken", "ba12afc43322f204fe6236b11a0f85b5d9edcb09f446176c73fe4abe99a17edd")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             LOCK(cs_main);
             ChainstateManager& chainman = EnsureAnyChainman(request.context);
@@ -94,7 +94,7 @@ listtokens()
         RPCResult{RPCResult::Type::ARR, "", "", {
                                                     RPCResult{RPCResult::Type::OBJ, "", "", tokenInfoResult},
                                                 }},
-        RPCExamples{HelpExampleCli("listtokens", "")},
+        RPCExamples{HelpExampleCli("listtokens", "") + HelpExampleRpc("listtokens", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             LOCK(cs_main);
             ChainstateManager& chainman = EnsureAnyChainman(request.context);
