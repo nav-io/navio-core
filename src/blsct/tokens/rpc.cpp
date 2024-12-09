@@ -15,10 +15,12 @@ std::vector<RPCResult> tokenInfoResult = {
     RPCResult{RPCResult::Type::STR_HEX, "tokenId", "the token id"},
     RPCResult{RPCResult::Type::STR_HEX, "publicKey", "the token public key"},
     RPCResult{RPCResult::Type::STR, "type", "the token type"},
-    RPCResult{RPCResult::Type::ANY, "metadata", "the token metadata"},
-    RPCResult{RPCResult::Type::NUM, "maxSupply", "the token max supply"},
-    RPCResult{RPCResult::Type::NUM, "currentSupply", true, "the token current supply"},
-    RPCResult{RPCResult::Type::ANY, "mintedNft", true, "the nfts already minted"},
+    RPCResult{RPCResult::Type::OBJ_DYN, "metadata", "the token metadata", {
+        {RPCResult::Type::STR, "<key>", "the metadata value"},
+                                                                          }},
+    RPCResult{RPCResult::Type::NUM, "maxSupply", "the token max supply"}, RPCResult{RPCResult::Type::NUM, "currentSupply", true, "the token current supply"}, RPCResult{RPCResult::Type::OBJ_DYN, "mintedNft", true, "the nfts already minted", {{RPCResult::Type::OBJ, "<nft_index>", "", {
+                                                                                                                                                                                                                                                                                               {RPCResult::Type::STR, "<metadata_key>", "the metadata value"},
+                                                                                                                                                                                                                                                                                           }}}}
 
 };
 
