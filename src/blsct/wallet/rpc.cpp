@@ -465,17 +465,24 @@ RPCHelpMan getnftbalance()
 
             bool avoid_reuse = GetAvoidReuseFlag(*pwallet, request.params[4]);
 
-            UniValue ret(UniValue::VOBJ);
+            UniValue ret(UniValue::VARR);
 
             for (auto& it : token.mapMintedNft) {
                 const auto bal = GetBalance(*pwallet, min_depth, avoid_reuse, TokenId(token_id, it.first));
 
                 if ((bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0)) > 0) {
-                    UniValue metadata(UniValue::VOBJ);
+                    UniValue retObj(UniValue::VOBJ);
+
+                    UniValue metadata(UniValue::VARR);
                     for (auto& md_it : it.second) {
-                        metadata.pushKV(md_it.first, md_it.second);
+                        UniValue metadataObj(UniValue::VOBJ);
+                        metadataObj.pushKV("key", md_it.first);
+                        metadataObj.pushKV("value", md_it.second);
+                        metadata.push_back(metadataObj);
                     }
-                    ret.pushKV(strprintf("%llu", it.first), metadata);
+                    retObj.pushKV("index", strprintf("%llu", it.first));
+                    retObj.pushKV("metadata", metadata);
+                    ret.push_back(retObj);
                 }
             }
 
