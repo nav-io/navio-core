@@ -311,7 +311,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         pchMessageStart[1] = 0xc3;
         pchMessageStart[2] = 0x31;
         pchMessageStart[3] = 0x0d;
-        nDefaultPort = 48480;
+        nDefaultPort = 33477;
         nPruneAfterHeight = 1000;
         m_assumed_blockchain_size = 10;
         m_assumed_chain_state_size = 3;
