@@ -526,7 +526,7 @@ RPCHelpMan sendtoblsctaddress()
             if (!request.params[2].isNull() && !request.params[2].get_str().empty())
                 sMemo = request.params[2].get_str();
 
-            const std::string address = request.params[1].get_str();
+            const std::string address = request.params[0].get_str();
 
             const bool verbose{request.params[3].isNull() ? false : request.params[10].get_bool()};
 
