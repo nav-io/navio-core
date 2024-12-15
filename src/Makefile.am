@@ -198,12 +198,18 @@ BLSCT_H = \
   blsct/set_mem_proof/set_mem_proof_prover.h \
   blsct/set_mem_proof/set_mem_proof_setup.h \
   blsct/signature.h \
+  blsct/tokens/info.h \
+  blsct/tokens/predicate.h \
+  blsct/tokens/predicate_exec.h \
+  blsct/tokens/predicate_parser.h \
+  blsct/tokens/rpc.h \
   blsct/wallet/address.h \
   blsct/wallet/hdchain.h \
   blsct/wallet/helpers.h \
   blsct/wallet/import_wallet_type.h \
   blsct/wallet/keyman.h \
   blsct/wallet/keyring.h \
+  blsct/wallet/rpc.h \
   blsct/wallet/txfactory.h \
   blsct/wallet/txfactory_base.h \
   blsct/wallet/txfactory_global.h \
@@ -250,6 +256,9 @@ BLSCT_CPP = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/signature.cpp \
+  blsct/tokens/info.cpp \
+  blsct/tokens/predicate_exec.cpp \
+  blsct/tokens/predicate_parser.cpp \
   blsct/wallet/address.cpp \
   blsct/wallet/helpers.cpp \
   blsct/wallet/keyman.cpp \
@@ -568,6 +577,9 @@ libbitcoin_node_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
+  blsct/tokens/info.cpp \
+  blsct/tokens/rpc.cpp \
+  blsct/wallet/rpc.cpp \
   blsct/wallet/verification.cpp \
   blsct/signature.cpp \
   chain.cpp \
@@ -725,6 +737,7 @@ libbitcoin_wallet_a_SOURCES = \
   blsct/wallet/helpers.cpp \
   blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
+  blsct/wallet/rpc.cpp \
   blsct/wallet/txfactory.cpp \
   blsct/wallet/txfactory_base.cpp \
   blsct/wallet/txfactory_global.cpp \
@@ -877,13 +890,15 @@ libbitcoin_consensus_a_SOURCES = \
   blsct/range_proof/bulletproofs/range_proof.cpp \
   blsct/range_proof/bulletproofs/range_proof_logic.cpp \
   blsct/range_proof/bulletproofs/range_proof_with_transcript.cpp \
+  blsct/range_proof/bulletproofs_plus/amount_recovery_result.cpp \
+  blsct/range_proof/bulletproofs_plus/amount_recovery_request.cpp \
   blsct/range_proof/bulletproofs_plus/range_proof.cpp \
+  blsct/range_proof/bulletproofs_plus/range_proof_logic.cpp \
+  blsct/range_proof/bulletproofs_plus/range_proof_with_transcript.cpp \
   blsct/range_proof/common.cpp \
   blsct/range_proof/generators.cpp \
   blsct/range_proof/proof_base.cpp \
   blsct/range_proof/msg_amt_cipher.cpp \
-  blsct/range_proof/bulletproofs/range_proof.cpp \
-  blsct/range_proof/bulletproofs_plus/range_proof.cpp \
   blsct/range_proof/bulletproofs_plus/util.cpp \
   blsct/set_mem_proof/set_mem_proof.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
@@ -966,6 +981,8 @@ libbitcoin_common_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/signature.cpp \
+  blsct/tokens/predicate_exec.cpp \
+  blsct/tokens/predicate_parser.cpp \
   blsct/wallet/address.cpp \
   blsct/wallet/txfactory_global.cpp \
   chainparams.cpp \
@@ -1295,6 +1312,8 @@ libnaviokernel_la_SOURCES = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/signature.cpp \
+  blsct/tokens/predicate_exec.cpp \
+  blsct/tokens/predicate_parser.cpp \
   blsct/wallet/txfactory_global.cpp \
   blsct/wallet/verification.cpp \
   chain.cpp \

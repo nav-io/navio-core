@@ -9,11 +9,11 @@
 
 namespace blsct {
 uint256
-CalculateKernelHash(const uint32_t& prevTime, const uint64_t& stakeModifier, const MclG1Point& phi, const uint32_t& time)
+CalculateKernelHash(const uint32_t& prevTime, const uint64_t& stakeModifier, const uint32_t& time)
 {
     HashWriter ss{};
 
-    ss << prevTime << stakeModifier << phi << time;
+    ss << prevTime << stakeModifier << time;
 
     return ss.GetHash();
 }

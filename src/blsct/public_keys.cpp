@@ -76,7 +76,7 @@ bool PublicKeys::VerifyBatch(const std::vector<PublicKey::Message>& msgs, const 
     std::vector<std::vector<uint8_t>> aug_msgs;
     auto msg = msgs.begin();
     for (auto pk = m_pks.begin(), end = m_pks.end(); pk != end; ++pk, ++msg) {
-        if (*msg == blsct::Common::BLSCTBALANCE && fVerifyTx) {
+        if ((*msg == blsct::Common::BLSCTBALANCE || *msg == blsct::Common::BLSCTFEE) && fVerifyTx) {
             aug_msgs.push_back(*msg);
         } else {
             aug_msgs.push_back(pk->AugmentMessage(*msg));

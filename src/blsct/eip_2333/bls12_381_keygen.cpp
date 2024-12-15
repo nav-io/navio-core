@@ -183,3 +183,19 @@ MclScalar BLS12_381_KeyGen::derive_child_SK(const MclScalar& parent_SK, const ui
     auto SK = HKDF_mod_r(std::vector<uint8_t>(comp_PK.cbegin(), comp_PK.cend()));
     return SK;
 }
+
+MclScalar BLS12_381_KeyGen::derive_child_SK_hash(const MclScalar& parent_SK, const uint256& hash)
+{
+    auto ret = parent_SK;
+    for (auto i = 0; i < 8; i++) {
+        const uint8_t* pos = hash.begin() + i * 4;
+        uint32_t index = (static_cast<uint32_t>(pos[0]) << 24) |
+                         (static_cast<uint32_t>(pos[1]) << 16) |
+                         (static_cast<uint32_t>(pos[2]) << 8) |
+                         (static_cast<uint32_t>(pos[3]));
+
+        auto comp_PK = parent_SK_to_lamport_PK(ret, index);
+        ret = HKDF_mod_r(std::vector<uint8_t>(comp_PK.cbegin(), comp_PK.cend()));
+    }
+    return ret;
+}

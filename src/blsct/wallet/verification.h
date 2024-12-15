@@ -5,11 +5,12 @@
 #ifndef BLSCT_VERIFICATION_H
 #define BLSCT_VERIFICATION_H
 
+#include <blsct/tokens/predicate_exec.h>
 #include <chain.h>
 #include <coins.h>
 #include <consensus/validation.h>
 
 namespace blsct {
-bool VerifyTx(const CTransaction& tx, const CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0);
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0);
 }
 #endif // BLSCT_VERIFICATION_H

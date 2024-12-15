@@ -9,9 +9,10 @@
 #include <attributes.h>
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/private_key.h>
-#include <blsct/range_proof/bulletproofs/range_proof.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/generators.h>
 #include <blsct/signature.h>
+#include <blsct/tokens/predicate_parser.h>
 #include <consensus/amount.h>
 #include <ctokens/tokenid.h>
 #include <prevector.h>
@@ -162,7 +163,7 @@ public:
     MclG1Point spendingKey;
     MclG1Point ephemeralKey;
     MclG1Point blindingKey;
-    bulletproofs::RangeProof<Mcl> rangeProof;
+    bulletproofs_plus::RangeProof<Mcl> rangeProof;
     uint16_t viewTag;
 
     CTxOutBLSCTData()
@@ -213,6 +214,13 @@ public:
     }
 };
 
+struct CTxOutBLSCTDataCompressedForRecovery {
+    FORMATTER_METHODS(CTxOutBLSCTData, obj)
+    {
+        READWRITE(Using<bulletproofs_plus::RangeProofCompressedForRecovery<Mcl>>(obj.rangeProof), obj.spendingKey, obj.blindingKey, obj.ephemeralKey, obj.viewTag);
+    }
+};
+
 /** An output of a transaction.  It contains the public key that the next input
  * must be able to sign with to claim it.
  */
@@ -221,11 +229,14 @@ class CTxOut
 public:
     static const uint32_t BLSCT_MARKER = 0x1 << 0;
     static const uint32_t TOKEN_MARKER = 0x1 << 1;
+    static const uint32_t PREDICATE_MARKER = 0x1 << 2;
+    static const uint32_t TRANSPARENT_VALUE_MARKER = 0x1 << 3;
 
     CAmount nValue;
     CScript scriptPubKey;
     CTxOutBLSCTData blsctData;
     TokenId tokenId;
+    blsct::VectorPredicate predicate;
 
     CTxOut()
     {
@@ -239,13 +250,19 @@ public:
     {
         uint64_t nFlags = 0;
 
-        if (blsctData.rangeProof.Vs.Size() > 0)
+        if (blsctData.rangeProof.Vs.Size() > 0 || HasBLSCTKeys())
             nFlags |= BLSCT_MARKER;
         if (!tokenId.IsNull())
             nFlags |= TOKEN_MARKER;
+        if ((tokenId.IsNFT() || predicate.size() > 0) && nValue > 0)
+            nFlags |= TRANSPARENT_VALUE_MARKER;
+        if (predicate.size() > 0)
+            nFlags |= PREDICATE_MARKER;
         if (nFlags != 0) {
             ::Serialize(s, std::numeric_limits<CAmount>::max());
             ::Serialize(s, nFlags);
+            if (nFlags & TRANSPARENT_VALUE_MARKER)
+                ::Serialize(s, nValue);
         } else {
             ::Serialize(s, nValue);
         }
@@ -255,6 +272,8 @@ public:
         }
         if (nFlags & TOKEN_MARKER)
             ::Serialize(s, tokenId);
+        if (nFlags & PREDICATE_MARKER)
+            ::Serialize(s, predicate);
     }
 
     template <typename Stream>
@@ -265,6 +284,8 @@ public:
         if (nValue == std::numeric_limits<CAmount>::max()) {
             nValue = 0;
             ::Unserialize(s, nFlags);
+            if (nFlags & TRANSPARENT_VALUE_MARKER)
+                ::Unserialize(s, nValue);
         }
         ::Unserialize(s, scriptPubKey);
         if (nFlags & BLSCT_MARKER) {
@@ -272,6 +293,9 @@ public:
         }
         if (nFlags & TOKEN_MARKER) {
             ::Unserialize(s, tokenId);
+        }
+        if (nFlags & PREDICATE_MARKER) {
+            ::Unserialize(s, predicate);
         }
     }
 
@@ -286,33 +310,43 @@ public:
         return nValue == -1;
     }
 
-    bool IsBLSCT() const
+    bool HasBLSCTRangeProof() const
     {
         return blsctData.rangeProof.Vs.Size() > 0;
     }
 
+    bool HasBLSCTKeys() const
+    {
+        return !blsctData.ephemeralKey.IsZero() || !blsctData.blindingKey.IsZero() || !blsctData.spendingKey.IsZero();
+    }
+
     bool IsStakedCommitment() const
     {
-        bulletproofs::RangeProofWithSeed<Mcl> dummy;
+        bulletproofs_plus::RangeProofWithSeed<Mcl> dummy;
 
         return GetStakedCommitmentRangeProof(dummy);
     }
 
-    bool GetStakedCommitmentRangeProof(bulletproofs::RangeProofWithSeed<Mcl>& rangeProof) const
+    bool GetStakedCommitmentRangeProof(bulletproofs_plus::RangeProofWithSeed<Mcl>& rangeProof) const
     {
-        if (!IsBLSCT())
+        if (!HasBLSCTRangeProof())
             return false;
+
         if (scriptPubKey.size() <= 7) return false;
+
         if (blsctData.rangeProof.Vs.Size() == 0)
             return false;
+
         if (!tokenId.IsNull())
             return false;
+
         if (!(*(scriptPubKey.begin()) == OP_STAKED_COMMITMENT && *(scriptPubKey.begin() + 1) == OP_PUSHDATA2 && *(scriptPubKey.end() - 1) == OP_TRUE)) return false;
+
         try {
             auto commitment = std::vector<unsigned char>(scriptPubKey.begin() + 4, scriptPubKey.end());
 
             DataStream s(MakeByteSpan(commitment));
-            s >> rangeProof;
+            s >> Using<bulletproofs_plus::RangeProofWithoutVs<Mcl>>(rangeProof);
         } catch (...) {
             return false;
         }
@@ -332,8 +366,26 @@ public:
         return !(a == b);
     }
 
+    bool IsFee() const
+    {
+        blsct::ParsedPredicate parsedPredicate;
+
+        if (predicate.size() > 0) {
+            parsedPredicate = blsct::ParsePredicate(predicate);
+        }
+
+        return parsedPredicate.IsPayFeePredicate();
+    }
+
     std::string ToString() const;
     uint256 GetHash() const;
+};
+
+struct CTxOutCompressedForRecovery {
+    FORMATTER_METHODS(CTxOut, obj)
+    {
+        READWRITE(Using<CTxOutBLSCTDataCompressedForRecovery>(obj.blsctData), obj.nValue, obj.scriptPubKey, obj.tokenId, obj.viewTag);
+    }
 };
 
 struct CMutableTransaction;
@@ -366,7 +418,6 @@ template<typename Stream, typename TxType>
 void UnserializeTransaction(TxType& tx, Stream& s, const TransactionSerParams& params)
 {
     const bool fAllowWitness = params.allow_witness;
-
     s >> tx.nVersion;
     unsigned char flags = 0;
     tx.vin.clear();

@@ -23,4 +23,22 @@ void FindCoins(const NodeContext& node, std::map<COutPoint, Coin>& coins)
         }
     }
 }
+
+void FindTokens(const NodeContext& node, std::map<uint256, blsct::TokenEntry>& tokens)
+{
+    assert(node.mempool);
+    assert(node.chainman);
+    LOCK2(cs_main, node.mempool->cs);
+    CCoinsViewCache& chain_view = node.chainman->ActiveChainstate().CoinsTip();
+    CCoinsViewMemPool mempool_view(&chain_view, *node.mempool);
+
+
+    for (auto it = tokens.begin(); it != tokens.end();) {
+        if (!mempool_view.GetToken(it->first, it->second)) {
+            it = tokens.erase(it);
+        } else {
+            ++it;
+        };
+    }
+}
 } // namespace node

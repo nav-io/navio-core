@@ -335,6 +335,10 @@ class TestNode():
         assert not invalid_call
         return self.__getattr__('generatetoaddress')(*args, **kwargs)
 
+    def generatetoblsctaddress(self, *args, invalid_call, **kwargs):
+        assert not invalid_call
+        return self.__getattr__('generatetoblsctaddress')(*args, **kwargs)
+
     def generatetodescriptor(self, *args, invalid_call, **kwargs):
         assert not invalid_call
         return self.__getattr__('generatetodescriptor')(*args, **kwargs)

@@ -1104,7 +1104,9 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
     }
 
     if (args.m_chainparams.GetConsensus().fBLSCT) {
-        if (!blsct::VerifyTx(tx, m_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount)) {
+        CCoinsViewCache viewNew(&m_active_chainstate.CoinsTip());
+
+        if (!blsct::VerifyTx(tx, viewNew, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount)) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }
@@ -1251,7 +1253,6 @@ MempoolAcceptResult MemPoolAccept::AcceptSingleTransaction(const CTransactionRef
 
     Workspace ws(ptx);
     const std::vector<Wtxid> single_wtxid{ws.m_ptx->GetWitnessHash()};
-
     if (!PreChecks(args, ws)) {
         if (ws.m_state.GetResult() == TxValidationResult::TX_RECONSIDERABLE) {
             // Failed for fee reasons. Provide the effective feerate and which tx was included.
@@ -2070,6 +2071,12 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
             if (tx.vout[o].IsStakedCommitment()) {
                 view.RemoveStakedCommitment(tx.vout[o].blsctData.rangeProof.Vs[0]);
             }
+            if (tx.vout[o].predicate.size() > 0) {
+                if (!blsct::ExecutePredicate(tx.vout[o].predicate, view, true)) {
+                    error("DisconnectBlock(): Could not revert predicate: %s", blsct::PredicateToString(tx.vout[o].predicate));
+                    return DISCONNECT_FAILED;
+                }
+            }
             if (!tx.vout[o].scriptPubKey.IsUnspendable()) {
                 COutPoint out(hash, o);
                 Coin coin;
@@ -2642,8 +2649,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                     if (!blsct::VerifyTx(tx, view, tx_state, 0, params.GetConsensus().nPePoSMinStakeAmount)) {
                         state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                                       tx_state.GetRejectReason(), tx_state.GetDebugMessage());
-                        return error("ConnectBlock(): VerifyTx on transaction %s failed with %s",
-                                     tx.GetHash().ToString(), state.ToString());
+                        return error("ConnectBlock(): VerifyTx on transaction %s %s failed with %s",
+                                     tx.GetHash().ToString(), tx.ToString(), state.ToString());
                     }
                 } else {
                     return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "blsct-tx-not-allowed");

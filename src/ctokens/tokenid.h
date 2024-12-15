@@ -24,6 +24,11 @@ public:
         subid = std::numeric_limits<uint64_t>::max();
     }
 
+    bool IsNFT() const
+    {
+        return token != uint256() && subid != std::numeric_limits<uint64_t>::max();
+    };
+
     bool IsNull() const { return token == uint256() && subid == std::numeric_limits<uint64_t>::max(); }
 
     std::string ToString() const { return strprintf("%s%s", token.ToString(), subid == std::numeric_limits<uint64_t>::max() ? "" : strprintf("#%d", subid)); }

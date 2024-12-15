@@ -20,7 +20,7 @@ bool GetLastStakeModifier(const CBlockIndex* pindex, uint64_t& nStakeModifier, i
 int64_t GetStakeModifierSelectionIntervalSection(int nSection, const Consensus::Params& params);
 int64_t GetStakeModifierSelectionInterval(const Consensus::Params& params);
 std::vector<unsigned char> CalculateSetMemProofRandomness(const CBlockIndex* pindexPrev);
-blsct::Message CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev);
+blsct::Message CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& block);
 uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block);
 } // namespace blsct
 

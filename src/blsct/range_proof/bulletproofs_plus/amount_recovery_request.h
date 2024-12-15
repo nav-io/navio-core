@@ -7,7 +7,9 @@
 
 #include <blsct/arith/elements.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
+#include <blsct/range_proof/common.h>
 #include <ctokens/tokenid.h>
+
 
 namespace bulletproofs_plus {
 
@@ -19,7 +21,7 @@ struct AmountRecoveryRequest
     using Points = Elements<Point>;
 
     size_t id;
-    TokenId token_id;
+    typename GeneratorDeriver<T>::Seed seed;
     Scalar y;
     Scalar z;
     Scalar alpha_hat;
@@ -30,9 +32,12 @@ struct AmountRecoveryRequest
     size_t m;
     size_t n;
     size_t mn;
-    Point nonce;
+    typename range_proof::GammaSeed<T> nonce;
+    Scalar min_value;
 
-    static AmountRecoveryRequest<T> of(RangeProof<T>& proof, Point& nonce);
+    static AmountRecoveryRequest<T> of(const RangeProofWithSeed<T>& proof,
+                                       const range_proof::GammaSeed<T>& nonce,
+                                       const size_t& id = 0);
 };
 
 } // namespace bulletproofs_plus

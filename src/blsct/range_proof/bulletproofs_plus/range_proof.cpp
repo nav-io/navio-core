@@ -32,4 +32,23 @@ bool RangeProof<T>::operator!=(const RangeProof<T>& other) const
 template
 bool RangeProof<Mcl>::operator!=(const RangeProof<Mcl>& other) const;
 
+template <typename T>
+bool RangeProofWithSeed<T>::operator==(const RangeProofWithSeed<T>& other) const
+{
+    using P = RangeProof<T>;
+    auto this_parent = static_cast<const P&>(*this);
+    auto other_parent = static_cast<const P&>(other);
+
+    return this_parent == other_parent &&
+           seed == other.seed;
+}
+template bool RangeProofWithSeed<Mcl>::operator==(const RangeProofWithSeed<Mcl>& other) const;
+
+template <typename T>
+bool RangeProofWithSeed<T>::operator!=(const RangeProofWithSeed<T>& other) const
+{
+    return !operator==(other);
+}
+template bool RangeProofWithSeed<Mcl>::operator!=(const RangeProofWithSeed<Mcl>& other) const;
+
 } // namespace bulletproofs_plus

@@ -44,6 +44,10 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "getnetworkhashps", 1, "height" },
     { "sendtoblsctaddress", 1, "amount" },
     { "sendtoblsctaddress", 3, "verbose" },
+    { "sendnfttoblsctaddress", 1, "nft_id" },
+    { "sendnfttoblsctaddress", 4, "verbose" },
+    { "sendtokentoblsctaddress", 2, "amount" },
+    { "sendtokentoblsctaddress", 4, "verbose" },
     { "sendtoaddress", 1, "amount" },
     { "sendtoaddress", 4, "subtractfeefromamount" },
     { "sendtoaddress", 5 , "replaceable" },
@@ -72,6 +76,12 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "getbalance", 1, "minconf" },
     { "getbalance", 2, "include_watchonly" },
     { "getbalance", 3, "avoid_reuse" },
+    { "getnftbalance", 2, "minconf" },
+    { "getnftbalance", 3, "include_watchonly" },
+    { "getnftbalance", 4, "avoid_reuse" },
+    { "gettokenbalance", 2, "minconf" },
+    { "gettokenbalance", 3, "include_watchonly" },
+    { "gettokenbalance", 4, "avoid_reuse" },
     { "getblockfrompeer", 1, "peer_id" },
     { "getblockhash", 0, "height" },
     { "waitforblockheight", 0, "height" },
@@ -316,6 +326,14 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "sendmsgtopeer", 0, "peer_id" },
     { "stop", 0, "wait" },
     { "addnode", 2, "v2transport" },
+    // BLSCT
+    { "createtoken", 0, "metadata"},
+    { "createtoken", 1, "max_supply"},
+    { "createnft", 0, "metadata"},
+    { "createnft", 1, "max_supply"},
+    { "minttoken", 2, "amount"},
+    { "mintnft", 1, "nft_id"},
+    { "mintnft", 3, "metadata"},
 };
 // clang-format on
 

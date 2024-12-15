@@ -4,18 +4,18 @@
 
 #define BOOST_UNIT_TEST
 
-#include <boost/test/unit_test.hpp>
-#include <test/util/setup_common.h>
-#include <cstdio>
-#include <sstream>
-#include <blsct/arith/mcl/mcl.h>
 #include <blsct/arith/elements.h>
+#include <blsct/arith/mcl/mcl.h>
 #include <blsct/building_block/pedersen_commitment.h>
-#include <blsct/range_proof/bulletproofs/range_proof.h>
-#include <blsct/range_proof/bulletproofs/range_proof_logic.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
+#include <blsct/set_mem_proof/set_mem_proof.h>
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <blsct/set_mem_proof/set_mem_proof_setup.h>
-#include <blsct/set_mem_proof/set_mem_proof.h>
+#include <boost/test/unit_test.hpp>
+#include <cstdio>
+#include <sstream>
+#include <test/util/setup_common.h>
 
 using Scalar = Mcl::Scalar;
 using Scalars = Elements<Scalar>;
@@ -387,16 +387,16 @@ static MsgPair GenMsgPair(std::string s)
     return std::pair(s, message);
 }
 
-static bulletproofs::RangeProof<Arith> CreateTokenIdRangeProof(
+static bulletproofs_plus::RangeProof<Arith> CreateTokenIdRangeProof(
     Point nonce,
-    Scalar value
-) {
+    Scalar value)
+{
     auto msg = GenMsgPair("test");
 
     Scalars vs;
     vs.Add(value);
 
-    bulletproofs::RangeProofLogic<Arith> rp;
+    bulletproofs_plus::RangeProofLogic<Arith> rp;
     auto proof = rp.Prove(vs, nonce, msg.second, TokenId());
 
     return proof;
@@ -447,7 +447,7 @@ BOOST_AUTO_TEST_CASE(test_pos_scenario)
 
     BOOST_CHECK_EQUAL(res, true);
 
-    bulletproofs::RangeProofLogic<Arith> rp;
+    bulletproofs_plus::RangeProofLogic<Arith> rp;
     Scalars vs;
     vs.Add(value);
 
@@ -458,8 +458,8 @@ BOOST_AUTO_TEST_CASE(test_pos_scenario)
 
     BOOST_CHECK(rproof.Vs[0] == proof.phi);
 
-    std::vector<bulletproofs::RangeProofWithSeed<Arith>> rproofs;
-    bulletproofs::RangeProofWithSeed<Arith> p{rproof, eta_phi, value - Scalar(1)};
+    std::vector<bulletproofs_plus::RangeProofWithSeed<Arith>> rproofs;
+    bulletproofs_plus::RangeProofWithSeed<Arith> p{rproof, eta_phi, value - Scalar(1)};
     rproofs.emplace_back(p);
 
     res = rp.Verify(rproofs);

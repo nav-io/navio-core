@@ -11,7 +11,7 @@
 #define MODIFIER_INTERVAL_RATIO 3
 
 namespace blsct {
-uint256 CalculateKernelHash(const uint32_t& prevTime, const uint64_t& stakeModifier, const MclG1Point& phi, const uint32_t& time);
+uint256 CalculateKernelHash(const uint32_t& prevTime, const uint64_t& stakeModifier, const uint32_t& time);
 } // namespace blsct
 
 #endif // BLSCT_POS_H

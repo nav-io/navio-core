@@ -881,51 +881,58 @@ const BlsctPoint* get_tx_out_range_proof_A(const CTxOut* tx_out) {
     return copy;
 }
 
-const BlsctPoint* get_tx_out_range_proof_S(const CTxOut* tx_out) {
+const BlsctPoint* get_tx_out_range_proof_A_wip(const CTxOut* tx_out)
+{
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.rangeProof.S.GetVch();
+    auto org = tx_out->blsctData.rangeProof.A_wip.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_tx_out_range_proof_T1(const CTxOut* tx_out) {
+const BlsctPoint* get_tx_out_range_proof_B(const CTxOut* tx_out)
+{
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.rangeProof.T1.GetVch();
+    auto org = tx_out->blsctData.rangeProof.B.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_tx_out_range_proof_T2(const CTxOut* tx_out) {
-    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.rangeProof.T2.GetVch();
-    std::memcpy(copy, &org[0], POINT_SIZE);
-    return copy;
-}
-
-const BlsctScalar* get_tx_out_range_proof_mu(const CTxOut* tx_out) {
+const BlsctScalar* get_tx_out_range_proof_r_prime(const CTxOut* tx_out)
+{
     auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
-    auto org = tx_out->blsctData.rangeProof.mu.GetVch();
+    auto org = tx_out->blsctData.rangeProof.r_prime.GetVch();
     std::memcpy(copy, &org[0], SCALAR_SIZE);
     return copy;
 }
 
-const BlsctScalar* get_tx_out_range_proof_a(const CTxOut* tx_out) {
+const BlsctScalar* get_tx_out_range_proof_s_prime(const CTxOut* tx_out)
+{
     auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
-    auto org = tx_out->blsctData.rangeProof.a.GetVch();
+    auto org = tx_out->blsctData.rangeProof.s_prime.GetVch();
     std::memcpy(copy, &org[0], SCALAR_SIZE);
     return copy;
 }
 
-const BlsctScalar* get_tx_out_range_proof_b(const CTxOut* tx_out) {
+const BlsctScalar* get_tx_out_range_proof_delta_prime(const CTxOut* tx_out)
+{
     auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
-    auto org = tx_out->blsctData.rangeProof.b.GetVch();
+    auto org = tx_out->blsctData.rangeProof.delta_prime.GetVch();
     std::memcpy(copy, &org[0], SCALAR_SIZE);
     return copy;
 }
 
-const BlsctScalar* get_tx_out_range_proof_t_hat(const CTxOut* tx_out) {
+const BlsctScalar* get_tx_out_range_proof_alpha_hat(const CTxOut* tx_out)
+{
     auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
-    auto org = tx_out->blsctData.rangeProof.t_hat.GetVch();
+    auto org = tx_out->blsctData.rangeProof.alpha_hat.GetVch();
+    std::memcpy(copy, &org[0], SCALAR_SIZE);
+    return copy;
+}
+
+const BlsctScalar* get_tx_out_range_proof_tau_x(const CTxOut* tx_out)
+{
+    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
+    auto org = tx_out->blsctData.rangeProof.tau_x.GetVch();
     std::memcpy(copy, &org[0], SCALAR_SIZE);
     return copy;
 }

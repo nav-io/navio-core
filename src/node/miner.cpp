@@ -231,12 +231,29 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
         addPackageTxs(*m_mempool, nPackagesSelected, nDescendantsUpdated);
     }
 
+    CCoinsViewCache viewNew(&m_chainstate.CoinsTip());
+
     for (const CMutableTransaction& tx : txns) {
+        bool validPredicate = true;
+        CAmount txFees = 0;
+
         for (auto& out : tx.vout) {
-            if (out.scriptPubKey.IsFee()) {
-                nFees += out.nValue;
+            if (out.predicate.size() > 0) {
+                auto parsedPredicate = blsct::ParsePredicate(out.predicate);
+                if (!ExecutePredicate(parsedPredicate, viewNew)) {
+                    LogPrintf("%s: Failed validation of predicate of output %s\n", __func__, out.ToString());
+                    validPredicate = false;
+                    break;
+                }
+            }
+            if (out.IsFee()) {
+                txFees += out.nValue;
             }
         }
+
+        if (!validPredicate) continue;
+
+        nFees += txFees;
         pblock->vtx.push_back(MakeTransactionRef(tx));
     }
 
@@ -275,7 +292,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     pblocktemplate->vchCoinbaseCommitment = m_chainstate.m_chainman.GenerateCoinbaseCommitment(*pblock, pindexPrev);
     pblocktemplate->vTxFees[0] = -nFees;
 
-    LogPrintf("CreateNewBlock(): block weight: %u txs: %u fees: %ld sigops %d\n", GetBlockWeight(*pblock), nBlockTx, nFees, nBlockSigOpsCost);
+    LogPrintf("CreateNewBLSCTBlock(): block weight: %u txs: %u fees: %ld sigops %d\n", GetBlockWeight(*pblock), nBlockTx, nFees, nBlockSigOpsCost);
 
     // Fill in header
     pblock->hashPrevBlock = pindexPrev->GetBlockHash();
@@ -347,7 +364,7 @@ void BlockAssembler::AddToBlock(CTxMemPool::txiter iter)
     nBlockSigOpsCost += iter->GetSigOpCost();
     if (iter->GetTx().IsBLSCT()) {
         for (auto& out : iter->GetTx().vout) {
-            if (out.scriptPubKey.IsFee())
+            if (out.IsFee())
                 nFees += out.nValue;
         }
     } else {

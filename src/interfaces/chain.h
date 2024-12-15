@@ -6,6 +6,7 @@
 #define BITCOIN_INTERFACES_CHAIN_H
 
 #include <blockfilter.h>
+#include <blsct/tokens/info.h>
 #include <common/settings.h>
 #include <primitives/transaction.h> // For CTransactionRef
 #include <util/result.h>
@@ -32,6 +33,9 @@ enum class ChainstateRole;
 struct bilingual_str;
 struct CBlockLocator;
 struct FeeCalculation;
+namespace blsct {
+class TokenEntry;
+}
 namespace node {
 struct NodeContext;
 } // namespace node
@@ -188,6 +192,7 @@ public:
     //! the current chain UTXO set. Iterates through all the keys in the map and
     //! populates the values.
     virtual void findCoins(std::map<COutPoint, Coin>& coins) = 0;
+    virtual void findTokens(std::map<uint256, blsct::TokenEntry>& tokens) = 0;
 
     //! Estimate fraction of total transactions verified if blocks up to
     //! the specified block hash are verified.

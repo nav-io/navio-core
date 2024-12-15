@@ -1008,6 +1008,11 @@ bool CCoinsViewMemPool::GetCoin(const COutPoint &outpoint, Coin &coin) const {
     return base->GetCoin(outpoint, coin);
 }
 
+bool CCoinsViewMemPool::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const
+{
+    return base->GetToken(tokenId, token);
+};
+
 void CCoinsViewMemPool::PackageAddTransaction(const CTransactionRef& tx)
 {
     for (unsigned int n = 0; n < tx->vout.size(); ++n) {

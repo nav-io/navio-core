@@ -119,11 +119,11 @@ std::vector<unsigned char> CalculateSetMemProofRandomness(const CBlockIndex* pin
 
 
 blsct::Message
-CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev)
+CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& block)
 {
     HashWriter ss{};
 
-    ss << pindexPrev->nHeight << pindexPrev->nStakeModifier;
+    ss << pindexPrev->nHeight << pindexPrev->nStakeModifier << TX_NO_WITNESS(block.vtx);
 
     auto hash = ss.GetHash();
 
@@ -132,6 +132,6 @@ CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev)
 
 uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block)
 {
-    return CalculateKernelHash(pindexPrev->nTime, pindexPrev->nStakeModifier, block.posProof.setMemProof.phi, block.nTime);
+    return CalculateKernelHash(pindexPrev->nTime, pindexPrev->nStakeModifier, block.nTime);
 }
 } // namespace blsct

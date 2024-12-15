@@ -9,6 +9,11 @@
 
 class COutPoint;
 class Coin;
+class uint256;
+
+namespace blsct {
+class TokenEntry;
+}
 
 namespace node {
 struct NodeContext;
@@ -22,6 +27,7 @@ struct NodeContext;
  * @param[in,out] coins map to fill
  */
 void FindCoins(const node::NodeContext& node, std::map<COutPoint, Coin>& coins);
+void FindTokens(const NodeContext& node, std::map<uint256, blsct::TokenEntry>& tokens);
 } // namespace node
 
 #endif // BITCOIN_NODE_COIN_H
