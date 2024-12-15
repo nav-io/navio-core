@@ -72,14 +72,14 @@ public:
     void Serialize(Stream& s) const
     {
         ::Serialize(s, setMemProof);
-        ::Serialize(s, rangeProof);
+        ::Serialize(s, Using<bulletproofs_plus::RangeProofWithoutVs<Arith>>(rangeProof));
     }
 
     template <typename Stream>
     void Unserialize(Stream& s)
     {
         ::Unserialize(s, setMemProof);
-        ::Unserialize(s, rangeProof);
+        ::Unserialize(s, Using<bulletproofs_plus::RangeProofWithoutVs<Arith>>(rangeProof));
     }
 
     SetProof setMemProof;
