@@ -1478,7 +1478,7 @@ libblsct_a_SOURCES = \
   support/cleanse.cpp \
   support/lockedpool.cpp \
   uint256.cpp \
-	util/moneystr.cpp \
+  util/moneystr.cpp \
   util/rbf.cpp \
   util/strencodings.cpp \
   util/time.cpp \
