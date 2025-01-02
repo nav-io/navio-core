@@ -271,45 +271,4 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
     return tx.BuildTx(transactionData.changeDestination, transactionData.minStake, transactionData.type);
 }
 
-void TxFactoryBase::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates)
-{
-    AssertLockHeld(wallet->cs_wallet);
-    for (const wallet::COutput& output : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params).All()) {
-        auto tx = wallet->GetWalletTx(output.outpoint.hash);
-
-        if (tx == nullptr)
-            continue;
-
-        auto out = tx->tx->vout[output.outpoint.n];
-
-        auto recoveredInfo = tx->GetBLSCTRecoveryData(output.outpoint.n);
-        auto value = out.HasBLSCTRangeProof() ? recoveredInfo.amount : out.nValue;
-
-        inputCandidates.push_back({value, recoveredInfo.gamma, blsct_km->GetSpendingKeyForOutput(out), out.tokenId, COutPoint(output.outpoint.hash, output.outpoint.n), out.IsStakedCommitment()});
-    }
-}
-
-void TxFactoryBase::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates)
-{
-    AssertLockHeld(wallet->cs_wallet);
-
-    wallet::CoinFilterParams coins_params;
-    coins_params.min_amount = 0;
-    coins_params.only_blsct = true;
-    coins_params.token_id = token_id;
-
-    AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
-
-    if (type == CreateTransactionType::STAKED_COMMITMENT || type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) {
-        coins_params.include_staked_commitment = true;
-        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
-    }
-
-    if ((type == CreateTransactionType::NORMAL && !token_id.IsNull()) || type == CreateTransactionType::TX_MINT_TOKEN) {
-        coins_params.token_id.SetNull();
-        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
-    }
-}
-
-
 } // namespace blsct
