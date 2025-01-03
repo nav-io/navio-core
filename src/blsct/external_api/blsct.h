@@ -8,7 +8,6 @@
 #include <blsct/double_public_key.h>
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
-#include <blsct/wallet/address.h>
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/arith/elements.h>
 #include <blsct/range_proof/setup.h>
