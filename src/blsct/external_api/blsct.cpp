@@ -12,7 +12,6 @@
 #include <blsct/wallet/address.h>
 #include <blsct/wallet/helpers.h>
 #include <blsct/wallet/txfactory_base.h>
-#include <common/args.h>
 #include <common/url.h>
 #include <crypto/common.h>
 #include <memory.h>
@@ -35,7 +34,11 @@ static bulletproofs::RangeProofLogic<Mcl>* g_rpl;
 static bool g_is_little_endian;
 
 const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
-UrlDecodeFn* const URL_DECODE = urlDecode;
+UrlDecodeFn* const URL_DECODE = nullptr;
+
+const std::string& get_chain() {
+    return g_chain;
+}
 
 extern "C" {
 

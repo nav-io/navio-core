@@ -8,7 +8,6 @@
 #include <blsct/double_public_key.h>
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
-#include <blsct/wallet/address.h>
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/arith/elements.h>
 #include <blsct/range_proof/setup.h>
@@ -114,6 +113,9 @@ if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
 #define TO_VOID(name) reinterpret_cast<void*>(name)
 
 #define UNVOID(T, name) const T* name = reinterpret_cast<const T*>(void_##name)
+
+// global variable access
+const std::string& get_chain();
 
 #ifdef __cplusplus
 extern "C" {
@@ -393,6 +395,11 @@ const BlsctScalar* get_tx_out_range_proof_s_prime(const CTxOut* tx_out);
 const BlsctScalar* get_tx_out_range_proof_delta_prime(const CTxOut* tx_out);
 const BlsctScalar* get_tx_out_range_proof_alpha_hat(const CTxOut* tx_out);
 const BlsctScalar* get_tx_out_range_proof_tau_x(const CTxOut* tx_out);
+
+const BlsctSignature* sign_message(
+    const BlsctScalar* blsct_priv_key,
+    const char* blsct_msg
+);
 
 bool verify_msg_sig(
     const BlsctPubKey* blsct_pub_key,
