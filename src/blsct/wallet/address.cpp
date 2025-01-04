@@ -5,7 +5,7 @@
 #include <blsct/wallet/address.h>
 
 #ifdef LIBBLSCT
-#include <blsct/external_api/blsct.h>
+#include <blsct/chain.h>
 #include <blsct/key_io.h>
 #endif
 

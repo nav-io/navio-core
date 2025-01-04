@@ -10,6 +10,7 @@
 #include <blsct/public_key.h>
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/arith/elements.h>
+#include <blsct/chain.h>
 #include <blsct/range_proof/setup.h>
 #include <primitives/transaction.h>
 #include <tinyformat.h>
@@ -114,19 +115,9 @@ if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
 
 #define UNVOID(T, name) const T* name = reinterpret_cast<const T*>(void_##name)
 
-// global variable access
-const std::string& get_chain();
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-enum Chain {
-    MainNet,
-    TestNet,
-    SigNet,
-    RegTest
-};
 
 enum TxOutputType {
     Normal,
@@ -236,7 +227,6 @@ void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 
 // library initialization
 void init();
-bool set_chain(enum Chain chain);
 
 // point
 BlsctRetVal* gen_random_point();

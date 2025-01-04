@@ -165,6 +165,7 @@ BLSCT_H = \
   blsct/building_block/lazy_points.h \
   blsct/building_block/pedersen_commitment.h \
   blsct/building_block/weighted_inner_prod_arg.h \
+  blsct/chain.h \
   blsct/common.h \
   blsct/double_public_key.h \
   blsct/eip_2333/bls12_381_keygen.h \
@@ -226,6 +227,7 @@ BLSCT_CPP = \
   blsct/building_block/lazy_point.cpp \
   blsct/building_block/lazy_points.cpp \
   blsct/building_block/weighted_inner_prod_arg.cpp \
+  blsct/chain.cpp \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
