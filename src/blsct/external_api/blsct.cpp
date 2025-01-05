@@ -12,7 +12,6 @@
 #include <blsct/wallet/address.h>
 #include <blsct/wallet/helpers.h>
 #include <blsct/wallet/txfactory_base.h>
-#include <common/args.h>
 #include <common/url.h>
 #include <crypto/common.h>
 #include <memory.h>
@@ -28,16 +27,12 @@
 #include <optional>
 #include <string>
 
-static std::string g_chain;
 static std::mutex g_init_mutex;
-static std::mutex g_set_chain_mutex;
 static bulletproofs::RangeProofLogic<Mcl>* g_rpl;
 static bool g_is_little_endian;
 
 const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
-UrlDecodeFn* const URL_DECODE = urlDecode;
-
-extern "C" {
+UrlDecodeFn* const URL_DECODE = nullptr;
 
 static bool is_little_endian() {
     uint16_t n = 1;
@@ -51,36 +46,11 @@ void init()
 
     Mcl::Init for_side_effect_only;
 
-    g_chain = blsct::bech32_hrp::Main;
+    if (!set_chain(Chain::MainNet)) {
+        throw std::runtime_error("Chain has already been set");
+    }
     g_is_little_endian = is_little_endian();
     g_rpl = new(std::nothrow) bulletproofs::RangeProofLogic<Mcl>();
-}
-
-bool set_chain(enum Chain chain)
-{
-    std::lock_guard<std::mutex> lock(g_set_chain_mutex);
-    if (!g_chain.empty()) {
-        return false;
-    }
-
-    switch (chain) {
-        case MainNet:
-            g_chain = blsct::bech32_hrp::Main;
-            break;
-
-        case TestNet:
-            g_chain = blsct::bech32_hrp::TestNet;
-            break;
-
-        case SigNet:
-            g_chain = blsct::bech32_hrp::SigNet;
-            break;
-
-        case RegTest:
-            g_chain = blsct::bech32_hrp::RegTest;
-            break;
-    }
-    return true;
 }
 
 BlsctRetVal* succ(
@@ -226,7 +196,8 @@ BlsctRetVal* decode_address(
             return err(BLSCT_BAD_DPK_SIZE);
         }
         std::string enc_addr(blsct_enc_addr);
-        auto maybe_dpk = blsct::DecodeDoublePublicKey(g_chain, enc_addr);
+        auto chain = get_chain();
+        auto maybe_dpk = blsct::DecodeDoublePublicKey(chain, enc_addr);
         if (maybe_dpk) {
             auto dpk = maybe_dpk.value();
             if (dpk.IsValid()) {
@@ -259,7 +230,8 @@ BlsctRetVal* encode_address(
 
         auto bech32_encoding = encoding == Bech32 ?
             bech32_mod::Encoding::BECH32 : bech32_mod::Encoding::BECH32M;
-        auto enc_dpk_str = EncodeDoublePublicKey(g_chain, bech32_encoding, dpk);
+        auto chain = get_chain();
+        auto enc_dpk_str = EncodeDoublePublicKey(chain, bech32_encoding, dpk);
         size_t BUF_SIZE = enc_dpk_str.size() + 1;
         MALLOC_BYTES(char, enc_addr, BUF_SIZE);
         RETURN_ERR_IF_MEM_ALLOC_FAILED(enc_addr);
@@ -1282,6 +1254,4 @@ BlsctDoublePubKey* gen_dpk_with_keys_and_sub_addr_id(
 
     return blsct_dpk;
 }
-
-} // extern "C"
 
