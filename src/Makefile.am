@@ -165,6 +165,7 @@ BLSCT_H = \
   blsct/building_block/lazy_points.h \
   blsct/building_block/pedersen_commitment.h \
   blsct/building_block/weighted_inner_prod_arg.h \
+  blsct/chain.h \
   blsct/common.h \
   blsct/double_public_key.h \
   blsct/eip_2333/bls12_381_keygen.h \
@@ -226,6 +227,7 @@ BLSCT_CPP = \
   blsct/building_block/lazy_point.cpp \
   blsct/building_block/lazy_points.cpp \
   blsct/building_block/weighted_inner_prod_arg.cpp \
+  blsct/chain.cpp \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
@@ -1478,6 +1480,7 @@ libblsct_a_SOURCES = \
   support/cleanse.cpp \
   support/lockedpool.cpp \
   uint256.cpp \
+  util/moneystr.cpp \
   util/rbf.cpp \
   util/strencodings.cpp \
   util/time.cpp \
@@ -1517,7 +1520,7 @@ libunivalue_blsct_a_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR
 libunivalue_blsct_a_CXXFLAGS = $(AM_CXXFLAGS) -fPIC
 
 libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) -fPIC
-libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -DLIBBLSCT -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
 
 if ENABLE_SSE41
 libblsct_a_CXXFLAGS += $(SSE41_CXXFLAGS)
