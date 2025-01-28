@@ -383,6 +383,7 @@ CoinsResult AvailableCoins(const CWallet& wallet,
 
         for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
             const CTxOut& output = wtx.tx->vout[i];
+            CTxOut mutableOutput(output);
             const COutPoint outpoint(Txid::FromUint256(txid), i);
             auto nValue = output.HasBLSCTRangeProof() ? wtx.GetBLSCTRecoveryData(i).amount : output.nValue;
             if (nValue < params.min_amount || nValue > params.max_amount) continue;
@@ -442,8 +443,10 @@ CoinsResult AvailableCoins(const CWallet& wallet,
                 is_from_p2sh = true;
             }
 
+            mutableOutput.nValue = nValue;
+
             result.Add(GetOutputType(type, is_from_p2sh),
-                       COutput(outpoint, output, nDepth, input_bytes, spendable, solvable, safeTx, wtx.GetTxTime(), tx_from_me, feerate));
+                       COutput(outpoint, mutableOutput, nDepth, input_bytes, spendable, solvable, safeTx, wtx.GetTxTime(), tx_from_me, feerate));
 
             outpoints.push_back(outpoint);
 
