@@ -4,13 +4,31 @@
 
 #include <blsct/wallet/address.h>
 
+#ifdef LIBBLSCT
+#include <blsct/chain.h>
+#include <blsct/key_io.h>
+#endif
+
 namespace blsct {
 SubAddress::SubAddress(const std::string& sAddress)
 {
+#ifdef LIBBLSCT
+    auto chain = get_chain();
+    auto maybe_dpk = DecodeDoublePublicKey(chain, sAddress);
+    if (maybe_dpk) {
+        auto dpk = maybe_dpk.value();
+        if (dpk.IsValid()) {
+            pk = dpk;
+        } else {
+            throw std::runtime_error(std::string(__func__) + ": invalid double public key: " + sAddress);
+        }
+    }
+#else
     auto dest = DecodeDestination(sAddress);
     if (std::holds_alternative<blsct::DoublePublicKey>(dest)) {
         pk = std::get<blsct::DoublePublicKey>(dest);
     }
+#endif
 }
 
 SubAddress::SubAddress(const PrivateKey& viewKey, const PublicKey& spendKey, const SubAddressIdentifier& subAddressId)
@@ -41,7 +59,17 @@ SubAddress::SubAddress(const PrivateKey& viewKey, const PublicKey& spendKey, con
 
 std::string SubAddress::GetString() const
 {
+#ifdef LIBBLSCT
+    auto chain = get_chain();
+    auto enc_dpk = EncodeDoublePublicKey(
+        chain,
+        bech32_mod::Encoding::BECH32M,
+        pk
+    );
+    return enc_dpk;
+#else
     return EncodeDestination(pk);
+#endif
 }
 
 CTxDestination SubAddress::GetDestination() const
