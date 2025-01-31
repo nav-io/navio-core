@@ -30,7 +30,6 @@
 #define KEY_ID_SIZE 20
 #define POINT_SIZE 48
 #define SCALAR_SIZE 32
-#define RANGE_PROOF_SIZE 1315  // needs to be at least 1315
 #define TOKEN_ID_SIZE 40  // uint256 + uint64_t = 32 + 8 = 40
 #define UINT256_SIZE 32
 #define VIEW_TAG_SIZE 8
@@ -138,7 +137,6 @@ typedef uint8_t BlsctPoint[POINT_SIZE];
 typedef uint8_t BlsctPubKey[PUBLIC_KEY_SIZE];
 typedef uint8_t BlsctDoublePubKey[DOUBLE_PUBLIC_KEY_SIZE];
 typedef char BlsctAddrStr[ENCODED_DPK_STR_BUF_SIZE];
-typedef uint8_t BlsctRangeProof[RANGE_PROOF_SIZE];
 typedef uint8_t BlsctScalar[SCALAR_SIZE];
 typedef uint8_t BlsctScript[SCRIPT_SIZE];
 typedef uint8_t BlsctSubAddr[SUB_ADDR_SIZE];
@@ -193,7 +191,7 @@ BlsctBoolRetVal* err_bool(
 );
 
 typedef struct {
-  BlsctRangeProof range_proof;
+  uint8_t* range_proof;
   BlsctPoint nonce;
 } BlsctAmountRecoveryReq;
 
@@ -230,6 +228,7 @@ void init();
 
 // point
 BlsctRetVal* gen_random_point();
+BlsctRetVal* gen_base_point();
 const char* point_to_hex(const BlsctPoint* blsct_point);
 
 // scalar

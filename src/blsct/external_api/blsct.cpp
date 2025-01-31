@@ -5,9 +5,9 @@
 #include <blsct/key_io.h>
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
-#include <blsct/range_proof/bulletproofs/amount_recovery_request.h>
-#include <blsct/range_proof/bulletproofs/range_proof.h>
-#include <blsct/range_proof/bulletproofs/range_proof_logic.h>
+#include <blsct/range_proof/bulletproofs_plus/amount_recovery_request.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/signature.h>
 #include <blsct/wallet/address.h>
 #include <blsct/wallet/helpers.h>
@@ -17,6 +17,8 @@
 #include <memory.h>
 #include <primitives/transaction.h>
 #include <streams.h>
+
+#include <util/strencodings.h> // TODO delete this
 
 #include <cstdint>
 #include <cstring>
@@ -28,7 +30,7 @@
 #include <string>
 
 static std::mutex g_init_mutex;
-static bulletproofs::RangeProofLogic<Mcl>* g_rpl;
+static bulletproofs_plus::RangeProofLogic<Mcl>* g_rpl;
 static bool g_is_little_endian;
 
 const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
@@ -50,7 +52,7 @@ void init()
         throw std::runtime_error("Chain has already been set");
     }
     g_is_little_endian = is_little_endian();
-    g_rpl = new(std::nothrow) bulletproofs::RangeProofLogic<Mcl>();
+    g_rpl = new(std::nothrow) bulletproofs_plus::RangeProofLogic<Mcl>();
 }
 
 BlsctRetVal* succ(
@@ -118,6 +120,16 @@ BlsctRetVal* gen_random_point() {
     RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
 
     auto x = Point::Rand();
+    SERIALIZE_AND_COPY(x, blsct_point);
+
+    return succ(blsct_point, POINT_SIZE);
+}
+
+BlsctRetVal* gen_base_point() {
+    MALLOC(BlsctPoint, blsct_point);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
+
+    auto x = Point::GetBasePoint();
     SERIALIZE_AND_COPY(x, blsct_point);
 
     return succ(blsct_point, POINT_SIZE);
@@ -362,10 +374,16 @@ BlsctRetVal* build_range_proof(
             msg_vec,
             token_id
         );
-        MALLOC(BlsctRangeProof, blsct_range_proof);
+
+        DataStream ds;
+        range_proof.Serialize(ds);
+        size_t range_proof_size = ds.size();
+        printf("range proof size: %zu", range_proof_size);
+
+        MALLOC_BYTES(uint8_t, blsct_range_proof, range_proof_size);
         RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_range_proof);
         SERIALIZE_AND_COPY_WITH_STREAM(range_proof, blsct_range_proof);
-        return succ(blsct_range_proof, RANGE_PROOF_SIZE);
+        return succ(blsct_range_proof, range_proof_size);
 
     } catch(...) {}
 
@@ -376,12 +394,12 @@ BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs
 ) {
     try {
-        auto range_proofs = static_cast<const std::vector<bulletproofs::RangeProof<Mcl>>*>(vp_range_proofs);
+        auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
 
-        std::vector<bulletproofs::RangeProofWithSeed<Mcl>> range_proof_w_seeds;
+        std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> range_proof_w_seeds;
 
         for(const auto& rp: *range_proofs) {
-            auto rp_w_seed = bulletproofs::RangeProofWithSeed<Mcl>(rp);
+            auto rp_w_seed = bulletproofs_plus::RangeProofWithSeed<Mcl>(rp);
             range_proof_w_seeds.push_back(rp_w_seed);
         }
         bool is_valid = g_rpl->Verify(range_proof_w_seeds);
@@ -413,16 +431,16 @@ BlsctAmountsRetVal* recover_amount(
             static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
 
         // construct AmountRecoveryRequest vector
-        std::vector<bulletproofs::AmountRecoveryRequest<Mcl>> reqs;
+        std::vector<bulletproofs_plus::AmountRecoveryRequest<Mcl>> reqs;
 
         for (auto ar_req: *amt_recovery_req_vec) {
-            bulletproofs::RangeProof<Mcl> range_proof;
+            bulletproofs_plus::RangeProof<Mcl> range_proof;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.range_proof, RANGE_PROOF_SIZE, range_proof);
 
             Mcl::Point nonce;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.nonce, POINT_SIZE, nonce);
 
-            auto req = bulletproofs::AmountRecoveryRequest<Mcl>::of(
+            auto req = bulletproofs_plus::AmountRecoveryRequest<Mcl>::of(
                 range_proof,
                 nonce
             );
