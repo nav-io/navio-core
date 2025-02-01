@@ -113,6 +113,16 @@ void free_amounts_ret_val(BlsctAmountsRetVal* rv) {
     free(rv);
 }
 
+BlsctRetVal* gen_base_point() {
+    MALLOC(BlsctPoint, blsct_point);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
+
+    auto x = Point::GetBasePoint();
+    SERIALIZE_AND_COPY(x, blsct_point);
+
+    return succ(blsct_point, POINT_SIZE);
+}
+
 BlsctRetVal* gen_random_point() {
     MALLOC(BlsctPoint, blsct_point);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_point);

@@ -30,7 +30,7 @@
 #define KEY_ID_SIZE 20
 #define POINT_SIZE 48
 #define SCALAR_SIZE 32
-#define RANGE_PROOF_SIZE 1315  // needs to be at least 1315
+#define RANGE_PROOF_SIZE 704  // needs to be at least 1315
 #define TOKEN_ID_SIZE 40  // uint256 + uint64_t = 32 + 8 = 40
 #define UINT256_SIZE 32
 #define VIEW_TAG_SIZE 8
@@ -229,6 +229,7 @@ void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 void init();
 
 // point
+BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
 const char* point_to_hex(const BlsctPoint* blsct_point);
 
