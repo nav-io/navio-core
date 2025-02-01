@@ -372,11 +372,15 @@ BlsctRetVal* build_range_proof(
             msg_vec,
             token_id
         );
-        printf("---> range proof size: %lu\n", sizeof(bulletproofs_plus::RangeProof<Mcl>));
-        MALLOC(BlsctRangeProof, blsct_range_proof);
+        DataStream size_st{};
+        range_proof.Serialize(size_st);
+        size_t range_proof_size = size_st.size();
+
+        MALLOC_BYTES(BlsctRangeProof, blsct_range_proof, range_proof_size);
         RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_range_proof);
         SERIALIZE_AND_COPY_WITH_STREAM(range_proof, blsct_range_proof);
-        return succ(blsct_range_proof, RANGE_PROOF_SIZE);
+
+        return succ(blsct_range_proof, range_proof_size);
 
     } catch(...) {}
 
@@ -405,11 +409,18 @@ BlsctBoolRetVal* verify_range_proofs(
 
 BlsctAmountRecoveryReq* gen_recover_amount_req(
     const void* vp_blsct_range_proof,
+    const size_t range_proof_size,
     const void* vp_blsct_nonce
 ) {
     auto req = new(std::nothrow) BlsctAmountRecoveryReq;
     RETURN_IF_MEM_ALLOC_FAILED(req);
-    BLSCT_COPY(vp_blsct_range_proof, req->range_proof);
+
+    req->range_proof = const_cast<BlsctRangeProof*>(
+        static_cast<const BlsctRangeProof*>(vp_blsct_range_proof)
+    );
+
+    BLSCT_COPY_BYTES(vp_blsct_range_proof, req->range_proof, range_proof_size);
+    req->range_proof_size = range_proof_size;
     BLSCT_COPY(vp_blsct_nonce, req->nonce);
     return req;
 }
@@ -428,7 +439,7 @@ BlsctAmountsRetVal* recover_amount(
 
         for (auto ar_req: *amt_recovery_req_vec) {
             bulletproofs_plus::RangeProof<Mcl> range_proof;
-            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.range_proof, RANGE_PROOF_SIZE, range_proof);
+            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.range_proof, ar_req.range_proof_size, range_proof);
 
             Mcl::Point nonce;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.nonce, POINT_SIZE, nonce);
