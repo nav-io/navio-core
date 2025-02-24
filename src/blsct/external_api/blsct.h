@@ -30,7 +30,6 @@
 #define KEY_ID_SIZE 20
 #define POINT_SIZE 48
 #define SCALAR_SIZE 32
-#define RANGE_PROOF_SIZE 1315  // needs to be at least 1315
 #define TOKEN_ID_SIZE 40  // uint256 + uint64_t = 32 + 8 = 40
 #define UINT256_SIZE 32
 #define VIEW_TAG_SIZE 8
@@ -98,6 +97,7 @@
 }
 
 #define BLSCT_COPY(src, dest) std::memcpy(dest, src, sizeof(dest))
+#define BLSCT_COPY_BYTES(src, dest, n) std::memcpy(dest, src, n)
 
 #define MALLOC(T, name) T* name = (T*) malloc(sizeof(T))
 #define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
@@ -138,7 +138,6 @@ typedef uint8_t BlsctPoint[POINT_SIZE];
 typedef uint8_t BlsctPubKey[PUBLIC_KEY_SIZE];
 typedef uint8_t BlsctDoublePubKey[DOUBLE_PUBLIC_KEY_SIZE];
 typedef char BlsctAddrStr[ENCODED_DPK_STR_BUF_SIZE];
-typedef uint8_t BlsctRangeProof[RANGE_PROOF_SIZE];
 typedef uint8_t BlsctScalar[SCALAR_SIZE];
 typedef uint8_t BlsctScript[SCRIPT_SIZE];
 typedef uint8_t BlsctSubAddr[SUB_ADDR_SIZE];
@@ -149,6 +148,8 @@ typedef uint8_t BlsctTxId[TX_ID_SIZE];
 typedef uint8_t BlsctViewTag[VIEW_TAG_SIZE];
 typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
 typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
+
+typedef uint8_t BlsctRangeProof;
 
 typedef struct {
   BLSCT_RESULT result;
@@ -193,7 +194,8 @@ BlsctBoolRetVal* err_bool(
 );
 
 typedef struct {
-  BlsctRangeProof range_proof;
+  BlsctRangeProof* range_proof;
+  size_t range_proof_size;
   BlsctPoint nonce;
 } BlsctAmountRecoveryReq;
 
@@ -229,6 +231,7 @@ void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 void init();
 
 // point
+BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
 const char* point_to_hex(const BlsctPoint* blsct_point);
 
@@ -288,6 +291,7 @@ BlsctBoolRetVal* verify_range_proofs(
 // amount recovery
 BlsctAmountRecoveryReq* gen_recover_amount_req(
     const void* vp_blsct_range_proof,
+    const size_t range_proof_size,
     const void* vp_blsct_nonce
 );
 
