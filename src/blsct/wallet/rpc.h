@@ -10,7 +10,8 @@
 
 namespace wallet {
 class CWallet;
-}
+typedef std::multimap<int64_t, CWalletOutput*> OutputItems;
+} // namespace wallet
 
 namespace blsct {
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose);

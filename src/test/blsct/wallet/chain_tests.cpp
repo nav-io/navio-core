@@ -35,10 +35,10 @@ BOOST_FIXTURE_TEST_CASE(SyncTest, TestBLSCTChain100Setup)
 
     BOOST_CHECK(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
 
-    BOOST_CHECK(GetBalance(*wallet).m_mine_trusted == 4 * COIN);
-    BOOST_CHECK(GetBalance(*wallet).m_mine_immature == 4 * COINBASE_MATURITY * COIN);
+    BOOST_CHECK(GetBlsctBalance(*wallet).m_mine_trusted == 4 * COIN);
+    BOOST_CHECK(GetBlsctBalance(*wallet).m_mine_immature == 4 * COINBASE_MATURITY * COIN);
 
-    auto available_coins = AvailableCoins(*wallet);
+    auto available_coins = AvailableBlsctCoins(*wallet);
     std::vector<COutput> coins = available_coins.All();
 
     BOOST_CHECK(coins.size() == 1);
@@ -52,9 +52,9 @@ BOOST_FIXTURE_TEST_CASE(SyncTest, TestBLSCTChain100Setup)
 
     BOOST_CHECK(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
 
-    auto wtx = wallet->GetWalletTx(block.vtx[1]->GetHash());
+    auto wout = wallet->GetWalletOutput(COutPoint(block.vtx[1]->GetHash(), 1));
 
-    BOOST_CHECK(wtx != nullptr);
+    BOOST_CHECK(wout != nullptr);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

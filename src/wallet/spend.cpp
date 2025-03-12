@@ -477,6 +477,104 @@ CoinsResult AvailableCoins(const CWallet& wallet,
     return result;
 }
 
+CoinsResult AvailableBlsctCoins(const CWallet& wallet,
+                                const CCoinControl* coinControl,
+                                const CoinFilterParams& params)
+{
+    AssertLockHeld(wallet.cs_wallet);
+
+    CoinsResult result;
+    const int min_depth = {coinControl ? coinControl->m_min_depth : DEFAULT_MIN_DEPTH};
+    const int max_depth = {coinControl ? coinControl->m_max_depth : DEFAULT_MAX_DEPTH};
+    const bool only_safe = {coinControl ? !coinControl->m_include_unsafe_inputs : true};
+    std::vector<COutPoint> outpoints;
+
+    std::set<uint256> trusted_parents;
+    for (const auto& entry : wallet.mapOutputs) {
+        const COutPoint& outpoint = entry.first;
+        const CWalletOutput& wout = entry.second;
+
+        if (wallet.IsOutputImmatureCoinBase(wout) && !params.include_immature_coinbase)
+            continue;
+
+        int nDepth = wallet.GetOutputDepthInMainChain(wout);
+        if (nDepth < 0)
+            continue;
+
+        // Coins with no confirmations can not be spent
+        if (nDepth == 0) {
+            continue;
+        }
+
+        bool safeTx = IsOutputTrusted(wallet, wout);
+
+        if (only_safe && !safeTx) {
+            continue;
+        }
+
+        if (nDepth < min_depth || nDepth > max_depth) {
+            continue;
+        }
+
+        const CTxOut output = *wout.out;
+        CTxOut mutableOutput(output);
+
+        auto nValue = wout.blsctRecoveryData.amount;
+        if (nValue < params.min_amount || nValue > params.max_amount) continue;
+
+        // Skip manually selected coins (the caller can fetch them directly)
+        if (coinControl && coinControl->HasSelected() && coinControl->IsSelected(outpoint))
+            continue;
+
+        if (wallet.IsLockedCoin(outpoint) && params.skip_locked)
+            continue;
+
+        if (wallet.IsSpent(outpoint) || wout.IsSpent())
+            continue;
+
+        isminetype mine = wallet.IsMine(output);
+
+        if (mine == ISMINE_NO) {
+            continue;
+        }
+        if (params.include_staked_commitment && !output.IsStakedCommitment()) {
+            continue;
+        }
+        if (!params.include_staked_commitment && output.IsStakedCommitment()) {
+            continue;
+        }
+        if (params.token_id != output.tokenId) {
+            continue;
+        }
+
+        bool spendable = ((mine & (ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT)) != ISMINE_NO) || (((mine & ISMINE_WATCH_ONLY) != ISMINE_NO) && (coinControl && coinControl->fAllowWatchOnly));
+
+        // Filter by spendable outputs only
+        if (!spendable && params.only_spendable) continue;
+
+        mutableOutput.nValue = nValue;
+
+        result.Add(output.IsStakedCommitment() ? OutputType::BLSCT_STAKE : OutputType::BLSCT,
+                   COutput(outpoint, mutableOutput, nDepth, -1, spendable, true, safeTx, wout.GetTxTime(), true, 0));
+
+        outpoints.push_back(outpoint);
+
+        // Checks the sum amount of all UTXO's.
+        if (params.min_sum_amount != MAX_MONEY) {
+            if (result.GetTotalAmount() >= params.min_sum_amount) {
+                return result;
+            }
+        }
+
+        // Checks the maximum number of UTXO's.
+        if (params.max_count > 0 && result.Size() >= params.max_count) {
+            return result;
+        }
+    }
+
+    return result;
+}
+
 CoinsResult AvailableCoinsListUnspent(const CWallet& wallet, const CCoinControl* coinControl, CoinFilterParams params)
 {
     params.only_spendable = false;

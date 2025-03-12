@@ -79,6 +79,9 @@ enum WalletFlags : uint64_t {
 
     //! Indicates that the wallet is used for BLSCT transactions
     WALLET_FLAG_BLSCT = (1ULL << 36),
+    
+    //! Indicates that the wallet only stores outputs and not full transactions (experimental)
+    WALLET_FLAG_BLSCT_OUTPUT_STORAGE = (1ULL << 37),
 };
 
 //! Get the path of the wallet directory.

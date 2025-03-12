@@ -24,7 +24,8 @@ private:
 public:
     SaltedTxidHasher();
 
-    size_t operator()(const uint256& txid) const {
+    size_t operator()(const uint256& txid) const
+    {
         return SipHashUint256(k0, k1, txid);
     }
 };

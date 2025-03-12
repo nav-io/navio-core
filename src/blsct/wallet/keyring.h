@@ -15,6 +15,7 @@ class KeyRing
 {
 public:
     using KeyMap = std::map<CKeyID, PrivateKey>;
+    using OutKeyMap = std::map<uint256, PrivateKey>;
 
     /**
      * Map of key id to unencrypted private keys known by the signing provider.
@@ -22,6 +23,7 @@ public:
      * encrypted store.
      */
     KeyMap mapKeys GUARDED_BY(cs_KeyStore);
+    OutKeyMap mapOutKeys GUARDED_BY(cs_KeyStore);
     mutable RecursiveMutex cs_KeyStore;
 
     PrivateKey viewKey;
@@ -29,12 +31,14 @@ public:
     PublicKey spendPublicKey;
 
     virtual bool AddKeyPubKey(const PrivateKey& key, const PublicKey& pubkey);
+    virtual bool AddKeyOutKey(const PrivateKey& key, const uint256& outId);
     virtual bool AddKey(const PrivateKey& key) { return AddKeyPubKey(key, key.GetPublicKey()); }
     virtual bool AddViewKey(const PrivateKey& key, const PublicKey& pubkey);
     virtual bool AddSpendKey(const PublicKey& pubkey);
 
     virtual bool HaveKey(const CKeyID& id) const;
     virtual bool GetKey(const CKeyID& id, PrivateKey& keyOut) const;
+    virtual bool GetOutKey(const uint256& outId, PrivateKey& keyOut) const;
 
     virtual ~KeyRing() = default;
 

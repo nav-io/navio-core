@@ -28,7 +28,7 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
     if (vInputs.count(coin.out.tokenId) == 0)
         vInputs[coin.out.tokenId] = std::vector<UnsignedInput>();
 
-    vInputs[coin.out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, km->GetSpendingKeyForOutput(coin.out), stakedCommitment});
+    vInputs[coin.out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, km->GetSpendingKeyForOutputWithCache(coin.out), stakedCommitment});
 
     if (nAmounts.count(coin.out.tokenId) == 0)
         nAmounts[coin.out.tokenId] = {0, 0, 0};
@@ -42,19 +42,19 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 {
     AssertLockHeld(wallet->cs_wallet);
 
-    auto tx = wallet->GetWalletTx(outpoint.hash);
+    auto wout = wallet->GetWalletOutput(outpoint);
 
-    if (tx == nullptr)
+    if (wout == nullptr)
         return false;
 
-    auto out = tx->tx->vout[outpoint.n];
+    auto out = *(wout->out);
 
     if (vInputs.count(out.tokenId) == 0)
         vInputs[out.tokenId] = std::vector<UnsignedInput>();
 
-    auto recoveredInfo = tx->GetBLSCTRecoveryData(outpoint.n);
+    auto recoveredInfo = wout->blsctRecoveryData;
 
-    vInputs[out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, km->GetSpendingKeyForOutput(out), stakedCommitment});
+    vInputs[out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, km->GetSpendingKeyForOutputWithCache(out), stakedCommitment});
 
     if (nAmounts.count(out.tokenId) == 0)
         nAmounts[out.tokenId] = {0, 0, 0};
@@ -76,7 +76,7 @@ std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet*
 
     std::vector<InputCandidates> inputCandidates;
 
-    TxFactory::AddAvailableCoins(wallet, blsct_km, transactionData.token_id, transactionData.type, inputCandidates);
+    TxFactory::AddAvailableCoins(wallet, blsct_km, transactionData.token_id, transactionData.type, inputCandidates, transactionData.nAmount);
 
     auto changeType = transactionData.type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE ? STAKING_ACCOUNT : CHANGE_ACCOUNT;
 
@@ -89,27 +89,33 @@ std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet*
     return TxFactoryBase::CreateTransaction(inputCandidates, transactionData);
 }
 
-void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates)
+void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit)
 {
     AssertLockHeld(wallet->cs_wallet);
-    AvailableCoins(*wallet, nullptr, std::nullopt, coins_params).All();
 
-    for (const wallet::COutput& output : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params).All()) {
-        auto tx = wallet->GetWalletTx(output.outpoint.hash);
+    CAmount nTotalAdded = 0;
 
-        if (tx == nullptr)
+    for (const wallet::COutput& output : AvailableBlsctCoins(*wallet, nullptr, coins_params).All()) {
+        auto wout = wallet->GetWalletOutput(output.outpoint);
+
+        if (!wout)
             continue;
 
-        auto out = tx->tx->vout[output.outpoint.n];
+        auto out = *(wout->out);
 
-        auto recoveredInfo = tx->GetBLSCTRecoveryData(output.outpoint.n);
-        auto value = out.HasBLSCTRangeProof() ? recoveredInfo.amount : out.nValue;
+        auto recoveredInfo = wout->blsctRecoveryData;
+        auto value = recoveredInfo.amount;
 
-        inputCandidates.push_back({value, recoveredInfo.gamma, blsct_km->GetSpendingKeyForOutput(out), out.tokenId, COutPoint(output.outpoint.hash, output.outpoint.n), out.IsStakedCommitment()});
+        inputCandidates.push_back({value, recoveredInfo.gamma, blsct_km->GetSpendingKeyForOutputWithCache(out), out.tokenId, COutPoint(output.outpoint.hash, output.outpoint.n), out.IsStakedCommitment()});
+
+        nTotalAdded += value;
+
+        if (nTotalAdded > nAmountLimit)
+            break;
     }
 }
 
-void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates)
+void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit)
 {
     AssertLockHeld(wallet->cs_wallet);
 
@@ -118,16 +124,16 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     coins_params.only_blsct = true;
     coins_params.token_id = token_id;
 
-    AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
+    AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, nAmountLimit + COIN);
 
     if (type == CreateTransactionType::STAKED_COMMITMENT || type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) {
         coins_params.include_staked_commitment = true;
-        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
+        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, nAmountLimit);
     }
 
     if ((type == CreateTransactionType::NORMAL && !token_id.IsNull()) || type == CreateTransactionType::TX_MINT_TOKEN) {
         coins_params.token_id.SetNull();
-        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates);
+        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, COIN);
     }
 }
 
