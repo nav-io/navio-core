@@ -95,7 +95,9 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
 
     CAmount nTotalAdded = 0;
 
-    for (const wallet::COutput& output : AvailableBlsctCoins(*wallet, nullptr, coins_params).All()) {
+    auto availableCoins = wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE) ? AvailableBlsctCoins(*wallet, nullptr, coins_params) : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params);
+
+    for (const wallet::COutput& output : availableCoins.All()) {
         auto wout = wallet->GetWalletOutput(output.outpoint);
 
         if (!wout)
