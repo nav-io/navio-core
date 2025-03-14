@@ -350,8 +350,8 @@ static RPCHelpMan createwallet()
             {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Save wallet name to persistent settings and load on startup. True to add wallet to startup list, false to remove, null to leave unchanged."},
             {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true."},
             {"blsct", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a wallet with BLSCT keys."},
-            {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the wallet from the specified seed (can be a master seed or an audit key)."},
             {"storage_output", RPCArg::Type::BOOL, RPCArg::Default{false}, "Enables the storage of outputs instead of full txs (experimental)."},
+            {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the wallet from the specified seed (can be a master seed or an audit key)."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -411,10 +411,14 @@ static RPCHelpMan createwallet()
                 flags &= ~WALLET_FLAG_DESCRIPTORS;
             }
 
+            if (!request.params[9].isNull() && request.params[9].get_bool()) {
+                flags |= WALLET_FLAG_BLSCT_OUTPUT_STORAGE;
+            }
+
             std::vector<unsigned char> seed;
             blsct::SeedType type = blsct::IMPORT_MASTER_KEY;
-            if (!request.params[9].isNull() && request.params[9].isStr()) {
-                seed = ParseHex(request.params[9].get_str());
+            if (!request.params[10].isNull() && request.params[10].isStr()) {
+                seed = ParseHex(request.params[10].get_str());
 
                 if (seed.size() == 80) {
                     type = blsct::IMPORT_VIEW_KEY;
@@ -422,10 +426,6 @@ static RPCHelpMan createwallet()
                 } else if (seed.size() != 32) {
                     throw JSONRPCError(RPC_WALLET_ERROR, "Seed must be 64 (master) or 160 (view) characters long");
                 }
-            }
-
-            if (!request.params[10].isNull() && request.params[10].get_bool()) {
-                flags |= WALLET_FLAG_BLSCT_OUTPUT_STORAGE;
             }
 
             DatabaseOptions options;

@@ -162,12 +162,12 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
 
     wallet->transactionAddedToMempool(MakeTransactionRef(finalTx.value()));
 
-    auto wout = wallet->GetWalletOutput(COutPoint(finalTx.value().GetHash(), nChangePosition));
-    BOOST_CHECK(wout != nullptr);
+    auto wtx = wallet->GetWalletTx(finalTx.value().GetHash());
+    BOOST_CHECK(wtx != nullptr);
 
     fFoundChange = false;
 
-    if (wout->blsctRecoveryData.message == "Change" && wout->blsctRecoveryData.amount == (1000 - 900 - 0.00292125) * COIN) {
+    if (wtx->GetBLSCTRecoveryData(nChangePosition).message == "Change" && wtx->GetBLSCTRecoveryData(nChangePosition).amount == (1000 - 900 - 0.00292125) * COIN) {
         fFoundChange = true;
     }
 

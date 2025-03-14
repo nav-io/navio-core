@@ -154,7 +154,9 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
             auto nFromInputs = mapInputs[amounts.first];
 
-            if (nFromInputs < amounts.second.nFromOutputs + tokenFee) return std::nullopt;
+            if (nFromInputs < amounts.second.nFromOutputs + tokenFee) {
+                return std::nullopt;
+            }
 
             mapChange[amounts.first] = nFromInputs - amounts.second.nFromOutputs - tokenFee;
         }

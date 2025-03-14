@@ -16,7 +16,6 @@ namespace blsct {
 bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)
 {
     Coin coin;
-
     if (!cache.GetCoin(outpoint, coin))
         return false;
 
@@ -42,19 +41,34 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 {
     AssertLockHeld(wallet->cs_wallet);
 
-    auto wout = wallet->GetWalletOutput(outpoint);
+    CTxOut out;
+    range_proof::RecoveredData<Mcl> recoveredInfo;
 
-    if (wout == nullptr)
-        return false;
+    if (wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        auto wout = wallet->GetWalletOutput(outpoint);
 
-    auto out = *(wout->out);
+        if (wout == nullptr)
+            return false;
+
+        out = *(wout->out);
+
+        recoveredInfo = wout->blsctRecoveryData;
+    } else {
+        auto tx = wallet->GetWalletTx(outpoint.hash);
+
+        if (tx == nullptr)
+            return false;
+
+        out = tx->tx->vout[outpoint.n];
+
+        recoveredInfo = tx->GetBLSCTRecoveryData(outpoint.n);
+    }
 
     if (vInputs.count(out.tokenId) == 0)
         vInputs[out.tokenId] = std::vector<UnsignedInput>();
 
-    auto recoveredInfo = wout->blsctRecoveryData;
-
-    vInputs[out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, km->GetSpendingKeyForOutputWithCache(out), stakedCommitment});
+    vInputs[out.tokenId]
+        .push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, km->GetSpendingKeyForOutputWithCache(out), stakedCommitment});
 
     if (nAmounts.count(out.tokenId) == 0)
         nAmounts[out.tokenId] = {0, 0, 0};
@@ -98,14 +112,29 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     auto availableCoins = wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE) ? AvailableBlsctCoins(*wallet, nullptr, coins_params) : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params);
 
     for (const wallet::COutput& output : availableCoins.All()) {
-        auto wout = wallet->GetWalletOutput(output.outpoint);
+        CTxOut out;
+        range_proof::RecoveredData<Mcl> recoveredInfo;
 
-        if (!wout)
-            continue;
+        if (wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+            auto wout = wallet->GetWalletOutput(output.outpoint);
 
-        auto out = *(wout->out);
+            if (wout == nullptr)
+                continue;
 
-        auto recoveredInfo = wout->blsctRecoveryData;
+            out = *(wout->out);
+
+            recoveredInfo = wout->blsctRecoveryData;
+        } else {
+            auto tx = wallet->GetWalletTx(output.outpoint.hash);
+
+            if (tx == nullptr)
+                continue;
+
+            out = tx->tx->vout[output.outpoint.n];
+
+            recoveredInfo = tx->GetBLSCTRecoveryData(output.outpoint.n);
+        }
+
         auto value = recoveredInfo.amount;
 
         inputCandidates.push_back({value, recoveredInfo.gamma, blsct_km->GetSpendingKeyForOutputWithCache(out), out.tokenId, COutPoint(output.outpoint.hash, output.outpoint.n), out.IsStakedCommitment()});

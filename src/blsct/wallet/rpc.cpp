@@ -439,7 +439,7 @@ RPCHelpMan gettokenbalance()
 
             bool include_watchonly = ParseIncludeWatchonly(request.params[3], *pwallet);
 
-            const auto bal = GetBlsctBalance(*pwallet, min_depth, token_id);
+            const auto bal = GetBalance(*pwallet, min_depth, false, token_id);
 
             return ValueFromAmount(bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0));
         },
@@ -504,7 +504,7 @@ RPCHelpMan getnftbalance()
             UniValue ret(UniValue::VOBJ);
 
             for (auto& it : token.mapMintedNft) {
-                const auto bal = GetBlsctBalance(*pwallet, min_depth, TokenId(token_id, it.first));
+                const auto bal = GetBalance(*pwallet, min_depth, false, TokenId(token_id, it.first));
 
                 if ((bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0)) > 0) {
                     UniValue metadata(UniValue::VOBJ);
