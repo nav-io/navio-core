@@ -1403,7 +1403,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                     CWalletOutput* wout = AddToWallet(
                         outpoint,
                         MakeOutputRef<CTxOut>(std::move(txout)),
-                        tx_state, /*update_wtx=*/nullptr,
+                        tx_state, /*update_wout=*/nullptr,
                         /*fFlushOnClose=*/false, rescanning_old_block, TxStateInactive{}, tx.IsCoinBase());
 
                     if (!wout) {
@@ -1414,7 +1414,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
 
             for (size_t i = 0; i < tx.vin.size(); i++) {
                 auto txin = tx.vin[i];
-                CWalletOutput* wout = AddToWallet(txin.prevout, nullptr, tx_state, /*update_wtx=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block, state, tx.IsCoinBase());
+                CWalletOutput* wout = AddToWallet(txin.prevout, nullptr, tx_state, /*update_wout=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block, state, tx.IsCoinBase());
 
                 auto wout_ = GetWalletOutput(txin.prevout);
                 if (wout_)

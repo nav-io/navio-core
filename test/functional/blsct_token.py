@@ -148,7 +148,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         self.log.info(f"Generated blocks: {len(block_hashes)}")
 
         # Check the balance of the wallet
-        balance = wallet.getblsctbalance()
+        balance = wallet.getbalance()
         self.log.info(f"Balance in wallet1: {balance}")
 
         assert_equal(len(block_hashes), 101)
