@@ -135,7 +135,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
             recoveredInfo = tx->GetBLSCTRecoveryData(output.outpoint.n);
         }
 
-        auto value = recoveredInfo.amount;
+        auto value = out.HasBLSCTRangeProof() ? recoveredInfo.amount : out.nValue;
 
         inputCandidates.push_back({value, recoveredInfo.gamma, blsct_km->GetSpendingKeyForOutputWithCache(out), out.tokenId, COutPoint(output.outpoint.hash, output.outpoint.n), out.IsStakedCommitment()});
 
