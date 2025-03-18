@@ -1414,7 +1414,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
 
             for (size_t i = 0; i < tx.vin.size(); i++) {
                 auto txin = tx.vin[i];
-                CWalletOutput* wout = AddToWallet(txin.prevout, nullptr, tx_state, /*update_wout=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block, state, tx.IsCoinBase());
+                /*CWalletOutput* wout = */ AddToWallet(txin.prevout, nullptr, tx_state, /*update_wout=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block, state, tx.IsCoinBase());
 
                 auto wout_ = GetWalletOutput(txin.prevout);
                 if (wout_)

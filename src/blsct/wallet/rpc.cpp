@@ -1063,17 +1063,17 @@ RPCHelpMan listblscttransactions()
             {
                 LOCK(pwallet->cs_wallet);
 
-                wallet::OutputItems sortedMap;
-                for (const auto& it : pwallet->mapOutputs) {
-                    // sortedMap.emplace(it.second.GetTxTime(), &it.second);
-                }
+                // wallet::OutputItems sortedMap;
+                // for (const auto& it : pwallet->mapOutputs) {
+                //     sortedMap.emplace(it.second.GetTxTime(), &it.second);
+                // }
 
-                // iterate backwards until we have nCount items to return:
-                for (wallet::OutputItems::const_reverse_iterator it = sortedMap.rbegin(); it != sortedMap.rend(); ++it) {
-                    // wallet::CWalletOutput const pwout = (*it).second;
-                    //  ListBlsctTransactions(*pwallet, *pwout, 1, 100000000, true, ret, filter, filter_label);
-                    if ((int)ret.size() >= (nCount + nFrom)) break;
-                }
+                // // iterate backwards until we have nCount items to return:
+                // for (wallet::OutputItems::const_reverse_iterator it = sortedMap.rbegin(); it != sortedMap.rend(); ++it) {
+                //     wallet::CWalletOutput const pwout = (*it).second;
+                //     ListBlsctTransactions(*pwallet, *pwout, 1, 100000000, true, ret, filter, filter_label);
+                //     if ((int)ret.size() >= (nCount + nFrom)) break;
+                // }
             }
 
             // ret is newest to oldest
