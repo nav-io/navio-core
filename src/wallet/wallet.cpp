@@ -75,6 +75,7 @@
 #include <cassert>
 #include <condition_variable>
 #include <exception>
+#include <execution>
 #include <optional>
 #include <stdexcept>
 #include <thread>
@@ -1265,12 +1266,19 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
     }
 
     auto blsct_man = GetBLSCTKeyMan();
-    if (blsct_man) {
-        auto result = blsct_man->RecoverOutputs({wtx.tx->vout});
-        if (result.is_completed) {
-            auto xs = result.amounts;
-            for (auto& res : xs) {
-                wtx.blsctRecoveryData[res.id] = res;
+    if (wtx.tx.IsBlsct()) {
+        for (auto& out : wtx.tx->vout) {
+            if (blsct_man->IsMine(out))
+                blsct_man->GetSpendingKeyForOutputWithCache(out);
+        }
+
+        if (blsct_man) {
+            auto result = blsct_man->RecoverOutputs({wtx.tx->vout});
+            if (result.is_completed) {
+                auto xs = result.amounts;
+                for (auto& res : xs) {
+                    wtx.blsctRecoveryData[res.id] = res;
+                }
             }
         }
     }
@@ -1828,10 +1836,8 @@ isminetype CWallet::IsMine(const CScript& script) const
 bool CWallet::IsMine(const CTransaction& tx) const
 {
     AssertLockHeld(cs_wallet);
-    for (const CTxOut& txout : tx.vout)
-        if (IsMine(txout))
-            return true;
-    return false;
+    return std::any_of(std::execution::par, tx.vout.begin(), tx.vout.end(),
+                       [this](const CTxOut& txout) { return IsMine(txout); });
 }
 
 isminetype CWallet::IsMine(const COutPoint& outpoint) const
