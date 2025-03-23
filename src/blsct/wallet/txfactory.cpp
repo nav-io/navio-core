@@ -108,7 +108,6 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     AssertLockHeld(wallet->cs_wallet);
 
     CAmount nTotalAdded = 0;
-
     auto availableCoins = wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE) ? AvailableBlsctCoins(*wallet, nullptr, coins_params) : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params);
 
     for (const wallet::COutput& output : availableCoins.All()) {
@@ -134,11 +133,9 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
 
             recoveredInfo = tx->GetBLSCTRecoveryData(output.outpoint.n);
         }
-
         auto value = out.HasBLSCTRangeProof() ? recoveredInfo.amount : out.nValue;
 
         inputCandidates.push_back({value, recoveredInfo.gamma, blsct_km->GetSpendingKeyForOutputWithCache(out), out.tokenId, COutPoint(output.outpoint.hash, output.outpoint.n), out.IsStakedCommitment()});
-
         nTotalAdded += value;
 
         if (nTotalAdded > nAmountLimit)
@@ -154,16 +151,20 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     coins_params.min_amount = 0;
     coins_params.only_blsct = true;
     coins_params.token_id = token_id;
+    coins_params.min_sum_amount = nAmountLimit + COIN;
 
     AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, nAmountLimit + COIN);
 
     if (type == CreateTransactionType::STAKED_COMMITMENT || type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) {
         coins_params.include_staked_commitment = true;
+        coins_params.min_sum_amount = nAmountLimit;
+
         AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, nAmountLimit);
     }
 
     if ((type == CreateTransactionType::NORMAL && !token_id.IsNull()) || type == CreateTransactionType::TX_MINT_TOKEN) {
         coins_params.token_id.SetNull();
+        coins_params.min_sum_amount = COIN;
         AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, COIN);
     }
 }

@@ -135,7 +135,6 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
                 }
             }
         }
-
         for (auto& in_ : vInputs) {
             for (auto& in : in_.second) {
                 if (in.is_staked_commitment) continue;
@@ -148,7 +147,6 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
                 mapInputs[in_.first] += in.value.GetUint64();
             }
         }
-
         for (auto& amounts : nAmounts) {
             auto tokenFee = nAmounts[amounts.first].nFromFee;
 
@@ -160,7 +158,6 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
             mapChange[amounts.first] = nFromInputs - amounts.second.nFromOutputs - tokenFee;
         }
-
         for (auto& change : mapChange) {
             if (change.second == 0) continue;
 
@@ -171,7 +168,6 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             tx.vout.push_back(changeOutput.out);
             txSigs.push_back(PrivateKey(changeOutput.blindingKey).Sign(changeOutput.out.GetHash()));
         }
-
         if (nAmounts[TokenId()].nFromFee == GetTransactionWeight(CTransaction(tx)) * BLSCT_DEFAULT_FEE) {
             CTxOut fee_out{nAmounts[TokenId()].nFromFee, CScript(OP_RETURN)};
 
@@ -186,7 +182,6 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
             return tx;
         }
-
         nAmounts[TokenId()].nFromFee = GetTransactionWeight(CTransaction(tx)) * BLSCT_DEFAULT_FEE;
     }
 
@@ -269,7 +264,6 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
             tx.AddOutput(transactionData.destination, transactionData.nAmount, transactionData.sMemo, transactionData.token_id, transactionData.type);
         }
     }
-
     return tx.BuildTx(transactionData.changeDestination, transactionData.minStake, transactionData.type);
 }
 

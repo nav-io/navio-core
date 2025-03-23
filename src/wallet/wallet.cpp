@@ -1202,7 +1202,6 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
 
         MarkDestinationsDirty(tx_destinations);
     }
-
     // Inserts only if not already there, returns tx inserted or tx found
     auto ret = mapWallet.emplace(std::piecewise_construct, std::forward_as_tuple(hash), std::forward_as_tuple(tx, state));
     CWalletTx& wtx = (*ret.first).second;
@@ -1218,7 +1217,6 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
         // Update birth time when tx time is older than it.
         MaybeUpdateBirthTime(wtx.GetTxTime());
     }
-
     if (!fInsertedNew) {
         if (state.index() != wtx.m_state.index()) {
             wtx.m_state = state;
@@ -1237,7 +1235,6 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
             fUpdated = true;
         }
     }
-
     // Mark inactive coinbase transactions and their descendants as abandoned
     if (wtx.IsCoinBase() && wtx.isInactive()) {
         std::vector<CWalletTx*> txs{&wtx};
@@ -1282,7 +1279,6 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
             }
         }
     }
-
     //// debug print
     WalletLogPrintf("AddToWallet %s  %s%s %s\n", hash.ToString(), (fInsertedNew ? "new" : ""), (fUpdated ? "update" : ""), TxStateString(state));
 
@@ -1290,7 +1286,6 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
     if (fInsertedNew || fUpdated)
         if (!batch.WriteTx(wtx))
             return nullptr;
-
     // Break debit/credit balance caches:
     wtx.MarkDirty();
 
@@ -1451,7 +1446,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
 
         std::vector<uint256> vHashOut;
 
-        if (ZapSelectTx(vHashToZap, vHashOut) != DBErrors::LOAD_OK) {
+        if (vHashToZap.size() > 0 && ZapSelectTx(vHashToZap, vHashOut) != DBErrors::LOAD_OK) {
             throw std::runtime_error("DB error zapping conflicted transaction, load failed");
         }
 
@@ -1784,7 +1779,7 @@ CAmount CWallet::GetDebit(const CTxIn& txin, const isminefilter& filter, const T
                 } else if (IsMine(prev.tx->vout[txin.prevout.n]) & filter)
                     return prev.tx->vout[txin.prevout.n].nValue;
             }
-        } else {
+        } else if (IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
             const auto mo = mapOutputs.find(txin.prevout);
             if (mo != mapOutputs.end()) {
                 const CWalletOutput& wout = (*mo).second;
@@ -1836,8 +1831,14 @@ isminetype CWallet::IsMine(const CScript& script) const
 bool CWallet::IsMine(const CTransaction& tx) const
 {
     AssertLockHeld(cs_wallet);
-    return std::any_of(std::execution::par, tx.vout.begin(), tx.vout.end(),
-                       [this](const CTxOut& txout) { return IsMine(txout); });
+
+    for (auto& out : tx.vout) {
+        if (IsMine(out)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 isminetype CWallet::IsMine(const COutPoint& outpoint) const

@@ -339,7 +339,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
         }
 
         bool safeTx = CachedTxIsTrusted(wallet, wtx, trusted_parents);
-
         // We should not consider coins from transactions that are replacing
         // other transactions.
         //
@@ -378,9 +377,7 @@ CoinsResult AvailableCoins(const CWallet& wallet,
         if (nDepth < min_depth || nDepth > max_depth) {
             continue;
         }
-
-        bool tx_from_me = CachedTxIsFromMe(wallet, wtx, ISMINE_ALL);
-
+        bool tx_from_me = true; /*CachedTxIsFromMe(wallet, wtx, ISMINE_ALL);*/
         for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
             const CTxOut& output = wtx.tx->vout[i];
             CTxOut mutableOutput(output);
@@ -397,7 +394,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
 
             if (wallet.IsSpent(outpoint))
                 continue;
-
             isminetype mine = wallet.IsMine(output);
             if (mine == ISMINE_NO) {
                 continue;
@@ -417,7 +413,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             if (!allow_used_addresses && wallet.IsSpentKey(output.scriptPubKey)) {
                 continue;
             }
-
             std::unique_ptr<SigningProvider> provider = wallet.GetSolvingProvider(output.scriptPubKey);
 
             int input_bytes = CalculateMaximumSignedInputSize(output, COutPoint(), provider.get(), can_grind_r, coinControl);
@@ -429,7 +424,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             // Obtain script type
             std::vector<std::vector<uint8_t>> script_solutions;
             TxoutType type = Solver(output.scriptPubKey, script_solutions);
-
             // If the output is P2SH and solvable, we want to know if it is
             // a P2SH (legacy) or one of P2SH-P2WPKH, P2SH-P2WSH (P2SH-Segwit). We can determine
             // this from the redeemScript. If the output is not solvable, it will be classified
@@ -444,12 +438,10 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             }
 
             mutableOutput.nValue = nValue;
-
             result.Add(GetOutputType(type, is_from_p2sh),
                        COutput(outpoint, mutableOutput, nDepth, input_bytes, spendable, solvable, safeTx, wtx.GetTxTime(), tx_from_me, feerate));
 
             outpoints.push_back(outpoint);
-
             // Checks the sum amount of all UTXO's.
             if (params.min_sum_amount != MAX_MONEY) {
                 if (result.GetTotalAmount() >= params.min_sum_amount) {
