@@ -1392,7 +1392,6 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
         AssertLockHeld(cs_wallet);
 
         if (tx.IsBLSCT() && IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
-            std::cout << "output storage\n";
             TxState tx_state = std::visit([](auto&& s) -> TxState { return s; }, state);
 
             // loop though all outputs

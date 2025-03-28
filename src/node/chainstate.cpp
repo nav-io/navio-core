@@ -226,10 +226,10 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
         assert(!chainman.IsSnapshotValidated());
 
         chainman.InitializeChainstate(options.mempool);
-
         // A reload of the block index is required to recompute setBlockIndexCandidates
         // for the fully validated chainstate.
-        chainman.ActiveChainstate().ClearBlockIndexCandidates();
+        chainman.ActiveChainstate()
+            .ClearBlockIndexCandidates();
 
         auto [init_status, init_error] = CompleteChainstateInitialization(chainman, cache_sizes, options);
         if (init_status != ChainstateLoadStatus::SUCCESS) {

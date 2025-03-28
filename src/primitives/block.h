@@ -32,7 +32,6 @@ public:
     uint32_t nTime;
     uint32_t nBits;
     uint32_t nNonce;
-    blsct::ProofOfStake posProof;
 
     CBlockHeader()
     {
@@ -42,10 +41,7 @@ public:
     SERIALIZE_METHODS(CBlockHeader, obj)
     {
         READWRITE(obj.nVersion);
-        if (obj.IsProofOfStake())
-            READWRITE(obj.hashPrevBlock, obj.hashMerkleRoot, obj.nTime, obj.nBits, obj.posProof);
-        else
-            READWRITE(obj.hashPrevBlock, obj.hashMerkleRoot, obj.nTime, obj.nBits, obj.nNonce);
+        READWRITE(obj.hashPrevBlock, obj.hashMerkleRoot, obj.nTime, obj.nBits, obj.nNonce);
     }
 
     void SetNull()
@@ -98,6 +94,7 @@ class CBlock : public CBlockHeader
 {
 public:
     // network and disk
+    blsct::ProofOfStake posProof;
     std::vector<CTransactionRef> vtx;
 
     // memory only
@@ -116,7 +113,11 @@ public:
 
     SERIALIZE_METHODS(CBlock, obj)
     {
-        READWRITE(AsBase<CBlockHeader>(obj), obj.vtx);
+        READWRITE(AsBase<CBlockHeader>(obj));
+        if (obj.IsProofOfStake())
+            READWRITE(obj.posProof, obj.vtx);
+        else
+            READWRITE(obj.vtx);
     }
 
     void SetNull()
@@ -136,8 +137,7 @@ public:
         block.hashMerkleRoot = hashMerkleRoot;
         block.nTime          = nTime;
         block.nBits          = nBits;
-        block.nNonce         = nNonce;
-        block.posProof       = posProof;
+        block.nNonce = nNonce;
         return block;
     }
 
