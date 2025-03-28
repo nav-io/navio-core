@@ -31,8 +31,6 @@ bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* 
 {
     auto staked_commitments = cache.GetStakedCommitments().GetElements(block.GetHashWithoutPoSProof());
 
-    std::cout << "staked_commitments.Size() " << staked_commitments.Size() << "\n";
-
     if (staked_commitments.Size() < 2) {
         LogPrint(BCLog::POPS, "PoPS rejected. Staked commitments size is %d\n", staked_commitments.Size());
         return false;
