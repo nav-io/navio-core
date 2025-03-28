@@ -875,6 +875,7 @@ static RPCHelpMan getblocktemplate()
             // Update nTime
             UpdateTime(pblock, consensusParams, pindexPrev);
             pblock->nNonce = 0;
+            pblock->hashMerkleRoot = BlockMerkleRoot(*pblock);
 
             // NOTE: If at some point we support pre-segwit miners post-segwit-activation, this needs to take segwit support into consideration
             const bool fPreSegWit = !DeploymentActiveAfter(pindexPrev, chainman, Consensus::DEPLOYMENT_SEGWIT);
@@ -1019,7 +1020,8 @@ static RPCHelpMan getblocktemplate()
 
             if (consensusParams.fBLSCT) {
                 UniValue stakedCommitments(UniValue::VARR);
-                auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements(pblock->GetHashWithoutPoSProof());
+
+                auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements(pblock->GetBlockHeader().GetHash());
 
                 for (size_t i = 0; i < stakedCommitmentsElements.Size(); ++i)
                     stakedCommitments.push_back(HexStr(stakedCommitmentsElements[i].GetVch()));

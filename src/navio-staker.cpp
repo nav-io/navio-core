@@ -696,10 +696,6 @@ UniValueArrayToStakedCommitments(const UniValue& array)
         ret.push_back(point);
     }
 
-    sort(ret.begin(), ret.end(), [](const auto& lhs, const auto& rhs) {
-        return lhs < rhs;
-    });
-
     return ret;
 }
 
