@@ -2,13 +2,17 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <algorithm>
 #include <blsct/arith/elements.h>
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
 #include <deque>
+#include <iterator>
+#include <random>
 #include <sstream>
 #include <tinyformat.h>
 #include <util/strencodings.h>
+#include <vector>
 
 template <typename T>
 OrderedElements<T>::OrderedElements(){};
@@ -22,15 +26,34 @@ OrderedElements<T>::OrderedElements(const std::set<T>& set)
 template OrderedElements<MclG1Point>::OrderedElements(const std::set<MclG1Point>& set);
 
 template <typename T>
-Elements<T> OrderedElements<T>::GetElements() const
+Elements<T> OrderedElements<T>::GetElements(const uint256& seed) const
 {
     if (Size() == 0) return Elements<T>();
+
     std::vector<T> ret;
     std::copy(m_set.begin(), m_set.end(), std::back_inserter(ret));
 
-    return ret;
-};
-template Elements<MclG1Point> OrderedElements<MclG1Point>::GetElements() const;
+    if (seed != uint256()) {
+        std::seed_seq seq{
+            static_cast<uint32_t>(seed.GetUint64(0) & 0xFFFFFFFF),
+            static_cast<uint32_t>(seed.GetUint64(0) >> 32),
+            static_cast<uint32_t>(seed.GetUint64(1) & 0xFFFFFFFF),
+            static_cast<uint32_t>(seed.GetUint64(1) >> 32),
+            static_cast<uint32_t>(seed.GetUint64(2) & 0xFFFFFFFF),
+            static_cast<uint32_t>(seed.GetUint64(2) >> 32),
+            static_cast<uint32_t>(seed.GetUint64(3) & 0xFFFFFFFF),
+            static_cast<uint32_t>(seed.GetUint64(3) >> 32)};
+
+        std::mt19937 rng(seq);
+        std::shuffle(ret.begin(), ret.end(), rng);
+        
+        if (ret.size() > 16) {
+            ret.resize(16);
+        }
+    }
+
+    return Elements<T>(ret); // assuming Elements<T> has a vector<T> constructor
+}
 
 template <typename T>
 size_t OrderedElements<T>::Size() const

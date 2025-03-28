@@ -1019,7 +1019,7 @@ static RPCHelpMan getblocktemplate()
 
             if (consensusParams.fBLSCT) {
                 UniValue stakedCommitments(UniValue::VARR);
-                auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements();
+                auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements(pblock->GetHashWithoutPoSProof());
 
                 for (size_t i = 0; i < stakedCommitmentsElements.Size(); ++i)
                     stakedCommitments.push_back(HexStr(stakedCommitmentsElements[i].GetVch()));

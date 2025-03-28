@@ -609,6 +609,13 @@ BOOST_AUTO_TEST_CASE(test_ordered_elements)
     for (size_t i = 0; i <= 9; i++) {
         BOOST_CHECK(elements[i] < elements[i + 1]);
     }
+
+    auto elements_1 = points.GetElements(uint256(10));
+    auto elements_2 = points.GetElements(uint256(10));
+    auto elements_3 = points.GetElements(uint256(11));
+
+    BOOST_CHECK(elements_1 == elements_2);
+    BOOST_CHECK(elements_2 != elements_3);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
