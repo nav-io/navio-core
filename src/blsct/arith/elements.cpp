@@ -46,7 +46,7 @@ Elements<T> OrderedElements<T>::GetElements(const uint256& seed) const
 
         std::mt19937 rng(seq);
         std::shuffle(ret.begin(), ret.end(), rng);
-        
+
         if (ret.size() > 16) {
             ret.resize(16);
         }
