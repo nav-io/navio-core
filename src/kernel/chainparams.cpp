@@ -307,11 +307,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nMinimumChainWork = uint256{};
         consensus.defaultAssumeValid = uint256{}; // 2500000
 
-        pchMessageStart[0] = 0xa0;
-        pchMessageStart[1] = 0xc3;
-        pchMessageStart[2] = 0x31;
-        pchMessageStart[3] = 0x0d;
-        nDefaultPort = 33470;
+        pchMessageStart[0] = 0xb9;
+        pchMessageStart[1] = 0x3c;
+        pchMessageStart[2] = 0x0e;
+        pchMessageStart[3] = 0xdf;
+        nDefaultPort = 33570;
         nPruneAfterHeight = 1000;
         m_assumed_blockchain_size = 10;
         m_assumed_chain_state_size = 3;
