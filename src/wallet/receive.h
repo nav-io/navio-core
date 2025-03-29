@@ -17,6 +17,7 @@ isminetype InputIsMine(const CWallet& wallet, const CTxIn& txin) EXCLUSIVE_LOCKS
 bool AllInputsMine(const CWallet& wallet, const CTransaction& tx, const isminefilter& filter);
 
 CAmount OutputGetCredit(const CWallet& wallet, const CTxOut& txout, const isminefilter& filter, const TokenId& token_id = TokenId());
+CAmount OutputGetCredit(const CWallet& wallet, const CWalletOutput& wout, const isminefilter& filter, const TokenId& token_id, bool fIgnoreImmature = true);
 CAmount TxGetCredit(const CWallet& wallet, const CTransaction& tx, const isminefilter& filter, const TokenId& token_id = TokenId());
 
 bool ScriptIsChange(const CWallet& wallet, const CScript& script) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
@@ -31,6 +32,7 @@ CAmount CachedTxGetDebit(const CWallet& wallet, const CWalletTx& wtx, const ismi
 CAmount CachedTxGetChange(const CWallet& wallet, const CWalletTx& wtx, const TokenId& token_id = TokenId());
 CAmount CachedTxGetImmatureCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter, const TokenId& token_id = TokenId())
     EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+CAmount OutputGetImmatureCredit(const CWallet& wallet, const CWalletOutput& wout, const isminefilter& filter, const TokenId& token_id = TokenId()) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, const TokenId& token_id = TokenId())
     EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 struct COutputEntry
@@ -47,6 +49,7 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
 bool CachedTxIsFromMe(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter);
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uint256>& trusted_parents) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx);
+bool IsOutputTrusted(const CWallet& wallet, const CWalletOutput& wout) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 
 struct Balance {
     CAmount m_mine_trusted{0};           //!< Trusted, at depth=GetBalance.min_depth or more
@@ -58,6 +61,7 @@ struct Balance {
     CAmount m_watchonly_immature{0};
 };
 Balance GetBalance(const CWallet& wallet, int min_depth = 0, bool avoid_reuse = true, const TokenId& token_id = TokenId());
+Balance GetBlsctBalance(const CWallet& wallet, int min_depth = 0, const TokenId& token_id = TokenId());
 
 std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet, const TokenId& token_id = TokenId());
 std::set<std::set<CTxDestination>> GetAddressGroupings(const CWallet& wallet, const TokenId& token_id = TokenId()) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);

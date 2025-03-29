@@ -75,6 +75,7 @@
 #include <cassert>
 #include <condition_variable>
 #include <exception>
+#include <execution>
 #include <optional>
 #include <stdexcept>
 #include <thread>
@@ -548,6 +549,15 @@ const CWalletTx* CWallet::GetWalletTx(const uint256& hash) const
     AssertLockHeld(cs_wallet);
     const auto it = mapWallet.find(hash);
     if (it == mapWallet.end())
+        return nullptr;
+    return &(it->second);
+}
+
+const CWalletOutput* CWallet::GetWalletOutput(const COutPoint& outpoint) const
+{
+    AssertLockHeld(cs_wallet);
+    const auto it = mapOutputs.find(outpoint);
+    if (it == mapOutputs.end())
         return nullptr;
     return &(it->second);
 }
@@ -1073,6 +1083,106 @@ bool CWallet::IsSpentKey(const CScript& scriptPubKey) const
     return false;
 }
 
+CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, const TxState& state, const UpdateWalletOutputFn& update_wout, bool fFlushOnClose, bool rescanning_old_block, const SyncTxState& state_spent, bool fCoinbase)
+{
+    LOCK(cs_wallet);
+
+    if (out == nullptr && mapOutputs.count(outpoint) <= 0)
+        return nullptr;
+
+    WalletBatch batch(GetDatabase(), fFlushOnClose);
+
+    // Inserts only if not already there, returns tx inserted or tx found
+    auto ret = mapOutputs.emplace(std::piecewise_construct, std::forward_as_tuple(outpoint), std::forward_as_tuple(out, state));
+    CWalletOutput& wout = (*ret.first).second;
+    bool fInsertedNew = ret.second;
+    bool fUpdated = update_wout && update_wout(wout, fInsertedNew);
+    if (fInsertedNew) {
+        wout.nTimeReceived = GetTime();
+        wout.nOrderPos = IncOrderPosNext(&batch);
+        wout.fCoinbase = fCoinbase;
+    }
+
+    if (!fInsertedNew) {
+        if (TxStateString(wout.m_state) != TxStateString(state)) {
+            wout.m_state = state;
+            fUpdated = true;
+        } else {
+            assert(TxStateSerializedIndex<TxState>(wout.m_state) == TxStateSerializedIndex<TxState>(state));
+            assert(TxStateSerializedBlockHash<TxState>(wout.m_state) == TxStateSerializedBlockHash<TxState>(state));
+        }
+
+        if (TxStateString(state_spent) != TxStateString(wout.m_state_spent)) {
+            wout.m_state_spent = state_spent;
+            fUpdated = true;
+        } else {
+            assert(TxStateSerializedIndex<SyncTxState>(state_spent) == TxStateSerializedIndex<SyncTxState>(wout.m_state_spent));
+            assert(TxStateSerializedBlockHash<SyncTxState>(state_spent) == TxStateSerializedBlockHash<SyncTxState>(wout.m_state_spent));
+        }
+
+        if (fCoinbase != wout.fCoinbase) {
+            wout.fCoinbase = fCoinbase;
+            fUpdated = true;
+        } else {
+            assert(fCoinbase == wout.fCoinbase);
+        }
+    }
+
+    if (rescanning_old_block || fInsertedNew) {
+        if (wout.out->HasBLSCTRangeProof()) {
+            auto blsct_man = GetBLSCTKeyMan();
+            if (blsct_man) {
+                auto result = blsct_man->RecoverOutputs({*wout.out});
+                if (result.is_completed) {
+                    auto xs = result.amounts;
+                    wout.blsctRecoveryData = xs[0];
+                }
+            }
+        } else {
+            wout.blsctRecoveryData.amount = wout.out->nValue;
+        }
+    }
+
+    //// debug print
+    WalletLogPrintf("AddToWallet %s  %s%s %s\n", outpoint.ToString(), (fInsertedNew ? "new" : ""), (fUpdated ? "update" : ""), TxStateString(state));
+
+    // Write to disk
+    if (fInsertedNew || fUpdated)
+        if (!batch.WriteOutput(outpoint, wout))
+            return nullptr;
+
+            // Notify UI of new or updated transaction
+            // NotifyTransactionChanged(hash, fInsertedNew ? CT_NEW : CT_UPDATED);
+
+#if HAVE_SYSTEM
+    // notify an external script when a wallet transaction comes in or is updated
+    std::string strCmd = m_notify_tx_changed_script;
+
+    if (!strCmd.empty()) {
+        ReplaceAll(strCmd, "%s", outpoint.ToString());
+        if (auto* conf = wout.state<TxStateConfirmed>()) {
+            ReplaceAll(strCmd, "%b", conf->confirmed_block_hash.GetHex());
+            ReplaceAll(strCmd, "%h", ToString(conf->confirmed_block_height));
+        } else {
+            ReplaceAll(strCmd, "%b", "unconfirmed");
+            ReplaceAll(strCmd, "%h", "-1");
+        }
+#ifndef WIN32
+        // Substituting the wallet name isn't currently supported on windows
+        // because windows shell escaping has not been implemented yet:
+        // https://github.com/bitcoin/bitcoin/pull/13339#issuecomment-537384875
+        // A few ways it could be implemented in the future are described in:
+        // https://github.com/bitcoin/bitcoin/pull/13339#issuecomment-461288094
+        ReplaceAll(strCmd, "%w", ShellEscape(GetName()));
+#endif
+        std::thread t(runCommand, strCmd);
+        t.detach(); // thread runs free
+    }
+#endif
+
+    return &wout;
+}
+
 CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const UpdateWalletTxFn& update_wtx, bool fFlushOnClose, bool rescanning_old_block)
 {
     LOCK(cs_wallet);
@@ -1092,7 +1202,6 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
 
         MarkDestinationsDirty(tx_destinations);
     }
-
     // Inserts only if not already there, returns tx inserted or tx found
     auto ret = mapWallet.emplace(std::piecewise_construct, std::forward_as_tuple(hash), std::forward_as_tuple(tx, state));
     CWalletTx& wtx = (*ret.first).second;
@@ -1108,14 +1217,13 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
         // Update birth time when tx time is older than it.
         MaybeUpdateBirthTime(wtx.GetTxTime());
     }
-
     if (!fInsertedNew) {
         if (state.index() != wtx.m_state.index()) {
             wtx.m_state = state;
             fUpdated = true;
         } else {
-            assert(TxStateSerializedIndex(wtx.m_state) == TxStateSerializedIndex(state));
-            assert(TxStateSerializedBlockHash(wtx.m_state) == TxStateSerializedBlockHash(state));
+            assert(TxStateSerializedIndex<TxState>(wtx.m_state) == TxStateSerializedIndex<TxState>(state));
+            assert(TxStateSerializedBlockHash<TxState>(wtx.m_state) == TxStateSerializedBlockHash<TxState>(state));
         }
         // If we have a witness-stripped version of this transaction, and we
         // see a new version with a witness, then we must be upgrading a pre-segwit
@@ -1127,7 +1235,6 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
             fUpdated = true;
         }
     }
-
     // Mark inactive coinbase transactions and their descendants as abandoned
     if (wtx.IsCoinBase() && wtx.isInactive()) {
         std::vector<CWalletTx*> txs{&wtx};
@@ -1156,16 +1263,22 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
     }
 
     auto blsct_man = GetBLSCTKeyMan();
-    if (blsct_man) {
-        auto result = blsct_man->RecoverOutputs({wtx.tx->vout});
-        if (result.is_completed) {
-            auto xs = result.amounts;
-            for (auto& res : xs) {
-                wtx.blsctRecoveryData[res.id] = res;
+    if (wtx.tx->IsBLSCT()) {
+        for (auto& out : wtx.tx->vout) {
+            if (blsct_man->IsMine(out))
+                blsct_man->GetSpendingKeyForOutputWithCache(out);
+        }
+
+        if (blsct_man) {
+            auto result = blsct_man->RecoverOutputs({wtx.tx->vout});
+            if (result.is_completed) {
+                auto xs = result.amounts;
+                for (auto& res : xs) {
+                    wtx.blsctRecoveryData[res.id] = res;
+                }
             }
         }
     }
-
     //// debug print
     WalletLogPrintf("AddToWallet %s  %s%s %s\n", hash.ToString(), (fInsertedNew ? "new" : ""), (fUpdated ? "update" : ""), TxStateString(state));
 
@@ -1173,7 +1286,6 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
     if (fInsertedNew || fUpdated)
         if (!batch.WriteTx(wtx))
             return nullptr;
-
     // Break debit/credit balance caches:
     wtx.MarkDirty();
 
@@ -1219,7 +1331,7 @@ bool CWallet::LoadToWallet(const uint256& hash, const UpdateWalletTxFn& fill_wtx
     // If wallet doesn't have a chain (e.g when using navio-wallet tool),
     // don't bother to update txn.
     if (HaveChain()) {
-      wtx.updateState(chain());
+        wtx.updateState(chain());
     }
     if (/* insertion took place */ ins.second) {
         wtx.m_it_wtxOrdered = wtxOrdered.insert(std::make_pair(wtx.nOrderPos, &wtx));
@@ -1241,12 +1353,77 @@ bool CWallet::LoadToWallet(const uint256& hash, const UpdateWalletTxFn& fill_wtx
     return true;
 }
 
+bool CWallet::LoadToWallet(const COutPoint& outpoint, const UpdateWalletOutputFn& fill_wout)
+{
+    const auto& ins = mapOutputs.emplace(std::piecewise_construct, std::forward_as_tuple(outpoint), std::forward_as_tuple(nullptr, TxStateInactive{}));
+    CWalletOutput& wout = ins.first->second;
+    if (!fill_wout(wout, ins.second)) {
+        return false;
+    }
+    // If wallet doesn't have a chain (e.g when using navio-wallet tool),
+    // don't bother to update txn.
+    if (HaveChain()) {
+        wout.updateState(chain());
+    }
+    // if (/* insertion took place */ ins.second) {
+    //     wtx.m_it_wtxOrdered = wtxOrdered.insert(std::make_pair(wtx.nOrderPos, &wtx));
+    // }
+    // AddToSpends(wtx);
+    // for (const CTxIn& txin : wtx.tx->vin) {
+    //     auto it = mapWallet.find(txin.prevout.hash);
+    //     if (it != mapWallet.end()) {
+    //         CWalletTx& prevtx = it->second;
+    //         if (auto* prev = prevtx.state<TxStateConflicted>()) {
+    //             MarkConflicted(prev->conflicting_block_hash, prev->conflicting_block_height, wtx.GetHash());
+    //         }
+    //     }
+    // }
+
+    // Update birth time when tx time is older than it.
+    MaybeUpdateBirthTime(wout.GetTxTime());
+
+    return true;
+}
+
 bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxState& state, bool fUpdate, bool rescanning_old_block)
 {
     const CTransaction& tx = *ptx;
     {
         AssertLockHeld(cs_wallet);
 
+        if (tx.IsBLSCT() && IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+            TxState tx_state = std::visit([](auto&& s) -> TxState { return s; }, state);
+
+            // loop though all outputs
+            for (size_t i = 0; i < tx.vout.size(); i++) {
+                CTxOut txout = tx.vout[i];
+                COutPoint outpoint(tx.GetHash(), i);
+
+                bool fExisted = mapOutputs.count(outpoint) != 0;
+                if (fExisted && !fUpdate) return false;
+                if (fExisted || IsMine(txout)) {
+                    CWalletOutput* wout = AddToWallet(
+                        outpoint,
+                        MakeOutputRef<CTxOut>(std::move(txout)),
+                        tx_state, /*update_wout=*/nullptr,
+                        /*fFlushOnClose=*/false, rescanning_old_block, TxStateInactive{}, tx.IsCoinBase());
+
+                    if (!wout) {
+                        throw std::runtime_error("DB error adding output to wallet, write failed");
+                    }
+                }
+            }
+
+            for (size_t i = 0; i < tx.vin.size(); i++) {
+                auto txin = tx.vin[i];
+                /*CWalletOutput* wout = */ AddToWallet(txin.prevout, nullptr, tx_state, /*update_wout=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block, state, tx.IsCoinBase());
+
+                auto wout_ = GetWalletOutput(txin.prevout);
+                if (wout_)
+                    assert(wout_->IsSpent() == (state.index() != 2));
+            }
+            return true;
+        }
         std::vector<uint256> vHashToZap;
 
         if (auto* conf = std::get_if<TxStateConfirmed>(&state)) {
@@ -1268,12 +1445,13 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
 
         std::vector<uint256> vHashOut;
 
-        if (ZapSelectTx(vHashToZap, vHashOut) != DBErrors::LOAD_OK) {
+        if (vHashToZap.size() > 0 && ZapSelectTx(vHashToZap, vHashOut) != DBErrors::LOAD_OK) {
             throw std::runtime_error("DB error zapping conflicted transaction, load failed");
         }
 
         bool fExisted = mapWallet.count(tx.GetHash()) != 0;
         if (fExisted && !fUpdate) return false;
+
         if (fExisted || IsMine(tx) || IsFromMe(tx)) {
             /* Check if any keys in the wallet keypool that were supposed to be unused
              * have appeared in a new transaction. If so, remove those keys from the keypool.
@@ -1302,7 +1480,6 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                     }
                 }
             }
-
 
             // Block disconnection override an abandoned tx as unconfirmed
             // which means user may have to call abandontransaction again
@@ -1601,6 +1778,12 @@ CAmount CWallet::GetDebit(const CTxIn& txin, const isminefilter& filter, const T
                 } else if (IsMine(prev.tx->vout[txin.prevout.n]) & filter)
                     return prev.tx->vout[txin.prevout.n].nValue;
             }
+        } else if (IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+            const auto mo = mapOutputs.find(txin.prevout);
+            if (mo != mapOutputs.end()) {
+                const CWalletOutput& wout = (*mo).second;
+                return wout.blsctRecoveryData.amount;
+            }
         }
     }
     return 0;
@@ -1647,9 +1830,13 @@ isminetype CWallet::IsMine(const CScript& script) const
 bool CWallet::IsMine(const CTransaction& tx) const
 {
     AssertLockHeld(cs_wallet);
-    for (const CTxOut& txout : tx.vout)
-        if (IsMine(txout))
+
+    for (auto& out : tx.vout) {
+        if (IsMine(out)) {
             return true;
+        }
+    }
+
     return false;
 }
 
@@ -2341,11 +2528,13 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
         throw std::runtime_error(std::string(__func__) + ": Wallet db error, transaction commit failed");
     }
 
-    // Notify that old coins are spent
-    for (const CTxIn& txin : tx->vin) {
-        CWalletTx& coin = mapWallet.at(txin.prevout.hash);
-        coin.MarkDirty();
-        NotifyTransactionChanged(coin.GetHash(), CT_UPDATED);
+    if (!tx->IsBLSCT()) {
+        // Notify that old coins are spent
+        for (const CTxIn& txin : tx->vin) {
+            CWalletTx& coin = mapWallet.at(txin.prevout.hash);
+            coin.MarkDirty();
+            NotifyTransactionChanged(coin.GetHash(), CT_UPDATED);
+        }
     }
 
     if (!fBroadcastTransactions) {
@@ -3425,6 +3614,20 @@ int CWallet::GetTxDepthInMainChain(const CWalletTx& wtx) const
     }
 }
 
+int CWallet::GetOutputDepthInMainChain(const CWalletOutput& wout) const
+{
+    AssertLockHeld(cs_wallet);
+    if (auto* conf = wout.state<TxStateConfirmed>()) {
+        assert(conf->confirmed_block_height >= 0);
+        return GetLastBlockHeight() - conf->confirmed_block_height + 1;
+    } else if (auto* conf = wout.state<TxStateConflicted>()) {
+        assert(conf->conflicting_block_height >= 0);
+        return -1 * (GetLastBlockHeight() - conf->conflicting_block_height + 1);
+    } else {
+        return 0;
+    }
+}
+
 int CWallet::GetTxBlocksToMaturity(const CWalletTx& wtx) const
 {
     AssertLockHeld(cs_wallet);
@@ -3437,12 +3640,32 @@ int CWallet::GetTxBlocksToMaturity(const CWalletTx& wtx) const
     return std::max(0, (COINBASE_MATURITY + 1) - chain_depth);
 }
 
+int CWallet::GetOutputBlocksToMaturity(const CWalletOutput& wout) const
+{
+    AssertLockHeld(cs_wallet);
+
+    if (!wout.IsCoinBase()) {
+        return 0;
+    }
+    int chain_depth = GetOutputDepthInMainChain(wout);
+    assert(chain_depth >= 0); // coinbase tx should not be conflicted
+    return std::max(0, (COINBASE_MATURITY + 1) - chain_depth);
+}
+
 bool CWallet::IsTxImmatureCoinBase(const CWalletTx& wtx) const
 {
     AssertLockHeld(cs_wallet);
 
     // note GetBlocksToMaturity is 0 for non-coinbase tx
     return GetTxBlocksToMaturity(wtx) > 0;
+}
+
+bool CWallet::IsOutputImmatureCoinBase(const CWalletOutput& wout) const
+{
+    AssertLockHeld(cs_wallet);
+
+    // note GetBlocksToMaturity is 0 for non-coinbase tx
+    return GetOutputBlocksToMaturity(wout) > 0;
 }
 
 bool CWallet::IsCrypted() const
@@ -4225,6 +4448,9 @@ bool DoMigration(CWallet& wallet, WalletContext& context, bilingual_str& error, 
         }
         if (wallet.IsWalletFlagSet(WALLET_FLAG_KEY_ORIGIN_METADATA)) {
             options.create_flags |= WALLET_FLAG_KEY_ORIGIN_METADATA;
+        }
+        if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+            options.create_flags |= WALLET_FLAG_BLSCT_OUTPUT_STORAGE;
         }
         if (data->watch_descs.size() > 0) {
             wallet.WalletLogPrintf("Making a new watchonly wallet containing the watched scripts\n");

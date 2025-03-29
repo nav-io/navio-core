@@ -37,11 +37,13 @@ const std::string BESTBLOCK_NOMERKLE{"bestblock_nomerkle"};
 const std::string BESTBLOCK{"bestblock"};
 const std::string BLSCTHDCHAIN{"blscthdchain"};
 const std::string BLSCTKEY{"blsctkey"};
+const std::string BLSCTOUTKEY{"blsctoutkey"};
 const std::string BLSCTKEYMETA{"blsctkeymeta"};
 const std::string BLSCTSUBADDRESS{"blsctsubaddress"};
 const std::string BLSCTSUBADDRESSSTR{"blsctsubaddressstr"};
 const std::string BLSCTSUBADDRESSPOOL{"blsctsubaddresspool"};
 const std::string CRYPTED_BLSCTKEY{"cblsctkey"};
+const std::string CRYPTED_BLSCTOUTKEY{"cblsctoutkey"};
 const std::string CRYPTED_KEY{"ckey"};
 const std::string CSCRIPT{"cscript"};
 const std::string DEFAULTKEY{"defaultkey"};
@@ -61,6 +63,7 @@ const std::string PURPOSE{"purpose"};
 const std::string SETTINGS{"settings"};
 const std::string SPENDKEY{"spendkey"};
 const std::string TX{"tx"};
+const std::string OUTPUT{"output"};
 const std::string VERSION{"version"};
 const std::string VIEWKEY{"viewkey"};
 const std::string WALLETDESCRIPTOR{"walletdescriptor"};
@@ -71,8 +74,8 @@ const std::string WALLETDESCRIPTORKEY{"walletdescriptorkey"};
 const std::string WATCHMETA{"watchmeta"};
 const std::string WATCHS{"watchs"};
 const std::unordered_set<std::string> LEGACY_TYPES{CRYPTED_KEY, CSCRIPT, DEFAULTKEY, HDCHAIN, KEYMETA, KEY, OLD_KEY, POOL, WATCHMETA, WATCHS};
-const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA};
-const std::unordered_set<std::string> BLSCTKEY_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY};
+const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTOUTKEY};
+const std::unordered_set<std::string> BLSCTKEY_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, BLSCTOUTKEY, CRYPTED_BLSCTOUTKEY};
 } // namespace DBKeys
 
 //
@@ -109,6 +112,16 @@ bool WalletBatch::WriteTx(const CWalletTx& wtx)
 bool WalletBatch::EraseTx(uint256 hash)
 {
     return EraseIC(std::make_pair(DBKeys::TX, hash));
+}
+
+bool WalletBatch::WriteOutput(const COutPoint& outpoint, const CWalletOutput& out)
+{
+    return WriteIC(std::make_pair(DBKeys::OUTPUT, outpoint), out);
+}
+
+bool WalletBatch::EraseOutput(const COutPoint& outpoint)
+{
+    return EraseIC(std::make_pair(DBKeys::OUTPUT, outpoint));
 }
 
 bool WalletBatch::WriteKeyMetadata(const CKeyMetadata& meta, const CPubKey& pubkey, const bool overwrite)
@@ -152,6 +165,11 @@ bool WalletBatch::WriteKey(const blsct::PublicKey& pubKey, const blsct::PrivateK
     vchKey.insert(vchKey.end(), vchPrivKey.begin(), vchPrivKey.end());
 
     return WriteIC(std::make_pair(DBKeys::BLSCTKEY, pubKey), std::make_pair(privKey, Hash(vchKey)), false);
+}
+
+bool WalletBatch::WriteOutKey(const uint256& outId, const blsct::PrivateKey& privKey)
+{
+    return WriteIC(std::make_pair(DBKeys::BLSCTOUTKEY, outId), privKey, false);
 }
 
 bool WalletBatch::WriteViewKey(const blsct::PublicKey& pubKey, const blsct::PrivateKey& privKey, const CKeyMetadata& keyMeta)
@@ -234,6 +252,28 @@ bool WalletBatch::WriteCryptedKey(const blsct::PublicKey& pubKey,
         }
     }
     EraseIC(std::make_pair(DBKeys::BLSCTKEY, pubKey));
+    return true;
+}
+
+bool WalletBatch::WriteCryptedOutKey(const uint256& outId,
+                                     const blsct::PublicKey& vchPubKey,
+                                     const std::vector<unsigned char>& vchCryptedSecret)
+{
+    // Compute a checksum of the encrypted key
+    uint256 checksum = Hash(vchCryptedSecret);
+
+    const auto key = std::make_pair(DBKeys::CRYPTED_BLSCTOUTKEY, std::make_pair(vchPubKey, outId));
+    if (!WriteIC(key, std::make_pair(vchCryptedSecret, checksum), false)) {
+        // It may already exist, so try writing just the checksum
+        std::vector<unsigned char> val;
+        if (!m_batch->Read(key, val)) {
+            return false;
+        }
+        if (!WriteIC(key, std::make_pair(val, checksum), true)) {
+            return false;
+        }
+    }
+    EraseIC(std::make_pair(DBKeys::BLSCTOUTKEY, outId));
     return true;
 }
 
@@ -531,6 +571,29 @@ bool LoadBLSCTKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std:
     return true;
 }
 
+bool LoadBLSCTOutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
+{
+    LOCK(pwallet->cs_wallet);
+    try {
+        uint256 outId;
+        ssKey >> outId;
+
+        blsct::PrivateKey key;
+        ssValue >> key;
+
+        if (!pwallet->GetOrCreateBLSCTKeyMan()->LoadOutKey(key, outId)) {
+            strErr = "Error reading wallet database: BLSCTKeyMan::LoadKey failed";
+            return false;
+        }
+    } catch (const std::exception& e) {
+        if (strErr.empty()) {
+            strErr = e.what();
+        }
+        return false;
+    }
+    return true;
+}
+
 bool LoadSpendKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
 {
     LOCK(pwallet->cs_wallet);
@@ -678,6 +741,42 @@ bool LoadBLSCTCryptedKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValu
 
         if (!pwallet->GetOrCreateBLSCTKeyMan()->LoadCryptedKey(vchPubKey, vchPrivKey, checksum_valid)) {
             strErr = "Error reading wallet database: GetOrCreateBLSCTKeyMan::LoadCryptedKey failed";
+            return false;
+        }
+    } catch (const std::exception& e) {
+        if (strErr.empty()) {
+            strErr = e.what();
+        }
+        return false;
+    }
+    return true;
+}
+
+bool LoadBLSCTCryptedOutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
+{
+    LOCK(pwallet->cs_wallet);
+    try {
+        uint256 outId;
+        ssKey >> outId;
+        blsct::PublicKey vchPubKey;
+        ssKey >> vchPubKey;
+
+        std::vector<unsigned char> vchPrivKey;
+        ssValue >> vchPrivKey;
+
+        // Get the checksum and check it
+        bool checksum_valid = false;
+        if (!ssValue.eof()) {
+            uint256 checksum;
+            ssValue >> checksum;
+            if (!(checksum_valid = Hash(vchPrivKey) == checksum)) {
+                strErr = "Error reading wallet database: Encrypted blsct private output key corrupt";
+                return false;
+            }
+        }
+
+        if (!pwallet->GetOrCreateBLSCTKeyMan()->LoadCryptedOutKey(outId, vchPubKey, vchPrivKey, checksum_valid)) {
+            strErr = "Error reading wallet database: GetOrCreateBLSCTKeyMan::LoadBLSCTCryptedOutKey failed";
             return false;
         }
     } catch (const std::exception& e) {
@@ -903,6 +1002,12 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
     });
     result = std::max(result, blsctkey_res.m_result);
 
+    LoadResult blsctoutkey_res = LoadRecords(pwallet, batch, DBKeys::BLSCTOUTKEY,
+                                             [](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+                                                 return LoadBLSCTOutKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
+                                             });
+    result = std::max(result, blsctoutkey_res.m_result);
+
     LoadResult viewkey_res = LoadRecords(pwallet, batch, DBKeys::VIEWKEY,
         [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
         return LoadViewKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
@@ -916,10 +1021,16 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
     result = std::max(result, spendkey_res.m_result);
 
     LoadResult blsct_ckey_res = LoadRecords(pwallet, batch, DBKeys::CRYPTED_BLSCTKEY,
-        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
-        return LoadBLSCTCryptedKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
-    });
+                                            [](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+                                                return LoadBLSCTCryptedKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
+                                            });
     result = std::max(result, blsct_ckey_res.m_result);
+
+    LoadResult blsct_coutkey_res = LoadRecords(pwallet, batch, DBKeys::CRYPTED_BLSCTOUTKEY,
+                                               [](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+                                                   return LoadBLSCTCryptedOutKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
+                                               });
+    result = std::max(result, blsct_coutkey_res.m_result);
 
     LoadResult blsctsubaddress_res = LoadRecords(pwallet, batch, DBKeys::BLSCTSUBADDRESS,
         [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& strErr) {
@@ -1407,82 +1518,115 @@ static DBErrors LoadTxRecords(CWallet* pwallet, DatabaseBatch& batch, std::vecto
     // Load tx record
     any_unordered = false;
     LoadResult tx_res = LoadRecords(pwallet, batch, DBKeys::TX,
-        [&any_unordered, &upgraded_txs] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
-        DBErrors result = DBErrors::LOAD_OK;
-        uint256 hash;
-        key >> hash;
-        // LoadToWallet call below creates a new CWalletTx that fill_wtx
-        // callback fills with transaction metadata.
-        auto fill_wtx = [&](CWalletTx& wtx, bool new_tx) {
-            if(!new_tx) {
-                // There's some corruption here since the tx we just tried to load was already in the wallet.
-                err = "Error: Corrupt transaction found. This can be fixed by removing transactions from wallet and rescanning.";
-                result = DBErrors::CORRUPT;
-                return false;
-            }
-            value >> wtx;
+                                    [&any_unordered, &upgraded_txs](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+                                        DBErrors result = DBErrors::LOAD_OK;
+                                        uint256 hash;
+                                        key >> hash;
+                                        // LoadToWallet call below creates a new CWalletTx that fill_wtx
+                                        // callback fills with transaction metadata.
+                                        auto fill_wtx = [&](CWalletTx& wtx, bool new_tx) {
+                                            if (!new_tx) {
+                                                // There's some corruption here since the tx we just tried to load was already in the wallet.
+                                                err = "Error: Corrupt transaction found. This can be fixed by removing transactions from wallet and rescanning.";
+                                                result = DBErrors::CORRUPT;
+                                                return false;
+                                            }
+                                            value >> wtx;
 
-            if (wtx.GetHash() != hash) return false;
+                                            if (wtx.GetHash() != hash) return false;
 
-            // Undo serialize changes in 31600
-            if (31404 <= wtx.fTimeReceivedIsTxTime && wtx.fTimeReceivedIsTxTime <= 31703)
-            {
-                if (!value.empty())
-                {
-                    uint8_t fTmp;
-                    uint8_t fUnused;
-                    std::string unused_string;
-                    value >> fTmp >> fUnused >> unused_string;
-                    pwallet->WalletLogPrintf("LoadWallet() upgrading tx ver=%d %d %s\n",
-                                       wtx.fTimeReceivedIsTxTime, fTmp, hash.ToString());
-                    wtx.fTimeReceivedIsTxTime = fTmp;
-                }
-                else
-                {
-                    pwallet->WalletLogPrintf("LoadWallet() repairing tx ver=%d %s\n", wtx.fTimeReceivedIsTxTime, hash.ToString());
-                    wtx.fTimeReceivedIsTxTime = 0;
-                }
-                upgraded_txs.push_back(hash);
-            }
+                                            // Undo serialize changes in 31600
+                                            if (31404 <= wtx.fTimeReceivedIsTxTime && wtx.fTimeReceivedIsTxTime <= 31703) {
+                                                if (!value.empty()) {
+                                                    uint8_t fTmp;
+                                                    uint8_t fUnused;
+                                                    std::string unused_string;
+                                                    value >> fTmp >> fUnused >> unused_string;
+                                                    pwallet->WalletLogPrintf("LoadWallet() upgrading tx ver=%d %d %s\n",
+                                                                             wtx.fTimeReceivedIsTxTime, fTmp, hash.ToString());
+                                                    wtx.fTimeReceivedIsTxTime = fTmp;
+                                                } else {
+                                                    pwallet->WalletLogPrintf("LoadWallet() repairing tx ver=%d %s\n", wtx.fTimeReceivedIsTxTime, hash.ToString());
+                                                    wtx.fTimeReceivedIsTxTime = 0;
+                                                }
+                                                upgraded_txs.push_back(hash);
+                                            }
 
-            if (wtx.nOrderPos == -1)
-                any_unordered = true;
+                                            if (wtx.nOrderPos == -1)
+                                                any_unordered = true;
 
-            return true;
-        };
-        if (!pwallet->LoadToWallet(hash, fill_wtx)) {
-            // Use std::max as fill_wtx may have already set result to CORRUPT
-            result = std::max(result, DBErrors::NEED_RESCAN);
-        }
-        return result;
-    });
+                                            return true;
+                                        };
+                                        if (!pwallet->LoadToWallet(hash, fill_wtx)) {
+                                            // Use std::max as fill_wtx may have already set result to CORRUPT
+                                            result = std::max(result, DBErrors::NEED_RESCAN);
+                                        }
+                                        return result;
+                                    });
     result = std::max(result, tx_res.m_result);
 
     // Load locked utxo record
     LoadResult locked_utxo_res = LoadRecords(pwallet, batch, DBKeys::LOCKED_UTXO,
-        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
-        Txid hash;
-        uint32_t n;
-        key >> hash;
-        key >> n;
-        pwallet->LockCoin(COutPoint(hash, n));
-        return DBErrors::LOAD_OK;
-    });
+                                             [](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+                                                 Txid hash;
+                                                 uint32_t n;
+                                                 key >> hash;
+                                                 key >> n;
+                                                 pwallet->LockCoin(COutPoint(hash, n));
+                                                 return DBErrors::LOAD_OK;
+                                             });
     result = std::max(result, locked_utxo_res.m_result);
 
     // Load orderposnext record
     // Note: There should only be one ORDERPOSNEXT record with nothing trailing the type
     LoadResult order_pos_res = LoadRecords(pwallet, batch, DBKeys::ORDERPOSNEXT,
-        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
-        try {
-            value >> pwallet->nOrderPosNext;
-        } catch (const std::exception& e) {
-            err = e.what();
-            return DBErrors::NONCRITICAL_ERROR;
-        }
-        return DBErrors::LOAD_OK;
-    });
+                                           [](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+                                               try {
+                                                   value >> pwallet->nOrderPosNext;
+                                               } catch (const std::exception& e) {
+                                                   err = e.what();
+                                                   return DBErrors::NONCRITICAL_ERROR;
+                                               }
+                                               return DBErrors::LOAD_OK;
+                                           });
     result = std::max(result, order_pos_res.m_result);
+
+    return result;
+}
+
+static DBErrors LoadOutputs(CWallet* pwallet, DatabaseBatch& batch, bool& any_unordered) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet)
+{
+    AssertLockHeld(pwallet->cs_wallet);
+    DBErrors result = DBErrors::LOAD_OK;
+
+    // Load output record
+    any_unordered = false;
+    LoadResult out_res = LoadRecords(pwallet, batch, DBKeys::OUTPUT,
+                                     [&any_unordered](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+                                         DBErrors result = DBErrors::LOAD_OK;
+                                         COutPoint outpoint;
+                                         key >> outpoint;
+                                         auto fill_wout = [&](CWalletOutput& wout, bool new_out) {
+                                             if (!new_out) {
+                                                 // There's some corruption here since the tx we just tried to load was already in the wallet.
+                                                 err = "Error: Corrupt output found. This can be fixed by removing outputs from wallet and rescanning.";
+                                                 result = DBErrors::CORRUPT;
+                                                 return false;
+                                             }
+                                             value >> wout;
+
+                                             if (wout.nOrderPos == -1)
+                                                 any_unordered = true;
+
+                                             return true;
+                                         };
+                                         if (!pwallet->LoadToWallet(outpoint, fill_wout)) {
+                                             // Use std::max as fill_wtx may have already set result to CORRUPT
+                                             result = std::max(result, DBErrors::NEED_RESCAN);
+                                         }
+                                         return result;
+                                     });
+    result = std::max(result, out_res.m_result);
 
     return result;
 }
@@ -1573,6 +1717,9 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
 
         // Load tx records
         result = std::max(LoadTxRecords(pwallet, *m_batch, upgraded_txs, any_unordered), result);
+
+        // Load outputs
+        result = std::max(LoadOutputs(pwallet, *m_batch, any_unordered), result);
 
         // Load SPKMs
         result = std::max(LoadActiveSPKMs(pwallet, *m_batch), result);

@@ -27,6 +27,7 @@ class CKeyPool;
 class CMasterKey;
 class CWallet;
 class CWalletTx;
+class CWalletOutput;
 struct WalletContext;
 
 /**
@@ -245,6 +246,9 @@ public:
     bool WriteTx(const CWalletTx& wtx);
     bool EraseTx(uint256 hash);
 
+    bool WriteOutput(const COutPoint& outpoint, const CWalletOutput& out);
+    bool EraseOutput(const COutPoint& outpoint);
+
     bool WriteKeyMetadata(const CKeyMetadata& meta, const CPubKey& pubkey, const bool overwrite);
     bool WriteKey(const CPubKey& vchPubKey, const CPrivKey& vchPrivKey, const CKeyMetadata& keyMeta);
     bool WriteCryptedKey(const CPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, const CKeyMetadata& keyMeta);
@@ -252,7 +256,9 @@ public:
 
     bool WriteKeyMetadata(const CKeyMetadata& meta, const blsct::PublicKey& pubkey, const bool overwrite);
     bool WriteKey(const blsct::PublicKey& vchPubKey, const blsct::PrivateKey& vchPrivKey, const CKeyMetadata& keyMeta);
+    bool WriteOutKey(const uint256& outId, const blsct::PrivateKey& privKey);
     bool WriteCryptedKey(const blsct::PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, const CKeyMetadata& keyMeta);
+    bool WriteCryptedOutKey(const uint256& outId, const blsct::PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
     bool WriteViewKey(const blsct::PublicKey& pubKey, const blsct::PrivateKey& privKey, const CKeyMetadata& keyMeta);
     bool WriteSpendKey(const blsct::PublicKey& pubKey);
 
@@ -329,8 +335,10 @@ bool LoadCryptedKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, st
 bool LoadEncryptionKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadHDChain(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTCryptedKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
+bool LoadBLSCTCryptedOutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTHDChain(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
+bool LoadBLSCToutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadSpendKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadViewKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 } // namespace wallet

@@ -147,11 +147,15 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx.value()), coins_view_cache, tx_state));
 
     bool fFoundChange = false;
+    uint32_t nChangePosition = 0;
 
     auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
 
     for (auto& res : result.amounts) {
-        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00292125) * COIN) fFoundChange = true;
+        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00292125) * COIN) {
+            fFoundChange = true;
+            nChangePosition = res.id;
+        }
     }
 
     BOOST_CHECK(fFoundChange);
@@ -162,14 +166,9 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     BOOST_CHECK(wtx != nullptr);
 
     fFoundChange = false;
-    uint32_t nChangePosition = 0;
 
-    for (auto& res : wtx->blsctRecoveryData) {
-        if (res.second.message == "Change" && res.second.amount == (1000 - 900 - 0.00292125) * COIN) {
-            nChangePosition = res.second.id;
-            fFoundChange = true;
-            break;
-        }
+    if (wtx->GetBLSCTRecoveryData(nChangePosition).message == "Change" && wtx->GetBLSCTRecoveryData(nChangePosition).amount == (1000 - 900 - 0.00292125) * COIN) {
+        fFoundChange = true;
     }
 
     BOOST_CHECK(fFoundChange);

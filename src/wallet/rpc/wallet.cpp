@@ -92,13 +92,14 @@ static RPCHelpMan getwalletinfo()
 
             size_t kpExternalSize = pwallet->KeypoolCountExternalKeys();
             const auto bal = GetBalance(*pwallet);
+            const auto blsct_bal = GetBlsctBalance(*pwallet);
             obj.pushKV("walletname", pwallet->GetName());
             obj.pushKV("walletversion", pwallet->GetVersion());
             obj.pushKV("format", pwallet->GetDatabase().Format());
-            obj.pushKV("balance", ValueFromAmount(bal.m_mine_trusted));
-            obj.pushKV("staked_commitment_balance", ValueFromAmount(bal.m_mine_staked_commitment));
-            obj.pushKV("unconfirmed_balance", ValueFromAmount(bal.m_mine_untrusted_pending));
-            obj.pushKV("immature_balance", ValueFromAmount(bal.m_mine_immature));
+            obj.pushKV("balance", ValueFromAmount(bal.m_mine_trusted + blsct_bal.m_mine_trusted));
+            obj.pushKV("staked_commitment_balance", ValueFromAmount(bal.m_mine_staked_commitment + blsct_bal.m_mine_staked_commitment));
+            obj.pushKV("unconfirmed_balance", ValueFromAmount(bal.m_mine_untrusted_pending + blsct_bal.m_mine_untrusted_pending));
+            obj.pushKV("immature_balance", ValueFromAmount(bal.m_mine_immature + blsct_bal.m_mine_immature));
             obj.pushKV("txcount", (int)pwallet->mapWallet.size());
             const auto kp_oldest = pwallet->GetOldestKeyPoolTime();
             if (kp_oldest.has_value()) {
@@ -349,6 +350,7 @@ static RPCHelpMan createwallet()
             {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Save wallet name to persistent settings and load on startup. True to add wallet to startup list, false to remove, null to leave unchanged."},
             {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true."},
             {"blsct", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a wallet with BLSCT keys."},
+            {"storage_output", RPCArg::Type::BOOL, RPCArg::Default{false}, "Enables the storage of outputs instead of full txs (experimental)."},
             {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the wallet from the specified seed (can be a master seed or an audit key)."},
         },
         RPCResult{
@@ -409,10 +411,14 @@ static RPCHelpMan createwallet()
                 flags &= ~WALLET_FLAG_DESCRIPTORS;
             }
 
+            if (!request.params[9].isNull() && request.params[9].get_bool()) {
+                flags |= WALLET_FLAG_BLSCT_OUTPUT_STORAGE;
+            }
+
             std::vector<unsigned char> seed;
             blsct::SeedType type = blsct::IMPORT_MASTER_KEY;
-            if (!request.params[9].isNull() && request.params[9].isStr()) {
-                seed = ParseHex(request.params[9].get_str());
+            if (!request.params[10].isNull() && request.params[10].isStr()) {
+                seed = ParseHex(request.params[10].get_str());
 
                 if (seed.size() == 80) {
                     type = blsct::IMPORT_VIEW_KEY;

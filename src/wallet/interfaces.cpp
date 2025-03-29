@@ -402,15 +402,16 @@ public:
     WalletBalances getBalances() override
     {
         const auto bal = GetBalance(*m_wallet);
+        const auto blsct_bal = GetBlsctBalance(*m_wallet);
         WalletBalances result;
-        result.balance = bal.m_mine_trusted;
-        result.unconfirmed_balance = bal.m_mine_untrusted_pending;
-        result.immature_balance = bal.m_mine_immature;
+        result.balance = bal.m_mine_trusted + blsct_bal.m_mine_trusted;
+        result.unconfirmed_balance = bal.m_mine_untrusted_pending + blsct_bal.m_mine_untrusted_pending;
+        result.immature_balance = bal.m_mine_immature + blsct_bal.m_mine_immature;
         result.have_watch_only = haveWatchOnly();
         if (result.have_watch_only) {
-            result.watch_only_balance = bal.m_watchonly_trusted;
-            result.unconfirmed_watch_only_balance = bal.m_watchonly_untrusted_pending;
-            result.immature_watch_only_balance = bal.m_watchonly_immature;
+            result.watch_only_balance = bal.m_watchonly_trusted + blsct_bal.m_watchonly_trusted;
+            result.unconfirmed_watch_only_balance = bal.m_watchonly_untrusted_pending + blsct_bal.m_watchonly_untrusted_pending;
+            result.immature_watch_only_balance = bal.m_watchonly_immature + blsct_bal.m_watchonly_immature;
         }
         return result;
     }
@@ -424,7 +425,7 @@ public:
         balances = getBalances();
         return true;
     }
-    CAmount getBalance() override { return GetBalance(*m_wallet).m_mine_trusted; }
+    CAmount getBalance() override { return GetBalance(*m_wallet).m_mine_trusted + GetBlsctBalance(*m_wallet).m_mine_trusted; }
     CAmount getAvailableBalance(const CCoinControl& coin_control) override
     {
         LOCK(m_wallet->cs_wallet);
@@ -441,7 +442,7 @@ public:
 
         // And fetch the wallet available coins
         if (coin_control.m_allow_other_inputs) {
-            total_amount += AvailableCoins(*m_wallet, &coin_control).GetTotalAmount();
+            total_amount += AvailableCoins(*m_wallet, &coin_control).GetTotalAmount() + AvailableBlsctCoins(*m_wallet, &coin_control).GetTotalAmount();
         }
 
         return total_amount;

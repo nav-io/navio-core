@@ -41,7 +41,6 @@ BOOST_FIXTURE_TEST_CASE(SubtractFee, TestChain100Setup)
         BOOST_CHECK_GT(txr.fee, 0);
         return txr.fee;
     };
-
     // Send full input amount to recipient, check that only nonzero fee is
     // subtracted (to_reduce == fee).
     const CAmount fee{check_tx(0)};

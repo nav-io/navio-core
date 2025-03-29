@@ -141,7 +141,20 @@ bool DecryptKey(const CKeyingMaterial& vMasterKey, const std::vector<unsigned ch
 bool DecryptKey(const CKeyingMaterial& vMasterKey, const std::vector<unsigned char>& vchCryptedSecret, const blsct::PublicKey& vchPubKey, blsct::PrivateKey& key)
 {
     CKeyingMaterial vchSecret;
-    if(!DecryptSecret(vMasterKey, vchCryptedSecret, vchPubKey.GetHash(), vchSecret))
+    if (!DecryptSecret(vMasterKey, vchCryptedSecret, vchPubKey.GetHash(), vchSecret))
+        return false;
+
+    if (vchSecret.size() != 32)
+        return false;
+
+    key = MclScalar(std::vector<unsigned char>(vchSecret.begin(), vchSecret.end()));
+    return key.VerifyPubKey(vchPubKey);
+}
+
+bool DecryptKey(const CKeyingMaterial& vMasterKey, const std::vector<unsigned char>& vchCryptedSecret, const uint256& outId, const blsct::PublicKey& vchPubKey, blsct::PrivateKey& key)
+{
+    CKeyingMaterial vchSecret;
+    if (!DecryptSecret(vMasterKey, vchCryptedSecret, outId, vchSecret))
         return false;
 
     if (vchSecret.size() != 32)

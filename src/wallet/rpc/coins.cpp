@@ -259,8 +259,9 @@ RPCHelpMan getbalance()
             bool avoid_reuse = GetAvoidReuseFlag(*pwallet, request.params[3]);
 
             const auto bal = GetBalance(*pwallet, min_depth, avoid_reuse);
+            const auto blsct_bal = GetBlsctBalance(*pwallet, min_depth);
 
-            return ValueFromAmount(bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0));
+            return ValueFromAmount(bal.m_mine_trusted + blsct_bal.m_mine_trusted + (include_watchonly ? (bal.m_watchonly_trusted + blsct_bal.m_watchonly_trusted) : 0));
         },
     };
 }
@@ -283,7 +284,7 @@ RPCHelpMan getunconfirmedbalance()
 
     LOCK(pwallet->cs_wallet);
 
-    return ValueFromAmount(GetBalance(*pwallet).m_mine_untrusted_pending);
+    return ValueFromAmount(GetBalance(*pwallet).m_mine_untrusted_pending + GetBlsctBalance(*pwallet).m_mine_untrusted_pending);
 },
     };
 }
@@ -512,13 +513,14 @@ RPCHelpMan getbalances()
             LOCK(wallet.cs_wallet);
 
             const auto bal = GetBalance(wallet);
+            const auto blsct_bal = GetBlsctBalance(wallet);
             UniValue balances{UniValue::VOBJ};
             {
                 UniValue balances_mine{UniValue::VOBJ};
-                balances_mine.pushKV("trusted", ValueFromAmount(bal.m_mine_trusted));
-                balances_mine.pushKV("staked_commitment_balance", ValueFromAmount(bal.m_mine_staked_commitment));
-                balances_mine.pushKV("untrusted_pending", ValueFromAmount(bal.m_mine_untrusted_pending));
-                balances_mine.pushKV("immature", ValueFromAmount(bal.m_mine_immature));
+                balances_mine.pushKV("trusted", ValueFromAmount(bal.m_mine_trusted + blsct_bal.m_mine_trusted));
+                balances_mine.pushKV("staked_commitment_balance", ValueFromAmount(bal.m_mine_staked_commitment + blsct_bal.m_mine_staked_commitment));
+                balances_mine.pushKV("untrusted_pending", ValueFromAmount(bal.m_mine_untrusted_pending + blsct_bal.m_mine_untrusted_pending));
+                balances_mine.pushKV("immature", ValueFromAmount(bal.m_mine_immature + blsct_bal.m_mine_immature));
                 if (wallet.IsWalletFlagSet(WALLET_FLAG_AVOID_REUSE)) {
                     // If the AVOID_REUSE flag is set, bal has been set to just the un-reused address balance. Get
                     // the total balance, and then subtract bal to get the reused address balance.

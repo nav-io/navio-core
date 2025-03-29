@@ -696,10 +696,6 @@ UniValueArrayToStakedCommitments(const UniValue& array)
         ret.push_back(point);
     }
 
-    sort(ret.begin(), ret.end(), [](const auto& lhs, const auto& rhs) {
-        return lhs < rhs;
-    });
-
     return ret;
 }
 
@@ -762,6 +758,16 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         return std::nullopt;
     }
 
+    auto staked_elements = UniValueArrayToStakedCommitments(result.find_value("staked_commitments").get_array());
+
+    bool fFound = false;
+
+    for (auto& sc : staked_elements)
+        fFound |= sc == staked_commitment.point;
+
+    if (!fFound)
+        return std::nullopt;
+
     auto eta_fiat_shamir = ParseHex(result.find_value("eta_fiat_shamir").get_str());
     auto eta_phi = ParseHex(result.find_value("eta_phi").get_str());
 
@@ -778,8 +784,6 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
     proposal.nBits = next_target;
     proposal.hashPrevBlock = uint256S(result.find_value("previousblockhash").get_str());
     proposal.vtx = UniValueArrayToTransactions(result.find_value("transactions").get_array());
-
-    auto staked_elements = UniValueArrayToStakedCommitments(result.find_value("staked_commitments").get_array());
 
     proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, proposal.nTime, next_target);
     proposal.hashMerkleRoot = BlockMerkleRoot(proposal);

@@ -25,7 +25,6 @@ struct CompressedHeader {
     uint32_t nTime{0};
     uint32_t nBits{0};
     uint32_t nNonce{0};
-    blsct::ProofOfStake posProof;
 
     CompressedHeader()
     {
@@ -49,7 +48,6 @@ struct CompressedHeader {
         ret.nTime = nTime;
         ret.nBits = nBits;
         ret.nNonce = nNonce;
-        ret.posProof = posProof;
         return ret;
     };
 };

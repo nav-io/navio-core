@@ -12,6 +12,13 @@ bool KeyRing::AddKeyPubKey(const PrivateKey& key, const PublicKey& pubkey)
     return true;
 }
 
+bool KeyRing::AddKeyOutKey(const PrivateKey& key, const uint256& outId)
+{
+    LOCK(cs_KeyStore);
+    mapOutKeys[outId] = key;
+    return true;
+}
+
 bool KeyRing::AddViewKey(const PrivateKey& key, const PublicKey& pubkey)
 {
     LOCK(cs_KeyStore);
@@ -40,6 +47,17 @@ bool KeyRing::GetKey(const CKeyID& address, PrivateKey& keyOut) const
     LOCK(cs_KeyStore);
     KeyMap::const_iterator mi = mapKeys.find(address);
     if (mi != mapKeys.end()) {
+        keyOut = mi->second;
+        return true;
+    }
+    return false;
+}
+
+bool KeyRing::GetOutKey(const uint256& outId, PrivateKey& keyOut) const
+{
+    LOCK(cs_KeyStore);
+    OutKeyMap::const_iterator mi = mapOutKeys.find(outId);
+    if (mi != mapOutKeys.end()) {
         keyOut = mi->second;
         return true;
     }

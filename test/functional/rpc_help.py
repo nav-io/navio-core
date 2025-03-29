@@ -67,11 +67,17 @@ class HelpRpcTest(BitcoinTestFramework):
         # Filter all RPCs whether they need conversion
         mapping_server_conversion = [tuple(m[:3]) for m in mapping_server if not m[3]]
 
+
+        ar1 = sorted(mapping_client)
+        ar2 = sorted(mapping_server_conversion)
+        filtered_array = [item for item in ar1 if item[0] == 'listblscttransactions']
+        filtered_array2 = [item for item in ar2 if item[0] == 'listblscttransactions']
+
         # Only check if all RPC methods have been compiled (i.e. wallet is enabled)
         if self.is_wallet_compiled() and sorted(mapping_client) != sorted(mapping_server_conversion):
-            raise AssertionError("RPC client conversion table ({}) and RPC server named arguments mismatch!\n{}".format(
+            raise AssertionError("RPC client conversion table ({}) and RPC server named arguments mismatch!\n{}\n{}\n{}".format(
                 file_conversion_table,
-                set(mapping_client).symmetric_difference(mapping_server_conversion),
+                set(mapping_client).symmetric_difference(mapping_server_conversion),sorted(filtered_array), sorted(filtered_array2)
             ))
 
         # Check for conversion difference by argument name.

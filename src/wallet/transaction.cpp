@@ -54,4 +54,57 @@ void CWalletTx::CopyFrom(const CWalletTx& _tx)
 {
     *this = _tx;
 }
+
+void CWalletOutput::CopyFrom(const CWalletOutput& _out)
+{
+    *this = _out;
+}
+
+void CWalletOutput::updateState(interfaces::Chain& chain)
+{
+    bool active;
+    auto lookup_block = [&](const uint256& hash, int& height, TxState& state) {
+        // If tx block (or conflicting block) was reorged out of chain
+        // while the wallet was shutdown, change tx status to UNCONFIRMED
+        // and reset block height, hash, and index. ABANDONED tx don't have
+        // associated blocks and don't need to be updated. The case where a
+        // transaction was reorged out while online and then reconfirmed
+        // while offline is covered by the rescan logic.
+        if (!chain.findBlock(hash, FoundBlock().inActiveChain(active).height(height)) || !active) {
+            state = TxStateInactive{};
+        }
+    };
+
+    auto lookup_block_spent = [&](const uint256& hash, int& height, SyncTxState& state) {
+        // If tx block (or conflicting block) was reorged out of chain
+        // while the wallet was shutdown, change tx status to UNCONFIRMED
+        // and reset block height, hash, and index. ABANDONED tx don't have
+        // associated blocks and don't need to be updated. The case where a
+        // transaction was reorged out while online and then reconfirmed
+        // while offline is covered by the rescan logic.
+        if (!chain.findBlock(hash, FoundBlock().inActiveChain(active).height(height)) || !active) {
+            state = TxStateInactive{};
+        }
+    };
+
+    if (auto* conf = state<TxStateConfirmed>()) {
+        lookup_block(conf->confirmed_block_hash, conf->confirmed_block_height, m_state);
+    } else if (auto* conf = state<TxStateConflicted>()) {
+        lookup_block(conf->conflicting_block_hash, conf->conflicting_block_height, m_state);
+    }
+
+    if (auto* conf = state_spent<TxStateConfirmed>()) {
+        lookup_block_spent(conf->confirmed_block_hash, conf->confirmed_block_height, m_state_spent);
+    }
+}
+
+int64_t CWalletOutput::GetTxTime() const
+{
+    return nTimeReceived;
+}
+
+bool CWalletOutput::InMempool() const
+{
+    return state<TxStateInMempool>();
+}
 } // namespace wallet

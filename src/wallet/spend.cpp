@@ -339,7 +339,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
         }
 
         bool safeTx = CachedTxIsTrusted(wallet, wtx, trusted_parents);
-
         // We should not consider coins from transactions that are replacing
         // other transactions.
         //
@@ -378,9 +377,7 @@ CoinsResult AvailableCoins(const CWallet& wallet,
         if (nDepth < min_depth || nDepth > max_depth) {
             continue;
         }
-
-        bool tx_from_me = CachedTxIsFromMe(wallet, wtx, ISMINE_ALL);
-
+        bool tx_from_me = true; /*CachedTxIsFromMe(wallet, wtx, ISMINE_ALL);*/
         for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
             const CTxOut& output = wtx.tx->vout[i];
             CTxOut mutableOutput(output);
@@ -397,7 +394,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
 
             if (wallet.IsSpent(outpoint))
                 continue;
-
             isminetype mine = wallet.IsMine(output);
             if (mine == ISMINE_NO) {
                 continue;
@@ -417,7 +413,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             if (!allow_used_addresses && wallet.IsSpentKey(output.scriptPubKey)) {
                 continue;
             }
-
             std::unique_ptr<SigningProvider> provider = wallet.GetSolvingProvider(output.scriptPubKey);
 
             int input_bytes = CalculateMaximumSignedInputSize(output, COutPoint(), provider.get(), can_grind_r, coinControl);
@@ -429,7 +424,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             // Obtain script type
             std::vector<std::vector<uint8_t>> script_solutions;
             TxoutType type = Solver(output.scriptPubKey, script_solutions);
-
             // If the output is P2SH and solvable, we want to know if it is
             // a P2SH (legacy) or one of P2SH-P2WPKH, P2SH-P2WSH (P2SH-Segwit). We can determine
             // this from the redeemScript. If the output is not solvable, it will be classified
@@ -444,12 +438,10 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             }
 
             mutableOutput.nValue = nValue;
-
             result.Add(GetOutputType(type, is_from_p2sh),
                        COutput(outpoint, mutableOutput, nDepth, input_bytes, spendable, solvable, safeTx, wtx.GetTxTime(), tx_from_me, feerate));
 
             outpoints.push_back(outpoint);
-
             // Checks the sum amount of all UTXO's.
             if (params.min_sum_amount != MAX_MONEY) {
                 if (result.GetTotalAmount() >= params.min_sum_amount) {
@@ -471,6 +463,104 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             for (auto& output : outputs) {
                 output.ApplyBumpFee(map_of_bump_fees.at(output.outpoint));
             }
+        }
+    }
+
+    return result;
+}
+
+CoinsResult AvailableBlsctCoins(const CWallet& wallet,
+                                const CCoinControl* coinControl,
+                                const CoinFilterParams& params)
+{
+    AssertLockHeld(wallet.cs_wallet);
+
+    CoinsResult result;
+    const int min_depth = {coinControl ? coinControl->m_min_depth : DEFAULT_MIN_DEPTH};
+    const int max_depth = {coinControl ? coinControl->m_max_depth : DEFAULT_MAX_DEPTH};
+    const bool only_safe = {coinControl ? !coinControl->m_include_unsafe_inputs : true};
+    std::vector<COutPoint> outpoints;
+
+    std::set<uint256> trusted_parents;
+    for (const auto& entry : wallet.mapOutputs) {
+        const COutPoint& outpoint = entry.first;
+        const CWalletOutput& wout = entry.second;
+
+        if (wallet.IsOutputImmatureCoinBase(wout) && !params.include_immature_coinbase)
+            continue;
+
+        int nDepth = wallet.GetOutputDepthInMainChain(wout);
+        if (nDepth < 0)
+            continue;
+
+        // Coins with no confirmations can not be spent
+        if (nDepth == 0) {
+            continue;
+        }
+
+        bool safeTx = IsOutputTrusted(wallet, wout);
+
+        if (only_safe && !safeTx) {
+            continue;
+        }
+
+        if (nDepth < min_depth || nDepth > max_depth) {
+            continue;
+        }
+
+        const CTxOut output = *wout.out;
+        CTxOut mutableOutput(output);
+
+        auto nValue = wout.blsctRecoveryData.amount;
+        if (nValue < params.min_amount || nValue > params.max_amount) continue;
+
+        // Skip manually selected coins (the caller can fetch them directly)
+        if (coinControl && coinControl->HasSelected() && coinControl->IsSelected(outpoint))
+            continue;
+
+        if (wallet.IsLockedCoin(outpoint) && params.skip_locked)
+            continue;
+
+        if (wallet.IsSpent(outpoint) || wout.IsSpent())
+            continue;
+
+        isminetype mine = wallet.IsMine(output);
+
+        if (mine == ISMINE_NO) {
+            continue;
+        }
+        if (params.include_staked_commitment && !output.IsStakedCommitment()) {
+            continue;
+        }
+        if (!params.include_staked_commitment && output.IsStakedCommitment()) {
+            continue;
+        }
+        if (params.token_id != output.tokenId) {
+            continue;
+        }
+
+        bool spendable = ((mine & (ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT)) != ISMINE_NO) || (((mine & ISMINE_WATCH_ONLY) != ISMINE_NO) && (coinControl && coinControl->fAllowWatchOnly));
+
+        // Filter by spendable outputs only
+        if (!spendable && params.only_spendable) continue;
+
+        mutableOutput.nValue = nValue;
+
+        result.Add(output.IsStakedCommitment() ? OutputType::BLSCT_STAKE : OutputType::BLSCT,
+                   COutput(outpoint, mutableOutput, nDepth, -1, spendable, true, safeTx, wout.GetTxTime(), true, 0));
+
+        outpoints.push_back(outpoint);
+
+        // Checks the sum amount of all UTXO's.
+        if (params.min_sum_amount != MAX_MONEY) {
+            if (result.GetTotalAmount() >= params.min_sum_amount) {
+                return result;
+            }
+        }
+
+        // Checks the maximum number of UTXO's.
+        if (params.max_count > 0 && result.Size() >= params.max_count) {
+            return result;
         }
     }
 
