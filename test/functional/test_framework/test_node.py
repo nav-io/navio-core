@@ -171,6 +171,7 @@ class TestNode():
         self.process = None
         self.rpc_connected = False
         self.rpc = None
+        self.reuse_http_connections = True # Must be set before calling get_rpc_proxy() i.e. before restarting node
         self.url = None
         self.log = logging.getLogger('TestFramework.node%d' % i)
         self.cleanup_on_exit = True # Whether to kill the node when this object goes away
@@ -286,6 +287,7 @@ class TestNode():
                     timeout=self.rpc_timeout // 2,  # Shorter timeout to allow for one retry in case of ETIMEDOUT
                     coveragedir=self.coverage_dir,
                 )
+                rpc.auth_service_proxy_instance.reuse_http_connections = self.reuse_http_connections
                 rpc.getblockcount()
                 # If the call to getblockcount() succeeds then the RPC connection is up
                 self.wait_until(lambda: rpc.getmempoolinfo()['loaded'])
