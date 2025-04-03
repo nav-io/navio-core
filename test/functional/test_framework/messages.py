@@ -1739,7 +1739,7 @@ class msg_headers:
             self.headers.append(CBlockHeader(x))
 
     def serialize(self):
-        blocks = [CBlock(x) for x in self.headers]
+        blocks = [CBlockHeader(x) for x in self.headers]
         return ser_vector(blocks)
 
     def __repr__(self):
