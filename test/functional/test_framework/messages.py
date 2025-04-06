@@ -1734,7 +1734,7 @@ class msg_headers:
 
     def deserialize(self, f):
         # comment in naviod indicates these should be deserialized as blocks
-        blocks = deser_vector(f, CBlock)
+        blocks = deser_vector(f, CBlockHeader)
         for x in blocks:
             self.headers.append(CBlockHeader(x))
 
