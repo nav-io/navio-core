@@ -25,6 +25,53 @@ OrderedElements<T>::OrderedElements(const std::set<T>& set)
 };
 template OrderedElements<MclG1Point>::OrderedElements(const std::set<MclG1Point>& set);
 
+struct XorShift32 {
+    uint32_t state;
+
+    explicit XorShift32(uint32_t seed) : state(seed)
+    {
+        if (state == 0) state = 0x1; // avoid zero state
+    }
+
+    uint32_t next()
+    {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return state;
+    }
+};
+
+// Deterministic shuffle using Fisher-Yates
+template <typename T>
+void _deterministic_shuffle(std::vector<T>& vec, XorShift32& rng)
+{
+    for (std::size_t i = vec.size() - 1; i > 0; --i) {
+        uint32_t j = rng.next() % (i + 1);
+        std::swap(vec[i], vec[j]);
+    }
+}
+
+void uint256_to_seed_array(const uint256& value, uint64_t seed_data[4])
+{
+    const unsigned char* bytes = value.begin(); // Little-endian
+
+    for (int i = 0; i < 4; ++i) {
+        std::memcpy(&seed_data[i], bytes + i * 8, sizeof(uint64_t));
+    }
+}
+
+uint32_t compress_seed(const uint64_t seed_data[4])
+{
+    // Fold the 4x64-bit seed into a 32-bit value deterministically
+    return static_cast<uint32_t>(
+        (seed_data[0] ^ (seed_data[0] >> 32) ^
+         seed_data[1] ^ (seed_data[1] >> 32) ^
+         seed_data[2] ^ (seed_data[2] >> 32) ^
+         seed_data[3] ^ (seed_data[3] >> 32)) &
+        0xFFFFFFFF);
+}
+
 template <typename T>
 Elements<T> OrderedElements<T>::GetElements(const uint256& seed) const
 {
@@ -34,18 +81,11 @@ Elements<T> OrderedElements<T>::GetElements(const uint256& seed) const
     std::copy(m_set.begin(), m_set.end(), std::back_inserter(ret));
 
     if (seed != uint256()) {
-        std::seed_seq seq{
-            static_cast<uint32_t>(seed.GetUint64(0) & 0xFFFFFFFF),
-            static_cast<uint32_t>(seed.GetUint64(0) >> 32),
-            static_cast<uint32_t>(seed.GetUint64(1) & 0xFFFFFFFF),
-            static_cast<uint32_t>(seed.GetUint64(1) >> 32),
-            static_cast<uint32_t>(seed.GetUint64(2) & 0xFFFFFFFF),
-            static_cast<uint32_t>(seed.GetUint64(2) >> 32),
-            static_cast<uint32_t>(seed.GetUint64(3) & 0xFFFFFFFF),
-            static_cast<uint32_t>(seed.GetUint64(3) >> 32)};
+        uint64_t seed_data[4];
+        uint256_to_seed_array(seed, seed_data);
 
-        std::mt19937 rng(seq);
-        std::shuffle(ret.begin(), ret.end(), rng);
+        XorShift32 rng(compress_seed(seed_data));
+        _deterministic_shuffle(ret, rng);
 
         if (ret.size() > 16) {
             ret.resize(16);
