@@ -70,6 +70,8 @@ struct tallyitem
 
 static UniValue ListReceived(const CWallet& wallet, const UniValue& params, const bool by_label, const bool include_immature_coinbase) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
+    auto blsct_km = wallet.GetBLSCTKeyMan();
+
     // Minimum confirmations
     int nMinDepth = 1;
     if (!params[0].isNull())
@@ -109,10 +111,19 @@ static UniValue ListReceived(const CWallet& wallet, const UniValue& params, cons
             continue;
         }
 
+        size_t i = -1;
+
         for (const CTxOut& txout : wtx.tx->vout) {
+            i++;
             CTxDestination address;
-            if (!ExtractDestination(txout.scriptPubKey, address))
-                continue;
+            if (txout.HasBLSCTKeys()) {
+                address = blsct_km->GetDestination(txout);
+                if (address.index() == 0)
+                    continue;
+            } else {
+                if (!ExtractDestination(txout.scriptPubKey, address))
+                    continue;
+            }
 
             if (filtered_address && !(filtered_address == address)) {
                 continue;
@@ -123,7 +134,7 @@ static UniValue ListReceived(const CWallet& wallet, const UniValue& params, cons
                 continue;
 
             tallyitem& item = mapTally[address];
-            item.nAmount += txout.nValue;
+            item.nAmount += txout.HasBLSCTRangeProof() ? wtx.GetBLSCTRecoveryData(i).amount : txout.nValue;
             item.nConf = std::min(item.nConf, nDepth);
             item.txids.push_back(wtx.GetHash());
             if (mine & ISMINE_WATCH_ONLY)
