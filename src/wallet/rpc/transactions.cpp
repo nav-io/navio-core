@@ -82,7 +82,7 @@ static UniValue ListReceived(const CWallet& wallet, const UniValue& params, cons
     if (!params[1].isNull())
         fIncludeEmpty = params[1].get_bool();
 
-    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
 
     if (ParseIncludeWatchonly(params[2], wallet)) {
         filter |= ISMINE_WATCH_ONLY;
@@ -111,10 +111,8 @@ static UniValue ListReceived(const CWallet& wallet, const UniValue& params, cons
             continue;
         }
 
-        size_t i = -1;
-
-        for (const CTxOut& txout : wtx.tx->vout) {
-            i++;
+        for (size_t i = 0; i < wtx.tx->vout.size(); i++) {
+            const CTxOut& txout = wtx.tx->vout[i];
             CTxDestination address;
             if (txout.HasBLSCTKeys()) {
                 address = blsct_km->GetDestination(txout);
@@ -129,9 +127,16 @@ static UniValue ListReceived(const CWallet& wallet, const UniValue& params, cons
                 continue;
             }
 
-            isminefilter mine = wallet.IsMine(address);
-            if (!(mine & filter))
-                continue;
+            isminefilter mine;
+            if (txout.HasBLSCTKeys()) {
+                mine = wallet.IsMine(txout);
+                if (!(mine & filter))
+                    continue;
+            } else {
+                mine = wallet.IsMine(address);
+                if (!(mine & filter))
+                    continue;
+            }
 
             tallyitem& item = mapTally[address];
             item.nAmount += txout.HasBLSCTRangeProof() ? wtx.GetBLSCTRecoveryData(i).amount : txout.nValue;
