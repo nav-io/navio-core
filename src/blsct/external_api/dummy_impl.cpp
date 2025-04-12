@@ -3,6 +3,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 struct bilingual_str;
 struct CExtKey;
@@ -27,4 +28,27 @@ std::string EncodeExtKey(const CExtKey& key) {
     throw std::logic_error("Not implemented");
 }
 
+namespace common {
+struct Settings;
+struct SettingsValue;
+
+SettingsValue GetSetting(
+    const Settings& settings,
+    const std::string& section,
+    const std::string& name,
+    bool ignore_default_section_config,
+    bool ignore_nonpersistent,
+    bool get_chain_type) {
+    throw std::logic_error("Not implemented");
+}
+
+std::vector<SettingsValue> GetSettingsList(
+    const Settings& settings,
+    const std::string& section,
+    const std::string& name,
+    bool ignore_default_section_config) {
+    throw std::logic_error("Not implemented");
+}
+
+} // namespace common
 
