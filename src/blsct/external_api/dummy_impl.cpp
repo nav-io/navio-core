@@ -2,8 +2,10 @@
 
 #include <memory>
 #include <stdexcept>
+#include <string>
 
 struct bilingual_str;
+struct CExtKey;
 
 namespace wallet {
 struct BerkeleyDatabase;
@@ -20,4 +22,9 @@ std::unique_ptr<SQLiteDatabase> MakeSQLiteDatabase(const fs::path& path, const D
 }
 
 } // namespace wallet
+
+std::string EncodeExtKey(const CExtKey& key) {
+    throw std::logic_error("Not implemented");
+}
+
 
