@@ -1456,6 +1456,7 @@ LIBBLSCT = libblsct.a
 noinst_LIBRARIES = $(LIBBLSCT)
 libblsct_a_SOURCES = \
   blsct/external_api/blsct.cpp \
+  blsct/external_api/dummy_impl.cpp \
   common/args.cpp \
   common/system.cpp \
   common/url.cpp \
@@ -1511,46 +1512,6 @@ libblsct_a_SOURCES = \
   wallet/walletdb.cpp \
   wallet/walletutil.cpp \
   wallet/coinselection.cpp \
-	\
-	addresstype.cpp \
-	arith_uint256.cpp \
-  blsct/external_api/dummy_impl.cpp \
-	chain.cpp \
-	coins.cpp \
-	common/bloom.cpp \
-	common/interfaces.cpp \
-	core_read.cpp \
-	core_write.cpp \
-	crypto/aes.cpp \
-	crypto/chacha20.cpp \
-	crypto/hmac_sha512.cpp \
-	crypto/sha1.cpp \
-	crypto/sha512.cpp \
-	crypto/siphash.cpp \
-	external_signer.cpp \
-	merkleblock.cpp \
-	key.cpp \
-	psbt.cpp \
-  pubkey.cpp \
-	policy/feerate.cpp \
-	policy/policy.cpp \
-	random.cpp \
-	randomenv.cpp \
-	rpc/rawtransaction_util.cpp \
-	scheduler.cpp \
-	script/descriptor.cpp \
-	script/solver.cpp \
-	util/bip32.cpp \
-	util/bytevectorhash.cpp \
-	util/check.cpp \
-	util/error.cpp \
-	util/fees.cpp \
-	util/fs.cpp \
-	util/fs_helpers.cpp \
-	util/hasher.cpp \
-	util/message.cpp \
-	util/spanparsing.cpp \
-	\
   $(BLSCT_CPP)
 
 LIBUNIVALUE_BLSCT = libunivalue_blsct.a
@@ -1560,7 +1521,7 @@ libunivalue_blsct_a_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR
 libunivalue_blsct_a_CXXFLAGS = $(AM_CXXFLAGS) -fPIC
 
 libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) -fPIC
-libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -DLIBBLSCT -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT) -I$(srcdir)/secp256k1/include
+libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -DLIBBLSCT -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
 
 if ENABLE_SSE41
 libblsct_a_CXXFLAGS += $(SSE41_CXXFLAGS)
@@ -1582,7 +1543,7 @@ libblsct_a_CXXFLAGS += $(ARM_SHANI_CXXFLAGS)
 libblsct_a_CPPFLAGS += -DENABLE_ARM_SHANI
 endif
 
-$(LIBBLSCT): $(LIBBLS) $(LIBMCL) $(LIBUNIVALUE_BLSCT) $(LIBSECP256K1)
+$(LIBBLSCT): $(LIBBLS) $(LIBMCL) $(LIBUNIVALUE_BLSCT)
 
 CLEANFILES += $(LIBBLSCT) blsct/include/libblsct_a-blsct.o
 endif
