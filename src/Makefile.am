@@ -1456,6 +1456,7 @@ LIBBLSCT = libblsct.a
 noinst_LIBRARIES = $(LIBBLSCT)
 libblsct_a_SOURCES = \
   blsct/external_api/blsct.cpp \
+  blsct/external_api/dummy_impl.cpp \
   common/args.cpp \
   common/system.cpp \
   common/url.cpp \
