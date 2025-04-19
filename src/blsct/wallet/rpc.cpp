@@ -562,6 +562,11 @@ RPCHelpMan sendtoblsctaddress()
             if (!request.params[2].isNull() && !request.params[2].get_str().empty())
                 sMemo = request.params[2].get_str();
 
+            CTxDestination destination = DecodeDestination(request.params[0].get_str());
+            if (!IsValidDestination(destination) || destination.index() != 8) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
+            }
+
             const std::string address = request.params[0].get_str();
 
             const bool verbose{request.params[3].isNull() ? false : request.params[10].get_bool()};
@@ -631,6 +636,11 @@ RPCHelpMan sendtokentoblsctaddress()
             std::string sMemo;
             if (!request.params[3].isNull() && !request.params[3].get_str().empty())
                 sMemo = request.params[3].get_str();
+
+            CTxDestination destination = DecodeDestination(request.params[1].get_str());
+            if (!IsValidDestination(destination) || destination.index() != 8) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
+            }
 
             const std::string address = request.params[1].get_str();
 
@@ -703,6 +713,11 @@ RPCHelpMan sendnfttoblsctaddress()
             std::string sMemo;
             if (!request.params[3].isNull() && !request.params[3].get_str().empty())
                 sMemo = request.params[3].get_str();
+
+            CTxDestination destination = DecodeDestination(request.params[2].get_str());
+            if (!IsValidDestination(destination) || destination.index() != 8) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
+            }
 
             const std::string address = request.params[2].get_str();
 
