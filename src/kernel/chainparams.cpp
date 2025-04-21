@@ -347,8 +347,10 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         m_assumeutxo_data = {};
 
         chainTxData = ChainTxData{
-            // Data from RPC: getchaintxstats 4096 0000000000000021bc50a89cde4870d4a81ffe0153b3c8de77b435a2fd3f6761
-
+            // Data from RPC: getchaintxstats 4095 a7ba30f5b01b09534794064e9629e4fa75299d28c2fbc3074c318bd01d74483f
+            .nTime = 1744195516,
+            .nTxCount = 5821,
+            .dTxRate = 0.02367497060462921,
         };
         }
     };
