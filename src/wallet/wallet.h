@@ -580,7 +580,9 @@ public:
     bool IsScanning() const { return fScanningWallet; }
     bool IsScanningWithPassphrase() const { return m_scanning_with_passphrase; }
     SteadyClock::duration ScanningDuration() const { return fScanningWallet ? SteadyClock::now() - m_scanning_start.load() : SteadyClock::duration{}; }
-    double ScanningProgress() const { return fScanningWallet ? (double)m_scanning_progress : 0; }
+    double ScanningProgress() const {
+        return fScanningWallet ? (double)m_scanning_progress : 0;
+    }
 
     //! Upgrade stored CKeyMetadata objects to store key origin info as KeyOriginInfo
     void UpgradeKeyMetadata() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);

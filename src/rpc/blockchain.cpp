@@ -1337,23 +1337,20 @@ UniValue DeploymentInfo(const CBlockIndex* blockindex, const ChainstateManager& 
 
 RPCHelpMan getdeploymentinfo()
 {
-    return RPCHelpMan{"getdeploymentinfo",
+    return RPCHelpMan{
+        "getdeploymentinfo",
         "Returns an object containing various state info regarding deployments of consensus changes.",
         {
             {"blockhash", RPCArg::Type::STR_HEX, RPCArg::Default{"hash of current chain tip"}, "The block hash at which to query deployment state"},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
-                {RPCResult::Type::STR, "hash", "requested block hash (or tip)"},
-                {RPCResult::Type::NUM, "height", "requested block height (or tip)"},
-                {RPCResult::Type::OBJ_DYN, "deployments", "", {
-                    {RPCResult::Type::OBJ, "xxxx", "name of the deployment", RPCHelpForDeployment}
-                }},
-            }
-        },
-        RPCExamples{ HelpExampleCli("getdeploymentinfo", "") + HelpExampleRpc("getdeploymentinfo", "") },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-        {
+                                              {RPCResult::Type::STR, "hash", "requested block hash (or tip)"},
+                                              {RPCResult::Type::NUM, "height", "requested block height (or tip)"},
+                                              {RPCResult::Type::OBJ_DYN, "deployments", "", {{RPCResult::Type::STR, "xxxx", "name of the deployment"}}},
+                                          }},
+        RPCExamples{HelpExampleCli("getdeploymentinfo", "") + HelpExampleRpc("getdeploymentinfo", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             const ChainstateManager& chainman = EnsureAnyChainman(request.context);
             LOCK(cs_main);
             const Chainstate& active_chainstate = chainman.ActiveChainstate();
