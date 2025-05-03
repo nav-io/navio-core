@@ -17,6 +17,7 @@
 #include <memory.h>
 #include <primitives/transaction.h>
 #include <streams.h>
+#include <util/transaction_identifier.h>
 
 #include <cstdint>
 #include <cstring>
@@ -735,6 +736,18 @@ BlsctTxRetVal* build_tx(
     std::memcpy(rv->ser_tx, st.data(), st.size());
 
     return rv;
+}
+
+const char* get_tx_id(const CMutableTransaction* tx) {
+    Txid txid = tx->GetHash();
+    std::string txid_hex = txid.GetHex();
+
+    size_t BUF_SIZE = txid_hex.size() + 1;
+    MALLOC_BYTES(char, buf, BUF_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(buf);
+    std::memcpy(buf, txid_hex.c_str(), BUF_SIZE); // also copies null at the end of c_str
+
+    return buf;
 }
 
 CMutableTransaction* deserialize_tx(
