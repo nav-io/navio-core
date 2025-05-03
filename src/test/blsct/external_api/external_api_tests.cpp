@@ -113,9 +113,6 @@ BOOST_AUTO_TEST_CASE(test_build_tx)
 
     std::vector<BlsctTxOut> tx_outs;
     tx_outs.push_back(*tx_out);
-    for(size_t i=0; i<tx_outs.size(); ++i) {
-        printf("value[%lu]=%llu\n", i, tx_outs[i].amount);
-    }
 
     BlsctTxRetVal* tx_rv = build_tx(
         static_cast<const void*>(&tx_ins),
@@ -134,9 +131,6 @@ BOOST_AUTO_TEST_CASE(test_build_tx)
     BOOST_CHECK(tx.vin.size() == 1);
     BOOST_CHECK(tx.vout.size() == 3);
 
-    for(size_t i=0; i<tx.vout.size(); ++i) {
-        printf("value[%lu]=%llu\n", i, tx.vout[i].nValue);
-    }
     auto tx_id = get_tx_id(&tx);
     BOOST_CHECK(std::strlen(tx_id) == 64);
 

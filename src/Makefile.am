@@ -231,6 +231,7 @@ BLSCT_CPP = \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
+  blsct/external_api/blsct.cpp \
   blsct/key_io.cpp \
   blsct/pos/helpers.cpp \
   blsct/pos/pos.cpp \
@@ -961,6 +962,7 @@ libbitcoin_common_a_SOURCES = \
   blsct/building_block/weighted_inner_prod_arg.cpp \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
+  blsct/external_api/blsct.cpp \
   blsct/key_io.cpp \
   blsct/private_key.cpp \
   blsct/public_key.cpp \
