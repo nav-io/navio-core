@@ -353,6 +353,8 @@ size_t get_tx_outs_size(const std::vector<CTxOut>* tx_outs);
 
 const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i);
 
+const char* get_tx_id(const CMutableTransaction* tx);
+
 // TxIn
 const BlsctScript* get_tx_in_script_sig(const CTxIn* tx_in);
 

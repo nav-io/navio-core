@@ -2,34 +2,17 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <util/strencodings.h>
-#include <blsct/wallet/txfactory.h>
-#include <blsct/wallet/verification.h>
-#include <test/util/random.h>
+#include <blsct/external_api/blsct.h>
+#include <ctokens/tokenid.h>
+#include <primitives/transaction.h>
 #include <test/util/setup_common.h>
-#include <txdb.h>
-#include <wallet/receive.h>
-#include <wallet/test/util.h>
-#include <wallet/wallet.h>
-#include <iostream>
+#include <util/strencodings.h>
 
 #include <boost/test/unit_test.hpp>
 
 BOOST_FIXTURE_TEST_SUITE(external_api_tests, BasicTestingSetup)
 
-uint8_t hex_to_uint(char c) {
-    if (c >= '0' && c <= '9') {
-        return c - '0';
-    } else if (c >= 'a' && c <= 'f') {
-        return 10 + (c - 'a');
-    } else {
-        throw std::invalid_argument("Unexpected hex char found");
-    }
-}
-
-// This test checks if there is any structural change in
-// CMutableTransaction and its dependencies
-BOOST_AUTO_TEST_CASE(test_cmutable_transaction_sizes)
+void DeserializeSampleTx(CMutableTransaction& tx)
 {
     // in case there is a structural change in CMutableTransaction,
     // tx_hex needs to be regenerated to reflect the structure change
@@ -39,13 +22,133 @@ BOOST_AUTO_TEST_CASE(test_cmutable_transaction_sizes)
     TransactionSerParams params { .allow_witness = true };
     ParamsStream ps {params, st};
 
-    CMutableTransaction tx;
-
     try {
         tx.Unserialize(ps); // should not throw an exception
     } catch(...) {
         BOOST_CHECK(false);
     }
+}
+
+// This test checks if there is any structural change in
+// CMutableTransaction and its dependencies
+BOOST_AUTO_TEST_CASE(test_cmutable_transaction_sizes)
+{
+    CMutableTransaction tx;
+    DeserializeSampleTx(tx);
+}
+
+BOOST_AUTO_TEST_CASE(test_get_tx_id)
+{
+    CMutableTransaction tx;
+    DeserializeSampleTx(tx);
+
+    const char* get_tx_id(const CMutableTransaction* tx);
+}
+
+BOOST_AUTO_TEST_CASE(test_build_tx)
+{
+    size_t num_tx_in = 1;
+    size_t num_tx_out = 1;
+    size_t default_fee = 200000;
+    uint64_t fee = (num_tx_in + num_tx_out) * default_fee;
+    uint64_t out_amount = 10000;
+    uint64_t in_amount = fee + out_amount;
+    uint64_t gamma = 100;
+
+    BlsctRetVal* rv;
+
+    rv = gen_random_scalar();
+    auto spending_key = static_cast<BlsctScalar*>(rv->value);
+    free(rv);
+
+    rv = gen_default_token_id();
+    auto token_id = static_cast<BlsctTokenId*>(rv->value);
+    free(rv);
+
+    std::string prev_tx_id = " d7bc9fb82350b48b004fa79caea4c7b61eed2b49ce695bfcb9614d46774f1814";
+    rv = gen_out_point(prev_tx_id.c_str(), 0);
+    auto out_point = static_cast<BlsctOutPoint*>(rv->value);
+    free(rv);
+
+    rv = build_tx_in(
+      in_amount,
+      gamma,
+      spending_key,
+      token_id,
+      out_point,
+      false
+    );
+    auto tx_in = static_cast<BlsctTxIn*>(rv->value);
+    free(rv);
+
+    rv = gen_random_public_key();
+    auto pk1 = static_cast<BlsctPubKey*>(rv->value);
+    free(rv);
+
+    rv = gen_random_public_key();
+    auto pk2 = static_cast<BlsctPubKey*>(rv->value);
+    free(rv);
+
+    rv = gen_double_pub_key(pk1, pk2);
+    auto dpk = static_cast<BlsctDoublePubKey*>(rv->value);
+    free(rv);
+
+    rv = dpk_to_sub_addr(dpk);
+    auto sub_addr = static_cast<BlsctSubAddr*>(rv->value);
+    free(rv);
+
+    rv = build_tx_out(
+        sub_addr,
+        out_amount,
+        "navio",
+        token_id,
+        TxOutputType::Normal,
+        0
+    );
+    auto tx_out = static_cast<BlsctTxOut*>(rv->value);
+    free(rv);
+
+    std::vector<BlsctTxIn> tx_ins;
+    tx_ins.push_back(*tx_in);
+
+    std::vector<BlsctTxOut> tx_outs;
+    tx_outs.push_back(*tx_out);
+    for(size_t i=0; i<tx_outs.size(); ++i) {
+        printf("value[%lu]=%llu\n", i, tx_outs[i].amount);
+    }
+
+    BlsctTxRetVal* tx_rv = build_tx(
+        static_cast<const void*>(&tx_ins),
+        static_cast<const void*>(&tx_outs)
+    );
+    DataStream st{};
+    TransactionSerParams params { .allow_witness = true };
+    ParamsStream ps {params, st};
+    for(size_t i=0; i<tx_rv->ser_tx_size; ++i) {
+        ps << tx_rv->ser_tx[i];
+    }
+    CMutableTransaction tx;
+    tx.Unserialize(ps);
+    free(tx_rv);
+
+    BOOST_CHECK(tx.vin.size() == 1);
+    BOOST_CHECK(tx.vout.size() == 3);
+
+    for(size_t i=0; i<tx.vout.size(); ++i) {
+        printf("value[%lu]=%llu\n", i, tx.vout[i].nValue);
+    }
+    auto tx_id = get_tx_id(&tx);
+    BOOST_CHECK(std::strlen(tx_id) == 64);
+
+    free(spending_key);
+    free(token_id);
+    free(out_point);
+    free(pk1);
+    free(pk2);
+    free(dpk);
+    free(sub_addr);
+    free(tx_in);
+    free(tx_out);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

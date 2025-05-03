@@ -555,6 +555,7 @@ libbitcoin_node_a_SOURCES = \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
+  blsct/external_api/blsct.cpp \
   blsct/pos/pos.cpp \
   blsct/pos/proof.cpp \
   blsct/pos/proof_logic.cpp \
@@ -1455,7 +1456,6 @@ if BUILD_LIBBLSCT_ONLY
 LIBBLSCT = libblsct.a
 noinst_LIBRARIES = $(LIBBLSCT)
 libblsct_a_SOURCES = \
-  blsct/external_api/blsct.cpp \
   blsct/external_api/dummy_impl.cpp \
   common/args.cpp \
   common/system.cpp \
