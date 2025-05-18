@@ -942,6 +942,9 @@ class CBlockHeader:
         self.calc_sha256()
         return self.sha256
 
+    def IsProofOfStake(self):
+        return self.nVersion & 0x01000000
+
     def __repr__(self):
         return "CBlockHeader(nVersion=%i hashPrevBlock=%064x hashMerkleRoot=%064x nTime=%s nBits=%08x nNonce=%08x)" \
             % (self.nVersion, self.hashPrevBlock, self.hashMerkleRoot,
@@ -951,19 +954,24 @@ BLOCK_HEADER_SIZE = len(CBlockHeader().serialize())
 assert_equal(BLOCK_HEADER_SIZE, 80)
 
 class CBlock(CBlockHeader):
-    __slots__ = ("vtx",)
+    __slots__ = ("vtx", "posProof")
 
     def __init__(self, header=None):
         super().__init__(header)
         self.vtx = []
+        self.posProof = PosProof()
 
     def deserialize(self, f):
         super().deserialize(f)
+        if self.IsProofOfStake():
+            self.posProof.deserialize(f)
         self.vtx = deser_vector(f, CTransaction)
 
     def serialize(self, with_witness=True):
         r = b""
         r += super().serialize()
+        if self.IsProofOfStake():
+            r += self.posProof.serialize()
         if with_witness:
             r += ser_vector(self.vtx, "serialize_with_witness")
         else:
@@ -1061,11 +1069,142 @@ class PrefilledTransaction:
     def __repr__(self):
         return "PrefilledTransaction(index=%d, tx=%s)" % (self.index, repr(self.tx))
 
+class SetMemProof:
+    __slots__ = ("phi", "A1", "A2", "S1", "S2", "S3", "T1", "T2", "tau_x", "mu", "z_alpha", "z_tau", "z_beta", "t", "Ls", "Rs", "a", "b", "omega")
+
+    def __init__(self):
+        self.phi = MclG1Point()
+        self.A1 = MclG1Point()
+        self.A2 = MclG1Point()
+        self.S1 = MclG1Point()
+        self.S2 = MclG1Point()
+        self.S3 = MclG1Point()
+        self.T1 = MclG1Point()
+        self.T2 = MclG1Point()
+        self.tau_x = MclScalar()
+        self.mu = MclScalar()
+        self.z_alpha = MclScalar()
+        self.z_tau = MclScalar()
+        self.z_beta = MclScalar()
+        self.t = MclScalar()
+        self.Ls = []
+        self.Rs = []
+        self.a = MclScalar()
+        self.b = MclScalar()
+        self.omega = MclScalar()
+
+    def deserialize(self, f):
+        self.phi.deserialize(f)
+        self.A1.deserialize(f)
+        self.A2.deserialize(f)
+        self.S1.deserialize(f)
+        self.S2.deserialize(f)
+        self.S3.deserialize(f)
+        self.T1.deserialize(f)
+        self.T2.deserialize(f)
+        self.tau_x.deserialize(f)
+        self.mu.deserialize(f)
+        self.z_alpha.deserialize(f)
+        self.z_tau.deserialize(f)
+        self.z_beta.deserialize(f)
+        self.t.deserialize(f)
+        self.Ls = deser_vector(f, MclG1Point)
+        self.Rs = deser_vector(f, MclG1Point)
+        self.a.deserialize(f)
+        self.b.deserialize(f)
+        self.omega.deserialize(f)
+
+    def serialize(self):
+        r = b""
+        r += self.phi.serialize()
+        r += self.A1.serialize()
+        r += self.A2.serialize()
+        r += self.S1.serialize()
+        r += self.S2.serialize()
+        r += self.S3.serialize()
+        r += self.T1.serialize()
+        r += self.T2.serialize()
+        r += self.tau_x.serialize()
+        r += self.mu.serialize()
+        r += self.z_alpha.serialize()
+        r += self.z_tau.serialize()
+        r += self.z_beta.serialize()
+        r += self.t.serialize()
+        r += ser_vector(self.Ls, "serialize")
+        r += ser_vector(self.Rs, "serialize")
+        r += self.a.serialize()
+        r += self.b.serialize()
+        r += self.omega.serialize()
+        return r
+        
+class RangeProof:
+    __slots__ = 'Vs', 'Ls', 'Rs', 'A', 'A_wip', 'B', 'r_prime', 's_prime', 'delta_prime', 'alpha_hat', 'tau_x'
+
+    def __init__(self):
+        self.Vs = []
+        self.Ls = []
+        self.Rs = []
+        self.A = MclG1Point()
+        self.A_wip = MclG1Point()
+        self.B = MclG1Point()
+        self.r_prime = MclScalar()
+        self.s_prime = MclScalar()
+        self.delta_prime = MclScalar()
+        self.alpha_hat = MclScalar()
+        self.tau_x = MclScalar()
+
+    def deserialize(self, f):
+        self.Vs = deser_vector(f, MclG1Point)
+        self.Ls = deser_vector(f, MclG1Point)
+        self.Rs = deser_vector(f, MclG1Point)
+        self.A.deserialize(f)
+        self.A_wip.deserialize(f)
+        self.B.deserialize(f)
+        self.r_prime.deserialize(f)
+        self.s_prime.deserialize(f)
+        self.delta_prime.deserialize(f)
+        self.alpha_hat.deserialize(f)
+        self.tau_x.deserialize(f)
+
+    def serialize(self):
+        r = b""
+        r += ser_vector(self.Vs, "serialize")
+        r += ser_vector(self.Ls, "serialize")
+        r += ser_vector(self.Rs, "serialize")
+        r += self.A.serialize()
+        r += self.A_wip.serialize()
+        r += self.B.serialize()
+        r += self.r_prime.serialize()
+        r += self.s_prime.serialize()
+        r += self.delta_prime.serialize()
+        r += self.alpha_hat.serialize()
+        r += self.tau_x.serialize()
+        return r
+        
+        
+class PosProof:
+    __slots__ = ("set_mem_proof", "range_proof")
+
+    def __init__(self, set_mem_proof=SetMemProof(), range_proof=RangeProof()):
+        self.set_mem_proof = set_mem_proof
+        self.range_proof = range_proof
+
+    def deserialize(self, f):
+        self.set_mem_proof = SetMemProof()
+        self.set_mem_proof.deserialize(f)
+        self.range_proof = RangeProof()
+        self.range_proof.deserialize(f)
+
+    def serialize(self):
+        r = b""
+        r += self.set_mem_proof.serialize()
+        r += self.range_proof.serialize()
+        return r
 
 # This is what we send on the wire, in a cmpctblock message.
 class P2PHeaderAndShortIDs:
     __slots__ = ("header", "nonce", "prefilled_txn", "prefilled_txn_length",
-                 "shortids", "shortids_length")
+                 "shortids", "shortids_length", "posProof")
 
     def __init__(self):
         self.header = CBlockHeader()
@@ -1074,9 +1213,12 @@ class P2PHeaderAndShortIDs:
         self.shortids = []
         self.prefilled_txn_length = 0
         self.prefilled_txn = []
+        self.posProof = PosProof()
 
     def deserialize(self, f):
         self.header.deserialize(f)
+        if self.header.IsProofOfStake():
+            self.posProof.deserialize(f)
         self.nonce = struct.unpack("<Q", f.read(8))[0]
         self.shortids_length = deser_compact_size(f)
         for _ in range(self.shortids_length):
@@ -1090,6 +1232,8 @@ class P2PHeaderAndShortIDs:
     def serialize(self, with_witness=False):
         r = b""
         r += self.header.serialize()
+        if self.header.IsProofOfStake():
+            r += self.posProof.serialize()
         r += struct.pack("<Q", self.nonce)
         r += ser_compact_size(self.shortids_length)
         for x in self.shortids:
@@ -1122,7 +1266,7 @@ def calculate_shortid(k0, k1, tx_hash):
 # This version gets rid of the array lengths, and reinterprets the differential
 # encoding into indices that can be used for lookup.
 class HeaderAndShortIDs:
-    __slots__ = ("header", "nonce", "prefilled_txn", "shortids", "use_witness")
+    __slots__ = ("header", "nonce", "prefilled_txn", "shortids", "use_witness", "posProof")
 
     def __init__(self, p2pheaders_and_shortids = None):
         self.header = CBlockHeader()
@@ -1130,11 +1274,12 @@ class HeaderAndShortIDs:
         self.shortids = []
         self.prefilled_txn = []
         self.use_witness = False
-
+        self.posProof = PosProof()
         if p2pheaders_and_shortids is not None:
             self.header = p2pheaders_and_shortids.header
             self.nonce = p2pheaders_and_shortids.nonce
             self.shortids = p2pheaders_and_shortids.shortids
+            self.posProof = p2pheaders_and_shortids.posProof
             last_index = -1
             for x in p2pheaders_and_shortids.prefilled_txn:
                 self.prefilled_txn.append(PrefilledTransaction(x.index + last_index + 1, x.tx))
@@ -1151,6 +1296,7 @@ class HeaderAndShortIDs:
         ret.shortids = self.shortids
         ret.prefilled_txn_length = len(self.prefilled_txn)
         ret.prefilled_txn = []
+        ret.posProof = self.posProof
         last_index = -1
         for x in self.prefilled_txn:
             ret.prefilled_txn.append(PrefilledTransaction(x.index - last_index - 1, x.tx))
@@ -1159,6 +1305,8 @@ class HeaderAndShortIDs:
 
     def get_siphash_keys(self):
         header_nonce = self.header.serialize()
+        if self.header.IsProofOfStake():
+            header_nonce += self.posProof.serialize()
         header_nonce += struct.pack("<Q", self.nonce)
         hash_header_nonce_as_str = sha256(header_nonce)
         key0 = struct.unpack("<Q", hash_header_nonce_as_str[0:8])[0]
@@ -1170,6 +1318,7 @@ class HeaderAndShortIDs:
         if prefill_list is None:
             prefill_list = [0]
         self.header = CBlockHeader(block)
+        self.posProof = block.posProof
         self.nonce = nonce
         self.prefilled_txn = [ PrefilledTransaction(i, block.vtx[i]) for i in prefill_list ]
         self.shortids = []

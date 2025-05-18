@@ -1347,7 +1347,7 @@ RPCHelpMan getdeploymentinfo()
             RPCResult::Type::OBJ, "", "", {
                                               {RPCResult::Type::STR, "hash", "requested block hash (or tip)"},
                                               {RPCResult::Type::NUM, "height", "requested block height (or tip)"},
-                                              {RPCResult::Type::OBJ_DYN, "deployments", "", {{RPCResult::Type::STR, "xxxx", "name of the deployment"}}},
+                                              {RPCResult::Type::OBJ_DYN, "deployments", "", {{RPCResult::Type::OBJ, "xxxx", "name of the deployment", RPCHelpForDeployment}}},
                                           }},
         RPCExamples{HelpExampleCli("getdeploymentinfo", "") + HelpExampleRpc("getdeploymentinfo", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
