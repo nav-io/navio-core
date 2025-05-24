@@ -187,6 +187,23 @@ const char* point_to_hex(const BlsctPoint* blsct_point) {
     return hex_buf;
 }
 
+BlsctRetVal* hex_to_point(const char* hex) {
+    std::string hex_str(hex);
+    auto maybe_vec = TryParseHex<uint8_t>(hex);
+    if (!maybe_vec.has_value()) {
+        return err(BLSCT_FAILURE);
+    }
+    auto vec = maybe_vec.value();
+    Point point;
+    point.SetVch(vec);
+
+    MALLOC(BlsctPoint, blsct_point);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
+    SERIALIZE_AND_COPY(point, blsct_point);
+
+    return succ(blsct_point, SCALAR_SIZE);
+}
+
 const char* scalar_to_hex(const BlsctScalar* blsct_scalar) {
     Scalar scalar;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);

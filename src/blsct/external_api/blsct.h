@@ -234,6 +234,7 @@ void init();
 BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
 const char* point_to_hex(const BlsctPoint* blsct_point);
+BlsctRetVal* hex_to_point(const char* hex);
 
 // scalar
 BlsctRetVal* gen_random_scalar();
