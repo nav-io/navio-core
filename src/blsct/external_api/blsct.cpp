@@ -231,6 +231,29 @@ BlsctRetVal* hex_to_point(const char* hex) {
     return succ(blsct_point, POINT_SIZE);
 }
 
+int is_point_equal(const BlsctPoint* blsct_a, const BlsctPoint* blsct_b) {
+    if (blsct_a == nullptr || blsct_b == nullptr) {
+        return 0;
+    }
+    Point a, b;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_a, POINT_SIZE, a);
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_b, POINT_SIZE, b);
+    return a == b ? 1 : 0;
+}
+
+const char* point_to_str(const BlsctPoint* blsct_point) {
+    Point point;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
+    auto str = point.GetString();
+
+    size_t BUF_SIZE = str.size() + 1;
+    MALLOC_BYTES(char, str_buf, BUF_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(str_buf);
+    std::memcpy(str_buf, str.c_str(), BUF_SIZE); // also copies null at the end
+
+    return str_buf;
+}
+
 const char* scalar_to_hex(const BlsctScalar* blsct_scalar) {
     Scalar scalar;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
@@ -261,6 +284,29 @@ BlsctRetVal* hex_to_scalar(const char* hex) {
     return succ(blsct_scalar, SCALAR_SIZE);
 }
 
+int is_scalar_equal(const BlsctScalar* blsct_a, const BlsctScalar* blsct_b) {
+    if (blsct_a == nullptr || blsct_b == nullptr) {
+        return 0;
+    }
+    Scalar a, b;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_a, SCALAR_SIZE, a);
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_b, SCALAR_SIZE, b);
+    return a == b ? 1 : 0;
+}
+
+const char* scalar_to_str(const BlsctScalar* blsct_scalar) {
+    Scalar scalar;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
+    auto str = scalar.GetString();
+
+    size_t BUF_SIZE = str.size() + 1;
+    MALLOC_BYTES(char, str_buf, BUF_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(str_buf);
+    std::memcpy(str_buf, str.c_str(), BUF_SIZE); // also copies null at the end
+
+    return str_buf;
+}
+
 BlsctRetVal* decode_address(
     const char* blsct_enc_addr
 ) {
@@ -269,7 +315,7 @@ BlsctRetVal* decode_address(
             return err(BLSCT_BAD_DPK_SIZE);
         }
         std::string enc_addr(blsct_enc_addr);
-        auto chain = get_chain();
+        auto& chain = get_chain();
         auto maybe_dpk = blsct::DecodeDoublePublicKey(chain, enc_addr);
         if (maybe_dpk) {
             auto dpk = maybe_dpk.value();
@@ -303,7 +349,7 @@ BlsctRetVal* encode_address(
 
         auto bech32_encoding = encoding == Bech32 ?
             bech32_mod::Encoding::BECH32 : bech32_mod::Encoding::BECH32M;
-        auto chain = get_chain();
+        auto& chain = get_chain();
         auto enc_dpk_str = EncodeDoublePublicKey(chain, bech32_encoding, dpk);
         size_t BUF_SIZE = enc_dpk_str.size() + 1;
         MALLOC_BYTES(char, enc_addr, BUF_SIZE);

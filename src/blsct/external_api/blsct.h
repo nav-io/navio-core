@@ -236,6 +236,8 @@ BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
 const char* point_to_hex(const BlsctPoint* blsct_point);
 BlsctRetVal* hex_to_point(const char* hex);
+int is_point_equal(const BlsctPoint* a, const BlsctPoint* b);
+const char* point_to_str(const BlsctPoint* blsct_point);
 
 // scalar
 BlsctRetVal* gen_random_scalar();
@@ -243,6 +245,8 @@ BlsctRetVal* gen_scalar(const uint64_t n);
 uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
 const char* scalar_to_hex(const BlsctScalar* blsct_scalar);
 BlsctRetVal* hex_to_scalar(const char* hex);
+int is_scalar_equal(const BlsctScalar* a, const BlsctScalar* b);
+const char* scalar_to_str(const BlsctScalar* blsct_scalar);
 
 // public key
 BlsctRetVal* gen_random_public_key();
