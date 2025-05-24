@@ -297,7 +297,7 @@ int is_scalar_equal(const BlsctScalar* blsct_a, const BlsctScalar* blsct_b) {
 const char* scalar_to_str(const BlsctScalar* blsct_scalar) {
     Scalar scalar;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
-    auto str = scalar.GetString();
+    auto str = scalar.GetString(10);
 
     size_t BUF_SIZE = str.size() + 1;
     MALLOC_BYTES(char, str_buf, BUF_SIZE);
