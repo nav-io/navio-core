@@ -243,8 +243,10 @@ uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
 const char* scalar_to_hex(const BlsctScalar* blsct_scalar);
 BlsctRetVal* hex_to_scalar(const char* hex);
 
-// public key generation
+// public key
 BlsctRetVal* gen_random_public_key();
+BlsctPoint* get_public_key_point(const BlsctPubKey* blsct_pub_key);
+BlsctPubKey* point_to_public_key(const BlsctPoint* blsct_point);
 
 // address
 BlsctRetVal* decode_address(

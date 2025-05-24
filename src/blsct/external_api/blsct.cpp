@@ -174,6 +174,30 @@ BlsctRetVal* gen_random_public_key() {
     return succ(blsct_pub_key, PUBLIC_KEY_SIZE);
 }
 
+BlsctPoint* get_public_key_point(const BlsctPubKey* blsct_pub_key) {
+    blsct::PublicKey pub_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_pub_key, PUBLIC_KEY_SIZE, pub_key);
+    auto point = pub_key.GetG1Point();
+
+    MALLOC(BlsctPoint, blsct_point);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
+    SERIALIZE_AND_COPY(point, blsct_point);
+
+    return blsct_point;
+}
+
+BlsctPubKey* point_to_public_key(const BlsctPoint* blsct_point) {
+    Point point;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
+    blsct::PublicKey pub_key(point);
+
+    MALLOC(BlsctPubKey, blsct_pub_key);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_pub_key);
+    SERIALIZE_AND_COPY(pub_key, blsct_pub_key);
+
+    return blsct_pub_key;
+}
+
 const char* point_to_hex(const BlsctPoint* blsct_point) {
     Point point;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
