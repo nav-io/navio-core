@@ -240,6 +240,7 @@ BlsctRetVal* gen_random_scalar();
 BlsctRetVal* gen_scalar(const uint64_t n);
 uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
 const char* scalar_to_hex(const BlsctScalar* blsct_scalar);
+BlsctRetVal* hex_to_scalar(const char* hex);
 
 // public key generation
 BlsctRetVal* gen_random_public_key();

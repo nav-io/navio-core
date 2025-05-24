@@ -18,6 +18,7 @@
 #include <primitives/transaction.h>
 #include <streams.h>
 #include <util/transaction_identifier.h>
+#include <util/strencodings.h>
 
 #include <cstdint>
 #include <cstring>
@@ -197,6 +198,23 @@ const char* scalar_to_hex(const BlsctScalar* blsct_scalar) {
     std::memcpy(hex_buf, hex.c_str(), BUF_SIZE); // also copies null at the end
 
     return hex_buf;
+}
+
+BlsctRetVal* hex_to_scalar(const char* hex) {
+    std::string hex_str(hex);
+    auto maybe_vec = TryParseHex<uint8_t>(hex);
+    if (!maybe_vec.has_value()) {
+        return err(BLSCT_FAILURE);
+    }
+    auto vec = maybe_vec.value();
+    Scalar scalar;
+    scalar.SetVch(vec);
+
+    MALLOC(BlsctScalar, blsct_scalar);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_scalar);
+    SERIALIZE_AND_COPY(scalar, blsct_scalar);
+
+    return succ(blsct_scalar, SCALAR_SIZE);
 }
 
 BlsctRetVal* decode_address(
