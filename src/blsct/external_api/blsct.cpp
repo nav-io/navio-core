@@ -201,12 +201,13 @@ BlsctPubKey* point_to_public_key(const BlsctPoint* blsct_point) {
 const char* point_to_hex(const BlsctPoint* blsct_point) {
     Point point;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
-    auto hex = point.GetString();
+    auto ser_point = point.GetVch();
+    auto hex = HexStr(ser_point);
 
-    size_t BUF_SIZE = hex.size() + 1;
-    MALLOC_BYTES(char, hex_buf, BUF_SIZE);
+    size_t HEX_BUF_SIZE = hex.size() + 1;
+    MALLOC_BYTES(char, hex_buf, HEX_BUF_SIZE);
     RETURN_ERR_IF_MEM_ALLOC_FAILED(hex_buf);
-    std::memcpy(hex_buf, hex.c_str(), BUF_SIZE); // also copies null at the end
+    std::memcpy(hex_buf, hex.c_str(), HEX_BUF_SIZE); // also copies null at the end
 
     return hex_buf;
 }
@@ -220,7 +221,7 @@ BlsctRetVal* hex_to_point(const char* hex) {
     auto vec = maybe_vec.value();
     Point point;
     if (!point.SetVch(vec)) {
-        return err(BLSCT_FAILURE);
+        return err(BLSCT_DESER_FAILED);
     }
 
     MALLOC(BlsctPoint, blsct_point);

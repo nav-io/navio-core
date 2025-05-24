@@ -55,6 +55,7 @@
 #define BLSCT_BAD_OUT_TYPE 16
 #define BLSCT_MEMO_TOO_LONG 17
 #define BLSCT_MEM_ALLOC_FAILED 18
+#define BLSCT_DESER_FAILED 19
 
 #define TRY_DEFINE_MCL_POINT_FROM(src, dest) \
     Point dest; \
