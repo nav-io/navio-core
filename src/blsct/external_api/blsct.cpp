@@ -219,13 +219,15 @@ BlsctRetVal* hex_to_point(const char* hex) {
     }
     auto vec = maybe_vec.value();
     Point point;
-    point.SetVch(vec);
+    if (!point.SetVch(vec)) {
+        return err(BLSCT_FAILURE);
+    }
 
     MALLOC(BlsctPoint, blsct_point);
     RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
     SERIALIZE_AND_COPY(point, blsct_point);
 
-    return succ(blsct_point, SCALAR_SIZE);
+    return succ(blsct_point, POINT_SIZE);
 }
 
 const char* scalar_to_hex(const BlsctScalar* blsct_scalar) {
