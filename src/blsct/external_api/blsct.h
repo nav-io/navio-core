@@ -238,6 +238,7 @@ const char* point_to_hex(const BlsctPoint* blsct_point);
 BlsctRetVal* hex_to_point(const char* hex);
 int is_point_equal(const BlsctPoint* a, const BlsctPoint* b);
 const char* point_to_str(const BlsctPoint* blsct_point);
+BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
 
 // scalar
 BlsctRetVal* gen_random_scalar();

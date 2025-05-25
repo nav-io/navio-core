@@ -254,6 +254,20 @@ const char* point_to_str(const BlsctPoint* blsct_point) {
     return str_buf;
 }
 
+BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar) {
+    Scalar scalar;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
+
+    Point g = Point::GetBasePoint();
+    Point point = g * scalar;
+
+    MALLOC(BlsctPoint, blsct_point);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
+    SERIALIZE_AND_COPY(point, blsct_point);
+
+    return blsct_point;
+}
+
 const char* scalar_to_hex(const BlsctScalar* blsct_scalar) {
     Scalar scalar;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
