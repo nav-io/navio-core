@@ -55,6 +55,7 @@
 #define BLSCT_BAD_OUT_TYPE 16
 #define BLSCT_MEMO_TOO_LONG 17
 #define BLSCT_MEM_ALLOC_FAILED 18
+#define BLSCT_DESER_FAILED 19
 
 #define TRY_DEFINE_MCL_POINT_FROM(src, dest) \
     Point dest; \
@@ -234,15 +235,24 @@ void init();
 BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
 const char* point_to_hex(const BlsctPoint* blsct_point);
+BlsctRetVal* hex_to_point(const char* hex);
+int is_point_equal(const BlsctPoint* a, const BlsctPoint* b);
+const char* point_to_str(const BlsctPoint* blsct_point);
+BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
 
 // scalar
 BlsctRetVal* gen_random_scalar();
 BlsctRetVal* gen_scalar(const uint64_t n);
 uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
 const char* scalar_to_hex(const BlsctScalar* blsct_scalar);
+BlsctRetVal* hex_to_scalar(const char* hex);
+int is_scalar_equal(const BlsctScalar* a, const BlsctScalar* b);
+const char* scalar_to_str(const BlsctScalar* blsct_scalar);
 
-// public key generation
+// public key
 BlsctRetVal* gen_random_public_key();
+BlsctPoint* get_public_key_point(const BlsctPubKey* blsct_pub_key);
+BlsctPubKey* point_to_public_key(const BlsctPoint* blsct_point);
 
 // address
 BlsctRetVal* decode_address(

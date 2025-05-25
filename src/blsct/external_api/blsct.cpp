@@ -18,6 +18,7 @@
 #include <primitives/transaction.h>
 #include <streams.h>
 #include <util/transaction_identifier.h>
+#include <util/strencodings.h>
 
 #include <cstdint>
 #include <cstring>
@@ -173,17 +174,98 @@ BlsctRetVal* gen_random_public_key() {
     return succ(blsct_pub_key, PUBLIC_KEY_SIZE);
 }
 
+BlsctPoint* get_public_key_point(const BlsctPubKey* blsct_pub_key) {
+    blsct::PublicKey pub_key;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_pub_key, PUBLIC_KEY_SIZE, pub_key);
+    auto point = pub_key.GetG1Point();
+
+    MALLOC(BlsctPoint, blsct_point);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
+    SERIALIZE_AND_COPY(point, blsct_point);
+
+    return blsct_point;
+}
+
+BlsctPubKey* point_to_public_key(const BlsctPoint* blsct_point) {
+    Point point;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
+    blsct::PublicKey pub_key(point);
+
+    MALLOC(BlsctPubKey, blsct_pub_key);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_pub_key);
+    SERIALIZE_AND_COPY(pub_key, blsct_pub_key);
+
+    return blsct_pub_key;
+}
+
 const char* point_to_hex(const BlsctPoint* blsct_point) {
     Point point;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
-    auto hex = point.GetString();
+    auto ser_point = point.GetVch();
+    auto hex = HexStr(ser_point);
 
-    size_t BUF_SIZE = hex.size() + 1;
-    MALLOC_BYTES(char, hex_buf, BUF_SIZE);
+    size_t HEX_BUF_SIZE = hex.size() + 1;
+    MALLOC_BYTES(char, hex_buf, HEX_BUF_SIZE);
     RETURN_ERR_IF_MEM_ALLOC_FAILED(hex_buf);
-    std::memcpy(hex_buf, hex.c_str(), BUF_SIZE); // also copies null at the end
+    std::memcpy(hex_buf, hex.c_str(), HEX_BUF_SIZE); // also copies null at the end
 
     return hex_buf;
+}
+
+BlsctRetVal* hex_to_point(const char* hex) {
+    std::string hex_str(hex);
+    auto maybe_vec = TryParseHex<uint8_t>(hex);
+    if (!maybe_vec.has_value()) {
+        return err(BLSCT_FAILURE);
+    }
+    auto vec = maybe_vec.value();
+    Point point;
+    if (!point.SetVch(vec)) {
+        return err(BLSCT_DESER_FAILED);
+    }
+
+    MALLOC(BlsctPoint, blsct_point);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
+    SERIALIZE_AND_COPY(point, blsct_point);
+
+    return succ(blsct_point, POINT_SIZE);
+}
+
+int is_point_equal(const BlsctPoint* blsct_a, const BlsctPoint* blsct_b) {
+    if (blsct_a == nullptr || blsct_b == nullptr) {
+        return 0;
+    }
+    Point a, b;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_a, POINT_SIZE, a);
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_b, POINT_SIZE, b);
+    return a == b ? 1 : 0;
+}
+
+const char* point_to_str(const BlsctPoint* blsct_point) {
+    Point point;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
+    auto str = point.GetString();
+
+    size_t BUF_SIZE = str.size() + 1;
+    MALLOC_BYTES(char, str_buf, BUF_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(str_buf);
+    std::memcpy(str_buf, str.c_str(), BUF_SIZE); // also copies null at the end
+
+    return str_buf;
+}
+
+BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar) {
+    Scalar scalar;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
+
+    Point g = Point::GetBasePoint();
+    Point point = g * scalar;
+
+    MALLOC(BlsctPoint, blsct_point);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
+    SERIALIZE_AND_COPY(point, blsct_point);
+
+    return blsct_point;
 }
 
 const char* scalar_to_hex(const BlsctScalar* blsct_scalar) {
@@ -199,6 +281,46 @@ const char* scalar_to_hex(const BlsctScalar* blsct_scalar) {
     return hex_buf;
 }
 
+BlsctRetVal* hex_to_scalar(const char* hex) {
+    std::string hex_str(hex);
+    auto maybe_vec = TryParseHex<uint8_t>(hex);
+    if (!maybe_vec.has_value()) {
+        return err(BLSCT_FAILURE);
+    }
+    auto vec = maybe_vec.value();
+    Scalar scalar;
+    scalar.SetVch(vec);
+
+    MALLOC(BlsctScalar, blsct_scalar);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_scalar);
+    SERIALIZE_AND_COPY(scalar, blsct_scalar);
+
+    return succ(blsct_scalar, SCALAR_SIZE);
+}
+
+int is_scalar_equal(const BlsctScalar* blsct_a, const BlsctScalar* blsct_b) {
+    if (blsct_a == nullptr || blsct_b == nullptr) {
+        return 0;
+    }
+    Scalar a, b;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_a, SCALAR_SIZE, a);
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_b, SCALAR_SIZE, b);
+    return a == b ? 1 : 0;
+}
+
+const char* scalar_to_str(const BlsctScalar* blsct_scalar) {
+    Scalar scalar;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
+    auto str = scalar.GetString(10);
+
+    size_t BUF_SIZE = str.size() + 1;
+    MALLOC_BYTES(char, str_buf, BUF_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(str_buf);
+    std::memcpy(str_buf, str.c_str(), BUF_SIZE); // also copies null at the end
+
+    return str_buf;
+}
+
 BlsctRetVal* decode_address(
     const char* blsct_enc_addr
 ) {
@@ -207,7 +329,7 @@ BlsctRetVal* decode_address(
             return err(BLSCT_BAD_DPK_SIZE);
         }
         std::string enc_addr(blsct_enc_addr);
-        auto chain = get_chain();
+        auto& chain = get_chain();
         auto maybe_dpk = blsct::DecodeDoublePublicKey(chain, enc_addr);
         if (maybe_dpk) {
             auto dpk = maybe_dpk.value();
@@ -241,7 +363,7 @@ BlsctRetVal* encode_address(
 
         auto bech32_encoding = encoding == Bech32 ?
             bech32_mod::Encoding::BECH32 : bech32_mod::Encoding::BECH32M;
-        auto chain = get_chain();
+        auto& chain = get_chain();
         auto enc_dpk_str = EncodeDoublePublicKey(chain, bech32_encoding, dpk);
         size_t BUF_SIZE = enc_dpk_str.size() + 1;
         MALLOC_BYTES(char, enc_addr, BUF_SIZE);
