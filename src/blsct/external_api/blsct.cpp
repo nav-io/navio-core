@@ -295,7 +295,7 @@ const char* scalar_to_str(const BlsctScalar* blsct_scalar) {
 
 BlsctRetVal* decode_address(
     const char* blsct_enc_addr
-) {V
+) {
     try {
         if (strlen(blsct_enc_addr) != ENCODED_DPK_STR_SIZE) {
             return err(BLSCT_BAD_DPK_SIZE);
@@ -680,13 +680,12 @@ const char* serialize_script(const BlsctScript* blsct_script) {
         return nullptr;
     }
 
-    // since BlsctScript is CScript, CScript serializor can be used
-    auto cscript = reinterpret_cast<CScript>(blsct_script);
-
-    SERIALIZE_AND_COPY_WITH_STREAM(
-        CScript(vec),
-        ser_cscript
-    );
+    // since BlsctScript is a result of serializing CScript,
+    // it can be returned as is
+    std::vector<uint8_t> vec;
+    for (size_t i=0; i<SCRIPT_SIZE; ++i) {
+        vec.push_back(*blsct_script[i]);
+    }
     auto hex_str = HexStr(vec);
     return StrToAllocCStr(hex_str);
 }

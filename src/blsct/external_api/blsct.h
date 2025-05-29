@@ -57,6 +57,7 @@
 #define BLSCT_MEMO_TOO_LONG 17
 #define BLSCT_MEM_ALLOC_FAILED 18
 #define BLSCT_DESER_FAILED 19
+#define BLSCT_BAD_SCRIPT_SIZE 20
 
 #ifdef __cplusplus
 extern "C" {
