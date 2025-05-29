@@ -18,7 +18,6 @@
 #include <primitives/transaction.h>
 #include <streams.h>
 #include <util/transaction_identifier.h>
-#include <util/strencodings.h>
 
 #include <cstdint>
 #include <cstring>
@@ -198,27 +197,20 @@ BlsctPubKey* point_to_public_key(const BlsctPoint* blsct_point) {
     return blsct_pub_key;
 }
 
-const char* point_to_hex(const BlsctPoint* blsct_point) {
+const char* serialize_point(const BlsctPoint* blsct_point) {
     Point point;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
     auto ser_point = point.GetVch();
     auto hex = HexStr(ser_point);
 
-    size_t HEX_BUF_SIZE = hex.size() + 1;
-    MALLOC_BYTES(char, hex_buf, HEX_BUF_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(hex_buf);
-    std::memcpy(hex_buf, hex.c_str(), HEX_BUF_SIZE); // also copies null at the end
-
-    return hex_buf;
+    return StrToAllocCStr(hex);
 }
 
-BlsctRetVal* hex_to_point(const char* hex) {
-    std::string hex_str(hex);
-    auto maybe_vec = TryParseHex<uint8_t>(hex);
-    if (!maybe_vec.has_value()) {
+BlsctRetVal* deserialize_point(const char* hex) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
         return err(BLSCT_FAILURE);
     }
-    auto vec = maybe_vec.value();
     Point point;
     if (!point.SetVch(vec)) {
         return err(BLSCT_DESER_FAILED);
@@ -245,13 +237,7 @@ const char* point_to_str(const BlsctPoint* blsct_point) {
     Point point;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
     auto str = point.GetString();
-
-    size_t BUF_SIZE = str.size() + 1;
-    MALLOC_BYTES(char, str_buf, BUF_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(str_buf);
-    std::memcpy(str_buf, str.c_str(), BUF_SIZE); // also copies null at the end
-
-    return str_buf;
+    return StrToAllocCStr(str);
 }
 
 BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar) {
@@ -268,26 +254,18 @@ BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar) {
     return blsct_point;
 }
 
-const char* scalar_to_hex(const BlsctScalar* blsct_scalar) {
+const char* serialize_scalar(const BlsctScalar* blsct_scalar) {
     Scalar scalar;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
     auto hex = scalar.GetString();
-
-    size_t BUF_SIZE = hex.size() + 1;
-    MALLOC_BYTES(char, hex_buf, BUF_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(hex_buf);
-    std::memcpy(hex_buf, hex.c_str(), BUF_SIZE); // also copies null at the end
-
-    return hex_buf;
+    return StrToAllocCStr(hex);
 }
 
-BlsctRetVal* hex_to_scalar(const char* hex) {
-    std::string hex_str(hex);
-    auto maybe_vec = TryParseHex<uint8_t>(hex);
-    if (!maybe_vec.has_value()) {
+BlsctRetVal* deserialize_scalar(const char* hex) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
         return err(BLSCT_FAILURE);
     }
-    auto vec = maybe_vec.value();
     Scalar scalar;
     scalar.SetVch(vec);
 
@@ -312,18 +290,12 @@ const char* scalar_to_str(const BlsctScalar* blsct_scalar) {
     Scalar scalar;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
     auto str = scalar.GetString(10);
-
-    size_t BUF_SIZE = str.size() + 1;
-    MALLOC_BYTES(char, str_buf, BUF_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(str_buf);
-    std::memcpy(str_buf, str.c_str(), BUF_SIZE); // also copies null at the end
-
-    return str_buf;
+    return StrToAllocCStr(str);
 }
 
 BlsctRetVal* decode_address(
     const char* blsct_enc_addr
-) {
+) {V
     try {
         if (strlen(blsct_enc_addr) != ENCODED_DPK_STR_SIZE) {
             return err(BLSCT_BAD_DPK_SIZE);
@@ -404,6 +376,38 @@ BlsctRetVal* gen_double_pub_key(
     return succ(blsct_dpk, sizeof(BlsctDoublePubKey));
 }
 
+const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk) {
+    blsct::DoublePublicKey dpk;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE, dpk);
+    auto vec = dpk.GetVch();
+    auto hex = HexStr(vec);
+
+    size_t BUF_SIZE = hex.size() + 1;
+    MALLOC_BYTES(char, hex_buf, BUF_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(hex_buf);
+    std::memcpy(hex_buf, hex.c_str(), BUF_SIZE); // also copies null at the end
+
+    return hex_buf;
+}
+
+BlsctRetVal* deserialize_dpk(const char* hex) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
+        return err(BLSCT_FAILURE);
+    }
+    blsct::DoublePublicKey dpk;
+    DataStream st{};
+    st << vec;
+
+    dpk.Unserialize(st);
+
+    MALLOC(BlsctDoublePubKey, blsct_dpk);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
+    SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
+
+    return succ(blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
+}
+
 BlsctRetVal* gen_token_id_with_subid(
     const uint64_t token,
     const uint64_t subid
@@ -451,6 +455,26 @@ uint64_t get_token_id_subid(const BlsctTokenId* blsct_token_id) {
     TokenId token_id;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id, TOKEN_ID_SIZE, token_id);
     return token_id.subid;
+}
+
+const char* serialize_token_id(const BlsctTokenId* blsct_token_id) {
+    // BlsctTokenId is a serialization of TokenId
+    // so just need to convert it to hex
+    std::vector<uint8_t> vec((*blsct_token_id), (*blsct_token_id) + TOKEN_ID_SIZE);
+    auto hex_str = HexStr(vec);
+    return StrToAllocCStr(hex_str);
+}
+
+BlsctRetVal* deserialize_token_id(const char* hex) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
+        return err(BLSCT_FAILURE);
+    }
+    MALLOC(BlsctTokenId, blsct_token_id);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_token_id);
+    std::memcpy(blsct_token_id, &vec[0], vec.size());
+
+    return succ(blsct_token_id, TOKEN_ID_SIZE);
 }
 
 BlsctRetVal* build_range_proof(
@@ -648,6 +672,41 @@ BlsctRetVal* gen_out_point(
         blsct_out_point
     );
     return succ(blsct_out_point, OUT_POINT_SIZE);
+}
+
+// script
+const char* serialize_script(const BlsctScript* blsct_script) {
+    if (blsct_script == nullptr) {
+        return nullptr;
+    }
+
+    // since BlsctScript is CScript, CScript serializor can be used
+    auto cscript = reinterpret_cast<CScript>(blsct_script);
+
+    SERIALIZE_AND_COPY_WITH_STREAM(
+        CScript(vec),
+        ser_cscript
+    );
+    auto hex_str = HexStr(vec);
+    return StrToAllocCStr(hex_str);
+}
+
+BlsctRetVal* deserialize_script(const char* hex) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
+        return err(BLSCT_FAILURE);
+    }
+
+    // check if the size is correct
+    if (vec.size() != SCRIPT_SIZE) {
+        return err(BLSCT_BAD_SCRIPT_SIZE);
+    }
+
+    MALLOC(BlsctScript, blsct_script);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_script);
+    std::memcpy(blsct_script, &vec[0], SCRIPT_SIZE);
+
+    return succ(blsct_script, SCRIPT_SIZE);
 }
 
 BlsctRetVal* build_tx_in(
@@ -864,12 +923,7 @@ const char* get_tx_id(const CMutableTransaction* tx) {
     Txid txid = tx->GetHash();
     std::string txid_hex = txid.GetHex();
 
-    size_t BUF_SIZE = txid_hex.size() + 1;
-    MALLOC_BYTES(char, buf, BUF_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(buf);
-    std::memcpy(buf, txid_hex.c_str(), BUF_SIZE); // also copies null at the end of c_str
-
-    return buf;
+    return StrToAllocCStr(txid_hex);
 }
 
 CMutableTransaction* deserialize_tx(
@@ -1259,7 +1313,7 @@ uint64_t calc_view_tag(
     );
 }
 
-BlsctKeyId* calc_hash_id(
+BlsctKeyId* calc_key_id(
     const BlsctPubKey* blsct_blinding_pub_key,
     const BlsctPubKey* blsct_spending_pub_key,
     const BlsctScalar* blsct_view_key
@@ -1273,33 +1327,42 @@ BlsctKeyId* calc_hash_id(
     Scalar view_key;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, SCALAR_SIZE, view_key);
 
-    auto hash_id = blsct::CalculateHashId(
+    auto key_id = blsct::CalculateHashId(
         blinding_pub_key.GetG1Point(),
         spending_pub_key.GetG1Point(),
         view_key
     );
-    BlsctKeyId* blsct_hash_id = static_cast<BlsctKeyId*>(
+    BlsctKeyId* blsct_key_id = static_cast<BlsctKeyId*>(
         malloc(KEY_ID_SIZE)
     );
-    SERIALIZE_AND_COPY_WITH_STREAM(hash_id, blsct_hash_id);
+    SERIALIZE_AND_COPY_WITH_STREAM(key_id, blsct_key_id);
 
-    return blsct_hash_id;
+    return blsct_key_id;
 }
 
-const char* get_key_id_hex(
+const char* serialize_key_id(
     const BlsctKeyId* blsct_key_id
 ) {
     CKeyID key_id;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_key_id, KEY_ID_SIZE, key_id);
-
     auto hex = key_id.GetHex();
+    return StrToAllocCStr(hex);
+}
 
-    size_t BUF_SIZE = hex.size() + 1;
-    MALLOC_BYTES(char, hex_buf, BUF_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(hex_buf);
-    std::memcpy(hex_buf, hex.c_str(), BUF_SIZE); // also copies null at the end
+BlsctRetVal* deserialize_key_id(const char* hex) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
+        return err(BLSCT_FAILURE);
+    }
+    uint160 key_id_uint160(vec);
+    CKeyID key_id(key_id_uint160);
 
-    return hex_buf;
+    BlsctKeyId* blsct_key_id = static_cast<BlsctKeyId*>(
+        malloc(KEY_ID_SIZE)
+    );
+    SERIALIZE_AND_COPY_WITH_STREAM(key_id, blsct_key_id);
+
+    return succ(blsct_key_id, KEY_ID_SIZE);
 }
 
 BlsctPoint* calc_nonce(

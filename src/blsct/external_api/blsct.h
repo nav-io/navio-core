@@ -19,6 +19,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <util/strencodings.h>
 
 /* constants */
 #define PUBLIC_KEY_SIZE 48
@@ -56,6 +57,24 @@
 #define BLSCT_MEMO_TOO_LONG 17
 #define BLSCT_MEM_ALLOC_FAILED 18
 #define BLSCT_DESER_FAILED 19
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct {
+  BLSCT_RESULT result;
+  void* value;
+  size_t value_size;
+} BlsctRetVal;
+
+BlsctRetVal* err(
+    BLSCT_RESULT result
+);
+
+#ifdef __cplusplus
+} // extern "C"
+#endif
 
 #define TRY_DEFINE_MCL_POINT_FROM(src, dest) \
     Point dest; \
@@ -116,6 +135,26 @@ if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
 
 #define UNVOID(T, name) const T* name = reinterpret_cast<const T*>(void_##name)
 
+inline bool TryParseHexWrap(
+    const std::string& hex,
+    std::vector<uint8_t>& out_vec
+) {
+    auto maybe_vec = TryParseHex<uint8_t>(hex);
+    if (!maybe_vec.has_value()) {
+        return false;
+    }
+    out_vec = std::move(*maybe_vec);
+    return true;
+}
+
+inline const char* StrToAllocCStr(std::string s) {
+    size_t buf_size = s.size() + 1;
+    MALLOC_BYTES(char, cstr_buf, buf_size);
+    RETURN_IF_MEM_ALLOC_FAILED(cstr_buf);
+    std::memcpy(cstr_buf, s.c_str(), buf_size); // also copies null at the end
+    return cstr_buf;
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -154,12 +193,6 @@ typedef uint8_t BlsctRangeProof;
 
 typedef struct {
   BLSCT_RESULT result;
-  void* value;
-  size_t value_size;
-} BlsctRetVal;
-
-typedef struct {
-  BLSCT_RESULT result;
   bool value;
 } BlsctBoolRetVal;
 
@@ -180,10 +213,6 @@ typedef struct {
 BlsctRetVal* succ(
     void* value,
     size_t value_size
-);
-
-BlsctRetVal* err(
-    BLSCT_RESULT result
 );
 
 BlsctBoolRetVal* succ_bool(
@@ -234,8 +263,8 @@ void init();
 // point
 BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
-const char* point_to_hex(const BlsctPoint* blsct_point);
-BlsctRetVal* hex_to_point(const char* hex);
+const char* serialize_point(const BlsctPoint* blsct_point);
+BlsctRetVal* deserialize_point(const char* hex);
 int is_point_equal(const BlsctPoint* a, const BlsctPoint* b);
 const char* point_to_str(const BlsctPoint* blsct_point);
 BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
@@ -244,8 +273,8 @@ BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
 BlsctRetVal* gen_random_scalar();
 BlsctRetVal* gen_scalar(const uint64_t n);
 uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
-const char* scalar_to_hex(const BlsctScalar* blsct_scalar);
-BlsctRetVal* hex_to_scalar(const char* hex);
+const char* serialize_scalar(const BlsctScalar* blsct_scalar);
+BlsctRetVal* deserialize_hex(const char* hex);
 int is_scalar_equal(const BlsctScalar* a, const BlsctScalar* b);
 const char* scalar_to_str(const BlsctScalar* blsct_scalar);
 
@@ -269,6 +298,8 @@ BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk1,
     const BlsctPubKey* blsct_pk2
 );
+const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk);
+BlsctRetVal* deserialize_dpk(const char* hex);
 
 // token id
 BlsctRetVal* gen_token_id_with_subid(
@@ -281,10 +312,10 @@ BlsctRetVal* gen_token_id(
 );
 
 BlsctRetVal* gen_default_token_id();
-
 uint64_t get_token_id_token(const BlsctTokenId* blsct_token_id);
-
 uint64_t get_token_id_subid(const BlsctTokenId* blsct_token_id);
+const char* serialize_token_id(const BlsctTokenId* blsct_token_id);
+BlsctRetVal* deserialize_token_id(const char* hex);
 
 // range proof
 BlsctRetVal* build_range_proof(
@@ -317,6 +348,10 @@ BlsctRetVal* gen_out_point(
     const char* tx_id_c_str,
     const uint32_t n
 );
+
+// script
+const char* serialize_script(const BlsctScript* blsct_script);
+BlsctRetVal* deserialize_script(const char* hex);
 
 BlsctRetVal* build_tx_in(
     const uint64_t amount,
@@ -469,14 +504,19 @@ uint64_t calc_view_tag(
     const BlsctScalar* view_key
 );
 
-BlsctKeyId* calc_hash_id(
+// Key ID (=Hash ID)
+BlsctKeyId* calc_key_id(
     const BlsctPubKey* blsct_blinding_pub_key,
     const BlsctPubKey* blsct_spending_pub_key,
     const BlsctScalar* blsct_view_key
 );
 
-const char* get_key_id_hex(
+const char* serialize_key_id(
     const BlsctKeyId* blsct_key_id
+);
+
+BlsctRetVal* deserialize_key_id(
+    const char* hex
 );
 
 BlsctPoint* calc_nonce(
