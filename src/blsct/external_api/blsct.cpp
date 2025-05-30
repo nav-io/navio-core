@@ -298,7 +298,7 @@ BlsctRetVal* decode_address(
 ) {
     try {
         if (strlen(blsct_enc_addr) != ENCODED_DPK_STR_SIZE) {
-            return err(BLSCT_BAD_DPK_SIZE);
+            return err(BLSCT_BAD_SIZE);
         }
         std::string enc_addr(blsct_enc_addr);
         auto& chain = get_chain();
@@ -554,7 +554,23 @@ BlsctBoolRetVal* verify_range_proofs(
     return err_bool(BLSCT_EXCEPTION);
 }
 
-BlsctAmountRecoveryReq* gen_recover_amount_req(
+const char* serialize_range_proof(
+    const BlsctRangeProof* blsct_range_proof,
+    const size_t range_proof_size
+) {
+    return SerializeToHex(blsct_range_proof, range_proof_size);
+}
+
+BlsctRetVal* deserialize_range_proof(
+    const char* hex,
+    const size_t range_proof_size
+) {
+    BlsctRangeProof* blsct_range_proof =
+        static_cast<BlsctRangeProof*>(DeserializeFromHex(hex, range_proof_size));
+    return succ(blsct_range_proof, range_proof_size);
+}
+
+BlsctAmountRecoveryReq* gen_amount_recovery_req(
     const void* vp_blsct_range_proof,
     const size_t range_proof_size,
     const void* vp_blsct_nonce
@@ -570,6 +586,12 @@ BlsctAmountRecoveryReq* gen_recover_amount_req(
     req->range_proof_size = range_proof_size;
     BLSCT_COPY(vp_blsct_nonce, req->nonce);
     return req;
+}
+
+const char* serialize_amount_recovery_req(
+    const BlsctAmountRecoveryReq* blsct_amount_recovery_req
+) {
+    return nullptr;
 }
 
 BlsctAmountsRetVal* recover_amount(
@@ -674,6 +696,16 @@ BlsctRetVal* gen_out_point(
     return succ(blsct_out_point, OUT_POINT_SIZE);
 }
 
+const char* serialize_out_point(const BlsctOutPoint* blsct_out_point) {
+     return SerializeToHex(*blsct_out_point, OUT_POINT_SIZE);
+}
+
+BlsctRetVal* deserialize_out_point(const char* hex) {
+    BlsctOutPoint* blsct_out_point =
+        static_cast<BlsctOutPoint*>(DeserializeFromHex(hex, OUT_POINT_SIZE));
+    return succ(blsct_out_point, OUT_POINT_SIZE);
+}
+
 // script
 const char* serialize_script(const BlsctScript* blsct_script) {
     if (blsct_script == nullptr) {
@@ -691,23 +723,22 @@ const char* serialize_script(const BlsctScript* blsct_script) {
 }
 
 BlsctRetVal* deserialize_script(const char* hex) {
-    std::vector<uint8_t> vec;
-    if (!TryParseHexWrap(hex, vec)) {
-        return err(BLSCT_FAILURE);
-    }
-
-    // check if the size is correct
-    if (vec.size() != SCRIPT_SIZE) {
-        return err(BLSCT_BAD_SCRIPT_SIZE);
-    }
-
-    MALLOC(BlsctScript, blsct_script);
-    RETURN_IF_MEM_ALLOC_FAILED(blsct_script);
-    std::memcpy(blsct_script, &vec[0], SCRIPT_SIZE);
-
+    BlsctScript* blsct_script =
+        static_cast<BlsctScript*>(DeserializeFromHex(hex, SCRIPT_SIZE));
     return succ(blsct_script, SCRIPT_SIZE);
 }
 
+const char* serialize_signature(const BlsctSignature* blsct_signature) {
+    return nullptr;
+}
+
+BlsctRetVal* deserialize_signature(const char* hex) {
+    BlsctSignature* blsct_signature =
+        static_cast<BlsctSignature*>(DeserializeFromHex(hex, SIGNATURE_SIZE));
+    return succ(blsct_signature, SIGNATURE_SIZE);
+}
+
+// tx_in
 BlsctRetVal* build_tx_in(
     const uint64_t amount,
     const uint64_t gamma,
@@ -727,6 +758,16 @@ BlsctRetVal* build_tx_in(
     tx_in->rbf = rbf;
 
     return succ(tx_in, sizeof(BlsctTxIn));
+}
+
+const char* serialize_tx_in(const BlsctTxIn* blsct_tx_in, size_t tx_in_size) {
+    return nullptr;
+}
+
+BlsctRetVal* deserialize_tx_in(const char* hex, size_t tx_in_size) {
+    BlsctTxIn* blsct_tx_in =
+        static_cast<BlsctTxIn*>(DeserializeFromHex(hex, tx_in_size));
+    return succ(blsct_tx_in, tx_in_size);
 }
 
 BlsctRetVal* dpk_to_sub_addr(
@@ -751,6 +792,7 @@ BlsctRetVal* dpk_to_sub_addr(
     return succ(blsct_sub_addr, sizeof(blsct::SubAddress));
 }
 
+// tx_out
 BlsctRetVal* build_tx_out(
     const BlsctSubAddr* blsct_dest,
     const uint64_t amount,
@@ -777,6 +819,14 @@ BlsctRetVal* build_tx_out(
     tx_out->min_stake = min_stake;
 
     return succ(tx_out, sizeof(BlsctTxOut));
+}
+
+const char* serialize_tx_out(const BlsctTxOut* blsct_tx_out) {
+    return nullptr;
+}
+
+BlsctRetVal* deserialize_tx_out(const char* hex) {
+    return nullptr;
 }
 
 static blsct::PrivateKey blsct_scalar_to_priv_key(
@@ -1409,6 +1459,16 @@ BlsctSubAddr* derive_sub_address(
     return blsct_sub_addr;
 }
 
+const char* serialize_sub_addr(const BlsctSubAddr* blsct_sub_addr) {
+    return SerializeToHex(*blsct_sub_addr, SUB_ADDR_SIZE);
+}
+
+BlsctRetVal* deserialize_sub_addr(const char* hex) {
+    BlsctSubAddr* blsct_sub_addr =
+        static_cast<BlsctSubAddr*>(DeserializeFromHex(hex, SUB_ADDR_SIZE));
+    return succ(blsct_sub_addr, SUB_ADDR_SIZE);
+}
+
 BlsctSubAddrId* gen_sub_addr_id(
     const int64_t account,
     const uint64_t address
@@ -1423,6 +1483,16 @@ BlsctSubAddrId* gen_sub_addr_id(
     SERIALIZE_AND_COPY_WITH_STREAM(sub_addr_id, blsct_sub_addr_id);
 
     return blsct_sub_addr_id;
+}
+
+const char* serialize_sub_addr_id(const BlsctSubAddrId* blsct_sub_addr_id) {
+    return SerializeToHex(*blsct_sub_addr_id, SUB_ADDR_ID_SIZE);
+}
+
+BlsctRetVal* deserialize_sub_addr_id(const char* hex) {
+    BlsctSubAddrId* blsct_sub_addr_id =
+        static_cast<BlsctSubAddrId*>(DeserializeFromHex(hex, SUB_ADDR_ID_SIZE));
+    return succ(blsct_sub_addr_id, SUB_ADDR_ID_SIZE);
 }
 
 int64_t get_sub_addr_id_account(

@@ -38,6 +38,26 @@ struct AmountRecoveryRequest
     static AmountRecoveryRequest<T> of(const RangeProofWithSeed<T>& proof,
                                        const range_proof::GammaSeed<T>& nonce,
                                        const size_t& id = 0);
+
+    SERIALIZE_METHODS(AmountRecoveryRequest, obj)
+    {
+        READWRITE(
+            obj.id,
+            obj.seed,
+            obj.y,
+            obj.z,
+            obj.alpha_hat,
+            obj.tau_x,
+            obj.Vs,
+            obj.Ls,
+            obj.Rs,
+            obj.m,
+            obj.n,
+            obj.mn,
+            obj.nonce,
+            obj.min_value
+        );
+    }
 };
 
 } // namespace bulletproofs_plus

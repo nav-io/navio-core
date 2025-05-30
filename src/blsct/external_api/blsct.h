@@ -47,7 +47,7 @@
 #define BLSCT_SUCCESS 0
 #define BLSCT_FAILURE 1
 #define BLSCT_EXCEPTION 2
-#define BLSCT_BAD_DPK_SIZE 10
+#define BLSCT_BAD_SIZE 10
 #define BLSCT_UNKNOWN_ENCODING 11
 #define BLSCT_VALUE_OUTSIDE_THE_RANGE 12
 #define BLSCT_DID_NOT_RUN_TO_COMPLETION 13
@@ -57,7 +57,6 @@
 #define BLSCT_MEMO_TOO_LONG 17
 #define BLSCT_MEM_ALLOC_FAILED 18
 #define BLSCT_DESER_FAILED 19
-#define BLSCT_BAD_SCRIPT_SIZE 20
 
 #ifdef __cplusplus
 extern "C" {
@@ -148,12 +147,47 @@ inline bool TryParseHexWrap(
     return true;
 }
 
-inline const char* StrToAllocCStr(std::string s) {
+inline const char* StrToAllocCStr(const std::string s) {
     size_t buf_size = s.size() + 1;
     MALLOC_BYTES(char, cstr_buf, buf_size);
     RETURN_IF_MEM_ALLOC_FAILED(cstr_buf);
     std::memcpy(cstr_buf, s.c_str(), buf_size); // also copies null at the end
     return cstr_buf;
+}
+
+inline const char* SerializeToHex(
+    const uint8_t* blsct_obj,
+    const size_t obj_size
+) {
+    if (blsct_obj == nullptr) return nullptr;
+
+    std::vector<uint8_t> vec;
+    for (size_t i=0; i<obj_size; ++i) {
+        vec.push_back(blsct_obj[i]);
+    }
+    auto hex_str = HexStr(vec);
+    return StrToAllocCStr(hex_str);
+}
+
+void* DeserializeFromHex(const char* hex, const size_t obj_size) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
+        return err(BLSCT_FAILURE);
+    }
+
+    // check if the size is correct
+    if (vec.size() != obj_size) {
+        return err(BLSCT_BAD_SIZE);
+    }
+
+    void* blsct_obj = malloc(obj_size);
+    if (blsct_obj == nullptr) {
+        fputs("Failed to allocate memory\n", stderr);
+        return nullptr;
+    }
+    std::memcpy(blsct_obj, &vec[0], obj_size);
+
+    return blsct_obj;
 }
 
 #ifdef __cplusplus
@@ -299,6 +333,7 @@ BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk1,
     const BlsctPubKey* blsct_pk2
 );
+
 const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk);
 BlsctRetVal* deserialize_dpk(const char* hex);
 
@@ -319,7 +354,7 @@ const char* serialize_token_id(const BlsctTokenId* blsct_token_id);
 BlsctRetVal* deserialize_token_id(const char* hex);
 
 // range proof
-BlsctRetVal* build_range_proof(
+BlsctRetVal* build_ange_proof(
     const void* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
     const char* blsct_msg,
@@ -330,8 +365,17 @@ BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs
 );
 
-// amount recovery
-BlsctAmountRecoveryReq* gen_recover_amount_req(
+const char* serialize_range_proof(
+    const BlsctRangeProof* blsct_range_proof,
+    const size_t obj_size
+);
+BlsctRetVal* deserialize_range_proof(
+    const char* hex,
+    const size_t obj_size
+);
+
+// amount recovery request
+BlsctAmountRecoveryReq* gen_amount_recovery_req(
     const void* vp_blsct_range_proof,
     const size_t range_proof_size,
     const void* vp_blsct_nonce
@@ -343,6 +387,14 @@ BlsctAmountsRetVal* recover_amount(
     void* vp_amt_recovery_req_vec
 );
 
+const char* serialize_amount_recovery_req(
+    const BlsctAmountRecoveryReq* blsct_amount_recovery_req
+);
+
+BlsctRetVal* deserialize_amount_recovery_req(
+    const char* hex
+);
+
 // out point
 // txid is 32 bytes and represented as 64-char hex str
 BlsctRetVal* gen_out_point(
@@ -350,10 +402,18 @@ BlsctRetVal* gen_out_point(
     const uint32_t n
 );
 
+const char* serialize_out_point(const BlsctOutPoint* blsct_out_point);
+BlsctRetVal* deserialize_out_point(const char* hex);
+
 // script
 const char* serialize_script(const BlsctScript* blsct_script);
 BlsctRetVal* deserialize_script(const char* hex);
 
+// signature
+const char* serialize_signature(const BlsctSignature* blsct_signature);
+BlsctRetVal* deserialize_signature(const char* hex);
+
+// tx_in
 BlsctRetVal* build_tx_in(
     const uint64_t amount,
     const uint64_t gamma,
@@ -363,10 +423,14 @@ BlsctRetVal* build_tx_in(
     const bool rbf
 );
 
+const char* serialize_tx_in(const BlsctTxIn* blsct_tx_in);
+BlsctRetVal* deserialize_tx_in(const char* hex);
+
 BlsctRetVal* dpk_to_sub_addr(
     const void* blsct_dpk
 );
 
+// tx_out
 BlsctRetVal* build_tx_out(
     const BlsctSubAddr* blsct_dest,
     const uint64_t amount,
@@ -376,6 +440,10 @@ BlsctRetVal* build_tx_out(
     const uint64_t min_stake
 );
 
+const char* serialize_tx_out(const BlsctTxOut* blsct_tx_out);
+BlsctRetVal* deserialize_tx_out(const char* hex);
+
+// tx
 BlsctTxRetVal* build_tx(
     const void* void_tx_ins,
     const void* void_tx_outs
@@ -525,16 +593,25 @@ BlsctPoint* calc_nonce(
     const BlsctScalar* view_key
 );
 
+// sub addr
 BlsctSubAddr* derive_sub_address(
     const BlsctScalar* blsct_view_key,
     const BlsctPubKey* blsct_spending_pub_key,
     const BlsctSubAddrId* blsct_sub_addr_id
 );
 
+const char* serialize_sub_addr(const BlsctSignature* blsct_sub_addr);
+
+BlsctRetVal* deserialize_sub_addr(const char* hex);
+
+// SubAddrId
 BlsctSubAddrId* gen_sub_addr_id(
     const int64_t account,
     const uint64_t address
 );
+
+const char* serialize_sub_addr_id(const BlsctSubAddrId* blsct_sub_addr_id);
+BlsctRetVal* deserialize_sub_addr_id(const char* hex);
 
 int64_t get_sub_addr_id_account(
     const BlsctSubAddrId* blsct_sub_addr_id
