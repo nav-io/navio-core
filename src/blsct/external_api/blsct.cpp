@@ -477,6 +477,8 @@ BlsctRetVal* deserialize_token_id(const char* hex) {
     return succ(blsct_token_id, TOKEN_ID_SIZE);
 }
 
+// range proof
+
 BlsctRetVal* build_range_proof(
     const void* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
@@ -554,6 +556,42 @@ BlsctBoolRetVal* verify_range_proofs(
     return err_bool(BLSCT_EXCEPTION);
 }
 
+#define DEFINE_RANGE_PROOF_POINT_GETTER(field) \
+const BlsctPoint* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
+{ \
+    bulletproofs_plus::RangeProof<Mcl> range_proof; \
+    UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof); \
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE)); \
+    auto org = range_proof.field.GetVch(); \
+    std::memcpy(copy, &org[0], POINT_SIZE); \
+    return copy; \
+}
+
+DEFINE_RANGE_PROOF_POINT_GETTER(A)
+DEFINE_RANGE_PROOF_POINT_GETTER(A_wip)
+DEFINE_RANGE_PROOF_POINT_GETTER(B)
+
+#undef DEFINE_RANGE_PROOF_POINT_GETTER
+
+#define DEFINE_RANGE_PROOF_SCALAR_GETTER(field) \
+const BlsctScalar* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
+{ \
+    bulletproofs_plus::RangeProof<Mcl> range_proof; \
+    UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof); \
+    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE)); \
+    auto org = range_proof.field.GetVch(); \
+    std::memcpy(copy, &org[0], SCALAR_SIZE); \
+    return copy; \
+}
+
+DEFINE_RANGE_PROOF_SCALAR_GETTER(r_prime)
+DEFINE_RANGE_PROOF_SCALAR_GETTER(s_prime)
+DEFINE_RANGE_PROOF_SCALAR_GETTER(delta_prime)
+DEFINE_RANGE_PROOF_SCALAR_GETTER(alpha_hat)
+DEFINE_RANGE_PROOF_SCALAR_GETTER(tau_x)
+
+#undef DEFINE_RANGE_PROOF_SCALAR_GETTER
+
 const char* serialize_range_proof(
     const BlsctRangeProof* blsct_range_proof,
     const size_t range_proof_size
@@ -586,12 +624,6 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
     req->range_proof_size = range_proof_size;
     BLSCT_COPY(vp_blsct_nonce, req->nonce);
     return req;
-}
-
-const char* serialize_amount_recovery_req(
-    const BlsctAmountRecoveryReq* blsct_amount_recovery_req
-) {
-    return nullptr;
 }
 
 BlsctAmountsRetVal* recover_amount(
@@ -760,16 +792,6 @@ BlsctRetVal* build_tx_in(
     return succ(tx_in, sizeof(BlsctTxIn));
 }
 
-const char* serialize_tx_in(const BlsctTxIn* blsct_tx_in, size_t tx_in_size) {
-    return nullptr;
-}
-
-BlsctRetVal* deserialize_tx_in(const char* hex, size_t tx_in_size) {
-    BlsctTxIn* blsct_tx_in =
-        static_cast<BlsctTxIn*>(DeserializeFromHex(hex, tx_in_size));
-    return succ(blsct_tx_in, tx_in_size);
-}
-
 BlsctRetVal* dpk_to_sub_addr(
     const void* blsct_dpk
 ) {
@@ -819,14 +841,6 @@ BlsctRetVal* build_tx_out(
     tx_out->min_stake = min_stake;
 
     return succ(tx_out, sizeof(BlsctTxOut));
-}
-
-const char* serialize_tx_out(const BlsctTxOut* blsct_tx_out) {
-    return nullptr;
-}
-
-BlsctRetVal* deserialize_tx_out(const char* hex) {
-    return nullptr;
 }
 
 static blsct::PrivateKey blsct_scalar_to_priv_key(
@@ -959,7 +973,7 @@ BlsctTxRetVal* build_tx(
     ParamsStream ps {params, st};
     tx.Serialize(ps);
 
-    // copy serialize tx to the result
+    // copy the buffer containing serializef tx to the result
     rv->result = BLSCT_SUCCESS;
     rv->ser_tx_size = st.size();
     rv->ser_tx = (uint8_t*) malloc(st.size());
@@ -975,34 +989,23 @@ const char* get_tx_id(const CMutableTransaction* tx) {
     return StrToAllocCStr(txid_hex);
 }
 
-CMutableTransaction* deserialize_tx(
+// expects that ser_tx is always valid
+CMutableTransaction* ser_tx_to_CMutalbleTransaction(
     const uint8_t* ser_tx,
     const size_t ser_tx_size
 ) {
-    CMutableTransaction* tx = static_cast<CMutableTransaction*>(
-        malloc(sizeof(CMutableTransaction))
-    );
-    CMutableTransaction empty_tx;
-    std::memcpy(tx, &empty_tx, sizeof(CMutableTransaction));
+    MALLOC(CMutableTransaction, tx);
+    RETURN_IF_MEM_ALLOC_FAILED(tx);
 
-    DataStream st{};
-    TransactionSerParams params { .allow_witness = true };
-    ParamsStream ps {params, st};
-
-    for(size_t i=0; i<ser_tx_size; ++i) {
-        ps << ser_tx[i];
-    }
-    tx->Unserialize(ps);
-
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ser_tx, ser_tx_size, (*tx));
     return tx;
 }
 
-// tx in
 const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx) {
     return &tx->vin;
 }
 
-size_t get_tx_ins_size(const std::vector<CTxIn>* tx_ins) {
+size_t get_tx_in_count(const std::vector<CTxIn>* tx_ins) {
     return tx_ins->size();
 }
 
@@ -1014,6 +1017,23 @@ const BlsctRetVal* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i) {
     return succ(tx_in_copy, tx_in_size);
 }
 
+const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx) {
+    return &tx->vout;
+}
+
+size_t get_tx_out_count(const std::vector<CTxOut>* tx_outs) {
+    return tx_outs->size();
+}
+
+const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i) {
+    auto tx_out = &tx_outs->at(i);
+    auto tx_out_size = sizeof(*tx_out);
+    auto tx_out_copy = static_cast<CTxOut*>(malloc(tx_out_size));
+    std::memcpy(tx_out_copy, tx_out, tx_out_size);
+    return succ(tx_out_copy, tx_out_size);
+}
+
+// tx_in
 const BlsctScript* get_tx_in_script_sig(const CTxIn* tx_in) {
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
     std::memcpy(copy, &tx_in->scriptSig, SCRIPT_SIZE);
@@ -1041,22 +1061,6 @@ uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in) {
 }
 
 // tx out
-const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx) {
-    return &tx->vout;
-}
-
-size_t get_tx_outs_size(const std::vector<CTxOut>* tx_outs) {
-    return tx_outs->size();
-}
-
-const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i) {
-    auto tx_out = &tx_outs->at(i);
-    auto tx_out_size = sizeof(*tx_out);
-    auto tx_out_copy = static_cast<CTxOut*>(malloc(tx_out_size));
-    std::memcpy(tx_out_copy, tx_out, tx_out_size);
-    return succ(tx_out_copy, tx_out_size);
-}
-
 uint64_t get_tx_out_value(const CTxOut* tx_out) {
     return tx_out->nValue;
 }
@@ -1100,73 +1104,16 @@ const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out) {
     return copy;
 }
 
+const BlsctRangeProof* get_tx_out_range_proof(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctRangeProof*>(malloc(POINT_SIZE));
+    DataStream st{};
+    tx_out->blsctData.rangeProof.Serialize(st);
+    std::memcpy(copy, st.data(), st.size());
+    return copy;
+};
+
 uint16_t get_tx_out_view_tag(const CTxOut* tx_out) {
     return tx_out->blsctData.viewTag;
-}
-
-//// range proof
-
-const BlsctPoint* get_tx_out_range_proof_A(const CTxOut* tx_out) {
-    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.rangeProof.A.GetVch();
-    std::memcpy(copy, &org[0], POINT_SIZE);
-    return copy;
-}
-
-const BlsctPoint* get_tx_out_range_proof_A_wip(const CTxOut* tx_out)
-{
-    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.rangeProof.A_wip.GetVch();
-    std::memcpy(copy, &org[0], POINT_SIZE);
-    return copy;
-}
-
-const BlsctPoint* get_tx_out_range_proof_B(const CTxOut* tx_out)
-{
-    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.rangeProof.B.GetVch();
-    std::memcpy(copy, &org[0], POINT_SIZE);
-    return copy;
-}
-
-const BlsctScalar* get_tx_out_range_proof_r_prime(const CTxOut* tx_out)
-{
-    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
-    auto org = tx_out->blsctData.rangeProof.r_prime.GetVch();
-    std::memcpy(copy, &org[0], SCALAR_SIZE);
-    return copy;
-}
-
-const BlsctScalar* get_tx_out_range_proof_s_prime(const CTxOut* tx_out)
-{
-    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
-    auto org = tx_out->blsctData.rangeProof.s_prime.GetVch();
-    std::memcpy(copy, &org[0], SCALAR_SIZE);
-    return copy;
-}
-
-const BlsctScalar* get_tx_out_range_proof_delta_prime(const CTxOut* tx_out)
-{
-    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
-    auto org = tx_out->blsctData.rangeProof.delta_prime.GetVch();
-    std::memcpy(copy, &org[0], SCALAR_SIZE);
-    return copy;
-}
-
-const BlsctScalar* get_tx_out_range_proof_alpha_hat(const CTxOut* tx_out)
-{
-    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
-    auto org = tx_out->blsctData.rangeProof.alpha_hat.GetVch();
-    std::memcpy(copy, &org[0], SCALAR_SIZE);
-    return copy;
-}
-
-const BlsctScalar* get_tx_out_range_proof_tau_x(const CTxOut* tx_out)
-{
-    auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));
-    auto org = tx_out->blsctData.rangeProof.tau_x.GetVch();
-    std::memcpy(copy, &org[0], SCALAR_SIZE);
-    return copy;
 }
 
 const BlsctSignature* sign_message(

@@ -365,6 +365,16 @@ BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs
 );
 
+const BlsctPoint* get_range_proof_A(const BlsctRangeProof* blsct_range_proof, const size_t obj_size);
+const BlsctPoint* get_range_proof_A_wip(const BlsctRangeProof* blsct_range_proof, const size_t obj_size);
+const BlsctPoint* get_range_proof_B(const BlsctRangeProof* blsct_range_proof, const size_t obj_size);
+
+const BlsctScalar* get_range_proof_r_prime(const BlsctRangeProof* blsct_range_proof, const size_t obj_size);
+const BlsctScalar* get_range_proof_s_prime(const BlsctRangeProof* blsct_range_proof, const size_t obj_size);
+const BlsctScalar* get_range_proof_delta_prime(const BlsctRangeProof* blsct_range_proof, const size_t obj_size);
+const BlsctScalar* get_range_proof_alpha_hat(const BlsctRangeProof* blsct_range_proof, const size_t obj_size);
+const BlsctScalar* get_range_proof_tau_x(const BlsctRangeProof* blsct_range_proof, const size_t obj_size);
+
 const char* serialize_range_proof(
     const BlsctRangeProof* blsct_range_proof,
     const size_t obj_size
@@ -381,18 +391,12 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
     const void* vp_blsct_nonce
 );
 
+// amountry recovery and the result result
+
 // returns a structure whose value field is
 // a vector of the same size as the input vector
 BlsctAmountsRetVal* recover_amount(
     void* vp_amt_recovery_req_vec
-);
-
-const char* serialize_amount_recovery_req(
-    const BlsctAmountRecoveryReq* blsct_amount_recovery_req
-);
-
-BlsctRetVal* deserialize_amount_recovery_req(
-    const char* hex
 );
 
 // out point
@@ -423,12 +427,14 @@ BlsctRetVal* build_tx_in(
     const bool rbf
 );
 
-const char* serialize_tx_in(const BlsctTxIn* blsct_tx_in);
-BlsctRetVal* deserialize_tx_in(const char* hex);
-
 BlsctRetVal* dpk_to_sub_addr(
     const void* blsct_dpk
 );
+const BlsctScript* get_tx_in_script_sig(const CTxIn* tx_in);
+uint32_t get_tx_in_sequence(const CTxIn* tx_in);
+const BlsctScript* get_tx_in_script_witness(const CTxIn* tx_in);
+const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in);
+uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in);
 
 // tx_out
 BlsctRetVal* build_tx_out(
@@ -439,9 +445,15 @@ BlsctRetVal* build_tx_out(
     const TxOutputType output_type,
     const uint64_t min_stake
 );
-
-const char* serialize_tx_out(const BlsctTxOut* blsct_tx_out);
-BlsctRetVal* deserialize_tx_out(const char* hex);
+uint64_t get_tx_out_value(const CTxOut* tx_out);
+const BlsctScript* get_tx_out_script_pub_key(const CTxOut* tx_out);
+const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out);
+const BlsctScript* get_tx_out_script_pubkey(const CTxOut* tx_out);
+const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out);
+const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out);
+const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out);
+const BlsctRangeProof* get_tx_out_range_proof(const CTxOut* tx_out);
+uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
 
 // tx
 BlsctTxRetVal* build_tx(
@@ -450,61 +462,24 @@ BlsctTxRetVal* build_tx(
 );
 
 // must free the returned object after use
-CMutableTransaction* deserialize_tx(
+CMutableTransaction* ser_tx_to_CMutalbleTransaction(
     const uint8_t* ser_tx,
     const size_t ser_tx_size
 );
 
 const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx);
 
-size_t get_tx_ins_size(const std::vector<CTxIn>* tx_ins);
+size_t get_tx_in_count(const std::vector<CTxIn>* tx_ins);
 
 const BlsctRetVal* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i);
 
 const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx);
 
-size_t get_tx_outs_size(const std::vector<CTxOut>* tx_outs);
+size_t get_tx_out_count(const std::vector<CTxOut>* tx_outs);
 
 const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i);
 
 const char* get_tx_id(const CMutableTransaction* tx);
-
-// TxIn
-const BlsctScript* get_tx_in_script_sig(const CTxIn* tx_in);
-
-uint32_t get_tx_in_sequence(const CTxIn* tx_in);
-
-const BlsctScript* get_tx_in_script_witness(const CTxIn* tx_in);
-
-const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in);
-
-uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in);
-
-// TxOut
-uint64_t get_tx_out_value(const CTxOut* tx_out);
-
-const BlsctScript* get_tx_out_script_pub_key(const CTxOut* tx_out);
-
-const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out);
-
-const BlsctScript* get_tx_out_script_pubkey(const CTxOut* tx_out);
-
-const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out);
-
-const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out);
-
-const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out);
-
-uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
-
-const BlsctPoint* get_tx_out_range_proof_A(const CTxOut* tx_out);
-const BlsctPoint* get_tx_out_range_proof_A_wip(const CTxOut* tx_out);
-const BlsctPoint* get_tx_out_range_proof_B(const CTxOut* tx_out);
-const BlsctScalar* get_tx_out_range_proof_r_prime(const CTxOut* tx_out);
-const BlsctScalar* get_tx_out_range_proof_s_prime(const CTxOut* tx_out);
-const BlsctScalar* get_tx_out_range_proof_delta_prime(const CTxOut* tx_out);
-const BlsctScalar* get_tx_out_range_proof_alpha_hat(const CTxOut* tx_out);
-const BlsctScalar* get_tx_out_range_proof_tau_x(const CTxOut* tx_out);
 
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,
