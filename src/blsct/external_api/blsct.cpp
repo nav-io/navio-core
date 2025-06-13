@@ -997,7 +997,15 @@ CMutableTransaction* ser_tx_to_CMutalbleTransaction(
     MALLOC(CMutableTransaction, tx);
     RETURN_IF_MEM_ALLOC_FAILED(tx);
 
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ser_tx, ser_tx_size, (*tx));
+    DataStream st{};
+    TransactionSerParams params { .allow_witness = true };
+    ParamsStream ps {params, st};
+
+    for(size_t i=0; i<ser_tx_size; ++i) {
+        ps << ser_tx[i];
+    }
+    tx->Unserialize(ps);
+
     return tx;
 }
 
