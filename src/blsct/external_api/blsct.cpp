@@ -770,28 +770,6 @@ BlsctRetVal* deserialize_signature(const char* hex) {
     return succ(blsct_signature, SIGNATURE_SIZE);
 }
 
-// tx_in
-BlsctRetVal* build_tx_in(
-    const uint64_t amount,
-    const uint64_t gamma,
-    const BlsctScalar* spending_key,
-    const BlsctTokenId* token_id,
-    const BlsctOutPoint* out_point,
-    const bool rbf
-) {
-    MALLOC(BlsctTxIn, tx_in);
-    RETURN_IF_MEM_ALLOC_FAILED(tx_in);
-
-    tx_in->amount = amount;
-    tx_in->gamma = gamma;
-    BLSCT_COPY(spending_key, tx_in->spending_key);
-    BLSCT_COPY(token_id, tx_in->token_id);
-    BLSCT_COPY(out_point, tx_in->out_point);
-    tx_in->rbf = rbf;
-
-    return succ(tx_in, sizeof(BlsctTxIn));
-}
-
 BlsctRetVal* dpk_to_sub_addr(
     const void* blsct_dpk
 ) {
@@ -814,7 +792,69 @@ BlsctRetVal* dpk_to_sub_addr(
     return succ(blsct_sub_addr, sizeof(blsct::SubAddress));
 }
 
-// tx_out
+static blsct::PrivateKey blsct_scalar_to_priv_key(
+    const BlsctScalar* blsct_scalar
+) {
+    // unserialize blsct_scalar to Scalar
+    Scalar scalar;
+    auto u8_blsct_scalar = U8C(blsct_scalar);
+    std::vector<uint8_t> vec {u8_blsct_scalar, u8_blsct_scalar + SCALAR_SIZE};
+    scalar.SetVch(vec);
+
+    // build private key from the scalar
+    blsct::PrivateKey priv_key(scalar);
+    return priv_key;
+}
+
+// tx_in
+BlsctRetVal* build_tx_in(
+    const uint64_t amount,
+    const uint64_t gamma,
+    const BlsctScalar* spending_key,
+    const BlsctTokenId* token_id,
+    const BlsctOutPoint* out_point,
+    const bool rbf
+) {
+    MALLOC(BlsctTxIn, tx_in);
+    RETURN_IF_MEM_ALLOC_FAILED(tx_in);
+
+    tx_in->amount = amount;
+    tx_in->gamma = gamma;
+    BLSCT_COPY(spending_key, tx_in->spending_key);
+    BLSCT_COPY(token_id, tx_in->token_id);
+    BLSCT_COPY(out_point, tx_in->out_point);
+    tx_in->rbf = rbf;
+
+    return succ(tx_in, sizeof(BlsctTxIn));
+}
+
+const BlsctScript* get_tx_in_script_sig(const CTxIn* tx_in) {
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &tx_in->scriptSig, SCRIPT_SIZE);
+    return copy;
+}
+
+uint32_t get_tx_in_sequence(const CTxIn* tx_in) {
+    return tx_in->nSequence;
+}
+
+const BlsctScript* get_tx_in_script_witness(const CTxIn* tx_in) {
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &tx_in->scriptWitness, SCRIPT_SIZE);
+    return copy;
+}
+
+const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in) {
+    auto copy = static_cast<BlsctTxId*>(malloc(TX_ID_SIZE));
+    std::memcpy(copy, &tx_in->prevout.hash, TX_ID_SIZE);
+    return copy;
+}
+
+uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in) {
+    return tx_in->prevout.n;
+}
+
+// tx out
 BlsctRetVal* build_tx_out(
     const BlsctSubAddr* blsct_dest,
     const uint64_t amount,
@@ -843,20 +883,62 @@ BlsctRetVal* build_tx_out(
     return succ(tx_out, sizeof(BlsctTxOut));
 }
 
-static blsct::PrivateKey blsct_scalar_to_priv_key(
-    const BlsctScalar* blsct_scalar
-) {
-    // unserialize blsct_scalar to Scalar
-    Scalar scalar;
-    auto u8_blsct_scalar = U8C(blsct_scalar);
-    std::vector<uint8_t> vec {u8_blsct_scalar, u8_blsct_scalar + SCALAR_SIZE};
-    scalar.SetVch(vec);
-
-    // build private key from the scalar
-    blsct::PrivateKey priv_key(scalar);
-    return priv_key;
+uint64_t get_tx_out_value(const CTxOut* tx_out) {
+    return tx_out->nValue;
 }
 
+const BlsctScript* get_tx_out_script_pub_key(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &tx_out->scriptPubKey, SCRIPT_SIZE);
+    return copy;
+}
+
+const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
+    std::memcpy(copy, &tx_out->tokenId, TOKEN_ID_SIZE);
+    return copy;
+}
+
+const BlsctScript* get_tx_out_script_pubkey(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &tx_out->scriptPubKey, SCRIPT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = tx_out->blsctData.spendingKey.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = tx_out->blsctData.ephemeralKey.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = tx_out->blsctData.blindingKey.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctRangeProof* get_tx_out_range_proof(const CTxOut* tx_out) {
+    auto copy = static_cast<BlsctRangeProof*>(malloc(POINT_SIZE));
+    DataStream st{};
+    tx_out->blsctData.rangeProof.Serialize(st);
+    std::memcpy(copy, st.data(), st.size());
+    return copy;
+};
+
+uint16_t get_tx_out_view_tag(const CTxOut* tx_out) {
+    return tx_out->blsctData.viewTag;
+}
+
+// tx
 BlsctTxRetVal* build_tx(
     const void* void_tx_ins,
     const void* void_tx_outs
@@ -1041,89 +1123,7 @@ const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i
     return succ(tx_out_copy, tx_out_size);
 }
 
-// tx_in
-const BlsctScript* get_tx_in_script_sig(const CTxIn* tx_in) {
-    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &tx_in->scriptSig, SCRIPT_SIZE);
-    return copy;
-}
-
-uint32_t get_tx_in_sequence(const CTxIn* tx_in) {
-    return tx_in->nSequence;
-}
-
-const BlsctScript* get_tx_in_script_witness(const CTxIn* tx_in) {
-    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &tx_in->scriptWitness, SCRIPT_SIZE);
-    return copy;
-}
-
-const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in) {
-    auto copy = static_cast<BlsctTxId*>(malloc(TX_ID_SIZE));
-    std::memcpy(copy, &tx_in->prevout.hash, TX_ID_SIZE);
-    return copy;
-}
-
-uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in) {
-    return tx_in->prevout.n;
-}
-
-// tx out
-uint64_t get_tx_out_value(const CTxOut* tx_out) {
-    return tx_out->nValue;
-}
-
-const BlsctScript* get_tx_out_script_pub_key(const CTxOut* tx_out) {
-    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &tx_out->scriptPubKey, SCRIPT_SIZE);
-    return copy;
-}
-
-const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out) {
-    auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
-    std::memcpy(copy, &tx_out->tokenId, TOKEN_ID_SIZE);
-    return copy;
-}
-
-const BlsctScript* get_tx_out_script_pubkey(const CTxOut* tx_out) {
-    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &tx_out->scriptPubKey, SCRIPT_SIZE);
-    return copy;
-}
-
-const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out) {
-    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.spendingKey.GetVch();
-    std::memcpy(copy, &org[0], POINT_SIZE);
-    return copy;
-}
-
-const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out) {
-    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.ephemeralKey.GetVch();
-    std::memcpy(copy, &org[0], POINT_SIZE);
-    return copy;
-}
-
-const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out) {
-    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.blindingKey.GetVch();
-    std::memcpy(copy, &org[0], POINT_SIZE);
-    return copy;
-}
-
-const BlsctRangeProof* get_tx_out_range_proof(const CTxOut* tx_out) {
-    auto copy = static_cast<BlsctRangeProof*>(malloc(POINT_SIZE));
-    DataStream st{};
-    tx_out->blsctData.rangeProof.Serialize(st);
-    std::memcpy(copy, st.data(), st.size());
-    return copy;
-};
-
-uint16_t get_tx_out_view_tag(const CTxOut* tx_out) {
-    return tx_out->blsctData.viewTag;
-}
-
+// signature
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,
     const char* blsct_msg
