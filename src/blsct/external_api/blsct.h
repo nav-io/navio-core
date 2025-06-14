@@ -309,6 +309,7 @@ BlsctRetVal* gen_random_scalar();
 BlsctRetVal* gen_scalar(const uint64_t n);
 uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
 const char* serialize_scalar(const BlsctScalar* blsct_scalar);
+BlsctRetVal* deserialize_scalar(const char* hex);
 BlsctRetVal* deserialize_hex(const char* hex);
 int is_scalar_equal(const BlsctScalar* a, const BlsctScalar* b);
 const char* scalar_to_str(const BlsctScalar* blsct_scalar);
