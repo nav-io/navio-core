@@ -355,7 +355,7 @@ const char* serialize_token_id(const BlsctTokenId* blsct_token_id);
 BlsctRetVal* deserialize_token_id(const char* hex);
 
 // range proof
-BlsctRetVal* build_ange_proof(
+BlsctRetVal* build_range_proof(
     const void* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
     const char* blsct_msg,
