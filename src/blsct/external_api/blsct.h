@@ -433,11 +433,11 @@ BlsctRetVal* build_tx_in(
 BlsctRetVal* dpk_to_sub_addr(
     const void* blsct_dpk
 );
-const BlsctScript* get_tx_in_script_sig(const CTxIn* tx_in);
-uint32_t get_tx_in_sequence(const CTxIn* tx_in);
-const BlsctScript* get_tx_in_script_witness(const CTxIn* tx_in);
-const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in);
-uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in);
+const BlsctScript* get_ctx_in_script_sig(const CTxIn* ctx_in);
+uint32_t get_ctx_in_sequence(const CTxIn* ctx_in);
+const BlsctScript* get_ctx_in_script_witness(const CTxIn* ctx_in);
+const BlsctTxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in);
+uint32_t get_ctx_in_prev_out_n(const CTxIn* ctx_in);
 
 // tx_out
 
