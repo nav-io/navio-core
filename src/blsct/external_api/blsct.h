@@ -162,6 +162,7 @@ inline const char* SerializeToHex(
     if (blsct_obj == nullptr) return nullptr;
 
     std::vector<uint8_t> vec;
+    vec.reserve(obj_size);
     for (size_t i=0; i<obj_size; ++i) {
         vec.push_back(blsct_obj[i]);
     }
@@ -169,7 +170,7 @@ inline const char* SerializeToHex(
     return StrToAllocCStr(hex_str);
 }
 
-void* DeserializeFromHex(const char* hex, const size_t obj_size) {
+inline void* DeserializeFromHex(const char* hex, const size_t obj_size) {
     std::vector<uint8_t> vec;
     if (!TryParseHexWrap(hex, vec)) {
         return err(BLSCT_FAILURE);
