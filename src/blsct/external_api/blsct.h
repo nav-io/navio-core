@@ -419,6 +419,8 @@ const char* serialize_signature(const BlsctSignature* blsct_signature);
 BlsctRetVal* deserialize_signature(const char* hex);
 
 // tx_in
+
+// returns BlsctTxIn
 BlsctRetVal* build_tx_in(
     const uint64_t amount,
     const uint64_t gamma,
@@ -438,6 +440,8 @@ const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in);
 uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in);
 
 // tx_out
+
+// returns BlsctTxOut
 BlsctRetVal* build_tx_out(
     const BlsctSubAddr* blsct_dest,
     const uint64_t amount,
@@ -446,18 +450,21 @@ BlsctRetVal* build_tx_out(
     const TxOutputType output_type,
     const uint64_t min_stake
 );
-uint64_t get_tx_out_value(const CTxOut* tx_out);
-const BlsctScript* get_tx_out_script_pub_key(const CTxOut* tx_out);
-const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out);
-const BlsctScript* get_tx_out_script_pubkey(const CTxOut* tx_out);
-const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out);
-const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out);
-const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out);
-const BlsctRangeProof* get_tx_out_range_proof(const CTxOut* tx_out);
-uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
+uint64_t get_ctx_out_value(const CTxOut* ctx_out);
+const BlsctScript* get_ctx_out_script_pub_key(const CTxOut* ctx_out);
+const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out);
+const BlsctScript* get_ctx_out_script_pubkey(const CTxOut* ctx_out);
+const BlsctPoint* get_ctx_out_spending_key(const CTxOut* ctx_out);
+const BlsctPoint* get_ctx_out_ephemeral_key(const CTxOut* ctx_out);
+const BlsctPoint* get_ctx_out_blinding_key(const CTxOut* ctx_out);
+const BlsctRangeProof* get_ctx_out_range_proof(const CTxOut* ctx_out);
+uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out);
 
 // tx
-BlsctTxRetVal* build_tx(
+
+// takes BlsctTxIn and BlsctTxOut vectors and
+// returns a serialized CMutableTransaction
+BlsctTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
 );
@@ -468,19 +475,19 @@ CMutableTransaction* ser_tx_to_CMutalbleTransaction(
     const size_t ser_tx_size
 );
 
-const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx);
+const std::vector<CTxIn>* get_ctx_ins(const CMutableTransaction* ctx);
 
-size_t get_tx_in_count(const std::vector<CTxIn>* tx_ins);
+size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins);
 
-const BlsctRetVal* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i);
+const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i);
 
-const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx);
+const std::vector<CTxOut>* get_ctx_outs(const CMutableTransaction* ctx);
 
-size_t get_tx_out_count(const std::vector<CTxOut>* tx_outs);
+size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs);
 
-const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i);
+const BlsctRetVal* get_ctx_out(const std::vector<CTxOut>* ctx_outs, const size_t i);
 
-const char* get_tx_id(const CMutableTransaction* tx);
+const char* get_tx_id(const CMutableTransaction* ctx);
 
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,

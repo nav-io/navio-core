@@ -828,30 +828,30 @@ BlsctRetVal* build_tx_in(
     return succ(tx_in, sizeof(BlsctTxIn));
 }
 
-const BlsctScript* get_tx_in_script_sig(const CTxIn* tx_in) {
+const BlsctScript* get_ctx_in_script_sig(const CTxIn* ctx_in) {
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &tx_in->scriptSig, SCRIPT_SIZE);
+    std::memcpy(copy, &ctx_in->scriptSig, SCRIPT_SIZE);
     return copy;
 }
 
-uint32_t get_tx_in_sequence(const CTxIn* tx_in) {
-    return tx_in->nSequence;
+uint32_t get_ctx_in_sequence(const CTxIn* ctx_in) {
+    return ctx_in->nSequence;
 }
 
-const BlsctScript* get_tx_in_script_witness(const CTxIn* tx_in) {
+const BlsctScript* get_ctx_in_script_witness(const CTxIn* ctx_in) {
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &tx_in->scriptWitness, SCRIPT_SIZE);
+    std::memcpy(copy, &ctx_in->scriptWitness, SCRIPT_SIZE);
     return copy;
 }
 
-const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in) {
+const BlsctTxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in) {
     auto copy = static_cast<BlsctTxId*>(malloc(TX_ID_SIZE));
-    std::memcpy(copy, &tx_in->prevout.hash, TX_ID_SIZE);
+    std::memcpy(copy, &ctx_in->prevout.hash, TX_ID_SIZE);
     return copy;
 }
 
-uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in) {
-    return tx_in->prevout.n;
+uint32_t get_ctx_in_prev_out_n(const CTxIn* ctx_in) {
+    return ctx_in->prevout.n;
 }
 
 // tx out
@@ -883,63 +883,63 @@ BlsctRetVal* build_tx_out(
     return succ(tx_out, sizeof(BlsctTxOut));
 }
 
-uint64_t get_tx_out_value(const CTxOut* tx_out) {
+uint64_t get_ctx_out_value(const CTxOut* tx_out) {
     return tx_out->nValue;
 }
 
-const BlsctScript* get_tx_out_script_pub_key(const CTxOut* tx_out) {
+const BlsctScript* get_ctx_out_script_pub_key(const CTxOut* ctx_out) {
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &tx_out->scriptPubKey, SCRIPT_SIZE);
+    std::memcpy(copy, &ctx_out->scriptPubKey, SCRIPT_SIZE);
     return copy;
 }
 
-const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out) {
+const BlsctTokenId* getc_ctx_out_token_id(const CTxOut* ctx_out) {
     auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
-    std::memcpy(copy, &tx_out->tokenId, TOKEN_ID_SIZE);
+    std::memcpy(copy, &ctx_out->tokenId, TOKEN_ID_SIZE);
     return copy;
 }
 
-const BlsctScript* get_tx_out_script_pubkey(const CTxOut* tx_out) {
+const BlsctScript* get_ctx_out_script_pubkey(const CTxOut* ctx_out) {
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &tx_out->scriptPubKey, SCRIPT_SIZE);
+    std::memcpy(copy, &ctx_out->scriptPubKey, SCRIPT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out) {
+const BlsctPoint* get_ctx_out_spending_key(const CTxOut* ctx_out) {
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.spendingKey.GetVch();
+    auto org = ctx_out->blsctData.spendingKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out) {
+const BlsctPoint* get_ctx_out_ephemeral_key(const CTxOut* ctx_out) {
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.ephemeralKey.GetVch();
+    auto org = ctx_out->blsctData.ephemeralKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out) {
+const BlsctPoint* get_ctx_out_blinding_key(const CTxOut* ctx_out) {
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
-    auto org = tx_out->blsctData.blindingKey.GetVch();
+    auto org = ctx_out->blsctData.blindingKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctRangeProof* get_tx_out_range_proof(const CTxOut* tx_out) {
+const BlsctRangeProof* get_tx_out_range_proof(const CTxOut* ctx_out) {
     auto copy = static_cast<BlsctRangeProof*>(malloc(POINT_SIZE));
     DataStream st{};
-    tx_out->blsctData.rangeProof.Serialize(st);
+    ctx_out->blsctData.rangeProof.Serialize(st);
     std::memcpy(copy, st.data(), st.size());
     return copy;
 };
 
-uint16_t get_tx_out_view_tag(const CTxOut* tx_out) {
-    return tx_out->blsctData.viewTag;
+uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out) {
+    return ctx_out->blsctData.viewTag;
 }
 
 // tx
-BlsctTxRetVal* build_tx(
+BlsctTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
 ) {
@@ -1042,18 +1042,18 @@ BlsctTxRetVal* build_tx(
 
     // build tx
     blsct::DoublePublicKey change_amt_dest;
-    auto maybe_tx = psbt.BuildTx(change_amt_dest);
-    if (!maybe_tx.has_value()) {
+    auto maybe_ctx = psbt.BuildTx(change_amt_dest);
+    if (!maybe_ctx.has_value()) {
         rv->result = BLSCT_FAILURE;
         return rv;
     }
-    auto tx = maybe_tx.value();
+    auto& ctx = maybe_ctx.value();
 
     // serialize tx
     DataStream st{};
     TransactionSerParams params { .allow_witness = true };
     ParamsStream ps {params, st};
-    tx.Serialize(ps);
+    ctx.Serialize(ps);
 
     // copy the buffer containing serializef tx to the result
     rv->result = BLSCT_SUCCESS;
@@ -1064,11 +1064,11 @@ BlsctTxRetVal* build_tx(
     return rv;
 }
 
-const char* get_tx_id(const CMutableTransaction* tx) {
-    Txid txid = tx->GetHash();
-    std::string txid_hex = txid.GetHex();
+const char* get_ctx_id(const CMutableTransaction* ctx) {
+    Txid ctxid = ctx->GetHash();
+    std::string ctxid_hex = ctxid.GetHex();
 
-    return StrToAllocCStr(txid_hex);
+    return StrToAllocCStr(ctxid_hex);
 }
 
 // expects that ser_tx is always valid
@@ -1091,36 +1091,36 @@ CMutableTransaction* ser_tx_to_CMutalbleTransaction(
     return tx;
 }
 
-const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx) {
-    return &tx->vin;
+const std::vector<CTxIn>* get_ctx_ins(const CMutableTransaction* ctx) {
+    return &ctx->vin;
 }
 
-size_t get_tx_in_count(const std::vector<CTxIn>* tx_ins) {
-    return tx_ins->size();
+size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins) {
+    return ctx_ins->size();
 }
 
-const BlsctRetVal* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i) {
-    auto tx_in = &tx_ins->at(i);
-    auto tx_in_size = sizeof(*tx_in);
-    auto tx_in_copy = static_cast<CTxIn*>(malloc(tx_in_size));
-    std::memcpy(tx_in_copy, tx_in, tx_in_size);
-    return succ(tx_in_copy, tx_in_size);
+const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i) {
+    auto ctx_in = &ctx_ins->at(i);
+    auto ctx_in_size = sizeof(*ctx_in);
+    auto ctx_in_copy = static_cast<CTxIn*>(malloc(ctx_in_size));
+    std::memcpy(ctx_in_copy, ctx_in, ctx_in_size);
+    return succ(ctx_in_copy, ctx_in_size);
 }
 
-const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx) {
-    return &tx->vout;
+const std::vector<CTxOut>* get_ctx_outs(const CMutableTransaction* ctx) {
+    return &ctx->vout;
 }
 
-size_t get_tx_out_count(const std::vector<CTxOut>* tx_outs) {
-    return tx_outs->size();
+size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs) {
+    return ctx_outs->size();
 }
 
-const BlsctRetVal* get_tx_out(const std::vector<CTxOut>* tx_outs, const size_t i) {
-    auto tx_out = &tx_outs->at(i);
-    auto tx_out_size = sizeof(*tx_out);
-    auto tx_out_copy = static_cast<CTxOut*>(malloc(tx_out_size));
-    std::memcpy(tx_out_copy, tx_out, tx_out_size);
-    return succ(tx_out_copy, tx_out_size);
+const BlsctRetVal* get_ctx_out(const std::vector<CTxOut>* ctx_outs, const size_t i) {
+    auto ctx_out = &ctx_outs->at(i);
+    auto ctx_out_size = sizeof(*ctx_out);
+    auto ctx_out_copy = static_cast<CTxOut*>(malloc(ctx_out_size));
+    std::memcpy(ctx_out_copy, ctx_out, ctx_out_size);
+    return succ(ctx_out_copy, ctx_out_size);
 }
 
 // signature
