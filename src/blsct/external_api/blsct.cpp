@@ -926,7 +926,7 @@ const BlsctPoint* get_ctx_out_blinding_key(const CTxOut* ctx_out) {
     return copy;
 }
 
-const BlsctRangeProof* get_tx_out_range_proof(const CTxOut* ctx_out) {
+const BlsctRangeProof* get_ctx_out_range_proof(const CTxOut* ctx_out) {
     auto copy = static_cast<BlsctRangeProof*>(malloc(POINT_SIZE));
     DataStream st{};
     ctx_out->blsctData.rangeProof.Serialize(st);
