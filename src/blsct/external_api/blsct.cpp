@@ -893,7 +893,7 @@ const BlsctScript* get_ctx_out_script_pub_key(const CTxOut* ctx_out) {
     return copy;
 }
 
-const BlsctTokenId* getc_ctx_out_token_id(const CTxOut* ctx_out) {
+const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out) {
     auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
     std::memcpy(copy, &ctx_out->tokenId, TOKEN_ID_SIZE);
     return copy;
