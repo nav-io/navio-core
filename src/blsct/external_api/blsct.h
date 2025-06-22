@@ -488,7 +488,7 @@ size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs);
 
 const BlsctRetVal* get_ctx_out(const std::vector<CTxOut>* ctx_outs, const size_t i);
 
-const char* get_tx_id(const CMutableTransaction* ctx);
+const char* get_ctx_id(const CMutableTransaction* ctx);
 
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,
