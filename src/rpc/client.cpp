@@ -29,6 +29,9 @@ public:
  */
 static const CRPCConvertParam vRPCConvertParams[] =
 {
+    {"createblsctrawtransaction", 0, "inputs"},
+    {"createblsctrawtransaction", 1, "outputs"},
+    { "createblsctbalanceproof", 0, "amount" },
     { "setmocktime", 0, "timestamp" },
     { "mockscheduler", 0, "delta_time" },
     { "utxoupdatepsbt", 1, "descriptors" },

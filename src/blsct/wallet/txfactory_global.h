@@ -66,12 +66,48 @@ struct UnsignedInput {
     Scalar gamma;
     PrivateKey sk;
     bool is_staked_commitment;
+
+    template <typename Stream>
+    void Serialize(Stream& s) const
+    {
+        ::Serialize(s, in);
+        ::Serialize(s, value);
+        ::Serialize(s, gamma);
+        ::Serialize(s, sk);
+        ::Serialize(s, is_staked_commitment);
+    }
+
+    template <typename Stream>
+    void Unserialize(Stream& s)
+    {
+        ::Unserialize(s, in);
+        ::Unserialize(s, value);
+        ::Unserialize(s, gamma);
+        ::Unserialize(s, sk);
+        ::Unserialize(s, is_staked_commitment);
+    }
 };
 
 struct Amounts {
     CAmount nFromInputs;
     CAmount nFromOutputs;
     CAmount nFromFee;
+
+    template <typename Stream>
+    void Serialize(Stream& s) const
+    {
+        ::Serialize(s, nFromInputs);
+        ::Serialize(s, nFromOutputs);
+        ::Serialize(s, nFromFee);
+    }
+
+    template <typename Stream>
+    void Unserialize(Stream& s)
+    {
+        ::Unserialize(s, nFromInputs);
+        ::Unserialize(s, nFromOutputs);
+        ::Unserialize(s, nFromFee);
+    }
 };
 
 CTransactionRef

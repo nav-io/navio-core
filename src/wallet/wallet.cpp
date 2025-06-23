@@ -2763,6 +2763,13 @@ util::Result<CTxDestination> CWallet::GetNewChangeDestination(const OutputType t
 std::optional<int64_t> CWallet::GetOldestKeyPoolTime() const
 {
     LOCK(cs_wallet);
+    if (IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
+        auto blsct_km = GetBLSCTKeyMan();
+        if (blsct_km) {
+            return blsct_km->GetOldestSubAddressPoolTime(0);
+        }
+    }
+
     if (m_spk_managers.empty()) {
         return std::nullopt;
     }
