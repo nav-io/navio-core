@@ -1672,10 +1672,10 @@ RPCHelpMan signblsctrawtransaction()
     };
 }
 
-RPCHelpMan decodeblsctrawtransaction()
+RPCHelpMan decodeblsctrawunsignedtransaction()
 {
     return RPCHelpMan{
-        "decodeblsctrawtransaction",
+        "decodeblsctrawunsignedtransaction",
         "\nDecode a BLSCT raw transaction and return a JSON object describing the transaction structure.\n",
         {
             {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"},
@@ -1686,7 +1686,7 @@ RPCHelpMan decodeblsctrawtransaction()
                                                                                                                   {RPCResult::Type::OBJ, "", "", {
                                                                                                                                                      {RPCResult::Type::STR_HEX, "txid", "The transaction id"},
                                                                                                                                                      {RPCResult::Type::NUM, "vout", "The output number"},
-                                                                                                                                                     {RPCResult::Type::NUM, "value", "The input value in satoshis"},
+                                                                                                                                                     {RPCResult::Type::NUM, "value", "The input value"},
                                                                                                                                                      {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                      {RPCResult::Type::BOOL, "is_staked_commitment", "Whether this input is a staked commitment"},
                                                                                                                                                  }},
@@ -1700,7 +1700,7 @@ RPCHelpMan decodeblsctrawtransaction()
                                                                                                                 }},
                                               {RPCResult::Type::STR_AMOUNT, "fee", "The transaction fee in " + CURRENCY_UNIT},
                                           }},
-        RPCExamples{HelpExampleCli("decodeblsctrawtransaction", "\"hexstring\"") + HelpExampleRpc("decodeblsctrawtransaction", "\"hexstring\"")},
+        RPCExamples{HelpExampleCli("decodeblsctrawunsignedtransaction", "\"hexstring\"") + HelpExampleRpc("decodeblsctrawunsignedtransaction", "\"hexstring\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::vector<unsigned char> tx_data = ParseHex(request.params[0].get_str());
             auto unsigned_tx_opt = blsct::UnsignedTransaction::Deserialize(tx_data);
@@ -1765,7 +1765,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &createblsctrawtransaction},
         {"blsct", &fundblsctrawtransaction},
         {"blsct", &signblsctrawtransaction},
-        {"blsct", &decodeblsctrawtransaction},
+        {"blsct", &decodeblsctrawunsignedtransaction},
     };
     return commands;
 }

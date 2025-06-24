@@ -60,7 +60,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.test_createblsctrawtransaction(wallet1, wallet2, address1, address2)
         self.test_fundblsctrawtransaction(wallet1, wallet2, address1, address2)
         self.test_signblsctrawtransaction(wallet1, wallet2, address1, address2)
-        self.test_decodeblsctrawtransaction(wallet1, wallet2, address1, address2)
+        self.test_decodeblsctrawunsignedtransaction(wallet1, wallet2, address1, address2)
         self.test_integration_workflow(wallet1, wallet2, address1, address2)
 
     def test_createblsctrawtransaction(self, wallet1, wallet2, address1, address2):
@@ -172,9 +172,9 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         self.log.info("signblsctrawtransaction tests passed")
 
-    def test_decodeblsctrawtransaction(self, wallet1, wallet2, address1, address2):
-        """Test decodeblsctrawtransaction RPC method"""
-        self.log.info("Testing decodeblsctrawtransaction")
+    def test_decodeblsctrawunsignedtransaction(self, wallet1, wallet2, address1, address2):
+        """Test decodeblsctrawunsignedtransaction RPC method"""
+        self.log.info("Testing decodeblsctrawunsignedtransaction")
 
         # Get some unspent outputs
         unspent = wallet1.listblsctunspent()
@@ -185,15 +185,15 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 1: Decode a raw transaction
         raw_tx = wallet1.createblsctrawtransaction([{"txid": utxo['txid'], "vout": utxo['vout']}], [])
-        decoded_tx = wallet1.decodeblsctrawtransaction(raw_tx)
+        decoded_tx = wallet1.decodeblsctrawunsignedtransaction(raw_tx)
         self.log.info(f"Decoded transaction: {decoded_tx}")
 
         # Test 2: Error cases
         # Invalid hex string
         assert_raises_rpc_error(-22, "Transaction deserialization faile", 
-                               wallet1.decodeblsctrawtransaction, "invalid_hex")
+                               wallet1.decodeblsctrawunsignedtransaction, "invalid_hex")
 
-        self.log.info("decodeblsctrawtransaction tests passed")
+        self.log.info("decodeblsctrawunsignedtransaction tests passed")
 
     def test_integration_workflow(self, wallet1, wallet2, address1, address2):
         """Test the complete workflow: create -> fund -> sign -> broadcast"""
