@@ -277,6 +277,7 @@ typedef struct {
     BlsctScalar spending_key;
     BlsctTokenId token_id;
     BlsctOutPoint out_point;
+    bool staked_commitment;
     bool rbf;
 } BlsctTxIn;
 
@@ -404,7 +405,7 @@ BlsctAmountsRetVal* recover_amount(
 // out point
 // txid is 32 bytes and represented as 64-char hex str
 BlsctRetVal* gen_out_point(
-    const char* tx_id_c_str,
+    const char* ctx_id_c_str,
     const uint32_t n
 );
 
@@ -419,7 +420,7 @@ BlsctRetVal* deserialize_script(const char* hex);
 const char* serialize_signature(const BlsctSignature* blsct_signature);
 BlsctRetVal* deserialize_signature(const char* hex);
 
-// tx_in
+// tx in
 
 // returns BlsctTxIn
 BlsctRetVal* build_tx_in(
@@ -428,19 +429,28 @@ BlsctRetVal* build_tx_in(
     const BlsctScalar* spending_key,
     const BlsctTokenId* token_id,
     const BlsctOutPoint* out_point,
+    const bool staked_commitment,
     const bool rbf
 );
 
 BlsctRetVal* dpk_to_sub_addr(
     const void* blsct_dpk
 );
+uint64_t get_tx_in_amount(const BlsctTxIn* tx_in);
+uint64_t get_tx_in_gamma(const BlsctTxIn* tx_in);
+const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in);
+const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in);
+const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in);
+bool get_tx_in_staked_commitment(const BlsctTxIn* tx_in);
+bool get_tx_in_rbf(const BlsctTxIn* tx_in);
+
 const BlsctScript* get_ctx_in_script_sig(const CTxIn* ctx_in);
 uint32_t get_ctx_in_sequence(const CTxIn* ctx_in);
 const BlsctScript* get_ctx_in_script_witness(const CTxIn* ctx_in);
 const BlsctTxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in);
 uint32_t get_ctx_in_prev_out_n(const CTxIn* ctx_in);
 
-// tx_out
+// tx out
 
 // returns BlsctTxOut
 BlsctRetVal* build_tx_out(
@@ -451,6 +461,14 @@ BlsctRetVal* build_tx_out(
     const TxOutputType output_type,
     const uint64_t min_stake
 );
+
+const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out);
+uint64_t get_tx_out_amount(const BlsctTxOut* tx_out);
+const char* get_tx_out_memo(const BlsctTxOut* tx_out);
+const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out);
+TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out);
+uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
+
 uint64_t get_ctx_out_value(const CTxOut* ctx_out);
 const BlsctScript* get_ctx_out_script_pub_key(const CTxOut* ctx_out);
 const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out);

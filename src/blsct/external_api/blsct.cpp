@@ -710,16 +710,16 @@ BlsctAmountsRetVal* recover_amount(
 }
 
 BlsctRetVal* gen_out_point(
-    const char* tx_id_c_str,
+    const char* ctx_id_c_str,
     const uint32_t out_index
 ) {
     MALLOC(BlsctOutPoint, blsct_out_point);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_out_point);
 
-    std::string tx_id_str(tx_id_c_str, TX_ID_STR_LEN);
+    std::string ctx_id_str(ctx_id_c_str, TX_ID_STR_LEN);
 
-    auto tx_id = TxidFromString(tx_id_str);
-    COutPoint out_point { tx_id, out_index };
+    auto ctx_id = TxidFromString(ctx_id_str);
+    COutPoint out_point { ctx_id, out_index };
 
     SERIALIZE_AND_COPY_WITH_STREAM(
         out_point,
@@ -813,6 +813,7 @@ BlsctRetVal* build_tx_in(
     const BlsctScalar* spending_key,
     const BlsctTokenId* token_id,
     const BlsctOutPoint* out_point,
+    const bool staked_commitment,
     const bool rbf
 ) {
     MALLOC(BlsctTxIn, tx_in);
@@ -823,9 +824,47 @@ BlsctRetVal* build_tx_in(
     BLSCT_COPY(spending_key, tx_in->spending_key);
     BLSCT_COPY(token_id, tx_in->token_id);
     BLSCT_COPY(out_point, tx_in->out_point);
+    tx_in->staked_commitment = staked_commitment;
     tx_in->rbf = rbf;
 
     return succ(tx_in, sizeof(BlsctTxIn));
+}
+
+uint64_t get_tx_in_amount(const BlsctTxIn* tx_in) {
+    return tx_in->amount;
+}
+
+uint64_t get_tx_in_gamma(const BlsctTxIn* tx_in) {
+    return tx_in->gamma;
+}
+
+const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in) {
+    MALLOC(BlsctScalar, spending_key);
+    RETURN_IF_MEM_ALLOC_FAILED(spending_key);
+    BLSCT_COPY(tx_in->spending_key, *spending_key);
+    return spending_key;
+}
+
+const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in) {
+    MALLOC(BlsctTokenId, token_id);
+    RETURN_IF_MEM_ALLOC_FAILED(token_id);
+    BLSCT_COPY(tx_in->token_id, *token_id);
+    return token_id;
+}
+
+const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in) {
+    MALLOC(BlsctOutPoint, out_point);
+    RETURN_IF_MEM_ALLOC_FAILED(out_point);
+    BLSCT_COPY(tx_in->out_point, *out_point);
+    return out_point;
+}
+
+bool get_tx_in_staked_commitment(const BlsctTxIn* tx_in) {
+    return tx_in->staked_commitment;
+}
+
+bool get_tx_in_rbf(const BlsctTxIn* tx_in) {
+    return tx_in->rbf;
 }
 
 const BlsctScript* get_ctx_in_script_sig(const CTxIn* ctx_in) {
@@ -858,7 +897,7 @@ uint32_t get_ctx_in_prev_out_n(const CTxIn* ctx_in) {
 BlsctRetVal* build_tx_out(
     const BlsctSubAddr* blsct_dest,
     const uint64_t amount,
-    const char* in_memo_c_str,
+    const char* memo_c_str,
     const BlsctTokenId* blsct_token_id,
     const TxOutputType output_type,
     const uint64_t min_stake
@@ -870,17 +909,51 @@ BlsctRetVal* build_tx_out(
     tx_out->amount = amount;
 
     // copy memo to tx_out
-    size_t in_memo_c_str_len = std::strlen(in_memo_c_str);
-    if (in_memo_c_str_len > MAX_MEMO_LEN) {
+    size_t memo_c_str_len = std::strlen(memo_c_str);
+    if (memo_c_str_len > MAX_MEMO_LEN) {
         return err(BLSCT_MEMO_TOO_LONG);
     }
-    std::memcpy(tx_out->memo_c_str, in_memo_c_str, in_memo_c_str_len + 1);
+    std::memcpy(tx_out->memo_c_str, memo_c_str, memo_c_str_len + 1);
 
     BLSCT_COPY(blsct_token_id, tx_out->token_id);
     tx_out->output_type = output_type;
     tx_out->min_stake = min_stake;
 
     return succ(tx_out, sizeof(BlsctTxOut));
+}
+
+const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out) {
+    MALLOC(BlsctSubAddr, sub_addr);
+    RETURN_IF_MEM_ALLOC_FAILED(sub_addr);
+    BLSCT_COPY(tx_out->dest, *sub_addr);
+    return sub_addr;
+}
+
+uint64_t get_tx_out_amount(const BlsctTxOut* tx_out) {
+    return tx_out->amount;
+}
+
+const char* get_tx_out_memo(const BlsctTxOut* tx_out) {
+    size_t memo_c_str_len = std::strlen(tx_out->memo_c_str);
+    char* memo_c_str = (char*) malloc(memo_c_str_len);
+    RETURN_IF_MEM_ALLOC_FAILED(memo_c_str);
+    std::memcpy(memo_c_str, tx_out->memo_c_str, memo_c_str_len + 1);
+    return memo_c_str;
+}
+
+const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out) {
+    MALLOC(BlsctTokenId, token_id);
+    RETURN_IF_MEM_ALLOC_FAILED(token_id);
+    BLSCT_COPY(tx_out->token_id, *token_id);
+    return token_id;
+}
+
+TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out) {
+    return tx_out->output_type;
+}
+
+uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out) {
+    return tx_out->min_stake;
 }
 
 uint64_t get_ctx_out_value(const CTxOut* tx_out) {
@@ -987,7 +1060,9 @@ BlsctTxRetVal* build_ctx(
             gamma,
             spending_key,
             token_id,
-            out_point
+            out_point,
+            tx_in.staked_commitment,
+            tx_in.rbf
         );
     }
 
