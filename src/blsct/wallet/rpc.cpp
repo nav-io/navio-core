@@ -1623,9 +1623,8 @@ RPCHelpMan fundblsctrawtransaction()
                     blsct::UnsignedOutput change_output = CreateOutput(change_subaddr.GetKeys(), change_value, "", TokenId(), Scalar::Rand());
                     unsigned_tx.AddOutput(change_output);
                 }
-
-                return HexStr(unsigned_tx.Serialize());
             }
+            return HexStr(unsigned_tx.Serialize());
         },
     };
 }
@@ -1672,10 +1671,10 @@ RPCHelpMan signblsctrawtransaction()
     };
 }
 
-RPCHelpMan decodeblsctrawunsignedtransaction()
+RPCHelpMan decodeblsctrawtransaction()
 {
     return RPCHelpMan{
-        "decodeblsctrawunsignedtransaction",
+        "decodeblsctrawtransaction",
         "\nDecode a BLSCT raw transaction and return a JSON object describing the transaction structure.\n",
         {
             {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"},
@@ -1700,7 +1699,7 @@ RPCHelpMan decodeblsctrawunsignedtransaction()
                                                                                                                 }},
                                               {RPCResult::Type::STR_AMOUNT, "fee", "The transaction fee in " + CURRENCY_UNIT},
                                           }},
-        RPCExamples{HelpExampleCli("decodeblsctrawunsignedtransaction", "\"hexstring\"") + HelpExampleRpc("decodeblsctrawunsignedtransaction", "\"hexstring\"")},
+        RPCExamples{HelpExampleCli("decodeblsctrawtransaction", "\"hexstring\"") + HelpExampleRpc("decodeblsctrawtransaction", "\"hexstring\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::vector<unsigned char> tx_data = ParseHex(request.params[0].get_str());
             auto unsigned_tx_opt = blsct::UnsignedTransaction::Deserialize(tx_data);
@@ -1728,9 +1727,35 @@ RPCHelpMan decodeblsctrawunsignedtransaction()
             UniValue outputs(UniValue::VARR);
             for (const auto& output : unsigned_tx.GetOutputs()) {
                 UniValue output_obj(UniValue::VOBJ);
+
+                // Decode the address from the CTxOut
+                CTxDestination destination;
+                if (ExtractDestination(output.out.scriptPubKey, destination)) {
+                    output_obj.pushKV("address", EncodeDestination(destination));
+                } else {
+                    output_obj.pushKV("address", "");
+                }
+
                 output_obj.pushKV("amount", ValueFromAmount(output.value.GetUint64()));
+
+                // Extract memo from script if possible
+                std::string memo = "";
+                if (output.out.scriptPubKey.IsUnspendable()) {
+                    // Try to extract memo from OP_RETURN
+                    std::vector<unsigned char> data;
+                    if (output.out.scriptPubKey.size() > 1 && output.out.scriptPubKey[0] == OP_RETURN) {
+                        data.assign(output.out.scriptPubKey.begin() + 1, output.out.scriptPubKey.end());
+                        memo = std::string(data.begin(), data.end());
+                    }
+                }
+                output_obj.pushKV("memo", memo);
+
+                // Token ID would need to be extracted from the token_key or other fields
+                output_obj.pushKV("token_id", "");
+
                 output_obj.pushKV("blinding_key", HexStr(output.blindingKey.GetVch()));
                 output_obj.pushKV("gamma", HexStr(output.gamma.GetVch()));
+                output_obj.pushKV("token_key", HexStr(output.tokenKey.GetVch()));
                 outputs.push_back(output_obj);
             }
             result.pushKV("outputs", outputs);
@@ -1738,6 +1763,125 @@ RPCHelpMan decodeblsctrawunsignedtransaction()
             // Add fee
             result.pushKV("fee", ValueFromAmount(unsigned_tx.GetFee()));
 
+            return result;
+        },
+    };
+}
+
+static RPCHelpMan getblsctrecoverydata()
+{
+    return RPCHelpMan{
+        "getblsctrecoverydata",
+        "\nGet BLSCT recovery data for transaction output(s)\n",
+        {
+            {"txid_or_hex", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction id or raw transaction hex"},
+            {"vout", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The output index. If omitted, shows data for all outputs."},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                                        {RPCResult::Type::ARR, "outputs", "Array of outputs with recovery data", {
+                                                                                                                           {RPCResult::Type::OBJ, "", "", {
+                                                                                                                                                              {RPCResult::Type::NUM, "vout", "Output index"},
+                                                                                                                                                              {RPCResult::Type::STR_AMOUNT, "amount", "The recovered amount in " + CURRENCY_UNIT},
+                                                                                                                                                              {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
+                                                                                                                                                              {RPCResult::Type::STR, "message", "The memo/message associated with this output"},
+                                                                                                                                                          }},
+                                                                                                                       }},
+                                          }},
+        RPCExamples{HelpExampleCli("getblsctrecoverydata", "\"mytxid\"") + HelpExampleCli("getblsctrecoverydata", "\"mytxid\" 1") + HelpExampleRpc("getblsctrecoverydata", "\"mytxid\", 1")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const wallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!wallet) return NullUniValue;
+
+            LOCK(wallet->cs_wallet);
+
+            CMutableTransaction mtx;
+            uint256 hash;
+            bool is_hex_input = false;
+
+            // Parse input as either txid or hex
+            std::string input = request.params[0].get_str();
+            if (input.length() == 64) {
+                hash = uint256S(input);
+                auto tx = wallet->GetWalletTx(hash);
+                if (!tx) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction not found in wallet");
+                }
+                mtx = CMutableTransaction(*tx->tx);
+            } else {
+                if (!DecodeHexTx(mtx, input)) {
+                    throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction decode failed");
+                }
+                hash = mtx.GetHash();
+                is_hex_input = true;
+            }
+
+            int specific_vout = -1;
+            if (!request.params[1].isNull()) {
+                specific_vout = request.params[1].getInt<int>();
+                if (specific_vout < 0 || specific_vout >= (int)mtx.vout.size()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "vout index out of range");
+                }
+            }
+
+            UniValue result(UniValue::VOBJ);
+            UniValue outputs(UniValue::VARR);
+
+            if (is_hex_input) {
+                // For hex input, use BLSCT key manager to recover outputs
+                auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+
+                for (size_t i = 0; i < mtx.vout.size(); i++) {
+                    if (specific_vout != -1 && specific_vout != (int)i) {
+                        continue;
+                    }
+
+                    const CTxOut& out = mtx.vout[i];
+                    UniValue output(UniValue::VOBJ);
+                    output.pushKV("vout", (int)i);
+
+                    // Use RecoverOutputs for hex input
+                    auto result = blsct_km->RecoverOutputs({out});
+                    if (!out.HasBLSCTRangeProof()) {
+                        // If recovery failed, show what we can
+                        output.pushKV("amount", ValueFromAmount(out.nValue));
+                        output.pushKV("gamma", "");
+                        output.pushKV("message", "");
+                        outputs.push_back(output);
+                    } else if (result.is_completed && !result.amounts.empty()) {
+                        auto recovery_data = result.amounts[0];
+                        output.pushKV("amount", ValueFromAmount(recovery_data.amount));
+                        output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
+                        output.pushKV("message", recovery_data.message);
+                        outputs.push_back(output);
+                    }
+                }
+            } else {
+                // For txid input, use wallet transaction
+                auto wallet_tx = wallet->GetWalletTx(hash);
+                if (!wallet_tx) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction not found in wallet");
+                }
+
+                for (size_t i = 0; i < mtx.vout.size(); i++) {
+                    if (specific_vout != -1 && specific_vout != (int)i) {
+                        continue;
+                    }
+
+                    UniValue output(UniValue::VOBJ);
+                    output.pushKV("vout", (int)i);
+
+                    // Get recovery data from wallet transaction
+                    auto recovery_data = wallet_tx->GetBLSCTRecoveryData(i);
+                    output.pushKV("amount", ValueFromAmount(recovery_data.amount));
+                    output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
+                    output.pushKV("message", recovery_data.message);
+
+                    outputs.push_back(output);
+                }
+            }
+
+            result.pushKV("outputs", outputs);
             return result;
         },
     };
@@ -1765,7 +1909,8 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &createblsctrawtransaction},
         {"blsct", &fundblsctrawtransaction},
         {"blsct", &signblsctrawtransaction},
-        {"blsct", &decodeblsctrawunsignedtransaction},
+        {"blsct", &decodeblsctrawtransaction},
+        {"blsct", &getblsctrecoverydata},
     };
     return commands;
 }
