@@ -18,11 +18,11 @@ void UnsignedOutput::GenerateKeys(Scalar blindingKey, DoublePublicKey destKeys)
 
     Point vk, sk;
 
-    if (!destKeys.GetViewKey(vk)) {
+    if (!destKeys.GetViewKey(vk) || vk.IsZero()) {
         throw std::runtime_error(strprintf("%s: could not get view key from destination address\n", __func__));
     }
 
-    if (!destKeys.GetSpendKey(sk)) {
+    if (!destKeys.GetSpendKey(sk) || sk.IsZero()) {
         throw std::runtime_error(strprintf("%s: could not get spend key from destination address\n", __func__));
     }
 
