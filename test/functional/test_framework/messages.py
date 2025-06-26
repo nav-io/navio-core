@@ -519,7 +519,7 @@ class BLSCTSignature:
         r += ser_bytes(self.sig)
         return r
 
-class RangeProof:
+class RangeProof_old:
     __slots__ = ("Vs", "A", "T1", "T2", "mu", "tau_x", "Ls", "Rs", "a", "b", "t_hat")
 
     def __init__(self, proof=None):
