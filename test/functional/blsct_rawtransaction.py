@@ -272,11 +272,11 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 4: Error cases
         # Invalid hex string
-        assert_raises_rpc_error(-22, "Transaction decode failed", 
+        assert_raises_rpc_error(-22, "Transaction decode failed",
                                wallet1.getblsctrecoverydata, "invalid_hex")
 
         # Invalid vout index
-        assert_raises_rpc_error(-8, "vout index out of range", 
+        assert_raises_rpc_error(-8, "vout index out of range",
                                wallet1.getblsctrecoverydata, signed_tx, 999)
 
         # Transaction not found in wallet (for txid input)
