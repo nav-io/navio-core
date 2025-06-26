@@ -584,7 +584,6 @@ libbitcoin_node_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/tokens/info.cpp \
   blsct/tokens/rpc.cpp \
-  blsct/wallet/rpc.cpp \
   blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/verification.cpp \
   blsct/signature.cpp \
@@ -744,7 +743,6 @@ libbitcoin_wallet_a_SOURCES = \
   blsct/wallet/helpers.cpp \
   blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
-  blsct/wallet/rpc.cpp \
   blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/txfactory.cpp \
   blsct/wallet/txfactory_base.cpp \
