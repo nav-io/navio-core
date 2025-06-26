@@ -51,7 +51,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Generate blocks to fund the first wallet
         self.log.info("Generating 101 blocks to fund wallet1")
         block_hashes = self.generatetoblsctaddress(self.nodes[0], 101, address1)
-        
+
         # Check initial balance
         balance1 = wallet1.getbalance()
         self.log.info(f"Initial balance in wallet1: {balance1}")
@@ -71,17 +71,17 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Get some unspent outputs
         unspent = wallet1.listblsctunspent()
         assert_greater_than(len(unspent), 0)
-        
+
         utxo = unspent[0]
         self.log.info(f"Using UTXO: {utxo['txid']}:{utxo['vout']}")
 
         # Test 1: Create raw transaction with minimal inputs (wallet will fill missing data)
         inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
         outputs = [{"address": address2, "amount": 0.1, "memo": "Test transaction"}]
-        
+
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
         self.log.info(f"Created raw transaction: {raw_tx[:100]}...")
-        
+
         # Test 2: Create raw transaction with all optional fields provided
         inputs_with_data = [{
             "txid": utxo['txid'], 
@@ -89,7 +89,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
             "value": int(utxo['amount'] * COIN),
             "is_staked_commitment": False
         }]
-        
+
         raw_tx_with_data = wallet1.createblsctrawtransaction(inputs_with_data, outputs)
 
         # Test 3: Create raw transaction with multiple outputs
@@ -97,7 +97,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
             {"address": address2, "amount": 0.05, "memo": "First output"},
             {"address": address1, "amount": 0.03, "memo": "Second output"}
         ]
-        
+
         raw_tx_multi = wallet1.createblsctrawtransaction(inputs, outputs_multi)
 
         # Test 4: Error cases
@@ -120,13 +120,13 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Create a raw transaction with insufficient inputs
         inputs = []  # No inputs
         outputs = [{"address": address2, "amount": 0.1, "memo": "Test funding"}]
-        
+
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
-        
+
         # Fund the transaction
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
         self.log.info(f"Funded transaction: {funded_tx[:100]}...")
-        
+
         # Verify the funded transaction is different from the original
         assert funded_tx != raw_tx, "Funded transaction should be different from original"
 
@@ -147,7 +147,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         balance = wallet1.getbalance()
         large_outputs = [{"address": address2, "amount": balance + 1, "memo": "Too much"}]
         large_raw_tx = wallet1.createblsctrawtransaction(inputs, large_outputs)
-        
+
         assert_raises_rpc_error(-6, "Insufficient funds", 
                                wallet1.fundblsctrawtransaction, large_raw_tx)
 
@@ -160,14 +160,14 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Create and fund a raw transaction
         inputs = []
         outputs = [{"address": address2, "amount": 0.1, "memo": "Test signing"}]
-        
+
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
-        
+
         # Sign the transaction
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
         self.log.info(f"Signed transaction: {signed_tx[:100]}...")
-        
+
         # Verify the signed transaction is different from the funded transaction
         assert signed_tx != funded_tx, "Signed transaction should be different from funded transaction"
 
@@ -180,7 +180,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Get some unspent outputs
         unspent = wallet1.listblsctunspent()
         assert_greater_than(len(unspent), 0)
-        
+
         utxo = unspent[0]
         self.log.info(f"Using UTXO: {utxo['txid']}:{utxo['vout']}")
 
@@ -203,7 +203,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Get some unspent outputs
         unspent = wallet1.listblsctunspent()
         assert_greater_than(len(unspent), 0)
-        
+
         utxo = unspent[0]
         self.log.info(f"Using UTXO: {utxo['txid']}:{utxo['vout']}")
 
@@ -213,7 +213,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
         recovery_data = wallet1.getblsctrecoverydata(signed_tx)
         self.log.info(f"Recovery data from hex: {recovery_data}")
-        
+
         assert_equal(len(recovery_data["outputs"]), 2)
         # Verify the structure
         assert "outputs" in recovery_data
@@ -230,7 +230,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
             specific_vout = recovery_data["outputs"][0]["vout"]
             recovery_data_specific = wallet1.getblsctrecoverydata(signed_tx, specific_vout)
             self.log.info(f"Recovery data for vout {specific_vout}: {recovery_data_specific}")
-            
+
             # Should have exactly one output
             assert_equal(len(recovery_data_specific["outputs"]), 1)
             assert_equal(recovery_data_specific["outputs"][0]["vout"], specific_vout)
@@ -239,25 +239,25 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Create a simple transaction
         inputs = []
         outputs = [{"address": address2, "amount": 0.01, "memo": "Test recovery data"}]
-        
+
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
-        
+
         # Broadcast the transaction
         txid = self.nodes[0].sendrawtransaction(signed_tx)
         self.log.info(f"Broadcasted transaction: {txid}")
-        
+
         # Mine a block to confirm
         self.generatetoblsctaddress(self.nodes[0], 1, address1)
-        
+
         # Get the last received transaction to get the actual txid
         transactions = wallet1.listtransactions("*", 1, 0)
         assert_greater_than(len(transactions), 0)
         last_tx = transactions[0]
         actual_txid = last_tx["txid"]
         self.log.info(f"Last received transaction: {actual_txid}")
-        
+
         # Get recovery data by txid
         recovery_data_txid = wallet1.getblsctrecoverydata(actual_txid)
         recovery_data_signed = wallet1.getblsctrecoverydata(actual_txid)
@@ -265,7 +265,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.log.info(f"Recovery data from signed: {recovery_data_signed}")
 
         assert_equal(recovery_data_txid, recovery_data_signed)
-        
+
         # Verify we can get recovery data for specific vout
         if len(recovery_data_txid["outputs"]) > 0:
             specific_vout = recovery_data_txid["outputs"][0]["vout"]
@@ -276,11 +276,11 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Invalid hex string
         assert_raises_rpc_error(-22, "Transaction decode failed", 
                                wallet1.getblsctrecoverydata, "invalid_hex")
-        
+
         # Invalid vout index
         assert_raises_rpc_error(-8, "vout index out of range", 
                                wallet1.getblsctrecoverydata, signed_tx, 999)
-        
+
         # Transaction not found in wallet (for txid input)
         fake_txid = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
         assert_raises_rpc_error(-8, "Transaction not found in wallet", 
@@ -295,7 +295,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Step 1: Create raw transaction
         inputs = []
         outputs = [{"address": address2, "amount": 0.05, "memo": "Integration test"}]
-        
+
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
         self.log.info("Step 1: Created raw transaction")
 

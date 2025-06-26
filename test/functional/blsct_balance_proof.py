@@ -61,31 +61,30 @@ class NavioBlsctBalanceProofTest(BitcoinTestFramework):
 
         # Test creating a balance proof
         self.log.info("Testing createblsctbalanceproof")
-        
+
         # Create a valid proof
         proof_result = wallet.createblsctbalanceproof(balance / 2)
         assert "proof" in proof_result, "Proof not found in result"
         proof_hex = proof_result["proof"]
-        
+
         # Test verifying the proof
         self.log.info("Testing verifyblsctbalanceproof")
-        
+
         # Test with invalid proof format
         assert_raises_rpc_error(-8, "Invalid proof format", wallet.verifyblsctbalanceproof, "invalid")
-        
+
         # Test with modified proof (corrupt the hex string)
         if len(proof_hex) > 2:
             # Modify the last character of the hex string
             modified_proof = proof_hex[::-1]
             assert_raises_rpc_error(-8, "Invalid proof format",wallet_2.verifyblsctbalanceproof, modified_proof)
-        
+
         # Verify the valid proof
         verify_result = wallet_2.verifyblsctbalanceproof(proof_hex)
         assert "valid" in verify_result, "Valid field not found in result"
         assert "min_amount" in verify_result, "Min amount field not found in result"
         assert verify_result["valid"], "Proof should be valid"
         assert_equal(verify_result["min_amount"], balance / 2)
-        
 
 if __name__ == '__main__':
     NavioBlsctBalanceProofTest().main() 
