@@ -744,6 +744,7 @@ libbitcoin_wallet_a_SOURCES = \
   blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
   blsct/wallet/unsigned_transaction.cpp \
+  blsct/wallet/rpc.cpp \
   blsct/wallet/txfactory.cpp \
   blsct/wallet/txfactory_base.cpp \
   blsct/wallet/txfactory_global.cpp \
