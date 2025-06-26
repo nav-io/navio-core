@@ -5,7 +5,6 @@
 
 """Test the BLSCT raw transaction RPC methods."""
 
-from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -33,11 +32,11 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
     def run_test(self):
         self.log.info("Setting up wallets and generating initial blocks")
-        
+
         # Create BLSCT wallets
         self.nodes[0].createwallet(wallet_name="wallet1", blsct=True)
         self.nodes[1].createwallet(wallet_name="wallet2", blsct=True)
-        
+
         wallet1 = self.nodes[0].get_wallet_rpc("wallet1")
         wallet2 = self.nodes[1].get_wallet_rpc("wallet2")
 
@@ -50,7 +49,6 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Generate blocks to fund the first wallet
         self.log.info("Generating 101 blocks to fund wallet1")
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 101, address1)
 
         # Check initial balance
         balance1 = wallet1.getbalance()
@@ -84,14 +82,14 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 2: Create raw transaction with all optional fields provided
         inputs_with_data = [{
-            "txid": utxo['txid'], 
+            "txid": utxo['txid'],
             "vout": utxo['vout'],
             "value": int(utxo['amount'] * COIN),
             "is_staked_commitment": False
         }]
 
         raw_tx_with_data = wallet1.createblsctrawtransaction(inputs_with_data, outputs)
-
+        self.log.info(f"Created raw transaction with data: {raw_tx_with_data[:100]}...")
         # Test 3: Create raw transaction with multiple outputs
         outputs_multi = [
             {"address": address2, "amount": 0.05, "memo": "First output"},
@@ -99,16 +97,16 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         ]
 
         raw_tx_multi = wallet1.createblsctrawtransaction(inputs, outputs_multi)
-
+        self.log.info(f"Created raw transaction with multiple outputs: {raw_tx_multi[:100]}...")
         # Test 4: Error cases
         # Invalid address
         outputs_invalid = [{"address": "invalid_address", "amount": 0.1}]
-        assert_raises_rpc_error(-5, "Invalid BLSCT address", 
+        assert_raises_rpc_error(-5, "Invalid BLSCT address",
                                wallet1.createblsctrawtransaction, inputs, outputs_invalid)
 
         # Negative amount
         outputs_negative = [{"address": address2, "amount": -0.1}]
-        assert_raises_rpc_error(-3, "Amount out of range", 
+        assert_raises_rpc_error(-3, "Amount out of range",
                                wallet1.createblsctrawtransaction, inputs, outputs_negative)
 
         self.log.info("createblsctrawtransaction tests passed")
@@ -133,14 +131,14 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Test with custom change address
         change_address = wallet2.getnewaddress(label="", address_type="blsct")
         funded_tx_with_change = wallet1.fundblsctrawtransaction(raw_tx, change_address)
-
+        self.log.info(f"Funded transaction with change: {funded_tx_with_change[:100]}...")
         # Test error cases
         # Invalid hex string
-        assert_raises_rpc_error(-22, "Transaction deserialization faile", 
+        assert_raises_rpc_error(-22, "Transaction deserialization faile",
                                wallet1.fundblsctrawtransaction, "invalid_hex")
 
         # Invalid change address
-        assert_raises_rpc_error(-5, "Invalid BLSCT change address", 
+        assert_raises_rpc_error(-5, "Invalid BLSCT change address",
                                wallet1.fundblsctrawtransaction, raw_tx, "invalid_address")
 
         # Test with insufficient funds (create a transaction larger than available balance)
@@ -148,7 +146,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         large_outputs = [{"address": address2, "amount": balance + 1, "memo": "Too much"}]
         large_raw_tx = wallet1.createblsctrawtransaction(inputs, large_outputs)
 
-        assert_raises_rpc_error(-6, "Insufficient funds", 
+        assert_raises_rpc_error(-6, "Insufficient funds",
                                wallet1.fundblsctrawtransaction, large_raw_tx)
 
         self.log.info("fundblsctrawtransaction tests passed")
@@ -191,7 +189,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 2: Error cases
         # Invalid hex string
-        assert_raises_rpc_error(-22, "Transaction deserialization faile", 
+        assert_raises_rpc_error(-22, "Transaction deserialization faile",
                                wallet1.decodeblsctrawtransaction, "invalid_hex")
 
         self.log.info("decodeblsctrawtransaction tests passed")
@@ -283,7 +281,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Transaction not found in wallet (for txid input)
         fake_txid = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-        assert_raises_rpc_error(-8, "Transaction not found in wallet", 
+        assert_raises_rpc_error(-8, "Transaction not found in wallet",
                                wallet1.getblsctrecoverydata, fake_txid)
 
         self.log.info("getblsctrecoverydata tests passed")
@@ -327,4 +325,4 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    BLSCTRawTransactionTest().main() 
+    BLSCTRawTransactionTest().main()

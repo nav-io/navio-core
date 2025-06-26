@@ -1136,7 +1136,7 @@ class SetMemProof:
         r += self.b.serialize()
         r += self.omega.serialize()
         return r
-        
+
 class RangeProof:
     __slots__ = 'Vs', 'Ls', 'Rs', 'A', 'A_wip', 'B', 'r_prime', 's_prime', 'delta_prime', 'alpha_hat', 'tau_x'
 
@@ -1180,8 +1180,8 @@ class RangeProof:
         r += self.alpha_hat.serialize()
         r += self.tau_x.serialize()
         return r
-        
-        
+
+
 class PosProof:
     __slots__ = ("set_mem_proof", "range_proof")
 
