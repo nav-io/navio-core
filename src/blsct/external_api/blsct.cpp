@@ -993,12 +993,12 @@ const BlsctPoint* get_ctx_out_blinding_key(const CTxOut* ctx_out) {
     return copy;
 }
 
-const BlsctRangeProof* get_ctx_out_range_proof(const CTxOut* ctx_out) {
-    auto copy = static_cast<BlsctRangeProof*>(malloc(POINT_SIZE));
+const BlsctRetVal* get_ctx_out_range_proof(const CTxOut* ctx_out) {
     DataStream st{};
     ctx_out->blsctData.rangeProof.Serialize(st);
+    auto copy = static_cast<BlsctRangeProof*>(malloc(st.size()));
     std::memcpy(copy, st.data(), st.size());
-    return copy;
+    return succ(copy, st.size());;
 };
 
 uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out) {
