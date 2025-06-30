@@ -412,6 +412,10 @@ BlsctRetVal* gen_out_point(
 const char* serialize_out_point(const BlsctOutPoint* blsct_out_point);
 BlsctRetVal* deserialize_out_point(const char* hex);
 
+// script
+const char* serialize_script(const BlsctScript* blsct_script);
+BlsctRetVal* deserialize_script(const char* hex);
+
 // signature
 const char* serialize_signature(const BlsctSignature* blsct_signature);
 BlsctRetVal* deserialize_signature(const char* hex);
