@@ -1516,9 +1516,8 @@ BlsctSubAddrId* gen_sub_addr_id(
     sub_addr_id.account = account;
     sub_addr_id.address = address;
 
-    BlsctSubAddrId* blsct_sub_addr_id = static_cast<BlsctSubAddrId*>(
-        malloc(SUB_ADDR_ID_SIZE)
-    );
+    MALLOC(BlsctSubAddrId, blsct_sub_addr_id);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_sub_addr_id);
     SERIALIZE_AND_COPY_WITH_STREAM(sub_addr_id, blsct_sub_addr_id);
 
     return blsct_sub_addr_id;
