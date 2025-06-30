@@ -377,34 +377,13 @@ BlsctRetVal* gen_double_pub_key(
 }
 
 const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk) {
-    blsct::DoublePublicKey dpk;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE, dpk);
-    auto vec = dpk.GetVch();
-    auto hex = HexStr(vec);
-
-    size_t BUF_SIZE = hex.size() + 1;
-    MALLOC_BYTES(char, hex_buf, BUF_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(hex_buf);
-    std::memcpy(hex_buf, hex.c_str(), BUF_SIZE); // also copies null at the end
-
-    return hex_buf;
+    return SerializeToHex(*blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
 }
 
 BlsctRetVal* deserialize_dpk(const char* hex) {
-    std::vector<uint8_t> vec;
-    if (!TryParseHexWrap(hex, vec)) {
-        return err(BLSCT_FAILURE);
-    }
-    blsct::DoublePublicKey dpk;
-    DataStream st{};
-    st << vec;
-
-    dpk.Unserialize(st);
-
-    MALLOC(BlsctDoublePubKey, blsct_dpk);
-    RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
-    SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
-
+    BlsctDoublePubKey* blsct_dpk = static_cast<BlsctDoublePubKey*>(
+        DeserializeFromHex(hex, DOUBLE_PUBLIC_KEY_SIZE)
+    );
     return succ(blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
 }
 
