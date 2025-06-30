@@ -716,7 +716,7 @@ BlsctRetVal* gen_out_point(
     MALLOC(BlsctOutPoint, blsct_out_point);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_out_point);
 
-    std::string ctx_id_str(ctx_id_c_str, TX_ID_STR_LEN);
+    std::string ctx_id_str(ctx_id_c_str, CTX_ID_STR_LEN);
 
     auto ctx_id = TxidFromString(ctx_id_str);
     COutPoint out_point { ctx_id, out_index };
@@ -883,9 +883,9 @@ const BlsctScript* get_ctx_in_script_witness(const CTxIn* ctx_in) {
     return copy;
 }
 
-const BlsctTxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in) {
-    auto copy = static_cast<BlsctTxId*>(malloc(TX_ID_SIZE));
-    std::memcpy(copy, &ctx_in->prevout.hash, TX_ID_SIZE);
+const BlsctCtxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in) {
+    auto copy = static_cast<BlsctCtxId*>(malloc(CTX_ID_SIZE));
+    std::memcpy(copy, &ctx_in->prevout.hash, CTX_ID_SIZE);
     return copy;
 }
 
@@ -1012,7 +1012,7 @@ uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out) {
 }
 
 // tx
-BlsctTxRetVal* build_ctx(
+BlsctCtxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
 ) {
@@ -1020,7 +1020,7 @@ BlsctTxRetVal* build_ctx(
     UNVOID(std::vector<BlsctTxOut>, tx_outs);
 
     blsct::TxFactoryBase psbt;
-    MALLOC(BlsctTxRetVal, rv);
+    MALLOC(BlsctCtxRetVal, rv);
     RETURN_IF_MEM_ALLOC_FAILED(rv);
 
     for (size_t i=0; i<tx_ins->size(); ++i) {
@@ -1132,9 +1132,9 @@ BlsctTxRetVal* build_ctx(
 
     // copy the buffer containing serializef tx to the result
     rv->result = BLSCT_SUCCESS;
-    rv->ser_tx_size = st.size();
-    rv->ser_tx = (uint8_t*) malloc(st.size());
-    std::memcpy(rv->ser_tx, st.data(), st.size());
+    rv->ser_ctx_size = st.size();
+    rv->ser_ctx = (uint8_t*) malloc(st.size());
+    std::memcpy(rv->ser_ctx, st.data(), st.size());
 
     return rv;
 }
@@ -1146,24 +1146,24 @@ const char* get_ctx_id(const CMutableTransaction* ctx) {
     return StrToAllocCStr(ctxid_hex);
 }
 
-// expects that ser_tx is always valid
-CMutableTransaction* ser_tx_to_CMutalbleTransaction(
-    const uint8_t* ser_tx,
-    const size_t ser_tx_size
+// expects that ser_ctx is always valid
+CMutableTransaction* ser_ctx_to_CMutableTransaction(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
 ) {
-    MALLOC(CMutableTransaction, tx);
-    RETURN_IF_MEM_ALLOC_FAILED(tx);
+    MALLOC(CMutableTransaction, ctx);
+    RETURN_IF_MEM_ALLOC_FAILED(ctx);
 
     DataStream st{};
     TransactionSerParams params { .allow_witness = true };
     ParamsStream ps {params, st};
 
-    for(size_t i=0; i<ser_tx_size; ++i) {
-        ps << ser_tx[i];
+    for(size_t i=0; i<ser_ctx_size; ++i) {
+        ps << ser_ctx[i];
     }
-    tx->Unserialize(ps);
+    ctx->Unserialize(ps);
 
-    return tx;
+    return ctx;
 }
 
 const std::vector<CTxIn>* get_ctx_ins(const CMutableTransaction* ctx) {

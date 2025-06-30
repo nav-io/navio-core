@@ -39,8 +39,8 @@
 #define SCRIPT_SIZE 28
 #define MAX_MEMO_LEN 100
 #define MEMO_BUF_SIZE MAX_MEMO_LEN + 1
-#define TX_ID_SIZE UINT256_SIZE
-#define TX_ID_STR_LEN TX_ID_SIZE * 2
+#define CTX_ID_SIZE UINT256_SIZE
+#define CTX_ID_STR_LEN CTX_ID_SIZE * 2
 
 /* return codes */
 #define BLSCT_RESULT uint8_t
@@ -220,7 +220,7 @@ typedef uint8_t BlsctSubAddr[SUB_ADDR_SIZE];
 typedef uint8_t BlsctSubAddrId[SUB_ADDR_ID_SIZE];
 typedef uint8_t BlsctTokenId[TOKEN_ID_SIZE];
 typedef uint8_t BlsctUint256[UINT256_SIZE];
-typedef uint8_t BlsctTxId[TX_ID_SIZE];
+typedef uint8_t BlsctCtxId[CTX_ID_SIZE];
 typedef uint8_t BlsctViewTag[VIEW_TAG_SIZE];
 typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
 typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
@@ -239,12 +239,12 @@ typedef struct {
 
 typedef struct {
   BLSCT_RESULT result;
-  uint8_t* ser_tx;
-  size_t ser_tx_size;
+  uint8_t* ser_ctx;
+  size_t ser_ctx_size;
 
   size_t in_amount_err_index; // holds the first index of the tx_in whose amount exceeds the maximum
   size_t out_amount_err_index; // holds the first index of the tx_out whose amount exceeds the maximum
-} BlsctTxRetVal;
+} BlsctCtxRetVal;
 
 BlsctRetVal* succ(
     void* value,
@@ -447,7 +447,7 @@ bool get_tx_in_rbf(const BlsctTxIn* tx_in);
 const BlsctScript* get_ctx_in_script_sig(const CTxIn* ctx_in);
 uint32_t get_ctx_in_sequence(const CTxIn* ctx_in);
 const BlsctScript* get_ctx_in_script_witness(const CTxIn* ctx_in);
-const BlsctTxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in);
+const BlsctCtxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in);
 uint32_t get_ctx_in_prev_out_n(const CTxIn* ctx_in);
 
 // tx out
@@ -483,15 +483,15 @@ uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out);
 
 // takes BlsctTxIn and BlsctTxOut vectors and
 // returns a serialized CMutableTransaction
-BlsctTxRetVal* build_ctx(
+BlsctCtxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
 );
 
 // must free the returned object after use
-CMutableTransaction* ser_tx_to_CMutalbleTransaction(
-    const uint8_t* ser_tx,
-    const size_t ser_tx_size
+CMutableTransaction* ser_ctx_to_CMutableTransaction(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
 );
 
 const std::vector<CTxIn>* get_ctx_ins(const CMutableTransaction* ctx);
