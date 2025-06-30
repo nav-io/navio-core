@@ -761,7 +761,7 @@ BlsctRetVal* deserialize_script(const char* hex) {
 }
 
 const char* serialize_signature(const BlsctSignature* blsct_signature) {
-    return nullptr;
+    return SerializeToHex(*blsct_signature, SIGNATURE_SIZE);
 }
 
 BlsctRetVal* deserialize_signature(const char* hex) {

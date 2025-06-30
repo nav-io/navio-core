@@ -416,28 +416,6 @@ BlsctRetVal* deserialize_out_point(const char* hex);
 const char* serialize_script(const BlsctScript* blsct_script);
 BlsctRetVal* deserialize_script(const char* hex);
 
-// signature
-const char* serialize_signature(const BlsctSignature* blsct_signature);
-BlsctRetVal* deserialize_signature(const char* hex);
-
-// tx in
-
-// returns BlsctTxIn
-BlsctRetVal* build_tx_in(
-    const uint64_t amount,
-    const uint64_t gamma,
-    const BlsctScalar* spending_key,
-    const BlsctTokenId* token_id,
-    const BlsctOutPoint* out_point,
-    const bool staked_commitment,
-    const bool rbf
-);
-
-BlsctRetVal* dpk_to_sub_addr(
-    const void* blsct_dpk
-);
-uint64_t get_tx_in_amount(const BlsctTxIn* tx_in);
-uint64_t get_tx_in_gamma(const BlsctTxIn* tx_in);
 const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in);
 const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in);
 const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in);
