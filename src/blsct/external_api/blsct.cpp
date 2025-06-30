@@ -719,18 +719,7 @@ BlsctRetVal* deserialize_out_point(const char* hex) {
 
 // script
 const char* serialize_script(const BlsctScript* blsct_script) {
-    if (blsct_script == nullptr) {
-        return nullptr;
-    }
-
-    // since BlsctScript is a result of serializing CScript,
-    // it can be returned as is
-    std::vector<uint8_t> vec;
-    for (size_t i=0; i<SCRIPT_SIZE; ++i) {
-        vec.push_back(*blsct_script[i]);
-    }
-    auto hex_str = HexStr(vec);
-    return StrToAllocCStr(hex_str);
+     return SerializeToHex(*blsct_script, SCRIPT_SIZE);
 }
 
 BlsctRetVal* deserialize_script(const char* hex) {
