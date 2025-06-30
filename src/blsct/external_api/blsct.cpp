@@ -966,12 +966,6 @@ const BlsctScript* get_ctx_out_script_pub_key(const CTxOut* ctx_out) {
     return copy;
 }
 
-const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out) {
-    auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
-    std::memcpy(copy, &ctx_out->tokenId, TOKEN_ID_SIZE);
-    return copy;
-}
-
 const BlsctScript* get_ctx_out_script_pubkey(const CTxOut* ctx_out) {
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_out->scriptPubKey, SCRIPT_SIZE);
@@ -1009,6 +1003,21 @@ const BlsctRangeProof* get_ctx_out_range_proof(const CTxOut* ctx_out) {
 
 uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out) {
     return ctx_out->blsctData.viewTag;
+}
+
+const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out) {
+    auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
+    std::memcpy(copy, &ctx_out->tokenId, TOKEN_ID_SIZE);
+    return copy;
+}
+
+const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* ctx_out) {
+    auto& pred = ctx_out->predicate;
+    MALLOC_BYTES(uint8_t, buf, pred.size());
+    RETURN_IF_MEM_ALLOC_FAILED(buf)
+
+    std::memcpy(buf, pred.data(), pred.size());
+    return succ(buf, pred.size());
 }
 
 // tx

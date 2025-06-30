@@ -471,13 +471,16 @@ uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
 
 uint64_t get_ctx_out_value(const CTxOut* ctx_out);
 const BlsctScript* get_ctx_out_script_pub_key(const CTxOut* ctx_out);
-const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out);
 const BlsctScript* get_ctx_out_script_pubkey(const CTxOut* ctx_out);
+// tx out blsct data
 const BlsctPoint* get_ctx_out_spending_key(const CTxOut* ctx_out);
 const BlsctPoint* get_ctx_out_ephemeral_key(const CTxOut* ctx_out);
 const BlsctPoint* get_ctx_out_blinding_key(const CTxOut* ctx_out);
 const BlsctRangeProof* get_ctx_out_range_proof(const CTxOut* ctx_out);
 uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out);
+// tx out
+const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out);
+const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* ctx_out);
 
 // tx
 
