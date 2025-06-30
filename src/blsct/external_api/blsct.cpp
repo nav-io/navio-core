@@ -1410,25 +1410,13 @@ BlsctKeyId* calc_key_id(
 const char* serialize_key_id(
     const BlsctKeyId* blsct_key_id
 ) {
-    CKeyID key_id;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_key_id, KEY_ID_SIZE, key_id);
-    auto hex = key_id.GetHex();
-    return StrToAllocCStr(hex);
+    return SerializeToHex(*blsct_key_id, KEY_ID_SIZE);
 }
 
 BlsctRetVal* deserialize_key_id(const char* hex) {
-    std::vector<uint8_t> vec;
-    if (!TryParseHexWrap(hex, vec)) {
-        return err(BLSCT_FAILURE);
-    }
-    uint160 key_id_uint160(vec);
-    CKeyID key_id(key_id_uint160);
-
     BlsctKeyId* blsct_key_id = static_cast<BlsctKeyId*>(
-        malloc(KEY_ID_SIZE)
+        DeserializeFromHex(hex, KEY_ID_SIZE)
     );
-    SERIALIZE_AND_COPY_WITH_STREAM(key_id, blsct_key_id);
-
     return succ(blsct_key_id, KEY_ID_SIZE);
 }
 
