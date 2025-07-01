@@ -147,7 +147,7 @@ inline bool TryParseHexWrap(
     return true;
 }
 
-inline const char* StrToAllocCStr(const std::string s) {
+inline const char* StrToAllocCStr(const std::string& s) {
     size_t buf_size = s.size() + 1;
     MALLOC_BYTES(char, cstr_buf, buf_size);
     RETURN_IF_MEM_ALLOC_FAILED(cstr_buf);
@@ -491,25 +491,28 @@ BlsctCtxRetVal* build_ctx(
     const void* void_tx_outs
 );
 
-// must free the returned object after use
-CMutableTransaction* ser_ctx_to_CMutableTransaction(
+const char* get_ctx_id(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
 );
 
-const std::vector<CTxIn>* get_ctx_ins(const CMutableTransaction* ctx);
+const std::vector<CTxIn>* get_ctx_ins(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+);
 
 size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins);
 
 const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i);
 
-const std::vector<CTxOut>* get_ctx_outs(const CMutableTransaction* ctx);
+const std::vector<CTxOut>* get_ctx_outs(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+);
 
 size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs);
 
 const BlsctRetVal* get_ctx_out(const std::vector<CTxOut>* ctx_outs, const size_t i);
-
-const char* get_ctx_id(const CMutableTransaction* ctx);
 
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,

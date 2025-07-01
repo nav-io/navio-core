@@ -1116,21 +1116,12 @@ BlsctCtxRetVal* build_ctx(
     return rv;
 }
 
-const char* get_ctx_id(const CMutableTransaction* ctx) {
-    Txid ctxid = ctx->GetHash();
-    std::string ctxid_hex = ctxid.GetHex();
-
-    return StrToAllocCStr(ctxid_hex);
-}
-
 // expects that ser_ctx is always valid
-CMutableTransaction* ser_ctx_to_CMutableTransaction(
+inline void UnserializeCMutableTx(
+    CMutableTransaction& ctx,
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
 ) {
-    MALLOC(CMutableTransaction, ctx);
-    RETURN_IF_MEM_ALLOC_FAILED(ctx);
-
     DataStream st{};
     TransactionSerParams params { .allow_witness = true };
     ParamsStream ps {params, st};
@@ -1138,13 +1129,28 @@ CMutableTransaction* ser_ctx_to_CMutableTransaction(
     for(size_t i=0; i<ser_ctx_size; ++i) {
         ps << ser_ctx[i];
     }
-    ctx->Unserialize(ps);
-
-    return ctx;
+    ctx.Unserialize(ps);
 }
 
-const std::vector<CTxIn>* get_ctx_ins(const CMutableTransaction* ctx) {
-    return &ctx->vin;
+const char* get_ctx_id(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+) {
+    CMutableTransaction ctx;
+    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+    Txid ctxid = ctx.GetHash();
+    std::string ctxid_hex = ctxid.GetHex();
+
+    return StrToAllocCStr(ctxid_hex);
+}
+
+const std::vector<CTxIn>* get_ctx_ins(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+) {
+    CMutableTransaction ctx;
+    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+    return new std::vector<CTxIn>(ctx.vin);
 }
 
 size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins) {
@@ -1159,8 +1165,13 @@ const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i)
     return succ(ctx_in_copy, ctx_in_size);
 }
 
-const std::vector<CTxOut>* get_ctx_outs(const CMutableTransaction* ctx) {
-    return &ctx->vout;
+const std::vector<CTxOut>* get_ctx_outs(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+) {
+    CMutableTransaction ctx;
+    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+    return new std::vector<CTxOut>(ctx.vout);
 }
 
 size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs) {
