@@ -903,7 +903,7 @@ uint64_t get_tx_out_amount(const BlsctTxOut* tx_out) {
 
 const char* get_tx_out_memo(const BlsctTxOut* tx_out) {
     size_t memo_c_str_len = std::strlen(tx_out->memo_c_str);
-    char* memo_c_str = (char*) malloc(memo_c_str_len);
+    char* memo_c_str = (char*) malloc(memo_c_str_len + 1);
     RETURN_IF_MEM_ALLOC_FAILED(memo_c_str);
     std::memcpy(memo_c_str, tx_out->memo_c_str, memo_c_str_len + 1);
     return memo_c_str;
