@@ -501,14 +501,14 @@ const std::vector<CTxIn>* get_ctx_ins(
     const size_t ser_ctx_size
 );
 
-size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins);
-
-const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i);
-
 const std::vector<CTxOut>* get_ctx_outs(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
 );
+
+size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins);
+
+const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i);
 
 size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs);
 

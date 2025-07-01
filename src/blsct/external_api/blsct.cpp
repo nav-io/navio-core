@@ -1153,6 +1153,15 @@ const std::vector<CTxIn>* get_ctx_ins(
     return new std::vector<CTxIn>(ctx.vin);
 }
 
+const std::vector<CTxOut>* get_ctx_outs(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+) {
+    CMutableTransaction ctx;
+    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+    return new std::vector<CTxOut>(ctx.vout);
+}
+
 size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins) {
     return ctx_ins->size();
 }
@@ -1163,15 +1172,6 @@ const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i)
     auto ctx_in_copy = static_cast<CTxIn*>(malloc(ctx_in_size));
     std::memcpy(ctx_in_copy, ctx_in, ctx_in_size);
     return succ(ctx_in_copy, ctx_in_size);
-}
-
-const std::vector<CTxOut>* get_ctx_outs(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-) {
-    CMutableTransaction ctx;
-    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
-    return new std::vector<CTxOut>(ctx.vout);
 }
 
 size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs) {
