@@ -24,7 +24,7 @@ struct AmountRecoveryResult
     {
         READWRITE(
             obj.is_completed,
-            obj.amoutns
+            obj.amounts
         );
     }
 };
