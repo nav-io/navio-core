@@ -444,11 +444,33 @@ const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in);
 bool get_tx_in_staked_commitment(const BlsctTxIn* tx_in);
 bool get_tx_in_rbf(const BlsctTxIn* tx_in);
 
+// ctx in (c++)
 const BlsctScript* get_ctx_in_script_sig(const CTxIn* ctx_in);
 uint32_t get_ctx_in_sequence(const CTxIn* ctx_in);
 const BlsctScript* get_ctx_in_script_witness(const CTxIn* ctx_in);
 const BlsctCtxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in);
 uint32_t get_ctx_in_prev_out_n(const CTxIn* ctx_in);
+
+// ctx in (c)
+const BlsctScript* get_ctx_in_script_sig_c(
+    const uint8_t* ser_ctx_in,
+    const size_t ser_ctx_in_size
+);
+
+uint32_t get_ctx_in_sequence_c(
+    const uint8_t* ser_ctx_in,
+    const size_t ser_ctx_in_size
+);
+
+const BlsctScript* get_ctx_in_script_witness_c(
+    const uint8_t* ser_ctx_in,
+    const size_t ser_ctx_in_size
+);
+
+uint32_t get_ctx_in_prev_out_n_c(
+    const uint8_t* ser_ctx_in,
+    const size_t ser_ctx_in_size
+);
 
 // tx out
 
@@ -469,18 +491,70 @@ const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out);
 TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out);
 uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
 
+// ctx out
 uint64_t get_ctx_out_value(const CTxOut* ctx_out);
 const BlsctScript* get_ctx_out_script_pub_key(const CTxOut* ctx_out);
 const BlsctScript* get_ctx_out_script_pubkey(const CTxOut* ctx_out);
-// tx out blsct data
+const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out);
+const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* ctx_out);
+
+// ctx out blsct data
 const BlsctPoint* get_ctx_out_spending_key(const CTxOut* ctx_out);
 const BlsctPoint* get_ctx_out_ephemeral_key(const CTxOut* ctx_out);
 const BlsctPoint* get_ctx_out_blinding_key(const CTxOut* ctx_out);
 const BlsctRetVal* get_ctx_out_range_proof(const CTxOut* ctx_out);
 uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out);
-// tx out
-const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out);
-const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* ctx_out);
+
+// ctx out (c)
+uint64_t get_ctx_out_value_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+);
+
+const BlsctScript* get_ctx_out_script_pub_key_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+);
+
+const BlsctScript* get_ctx_out_script_pubkey_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+);
+
+const BlsctPoint* get_ctx_out_spending_key_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+);
+
+const BlsctPoint* get_ctx_out_ephemeral_key_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+);
+
+const BlsctPoint* get_ctx_out_blinding_key_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+);
+
+const BlsctRetVal* get_ctx_out_range_proof_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+);
+
+uint16_t get_ctx_out_view_tag_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+);
+
+const BlsctTokenId* get_ctx_out_token_id_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+);
+
+const BlsctRetVal* get_ctx_out_vector_predicate_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+);
 
 // tx
 
@@ -496,6 +570,9 @@ const char* get_ctx_id(
     const size_t ser_ctx_size
 );
 
+size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins);
+size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs);
+
 const std::vector<CTxIn>* get_ctx_ins(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
@@ -506,13 +583,37 @@ const std::vector<CTxOut>* get_ctx_outs(
     const size_t ser_ctx_size
 );
 
-size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins);
+const BlsctRetVal* get_ctx_in(
+    const std::vector<CTxIn>* ctx_ins,
+    const size_t i
+);
 
-const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i);
+const BlsctRetVal* get_ctx_out(
+    const std::vector<CTxOut>* ctx_outs,
+    const size_t i
+);
 
-size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs);
+size_t get_ctx_in_count_c(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+);
 
-const BlsctRetVal* get_ctx_out(const std::vector<CTxOut>* ctx_outs, const size_t i);
+size_t get_ctx_out_count_c(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+);
+
+const BlsctRetVal* get_ctx_in_c(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size,
+    const size_t i
+);
+
+const BlsctRetVal* get_ctx_out_c(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size,
+    const size_t i
+);
 
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,

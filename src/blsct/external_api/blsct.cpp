@@ -835,6 +835,7 @@ bool get_tx_in_rbf(const BlsctTxIn* tx_in) {
     return tx_in->rbf;
 }
 
+// ctx in (c++)
 const BlsctScript* get_ctx_in_script_sig(const CTxIn* ctx_in) {
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_in->scriptSig, SCRIPT_SIZE);
@@ -859,6 +860,61 @@ const BlsctCtxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in) {
 
 uint32_t get_ctx_in_prev_out_n(const CTxIn* ctx_in) {
     return ctx_in->prevout.n;
+}
+
+// ctx in (c)
+inline void UnserializeCTxIn(
+    CTxIn& ctx_in,
+    const uint8_t* ser_ctx_in,
+    const size_t ser_ctx_in_size
+) {
+    DataStream st{};
+    for(size_t i=0; i<ser_ctx_in_size; ++i) {
+        st << ser_ctx_in[i];
+    }
+    ctx_in.Unserialize(st);
+}
+
+const BlsctScript* get_ctx_in_script_sig_c(
+    const uint8_t* ser_ctx_in,
+    const size_t ser_ctx_in_size
+) {
+    CTxIn ctx_in;
+    UnserializeCTxIn(ctx_in, ser_ctx_in, ser_ctx_in_size);
+
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &ctx_in.scriptSig, SCRIPT_SIZE);
+    return copy;
+}
+
+uint32_t get_ctx_in_sequence_c(
+    const uint8_t* ser_ctx_in,
+    const size_t ser_ctx_in_size
+) {
+    CTxIn ctx_in;
+    UnserializeCTxIn(ctx_in, ser_ctx_in, ser_ctx_in_size);
+    return ctx_in.nSequence;
+}
+
+const BlsctScript* get_ctx_in_script_witness_c(
+    const uint8_t* ser_ctx_in,
+    const size_t ser_ctx_in_size
+) {
+    CTxIn ctx_in;
+    UnserializeCTxIn(ctx_in, ser_ctx_in, ser_ctx_in_size);
+
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &ctx_in.scriptWitness, SCRIPT_SIZE);
+    return copy;
+}
+
+uint32_t get_ctx_in_prev_out_n_c(
+    const uint8_t* ser_ctx_in,
+    const size_t ser_ctx_in_size
+) {
+    CTxIn ctx_in;
+    UnserializeCTxIn(ctx_in, ser_ctx_in, ser_ctx_in_size);
+    return ctx_in.prevout.n;
 }
 
 // tx out
@@ -924,6 +980,7 @@ uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out) {
     return tx_out->min_stake;
 }
 
+// ctx out (c++)
 uint64_t get_ctx_out_value(const CTxOut* tx_out) {
     return tx_out->nValue;
 }
@@ -981,6 +1038,141 @@ const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out) {
 
 const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* ctx_out) {
     auto& pred = ctx_out->predicate;
+    MALLOC_BYTES(uint8_t, buf, pred.size());
+    RETURN_IF_MEM_ALLOC_FAILED(buf)
+
+    std::memcpy(buf, pred.data(), pred.size());
+    return succ(buf, pred.size());
+}
+
+// ctx out (c)
+inline void UnserializeCTxOut(
+    CTxOut& ctx_out,
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    DataStream st{};
+    for(size_t i=0; i<ser_ctx_out_size; ++i) {
+        st << ser_ctx_out[i];
+    }
+    ctx_out.Unserialize(st);
+}
+
+uint64_t get_ctx_out_value_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    CTxOut ctx_out;
+    UnserializeCTxOut(ctx_out, ser_ctx_out, ser_ctx_out_size);
+    return ctx_out.nValue;
+}
+
+const BlsctScript* get_ctx_out_script_pub_key_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    CTxOut ctx_out;
+    UnserializeCTxOut(ctx_out, ser_ctx_out, ser_ctx_out_size);
+
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &ctx_out.scriptPubKey, SCRIPT_SIZE);
+    return copy;
+}
+
+const BlsctScript* get_ctx_out_script_pubkey_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    CTxOut ctx_out;
+    UnserializeCTxOut(ctx_out, ser_ctx_out, ser_ctx_out_size);
+
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &ctx_out.scriptPubKey, SCRIPT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_ctx_out_spending_key_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    CTxOut ctx_out;
+    UnserializeCTxOut(ctx_out, ser_ctx_out, ser_ctx_out_size);
+
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = ctx_out.blsctData.spendingKey.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_ctx_out_ephemeral_key_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    CTxOut ctx_out;
+    UnserializeCTxOut(ctx_out, ser_ctx_out, ser_ctx_out_size);
+
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = ctx_out.blsctData.ephemeralKey.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctPoint* get_ctx_out_blinding_key_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    CTxOut ctx_out;
+    UnserializeCTxOut(ctx_out, ser_ctx_out, ser_ctx_out_size);
+
+    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto org = ctx_out.blsctData.blindingKey.GetVch();
+    std::memcpy(copy, &org[0], POINT_SIZE);
+    return copy;
+}
+
+const BlsctRetVal* get_ctx_out_range_proof_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    CTxOut ctx_out;
+    UnserializeCTxOut(ctx_out, ser_ctx_out, ser_ctx_out_size);
+
+    DataStream st{};
+    ctx_out.blsctData.rangeProof.Serialize(st);
+    auto copy = static_cast<BlsctRangeProof*>(malloc(st.size()));
+    std::memcpy(copy, st.data(), st.size());
+    return succ(copy, st.size());;
+};
+
+uint16_t get_ctx_out_view_tag_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    CTxOut ctx_out;
+    UnserializeCTxOut(ctx_out, ser_ctx_out, ser_ctx_out_size);
+    return ctx_out.blsctData.viewTag;
+}
+
+const BlsctTokenId* get_ctx_out_token_id_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    CTxOut ctx_out;
+    UnserializeCTxOut(ctx_out, ser_ctx_out, ser_ctx_out_size);
+
+    auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
+    std::memcpy(copy, &ctx_out.tokenId, TOKEN_ID_SIZE);
+    return copy;
+}
+
+const BlsctRetVal* get_ctx_out_vector_predicate_c(
+    const uint8_t* ser_ctx_out,
+    const size_t ser_ctx_out_size
+) {
+    CTxOut ctx_out;
+    UnserializeCTxOut(ctx_out, ser_ctx_out, ser_ctx_out_size);
+
+    auto& pred = ctx_out.predicate;
     MALLOC_BYTES(uint8_t, buf, pred.size());
     RETURN_IF_MEM_ALLOC_FAILED(buf)
 
@@ -1116,7 +1308,6 @@ BlsctCtxRetVal* build_ctx(
     return rv;
 }
 
-// expects that ser_ctx is always valid
 inline void UnserializeCMutableTx(
     CMutableTransaction& ctx,
     const uint8_t* ser_ctx,
@@ -1144,6 +1335,14 @@ const char* get_ctx_id(
     return StrToAllocCStr(ctxid_hex);
 }
 
+size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins) {
+    return ctx_ins->size();
+}
+
+size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs) {
+    return ctx_outs->size();
+}
+
 const std::vector<CTxIn>* get_ctx_ins(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
@@ -1162,10 +1361,6 @@ const std::vector<CTxOut>* get_ctx_outs(
     return new std::vector<CTxOut>(ctx.vout);
 }
 
-size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins) {
-    return ctx_ins->size();
-}
-
 const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i) {
     auto ctx_in = &ctx_ins->at(i);
     auto ctx_in_size = sizeof(*ctx_in);
@@ -1174,16 +1369,70 @@ const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i)
     return succ(ctx_in_copy, ctx_in_size);
 }
 
-size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs) {
-    return ctx_outs->size();
-}
-
 const BlsctRetVal* get_ctx_out(const std::vector<CTxOut>* ctx_outs, const size_t i) {
     auto ctx_out = &ctx_outs->at(i);
     auto ctx_out_size = sizeof(*ctx_out);
     auto ctx_out_copy = static_cast<CTxOut*>(malloc(ctx_out_size));
     std::memcpy(ctx_out_copy, ctx_out, ctx_out_size);
     return succ(ctx_out_copy, ctx_out_size);
+}
+
+size_t get_ctx_in_count_c(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+) {
+    CMutableTransaction ctx;
+    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+    return ctx.vin.size();
+}
+
+size_t get_ctx_out_count_c(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+) {
+    CMutableTransaction ctx;
+    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+    return ctx.vout.size();
+}
+
+const BlsctRetVal* get_ctx_in_c(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size,
+    const size_t i
+) {
+    CMutableTransaction ctx;
+    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+
+    // return serialized CTxIn at index i
+    auto ctx_in = ctx.vin.at(i);
+    DataStream st{};
+    ctx_in.Serialize(st);
+    size_t ser_ctx_in_size = st.size();
+
+    MALLOC_BYTES(CTxIn, ser_ctx_in, ser_ctx_in_size);
+    std::memcpy(ser_ctx_in, st.data(), ser_ctx_in_size);
+
+    return succ(ser_ctx_in, ser_ctx_in_size);
+}
+
+const BlsctRetVal* get_ctx_out_c(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size,
+    const size_t i
+) {
+    CMutableTransaction ctx;
+    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+
+    // return serialized CTxOut at index i
+    auto ctx_out = ctx.vout.at(i);
+    DataStream st{};
+    ctx_out.Serialize(st);
+    size_t ser_ctx_out_size = st.size();
+
+    MALLOC_BYTES(CTxOut, ser_ctx_out, ser_ctx_out_size);
+    std::memcpy(ser_ctx_out, st.data(), ser_ctx_out_size);
+
+    return succ(ser_ctx_out, ser_ctx_out_size);
 }
 
 // signature
