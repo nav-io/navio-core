@@ -169,7 +169,6 @@ BLSCT_H = \
   blsct/common.h \
   blsct/double_public_key.h \
   blsct/eip_2333/bls12_381_keygen.h \
-  blsct/external_api/blsct.h \
   blsct/key_io.h \
   blsct/private_key.h \
   blsct/public_key.h \
@@ -231,7 +230,6 @@ BLSCT_CPP = \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
-  blsct/external_api/blsct.cpp \
   blsct/key_io.cpp \
   blsct/pos/helpers.cpp \
   blsct/pos/pos.cpp \
@@ -556,7 +554,6 @@ libbitcoin_node_a_SOURCES = \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
-  blsct/external_api/blsct.cpp \
   blsct/pos/pos.cpp \
   blsct/pos/proof.cpp \
   blsct/pos/proof_logic.cpp \
@@ -962,7 +959,6 @@ libbitcoin_common_a_SOURCES = \
   blsct/building_block/weighted_inner_prod_arg.cpp \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
-  blsct/external_api/blsct.cpp \
   blsct/key_io.cpp \
   blsct/private_key.cpp \
   blsct/public_key.cpp \
@@ -1458,6 +1454,8 @@ if BUILD_LIBBLSCT_ONLY
 LIBBLSCT = libblsct.a
 noinst_LIBRARIES = $(LIBBLSCT)
 libblsct_a_SOURCES = \
+  blsct/external_api/blsct.h \
+  blsct/external_api/blsct.cpp \
   blsct/external_api/dummy_impl.cpp \
   common/args.cpp \
   common/system.cpp \
