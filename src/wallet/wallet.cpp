@@ -4694,4 +4694,27 @@ util::Result<MigrationResult> MigrateLegacyToDescriptor(const std::string& walle
     }
     return res;
 }
+
+bool CWallet::importblsctscript(const std::string& label, const std::set<CScript>& script_pub_keys, const bool have_solving_data, const bool apply_label, const int64_t timestamp)
+{
+    auto blsct_man = GetBLSCTKeyMan();
+    if (!blsct_man) {
+        return false;
+    }
+    LOCK(blsct_man->cs_KeyStore);
+    if (!blsct_man->ImportScriptPubKeys(script_pub_keys, have_solving_data, timestamp)) {
+        return false;
+    }
+    if (apply_label) {
+        WalletBatch batch(GetDatabase());
+        for (const CScript& script : script_pub_keys) {
+            CTxDestination dest;
+            ExtractDestination(script, dest);
+            if (IsValidDestination(dest)) {
+                SetAddressBookWithDB(batch, dest, label, AddressPurpose::RECEIVE);
+            }
+        }
+    }
+    return true;
+}
 } // namespace wallet

@@ -590,7 +590,6 @@ bool EvalScript(std::vector<std::vector<unsigned char>>& stack, const CScript& s
                 }
 
                 case OP_NOP1:
-                case OP_NOP4:
                 case OP_NOP5:
                 case OP_NOP6:
                 case OP_NOP7:
@@ -1034,6 +1033,24 @@ bool EvalScript(std::vector<std::vector<unsigned char>>& stack, const CScript& s
                     popstack(stack);
                     popstack(stack);
                     stack.push_back((num + (success ? 1 : 0)).getvch());
+                } break;
+
+                case OP_BLSCHECKSIG: {
+                    // (pubkey -- bool)
+                    if (stack.size() < 1)
+                        return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                    const valtype& vchPubKey = stacktop(-1);
+
+                    // Validate public key size (BLS public keys are 48 or 64 bytes)
+                    if (vchPubKey.size() != 48 && vchPubKey.size() != 64) {
+                        return set_error(serror, SCRIPT_ERR_INVALID_PUBKEY);
+                    }
+
+                    bool fSuccess = checker.CheckBlsSignature(vchPubKey);
+
+                    popstack(stack);
+                    stack.push_back(fSuccess ? vchTrue : vchFalse);
                 } break;
 
                 case OP_CHECKMULTISIG:
@@ -1604,6 +1621,28 @@ bool GenericTransactionSignatureChecker<T>::CheckECDSASignature(const std::vecto
         return false;
 
     return true;
+}
+
+template <class T>
+bool GenericTransactionSignatureChecker<T>::CheckBlsSignature(Span<const unsigned char> pubkey) const
+{
+    blsct::PublicKey blsPubKey;
+    if (!blsPubKey.SetVch(std::vector<unsigned char>(pubkey.begin(), pubkey.end()))) {
+        return false;
+    }
+
+    CTxIn txin = txTo->vin[nIn];
+    uint256 sighash = txin.GetHash();
+
+    m_key_message_pairs.emplace_back(blsPubKey, sighash);
+
+    return true;
+}
+
+template <class T>
+std::vector<std::pair<blsct::PublicKey, uint256>>& GenericTransactionSignatureChecker<T>::GetKeyMessagePairs() const
+{
+    return m_key_message_pairs;
 }
 
 template <class T>

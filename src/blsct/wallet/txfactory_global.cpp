@@ -4,6 +4,7 @@
 
 #include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory_global.h>
+#include <util/strencodings.h>
 
 using T = Mcl;
 using Point = T::Point;
@@ -18,11 +19,12 @@ void UnsignedOutput::GenerateKeys(Scalar blindingKey, DoublePublicKey destKeys)
 
     Point vk, sk;
 
-    if (!destKeys.GetViewKey(vk) || vk.IsZero()) {
+    if (!destKeys.GetViewKey(vk)) {
+        assert(false);
         throw std::runtime_error(strprintf("%s: could not get view key from destination address\n", __func__));
     }
 
-    if (!destKeys.GetSpendKey(sk) || sk.IsZero()) {
+    if (!destKeys.GetSpendKey(sk)) {
         throw std::runtime_error(strprintf("%s: could not get spend key from destination address\n", __func__));
     }
 
@@ -131,6 +133,67 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
             ret.out.blsctData.rangeProof = p;
         }
         ret.GenerateKeys(ret.blindingKey, destKeys);
+        HashWriter hash{};
+        hash << nonce;
+
+        ret.out.blsctData.viewTag = (hash.GetHash().GetUint64(0) & 0xFFFF);
+    } else {
+        ret.out.scriptPubKey = CScript(OP_RETURN);
+    }
+
+    return ret;
+}
+
+UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId, const Scalar& blindingKey, const CreateTransactionType& type, const CAmount& minStake)
+{
+    bulletproofs_plus::RangeProofLogic<T> rp;
+    auto ret = UnsignedOutput();
+
+    ret.type = type;
+
+    ret.out.nValue = 0;
+    ret.out.tokenId = tokenId;
+
+    Scalars vs;
+    vs.Add(nAmount);
+
+    ret.blindingKey = blindingKey.IsZero() ? MclScalar::Rand() : blindingKey;
+
+    Points nonces;
+    Point vk;
+
+    if (!destination.first.GetViewKey(vk)) {
+        throw std::runtime_error(strprintf("%s: could not get view key from destination address\n", __func__));
+    }
+
+    auto nonce = vk * ret.blindingKey;
+    nonces.Add(nonce);
+
+    ret.value = nAmount;
+    ret.gamma = nonce.GetHashWithSalt(100);
+
+    std::vector<unsigned char> memo{sMemo.begin(), sMemo.end()};
+
+    if (nAmount > 0) {
+        ret.out.scriptPubKey = destination.second;
+
+        if (type == STAKED_COMMITMENT && tokenId.IsNull()) {
+            auto stakeRp = rp.Prove(vs, nonce, {}, tokenId, minStake);
+
+            stakeRp.Vs.Clear();
+
+            DataStream ss{};
+            ss << Using<bulletproofs_plus::RangeProofWithoutVs<T>>(stakeRp);
+
+            ret.out.scriptPubKey = CScript() << OP_STAKED_COMMITMENT << blsct::Common::DataStreamToVector(ss) << OP_DROP << OP_TRUE;
+        }
+        if (tokenId.IsNFT()) {
+            ret.out.nValue = nAmount;
+        } else {
+            auto p = rp.Prove(vs, nonce, memo, tokenId);
+            ret.out.blsctData.rangeProof = p;
+        }
+        ret.GenerateKeys(ret.blindingKey, destination.first);
         HashWriter hash{};
         hash << nonce;
         ret.out.blsctData.viewTag = (hash.GetHash().GetUint64(0) & 0xFFFF);

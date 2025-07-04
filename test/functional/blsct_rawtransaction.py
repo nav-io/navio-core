@@ -49,6 +49,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Generate blocks to fund the first wallet
         self.log.info("Generating 101 blocks to fund wallet1")
+        self.generatetoblsctaddress(self.nodes[0], 101, address1)
 
         # Check initial balance
         balance1 = wallet1.getbalance()
@@ -203,16 +204,16 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         assert_greater_than(len(unspent), 0)
 
         utxo = unspent[0]
-        self.log.info(f"Using UTXO: {utxo['txid']}:{utxo['vout']}")
+        self.log.info(f"Using UTXO: {utxo}")
 
         # Test 1: Get recovery data for a raw transaction (hex input)
-        raw_tx = wallet1.createblsctrawtransaction([{"txid": utxo['txid'], "vout": utxo['vout']}], [])
+        raw_tx = wallet1.createblsctrawtransaction([{"txid": utxo['txid'], "vout": utxo['vout']}], [{"address": address1, "amount": 0.005, "memo": "Test script output"}])
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
         recovery_data = wallet1.getblsctrecoverydata(signed_tx)
         self.log.info(f"Recovery data from hex: {recovery_data}")
 
-        assert_equal(len(recovery_data["outputs"]), 2)
+        assert_equal(len(recovery_data["outputs"]), 3)
         # Verify the structure
         assert "outputs" in recovery_data
         assert isinstance(recovery_data["outputs"], list)

@@ -912,6 +912,7 @@ libbitcoin_consensus_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/pos/helpers.cpp \
   blsct/pos/proof.cpp \
+  blsct/public_key.cpp \
   blsct/signature.cpp \
   consensus/amount.h \
   consensus/merkle.cpp \

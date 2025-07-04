@@ -66,7 +66,7 @@ BOOST_FIXTURE_TEST_CASE(validation_reward_test, TestingSetup)
     CMutableTransaction tx;
     TxValidationState tx_state;
 
-    auto out = blsct::CreateOutput(blsct::DoublePublicKey(), 900 * COIN, " Reward ");
+    auto out = blsct::CreateOutput(blsct::DoublePublicKey(MclG1Point::Rand(), MclG1Point::Rand()), 900 * COIN, " Reward ");
     tx.vout.push_back(out.out);
     tx.txSig = out.GetSignature();
 

@@ -4,6 +4,7 @@
 
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/keyman.h>
+#include <script/script.h>
 
 namespace blsct {
 bool KeyMan::IsHDEnabled() const
@@ -734,6 +735,12 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
     return rp.RecoverAmounts(reqs);
 }
 
+bool KeyMan::IsMine(const CScript& script) const
+{
+    LOCK(cs_KeyStore);
+    return setWatchOnly.count(script) > 0;
+}
+
 bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag)
 {
     if (!fViewKeyDefined || !viewKey.IsValid())
@@ -1056,5 +1063,84 @@ int64_t KeyMan::GetTimeFirstKey() const
 {
     LOCK(cs_KeyStore);
     return nTimeFirstKey;
+}
+
+// BLSCT Watch-only functionality
+bool KeyMan::AddWatchOnlyInMem(const CScript& dest)
+{
+    LOCK(cs_KeyStore);
+    setWatchOnly.insert(dest);
+    return true;
+}
+
+bool KeyMan::AddWatchOnlyWithDB(wallet::WalletBatch& batch, const CScript& dest, int64_t create_time)
+{
+    if (!AddWatchOnlyInMem(dest))
+        return false;
+    const wallet::CKeyMetadata& meta = m_script_metadata[CScriptID(dest)];
+    UpdateTimeFirstKey(meta.nCreateTime);
+    if (batch.WriteBLSCTWatchOnly(dest, meta)) {
+        m_storage.UnsetBlankWalletFlag(batch);
+        return true;
+    }
+    return false;
+}
+
+bool KeyMan::AddWatchOnly(const CScript& dest, int64_t nCreateTime)
+{
+    m_script_metadata[CScriptID(dest)].nCreateTime = nCreateTime;
+    wallet::WalletBatch batch(m_storage.GetDatabase());
+    return AddWatchOnlyWithDB(batch, dest, nCreateTime);
+}
+
+bool KeyMan::HaveWatchOnly(const CScript& dest) const
+{
+    LOCK(cs_KeyStore);
+    return setWatchOnly.count(dest) > 0;
+}
+
+bool KeyMan::ImportScriptPubKeys(const std::set<CScript>& script_pub_keys, const bool have_solving_data, const int64_t timestamp)
+{
+    wallet::WalletBatch batch(m_storage.GetDatabase());
+    for (const CScript& script : script_pub_keys) {
+        if (!have_solving_data || !IsMine(script)) { // Always call AddWatchOnly for non-solvable watch-only, so that watch timestamp gets updated
+            if (!AddWatchOnlyWithDB(batch, script, timestamp)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool KeyMan::ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKey& spendingKey) const
+{
+    // Parse the script to find OP_BLSCHECKSIG and extract the public key before it
+    CScript::const_iterator pc = script.begin();
+    opcodetype opcode;
+    std::vector<unsigned char> vch;
+    std::vector<unsigned char> lastData; // Keep track of the last data pushed
+
+    if (script.size() != 50) return false;
+
+    while (pc < script.end()) {
+        if (!script.GetOp(pc, opcode, vch)) {
+            return false;
+        }
+
+        if (opcode == OP_BLSCHECKSIG) {
+            // We found OP_BLSCHECKSIG, the public key should be the last data pushed before this opcode
+            if (lastData.size() == 48) { // BLS public keys are 48 bytes
+                return spendingKey.SetVch(lastData);
+            }
+            return false;
+        }
+
+        // If this is a data push (not an opcode), store it as the last data
+        if (opcode <= OP_PUSHDATA4) {
+            lastData = vch;
+        }
+    }
+
+    return false;
 }
 } // namespace blsct

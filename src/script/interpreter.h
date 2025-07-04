@@ -13,6 +13,10 @@
 #include <span.h>
 #include <uint256.h>
 
+// BLSCT includes for DeferredBlsSignatureChecker
+#include <blsct/public_key.h>
+#include <blsct/signature.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -255,6 +259,11 @@ public:
         return false;
     }
 
+    virtual bool CheckBlsSignature(Span<const unsigned char> pubkey) const
+    {
+        return false;
+    }
+
     virtual bool CheckLockTime(const CScriptNum& nLockTime) const
     {
          return false;
@@ -289,6 +298,7 @@ private:
     unsigned int nIn;
     const CAmount amount;
     const PrecomputedTransactionData* txdata;
+    mutable std::vector<std::pair<blsct::PublicKey, uint256>> m_key_message_pairs;
 
 protected:
     virtual bool VerifyECDSASignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const;
@@ -299,8 +309,10 @@ public:
     GenericTransactionSignatureChecker(const T* txToIn, unsigned int nInIn, const CAmount& amountIn, const PrecomputedTransactionData& txdataIn, MissingDataBehavior mdb) : txTo(txToIn), m_mdb(mdb), nIn(nInIn), amount(amountIn), txdata(&txdataIn) {}
     bool CheckECDSASignature(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const override;
     bool CheckSchnorrSignature(Span<const unsigned char> sig, Span<const unsigned char> pubkey, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror = nullptr) const override;
+    bool CheckBlsSignature(Span<const unsigned char> pubkey) const override;
     bool CheckLockTime(const CScriptNum& nLockTime) const override;
     bool CheckSequence(const CScriptNum& nSequence) const override;
+    std::vector<std::pair<blsct::PublicKey, uint256>>& GetKeyMessagePairs() const;
 };
 
 using TransactionSignatureChecker = GenericTransactionSignatureChecker<CTransaction>;
@@ -322,6 +334,11 @@ public:
     bool CheckSchnorrSignature(Span<const unsigned char> sig, Span<const unsigned char> pubkey, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror = nullptr) const override
     {
         return m_checker.CheckSchnorrSignature(sig, pubkey, sigversion, execdata, serror);
+    }
+
+    bool CheckBlsSignature(Span<const unsigned char> pubkey) const override
+    {
+        return m_checker.CheckBlsSignature(pubkey);
     }
 
     bool CheckLockTime(const CScriptNum& nLockTime) const override

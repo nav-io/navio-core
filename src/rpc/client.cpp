@@ -353,6 +353,11 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "minttoken", 2, "amount"},
     { "mintnft", 1, "nft_id"},
     { "mintnft", 3, "metadata"},
+    { "importblsctscript", 1, "scripts" },
+    { "importblsctscript", 2, "have_solving_data" },
+    { "importblsctscript", 3, "apply_label" },
+    { "importblsctscript", 4, "timestamp" },
+    { "getblsctrecoverydata", 1, "vout" },
 };
 // clang-format on
 

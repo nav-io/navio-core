@@ -10,20 +10,20 @@
 #include <blsct/wallet/address.h>
 #include <chainparamsbase.h>
 #include <common/args.h> // IWYU pragma: export
+#include <functional>
 #include <key.h>
 #include <node/caches.h>
 #include <node/context.h> // IWYU pragma: export
 #include <primitives/transaction.h>
 #include <pubkey.h>
 #include <stdexcept>
+#include <type_traits>
 #include <util/chaintype.h> // IWYU pragma: export
 #include <util/check.h>
 #include <util/fs.h>
+#include <util/strencodings.h>
 #include <util/string.h>
 #include <util/vector.h>
-
-#include <functional>
-#include <type_traits>
 #include <vector>
 
 class CFeeRate;
@@ -219,6 +219,7 @@ struct TestChain100Setup : public TestingSetup {
  * Testing fixture that pre-creates a 100-block REGTEST-mode BLSCT block chain
  */
 struct TestBLSCTChain100Setup : public TestingSetup {
+    volatile MclInit for_side_effect_only;
     blsct::SubAddress coinbaseDest;
 
     TestBLSCTChain100Setup(
