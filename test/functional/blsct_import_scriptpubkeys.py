@@ -11,8 +11,6 @@ from test_framework.util import (
     assert_raises_rpc_error,
     assert_greater_than,
 )
-from test_framework.messages import COIN
-import json
 import random
 
 
@@ -85,7 +83,7 @@ class BLSCTImportScriptsTest(BitcoinTestFramework):
 
         # Import scripts into wallet2 (watch-only)
         script_pub_keys = [script1, script2]
-        
+
         # Test importing without label
         result = wallet2.importblsctscript("", script_pub_keys, False, False, 0)
         assert_equal(result, True)
@@ -106,7 +104,7 @@ class BLSCTImportScriptsTest(BitcoinTestFramework):
         # Import script with label
         script_pub_keys = [script1]
         label = "test_label"
-        
+
         result = wallet3.importblsctscript(label, script_pub_keys, False, True, 0)
         assert_equal(result, True)
 
@@ -122,19 +120,19 @@ class BLSCTImportScriptsTest(BitcoinTestFramework):
 
         # Test with invalid script
         invalid_script_pub_keys = ["invalid_script"]
-        
+
         assert_raises_rpc_error(-8, "Invalid script: not hex",
                                wallet4.importblsctscript, "", invalid_script_pub_keys, False, False, 0)
 
         # Test with empty scripts array
         empty_script_pub_keys = []
-        
+
         assert_raises_rpc_error(-8, "No scripts provided",
                                wallet4.importblsctscript, "", empty_script_pub_keys, False, False, 0)
 
         # Test with non-hex script
         non_hex_script_pub_keys = ["not_hex_script"]
-        
+
         assert_raises_rpc_error(-8, "Invalid script: not hex",
                                wallet4.importblsctscript, "", non_hex_script_pub_keys, False, False, 0)
 
@@ -165,7 +163,7 @@ class BLSCTImportScriptsTest(BitcoinTestFramework):
         # Create a transaction sending to the imported script using the script parameter
         inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
         outputs = [{"address": address1, "amount": 0.05, "memo": "Change output"}]
-        
+
         # Add output with the imported script
         outputs.append({"script": test_script, "amount": 0.005, "memo": "Test script output", "address": address1})
 
@@ -176,7 +174,7 @@ class BLSCTImportScriptsTest(BitcoinTestFramework):
 
         print(signed_tx)
         print(wallet1.decoderawtransaction(signed_tx))
-        
+
         # Send the transaction
         txid = self.nodes[0].sendrawtransaction(signed_tx)
         self.log.info(f"Sent transaction {txid} with script {test_script}")
@@ -207,7 +205,6 @@ class BLSCTImportScriptsTest(BitcoinTestFramework):
         assert_greater_than(balance, 0)
 
         self.log.info("ImportScripts transaction detection test passed")
-
 
 if __name__ == '__main__':
     BLSCTImportScriptsTest().main() 
