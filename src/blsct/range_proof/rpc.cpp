@@ -12,6 +12,7 @@
 #include <rpc/server_util.h>
 #include <rpc/util.h>
 #include <univalue.h>
+#include <validation.h>
 
 RPCHelpMan verifyblsctbalanceproof()
 {
@@ -57,7 +58,7 @@ RPCHelpMan verifyblsctbalanceproof()
     };
 }
 
-void RegisterBLSCTUtilsRPCCommands(CRPCTable& t)
+void RegisterRangeProofRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
         {"blsct", &verifyblsctbalanceproof},
@@ -65,4 +66,12 @@ void RegisterBLSCTUtilsRPCCommands(CRPCTable& t)
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);
     }
+}
+
+Span<const CRPCCommand> GetRangeProofRPCCommands()
+{
+    static const CRPCCommand commands[]{
+        {"blsct", &verifyblsctbalanceproof},
+    };
+    return commands;
 }

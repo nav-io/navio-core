@@ -579,6 +579,7 @@ libbitcoin_node_a_SOURCES = \
   blsct/range_proof/generators.cpp \
   blsct/range_proof/msg_amt_cipher.cpp \
   blsct/range_proof/proof_base.cpp \
+  blsct/range_proof/rpc.cpp \
   blsct/set_mem_proof/set_mem_proof.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
