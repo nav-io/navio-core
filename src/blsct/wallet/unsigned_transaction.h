@@ -21,10 +21,10 @@ private:
     // Inputs and outputs
     std::vector<UnsignedInput> m_inputs;
     std::vector<UnsignedOutput> m_outputs;
-    CAmount m_fee;
+    CAmount m_fee{0};
 
 public:
-    UnsignedTransaction() : m_fee(0){};
+    UnsignedTransaction() = default;
 
     // Getters
     const std::vector<UnsignedInput>& GetInputs() const { return m_inputs; }
