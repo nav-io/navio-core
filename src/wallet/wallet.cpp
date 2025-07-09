@@ -1266,7 +1266,12 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
     if (wtx.tx->IsBLSCT()) {
         for (auto& out : wtx.tx->vout) {
             if (blsct_man->IsMine(out))
-                blsct_man->GetSpendingKeyForOutputWithCache(out);
+            {
+                blsct::PrivateKey spending_key;
+                if (!blsct_man->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+                    continue;
+                }
+            }
         }
 
         if (blsct_man) {

@@ -908,7 +908,6 @@ RPCHelpMan abandontransaction();
 RPCHelpMan rescanblockchain();
 RPCHelpMan abortrescan();
 
-RPCHelpMan importblsctscript();
 
 Span<const CRPCCommand> GetWalletRPCCommands()
 {
@@ -986,7 +985,6 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &walletpassphrase},
         {"wallet", &walletpassphrasechange},
         {"wallet", &walletprocesspsbt},
-        {"wallet", &importblsctscript},
     };
     return commands;
 }

@@ -3,7 +3,7 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-"""Test BLSCT ImportScripts functionality."""
+"""Test BLSCT raw transaction with custom script outputs."""
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
@@ -12,9 +12,9 @@ from test_framework.util import (
     assert_greater_than,
 )
 import random
+from decimal import Decimal
 
-
-class BLSCTImportScriptsTest(BitcoinTestFramework):
+class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
     def add_options(self, parser):
         self.add_wallet_options(parser, blsct=True)
 
@@ -31,9 +31,9 @@ class BLSCTImportScriptsTest(BitcoinTestFramework):
         self.connect_nodes(0, 1)
 
     def create_random_script(self):
-        """Create a random OP_RETURN script for testing"""
-        # Create random data for OP_RETURN
-        random_data = ''.join(random.choices('0123456789abcdef', k=32))
+        """Create a random script for testing"""
+        # Create random data (32 bytes)
+        random_data = ''.join(random.choices('0123456789abcdef', k=64))
         # OP_RETURN followed by data length and data
         script = f"6a20{random_data}"  # 6a = OP_RETURN, 20 = 32 bytes
         return script
@@ -64,147 +64,224 @@ class BLSCTImportScriptsTest(BitcoinTestFramework):
         self.log.info(f"Initial balance in wallet1: {balance1}")
         assert_greater_than(balance1, 0)
 
-        # Test the ImportScripts functionality
-        self.test_import_scripts_basic(wallet1, wallet2, address1, address2)
-        self.test_import_scripts_with_label(wallet1, wallet2, address1, address2)
-        self.test_import_scripts_error_cases(wallet1, wallet2, address1, address2)
-        self.test_import_scripts_transaction_detection(wallet1, wallet2, address1, address2)
+        # Test BLSCT raw transaction with custom scripts
+        self.test_blsct_raw_transaction_with_script(wallet1, wallet2, address1, address2)
+        self.test_blsct_raw_transaction_multiple_scripts(wallet1, wallet2, address1, address2)
+        self.test_blsct_raw_transaction_script_verification(wallet1, wallet2, address1, address2)
 
-    def test_import_scripts_basic(self, wallet1, wallet2, address1, address2):
-        """Test basic ImportScripts functionality"""
-        self.log.info("Testing basic ImportScripts functionality")
+    def test_blsct_raw_transaction_with_script(self, wallet1, wallet2, address1, address2):
+        """Test creating a BLSCT raw transaction with a custom script output"""
+        self.log.info("Testing BLSCT raw transaction with custom script")
 
-        # Create random scripts for testing
-        script1 = self.create_random_script()
-        script2 = self.create_random_script()
-
-        self.log.info(f"Script 1: {script1}")
-        self.log.info(f"Script 2: {script2}")
-
-        # Import scripts into wallet2 (watch-only)
-        script_pub_keys = [script1, script2]
-
-        # Test importing without label
-        result = wallet2.importblsctscript("", script_pub_keys, False, False, 0)
-        assert_equal(result, True)
-
-        self.log.info("Basic ImportScripts test passed")
-
-    def test_import_scripts_with_label(self, wallet1, wallet2, address1, address2):
-        """Test ImportScripts with label functionality"""
-        self.log.info("Testing ImportScripts with label")
-
-        # Create a new wallet for this test
-        self.nodes[1].createwallet(wallet_name="wallet3", blsct=True)
-        wallet3 = self.nodes[1].get_wallet_rpc("wallet3")
-
-        # Create random script
-        script1 = self.create_random_script()
-
-        # Import script with label
-        script_pub_keys = [script1]
-        label = "test_label"
-
-        result = wallet3.importblsctscript(label, script_pub_keys, False, True, 0)
-        assert_equal(result, True)
-
-        self.log.info("ImportScripts with label test passed")
-
-    def test_import_scripts_error_cases(self, wallet1, wallet2, address1, address2):
-        """Test ImportScripts error cases"""
-        self.log.info("Testing ImportScripts error cases")
-
-        # Create a new wallet for this test
-        self.nodes[1].createwallet(wallet_name="wallet4", blsct=True)
-        wallet4 = self.nodes[1].get_wallet_rpc("wallet4")
-
-        # Test with invalid script
-        invalid_script_pub_keys = ["invalid_script"]
-
-        assert_raises_rpc_error(-8, "Invalid script: not hex",
-                               wallet4.importblsctscript, "", invalid_script_pub_keys, False, False, 0)
-
-        # Test with empty scripts array
-        empty_script_pub_keys = []
-
-        assert_raises_rpc_error(-8, "No scripts provided",
-                               wallet4.importblsctscript, "", empty_script_pub_keys, False, False, 0)
-
-        # Test with non-hex script
-        non_hex_script_pub_keys = ["not_hex_script"]
-
-        assert_raises_rpc_error(-8, "Invalid script: not hex",
-                               wallet4.importblsctscript, "", non_hex_script_pub_keys, False, False, 0)
-
-        self.log.info("Importscripts error cases test passed")
-
-    def test_import_scripts_transaction_detection(self, wallet1, wallet2, address1, address2):
-        """Test that imported scripts detect transactions"""
-        self.log.info("Testing Importscripts transaction detection")
-
-        # Create a new wallet for this test
-        self.nodes[1].createwallet(wallet_name="wallet5", blsct=True)
-        wallet5 = self.nodes[1].get_wallet_rpc("wallet5")
-
-        # Create a random script
-        test_script = self.create_random_script()
-        self.log.info(f"Test script: {test_script}")
-
-        # Import script into wallet5
-        script_pub_keys = [test_script]
-        result = wallet5.importblsctscript("", script_pub_keys, False, False, 0)
-        assert_equal(result, True)
-
-        # Get some unspent outputs from wallet1
+        # Get unspent outputs from wallet1
         unspent = wallet1.listblsctunspent()
         assert_greater_than(len(unspent), 0)
         utxo = unspent[0]
 
-        # Create a transaction sending to the imported script using the script parameter
+        # Create a random script
+        custom_script = self.create_random_script()
+        self.log.info(f"Custom script: {custom_script}")
+
+        # Create transaction inputs
         inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
-        outputs = [{"address": address1, "amount": 0.05, "memo": "Change output"}]
 
-        # Add output with the imported script
-        outputs.append({"script": test_script, "amount": 0.005, "memo": "Test script output", "address": address1})
+        # Create transaction outputs
+        outputs = [
+            {"address": address2, "amount": 0.1, "memo": "Regular output"},
+            {"address": address2, "script": custom_script, "amount": 0.05, "memo": "Custom script output"}
+        ]
 
-        # Create and sign the transaction
+        # Create raw transaction
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
-        raw_tx = wallet1.fundblsctrawtransaction(raw_tx)
-        signed_tx = wallet1.signblsctrawtransaction(raw_tx)
+        self.log.info(f"Created raw transaction: {raw_tx}")
 
-        print(signed_tx)
-        print(wallet1.decoderawtransaction(signed_tx))
+        # Fund the transaction
+        funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
+        self.log.info(f"Funded transaction: {funded_tx}")
+
+        # Sign the transaction
+        signed_tx = wallet1.signblsctrawtransaction(funded_tx)
+        self.log.info(f"Signed transaction: {signed_tx}")
+
+        # Decode and verify the transaction
+        decoded_tx = wallet1.decoderawtransaction(signed_tx)
+        self.log.info(f"Decoded transaction: {decoded_tx}")
+
+        # Get BLSCT recovery data to extract amounts and script information
+        recovery_data = wallet2.getblsctrecoverydata(signed_tx)
+        self.log.info(f"Recovery data: {recovery_data}")
+
+        script_found = False
+
+        for output in recovery_data['outputs']:
+            print(f"Output: {output} {output['script']} {custom_script}")
+            if 'script' in output and output['script'] == custom_script:
+                script_found = True
+                assert_equal(output['amount'], Decimal('0.05'))
+                self.log.info(f"Found custom script in output: {output}")
+                break
+
+        assert_equal(script_found, True)
+
+        # Check that the custom script is in the outputs
+        script_found = False
+        for output in decoded_tx['vout']:
+            if 'scriptPubKey' in output and output['scriptPubKey']['hex'] == custom_script:
+                script_found = True
+                self.log.info(f"Found custom script in output: {output}")
+                break
+        assert_equal(script_found, True)
 
         # Send the transaction
         txid = self.nodes[0].sendrawtransaction(signed_tx)
-        self.log.info(f"Sent transaction {txid} with script {test_script}")
+        self.log.info(f"Sent transaction {txid}")
 
         # Generate a block to confirm the transaction
         self.generatetoblsctaddress(self.nodes[0], 1, address1)
 
-        # Verify that wallet5 detects the transaction
-        # Wait a bit for the wallet to process the transaction
+        # Verify the transaction is in the mempool and then confirmed
         self.sync_all()
 
-        # Check if the transaction appears in wallet5's transaction list
-        transactions = wallet5.listtransactions()
-        found_transaction = False
-        for tx in transactions:
-            print(tx)
-            if tx['txid'] == txid:
-                found_transaction = True
-                assert_equal(tx['category'], 'receive')
-                # Note: The amount might be different due to fees, so we just check that it's positive
-                assert_greater_than(tx['amount'], 0)
+        # Check that wallet2 received the regular output
+        balance2 = wallet2.getbalance()
+        assert_greater_than(balance2, 0)
+
+        self.log.info("BLSCT raw transaction with custom script test passed")
+
+    def test_blsct_raw_transaction_multiple_scripts(self, wallet1, wallet2, address1, address2):
+        """Test creating a BLSCT raw transaction with multiple custom script outputs"""
+        self.log.info("Testing BLSCT raw transaction with multiple custom scripts")
+
+        # Get unspent outputs from wallet1
+        unspent = wallet1.listblsctunspent()
+        assert_greater_than(len(unspent), 0)
+        utxo = unspent[0]
+
+        # Create multiple random scripts
+        script1 = self.create_random_script()
+        script2 = self.create_random_script()
+        script3 = self.create_random_script()
+
+        self.log.info(f"Script 1: {script1}")
+        self.log.info(f"Script 2: {script2}")
+        self.log.info(f"Script 3: {script3}")
+
+        # Create transaction inputs
+        inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
+
+        # Create transaction outputs with multiple scripts
+        outputs = [
+            {"address": address2, "script": script1, "amount": 0.02, "memo": "Script 1 output"},
+            {"address": address2, "script": script2, "amount": 0.03, "memo": "Script 2 output"},
+            {"address": address2, "script": script3, "amount": 0.04, "memo": "Script 3 output"}
+        ]
+
+        # Create raw transaction
+        raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
+
+        # Fund the transaction
+        funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
+
+        # Sign the transaction
+        signed_tx = wallet1.signblsctrawtransaction(funded_tx)
+
+        # Decode and verify the transaction
+        decoded_tx = wallet1.decoderawtransaction(signed_tx)
+
+        # Get BLSCT recovery data to extract amounts and script information
+        recovery_data = wallet2.getblsctrecoverydata(signed_tx)
+        self.log.info(f"Recovery data: {recovery_data}")
+
+        # Verify the outputs
+        assert_equal(len(recovery_data['outputs']), 4)
+        # Check that all custom scripts are in the outputs
+        scripts_found = set()
+        for output in recovery_data['outputs']:
+            if 'script' in output and output['gamma'] != "":
+                scripts_found.add(output['script'])
+        expected_scripts = {script1, script2, script3}
+        assert_equal(scripts_found, expected_scripts)
+
+        # Send the transaction
+        txid = self.nodes[0].sendrawtransaction(signed_tx)
+        self.log.info(f"Sent transaction {txid} with multiple scripts")
+
+        # Generate a block to confirm the transaction
+        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+
+        self.log.info("BLSCT raw transaction with multiple custom scripts test passed")
+
+    def test_blsct_raw_transaction_script_verification(self, wallet1, wallet2, address1, address2):
+        """Test that custom scripts in BLSCT transactions can be verified by the node"""
+        self.log.info("Testing BLSCT raw transaction script verification")
+
+        # Get unspent outputs from wallet1
+        unspent = wallet1.listblsctunspent()
+        assert_greater_than(len(unspent), 0)
+        utxo = unspent[0]
+
+        # Create a custom script
+        custom_script = self.create_random_script()
+        self.log.info(f"Custom script: {custom_script}")
+
+        # Create transaction inputs
+        inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
+
+        # Create transaction outputs with custom script
+        outputs = [
+            {"address": address2, "amount": 0.05, "memo": "Regular output"},
+            {"address": address1, "script": custom_script, "amount": 0.01, "memo": "Custom script output"}
+        ]
+
+        # Create raw transaction
+        raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
+
+        # Fund the transaction
+        funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
+
+        # Sign the transaction
+        signed_tx = wallet1.signblsctrawtransaction(funded_tx)
+
+        # Send the transaction
+        txid = self.nodes[0].sendrawtransaction(signed_tx)
+        self.log.info(f"Sent transaction {txid} with custom script")
+
+        # Generate a block to confirm the transaction
+        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+
+        # Wait a moment for the transaction to be processed
+        self.sync_all()
+
+        # Also check listunspent for the new outputs
+        unspent_after = wallet1.listunspent()
+        self.log.info(f"Unspent outputs after transaction: {len(unspent_after)}")
+
+        script_output_found = False
+
+        for utxo in unspent_after:
+            self.log.info(f"Unspent output: {utxo}")
+            if utxo['scriptPubKey'] == custom_script:
+                self.log.info(f"Found custom script in unspent output: {utxo}")
+                script_output_found = True
                 break
 
-        assert_equal(found_transaction, True, "Imported script should detect incoming transactions")
+        assert_equal(script_output_found, True)
+        # Look for outputs with our custom script using recovery data
+        script_output_found = False
+        for utxo in unspent_after:
+            # Get recovery data for this specific output
+            recovery_data_utxo = wallet1.getblsctrecoverydata(utxo['txid'], utxo['vout'])
+            for output in recovery_data_utxo['outputs']:
+                if 'script' in output and output['script'] == custom_script:
+                    script_output_found = True
+                    self.log.info(f"Found custom script in unspent output recovery data: {output}")
+                    break
+            if script_output_found:
+                break
+        assert_equal(script_output_found, True)
 
-        # Check balance
-        balance = wallet5.getbalance()
-        assert_greater_than(balance, 0)
+        self.log.info("BLSCT raw transaction script verification test passed")
 
-        self.log.info("ImportScripts transaction detection test passed")
 
 if __name__ == '__main__':
-    BLSCTImportScriptsTest().main() 
+    BLSCTRawTransactionScriptTest().main()

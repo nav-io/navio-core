@@ -1403,8 +1403,8 @@ RPCHelpMan createblsctrawtransaction()
                     const CTxOut& txout = wallet_tx->tx->vout[nOut];
 
                     // Get the spending key for this output
-                    auto spending_key = blsct_km->GetSpendingKeyForOutputWithCache(txout);
-                    if (!spending_key.IsValid()) {
+                    blsct::PrivateKey spending_key;
+                    if (!blsct_km->GetSpendingKeyForOutputWithCache(txout, spending_key) || !spending_key.IsValid()) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Spending key not available for output %s:%d", txid.GetHex(), nOut));
                     }
 
@@ -1609,8 +1609,8 @@ RPCHelpMan fundblsctrawtransaction()
                     input.gamma = recovery_data.gamma;
 
                     // Get the spending key for this output
-                    auto spending_key = blsct_km->GetSpendingKeyForOutputWithCache(output.txout);
-                    if (!spending_key.IsValid()) {
+                    blsct::PrivateKey spending_key;
+                    if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Spending key not available for output %s:%d", output.outpoint.hash.GetHex(), output.outpoint.n));
                     }
 
@@ -1777,9 +1777,10 @@ static RPCHelpMan getblsctrecoverydata()
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
-                                        {RPCResult::Type::ARR, "outputs", "Array of outputs with recovery data", {
+                                              {RPCResult::Type::ARR, "outputs", "Array of outputs with recovery data", {
                                                                                                                            {RPCResult::Type::OBJ, "", "", {
                                                                                                                                                               {RPCResult::Type::NUM, "vout", "Output index"},
+                                                                                                                                                              {RPCResult::Type::STR_HEX, "script", "The script hex"},
                                                                                                                                                               {RPCResult::Type::STR_AMOUNT, "amount", "The recovered amount in " + CURRENCY_UNIT},
                                                                                                                                                               {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                               {RPCResult::Type::STR, "message", "The memo/message associated with this output"},
@@ -1837,6 +1838,7 @@ static RPCHelpMan getblsctrecoverydata()
                     const CTxOut& out = mtx.vout[i];
                     UniValue output(UniValue::VOBJ);
                     output.pushKV("vout", (int)i);
+                    output.pushKV("script", HexStr(out.scriptPubKey));
 
                     // Use RecoverOutputs for hex input
                     auto result = blsct_km->RecoverOutputs({out});
@@ -1868,6 +1870,7 @@ static RPCHelpMan getblsctrecoverydata()
 
                     UniValue output(UniValue::VOBJ);
                     output.pushKV("vout", (int)i);
+                    output.pushKV("script", HexStr(mtx.vout[i].scriptPubKey));
 
                     // Get recovery data from wallet transaction
                     auto recovery_data = wallet_tx->GetBLSCTRecoveryData(i);

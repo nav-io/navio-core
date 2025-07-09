@@ -180,12 +180,12 @@ public:
     blsct::PublicKey GetPublicSpendingKey() const;
     blsct::PrivateKey GetMasterTokenKey() const;
     blsct::PrivateKey GetSpendingKey() const;
-    blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out) const;
-    blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id) const;
-    blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id) const;
-    blsct::PrivateKey GetSpendingKeyForOutputWithCache(const CTxOut& out);
-    blsct::PrivateKey GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& id);
-    blsct::PrivateKey GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id);
+    bool GetSpendingKeyForOutput(const CTxOut& out, blsct::PrivateKey& key) const;
+    bool GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key) const;
+    bool GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key) const;
+    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, blsct::PrivateKey& key);
+    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key);
+    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key);
     bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
 
     blsct::PrivateKey GetTokenKey(const uint256& tokenId) const;

@@ -27,7 +27,16 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
     if (vInputs.count(coin.out.tokenId) == 0)
         vInputs[coin.out.tokenId] = std::vector<UnsignedInput>();
 
-    vInputs[coin.out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, km->GetSpendingKeyForOutputWithCache(coin.out), stakedCommitment});
+    try {
+        blsct::PrivateKey spending_key;
+        if (!km->GetSpendingKeyForOutputWithCache(coin.out, spending_key)) {
+            return false;
+        }
+        vInputs[coin.out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, spending_key, stakedCommitment});
+    } catch (const std::exception& e) {
+        LogPrintf("Error adding input: %s\n", e.what());
+        return false;
+    }
 
     if (nAmounts.count(coin.out.tokenId) == 0)
         nAmounts[coin.out.tokenId] = {0, 0, 0};
@@ -67,8 +76,17 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
     if (vInputs.count(out.tokenId) == 0)
         vInputs[out.tokenId] = std::vector<UnsignedInput>();
 
-    vInputs[out.tokenId]
-        .push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, km->GetSpendingKeyForOutputWithCache(out), stakedCommitment});
+    try {
+        blsct::PrivateKey spending_key;
+        if (!km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+            return false;
+        }
+        vInputs[out.tokenId]
+            .push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, spending_key, stakedCommitment});
+    } catch (const std::exception& e) {
+        LogPrintf("Error adding input: %s\n", e.what());
+        return false;
+    }
 
     if (nAmounts.count(out.tokenId) == 0)
         nAmounts[out.tokenId] = {0, 0, 0};
@@ -135,7 +153,16 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
         }
         auto value = out.HasBLSCTRangeProof() ? recoveredInfo.amount : out.nValue;
 
-        inputCandidates.push_back({value, recoveredInfo.gamma, blsct_km->GetSpendingKeyForOutputWithCache(out), out.tokenId, COutPoint(output.outpoint.hash, output.outpoint.n), out.IsStakedCommitment()});
+        try {
+            blsct::PrivateKey spending_key;
+            if (!blsct_km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+                continue;
+            }
+            inputCandidates.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash, output.outpoint.n), out.IsStakedCommitment()});
+        } catch (const std::exception& e) {
+            LogPrintf("Error adding input: %s\n", e.what());
+            continue;
+        }
         nTotalAdded += value;
 
         if (nTotalAdded > nAmountLimit)
