@@ -8,7 +8,6 @@
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
-    assert_raises_rpc_error,
     assert_greater_than,
 )
 import random
@@ -184,9 +183,6 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
 
         # Sign the transaction
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
-
-        # Decode and verify the transaction
-        decoded_tx = wallet1.decoderawtransaction(signed_tx)
 
         # Get BLSCT recovery data to extract amounts and script information
         recovery_data = wallet2.getblsctrecoverydata(signed_tx)

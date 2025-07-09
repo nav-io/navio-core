@@ -135,7 +135,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.log.info(f"Funded transaction with change: {funded_tx_with_change[:100]}...")
         # Test error cases
         # Invalid hex string
-        assert_raises_rpc_error(-22, "Transaction deserialization faile",
+        assert_raises_rpc_error(-22, "Transaction deserialization failed",
                                wallet1.fundblsctrawtransaction, "invalid_hex")
 
         # Invalid change address
@@ -190,7 +190,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 2: Error cases
         # Invalid hex string
-        assert_raises_rpc_error(-22, "Transaction deserialization faile",
+        assert_raises_rpc_error(-22, "Transaction deserialization failed",
                                wallet1.decodeblsctrawtransaction, "invalid_hex")
 
         self.log.info("decodeblsctrawtransaction tests passed")
