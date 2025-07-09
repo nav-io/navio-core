@@ -1341,7 +1341,7 @@ RPCHelpMan createblsctrawtransaction()
                             }
                             unsigned_input.gamma = Scalar(gamma_bytes);
                         } catch (const std::exception& e) {
-                            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid gamma hex string");
+                            throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid gamma hex string: %s", e.what()));
                         }
                     }
                 }
@@ -1357,7 +1357,7 @@ RPCHelpMan createblsctrawtransaction()
                             }
                             unsigned_input.sk = blsct::PrivateKey(Scalar(sk_bytes));
                         } catch (const std::exception& e) {
-                            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid private key hex string");
+                            throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid private key hex string: %s", e.what()));
                         }
                     }
                 }
@@ -1467,7 +1467,7 @@ RPCHelpMan createblsctrawtransaction()
                         CScript script(script_bytes.begin(), script_bytes.end());
                         unsigned_output = CreateOutput(std::make_pair(subAddress.GetKeys(), script), nAmount, memo, token_id, Scalar::Rand(), type, 0);
                     } catch (const std::exception& e) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid script hex string");
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid script hex string: %s", e.what()));
                     }
                 } else {
                     unsigned_output = CreateOutput(subAddress.GetKeys(), nAmount, memo, token_id, Scalar::Rand(), type);

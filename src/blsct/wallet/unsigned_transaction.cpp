@@ -30,7 +30,7 @@ std::optional<UnsignedTransaction> UnsignedTransaction::Deserialize(const std::v
         UnsignedTransaction tx;
         stream >> tx;
         return tx;
-    } catch (const std::exception& e) {
+    } catch (const std::exception&) {
         return std::nullopt;
     }
 }
@@ -87,7 +87,7 @@ std::optional<CTransaction> UnsignedTransaction::Sign() const
         tx.txSig = Signature::Aggregate(txSigs);
 
         return CTransaction(tx);
-    } catch (const std::exception& e) {
+    } catch (const std::exception&) {
         return std::nullopt;
     }
 }
