@@ -228,13 +228,6 @@ public:
         LogPrintf(("%s " + fmt).c_str(), m_storage.GetDisplayName(), parameters...);
     };
 
-    // Watch-only functionality
-    bool AddWatchOnly(const CScript& dest, int64_t nCreateTime = 1);
-    bool AddWatchOnlyWithDB(wallet::WalletBatch& batch, const CScript& dest, int64_t create_time);
-    bool AddWatchOnlyInMem(const CScript& dest);
-    bool HaveWatchOnly(const CScript& dest) const;
-    bool ImportScriptPubKeys(const std::set<CScript>& script_pub_keys, const bool have_solving_data, const int64_t timestamp);
-
     // Helper function to extract spending key from OP_BLSCHECKSIG script
     bool ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKey& spendingKey) const;
 };

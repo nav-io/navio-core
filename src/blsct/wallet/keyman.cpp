@@ -1065,53 +1065,6 @@ int64_t KeyMan::GetTimeFirstKey() const
     return nTimeFirstKey;
 }
 
-// BLSCT Watch-only functionality
-bool KeyMan::AddWatchOnlyInMem(const CScript& dest)
-{
-    LOCK(cs_KeyStore);
-    setWatchOnly.insert(dest);
-    return true;
-}
-
-bool KeyMan::AddWatchOnlyWithDB(wallet::WalletBatch& batch, const CScript& dest, int64_t create_time)
-{
-    if (!AddWatchOnlyInMem(dest))
-        return false;
-    const wallet::CKeyMetadata& meta = m_script_metadata[CScriptID(dest)];
-    UpdateTimeFirstKey(meta.nCreateTime);
-    if (batch.WriteBLSCTWatchOnly(dest, meta)) {
-        m_storage.UnsetBlankWalletFlag(batch);
-        return true;
-    }
-    return false;
-}
-
-bool KeyMan::AddWatchOnly(const CScript& dest, int64_t nCreateTime)
-{
-    m_script_metadata[CScriptID(dest)].nCreateTime = nCreateTime;
-    wallet::WalletBatch batch(m_storage.GetDatabase());
-    return AddWatchOnlyWithDB(batch, dest, nCreateTime);
-}
-
-bool KeyMan::HaveWatchOnly(const CScript& dest) const
-{
-    LOCK(cs_KeyStore);
-    return setWatchOnly.count(dest) > 0;
-}
-
-bool KeyMan::ImportScriptPubKeys(const std::set<CScript>& script_pub_keys, const bool have_solving_data, const int64_t timestamp)
-{
-    wallet::WalletBatch batch(m_storage.GetDatabase());
-    for (const CScript& script : script_pub_keys) {
-        if (!have_solving_data || !IsMine(script)) { // Always call AddWatchOnly for non-solvable watch-only, so that watch timestamp gets updated
-            if (!AddWatchOnlyWithDB(batch, script, timestamp)) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 bool KeyMan::ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKey& spendingKey) const
 {
     // Parse the script to find OP_BLSCHECKSIG and extract the public key before it

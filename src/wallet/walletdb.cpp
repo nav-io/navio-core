@@ -941,28 +941,6 @@ static LoadResult LoadRecords(CWallet* pwallet, DatabaseBatch& batch, const std:
     return LoadRecords(pwallet, batch, key, prefix, load_func);
 }
 
-bool LoadBLSCTWatchOnly(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
-{
-    LOCK(pwallet->cs_wallet);
-    try {
-        CScript script;
-        ssKey >> script;
-        CKeyMetadata keyMeta;
-        ssValue >> keyMeta;
-
-        if (!pwallet->GetOrCreateBLSCTKeyMan()->AddWatchOnly(script, keyMeta.nCreateTime)) {
-            strErr = "Error reading wallet database: BLSCTKeyMan::AddWatchOnly failed";
-            return false;
-        }
-    } catch (const std::exception& e) {
-        if (strErr.empty()) {
-            strErr = e.what();
-        }
-        return false;
-    }
-    return true;
-}
-
 static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, int last_client) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet)
 {
     AssertLockHeld(pwallet->cs_wallet);
@@ -1128,12 +1106,6 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
         return DBErrors::LOAD_OK;
     });
     result = std::max(result, blsctkeymeta_res.m_result);
-
-    LoadResult blsctwatchonly_res = LoadRecords(pwallet, batch, DBKeys::BLSCTWATCHMETA,
-                                                [](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
-                                                    return LoadBLSCTWatchOnly(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
-                                                });
-    result = std::max(result, blsctwatchonly_res.m_result);
 
     // Check whether rewrite is needed
     if (ckey_res.m_records > 0) {
