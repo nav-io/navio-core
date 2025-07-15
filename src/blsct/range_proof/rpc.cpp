@@ -21,6 +21,7 @@ RPCHelpMan verifyblsctbalanceproof()
         "Verifies a zero-knowledge balance proof\n",
         {
             {"proof", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The serialized balance proof"},
+            {"additional_commitment", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The additional commitment to use for the proof signature verification"},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -38,6 +39,8 @@ RPCHelpMan verifyblsctbalanceproof()
 
             // Deserialize the proof
             std::vector<unsigned char> proof_data = ParseHex(request.params[0].get_str());
+            uint256 hash = MessageHash("BLSCT_BALANCE_PROOF_" + (!request.params[1].isNull() ? request.params[1].get_str() : ""));
+            blsct::Message additional_commitment(hash.begin(), hash.end());
             DataStream ss{proof_data};
             blsct::BalanceProof proof;
             try {
@@ -47,7 +50,7 @@ RPCHelpMan verifyblsctbalanceproof()
             }
 
             // Verify the proof
-            bool valid = proof.Verify(coins_view);
+            bool valid = proof.Verify(coins_view, additional_commitment);
 
             UniValue result(UniValue::VOBJ);
             result.pushKV("valid", valid);

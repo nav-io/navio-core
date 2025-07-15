@@ -400,7 +400,8 @@ BASE_SCRIPTS = [
     'blsct_nft.py',
     'blsct_balance_proof.py',
     'blsct_rawtransaction.py',
-    'blsct_import_scriptpubkeys.py'
+    'blsct_import_scriptpubkeys.py',
+    'bls_message_signing.py'
     # Don't append tests at the end to avoid merge conflicts
     # Put them in a random line within the section that fits their approximate run-time
 ]
@@ -805,7 +806,7 @@ class TestResult():
 def check_script_prefixes():
     """Check that test scripts start with one of the allowed name prefixes."""
 
-    good_prefixes_re = re.compile("^(example|feature|interface|mempool|mining|p2p|rpc|wallet|tool|blsct)_")
+    good_prefixes_re = re.compile("^(example|feature|interface|mempool|mining|p2p|rpc|wallet|tool|blsct|bls)_")
     bad_script_names = [script for script in ALL_SCRIPTS if good_prefixes_re.match(script) is None]
 
     if bad_script_names:

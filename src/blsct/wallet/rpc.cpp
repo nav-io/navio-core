@@ -1180,15 +1180,19 @@ RPCHelpMan createblsctbalanceproof()
         "Creates a zero-knowledge proof that the wallet has at least the specified balance\n",
         {
             {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The minimum balance to prove"},
+            {"additional_commitment", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The additional commitment to use for the proof signature"},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
                                               {RPCResult::Type::STR_HEX, "proof", "The serialized balance proof"},
                                           }},
-        RPCExamples{HelpExampleCli("createblsctbalanceproof", "1.0") + HelpExampleRpc("createblsctbalanceproof", "1.0")},
+        RPCExamples{HelpExampleCli("createblsctbalanceproof", "1.0 \"order id: 100\"") + HelpExampleRpc("createblsctbalanceproof", "1.0 \"order id: 100\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::vector<COutPoint> outpoints;
             CAmount target_amount = AmountFromValue(request.params[0]);
+
+            uint256 hash = MessageHash("BLSCT_BALANCE_PROOF_" + (!request.params[1].isNull() ? request.params[1].get_str() : ""));
+            blsct::Message additional_commitment(hash.begin(), hash.end());
 
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -1221,7 +1225,7 @@ RPCHelpMan createblsctbalanceproof()
                 }
             }
 
-            blsct::BalanceProof proof(outpoints, target_amount, *pwallet);
+            blsct::BalanceProof proof(outpoints, target_amount, *pwallet, additional_commitment);
 
             // Serialize the proof
             DataStream ss{};
@@ -1526,12 +1530,15 @@ RPCHelpMan fundblsctrawtransaction()
             if (!unsigned_tx_opt) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction deserialization failed");
             }
-            auto unsigned_tx = unsigned_tx_opt.value();
+            auto& unsigned_tx = unsigned_tx_opt.value();
 
             // Calculate total output amount
             CAmount output_value = 0;
             for (const auto& out : unsigned_tx.GetOutputs()) {
                 output_value += out.value.GetUint64();
+                if (!MoneyRange(output_value)) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Output value is too large");
+                }
             }
 
             // Calculate total input amount from existing inputs
@@ -1671,10 +1678,10 @@ RPCHelpMan signblsctrawtransaction()
             if (!unsigned_tx_opt) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction deserialization failed");
             }
-            auto unsigned_tx = unsigned_tx_opt.value();
+            auto& unsigned_tx = unsigned_tx_opt.value();
 
             // Sign the transaction
-            auto tx_opt = unsigned_tx.Sign();
+            const auto& tx_opt = unsigned_tx.Sign();
             if (!tx_opt) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign transaction");
             }
@@ -1720,7 +1727,7 @@ RPCHelpMan decodeblsctrawtransaction()
             if (!unsigned_tx_opt) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction deserialization failed");
             }
-            auto unsigned_tx = unsigned_tx_opt.value();
+            auto& unsigned_tx = unsigned_tx_opt.value();
 
             UniValue result(UniValue::VOBJ);
 
@@ -1888,6 +1895,118 @@ static RPCHelpMan getblsctrecoverydata()
     };
 }
 
+static RPCHelpMan signblsmessage()
+{
+    return RPCHelpMan{
+        "signblsmessage",
+        "\nSign a message using a BLS private key.\n",
+        {
+            {"private_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The BLS private key in hex format"},
+            {"message", RPCArg::Type::STR, RPCArg::Optional::NO, "The message to sign"},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                                              {RPCResult::Type::STR_HEX, "signature", "The signature in hex format"},
+                                              {RPCResult::Type::STR_HEX, "public_key", "The public key corresponding to the private key"},
+                                          }},
+        RPCExamples{HelpExampleCli("signblsmessage", "\"private_key_hex\" \"Hello, world!\"") + HelpExampleRpc("signblsmessage", "\"private_key_hex\", \"Hello, world!\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::string private_key_hex = request.params[0].get_str();
+            std::string message = request.params[1].get_str();
+
+            // Parse private key from hex
+            std::vector<unsigned char> private_key_bytes;
+            try {
+                private_key_bytes = ParseHex(private_key_hex);
+                if (private_key_bytes.size() != 32) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Private key must be 32 bytes (64 hex characters)");
+                }
+            } catch (const std::exception& e) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid private key hex string: %s", e.what()));
+            }
+
+            // Create private key object
+            blsct::PrivateKey private_key = MclScalar(private_key_bytes);
+            if (!private_key.IsValid()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid private key");
+            }
+
+            // Hash the message with prefix
+            uint256 message_hash = MessageHash("BLSCT_MESSAGE_SIGN_" + message);
+            blsct::Message blsct_message(message_hash.begin(), message_hash.end());
+
+            // Sign the message
+            blsct::Signature signature = private_key.Sign(blsct_message);
+
+            // Get the public key
+            blsct::PublicKey public_key = private_key.GetPublicKey();
+
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("signature", HexStr(signature.GetVch()));
+            result.pushKV("public_key", HexStr(public_key.GetVch()));
+
+            return result;
+        },
+    };
+}
+
+static RPCHelpMan verifyblsmessage()
+{
+    return RPCHelpMan{
+        "verifyblsmessage",
+        "\nVerify a BLS message signature.\n",
+        {
+            {"public_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The BLS public key in hex format"},
+            {"message", RPCArg::Type::STR, RPCArg::Optional::NO, "The message that was signed"},
+            {"signature", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The signature in hex format"},
+        },
+        RPCResult{
+            RPCResult::Type::BOOL, "valid", "Whether the signature is valid"},
+        RPCExamples{HelpExampleCli("verifyblsmessage", "\"public_key_hex\" \"Hello, world!\" \"signature_hex\"") + HelpExampleRpc("verifyblsmessage", "\"public_key_hex\", \"Hello, world!\", \"signature_hex\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::string public_key_hex = request.params[0].get_str();
+            std::string message = request.params[1].get_str();
+            std::string signature_hex = request.params[2].get_str();
+
+            // Parse public key from hex
+            std::vector<unsigned char> public_key_bytes;
+            try {
+                public_key_bytes = ParseHex(public_key_hex);
+                if (public_key_bytes.size() != 48) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Public key must be 48 bytes (96 hex characters)");
+                }
+            } catch (const std::exception& e) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid public key hex string: %s", e.what()));
+            }
+
+            // Parse signature from hex
+            std::vector<unsigned char> signature_bytes;
+            try {
+                signature_bytes = ParseHex(signature_hex);
+                if (signature_bytes.size() != 96) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Signature must be 96 bytes (192 hex characters)");
+                }
+            } catch (const std::exception& e) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid signature hex string: %s", e.what()));
+            }
+
+            // Create public key and signature objects
+            blsct::PublicKey public_key(public_key_bytes);
+            blsct::Signature signature(signature_bytes);
+
+            // Hash the message with prefix
+            uint256 message_hash = MessageHash("BLSCT_MESSAGE_SIGN_" + message);
+            blsct::Message blsct_message(message_hash.begin(), message_hash.end());
+
+            // Verify the signature
+            bool valid = public_key.Verify(blsct_message, signature);
+
+            return valid;
+        },
+    };
+}
+
+
 Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
 {
     static const CRPCCommand commands[]{
@@ -1912,6 +2031,8 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &signblsctrawtransaction},
         {"blsct", &decodeblsctrawtransaction},
         {"blsct", &getblsctrecoverydata},
+        {"blsct", &signblsmessage},
+        {"blsct", &verifyblsmessage},
     };
     return commands;
 }
