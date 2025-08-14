@@ -66,12 +66,48 @@ struct UnsignedInput {
     Scalar gamma;
     PrivateKey sk;
     bool is_staked_commitment;
+
+    template <typename Stream>
+    void Serialize(Stream& s) const
+    {
+        ::Serialize(s, in);
+        ::Serialize(s, value);
+        ::Serialize(s, gamma);
+        ::Serialize(s, sk);
+        ::Serialize(s, is_staked_commitment);
+    }
+
+    template <typename Stream>
+    void Unserialize(Stream& s)
+    {
+        ::Unserialize(s, in);
+        ::Unserialize(s, value);
+        ::Unserialize(s, gamma);
+        ::Unserialize(s, sk);
+        ::Unserialize(s, is_staked_commitment);
+    }
 };
 
 struct Amounts {
     CAmount nFromInputs;
     CAmount nFromOutputs;
     CAmount nFromFee;
+
+    template <typename Stream>
+    void Serialize(Stream& s) const
+    {
+        ::Serialize(s, nFromInputs);
+        ::Serialize(s, nFromOutputs);
+        ::Serialize(s, nFromFee);
+    }
+
+    template <typename Stream>
+    void Unserialize(Stream& s)
+    {
+        ::Unserialize(s, nFromInputs);
+        ::Unserialize(s, nFromOutputs);
+        ::Unserialize(s, nFromFee);
+    }
 };
 
 CTransactionRef
@@ -80,6 +116,7 @@ UnsignedOutput CreateOutput(const Scalar& tokenKey, const blsct::TokenInfo& toke
 UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey);
 UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata);
 UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId = TokenId(), const Scalar& blindingKey = Scalar::Rand(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0);
+UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId = TokenId(), const Scalar& blindingKey = Scalar::Rand(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0);
 int32_t GetTransactionWeight(const CTransaction& tx);
 int32_t GetTransactioOutputWeight(const CTxOut& out);
 } // namespace blsct

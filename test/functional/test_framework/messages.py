@@ -520,6 +520,50 @@ class BLSCTSignature:
         return r
 
 class RangeProof:
+    __slots__ = 'Vs', 'Ls', 'Rs', 'A', 'A_wip', 'B', 'r_prime', 's_prime', 'delta_prime', 'alpha_hat', 'tau_x'
+
+    def __init__(self):
+        self.Vs = []
+        self.Ls = []
+        self.Rs = []
+        self.A = MclG1Point()
+        self.A_wip = MclG1Point()
+        self.B = MclG1Point()
+        self.r_prime = MclScalar()
+        self.s_prime = MclScalar()
+        self.delta_prime = MclScalar()
+        self.alpha_hat = MclScalar()
+        self.tau_x = MclScalar()
+
+    def deserialize(self, f):
+        self.Vs = deser_vector(f, MclG1Point)
+        self.Ls = deser_vector(f, MclG1Point)
+        self.Rs = deser_vector(f, MclG1Point)
+        self.A.deserialize(f)
+        self.A_wip.deserialize(f)
+        self.B.deserialize(f)
+        self.r_prime.deserialize(f)
+        self.s_prime.deserialize(f)
+        self.delta_prime.deserialize(f)
+        self.alpha_hat.deserialize(f)
+        self.tau_x.deserialize(f)
+
+    def serialize(self):
+        r = b""
+        r += ser_vector(self.Vs, "serialize")
+        r += ser_vector(self.Ls, "serialize")
+        r += ser_vector(self.Rs, "serialize")
+        r += self.A.serialize()
+        r += self.A_wip.serialize()
+        r += self.B.serialize()
+        r += self.r_prime.serialize()
+        r += self.s_prime.serialize()
+        r += self.delta_prime.serialize()
+        r += self.alpha_hat.serialize()
+        r += self.tau_x.serialize()
+        return r
+
+class RangeProof_old:
     __slots__ = ("Vs", "A", "T1", "T2", "mu", "tau_x", "Ls", "Rs", "a", "b", "t_hat")
 
     def __init__(self, proof=None):

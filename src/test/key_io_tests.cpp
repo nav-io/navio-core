@@ -163,7 +163,7 @@ BOOST_AUTO_TEST_CASE(key_io_double_public_key_endode_decode)
 BOOST_AUTO_TEST_CASE(key_io_double_public_key_decode_encode)
 {
     // a valid bech32_mod encoded double public key
-    std::string dpk_bech32_mod = "nv1jlca8fe3jltegf54vwxyl2dvplpk3rz0ja6tjpdpfcar79cm43vxc40g8luh5xh0lva0qzkmytrthftje04fqnt8g6yq3j8t2z552ryhy8dnpyfgqyj58ypdptp43f32u28htwu0r37y9su6332jn0c0fcvan8l53m";
+    std::string dpk_bech32_mod = "nav1szddvednme8p63xcxhcm3h3k4tlw5vnesudwe66km0w6jrqyymqz969xmknnz0w9unqczu58sp0rhqjc4tdmgt6hmtn9tpavrzckfdfcuwyx4w0s7dgvjce34377psjen6ug4s2xfg9smrw6qx70xtja6syg55uu8z";
 
     // check if decoding and then encoding it produces
     // the original bech32_mod encoded double public key

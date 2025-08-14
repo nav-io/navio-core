@@ -8,8 +8,7 @@
 
 #include <string>
 
-typedef enum ScriptError_t
-{
+typedef enum ScriptError_t {
     SCRIPT_ERR_OK = 0,
     SCRIPT_ERR_UNKNOWN_ERROR,
     SCRIPT_ERR_EVAL_FALSE,
@@ -29,6 +28,7 @@ typedef enum ScriptError_t
     SCRIPT_ERR_CHECKMULTISIGVERIFY,
     SCRIPT_ERR_CHECKSIGVERIFY,
     SCRIPT_ERR_NUMEQUALVERIFY,
+    SCRIPT_ERR_INVALID_PUBKEY,
 
     /* Logical/Format/Canonical errors */
     SCRIPT_ERR_BAD_OPCODE,

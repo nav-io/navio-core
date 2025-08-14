@@ -25,7 +25,7 @@ static void Bech32ModEncode(benchmark::Bench& bench)
 
 static void Bech32ModDecode(benchmark::Bench& bench)
 {
-    std::string addr = "nv1d3fqq4j2w384smpjxgm95anexe4rjwzr2pc553t0xduxuc3sd35nvatcxpnn2mjyde45sqrtfapnws3kwfc85sm3v9ekzc2r2ajnquzf09282e62xddykn25x3";
+    std::string addr = "nav1d3fqq4j2w384smpjxgm95anexe4rjwzr2pc553t0xduxuc3sd35nvatcxpnn2mjyde45sqrtfapnws3kwfc85sm3v9ekzc2r2ajnquzf09282e62xddykn25x3";
     bench.batch(addr.size()).unit("byte").run([&] {
         bech32_mod::Decode(addr);
     });

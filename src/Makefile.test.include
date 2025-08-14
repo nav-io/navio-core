@@ -109,6 +109,7 @@ BITCOIN_TESTS =\
   test/blsct/set_mem_proof/set_mem_proof_tests.cpp \
   test/blsct/signature_tests.cpp \
   test/blsct/sign_verify_tests.cpp \
+  test/blsct_signature_checker_tests.cpp \
   test/bswap_tests.cpp \
   test/checkqueue_tests.cpp \
   test/coins_tests.cpp \

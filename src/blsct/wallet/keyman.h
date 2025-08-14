@@ -17,6 +17,7 @@
 #include <blsct/wallet/import_wallet_type.h>
 #include <blsct/wallet/keyring.h>
 #include <logging.h>
+#include <util/strencodings.h>
 #include <wallet/crypter.h>
 #include <wallet/scriptpubkeyman.h>
 #include <wallet/walletdb.h>
@@ -61,6 +62,7 @@ private:
     using SubAddressMap = std::map<CKeyID, SubAddressIdentifier>;
     using SubAddressStrMap = std::map<SubAddress, CKeyID>;
     using SubAddressPoolMapSet = std::map<int64_t, std::set<uint64_t>>;
+    using WatchOnlyScriptMap = std::map<CScriptID, wallet::CKeyMetadata>;
 
     CryptedKeyMap mapCryptedKeys GUARDED_BY(cs_KeyStore);
     CryptedOutKeyMap mapCryptedOutKeys GUARDED_BY(cs_KeyStore);
@@ -68,6 +70,8 @@ private:
     SubAddressStrMap mapSubAddressesStr GUARDED_BY(cs_KeyStore);
     SubAddressPoolMapSet setSubAddressPool GUARDED_BY(cs_KeyStore);
     SubAddressPoolMapSet setSubAddressReservePool GUARDED_BY(cs_KeyStore);
+    std::set<CScript> setWatchOnly GUARDED_BY(cs_KeyStore);
+    WatchOnlyScriptMap m_script_metadata GUARDED_BY(cs_KeyStore);
 
     int64_t nTimeFirstKey GUARDED_BY(cs_KeyStore) = 0;
     //! Number of pre-generated SubAddresses
@@ -142,9 +146,33 @@ public:
     bool DeleteKeys();
 
     /** Detect ownership of outputs **/
-    bool IsMine(const CTxOut& txout) { return IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag); };
+    bool IsMine(const CTxOut& txout)
+    {
+        if (txout.blsctData.spendingKey.IsZero()) {
+            blsct::PublicKey extractedSpendingKey;
+            if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
+                return IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag);
+            }
+            return false;
+        }
+        return IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag);
+    };
     bool IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag);
-    CKeyID GetHashId(const CTxOut& txout) const { return GetHashId(txout.blsctData.blindingKey, txout.blsctData.spendingKey); }
+    bool IsMine(const CScript& script) const;
+    CKeyID GetHashId(const CTxOut& txout) const
+    {
+        if (!txout.scriptPubKey.IsSpendable()) {
+            return CKeyID();
+        }
+        if (txout.blsctData.spendingKey.IsZero()) {
+            blsct::PublicKey extractedSpendingKey;
+            if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
+                return GetHashId(txout.blsctData.blindingKey, extractedSpendingKey);
+            }
+            return CKeyID();
+        }
+        return GetHashId(txout.blsctData.blindingKey, txout.blsctData.spendingKey);
+    }
     CKeyID GetHashId(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey) const;
     CTxDestination GetDestination(const CTxOut& txout) const;
     blsct::PrivateKey GetMasterSeedKey() const;
@@ -152,12 +180,12 @@ public:
     blsct::PublicKey GetPublicSpendingKey() const;
     blsct::PrivateKey GetMasterTokenKey() const;
     blsct::PrivateKey GetSpendingKey() const;
-    blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out) const;
-    blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id) const;
-    blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id) const;
-    blsct::PrivateKey GetSpendingKeyForOutputWithCache(const CTxOut& out);
-    blsct::PrivateKey GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& id);
-    blsct::PrivateKey GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id);
+    bool GetSpendingKeyForOutput(const CTxOut& out, blsct::PrivateKey& key) const;
+    bool GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key) const;
+    bool GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key) const;
+    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, blsct::PrivateKey& key);
+    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key);
+    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key);
     bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
 
     blsct::PrivateKey GetTokenKey(const uint256& tokenId) const;
@@ -199,6 +227,9 @@ public:
     {
         LogPrintf(("%s " + fmt).c_str(), m_storage.GetDisplayName(), parameters...);
     };
+
+    // Helper function to extract spending key from OP_BLSCHECKSIG script
+    bool ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKey& spendingKey) const;
 };
 } // namespace blsct
 

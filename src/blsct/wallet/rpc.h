@@ -18,7 +18,6 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
 }
 
 class CRPCCommand;
-
 Span<const CRPCCommand> GetBLSCTWalletRPCCommands();
 
 #endif // BITCOIN_BLSCT_WALLET_RPC_H

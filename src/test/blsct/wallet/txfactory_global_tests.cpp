@@ -12,16 +12,16 @@ BOOST_AUTO_TEST_SUITE(blsct_txfactory_global_tests)
 
 BOOST_FIXTURE_TEST_CASE(create_output_test, TestingSetup)
 {
-    std::string destAddr = "nv1szddvednme8p63xcxhcm3h3k4tlw5vnesudwe66km0w6jrqyymqz969xmknnz0w9unqczu58sp0rhqjc4tdmgt6hmtn9tpavrzckfdfcuwyx4w0s7dgvjce34377psjen6ug4s2xfg9smrw6qx70xtja6s8wrt28dc";
+    std::string destAddr = "nav14h85k6mf4l5fu3j4v0nuuswjwrz5entvzcw9jl3s8uknsndu0pfzaze4992n36uq7hpcy8yeuu854p0gmhq4m2u0tf5znazc527cxy4j7c39qxlc89wg4nca8pazkecx0p6wmu3pwrma3ercgrk8s7k4759q2thyq5";
     MclScalar blindingKey{ParseHex("42c0926471b3bd01ae130d9382c5fca2e2b5000abbf826a93132696ffa5f2c65")};
 
     auto out = blsct::CreateOutput(blsct::SubAddress(destAddr).GetKeys(), 1, "", TokenId(), blindingKey);
 
-    BOOST_CHECK(out.out.blsctData.viewTag == 20232);
-    BOOST_CHECK(HexStr(out.out.blsctData.spendingKey.GetVch()) == "84ee3e9c40fe65f91776033b5ddb3bf280bbd549924028280dad0d6ea464bb728886910f53bd66bcc2b59e37f1b8f55e");
-    BOOST_CHECK(HexStr(out.out.blsctData.blindingKey.GetVch()) == "80e845ca79807a66ab93121dd57971ee2acbb3ef20d94c0750eb33eaa64bf58fe0f5cd775dcf73b49117260e806e8708");
+    BOOST_CHECK(out.out.blsctData.viewTag == 52098);
+    BOOST_CHECK(HexStr(out.out.blsctData.spendingKey.GetVch()) == "90a498638b6d13a89b2dd1bbcb1caf419577878bff4c2d6426d602b9d74f3878d4a89feda5c2a59dc862a55c4e25a265");
+    BOOST_CHECK(HexStr(out.out.blsctData.blindingKey.GetVch()) == "b96f2eae5089b87e1f9c39f49cccc779c840d861ab0a722d9597273c4c6e9f4075ce5562c82efba02f46146bf17bad72");
     BOOST_CHECK(HexStr(out.out.blsctData.ephemeralKey.GetVch()) == "935963399885ba1dd51dd272fb9be541896ac619570315e55f06c1e3a42d28ffb300fe6a3247d484bb491b25ecf7fb8a");
-    BOOST_CHECK(out.gamma.GetString() == "77fb7a5ff31f1c28037942b94e23270338fa788e065855dffa6860be93073ee");
+    BOOST_CHECK(out.gamma.GetString() == "37763c3ba24138ed73aafc33881e221d942bd81b20acc840033eb0a7bc0be4b5");
     BOOST_CHECK(out.blindingKey.GetString() == "42c0926471b3bd01ae130d9382c5fca2e2b5000abbf826a93132696ffa5f2c65");
 }
 

@@ -1266,7 +1266,12 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
     if (wtx.tx->IsBLSCT()) {
         for (auto& out : wtx.tx->vout) {
             if (blsct_man->IsMine(out))
-                blsct_man->GetSpendingKeyForOutputWithCache(out);
+            {
+                blsct::PrivateKey spending_key;
+                if (!blsct_man->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+                    continue;
+                }
+            }
         }
 
         if (blsct_man) {
@@ -2763,6 +2768,13 @@ util::Result<CTxDestination> CWallet::GetNewChangeDestination(const OutputType t
 std::optional<int64_t> CWallet::GetOldestKeyPoolTime() const
 {
     LOCK(cs_wallet);
+    if (IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
+        auto blsct_km = GetBLSCTKeyMan();
+        if (blsct_km) {
+            return blsct_km->GetOldestSubAddressPoolTime(0);
+        }
+    }
+
     if (m_spk_managers.empty()) {
         return std::nullopt;
     }

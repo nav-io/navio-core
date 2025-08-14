@@ -73,8 +73,10 @@ const std::string WALLETDESCRIPTORCKEY{"walletdescriptorckey"};
 const std::string WALLETDESCRIPTORKEY{"walletdescriptorkey"};
 const std::string WATCHMETA{"watchmeta"};
 const std::string WATCHS{"watchs"};
+const std::string BLSCTWATCHMETA{"blsctwatchmeta"};
+const std::string BLSCTWATCHS{"blsctwatchs"};
 const std::unordered_set<std::string> LEGACY_TYPES{CRYPTED_KEY, CSCRIPT, DEFAULTKEY, HDCHAIN, KEYMETA, KEY, OLD_KEY, POOL, WATCHMETA, WATCHS};
-const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTOUTKEY};
+const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTOUTKEY, BLSCTWATCHMETA, BLSCTWATCHS};
 const std::unordered_set<std::string> BLSCTKEY_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, BLSCTOUTKEY, CRYPTED_BLSCTOUTKEY};
 } // namespace DBKeys
 
@@ -327,6 +329,22 @@ bool WalletBatch::EraseWatchOnly(const CScript& dest)
         return false;
     }
     return EraseIC(std::make_pair(DBKeys::WATCHS, dest));
+}
+
+bool WalletBatch::WriteBLSCTWatchOnly(const CScript& dest, const CKeyMetadata& keyMeta)
+{
+    if (!WriteIC(std::make_pair(DBKeys::BLSCTWATCHMETA, dest), keyMeta)) {
+        return false;
+    }
+    return WriteIC(std::make_pair(DBKeys::BLSCTWATCHS, dest), uint8_t{'1'});
+}
+
+bool WalletBatch::EraseBLSCTWatchOnly(const CScript& dest)
+{
+    if (!EraseIC(std::make_pair(DBKeys::BLSCTWATCHMETA, dest))) {
+        return false;
+    }
+    return EraseIC(std::make_pair(DBKeys::BLSCTWATCHS, dest));
 }
 
 bool WalletBatch::WriteBestBlock(const CBlockLocator& locator)

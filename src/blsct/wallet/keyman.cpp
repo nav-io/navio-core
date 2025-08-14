@@ -4,6 +4,7 @@
 
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/keyman.h>
+#include <script/script.h>
 
 namespace blsct {
 bool KeyMan::IsHDEnabled() const
@@ -638,51 +639,53 @@ blsct::PrivateKey KeyMan::GetSpendingKey() const
     return ret;
 }
 
-blsct::PrivateKey KeyMan::GetSpendingKeyForOutput(const CTxOut& out) const
+bool KeyMan::GetSpendingKeyForOutput(const CTxOut& out, blsct::PrivateKey& key) const
 {
     auto hashId = GetHashId(out);
 
-    return GetSpendingKeyForOutput(out, hashId);
+    return GetSpendingKeyForOutput(out, hashId, key);
 }
 
-blsct::PrivateKey KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& hashId) const
+bool KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& hashId, blsct::PrivateKey& key) const
 {
     SubAddressIdentifier id;
 
     if (!GetSubAddressId(hashId, id))
-        throw std::runtime_error(strprintf("%s: could not read subaddress id", __func__));
+        return false;
 
-    return GetSpendingKeyForOutput(out, id);
+    return GetSpendingKeyForOutput(out, id, key);
 }
 
-blsct::PrivateKey KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id) const
+bool KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key) const
 {
     if (!fViewKeyDefined || !viewKey.IsValid())
         throw std::runtime_error(strprintf("%s: the wallet has no view key available", __func__));
 
     auto sk = GetSpendingKey();
 
-    return CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
+    key = CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
+
+    return true;
 }
 
-blsct::PrivateKey KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out)
+bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, blsct::PrivateKey& key)
 {
     auto hashId = GetHashId(out);
 
-    return GetSpendingKeyForOutput(out, hashId);
+    return GetSpendingKeyForOutput(out, hashId, key);
 }
 
-blsct::PrivateKey KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& hashId)
+bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& hashId, blsct::PrivateKey& key)
 {
     SubAddressIdentifier id;
 
     if (!GetSubAddressId(hashId, id))
-        throw std::runtime_error(strprintf("%s: could not read subaddress id", __func__));
+        return false;
 
-    return GetSpendingKeyForOutput(out, id);
+    return GetSpendingKeyForOutput(out, id, key);
 }
 
-blsct::PrivateKey KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id)
+bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key)
 {
     if (!fViewKeyDefined || !viewKey.IsValid())
         throw std::runtime_error(strprintf("%s: the wallet has no view key available", __func__));
@@ -691,16 +694,14 @@ blsct::PrivateKey KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, co
 
     auto outId = (HashWriter() << out.blsctData.blindingKey << viewKey.GetScalar() << sk.GetScalar() << id.account << id.address).GetHash();
 
-    blsct::PrivateKey ret;
+    if (GetOutKey(outId, key))
+        return true;
 
-    if (GetOutKey(outId, ret))
-        return ret;
+    key = CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
 
-    ret = CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
+    AddKeyOutKey(key, outId);
 
-    AddKeyOutKey(ret, outId);
-
-    return ret;
+    return true;
 }
 
 blsct::PrivateKey KeyMan::GetTokenKey(const uint256& tokenId) const
@@ -732,6 +733,12 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
     }
 
     return rp.RecoverAmounts(reqs);
+}
+
+bool KeyMan::IsMine(const CScript& script) const
+{
+    LOCK(cs_KeyStore);
+    return setWatchOnly.count(script) > 0;
 }
 
 bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag)
@@ -1056,5 +1063,37 @@ int64_t KeyMan::GetTimeFirstKey() const
 {
     LOCK(cs_KeyStore);
     return nTimeFirstKey;
+}
+
+bool KeyMan::ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKey& spendingKey) const
+{
+    // Parse the script to find OP_BLSCHECKSIG and extract the public key before it
+    CScript::const_iterator pc = script.begin();
+    opcodetype opcode;
+    std::vector<unsigned char> vch;
+    std::vector<unsigned char> lastData; // Keep track of the last data pushed
+
+    if (script.size() != 50) return false;
+
+    while (pc < script.end()) {
+        if (!script.GetOp(pc, opcode, vch)) {
+            return false;
+        }
+
+        if (opcode == OP_BLSCHECKSIG) {
+            // We found OP_BLSCHECKSIG, the public key should be the last data pushed before this opcode
+            if (lastData.size() == 48) { // BLS public keys are 48 bytes
+                return spendingKey.SetVch(lastData);
+            }
+            return false;
+        }
+
+        // If this is a data push (not an opcode), store it as the last data
+        if (opcode <= OP_PUSHDATA4) {
+            lastData = vch;
+        }
+    }
+
+    return false;
 }
 } // namespace blsct
