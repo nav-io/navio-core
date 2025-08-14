@@ -362,8 +362,6 @@ const BlsctScript* get_tx_in_script_witness(const CTxIn* tx_in);
 
 const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in);
 
-uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in);
-
 // TxOut
 uint64_t get_tx_out_value(const CTxOut* tx_out);
 

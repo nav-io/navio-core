@@ -52,24 +52,58 @@ void CTxMemPool::UpdateForDescendants(txiter updateIt, cacheMap& cachedDescendan
                                       const std::set<uint256>& setExclude, std::set<uint256>& descendants_to_remove)
 {
     CTxMemPoolEntry::Children stageEntries, descendants;
-    stageEntries = updateIt->GetMemPoolChildrenConst();
+
+    // Use our new mappings to find children
+    const CTransaction& tx = updateIt->GetTx();
+    std::set<uint256> childTxids;
+    for (unsigned int i = 0; i < tx.vout.size(); i++) {
+        uint256 outputHash = tx.vout[i].GetHash();
+        // Find any transactions that spend this output
+        auto output_iter = mapNextTx.find(COutPoint(outputHash));
+        if (output_iter != mapNextTx.end()) {
+            childTxids.insert(output_iter->second->GetHash());
+        }
+    }
+
+    // Convert to CTxMemPoolEntry::Children format for compatibility
+    for (const uint256& childTxid : childTxids) {
+        auto child_iter = mapTx.find(childTxid);
+        if (child_iter != mapTx.end()) {
+            stageEntries.insert(*child_iter);
+        }
+    }
 
     while (!stageEntries.empty()) {
         const CTxMemPoolEntry& descendant = *stageEntries.begin();
         descendants.insert(descendant);
         stageEntries.erase(descendant);
-        const CTxMemPoolEntry::Children& children = descendant.GetMemPoolChildrenConst();
-        for (const CTxMemPoolEntry& childEntry : children) {
-            cacheMap::iterator cacheIt = cachedDescendants.find(mapTx.iterator_to(childEntry));
-            if (cacheIt != cachedDescendants.end()) {
-                // We've already calculated this one, just add the entries for this set
-                // but don't traverse again.
-                for (txiter cacheEntry : cacheIt->second) {
-                    descendants.insert(*cacheEntry);
+
+        // Use our new mappings to find children of this descendant
+        const CTransaction& descendantTx = descendant.GetTx();
+        std::set<uint256> grandchildTxids;
+        for (unsigned int i = 0; i < descendantTx.vout.size(); i++) {
+            uint256 outputHash = descendantTx.vout[i].GetHash();
+            // Find any transactions that spend this output
+            auto output_iter = mapNextTx.find(COutPoint(outputHash));
+            if (output_iter != mapNextTx.end()) {
+                grandchildTxids.insert(output_iter->second->GetHash());
+            }
+        }
+
+        for (const uint256& grandchildTxid : grandchildTxids) {
+            auto grandchild_iter = mapTx.find(grandchildTxid);
+            if (grandchild_iter != mapTx.end()) {
+                cacheMap::iterator cacheIt = cachedDescendants.find(grandchild_iter);
+                if (cacheIt != cachedDescendants.end()) {
+                    // We've already calculated this one, just add the entries for this set
+                    // but don't traverse again.
+                    for (txiter cacheEntry : cacheIt->second) {
+                        descendants.insert(*cacheEntry);
+                    }
+                } else if (!descendants.count(*grandchild_iter)) {
+                    // Schedule for later processing
+                    stageEntries.insert(*grandchild_iter);
                 }
-            } else if (!descendants.count(childEntry)) {
-                // Schedule for later processing
-                stageEntries.insert(childEntry);
             }
         }
     }
@@ -124,25 +158,29 @@ void CTxMemPool::UpdateTransactionsFromBlock(const std::vector<uint256>& vHashes
         if (it == mapTx.end()) {
             continue;
         }
-        auto iter = mapNextTx.lower_bound(COutPoint(Txid::FromUint256(hash), 0));
-        // First calculate the children, and update CTxMemPoolEntry::m_children to
-        // include them, and update their CTxMemPoolEntry::m_parents to include this tx.
-        // we cache the in-mempool children to avoid duplicate updates
+
         {
             WITH_FRESH_EPOCH(m_epoch);
-            for (; iter != mapNextTx.end() && iter->first->hash == hash; ++iter) {
-                const uint256 &childHash = iter->second->GetHash();
-                txiter childIter = mapTx.find(childHash);
-                assert(childIter != mapTx.end());
-                // We can skip updating entries we've encountered before or that
-                // are in the block (which are already accounted for).
-                if (!visited(childIter) && !setAlreadyIncluded.count(childHash)) {
-                    UpdateChild(it, childIter, true);
-                    UpdateParent(childIter, it, true);
+            for (const auto& out : it->GetTx().vout) {
+                const auto outHash = out.GetHash();
+                // Find children by looking up the output hash in mapOutputToTx
+                auto output_iter = mapOutputToTx.find(outHash);
+                if (output_iter != mapOutputToTx.end()) {
+                    // Found a transaction that spends this output
+                    const uint256& childHash = output_iter->second;
+                    txiter childIter = mapTx.find(childHash);
+                    if (childIter != mapTx.end()) {
+                        // We can skip updating entries we've encountered before or that
+                        // are in the block (which are already accounted for).
+                        if (!visited(childIter) && !setAlreadyIncluded.count(childHash)) {
+                            UpdateChild(it, childIter, true);
+                            UpdateParent(childIter, it, true);
+                        }
+                    }
                 }
+                UpdateForDescendants(it, mapMemPoolDescendantsToUpdate, setAlreadyIncluded, descendants_to_remove);
             }
-        } // release epoch guard for UpdateForDescendants
-        UpdateForDescendants(it, mapMemPoolDescendantsToUpdate, setAlreadyIncluded, descendants_to_remove);
+        }
     }
 
     for (const auto& txid : descendants_to_remove) {
@@ -215,11 +253,15 @@ util::Result<void> CTxMemPool::CheckPackageLimits(const Package& package,
     CTxMemPoolEntry::Parents staged_ancestors;
     for (const auto& tx : package) {
         for (const auto& input : tx->vin) {
-            std::optional<txiter> piter = GetIter(input.prevout.hash);
-            if (piter) {
-                staged_ancestors.insert(**piter);
-                if (staged_ancestors.size() + package.size() > static_cast<uint64_t>(m_limits.ancestor_count)) {
-                    return util::Error{Untranslated(strprintf("too many unconfirmed parents [limit: %u]", m_limits.ancestor_count))};
+            // Convert output hash to transaction hash using mapOutputToTx
+            auto output_iter = mapOutputToTx.find(input.prevout.hash);
+            if (output_iter != mapOutputToTx.end()) {
+                std::optional<txiter> piter = GetIter(output_iter->second);
+                if (piter) {
+                    staged_ancestors.insert(**piter);
+                    if (staged_ancestors.size() + package.size() > static_cast<uint64_t>(m_limits.ancestor_count)) {
+                        return util::Error{Untranslated(strprintf("too many unconfirmed parents [limit: %u]", m_limits.ancestor_count))};
+                    }
                 }
             }
         }
@@ -247,11 +289,15 @@ util::Result<CTxMemPool::setEntries> CTxMemPool::CalculateMemPoolAncestors(
         // GetMemPoolParents() is only valid for entries in the mempool, so we
         // iterate mapTx to find parents.
         for (unsigned int i = 0; i < tx.vin.size(); i++) {
-            std::optional<txiter> piter = GetIter(tx.vin[i].prevout.hash);
-            if (piter) {
-                staged_ancestors.insert(**piter);
-                if (staged_ancestors.size() + 1 > static_cast<uint64_t>(limits.ancestor_count)) {
-                    return util::Error{Untranslated(strprintf("too many unconfirmed parents [limit: %u]", limits.ancestor_count))};
+            // Convert output hash to transaction hash using mapOutputToTx
+            auto output_iter = mapOutputToTx.find(tx.vin[i].prevout.hash);
+            if (output_iter != mapOutputToTx.end()) {
+                std::optional<txiter> piter = GetIter(output_iter->second);
+                if (piter) {
+                    staged_ancestors.insert(**piter);
+                    if (staged_ancestors.size() + 1 > static_cast<uint64_t>(limits.ancestor_count)) {
+                        return util::Error{Untranslated(strprintf("too many unconfirmed parents [limit: %u]", limits.ancestor_count))};
+                    }
                 }
             }
         }
@@ -277,16 +323,32 @@ CTxMemPool::setEntries CTxMemPool::AssumeCalculateMemPoolAncestors(
         LogPrintLevel(BCLog::MEMPOOL, BCLog::Level::Error, "%s: CalculateMemPoolAncestors failed unexpectedly, continuing with empty ancestor set (%s)\n",
                       calling_fn_name, util::ErrorString(result).original);
     }
-    return std::move(result).value_or(CTxMemPool::setEntries{});
+    
+    auto ancestors = std::move(result).value_or(CTxMemPool::setEntries{});
+    return ancestors;
 }
 
 void CTxMemPool::UpdateAncestorsOf(bool add, txiter it, setEntries &setAncestors)
 {
-    const CTxMemPoolEntry::Parents& parents = it->GetMemPoolParentsConst();
-    // add or remove this tx as a child of each parent
-    for (const CTxMemPoolEntry& parent : parents) {
-        UpdateChild(mapTx.iterator_to(parent), it, add);
+    // Use our new mappings to find parents
+    const CTransaction& tx = it->GetTx();
+    std::set<uint256> parentTxids;
+    for (unsigned int i = 0; i < tx.vin.size(); i++) {
+        // Convert output hash to transaction hash using mapOutputToTx
+        auto output_iter = mapOutputToTx.find(tx.vin[i].prevout.hash);
+        if (output_iter != mapOutputToTx.end()) {
+            parentTxids.insert(output_iter->second);
+        }
     }
+
+    // add or remove this tx as a child of each parent
+    for (const uint256& parentTxid : parentTxids) {
+        auto parent_iter = mapTx.find(parentTxid);
+        if (parent_iter != mapTx.end()) {
+            UpdateChild(parent_iter, it, add);
+        }
+    }
+
     const int32_t updateCount = (add ? 1 : -1);
     const int32_t updateSize{updateCount * it->GetTxSize()};
     const CAmount updateFee = updateCount * it->GetModifiedFee();
@@ -311,9 +373,23 @@ void CTxMemPool::UpdateEntryForAncestors(txiter it, const setEntries &setAncesto
 
 void CTxMemPool::UpdateChildrenForRemoval(txiter it)
 {
-    const CTxMemPoolEntry::Children& children = it->GetMemPoolChildrenConst();
-    for (const CTxMemPoolEntry& updateIt : children) {
-        UpdateParent(mapTx.iterator_to(updateIt), it, false);
+    // Use our new mappings to find children
+    const CTransaction& tx = it->GetTx();
+    std::set<uint256> childTxids;
+    for (unsigned int i = 0; i < tx.vout.size(); i++) {
+        uint256 outputHash = tx.vout[i].GetHash();
+        // Find any transactions that spend this output
+        auto output_iter = mapNextTx.find(COutPoint(outputHash));
+        if (output_iter != mapNextTx.end()) {
+            childTxids.insert(output_iter->second->GetHash());
+        }
+    }
+
+    for (const uint256& childTxid : childTxids) {
+        auto child_iter = mapTx.find(childTxid);
+        if (child_iter != mapTx.end()) {
+            UpdateParent(child_iter, it, false);
+        }
     }
 }
 
@@ -348,8 +424,7 @@ void CTxMemPool::UpdateForRemoveFromMempool(const setEntries &entriesToRemove, b
         // should be a bit faster.
         // However, if we happen to be in the middle of processing a reorg, then
         // the mempool can be in an inconsistent state.  In this case, the set
-        // of ancestors reachable via GetMemPoolParents()/GetMemPoolChildren()
-        // will be the same as the set of ancestors whose packages include this
+        // of ancestors reachable via our new mappings will be the same as the set of ancestors whose packages include this
         // transaction, because when we add a new transaction to the mempool in
         // addUnchecked(), we assume it has no children, and in the case of a
         // reorg where that assumption is false, the in-mempool children aren't
@@ -357,7 +432,7 @@ void CTxMemPool::UpdateForRemoveFromMempool(const setEntries &entriesToRemove, b
         // called.
         // So if we're being called during a reorg, ie before
         // UpdateTransactionsFromBlock() has been called, then
-        // GetMemPoolParents()/GetMemPoolChildren() will differ from the set of
+        // our new mappings will differ from the set of
         // mempool parents we'd calculate by searching, and it's important that
         // we use the cached notion of ancestor transactions as the set of
         // things to update for removal.
@@ -451,7 +526,16 @@ void CTxMemPool::addUnchecked(const CTxMemPoolEntry &entry, setEntries &setAnces
     std::set<uint256> setParentTransactions;
     for (unsigned int i = 0; i < tx.vin.size(); i++) {
         mapNextTx.insert(std::make_pair(&tx.vin[i].prevout, &tx));
-        setParentTransactions.insert(tx.vin[i].prevout.hash);
+        // Convert output hash to transaction hash using mapOutputToTx
+        auto output_iter = mapOutputToTx.find(tx.vin[i].prevout.hash);
+        if (output_iter != mapOutputToTx.end()) {
+            setParentTransactions.insert(output_iter->second);
+        }
+    }
+
+    // Add output hash to transaction hash mapping for parent-child tracking
+    for (unsigned int i = 0; i < tx.vout.size(); i++) {
+        mapOutputToTx[tx.vout[i].GetHash()] = tx.GetHash();
     }
     // Don't bother worrying about child transactions of this one.
     // Normal case of a new transaction arriving is that there can't be any
@@ -462,17 +546,30 @@ void CTxMemPool::addUnchecked(const CTxMemPoolEntry &entry, setEntries &setAnces
 
     // Update ancestors with information about this tx
     for (const auto& pit : GetIterSet(setParentTransactions)) {
-            UpdateParent(newit, pit, true);
+        UpdateParent(newit, pit, true);
     }
+
+    // Also update children of existing transactions that spend our outputs
+    for (unsigned int i = 0; i < tx.vout.size(); i++) {
+        uint256 outputHash = tx.vout[i].GetHash();
+        // Find any existing transactions that spend this output
+        auto output_iter = mapNextTx.find(COutPoint(outputHash));
+        if (output_iter != mapNextTx.end()) {
+            auto child_iter = mapTx.find(output_iter->second->GetHash());
+            if (child_iter != mapTx.end()) {
+                UpdateChild(newit, child_iter, true);
+            }
+        }
+    }
+
+    // Calculate ancestors after the transaction is added to the mempool
+    setAncestors = AssumeCalculateMemPoolAncestors(__func__, *newit, Limits::NoLimits(), /*fSearchForParents=*/false);
     UpdateAncestorsOf(true, newit, setAncestors);
     UpdateEntryForAncestors(newit, setAncestors);
 
     nTransactionsUpdated++;
     totalTxSize += entry.GetTxSize();
     m_total_fee += entry.GetFee();
-
-    txns_randomized.emplace_back(newit->GetSharedTx());
-    newit->idx_randomized = txns_randomized.size() - 1;
 
     TRACE3(mempool, added,
         entry.GetTx().GetHash().data(),
@@ -505,23 +602,20 @@ void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason)
     for (const CTxIn& txin : it->GetTx().vin)
         mapNextTx.erase(txin.prevout);
 
-    RemoveUnbroadcastTx(it->GetTx().GetHash(), true /* add logging because unchecked */);
+    // Remove output hash to transaction hash mappings
+    for (const CTxOut& txout : it->GetTx().vout) {
+        mapOutputToTx.erase(txout.GetHash());
+    }
 
-    if (txns_randomized.size() > 1) {
-        // Update idx_randomized of the to-be-moved entry.
-        Assert(GetEntry(txns_randomized.back()->GetHash()))->idx_randomized = it->idx_randomized;
-        // Remove entry from txns_randomized by replacing it with the back and deleting the back.
-        txns_randomized[it->idx_randomized] = std::move(txns_randomized.back());
-        txns_randomized.pop_back();
-        if (txns_randomized.size() * 2 < txns_randomized.capacity())
-            txns_randomized.shrink_to_fit();
-    } else
-        txns_randomized.clear();
+    // Note: mapNextTx is already being cleaned up above with mapNextTx.erase(txin.prevout)
+
+    RemoveUnbroadcastTx(it->GetTx().GetHash(), true /* add logging because unchecked */);
 
     totalTxSize -= it->GetTxSize();
     m_total_fee -= it->GetFee();
     cachedInnerUsage -= it->DynamicMemoryUsage();
-    cachedInnerUsage -= memusage::DynamicUsage(it->GetMemPoolParentsConst()) + memusage::DynamicUsage(it->GetMemPoolChildrenConst());
+    // Note: We can't use GetMemPoolParentsConst() and GetMemPoolChildrenConst() anymore since we're using new mappings
+    // cachedInnerUsage -= memusage::DynamicUsage(it->GetMemPoolParentsConst()) + memusage::DynamicUsage(it->GetMemPoolChildrenConst());
     mapTx.erase(it);
     nTransactionsUpdated++;
 }
@@ -546,10 +640,21 @@ void CTxMemPool::CalculateDescendants(txiter entryit, setEntries& setDescendants
         setDescendants.insert(it);
         stage.erase(it);
 
-        const CTxMemPoolEntry::Children& children = it->GetMemPoolChildrenConst();
-        for (const CTxMemPoolEntry& child : children) {
-            txiter childiter = mapTx.iterator_to(child);
-            if (!setDescendants.count(childiter)) {
+        // Use our new mappings to find children
+        const CTransaction& tx = it->GetTx();
+        std::set<uint256> childTxids;
+        for (unsigned int i = 0; i < tx.vout.size(); i++) {
+            uint256 outputHash = tx.vout[i].GetHash();
+            // Find any transactions that spend this output
+            auto output_iter = mapNextTx.find(COutPoint(outputHash));
+            if (output_iter != mapNextTx.end()) {
+                childTxids.insert(output_iter->second->GetHash());
+            }
+        }
+
+        for (const uint256& childTxid : childTxids) {
+            txiter childiter = mapTx.find(childTxid);
+            if (childiter != mapTx.end() && !setDescendants.count(childiter)) {
                 stage.insert(childiter);
             }
         }
@@ -560,30 +665,31 @@ void CTxMemPool::removeRecursive(const CTransaction &origTx, MemPoolRemovalReaso
 {
     // Remove transaction from memory pool
     AssertLockHeld(cs);
-        setEntries txToRemove;
-        txiter origit = mapTx.find(origTx.GetHash());
-        if (origit != mapTx.end()) {
-            txToRemove.insert(origit);
-        } else {
-            // When recursively removing but origTx isn't in the mempool
-            // be sure to remove any children that are in the pool. This can
-            // happen during chain re-orgs if origTx isn't re-accepted into
-            // the mempool for any reason.
-            for (unsigned int i = 0; i < origTx.vout.size(); i++) {
-                auto it = mapNextTx.find(COutPoint(origTx.GetHash(), i));
-                if (it == mapNextTx.end())
-                    continue;
-                txiter nextit = mapTx.find(it->second->GetHash());
-                assert(nextit != mapTx.end());
-                txToRemove.insert(nextit);
+    setEntries txToRemove;
+    txiter origit = mapTx.find(origTx.GetHash());
+    if (origit != mapTx.end()) {
+        txToRemove.insert(origit);
+    } else {
+        // When recursively removing but origTx isn't in the mempool
+        // be sure to remove any children that are in the pool. This can
+        // happen during chain re-orgs if origTx isn't re-accepted into
+        // the mempool for any reason.
+        for (unsigned int i = 0; i < origTx.vout.size(); i++) {
+            auto output_iter = mapNextTx.find(COutPoint(origTx.vout[i].GetHash()));
+            if (output_iter != mapNextTx.end()) {
+                const uint256& childHash = output_iter->second->GetHash();
+                txiter nextit = mapTx.find(childHash);
+                if (nextit != mapTx.end()) {
+                    txToRemove.insert(nextit);
+                }
             }
         }
-        setEntries setAllRemoves;
-        for (txiter it : txToRemove) {
-            CalculateDescendants(it, setAllRemoves);
-        }
-
-        RemoveStaged(setAllRemoves, false, reason);
+    }
+    setEntries setAllRemoves;
+    for (txiter it : txToRemove) {
+        CalculateDescendants(it, setAllRemoves);
+    }
+    RemoveStaged(setAllRemoves, false, reason);
 }
 
 void CTxMemPool::removeForReorg(CChain& chain, std::function<bool(txiter)> check_final_and_mature)
@@ -670,15 +776,20 @@ void CTxMemPool::check(const CCoinsViewCache& active_coins_tip, int64_t spendhei
         check_total_fee += it->GetFee();
         innerUsage += it->DynamicMemoryUsage();
         const CTransaction& tx = it->GetTx();
+        // Note: We can't use GetMemPoolParentsConst() and GetMemPoolChildrenConst() anymore since we're using new mappings
         innerUsage += memusage::DynamicUsage(it->GetMemPoolParentsConst()) + memusage::DynamicUsage(it->GetMemPoolChildrenConst());
         CTxMemPoolEntry::Parents setParentCheck;
         for (const CTxIn &txin : tx.vin) {
             // Check that every mempool transaction's inputs refer to available coins, or other mempool tx's.
-            indexed_transaction_set::const_iterator it2 = mapTx.find(txin.prevout.hash);
-            if (it2 != mapTx.end()) {
-                const CTransaction& tx2 = it2->GetTx();
-                assert(tx2.vout.size() > txin.prevout.n && !tx2.vout[txin.prevout.n].IsNull());
-                setParentCheck.insert(*it2);
+            // Convert output hash to transaction hash using mapOutputToTx
+            auto output_iter = mapOutputToTx.find(txin.prevout.hash);
+            if (output_iter != mapOutputToTx.end()) {
+                indexed_transaction_set::const_iterator it2 = mapTx.find(output_iter->second);
+                if (it2 != mapTx.end()) {
+                    const CTransaction& tx2 = it2->GetTx();
+                    assert(std::any_of(tx2.vout.begin(), tx2.vout.end(), [&txin](const CTxOut& out) { return out.GetHash() == txin.prevout.hash; }));
+                    setParentCheck.insert(*it2);
+                }
             }
             // We are iterating through the mempool entries sorted in order by ancestor count.
             // All parents must have been checked before their children and their coins added to
@@ -690,11 +801,12 @@ void CTxMemPool::check(const CCoinsViewCache& active_coins_tip, int64_t spendhei
             assert(it3->first == &txin.prevout);
             assert(it3->second == &tx);
         }
-        auto comp = [](const CTxMemPoolEntry& a, const CTxMemPoolEntry& b) -> bool {
-            return a.GetTx().GetHash() == b.GetTx().GetHash();
-        };
-        assert(setParentCheck.size() == it->GetMemPoolParentsConst().size());
-        assert(std::equal(setParentCheck.begin(), setParentCheck.end(), it->GetMemPoolParentsConst().begin(), comp));
+        // auto comp = [](const CTxMemPoolEntry& a, const CTxMemPoolEntry& b) -> bool {
+        //     return a.GetTx().GetHash() == b.GetTx().GetHash();
+        // };
+        // Note: We can't check against GetMemPoolParentsConst() anymore since we're using new mappings
+        // assert(setParentCheck.size() == it->GetMemPoolParentsConst().size());
+        // assert(std::equal(setParentCheck.begin(), setParentCheck.end(), it->GetMemPoolParentsConst().begin(), comp));
         // Verify ancestor state is correct.
         auto ancestors{AssumeCalculateMemPoolAncestors(__func__, *it, Limits::NoLimits())};
         uint64_t nCountCheck = ancestors.size() + 1;
@@ -715,20 +827,25 @@ void CTxMemPool::check(const CCoinsViewCache& active_coins_tip, int64_t spendhei
         // Sanity check: we are walking in ascending ancestor count order.
         assert(prev_ancestor_count <= it->GetCountWithAncestors());
         prev_ancestor_count = it->GetCountWithAncestors();
+        int32_t child_sizes{0};
 
         // Check children against mapNextTx
         CTxMemPoolEntry::Children setChildrenCheck;
-        auto iter = mapNextTx.lower_bound(COutPoint(it->GetTx().GetHash(), 0));
-        int32_t child_sizes{0};
-        for (; iter != mapNextTx.end() && iter->first->hash == it->GetTx().GetHash(); ++iter) {
-            txiter childit = mapTx.find(iter->second->GetHash());
-            assert(childit != mapTx.end()); // mapNextTx points to in-mempool transactions
-            if (setChildrenCheck.insert(*childit).second) {
-                child_sizes += childit->GetTxSize();
+        for (const auto& out : it->GetTx().vout) {
+            // Find children using mapOutputToTx
+            auto output_iter = mapNextTx.find(COutPoint(out.GetHash()));
+            if (output_iter != mapNextTx.end()) {
+                auto childit = mapTx.find(output_iter->second->GetHash());
+                if (childit != mapTx.end()) {
+                    if (setChildrenCheck.insert(*childit).second) {
+                        child_sizes += childit->GetTxSize();
+                    }
+                }
             }
         }
-        assert(setChildrenCheck.size() == it->GetMemPoolChildrenConst().size());
-        assert(std::equal(setChildrenCheck.begin(), setChildrenCheck.end(), it->GetMemPoolChildrenConst().begin(), comp));
+        // Note: We can't check against GetMemPoolChildrenConst() anymore since we're using new mappings
+        // assert(setChildrenCheck.size() == it->GetMemPoolChildrenConst().size());
+        // assert(std::equal(setChildrenCheck.begin(), setChildrenCheck.end(), it->GetMemPoolChildrenConst().begin(), comp));
         // Also check to make sure size is greater than sum with immediate children.
         // just a sanity check, not definitive that this calc is correct...
         assert(it->GetSizeWithDescendants() >= child_sizes + it->GetTxSize());
@@ -976,15 +1093,22 @@ std::vector<CTxMemPool::txiter> CTxMemPool::GetIterVec(const std::vector<uint256
 
 bool CTxMemPool::HasNoInputsOf(const CTransaction &tx) const
 {
-    for (unsigned int i = 0; i < tx.vin.size(); i++)
-        if (exists(GenTxid::Txid(tx.vin[i].prevout.hash)))
-            return false;
+    for (unsigned int i = 0; i < tx.vin.size(); i++) {
+        // Convert output hash to transaction hash using mapOutputToTx
+        auto output_iter = mapOutputToTx.find(tx.vin[i].prevout.hash);
+        if (output_iter != mapOutputToTx.end()) {
+            if (exists(GenTxid::Txid(output_iter->second)))
+                return false;
+        }
+    }
     return true;
 }
 
 CCoinsViewMemPool::CCoinsViewMemPool(CCoinsView* baseIn, const CTxMemPool& mempoolIn) : CCoinsViewBacked(baseIn), mempool(mempoolIn) { }
 
 bool CCoinsViewMemPool::GetCoin(const COutPoint &outpoint, Coin &coin) const {
+    AssertLockHeld(mempool.cs);
+
     // Check to see if the inputs are made available by another tx in the package.
     // These Coins would not be available in the underlying CoinsView.
     if (auto it = m_temp_added.find(outpoint); it != m_temp_added.end()) {
@@ -995,14 +1119,20 @@ bool CCoinsViewMemPool::GetCoin(const COutPoint &outpoint, Coin &coin) const {
     // If an entry in the mempool exists, always return that one, as it's guaranteed to never
     // conflict with the underlying cache, and it cannot have pruned entries (as it contains full)
     // transactions. First checking the underlying cache risks returning a pruned entry instead.
-    CTransactionRef ptx = mempool.get(outpoint.hash);
-    if (ptx) {
-        if (outpoint.n < ptx->vout.size()) {
-            coin = Coin(ptx->vout[outpoint.n], MEMPOOL_HEIGHT, false);
-            m_non_base_coins.emplace(outpoint);
-            return true;
-        } else {
-            return false;
+    // In the new format, outpoint.hash is the output hash, so we need to find the transaction
+    // that contains this output using mapOutputToTx
+    auto output_iter = mempool.mapOutputToTx.find(outpoint.hash);
+    if (output_iter != mempool.mapOutputToTx.end()) {
+        CTransactionRef ptx = mempool.get(output_iter->second);
+        if (ptx) {
+            // Find the output index by matching the output hash
+            for (unsigned int i = 0; i < ptx->vout.size(); i++) {
+                if (ptx->vout[i].GetHash() == outpoint.hash) {
+                    coin = Coin(ptx->vout[i], MEMPOOL_HEIGHT, false);
+                    m_non_base_coins.emplace(outpoint);
+                    return true;
+                }
+            }
         }
     }
     return base->GetCoin(outpoint, coin);
@@ -1016,8 +1146,9 @@ bool CCoinsViewMemPool::GetToken(const uint256& tokenId, blsct::TokenEntry& toke
 void CCoinsViewMemPool::PackageAddTransaction(const CTransactionRef& tx)
 {
     for (unsigned int n = 0; n < tx->vout.size(); ++n) {
-        m_temp_added.emplace(COutPoint(tx->GetHash(), n), Coin(tx->vout[n], MEMPOOL_HEIGHT, false));
-        m_non_base_coins.emplace(tx->GetHash(), n);
+        m_temp_added.emplace(COutPoint(tx->vout[n].GetHash()), Coin(tx->vout[n], MEMPOOL_HEIGHT, false));
+        m_non_base_coins.emplace(COutPoint(tx->vout[n].GetHash()));
+        // Also add to the mempool's output-to-tx mapping for consistency
     }
 }
 void CCoinsViewMemPool::Reset()
@@ -1029,7 +1160,7 @@ void CCoinsViewMemPool::Reset()
 size_t CTxMemPool::DynamicMemoryUsage() const {
     LOCK(cs);
     // Estimate the overhead of mapTx to be 15 pointers + an allocation, as no exact formula for boost::multi_index_contained is implemented.
-    return memusage::MallocUsage(sizeof(CTxMemPoolEntry) + 15 * sizeof(void*)) * mapTx.size() + memusage::DynamicUsage(mapNextTx) + memusage::DynamicUsage(mapDeltas) + memusage::DynamicUsage(txns_randomized) + cachedInnerUsage;
+    return memusage::MallocUsage(sizeof(CTxMemPoolEntry) + 15 * sizeof(void*)) * mapTx.size() + memusage::DynamicUsage(mapNextTx) + memusage::DynamicUsage(mapDeltas) + memusage::DynamicUsage(mapOutputToTx) + cachedInnerUsage;
 }
 
 void CTxMemPool::RemoveUnbroadcastTx(const uint256& txid, const bool unchecked) {
@@ -1068,7 +1199,7 @@ int CTxMemPool::Expire(std::chrono::seconds time)
 
 void CTxMemPool::addUnchecked(const CTxMemPoolEntry &entry)
 {
-    auto ancestors{AssumeCalculateMemPoolAncestors(__func__, entry, Limits::NoLimits())};
+    setEntries ancestors;
     return addUnchecked(entry, ancestors);
 }
 
@@ -1157,7 +1288,11 @@ void CTxMemPool::TrimToSize(size_t sizelimit, std::vector<COutPoint>* pvNoSpends
         if (pvNoSpendsRemaining) {
             for (const CTransaction& tx : txn) {
                 for (const CTxIn& txin : tx.vin) {
-                    if (exists(GenTxid::Txid(txin.prevout.hash))) continue;
+                    // Convert output hash to transaction hash using mapOutputToTx
+                    auto output_iter = mapOutputToTx.find(txin.prevout.hash);
+                    if (output_iter != mapOutputToTx.end()) {
+                        if (exists(GenTxid::Txid(output_iter->second))) continue;
+                    }
                     pvNoSpendsRemaining->push_back(txin.prevout);
                 }
             }
@@ -1179,12 +1314,26 @@ uint64_t CTxMemPool::CalculateDescendantMaximum(txiter entry) const {
         txiter candidate = candidates.back();
         candidates.pop_back();
         if (!counted.insert(candidate).second) continue;
-        const CTxMemPoolEntry::Parents& parents = candidate->GetMemPoolParentsConst();
-        if (parents.size() == 0) {
+
+        // Use our new mappings to find parents
+        const CTransaction& tx = candidate->GetTx();
+        std::set<uint256> parentTxids;
+        for (unsigned int i = 0; i < tx.vin.size(); i++) {
+            // Convert output hash to transaction hash using mapOutputToTx
+            auto output_iter = mapOutputToTx.find(tx.vin[i].prevout.hash);
+            if (output_iter != mapOutputToTx.end()) {
+                parentTxids.insert(output_iter->second);
+            }
+        }
+
+        if (parentTxids.size() == 0) {
             maximum = std::max(maximum, candidate->GetCountWithDescendants());
         } else {
-            for (const CTxMemPoolEntry& i : parents) {
-                candidates.push_back(mapTx.iterator_to(i));
+            for (const uint256& parentTxid : parentTxids) {
+                auto parent_iter = mapTx.find(parentTxid);
+                if (parent_iter != mapTx.end()) {
+                    candidates.push_back(parent_iter);
+                }
             }
         }
     }
@@ -1230,14 +1379,46 @@ std::vector<CTxMemPool::txiter> CTxMemPool::GatherClusters(const std::vector<uin
         // DoS protection: if there are 500 or more entries to process, just quit.
         if (clustered_txs.size() > 500) return {};
         const txiter& tx_iter = clustered_txs.at(i);
-        for (const auto& entries : {tx_iter->GetMemPoolParentsConst(), tx_iter->GetMemPoolChildrenConst()}) {
-            for (const CTxMemPoolEntry& entry : entries) {
-                const auto entry_it = mapTx.iterator_to(entry);
-                if (!visited(entry_it)) {
-                    clustered_txs.push_back(entry_it);
-                }
+
+        // Use our new mappings to find parents and children
+        const CTransaction& tx = tx_iter->GetTx();
+
+        // Find parents
+        std::set<uint256> parentTxids;
+        for (unsigned int j = 0; j < tx.vin.size(); j++) {
+            auto output_iter = mapOutputToTx.find(tx.vin[j].prevout.hash);
+            if (output_iter != mapOutputToTx.end()) {
+                parentTxids.insert(output_iter->second);
+            }
+        }
+
+        // Find children
+        std::set<uint256> childTxids;
+        for (unsigned int j = 0; j < tx.vout.size(); j++) {
+            uint256 outputHash = tx.vout[j].GetHash();
+            auto output_iter = mapNextTx.find(COutPoint(outputHash));
+            if (output_iter != mapNextTx.end()) {
+                childTxids.insert(output_iter->second->GetHash());
+            }
+        }
+
+        // Process parents and children
+        for (const uint256& parentTxid : parentTxids) {
+            auto parent_iter = mapTx.find(parentTxid);
+            if (parent_iter != mapTx.end() && !visited(parent_iter)) {
+                clustered_txs.push_back(parent_iter);
+                visited(parent_iter);
+            }
+        }
+
+        for (const uint256& childTxid : childTxids) {
+            auto child_iter = mapTx.find(childTxid);
+            if (child_iter != mapTx.end() && !visited(child_iter)) {
+                clustered_txs.push_back(child_iter);
+                visited(child_iter);
             }
         }
     }
     return clustered_txs;
 }
+

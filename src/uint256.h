@@ -33,6 +33,8 @@ public:
     /* constructor for constants between 1 and 255 */
     constexpr explicit base_blob(uint8_t v) : m_data{v} {}
 
+    constexpr explicit base_blob(uint64_t v) : m_data{static_cast<uint8_t>(v), static_cast<uint8_t>(v >> 8), static_cast<uint8_t>(v >> 16), static_cast<uint8_t>(v >> 24), static_cast<uint8_t>(v >> 32), static_cast<uint8_t>(v >> 40), static_cast<uint8_t>(v >> 48), static_cast<uint8_t>(v >> 56)} {}
+
     constexpr explicit base_blob(Span<const unsigned char> vch)
     {
         assert(vch.size() == WIDTH);
@@ -108,6 +110,7 @@ public:
     constexpr uint256() = default;
     constexpr explicit uint256(uint8_t v) : base_blob<256>(v) {}
     constexpr explicit uint256(Span<const unsigned char> vch) : base_blob<256>(vch) {}
+    constexpr explicit uint256(uint64_t v) : base_blob<256>(v) {}
     static const uint256 ZERO;
     static const uint256 ONE;
 };

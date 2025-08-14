@@ -518,7 +518,7 @@ BlsctRetVal* gen_out_point(
     std::string tx_id_str(tx_id_c_str, TX_ID_STR_LEN);
 
     auto tx_id = TxidFromString(tx_id_str);
-    COutPoint out_point { tx_id, out_index };
+    COutPoint out_point { tx_id };
 
     SERIALIZE_AND_COPY_WITH_STREAM(
         out_point,
@@ -796,10 +796,6 @@ const BlsctTxId* get_tx_in_prev_out_hash(const CTxIn* tx_in) {
     auto copy = static_cast<BlsctTxId*>(malloc(TX_ID_SIZE));
     std::memcpy(copy, &tx_in->prevout.hash, TX_ID_SIZE);
     return copy;
-}
-
-uint32_t get_tx_in_prev_out_n(const CTxIn* tx_in) {
-    return tx_in->prevout.n;
 }
 
 // tx out

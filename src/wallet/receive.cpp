@@ -13,9 +13,17 @@ namespace wallet {
 isminetype InputIsMine(const CWallet& wallet, const CTxIn& txin)
 {
     AssertLockHeld(wallet.cs_wallet);
-    const CWalletTx* prev = wallet.GetWalletTx(txin.prevout.hash);
-    if (prev && txin.prevout.n < prev->tx->vout.size()) {
-        return wallet.IsMine(prev->tx->vout[txin.prevout.n]);
+    const CWalletTx* prev = wallet.GetWalletTxFromOutpoint(txin.prevout);
+    if (prev) {
+        CTxOut utxo;
+        for (auto& it : prev->tx->vout) {
+            if (it.GetHash() == txin.prevout.hash) {
+                utxo = it;
+                break;
+            }
+        }
+        if (utxo.IsNull()) return ISMINE_NO;
+        return wallet.IsMine(utxo);
     }
     return ISMINE_NO;
 }
@@ -44,7 +52,8 @@ CAmount OutputGetCredit(const CWallet& wallet, const CTxOut& txout, const ismine
                 if (result.is_completed) {
                     auto xs = result.amounts;
                     for (auto& res : xs) {
-                        ret = res.amount;
+                        if (res.id == 0)
+                            ret = res.amount;
                     }
                 }
             }
@@ -244,11 +253,10 @@ CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, 
 
     bool allow_used_addresses = (filter & ISMINE_USED) || !wallet.IsWalletFlagSet(WALLET_FLAG_AVOID_REUSE);
     CAmount nCredit = 0;
-    Txid hashTx = wtx.GetHash();
     for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
         const CTxOut& txout = wtx.tx->vout[i];
         if (txout.tokenId != token_id) continue;
-        if (!wallet.IsSpent(COutPoint(hashTx, i)) && (allow_used_addresses || !wallet.IsSpentKey(txout.scriptPubKey))) {
+        if (!wallet.IsSpent(COutPoint(txout.GetHash())) && (allow_used_addresses || !wallet.IsSpentKey(txout.scriptPubKey))) {
             nCredit += OutputGetCredit(wallet, txout, filter, token_id);
             if (!MoneyRange(nCredit))
                 throw std::runtime_error(std::string(__func__) + " : value out of range");
@@ -271,10 +279,9 @@ std::vector<StakedCommitmentInfo> GetStakedCommitmentInfo(const CWallet& wallet,
 
     for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
         const CTxOut& txout = wtx.tx->vout[i];
-        Txid hashTx = wtx.GetHash();
-        if (!wallet.IsSpent(COutPoint(hashTx, i))) {
+        if (!wallet.IsSpent(COutPoint(txout.GetHash()))) {
             if (wallet.IsMine(txout) == ISMINE_STAKED_COMMITMENT_BLSCT) {
-                ret.push_back({hashTx, i, txout.blsctData.rangeProof.Vs[0],
+                ret.push_back({txout.GetHash(), i, txout.blsctData.rangeProof.Vs[0],
                                wtx.GetBLSCTRecoveryData(i).amount,
                                wtx.GetBLSCTRecoveryData(i).gamma});
             }
@@ -392,9 +399,15 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
     // Trusted if all inputs are from us and are in the mempool:
     for (const CTxIn& txin : wtx.tx->vin) {
         // Transactions not sent by us: not trusted
-        const CWalletTx* parent = wallet.GetWalletTx(txin.prevout.hash);
+        const CWalletTx* parent = wallet.GetWalletTxFromOutpoint(txin.prevout);
         if (parent == nullptr) return false;
-        const CTxOut& parentOut = parent->tx->vout[txin.prevout.n];
+        CTxOut parentOut;
+        for (auto& it : parent->tx->vout) {
+            if (it.GetHash() == txin.prevout.hash) {
+                parentOut = it;
+                break;
+            }
+        }
         // Check that this specific input being spent is trusted
         if (wallet.IsMine(parentOut) != ISMINE_SPENDABLE && wallet.IsMine(parentOut) != ISMINE_SPENDABLE_BLSCT) return false;
         // If we've already trusted this parent, continue
@@ -535,7 +548,7 @@ std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet, cons
 
                     auto recoveryData = wtx.GetBLSCTRecoveryData(i);
 
-                    CAmount n = wallet.IsSpent(COutPoint(Txid::FromUint256(walletEntry.first), i)) ? 0 : recoveryData.amount;
+                    CAmount n = wallet.IsSpent(COutPoint(output.GetHash())) ? 0 : recoveryData.amount;
                     balances[address] += n;
                 } else {
                     CTxDestination addr;
@@ -544,7 +557,7 @@ std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet, cons
                     if (!ExtractDestination(output.scriptPubKey, addr))
                         continue;
 
-                    CAmount n = wallet.IsSpent(COutPoint(Txid::FromUint256(walletEntry.first), i)) ? 0 : output.nValue;
+                    CAmount n = wallet.IsSpent(COutPoint(output.GetHash())) ? 0 : output.nValue;
                     balances[addr] += n;
                 }
             }
@@ -570,7 +583,14 @@ std::set<std::set<CTxDestination>> GetAddressGroupings(const CWallet& wallet, co
                 CTxDestination address;
                 if (!InputIsMine(wallet, txin)) /* If this input isn't mine, ignore it */
                     continue;
-                if (!ExtractDestination(wallet.mapWallet.at(txin.prevout.hash).tx->vout[txin.prevout.n].scriptPubKey, address))
+                CTxOut utxo;
+                for (auto& it : wallet.mapWallet.at(txin.prevout.hash).tx->vout) {
+                    if (it.GetHash() == txin.prevout.hash) {
+                        utxo = it;
+                        break;
+                    }
+                }
+                if (!ExtractDestination(utxo.scriptPubKey, address))
                     continue;
                 grouping.insert(address);
                 any_mine = true;

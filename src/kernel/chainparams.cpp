@@ -190,10 +190,10 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         m_assumed_blockchain_size = 1;
         m_assumed_chain_state_size = 9;
 
-        genesis = CreateGenesisBlock(1231006505, 2083236893, 0x1d00ffff, 1, 50 * COIN);
+        genesis = CreateGenesisBlock(1231006505, 2149801696, 0x1d00ffff, 1, 50 * COIN);
         consensus.hashGenesisBlock = genesis.GetHash();
-        assert(consensus.hashGenesisBlock == uint256S("0x000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"));
-        assert(genesis.hashMerkleRoot == uint256S("0x4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"));
+        assert(consensus.hashGenesisBlock == uint256S("0x00000000e563d370b42d83c98b811fb1bda076dd6c2b01dac9c1e21104c25277"));
+        assert(genesis.hashMerkleRoot == uint256S("0x923b312af9f8bafa4c0e3269ee492bf09b66ced16c19bfbc9e536fc11455a1b3"));
 
         // Note that of those which support the service bits prefix, most only support a subset of
         // possible options.
@@ -452,8 +452,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
 
             genesis = CreateGenesisBlock(1598918400, 52613770, 0x1e0377ae, 1, 50 * COIN);
             consensus.hashGenesisBlock = genesis.GetHash();
-            assert(consensus.hashGenesisBlock == uint256S("0x00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"));
-            assert(genesis.hashMerkleRoot == uint256S("0x4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"));
+            assert(consensus.hashGenesisBlock == uint256S("0xc08b381a6fed30e99acd83ddc273c5cf317d2e4c57ec98416c3e06d4970eb6ab"));
+            assert(genesis.hashMerkleRoot == uint256S("0x923b312af9f8bafa4c0e3269ee492bf09b66ced16c19bfbc9e536fc11455a1b3"));
 
             vFixedSeeds.clear();
 
@@ -560,8 +560,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
 
             genesis = CreateGenesisBlock(1296688602, 2, 0x207fffff, 1, 50 * COIN);
             consensus.hashGenesisBlock = genesis.GetHash();
-            assert(consensus.hashGenesisBlock == uint256S("0x0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"));
-            assert(genesis.hashMerkleRoot == uint256S("0x4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"));
+            assert(consensus.hashGenesisBlock == uint256S("0x7e58358d65d178e9d32e16e5f2d63baeda88b4864cac0130ab69ca03890659ef"));
+            assert(genesis.hashMerkleRoot == uint256S("0x923b312af9f8bafa4c0e3269ee492bf09b66ced16c19bfbc9e536fc11455a1b3"));
 
             vFixedSeeds.clear(); //!< Regtest mode doesn't have any fixed seeds.
             vSeeds.clear();
@@ -577,19 +577,15 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             };
 
             m_assumeutxo_data = {
-                {
-                    .height = 110,
-                    .hash_serialized = AssumeutxoHash{uint256S("0x6657b736d4fe4db0cbc796789e812d5dba7f5c143764b1b6905612f1830609d1")},
-                    .nChainTx = 111,
-                    .blockhash = uint256S("0x696e92821f65549c7ee134edceeeeaaa4105647a3c4fd9f298c0aec0ab50425c")
-                },
-                {
-                    // For use by test/functional/feature_assumeutxo.py
-                    .height = 299,
-                    .hash_serialized = AssumeutxoHash{uint256S("0x61d9c2b29a2571a5fe285fe2d8554f91f93309666fc9b8223ee96338de25ff53")},
-                    .nChainTx = 300,
-                    .blockhash = uint256S("0x7e0517ef3ea6ecbed9117858e42eedc8eb39e8698a38dcbd1b3962a283233f4c")
-                },
+                {.height = 110,
+                 .hash_serialized = AssumeutxoHash{uint256S("0xaacfd0c445daf8d9a63b6b454ada659b1bdba795ecbdde50fb92980777368eb4")},
+                 .nChainTx = 111,
+                 .blockhash = uint256S("0x456ba39cbc124e3fa6102eb140c1a2fcf602a973cc95f37bb1720e9be19b1d1e")},
+                {// For use by test/functional/feature_assumeutxo.py
+                 .height = 299,
+                 .hash_serialized = AssumeutxoHash{uint256S("0x61d9c2b29a2571a5fe285fe2d8554f91f93309666fc9b8223ee96338de25ff53")},
+                 .nChainTx = 300,
+                 .blockhash = uint256S("0x7e0517ef3ea6ecbed9117858e42eedc8eb39e8698a38dcbd1b3962a283233f4c")},
             };
 
             chainTxData = ChainTxData{

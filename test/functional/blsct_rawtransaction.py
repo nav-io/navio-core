@@ -61,6 +61,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.test_signblsctrawtransaction(wallet1, wallet2, address1, address2)
         self.test_decodeblsctrawtransaction(wallet1, wallet2, address1, address2)
         self.test_getblsctrecoverydata(wallet1, wallet2, address1, address2)
+        self.test_getblsctrecoverydatawithnonce(wallet1, wallet2, address1, address2)
         self.test_integration_workflow(wallet1, wallet2, address1, address2)
 
     def test_createblsctrawtransaction(self, wallet1, wallet2, address1, address2):
@@ -286,6 +287,64 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
                                wallet1.getblsctrecoverydata, fake_txid)
 
         self.log.info("getblsctrecoverydata tests passed")
+
+    def test_getblsctrecoverydatawithnonce(self, wallet1, wallet2, address1, address2):
+        """Test getblsctrecoverydatawithnonce RPC method with nonce and no address"""
+        self.log.info("Testing getblsctrecoverydatawithnonce")
+
+        # Get some unspent outputs
+        unspent = wallet1.listblsctunspent()
+        assert_greater_than(len(unspent), 0)
+
+        utxo = unspent[0]
+        self.log.info(f"Using UTXO: {utxo}")
+
+        # Generate a random 32-byte nonce
+        import secrets
+        nonce_bytes = secrets.token_bytes(32)
+        nonce_hex = nonce_bytes.hex()
+        self.log.info(f"Generated nonce: {nonce_hex}")
+
+        # Test 1: Create raw transaction with nonce and no address
+        inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
+        outputs = [{"amount": 0.005, "memo": "Test nonce recovery", "blinding_key": nonce_hex}]
+
+        raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
+        self.log.info(f"Created raw transaction with nonce: {raw_tx[:100]}...")
+
+        # Fund and sign the transaction
+        funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
+        signed_tx = wallet1.signblsctrawtransaction(funded_tx)
+
+        # Test recovery using the same nonce
+        recovery_data = wallet1.getblsctrecoverydatawithnonce(signed_tx, nonce_hex)
+        self.log.info(f"Recovery data with nonce: {recovery_data}")
+
+        # Verify the structure
+        assert "txid" in recovery_data
+        assert "outputs" in recovery_data
+        assert isinstance(recovery_data["outputs"], list)
+        assert len(recovery_data["outputs"]) > 0, "No outputs found in recovery data"
+        assert any(output["message"] == "Test nonce recovery" for output in recovery_data["outputs"]), "No output found with message 'Test nonce recovery'"
+        
+        if len(recovery_data["outputs"]) > 0:
+            output = recovery_data["outputs"][0]
+            assert "vout" in output
+            assert "amount" in output
+            assert "gamma" in output
+            assert "message" in output
+
+        # Test 2: Get recovery data for a specific vout with nonce
+        if len(recovery_data["outputs"]) > 0:
+            specific_vout = recovery_data["outputs"][0]["vout"]
+            recovery_data_specific = wallet1.getblsctrecoverydatawithnonce(signed_tx, nonce_hex, specific_vout)
+            self.log.info(f"Recovery data for vout {specific_vout} with nonce: {recovery_data_specific}")
+
+            # Should have exactly one output
+            assert_equal(len(recovery_data_specific["outputs"]), 1)
+            assert_equal(recovery_data_specific["outputs"][0]["vout"], specific_vout)
+
+        self.log.info("getblsctrecoverydatawithnonce tests passed")
 
     def test_integration_workflow(self, wallet1, wallet2, address1, address2):
         """Test the complete workflow: create -> fund -> sign -> broadcast"""

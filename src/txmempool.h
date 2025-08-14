@@ -392,7 +392,6 @@ public:
     indexed_transaction_set mapTx GUARDED_BY(cs);
 
     using txiter = indexed_transaction_set::nth_index<0>::type::const_iterator;
-    std::vector<CTransactionRef> txns_randomized GUARDED_BY(cs); //!< All transactions in mapTx, in random order
 
     typedef std::set<txiter, CompareIteratorByHash> setEntries;
 
@@ -434,6 +433,8 @@ private:
 public:
     indirectmap<COutPoint, const CTransaction*> mapNextTx GUARDED_BY(cs);
     std::map<uint256, CAmount> mapDeltas GUARDED_BY(cs);
+    /** Map from output hash to transaction hash for tracking parent-child relationships */
+    std::map<uint256, uint256> mapOutputToTx GUARDED_BY(cs);
 
     using Options = kernel::MemPoolOptions;
 

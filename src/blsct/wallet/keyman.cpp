@@ -735,6 +735,26 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
     return rp.RecoverAmounts(reqs);
 }
 
+bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce)
+{
+    if (!fViewKeyDefined || !viewKey.IsValid())
+        return bulletproofs_plus::AmountRecoveryResult<Arith>::failure();
+
+    bulletproofs_plus::RangeProofLogic<Arith> rp;
+    std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
+    reqs.reserve(outs.size());
+
+    for (size_t i = 0; i < outs.size(); i++) {
+        CTxOut out = outs[i];
+        if (!out.HasBLSCTKeys() || !out.HasBLSCTRangeProof()) continue;
+        // Use the provided nonce instead of calculating it
+        bulletproofs_plus::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
+        reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Arith>::of(proof, nonce, i));
+    }
+
+    return rp.RecoverAmounts(reqs);
+}
+
 bool KeyMan::IsMine(const CScript& script) const
 {
     LOCK(cs_KeyStore);

@@ -12,6 +12,7 @@
 #include <span.h>
 #include <streams.h>
 #include <util/fastrange.h>
+#include <util/strencodings.h>
 
 #include <algorithm>
 #include <cmath>
@@ -98,13 +99,14 @@ bool CBloomFilter::IsRelevantAndUpdate(const CTransaction& tx)
     //  for finding tx when they appear in a block
     if (vData.empty()) // zero-size = "match-all" filter
         return true;
-    const Txid& hash = tx.GetHash();
-    if (contains(hash.ToUint256()))
-        fFound = true;
 
     for (unsigned int i = 0; i < tx.vout.size(); i++)
     {
         const CTxOut& txout = tx.vout[i];
+        const Txid& hash = txout.GetHash();
+        if (contains(COutPoint(hash.ToUint256()))) {
+            fFound = true;
+        }
         // Match if the filter contains any arbitrary script data element in any scriptPubKey in tx
         // If this matches, also add the specific output that was matched.
         // This means clients don't have to update the filter themselves when a new relevant tx
@@ -120,13 +122,13 @@ bool CBloomFilter::IsRelevantAndUpdate(const CTransaction& tx)
             {
                 fFound = true;
                 if ((nFlags & BLOOM_UPDATE_MASK) == BLOOM_UPDATE_ALL)
-                    insert(COutPoint(hash, i));
+                    insert(COutPoint(hash));
                 else if ((nFlags & BLOOM_UPDATE_MASK) == BLOOM_UPDATE_P2PUBKEY_ONLY)
                 {
-                    std::vector<std::vector<unsigned char> > vSolutions;
+                    std::vector<std::vector<unsigned char>> vSolutions;
                     TxoutType type = Solver(txout.scriptPubKey, vSolutions);
                     if (type == TxoutType::PUBKEY || type == TxoutType::MULTISIG) {
-                        insert(COutPoint(hash, i));
+                        insert(COutPoint(hash));
                     }
                 }
                 break;
@@ -134,14 +136,16 @@ bool CBloomFilter::IsRelevantAndUpdate(const CTransaction& tx)
         }
     }
 
-    if (fFound)
+    if (fFound) {
         return true;
+    }
 
     for (const CTxIn& txin : tx.vin)
     {
         // Match if the filter contains an outpoint tx spends
-        if (contains(txin.prevout))
+        if (contains(txin.prevout)) {
             return true;
+        }
 
         // Match if the filter contains any arbitrary script data element in any scriptSig in tx
         CScript::const_iterator pc = txin.scriptSig.begin();
@@ -151,8 +155,9 @@ bool CBloomFilter::IsRelevantAndUpdate(const CTransaction& tx)
             opcodetype opcode;
             if (!txin.scriptSig.GetOp(pc, opcode, data))
                 break;
-            if (data.size() != 0 && contains(data))
+            if (data.size() != 0 && contains(data)) {
                 return true;
+            }
         }
     }
 

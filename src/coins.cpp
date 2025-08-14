@@ -119,9 +119,8 @@ void CCoinsViewCache::AddCoin(const COutPoint& outpoint, Coin&& coin, bool possi
     it->second.coin = std::move(coin);
     it->second.flags |= CCoinsCacheEntry::DIRTY | (fresh ? CCoinsCacheEntry::FRESH : 0);
     cachedCoinsUsage += it->second.coin.DynamicMemoryUsage();
-    TRACE5(utxocache, add,
+    TRACE4(utxocache, add,
            outpoint.hash.data(),
-           (uint32_t)outpoint.n,
            (uint32_t)it->second.coin.nHeight,
            (int64_t)it->second.coin.out.nValue,
            (bool)it->second.coin.IsCoinBase());
@@ -198,12 +197,12 @@ void CCoinsViewCache::EmplaceCoinInternalDANGER(COutPoint&& outpoint, Coin&& coi
 void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check_for_overwrite)
 {
     bool fCoinbase = tx.IsCoinBase();
-    const Txid& txid = tx.GetHash();
     for (size_t i = 0; i < tx.vout.size(); ++i) {
-        bool overwrite = check_for_overwrite ? cache.HaveCoin(COutPoint(txid, i)) : fCoinbase;
+        const uint256& outid = tx.vout[i].GetHash();
+        bool overwrite = check_for_overwrite ? cache.HaveCoin(COutPoint(outid)) : fCoinbase;
         // Coinbase transactions can always be overwritten, in order to correctly
         // deal with the pre-BIP30 occurrences of duplicate coinbase transactions.
-        cache.AddCoin(COutPoint(txid, i), Coin(tx.vout[i], nHeight, fCoinbase), overwrite);
+        cache.AddCoin(COutPoint(outid), Coin(tx.vout[i], nHeight, fCoinbase), overwrite);
     }
 }
 
@@ -213,9 +212,8 @@ bool CCoinsViewCache::SpendCoin(const COutPoint& outpoint, Coin* moveout)
     if (it == cacheCoins.end()) return false;
 
     cachedCoinsUsage -= it->second.coin.DynamicMemoryUsage();
-    TRACE5(utxocache, spent,
+    TRACE4(utxocache, spent,
            outpoint.hash.data(),
-           (uint32_t)outpoint.n,
            (uint32_t)it->second.coin.nHeight,
            (int64_t)it->second.coin.out.nValue,
            (bool)it->second.coin.IsCoinBase());
@@ -421,9 +419,8 @@ void CCoinsViewCache::Uncache(const COutPoint& hash)
     CCoinsMap::iterator it = cacheCoins.find(hash);
     if (it != cacheCoins.end() && it->second.flags == 0) {
         cachedCoinsUsage -= it->second.coin.DynamicMemoryUsage();
-        TRACE5(utxocache, uncache,
+        TRACE4(utxocache, uncache,
                hash.hash.data(),
-               (uint32_t)hash.n,
                (uint32_t)it->second.coin.nHeight,
                (int64_t)it->second.coin.out.nValue,
                (bool)it->second.coin.IsCoinBase());
@@ -476,18 +473,16 @@ void CCoinsViewCache::SanityCheck() const
 }
 
 static const size_t MIN_TRANSACTION_OUTPUT_WEIGHT = WITNESS_SCALE_FACTOR * ::GetSerializeSize(CTxOut());
-static const size_t MAX_OUTPUTS_PER_BLOCK = MAX_BLOCK_WEIGHT / MIN_TRANSACTION_OUTPUT_WEIGHT;
+// static const size_t MAX_OUTPUTS_PER_BLOCK = MAX_BLOCK_WEIGHT / MIN_TRANSACTION_OUTPUT_WEIGHT;
 
 const Coin& AccessByTxid(const CCoinsViewCache& view, const Txid& txid)
 {
-    COutPoint iter(txid, 0);
-    while (iter.n < MAX_OUTPUTS_PER_BLOCK) {
-        const Coin& alternate = view.AccessCoin(iter);
-        if (!alternate.IsSpent()) return alternate;
-        ++iter.n;
+    const Coin& coin = view.AccessCoin(COutPoint(txid));
+    if (coin.IsSpent()) {
+        static const Coin coinEmpty;
+        return coinEmpty;
     }
-    static const Coin coinEmpty;
-    return coinEmpty;
+    return coin;
 }
 
 template <typename Func>

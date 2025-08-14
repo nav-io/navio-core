@@ -366,7 +366,10 @@ void Chainstate::MaybeUpdateMempoolForReorg(
         // If the transaction spends any coinbase outputs, it must be mature.
         if (it->GetSpendsCoinbase()) {
             for (const CTxIn& txin : tx.vin) {
-                if (m_mempool->exists(GenTxid::Txid(txin.prevout.hash))) continue;
+                auto outHash = m_mempool->mapOutputToTx.find(txin.prevout.hash);
+                if (outHash != m_mempool->mapOutputToTx.end()) {
+                    if (m_mempool->exists(GenTxid::Txid(outHash->second))) continue;
+                }
                 const Coin& coin{CoinsTip().AccessCoin(txin.prevout)};
                 assert(!coin.IsSpent());
                 const auto mempool_spend_height{m_chain.Tip()->nHeight + 1};
@@ -411,15 +414,26 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationS
         // it is available in our current ChainstateActive UTXO set,
         // or it's a UTXO provided by a transaction in our mempool.
         // Ensure the scriptPubKeys in Coins from CoinsView are correct.
-        const CTransactionRef& txFrom = pool.get(txin.prevout.hash);
-        if (txFrom) {
-            assert(txFrom->GetHash() == txin.prevout.hash);
-            assert(txFrom->vout.size() > txin.prevout.n);
-            assert(txFrom->vout[txin.prevout.n] == coin.out);
-        } else {
-            const Coin& coinFromUTXOSet = coins_tip.AccessCoin(txin.prevout);
-            assert(!coinFromUTXOSet.IsSpent());
-            assert(coinFromUTXOSet.out == coin.out);
+        auto txHash = pool.mapOutputToTx.find(txin.prevout.hash);
+        if (txHash != pool.mapOutputToTx.end()) {
+            const CTransactionRef& txFrom = pool.get(txHash->second);
+            if (txFrom) {
+                assert(txFrom->GetHash() == txHash->second);
+                // In the new format, outpoints are just transaction hashes, so we need to find
+                // the correct output by matching the output hash with the input's prevout hash
+                CTxOut out;
+                for (const CTxOut& out_ : txFrom->vout) {
+                    if (out_.GetHash() == txin.prevout.hash) {
+                        out = out_;
+                        break;
+                    }
+                }
+                assert(out == coin.out);
+            } else {
+                const Coin& coinFromUTXOSet = coins_tip.AccessCoin(txin.prevout);
+                assert(!coinFromUTXOSet.IsSpent());
+                assert(coinFromUTXOSet.out == coin.out);
+            }
         }
     }
 
@@ -799,7 +813,7 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
             // Are inputs missing because we already have the tx?
             for (size_t out = 0; out < tx.vout.size(); out++) {
                 // Optimistically just do efficient check of cache for outputs
-                if (coins_cache.HaveCoinInCache(COutPoint(hash, out))) {
+                if (coins_cache.HaveCoinInCache(COutPoint(tx.vout[out].GetHash()))) {
                     return state.Invalid(TxValidationResult::TX_CONFLICT, "txn-already-known");
                 }
             }
@@ -1471,10 +1485,12 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptPackage(const Package& package, 
     // The package must be 1 child with all of its unconfirmed parents. The package is expected to
     // be sorted, so the last transaction is the child.
     const auto& child = package.back();
-    std::unordered_set<uint256, SaltedTxidHasher> unconfirmed_parent_txids;
-    std::transform(package.cbegin(), package.cend() - 1,
-                   std::inserter(unconfirmed_parent_txids, unconfirmed_parent_txids.end()),
-                   [](const auto& tx) { return tx->GetHash(); });
+    std::unordered_set<uint256, SaltedTxidHasher> unconfirmed_parent_outids;
+    for (auto it = package.cbegin(); it != package.cend() - 1; ++it) {
+        for (const auto& output : (*it)->vout) {
+            unconfirmed_parent_outids.insert(output.GetHash());
+        }
+    }
 
     // All child inputs must refer to a preceding package transaction or a confirmed UTXO. The only
     // way to verify this is to look up the child's inputs in our current coins view (not including
@@ -1491,8 +1507,8 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptPackage(const Package& package, 
     // This should be connecting directly to CoinsTip, not to m_viewmempool, because we specifically
     // require inputs to be confirmed if they aren't in the package.
     m_view.SetBackend(m_active_chainstate.CoinsTip());
-    const auto package_or_confirmed = [this, &unconfirmed_parent_txids](const auto& input) {
-         return unconfirmed_parent_txids.count(input.prevout.hash) > 0 || m_view.HaveCoin(input.prevout);
+    const auto package_or_confirmed = [this, &unconfirmed_parent_outids](const auto& input) {
+        return unconfirmed_parent_outids.count(input.prevout.hash) > 0 || m_view.HaveCoin(input.prevout);
     };
     if (!std::all_of(child->vin.cbegin(), child->vin.cend(), package_or_confirmed)) {
         package_state_quit_early.Invalid(PackageValidationResult::PCKG_POLICY, "package-not-child-with-unconfirmed-parents");
@@ -1669,7 +1685,7 @@ PackageMempoolAcceptResult ProcessNewPackage(Chainstate& active_chainstate, CTxM
             auto args = MemPoolAccept::ATMPArgs::PackageTestAccept(chainparams, /*accept_time=*/ now, /*embargo_time=*/ now, coins_to_uncache);
             return MemPoolAccept(pool, active_chainstate).AcceptMultipleTransactions(package, args);
         } else {
-            auto args = MemPoolAccept::ATMPArgs::PackageChildWithParents(chainparams, /*accept_time=*/ now, /*embargo_time=*/ now, coins_to_uncache);
+            auto args = MemPoolAccept::ATMPArgs::PackageChildWithParents(chainparams, /*accept_time=*/now, /*embargo_time=*/now, coins_to_uncache);
             return MemPoolAccept(pool, active_chainstate).AcceptPackage(package, args);
         }
     }();
@@ -2060,8 +2076,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
 
     // undo transactions in reverse order
     for (int i = block.vtx.size() - 1; i >= 0; i--) {
-        const CTransaction &tx = *(block.vtx[i]);
-        Txid hash = tx.GetHash();
+        const CTransaction& tx = *(block.vtx[i]);
         bool is_coinbase = tx.IsCoinBase();
         bool is_bip30_exception = (is_coinbase && !fEnforceBIP30);
 
@@ -2078,7 +2093,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
                 }
             }
             if (!tx.vout[o].scriptPubKey.IsUnspendable()) {
-                COutPoint out(hash, o);
+                COutPoint out(tx.vout[o].GetHash());
                 Coin coin;
                 bool is_spent = view.SpendCoin(out, &coin);
                 if (!is_spent || tx.vout[o] != coin.out || pindex->nHeight != coin.nHeight || is_coinbase != coin.fCoinBase) {
@@ -2543,9 +2558,9 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     if (fEnforceBIP30 || pindex->nHeight >= BIP34_IMPLIES_BIP30_LIMIT) {
         for (const auto& tx : block.vtx) {
             for (size_t o = 0; o < tx->vout.size(); o++) {
-                if (view.HaveCoin(COutPoint(tx->GetHash(), o))) {
+                if (view.HaveCoin(COutPoint(tx->vout[o].GetHash()))) {
                     LogPrintf("ERROR: ConnectBlock(): tried to overwrite transaction\n");
-                    return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-txns-BIP30");
+                    return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, strprintf("bad-txns-BIP30: %s", tx->ToString()));
                 }
             }
         }
@@ -5656,7 +5671,8 @@ bool ChainstateManager::PopulateAndValidateSnapshot(
 
     if (!maybe_au_data) {
         LogPrintf("[snapshot] assumeutxo height in snapshot metadata not recognized "
-                  "(%d) - refusing to load snapshot\n", base_height);
+                  "(%d) - refusing to load snapshot\n",
+                  base_height);
         return false;
     }
 
@@ -5687,9 +5703,7 @@ bool ChainstateManager::PopulateAndValidateSnapshot(
                       coins_count - coins_left);
             return false;
         }
-        if (coin.nHeight > base_height ||
-            outpoint.n >= std::numeric_limits<decltype(outpoint.n)>::max() // Avoid integer wrap-around in coinstats.cpp:ApplyHash
-        ) {
+        if (coin.nHeight > base_height) {
             LogPrintf("[snapshot] bad snapshot data after deserializing %d coins\n",
                       coins_count - coins_left);
             return false;
@@ -5707,9 +5721,9 @@ bool ChainstateManager::PopulateAndValidateSnapshot(
 
         if (coins_processed % 1000000 == 0) {
             LogPrintf("[snapshot] %d coins loaded (%.2f%%, %.2f MB)\n",
-                coins_processed,
-                static_cast<float>(coins_processed) * 100 / static_cast<float>(coins_count),
-                coins_cache.DynamicMemoryUsage() / (1000 * 1000));
+                      coins_processed,
+                      static_cast<float>(coins_processed) * 100 / static_cast<float>(coins_count),
+                      coins_cache.DynamicMemoryUsage() / (1000 * 1000));
         }
 
         // Batch write and flush (if we need to) every so often.

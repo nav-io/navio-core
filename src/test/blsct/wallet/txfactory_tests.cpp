@@ -58,7 +58,7 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_test, TestingSetup)
     auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
 
     const auto txid = Txid::FromUint256(InsecureRand256());
-    COutPoint outpoint{txid, /*nIn=*/0};
+    COutPoint outpoint{txid};
 
     Coin coin;
     auto out = blsct::CreateOutput(recvAddress, 1000 * COIN, "test");
@@ -93,7 +93,7 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_test, TestingSetup)
     auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
 
     for (auto& res : result.amounts) {
-        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00292125) * COIN) fFoundChange = true;
+        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00291625) * COIN) fFoundChange = true;
     }
 
     BOOST_CHECK(fFoundChange);
@@ -119,7 +119,7 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
 
     const auto txid = Txid::FromUint256(InsecureRand256());
-    COutPoint outpoint{txid, /*nIn=*/0};
+    COutPoint outpoint{txid};
 
     Coin coin;
     auto out = blsct::CreateOutput(recvAddress, 1000 * COIN, "test");
@@ -152,7 +152,7 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
 
     for (auto& res : result.amounts) {
-        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00292125) * COIN) {
+        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00291625) * COIN) {
             fFoundChange = true;
             nChangePosition = res.id;
         }
@@ -167,14 +167,14 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
 
     fFoundChange = false;
 
-    if (wtx->GetBLSCTRecoveryData(nChangePosition).message == "Change" && wtx->GetBLSCTRecoveryData(nChangePosition).amount == (1000 - 900 - 0.00292125) * COIN) {
+    if (wtx->GetBLSCTRecoveryData(nChangePosition).message == "Change" && wtx->GetBLSCTRecoveryData(nChangePosition).amount == (1000 - 900 - 0.00291625) * COIN) {
         fFoundChange = true;
     }
 
     BOOST_CHECK(fFoundChange);
 
     auto tx2 = blsct::TxFactory(blsct_km);
-    auto outpoint2 = COutPoint(finalTx.value().GetHash(), nChangePosition);
+    auto outpoint2 = COutPoint(finalTx.value().vout[nChangePosition].GetHash());
     Coin coin2;
     coin2.nHeight = 1;
     coin2.out = finalTx.value().vout[nChangePosition];
@@ -188,8 +188,8 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     auto finalTx2 = tx2.BuildTx();
     wallet->transactionAddedToMempool(MakeTransactionRef(finalTx2.value()));
 
-    BOOST_CHECK(wallet->GetDebit(CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == (1000 - 900 - 0.00292125) * COIN);
-    BOOST_CHECK(TxGetCredit(*wallet, CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == (1000 - 900 - 0.00292125 - 50 - 0.00292125) * COIN);
+    BOOST_CHECK(wallet->GetDebit(CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == (1000 - 900 - 0.00291625) * COIN);
+    BOOST_CHECK(TxGetCredit(*wallet, CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == (1000 - 900 - 0.00291625 - 50 - 0.00291625) * COIN);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

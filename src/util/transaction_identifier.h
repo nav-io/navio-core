@@ -8,12 +8,10 @@
 /** transaction_identifier represents the two canonical transaction identifier
  * types (txid, wtxid).*/
 template <bool has_witness>
-class transaction_identifier
+class 
+transaction_identifier
 {
     uint256 m_wrapped;
-
-    // Note: Use FromUint256 externally instead.
-    transaction_identifier(const uint256& wrapped) : m_wrapped{wrapped} {}
 
     // TODO: Comparisons with uint256 should be disallowed once we have
     // converted most of the code to using the new txid types.
@@ -27,6 +25,7 @@ class transaction_identifier
     }
 
 public:
+    transaction_identifier(const uint256& wrapped) : m_wrapped{wrapped} {}
     transaction_identifier() : m_wrapped{} {}
 
     template <typename Other>
@@ -64,6 +63,8 @@ public:
 using Txid = transaction_identifier<false>;
 /** Wtxid commits to all transaction fields including the witness. */
 using Wtxid = transaction_identifier<true>;
+/** Output hash */
+using Outid = transaction_identifier<false>;
 
 inline Txid TxidFromString(std::string_view str)
 {

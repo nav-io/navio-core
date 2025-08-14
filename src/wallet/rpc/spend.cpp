@@ -664,15 +664,6 @@ CreatedTransactionResult FundTransaction(CWallet& wallet, const CMutableTransact
         for (const UniValue& input : options["input_weights"].get_array().getValues()) {
             Txid txid = Txid::FromUint256(ParseHashO(input, "txid"));
 
-            const UniValue& vout_v = input.find_value("vout");
-            if (!vout_v.isNum()) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing vout key");
-            }
-            int vout = vout_v.getInt<int>();
-            if (vout < 0) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, vout cannot be negative");
-            }
-
             const UniValue& weight_v = input.find_value("weight");
             if (!weight_v.isNum()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing weight key");
@@ -687,7 +678,7 @@ CreatedTransactionResult FundTransaction(CWallet& wallet, const CMutableTransact
                 throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid parameter, weight cannot be greater than the maximum standard tx weight of %d", MAX_STANDARD_TX_WEIGHT));
             }
 
-            coinControl.SetInputWeight(COutPoint(txid, vout), weight);
+            coinControl.SetInputWeight(COutPoint(txid), weight);
         }
     }
 
@@ -1427,13 +1418,14 @@ RPCHelpMan sendall()
                           } else if (options.exists("inputs")) {
                               for (const CTxIn& input : rawTx.vin) {
                                   if (pwallet->IsSpent(input.prevout)) {
-                                      throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Input not available. UTXO (%s:%d) was already spent.", input.prevout.hash.ToString(), input.prevout.n));
+                                      throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Input not available. UTXO (%s) was already spent.", input.prevout.hash.ToString()));
                                   }
-                                  const CWalletTx* tx{pwallet->GetWalletTx(input.prevout.hash)};
-                                  if (!tx || input.prevout.n >= tx->tx->vout.size() || !(pwallet->IsMine(tx->tx->vout[input.prevout.n]) & (coin_control.fAllowWatchOnly ? ISMINE_ALL : ISMINE_SPENDABLE))) {
-                                      throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Input not found. UTXO (%s:%d) is not part of wallet.", input.prevout.hash.ToString(), input.prevout.n));
+                                  const CWalletTx* tx{pwallet->GetWalletTxFromOutpoint(input.prevout)};
+                                  auto out_ix = tx->GetOutputIndexFromHash(input.prevout);
+                                  if (!tx || !(pwallet->IsMine(tx->tx->vout[out_ix]) & (coin_control.fAllowWatchOnly ? ISMINE_ALL : ISMINE_SPENDABLE))) {
+                                      throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Input not found. UTXO (%s) is not part of wallet.", input.prevout.ToString()));
                                   }
-                                  total_input_value += tx->tx->vout[input.prevout.n].nValue;
+                                  total_input_value += tx->tx->vout[out_ix].nValue;
                               }
                           } else {
                               CoinFilterParams coins_params;
@@ -1443,7 +1435,7 @@ RPCHelpMan sendall()
                                   if (send_max && fee_rate.GetFee(output.input_bytes) > output.txout.nValue) {
                                       continue;
                                   }
-                                  CTxIn input(output.outpoint.hash, output.outpoint.n, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL);
+                                  CTxIn input(output.outpoint.hash, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL);
                                   rawTx.vin.push_back(input);
                                   total_input_value += output.txout.nValue;
                               }
