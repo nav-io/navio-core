@@ -169,7 +169,6 @@ BLSCT_H = \
   blsct/common.h \
   blsct/double_public_key.h \
   blsct/eip_2333/bls12_381_keygen.h \
-  blsct/external_api/blsct.h \
   blsct/key_io.h \
   blsct/private_key.h \
   blsct/public_key.h \
@@ -1464,6 +1463,7 @@ if BUILD_LIBBLSCT_ONLY
 LIBBLSCT = libblsct.a
 noinst_LIBRARIES = $(LIBBLSCT)
 libblsct_a_SOURCES = \
+  blsct/external_api/blsct.h \
   blsct/external_api/blsct.cpp \
   blsct/external_api/dummy_impl.cpp \
   common/args.cpp \
