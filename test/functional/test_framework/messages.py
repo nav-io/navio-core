@@ -678,7 +678,7 @@ class CTxOut:
         self.tokenId = tokenId
         self.predicate = predicate
 
-    def set_random_predicate():
+    def set_random_predicate(self):
         self.predicate = bytes.fromhex("0420") + random.getrandbits(256)
 
     def deserialize(self, f):

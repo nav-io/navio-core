@@ -72,7 +72,7 @@ template void LazyPoints<Mcl>::Add(
 
 template <typename T>
 typename T::Point LazyPoints<T>::Sum() const {
-    return T::Util::template MultiplyLazyPoints(m_points);
+    return T::Util::template MultiplyLazyPoints<T>(m_points);
 }
 template Mcl::Point LazyPoints<Mcl>::Sum() const;
 

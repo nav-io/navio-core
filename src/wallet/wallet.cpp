@@ -3889,6 +3889,8 @@ void CWallet::SetupBLSCTKeyMan()
 
 const CKeyingMaterial& CWallet::GetEncryptionKey() const
 {
+    AssertLockHeld(cs_wallet);
+
     return vMasterKey;
 }
 
