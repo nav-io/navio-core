@@ -392,7 +392,6 @@ public:
     indexed_transaction_set mapTx GUARDED_BY(cs);
 
     using txiter = indexed_transaction_set::nth_index<0>::type::const_iterator;
-    std::vector<CTransactionRef> txns_randomized GUARDED_BY(cs); //!< All transactions in mapTx, in random order
 
     typedef std::set<txiter, CompareIteratorByHash> setEntries;
 
@@ -434,6 +433,8 @@ private:
 public:
     indirectmap<COutPoint, const CTransaction*> mapNextTx GUARDED_BY(cs);
     std::map<uint256, CAmount> mapDeltas GUARDED_BY(cs);
+    /** Map from output hash to transaction hash for tracking parent-child relationships */
+    std::map<uint256, uint256> mapOutputToTx GUARDED_BY(cs);
 
     using Options = kernel::MemPoolOptions;
 
@@ -842,7 +843,7 @@ public:
     bool GetToken(const uint256& tokenId, blsct::TokenEntry& token) const override;
     /** GetCoin, returning whether it exists and is not spent. Also updates m_non_base_coins if the
      * coin is not fetched from base. */
-    bool GetCoin(const COutPoint& outpoint, Coin& coin) const override;
+    bool GetCoin(const COutPoint& outpoint, Coin& coin) const override EXCLUSIVE_LOCKS_REQUIRED(mempool.cs);
     /** Add the coins created by this transaction. These coins are only temporarily stored in
      * m_temp_added and cannot be flushed to the back end. Only used for package validation. */
     void PackageAddTransaction(const CTransactionRef& tx);

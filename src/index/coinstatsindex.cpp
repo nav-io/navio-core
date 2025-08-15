@@ -158,7 +158,7 @@ bool CoinStatsIndex::CustomAppend(const interfaces::BlockInfo& block)
             for (uint32_t j = 0; j < tx->vout.size(); ++j) {
                 const CTxOut& out{tx->vout[j]};
                 Coin coin{out, block.height, tx->IsCoinBase()};
-                COutPoint outpoint{tx->GetHash(), j};
+                COutPoint outpoint{tx->vout[j].GetHash()};
 
                 // Skip unspendable coins
                 if (coin.out.scriptPubKey.IsUnspendable()) {
@@ -186,7 +186,7 @@ bool CoinStatsIndex::CustomAppend(const interfaces::BlockInfo& block)
 
                 for (size_t j = 0; j < tx_undo.vprevout.size(); ++j) {
                     Coin coin{tx_undo.vprevout[j]};
-                    COutPoint outpoint{tx->vin[j].prevout.hash, tx->vin[j].prevout.n};
+                    COutPoint outpoint{tx->vin[j].prevout.hash};
 
                     RemoveCoinHash(m_muhash, outpoint, coin);
 
@@ -434,7 +434,7 @@ bool CoinStatsIndex::ReverseBlock(const CBlock& block, const CBlockIndex* pindex
 
         for (uint32_t j = 0; j < tx->vout.size(); ++j) {
             const CTxOut& out{tx->vout[j]};
-            COutPoint outpoint{tx->GetHash(), j};
+            COutPoint outpoint{tx->vout[j].GetHash()};
             Coin coin{out, pindex->nHeight, tx->IsCoinBase()};
 
             // Skip unspendable coins
@@ -463,7 +463,7 @@ bool CoinStatsIndex::ReverseBlock(const CBlock& block, const CBlockIndex* pindex
 
             for (size_t j = 0; j < tx_undo.vprevout.size(); ++j) {
                 Coin coin{tx_undo.vprevout[j]};
-                COutPoint outpoint{tx->vin[j].prevout.hash, tx->vin[j].prevout.n};
+                COutPoint outpoint{tx->vin[j].prevout.hash};
 
                 ApplyCoinHash(m_muhash, outpoint, coin);
 

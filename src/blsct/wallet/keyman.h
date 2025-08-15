@@ -187,6 +187,7 @@ public:
     bool GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key);
     bool GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key);
     bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
+    bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce);
 
     blsct::PrivateKey GetTokenKey(const uint256& tokenId) const;
     blsct::PrivateKey GetTokenKey(const blsct::PublicKey& tokenPublicKey) const { return GetTokenKey(tokenPublicKey.GetHash()); };

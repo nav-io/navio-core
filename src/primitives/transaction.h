@@ -37,31 +37,28 @@
 class COutPoint
 {
 public:
-    Txid hash;
-    uint32_t n;
+    Outid hash;
 
-    static constexpr uint32_t NULL_INDEX = std::numeric_limits<uint32_t>::max();
+    COutPoint() {}
+    COutPoint(const Outid& hashIn) : hash(hashIn) {}
+    COutPoint(const uint256& hashIn) : hash(Outid::FromUint256(hashIn)) {}
 
-    COutPoint(): n(NULL_INDEX) { }
-    COutPoint(const Txid& hashIn, uint32_t nIn): hash(hashIn), n(nIn) { }
-
-    SERIALIZE_METHODS(COutPoint, obj) { READWRITE(obj.hash, obj.n); }
+    SERIALIZE_METHODS(COutPoint, obj) { READWRITE(obj.hash); }
 
     void SetNull()
     {
         hash.SetNull();
-        n = NULL_INDEX;
     }
-    bool IsNull() const { return (hash.IsNull() && n == NULL_INDEX); }
+    bool IsNull() const { return hash.IsNull(); }
 
     friend bool operator<(const COutPoint& a, const COutPoint& b)
     {
-        return std::tie(a.hash, a.n) < std::tie(b.hash, b.n);
+        return a.hash < b.hash;
     }
 
     friend bool operator==(const COutPoint& a, const COutPoint& b)
     {
-        return (a.hash == b.hash && a.n == b.n);
+        return (a.hash == b.hash);
     }
 
     friend bool operator!=(const COutPoint& a, const COutPoint& b)
@@ -136,8 +133,7 @@ public:
         nSequence = SEQUENCE_FINAL;
     }
 
-    explicit CTxIn(COutPoint prevoutIn, CScript scriptSigIn=CScript(), uint32_t nSequenceIn=SEQUENCE_FINAL);
-    CTxIn(Txid hashPrevTx, uint32_t nOut, CScript scriptSigIn=CScript(), uint32_t nSequenceIn=SEQUENCE_FINAL);
+    explicit CTxIn(COutPoint prevoutIn, CScript scriptSigIn = CScript(), uint32_t nSequenceIn = SEQUENCE_FINAL);
 
     SERIALIZE_METHODS(CTxIn, obj) { READWRITE(obj.prevout, obj.scriptSig, obj.nSequence); }
 
@@ -377,10 +373,16 @@ public:
         blsct::ParsedPredicate parsedPredicate;
 
         if (predicate.size() > 0) {
-            parsedPredicate = blsct::ParsePredicate(predicate);
+            try {
+                parsedPredicate = blsct::ParsePredicate(predicate);
+                bool isFee = parsedPredicate.IsPayFeePredicate();
+                return isFee;
+            } catch (const std::exception& e) {
+                return false;
+            }
+        } else {
+            return false;
         }
-
-        return parsedPredicate.IsPayFeePredicate();
     }
 
     std::string ToString() const;

@@ -28,7 +28,7 @@ BOOST_AUTO_TEST_CASE(test_derive)
 
     // token id
     {
-        TokenId token_id(uint256(123));
+        TokenId token_id(uint256(uint64_t{123}));
         for (size_t i=0; i<10; ++i) {
             auto p = gd.Derive(g, i, token_id);
             xs.push_back(p);

@@ -24,10 +24,10 @@ BOOST_FIXTURE_TEST_CASE(merkleblock_construct_from_txids_found, BasicTestingSetu
     std::set<Txid> txids;
 
     // Last txn in block.
-    Txid txhash1{TxidFromString("0x74d681e0e03bafa802c8aa084379aa98d9fcd632ddc2ed9782b586ec87451f20")};
+    Txid txhash1{TxidFromString("0x92787a1e892b862764b2e11bbd7b2c22f649047d864489cd0b2967e4949fb509")};
 
     // Second txn in block.
-    Txid txhash2{TxidFromString("0xf9fc751cb7dc372406a9f8d738d5e6f8f63bab71986a39cf36ee70ee17036d07")};
+    Txid txhash2{TxidFromString("0x6cf3cc08b0887b2534a0603ec5e220061a9bd6b4fae35d713243248e67c2ada0")};
 
     txids.insert(txhash1);
     txids.insert(txhash2);

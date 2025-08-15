@@ -43,7 +43,7 @@ PSBTAnalysis AnalyzePSBT(PartiallySignedTransaction psbtx)
             in_amt += utxo.nValue;
             input_analysis.has_utxo = true;
         } else {
-            if (input.non_witness_utxo && psbtx.tx->vin[i].prevout.n >= input.non_witness_utxo->vout.size()) {
+            if (input.non_witness_utxo && !std::any_of(input.non_witness_utxo->vout.begin(), input.non_witness_utxo->vout.end(), [&psbtx, i](const CTxOut& out) { return out.GetHash() == psbtx.tx->vin[i].prevout.hash; })) {
                 result.SetInvalid(strprintf("PSBT is not valid. Input %u specifies invalid prevout", i));
                 return result;
             }

@@ -152,8 +152,9 @@ BOOST_FIXTURE_TEST_CASE(blockfilters_json_test, BasicTestingSetup)
         uint256 block_hash;
         BOOST_CHECK(ParseHashStr(test[pos++].get_str(), block_hash));
 
+        std::string block_str = test[pos++].get_str();
         CBlock block;
-        BOOST_REQUIRE(DecodeHexBlk(block, test[pos++].get_str()));
+        BOOST_REQUIRE(DecodeHexBlk(block, block_str));
 
         CBlockUndo block_undo;
         block_undo.vtxundo.emplace_back();

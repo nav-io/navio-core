@@ -74,7 +74,7 @@ FUZZ_TARGET(utxo_snapshot, .init = initialize_chain)
         const auto& coinscache{chainman.ActiveChainstate().CoinsTip()};
         int64_t chain_tx{};
         for (const auto& block : *g_chain) {
-            Assert(coinscache.HaveCoin(COutPoint{block->vtx.at(0)->GetHash(), 0}));
+            Assert(coinscache.HaveCoin(COutPoint{block->vtx.at(0)->vout[0].GetHash()}));
             const auto* index{chainman.m_blockman.LookupBlockIndex(block->GetHash())};
             const auto num_tx{Assert(index)->nTx};
             Assert(num_tx == 1);

@@ -27,6 +27,10 @@ ParsedPredicate ParsePredicate(const VectorPredicate& vch)
         PayFeePredicate p;
         ss >> p;
         return p;
+    } else if (op == DATA) {
+        DataPredicate p;
+        ss >> p;
+        return p;
     } else {
         throw std::ios_base::failure("unknown predicate operation");
     }
@@ -46,6 +50,8 @@ std::string PredicateToString(const VectorPredicate& vch)
         ret = "MINT_NFT";
     else if (predicate.IsPayFeePredicate())
         ret = "PAY_FEE";
+    else if (predicate.IsDataPredicate())
+        ret = "DATA";
 
     return ret;
 }
