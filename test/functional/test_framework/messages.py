@@ -707,7 +707,7 @@ class CTxOut:
             flags |= OUTPUT_BLSCT_MARKER
         if not self.tokenId.isNull():
             flags |= OUTPUT_TOKEN_MARKER
-        if len(self.predicate) > 0
+        if len(self.predicate) > 0:
             flags |= OUTPUT_PREDICATE_MARKER
 
         r = b""
@@ -726,7 +726,7 @@ class CTxOut:
         if flags & OUTPUT_TOKEN_MARKER:
             r += self.tokenId.serialize()
 
-        if (flags & OUTPUT_PREDICATE_MARKER)
+        if (flags & OUTPUT_PREDICATE_MARKER):
             r += ser_string(self.predicate)
 
         return r

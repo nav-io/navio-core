@@ -326,7 +326,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         assert isinstance(recovery_data["outputs"], list)
         assert len(recovery_data["outputs"]) > 0, "No outputs found in recovery data"
         assert any(output["message"] == "Test nonce recovery" for output in recovery_data["outputs"]), "No output found with message 'Test nonce recovery'"
-        
+
         if len(recovery_data["outputs"]) > 0:
             output = recovery_data["outputs"][0]
             assert "vout" in output
