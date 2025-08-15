@@ -19,7 +19,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
-#include <util/strencodings.h>
 
 /* constants */
 #define PUBLIC_KEY_SIZE 48
@@ -39,15 +38,15 @@
 #define SCRIPT_SIZE 28
 #define MAX_MEMO_LEN 100
 #define MEMO_BUF_SIZE MAX_MEMO_LEN + 1
-#define CTX_ID_SIZE UINT256_SIZE
-#define CTX_ID_STR_LEN CTX_ID_SIZE * 2
+#define TX_ID_SIZE UINT256_SIZE
+#define TX_ID_STR_LEN TX_ID_SIZE * 2
 
 /* return codes */
 #define BLSCT_RESULT uint8_t
 #define BLSCT_SUCCESS 0
 #define BLSCT_FAILURE 1
 #define BLSCT_EXCEPTION 2
-#define BLSCT_BAD_SIZE 10
+#define BLSCT_BAD_DPK_SIZE 10
 #define BLSCT_UNKNOWN_ENCODING 11
 #define BLSCT_VALUE_OUTSIDE_THE_RANGE 12
 #define BLSCT_DID_NOT_RUN_TO_COMPLETION 13
@@ -56,25 +55,6 @@
 #define BLSCT_BAD_OUT_TYPE 16
 #define BLSCT_MEMO_TOO_LONG 17
 #define BLSCT_MEM_ALLOC_FAILED 18
-#define BLSCT_DESER_FAILED 19
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-typedef struct {
-  BLSCT_RESULT result;
-  void* value;
-  size_t value_size;
-} BlsctRetVal;
-
-BlsctRetVal* err(
-    BLSCT_RESULT result
-);
-
-#ifdef __cplusplus
-} // extern "C"
-#endif
 
 #define TRY_DEFINE_MCL_POINT_FROM(src, dest) \
     Point dest; \
@@ -135,62 +115,6 @@ if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
 
 #define UNVOID(T, name) const T* name = reinterpret_cast<const T*>(void_##name)
 
-inline bool TryParseHexWrap(
-    const std::string& hex,
-    std::vector<uint8_t>& out_vec
-) {
-    auto maybe_vec = TryParseHex<uint8_t>(hex);
-    if (!maybe_vec.has_value()) {
-        return false;
-    }
-    out_vec = std::move(*maybe_vec);
-    return true;
-}
-
-inline const char* StrToAllocCStr(const std::string& s) {
-    size_t buf_size = s.size() + 1;
-    MALLOC_BYTES(char, cstr_buf, buf_size);
-    RETURN_IF_MEM_ALLOC_FAILED(cstr_buf);
-    std::memcpy(cstr_buf, s.c_str(), buf_size); // also copies null at the end
-    return cstr_buf;
-}
-
-inline const char* SerializeToHex(
-    const uint8_t* blsct_obj,
-    const size_t obj_size
-) {
-    if (blsct_obj == nullptr) return nullptr;
-
-    std::vector<uint8_t> vec;
-    vec.reserve(obj_size);
-    for (size_t i=0; i<obj_size; ++i) {
-        vec.push_back(blsct_obj[i]);
-    }
-    auto hex_str = HexStr(vec);
-    return StrToAllocCStr(hex_str);
-}
-
-inline void* DeserializeFromHex(const char* hex, const size_t obj_size) {
-    std::vector<uint8_t> vec;
-    if (!TryParseHexWrap(hex, vec)) {
-        return err(BLSCT_FAILURE);
-    }
-
-    // check if the size is correct
-    if (vec.size() != obj_size) {
-        return err(BLSCT_BAD_SIZE);
-    }
-
-    void* blsct_obj = malloc(obj_size);
-    if (blsct_obj == nullptr) {
-        fputs("Failed to allocate memory\n", stderr);
-        return nullptr;
-    }
-    std::memcpy(blsct_obj, &vec[0], obj_size);
-
-    return blsct_obj;
-}
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -220,12 +144,18 @@ typedef uint8_t BlsctSubAddr[SUB_ADDR_SIZE];
 typedef uint8_t BlsctSubAddrId[SUB_ADDR_ID_SIZE];
 typedef uint8_t BlsctTokenId[TOKEN_ID_SIZE];
 typedef uint8_t BlsctUint256[UINT256_SIZE];
-typedef uint8_t BlsctCtxId[CTX_ID_SIZE];
+typedef uint8_t BlsctTxId[TX_ID_SIZE];
 typedef uint8_t BlsctViewTag[VIEW_TAG_SIZE];
 typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
 typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
 
 typedef uint8_t BlsctRangeProof;
+
+typedef struct {
+  BLSCT_RESULT result;
+  void* value;
+  size_t value_size;
+} BlsctRetVal;
 
 typedef struct {
   BLSCT_RESULT result;
@@ -239,16 +169,20 @@ typedef struct {
 
 typedef struct {
   BLSCT_RESULT result;
-  uint8_t* ser_ctx;
-  size_t ser_ctx_size;
+  uint8_t* ser_tx;
+  size_t ser_tx_size;
 
   size_t in_amount_err_index; // holds the first index of the tx_in whose amount exceeds the maximum
   size_t out_amount_err_index; // holds the first index of the tx_out whose amount exceeds the maximum
-} BlsctCtxRetVal;
+} BlsctTxRetVal;
 
 BlsctRetVal* succ(
     void* value,
     size_t value_size
+);
+
+BlsctRetVal* err(
+    BLSCT_RESULT result
 );
 
 BlsctBoolRetVal* succ_bool(
@@ -277,7 +211,6 @@ typedef struct {
     BlsctScalar spending_key;
     BlsctTokenId token_id;
     BlsctOutPoint out_point;
-    bool staked_commitment;
     bool rbf;
 } BlsctTxIn;
 
@@ -300,26 +233,16 @@ void init();
 // point
 BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
-const char* serialize_point(const BlsctPoint* blsct_point);
-BlsctRetVal* deserialize_point(const char* hex);
-int is_point_equal(const BlsctPoint* a, const BlsctPoint* b);
-const char* point_to_str(const BlsctPoint* blsct_point);
-BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
+const char* point_to_hex(const BlsctPoint* blsct_point);
 
 // scalar
 BlsctRetVal* gen_random_scalar();
 BlsctRetVal* gen_scalar(const uint64_t n);
 uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
-const char* serialize_scalar(const BlsctScalar* blsct_scalar);
-BlsctRetVal* deserialize_scalar(const char* hex);
-BlsctRetVal* deserialize_hex(const char* hex);
-int is_scalar_equal(const BlsctScalar* a, const BlsctScalar* b);
-const char* scalar_to_str(const BlsctScalar* blsct_scalar);
+const char* scalar_to_hex(const BlsctScalar* blsct_scalar);
 
-// public key
+// public key generation
 BlsctRetVal* gen_random_public_key();
-BlsctPoint* get_public_key_point(const BlsctPubKey* blsct_pub_key);
-BlsctPubKey* point_to_public_key(const BlsctPoint* blsct_point);
 
 // address
 BlsctRetVal* decode_address(
@@ -337,9 +260,6 @@ BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk2
 );
 
-const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk);
-BlsctRetVal* deserialize_dpk(const char* hex);
-
 // token id
 BlsctRetVal* gen_token_id_with_subid(
     const uint64_t token,
@@ -351,10 +271,10 @@ BlsctRetVal* gen_token_id(
 );
 
 BlsctRetVal* gen_default_token_id();
+
 uint64_t get_token_id_token(const BlsctTokenId* blsct_token_id);
+
 uint64_t get_token_id_subid(const BlsctTokenId* blsct_token_id);
-const char* serialize_token_id(const BlsctTokenId* blsct_token_id);
-BlsctRetVal* deserialize_token_id(const char* hex);
 
 // range proof
 BlsctRetVal* build_range_proof(
@@ -368,33 +288,12 @@ BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs
 );
 
-const BlsctPoint* get_range_proof_A(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
-const BlsctPoint* get_range_proof_A_wip(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
-const BlsctPoint* get_range_proof_B(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
-
-const BlsctScalar* get_range_proof_r_prime(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
-const BlsctScalar* get_range_proof_s_prime(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
-const BlsctScalar* get_range_proof_delta_prime(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
-const BlsctScalar* get_range_proof_alpha_hat(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
-const BlsctScalar* get_range_proof_tau_x(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
-
-const char* serialize_range_proof(
-    const BlsctRangeProof* blsct_range_proof,
-    const size_t obj_size
-);
-BlsctRetVal* deserialize_range_proof(
-    const char* hex,
-    const size_t obj_size
-);
-
-// amount recovery request
-BlsctAmountRecoveryReq* gen_amount_recovery_req(
+// amount recovery
+BlsctAmountRecoveryReq* gen_recover_amount_req(
     const void* vp_blsct_range_proof,
     const size_t range_proof_size,
     const void* vp_blsct_nonce
 );
-
-// amountry recovery and the result result
 
 // returns a structure whose value field is
 // a vector of the same size as the input vector
@@ -405,55 +304,23 @@ BlsctAmountsRetVal* recover_amount(
 // out point
 // txid is 32 bytes and represented as 64-char hex str
 BlsctRetVal* gen_out_point(
-    const char* ctx_id_c_str,
+    const char* tx_id_c_str,
     const uint32_t n
 );
 
-const char* serialize_out_point(const BlsctOutPoint* blsct_out_point);
-BlsctRetVal* deserialize_out_point(const char* hex);
-
-// script
-const char* serialize_script(const BlsctScript* blsct_script);
-BlsctRetVal* deserialize_script(const char* hex);
-
-// signature
-const char* serialize_signature(const BlsctSignature* blsct_signature);
-BlsctRetVal* deserialize_signature(const char* hex);
-
-// tx in
-
-// returns BlsctTxIn
 BlsctRetVal* build_tx_in(
     const uint64_t amount,
     const uint64_t gamma,
     const BlsctScalar* spending_key,
     const BlsctTokenId* token_id,
     const BlsctOutPoint* out_point,
-    const bool staked_commitment,
     const bool rbf
 );
 
 BlsctRetVal* dpk_to_sub_addr(
     const void* blsct_dpk
 );
-uint64_t get_tx_in_amount(const BlsctTxIn* tx_in);
-uint64_t get_tx_in_gamma(const BlsctTxIn* tx_in);
-const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in);
-const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in);
-const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in);
-bool get_tx_in_staked_commitment(const BlsctTxIn* tx_in);
-bool get_tx_in_rbf(const BlsctTxIn* tx_in);
 
-// ctx in
-const BlsctScript* get_ctx_in_script_sig(const CTxIn* ctx_in);
-uint32_t get_ctx_in_sequence(const CTxIn* ctx_in);
-const BlsctScript* get_ctx_in_script_witness(const CTxIn* ctx_in);
-const BlsctCtxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in);
-uint32_t get_ctx_in_prev_out_n(const CTxIn* ctx_in);
-
-// tx out
-
-// returns BlsctTxOut
 BlsctRetVal* build_tx_out(
     const BlsctSubAddr* blsct_dest,
     const uint64_t amount,
@@ -463,43 +330,24 @@ BlsctRetVal* build_tx_out(
     const uint64_t min_stake
 );
 
-const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out);
-uint64_t get_tx_out_amount(const BlsctTxOut* tx_out);
-const char* get_tx_out_memo(const BlsctTxOut* tx_out);
-const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out);
-TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out);
-uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
-
-// ctx out
-uint64_t get_ctx_out_value(const CTxOut* ctx_out);
-const BlsctScript* get_ctx_out_script_pub_key(const CTxOut* ctx_out);
-const BlsctScript* get_ctx_out_script_pubkey(const CTxOut* ctx_out);
-const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out);
-const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* ctx_out);
-
-// ctx out blsct data
-const BlsctPoint* get_ctx_out_spending_key(const CTxOut* ctx_out);
-const BlsctPoint* get_ctx_out_ephemeral_key(const CTxOut* ctx_out);
-const BlsctPoint* get_ctx_out_blinding_key(const CTxOut* ctx_out);
-const BlsctRetVal* get_ctx_out_range_proof(const CTxOut* ctx_out);
-uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out);
-
-// tx
-
-// takes BlsctTxIn and BlsctTxOut vectors and
-// returns a serialized CMutableTransaction
-BlsctCtxRetVal* build_ctx(
+BlsctTxRetVal* build_tx(
     const void* void_tx_ins,
     const void* void_tx_outs
 );
 
-const char* get_ctx_id(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
+// must free the returned object after use
+CMutableTransaction* deserialize_tx(
+    const uint8_t* ser_tx,
+    const size_t ser_tx_size
 );
 
-size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins);
-size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs);
+const std::vector<CTxIn>* get_tx_ins(const CMutableTransaction* tx);
+
+size_t get_tx_ins_size(const std::vector<CTxIn>* tx_ins);
+
+const BlsctRetVal* get_tx_in(const std::vector<CTxIn>* tx_ins, const size_t i);
+
+const std::vector<CTxOut>* get_tx_outs(const CMutableTransaction* tx);
 
 size_t get_tx_outs_size(const std::vector<CTxOut>* tx_outs);
 
@@ -519,47 +367,26 @@ uint64_t get_tx_out_value(const CTxOut* tx_out);
 
 const BlsctScript* get_tx_out_script_pub_key(const CTxOut* tx_out);
 
-const std::vector<CTxIn>* get_ctx_ins(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-);
+const BlsctTokenId* get_tx_out_token_id(const CTxOut* tx_out);
 
-const std::vector<CTxOut>* get_ctx_outs(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-);
+const BlsctScript* get_tx_out_script_pubkey(const CTxOut* tx_out);
 
-const BlsctRetVal* get_ctx_in(
-    const std::vector<CTxIn>* ctx_ins,
-    const size_t i
-);
+const BlsctPoint* get_tx_out_spending_key(const CTxOut* tx_out);
 
-const BlsctRetVal* get_ctx_out(
-    const std::vector<CTxOut>* ctx_outs,
-    const size_t i
-);
+const BlsctPoint* get_tx_out_ephemeral_key(const CTxOut* tx_out);
 
-size_t get_ctx_in_count_c(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-);
+const BlsctPoint* get_tx_out_blinding_key(const CTxOut* tx_out);
 
-size_t get_ctx_out_count_c(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-);
+uint16_t get_tx_out_view_tag(const CTxOut* tx_out);
 
-const BlsctRetVal* get_ctx_in_c(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size,
-    const size_t i
-);
-
-const BlsctRetVal* get_ctx_out_c(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size,
-    const size_t i
-);
+const BlsctPoint* get_tx_out_range_proof_A(const CTxOut* tx_out);
+const BlsctPoint* get_tx_out_range_proof_A_wip(const CTxOut* tx_out);
+const BlsctPoint* get_tx_out_range_proof_B(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_r_prime(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_s_prime(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_delta_prime(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_alpha_hat(const CTxOut* tx_out);
+const BlsctScalar* get_tx_out_range_proof_tau_x(const CTxOut* tx_out);
 
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,
@@ -628,19 +455,14 @@ uint64_t calc_view_tag(
     const BlsctScalar* view_key
 );
 
-// Key ID (=Hash ID)
-BlsctKeyId* calc_key_id(
+BlsctKeyId* calc_hash_id(
     const BlsctPubKey* blsct_blinding_pub_key,
     const BlsctPubKey* blsct_spending_pub_key,
     const BlsctScalar* blsct_view_key
 );
 
-const char* serialize_key_id(
+const char* get_key_id_hex(
     const BlsctKeyId* blsct_key_id
-);
-
-BlsctRetVal* deserialize_key_id(
-    const char* hex
 );
 
 BlsctPoint* calc_nonce(
@@ -648,25 +470,16 @@ BlsctPoint* calc_nonce(
     const BlsctScalar* view_key
 );
 
-// sub addr
 BlsctSubAddr* derive_sub_address(
     const BlsctScalar* blsct_view_key,
     const BlsctPubKey* blsct_spending_pub_key,
     const BlsctSubAddrId* blsct_sub_addr_id
 );
 
-const char* serialize_sub_addr(const BlsctSignature* blsct_sub_addr);
-
-BlsctRetVal* deserialize_sub_addr(const char* hex);
-
-// SubAddrId
 BlsctSubAddrId* gen_sub_addr_id(
     const int64_t account,
     const uint64_t address
 );
-
-const char* serialize_sub_addr_id(const BlsctSubAddrId* blsct_sub_addr_id);
-BlsctRetVal* deserialize_sub_addr_id(const char* hex);
 
 int64_t get_sub_addr_id_account(
     const BlsctSubAddrId* blsct_sub_addr_id
