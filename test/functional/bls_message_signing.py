@@ -56,10 +56,10 @@ class BLSMessageSigningTest(BitcoinTestFramework):
         # Verify the result structure
         assert "signature" in sign_result, "Signature not found in result"
         assert "public_key" in sign_result, "Public key not found in result"
-        
+
         signature = sign_result["signature"]
         public_key = sign_result["public_key"]
-        
+
         # Verify they are valid hex strings with correct lengths
         assert len(signature) == 192, f"Signature should be 192 hex characters, got {len(signature)}"
         assert len(public_key) == 96, f"Public key should be 96 hex characters, got {len(public_key)}"
@@ -69,7 +69,7 @@ class BLSMessageSigningTest(BitcoinTestFramework):
         # Step 2: Verify the signature with the original message (should succeed)
         verify_result = wallet.verifyblsmessage(public_key, original_message, signature)
         self.log.info(f"Verification with original message: {verify_result}")
-        
+
         # Assert that verification result is a boolean
         assert isinstance(verify_result, bool), f"Verification result should be boolean, got {type(verify_result)}"
         assert_equal(verify_result, True)
@@ -143,4 +143,5 @@ class BLSMessageSigningTest(BitcoinTestFramework):
         self.log.info("verifyblsmessage error handling tests passed")
 
 if __name__ == '__main__':
-    BLSMessageSigningTest().main() 
+    BLSMessageSigningTest().main()
+
