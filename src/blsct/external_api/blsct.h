@@ -41,7 +41,7 @@
 #define CTX_ID_STR_LEN CTX_ID_SIZE * 2
 
 /* return codes */
-#define BLSCT_RESULT size_t
+#define BLSCT_RESULT uint8_t
 #define BLSCT_SUCCESS 0
 #define BLSCT_FAILURE 1
 #define BLSCT_EXCEPTION 2
