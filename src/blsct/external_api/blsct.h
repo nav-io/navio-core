@@ -328,6 +328,11 @@ BlsctRetVal* encode_address(
   const enum AddressEncoding encoding
 );
 
+BlsctRetVal* err_test_0();
+BlsctRetVal* err_test_1();
+BlsctRetVal* err_test_2();
+BlsctRetVal* err_test_3();
+
 // double public key
 BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk1,
