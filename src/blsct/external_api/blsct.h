@@ -26,8 +26,6 @@
 #define DOUBLE_PUBLIC_KEY_SIZE PUBLIC_KEY_SIZE * 2
 #define SUB_ADDR_SIZE DOUBLE_PUBLIC_KEY_SIZE
 #define SUB_ADDR_ID_SIZE 16
-#define ENCODED_DPK_STR_SIZE 165
-#define ENCODED_DPK_STR_BUF_SIZE ENCODED_DPK_STR_SIZE + 1 /* 1 for c-str null termination */
 #define KEY_ID_SIZE 20
 #define POINT_SIZE 48
 #define SCALAR_SIZE 32
@@ -213,7 +211,6 @@ typedef uint8_t BlsctKeyId[KEY_ID_SIZE];  // serialization of CKeyID which is ba
 typedef uint8_t BlsctPoint[POINT_SIZE];
 typedef uint8_t BlsctPubKey[PUBLIC_KEY_SIZE];
 typedef uint8_t BlsctDoublePubKey[DOUBLE_PUBLIC_KEY_SIZE];
-typedef char BlsctAddrStr[ENCODED_DPK_STR_BUF_SIZE];
 typedef uint8_t BlsctScalar[SCALAR_SIZE];
 typedef uint8_t BlsctScript[SCRIPT_SIZE];
 typedef uint8_t BlsctSubAddr[SUB_ADDR_SIZE];
