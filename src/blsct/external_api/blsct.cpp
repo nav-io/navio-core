@@ -346,11 +346,6 @@ BlsctRetVal* encode_address(
     return err(BLSCT_EXCEPTION);
 }
 
-BlsctRetVal* err_test_0() { return err(0); }
-BlsctRetVal* err_test_1() { return err(1); }
-BlsctRetVal* err_test_2() { return err(12); }
-BlsctRetVal* err_test_3() { return err(123); }
-
 BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk1,
     const BlsctPubKey* blsct_pk2
