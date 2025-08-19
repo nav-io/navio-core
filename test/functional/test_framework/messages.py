@@ -731,6 +731,9 @@ class CTxOut:
 
         return r
 
+    def hash(self):
+        return uint256_from_str(hash256(self.serialize()))
+
     def __repr__(self):
         return "CTxOut(nValue=%i.%08i scriptPubKey=%s)" \
             % (self.nValue // COIN, self.nValue % COIN,

@@ -275,7 +275,7 @@ class SegWitTest(BitcoinTestFramework):
 
         # Now create tx2, which will spend from txid1.
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(int(txid1, 16), 0), b''))
+        tx.vin.append(CTxIn(COutPoint(tx1.vout[0].hash()), b''))
         tx.vout.append(CTxOut(int(49.99 * COIN), CScript([OP_TRUE, OP_DROP] * 15 + [OP_TRUE])))
         tx2_hex = self.nodes[0].signrawtransactionwithwallet(tx.serialize().hex())['hex']
         txid2 = self.nodes[0].sendrawtransaction(tx2_hex)
@@ -291,7 +291,7 @@ class SegWitTest(BitcoinTestFramework):
 
         # Now create tx3, which will spend from txid2
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(int(txid2, 16), 0), b""))
+        tx.vin.append(CTxIn(COutPoint(tx.vout[0].hash()), b""))
         tx.vout.append(CTxOut(int(49.95 * COIN), CScript([OP_TRUE, OP_DROP] * 15 + [OP_TRUE])))  # Huge fee
         tx.calc_sha256()
         txid3 = self.nodes[0].sendrawtransaction(hexstring=tx.serialize().hex(), maxfeerate=0)
@@ -598,7 +598,7 @@ class SegWitTest(BitcoinTestFramework):
     def mine_and_test_listunspent(self, script_list, ismine):
         utxo = find_spendable_utxo(self.nodes[0], 50)
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(int('0x' + utxo['txid'], 0), utxo['vout'])))
+        tx.vin.append(CTxIn(COutPoint(int('0x' + utxo['txid'], 0))))
         for i in script_list:
             tx.vout.append(CTxOut(10000000, i))
         tx.rehash()
@@ -648,7 +648,7 @@ class SegWitTest(BitcoinTestFramework):
             txraw = self.nodes[0].getrawtransaction(i, 0, txs_mined[i])
             txtmp = tx_from_hex(txraw)
             for j in range(len(txtmp.vout)):
-                tx.vin.append(CTxIn(COutPoint(int('0x' + i, 0), j)))
+                tx.vin.append(CTxIn(COutPoint(txtmp.vout[j].hash())))
         tx.vout.append(CTxOut(0, CScript()))
         tx.rehash()
         signresults = self.nodes[0].signrawtransactionwithwallet(tx.serialize_without_witness().hex())['hex']

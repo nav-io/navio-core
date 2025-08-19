@@ -1147,7 +1147,7 @@ void CCoinsViewMemPool::PackageAddTransaction(const CTransactionRef& tx)
 {
     for (unsigned int n = 0; n < tx->vout.size(); ++n) {
         m_temp_added.emplace(COutPoint(tx->vout[n].GetHash()), Coin(tx->vout[n], MEMPOOL_HEIGHT, false));
-        m_non_base_coins.emplace(COutPoint(tx->vout[n].GetHash()));
+        m_non_base_coins.emplace(tx->vout[n].GetHash());
         // Also add to the mempool's output-to-tx mapping for consistency
     }
 }

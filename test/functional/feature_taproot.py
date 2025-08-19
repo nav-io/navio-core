@@ -1374,7 +1374,7 @@ class TaprootTest(BitcoinTestFramework):
             for unspent in unspents:
                 balance += int(unspent["amount"] * 100000000)
                 txid = int(unspent["txid"], 16)
-                fund_tx.vin.append(CTxIn(COutPoint(txid, int(unspent["vout"])), CScript()))
+                fund_tx.vin.append(CTxIn(COutPoint(txid), CScript()))
             # Add outputs
             cur_progress = done / len(spenders)
             next_progress = (done + count_this_tx) / len(spenders)
@@ -1392,7 +1392,7 @@ class TaprootTest(BitcoinTestFramework):
             # Construct UTXOData entries
             fund_tx.rehash()
             for i in range(count_this_tx):
-                utxodata = UTXOData(outpoint=COutPoint(fund_tx.sha256, i), output=fund_tx.vout[i], spender=spenders[done])
+                utxodata = UTXOData(outpoint=COutPoint(fund_tx.vout[i].hash()), output=fund_tx.vout[i], spender=spenders[done])
                 if utxodata.spender.need_vin_vout_mismatch:
                     mismatching_utxos.append(utxodata)
                 else:
@@ -1533,7 +1533,7 @@ class TaprootTest(BitcoinTestFramework):
         assert_equal(self.nodes[0].getblockcount(), 0)
         coinbase = CTransaction()
         coinbase.nVersion = 1
-        coinbase.vin = [CTxIn(COutPoint(0, 0xffffffff), CScript([OP_1, OP_1]), SEQUENCE_FINAL)]
+        coinbase.vin = [CTxIn(COutPoint(0), CScript([OP_1, OP_1]), SEQUENCE_FINAL)]
         coinbase.vout = [CTxOut(5000000000, CScript([OP_1]))]
         coinbase.nLockTime = 0
         coinbase.rehash()
@@ -1619,22 +1619,20 @@ class TaprootTest(BitcoinTestFramework):
         # Construct a deterministic chain of transactions creating UTXOs to the test's spk's (so that they
         # come from distinct txids).
         txn = []
-        lasttxid = coinbase.sha256
         amount = 5000000000
         for i, spk in enumerate(old_spks + tap_spks):
             val = 42000000 * (i + 7)
             tx = CTransaction()
             tx.nVersion = 1
-            tx.vin = [CTxIn(COutPoint(lasttxid, i & 1), CScript([]), SEQUENCE_FINAL)]
+            tx.vin = [CTxIn(COutPoint(coinbase.vout[i & 1].hash()), CScript([]), SEQUENCE_FINAL)]
             tx.vout = [CTxOut(val, spk), CTxOut(amount - val, CScript([OP_1]))]
             if i & 1:
                 tx.vout = list(reversed(tx.vout))
             tx.nLockTime = 0
             tx.rehash()
             amount -= val
-            lasttxid = tx.sha256
             txn.append(tx)
-            spend_info[spk]['prevout'] = COutPoint(tx.sha256, i & 1)
+            spend_info[spk]['prevout'] = COutPoint(tx.vout[i & 1].hash())
             spend_info[spk]['utxo'] = CTxOut(val, spk)
         # Mine those transactions
         self.init_blockinfo(self.nodes[0])

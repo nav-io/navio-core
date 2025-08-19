@@ -139,7 +139,7 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
         tx.vin[0].nSequence = MAX_BIP125_RBF_SEQUENCE + 1  # Now, opt out of RBF
         raw_tx_0 = tx.serialize().hex()
         txid_0 = tx.rehash()
-        out_hash_0 = tx.vout[0].GetHash()
+        out_hash_0 = tx.vout[0].hash()
         self.check_mempool_result(
             result_expected=[{'txid': txid_0, 'allowed': True, 'vsize': tx.get_vsize(), 'fees': {'base': (2 * fee)}}],
             rawtxs=[raw_tx_0],
@@ -168,7 +168,7 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
         self.log.info('A transaction with missing inputs, that existed once in the past')
         tx = tx_from_hex(raw_tx_0)
         tx.vin[0].prevout.hash = tx.vout[1].GetHash()  # Set vout to 1, to spend the other outpoint (49 coins) of the in-chain-tx we want to double spend
-        out_hash_1 = tx.vout[1].GetHash()
+        out_hash_1 = tx.vout[1].hash()
         raw_tx_1 = tx.serialize().hex()
         txid_1 = node.sendrawtransaction(hexstring=raw_tx_1, maxfeerate=0)
         # Now spend both to "clearly hide" the outputs, ie. remove the coins from the utxo set by spending them
@@ -256,7 +256,7 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
 
         self.log.info('A non-coinbase transaction with coinbase-like outpoint')
         tx = tx_from_hex(raw_tx_reference)
-        tx.vin.append(CTxIn(COutPoint(hash=0, n=0xffffffff)))
+        tx.vin.append(CTxIn(COutPoint(hash=0)))
         self.check_mempool_result(
             result_expected=[{'txid': tx.rehash(), 'allowed': False, 'reject-reason': 'bad-txns-prevout-null'}],
             rawtxs=[tx.serialize().hex()],
@@ -343,7 +343,7 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
 
         self.log.info('A tiny transaction(in non-witness bytes) that is disallowed')
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(int(seed_tx["txid"], 16), seed_tx["sent_vout"]), b"", SEQUENCE_FINAL))
+        tx.vin.append(CTxIn(COutPoint(seed_tx["tx"]["vout"][seed_tx["sent_vout"]].hash()), b"", SEQUENCE_FINAL))
         tx.wit.vtxinwit = [CTxInWitness()]
         tx.wit.vtxinwit[0].scriptWitness.stack = [CScript([OP_TRUE])]
         tx.vout.append(CTxOut(0, CScript([OP_RETURN] + ([OP_0] * (MIN_PADDING - 2)))))
