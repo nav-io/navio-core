@@ -8,8 +8,7 @@
 /** transaction_identifier represents the two canonical transaction identifier
  * types (txid, wtxid).*/
 template <bool has_witness>
-class 
-transaction_identifier
+class transaction_identifier
 {
     uint256 m_wrapped;
 
