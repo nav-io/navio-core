@@ -297,9 +297,6 @@ BlsctRetVal* decode_address(
     const char* blsct_enc_addr
 ) {
     try {
-        if (strlen(blsct_enc_addr) != ENCODED_DPK_STR_SIZE) {
-            return err(BLSCT_BAD_SIZE);
-        }
         std::string enc_addr(blsct_enc_addr);
         auto& chain = get_chain();
         auto maybe_dpk = blsct::DecodeDoublePublicKey(chain, enc_addr);
