@@ -377,7 +377,7 @@ public:
                 parsedPredicate = blsct::ParsePredicate(predicate);
                 bool isFee = parsedPredicate.IsPayFeePredicate();
                 return isFee;
-            } catch (const std::exception& e) {
+            } catch (const std::exception&) {
                 return false;
             }
         } else {
