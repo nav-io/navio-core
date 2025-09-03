@@ -610,9 +610,9 @@ BOOST_AUTO_TEST_CASE(test_ordered_elements)
         BOOST_CHECK(elements[i] < elements[i + 1]);
     }
 
-    auto elements_1 = points.GetElements(uint256(10));
-    auto elements_2 = points.GetElements(uint256(10));
-    auto elements_3 = points.GetElements(uint256(11));
+    auto elements_1 = points.GetElements(uint256(uint8_t{10}));
+    auto elements_2 = points.GetElements(uint256(uint8_t{10}));
+    auto elements_3 = points.GetElements(uint256(uint8_t{11}));
 
     BOOST_CHECK(elements_1 == elements_2);
     BOOST_CHECK(elements_2 != elements_3);

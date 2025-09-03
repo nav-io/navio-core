@@ -16,7 +16,8 @@ enum PredicateOperation : uint8_t {
     CREATE_TOKEN,
     MINT,
     NFT_MINT,
-    PAY_FEE
+    PAY_FEE,
+    DATA
 };
 
 struct CreateTokenPredicate {
@@ -35,6 +36,33 @@ struct CreateTokenPredicate {
         DataStream ss;
         ss << CREATE_TOKEN;
         ss << tokenInfo;
+        return VectorPredicate(ss.data(), ss.data() + ss.size());
+    }
+};
+
+struct DataPredicate {
+    std::vector<unsigned char> data;
+
+    DataPredicate(){};
+    DataPredicate(const std::vector<unsigned char>& dataIn) : data(dataIn){};
+    DataPredicate(const uint256& dataIn) : data(std::vector<unsigned char>(dataIn.begin(), dataIn.end())){};
+    DataPredicate(const uint64_t& dataIn) : data(std::vector<unsigned char>(sizeof(dataIn)))
+    {
+        DataStream ss;
+        ss << dataIn;
+        std::memcpy(data.data(), ss.data(), ss.size());
+    };
+
+    SERIALIZE_METHODS(DataPredicate, obj)
+    {
+        READWRITE(obj.data);
+    }
+
+    VectorPredicate GetVch()
+    {
+        DataStream ss;
+        ss << DATA;
+        ss << data;
         return VectorPredicate(ss.data(), ss.data() + ss.size());
     }
 };
@@ -113,6 +141,7 @@ public:
     ParsedPredicate(MintTokenPredicate& predicate) : predicate_(predicate) {}
     ParsedPredicate(MintNftPredicate& predicate) : predicate_(predicate) {}
     ParsedPredicate(PayFeePredicate& predicate) : predicate_(predicate) {}
+    ParsedPredicate(DataPredicate& predicate) : predicate_(predicate) {}
 
     bool IsCreateTokenPredicate() const
     {
@@ -132,6 +161,11 @@ public:
     bool IsPayFeePredicate() const
     {
         return std::holds_alternative<PayFeePredicate>(predicate_);
+    }
+
+    bool IsDataPredicate() const
+    {
+        return std::holds_alternative<DataPredicate>(predicate_);
     }
 
     blsct::PublicKey GetPublicKey() const
@@ -181,7 +215,7 @@ public:
     }
 
 private:
-    std::variant<CreateTokenPredicate, MintTokenPredicate, MintNftPredicate, PayFeePredicate>
+    std::variant<CreateTokenPredicate, MintTokenPredicate, MintNftPredicate, PayFeePredicate, DataPredicate>
         predicate_;
 };
 

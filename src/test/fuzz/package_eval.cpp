@@ -61,7 +61,7 @@ struct OutpointsUpdater final : public CValidationInterface {
 
         // outputs from this tx can now be spent
         for (uint32_t index{0}; index < tx.info.m_tx->vout.size(); ++index) {
-            m_mempool_outpoints.insert(COutPoint{tx.info.m_tx->GetHash(), index});
+            m_mempool_outpoints.insert(COutPoint{tx.info.m_tx->vout[index].GetHash()});
         }
     }
 
@@ -74,7 +74,7 @@ struct OutpointsUpdater final : public CValidationInterface {
         }
         // outpoints created by this tx no longer exist
         for (uint32_t index{0}; index < tx->vout.size(); ++index) {
-            m_mempool_outpoints.erase(COutPoint{tx->GetHash(), index});
+            m_mempool_outpoints.erase(COutPoint{tx->vout[index].GetHash()});
         }
     }
 };
@@ -231,12 +231,12 @@ FUZZ_TARGET(tx_package_eval, .init = initialize_tx_pool)
                     }
                     // Cache the in-package outpoints being made
                     for (size_t i = 0; i < tx->vout.size(); ++i) {
-                        package_outpoints.emplace(tx->GetHash(), i);
+                        package_outpoints.emplace(tx->vout[i].GetHash());
                     }
                 }
                 // We need newly-created values for the duration of this run
                 for (size_t i = 0; i < tx->vout.size(); ++i) {
-                    outpoints_value[COutPoint(tx->GetHash(), i)] = tx->vout[i].nValue;
+                    outpoints_value[COutPoint(tx->vout[i].GetHash())] = tx->vout[i].nValue;
                 }
                 return tx;
             }();

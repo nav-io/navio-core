@@ -53,7 +53,6 @@ CMutableTransaction ConsumeTransaction(FuzzedDataProvider& fuzzed_data_provider,
         const auto& txid_prev = prevout_txids ?
                                     PickValue(fuzzed_data_provider, *prevout_txids) :
                                     Txid::FromUint256(ConsumeUInt256(fuzzed_data_provider));
-        const auto index_out = fuzzed_data_provider.ConsumeIntegralInRange<uint32_t>(0, max_num_out);
         const auto sequence = ConsumeSequence(fuzzed_data_provider);
         const auto script_sig = p2wsh_op_true ? CScript{} : ConsumeScript(fuzzed_data_provider);
         CScriptWitness script_wit;
@@ -63,7 +62,7 @@ CMutableTransaction ConsumeTransaction(FuzzedDataProvider& fuzzed_data_provider,
             script_wit = ConsumeScriptWitness(fuzzed_data_provider);
         }
         CTxIn in;
-        in.prevout = COutPoint{txid_prev, index_out};
+        in.prevout = COutPoint{txid_prev};
         in.nSequence = sequence;
         in.scriptSig = script_sig;
         in.scriptWitness = script_wit;

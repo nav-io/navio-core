@@ -748,11 +748,10 @@ RPCHelpMan simulaterawtransaction()
         // everything in these
         // Also populate new_utxos in case these are spent in later transactions
 
-        const auto& hash = mtx.GetHash();
         for (size_t i = 0; i < mtx.vout.size(); ++i) {
             const auto& txout = mtx.vout[i];
             bool is_mine = 0 < (wallet.IsMine(txout) & filter);
-            changes += new_utxos[COutPoint(hash, i)] = is_mine ? txout.nValue : 0;
+            changes += new_utxos[COutPoint(txout.GetHash())] = is_mine ? txout.nValue : 0;
         }
     }
 

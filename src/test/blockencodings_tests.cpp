@@ -33,13 +33,11 @@ static CBlock BuildBlockTestCase() {
     block.nBits = 0x207fffff;
 
     tx.vin[0].prevout.hash = Txid::FromUint256(InsecureRand256());
-    tx.vin[0].prevout.n = 0;
     block.vtx[1] = MakeTransactionRef(tx);
 
     tx.vin.resize(10);
     for (size_t i = 0; i < tx.vin.size(); i++) {
         tx.vin[i].prevout.hash = Txid::FromUint256(InsecureRand256());
-        tx.vin[i].prevout.n = 0;
     }
     block.vtx[2] = MakeTransactionRef(tx);
 
@@ -51,8 +49,8 @@ static CBlock BuildBlockTestCase() {
 }
 
 // Number of shared use_counts we expect for a tx we haven't touched
-// (block + mempool entry + mempool txns_randomized + our copy from the GetSharedTx call)
-constexpr long SHARED_TX_OFFSET{4};
+// (block + mempool entry + our copy from the GetSharedTx call)
+constexpr long SHARED_TX_OFFSET{3};
 
 BOOST_AUTO_TEST_CASE(SimpleRoundTripTest)
 {

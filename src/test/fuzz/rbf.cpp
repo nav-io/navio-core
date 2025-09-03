@@ -48,7 +48,7 @@ FUZZ_TARGET(rbf, .init = initialize_rbf)
         }
         const CTransaction another_tx{*another_mtx};
         if (fuzzed_data_provider.ConsumeBool() && !mtx->vin.empty()) {
-            mtx->vin[0].prevout = COutPoint{another_tx.GetHash(), 0};
+            mtx->vin[0].prevout = COutPoint{another_tx.vout[0].GetHash()};
         }
         LOCK2(cs_main, pool.cs);
         pool.addUnchecked(ConsumeTxMemPoolEntry(fuzzed_data_provider, another_tx));

@@ -636,9 +636,14 @@ TransactionError LegacyScriptPubKeyMan::FillPSBT(PartiallySignedTransaction& psb
 
         // Check non_witness_utxo has specified prevout
         if (input.non_witness_utxo) {
-            if (txin.prevout.n >= input.non_witness_utxo->vout.size()) {
-                return TransactionError::MISSING_INPUTS;
+            CTxOut utxo;
+            for (auto &it: input.non_witness_utxo->vout) {
+                if (it.GetHash() == txin.prevout.hash) {
+                    utxo = it;
+                    break;
+                }
             }
+            if (utxo.IsNull()) return TransactionError::MISSING_INPUTS;
         } else if (input.witness_utxo.IsNull()) {
             // There's no UTXO so we can just skip this now
             continue;
@@ -2501,10 +2506,15 @@ TransactionError DescriptorScriptPubKeyMan::FillPSBT(PartiallySignedTransaction&
         if (!input.witness_utxo.IsNull()) {
             script = input.witness_utxo.scriptPubKey;
         } else if (input.non_witness_utxo) {
-            if (txin.prevout.n >= input.non_witness_utxo->vout.size()) {
-                return TransactionError::MISSING_INPUTS;
+            CTxOut utxo;
+            for (auto &it: input.non_witness_utxo->vout) {
+                if (it.GetHash() == txin.prevout.hash) {
+                    utxo = it;
+                    break;
+                }
             }
-            script = input.non_witness_utxo->vout[txin.prevout.n].scriptPubKey;
+            if (utxo.IsNull()) return TransactionError::MISSING_INPUTS;
+            script = utxo.scriptPubKey;
         } else {
             // There's no UTXO so we can just skip this now
             continue;
