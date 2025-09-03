@@ -164,11 +164,18 @@ TxSize CalculateMaximumSignedTxSize(const CTransaction &tx, const CWallet *walle
     std::vector<CTxOut> txouts;
     // Look up the inputs. The inputs are either in the wallet, or in coin_control.
     for (const CTxIn& input : tx.vin) {
-        const auto mi = wallet->mapWallet.find(input.prevout.hash);
+        const auto mi = wallet->GetWalletTxFromOutpoint(input.prevout);
         // Can not estimate size without knowing the input details
-        if (mi != wallet->mapWallet.end()) {
-            assert(input.prevout.n < mi->second.tx->vout.size());
-            txouts.emplace_back(mi->second.tx->vout.at(input.prevout.n));
+        if (mi != nullptr) {
+            CTxOut utxo;
+            for (auto& it : mi->tx->vout) {
+                if (it.GetHash() == input.prevout.hash) {
+                    utxo = it;
+                    break;
+                }
+            }
+            assert(!utxo.IsNull());
+            txouts.emplace_back(utxo);
         } else if (coin_control) {
             const auto& txout{coin_control->GetExternalOutput(input.prevout)};
             if (!txout) return TxSize{-1, -1};
@@ -267,14 +274,14 @@ util::Result<PreSelectedInputs> FetchSelectedInputs(const CWallet& wallet, const
             input_bytes = GetVirtualTransactionSize(input_bytes, 0, 0);
         }
         CTxOut txout;
-        if (auto ptr_wtx = wallet.GetWalletTx(outpoint.hash)) {
+        if (auto ptr_wtx = wallet.GetWalletTxFromOutpoint(outpoint)) {
             // Clearly invalid input, fail
-            if (ptr_wtx->tx->vout.size() <= outpoint.n) {
+            int32_t out_ix = ptr_wtx->GetOutputIndexFromHash(outpoint);
+            if (out_ix == -1) {
                 return util::Error{strprintf(_("Invalid pre-selected input %s"), outpoint.ToString())};
             }
-            txout = ptr_wtx->tx->vout.at(outpoint.n);
             if (input_bytes == -1) {
-                input_bytes = CalculateMaximumSignedInputSize(txout, &wallet, &coin_control);
+                input_bytes = CalculateMaximumSignedInputSize(ptr_wtx->tx->vout[out_ix], &wallet, &coin_control);
             }
         } else {
             // The input is external. We did not find the tx in mapWallet.
@@ -320,9 +327,7 @@ CoinsResult AvailableCoins(const CWallet& wallet,
     std::vector<COutPoint> outpoints;
 
     std::set<uint256> trusted_parents;
-    for (const auto& entry : wallet.mapWallet)
-    {
-        const uint256& txid = entry.first;
+    for (const auto& entry : wallet.mapWallet) {
         const CWalletTx& wtx = entry.second;
 
         if (wallet.IsTxImmatureCoinBase(wtx) && !params.include_immature_coinbase)
@@ -381,7 +386,7 @@ CoinsResult AvailableCoins(const CWallet& wallet,
         for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
             const CTxOut& output = wtx.tx->vout[i];
             CTxOut mutableOutput(output);
-            const COutPoint outpoint(Txid::FromUint256(txid), i);
+            const COutPoint outpoint(output.GetHash());
             auto nValue = output.HasBLSCTRangeProof() ? wtx.GetBLSCTRecoveryData(i).amount : output.nValue;
             if (nValue < params.min_amount || nValue > params.max_amount) continue;
 
@@ -573,24 +578,37 @@ CoinsResult AvailableCoinsListUnspent(const CWallet& wallet, const CCoinControl*
     return AvailableCoins(wallet, coinControl, /*feerate=*/ std::nullopt, params);
 }
 
-const CTxOut& FindNonChangeParentOutput(const CWallet& wallet, const COutPoint& outpoint)
+CTxOut FindNonChangeParentOutput(const CWallet& wallet, const COutPoint& outpoint)
 {
     AssertLockHeld(wallet.cs_wallet);
-    const CWalletTx* wtx{Assert(wallet.GetWalletTx(outpoint.hash))};
+    const CWalletTx* wtx{Assert(wallet.GetWalletTxFromOutpoint(outpoint))};
 
     const CTransaction* ptx = wtx->tx.get();
-    int n = outpoint.n;
-    while (OutputIsChange(wallet, ptx->vout[n]) && ptx->vin.size() > 0) {
-        const COutPoint& prevout = ptx->vin[0].prevout;
-        const CWalletTx* it = wallet.GetWalletTx(prevout.hash);
-        if (!it || it->tx->vout.size() <= prevout.n ||
-            !wallet.IsMine(it->tx->vout[prevout.n])) {
+    CTxOut utxo;
+    for (auto& it : ptx->vout) {
+        if (it.GetHash() == outpoint.hash) {
+            utxo = it;
             break;
         }
-        ptx = it->tx.get();
-        n = prevout.n;
     }
-    return ptx->vout[n];
+    if (utxo.IsNull()) {
+        return utxo;
+    }
+    while (OutputIsChange(wallet, utxo) && ptx->vin.size() > 0) {
+        const COutPoint& prevout = ptx->vin[0].prevout;
+        const CWalletTx* it = wallet.GetWalletTxFromOutpoint(prevout);
+        if (!it || !wallet.IsMine(utxo)) {
+            break;
+        }
+        for (auto& it_ : it->tx->vout) {
+            if (it_.GetHash() == prevout.hash) {
+                utxo = it_;
+                break;
+            }
+        }
+        ptx = it->tx.get();
+    }
+    return utxo;
 }
 
 std::map<CTxDestination, std::vector<COutput>> ListCoins(const CWallet& wallet)

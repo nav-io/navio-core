@@ -69,17 +69,21 @@ bool PartiallySignedTransaction::AddOutput(const CTxOut& txout, const PSBTOutput
 bool PartiallySignedTransaction::GetInputUTXO(CTxOut& utxo, int input_index) const
 {
     const PSBTInput& input = inputs[input_index];
-    uint32_t prevout_index = tx->vin[input_index].prevout.n;
     if (input.non_witness_utxo) {
-        if (prevout_index >= input.non_witness_utxo->vout.size()) {
+        bool found = false;
+        for (const CTxOut& out : input.non_witness_utxo->vout) {
+            if (out.GetHash() == tx->vin[input_index].prevout.hash) {
+                utxo = out;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
             return false;
         }
-        if (input.non_witness_utxo->GetHash() != tx->vin[input_index].prevout.hash) {
-            return false;
-        }
-        utxo = input.non_witness_utxo->vout[prevout_index];
     } else if (!input.witness_utxo.IsNull()) {
         utxo = input.witness_utxo;
+        return true;
     } else {
         return false;
     }
@@ -303,14 +307,16 @@ bool PSBTInputSignedAndVerified(const PartiallySignedTransaction psbt, unsigned 
 
     if (input.non_witness_utxo) {
         // If we're taking our information from a non-witness UTXO, verify that it matches the prevout.
-        COutPoint prevout = psbt.tx->vin[input_index].prevout;
-        if (prevout.n >= input.non_witness_utxo->vout.size()) {
+        for (const auto& out : input.non_witness_utxo->vout) {
+            if (out.GetHash() == psbt.tx->vin[input_index].prevout.hash) {
+                utxo = out;
+                break;
+            }
+        }
+
+        if (utxo.IsNull()) {
             return false;
         }
-        if (input.non_witness_utxo->GetHash() != prevout.hash) {
-            return false;
-        }
-        utxo = input.non_witness_utxo->vout[prevout.n];
     } else if (!input.witness_utxo.IsNull()) {
         utxo = input.witness_utxo;
     } else {
@@ -391,14 +397,16 @@ bool SignPSBTInput(const SigningProvider& provider, PartiallySignedTransaction& 
 
     if (input.non_witness_utxo) {
         // If we're taking our information from a non-witness UTXO, verify that it matches the prevout.
-        COutPoint prevout = tx.vin[index].prevout;
-        if (prevout.n >= input.non_witness_utxo->vout.size()) {
+        for (const auto& out : input.non_witness_utxo->vout) {
+            if (out.GetHash() == tx.vin[index].prevout.hash) {
+                utxo = out;
+                break;
+            }
+        }
+
+        if (utxo.IsNull()) {
             return false;
         }
-        if (input.non_witness_utxo->GetHash() != prevout.hash) {
-            return false;
-        }
-        utxo = input.non_witness_utxo->vout[prevout.n];
     } else if (!input.witness_utxo.IsNull()) {
         utxo = input.witness_utxo;
         // When we're taking our information from a witness UTXO, we can't verify it is actually data from

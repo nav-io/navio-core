@@ -40,7 +40,7 @@ FUZZ_TARGET(txorphan, .init = initialize_orphanage)
     std::vector<COutPoint> outpoints;
     // initial outpoints used to construct transactions later
     for (uint8_t i = 0; i < 4; i++) {
-        outpoints.emplace_back(Txid::FromUint256(uint256{i}), 0);
+        outpoints.emplace_back(Txid::FromUint256(uint256{i}));
     }
     // if true, allow duplicate input when constructing tx
     const bool duplicate_input = fuzzed_data_provider.ConsumeBool();
@@ -73,7 +73,7 @@ FUZZ_TARGET(txorphan, .init = initialize_orphanage)
             auto new_tx = MakeTransactionRef(tx_mut);
             // add newly constructed transaction to outpoints
             for (uint32_t i = 0; i < num_out; i++) {
-                outpoints.emplace_back(new_tx->GetHash(), i);
+                outpoints.emplace_back(new_tx->vout[i].GetHash());
             }
             return new_tx;
         }();

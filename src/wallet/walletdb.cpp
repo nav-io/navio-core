@@ -466,12 +466,12 @@ bool WalletBatch::WriteDescriptorCacheItems(const uint256& desc_id, const Descri
 
 bool WalletBatch::WriteLockedUTXO(const COutPoint& output)
 {
-    return WriteIC(std::make_pair(DBKeys::LOCKED_UTXO, std::make_pair(output.hash, output.n)), uint8_t{'1'});
+    return WriteIC(std::make_pair(DBKeys::LOCKED_UTXO, output.hash), uint8_t{'1'});
 }
 
 bool WalletBatch::EraseLockedUTXO(const COutPoint& output)
 {
-    return EraseIC(std::make_pair(DBKeys::LOCKED_UTXO, std::make_pair(output.hash, output.n)));
+    return EraseIC(std::make_pair(DBKeys::LOCKED_UTXO, output.hash));
 }
 
 bool LoadKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
@@ -1587,10 +1587,8 @@ static DBErrors LoadTxRecords(CWallet* pwallet, DatabaseBatch& batch, std::vecto
     LoadResult locked_utxo_res = LoadRecords(pwallet, batch, DBKeys::LOCKED_UTXO,
                                              [](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
                                                  Txid hash;
-                                                 uint32_t n;
                                                  key >> hash;
-                                                 key >> n;
-                                                 pwallet->LockCoin(COutPoint(hash, n));
+                                                 pwallet->LockCoin(COutPoint(hash));
                                                  return DBErrors::LOAD_OK;
                                              });
     result = std::max(result, locked_utxo_res.m_result);

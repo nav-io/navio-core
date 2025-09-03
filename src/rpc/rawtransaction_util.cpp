@@ -36,13 +36,6 @@ void AddInputs(CMutableTransaction& rawTx, const UniValue& inputs_in, std::optio
 
         Txid txid = Txid::FromUint256(ParseHashO(o, "txid"));
 
-        const UniValue& vout_v = o.find_value("vout");
-        if (!vout_v.isNum())
-            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing vout key");
-        int nOutput = vout_v.getInt<int>();
-        if (nOutput < 0)
-            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, vout cannot be negative");
-
         uint32_t nSequence;
 
         if (rbf.value_or(true)) {
@@ -64,7 +57,7 @@ void AddInputs(CMutableTransaction& rawTx, const UniValue& inputs_in, std::optio
             }
         }
 
-        CTxIn in(COutPoint(txid, nOutput), CScript(), nSequence);
+        CTxIn in(COutPoint(txid), CScript(), nSequence);
 
         rawTx.vin.push_back(in);
     }
@@ -154,7 +147,6 @@ static void TxInErrorToJSON(const CTxIn& txin, UniValue& vErrorsRet, const std::
 {
     UniValue entry(UniValue::VOBJ);
     entry.pushKV("txid", txin.prevout.hash.ToString());
-    entry.pushKV("vout", (uint64_t)txin.prevout.n);
     UniValue witness(UniValue::VARR);
     for (unsigned int i = 0; i < txin.scriptWitness.stack.size(); i++) {
         witness.push_back(HexStr(txin.scriptWitness.stack[i]));
@@ -181,18 +173,12 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
             RPCTypeCheckObj(prevOut,
                 {
                     {"txid", UniValueType(UniValue::VSTR)},
-                    {"vout", UniValueType(UniValue::VNUM)},
                     {"scriptPubKey", UniValueType(UniValue::VSTR)},
                 });
 
             Txid txid = Txid::FromUint256(ParseHashO(prevOut, "txid"));
 
-            int nOut = prevOut.find_value("vout").getInt<int>();
-            if (nOut < 0) {
-                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "vout cannot be negative");
-            }
-
-            COutPoint out(txid, nOut);
+            COutPoint out(txid);
             std::vector<unsigned char> pkData(ParseHexO(prevOut, "scriptPubKey"));
             CScript scriptPubKey(pkData.begin(), pkData.end());
 

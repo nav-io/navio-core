@@ -79,6 +79,8 @@ DEFAULT_MEMPOOL_EXPIRY_HOURS = 336  # hours
 TX_VERSION_BLSCT_MARKER = 1<<5
 OUTPUT_BLSCT_MARKER = 1<<0
 OUTPUT_TOKEN_MARKER = 1<<1
+OUTPUT_PREDICATE_MARKER = 1<<2
+OUTPUT_TRANSPARENT_VALUE_MARKER = 1<<3
 
 def sha256(s):
     return hashlib.sha256(s).digest()
@@ -428,24 +430,21 @@ class CBlockLocator:
 
 
 class COutPoint:
-    __slots__ = ("hash", "n")
+    __slots__ = ("hash")
 
-    def __init__(self, hash=0, n=0):
+    def __init__(self, hash=0):
         self.hash = hash
-        self.n = n
 
     def deserialize(self, f):
         self.hash = deser_uint256(f)
-        self.n = struct.unpack("<I", f.read(4))[0]
 
     def serialize(self):
         r = b""
         r += ser_uint256(self.hash)
-        r += struct.pack("<I", self.n)
         return r
 
     def __repr__(self):
-        return "COutPoint(hash=%064x n=%i)" % (self.hash, self.n)
+        return "COutPoint(hash=%064x)" % (self.hash)
 
 
 class CTxIn:
@@ -670,13 +669,17 @@ class TokenId:
         return False
 
 class CTxOut:
-    __slots__ = ("nValue", "scriptPubKey", "blsctData", "tokenId")
+    __slots__ = ("nValue", "scriptPubKey", "blsctData", "tokenId", "predicate")
 
-    def __init__(self, nValue=0, scriptPubKey=b"", blsctData=CTxOutBLSCTData(), tokenId=TokenId()):
+    def __init__(self, nValue=0, scriptPubKey=b"", blsctData=CTxOutBLSCTData(), tokenId=TokenId(), predicate=b""):
         self.nValue = nValue
         self.scriptPubKey = scriptPubKey
         self.blsctData = blsctData
         self.tokenId = tokenId
+        self.predicate = predicate
+
+    def set_random_predicate(self):
+        self.predicate = bytes.fromhex("0420") + random.getrandbits(256)
 
     def deserialize(self, f):
         self.nValue = struct.unpack("<q", f.read(8))[0]
@@ -694,6 +697,9 @@ class CTxOut:
         if flags & OUTPUT_TOKEN_MARKER:
             self.tokenId.deserialize(f)
 
+        if flags & OUTPUT_PREDICATE_MARKER:
+            self.predicate = deser_string(f)
+
     def serialize(self):
         flags = 0
 
@@ -701,6 +707,8 @@ class CTxOut:
             flags |= OUTPUT_BLSCT_MARKER
         if not self.tokenId.isNull():
             flags |= OUTPUT_TOKEN_MARKER
+        if len(self.predicate) > 0:
+            flags |= OUTPUT_PREDICATE_MARKER
 
         r = b""
 
@@ -718,7 +726,13 @@ class CTxOut:
         if flags & OUTPUT_TOKEN_MARKER:
             r += self.tokenId.serialize()
 
+        if (flags & OUTPUT_PREDICATE_MARKER):
+            r += ser_string(self.predicate)
+
         return r
+
+    def hash(self):
+        return uint256_from_str(hash256(self.serialize()))
 
     def __repr__(self):
         return "CTxOut(nValue=%i.%08i scriptPubKey=%s)" \

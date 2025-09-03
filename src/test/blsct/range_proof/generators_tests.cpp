@@ -20,11 +20,11 @@ BOOST_AUTO_TEST_CASE(test_generators_get_instance)
 {
     range_proof::GeneratorsFactory<T> gf;
 
-    TokenId token_id_1(uint256(1), 11ULL);
+    TokenId token_id_1(uint256(uint64_t{1}), 11ULL);
     range_proof::Generators<T> gens1 = gf.GetInstance(token_id_1);
     range_proof::Generators<T> gens1_2 = gf.GetInstance(token_id_1);
 
-    TokenId token_id_2(uint256(2), 22ULL);
+    TokenId token_id_2(uint256(uint64_t{2}), 22ULL);
     range_proof::Generators<T> gens2 = gf.GetInstance(token_id_2);
 
     auto max_size = range_proof::Setup::max_input_value_vec_len;
@@ -43,10 +43,10 @@ BOOST_AUTO_TEST_CASE(test_generators_h_static)
 {
     range_proof::GeneratorsFactory<T> gf;
 
-    TokenId token_id_1(uint256(1), 11ULL);
+    TokenId token_id_1(uint256(uint64_t{1}), 11ULL);
     range_proof::Generators<T> gens1 = gf.GetInstance(token_id_1);
 
-    TokenId token_id_2(uint256(2), 22ULL);
+    TokenId token_id_2(uint256(uint64_t{2}), 22ULL);
     range_proof::Generators<T> gens2 = gf.GetInstance(token_id_2);
 
     // regardless of token_id, the same H should be returned
@@ -60,10 +60,10 @@ BOOST_AUTO_TEST_CASE(test_generators_g_derived_from_token_id)
 {
     range_proof::GeneratorsFactory<T> gf;
 
-    TokenId token_id_1(uint256(1), 11ULL);
+    TokenId token_id_1(uint256(uint64_t{1}), 11ULL);
     range_proof::Generators<T> gens1 = gf.GetInstance(token_id_1);
 
-    TokenId token_id_2(uint256(2), 22ULL);
+    TokenId token_id_2(uint256(uint64_t{2}), 22ULL);
     range_proof::Generators<T> gens2 = gf.GetInstance(token_id_2);
 
     // G should differ if token_id differs
@@ -76,7 +76,7 @@ BOOST_AUTO_TEST_CASE(test_generators_g_derived_from_token_id)
 
 BOOST_AUTO_TEST_CASE(test_generators_get_gihi_subset)
 {
-    TokenId token_id(uint256(1), 11ULL);
+    TokenId token_id(uint256(uint64_t{1}), 11ULL);
     range_proof::GeneratorsFactory<T> gf;
 
     range_proof::Generators<T> gens = gf.GetInstance(token_id);

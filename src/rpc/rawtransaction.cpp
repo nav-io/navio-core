@@ -1106,13 +1106,22 @@ static RPCHelpMan decodepsbt()
                     have_a_utxo = true;
                 }
                 if (input.non_witness_utxo) {
-                    txout = input.non_witness_utxo->vout[psbtx.tx->vin[i].prevout.n];
+                    CTxOut txout;
 
-                    UniValue non_wit(UniValue::VOBJ);
-                    TxToUniv(*input.non_witness_utxo, /*block_hash=*/uint256(), /*entry=*/non_wit, /*include_hex=*/false);
-                    in.pushKV("non_witness_utxo", non_wit);
+                    for (auto& it : input.non_witness_utxo->vout) {
+                        if (it.GetHash() == psbtx.tx->vin[i].prevout.hash) {
+                            txout = it;
+                            break;
+                        }
+                    }
 
-                    have_a_utxo = true;
+                    if (txout != CTxOut()) {
+                        UniValue non_wit(UniValue::VOBJ);
+                        TxToUniv(*input.non_witness_utxo, /*block_hash=*/uint256(), /*entry=*/non_wit, /*include_hex=*/false);
+                        in.pushKV("non_witness_utxo", non_wit);
+
+                        have_a_utxo = true;
+                    }
                 }
                 if (have_a_utxo) {
                     if (MoneyRange(txout.nValue) && MoneyRange(total_in + txout.nValue)) {
@@ -1717,7 +1726,7 @@ static RPCHelpMan joinpsbts()
             for (auto& psbt : psbtxs) {
                 for (unsigned int i = 0; i < psbt.tx->vin.size(); ++i) {
                     if (!merged_psbt.AddInput(psbt.tx->vin[i], psbt.inputs[i])) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Input %s:%d exists in multiple PSBTs", psbt.tx->vin[i].prevout.hash.ToString(), psbt.tx->vin[i].prevout.n));
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Input %s exists in multiple PSBTs", psbt.tx->vin[i].prevout.hash.ToString()));
                     }
                 }
                 for (unsigned int i = 0; i < psbt.tx->vout.size(); ++i) {

@@ -36,11 +36,11 @@ static BlockTxns CreateRandomTransactions(size_t num_txns)
     CScript spk = CScript() << OP_TRUE;
     for (uint32_t i = 0; i < num_txns; ++i) {
         CMutableTransaction tx;
-        tx.vin.emplace_back(COutPoint{prevout_hash, 0});
+        tx.vin.emplace_back(COutPoint{prevout_hash});
         tx.vout.emplace_back(CENT, spk);
         auto ptx{MakeTransactionRef(tx)};
         txns.emplace_back(ptx);
-        prevout_hash = ptx->GetHash();
+        prevout_hash = ptx->vout[0].GetHash();
     }
     return txns;
 }

@@ -52,9 +52,9 @@ FUZZ_TARGET(bloom_filter)
                     good_data = false;
                     return;
                 }
-                (void)bloom_filter.contains(*u256);
-                bloom_filter.insert(*u256);
-                const bool present = bloom_filter.contains(*u256);
+                (void)bloom_filter.contains(COutPoint(*u256));
+                bloom_filter.insert(COutPoint(*u256));
+                const bool present = bloom_filter.contains(COutPoint(*u256));
                 assert(present);
             },
             [&] {
