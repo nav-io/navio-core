@@ -528,7 +528,6 @@ class SegWitTest(BitcoinTestFramework):
         tx.wit.vtxinwit[0].scriptWitness.stack = [b'a']
         tx.rehash()
 
-        tx_hash = tx.sha256
         tx_value = tx.vout[0].nValue
 
         # Verify that if a peer doesn't set nServices to include NODE_WITNESS,
@@ -1187,8 +1186,6 @@ class SegWitTest(BitcoinTestFramework):
         tx.wit.vtxinwit.append(CTxInWitness())
         tx.wit.vtxinwit[0].scriptWitness.stack = [b'a']
         tx.rehash()
-
-        tx_hash = tx.sha256
 
         # Verify that unnecessary witnesses are rejected.
         self.test_node.announce_tx_and_wait_for_getdata(tx)
