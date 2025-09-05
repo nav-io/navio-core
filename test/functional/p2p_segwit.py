@@ -1741,7 +1741,6 @@ class SegWitTest(BitcoinTestFramework):
             tx.vout.append(CTxOut(outputvalue, p2wsh))
             tx.vout.append(CTxOut(outputvalue, script_to_p2sh_script(p2wsh)))
         tx.rehash()
-        txid = tx.sha256
         test_transaction_acceptance(self.nodes[0], self.test_node, tx, with_witness=False, accepted=True)
 
         self.generate(self.nodes[0], 1)

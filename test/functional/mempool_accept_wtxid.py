@@ -62,7 +62,6 @@ class MempoolWtxidTest(BitcoinTestFramework):
         parent.rehash()
 
         privkeys = [node.get_deterministic_priv_key().key]
-        raw_parent = node.signrawtransactionwithkey(hexstring=parent.serialize().hex(), privkeys=privkeys)['hex']
         self.generate(node, 1)
 
         peer_wtxid_relay = node.add_p2p_connection(P2PTxInvStore())
