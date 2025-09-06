@@ -428,6 +428,259 @@ class CBlockLocator:
     def __repr__(self):
         return "CBlockLocator(vHave=%s)" % (repr(self.vHave))
 
+class COutPoint_old:
+    __slots__ = ("hash", "n")
+
+    def __init__(self, hash=0, n=0):
+        self.hash = hash
+        self.n = n
+
+    def deserialize(self, f):
+        self.hash = deser_uint256(f)
+        self.n = int.from_bytes(f.read(4), "little")
+
+    def serialize(self):
+        r = b""
+        r += ser_uint256(self.hash)
+        r += self.n.to_bytes(4, "little")
+        return r
+
+    def __repr__(self):
+        return "COutPoint_old(hash=%064x n=%i)" % (self.hash, self.n)
+
+
+class CTxIn_old:
+    __slots__ = ("nSequence", "prevout", "scriptSig")
+
+    def __init__(self, outpoint=None, scriptSig=b"", nSequence=0):
+        if outpoint is None:
+            self.prevout = COutPoint_old()
+        else:
+            self.prevout = outpoint
+        self.scriptSig = scriptSig
+        self.nSequence = nSequence
+
+    def deserialize(self, f):
+        self.prevout = COutPoint_old()
+        self.prevout.deserialize(f)
+        self.scriptSig = deser_string(f)
+        self.nSequence = int.from_bytes(f.read(4), "little")
+
+    def serialize(self):
+        r = b""
+        r += self.prevout.serialize()
+        r += ser_string(self.scriptSig)
+        r += self.nSequence.to_bytes(4, "little")
+        return r
+
+    def __repr__(self):
+        return "CTxIn_old(prevout=%s scriptSig=%s nSequence=%i)" \
+            % (repr(self.prevout), self.scriptSig.hex(),
+               self.nSequence)
+
+
+class CTxOut_old:
+    __slots__ = ("nValue", "scriptPubKey")
+
+    def __init__(self, nValue=0, scriptPubKey=b""):
+        self.nValue = nValue
+        self.scriptPubKey = scriptPubKey
+
+    def deserialize(self, f):
+        self.nValue = int.from_bytes(f.read(8), "little", signed=True)
+        self.scriptPubKey = deser_string(f)
+
+    def serialize(self):
+        r = b""
+        r += self.nValue.to_bytes(8, "little", signed=True)
+        r += ser_string(self.scriptPubKey)
+        return r
+
+    def __repr__(self):
+        return "CTxOut_old(nValue=%i.%08i scriptPubKey=%s)" \
+            % (self.nValue // COIN, self.nValue % COIN,
+               self.scriptPubKey.hex())
+
+
+class CScriptWitness_old:
+    __slots__ = ("stack",)
+
+    def __init__(self):
+        # stack is a vector of strings
+        self.stack = []
+
+    def __repr__(self):
+        return "CScriptWitness_old(%s)" % \
+               (",".join([x.hex() for x in self.stack]))
+
+    def is_null(self):
+        if self.stack:
+            return False
+        return True
+
+
+class CTxInWitness_old:
+    __slots__ = ("scriptWitness",)
+
+    def __init__(self):
+        self.scriptWitness = CScriptWitness_old()
+
+    def deserialize(self, f):
+        self.scriptWitness.stack = deser_string_vector(f)
+
+    def serialize(self):
+        return ser_string_vector(self.scriptWitness.stack)
+
+    def __repr__(self):
+        return repr(self.scriptWitness)
+
+    def is_null(self):
+        return self.scriptWitness.is_null()
+
+
+class CTxWitness_old:
+    __slots__ = ("vtxinwit",)
+
+    def __init__(self):
+        self.vtxinwit = []
+
+    def deserialize(self, f):
+        for i in range(len(self.vtxinwit)):
+            self.vtxinwit[i].deserialize(f)
+
+    def serialize(self):
+        r = b""
+        # This is different than the usual vector serialization --
+        # we omit the length of the vector, which is required to be
+        # the same length as the transaction's vin vector.
+        for x in self.vtxinwit:
+            r += x.serialize()
+        return r
+
+    def __repr__(self):
+        return "CTxWitness_old(%s)" % \
+               (';'.join([repr(x) for x in self.vtxinwit]))
+
+    def is_null(self):
+        for x in self.vtxinwit:
+            if not x.is_null():
+                return False
+        return True
+
+
+class CTransaction_old:
+    __slots__ = ("nLockTime", "version", "vin", "vout", "wit")
+
+    def __init__(self, tx=None):
+        if tx is None:
+            self.version = 2
+            self.vin = []
+            self.vout = []
+            self.wit = CTxWitness_old()
+            self.nLockTime = 0
+        else:
+            self.version = tx.version
+            self.vin = copy.deepcopy(tx.vin)
+            self.vout = copy.deepcopy(tx.vout)
+            self.nLockTime = tx.nLockTime
+            self.wit = copy.deepcopy(tx.wit)
+
+    def deserialize(self, f):
+        self.version = int.from_bytes(f.read(4), "little")
+        self.vin = deser_vector(f, CTxIn_old)
+        flags = 0
+        if len(self.vin) == 0:
+            flags = int.from_bytes(f.read(1), "little")
+            # Not sure why flags can't be zero, but this
+            # matches the implementation in bitcoind
+            if (flags != 0):
+                self.vin = deser_vector(f, CTxIn_old)
+                self.vout = deser_vector(f, CTxOut_old)
+        else:
+            self.vout = deser_vector(f, CTxOut_old)
+        if flags != 0:
+            self.wit.vtxinwit = [CTxInWitness_old() for _ in range(len(self.vin))]
+            self.wit.deserialize(f)
+        else:
+            self.wit = CTxWitness_old()
+        self.nLockTime = int.from_bytes(f.read(4), "little")
+
+    def serialize_without_witness(self):
+        r = b""
+        r += self.version.to_bytes(4, "little")
+        r += ser_vector(self.vin)
+        r += ser_vector(self.vout)
+        r += self.nLockTime.to_bytes(4, "little")
+        return r
+
+    # Only serialize with witness when explicitly called for
+    def serialize_with_witness(self):
+        flags = 0
+        if not self.wit.is_null():
+            flags |= 1
+        r = b""
+        r += self.version.to_bytes(4, "little")
+        if flags:
+            dummy = []
+            r += ser_vector(dummy)
+            r += flags.to_bytes(1, "little")
+        r += ser_vector(self.vin)
+        r += ser_vector(self.vout)
+        if flags & 1:
+            if (len(self.wit.vtxinwit) != len(self.vin)):
+                # vtxinwit must have the same length as vin
+                self.wit.vtxinwit = self.wit.vtxinwit[:len(self.vin)]
+                for _ in range(len(self.wit.vtxinwit), len(self.vin)):
+                    self.wit.vtxinwit.append(CTxInWitness_old())
+            r += self.wit.serialize()
+        r += self.nLockTime.to_bytes(4, "little")
+        return r
+
+    # Regular serialization is with witness -- must explicitly
+    # call serialize_without_witness to exclude witness data.
+    def serialize(self):
+        return self.serialize_with_witness()
+
+    @property
+    def wtxid_hex(self):
+        """Return wtxid (transaction hash with witness) as hex string."""
+        return hash256(self.serialize())[::-1].hex()
+
+    @property
+    def wtxid_int(self):
+        """Return wtxid (transaction hash with witness) as integer."""
+        return uint256_from_str(hash256(self.serialize_with_witness()))
+
+    @property
+    def txid_hex(self):
+        """Return txid (transaction hash without witness) as hex string."""
+        return hash256(self.serialize_without_witness())[::-1].hex()
+
+    @property
+    def txid_int(self):
+        """Return txid (transaction hash without witness) as integer."""
+        return uint256_from_str(hash256(self.serialize_without_witness()))
+
+    def is_valid(self):
+        for tout in self.vout:
+            if tout.nValue < 0 or tout.nValue > 21000000 * COIN:
+                return False
+        return True
+
+    # Calculate the transaction weight using witness and non-witness
+    # serialization size (does NOT use sigops).
+    def get_weight(self):
+        with_witness_size = len(self.serialize_with_witness())
+        without_witness_size = len(self.serialize_without_witness())
+        return (WITNESS_SCALE_FACTOR - 1) * without_witness_size + with_witness_size
+
+    def get_vsize(self):
+        return math.ceil(self.get_weight() / WITNESS_SCALE_FACTOR)
+
+    def __repr__(self):
+        return "CTransaction_old(version=%i vin=%s vout=%s wit=%s nLockTime=%i)" \
+            % (self.version, repr(self.vin), repr(self.vout), repr(self.wit), self.nLockTime)
+
 
 class COutPoint:
     __slots__ = ("hash")
