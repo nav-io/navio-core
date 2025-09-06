@@ -57,6 +57,8 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
         return true;
     } else if (predicate.IsPayFeePredicate()) {
         return true;
+    } else if (predicate.IsDataPredicate()) {
+        return true;
     }
 
     return false;

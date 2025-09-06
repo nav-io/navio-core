@@ -25,7 +25,7 @@ void initialize_miner()
     static const auto testing_setup = MakeNoLogFileContext<const TestingSetup>();
     g_setup = testing_setup.get();
     for (uint32_t i = 0; i < uint32_t{100}; ++i) {
-        g_available_coins.emplace_back(Txid::FromUint256(uint256::ZERO), i);
+        g_available_coins.emplace_back(Txid::FromUint256(uint256(uint64_t{i})));
     }
 }
 
@@ -60,14 +60,13 @@ FUZZ_TARGET(mini_miner, .init = initialize_miner)
         // All outputs are available to spend
         for (uint32_t n{0}; n < num_outputs; ++n) {
             if (fuzzed_data_provider.ConsumeBool()) {
-                available_coins.emplace_back(tx->GetHash(), n);
+                available_coins.emplace_back(tx->vout[n].GetHash());
             }
         }
 
         if (fuzzed_data_provider.ConsumeBool() && !tx->vout.empty()) {
             // Add outpoint from this tx (may or not be spent by a later tx)
-            outpoints.emplace_back(tx->GetHash(),
-                                          (uint32_t)fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, tx->vout.size()));
+            outpoints.emplace_back(tx->vout[(uint32_t)fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, tx->vout.size())].GetHash());
         } else {
             // Add some random outpoint (will be interpreted as confirmed or not yet submitted
             // to mempool).
@@ -136,9 +135,9 @@ FUZZ_TARGET(mini_miner_selection, .init = initialize_miner)
         // MiniMiner interprets spent coins as to-be-replaced and excludes them.
         for (uint32_t n{0}; n < num_outputs - 1; ++n) {
             if (fuzzed_data_provider.ConsumeBool()) {
-                available_coins.emplace_front(tx->GetHash(), n);
+                available_coins.emplace_front(tx->vout[n].GetHash());
             } else {
-                available_coins.emplace_back(tx->GetHash(), n);
+                available_coins.emplace_back(tx->vout[n].GetHash());
             }
         }
 
@@ -158,7 +157,7 @@ FUZZ_TARGET(mini_miner_selection, .init = initialize_miner)
     for (const auto& tx : transactions) {
         assert(pool.exists(GenTxid::Txid(tx->GetHash())));
         for (uint32_t n{0}; n < tx->vout.size(); ++n) {
-            COutPoint coin{tx->GetHash(), n};
+            COutPoint coin{tx->vout[n].GetHash()};
             if (!pool.GetConflictTx(coin)) outpoints.push_back(coin);
         }
     }

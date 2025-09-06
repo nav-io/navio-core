@@ -63,14 +63,17 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 
         recoveredInfo = wout->blsctRecoveryData;
     } else {
-        auto tx = wallet->GetWalletTx(outpoint.hash);
+        auto tx = wallet->GetWalletTxFromOutpoint(outpoint);
 
         if (tx == nullptr)
             return false;
 
-        out = tx->tx->vout[outpoint.n];
+        auto txout_iter = std::find_if(tx->tx->vout.begin(), tx->tx->vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
 
-        recoveredInfo = tx->GetBLSCTRecoveryData(outpoint.n);
+        if (txout_iter == tx->tx->vout.end())
+            return false;
+
+        recoveredInfo = tx->GetBLSCTRecoveryData(outpoint);
     }
 
     if (vInputs.count(out.tokenId) == 0)
@@ -142,14 +145,21 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
 
             recoveredInfo = wout->blsctRecoveryData;
         } else {
-            auto tx = wallet->GetWalletTx(output.outpoint.hash);
+            auto tx = wallet->GetWalletTxFromOutpoint(output.outpoint);
 
-            if (tx == nullptr)
+            if (tx == nullptr) {
                 continue;
+            }
 
-            out = tx->tx->vout[output.outpoint.n];
+            auto txout_iter = std::find_if(tx->tx->vout.begin(), tx->tx->vout.end(), [&](const CTxOut& out) { return out.GetHash() == output.outpoint.hash; });
 
-            recoveredInfo = tx->GetBLSCTRecoveryData(output.outpoint.n);
+            if (txout_iter == tx->tx->vout.end()) {
+                continue;
+            }
+
+            out = *txout_iter;
+
+            recoveredInfo = tx->GetBLSCTRecoveryData(output.outpoint);
         }
         auto value = out.HasBLSCTRangeProof() ? recoveredInfo.amount : out.nValue;
 
@@ -158,7 +168,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
             if (!blsct_km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
                 continue;
             }
-            inputCandidates.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash, output.outpoint.n), out.IsStakedCommitment()});
+            inputCandidates.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), out.IsStakedCommitment()});
         } catch (const std::exception& e) {
             LogPrintf("Error adding input: %s\n", e.what());
             continue;

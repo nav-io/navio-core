@@ -1019,7 +1019,7 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         # An external input without solving data should result in an error
         raw_tx = wallet.createrawtransaction([ext_utxo], {self.nodes[0].getnewaddress(): ext_utxo["amount"] / 2})
-        assert_raises_rpc_error(-4, "Not solvable pre-selected input COutPoint(%s, %s)" % (ext_utxo["txid"][0:10], ext_utxo["vout"]), wallet.fundrawtransaction, raw_tx)
+        assert_raises_rpc_error(-4, "Not solvable pre-selected input COutPoint(%s)" % (ext_utxo["txid"][0:10]), wallet.fundrawtransaction, raw_tx)
 
         # Error conditions
         assert_raises_rpc_error(-5, "'not a pubkey' is not hex", wallet.fundrawtransaction, raw_tx, solving_data={"pubkeys":["not a pubkey"]})

@@ -106,6 +106,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
     }
 
     auto nonce = vk * ret.blindingKey;
+
     nonces.Add(nonce);
 
     ret.value = nAmount;

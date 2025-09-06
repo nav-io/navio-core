@@ -89,16 +89,16 @@ static void ApplyCoinHash(std::nullptr_t, const COutPoint& outpoint, const Coin&
 //! construction could cause a previously invalid (and potentially malicious)
 //! UTXO snapshot to be considered valid.
 template <typename T>
-static void ApplyHash(T& hash_obj, const Txid& hash, const std::map<uint32_t, Coin>& outputs)
+static void ApplyHash(T& hash_obj, const Txid& hash, const std::map<uint256, Coin>& outputs)
 {
     for (auto it = outputs.begin(); it != outputs.end(); ++it) {
-        COutPoint outpoint = COutPoint(hash, it->first);
+        COutPoint outpoint = COutPoint(it->first);
         Coin coin = it->second;
         ApplyCoinHash(hash_obj, outpoint, coin);
     }
 }
 
-static void ApplyStats(CCoinsStats& stats, const uint256& hash, const std::map<uint32_t, Coin>& outputs)
+static void ApplyStats(CCoinsStats& stats, const uint256& hash, const std::map<uint256, Coin>& outputs)
 {
     assert(!outputs.empty());
     stats.nTransactions++;
@@ -119,7 +119,7 @@ static bool ComputeUTXOStats(CCoinsView* view, CCoinsStats& stats, T hash_obj, c
     assert(pcursor);
 
     Txid prevkey;
-    std::map<uint32_t, Coin> outputs;
+    std::map<uint256, Coin> outputs;
     while (pcursor->Valid()) {
         if (interruption_point) interruption_point();
         COutPoint key;
@@ -131,7 +131,7 @@ static bool ComputeUTXOStats(CCoinsView* view, CCoinsStats& stats, T hash_obj, c
                 outputs.clear();
             }
             prevkey = key.hash;
-            outputs[key.n] = std::move(coin);
+            outputs[key.hash] = std::move(coin);
             stats.coins_count++;
         } else {
             return error("%s: unable to read value", __func__);

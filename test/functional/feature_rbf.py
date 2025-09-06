@@ -105,7 +105,7 @@ class ReplaceByFeeTest(BitcoinTestFramework):
                 assert new_size < mempool_size
                 mempool_size = new_size
 
-        return self.wallet.get_utxo(txid=tx["txid"], vout=tx["sent_vout"])
+        return self.wallet.get_utxo(txid=tx["tx"]["vout"][tx["sent_vout"]].hash())
 
     def test_simple_doublespend(self):
         """Simple doublespend"""

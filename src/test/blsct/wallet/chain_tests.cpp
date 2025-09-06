@@ -55,6 +55,11 @@ BOOST_FIXTURE_TEST_CASE(SyncTest, TestBLSCTChain100Setup)
     auto wtx = wallet->GetWalletTx(block.vtx[1]->GetHash());
 
     BOOST_CHECK(wtx != nullptr);
+
+    auto wtx_out = wallet->GetWalletTxFromOutpoint(COutPoint(block.vtx[1]->vout[0].GetHash()));
+
+    BOOST_CHECK(wtx_out != nullptr);
+    BOOST_CHECK(wtx_out == wtx);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

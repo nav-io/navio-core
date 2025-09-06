@@ -16,37 +16,37 @@
 
 /** IsTopoSortedPackage where a set of txids has been pre-populated. The set is assumed to be correct and
  * is mutated within this function (even if return value is false). */
-bool IsTopoSortedPackage(const Package& txns, std::unordered_set<uint256, SaltedTxidHasher>& later_txids)
+bool IsTopoSortedPackage(const Package& txns, std::unordered_set<uint256, SaltedTxidHasher>& later_outids)
 {
-    // Avoid misusing this function: later_txids should contain the txids of txns.
-    Assume(txns.size() == later_txids.size());
-
-    // later_txids always contains the txids of this transaction and the ones that come later in
-    // txns. If any transaction's input spends a tx in that set, we've found a parent placed later
+    // later_outids contains the output hashes of this transaction and the ones that come later in
+    // txns. If any transaction's input spends an output in that set, we've found a parent placed later
     // than its child.
     for (const auto& tx : txns) {
         for (const auto& input : tx->vin) {
-            if (later_txids.find(input.prevout.hash) != later_txids.end()) {
+            if (later_outids.find(input.prevout.hash) != later_outids.end()) {
                 // The parent is a subsequent transaction in the package.
                 return false;
             }
         }
-        // Avoid misusing this function: later_txids must contain every tx.
-        Assume(later_txids.erase(tx->GetHash()) == 1);
+        // Remove this transaction's output hashes from the set as we process it
+        for (const auto& output : tx->vout) {
+            later_outids.erase(output.GetHash());
+        }
     }
 
-    // Avoid misusing this function: later_txids should have contained the txids of txns.
-    Assume(later_txids.empty());
     return true;
 }
 
 bool IsTopoSortedPackage(const Package& txns)
 {
-    std::unordered_set<uint256, SaltedTxidHasher> later_txids;
-    std::transform(txns.cbegin(), txns.cend(), std::inserter(later_txids, later_txids.end()),
-                   [](const auto& tx) { return tx->GetHash(); });
+    std::unordered_set<uint256, SaltedTxidHasher> later_outids;
+    for (const auto& tx : txns) {
+        for (const auto& output : tx->vout) {
+            later_outids.insert(output.GetHash());
+        }
+    }
 
-    return IsTopoSortedPackage(txns, later_txids);
+    return IsTopoSortedPackage(txns, later_outids);
 }
 
 bool IsConsistentPackage(const Package& txns)
@@ -95,6 +95,13 @@ bool IsWellFormedPackage(const Package& txns, PackageValidationState& state, boo
     std::transform(txns.cbegin(), txns.cend(), std::inserter(later_txids, later_txids.end()),
                    [](const auto& tx) { return tx->GetHash(); });
 
+    std::unordered_set<uint256, SaltedTxidHasher> later_outids;
+    for (const auto& tx : txns) {
+        for (const auto& output : tx->vout) {
+            later_outids.insert(output.GetHash());
+        }
+    }
+
     // Package must not contain any duplicate transactions, which is checked by txid. This also
     // includes transactions with duplicate wtxids and same-txid-different-witness transactions.
     if (later_txids.size() != txns.size()) {
@@ -105,7 +112,7 @@ bool IsWellFormedPackage(const Package& txns, PackageValidationState& state, boo
     // An unsorted package will fail anyway on missing-inputs, but it's better to quit earlier and
     // fail on something less ambiguous (missing-inputs could also be an orphan or trying to
     // spend nonexistent coins).
-    if (require_sorted && !IsTopoSortedPackage(txns, later_txids)) {
+    if (require_sorted && !IsTopoSortedPackage(txns, later_outids)) {
         return state.Invalid(PackageValidationResult::PCKG_POLICY, "package-not-sorted");
     }
 
@@ -123,27 +130,44 @@ bool IsChildWithParents(const Package& package)
 
     // The package is expected to be sorted, so the last transaction is the child.
     const auto& child = package.back();
-    std::unordered_set<uint256, SaltedTxidHasher> input_txids;
+    std::unordered_set<uint256, SaltedTxidHasher> input_outids;
     std::transform(child->vin.cbegin(), child->vin.cend(),
-                   std::inserter(input_txids, input_txids.end()),
+                   std::inserter(input_outids, input_outids.end()),
                    [](const auto& input) { return input.prevout.hash; });
 
     // Every transaction must be a parent of the last transaction in the package.
+    // Check if any output from each parent transaction matches an input of the child.
     return std::all_of(package.cbegin(), package.cend() - 1,
-                       [&input_txids](const auto& ptx) { return input_txids.count(ptx->GetHash()) > 0; });
+                       [&input_outids](const auto& ptx) {
+                           for (const auto& output : ptx->vout) {
+                               if (input_outids.count(output.GetHash()) > 0) {
+                                   return true;
+                               }
+                           }
+                           return false;
+                       });
 }
 
 bool IsChildWithParentsTree(const Package& package)
 {
     if (!IsChildWithParents(package)) return false;
-    std::unordered_set<uint256, SaltedTxidHasher> parent_txids;
-    std::transform(package.cbegin(), package.cend() - 1, std::inserter(parent_txids, parent_txids.end()),
-                   [](const auto& ptx) { return ptx->GetHash(); });
-    // Each parent must not have an input who is one of the other parents.
-    return std::all_of(package.cbegin(), package.cend() - 1, [&](const auto& ptx) {
-        for (const auto& input : ptx->vin) {
-            if (parent_txids.count(input.prevout.hash) > 0) return false;
+    // Check each parent against all other parents
+    for (auto it1 = package.cbegin(); it1 != package.cend() - 1; ++it1) {
+        // Collect outputs from all other parents (excluding the current one)
+        std::unordered_set<uint256, SaltedTxidHasher> other_parent_outids;
+        for (auto it2 = package.cbegin(); it2 != package.cend() - 1; ++it2) {
+            if (it1 != it2) { // Skip the current parent
+                for (const auto& output : (*it2)->vout) {
+                    other_parent_outids.insert(output.GetHash());
+                }
+            }
         }
-        return true;
-    });
+
+        // Check if current parent spends any output from other parents
+        for (const auto& input : (*it1)->vin) {
+            if (other_parent_outids.count(input.prevout.hash) > 0) return false;
+        }
+    }
+
+    return true;
 }

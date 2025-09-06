@@ -114,6 +114,9 @@ class MiniMiner
     /** Map of txid to its descendants. Should be inclusive. */
     std::map<uint256, std::vector<MockEntryMap::iterator>> m_descendant_set_by_txid;
 
+    /** Map of output hash to transaction hash for parent-child relationship tracking. */
+    std::map<uint256, uint256> m_mapOutputToTx;
+
     /** Consider this ancestor package "mined" so remove all these entries from our data structures. */
     void DeleteAncestorPackage(const std::set<MockEntryMap::iterator, IteratorComparator>& ancestors);
 

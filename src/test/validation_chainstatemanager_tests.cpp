@@ -198,7 +198,7 @@ struct SnapshotTestSetup : TestChain100Setup {
             size_t total_coins{0};
 
             for (CTransactionRef& txn : m_coinbase_txns) {
-                COutPoint op{txn->GetHash(), 0};
+                COutPoint op{txn->vout[0].GetHash()};
                 BOOST_CHECK(ibd_coinscache.HaveCoin(op));
                 total_coins++;
             }
@@ -307,7 +307,7 @@ struct SnapshotTestSetup : TestChain100Setup {
                 size_t total_coins{0};
 
                 for (CTransactionRef& txn : m_coinbase_txns) {
-                    COutPoint op{txn->GetHash(), 0};
+                    COutPoint op{txn->vout[0].GetHash()};
                     BOOST_CHECK(coinscache.HaveCoin(op));
                     total_coins++;
                 }
@@ -336,7 +336,7 @@ struct SnapshotTestSetup : TestChain100Setup {
                 bool is_background = chainstate != &chainman.ActiveChainstate();
 
                 for (CTransactionRef& txn : m_coinbase_txns) {
-                    COutPoint op{txn->GetHash(), 0};
+                    COutPoint op{txn->vout[0].GetHash()};
                     if (coinscache.HaveCoin(op)) {
                         (is_background ? coins_in_background : coins_in_active)++;
                     } else if (is_background) {
@@ -725,7 +725,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_completion_hash_mismatch, Sna
     badcoin.nHeight = 1;
     badcoin.out.scriptPubKey.assign(InsecureRandBits(6), 0);
     Txid txid = Txid::FromUint256(InsecureRand256());
-    ibd_coins.AddCoin(COutPoint(txid, 0), std::move(badcoin), false);
+    ibd_coins.AddCoin(COutPoint(txid), std::move(badcoin), false);
 
     fs::path snapshot_chainstate_dir = gArgs.GetDataDirNet() / "chainstate_snapshot";
     BOOST_CHECK(fs::exists(snapshot_chainstate_dir));

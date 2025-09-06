@@ -97,7 +97,7 @@ class BIP68Test(BitcoinTestFramework):
         # If sequence locks were used, this would require 1 block for the
         # input to mature.
         sequence_value = SEQUENCE_LOCKTIME_DISABLE_FLAG | 1
-        tx1.vin = [CTxIn(COutPoint(int(utxo["txid"], 16), utxo["vout"]), nSequence=sequence_value)]
+        tx1.vin = [CTxIn(COutPoint(int(utxo["txid"], 16)), nSequence=sequence_value)]
         tx1.vout = [CTxOut(value, SCRIPT_W0_SH_OP_TRUE)]
 
         self.wallet.sign_tx(tx=tx1)
@@ -109,7 +109,7 @@ class BIP68Test(BitcoinTestFramework):
         tx2 = CTransaction()
         tx2.nVersion = 2
         sequence_value = sequence_value & 0x7fffffff
-        tx2.vin = [CTxIn(COutPoint(tx1_id, 0), nSequence=sequence_value)]
+        tx2.vin = [CTxIn(COutPoint(tx1.vout[0].hash()), nSequence=sequence_value)]
         tx2.wit.vtxinwit = [CTxInWitness()]
         tx2.wit.vtxinwit[0].scriptWitness.stack = [CScript([OP_TRUE])]
         tx2.vout = [CTxOut(int(value - self.relayfee * COIN), SCRIPT_W0_SH_OP_TRUE)]
@@ -196,7 +196,7 @@ class BIP68Test(BitcoinTestFramework):
                         elif (not input_will_pass and time_delta <= cur_time - orig_time):
                             sequence_value = ((cur_time - orig_time) >> SEQUENCE_LOCKTIME_GRANULARITY)+1
                         sequence_value |= SEQUENCE_LOCKTIME_TYPE_FLAG
-                tx.vin.append(CTxIn(COutPoint(int(utxos[j]["txid"], 16), utxos[j]["vout"]), nSequence=sequence_value))
+                tx.vin.append(CTxIn(COutPoint(int(utxos[j]["txid"], 16)), nSequence=sequence_value))
                 value += utxos[j]["value"]*COIN
             # Overestimate the size of the tx - signatures should be less than 120 bytes, and leave 50 for the output
             tx_size = len(tx.serialize().hex())//2 + 120*num_inputs + 50
@@ -229,7 +229,7 @@ class BIP68Test(BitcoinTestFramework):
         # Sequence lock of 0 should pass.
         tx2 = CTransaction()
         tx2.nVersion = 2
-        tx2.vin = [CTxIn(COutPoint(tx1.sha256, 0), nSequence=0)]
+        tx2.vin = [CTxIn(COutPoint(tx1.vout[0].hash()), nSequence=0)]
         tx2.vout = [CTxOut(int(tx1.vout[0].nValue - self.relayfee * COIN), SCRIPT_W0_SH_OP_TRUE)]
         self.wallet.sign_tx(tx=tx2)
         tx2_raw = tx2.serialize().hex()
@@ -247,7 +247,7 @@ class BIP68Test(BitcoinTestFramework):
 
             tx = CTransaction()
             tx.nVersion = 2
-            tx.vin = [CTxIn(COutPoint(orig_tx.sha256, 0), nSequence=sequence_value)]
+            tx.vin = [CTxIn(COutPoint(orig_tx.vout[0].hash()), nSequence=sequence_value)]
             tx.wit.vtxinwit = [CTxInWitness()]
             tx.wit.vtxinwit[0].scriptWitness.stack = [CScript([OP_TRUE])]
             tx.vout = [CTxOut(int(orig_tx.vout[0].nValue - relayfee * COIN), SCRIPT_W0_SH_OP_TRUE)]
@@ -306,7 +306,7 @@ class BIP68Test(BitcoinTestFramework):
         assert tx5.hash not in self.nodes[0].getrawmempool()
 
         utxo = self.wallet.get_utxo()
-        tx5.vin.append(CTxIn(COutPoint(int(utxo["txid"], 16), utxo["vout"]), nSequence=1))
+        tx5.vin.append(CTxIn(COutPoint(int(utxo["txid"], 16)), nSequence=1))
         tx5.vout[0].nValue += int(utxo["value"]*COIN)
         self.wallet.sign_tx(tx=tx5)
 
@@ -361,7 +361,7 @@ class BIP68Test(BitcoinTestFramework):
         # Make an anyone-can-spend transaction
         tx2 = CTransaction()
         tx2.nVersion = 1
-        tx2.vin = [CTxIn(COutPoint(tx1.sha256, 0), nSequence=0)]
+        tx2.vin = [CTxIn(COutPoint(tx1.vout[0].hash()), nSequence=0)]
         tx2.vout = [CTxOut(int(tx1.vout[0].nValue - self.relayfee * COIN), SCRIPT_W0_SH_OP_TRUE)]
 
         # sign tx2
@@ -377,7 +377,7 @@ class BIP68Test(BitcoinTestFramework):
 
         tx3 = CTransaction()
         tx3.nVersion = 2
-        tx3.vin = [CTxIn(COutPoint(tx2.sha256, 0), nSequence=sequence_value)]
+        tx3.vin = [CTxIn(COutPoint(tx2.vout[0].hash()), nSequence=sequence_value)]
         tx3.wit.vtxinwit = [CTxInWitness()]
         tx3.wit.vtxinwit[0].scriptWitness.stack = [CScript([OP_TRUE])]
         tx3.vout = [CTxOut(int(tx2.vout[0].nValue - self.relayfee * COIN), SCRIPT_W0_SH_OP_TRUE)]
