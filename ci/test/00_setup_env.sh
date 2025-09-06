@@ -35,7 +35,7 @@ fi
 
 echo "Fallback to default values in env (if not yet set)"
 # The number of parallel jobs to pass down to make and test_runner.py
-export MAKEJOBS=${MAKEJOBS:--j2}
+export MAKEJOBS=${MAKEJOBS:--j4}
 # Whether to prefer BusyBox over GNU utilities
 export USE_BUSY_BOX=${USE_BUSY_BOX:-false}
 
