@@ -8,6 +8,7 @@
 #include <txmempool.h>
 #include <util/time.h>
 
+#include <test/util/random.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
@@ -135,7 +136,7 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     tx1.vout.resize(1);
     tx1.vout[0].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
     tx1.vout[0].nValue = 10 * COIN;
-    tx1.vout[0].predicate = blsct::DataPredicate(nCount++).GetVch();
+    tx1.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     pool.addUnchecked(entry.Fee(10000LL).FromTx(tx1));
 
     /* highest fee */
@@ -143,7 +144,7 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     tx2.vout.resize(1);
     tx2.vout[0].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
     tx2.vout[0].nValue = 2 * COIN;
-    tx2.vout[0].predicate = blsct::DataPredicate(nCount++).GetVch();
+    tx2.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     pool.addUnchecked(entry.Fee(20000LL).FromTx(tx2));
 
     /* lowest fee */
@@ -151,7 +152,7 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     tx3.vout.resize(1);
     tx3.vout[0].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
     tx3.vout[0].nValue = 5 * COIN;
-    tx3.vout[0].predicate = blsct::DataPredicate(nCount++).GetVch();
+    tx3.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     pool.addUnchecked(entry.Fee(0LL).FromTx(tx3));
 
     /* 2nd highest fee */
@@ -159,7 +160,7 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     tx4.vout.resize(1);
     tx4.vout[0].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
     tx4.vout[0].nValue = 6 * COIN;
-    tx4.vout[0].predicate = blsct::DataPredicate(nCount++).GetVch();
+    tx4.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     pool.addUnchecked(entry.Fee(15000LL).FromTx(tx4));
 
     /* equal fee rate to tx1, but newer */
@@ -167,7 +168,7 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     tx5.vout.resize(1);
     tx5.vout[0].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
     tx5.vout[0].nValue = 11 * COIN;
-    tx5.vout[0].predicate = blsct::DataPredicate(nCount++).GetVch();
+    tx5.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     entry.time = NodeSeconds{1s};
     pool.addUnchecked(entry.Fee(10000LL).FromTx(tx5));
     BOOST_CHECK_EQUAL(pool.size(), 5U);
@@ -187,7 +188,7 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     tx6.vout.resize(1);
     tx6.vout[0].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
     tx6.vout[0].nValue = 20 * COIN;
-    tx6.vout[0].predicate = blsct::DataPredicate(nCount++).GetVch();
+    tx6.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     pool.addUnchecked(entry.Fee(0LL).FromTx(tx6));
     BOOST_CHECK_EQUAL(pool.size(), 6U);
     // Check that at this point, tx6 is sorted low
@@ -205,8 +206,8 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     tx7.vout[0].nValue = 10 * COIN;
     tx7.vout[1].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
     tx7.vout[1].nValue = 1 * COIN;
-    tx7.vout[0].predicate = blsct::DataPredicate(nCount++).GetVch();
-    tx7.vout[1].predicate = blsct::DataPredicate(nCount++).GetVch();
+    tx7.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
+    tx7.vout[1].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     auto ancestors_calculated{pool.CalculateMemPoolAncestors(entry.Fee(2000000LL).FromTx(tx7), CTxMemPool::Limits::NoLimits())};
     BOOST_REQUIRE(ancestors_calculated.has_value());
     BOOST_CHECK(*ancestors_calculated == setAncestors);
@@ -228,7 +229,7 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     tx8.vout.resize(1);
     tx8.vout[0].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
     tx8.vout[0].nValue = 10 * COIN;
-    tx8.vout[0].predicate = blsct::DataPredicate(nCount++).GetVch();
+    tx8.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     setAncestors.insert(pool.GetIter(tx7.GetHash()).value());
     pool.addUnchecked(entry.Fee(0LL).Time(NodeSeconds{2s}).FromTx(tx8), setAncestors);
 
@@ -244,7 +245,7 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     tx9.vout.resize(1);
     tx9.vout[0].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
     tx9.vout[0].nValue = 1 * COIN;
-    tx9.vout[0].predicate = blsct::DataPredicate(nCount++).GetVch();
+    tx9.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     pool.addUnchecked(entry.Fee(0LL).Time(NodeSeconds{3s}).FromTx(tx9), setAncestors);
 
     // tx9 should be sorted low
@@ -266,7 +267,7 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     tx10.vout.resize(1);
     tx10.vout[0].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
     tx10.vout[0].nValue = 10 * COIN;
-    tx10.vout[0].predicate = blsct::DataPredicate(nCount++).GetVch();
+    tx10.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     ancestors_calculated = pool.CalculateMemPoolAncestors(entry.Fee(200000LL).Time(NodeSeconds{4s}).FromTx(tx10), CTxMemPool::Limits::NoLimits());
     BOOST_REQUIRE(ancestors_calculated);
     BOOST_CHECK(*ancestors_calculated == setAncestors);
@@ -597,7 +598,7 @@ inline CTransactionRef make_tx(std::vector<CAmount>&& output_values, std::vector
     for (size_t i = 0; i < output_values.size(); ++i) {
         tx.vout[i].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
         tx.vout[i].nValue = output_values[i];
-        tx.vout[i].predicate = blsct::DataPredicate(std::vector<unsigned char>(i * 1000 + output_values[i] + inputs.size() * 40000)).GetVch();
+        tx.vout[i].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     }
     return MakeTransactionRef(tx);
 }
@@ -762,49 +763,49 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests)
     BOOST_CHECK_EQUAL(descendants, 6ULL);
 }
 
-// BOOST_AUTO_TEST_CASE(MempoolAncestryTestsDiamond)
-// {
-//     size_t ancestors, descendants;
+BOOST_AUTO_TEST_CASE(MempoolAncestryTestsDiamond)
+{
+    size_t ancestors, descendants;
 
-//     CTxMemPool& pool = *Assert(m_node.mempool);
-//     LOCK2(::cs_main, pool.cs);
-//     TestMemPoolEntryHelper entry;
+    CTxMemPool& pool = *Assert(m_node.mempool);
+    LOCK2(::cs_main, pool.cs);
+    TestMemPoolEntryHelper entry;
 
-//     /* Ancestors represented more than once ("diamond") */
-//     //
-//     // [ta].0 <- [tb].0 -----<------- [td].0
-//     //            |                    |
-//     //            \---1 <- [tc].0 --<--/
-//     //
-//     CTransactionRef ta, tb, tc, td;
-//     ta = make_tx(/*output_values=*/{10 * COIN});
-//     tb = make_tx(/*output_values=*/{5 * COIN, 3 * COIN}, /*inputs=*/ {ta});
-//     tc = make_tx(/*output_values=*/{2 * COIN}, /*inputs=*/{tb}, /*input_indices=*/{1});
-//     td = make_tx(/*output_values=*/{6 * COIN}, /*inputs=*/{tb, tc}, /*input_indices=*/{0, 0});
-//     pool.addUnchecked(entry.Fee(10000LL).FromTx(ta));
-//     pool.addUnchecked(entry.Fee(10000LL).FromTx(tb));
-//     pool.addUnchecked(entry.Fee(10000LL).FromTx(tc));
-//     pool.addUnchecked(entry.Fee(10000LL).FromTx(td));
+    /* Ancestors represented more than once ("diamond") */
+    //
+    // [ta].0 <- [tb].0 -----<------- [td].0
+    //            |                    |
+    //            \---1 <- [tc].0 --<--/
+    //
+    CTransactionRef ta, tb, tc, td;
+    ta = make_tx(/*output_values=*/{10 * COIN});
+    tb = make_tx(/*output_values=*/{5 * COIN, 3 * COIN}, /*inputs=*/{ta});
+    tc = make_tx(/*output_values=*/{2 * COIN}, /*inputs=*/{tb}, /*input_indices=*/{1});
+    td = make_tx(/*output_values=*/{6 * COIN}, /*inputs=*/{tb, tc}, /*input_indices=*/{0, 0});
+    pool.addUnchecked(entry.Fee(10000LL).FromTx(ta));
+    pool.addUnchecked(entry.Fee(10000LL).FromTx(tb));
+    pool.addUnchecked(entry.Fee(10000LL).FromTx(tc));
+    pool.addUnchecked(entry.Fee(10000LL).FromTx(td));
 
-//     // Ancestors / descendants should be:
-//     // transaction  ancestors           descendants
-//     // ============ =================== ===========
-//     // ta           1 (ta               4 (ta,tb,tc,td)
-//     // tb           2 (ta,tb)           4 (ta,tb,tc,td)
-//     // tc           3 (ta,tb,tc)        4 (ta,tb,tc,td)
-//     // td           4 (ta,tb,tc,td)     4 (ta,tb,tc,td)
-//     pool.GetTransactionAncestry(ta->GetHash(), ancestors, descendants);
-//     BOOST_CHECK_EQUAL(ancestors, 1ULL);
-//     BOOST_CHECK_EQUAL(descendants, 4ULL);
-//     pool.GetTransactionAncestry(tb->GetHash(), ancestors, descendants);
-//     BOOST_CHECK_EQUAL(ancestors, 2ULL);
-//     BOOST_CHECK_EQUAL(descendants, 4ULL);
-//     pool.GetTransactionAncestry(tc->GetHash(), ancestors, descendants);
-//     BOOST_CHECK_EQUAL(ancestors, 3ULL);
-//     BOOST_CHECK_EQUAL(descendants, 4ULL);
-//     pool.GetTransactionAncestry(td->GetHash(), ancestors, descendants);
-//     BOOST_CHECK_EQUAL(ancestors, 4ULL);
-//     BOOST_CHECK_EQUAL(descendants, 4ULL);
-// }
+    // Ancestors / descendants should be:
+    // transaction  ancestors           descendants
+    // ============ =================== ===========
+    // ta           1 (ta               4 (ta,tb,tc,td)
+    // tb           2 (ta,tb)           4 (ta,tb,tc,td)
+    // tc           3 (ta,tb,tc)        4 (ta,tb,tc,td)
+    // td           4 (ta,tb,tc,td)     4 (ta,tb,tc,td)
+    pool.GetTransactionAncestry(ta->GetHash(), ancestors, descendants);
+    BOOST_CHECK_EQUAL(ancestors, 1ULL);
+    BOOST_CHECK_EQUAL(descendants, 4ULL);
+    pool.GetTransactionAncestry(tb->GetHash(), ancestors, descendants);
+    BOOST_CHECK_EQUAL(ancestors, 2ULL);
+    BOOST_CHECK_EQUAL(descendants, 4ULL);
+    pool.GetTransactionAncestry(tc->GetHash(), ancestors, descendants);
+    BOOST_CHECK_EQUAL(ancestors, 3ULL);
+    BOOST_CHECK_EQUAL(descendants, 4ULL);
+    pool.GetTransactionAncestry(td->GetHash(), ancestors, descendants);
+    BOOST_CHECK_EQUAL(ancestors, 4ULL);
+    BOOST_CHECK_EQUAL(descendants, 4ULL);
+}
 
 BOOST_AUTO_TEST_SUITE_END()

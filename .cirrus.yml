@@ -120,7 +120,7 @@ task:
   << : *GLOBAL_TASK_TEMPLATE
   persistent_worker:
     labels:
-      type: noble
+      type: small
   env:
     FILE_ENV: "./ci/test/00_setup_env_i686_centos.sh"
 
@@ -138,7 +138,7 @@ task:
   << : *GLOBAL_TASK_TEMPLATE
   persistent_worker:
     labels:
-      type: noble
+      type: medium
   env:
     FILE_ENV: "./ci/test/00_setup_env_native_tsan.sh"
 
@@ -166,7 +166,7 @@ task:
   << : *GLOBAL_TASK_TEMPLATE
   persistent_worker:
     labels:
-      type: noble
+      type: medium
   env:
     FILE_ENV: "./ci/test/00_setup_env_i686_multiprocess.sh"
 
