@@ -38,6 +38,7 @@ static BlockTxns CreateRandomTransactions(size_t num_txns)
         CMutableTransaction tx;
         tx.vin.emplace_back(COutPoint{prevout_hash});
         tx.vout.emplace_back(CENT, spk);
+        tx.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
         auto ptx{MakeTransactionRef(tx)};
         txns.emplace_back(ptx);
         prevout_hash = ptx->vout[0].GetHash();
