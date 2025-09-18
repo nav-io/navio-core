@@ -7,7 +7,6 @@
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
-    assert_equal,
     assert_greater_than,
     assert_raises_rpc_error,
 )
@@ -27,7 +26,7 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
     def run_test(self):
         # Minimum stake amount for BLSCT regtest is 100 NAV
         self.min_stake = 100
-        
+
         self.test_minimum_stake_requirement()
         self.test_basic_staking()
         self.test_balance_movements()
@@ -65,7 +64,7 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
 
     def test_basic_staking(self):
         self.log.info("Testing basic staking operations")
-        
+
         # Use the existing wallet that already has balance
         wallet = self.nodes[0].get_wallet_rpc("wallet1")
         blsct_address = wallet.getnewaddress(label="", address_type="blsct")
@@ -123,7 +122,7 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
 
     def test_verbose_output(self):
         self.log.info("Testing verbose output formats")
-        
+
         # Use existing wallet that has balance
         wallet = self.nodes[0].get_wallet_rpc("wallet1")
         blsct_address = wallet.getnewaddress(label="", address_type="blsct")
@@ -149,4 +148,4 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
             self.log.info(f"Verbose staking may have parameter handling issue: {e}")
 
 if __name__ == '__main__':
-    NavioBlsctStakingTest().main() 
+    NavioBlsctStakingTest().main()
