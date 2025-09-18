@@ -79,7 +79,6 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
 
     const arith_uint256 pow_limit = UintToArith256(params.powLimit);
     const uint32_t pow_limit_compact = pow_limit.GetCompact();
-    
     // Allow an unrestricted adjustment when starting from the proof-of-work
     // limit. This is useful for chains that begin at the minimum difficulty
     // (e.g. during launch or after long downtimes) and need to ramp to an

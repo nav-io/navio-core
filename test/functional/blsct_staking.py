@@ -93,7 +93,6 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
 
     def test_balance_movements(self):
         self.log.info("Testing balance movements")
-        
         # Use existing wallet that has balance
         wallet = self.nodes[0].get_wallet_rpc("wallet1")
         blsct_address = wallet.getnewaddress(label="", address_type="blsct")
