@@ -358,39 +358,32 @@ Result CommitTransaction(CWallet& wallet, const uint256& txid, CMutableTransacti
     if (!errors.empty()) {
         return Result::MISC_ERROR;
     }
-    std::cout << "0\n";
     auto it = txid.IsNull() ? wallet.mapWallet.end() : wallet.mapWallet.find(txid);
     if (it == wallet.mapWallet.end()) {
         errors.push_back(Untranslated("Invalid or non-wallet transaction id"));
         return Result::MISC_ERROR;
     }
-    std::cout << "1\n";
 
     const CWalletTx& oldWtx = it->second;
-    std::cout << "2\n";
 
     // make sure the transaction still has no descendants and hasn't been mined in the meantime
     Result result = PreconditionChecks(wallet, oldWtx, /* require_mine=*/ false, errors);
     if (result != Result::OK) {
         return result;
     }
-    std::cout << "3\n";
 
     // commit/broadcast the tx
     CTransactionRef tx = MakeTransactionRef(std::move(mtx));
     mapValue_t mapValue = oldWtx.mapValue;
     mapValue["replaces_txid"] = oldWtx.GetHash().ToString();
-    std::cout << "4\n";
 
     wallet.CommitTransaction(tx, std::move(mapValue), oldWtx.vOrderForm);
-    std::cout << "5\n";
 
     // mark the original tx as bumped
     bumped_txid = tx->GetHash();
     if (!wallet.MarkReplaced(oldWtx.GetHash(), bumped_txid)) {
         errors.push_back(Untranslated("Created new bumpfee transaction but could not mark the original transaction as replaced"));
     }
-    std::cout << "6\n";
 
     return Result::OK;
 }

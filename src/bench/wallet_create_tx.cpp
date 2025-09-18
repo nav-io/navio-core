@@ -110,8 +110,6 @@ static void WalletCreateTx(benchmark::Bench& bench, const OutputType output_type
 
     // Check available balance
     auto bal = WITH_LOCK(wallet.cs_wallet, return wallet::AvailableCoins(wallet).GetTotalAmount()); // Cache
-    std::cout << "Expected balance: " << (50 * COIN * (chain_size - COINBASE_MATURITY)) << std::endl;
-    std::cout << "Actual balance: " << bal << std::endl;
     assert(bal == 50 * COIN * (chain_size - COINBASE_MATURITY));
 
     wallet::CCoinControl coin_control;
@@ -124,20 +122,6 @@ static void WalletCreateTx(benchmark::Bench& bench, const OutputType output_type
         const auto& res = WITH_LOCK(wallet.cs_wallet,
                                     return wallet::AvailableCoins(wallet, /*coinControl=*/nullptr, /*feerate=*/std::nullopt, filter_coins));
 
-        std::cout << "=== DEBUG: Available coin types ===" << std::endl;
-        for (const auto& [type, coins] : res.coins) {
-            std::cout << "Output type " << static_cast<int>(type) << ": " << coins.size() << " coins" << std::endl;
-            for (size_t i = 0; i < std::min(coins.size(), size_t(10)); ++i) {
-                std::cout << "  Coin " << i << ": value=" << coins[i].txout.nValue
-                          << " (" << coins[i].txout.nValue / COIN << " BTC)" << std::endl;
-            }
-            if (coins.size() > 10) {
-                std::cout << "  ... and " << (coins.size() - 10) << " more" << std::endl;
-            }
-        }
-        std::cout << "Current output_type: " << static_cast<int>(output_type) << std::endl;
-        std::cout << "Available coins for output type " << static_cast<int>(output_type) << ": " << res.coins.at(output_type).size() << std::endl;
-
         CAmount total_input_value = 0;
         int selected_count = 0;
 
@@ -146,15 +130,10 @@ static void WalletCreateTx(benchmark::Bench& bench, const OutputType output_type
             if (selected_count >= preset_inputs->num_of_internal_inputs) break;
 
             if (coin.txout.nValue == 49 * COIN) { // Only select the 49 BTC outputs
-                std::cout << "Selecting coin " << selected_count << " with value: " << coin.txout.nValue << std::endl;
                 total_input_value += coin.txout.nValue;
                 coin_control.Select(coin.outpoint);
                 selected_count++;
             }
-        }
-
-        if (selected_count < preset_inputs->num_of_internal_inputs) {
-            std::cout << "Warning: Could only select " << selected_count << " coins of 49 BTC each" << std::endl;
         }
 
         // Set target to be less than total input value to leave room for fees
@@ -167,20 +146,7 @@ static void WalletCreateTx(benchmark::Bench& bench, const OutputType output_type
 
     bench.epochIterations(5).run([&] {
         LOCK(wallet.cs_wallet);
-        std::cout << "Starting CreateTransaction with target: " << target << std::endl;
-        std::cout << "Recipients count: " << recipients.size() << std::endl;
-        std::cout << "Available balance: " << WITH_LOCK(wallet.cs_wallet, return wallet::AvailableCoins(wallet).GetTotalAmount()) << std::endl;
-        std::cout << "Preset inputs selected: " << coin_control.HasSelected() << std::endl;
-        std::cout << "Allow other inputs: " << coin_control.m_allow_other_inputs << std::endl;
-
         const auto& tx_res = CreateTransaction(wallet, recipients, /*change_pos=*/std::nullopt, coin_control);
-
-        if (!tx_res) {
-            std::cout << "CreateTransaction failed with error: " << util::ErrorString(tx_res).original << std::endl;
-        } else {
-            std::cout << "CreateTransaction succeeded" << std::endl;
-        }
-
         assert(tx_res);
     });
 }

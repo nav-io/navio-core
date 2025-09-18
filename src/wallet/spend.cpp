@@ -280,6 +280,7 @@ util::Result<PreSelectedInputs> FetchSelectedInputs(const CWallet& wallet, const
             if (out_ix == -1) {
                 return util::Error{strprintf(_("Invalid pre-selected input %s"), outpoint.ToString())};
             }
+            txout = ptr_wtx->tx->vout[out_ix];
             if (input_bytes == -1) {
                 input_bytes = CalculateMaximumSignedInputSize(ptr_wtx->tx->vout[out_ix], &wallet, &coin_control);
             }
