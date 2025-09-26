@@ -53,6 +53,7 @@ from test_framework.util import (
     assert_greater_than_or_equal,
 )
 from test_framework.wallet_util import generate_keypair
+import random
 
 DEFAULT_FEE = Decimal("0.0001")
 
@@ -105,8 +106,8 @@ class MiniWallet:
         # for those mature UTXOs, so that all txs spend confirmed coins
         self.rescan_utxos()
 
-    def _create_utxo(self, *, txid, vout, value, height, coinbase, confirmations):
-        return {"txid": txid, "vout": vout, "value": value, "height": height, "coinbase": coinbase, "confirmations": confirmations}
+    def _create_utxo(self, *, txid, value, height, coinbase, confirmations):
+        return {"txid": txid, "value": value, "height": height, "coinbase": coinbase, "confirmations": confirmations}
 
     def _bulk_tx(self, tx, target_weight):
         """Pad a transaction with extra outputs until it reaches a target weight (or higher).
@@ -131,7 +132,6 @@ class MiniWallet:
         for utxo in res['unspents']:
             self._utxos.append(
                 self._create_utxo(txid=utxo["txid"],
-                                  vout=utxo["vout"],
                                   value=utxo["amount"],
                                   height=utxo["height"],
                                   coinbase=utxo["coinbase"],
@@ -151,12 +151,12 @@ class MiniWallet:
             # mark_as_spent=False to get_utxo or by using an utxo returned by a
             # create_self_transfer* call.
             try:
-                self.get_utxo(txid=spent["txid"], vout=spent["vout"])
+                self.get_utxo(txid=spent["txid"])
             except StopIteration:
                 pass
         for out in tx['vout']:
             if out['scriptPubKey']['hex'] == self._scriptPubKey.hex():
-                self._utxos.append(self._create_utxo(txid=tx["txid"], vout=out["n"], value=out["value"], height=0, coinbase=False, confirmations=0))
+                self._utxos.append(self._create_utxo(txid=out['hash'], value=out["value"], height=0, coinbase=False, confirmations=0))
 
     def scan_txs(self, txs):
         for tx in txs:
@@ -311,8 +311,10 @@ class MiniWallet:
 
         # create tx
         tx = CTransaction()
-        tx.vin = [CTxIn(COutPoint(int(utxo_to_spend['txid'], 16)), nSequence=seq) for utxo_to_spend, seq in zip(utxos_to_spend, sequence)]
+        tx.vin = [CTxIn(COutPoint(type(utxo_to_spend['txid']) == str and int(utxo_to_spend['txid'], 16) or utxo_to_spend['txid']), nSequence=seq) for utxo_to_spend, seq in zip(utxos_to_spend, sequence)]
         tx.vout = [CTxOut(amount_per_output, bytearray(self._scriptPubKey)) for _ in range(num_outputs)]
+        for i in range(len(tx.vout)):
+            tx.vout[i].predicate = random.randbytes(8)
         tx.nLockTime = locktime
 
         self.sign_tx(tx)
@@ -320,18 +322,16 @@ class MiniWallet:
         if target_weight:
             self._bulk_tx(tx, target_weight)
 
-        txid = tx.rehash()
         return {
             "new_utxos": [self._create_utxo(
-                txid=txid,
-                vout=i,
+                txid=tx.vout[i].hash(),
                 value=Decimal(tx.vout[i].nValue) / COIN,
                 height=0,
                 coinbase=False,
                 confirmations=0,
             ) for i in range(len(tx.vout))],
             "fee": fee,
-            "txid": txid,
+            "txid": tx.rehash(),
             "wtxid": tx.getwtxid(),
             "hex": tx.serialize().hex(),
             "tx": tx,
@@ -352,9 +352,9 @@ class MiniWallet:
         assert fee >= 0
         # calculate fee
         if self._mode in (MiniWalletMode.RAW_OP_TRUE, MiniWalletMode.ADDRESS_OP_TRUE):
-            vsize = Decimal(104)  # anyone-can-spend
+            vsize = Decimal(125)  # anyone-can-spend
         elif self._mode == MiniWalletMode.RAW_P2PK:
-            vsize = Decimal(168)  # P2PK (73 bytes scriptSig + 35 bytes scriptPubKey + 60 bytes other)
+            vsize = Decimal(189)  # P2PK (73 bytes scriptSig + 35 bytes scriptPubKey + 60 bytes other)
         else:
             assert False
         send_value = utxo_to_spend["value"] - (fee or (fee_rate * vsize / 1000))

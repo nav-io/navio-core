@@ -21,6 +21,7 @@ from test_framework.blocktools import (
 from test_framework.messages import (
     MAX_BIP125_RBF_SEQUENCE,
 )
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -96,7 +97,8 @@ class BumpFeeTest(BitcoinTestFramework):
         test_bumpfee_with_descendant_fails(self, rbf_node, rbf_node_address, dest_address)
         test_bumpfee_with_abandoned_descendant_succeeds(self, rbf_node, rbf_node_address, dest_address)
         test_dust_to_fee(self, rbf_node, dest_address)
-        test_watchonly_psbt(self, peer_node, rbf_node, dest_address)
+        if not DISABLE_PSBT_TESTS:
+            test_watchonly_psbt(self, peer_node, rbf_node, dest_address)
         test_rebumping(self, rbf_node, dest_address)
         test_rebumping_not_replaceable(self, rbf_node, dest_address)
         test_bumpfee_already_spent(self, rbf_node, dest_address)

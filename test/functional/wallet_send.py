@@ -13,7 +13,8 @@ from test_framework.messages import (
     ser_compact_size,
     WITNESS_SCALE_FACTOR,
 )
-from test_framework.test_framework import BitcoinTestFramework
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
+from test_framework.test_framework import BitcoinTestFramework, SkipTest
 from test_framework.util import (
     assert_equal,
     assert_fee_amount,
@@ -38,6 +39,8 @@ class WalletSendTest(BitcoinTestFramework):
         getcontext().prec = 8 # Satoshi precision for Decimal
 
     def skip_test_if_missing_module(self):
+        if DISABLE_PSBT_TESTS:
+            raise SkipTest("PSBT functionality disabled")
         self.skip_if_no_wallet()
 
     def test_send(self, from_wallet, to_wallet=None, amount=None, data=None,

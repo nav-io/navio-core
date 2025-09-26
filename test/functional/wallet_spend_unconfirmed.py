@@ -5,6 +5,7 @@
 
 from decimal import Decimal, getcontext
 
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_greater_than_or_equal,
@@ -438,6 +439,8 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         wallet.unloadwallet()
 
     def test_external_input_unconfirmed_low(self):
+        if DISABLE_PSBT_TESTS:
+            return
         self.log.info("Send funds to an external wallet then build tx that bumps parent by spending external input")
         wallet = self.setup_and_fund_wallet("test_external_wallet")
 
@@ -502,7 +505,8 @@ class UnconfirmedInputTest(BitcoinTestFramework):
 
         self.test_confirmed_and_unconfirmed_parent()
 
-        self.test_external_input_unconfirmed_low()
+        if not DISABLE_PSBT_TESTS:
+            self.test_external_input_unconfirmed_low()
 
 if __name__ == '__main__':
     UnconfirmedInputTest().main()

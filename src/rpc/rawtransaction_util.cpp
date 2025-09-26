@@ -11,6 +11,7 @@
 #include <key_io.h>
 #include <policy/policy.h>
 #include <primitives/transaction.h>
+#include <random.h>
 #include <rpc/request.h>
 #include <rpc/util.h>
 #include <script/sign.h>
@@ -101,6 +102,8 @@ void AddOutputs(CMutableTransaction& rawTx, const UniValue& outputs_in)
             std::vector<unsigned char> data = ParseHexV(outputs[name_].getValStr(), "Data");
 
             CTxOut out(0, CScript() << OP_RETURN << data);
+            FastRandomContext rng(true);
+            out.predicate = blsct::DataPredicate(rng.rand256()).GetVch();
             rawTx.vout.push_back(out);
         } else {
             CTxDestination destination = DecodeDestination(name_);

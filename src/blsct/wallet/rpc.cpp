@@ -875,7 +875,6 @@ RPCHelpMan listblsctunspent()
             RPCResult::Type::ARR, "", "", {
                                               {RPCResult::Type::OBJ, "", "", {
                                                                                  {RPCResult::Type::STR_HEX, "txid", "the transaction id"},
-                                                                                 {RPCResult::Type::NUM, "vout", "the vout value"},
                                                                                  {RPCResult::Type::STR, "address", /*optional=*/true, "the navio address"},
                                                                                  {RPCResult::Type::STR, "label", /*optional=*/true, "The associated label, or \"\" for the default label"},
                                                                                  {RPCResult::Type::STR_AMOUNT, "amount", "the transaction output amount in " + CURRENCY_UNIT},

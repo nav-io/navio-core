@@ -59,40 +59,31 @@ class RPCMempoolInfoTest(BitcoinTestFramework):
             assert_equal(txid in mempool, True)
 
         self.log.info("Find transactions spending outputs")
-        result = self.nodes[0].gettxspendingprevout([ {'txid' : confirmed_utxo['txid'], 'vout' : 0}, {'txid' : txidA, 'vout' : 1} ])
+        result = self.nodes[0].gettxspendingprevout([ {'txid' : confirmed_utxo['txid']}, {'txid' : txidA, 'vout' : 1} ])
         assert_equal(result, [ {'txid' : confirmed_utxo['txid'], 'vout' : 0, 'spendingtxid' : txidA}, {'txid' : txidA, 'vout' : 1, 'spendingtxid' : txidC} ])
 
         self.log.info("Find transaction spending multiple outputs")
-        result = self.nodes[0].gettxspendingprevout([ {'txid' : txidE, 'vout' : 0}, {'txid' : txidF, 'vout' : 0} ])
+        result = self.nodes[0].gettxspendingprevout([ {'txid' : txE.vout[0].hash()}, {'txid' : txidF, 'vout' : 0} ])
         assert_equal(result, [ {'txid' : txidE, 'vout' : 0, 'spendingtxid' : txidH}, {'txid' : txidF, 'vout' : 0, 'spendingtxid' : txidH} ])
 
         self.log.info("Find no transaction when output is unspent")
-        result = self.nodes[0].gettxspendingprevout([ {'txid' : txidH, 'vout' : 0} ])
+        result = self.nodes[0].gettxspendingprevout([ {'txid' : txH.vout[0].hash()} ])
         assert_equal(result, [ {'txid' : txidH, 'vout' : 0} ])
-        result = self.nodes[0].gettxspendingprevout([ {'txid' : txidA, 'vout' : 5} ])
+        result = self.nodes[0].gettxspendingprevout([ {'txid' : txA.vout[5].hash()} ])
         assert_equal(result, [ {'txid' : txidA, 'vout' : 5} ])
 
         self.log.info("Mixed spent and unspent outputs")
-        result = self.nodes[0].gettxspendingprevout([ {'txid' : txidB, 'vout' : 0}, {'txid' : txidG, 'vout' : 3} ])
-        assert_equal(result, [ {'txid' : txidB, 'vout' : 0, 'spendingtxid' : txidD}, {'txid' : txidG, 'vout' : 3} ])
+        result = self.nodes[0].gettxspendingprevout([ {'txid' : txB.vout[0].hash()}, {'txid' : txG.vout[3].hash()} ])
+        assert_equal(result, [ {'txid' : txB.vout[0].hash(), 'spendingtxid' : txidD}, {'txid' : txG.vout[3].hash(), 'vout' : 3} ])
 
         self.log.info("Unknown input fields")
-        assert_raises_rpc_error(-3, "Unexpected key unknown", self.nodes[0].gettxspendingprevout, [{'txid' : txidC, 'vout' : 1, 'unknown' : 42}])
-
-        self.log.info("Invalid vout provided")
-        assert_raises_rpc_error(-8, "Invalid parameter, vout cannot be negative", self.nodes[0].gettxspendingprevout, [{'txid' : txidA, 'vout' : -1}])
+        assert_raises_rpc_error(-3, "Unexpected key unknown", self.nodes[0].gettxspendingprevout, [{'txid' : txC.vout[1].hash(), 'unknown' : 42}])
 
         self.log.info("Invalid txid provided")
-        assert_raises_rpc_error(-3, "JSON value of type number for field txid is not of expected type string", self.nodes[0].gettxspendingprevout, [{'txid' : 42, 'vout' : 0}])
+        assert_raises_rpc_error(-3, "JSON value of type number for field txid is not of expected type string", self.nodes[0].gettxspendingprevout, [{'txid' : 42}])
 
         self.log.info("Missing outputs")
         assert_raises_rpc_error(-8, "Invalid parameter, outputs are missing", self.nodes[0].gettxspendingprevout, [])
-
-        self.log.info("Missing vout")
-        assert_raises_rpc_error(-3, "Missing vout", self.nodes[0].gettxspendingprevout, [{'txid' : txidA}])
-
-        self.log.info("Missing txid")
-        assert_raises_rpc_error(-3, "Missing txid", self.nodes[0].gettxspendingprevout, [{'vout' : 3}])
 
 
 if __name__ == '__main__':

@@ -269,6 +269,7 @@ void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry
 
         UniValue out(UniValue::VOBJ);
 
+        out.pushKV("hash", txout.GetHash().ToString());
         out.pushKV("value", ValueFromAmount(txout.nValue));
         out.pushKV("n", (int64_t)i);
 

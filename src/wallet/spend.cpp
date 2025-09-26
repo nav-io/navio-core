@@ -1152,6 +1152,8 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
         CHECK_NONFATAL(IsValidDestination(dest) != scriptChange.empty());
     }
     CTxOut change_prototype_txout(0, scriptChange);
+    FastRandomContext prototype_rng(true);
+    change_prototype_txout.predicate = blsct::DataPredicate(prototype_rng.rand256()).GetVch();
     coin_selection_params.change_output_size = GetSerializeSize(change_prototype_txout);
 
     // Get size of spending the change output
@@ -1204,6 +1206,8 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
     for (const auto& recipient : vecSend)
     {
         CTxOut txout(recipient.nAmount, GetScriptForDestination(recipient.dest));
+        FastRandomContext rng(true);
+        txout.predicate = blsct::DataPredicate(rng.rand256()).GetVch();
 
         // Include the fee cost for outputs.
         coin_selection_params.tx_noinputs_size += ::GetSerializeSize(txout);
@@ -1252,6 +1256,8 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
     const CAmount change_amount = result.GetChange(coin_selection_params.min_viable_change, coin_selection_params.m_change_fee);
     if (change_amount > 0) {
         CTxOut newTxOut(change_amount, scriptChange);
+        FastRandomContext rng(true);
+        newTxOut.predicate = blsct::DataPredicate(rng.rand256()).GetVch();
         if (!change_pos) {
             // Insert change txn at random position:
             change_pos = rng_fast.randrange(txNew.vout.size() + 1);

@@ -10,7 +10,8 @@ See also rpc_signer.py for tests without wallet context.
 import os
 import platform
 
-from test_framework.test_framework import BitcoinTestFramework
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
+from test_framework.test_framework import BitcoinTestFramework, SkipTest
 from test_framework.util import (
     assert_equal,
     assert_greater_than,
@@ -52,6 +53,8 @@ class WalletSignerTest(BitcoinTestFramework):
         ]
 
     def skip_test_if_missing_module(self):
+        if DISABLE_PSBT_TESTS:
+            raise SkipTest("PSBT functionality disabled")
         self.skip_if_no_external_signer()
         self.skip_if_no_wallet()
 

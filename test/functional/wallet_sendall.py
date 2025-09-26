@@ -6,6 +6,7 @@
 
 from decimal import Decimal, getcontext
 
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -292,6 +293,8 @@ class SendallTest(BitcoinTestFramework):
 
     @cleanup
     def sendall_watchonly_specific_inputs(self):
+        if DISABLE_PSBT_TESTS:
+            return
         self.log.info("Test sendall with a subset of UTXO pool in a watchonly wallet")
         self.add_utxos([17, 4])
         utxo = self.wallet.listunspent()[0]
@@ -452,7 +455,8 @@ class SendallTest(BitcoinTestFramework):
         self.sendall_fails_on_low_fee()
 
         # Sendall succeeds with watchonly wallets spending specific UTXOs
-        self.sendall_watchonly_specific_inputs()
+        if not DISABLE_PSBT_TESTS:
+            self.sendall_watchonly_specific_inputs()
 
         # Sendall only uses outputs with at least a give number of confirmations when using minconf
         self.sendall_with_minconf()

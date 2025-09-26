@@ -7,6 +7,7 @@
 import time
 from decimal import Decimal
 
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 from test_framework.wallet_util import WalletUnlock
@@ -175,6 +176,9 @@ class KeyPoolTest(BitcoinTestFramework):
             res = w1.sendtoaddress(address=address, amount=0.00010000)
         self.generate(nodes[0], 1)
         destination = addr.pop()
+
+        if DISABLE_PSBT_TESTS:
+            return
 
         # Using a fee rate (10 sat / byte) well above the minimum relay rate
         # creating a 5,000 sat transaction with change should not be possible

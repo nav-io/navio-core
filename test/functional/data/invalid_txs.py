@@ -183,7 +183,7 @@ class CreateNegative(BadTxTemplate):
     expect_disconnect = True
 
     def get_tx(self):
-        return create_tx_with_script(self.spend_tx, 0, amount=-1)
+        return create_tx_with_script(self.spend_tx, 0, amount=-10)
 
 
 class CreateTooLarge(BadTxTemplate):

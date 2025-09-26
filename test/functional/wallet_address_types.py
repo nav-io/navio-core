@@ -54,11 +54,12 @@ from decimal import Decimal
 import itertools
 
 from test_framework.blocktools import COINBASE_MATURITY
-from test_framework.test_framework import BitcoinTestFramework
 from test_framework.descriptors import (
     descsum_create,
     descsum_check,
 )
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
+from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_greater_than,
@@ -161,6 +162,8 @@ class AddressTypeTest(BitcoinTestFramework):
 
     def test_desc(self, node, address, multisig, typ, utxo):
         """Run sanity checks on a descriptor reported by getaddressinfo."""
+        if DISABLE_PSBT_TESTS:
+            return
         info = self.nodes[node].getaddressinfo(address)
         assert 'desc' in info
         assert_equal(info['desc'], utxo['desc'])

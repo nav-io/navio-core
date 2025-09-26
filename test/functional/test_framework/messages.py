@@ -921,6 +921,9 @@ class TokenId:
             return True
         return False
 
+    def isNFT(self):
+        return self.token != 0 and self.subid != -1
+
 class CTxOut:
     __slots__ = ("nValue", "scriptPubKey", "blsctData", "tokenId", "predicate")
 
@@ -929,10 +932,13 @@ class CTxOut:
         self.scriptPubKey = scriptPubKey
         self.blsctData = blsctData
         self.tokenId = tokenId
-        self.predicate = predicate
+        if predicate == b"":
+            self.set_random_predicate()
+        else:
+            self.predicate = predicate
 
     def set_random_predicate(self):
-        self.predicate = bytes.fromhex("0420") + random.getrandbits(256)
+        self.predicate = bytes.fromhex("0420") + random.randbytes(16)
 
     def deserialize(self, f):
         self.nValue = struct.unpack("<q", f.read(8))[0]
@@ -941,6 +947,8 @@ class CTxOut:
 
         if self.nValue == 9223372036854775807:
             flags = struct.unpack("<q", f.read(8))[0]
+            if flags & OUTPUT_TRANSPARENT_VALUE_MARKER:
+                self.nValue = struct.unpack("<q", f.read(8))[0]
 
         self.scriptPubKey = deser_string(f)
 
@@ -952,6 +960,8 @@ class CTxOut:
 
         if flags & OUTPUT_PREDICATE_MARKER:
             self.predicate = deser_string(f)
+        else:
+            self.predicate = b""
 
     def serialize(self):
         flags = 0
@@ -962,12 +972,16 @@ class CTxOut:
             flags |= OUTPUT_TOKEN_MARKER
         if len(self.predicate) > 0:
             flags |= OUTPUT_PREDICATE_MARKER
+        if ((self.tokenId.isNFT() or len(self.predicate) > 0) and self.nValue != 0):
+            flags |= OUTPUT_TRANSPARENT_VALUE_MARKER;
 
         r = b""
 
         if flags != 0:
             r += struct.pack("<q", 9223372036854775807)
             r += struct.pack("<q", flags)
+            if flags & OUTPUT_TRANSPARENT_VALUE_MARKER:
+                r += struct.pack("<q", self.nValue)
         else:
             r += struct.pack("<q", self.nValue)
 
@@ -988,9 +1002,9 @@ class CTxOut:
         return uint256_from_str(hash256(self.serialize()))
 
     def __repr__(self):
-        return "CTxOut(nValue=%i.%08i scriptPubKey=%s)" \
+        return "CTxOut(nValue=%i.%08i scriptPubKey=%s predicate=%s)" \
             % (self.nValue // COIN, self.nValue % COIN,
-               self.scriptPubKey.hex())
+               self.scriptPubKey.hex(), self.predicate.hex())
 
 
 class CScriptWitness:

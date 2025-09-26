@@ -88,12 +88,12 @@ class WalletTest(BitcoinTestFramework):
         assert_equal(len(self.nodes[2].listunspent()), 0)
 
         self.log.info("Test gettxout")
-        confirmed_txid, confirmed_index = utxos[0]["txid"], utxos[0]["vout"]
+        confirmed_txid = utxos[0]["txid"]
         # First, outputs that are unspent both in the chain and in the
         # mempool should appear with or without include_mempool
-        txout = self.nodes[0].gettxout(txid=confirmed_txid, n=confirmed_index, include_mempool=False)
+        txout = self.nodes[0].gettxout(txid=confirmed_txid, include_mempool=False)
         assert_equal(txout['value'], 50)
-        txout = self.nodes[0].gettxout(txid=confirmed_txid, n=confirmed_index, include_mempool=True)
+        txout = self.nodes[0].gettxout(txid=confirmed_txid, include_mempool=True)
         assert_equal(txout['value'], 50)
 
         # Send 21 BTC from 0 to 2 using sendtoaddress call.
@@ -103,18 +103,18 @@ class WalletTest(BitcoinTestFramework):
         self.log.info("Test gettxout (second part)")
         # utxo spent in mempool should be visible if you exclude mempool
         # but invisible if you include mempool
-        txout = self.nodes[0].gettxout(confirmed_txid, confirmed_index, False)
+        txout = self.nodes[0].gettxout(confirmed_txid, False)
         assert_equal(txout['value'], 50)
-        txout = self.nodes[0].gettxout(confirmed_txid, confirmed_index)  # by default include_mempool=True
+        txout = self.nodes[0].gettxout(confirmed_txid)  # by default include_mempool=True
         assert txout is None
-        txout = self.nodes[0].gettxout(confirmed_txid, confirmed_index, True)
+        txout = self.nodes[0].gettxout(confirmed_txid, True)
         assert txout is None
         # new utxo from mempool should be invisible if you exclude mempool
         # but visible if you include mempool
-        txout = self.nodes[0].gettxout(mempool_txid, 0, False)
+        txout = self.nodes[0].gettxout(mempool_txid, False)
         assert txout is None
-        txout1 = self.nodes[0].gettxout(mempool_txid, 0, True)
-        txout2 = self.nodes[0].gettxout(mempool_txid, 1, True)
+        txout1 = self.nodes[0].gettxout(mempool_txid, True)
+        txout2 = self.nodes[0].gettxout(mempool_txid, True)
         # note the mempool tx will have randomly assigned indices
         # but 10 will go to node2 and the rest will go to node0
         balance = self.nodes[0].getbalance()
