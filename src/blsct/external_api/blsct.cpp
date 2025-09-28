@@ -197,6 +197,33 @@ BlsctPubKey* point_to_public_key(const BlsctPoint* blsct_point) {
     return blsct_pub_key;
 }
 
+const char* serialize_public_key(const BlsctPubKey* blsct_pubkey) {
+    blsct::PublicKey pubkey;
+
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_pubkey, PUBLIC_KEY_SIZE, pubkey);
+    auto ser_pubkey = pubkey.GetVch();
+    auto hex = HexStr(ser_pubkey);
+
+    return StrToAllocCStr(hex);
+}
+
+BlsctRetVal* deserialize_public_key(const char* hex) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
+        return err(BLSCT_FAILURE);
+    }
+    blsct::PublicKey pubkey;
+    if (!pubkey.SetVch(vec)) {
+        return err(BLSCT_DESER_FAILED);
+    }
+
+    MALLOC(BlsctPubKey, blsct_pubkey);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_pubkey);
+    SERIALIZE_AND_COPY(pubkey, blsct_pubkey);
+
+    return succ(blsct_pubkey, PUBLIC_KEY_SIZE);
+}
+
 const char* serialize_point(const BlsctPoint* blsct_point) {
     Point point;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
@@ -384,7 +411,7 @@ BlsctRetVal* deserialize_dpk(const char* hex) {
     return succ(blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
 }
 
-BlsctRetVal* gen_token_id_with_subid(
+BlsctRetVal* gen_token_id_with_token_and_subid(
     const uint64_t token,
     const uint64_t subid
 ) {
@@ -406,7 +433,7 @@ BlsctRetVal* gen_token_id_with_subid(
 BlsctRetVal* gen_token_id(
     const uint64_t token
 ) {
-    return gen_token_id_with_subid(
+    return gen_token_id_with_token_and_subid(
         token,
         UINT64_MAX
     );
@@ -1581,7 +1608,7 @@ bool is_valid_point(
     return point.IsValid();
 }
 
-BlsctDoublePubKey* gen_dpk_with_keys_and_sub_addr_id(
+BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
     const BlsctScalar* blsct_view_key,
     const BlsctPubKey* blsct_spending_pub_key,
     const int64_t account,

@@ -317,6 +317,8 @@ const char* scalar_to_str(const BlsctScalar* blsct_scalar);
 BlsctRetVal* gen_random_public_key();
 BlsctPoint* get_public_key_point(const BlsctPubKey* blsct_pub_key);
 BlsctPubKey* point_to_public_key(const BlsctPoint* blsct_point);
+const char* serialize_public_key(const BlsctPoint* blsct_point);
+BlsctRetVal* deserialize_public_key(const char* hex);
 
 // address
 BlsctRetVal* decode_address(
@@ -334,11 +336,18 @@ BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk2
 );
 
+BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
+    const BlsctScalar* blsct_view_key,
+    const BlsctPubKey* blsct_spending_pub_key,
+    const int64_t account,
+    const uint64_t address
+);
+
 const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk);
 BlsctRetVal* deserialize_dpk(const char* hex);
 
 // token id
-BlsctRetVal* gen_token_id_with_subid(
+BlsctRetVal* gen_token_id_with_token_and_subid(
     const uint64_t token,
     const uint64_t subid
 );
@@ -657,13 +666,6 @@ uint64_t get_sub_addr_id_address(
 
 bool is_valid_point(
     const BlsctPoint* blsct_point
-);
-
-BlsctDoublePubKey* gen_dpk_with_keys_and_sub_addr_id(
-    const BlsctScalar* blsct_view_key,
-    const BlsctPubKey* blsct_spending_pub_key,
-    const int64_t account,
-    const uint64_t address
 );
 
 #ifdef __cplusplus
