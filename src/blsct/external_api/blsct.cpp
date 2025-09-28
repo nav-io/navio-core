@@ -1157,18 +1157,6 @@ inline void UnserializeCMutableTx(
     ctx.Unserialize(ps);
 }
 
-const char* get_ctx_id(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-) {
-    CMutableTransaction ctx;
-    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
-    Txid ctxid = ctx.GetHash();
-    std::string ctxid_hex = ctxid.GetHex();
-
-    return StrToAllocCStr(ctxid_hex);
-}
-
 size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins) {
     return ctx_ins->size();
 }
@@ -1630,5 +1618,29 @@ BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
     SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
 
     return blsct_dpk;
+}
+
+// ctx id
+const char* get_ctx_id(
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+) {
+    CMutableTransaction ctx;
+    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+    Txid ctxid = ctx.GetHash();
+    std::string ctxid_hex = ctxid.GetHex();
+
+    return StrToAllocCStr(ctxid_hex);
+}
+
+const char* serialize_ctx_id(const BlsctCTxId* blsct_ctx_id) {
+    return SerializeToHex(*blsct_ctx_id, CTX_ID_SIZE);
+}
+
+BlsctRetVal* deserialize_ctx_id(const char* hex) {
+    BlsctCTxId* blsct_ctx_id = static_cast<BlsctCTxId*>(
+        DeserializeFromHex(hex, CTX_ID_SIZE)
+    );
+    return succ(blsct_ctx_id, CTX_ID_SIZE);
 }
 

@@ -330,6 +330,10 @@ BlsctRetVal* encode_address(
   const enum AddressEncoding encoding
 );
 
+// ctx id
+const char* serialize_ctx_id(const BlsctCTxId* blsct_ctx_id);
+BlsctRetVal* deserialize_ctx_id(const char* hex);
+
 // double public key
 BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk1,
