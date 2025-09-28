@@ -418,9 +418,9 @@ BlsctRetVal* gen_out_point(
     const char* ctx_id_c_str,
     const uint32_t n
 );
-
 const char* serialize_out_point(const BlsctOutPoint* blsct_out_point);
 BlsctRetVal* deserialize_out_point(const char* hex);
+uint32_t get_out_point_n(const BlsctOutPoint* blsct_out_point);
 
 // script
 const char* serialize_script(const BlsctScript* blsct_script);

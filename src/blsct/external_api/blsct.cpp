@@ -712,6 +712,7 @@ BlsctAmountsRetVal* recover_amount(
     return rv;
 }
 
+// out point
 BlsctRetVal* gen_out_point(
     const char* ctx_id_c_str,
     const uint32_t out_index
@@ -739,6 +740,12 @@ BlsctRetVal* deserialize_out_point(const char* hex) {
     BlsctOutPoint* blsct_out_point =
         static_cast<BlsctOutPoint*>(DeserializeFromHex(hex, OUT_POINT_SIZE));
     return succ(blsct_out_point, OUT_POINT_SIZE);
+}
+
+uint32_t get_out_point_n(const BlsctOutPoint* blsct_out_point) {
+    COutPoint out_point;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_out_point, OUT_POINT_SIZE, out_point);
+    return out_point.n;
 }
 
 // script
