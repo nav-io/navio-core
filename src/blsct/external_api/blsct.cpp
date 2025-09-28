@@ -876,8 +876,8 @@ const BlsctScript* get_ctx_in_script_witness(const CTxIn* ctx_in) {
     return copy;
 }
 
-const BlsctCtxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in) {
-    auto copy = static_cast<BlsctCtxId*>(malloc(CTX_ID_SIZE));
+const BlsctCTxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in) {
+    auto copy = static_cast<BlsctCTxId*>(malloc(CTX_ID_SIZE));
     std::memcpy(copy, &ctx_in->prevout.hash, CTX_ID_SIZE);
     return copy;
 }

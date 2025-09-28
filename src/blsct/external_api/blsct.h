@@ -217,7 +217,7 @@ typedef uint8_t BlsctSubAddr[SUB_ADDR_SIZE];
 typedef uint8_t BlsctSubAddrId[SUB_ADDR_ID_SIZE];
 typedef uint8_t BlsctTokenId[TOKEN_ID_SIZE];
 typedef uint8_t BlsctUint256[UINT256_SIZE];
-typedef uint8_t BlsctCtxId[CTX_ID_SIZE];
+typedef uint8_t BlsctCTxId[CTX_ID_SIZE];
 typedef uint8_t BlsctViewTag[VIEW_TAG_SIZE];
 typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
 typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
@@ -454,7 +454,7 @@ bool get_tx_in_rbf(const BlsctTxIn* tx_in);
 const BlsctScript* get_ctx_in_script_sig(const CTxIn* ctx_in);
 uint32_t get_ctx_in_sequence(const CTxIn* ctx_in);
 const BlsctScript* get_ctx_in_script_witness(const CTxIn* ctx_in);
-const BlsctCtxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in);
+const BlsctCTxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in);
 uint32_t get_ctx_in_prev_out_n(const CTxIn* ctx_in);
 
 // tx out
