@@ -206,19 +206,19 @@ using Point = Mcl::Point;
 using Scalar = Mcl::Scalar;
 using Scalars = Elements<Scalar>;
 
+typedef uint8_t BlsctCTxId[CTX_ID_SIZE];
+typedef uint8_t BlsctDoublePubKey[DOUBLE_PUBLIC_KEY_SIZE];
 typedef uint8_t BlsctKeyId[KEY_ID_SIZE];  // serialization of CKeyID which is based on uint160
+typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
 typedef uint8_t BlsctPoint[POINT_SIZE];
 typedef uint8_t BlsctPubKey[PUBLIC_KEY_SIZE];
-typedef uint8_t BlsctDoublePubKey[DOUBLE_PUBLIC_KEY_SIZE];
 typedef uint8_t BlsctScalar[SCALAR_SIZE];
 typedef uint8_t BlsctScript[SCRIPT_SIZE];
+typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
 typedef uint8_t BlsctSubAddr[SUB_ADDR_SIZE];
 typedef uint8_t BlsctSubAddrId[SUB_ADDR_ID_SIZE];
 typedef uint8_t BlsctTokenId[TOKEN_ID_SIZE];
 typedef uint8_t BlsctUint256[UINT256_SIZE];
-typedef uint8_t BlsctCTxId[CTX_ID_SIZE];
-typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
-typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
 
 typedef uint8_t BlsctRangeProof;
 
@@ -667,6 +667,40 @@ int64_t get_sub_addr_id_account(
 uint64_t get_sub_addr_id_address(
     const BlsctSubAddrId* blsct_sub_addr_id
 );
+
+// helper functions migrated from blist.i
+#define HANDLE_MEM_ALLOC_FAILURE(name) \
+if (name == nullptr) { \
+  printf("ERROR: Memory allocation failed\n"); \
+  return nullptr; \
+}
+
+#define RETURN_IF_NULL(p) \
+if (p == nullptr) { \
+  printf("ERROR: " #p " is null\n"); \
+  return; \
+}
+
+void* create_uint64_vec() {
+    auto vec = new(std::nothrow) std::vector<uint64_t>;
+    HANDLE_MEM_ALLOC_FAILURE(vec);
+    return static_cast<void*>(vec);
+}
+
+void delete_uint64_vec(void* vp_vec) {
+if (vp_vec == nullptr) return;
+    auto vec = static_cast<const std::vector<uint64_t>*>(vp_vec);
+    delete vec;
+}
+
+void add_to_uint64_vec(
+void* vp_uint64_vec,
+const uint64_t n
+) {
+    RETURN_IF_NULL(vp_uint64_vec);
+    auto uint64_vec = static_cast<std::vector<uint64_t>*>(vp_uint64_vec);
+    uint64_vec->push_back(n);
+}
 
 #ifdef __cplusplus
 } // extern "C"
