@@ -1651,3 +1651,23 @@ BlsctRetVal* deserialize_ctx_id(const char* hex) {
     return succ(blsct_ctx_id, CTX_ID_SIZE);
 }
 
+// Misc helper functions
+void* create_uint64_vec() {
+    auto vec = new(std::nothrow) std::vector<uint64_t>;
+    HANDLE_MEM_ALLOC_FAILURE(vec);
+    return static_cast<void*>(vec);
+}
+
+void delete_uint64_vec(void* vp_vec) {
+if (vp_vec == nullptr) return;
+    auto vec = static_cast<const std::vector<uint64_t>*>(vp_vec);
+    delete vec;
+}
+
+void add_to_uint64_vec(void* vp_uint64_vec, const uint64_t n) {
+    RETURN_IF_NULL(vp_uint64_vec);
+    auto uint64_vec = static_cast<std::vector<uint64_t>*>(vp_uint64_vec);
+    uint64_vec->push_back(n);
+}
+
+
