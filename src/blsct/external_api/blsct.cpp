@@ -770,7 +770,7 @@ BlsctRetVal* deserialize_signature(const char* hex) {
 }
 
 BlsctRetVal* dpk_to_sub_addr(
-    const void* blsct_dpk
+    const BlsctDoublePubKey* blsct_dpk
 ) {
     // unserialize double public key
     blsct::DoublePublicKey dpk;

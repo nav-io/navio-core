@@ -302,6 +302,7 @@ BlsctRetVal* deserialize_point(const char* hex);
 int is_point_equal(const BlsctPoint* a, const BlsctPoint* b);
 const char* point_to_str(const BlsctPoint* blsct_point);
 BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
+bool is_valid_point(const BlsctPoint* blsct_point);
 
 // scalar
 BlsctRetVal* gen_random_scalar();
@@ -349,6 +350,10 @@ BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
 
 const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk);
 BlsctRetVal* deserialize_dpk(const char* hex);
+
+BlsctRetVal* dpk_to_sub_addr(
+    const BlsctDoublePubKey* blsct_dpk
+);
 
 // token id
 BlsctRetVal* gen_token_id_with_token_and_subid(
@@ -443,9 +448,6 @@ BlsctRetVal* build_tx_in(
     const bool rbf
 );
 
-BlsctRetVal* dpk_to_sub_addr(
-    const void* blsct_dpk
-);
 uint64_t get_tx_in_amount(const BlsctTxIn* tx_in);
 uint64_t get_tx_in_gamma(const BlsctTxIn* tx_in);
 const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in);
@@ -666,10 +668,6 @@ int64_t get_sub_addr_id_account(
 
 uint64_t get_sub_addr_id_address(
     const BlsctSubAddrId* blsct_sub_addr_id
-);
-
-bool is_valid_point(
-    const BlsctPoint* blsct_point
 );
 
 #ifdef __cplusplus
