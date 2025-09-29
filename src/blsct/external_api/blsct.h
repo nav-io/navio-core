@@ -31,7 +31,6 @@
 #define SCALAR_SIZE 32
 #define TOKEN_ID_SIZE 40  // uint256 + uint64_t = 32 + 8 = 40
 #define UINT256_SIZE 32
-#define VIEW_TAG_SIZE 8
 #define OUT_POINT_SIZE 36
 #define SIGNATURE_SIZE 96
 #define SCRIPT_SIZE 28
@@ -218,7 +217,6 @@ typedef uint8_t BlsctSubAddrId[SUB_ADDR_ID_SIZE];
 typedef uint8_t BlsctTokenId[TOKEN_ID_SIZE];
 typedef uint8_t BlsctUint256[UINT256_SIZE];
 typedef uint8_t BlsctCTxId[CTX_ID_SIZE];
-typedef uint8_t BlsctViewTag[VIEW_TAG_SIZE];
 typedef uint8_t BlsctOutPoint[OUT_POINT_SIZE];
 typedef uint8_t BlsctSignature[SIGNATURE_SIZE];
 
