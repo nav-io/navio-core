@@ -682,14 +682,21 @@ if (p == nullptr) { \
   return; \
 }
 
-// uint64 vec
+// uint64 vector
 void* create_uint64_vec();
-void delete_uint64_vec(void* vp_vec);
 void add_to_uint64_vec(void* vp_uint64_vec, const uint64_t n);
+void delete_uint64_vec(const void* vp_vec);
 
-#ifdef __cplusplus
+// range_proof vector
+void* create_range_proof_vec();
+void add_range_proof_to_vec(
+    void* vp_range_proofs,
+    size_t range_proof_size,
+    void* vp_blsct_range_proof
+);
+void delete_range_proof_vec(const void* vp_range_proofs);
+
 } // extern "C"
-#endif
 
 #endif // NAVCOIN_BLSCT_EXTERNAL_API_BLSCT_H
 

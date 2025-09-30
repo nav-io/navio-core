@@ -1652,22 +1652,61 @@ BlsctRetVal* deserialize_ctx_id(const char* hex) {
 }
 
 // Misc helper functions
+
+// uint64_t vector
 void* create_uint64_vec() {
     auto vec = new(std::nothrow) std::vector<uint64_t>;
     HANDLE_MEM_ALLOC_FAILURE(vec);
     return static_cast<void*>(vec);
 }
 
-void delete_uint64_vec(void* vp_vec) {
+void add_to_uint64_vec(void* vp_uint64_vec, const uint64_t n) {
+    RETURN_IF_NULL(vp_uint64_vec);
+    auto uint64_vec = static_cast<std::vector<uint64_t>*>(vp_uint64_vec);
+    uint64_vec->push_back(n);
+}
+
+void delete_uint64_vec(const void* vp_vec) {
 if (vp_vec == nullptr) return;
     auto vec = static_cast<const std::vector<uint64_t>*>(vp_vec);
     delete vec;
 }
 
-void add_to_uint64_vec(void* vp_uint64_vec, const uint64_t n) {
-    RETURN_IF_NULL(vp_uint64_vec);
-    auto uint64_vec = static_cast<std::vector<uint64_t>*>(vp_uint64_vec);
-    uint64_vec->push_back(n);
+// range_proof vector
+void* create_range_proof_vec() {
+    auto vec = new(std::nothrow) std::vector<bulletproofs_plus::RangeProof<Mcl>>;
+    HANDLE_MEM_ALLOC_FAILURE(vec);
+    return static_cast<void*>(vec);
+}
+
+void add_range_proof_to_vec(
+    void* vp_range_proofs,
+    size_t range_proof_size,
+    void* vp_blsct_range_proof
+) {
+    RETURN_IF_NULL(vp_range_proofs);
+    RETURN_IF_NULL(vp_blsct_range_proof);
+
+    auto range_proofs = static_cast<std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+    auto blsct_range_proof = static_cast<BlsctRangeProof*>(vp_blsct_range_proof);
+
+    // unserialize range proof
+    bulletproofs_plus::RangeProof<Mcl> range_proof;
+
+    DataStream st{};
+    for(size_t i=0; i<range_proof_size; ++i) {
+      st << blsct_range_proof[i];
+    }
+    range_proof.Unserialize(st);
+
+    // and move to the vector
+    range_proofs->push_back(std::move(range_proof));
+}
+
+void delete_range_proof_vec(const void* vp_range_proofs) {
+    if (vp_range_proofs == nullptr) return;
+    auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+    delete range_proofs;
 }
 
 
