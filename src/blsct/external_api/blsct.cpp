@@ -1704,4 +1704,73 @@ void delete_range_proof_vec(const void* vp_range_proofs) {
     delete range_proofs;
 }
 
+// amount recovery request vector
+void* create_amount_recovery_req_vec() {
+    auto vec = new(std::nothrow) std::vector<BlsctAmountRecoveryReq>;
+    RETURN_RET_VAL_IF_NULL(vec, nullptr);
+    return static_cast<void*>(vec);
+}
+
+void add_to_amount_recovery_req_vec(
+    void* vp_amt_recovery_req_vec,
+    void* vp_amt_recovery_req
+) {
+    RETURN_IF_NULL(vp_amt_recovery_req_vec);
+    RETURN_IF_NULL(vp_amt_recovery_req);
+
+    auto vec = static_cast<std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
+    auto req = static_cast<BlsctAmountRecoveryReq*>(vp_amt_recovery_req);
+    vec->push_back(*req);
+}
+
+void free_amount_recovery_req_vec(void* vp_amt_recovery_req_vec) {
+    RETURN_IF_NULL(vp_amt_recovery_req_vec);
+    auto vec = static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
+    delete vec;
+  }
+
+  // functions to retrieve attrs of amount recovery result
+int16_t get_amount_recovery_result_size(
+    void* vp_amt_recovery_res_vec
+) {
+    if (vp_amt_recovery_res_vec == nullptr) {
+        return -1;
+    }
+    auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_res_vec);
+
+    return vec->size();
+}
+
+bool get_amount_recovery_result_is_succ(
+    void* vp_amt_recovery_req_vec,
+    size_t idx
+) {
+    RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, false);
+
+    auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+
+    return vec->at(idx).is_succ;
+}
+
+int64_t get_amount_recovery_result_amount(
+    void* vp_amt_recovery_req_vec,
+    size_t idx
+) {
+    RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, -1);
+
+    auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+
+    return vec->at(idx).amount;
+}
+
+const char* get_amount_recovery_result_msg(
+    void* vp_amt_recovery_req_vec,
+    size_t idx
+) {
+    RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, nullptr);
+
+    auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+
+    return vec->at(idx).msg;
+}
 

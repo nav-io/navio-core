@@ -676,6 +676,11 @@ if (name == nullptr) { \
   return nullptr; \
 }
 
+#define RETURN_RET_VAL_IF_NULL(p, ret_val) \
+if (p == nullptr) { \
+  printf("ERROR: " #p " is null\n"); \
+  return ret_val; \
+}
 #define RETURN_IF_NULL(p) \
 if (p == nullptr) { \
   printf("ERROR: " #p " is null\n"); \
@@ -695,6 +700,35 @@ void add_to_range_proof_vec(
     size_t blsct_range_proof_size
 );
 void delete_range_proof_vec(const void* vp_range_proofs);
+
+// amount recovery request vector
+void* create_amount_recovery_req_vec();
+
+void add_to_amount_recovery_req_vec(
+    void* vp_amt_recovery_req_vec,
+    void* vp_amt_recovery_req
+);
+
+void free_amount_recovery_req_vec(void* vp_amt_recovery_req_vec);
+
+int16_t get_amount_recovery_result_size(
+    void* vp_amt_recovery_res_vec
+);
+
+bool get_amount_recovery_result_is_succ(
+    void* vp_amt_recovery_req_vec,
+    size_t idx
+);
+
+int64_t get_amount_recovery_result_amount(
+    void* vp_amt_recovery_req_vec,
+    size_t idx
+);
+
+const char* get_amount_recovery_result_msg(
+    void* vp_amt_recovery_req_vec,
+    size_t idx
+);
 
 } // extern "C"
 
