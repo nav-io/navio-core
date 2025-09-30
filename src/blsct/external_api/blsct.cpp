@@ -560,7 +560,7 @@ BlsctBoolRetVal* verify_range_proofs(
 }
 
 #define DEFINE_RANGE_PROOF_POINT_GETTER(field) \
-const BlsctPoint* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
+BlsctPoint* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
 { \
     bulletproofs_plus::RangeProof<Mcl> range_proof; \
     UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof); \
@@ -577,7 +577,7 @@ DEFINE_RANGE_PROOF_POINT_GETTER(B)
 #undef DEFINE_RANGE_PROOF_POINT_GETTER
 
 #define DEFINE_RANGE_PROOF_SCALAR_GETTER(field) \
-const BlsctScalar* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
+BlsctScalar* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
 { \
     bulletproofs_plus::RangeProof<Mcl> range_proof; \
     UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof); \
