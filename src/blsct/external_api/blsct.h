@@ -669,7 +669,6 @@ uint64_t get_sub_addr_id_address(
 );
 
 // Misc helper functions and macros migrated from blist.i
-
 #define HANDLE_MEM_ALLOC_FAILURE(name) \
 if (name == nullptr) { \
   printf("ERROR: Memory allocation failed\n"); \
@@ -686,6 +685,8 @@ if (p == nullptr) { \
   printf("ERROR: " #p " is null\n"); \
   return; \
 }
+
+uint8_t* hex_to_malloced_buf(const char* hex);
 
 // uint64 vector
 void* create_uint64_vec();

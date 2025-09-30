@@ -1776,3 +1776,17 @@ const char* get_amount_recovery_result_msg(
     return vec->at(idx).msg;
 }
 
+uint8_t* hex_to_malloced_buf(const char* hex) {
+    size_t hex_len = std::strlen(hex);
+    size_t buf_len = hex_len / 2;
+
+    uint8_t* buf = static_cast<uint8_t*>(malloc(buf_len));
+    const char* p = hex;
+
+    for (size_t i=0; i<buf_len; ++i) {
+        sscanf(p, "%2hhx", &buf[i]);
+        p += 2;
+    }
+    return buf;
+}
+
