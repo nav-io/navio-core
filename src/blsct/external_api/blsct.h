@@ -692,7 +692,7 @@ void* create_range_proof_vec();
 void add_to_range_proof_vec(
     void* vp_range_proofs,
     size_t range_proof_size,
-    void* vp_blsct_range_proof
+    const BlsctRangeProof* blsct_range_proof
 );
 void delete_range_proof_vec(const void* vp_range_proofs);
 

@@ -1682,14 +1682,9 @@ void* create_range_proof_vec() {
 void add_to_range_proof_vec(
     void* vp_range_proofs,
     size_t range_proof_size,
-    void* vp_blsct_range_proof
+    const BlsctRangeProof* blsct_range_proof
 ) {
-    RETURN_IF_NULL(vp_range_proofs);
-    RETURN_IF_NULL(vp_blsct_range_proof);
-
     auto range_proofs = static_cast<std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
-    auto blsct_range_proof = static_cast<BlsctRangeProof*>(vp_blsct_range_proof);
-
     // unserialize range proof
     bulletproofs_plus::RangeProof<Mcl> range_proof;
 
