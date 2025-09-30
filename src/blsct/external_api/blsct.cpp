@@ -619,11 +619,10 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
     auto req = new(std::nothrow) BlsctAmountRecoveryReq;
     RETURN_IF_MEM_ALLOC_FAILED(req);
 
-    req->range_proof = const_cast<BlsctRangeProof*>(
-        static_cast<const BlsctRangeProof*>(vp_blsct_range_proof)
-    );
+    req->range_proof = (BlsctRangeProof*) malloc(range_proof_size);
+    RETURN_IF_MEM_ALLOC_FAILED(req->range_proof);
 
-    //BLSCT_COPY_BYTES(vp_blsct_range_proof, req->range_proof, range_proof_size);
+    BLSCT_COPY_BYTES(vp_blsct_range_proof, req->range_proof, range_proof_size);
     req->range_proof_size = range_proof_size;
     BLSCT_COPY(vp_blsct_nonce, req->nonce);
     return req;
@@ -1726,6 +1725,9 @@ void add_to_amount_recovery_req_vec(
 void delete_amount_recovery_req_vec(void* vp_amt_recovery_req_vec) {
     RETURN_IF_NULL(vp_amt_recovery_req_vec);
     auto vec = static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
+    for (auto& req : *vec) {
+        free(req.range_proof);
+    }
     delete vec;
   }
 
