@@ -687,6 +687,7 @@ if (p == nullptr) { \
 }
 
 uint8_t* hex_to_malloced_buf(const char* hex);
+const char* buf_to_malloced_hex_c_str(const uint8_t* buf, size_t size);
 
 // uint64 vector
 void* create_uint64_vec();

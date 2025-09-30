@@ -1790,3 +1790,24 @@ uint8_t* hex_to_malloced_buf(const char* hex) {
     return buf;
 }
 
+const char* buf_to_malloced_hex_c_str(const uint8_t* buf, size_t size) {
+    // +1 for null terminator at the end
+    size_t hex_str_len = size * 2 + 1;
+
+    char* hex_c_str = static_cast<char*>(malloc(hex_str_len));
+    if (hex_c_str == nullptr) {
+        return nullptr;
+    }
+
+    static const char hex_table[] = "0123456789abcdef";
+
+    for(size_t i=0; i<size; ++i) {
+        uint8_t b = buf[i];
+        size_t p = 2 * i;
+        hex_c_str[p] = hex_table[b >> 4];     // high nibble
+        hex_c_str[p + 1] = hex_table[b & 0x0F];   // low nibble
+    }
+    hex_c_str[hex_str_len - 1] = '\0';
+
+    return hex_c_str;
+}
