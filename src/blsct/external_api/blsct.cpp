@@ -623,7 +623,7 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
         static_cast<const BlsctRangeProof*>(vp_blsct_range_proof)
     );
 
-    BLSCT_COPY_BYTES(vp_blsct_range_proof, req->range_proof, range_proof_size);
+    //BLSCT_COPY_BYTES(vp_blsct_range_proof, req->range_proof, range_proof_size);
     req->range_proof_size = range_proof_size;
     BLSCT_COPY(vp_blsct_nonce, req->nonce);
     return req;
@@ -1022,7 +1022,7 @@ const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* ctx_out) {
 }
 
 // tx
-BlsctCtxRetVal* build_ctx(
+BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
 ) {
@@ -1030,7 +1030,7 @@ BlsctCtxRetVal* build_ctx(
     UNVOID(std::vector<BlsctTxOut>, tx_outs);
 
     blsct::TxFactoryBase psbt;
-    MALLOC(BlsctCtxRetVal, rv);
+    MALLOC(BlsctCTxRetVal, rv);
     RETURN_IF_MEM_ALLOC_FAILED(rv);
 
     for (size_t i=0; i<tx_ins->size(); ++i) {

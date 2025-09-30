@@ -498,7 +498,7 @@ uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out);
 
 // takes BlsctTxIn and BlsctTxOut vectors and
 // returns a serialized CMutableTransaction
-BlsctCtxRetVal* build_ctx(
+BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
 );
