@@ -691,8 +691,8 @@ void delete_uint64_vec(const void* vp_vec);
 void* create_range_proof_vec();
 void add_to_range_proof_vec(
     void* vp_range_proofs,
-    size_t range_proof_size,
-    const BlsctRangeProof* blsct_range_proof
+    const BlsctRangeProof* blsct_range_proof,
+    size_t blsct_range_proof_size
 );
 void delete_range_proof_vec(const void* vp_range_proofs);
 

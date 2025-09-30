@@ -1681,15 +1681,15 @@ void* create_range_proof_vec() {
 
 void add_to_range_proof_vec(
     void* vp_range_proofs,
-    size_t range_proof_size,
-    const BlsctRangeProof* blsct_range_proof
+    const BlsctRangeProof* blsct_range_proof,
+    size_t blsct_range_proof_size
 ) {
     auto range_proofs = static_cast<std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
     // unserialize range proof
     bulletproofs_plus::RangeProof<Mcl> range_proof;
 
     DataStream st{};
-    for(size_t i=0; i<range_proof_size; ++i) {
+    for(size_t i=0; i<blsct_range_proof_size; ++i) {
       st << blsct_range_proof[i];
     }
     range_proof.Unserialize(st);
