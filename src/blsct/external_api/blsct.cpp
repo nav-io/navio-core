@@ -1723,7 +1723,7 @@ void add_to_amount_recovery_req_vec(
     vec->push_back(*req);
 }
 
-void free_amount_recovery_req_vec(void* vp_amt_recovery_req_vec) {
+void delete_amount_recovery_req_vec(void* vp_amt_recovery_req_vec) {
     RETURN_IF_NULL(vp_amt_recovery_req_vec);
     auto vec = static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
     delete vec;
