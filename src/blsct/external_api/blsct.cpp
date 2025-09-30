@@ -1752,7 +1752,7 @@ bool get_amount_recovery_result_is_succ(
     return vec->at(idx).is_succ;
 }
 
-int64_t get_amount_recovery_result_amount(
+uint64_t get_amount_recovery_result_amount(
     void* vp_amt_recovery_req_vec,
     size_t idx
 ) {

@@ -239,7 +239,7 @@ typedef struct {
 
   size_t in_amount_err_index; // holds the first index of the tx_in whose amount exceeds the maximum
   size_t out_amount_err_index; // holds the first index of the tx_out whose amount exceeds the maximum
-} BlsctCtxRetVal;
+} BlsctCTxRetVal;
 
 BlsctRetVal* succ(
     void* value,
@@ -720,7 +720,7 @@ bool get_amount_recovery_result_is_succ(
     size_t idx
 );
 
-int64_t get_amount_recovery_result_amount(
+uint64_t get_amount_recovery_result_amount(
     void* vp_amt_recovery_req_vec,
     size_t idx
 );
