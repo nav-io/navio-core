@@ -1679,7 +1679,7 @@ void* create_range_proof_vec() {
     return static_cast<void*>(vec);
 }
 
-void add_range_proof_to_vec(
+void add_to_range_proof_to_vec(
     void* vp_range_proofs,
     size_t range_proof_size,
     void* vp_blsct_range_proof
