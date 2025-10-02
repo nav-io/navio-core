@@ -285,6 +285,9 @@ typedef struct {
     uint64_t min_stake;
 } BlsctTxOut;
 
+typedef struct CTxIns CTxIns;
+typedef struct CTxOuts CTxOuts;
+
 // memory disposition
 void free_obj(void* x);
 void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
@@ -508,18 +511,21 @@ const char* get_ctx_id(
     const size_t ser_ctx_size
 );
 
-size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins);
-size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs);
-
-const std::vector<CTxIn>* get_ctx_ins(
+const CTxIns* get_ctx_ins(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
 );
 
-const std::vector<CTxOut>* get_ctx_outs(
+const CTxOuts* get_ctx_outs(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
 );
+
+size_t get_ctx_in_count(const CTxIns* ctx_ins);
+size_t get_ctx_out_count(const CTxOuts* ctx_outs);
+
+void delete_ctx_ins(const CTxIns* ctx_ins);
+void delete_ctx_outs(const CTxOuts* ctx_outs);
 
 const BlsctRetVal* get_ctx_in(
     const std::vector<CTxIn>* ctx_ins,

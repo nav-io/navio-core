@@ -1163,30 +1163,60 @@ inline void UnserializeCMutableTx(
     ctx.Unserialize(ps);
 }
 
-size_t get_ctx_in_count(const std::vector<CTxIn>* ctx_ins) {
-    return ctx_ins->size();
-}
+struct CTxIns {
+    std::vector<CTxIn> vec;
+};
 
-size_t get_ctx_out_count(const std::vector<CTxOut>* ctx_outs) {
-    return ctx_outs->size();
-}
+struct CTxOuts {
+    std::vector<CTxOut> vec;
+};
 
-const std::vector<CTxIn>* get_ctx_ins(
+const CTxIns* get_ctx_ins(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
 ) {
-    CMutableTransaction ctx;
-    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
-    return new std::vector<CTxIn>(ctx.vin);
+    try {
+        CMutableTransaction ctx;
+        UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+
+        auto* wrapper = new CTxIns();
+        wrapper->vec = ctx.vin;
+        return wrapper;
+    } catch(...) {
+        return nullptr;
+    }
 }
 
-const std::vector<CTxOut>* get_ctx_outs(
+const CTxOuts* get_ctx_outs(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
 ) {
-    CMutableTransaction ctx;
-    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
-    return new std::vector<CTxOut>(ctx.vout);
+    try {
+        CMutableTransaction ctx;
+        UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
+
+        auto* wrapper = new CTxOuts();
+        wrapper->vec = ctx.vout;
+        return wrapper;
+    } catch(...) {
+        return nullptr;
+    }
+}
+
+size_t get_ctx_in_count(const CTxIns* ctx_ins) {
+    return ctx_ins->vec.size();
+}
+
+size_t get_ctx_out_count(const CTxOuts* ctx_outs) {
+    return ctx_outs->vec.size();
+}
+
+void delete_ctx_ins(const CTxIns* ctx_ins) {
+    delete ctx_ins;
+}
+
+void delete_ctx_outs(const CTxIns* ctx_outs) {
+    delete ctx_outs;
 }
 
 const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i) {
