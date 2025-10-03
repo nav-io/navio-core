@@ -497,9 +497,8 @@ const BlsctPoint* get_ctx_out_blinding_key(const CTxOut* ctx_out);
 const BlsctRetVal* get_ctx_out_range_proof(const CTxOut* ctx_out);
 uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out);
 
-// tx
+// ctx
 
-// takes BlsctTxIn and BlsctTxOut vectors and
 // returns a serialized CMutableTransaction
 BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
@@ -528,37 +527,16 @@ void delete_ctx_ins(const CTxIns* ctx_ins);
 void delete_ctx_outs(const CTxOuts* ctx_outs);
 
 const BlsctRetVal* get_ctx_in(
-    const std::vector<CTxIn>* ctx_ins,
+    const CTxIns* ctx_ins,
     const size_t i
 );
 
 const BlsctRetVal* get_ctx_out(
-    const std::vector<CTxOut>* ctx_outs,
+    const CTxOuts* ctx_outs,
     const size_t i
 );
 
-size_t get_ctx_in_count_c(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-);
-
-size_t get_ctx_out_count_c(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-);
-
-const BlsctRetVal* get_ctx_in_c(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size,
-    const size_t i
-);
-
-const BlsctRetVal* get_ctx_out_c(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size,
-    const size_t i
-);
-
+// signature
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,
     const char* blsct_msg
@@ -570,6 +548,7 @@ bool verify_msg_sig(
     const BlsctSignature* blsct_signature
 );
 
+//
 BlsctPubKey* scalar_to_pub_key(
     const BlsctScalar* blsct_scalar
 );

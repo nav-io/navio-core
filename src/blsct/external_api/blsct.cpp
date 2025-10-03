@@ -1020,7 +1020,22 @@ const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* ctx_out) {
     return succ(buf, pred.size());
 }
 
-// tx
+// ctx
+inline void UnserializeCMutableTx(
+    CMutableTransaction& ctx,
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+) {
+    DataStream st{};
+    TransactionSerParams params { .allow_witness = true };
+    ParamsStream ps {params, st};
+
+    for(size_t i=0; i<ser_ctx_size; ++i) {
+        ps << ser_ctx[i];
+    }
+    ctx.Unserialize(ps);
+}
+
 BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
@@ -1148,21 +1163,6 @@ BlsctCTxRetVal* build_ctx(
     return rv;
 }
 
-inline void UnserializeCMutableTx(
-    CMutableTransaction& ctx,
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-) {
-    DataStream st{};
-    TransactionSerParams params { .allow_witness = true };
-    ParamsStream ps {params, st};
-
-    for(size_t i=0; i<ser_ctx_size; ++i) {
-        ps << ser_ctx[i];
-    }
-    ctx.Unserialize(ps);
-}
-
 struct CTxIns {
     std::vector<CTxIn> vec;
 };
@@ -1219,22 +1219,23 @@ void delete_ctx_outs(const CTxIns* ctx_outs) {
     delete ctx_outs;
 }
 
-const BlsctRetVal* get_ctx_in(const std::vector<CTxIn>* ctx_ins, const size_t i) {
-    auto ctx_in = &ctx_ins->at(i);
+const BlsctRetVal* get_ctx_in(const CTxIns* ctx_ins, const size_t i) {
+    auto ctx_in = &ctx_ins->vec.at(i);
     auto ctx_in_size = sizeof(*ctx_in);
     auto ctx_in_copy = static_cast<CTxIn*>(malloc(ctx_in_size));
     std::memcpy(ctx_in_copy, ctx_in, ctx_in_size);
     return succ(ctx_in_copy, ctx_in_size);
 }
 
-const BlsctRetVal* get_ctx_out(const std::vector<CTxOut>* ctx_outs, const size_t i) {
-    auto ctx_out = &ctx_outs->at(i);
+const BlsctRetVal* get_ctx_out(const CTxOuts* ctx_outs, const size_t i) {
+    auto ctx_out = &ctx_outs->vec.at(i);
     auto ctx_out_size = sizeof(*ctx_out);
     auto ctx_out_copy = static_cast<CTxOut*>(malloc(ctx_out_size));
     std::memcpy(ctx_out_copy, ctx_out, ctx_out_size);
     return succ(ctx_out_copy, ctx_out_size);
 }
 
+/* TO BE DELETED
 size_t get_ctx_in_count_c(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
@@ -1292,6 +1293,7 @@ const BlsctRetVal* get_ctx_out_c(
 
     return succ(ser_ctx_out, ser_ctx_out_size);
 }
+*/
 
 // signature
 const BlsctSignature* sign_message(
