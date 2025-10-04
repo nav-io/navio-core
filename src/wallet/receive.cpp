@@ -584,10 +584,13 @@ std::set<std::set<CTxDestination>> GetAddressGroupings(const CWallet& wallet, co
                 if (!InputIsMine(wallet, txin)) /* If this input isn't mine, ignore it */
                     continue;
                 CTxOut utxo;
-                for (auto& it : wallet.mapWallet.at(txin.prevout.hash).tx->vout) {
-                    if (it.GetHash() == txin.prevout.hash) {
-                        utxo = it;
-                        break;
+                const CWalletTx* prev = wallet.GetWalletTxFromOutpoint(txin.prevout);
+                if (prev) {
+                    for (auto& it : prev->tx->vout) {
+                        if (it.GetHash() == txin.prevout.hash) {
+                            utxo = it;
+                            break;
+                        }
                     }
                 }
                 if (!ExtractDestination(utxo.scriptPubKey, address))

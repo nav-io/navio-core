@@ -933,12 +933,17 @@ class CTxOut:
         self.blsctData = blsctData
         self.tokenId = tokenId
         if predicate == b"":
-            self.set_random_predicate()
+            # Don't set random predicate for OP_RETURN scripts (like witness commitments)
+            # to match node behavior
+            if len(scriptPubKey) > 0 and scriptPubKey[0] == 0x6a:  # OP_RETURN = 0x6a
+                self.predicate = b""
+            else:
+                self.set_random_predicate()
         else:
             self.predicate = predicate
 
     def set_random_predicate(self):
-        self.predicate = bytes.fromhex("0420") + random.randbytes(16)
+        self.predicate = bytes.fromhex("0410") + random.randbytes(16)
 
     def deserialize(self, f):
         self.nValue = struct.unpack("<q", f.read(8))[0]

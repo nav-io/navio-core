@@ -97,7 +97,7 @@ class BIP68Test(BitcoinTestFramework):
         # If sequence locks were used, this would require 1 block for the
         # input to mature.
         sequence_value = SEQUENCE_LOCKTIME_DISABLE_FLAG | 1
-        tx1.vin = [CTxIn(COutPoint(int(utxo["txid"], 16)), nSequence=sequence_value)]
+        tx1.vin = [CTxIn(COutPoint(int(utxo["txid"])), nSequence=sequence_value)]
         tx1.vout = [CTxOut(value, SCRIPT_W0_SH_OP_TRUE)]
 
         self.wallet.sign_tx(tx=tx1)

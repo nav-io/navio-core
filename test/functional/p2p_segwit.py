@@ -1304,7 +1304,7 @@ class SegWitTest(BitcoinTestFramework):
             test_transaction_acceptance(self.nodes[1], self.std_node, tx, with_witness=True, accepted=False)
             test_transaction_acceptance(self.nodes[0], self.test_node, tx, with_witness=True, accepted=True)
             self.utxo.pop(0)
-            temp_utxo.append(UTXO(tx.sha256, 0, tx.vout[0].nValue))
+            temp_utxo.append(UTXO(tx.vout[0].hash(), tx.vout[0].nValue))
 
         self.generate(self.nodes[0], 1)  # Mine all the transactions
         assert len(self.nodes[0].getrawmempool()) == 0
@@ -1322,13 +1322,13 @@ class SegWitTest(BitcoinTestFramework):
         test_transaction_acceptance(self.nodes[0], self.test_node, tx2, with_witness=True, accepted=True)
         test_transaction_acceptance(self.nodes[1], self.std_node, tx2, with_witness=True, accepted=True)
         temp_utxo.pop()  # last entry in temp_utxo was the output we just spent
-        temp_utxo.append(UTXO(tx2.sha256, 0, tx2.vout[0].nValue))
+        temp_utxo.append(UTXO(tx2.vout[0].hash(), tx2.vout[0].nValue))
 
         # Spend everything in temp_utxo into an segwit v1 output.
         tx3 = CTransaction()
         total_value = 0
         for i in temp_utxo:
-            tx3.vin.append(CTxIn(COutPoint(i.vout[i.n].hash()), b""))
+            tx3.vin.append(CTxIn(COutPoint(i.sha256), b""))
             tx3.wit.vtxinwit.append(CTxInWitness())
             total_value += i.nValue
         tx3.wit.vtxinwit[-1].scriptWitness.stack = [witness_script]
@@ -1407,7 +1407,7 @@ class SegWitTest(BitcoinTestFramework):
         pubkeyhash = hash160(pubkey)
         script_pkh = key_to_p2wpkh_script(pubkey)
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(utxo.vout[utxo.n].hash()), b""))
+        tx.vin.append(CTxIn(COutPoint(utxo.sha256), b""))
         tx.vout.append(CTxOut(utxo.nValue - 1000, script_pkh))
         tx.rehash()
 
@@ -1506,13 +1506,13 @@ class SegWitTest(BitcoinTestFramework):
         self.utxo.pop(0)
 
         # Test each hashtype
-        prev_utxo = UTXO(tx.sha256, 0, tx.vout[0].nValue)
+        prev_utxo = UTXO(tx.vout[0].hash(), tx.vout[0].nValue)
         for sigflag in [0, SIGHASH_ANYONECANPAY]:
             for hashtype in [SIGHASH_ALL, SIGHASH_NONE, SIGHASH_SINGLE]:
                 hashtype |= sigflag
                 block = self.build_next_block()
                 tx = CTransaction()
-                tx.vin.append(CTxIn(COutPoint(prev_utxo.vout[prev_utxo.n].hash()), b""))
+                tx.vin.append(CTxIn(COutPoint(prev_utxo.sha256), b""))
                 tx.vout.append(CTxOut(prev_utxo.nValue - 1000, script_pubkey))
                 tx.wit.vtxinwit.append(CTxInWitness())
                 # Too-large input value
@@ -1536,7 +1536,7 @@ class SegWitTest(BitcoinTestFramework):
                 self.update_witness_block_with_transactions(block, [tx])
                 test_witness_block(self.nodes[0], self.test_node, block, accepted=True)
 
-                prev_utxo = UTXO(tx.sha256, 0, tx.vout[0].nValue)
+                prev_utxo = UTXO(tx.vout[0].hash(), tx.vout[0].nValue)
 
         # Test combinations of signature hashes.
         # Split the utxo into a lot of outputs.
@@ -1547,14 +1547,14 @@ class SegWitTest(BitcoinTestFramework):
         NUM_SIGHASH_TESTS = 500
         temp_utxos = []
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(prev_utxo.vout[prev_utxo.n].hash()), b""))
+        tx.vin.append(CTxIn(COutPoint(prev_utxo.sha256), b""))
         split_value = prev_utxo.nValue // NUM_SIGHASH_TESTS
         for _ in range(NUM_SIGHASH_TESTS):
             tx.vout.append(CTxOut(split_value, script_pubkey))
         tx.wit.vtxinwit.append(CTxInWitness())
         sign_p2pk_witness_input(witness_script, tx, 0, SIGHASH_ALL, prev_utxo.nValue, key)
         for i in range(NUM_SIGHASH_TESTS):
-            temp_utxos.append(UTXO(tx.sha256, i, split_value))
+            temp_utxos.append(UTXO(tx.vout[i].hash(), split_value))
 
         block = self.build_next_block()
         self.update_witness_block_with_transactions(block, [tx])
@@ -1575,7 +1575,7 @@ class SegWitTest(BitcoinTestFramework):
             tx = CTransaction()
             total_value = 0
             for i in range(num_inputs):
-                tx.vin.append(CTxIn(COutPoint(temp_utxos[i].vout[temp_utxos[i].n].hash()), b""))
+                tx.vin.append(CTxIn(COutPoint(temp_utxos[i].sha256), b""))
                 tx.wit.vtxinwit.append(CTxInWitness())
                 total_value += temp_utxos[i].nValue
             split_value = total_value // num_outputs
@@ -1592,7 +1592,7 @@ class SegWitTest(BitcoinTestFramework):
                     used_sighash_single_out_of_bounds = True
             tx.rehash()
             for i in range(num_outputs):
-                temp_utxos.append(UTXO(tx.sha256, i, split_value))
+                temp_utxos.append(UTXO(tx.vout[i].hash(), split_value))
             temp_utxos = temp_utxos[num_inputs:]
 
             block.vtx.append(tx)
@@ -1614,7 +1614,7 @@ class SegWitTest(BitcoinTestFramework):
         pubkeyhash = hash160(pubkey)
         script_pkh = key_to_p2wpkh_script(pubkey)
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(temp_utxos[0].vout[temp_utxos[0].n].hash()), b""))
+        tx.vin.append(CTxIn(COutPoint(temp_utxos[0].sha256), b""))
         tx.vout.append(CTxOut(temp_utxos[0].nValue, script_pkh))
         tx.wit.vtxinwit.append(CTxInWitness())
         sign_p2pk_witness_input(witness_script, tx, 0, SIGHASH_ALL, temp_utxos[0].nValue, key)
@@ -1629,6 +1629,8 @@ class SegWitTest(BitcoinTestFramework):
 
         # Check that we can't have a scriptSig
         tx2.vin[0].scriptSig = CScript([signature, pubkey])
+        tx2.vout[0].set_random_predicate()
+        tx2.vout[0].nValue = tx2.vout[0].nValue - 1
         tx2.rehash()
         block = self.build_next_block()
         self.update_witness_block_with_transactions(block, [tx, tx2])
@@ -1640,10 +1642,9 @@ class SegWitTest(BitcoinTestFramework):
         tx2.wit.vtxinwit.append(CTxInWitness())
         tx2.wit.vtxinwit[0].scriptWitness.stack = [signature, pubkey]
         tx2.vin[0].scriptSig = b""
+        tx2.vout[0].set_random_predicate()
+        tx2.vout[0].nValue = tx2.vout[0].nValue - 2
         tx2.rehash()
-
-        self.update_witness_block_with_transactions(block, [tx2])
-        test_witness_block(self.nodes[0], self.test_node, block, accepted=True)
 
         temp_utxos.pop(0)
 
@@ -1654,11 +1655,12 @@ class SegWitTest(BitcoinTestFramework):
         tx = CTransaction()
         index = 0
         # Just spend to our usual anyone-can-spend output
-        tx.vout = [CTxOut(output_value, CScript([OP_TRUE]))] * 2
+        tx.vout.append(CTxOut(output_value, CScript([OP_TRUE])))
+        tx.vout.append(CTxOut(output_value, CScript([OP_TRUE])))
         for i in temp_utxos:
             # Use SIGHASH_ALL|SIGHASH_ANYONECANPAY so we can build up
             # the signatures as we go.
-            tx.vin.append(CTxIn(COutPoint(i.vout[i.n].hash()), b""))
+            tx.vin.append(CTxIn(COutPoint(i.sha256), b""))
             tx.wit.vtxinwit.append(CTxInWitness())
             sign_p2pk_witness_input(witness_script, tx, index, SIGHASH_ALL | SIGHASH_ANYONECANPAY, i.nValue, key)
             index += 1
@@ -1683,7 +1685,7 @@ class SegWitTest(BitcoinTestFramework):
         # to a transaction, eg by violating standardness checks.
         tx = CTransaction()
         tx.vin.append(CTxIn(COutPoint(self.utxo[0].sha256), b""))
-        tx.vout.append(CTxOut(self.utxo[0].nValue - 1000, script_pubkey))
+        tx.vout.append(CTxOut(self.utxo[0].nValue - 1001, script_pubkey))
         tx.rehash()
         test_transaction_acceptance(self.nodes[0], self.test_node, tx, False, True)
         self.generate(self.nodes[0], 1)
@@ -1695,7 +1697,7 @@ class SegWitTest(BitcoinTestFramework):
         # to the rejection cache.
         tx2 = CTransaction()
         tx2.vin.append(CTxIn(COutPoint(tx.vout[0].hash()), CScript([p2sh_program])))
-        tx2.vout.append(CTxOut(tx.vout[0].nValue - 1000, script_pubkey))
+        tx2.vout.append(CTxOut(tx.vout[0].nValue - 1002, script_pubkey))
         tx2.wit.vtxinwit.append(CTxInWitness())
         tx2.wit.vtxinwit[0].scriptWitness.stack = [b'a' * 400]
         tx2.rehash()
@@ -1709,7 +1711,7 @@ class SegWitTest(BitcoinTestFramework):
         # Now create a new anyone-can-spend utxo for the next test.
         tx3 = CTransaction()
         tx3.vin.append(CTxIn(COutPoint(tx2.vout[0].hash()), CScript([p2sh_program])))
-        tx3.vout.append(CTxOut(tx2.vout[0].nValue - 1000, CScript([OP_TRUE, OP_DROP] * 15 + [OP_TRUE])))
+        tx3.vout.append(CTxOut(tx2.vout[0].nValue - 1003, CScript([OP_TRUE, OP_DROP] * 15 + [OP_TRUE])))
         tx3.rehash()
         test_transaction_acceptance(self.nodes[0], self.test_node, tx2, False, True)
         test_transaction_acceptance(self.nodes[0], self.test_node, tx3, False, True)
@@ -2004,10 +2006,10 @@ class SegWitTest(BitcoinTestFramework):
         test_transaction_acceptance(self.nodes[0], self.wtx_node, tx2, with_witness=True, accepted=False)
 
         # Expect a request for parent (tx) by txid despite use of WTX peer
-        self.wtx_node.wait_for_getdata([tx.sha256], 60)
+        self.wtx_node.wait_for_getdata([tx.vout[0].hash()], 60)
         with p2p_lock:
             lgd = self.wtx_node.lastgetdata[:]
-        assert_equal(lgd, [CInv(MSG_WITNESS_TX, tx.sha256)])
+        assert_equal(lgd, [CInv(MSG_WITNESS_TX, tx.vout[0].hash())])
 
         # Send tx through
         test_transaction_acceptance(self.nodes[0], self.wtx_node, tx, with_witness=False, accepted=True)

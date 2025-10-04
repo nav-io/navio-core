@@ -38,21 +38,26 @@ ParsedPredicate ParsePredicate(const VectorPredicate& vch)
 
 std::string PredicateToString(const VectorPredicate& vch)
 {
-    auto predicate = ParsePredicate(vch);
+    try {
+        auto predicate = ParsePredicate(vch);
 
-    std::string ret;
+        std::string ret;
 
-    if (predicate.IsCreateTokenPredicate())
-        ret = "CREATE_TOKEN";
-    else if (predicate.IsMintTokenPredicate())
-        ret = "MINT_TOKEN";
-    else if (predicate.IsMintNftPredicate())
-        ret = "MINT_NFT";
-    else if (predicate.IsPayFeePredicate())
-        ret = "PAY_FEE";
-    else if (predicate.IsDataPredicate())
-        ret = "DATA";
+        if (predicate.IsCreateTokenPredicate())
+            ret = "CREATE_TOKEN";
+        else if (predicate.IsMintTokenPredicate())
+            ret = "MINT_TOKEN";
+        else if (predicate.IsMintNftPredicate())
+            ret = "MINT_NFT";
+        else if (predicate.IsPayFeePredicate())
+            ret = "PAY_FEE";
+        else if (predicate.IsDataPredicate())
+            ret = "DATA";
 
-    return ret;
+        return ret;
+    } catch (const std::ios_base::failure& e) {
+        // If predicate parsing fails, return a generic error message
+        return "INVALID_PREDICATE";
+    }
 }
 } // namespace blsct

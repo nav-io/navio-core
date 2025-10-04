@@ -1151,9 +1151,11 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
         // change keypool ran out, but change is required.
         CHECK_NONFATAL(IsValidDestination(dest) != scriptChange.empty());
     }
-    CTxOut change_prototype_txout(0, scriptChange);
-    FastRandomContext prototype_rng(true);
-    change_prototype_txout.predicate = blsct::DataPredicate(prototype_rng.rand256()).GetVch();
+    // Use a realistic change amount for size estimation (typical change is around 1 NAV)
+    CTxOut change_prototype_txout(COIN, scriptChange);
+    // Add a predicate with the exact same size as will be used in actual change output
+    uint256 dummy_hash = uint256::ZERO;
+    change_prototype_txout.predicate = blsct::DataPredicate(dummy_hash).GetVch();
     coin_selection_params.change_output_size = GetSerializeSize(change_prototype_txout);
 
     // Get size of spending the change output
@@ -1206,7 +1208,7 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
     for (const auto& recipient : vecSend)
     {
         CTxOut txout(recipient.nAmount, GetScriptForDestination(recipient.dest));
-        FastRandomContext rng(true);
+        FastRandomContext rng;
         txout.predicate = blsct::DataPredicate(rng.rand256()).GetVch();
 
         // Include the fee cost for outputs.

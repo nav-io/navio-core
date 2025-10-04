@@ -250,7 +250,7 @@ public:
             nFlags |= BLSCT_MARKER;
         if (!tokenId.IsNull())
             nFlags |= TOKEN_MARKER;
-        if ((tokenId.IsNFT() || predicate.size() > 0) && nValue > 0)
+        if ((tokenId.IsNFT() || predicate.size() > 0) && nValue != 0)
             nFlags |= TRANSPARENT_VALUE_MARKER;
         if (predicate.size() > 0)
             nFlags |= PREDICATE_MARKER;

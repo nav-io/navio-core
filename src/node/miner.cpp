@@ -238,9 +238,15 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
 
         for (auto& out : tx.vout) {
             if (out.predicate.size() > 0) {
-                auto parsedPredicate = blsct::ParsePredicate(out.predicate);
-                if (!ExecutePredicate(parsedPredicate, viewNew)) {
-                    LogPrintf("%s: Failed validation of predicate of output %s\n", __func__, out.ToString());
+                try {
+                    auto parsedPredicate = blsct::ParsePredicate(out.predicate);
+                    if (!ExecutePredicate(parsedPredicate, viewNew)) {
+                        LogPrintf("%s: Failed validation of predicate of output %s\n", __func__, out.ToString());
+                        validPredicate = false;
+                        break;
+                    }
+                } catch (const std::ios_base::failure& e) {
+                    LogPrintf("%s: Invalid predicate in output %s\n", __func__, out.ToString());
                     validPredicate = false;
                     break;
                 }

@@ -387,8 +387,9 @@ public:
 
     range_proof::RecoveredData<Mcl> GetBLSCTRecoveryData(const uint32_t& forOutput) const
     {
-        if (blsctRecoveryData.find(forOutput) == blsctRecoveryData.end())
+        if (blsctRecoveryData.find(forOutput) == blsctRecoveryData.end()) {
             return range_proof::RecoveredData<Mcl>{0, 0, 0, ""};
+        }
         return blsctRecoveryData.at(forOutput);
     };
 
