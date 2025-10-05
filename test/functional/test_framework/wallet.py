@@ -32,6 +32,7 @@ from test_framework.messages import (
     CTxIn,
     CTxInWitness,
     CTxOut,
+    uint256_from_str,
 )
 from test_framework.script import (
     CScript,
@@ -107,6 +108,8 @@ class MiniWallet:
         self.rescan_utxos()
 
     def _create_utxo(self, *, txid, value, height, coinbase, confirmations):
+        if isinstance(txid, int):
+            txid = f"{txid:064x}"
         return {"txid": txid, "value": value, "height": height, "coinbase": coinbase, "confirmations": confirmations}
 
     def _bulk_tx(self, tx, target_weight):
@@ -221,11 +224,13 @@ class MiniWallet:
             utxo_filter: Any = filter(lambda utxo: txid == utxo['txid'], self._utxos)
         else:
             utxo_filter = reversed(mature_coins)  # By default the largest utxo
-        if vout is not None:
-            utxo_filter = filter(lambda utxo: vout == utxo['vout'], utxo_filter)
         if confirmed_only:
             utxo_filter = filter(lambda utxo: utxo['confirmations'] > 0, utxo_filter)
-        index = self._utxos.index(next(utxo_filter))
+        try:
+            utxo = next(utxo_filter)
+            index = self._utxos.index(utxo)
+        except StopIteration:
+            raise StopIteration(f"No UTXO found with txid={txid}, confirmed_only={confirmed_only}")
         if mark_as_spent:
             return self._utxos.pop(index)
         else:
@@ -268,7 +273,7 @@ class MiniWallet:
         txid = self.sendrawtransaction(from_node=from_node, tx_hex=tx.serialize().hex())
         return {
             "sent_vout": 1,
-            "txid": txid,
+            "txid": hex(tx.vout[1].hash())[2:],
             "wtxid": tx.getwtxid(),
             "hex": tx.serialize().hex(),
             "tx": tx,
@@ -311,7 +316,11 @@ class MiniWallet:
 
         # create tx
         tx = CTransaction()
-        tx.vin = [CTxIn(COutPoint(type(utxo_to_spend['txid']) == str and int(utxo_to_spend['txid'], 16) or utxo_to_spend['txid']), nSequence=seq) for utxo_to_spend, seq in zip(utxos_to_spend, sequence)]
+        txins = []
+        for utxo_to_spend, seq in zip(utxos_to_spend, sequence):
+            prev_hash = utxo_to_spend['txid'] if isinstance(utxo_to_spend['txid'], int) else int(utxo_to_spend['txid'], 16)
+            txins.append(CTxIn(COutPoint(prev_hash), nSequence=seq))
+        tx.vin = txins
         tx.vout = [CTxOut(amount_per_output, bytearray(self._scriptPubKey)) for _ in range(num_outputs)]
         for i in range(len(tx.vout)):
             tx.vout[i].predicate = random.randbytes(8)

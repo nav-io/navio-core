@@ -1258,7 +1258,7 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
     const CAmount change_amount = result.GetChange(coin_selection_params.min_viable_change, coin_selection_params.m_change_fee);
     if (change_amount > 0) {
         CTxOut newTxOut(change_amount, scriptChange);
-        FastRandomContext rng(true);
+        FastRandomContext rng;
         newTxOut.predicate = blsct::DataPredicate(rng.rand256()).GetVch();
         if (!change_pos) {
             // Insert change txn at random position:

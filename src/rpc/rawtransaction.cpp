@@ -10,6 +10,7 @@
 #include <consensus/validation.h>
 #include <core_io.h>
 #include <index/txindex.h>
+#include <interfaces/wallet.h>
 #include <key_io.h>
 #include <node/blockstorage.h>
 #include <node/coin.h>
@@ -40,6 +41,7 @@
 #include <util/vector.h>
 #include <validation.h>
 #include <validationinterface.h>
+#include <wallet/wallet.h>
 
 #include <numeric>
 #include <stdint.h>
@@ -1954,6 +1956,124 @@ RPCHelpMan descriptorprocesspsbt()
     };
 }
 
+static RPCHelpMan gettxfromoutputhash()
+{
+    return RPCHelpMan{
+        "gettxfromoutputhash",
+        "\nReturns the transaction hash that contains the specified output hash.\n"
+        "\nThis command searches through the blockchain and mempool to find which transaction contains an output with the given hash.\n",
+        {
+            {"outputhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The hash of the output to search for"},
+            {"include_mempool", RPCArg::Type::BOOL, RPCArg::Default{true}, "Include mempool transactions in the search"},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                                              {RPCResult::Type::STR_HEX, "txid", "The transaction hash that contains the output"},
+                                              {RPCResult::Type::NUM, "vout", "The output index within the transaction"},
+                                              {RPCResult::Type::STR_HEX, "blockhash", /*optional=*/true, "The block hash containing the transaction (if confirmed)"},
+                                              {RPCResult::Type::NUM, "confirmations", /*optional=*/true, "The number of confirmations (if confirmed)"},
+                                          }},
+        RPCExamples{HelpExampleCli("gettxfromoutputhash", "\"outputhash\"") + HelpExampleRpc("gettxfromoutputhash", "\"outputhash\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            const NodeContext& node = EnsureAnyNodeContext(request.context);
+            ChainstateManager& chainman = EnsureChainman(node);
+
+            uint256 output_hash = ParseHashV(request.params[0], "outputhash");
+            bool include_mempool = request.params[1].isNull() ? true : request.params[1].get_bool();
+
+            LOCK(cs_main);
+            Chainstate& active_chainstate = chainman.ActiveChainstate();
+
+            // First, search in mempool if requested
+            if (include_mempool && node.mempool) {
+                LOCK(node.mempool->cs);
+                for (const auto& entry : node.mempool->mapTx) {
+                    const CTransaction& tx = *entry.GetSharedTx();
+                    for (size_t i = 0; i < tx.vout.size(); i++) {
+                        if (tx.vout[i].GetHash() == output_hash) {
+                            UniValue result(UniValue::VOBJ);
+                            result.pushKV("txid", tx.GetHash().GetHex());
+                            result.pushKV("vout", (int)i);
+                            result.pushKV("confirmations", 0);
+                            return result;
+                        }
+                    }
+                }
+            }
+
+            // Search in wallet transactions using GetWalletTxFromOutpoint (much more efficient)
+            if (node.wallet_loader) {
+                for (const auto& wallet : node.wallet_loader->getWallets()) {
+                    // Cast to CWallet to access the actual implementation
+                    const wallet::CWallet* cwallet = dynamic_cast<const wallet::CWallet*>(wallet.get());
+                    if (cwallet) {
+                        LOCK(cwallet->cs_wallet);
+
+                        // Try to find the transaction using the output hash as a COutPoint
+                        COutPoint outpoint(output_hash);
+                        auto wallet_tx = cwallet->GetWalletTxFromOutpoint(outpoint);
+                        if (wallet_tx) {
+                            // Find the output index within the transaction
+                            int output_index = wallet_tx->GetOutputIndexFromHash(outpoint);
+                            if (output_index >= 0) {
+                                UniValue result(UniValue::VOBJ);
+                                result.pushKV("txid", wallet_tx->GetHash().GetHex());
+                                result.pushKV("vout", output_index);
+
+                                // Determine if confirmed and get block info
+                                uint256 block_hash = TxStateSerializedBlockHash<wallet::TxState>(wallet_tx->m_state);
+                                if (block_hash.IsNull()) {
+                                    result.pushKV("confirmations", 0);
+                                } else {
+                                    const CBlockIndex* pindex = chainman.m_blockman.LookupBlockIndex(block_hash);
+                                    if (pindex && active_chainstate.m_chain.Contains(pindex)) {
+                                        result.pushKV("blockhash", block_hash.GetHex());
+                                        result.pushKV("confirmations", 1 + active_chainstate.m_chain.Height() - pindex->nHeight);
+                                    } else {
+                                        result.pushKV("confirmations", 0);
+                                    }
+                                }
+                                return result;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback: Search in blockchain using txindex if available
+            if (g_txindex) {
+                g_txindex->BlockUntilSyncedToCurrentChain();
+
+                // We need to iterate through all blocks to find the transaction
+                // This is expensive but necessary since there's no reverse index
+                const CBlockIndex* pindex = active_chainstate.m_chain.Tip();
+                while (pindex) {
+                    CBlock block;
+                    if (chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
+                        for (const auto& tx : block.vtx) {
+                            for (size_t i = 0; i < tx->vout.size(); i++) {
+                                if (tx->vout[i].GetHash() == output_hash) {
+                                    UniValue result(UniValue::VOBJ);
+                                    result.pushKV("txid", tx->GetHash().GetHex());
+                                    result.pushKV("vout", (int)i);
+                                    result.pushKV("blockhash", pindex->GetBlockHash().GetHex());
+                                    result.pushKV("confirmations", 1 + active_chainstate.m_chain.Height() - pindex->nHeight);
+                                    return result;
+                                }
+                            }
+                        }
+                    }
+                    pindex = pindex->pprev;
+                }
+            } else {
+                throw JSONRPCError(RPC_MISC_ERROR, "Transaction index not available. Use -txindex to enable blockchain transaction queries.");
+            }
+
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Output hash not found in blockchain or mempool");
+        },
+    };
+}
+
 void RegisterRawTransactionRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -1972,6 +2092,7 @@ void RegisterRawTransactionRPCCommands(CRPCTable& t)
         {"rawtransactions", &descriptorprocesspsbt},
         {"rawtransactions", &joinpsbts},
         {"rawtransactions", &analyzepsbt},
+        {"rawtransactions", &gettxfromoutputhash},
     };
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);

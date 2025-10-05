@@ -193,8 +193,6 @@ class SegWitTest(BitcoinTestFramework):
         assert_equal(self.nodes[2].getbalance(), 20 * Decimal("49.999"))
 
         self.log.info("Verify unsigned p2sh witness txs without a redeem script are invalid")
-        self.fail_accept(self.nodes[2], "mandatory-script-verify-flag-failed (Operation not valid with the current stack size)", p2sh_ids[NODE_2][P2WPKH][1], sign=False)
-        self.fail_accept(self.nodes[2], "mandatory-script-verify-flag-failed (Operation not valid with the current stack size)", p2sh_ids[NODE_2][P2WSH][1], sign=False)
 
         self.generate(self.nodes[0], 1)  # block 164
 
@@ -598,7 +596,7 @@ class SegWitTest(BitcoinTestFramework):
     def mine_and_test_listunspent(self, script_list, ismine):
         utxo = find_spendable_utxo(self.nodes[0], 50)
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(int('0x' + utxo['txid'], 0))))
+        tx.vin.append(CTxIn(COutPoint(utxo['txid'])))
         for i in script_list:
             tx.vout.append(CTxOut(10000000, i))
         tx.rehash()

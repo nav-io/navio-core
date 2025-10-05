@@ -424,8 +424,7 @@ RPCHelpMan listlockunspent()
                     {
                         {RPCResult::Type::OBJ, "", "",
                         {
-                            {RPCResult::Type::STR_HEX, "txid", "The transaction id locked"},
-                            {RPCResult::Type::NUM, "vout", "The vout value"},
+                            {RPCResult::Type::STR_HEX, "txid", "The identifier of the locked output"},
                         }},
                     }
                 },

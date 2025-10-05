@@ -137,8 +137,8 @@ class CoinStatsIndexTest(BitcoinTestFramework):
             assert_equal(res5['block_info'], {
                 'unspendable': 0,
                 'prevout_spent': 50,
-                'new_outputs_ex_coinbase': Decimal('49.99968800'),
-                'coinbase': Decimal('50.00031200'),
+                'new_outputs_ex_coinbase': Decimal('49.99962500'),
+                'coinbase': Decimal('50.00037500'),
                 'unspendables': {
                     'genesis_block': 0,
                     'bip30': 0,
@@ -156,7 +156,7 @@ class CoinStatsIndexTest(BitcoinTestFramework):
         )
 
         # Find the right position of the 21 BTC output
-        tx1_out_21 = self.wallet.get_utxo(txid=tx1["txid"], vout=tx1["sent_vout"])
+        tx1_out_21 = self.wallet.get_utxo(txid=tx1["txid"])
 
         # Generate and send another tx with an OP_RETURN output (which is unspendable)
         tx2 = self.wallet.create_self_transfer(utxo_to_spend=tx1_out_21)['tx']

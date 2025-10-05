@@ -329,7 +329,9 @@ void Chainstate::MaybeUpdateMempoolForReorg(
     // previously-confirmed transactions back to the mempool.
     // UpdateTransactionsFromBlock finds descendants of any transactions in
     // the disconnectpool that were added back and cleans up the mempool state.
-    m_mempool->UpdateTransactionsFromBlock(vHashUpdate);
+    std::set<uint256> unique_hashes(vHashUpdate.begin(), vHashUpdate.end());
+    std::vector<uint256> unique_vec(unique_hashes.begin(), unique_hashes.end());
+    m_mempool->UpdateTransactionsFromBlock(unique_vec, fAddToMempool);
 
     // Predicate to use for filtering transactions in removeForReorg.
     // Checks whether the transaction is still final and, if it spends a coinbase output, mature.
@@ -3334,7 +3336,7 @@ void Chainstate::PruneBlockIndexCandidates() {
  *
  * @returns true unless a system error occurred
  */
-bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex* pindexMostWork, const std::shared_ptr<const CBlock>& pblock, bool& fInvalidFound, ConnectTrace& connectTrace)
+bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex* pindexMostWork, const std::shared_ptr<const CBlock>& pblock, bool& fInvalidFound, ConnectTrace& connectTrace, DisconnectedBlockTransactions& disconnectpool, bool& fBlocksDisconnectedOut)
 {
     AssertLockHeld(cs_main);
     if (m_mempool) AssertLockHeld(m_mempool->cs);
@@ -3344,7 +3346,6 @@ bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex*
 
     // Disconnect active blocks which are no longer in the best chain.
     bool fBlocksDisconnected = false;
-    DisconnectedBlockTransactions disconnectpool{MAX_DISCONNECTED_TX_POOL_BYTES};
     while (m_chain.Tip() && m_chain.Tip() != pindexFork) {
         if (!DisconnectTip(state, &disconnectpool)) {
             // This is likely a fatal error, but keep the mempool consistent,
@@ -3408,11 +3409,12 @@ bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex*
     }
 
     if (fBlocksDisconnected) {
-        // If any blocks were disconnected, disconnectpool may be non empty.  Add
-        // any disconnected transactions back to the mempool.
-        MaybeUpdateMempoolForReorg(disconnectpool, true);
+        fBlocksDisconnectedOut = true;
     }
-    if (m_mempool) m_mempool->check(this->CoinsTip(), this->m_chain.Height() + 1);
+    if (m_mempool) {
+        LimitMempoolSize(*m_mempool, this->CoinsTip());
+        m_mempool->check(this->CoinsTip(), this->m_chain.Height() + 1);
+    }
 
     CheckForkWarningConditions();
 
@@ -3484,6 +3486,8 @@ bool Chainstate::ActivateBestChain(BlockValidationState& state, std::shared_ptr<
     CBlockIndex *pindexMostWork = nullptr;
     CBlockIndex *pindexNewTip = nullptr;
     bool exited_ibd{false};
+    DisconnectedBlockTransactions disconnectpool{MAX_DISCONNECTED_TX_POOL_BYTES};
+    bool blocks_disconnected = false;
     do {
         // Block until the validation queue drains. This should largely
         // never happen in normal operation, however may happen during
@@ -3516,11 +3520,15 @@ bool Chainstate::ActivateBestChain(BlockValidationState& state, std::shared_ptr<
 
                 bool fInvalidFound = false;
                 std::shared_ptr<const CBlock> nullBlockPtr;
-                if (!ActivateBestChainStep(state, pindexMostWork, pblock && pblock->GetHash() == pindexMostWork->GetBlockHash() ? pblock : nullBlockPtr, fInvalidFound, connectTrace)) {
+                bool step_disconnected = false;
+                if (!ActivateBestChainStep(state, pindexMostWork, pblock && pblock->GetHash() == pindexMostWork->GetBlockHash() ? pblock : nullBlockPtr, fInvalidFound, connectTrace, disconnectpool, step_disconnected)) {
                     // A system error occurred
                     return false;
                 }
                 blocks_connected = true;
+                if (step_disconnected) {
+                    blocks_disconnected = true;
+                }
 
                 if (fInvalidFound) {
                     // Wipe cache, we may need another branch now.
@@ -3543,6 +3551,12 @@ bool Chainstate::ActivateBestChain(BlockValidationState& state, std::shared_ptr<
                 }
             } while (!m_chain.Tip() || (starting_tip && CBlockIndexWorkComparator()(m_chain.Tip(), starting_tip)));
             if (!blocks_connected) return true;
+
+            if (blocks_disconnected) {
+                // If any blocks were disconnected during the step(s), release them to the mempool now.
+                LogPrint(BCLog::MEMPOOL, "Reorg flushing %u disconnected txs\n", disconnectpool.size());
+                MaybeUpdateMempoolForReorg(disconnectpool, true);
+            }
 
             const CBlockIndex* pindexFork = m_chain.FindFork(starting_tip);
             bool still_in_ibd = m_chainman.IsInitialBlockDownload();

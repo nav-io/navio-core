@@ -97,7 +97,7 @@ class BIP68Test(BitcoinTestFramework):
         # If sequence locks were used, this would require 1 block for the
         # input to mature.
         sequence_value = SEQUENCE_LOCKTIME_DISABLE_FLAG | 1
-        tx1.vin = [CTxIn(COutPoint(int(utxo["txid"])), nSequence=sequence_value)]
+        tx1.vin = [CTxIn(COutPoint(utxo["txid"]), nSequence=sequence_value)]
         tx1.vout = [CTxOut(value, SCRIPT_W0_SH_OP_TRUE)]
 
         self.wallet.sign_tx(tx=tx1)
@@ -196,7 +196,7 @@ class BIP68Test(BitcoinTestFramework):
                         elif (not input_will_pass and time_delta <= cur_time - orig_time):
                             sequence_value = ((cur_time - orig_time) >> SEQUENCE_LOCKTIME_GRANULARITY)+1
                         sequence_value |= SEQUENCE_LOCKTIME_TYPE_FLAG
-                tx.vin.append(CTxIn(COutPoint(int(utxos[j]["txid"], 16)), nSequence=sequence_value))
+                tx.vin.append(CTxIn(COutPoint(utxos[j]["txid"]), nSequence=sequence_value))
                 value += utxos[j]["value"]*COIN
             # Overestimate the size of the tx - signatures should be less than 120 bytes, and leave 50 for the output
             tx_size = len(tx.serialize().hex())//2 + 120*num_inputs + 50
@@ -306,7 +306,7 @@ class BIP68Test(BitcoinTestFramework):
         assert tx5.hash not in self.nodes[0].getrawmempool()
 
         utxo = self.wallet.get_utxo()
-        tx5.vin.append(CTxIn(COutPoint(int(utxo["txid"], 16)), nSequence=1))
+        tx5.vin.append(CTxIn(COutPoint(utxo["txid"]), nSequence=1))
         tx5.vout[0].nValue += int(utxo["value"]*COIN)
         self.wallet.sign_tx(tx=tx5)
 

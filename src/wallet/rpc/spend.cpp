@@ -885,7 +885,6 @@ RPCHelpMan signrawtransactionwithwallet()
                                               {RPCResult::Type::ARR, "errors", /*optional=*/true, "Script verification errors (if there are any)", {
                                                                                                                                                        {RPCResult::Type::OBJ, "", "", {
                                                                                                                                                                                           {RPCResult::Type::STR_HEX, "txid", "The hash of the referenced, previous transaction"},
-                                                                                                                                                                                          {RPCResult::Type::NUM, "vout", "The index of the output to spent and used as input"},
                                                                                                                                                                                           {RPCResult::Type::ARR, "witness", "", {
                                                                                                                                                                                                                                     {RPCResult::Type::STR_HEX, "witness", ""},
                                                                                                                                                                                                                                 }},
@@ -1201,7 +1200,6 @@ RPCHelpMan send()
                                        "Specify inputs instead of adding them automatically. A JSON array of JSON objects",
                                        {
                                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
-                                           {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
                                            {"sequence", RPCArg::Type::NUM, RPCArg::Optional::NO, "The sequence number"},
                                            {"weight", RPCArg::Type::NUM, RPCArg::DefaultHint{"Calculated from wallet and solving data"}, "The maximum weight for this input, "
                                                                                                                                          "including the weight of the outpoint and sequence number. "

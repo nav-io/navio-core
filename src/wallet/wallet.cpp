@@ -791,10 +791,10 @@ bool CWallet::IsSpent(const COutPoint& outpoint) const
 
     for (TxSpends::const_iterator it = range.first; it != range.second; ++it) {
         const uint256& wtxid = it->second;
-        const auto mit = mapWallet.find(wtxid);
-        if (mit != mapWallet.end()) {
-            int depth = GetTxDepthInMainChain(mit->second);
-            if (depth > 0 || (depth == 0 && !mit->second.isAbandoned()))
+        const auto wtx = GetWalletTxFromOutpoint(outpoint);
+        if (wtx != nullptr) {
+            int depth = GetTxDepthInMainChain(*wtx);
+            if (depth > 0 || (depth == 0 && !wtx->isAbandoned()))
                 return true; // Spent
         }
     }
@@ -1264,9 +1264,12 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
                 COutPoint outpoint(desc_tx->tx->vout[i].GetHash());
                 std::pair<TxSpends::const_iterator, TxSpends::const_iterator> range = mapTxSpends.equal_range(outpoint);
                 for (TxSpends::const_iterator it = range.first; it != range.second; ++it) {
-                    const auto wit = mapWallet.find(it->second);
-                    if (wit != mapWallet.end()) {
-                        txs.push_back(&wit->second);
+                    const auto wtx = GetWalletTxFromOutpoint(outpoint);
+                    if (wtx != nullptr) {
+                        auto mit = mapWallet.find(wtx->GetHash());
+                        if (mit != mapWallet.end()) {
+                            txs.push_back(&mit->second);
+                        }
                     }
                 }
             }
@@ -2410,10 +2413,9 @@ TransactionError CWallet::FillPSBT(PartiallySignedTransaction& psbtx, bool& comp
 
         // If we have no utxo, grab it from the wallet.
         if (!input.non_witness_utxo) {
-            const uint256& txhash = txin.prevout.hash;
-            const auto it = mapWallet.find(txhash);
-            if (it != mapWallet.end()) {
-                const CWalletTx& wtx = it->second;
+            auto wtxhash = GetWalletTxFromOutpoint(txin.prevout);
+            if (wtxhash != nullptr) {
+                const CWalletTx& wtx = *wtxhash;
                 // We only need the non_witness_utxo, which is a superset of the witness_utxo.
                 //   The signing code will switch to the smaller witness_utxo if this is ok.
                 input.non_witness_utxo = wtx.tx;

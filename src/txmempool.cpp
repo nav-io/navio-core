@@ -133,7 +133,7 @@ void CTxMemPool::UpdateForDescendants(txiter updateIt, cacheMap& cachedDescendan
     mapTx.modify(updateIt, [=](CTxMemPoolEntry& e) { e.UpdateDescendantState(modifySize, modifyFee, modifyCount); });
 }
 
-void CTxMemPool::UpdateTransactionsFromBlock(const std::vector<uint256>& vHashesToUpdate)
+void CTxMemPool::UpdateTransactionsFromBlock(const std::vector<uint256>& vHashesToUpdate, bool skip_descendant_limits)
 {
     AssertLockHeld(cs);
     // For each entry in vHashesToUpdate, store the set of in-mempool, but not
@@ -159,35 +159,35 @@ void CTxMemPool::UpdateTransactionsFromBlock(const std::vector<uint256>& vHashes
             continue;
         }
 
-        {
-            WITH_FRESH_EPOCH(m_epoch);
-            for (const auto& out : it->GetTx().vout) {
-                const auto outHash = out.GetHash();
-                // Find children by looking up the output hash in mapOutputToTx
-                auto output_iter = mapOutputToTx.find(outHash);
-                if (output_iter != mapOutputToTx.end()) {
-                    // Found a transaction that spends this output
-                    const uint256& childHash = output_iter->second;
-                    txiter childIter = mapTx.find(childHash);
-                    if (childIter != mapTx.end()) {
-                        // We can skip updating entries we've encountered before or that
-                        // are in the block (which are already accounted for).
-                        if (!visited(childIter) && !setAlreadyIncluded.count(childHash)) {
-                            UpdateChild(it, childIter, true);
-                            UpdateParent(childIter, it, true);
-                        }
+        WITH_FRESH_EPOCH(m_epoch);
+        for (const auto& out : it->GetTx().vout) {
+            const auto outHash = out.GetHash();
+            // Find children by looking up the output hash in mapOutputToTx
+            auto output_iter = mapOutputToTx.find(outHash);
+            if (output_iter != mapOutputToTx.end()) {
+                // Found a transaction that spends this output
+                const uint256& childHash = output_iter->second;
+                txiter childIter = mapTx.find(childHash);
+                if (childIter != mapTx.end()) {
+                    // We can skip updating entries we've encountered before or that
+                    // are in the block (which are already accounted for).
+                    if (!visited(childIter) && !setAlreadyIncluded.count(childHash)) {
+                        UpdateChild(it, childIter, true);
+                        UpdateParent(childIter, it, true);
                     }
                 }
-                UpdateForDescendants(it, mapMemPoolDescendantsToUpdate, setAlreadyIncluded, descendants_to_remove);
             }
         }
+        UpdateForDescendants(it, mapMemPoolDescendantsToUpdate, setAlreadyIncluded, descendants_to_remove);
     }
 
-    for (const auto& txid : descendants_to_remove) {
-        // This txid may have been removed already in a prior call to removeRecursive.
-        // Therefore we ensure it is not yet removed already.
-        if (const std::optional<txiter> txiter = GetIter(txid)) {
-            removeRecursive((*txiter)->GetTx(), MemPoolRemovalReason::SIZELIMIT);
+    if (!skip_descendant_limits) {
+        for (const auto& txid : descendants_to_remove) {
+            // This txid may have been removed already in a prior call to removeRecursive.
+            // Therefore we ensure it is not yet removed already.
+            if (const std::optional<txiter> txiter = GetIter(txid)) {
+                removeRecursive((*txiter)->GetTx(), MemPoolRemovalReason::SIZELIMIT);
+            }
         }
     }
 }
@@ -1421,4 +1421,3 @@ std::vector<CTxMemPool::txiter> CTxMemPool::GatherClusters(const std::vector<uin
     }
     return clustered_txs;
 }
-

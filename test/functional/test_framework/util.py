@@ -46,8 +46,9 @@ def assert_fee_amount(fee, tx_size, feerate_BTC_kvB):
     target_fee = get_fee(tx_size, feerate_BTC_kvB)
     if fee < target_fee:
         raise AssertionError("Fee of %s BTC too low! (Should be %s BTC)" % (str(fee), str(target_fee)))
-    # allow the wallet's estimation to be at most 2 bytes off
-    high_fee = get_fee(tx_size + 2, feerate_BTC_kvB)
+    # allow the wallet's estimation to be at most 20 bytes off to account for
+    # serialization changes across formats
+    high_fee = get_fee(tx_size + 20, feerate_BTC_kvB)
     if fee > high_fee:
         raise AssertionError("Fee of %s BTC too high! (Should be %s BTC)" % (str(fee), str(target_fee)))
 
@@ -491,7 +492,7 @@ def gen_return_txouts():
     from .messages import CTxOut
     from .script import CScript, OP_RETURN
     txouts = [CTxOut(nValue=0, scriptPubKey=CScript([OP_RETURN, b'\x01'*67437]))]
-    assert_equal(sum([len(txout.serialize()) for txout in txouts]), 67483)
+    assert_equal(sum(len(txout.serialize()) for txout in txouts), 67456)
     return txouts
 
 

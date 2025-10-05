@@ -59,7 +59,7 @@ class BytesPerSigOpTest(BitcoinTestFramework):
 
         # create spending transaction
         tx = CTransaction()
-        tx.vin = [CTxIn(COutPoint(fund["tx"]["vout"][fund["sent_vout"]].hash()))]
+        tx.vin = [CTxIn(COutPoint(fund["tx"].vout[fund["sent_vout"]].hash()))]
         tx.wit.vtxinwit = [CTxInWitness()]
         tx.wit.vtxinwit[0].scriptWitness.stack = [bytes(witness_script)]
         tx.vout = [CTxOut(500000, output_script)]

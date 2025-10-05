@@ -102,7 +102,7 @@ void AddOutputs(CMutableTransaction& rawTx, const UniValue& outputs_in)
             std::vector<unsigned char> data = ParseHexV(outputs[name_].getValStr(), "Data");
 
             CTxOut out(0, CScript() << OP_RETURN << data);
-            FastRandomContext rng(true);
+            FastRandomContext rng;
             out.predicate = blsct::DataPredicate(rng.rand256()).GetVch();
             rawTx.vout.push_back(out);
         } else {
@@ -119,6 +119,8 @@ void AddOutputs(CMutableTransaction& rawTx, const UniValue& outputs_in)
             CAmount nAmount = AmountFromValue(outputs[name_]);
 
             CTxOut out(nAmount, scriptPubKey);
+            FastRandomContext rng;
+            out.predicate = blsct::DataPredicate(rng.rand256()).GetVch();
             rawTx.vout.push_back(out);
         }
     }

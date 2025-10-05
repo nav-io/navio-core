@@ -88,12 +88,12 @@ class WalletTest(BitcoinTestFramework):
         assert_equal(len(self.nodes[2].listunspent()), 0)
 
         self.log.info("Test gettxout")
-        confirmed_txid = utxos[0]["txid"]
+        confirmed_outid = utxos[0]["txid"]
         # First, outputs that are unspent both in the chain and in the
         # mempool should appear with or without include_mempool
-        txout = self.nodes[0].gettxout(txid=confirmed_txid, include_mempool=False)
+        txout = self.nodes[0].gettxout(txid=confirmed_outid, include_mempool=False)
         assert_equal(txout['value'], 50)
-        txout = self.nodes[0].gettxout(txid=confirmed_txid, include_mempool=True)
+        txout = self.nodes[0].gettxout(txid=confirmed_outid, include_mempool=True)
         assert_equal(txout['value'], 50)
 
         # Send 21 BTC from 0 to 2 using sendtoaddress call.
@@ -103,22 +103,21 @@ class WalletTest(BitcoinTestFramework):
         self.log.info("Test gettxout (second part)")
         # utxo spent in mempool should be visible if you exclude mempool
         # but invisible if you include mempool
-        txout = self.nodes[0].gettxout(confirmed_txid, False)
+        txout = self.nodes[0].gettxout(confirmed_outid, False)
         assert_equal(txout['value'], 50)
-        txout = self.nodes[0].gettxout(confirmed_txid)  # by default include_mempool=True
+        txout = self.nodes[0].gettxout(confirmed_outid)  # by default include_mempool=True
         assert txout is None
-        txout = self.nodes[0].gettxout(confirmed_txid, True)
+        txout = self.nodes[0].gettxout(confirmed_outid, True)
         assert txout is None
         # new utxo from mempool should be invisible if you exclude mempool
         # but visible if you include mempool
-        txout = self.nodes[0].gettxout(mempool_txid, False)
-        assert txout is None
-        txout1 = self.nodes[0].gettxout(mempool_txid, True)
-        txout2 = self.nodes[0].gettxout(mempool_txid, True)
-        # note the mempool tx will have randomly assigned indices
-        # but 10 will go to node2 and the rest will go to node0
+        raw_mempool_tx = self.nodes[0].decoderawtransaction(self.nodes[0].getrawtransaction(mempool_txid))
+        out_hashes = [vout['hash'] for vout in raw_mempool_tx['vout']]
+        for out_hash in out_hashes:
+            assert self.nodes[0].gettxout(out_hash, False) is None
+        txout_values = [self.nodes[0].gettxout(out_hash, True)['value'] for out_hash in out_hashes]
         balance = self.nodes[0].getbalance()
-        assert_equal(set([txout1['value'], txout2['value']]), set([10, balance]))
+        assert_equal(set(txout_values), set([10, balance]))
         walletinfo = self.nodes[0].getwalletinfo()
         assert_equal(walletinfo['immature_balance'], 0)
 
@@ -127,7 +126,7 @@ class WalletTest(BitcoinTestFramework):
 
         # Exercise locking of unspent outputs
         unspent_0 = self.nodes[2].listunspent()[0]
-        unspent_0 = {"txid": unspent_0["txid"], "vout": unspent_0["vout"]}
+        unspent_0 = {"txid": unspent_0["txid"]}
         # Trying to unlock an output which isn't locked should error
         assert_raises_rpc_error(-8, "Invalid parameter, expected locked output", self.nodes[2].lockunspent, True, [unspent_0])
 
@@ -173,16 +172,13 @@ class WalletTest(BitcoinTestFramework):
 
         assert_raises_rpc_error(-8, "txid must be of length 64 (not 34, for '0000000000000000000000000000000000')",
                                 self.nodes[2].lockunspent, False,
-                                [{"txid": "0000000000000000000000000000000000", "vout": 0}])
+                                [{"txid": "0000000000000000000000000000000000"}])
         assert_raises_rpc_error(-8, "txid must be hexadecimal string (not 'ZZZ0000000000000000000000000000000000000000000000000000000000000')",
                                 self.nodes[2].lockunspent, False,
-                                [{"txid": "ZZZ0000000000000000000000000000000000000000000000000000000000000", "vout": 0}])
+                                [{"txid": "ZZZ0000000000000000000000000000000000000000000000000000000000000"}])
         assert_raises_rpc_error(-8, "Invalid parameter, unknown transaction",
                                 self.nodes[2].lockunspent, False,
-                                [{"txid": "0000000000000000000000000000000000000000000000000000000000000000", "vout": 0}])
-        assert_raises_rpc_error(-8, "Invalid parameter, vout index out of bounds",
-                                self.nodes[2].lockunspent, False,
-                                [{"txid": unspent_0["txid"], "vout": 999}])
+                                [{"txid": "0000000000000000000000000000000000000000000000000000000000000000"}])
 
         # The lock on a manually selected output is ignored
         unspent_0 = self.nodes[1].listunspent()[0]
@@ -220,7 +216,7 @@ class WalletTest(BitcoinTestFramework):
         for utxo in node0utxos:
             inputs = []
             outputs = {}
-            inputs.append({"txid": utxo["txid"], "vout": utxo["vout"]})
+            inputs.append({"txid": utxo["txid"]})
             outputs[self.nodes[2].getnewaddress()] = utxo["amount"] - 3
             raw_tx = self.nodes[0].createrawtransaction(inputs, outputs)
             txns_to_send.append(self.nodes[0].signrawtransactionwithwallet(raw_tx))
@@ -236,7 +232,7 @@ class WalletTest(BitcoinTestFramework):
         assert_equal(self.nodes[2].getbalance(), 94)
 
         # Verify that a spent output cannot be locked anymore
-        spent_0 = {"txid": node0utxos[0]["txid"], "vout": node0utxos[0]["vout"]}
+        spent_0 = {"txid": node0utxos[0]["txid"]}
         assert_raises_rpc_error(-8, "Invalid parameter, expected unspent output", self.nodes[0].lockunspent, False, [spent_0])
 
         # Send 10 BTC normal
@@ -352,7 +348,7 @@ class WalletTest(BitcoinTestFramework):
         # 3. sign and send
         # 4. check if recipient (node0) can list the zero value tx
         usp = self.nodes[1].listunspent(query_options={'minimumAmount': '49.998'})[0]
-        inputs = [{"txid": usp['txid'], "vout": usp['vout']}]
+        inputs = [{"txid": usp['txid']}]
         outputs = {self.nodes[1].getnewaddress(): 49.998, self.nodes[0].getnewaddress(): 11.11}
 
         raw_tx = self.nodes[1].createrawtransaction(inputs, outputs).replace("c0833842", "00000000")  # replace 11.11 with 0.0 (int32)
@@ -364,13 +360,9 @@ class WalletTest(BitcoinTestFramework):
         self.sync_all()
         self.generate(self.nodes[1], 1)  # mine a block
 
-        unspent_txs = self.nodes[0].listunspent()  # zero value tx must be in listunspents output
-        found = False
-        for uTx in unspent_txs:
-            if uTx['txid'] == zero_value_txid:
-                found = True
-                assert_equal(uTx['amount'], Decimal('0'))
-        assert found
+        unspent_txs = self.nodes[0].listunspent()
+        # Zero-value outputs are ignored by listunspent; ensure it is not reported.
+        assert all(uTx['txid'] != zero_value_txid for uTx in unspent_txs)
 
         self.log.info("Test -walletbroadcast")
         self.stop_nodes()
@@ -676,8 +668,7 @@ class WalletTest(BitcoinTestFramework):
         expected_receive_vout = {"label":    "baz",
                                  "address":  baz["address"],
                                  "amount":   baz["amount"],
-                                 "category": baz["category"],
-                                 "vout":     baz["vout"]}
+                                 "category": baz["category"]}
         expected_fields = frozenset({'amount', 'bip125-replaceable', 'confirmations', 'details', 'fee',
                                      'hex', 'lastprocessedblock', 'time', 'timereceived', 'trusted', 'txid', 'wtxid', 'walletconflicts'})
         verbose_field = "decoded"
