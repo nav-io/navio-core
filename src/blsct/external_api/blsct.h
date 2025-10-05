@@ -460,11 +460,11 @@ bool get_tx_in_staked_commitment(const BlsctTxIn* tx_in);
 bool get_tx_in_rbf(const BlsctTxIn* tx_in);
 
 // ctx in
-const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* ctx_in);
-uint32_t get_ctx_in_sequence(const BlsctCTxIn* ctx_in);
-const BlsctScript* get_ctx_in_script_witness(const BlsctCTxIn* ctx_in);
-const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* ctx_in);
-uint32_t get_ctx_in_prev_out_n(const BlsctCTxIn* ctx_in);
+const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* blsct_ctx_in);
+uint32_t get_ctx_in_sequence(const BlsctCTxIn* blsct_ctx_in);
+const BlsctScript* get_ctx_in_script_witness(const BlsctCTxIn* blsct_ctx_in);
+const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* blsct_ctx_in);
+uint32_t get_ctx_in_prev_out_n(const BlsctCTxIn* blsct_ctx_in);
 
 // tx out
 
@@ -487,17 +487,17 @@ uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
 
 // ctx out
 uint64_t get_ctx_out_value(const BlsctCTxOut* ctx_out);
-const BlsctScript* get_ctx_out_script_pub_key(const BlsctCTxOut* ctx_out);
-const BlsctScript* get_ctx_out_script_pubkey(const BlsctCTxOut* ctx_out);
-const BlsctTokenId* get_ctx_out_token_id(const BlsctCTxOut* ctx_out);
-const BlsctRetVal* get_ctx_out_vector_predicate(const BlsctCTxOut* ctx_out);
+const BlsctScript* get_ctx_out_script_pub_key(const BlsctCTxOut* blsct_ctx_out);
+const BlsctScript* get_ctx_out_script_pubkey(const BlsctCTxOut* blsct_ctx_out);
+const BlsctTokenId* get_ctx_out_token_id(const BlsctCTxOut* blsct_ctx_out);
+const BlsctRetVal* get_ctx_out_vector_predicate(const BlsctCTxOut* blsct_ctx_out);
 
 // ctx out blsct data
-const BlsctPoint* get_ctx_out_spending_key(const BlsctCTxOut* ctx_out);
-const BlsctPoint* get_ctx_out_ephemeral_key(const BlsctCTxOut* ctx_out);
-const BlsctPoint* get_ctx_out_blinding_key(const BlsctCTxOut* ctx_out);
-const BlsctRetVal* get_ctx_out_range_proof(const BlsctCTxOut* ctx_out);
-uint16_t get_ctx_out_view_tag(const BlsctCTxOut* ctx_out);
+const BlsctPoint* get_ctx_out_spending_key(const BlsctCTxOut* blsct_ctx_out);
+const BlsctPoint* get_ctx_out_ephemeral_key(const BlsctCTxOut* blsct_jctx_out);
+const BlsctPoint* get_ctx_out_blinding_key(const BlsctCTxOut* blsct_ctx_out);
+const BlsctRetVal* get_ctx_out_range_proof(const BlsctCTxOut* blsct_ctx_out);
+uint16_t get_ctx_out_view_tag(const BlsctCTxOut* blsct_ctx_out);
 
 // ctx
 
@@ -522,19 +522,19 @@ const BlsctCTxOuts* get_ctx_outs(
     const size_t ser_ctx_size
 );
 
-size_t get_ctx_ins_size(const BlsctCTxIns* ctx_ins);
-size_t get_ctx_outs_size(const BlsctCTxOuts* ctx_outs);
+size_t get_ctx_ins_size(const BlsctCTxIns* blsct_ctx_ins);
+size_t get_ctx_outs_size(const BlsctCTxOuts* blsct_ctx_outs);
 
-void delete_ctx_ins(const BlsctCTxIns* ctx_ins);
-void delete_ctx_outs(const BlsctCTxOuts* ctx_outs);
+void delete_ctx_ins(const BlsctCTxIns* blsct_ctx_ins);
+void delete_ctx_outs(const BlsctCTxOuts* blsct_ctx_outs);
 
-const BlsctRetVal* get_ctx_in(
-    const BlsctCTxIns* ctx_ins,
+const BlsctRetVal* get_ctx_in_at(
+    const BlsctCTxIns* blsct_ctx_ins,
     const size_t i
 );
 
-const BlsctRetVal* get_ctx_out(
-    const BlsctCTxOuts* ctx_outs,
+const BlsctRetVal* get_ctx_out_at(
+    const BlsctCTxOuts* blsct_ctx_outs,
     const size_t i
 );
 

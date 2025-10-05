@@ -1221,32 +1221,32 @@ const BlsctCTxOuts* get_ctx_outs(
     }
 }
 
-size_t get_ctx_ins_size(const BlsctCTxIns* ctx_ins) {
-    return ctx_ins->vec.size();
+size_t get_ctx_ins_size(const BlsctCTxIns* blsct_ctx_ins) {
+    return blsct_ctx_ins->vec.size();
 }
 
-size_t get_ctx_outs_size(const BlsctCTxOuts* ctx_outs) {
-    return ctx_outs->vec.size();
+size_t get_ctx_outs_size(const BlsctCTxOuts* blsct_ctx_outs) {
+    return blsct_ctx_outs->vec.size();
 }
 
-void delete_ctx_ins(const BlsctCTxIns* ctx_ins) {
-    delete ctx_ins;
+void delete_ctx_ins(const BlsctCTxIns* blsct_ctx_ins) {
+    delete blsct_ctx_ins;
 }
 
-void delete_ctx_outs(const BlsctCTxIns* ctx_outs) {
-    delete ctx_outs;
+void delete_ctx_outs(const BlsctCTxIns* blsct_ctx_outs) {
+    delete blsct_ctx_outs;
 }
 
-const BlsctRetVal* get_ctx_in(const BlsctCTxIns* ctx_ins, const size_t i) {
-    auto ctx_in = &ctx_ins->vec.at(i);
+const BlsctRetVal* get_ctx_in_at(const BlsctCTxIns* blsct_ctx_ins, const size_t i) {
+    auto ctx_in = &blsct_ctx_ins->vec.at(i);
     auto ctx_in_size = sizeof(*ctx_in);
     auto ctx_in_copy = static_cast<CTxIn*>(malloc(ctx_in_size));
     std::memcpy(ctx_in_copy, ctx_in, ctx_in_size);
     return succ(ctx_in_copy, ctx_in_size);
 }
 
-const BlsctRetVal* get_ctx_out(const BlsctCTxOuts* ctx_outs, const size_t i) {
-    auto ctx_out = &ctx_outs->vec.at(i);
+const BlsctRetVal* get_ctx_out_at(const BlsctCTxOuts* blsct_ctx_outs, const size_t i) {
+    auto ctx_out = &blsct_ctx_outs->vec.at(i);
     auto ctx_out_size = sizeof(*ctx_out);
     auto ctx_out_copy = static_cast<BlsctCTxOut*>(malloc(ctx_out_size));
     std::memcpy(ctx_out_copy, ctx_out, ctx_out_size);
