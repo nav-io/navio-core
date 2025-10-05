@@ -285,8 +285,10 @@ typedef struct {
     uint64_t min_stake;
 } BlsctTxOut;
 
-typedef struct CTxIns CTxIns;
-typedef struct CTxOuts CTxOuts;
+typedef struct BlsctCTxIns BlsctCTxIns;
+typedef struct BlsctCTxOuts BlsctCTxOuts;
+typedef struct BlsctCTxIn BlsctCTxIn;
+typedef struct BlsctCTxOut BlsctCTxOut;
 
 // memory disposition
 void free_obj(void* x);
@@ -458,11 +460,11 @@ bool get_tx_in_staked_commitment(const BlsctTxIn* tx_in);
 bool get_tx_in_rbf(const BlsctTxIn* tx_in);
 
 // ctx in
-const BlsctScript* get_ctx_in_script_sig(const CTxIn* ctx_in);
-uint32_t get_ctx_in_sequence(const CTxIn* ctx_in);
-const BlsctScript* get_ctx_in_script_witness(const CTxIn* ctx_in);
-const BlsctCTxId* get_ctx_in_prev_out_hash(const CTxIn* ctx_in);
-uint32_t get_ctx_in_prev_out_n(const CTxIn* ctx_in);
+const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* ctx_in);
+uint32_t get_ctx_in_sequence(const BlsctCTxIn* ctx_in);
+const BlsctScript* get_ctx_in_script_witness(const BlsctCTxIn* ctx_in);
+const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* ctx_in);
+uint32_t get_ctx_in_prev_out_n(const BlsctCTxIn* ctx_in);
 
 // tx out
 
@@ -484,18 +486,18 @@ TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out);
 uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
 
 // ctx out
-uint64_t get_ctx_out_value(const CTxOut* ctx_out);
-const BlsctScript* get_ctx_out_script_pub_key(const CTxOut* ctx_out);
-const BlsctScript* get_ctx_out_script_pubkey(const CTxOut* ctx_out);
-const BlsctTokenId* get_ctx_out_token_id(const CTxOut* ctx_out);
-const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* ctx_out);
+uint64_t get_ctx_out_value(const BlsctCTxOut* ctx_out);
+const BlsctScript* get_ctx_out_script_pub_key(const BlsctCTxOut* ctx_out);
+const BlsctScript* get_ctx_out_script_pubkey(const BlsctCTxOut* ctx_out);
+const BlsctTokenId* get_ctx_out_token_id(const BlsctCTxOut* ctx_out);
+const BlsctRetVal* get_ctx_out_vector_predicate(const BlsctCTxOut* ctx_out);
 
 // ctx out blsct data
-const BlsctPoint* get_ctx_out_spending_key(const CTxOut* ctx_out);
-const BlsctPoint* get_ctx_out_ephemeral_key(const CTxOut* ctx_out);
-const BlsctPoint* get_ctx_out_blinding_key(const CTxOut* ctx_out);
-const BlsctRetVal* get_ctx_out_range_proof(const CTxOut* ctx_out);
-uint16_t get_ctx_out_view_tag(const CTxOut* ctx_out);
+const BlsctPoint* get_ctx_out_spending_key(const BlsctCTxOut* ctx_out);
+const BlsctPoint* get_ctx_out_ephemeral_key(const BlsctCTxOut* ctx_out);
+const BlsctPoint* get_ctx_out_blinding_key(const BlsctCTxOut* ctx_out);
+const BlsctRetVal* get_ctx_out_range_proof(const BlsctCTxOut* ctx_out);
+uint16_t get_ctx_out_view_tag(const BlsctCTxOut* ctx_out);
 
 // ctx
 
@@ -510,29 +512,29 @@ const char* get_ctx_id(
     const size_t ser_ctx_size
 );
 
-const CTxIns* get_ctx_ins(
+const BlsctCTxIns* get_ctx_ins(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
 );
 
-const CTxOuts* get_ctx_outs(
+const BlsctCTxOuts* get_ctx_outs(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
 );
 
-size_t get_ctx_in_count(const CTxIns* ctx_ins);
-size_t get_ctx_out_count(const CTxOuts* ctx_outs);
+size_t get_ctx_ins_size(const BlsctCTxIns* ctx_ins);
+size_t get_ctx_outs_size(const BlsctCTxOuts* ctx_outs);
 
-void delete_ctx_ins(const CTxIns* ctx_ins);
-void delete_ctx_outs(const CTxOuts* ctx_outs);
+void delete_ctx_ins(const BlsctCTxIns* ctx_ins);
+void delete_ctx_outs(const BlsctCTxOuts* ctx_outs);
 
 const BlsctRetVal* get_ctx_in(
-    const CTxIns* ctx_ins,
+    const BlsctCTxIns* ctx_ins,
     const size_t i
 );
 
 const BlsctRetVal* get_ctx_out(
-    const CTxOuts* ctx_outs,
+    const BlsctCTxOuts* ctx_outs,
     const size_t i
 );
 
