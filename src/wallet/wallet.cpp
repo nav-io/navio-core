@@ -1547,6 +1547,22 @@ bool CWallet::AbandonTransaction(const uint256& hashTx)
         return false;
     }
 
+    // If this transaction replaced another transaction, clear the replaced_by_txid from the original
+    if (origtx.mapValue.count("replaces_txid")) {
+        uint256 replaced_hash;
+        replaced_hash.SetHex(origtx.mapValue.at("replaces_txid"));
+        auto replaced_it = mapWallet.find(replaced_hash);
+        if (replaced_it != mapWallet.end()) {
+            CWalletTx& replaced_wtx = replaced_it->second;
+            if (replaced_wtx.mapValue.count("replaced_by_txid")) {
+                replaced_wtx.mapValue.erase("replaced_by_txid");
+                WalletBatch batch(GetDatabase());
+                batch.WriteTx(replaced_wtx);
+                NotifyTransactionChanged(replaced_hash, CT_UPDATED);
+            }
+        }
+    }
+
     auto try_updating_state = [](CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
         // If the orig tx was not in block/mempool, none of its spends can be.
         assert(!wtx.isConfirmed());
