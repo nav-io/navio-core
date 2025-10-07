@@ -500,6 +500,13 @@ const BlsctRetVal* get_ctx_out_range_proof(const BlsctCTxOut* blsct_ctx_out);
 uint16_t get_ctx_out_view_tag(const BlsctCTxOut* blsct_ctx_out);
 
 // ctx
+void* create_tx_in_vec();
+void add_to_tx_in_vec(void* vp_tx_in_vec, const BlsctTxIn* tx_in);
+void delete_tx_in_vec(void* vp_tx_in_vec);
+
+void* create_tx_out_vec();
+void add_to_tx_out_vec(void* vp_tx_out_vec, const BlsctTxOut* tx_out);
+void delete_tx_out_vec(void* vp_tx_out_vec);
 
 // returns a serialized CMutableTransaction
 BlsctCTxRetVal* build_ctx(

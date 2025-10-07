@@ -1062,6 +1062,36 @@ inline void UnserializeCMutableTx(
     ctx.Unserialize(ps);
 }
 
+void* create_tx_in_vec() {
+    auto* tx_in_vec = new(std::nothrow) std::vector<BlsctTxIn>;
+    return reinterpret_cast<void*>(tx_in_vec);
+}
+
+void add_to_tx_in_vec(void* vp_tx_in_vec, const BlsctTxIn* tx_in) {
+    auto* tx_in_vec = reinterpret_cast<std::vector<BlsctTxIn>*>(vp_tx_in_vec);
+    tx_in_vec->push_back(*tx_in);
+}
+
+void delete_tx_in_vec(void* vp_tx_in_vec) {
+    auto* tx_in_vec = reinterpret_cast<std::vector<BlsctTxIn>*>(vp_tx_in_vec);
+    delete tx_in_vec;
+}
+
+void* create_tx_out_vec() {
+    auto* tx_out_vec = new(std::nothrow) std::vector<BlsctTxOut>;
+    return reinterpret_cast<void*>(tx_out_vec);
+}
+
+void add_to_tx_out_vec(void* vp_tx_out_vec, const BlsctTxOut* tx_out) {
+    auto* tx_out_vec = reinterpret_cast<std::vector<BlsctTxOut>*>(vp_tx_out_vec);
+    tx_out_vec->push_back(*tx_out);
+}
+
+void delete_tx_out_vec(void* vp_tx_out_vec) {
+    auto* tx_out_vec = reinterpret_cast<std::vector<BlsctTxOut>*>(vp_tx_out_vec);
+    delete tx_out_vec;
+}
+
 BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
