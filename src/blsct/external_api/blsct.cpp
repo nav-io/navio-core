@@ -1114,11 +1114,9 @@ BlsctCTxRetVal* build_ctx(
             rv->in_amount_err_index = i;
             return rv;
         }
-        printf("tx_in.amount: %llu\n", tx_in.amount);
 
         // gamma is uint64_t and not serialized
         Scalar gamma(tx_in.gamma);
-        printf("tx_in.gamma: %llu\n", tx_in.gamma);
 
         // unserialize spending_key
         blsct::PrivateKey spending_key =
@@ -1146,7 +1144,6 @@ BlsctCTxRetVal* build_ctx(
             tx_in.staked_commitment,
             tx_in.rbf
         );
-        printf("Added tx_in %zu\n", i);
     }
 
     for (size_t i=0; i<tx_outs->size(); ++i) {
@@ -1169,7 +1166,6 @@ BlsctCTxRetVal* build_ctx(
 
         // create memo std::string from memo c_str
         std::string memo_str(tx_out.memo_c_str);
-        printf("tx_out.memo_str: %s\n", memo_str.c_str());
 
         // unserialize token_id
         TokenId token_id;
@@ -1197,7 +1193,6 @@ BlsctCTxRetVal* build_ctx(
             out_type,
             tx_out.min_stake
         );
-        printf("Added tx_out %zu\n", i);
     }
 
     // build tx
