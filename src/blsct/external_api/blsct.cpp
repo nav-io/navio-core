@@ -1114,9 +1114,11 @@ BlsctCTxRetVal* build_ctx(
             rv->in_amount_err_index = i;
             return rv;
         }
+        printf("tx_in.amount: %llu\n", tx_in.amount);
 
         // gamma is uint64_t and not serialized
         Scalar gamma(tx_in.gamma);
+        printf("tx_in.gamma: %llu\n", tx_in.gamma);
 
         // unserialize spending_key
         blsct::PrivateKey spending_key =
@@ -1144,6 +1146,7 @@ BlsctCTxRetVal* build_ctx(
             tx_in.staked_commitment,
             tx_in.rbf
         );
+        printf("Added tx_in %zu\n", i);
     }
 
     for (size_t i=0; i<tx_outs->size(); ++i) {
@@ -1166,6 +1169,7 @@ BlsctCTxRetVal* build_ctx(
 
         // create memo std::string from memo c_str
         std::string memo_str(tx_out.memo_c_str);
+        printf("tx_out.memo_str: %s\n", memo_str.c_str());
 
         // unserialize token_id
         TokenId token_id;
@@ -1193,6 +1197,7 @@ BlsctCTxRetVal* build_ctx(
             out_type,
             tx_out.min_stake
         );
+        printf("Added tx_out %zu\n", i);
     }
 
     // build tx
@@ -1209,6 +1214,12 @@ BlsctCTxRetVal* build_ctx(
     TransactionSerParams params { .allow_witness = true };
     ParamsStream ps {params, st};
     ctx.Serialize(ps);
+
+    MALLOC_BYTES(uint8_t, ser_ctx, st.size());
+    if (ser_ctx == nullptr) {
+        rv->result = BLSCT_MEM_ALLOC_FAILED;
+        return nullptr;
+    }
 
     // copy the buffer containing serializef tx to the result
     rv->result = BLSCT_SUCCESS;
@@ -1281,6 +1292,16 @@ const BlsctRetVal* get_ctx_out_at(const BlsctCTxOuts* blsct_ctx_outs, const size
     auto ctx_out_copy = static_cast<BlsctCTxOut*>(malloc(ctx_out_size));
     std::memcpy(ctx_out_copy, ctx_out, ctx_out_size);
     return succ(ctx_out_copy, ctx_out_size);
+}
+
+const char* serialize_ctx(const uint8_t* ser_ctx, const size_t ser_ctx_size) {
+    return SerializeToHex(ser_ctx, ser_ctx_size);
+}
+
+BlsctRetVal* deserialize_ctx(const char* hex) {
+    size_t ser_ctx_size = std::strlen(hex) / 2;
+    void* obj = DeserializeFromHex(hex, ser_ctx_size);
+    return succ(obj, ser_ctx_size);
 }
 
 // signature

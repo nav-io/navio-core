@@ -508,6 +508,9 @@ void* create_tx_out_vec();
 void add_to_tx_out_vec(void* vp_tx_out_vec, const BlsctTxOut* tx_out);
 void delete_tx_out_vec(void* vp_tx_out_vec);
 
+const char* serialize_ctx(const uint8_t* ser_ctx, const size_t ser_ctx_size);
+BlsctRetVal* deserialize_ctx(const char* hex);
+
 // returns a serialized CMutableTransaction
 BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
