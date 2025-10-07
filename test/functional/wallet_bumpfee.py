@@ -788,7 +788,7 @@ def spend_one_input(node, dest_address, change_size=Decimal("0.00049000"), data=
     hash = ""
     for i in range(len(tx_from_hex(rawtx).vout)):
         if tx_from_hex(rawtx).vout[i].nValue == 50000:
-            hash = hex(tx_from_hex(rawtx).vout[i].hash())[2:]
+            hash = hex(tx_from_hex(rawtx).vout[i].hash())[2:].zfill(64)
             break
     return {"txid": txid, "outid": hash}
 

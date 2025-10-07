@@ -64,6 +64,7 @@ def getutxo(node,txid):
     tx = node.getrawtransaction(txid)
     tx_obj = tx_from_hex(tx)
     utxo["txid"] = hex(tx_obj.vout[0].hash())[2:].zfill(64)
+    utxo["vout"] = 0
     return utxo
 
 
@@ -558,7 +559,7 @@ class SegWitTest(BitcoinTestFramework):
 
             # Check that createrawtransaction/decoderawtransaction with non-v0 Bech32 works
             v1_addr = program_to_witness(1, [3, 5])
-            v1_tx = self.nodes[0].createrawtransaction([getutxo(spendable_txid[0])], {v1_addr: 1})
+            v1_tx = self.nodes[0].createrawtransaction([getutxo(self.nodes[0], spendable_txid[0])], {v1_addr: 1})
             v1_decoded = self.nodes[1].decoderawtransaction(v1_tx)
             assert_equal(v1_decoded['vout'][0]['scriptPubKey']['address'], v1_addr)
             assert_equal(v1_decoded['vout'][0]['scriptPubKey']['hex'], "51020305")
@@ -601,8 +602,12 @@ class SegWitTest(BitcoinTestFramework):
         utxo = find_spendable_utxo(self.nodes[0], 50)
         tx = CTransaction()
         tx.vin.append(CTxIn(COutPoint(utxo['txid'])))
+        index = -1
+        outhashes = []
         for i in script_list:
             tx.vout.append(CTxOut(10000000, i))
+            index += 1
+            outhashes.append(hex(tx.vout[index].hash())[2:].zfill(64))
         tx.rehash()
         signresults = self.nodes[0].signrawtransactionwithwallet(tx.serialize_without_witness().hex())['hex']
         txid = self.nodes[0].sendrawtransaction(hexstring=signresults, maxfeerate=0)
@@ -610,7 +615,7 @@ class SegWitTest(BitcoinTestFramework):
         watchcount = 0
         spendcount = 0
         for i in self.nodes[0].listunspent():
-            if i['txid'] == txid:
+            if i['txid'] in outhashes:
                 watchcount += 1
                 if i['spendable']:
                     spendcount += 1

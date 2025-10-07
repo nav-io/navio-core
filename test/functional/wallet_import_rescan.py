@@ -29,6 +29,8 @@ from test_framework.util import (
     set_node_times,
 )
 
+from test_framework.messages import tx_from_hex
+
 import collections
 from decimal import Decimal
 import enum
@@ -158,6 +160,7 @@ class ImportRescanTest(BitcoinTestFramework):
 
     def set_test_params(self):
         self.num_nodes = 2 + len(IMPORT_NODES)
+        self.extra_args = [["-txindex=1"] for _ in range(self.num_nodes)]
         self.supports_cli = False
         self.rpc_timeout = 120
 
@@ -275,6 +278,16 @@ class ImportRescanTest(BitcoinTestFramework):
             variant.key = self.nodes[1].dumpprivkey(variant.address["address"])
             variant.initial_amount = get_rand_amount() * 2
             variant.initial_txid = self.nodes[0].sendtoaddress(variant.address["address"], variant.initial_amount)
+            variant.initial_outid = None
+            tx = tx_from_hex(self.nodes[0].getrawtransaction(variant.initial_txid, 0))
+            for vout in tx.vout:
+                # Use Decimal for precise comparison
+                vout_amount = Decimal(vout.nValue) / Decimal(1e8)
+                if abs(vout_amount - variant.initial_amount) < Decimal('0.00000001'):
+                    variant.initial_outid = hex(vout.hash())[2:].zfill(64)
+                    break
+            if variant.initial_outid is None:
+                raise Exception(f"Could not find output with amount {variant.initial_amount} in transaction {variant.initial_txid}")
             variant.confirmation_height = 0
             variant.timestamp = timestamp
 
@@ -289,10 +302,10 @@ class ImportRescanTest(BitcoinTestFramework):
         # transaction can't be recognized using its outputs. The wallet rescan needs to know the
         # inputs of the transaction to detect it, so the parent must be processed before the child.
         # An equivalent test for descriptors exists in wallet_rescan_unconfirmed.py.
-        unspent_txid_map = {f"{txin['txid']}:{txin['vout']}" : txin for txin in self.nodes[1].listunspent()}
+        unspent_txid_map = {f"{txin['txid']}" : txin for txin in self.nodes[1].listunspent()}
         for variant in mempool_variants:
             # Find the unspent output that corresponds to this transaction
-            unspent_output = next(txin for txin in self.nodes[1].listunspent() if txin["txid"] == variant.initial_txid)
+            unspent_output = next(txin for txin in self.nodes[1].listunspent() if txin["txid"] == variant.initial_outid)
             # Send full amount, subtracting fee from outputs, to ensure no change is created.
             child = self.nodes[1].send(
                 add_to_wallet=False,

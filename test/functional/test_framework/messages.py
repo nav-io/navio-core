@@ -693,7 +693,12 @@ class COutPoint:
 
     def serialize(self):
         r = b""
-        r += ser_uint256(self.hash)
+        # Convert string hash to int if needed
+        if isinstance(self.hash, str):
+            hash_int = int(self.hash, 16)
+        else:
+            hash_int = self.hash
+        r += ser_uint256(hash_int)
         return r
 
     def __repr__(self):
