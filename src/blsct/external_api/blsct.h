@@ -412,12 +412,22 @@ BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
     const uint64_t address
 );
 
-const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk);
-BlsctRetVal* deserialize_dpk(const char* hex);
-
 BlsctRetVal* dpk_to_sub_addr(
     const BlsctDoublePubKey* blsct_dpk
 );
+
+const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk);
+BlsctRetVal* deserialize_dpk(const char* hex);
+
+// key id (=Hash ID)
+BlsctKeyId* calc_key_id(
+    const BlsctPubKey* blsct_blinding_pub_key,
+    const BlsctPubKey* blsct_spending_pub_key,
+    const BlsctScalar* blsct_view_key
+);
+
+const char* serialize_key_id(const BlsctKeyId* blsct_key_id);
+BlsctRetVal* deserialize_key_id(const char* hex);
 
 // out point
 // txid is 32 bytes and represented as 64-char hex str
@@ -641,21 +651,6 @@ BlsctScalar* calc_priv_spending_key(
 uint64_t calc_view_tag(
     const BlsctPubKey* blinding_pub_key,
     const BlsctScalar* view_key
-);
-
-// Key ID (=Hash ID)
-BlsctKeyId* calc_key_id(
-    const BlsctPubKey* blsct_blinding_pub_key,
-    const BlsctPubKey* blsct_spending_pub_key,
-    const BlsctScalar* blsct_view_key
-);
-
-const char* serialize_key_id(
-    const BlsctKeyId* blsct_key_id
-);
-
-BlsctRetVal* deserialize_key_id(
-    const char* hex
 );
 
 BlsctPoint* calc_nonce(
