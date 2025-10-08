@@ -26,7 +26,6 @@ from .messages import (
     SEQUENCE_FINAL,
     hash256,
     ser_uint256,
-    tx_from_hex,
     uint256_from_str,
 )
 from .script import (
@@ -43,7 +42,7 @@ from .script_util import (
     keys_to_multisig_script,
     script_to_p2wsh_script,
 )
-from .util import assert_equal
+from .util import assert_equal, tx_from_hex
 
 WITNESS_SCALE_FACTOR = 4
 MAX_BLOCK_SIGOPS = 20000

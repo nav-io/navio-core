@@ -15,7 +15,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
-    find_vout_for_address,
+    find_outid_for_address,
 )
 from test_framework.script_util import (
     key_to_p2pk_script,
@@ -112,11 +112,11 @@ class SignRawTransactionWithKeyTest(BitcoinTestFramework):
         script_pub_key = address_to_scriptpubkey(addr).hex()
         # Fund that address
         txid = self.send_to_address(addr, 10)
-        vout = find_vout_for_address(self.nodes[0], txid, addr)
+        outid = find_outid_for_address(self.nodes[0], txid, addr)
         self.generate(self.nodes[0], 1)
         # Now create and sign a transaction spending that output on node[0], which doesn't know the scripts or keys
-        spending_tx = self.nodes[0].createrawtransaction([{'txid': txid, 'vout': vout}], {getnewdestination()[2]: Decimal("9.999")})
-        spending_tx_signed = self.nodes[0].signrawtransactionwithkey(spending_tx, [embedded_privkey], [{'txid': txid, 'vout': vout, 'scriptPubKey': script_pub_key, 'redeemScript': redeem_script, 'witnessScript': witness_script, 'amount': 10}])
+        spending_tx = self.nodes[0].createrawtransaction([{'txid': outid}], {getnewdestination()[2]: Decimal("9.999")})
+        spending_tx_signed = self.nodes[0].signrawtransactionwithkey(spending_tx, [embedded_privkey], [{'txid': outid, 'scriptPubKey': script_pub_key, 'redeemScript': redeem_script, 'witnessScript': witness_script, 'amount': 10}])
         self.assert_signing_completed_successfully(spending_tx_signed)
         self.nodes[0].sendrawtransaction(spending_tx_signed['hex'])
 

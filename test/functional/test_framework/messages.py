@@ -223,9 +223,6 @@ def from_hex(obj, hex_string):
     return obj
 
 
-def tx_from_hex(hex_string):
-    """Deserialize from hex string to a transaction object"""
-    return from_hex(CTransaction(), hex_string)
 
 
 # like from_hex, but without the hex part

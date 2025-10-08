@@ -10,7 +10,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_greater_than_or_equal,
     assert_equal,
-    find_vout_for_address,
+    find_outid_for_address,
 )
 
 class UnconfirmedInputTest(BitcoinTestFramework):
@@ -452,7 +452,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
 
         self.assert_undershoots_target(parent_tx)
 
-        spend_res = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"inputs":[{"txid":parent_txid, "vout":find_vout_for_address(self.nodes[0], parent_txid, external_address)}], "solving_data":{"descriptors":[external_descriptor]}})
+        spend_res = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"inputs":[{"txid": find_outid_for_address(self.nodes[0], parent_txid, external_address)}], "solving_data":{"descriptors":[external_descriptor]}})
         signed_psbt = self.def_wallet.walletprocesspsbt(spend_res["psbt"])
         external_tx = self.def_wallet.finalizepsbt(signed_psbt["psbt"])
         ancestor_aware_txid = self.def_wallet.sendrawtransaction(external_tx["hex"])

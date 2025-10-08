@@ -24,6 +24,11 @@ from typing import Optional
 
 logger = logging.getLogger("TestFramework.utils")
 
+def tx_from_hex(hex_string):
+    """Deserialize from hex string to a transaction object"""
+    from .messages import from_hex, CTransaction
+    return from_hex(CTransaction(), hex_string)
+
 # Assert functions
 ##################
 
@@ -531,4 +536,16 @@ def find_vout_for_address(node, txid, addr):
     for i in range(len(tx["vout"])):
         if addr == tx["vout"][i]["scriptPubKey"]["address"]:
             return i
+    raise RuntimeError("Vout not found for address: txid=%s, addr=%s" % (txid, addr))
+
+def find_outid_for_address(node, txid, addr):
+    """
+    Locate the outid of the given transaction sending to the
+    given address. Raises runtime error exception if not found.
+    """
+    tx = tx_from_hex(node.getrawtransaction(txid))
+    txJson = node.getrawtransaction(txid, True)
+    for i in range(len(tx.vout)):
+        if addr == txJson["vout"][i]["scriptPubKey"]["address"]:
+            return hex(tx.vout[i].hash())[2:].zfill(64)
     raise RuntimeError("Vout not found for address: txid=%s, addr=%s" % (txid, addr))
