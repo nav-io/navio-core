@@ -111,6 +111,7 @@ BlsctBoolRetVal* err_bool(
     return p;
 }
 
+// common
 void free_obj(void* x) {
     if (x != nullptr) free(x);
 }
@@ -125,6 +126,17 @@ void free_amounts_ret_val(BlsctAmountsRetVal* rv) {
     free(rv);
 }
 
+const char* serialize_raw_obj(const uint8_t* ser_obj, const size_t ser_obj_size) {
+    return SerializeToHex(ser_obj, ser_obj_size);
+}
+
+BlsctRetVal* deserialize_raw_obj(const char* hex) {
+    size_t ser_obj_size = std::strlen(hex) / 2;
+    void* obj = DeserializeFromHex(hex, ser_obj_size);
+    return succ(obj, ser_obj_size);
+}
+
+// point
 BlsctRetVal* gen_base_point() {
     MALLOC(BlsctPoint, blsct_point);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
@@ -145,6 +157,64 @@ BlsctRetVal* gen_random_point() {
     return succ(blsct_point, POINT_SIZE);
 }
 
+const char* serialize_point(const BlsctPoint* blsct_point) {
+    Point point;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
+    auto ser_point = point.GetVch();
+    auto hex = HexStr(ser_point);
+
+    return StrToAllocCStr(hex);
+}
+
+BlsctRetVal* deserialize_point(const char* hex) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
+        return err(BLSCT_FAILURE);
+    }
+    Point point;
+    if (!point.SetVch(vec)) {
+        return err(BLSCT_DESER_FAILED);
+    }
+
+    MALLOC(BlsctPoint, blsct_point);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
+    SERIALIZE_AND_COPY(point, blsct_point);
+
+    return succ(blsct_point, POINT_SIZE);
+}
+
+int is_point_equal(const BlsctPoint* blsct_a, const BlsctPoint* blsct_b) {
+    if (blsct_a == nullptr || blsct_b == nullptr) {
+        return 0;
+    }
+    Point a, b;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_a, POINT_SIZE, a);
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_b, POINT_SIZE, b);
+    return a == b ? 1 : 0;
+}
+
+const char* point_to_str(const BlsctPoint* blsct_point) {
+    Point point;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
+    auto str = point.GetString();
+    return StrToAllocCStr(str);
+}
+
+BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar) {
+    Scalar scalar;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
+
+    Point g = Point::GetBasePoint();
+    Point point = g * scalar;
+
+    MALLOC(BlsctPoint, blsct_point);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
+    SERIALIZE_AND_COPY(point, blsct_point);
+
+    return blsct_point;
+}
+
+// scalar
 BlsctRetVal* gen_random_scalar() {
     MALLOC(BlsctScalar, blsct_scalar);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_scalar);
@@ -173,6 +243,46 @@ uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar)
     return scalar.GetUint64();
 }
 
+const char* serialize_scalar(const BlsctScalar* blsct_scalar) {
+    Scalar scalar;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
+    auto hex = scalar.GetString();
+    return StrToAllocCStr(hex);
+}
+
+BlsctRetVal* deserialize_scalar(const char* hex) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
+        return err(BLSCT_FAILURE);
+    }
+    Scalar scalar;
+    scalar.SetVch(vec);
+
+    MALLOC(BlsctScalar, blsct_scalar);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_scalar);
+    SERIALIZE_AND_COPY(scalar, blsct_scalar);
+
+    return succ(blsct_scalar, SCALAR_SIZE);
+}
+
+int is_scalar_equal(const BlsctScalar* blsct_a, const BlsctScalar* blsct_b) {
+    if (blsct_a == nullptr || blsct_b == nullptr) {
+        return 0;
+    }
+    Scalar a, b;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_a, SCALAR_SIZE, a);
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_b, SCALAR_SIZE, b);
+    return a == b ? 1 : 0;
+}
+
+const char* scalar_to_str(const BlsctScalar* blsct_scalar) {
+    Scalar scalar;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
+    auto str = scalar.GetString(10);
+    return StrToAllocCStr(str);
+}
+
+// public key
 BlsctRetVal* gen_random_public_key() {
     auto vec = Point::Rand().GetVch();
     blsct::PublicKey pub_key(vec);
@@ -235,102 +345,7 @@ BlsctRetVal* deserialize_public_key(const char* hex) {
     return succ(blsct_pubkey, PUBLIC_KEY_SIZE);
 }
 
-const char* serialize_point(const BlsctPoint* blsct_point) {
-    Point point;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
-    auto ser_point = point.GetVch();
-    auto hex = HexStr(ser_point);
-
-    return StrToAllocCStr(hex);
-}
-
-BlsctRetVal* deserialize_point(const char* hex) {
-    std::vector<uint8_t> vec;
-    if (!TryParseHexWrap(hex, vec)) {
-        return err(BLSCT_FAILURE);
-    }
-    Point point;
-    if (!point.SetVch(vec)) {
-        return err(BLSCT_DESER_FAILED);
-    }
-
-    MALLOC(BlsctPoint, blsct_point);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
-    SERIALIZE_AND_COPY(point, blsct_point);
-
-    return succ(blsct_point, POINT_SIZE);
-}
-
-int is_point_equal(const BlsctPoint* blsct_a, const BlsctPoint* blsct_b) {
-    if (blsct_a == nullptr || blsct_b == nullptr) {
-        return 0;
-    }
-    Point a, b;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_a, POINT_SIZE, a);
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_b, POINT_SIZE, b);
-    return a == b ? 1 : 0;
-}
-
-const char* point_to_str(const BlsctPoint* blsct_point) {
-    Point point;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
-    auto str = point.GetString();
-    return StrToAllocCStr(str);
-}
-
-BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar) {
-    Scalar scalar;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
-
-    Point g = Point::GetBasePoint();
-    Point point = g * scalar;
-
-    MALLOC(BlsctPoint, blsct_point);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
-    SERIALIZE_AND_COPY(point, blsct_point);
-
-    return blsct_point;
-}
-
-const char* serialize_scalar(const BlsctScalar* blsct_scalar) {
-    Scalar scalar;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
-    auto hex = scalar.GetString();
-    return StrToAllocCStr(hex);
-}
-
-BlsctRetVal* deserialize_scalar(const char* hex) {
-    std::vector<uint8_t> vec;
-    if (!TryParseHexWrap(hex, vec)) {
-        return err(BLSCT_FAILURE);
-    }
-    Scalar scalar;
-    scalar.SetVch(vec);
-
-    MALLOC(BlsctScalar, blsct_scalar);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_scalar);
-    SERIALIZE_AND_COPY(scalar, blsct_scalar);
-
-    return succ(blsct_scalar, SCALAR_SIZE);
-}
-
-int is_scalar_equal(const BlsctScalar* blsct_a, const BlsctScalar* blsct_b) {
-    if (blsct_a == nullptr || blsct_b == nullptr) {
-        return 0;
-    }
-    Scalar a, b;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_a, SCALAR_SIZE, a);
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_b, SCALAR_SIZE, b);
-    return a == b ? 1 : 0;
-}
-
-const char* scalar_to_str(const BlsctScalar* blsct_scalar) {
-    Scalar scalar;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
-    auto str = scalar.GetString(10);
-    return StrToAllocCStr(str);
-}
-
+// address
 BlsctRetVal* decode_address(
     const char* blsct_enc_addr
 ) {
@@ -384,6 +399,7 @@ BlsctRetVal* encode_address(
     return err(BLSCT_EXCEPTION);
 }
 
+// double public key
 BlsctRetVal* gen_double_pub_key(
     const BlsctPubKey* blsct_pk1,
     const BlsctPubKey* blsct_pk2
@@ -422,6 +438,7 @@ BlsctRetVal* deserialize_dpk(const char* hex) {
     return succ(blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
 }
 
+// token id
 BlsctRetVal* gen_token_id_with_token_and_subid(
     const uint64_t token,
     const uint64_t subid
@@ -492,7 +509,6 @@ BlsctRetVal* deserialize_token_id(const char* hex) {
 }
 
 // range proof
-
 BlsctRetVal* build_range_proof(
     const void* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
@@ -1092,6 +1108,18 @@ void delete_tx_out_vec(void* vp_tx_out_vec) {
     delete tx_out_vec;
 }
 
+static inline std::pair<uint8_t*, size_t> SerializeCMutableTransaction(
+    const CMutableTransaction& ctx
+) {
+    DataStream st{};
+    TransactionSerParams params { .allow_witness = true };
+    ParamsStream ps {params, st};
+    ctx.Serialize(ps);
+
+    MALLOC_BYTES(uint8_t, ser_ctx, st.size());
+    return {ser_ctx, st.size()};
+}
+
 BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
@@ -1204,23 +1232,17 @@ BlsctCTxRetVal* build_ctx(
     }
     auto& ctx = maybe_ctx.value();
 
-    // serialize tx
-    DataStream st{};
-    TransactionSerParams params { .allow_witness = true };
-    ParamsStream ps {params, st};
-    ctx.Serialize(ps);
-
-    MALLOC_BYTES(uint8_t, ser_ctx, st.size());
+    // ser_ctx is raw uint8_t array and not hex here
+    auto [ser_ctx, ser_ctx_size] = SerializeCMutableTransaction(ctx);
     if (ser_ctx == nullptr) {
         rv->result = BLSCT_MEM_ALLOC_FAILED;
-        return nullptr;
+        return rv;
     }
 
     // copy the buffer containing serializef tx to the result
     rv->result = BLSCT_SUCCESS;
-    rv->ser_ctx_size = st.size();
-    rv->ser_ctx = (uint8_t*) malloc(st.size());
-    std::memcpy(rv->ser_ctx, st.data(), st.size());
+    rv->ser_ctx_size = ser_ctx_size;
+    rv->ser_ctx = ser_ctx;
 
     return rv;
 }
@@ -1273,6 +1295,34 @@ void delete_ctx_outs(const BlsctCTxIns* blsct_ctx_outs) {
     delete blsct_ctx_outs;
 }
 
+const char* serialize_ctx(const BlsctCTx* blsct_ctx) {
+    CMutableTransaction ctx;
+    auto [ser_ctx, ser_ctx_size] = SerializeCMutableTransaction(ctx);
+
+    return ser_ctx == nullptr ? nullptr :
+        SerializeToHex(ser_ctx, ser_ctx_size);
+}
+
+BlsctRetVal* deserialize_ctx(const char* hex) {
+    CMutableTransaction* ctx = new CMutableTransaction();
+
+    std::string hex_str(hex);
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex_str, vec)) {
+        return err(BLSCT_FAILURE);
+    }
+
+    DataStream st;
+    TransactionSerParams params { .allow_witness = true };
+    ParamsStream ps {params, st};
+    ps << vec;
+    ctx->Unserialize(ps);
+
+    // the object should be deleteed after use and will not need the size
+    return succ(ctx, 0);
+}
+
+// ctx_ins
 const BlsctRetVal* get_ctx_in_at(const BlsctCTxIns* blsct_ctx_ins, const size_t i) {
     auto ctx_in = &blsct_ctx_ins->vec.at(i);
     auto ctx_in_size = sizeof(*ctx_in);
@@ -1281,22 +1331,13 @@ const BlsctRetVal* get_ctx_in_at(const BlsctCTxIns* blsct_ctx_ins, const size_t 
     return succ(ctx_in_copy, ctx_in_size);
 }
 
+// ctx_outs
 const BlsctRetVal* get_ctx_out_at(const BlsctCTxOuts* blsct_ctx_outs, const size_t i) {
     auto ctx_out = &blsct_ctx_outs->vec.at(i);
     auto ctx_out_size = sizeof(*ctx_out);
     auto ctx_out_copy = static_cast<BlsctCTxOut*>(malloc(ctx_out_size));
     std::memcpy(ctx_out_copy, ctx_out, ctx_out_size);
     return succ(ctx_out_copy, ctx_out_size);
-}
-
-const char* serialize_ctx(const uint8_t* ser_ctx, const size_t ser_ctx_size) {
-    return SerializeToHex(ser_ctx, ser_ctx_size);
-}
-
-BlsctRetVal* deserialize_ctx(const char* hex) {
-    size_t ser_ctx_size = std::strlen(hex) / 2;
-    void* obj = DeserializeFromHex(hex, ser_ctx_size);
-    return succ(obj, ser_ctx_size);
 }
 
 // signature
@@ -1847,3 +1888,4 @@ const char* buf_to_malloced_hex_c_str(const uint8_t* buf, size_t size) {
 
     return hex_c_str;
 }
+
