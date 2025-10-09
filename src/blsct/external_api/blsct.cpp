@@ -16,6 +16,7 @@
 #include <crypto/common.h>
 #include <memory.h>
 #include <primitives/transaction.h>
+#include <serialize.h>
 #include <streams.h>
 #include <util/transaction_identifier.h>
 
@@ -422,7 +423,6 @@ static inline std::pair<uint8_t*, size_t> SerializeCMutableTransaction(
     return {ser_ctx, st.size()};
 }
 
-// forward declaration
 static blsct::PrivateKey blsct_scalar_to_priv_key(
     const BlsctScalar* blsct_scalar
 );
@@ -694,6 +694,50 @@ const BlsctRetVal* get_ctx_in_at(const BlsctCTxIns* blsct_ctx_ins, const size_t 
     return succ(ctx_in_copy, ctx_in_size);
 }
 
+bool are_ctx_ins_equal(const BlsctCTxIns* a, const BlsctCTxIns* b) {
+    return a->vec == b->vec;
+}
+
+const char* serialize_ctx_ins(const BlsctCTxIns* blsct_ctx_ins) {
+    DataStream st{};
+
+    WriteCompactSize(st, blsct_ctx_ins->vec.size());
+    for(const auto& ctx_in: blsct_ctx_ins->vec) {
+        ctx_in.Serialize(st);
+    }
+
+    auto ser_ctx_ins = reinterpret_cast<uint8_t*>(st.data());
+    MALLOC_BYTES(uint8_t, ser_tx_ins, st.size());
+
+    return ser_ctx_ins == nullptr ? nullptr :
+        SerializeToHex(ser_tx_ins, st.size());
+}
+
+BlsctRetVal* deserialize_ctx_ins(const char* hex) {
+    // set up a stream with the given hex
+    DataStream st{};
+    std::vector<uint8_t> hex_vec;
+    if (!TryParseHexWrap(hex, hex_vec)) {
+        return err(BLSCT_FAILURE);
+    }
+    st << hex_vec;
+
+    // tunserialize vector with the stream
+    size_t vec_size = ReadCompactSize(st);
+    std::vector<CTxIn> vec(vec_size);
+
+    for (size_t i=0; i<vec_size; ++i) {
+        vec[i].Unserialize(st);
+    }
+
+    // wrap the vector with BlsctCTxIns
+    auto* wrapper = new BlsctCTxIns();
+    wrapper->vec = vec;
+
+    // setting size 0 since size will not be used
+    return succ(wrapper, 0);
+}
+
 // ctx out
 uint64_t get_ctx_out_value(const CTxOut* blsct_ctx_out) {
     const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
@@ -776,6 +820,10 @@ const BlsctRetVal* get_ctx_out_at(const BlsctCTxOuts* blsct_ctx_outs, const size
     auto ctx_out_copy = static_cast<BlsctCTxOut*>(malloc(ctx_out_size));
     std::memcpy(ctx_out_copy, ctx_out, ctx_out_size);
     return succ(ctx_out_copy, ctx_out_size);
+}
+
+bool are_ctx_outs_equal(const BlsctCTxOuts* a, const BlsctCTxOuts* b) {
+    return a->vec == b->vec;
 }
 
 // delegators of blsct/wallet/helpers

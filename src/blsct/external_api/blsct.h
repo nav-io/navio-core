@@ -378,6 +378,9 @@ const BlsctRetVal* get_ctx_in_at(
     const BlsctCTxIns* blsct_ctx_ins,
     const size_t i
 );
+bool are_ctx_ins_equal(const BlsctCTxIns* a, const BlsctCTxIns* b);
+const char* serialize_ctx_ins(const BlsctCTxIns* blsct_ctx_ins);
+BlsctRetVal* deserialize_ctx_ins(const char* hex);
 
 // ctx out
 uint64_t get_ctx_out_value(const BlsctCTxOut* ctx_out);
@@ -398,6 +401,8 @@ const BlsctRetVal* get_ctx_out_at(
     const BlsctCTxOuts* blsct_ctx_outs,
     const size_t i
 );
+
+bool are_ctx_outs_equal(const BlsctCTxOuts* a, const BlsctCTxOuts* b);
 
 // double public key
 BlsctRetVal* gen_double_pub_key(
