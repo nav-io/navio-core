@@ -374,7 +374,7 @@ const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* blsct_ctx_in);
 uint32_t get_ctx_in_prev_out_n(const BlsctCTxIn* blsct_ctx_in);
 
 // ctx_ins
-const BlsctRetVal* get_ctx_in_at(
+BlsctRetVal* get_ctx_in_at(
     const BlsctCTxIns* blsct_ctx_ins,
     const size_t i
 );
@@ -397,7 +397,7 @@ const BlsctRetVal* get_ctx_out_range_proof(const BlsctCTxOut* blsct_ctx_out);
 uint16_t get_ctx_out_view_tag(const BlsctCTxOut* blsct_ctx_out);
 
 // ctx_outs
-const BlsctRetVal* get_ctx_out_at(
+BlsctRetVal* get_ctx_out_at(
     const BlsctCTxOuts* blsct_ctx_outs,
     const size_t i
 );

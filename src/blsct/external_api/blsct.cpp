@@ -554,6 +554,7 @@ BlsctCTxRetVal* build_ctx(
     return rv;
 }
 
+// returns newed obj with std::vector copy
 const BlsctCTxIns* get_ctx_ins(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
@@ -570,6 +571,7 @@ const BlsctCTxIns* get_ctx_ins(
     }
 }
 
+// returns newed obj with std::vector copy
 const BlsctCTxOuts* get_ctx_outs(
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size
@@ -686,7 +688,7 @@ uint32_t get_ctx_in_prev_out_n(const BlsctCTxIn* blsct_ctx_in) {
 }
 
 // ctx ins
-const BlsctRetVal* get_ctx_in_at(const BlsctCTxIns* blsct_ctx_ins, const size_t i) {
+BlsctRetVal* get_ctx_in_at(const BlsctCTxIns* blsct_ctx_ins, const size_t i) {
     auto ctx_in = &blsct_ctx_ins->vec.at(i);
     auto ctx_in_size = sizeof(*ctx_in);
     auto ctx_in_copy = static_cast<CTxIn*>(malloc(ctx_in_size));
@@ -814,7 +816,7 @@ const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* blsct_ctx_out) {
 }
 
 // ctx outs
-const BlsctRetVal* get_ctx_out_at(const BlsctCTxOuts* blsct_ctx_outs, const size_t i) {
+BlsctRetVal* get_ctx_out_at(const BlsctCTxOuts* blsct_ctx_outs, const size_t i) {
     auto ctx_out = &blsct_ctx_outs->vec.at(i);
     auto ctx_out_size = sizeof(*ctx_out);
     auto ctx_out_copy = static_cast<BlsctCTxOut*>(malloc(ctx_out_size));
