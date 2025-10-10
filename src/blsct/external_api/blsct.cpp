@@ -112,6 +112,52 @@ BlsctBoolRetVal* err_bool(
     return p;
 }
 
+static inline DataStream set_up_data_stream_with_hex(const char* hex) {
+    // set up a stream with the given hex
+    DataStream st{};
+    std::vector<uint8_t> hex_vec;
+    if (!TryParseHexWrap(hex, hex_vec)) {
+        return st;
+    }
+    st << hex_vec;
+    return st;
+}
+
+static blsct::PrivateKey blsct_scalar_to_priv_key(
+    const BlsctScalar* blsct_scalar
+) {
+    // unserialize blsct_scalar to Scalar
+    Scalar scalar;
+    auto u8_blsct_scalar = U8C(blsct_scalar);
+    std::vector<uint8_t> vec {u8_blsct_scalar, u8_blsct_scalar + SCALAR_SIZE};
+    scalar.SetVch(vec);
+
+    // build private key from the scalar
+    blsct::PrivateKey priv_key(scalar);
+    return priv_key;
+}
+
+static inline const char* data_stream_to_malloced_hex(DataStream& st) {
+    auto data = reinterpret_cast<uint8_t*>(st.data());
+    MALLOC_BYTES(uint8_t, buf, st.size());
+    return buf == nullptr ? nullptr : SerializeToHex(buf, st.size());
+}
+
+static inline void UnserializeCMutableTx(
+    CMutableTransaction& ctx,
+    const uint8_t* ser_ctx,
+    const size_t ser_ctx_size
+) {
+    DataStream st{};
+    TransactionSerParams params { .allow_witness = true };
+    ParamsStream ps {params, st};
+
+    for(size_t i=0; i<ser_ctx_size; ++i) {
+        ps << ser_ctx[i];
+    }
+    ctx.Unserialize(ps);
+}
+
 //---------------------
 
 void free_obj(void* x) {
@@ -366,21 +412,6 @@ const char* get_amount_recovery_result_msg(
 }
 
 // ctx
-inline void UnserializeCMutableTx(
-    CMutableTransaction& ctx,
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-) {
-    DataStream st{};
-    TransactionSerParams params { .allow_witness = true };
-    ParamsStream ps {params, st};
-
-    for(size_t i=0; i<ser_ctx_size; ++i) {
-        ps << ser_ctx[i];
-    }
-    ctx.Unserialize(ps);
-}
-
 void* create_tx_in_vec() {
     auto* tx_in_vec = new(std::nothrow) std::vector<BlsctTxIn>;
     return reinterpret_cast<void*>(tx_in_vec);
@@ -411,18 +442,7 @@ void delete_tx_out_vec(void* vp_tx_out_vec) {
     delete tx_out_vec;
 }
 
-static inline std::pair<uint8_t*, size_t> SerializeCMutableTransaction(
-    const CMutableTransaction& ctx
-) {
-    DataStream st{};
-    TransactionSerParams params { .allow_witness = true };
-    ParamsStream ps {params, st};
-    ctx.Serialize(ps);
-
-    MALLOC_BYTES(uint8_t, ser_ctx, st.size());
-    return {ser_ctx, st.size()};
-}
-
+// forward declration for build_ctx
 static blsct::PrivateKey blsct_scalar_to_priv_key(
     const BlsctScalar* blsct_scalar
 );
@@ -530,86 +550,51 @@ BlsctCTxRetVal* build_ctx(
         );
     }
 
-    // build tx
+    // build ctx
     blsct::DoublePublicKey change_amt_dest;
     auto maybe_ctx = psbt.BuildTx(change_amt_dest);
     if (!maybe_ctx.has_value()) {
         rv->result = BLSCT_FAILURE;
         return rv;
     }
-    auto& ctx = maybe_ctx.value();
+
+    // move the ctx to newly created ctx in heap
+    CMutableTransaction* ctx_in_heap = new(std::nothrow) CMutableTransaction;
+    *ctx_in_heap = maybe_ctx.value();
 
     // ser_ctx is raw uint8_t array and not hex here
-    auto [ser_ctx, ser_ctx_size] = SerializeCMutableTransaction(ctx);
-    if (ser_ctx == nullptr) {
-        rv->result = BLSCT_MEM_ALLOC_FAILED;
-        return rv;
-    }
-
-    // copy the buffer containing serializef tx to the result
     rv->result = BLSCT_SUCCESS;
-    rv->ser_ctx_size = ser_ctx_size;
-    rv->ser_ctx = ser_ctx;
+    rv->ctx = static_cast<void*>(ctx_in_heap);
 
     return rv;
 }
 
-// returns newed obj with std::vector copy
-const BlsctCTxIns* get_ctx_ins(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-) {
-    try {
-        CMutableTransaction ctx;
-        UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
-
-        auto* wrapper = new BlsctCTxIns();
-        wrapper->vec = ctx.vin;
-        return wrapper;
-    } catch(...) {
-        return nullptr;
-    }
+const BlsctCTxIns* get_ctx_ins(void* vp_ctx) {
+    CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
+    auto* wrapper = new BlsctCTxIns();
+    wrapper->vec = ctx->vin;
+    return wrapper;
 }
 
-// returns newed obj with std::vector copy
-const BlsctCTxOuts* get_ctx_outs(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-) {
-    try {
-        CMutableTransaction ctx;
-        UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
-
-        auto* wrapper = new BlsctCTxOuts();
-        wrapper->vec = ctx.vout;
-        return wrapper;
-    } catch(...) {
-        return nullptr;
-    }
+const BlsctCTxOuts* get_ctx_outs(void* vp_ctx) {
+    CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
+    auto* wrapper = new BlsctCTxOuts();
+    wrapper->vec = ctx->vout;
+    return wrapper;
 }
 
-size_t get_ctx_ins_size(const BlsctCTxIns* blsct_ctx_ins) {
-    return blsct_ctx_ins->vec.size();
-}
+const char* serialize_ctx(void* vp_ctx) {
+    DataStream st{};
+    TransactionSerParams params { .allow_witness = true };
+    ParamsStream ps {params, st};
 
-size_t get_ctx_outs_size(const BlsctCTxOuts* blsct_ctx_outs) {
-    return blsct_ctx_outs->vec.size();
-}
+    auto ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
+    ctx->Serialize(ps);
 
-void delete_ctx_ins(const BlsctCTxIns* blsct_ctx_ins) {
-    delete blsct_ctx_ins;
-}
-
-void delete_ctx_outs(const BlsctCTxIns* blsct_ctx_outs) {
-    delete blsct_ctx_outs;
-}
-
-const char* serialize_ctx(const BlsctCTx* blsct_ctx) {
-    CMutableTransaction ctx;
-    auto [ser_ctx, ser_ctx_size] = SerializeCMutableTransaction(ctx);
-
-    return ser_ctx == nullptr ? nullptr :
-        SerializeToHex(ser_ctx, ser_ctx_size);
+    return SerializeToHex(
+        reinterpret_cast<uint8_t*>(st.data()),
+        ps.size()
+    );
 }
 
 BlsctRetVal* deserialize_ctx(const char* hex) {
@@ -629,6 +614,11 @@ BlsctRetVal* deserialize_ctx(const char* hex) {
 
     // the object should be deleteed after use and will not need the size
     return succ(ctx, 0);
+}
+
+void delete_ctx(void* vp_ctx) {
+    auto ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
+    delete ctx;
 }
 
 // ctx id
@@ -656,73 +646,97 @@ BlsctRetVal* deserialize_ctx_id(const char* hex) {
 }
 
 // ctx in
-const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* blsct_ctx_in) {
-    const CTxIn* ctx_in = reinterpret_cast<const CTxIn*>(blsct_ctx_in);
-    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &ctx_in->scriptSig, SCRIPT_SIZE);
-    return copy;
+bool are_ctx_in_equal(void* vp_a, void* vp_b) {
+    CTxIn* a = static_cast<CTxIn*>(vp_a);
+    CTxIn* b = static_cast<CTxIn*>(vp_a);
+    return *a == *b;
 }
 
-uint32_t get_ctx_in_sequence(const BlsctCTxIn* blsct_ctx_in) {
-    const CTxIn* ctx_in = reinterpret_cast<const CTxIn*>(blsct_ctx_in);
-    return ctx_in->nSequence;
-}
-
-const BlsctScript* get_ctx_in_script_witness(const BlsctCTxIn* blsct_ctx_in) {
-    const CTxIn* ctx_in = reinterpret_cast<const CTxIn*>(blsct_ctx_in);
-    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &ctx_in->scriptWitness, SCRIPT_SIZE);
-    return copy;
-}
-
-const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* blsct_ctx_in) {
-    const CTxIn* ctx_in = reinterpret_cast<const CTxIn*>(blsct_ctx_in);
+const BlsctCTxId* get_ctx_in_prev_out_hash(void* vp_ctx_in) {
+    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
     auto copy = static_cast<BlsctCTxId*>(malloc(CTX_ID_SIZE));
     std::memcpy(copy, &ctx_in->prevout.hash, CTX_ID_SIZE);
     return copy;
 }
 
-uint32_t get_ctx_in_prev_out_n(const BlsctCTxIn* blsct_ctx_in) {
-    const CTxIn* ctx_in = reinterpret_cast<const CTxIn*>(blsct_ctx_in);
+uint32_t get_ctx_in_prev_out_n(void* vp_ctx_in) {
+    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
     return ctx_in->prevout.n;
 }
 
-// ctx ins
-BlsctRetVal* get_ctx_in_at(const BlsctCTxIns* blsct_ctx_ins, const size_t i) {
-    auto ctx_in = &blsct_ctx_ins->vec.at(i);
-    auto ctx_in_size = sizeof(*ctx_in);
-    auto ctx_in_copy = static_cast<CTxIn*>(malloc(ctx_in_size));
-    std::memcpy(ctx_in_copy, ctx_in, ctx_in_size);
-    return succ(ctx_in_copy, ctx_in_size);
+const BlsctScript* get_ctx_in_script_sig(void* vp_ctx_in) {
+    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &ctx_in->scriptSig, SCRIPT_SIZE);
+    return copy;
 }
 
-bool are_ctx_ins_equal(const BlsctCTxIns* a, const BlsctCTxIns* b) {
+uint32_t get_ctx_in_sequence(void* vp_ctx_in) {
+    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+    return ctx_in->nSequence;
+}
+
+const BlsctScript* get_ctx_in_script_witness(void* vp_ctx_in) {
+    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    std::memcpy(copy, &ctx_in->scriptWitness, SCRIPT_SIZE);
+    return copy;
+}
+
+void delete_ctx_in(void* vp_ctx_in) {
+    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+    delete ctx_in;
+}
+
+BlsctRetVal* deserialize_ctx_in(const char* hex) {
+    auto st = set_up_data_stream_with_hex(hex);
+    if (st.size() == 0) err(BLSCT_FAILURE);
+
+    CTxIn* ctx_in = new CTxIn();
+    ctx_in->Unserialize(st);
+
+    return succ(ctx_in, 0);
+}
+
+const char* serialize_ctx_in(void* vp_ctx_in) {
+    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+
+    DataStream st{};
+    ctx_in->Serialize(st);
+
+    return data_stream_to_malloced_hex(st);
+}
+
+// ctx ins
+bool are_ctx_ins_equal(void* vp_a, void* vp_b) {
+    BlsctCTxIns* a = static_cast<BlsctCTxIns*>(vp_a);
+    BlsctCTxIns* b = static_cast<BlsctCTxIns*>(vp_b);
     return a->vec == b->vec;
 }
 
-const char* serialize_ctx_ins(const BlsctCTxIns* blsct_ctx_ins) {
-    DataStream st{};
+size_t get_ctx_ins_size(void* vp_ctx_ins) {
+    BlsctCTxIns* ctx_ins = static_cast<BlsctCTxIns*>(vp_ctx_ins);
+    return ctx_ins->vec.size();
+}
 
-    WriteCompactSize(st, blsct_ctx_ins->vec.size());
-    for(const auto& ctx_in: blsct_ctx_ins->vec) {
-        ctx_in.Serialize(st);
-    }
+BlsctRetVal* get_ctx_in_at(void* vp_ctx_ins, const size_t i) {
+    BlsctCTxIns* ctx_ins = static_cast<BlsctCTxIns*>(vp_ctx_ins);
 
-    auto ser_ctx_ins = reinterpret_cast<uint8_t*>(st.data());
-    MALLOC_BYTES(uint8_t, ser_tx_ins, st.size());
+    CTxIn local_ctx_in = ctx_ins->vec.at(i);
+    CTxIn* heap_ctx_in = new(std::nothrow) CTxIn;
+    *heap_ctx_in = local_ctx_in;
 
-    return ser_ctx_ins == nullptr ? nullptr :
-        SerializeToHex(ser_tx_ins, st.size());
+    return succ(heap_ctx_in, 0);
+}
+
+void delete_ctx_ins(void* vp_ctx_ins) {
+    BlsctCTxIns* ctx_ins = static_cast<BlsctCTxIns*>(vp_ctx_ins);
+    delete ctx_ins;
 }
 
 BlsctRetVal* deserialize_ctx_ins(const char* hex) {
-    // set up a stream with the given hex
-    DataStream st{};
-    std::vector<uint8_t> hex_vec;
-    if (!TryParseHexWrap(hex, hex_vec)) {
-        return err(BLSCT_FAILURE);
-    }
-    st << hex_vec;
+    auto st = set_up_data_stream_with_hex(hex);
+    if (st.size() == 0) return err(BLSCT_FAILURE);
 
     // tunserialize vector with the stream
     size_t vec_size = ReadCompactSize(st);
@@ -732,60 +746,78 @@ BlsctRetVal* deserialize_ctx_ins(const char* hex) {
         vec[i].Unserialize(st);
     }
 
-    // wrap the vector with BlsctCTxIns
+    // wrap the copy of the vector with BlsctCTxIns
     auto* wrapper = new BlsctCTxIns();
     wrapper->vec = vec;
 
-    // setting size 0 since size will not be used
     return succ(wrapper, 0);
 }
 
+const char* serialize_ctx_ins(void* vp_ctx_ins) {
+    BlsctCTxIns* ctx_ins = static_cast<BlsctCTxIns*>(vp_ctx_ins);
+
+    DataStream st{};
+
+    WriteCompactSize(st, ctx_ins->vec.size());
+    for(const auto& ctx_in: ctx_ins->vec) {
+        ctx_in.Serialize(st);
+    }
+
+    return data_stream_to_malloced_hex(st);
+}
+
 // ctx out
-uint64_t get_ctx_out_value(const CTxOut* blsct_ctx_out) {
-    const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
+bool are_ctx_out_equal(void* vp_a, void* vp_b) {
+    CTxOut* a = static_cast<CTxOut*>(vp_a);
+    CTxOut* b = static_cast<CTxOut*>(vp_b);
+    return *a == *b;
+}
+
+uint64_t get_ctx_out_value(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
     return ctx_out->nValue;
 }
 
-const BlsctScript* get_ctx_out_script_pub_key(const CTxOut* blsct_ctx_out) {
-    const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
+const BlsctScript* get_ctx_out_script_pub_key(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_out->scriptPubKey, SCRIPT_SIZE);
     return copy;
 }
 
-const BlsctScript* get_ctx_out_script_pubkey(const CTxOut* blsct_ctx_out) {
-    const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
+const BlsctScript* get_ctx_out_script_pubkey(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_out->scriptPubKey, SCRIPT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_ctx_out_spending_key(const CTxOut* blsct_ctx_out) {
-    const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
+const BlsctPoint* get_ctx_out_spending_key(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
     auto org = ctx_out->blsctData.spendingKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_ctx_out_ephemeral_key(const CTxOut* blsct_ctx_out) {
-    const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
+const BlsctPoint* get_ctx_out_ephemeral_key(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
     auto org = ctx_out->blsctData.ephemeralKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_ctx_out_blinding_key(const CTxOut* blsct_ctx_out) {
-    const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
+const BlsctPoint* get_ctx_out_blinding_key(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
     auto org = ctx_out->blsctData.blindingKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctRetVal* get_ctx_out_range_proof(const CTxOut* blsct_ctx_out) {
-    const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
+const BlsctRetVal* get_ctx_out_range_proof(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
     DataStream st{};
     ctx_out->blsctData.rangeProof.Serialize(st);
     auto copy = static_cast<BlsctRangeProof*>(malloc(st.size()));
@@ -793,20 +825,20 @@ const BlsctRetVal* get_ctx_out_range_proof(const CTxOut* blsct_ctx_out) {
     return succ(copy, st.size());;
 };
 
-uint16_t get_ctx_out_view_tag(const CTxOut* blsct_ctx_out) {
-    const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
+uint16_t get_ctx_out_view_tag(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
     return ctx_out->blsctData.viewTag;
 }
 
-const BlsctTokenId* get_ctx_out_token_id(const CTxOut* blsct_ctx_out) {
-    const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
+const BlsctTokenId* get_ctx_out_token_id(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
     auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
     std::memcpy(copy, &ctx_out->tokenId, TOKEN_ID_SIZE);
     return copy;
 }
 
-const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* blsct_ctx_out) {
-    const CTxOut* ctx_out = reinterpret_cast<const CTxOut*>(blsct_ctx_out);
+const BlsctRetVal* get_ctx_out_vector_predicate(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
     auto& pred = ctx_out->predicate;
     MALLOC_BYTES(uint8_t, buf, pred.size());
     RETURN_IF_MEM_ALLOC_FAILED(buf)
@@ -815,17 +847,85 @@ const BlsctRetVal* get_ctx_out_vector_predicate(const CTxOut* blsct_ctx_out) {
     return succ(buf, pred.size());
 }
 
+void delete_ctx_out(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
+    delete ctx_out;
+}
+
+BlsctRetVal* deserialize_ctx_out(const char* hex) {
+    auto st = set_up_data_stream_with_hex(hex);
+    if (st.size() == 0) err(BLSCT_FAILURE);
+
+    CTxOut* ctx_out = new CTxOut();
+    ctx_out->Unserialize(st);
+
+    return succ(ctx_out, 0);
+}
+
+const char* serialize_ctx_out(void* vp_ctx_out) {
+    CTxOut* ctx_out = static_cast<CTxOut*>(vp_ctx_out);
+
+    DataStream st{};
+    ctx_out->Serialize(st);
+
+    return data_stream_to_malloced_hex(st);
+}
+
 // ctx outs
-BlsctRetVal* get_ctx_out_at(const BlsctCTxOuts* blsct_ctx_outs, const size_t i) {
-    auto ctx_out = &blsct_ctx_outs->vec.at(i);
+bool are_ctx_outs_equal(void* vp_a, void* vp_b) {
+    BlsctCTxOuts* a = static_cast<BlsctCTxOuts*>(vp_a);
+    BlsctCTxOuts* b = static_cast<BlsctCTxOuts*>(vp_b);
+    return a->vec == b->vec;
+}
+
+size_t get_ctx_outs_size(void* vp_ctx_outs) {
+    BlsctCTxOuts* ctx_outs = static_cast<BlsctCTxOuts*>(vp_ctx_outs);
+    return ctx_outs->vec.size();
+}
+
+BlsctRetVal* get_ctx_out_at(void* vp_ctx_outs, const size_t i) {
+    BlsctCTxOuts* ctx_outs = static_cast<BlsctCTxOuts*>(vp_ctx_outs);
+    auto ctx_out = &ctx_outs->vec.at(i);
     auto ctx_out_size = sizeof(*ctx_out);
     auto ctx_out_copy = static_cast<BlsctCTxOut*>(malloc(ctx_out_size));
     std::memcpy(ctx_out_copy, ctx_out, ctx_out_size);
     return succ(ctx_out_copy, ctx_out_size);
 }
 
-bool are_ctx_outs_equal(const BlsctCTxOuts* a, const BlsctCTxOuts* b) {
-    return a->vec == b->vec;
+void delete_ctx_outs(void* vp_ctx_outs) {
+    BlsctCTxOuts* ctx_outs = static_cast<BlsctCTxOuts*>(vp_ctx_outs);
+    delete ctx_outs;
+}
+
+BlsctRetVal* deserialize_ctx_outs(const char* hex) {
+    auto st = set_up_data_stream_with_hex(hex);
+    if (st.size() == 0) err(BLSCT_FAILURE);
+
+    // unserialize vector with the stream
+    size_t vec_size = ReadCompactSize(st);
+    std::vector<CTxOut> vec(vec_size);
+
+    for (size_t i=0; i<vec_size; ++i) {
+        vec[i].Unserialize(st);
+    }
+
+    // wrap the vector with BlsctCTxOuts
+    auto* wrapper = new BlsctCTxOuts();
+    wrapper->vec = vec;
+
+    // setting size 0 since size will not be used
+    return succ(wrapper, 0);
+}
+
+const char* serialize_ctx_outs(void* vp_ctx_outs) {
+    BlsctCTxOuts* ctx_outs = static_cast<BlsctCTxOuts*>(vp_ctx_outs);
+    DataStream st{};
+
+    WriteCompactSize(st, ctx_outs->vec.size());
+    for(const auto& ctx_in: ctx_outs->vec) {
+        ctx_in.Serialize(st);
+    }
+    return data_stream_to_malloced_hex(st);
 }
 
 // delegators of blsct/wallet/helpers
@@ -1420,20 +1520,6 @@ const char* scalar_to_str(const BlsctScalar* blsct_scalar) {
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, scalar);
     auto str = scalar.GetString(10);
     return StrToAllocCStr(str);
-}
-
-static blsct::PrivateKey blsct_scalar_to_priv_key(
-    const BlsctScalar* blsct_scalar
-) {
-    // unserialize blsct_scalar to Scalar
-    Scalar scalar;
-    auto u8_blsct_scalar = U8C(blsct_scalar);
-    std::vector<uint8_t> vec {u8_blsct_scalar, u8_blsct_scalar + SCALAR_SIZE};
-    scalar.SetVch(vec);
-
-    // build private key from the scalar
-    blsct::PrivateKey priv_key(scalar);
-    return priv_key;
 }
 
 BlsctPubKey* scalar_to_pub_key(

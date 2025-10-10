@@ -235,8 +235,7 @@ typedef struct {
 
 typedef struct {
   BLSCT_RESULT result;
-  uint8_t* ser_ctx;
-  size_t ser_ctx_size;
+  void* ctx;
 
   size_t in_amount_err_index; // holds the first index of the tx_in whose amount exceeds the maximum
   size_t out_amount_err_index; // holds the first index of the tx_out whose amount exceeds the maximum
@@ -288,8 +287,6 @@ typedef struct {
 
 typedef struct BlsctCTxIns BlsctCTxIns;
 typedef struct BlsctCTxOuts BlsctCTxOuts;
-typedef struct BlsctCTxIn BlsctCTxIn;
-typedef struct BlsctCTxOut BlsctCTxOut;
 
 void free_obj(void* x);
 void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
@@ -332,7 +329,7 @@ void* create_tx_out_vec();
 void add_to_tx_out_vec(void* vp_tx_out_vec, const BlsctTxOut* tx_out);
 void delete_tx_out_vec(void* vp_tx_out_vec);
 
-const char* serialize_ctx(const BlsctCTx* blsct_ctx);
+const char* serialize_ctx(void* vp_ctx);
 BlsctRetVal* deserialize_ctx(const char* hex);
 
 // returns a serialized CMutableTransaction
@@ -340,69 +337,59 @@ BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
 );
-
-const char* get_ctx_id(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-);
-
-const BlsctCTxIns* get_ctx_ins(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-);
-
-const BlsctCTxOuts* get_ctx_outs(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-);
-
-size_t get_ctx_ins_size(const BlsctCTxIns* blsct_ctx_ins);
-size_t get_ctx_outs_size(const BlsctCTxOuts* blsct_ctx_outs);
-
-void delete_ctx_ins(const BlsctCTxIns* blsct_ctx_ins);
-void delete_ctx_outs(const BlsctCTxOuts* blsct_ctx_outs);
+const char* get_ctx_id(void* vp_ctx);
+const BlsctCTxIns* get_ctx_ins(void* vp_ctx);
+const BlsctCTxOuts* get_ctx_outs(void* vp_ctx);
 
 // ctx id
 const char* serialize_ctx_id(const BlsctCTxId* blsct_ctx_id);
 BlsctRetVal* deserialize_ctx_id(const char* hex);
 
 // ctx in
-const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* blsct_ctx_in);
-uint32_t get_ctx_in_sequence(const BlsctCTxIn* blsct_ctx_in);
-const BlsctScript* get_ctx_in_script_witness(const BlsctCTxIn* blsct_ctx_in);
-const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* blsct_ctx_in);
-uint32_t get_ctx_in_prev_out_n(const BlsctCTxIn* blsct_ctx_in);
+bool are_ctx_in_equal(void* vp_a, const void* vp_b);
+const BlsctCTxId* get_ctx_in_prev_out_hash(void* vp_ctx_in);
+uint32_t get_ctx_in_prev_out_n(void* vp_ctx_in);
+const BlsctScript* get_ctx_in_script_sig(void* vp_ctx_in);
+uint32_t get_ctx_in_sequence(void* vp_ctx_in);
+const BlsctScript* get_ctx_in_script_witness(void* vp_ctx_in);
+void delete_ctx_in(void* vp_ctx_in);
+BlsctRetVal* deserialize_ctx_in(const char* hex);
+const char* serialize_ctx_in(void* vp_ctx_in);
 
 // ctx_ins
-BlsctRetVal* get_ctx_in_at(
-    const BlsctCTxIns* blsct_ctx_ins,
-    const size_t i
-);
 bool are_ctx_ins_equal(const BlsctCTxIns* a, const BlsctCTxIns* b);
+size_t get_ctx_ins_size(const BlsctCTxIns* blsct_ctx_ins);
+BlsctRetVal* get_ctx_in_at(const BlsctCTxIns* blsct_ctx_ins, const size_t i);
 const char* serialize_ctx_ins(const BlsctCTxIns* blsct_ctx_ins);
 BlsctRetVal* deserialize_ctx_ins(const char* hex);
+void delete_ctx_ins(const BlsctCTxIns* blsct_ctx_ins);
 
 // ctx out
-uint64_t get_ctx_out_value(const BlsctCTxOut* ctx_out);
-const BlsctScript* get_ctx_out_script_pub_key(const BlsctCTxOut* blsct_ctx_out);
-const BlsctScript* get_ctx_out_script_pubkey(const BlsctCTxOut* blsct_ctx_out);
-const BlsctTokenId* get_ctx_out_token_id(const BlsctCTxOut* blsct_ctx_out);
-const BlsctRetVal* get_ctx_out_vector_predicate(const BlsctCTxOut* blsct_ctx_out);
+bool are_ctx_out_equal(void* vp_a, void* vp_b);
+uint64_t get_ctx_out_value(void* ctx_out);
+const BlsctScript* get_ctx_out_script_pub_key(void* vp_ctx_out);
+const BlsctScript* get_ctx_out_script_pubkey(void* vp_ctx_out);
+const BlsctTokenId* get_ctx_out_token_id(void* vp_ctx_out);
+const BlsctRetVal* get_ctx_out_vector_predicate(void* vp_ctx_out);
+void delete_ctx_out(void* vp_ctx_out);
+BlsctRetVal* deserialize_ctx_out(const char* hex);
+const char* serialize_ctx_out(void* vp_ctx_out);
 
 // ctx out blsct data
-const BlsctPoint* get_ctx_out_spending_key(const BlsctCTxOut* blsct_ctx_out);
-const BlsctPoint* get_ctx_out_ephemeral_key(const BlsctCTxOut* blsct_jctx_out);
-const BlsctPoint* get_ctx_out_blinding_key(const BlsctCTxOut* blsct_ctx_out);
-const BlsctRetVal* get_ctx_out_range_proof(const BlsctCTxOut* blsct_ctx_out);
-uint16_t get_ctx_out_view_tag(const BlsctCTxOut* blsct_ctx_out);
+const BlsctPoint* get_ctx_out_spending_key(void* vp_ctx_out);
+const BlsctPoint* get_ctx_out_ephemeral_key(void* vp_jctx_out);
+const BlsctPoint* get_ctx_out_blinding_key(void* vp_ctx_out);
+const BlsctRetVal* get_ctx_out_range_proof(void* vp_ctx_out);
+uint16_t get_ctx_out_view_tag(void* vp_ctx_out);
+// delete?????
 
 // ctx_outs
-BlsctRetVal* get_ctx_out_at(
-    const BlsctCTxOuts* blsct_ctx_outs,
-    const size_t i
-);
-
 bool are_ctx_outs_equal(const BlsctCTxOuts* a, const BlsctCTxOuts* b);
+size_t get_ctx_outs_size(const BlsctCTxOuts* blsct_ctx_outs);
+BlsctRetVal* get_ctx_out_at(const BlsctCTxOuts* blsct_ctx_outs, const size_t i);
+void delete_ctx_outs(const BlsctCTxOuts* blsct_ctx_outs);
+const char* serialize_ctx_outs(const BlsctCTxOuts* blsct_ctx_outs);
+BlsctRetVal* deserialize_ctx_outs(const char* hex);
 
 // double public key
 BlsctRetVal* gen_double_pub_key(
