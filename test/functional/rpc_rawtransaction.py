@@ -21,7 +21,6 @@ from test_framework.messages import (
     COIN,
     CTransaction,
     CTxOut,
-    tx_from_hex,
 )
 from test_framework.script import (
     CScript,
@@ -34,6 +33,7 @@ from test_framework.util import (
     assert_equal,
     assert_greater_than,
     assert_raises_rpc_error,
+    tx_from_hex,
 )
 from test_framework.wallet import (
     getnewdestination,

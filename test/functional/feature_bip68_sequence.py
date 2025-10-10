@@ -19,7 +19,6 @@ from test_framework.messages import (
     CTxIn,
     CTxInWitness,
     CTxOut,
-    tx_from_hex,
 )
 from test_framework.script import (
     CScript,
@@ -31,6 +30,7 @@ from test_framework.util import (
     assert_greater_than,
     assert_raises_rpc_error,
     softfork_active,
+    tx_from_hex,
 )
 from test_framework.wallet import MiniWallet
 

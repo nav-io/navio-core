@@ -18,12 +18,12 @@ from test_framework.blocktools import (
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.messages import (
     hash256,
-    tx_from_hex,
 )
 from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
     p2p_port,
+    tx_from_hex,
 )
 from test_framework.wallet import (
     MiniWallet,

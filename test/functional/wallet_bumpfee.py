@@ -20,11 +20,11 @@ from test_framework.blocktools import (
 )
 from test_framework.messages import (
     MAX_BIP125_RBF_SEQUENCE,
-    tx_from_hex
 )
 from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
+    tx_from_hex,
     assert_equal,
     assert_fee_amount,
     assert_greater_than,

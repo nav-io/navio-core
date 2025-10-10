@@ -466,13 +466,18 @@ std::map<COutPoint, CAmount> MiniMiner::CalculateBumpFees(const CFeeRate& target
             }
 
             // Calculate package fee and size from the gathered ancestor set
+            // Only include ancestors that actually need bumping (those with feerates below target)
             CAmount package_fee = 0;
             int64_t package_size = 0;
             for (const auto& ancestor_txid : ancestor_txids) {
                 auto entry_it = original_entries_by_txid.find(ancestor_txid);
                 if (entry_it != original_entries_by_txid.end()) {
-                    package_fee += entry_it->second.GetModifiedFee();
-                    package_size += entry_it->second.GetTxSize();
+                    const auto& entry = entry_it->second;
+                    // Only include ancestors that need bumping (feerate below target)
+                    if (entry.GetModifiedFee() < target_feerate.GetFee(entry.GetTxSize())) {
+                        package_fee += entry.GetModifiedFee();
+                        package_size += entry.GetTxSize();
+                    }
                 }
             }
 
@@ -539,15 +544,30 @@ std::optional<CAmount> MiniMiner::CalculateTotalBumpFees(const CFeeRate& target_
     }
 
     // Calculate the total bump fee for the entire ancestor package
+    // Only include ancestors that actually need bumping (those with feerates below target)
     const auto ancestor_package_size = std::accumulate(all_ancestors.cbegin(), all_ancestors.cend(), int64_t{0},
-                                                       [&original_entries_by_txid](int64_t sum, const uint256& txid) {
+                                                       [&original_entries_by_txid, &target_feerate](int64_t sum, const uint256& txid) {
                                                            auto it = original_entries_by_txid.find(txid);
-                                                           return sum + (it != original_entries_by_txid.end() ? it->second.GetTxSize() : 0);
+                                                           if (it != original_entries_by_txid.end()) {
+                                                               const auto& entry = it->second;
+                                                               // Only include ancestors that need bumping (feerate below target)
+                                                               if (entry.GetModifiedFee() < target_feerate.GetFee(entry.GetTxSize())) {
+                                                                   return sum + entry.GetTxSize();
+                                                               }
+                                                           }
+                                                           return sum;
                                                        });
     const auto ancestor_package_fee = std::accumulate(all_ancestors.cbegin(), all_ancestors.cend(), CAmount{0},
-                                                      [&original_entries_by_txid](CAmount sum, const uint256& txid) {
+                                                      [&original_entries_by_txid, &target_feerate](CAmount sum, const uint256& txid) {
                                                           auto it = original_entries_by_txid.find(txid);
-                                                          return sum + (it != original_entries_by_txid.end() ? it->second.GetModifiedFee() : 0);
+                                                          if (it != original_entries_by_txid.end()) {
+                                                              const auto& entry = it->second;
+                                                              // Only include ancestors that need bumping (feerate below target)
+                                                              if (entry.GetModifiedFee() < target_feerate.GetFee(entry.GetTxSize())) {
+                                                                  return sum + entry.GetModifiedFee();
+                                                              }
+                                                          }
+                                                          return sum;
                                                       });
 
     return target_feerate.GetFee(ancestor_package_size) - ancestor_package_fee;

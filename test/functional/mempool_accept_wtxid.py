@@ -15,7 +15,6 @@ from test_framework.messages import (
     CTxIn,
     CTxInWitness,
     CTxOut,
-    sha256,
     tx_from_hex,
 )
 from test_framework.p2p import P2PTxInvStore
@@ -33,6 +32,8 @@ from test_framework.script import (
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
+    sha256,
+
 )
 
 class MempoolWtxidTest(BitcoinTestFramework):

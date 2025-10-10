@@ -20,7 +20,6 @@ from test_framework.messages import (
     MAX_BLOCK_WEIGHT,
     MAX_MONEY,
     SEQUENCE_FINAL,
-    tx_from_hex,
 )
 from test_framework.script import (
     CScript,
@@ -41,6 +40,7 @@ from test_framework.util import (
     assert_equal,
     assert_greater_than,
     assert_raises_rpc_error,
+    tx_from_hex,
 )
 from test_framework.wallet import MiniWallet
 from test_framework.wallet_util import generate_keypair

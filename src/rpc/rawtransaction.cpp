@@ -771,7 +771,6 @@ static RPCHelpMan signrawtransactionwithkey()
                         "",
                         {
                             {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
-                            {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
                             {"scriptPubKey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "script key"},
                             {"redeemScript", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(required for P2SH) redeem script"},
                             {"witnessScript", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(required for P2WSH or P2SH-P2WSH) witness script"},
@@ -796,7 +795,6 @@ static RPCHelpMan signrawtransactionwithkey()
                                               {RPCResult::Type::ARR, "errors", /*optional=*/true, "Script verification errors (if there are any)", {
                                                                                                                                                        {RPCResult::Type::OBJ, "", "", {
                                                                                                                                                                                           {RPCResult::Type::STR_HEX, "txid", "The hash of the referenced, previous transaction"},
-                                                                                                                                                                                          {RPCResult::Type::NUM, "vout", "The index of the output to spent and used as input"},
                                                                                                                                                                                           {RPCResult::Type::ARR, "witness", "", {
                                                                                                                                                                                                                                     {RPCResult::Type::STR_HEX, "witness", ""},
                                                                                                                                                                                                                                 }},

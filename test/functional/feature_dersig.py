@@ -12,7 +12,6 @@ from test_framework.blocktools import (
     create_coinbase,
 )
 from test_framework.messages import (
-    tx_from_hex,
     msg_block
 )
 from test_framework.p2p import P2PInterface
@@ -20,6 +19,8 @@ from test_framework.script import CScript
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
+    tx_from_hex,
+
 )
 from test_framework.wallet import (
     MiniWallet,

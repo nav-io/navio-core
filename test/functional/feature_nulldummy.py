@@ -23,7 +23,6 @@ from test_framework.blocktools import (
 )
 from test_framework.messages import (
     CTransaction,
-    tx_from_hex,
 )
 from test_framework.script import (
     OP_0,
@@ -33,6 +32,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
+    tx_from_hex,
 )
 from test_framework.wallet import getnewdestination
 from test_framework.wallet_util import generate_keypair

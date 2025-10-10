@@ -24,7 +24,6 @@ from test_framework.messages import (
     CTransaction,
     CTxIn,
     CTxOut,
-    tx_from_hex,
 )
 from test_framework.script import (
     CScript,
@@ -43,6 +42,7 @@ from test_framework.script_util import (
 )
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
+    tx_from_hex,
     assert_equal,
     assert_greater_than_or_equal,
     assert_is_hex_string,

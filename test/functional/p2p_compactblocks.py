@@ -44,7 +44,6 @@ from test_framework.messages import (
     msg_sendheaders,
     msg_tx,
     ser_uint256,
-    tx_from_hex,
 )
 from test_framework.p2p import (
     P2PInterface,
@@ -59,6 +58,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     softfork_active,
+    tx_from_hex,
 )
 from test_framework.wallet import MiniWallet
 

@@ -20,7 +20,6 @@ from test_framework.messages import (
     CTxOut,
     SEQUENCE_FINAL,
     TX_VERSION_BLSCT_MARKER,
-    tx_from_hex,
 )
 from test_framework.script import (
     ANNEX_TAG,
@@ -96,6 +95,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_raises_rpc_error,
     assert_equal,
+    tx_from_hex,
 )
 from test_framework.wallet_util import generate_keypair
 from test_framework.key import (

@@ -13,7 +13,6 @@ from test_framework.messages import (
     CTxInWitness,
     CTxOut,
     WITNESS_SCALE_FACTOR,
-    tx_from_hex,
 )
 from test_framework.script import (
     CScript,
@@ -34,6 +33,7 @@ from test_framework.util import (
     assert_equal,
     assert_greater_than,
     assert_greater_than_or_equal,
+    tx_from_hex,
 )
 from test_framework.wallet import MiniWallet
 from test_framework.wallet_util import generate_keypair

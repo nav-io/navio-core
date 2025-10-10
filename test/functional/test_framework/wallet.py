@@ -274,6 +274,7 @@ class MiniWallet:
         return {
             "sent_vout": 1,
             "txid": hex(tx.vout[1].hash())[2:],
+            "txidhash": txid,
             "wtxid": tx.getwtxid(),
             "hex": tx.serialize().hex(),
             "tx": tx,

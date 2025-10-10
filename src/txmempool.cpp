@@ -1342,13 +1342,20 @@ uint64_t CTxMemPool::CalculateDescendantMaximum(txiter entry) const {
 
 void CTxMemPool::GetTransactionAncestry(const uint256& txid, size_t& ancestors, size_t& descendants, size_t* const ancestorsize, CAmount* const ancestorfees) const {
     LOCK(cs);
-    auto it = mapTx.find(txid);
     ancestors = descendants = 0;
-    if (it != mapTx.end()) {
-        ancestors = it->GetCountWithAncestors();
-        if (ancestorsize) *ancestorsize = it->GetSizeWithAncestors();
-        if (ancestorfees) *ancestorfees = it->GetModFeesWithAncestors();
-        descendants = CalculateDescendantMaximum(it);
+
+    // Since txid is actually an output hash in the new model, we need to find the transaction
+    // that contains this output using mapOutputToTx
+    auto output_iter = mapOutputToTx.find(txid);
+    if (output_iter != mapOutputToTx.end()) {
+        // Now look up the actual transaction hash in mapTx
+        auto it = mapTx.find(output_iter->second);
+        if (it != mapTx.end()) {
+            ancestors = it->GetCountWithAncestors();
+            if (ancestorsize) *ancestorsize = it->GetSizeWithAncestors();
+            if (ancestorfees) *ancestorfees = it->GetModFeesWithAncestors();
+            descendants = CalculateDescendantMaximum(it);
+        }
     }
 }
 

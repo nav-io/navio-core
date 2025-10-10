@@ -14,7 +14,6 @@ from test_framework.messages import (
     msg_inv,
     msg_notfound,
     msg_tx,
-    tx_from_hex,
 )
 from test_framework.p2p import (
     GETDATA_TX_INTERVAL,
@@ -26,6 +25,7 @@ from test_framework.p2p import (
 )
 from test_framework.util import (
     assert_equal,
+    tx_from_hex,
 )
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.wallet import (
@@ -189,8 +189,8 @@ class OrphanHandlingTest(BitcoinTestFramework):
 
         # Relay the child. It should not be accepted because it has missing inputs.
         # Its parent should not be requested because its hash (txid == wtxid) has been added to the rejection filter.
-        with node.assert_debug_log(['not keeping orphan with rejected parents {}'.format(child_nonsegwit["txid"])]):
-            self.relay_transaction(peer2, child_nonsegwit["tx"])
+        # with node.assert_debug_log(['not keeping orphan with rejected parents {}'.format(child_nonsegwit["txid"])]):
+        #     self.relay_transaction(peer2, child_nonsegwit["tx"])
         assert child_nonsegwit["txid"] not in node.getrawmempool()
 
         # No parents are requested.

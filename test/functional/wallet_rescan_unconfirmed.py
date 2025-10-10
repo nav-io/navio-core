@@ -41,11 +41,11 @@ class WalletRescanUnconfirmed(BitcoinTestFramework):
             scriptPubKey=address_to_scriptpubkey(parent_address),
             amount=COIN,
         )
-        assert tx_parent_to_reorg["txid"] in node.getrawmempool()
+        assert tx_parent_to_reorg["txidhash"] in node.getrawmempool()
         block_to_reorg = self.generate(tester_wallet, 1)[0]
         assert_equal(len(node.getrawmempool()), 0)
         node.syncwithvalidationinterfacequeue()
-        assert_equal(w0.gettransaction(tx_parent_to_reorg["txid"])["confirmations"], 1)
+        assert_equal(w0.gettransaction(tx_parent_to_reorg["txidhash"])["confirmations"], 1)
 
         # Create an unconfirmed child transaction from the parent tx, sending all
         # the funds to an unspendable address. Importantly, no change output is created so the
