@@ -171,7 +171,6 @@ static std::vector<RPCArg> CreateTxDoc()
                     "",
                     {
                         {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
-                        {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
                         {"sequence", RPCArg::Type::NUM, RPCArg::DefaultHint{"depends on the value of the 'replaceable' and 'locktime' arguments"}, "The sequence number"},
                     },
                 },

@@ -498,7 +498,7 @@ RPCHelpMan getbalances()
 
             LOCK(wallet.cs_wallet);
 
-            const auto bal = GetBalance(wallet);
+            const auto bal = GetBalance(wallet, 0, wallet.IsWalletFlagSet(WALLET_FLAG_AVOID_REUSE));
             const auto blsct_bal = GetBlsctBalance(wallet);
             UniValue balances{UniValue::VOBJ};
             {

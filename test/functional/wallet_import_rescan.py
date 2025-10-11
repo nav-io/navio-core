@@ -27,9 +27,8 @@ from test_framework.address import (
 from test_framework.util import (
     assert_equal,
     set_node_times,
+    tx_from_hex
 )
-
-from test_framework.messages import tx_from_hex
 
 import collections
 from decimal import Decimal

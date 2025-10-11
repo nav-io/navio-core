@@ -76,7 +76,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.log.info(f"Using UTXO: {utxo['txid']}:{utxo['vout']}")
 
         # Test 1: Create raw transaction with minimal inputs (wallet will fill missing data)
-        inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
+        inputs = [{"txid": utxo['txid']}]
         outputs = [{"address": address2, "amount": 0.1, "memo": "Test transaction"}]
 
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
@@ -306,7 +306,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.log.info(f"Generated nonce: {nonce_hex}")
 
         # Test 1: Create raw transaction with nonce and no address
-        inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
+        inputs = [{"txid": utxo['txid']}]
         outputs = [{"amount": 0.005, "memo": "Test nonce recovery", "blinding_key": nonce_hex}]
 
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
