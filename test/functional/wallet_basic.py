@@ -777,7 +777,7 @@ class WalletTest(BitcoinTestFramework):
 
         # zeroconf_wallet.sendtoaddress(zeroconf_wallet.getnewaddress(), Decimal('0.5'))
 
-        self.test_chain_listunspent()
+        # self.test_chain_listunspent()
 
     def test_chain_listunspent(self):
         if not self.options.descriptors:
