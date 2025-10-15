@@ -915,12 +915,11 @@ const std::array<std::string, 33> V2_MESSAGE_IDS = {
     NetMsgType::GETCFCHECKPT,
     NetMsgType::CFCHECKPT,
     NetMsgType::ADDRV2,
+    NetMsgType::GETOUTPUTDATA,
     // Unimplemented message types that are assigned in BIP324:
     "",
     "",
-    "",
-    ""
-};
+    ""};
 
 class V2MessageMap
 {

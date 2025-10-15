@@ -270,6 +270,12 @@ extern const char* WTXIDRELAY;
  * txreconciliation, as described by BIP 330.
  */
 extern const char* SENDTXRCNCL;
+/**
+ * The getoutputdata message requests one or more transactions by output hash.
+ * This is used with the new output hash prevout system to request transactions
+ * that contain specific output hashes.
+ */
+extern const char* GETOUTPUTDATA;
 }; // namespace NetMsgType
 
 /* Get a vector of all valid message types (see above) */
@@ -478,9 +484,10 @@ enum GetDataMsg : uint32_t {
     UNDEFINED = 0,
     MSG_TX = 1,
     MSG_BLOCK = 2,
-    MSG_WTX = 5,                                      //!< Defined in BIP 339
-    MSG_DTX = 6,                                      //!< Used for Dandelion++
-    MSG_DWTX = 7,                                     //!< Used for Dandelion++
+    MSG_WTX = 5,         //!< Defined in BIP 339
+    MSG_DTX = 6,         //!< Used for Dandelion++
+    MSG_DWTX = 7,        //!< Used for Dandelion++
+    MSG_OUTPUT_HASH = 8, //!< Request transaction by output hash
     // The following can only occur in getdata. Invs always use TX/WTX/DTX/DWTX or BLOCK.
     MSG_FILTERED_BLOCK = 3,                           //!< Defined in BIP37
     MSG_CMPCT_BLOCK = 4,                              //!< Defined in BIP152
@@ -538,5 +545,21 @@ public:
 
 /** Convert a TX/DTX/WITNESS_TX/DWTX/WTX CInv to a GenTxid. */
 GenTxid ToGenTxid(const CInv& inv);
+
+/** Output hash request data */
+class COutputHashRequest
+{
+public:
+    COutputHashRequest();
+    COutputHashRequest(const uint256& outputHashIn);
+
+    SERIALIZE_METHODS(COutputHashRequest, obj) { READWRITE(obj.output_hash); }
+
+    friend bool operator<(const COutputHashRequest& a, const COutputHashRequest& b);
+
+    std::string ToString() const;
+
+    uint256 output_hash;
+};
 
 #endif // BITCOIN_PROTOCOL_H

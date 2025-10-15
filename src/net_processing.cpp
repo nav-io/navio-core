@@ -1011,6 +1011,9 @@ private:
     bool AlreadyHaveBlock(const uint256& block_hash) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
     void ProcessGetBlockData(CNode& pfrom, Peer& peer, const CInv& inv)
         EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex);
+    void ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::vector<COutputHashRequest>& vOutputHashRequests, const std::atomic<bool>& interruptMsgProc);
+    CTransactionRef FindTxByOutputHash(const uint256& outputHash);
+    void AddOutputHashAnnouncement(const CNode& node, const uint256& outputHash, std::chrono::microseconds current_time);
 
     /**
      * Validation logic for compact filters request handling.
@@ -1541,6 +1544,35 @@ void PeerManagerImpl::AddTxAnnouncement(const CNode& node, const GenTxid& gtxid,
     const bool overloaded = !node.HasPermission(NetPermissionFlags::Relay) &&
         m_txrequest.CountInFlight(nodeid) >= MAX_PEER_TX_REQUEST_IN_FLIGHT;
     if (overloaded) delay += OVERLOADED_PEER_TX_DELAY;
+    m_txrequest.ReceivedInv(nodeid, gtxid, preferred, current_time + delay);
+}
+
+void PeerManagerImpl::AddOutputHashAnnouncement(const CNode& node, const uint256& outputHash, std::chrono::microseconds current_time)
+{
+    AssertLockHeld(::cs_main); // For m_txrequest
+    NodeId nodeid = node.GetId();
+    if (!node.HasPermission(NetPermissionFlags::Relay) && m_txrequest.Count(nodeid) >= MAX_PEER_TX_ANNOUNCEMENTS) {
+        // Too many queued announcements from this peer
+        return;
+    }
+    const CNodeState* state = State(nodeid);
+
+    // Decide the TxRequestTracker parameters for this announcement:
+    // - "preferred": if fPreferredDownload is set (= outbound, or NetPermissionFlags::NoBan permission)
+    // - "reqtime": current time plus delays for:
+    //   - NONPREF_PEER_TX_DELAY for announcements from non-preferred connections
+    //   - OVERLOADED_PEER_TX_DELAY for announcements from peers which have at least
+    //     MAX_PEER_TX_REQUEST_IN_FLIGHT requests in flight (and don't have NetPermissionFlags::Relay).
+    auto delay{0us};
+    const bool preferred = state->fPreferredDownload;
+    if (!preferred) delay += NONPREF_PEER_TX_DELAY;
+    const bool overloaded = !node.HasPermission(NetPermissionFlags::Relay) &&
+                            m_txrequest.CountInFlight(nodeid) >= MAX_PEER_TX_REQUEST_IN_FLIGHT;
+    if (overloaded) delay += OVERLOADED_PEER_TX_DELAY;
+
+    // For output hash requests, we use a special GenTxid that represents output hash requests
+    // We'll use a special marker to distinguish output hash requests from regular tx requests
+    const auto gtxid{GenTxid::Wtxid(outputHash)}; // Use wtxid format but with output hash
     m_txrequest.ReceivedInv(nodeid, gtxid, preferred, current_time + delay);
 }
 
@@ -2403,6 +2435,40 @@ CTransactionRef PeerManagerImpl::FindTxForGetData(const Peer::TxRelay& tx_relay,
     return {};
 }
 
+CTransactionRef PeerManagerImpl::FindTxByOutputHash(const uint256& outputHash)
+{
+    // First, check the mempool for transactions that contain this output hash
+    {
+        LOCK(m_mempool.cs);
+        for (const auto& entry : m_mempool.mapTx) {
+            const CTransactionRef& tx = entry.GetSharedTx();
+            // Check if any output in this transaction has the requested output hash
+            for (const auto& txout : tx->vout) {
+                if (txout.GetHash() == outputHash) {
+                    return tx;
+                }
+            }
+        }
+    }
+
+    // Check the most recent block
+    {
+        LOCK(m_most_recent_block_mutex);
+        if (m_most_recent_block_txs != nullptr) {
+            for (const auto& [txid, tx] : *m_most_recent_block_txs) {
+                // Check if any output in this transaction has the requested output hash
+                for (const auto& txout : tx->vout) {
+                    if (txout.GetHash() == outputHash) {
+                        return tx;
+                    }
+                }
+            }
+        }
+    }
+
+    return {};
+}
+
 void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic<bool>& interruptMsgProc)
 {
     AssertLockNotHeld(cs_main);
@@ -2489,6 +2555,70 @@ void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic
         // In normal operation, we often send NOTFOUND messages for parents of
         // transactions that we relay; if a peer is missing a parent, they may
         // assume we have them and request the parents from us.
+        MakeAndPushMessage(pfrom, NetMsgType::NOTFOUND, vNotFound);
+    }
+}
+
+void PeerManagerImpl::ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::vector<COutputHashRequest>& vOutputHashRequests, const std::atomic<bool>& interruptMsgProc)
+{
+    AssertLockNotHeld(cs_main);
+
+    auto tx_relay = peer.GetTxRelay();
+
+    if (tx_relay == nullptr) {
+        // Ignore GETOUTPUTDATA requests from block-relay-only peers and peers that asked us not to announce transactions.
+        return;
+    }
+
+    std::vector<CInv> vNotFound;
+    std::vector<CTransactionRef> vTxs;
+
+    // Process each output hash request
+    for (const auto& outputHashRequest : vOutputHashRequests) {
+        if (interruptMsgProc) return;
+        // The send buffer provides backpressure. If there's no space in
+        // the buffer, pause processing until the next call.
+        if (pfrom.fPauseSend) break;
+
+        const uint256& outputHash = outputHashRequest.output_hash;
+
+        // Try to find a transaction that contains this output hash
+        CTransactionRef tx = FindTxByOutputHash(outputHash);
+
+        if (tx) {
+            // Found a transaction with this output hash
+            const auto current_time{GetTime<std::chrono::microseconds>()};
+            auto replyMsgType = NetMsgType::TX;
+            auto txinfo = m_mempool.info(GenTxid::Txid(tx->GetHash()));
+            bool has_embargo = txinfo.tx && txinfo.m_embargo > current_time;
+
+            // Check if tx is embargoed
+            if (has_embargo) {
+                LOCK(tx_relay->m_tx_inventory_mutex);
+                LogPrint(BCLog::DANDELION, "getoutputdata tx=%s has_embargo=%f peer=%d m_send_stem=%f\n", tx->GetHash().ToString(), has_embargo, pfrom.GetId(), tx_relay->m_send_stem);
+                // Set the reply message type to DTX for embargoed TX data
+                replyMsgType = NetMsgType::DTX;
+
+                // Check if peer selected as stem peer
+                if (!tx_relay->m_send_stem) {
+                    // Don't send embargoed Inv to non stem peers
+                    continue;
+                }
+            }
+
+            // Send the transaction with witness data
+            MakeAndPushMessage(pfrom, replyMsgType, TX_WITH_WITNESS(*tx));
+            m_mempool.RemoveUnbroadcastTx(tx->GetHash());
+        } else {
+            // Create a notfound entry for this output hash
+            // We'll use MSG_OUTPUT_HASH type for notfound responses
+            CInv notFoundInv(MSG_OUTPUT_HASH, outputHash);
+            vNotFound.push_back(notFoundInv);
+        }
+    }
+
+    // Send notfound for any output hashes we couldn't find
+    if (!vNotFound.empty()) {
         MakeAndPushMessage(pfrom, NetMsgType::NOTFOUND, vNotFound);
     }
 }
@@ -3992,6 +4122,24 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             ProcessGetData(pfrom, *peer, interruptMsgProc);
         }
 
+        return;
+    }
+
+    if (msg_type == NetMsgType::GETOUTPUTDATA) {
+        std::vector<COutputHashRequest> vOutputHashRequests;
+        vRecv >> vOutputHashRequests;
+        if (vOutputHashRequests.size() > MAX_INV_SZ) {
+            Misbehaving(*peer, 20, strprintf("getoutputdata message size = %u", vOutputHashRequests.size()));
+            return;
+        }
+
+        LogPrint(BCLog::NET, "received getoutputdata (%u output hashes) peer=%d\n", vOutputHashRequests.size(), pfrom.GetId());
+
+        if (vOutputHashRequests.size() > 0) {
+            LogPrint(BCLog::NET, "received getoutputdata for: %s peer=%d\n", vOutputHashRequests[0].ToString(), pfrom.GetId());
+        }
+
+        ProcessGetOutputData(pfrom, *peer, vOutputHashRequests, interruptMsgProc);
         return;
     }
 

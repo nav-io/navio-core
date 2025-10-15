@@ -84,8 +84,10 @@ class RPCGenerateTest(BitcoinTestFramework):
         assert_equal(node.getrawtransaction(txid=txid, verbose=False, blockhash=hash), rawtx)
 
         self.log.info('Fail to generate block with out of order txs')
-        txid1 = miniwallet.send_self_transfer(from_node=node)['txid']
-        utxo1 = miniwallet.get_utxo(txid=txid1)
+        res = miniwallet.send_self_transfer(from_node=node)
+        txid1 = res['txid']
+        txoutid1 = res['new_utxo']['txid']
+        utxo1 = miniwallet.get_utxo(txid=txoutid1)
         rawtx2 = miniwallet.create_self_transfer(utxo_to_spend=utxo1)['hex']
         assert_raises_rpc_error(-25, 'TestBlockValidity failed: bad-txns-inputs-missingorspent', self.generateblock, node, address, [rawtx2, txid1])
 

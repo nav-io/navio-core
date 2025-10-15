@@ -406,6 +406,25 @@ class CInv:
         return isinstance(other, CInv) and self.hash == other.hash and self.type == other.type
 
 
+class COutputHashRequest:
+    __slots__ = ("output_hash",)
+
+    def __init__(self, output_hash=0):
+        self.output_hash = output_hash
+
+    def deserialize(self, f):
+        self.output_hash = deser_uint256(f)
+
+    def serialize(self):
+        return ser_uint256(self.output_hash)
+
+    def __repr__(self):
+        return "COutputHashRequest(output_hash=%064x)" % (self.output_hash)
+
+    def __eq__(self, other):
+        return isinstance(other, COutputHashRequest) and self.output_hash == other.output_hash
+
+
 class CBlockLocator:
     __slots__ = ("nVersion", "vHave")
 
@@ -1899,6 +1918,23 @@ class msg_getdata:
 
     def __repr__(self):
         return "msg_getdata(inv=%s)" % (repr(self.inv))
+
+
+class msg_getoutputdata:
+    __slots__ = ("output_hashes",)
+    msgtype = b"getoutputdata"
+
+    def __init__(self, output_hashes=None):
+        self.output_hashes = output_hashes if output_hashes is not None else []
+
+    def deserialize(self, f):
+        self.output_hashes = deser_vector(f, COutputHashRequest)
+
+    def serialize(self):
+        return ser_vector(self.output_hashes)
+
+    def __repr__(self):
+        return "msg_getoutputdata(output_hashes=%s)" % (repr(self.output_hashes))
 
 
 class msg_getblocks:

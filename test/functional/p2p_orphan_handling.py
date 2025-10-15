@@ -7,10 +7,12 @@ import time
 
 from test_framework.messages import (
     CInv,
+    COutputHashRequest,
     MSG_TX,
     MSG_WITNESS_TX,
     MSG_WTX,
     msg_getdata,
+    msg_getoutputdata,
     msg_inv,
     msg_notfound,
     msg_tx,
@@ -80,13 +82,35 @@ class PeerTxRelayer(P2PTxInvStore):
 
     def wait_for_parent_requests(self, txids):
         """Wait for requests for missing parents by txid with witness data (MSG_WITNESS_TX or
-        WitnessTx). Requires that the getdata message match these txids exactly; all txids must be
+        MSG_WTX). Requires that the getdata message match these txids exactly; all txids must be
         requested and no additional requests are allowed."""
         def test_function():
             last_getdata = self.last_message.get('getdata')
             if not last_getdata:
                 return False
-            return len(last_getdata.inv) == len(txids) and all([item.type == MSG_WITNESS_TX and item.hash in txids for item in last_getdata.inv])
+            allowed_types = {MSG_WITNESS_TX, MSG_WTX}
+            return len(last_getdata.inv) == len(txids) and all(item.type in allowed_types and item.hash in txids for item in last_getdata.inv)
+        self.wait_until(test_function, timeout=10)
+
+    def wait_for_output_hash_requests(self, output_hashes):
+        """Wait for requests for missing parents by output hash with witness data (MSG_WITNESS_TX or
+        WitnessTx). Requires that the getdata message contain all the specified output hashes."""
+        def test_function():
+            last_getdata = self.last_message.get('getdata')
+            if not last_getdata:
+                return False
+            received_hashes = [item.hash for item in last_getdata.inv if item.type == MSG_WITNESS_TX]
+            return all(hash_val in received_hashes for hash_val in output_hashes)
+        self.wait_until(test_function, timeout=10)
+
+    def wait_for_getoutputdata(self, output_hash_requests):
+        """Wait for getoutputdata message containing the specified output hash requests."""
+        def test_function():
+            last_getoutputdata = self.last_message.get('getoutputdata')
+            if not last_getoutputdata:
+                return False
+            received_hashes = [req.output_hash for req in last_getoutputdata.output_hashes]
+            return all(req.output_hash in received_hashes for req in output_hash_requests)
         self.wait_until(test_function, timeout=10)
 
     def assert_no_immediate_response(self, message):
@@ -214,7 +238,12 @@ class OrphanHandlingTest(BitcoinTestFramework):
         # The parent should be requested because even though the txid commits to the fee, it doesn't
         # commit to the feerate. Delayed because it's by txid and this is not a preferred relay peer.
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY + TXID_RELAY_DELAY)
-        peer2.wait_for_getdata([int(parent_low_fee["tx"].rehash(), 16)])
+        
+        # With the new output hash prevout system, the node requests transactions by output hash
+        # instead of transaction hash. Get the output hash that the child transaction is trying to spend.
+        child_tx = child_low_fee["tx"]
+        expected_output_hash = child_tx.vin[0].prevout.hash
+        peer2.wait_for_getdata([expected_output_hash])
 
         self.log.info("Test orphan handling when a parent was previously downloaded with witness stripped")
         parent_normal = self.wallet.create_self_transfer()
@@ -233,7 +262,11 @@ class OrphanHandlingTest(BitcoinTestFramework):
         # The parent should be requested since the unstripped wtxid would differ. Delayed because
         # it's by txid and this is not a preferred relay peer.
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY + TXID_RELAY_DELAY)
-        peer2.wait_for_getdata([int(parent_normal["tx"].rehash(), 16)])
+        # With the new output hash prevout system, the node requests transactions by output hash
+        # instead of transaction hash. Get the output hash that the child transaction is trying to spend.
+        child_tx = child_invalid_witness["tx"]
+        expected_output_hash = child_tx.vin[0].prevout.hash
+        peer2.wait_for_getdata([expected_output_hash])
 
         # parent_normal can be relayed again even though parent1_witness_stripped was rejected
         self.relay_transaction(peer1, parent_normal["tx"])
@@ -277,8 +310,22 @@ class OrphanHandlingTest(BitcoinTestFramework):
         self.relay_transaction(peer, orphan["tx"])
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY + TXID_RELAY_DELAY)
         peer.sync_with_ping()
-        assert_equal(len(peer.last_message["getdata"].inv), 2)
-        peer.wait_for_parent_requests([int(txid_conf_old, 16), int(missing_tx["txid"], 16)])
+        
+        # With the new output hash prevout system, the node requests transactions by output hash
+        # instead of transaction hash. Get the output hashes that the orphan transaction is trying to spend.
+        orphan_tx = orphan["tx"]
+        expected_output_hashes = []
+        for vin in orphan_tx.vin:
+            expected_output_hashes.append(vin.prevout.hash)
+        
+        # The node should request all the missing parent transactions by their output hashes
+        # We expect at least 2 requests (for the old confirmed and missing transactions)
+        assert len(peer.last_message["getdata"].inv) >= 2, f"Expected at least 2 getdata requests, got {len(peer.last_message['getdata'].inv)}"
+        
+        # Wait for the specific parent requests we expect (by output hash)
+        # Create output hash requests for the expected hashes
+        output_hash_requests = [COutputHashRequest(hash_val) for hash_val in expected_output_hashes]
+        peer.wait_for_getoutputdata(output_hash_requests)
 
         # Even though the peer would send a notfound for the "old" confirmed transaction, the node
         # doesn't give up on the orphan. Once all of the missing parents are received, it should be
