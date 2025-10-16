@@ -791,10 +791,11 @@ bool CWallet::IsSpent(const COutPoint& outpoint) const
 
     for (TxSpends::const_iterator it = range.first; it != range.second; ++it) {
         const uint256& wtxid = it->second;
-        const auto wtx = GetWalletTxFromOutpoint(outpoint);
-        if (wtx != nullptr) {
-            int depth = GetTxDepthInMainChain(*wtx);
-            if (depth > 0 || (depth == 0 && !wtx->isAbandoned()))
+        // Look up the spending transaction (not the transaction that created the output)
+        const auto spending_wtx = GetWalletTx(wtxid);
+        if (spending_wtx != nullptr) {
+            int depth = GetTxDepthInMainChain(*spending_wtx);
+            if (depth > 0 || (depth == 0 && !spending_wtx->isAbandoned()))
                 return true; // Spent
         }
     }
@@ -1264,9 +1265,9 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
                 COutPoint outpoint(desc_tx->tx->vout[i].GetHash());
                 std::pair<TxSpends::const_iterator, TxSpends::const_iterator> range = mapTxSpends.equal_range(outpoint);
                 for (TxSpends::const_iterator it = range.first; it != range.second; ++it) {
-                    const auto wtx = GetWalletTxFromOutpoint(outpoint);
-                    if (wtx != nullptr) {
-                        auto mit = mapWallet.find(wtx->GetHash());
+                    const auto spending_wtx = GetWalletTx(it->second);
+                    if (spending_wtx != nullptr) {
+                        auto mit = mapWallet.find(spending_wtx->GetHash());
                         if (mit != mapWallet.end()) {
                             txs.push_back(&mit->second);
                         }
