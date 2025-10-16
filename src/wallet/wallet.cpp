@@ -1280,8 +1280,7 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
     auto blsct_man = GetBLSCTKeyMan();
     if (wtx.tx->IsBLSCT()) {
         for (auto& out : wtx.tx->vout) {
-            if (blsct_man->IsMine(out))
-            {
+            if (blsct_man->IsMine(out)) {
                 blsct::PrivateKey spending_key;
                 if (!blsct_man->GetSpendingKeyForOutputWithCache(out, spending_key)) {
                     continue;
@@ -1614,10 +1613,10 @@ void CWallet::MarkConflicted(const uint256& hashBlock, int conflicting_height, c
 
     // Iterate over all its outputs, and mark transactions in the wallet that spend them conflicted too.
     RecursiveUpdateTxState(hashTx, try_updating_state);
-
 }
 
-void CWallet::RecursiveUpdateTxState(const uint256& tx_hash, const TryUpdatingStateFn& try_updating_state) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
+void CWallet::RecursiveUpdateTxState(const uint256& tx_hash, const TryUpdatingStateFn& try_updating_state) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet)
+{
     // Do not flush the wallet here for performance reasons
     WalletBatch batch(GetDatabase(), false);
 
@@ -3206,9 +3205,8 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
         } else if (nLoadWalletRet == DBErrors::NONCRITICAL_ERROR) {
             warnings.push_back(strprintf(_("Error reading %s! All keys read correctly, but transaction data"
                                            " or address metadata may be missing or incorrect."),
-                walletFile));
-        }
-        else if (nLoadWalletRet == DBErrors::TOO_NEW) {
+                                         walletFile));
+        } else if (nLoadWalletRet == DBErrors::TOO_NEW) {
             error = strprintf(_("Error loading %s: Wallet requires newer version of %s"), walletFile, PACKAGE_NAME);
             return nullptr;
         } else if (nLoadWalletRet == DBErrors::EXTERNAL_SIGNER_SUPPORT_REQUIRED) {
@@ -3391,7 +3389,7 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
             warnings.push_back(strprintf(_("%s is set very high! Fees this large could be paid on a single transaction."), "-maxtxfee"));
         }
 
-        if (chain&& CFeeRate{max_fee.value(), 1000} < chain->relayMinFee()) {
+        if (chain && CFeeRate{max_fee.value(), 1000} < chain->relayMinFee()) {
             error = strprintf(_("Invalid amount for %s=<amount>: '%s' (must be at least the minrelay fee of %s to prevent stuck transactions)"),
                               "-maxtxfee", args.GetArg("-maxtxfee", ""), chain->relayMinFee().ToString());
             return nullptr;
@@ -4338,11 +4336,11 @@ bool CWallet::ApplyMigrationData(MigrationData& data, bilingual_str& error)
                     const uint256& hash = wtx->GetHash();
                     const CWalletTx& to_copy_wtx = *wtx;
                     if (!data.watchonly_wallet->LoadToWallet(hash, [&](CWalletTx& ins_wtx, bool new_tx) EXCLUSIVE_LOCKS_REQUIRED(data.watchonly_wallet->cs_wallet) {
-                        if (!new_tx) return false;
-                        ins_wtx.SetTx(to_copy_wtx.tx);
-                        ins_wtx.CopyFrom(to_copy_wtx);
-                        return true;
-                    })) {
+                            if (!new_tx) return false;
+                            ins_wtx.SetTx(to_copy_wtx.tx);
+                            ins_wtx.CopyFrom(to_copy_wtx);
+                            return true;
+                        })) {
                         error = strprintf(_("Error: Could not add watchonly tx %s to watchonly wallet"), wtx->GetHash().GetHex());
                         return false;
                     }
