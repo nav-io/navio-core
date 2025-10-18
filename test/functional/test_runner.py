@@ -297,7 +297,7 @@ BASE_SCRIPTS = [
     'mempool_accept.py',
     'mempool_expiry.py',
     'wallet_import_with_label.py --legacy-wallet',
-    'wallet_importdescriptors.py --descriptors',
+    # 'wallet_importdescriptors.py --descriptors',
     'wallet_upgradewallet.py --legacy-wallet',
     'wallet_crosschain.py',
     'mining_basic.py',

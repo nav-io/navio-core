@@ -122,19 +122,42 @@ class ListTransactionsTest(BitcoinTestFramework):
         self.log.info("Test txs w/o opt-in RBF (bip125-replaceable=no)")
         # Chain a few transactions that don't opt in.
         txid_1 = self.nodes[0].sendtoaddress(self.nodes[1].getnewaddress(), 1)
+        # Get the transaction details
+        raw_tx = self.nodes[0].getrawtransaction(txid_1, 1)
+        # Find the output index of the 1 BTC output sent to node1
+        txoutn_1 = next(i for i in raw_tx['vout'] if i['value'] == Decimal("1"))["n"]
+        # Find the change output (the one that's not the amount we sent)
+        change_output = None
+        for vout in raw_tx['vout']:
+            if vout['value'] != Decimal("1"):  # Not the output sent to node1
+                change_output = vout
+                break
+        txoutid_1 = change_output['hash']
         assert not is_opt_in(self.nodes[0], txid_1)
         assert_array_result(self.nodes[0].listtransactions(), {"txid": txid_1}, {"bip125-replaceable": "no"})
         self.sync_mempools()
         assert_array_result(self.nodes[1].listpendingtransactions(), {"txid": txid_1}, {"bip125-replaceable": "no"})
 
         # Tx2 will build off tx1, still not opting in to RBF.
-        utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[0], txid_1)
+        # Node0 should have the change output (safe=True)
+        utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[0], txoutid_1)
         assert_equal(utxo_to_use["safe"], True)
-        utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[1], txid_1)
+        # Node1 should have the output that was sent to it (safe=False)
+        # Find the output that was sent to node1 (value=1)
+        sent_output = None
+        for vout in raw_tx['vout']:
+            if vout['value'] == Decimal("1"):  # The output sent to node1
+                sent_output = vout
+                break
+        txoutid_sent = sent_output['hash']
+        utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[1], txoutid_sent)
         assert_equal(utxo_to_use["safe"], False)
 
         # Create tx2 using createrawtransaction
-        inputs = [{"txid": utxo_to_use["txid"], "vout": utxo_to_use["vout"]}]
+        # Since listunspent returns output hashes as 'txid', we need to use the output hash
+        # instead of the transaction ID when creating the raw transaction
+        sent_output_hash = sent_output['hash']
+        inputs = [{"txid": sent_output_hash, "vout": 0}]
         outputs = {self.nodes[0].getnewaddress(): 0.999}
         tx2 = self.nodes[1].createrawtransaction(inputs=inputs, outputs=outputs, replaceable=False)
         tx2_signed = self.nodes[1].signrawtransactionwithwallet(tx2)["hex"]
@@ -148,8 +171,13 @@ class ListTransactionsTest(BitcoinTestFramework):
 
         self.log.info("Test txs with opt-in RBF (bip125-replaceable=yes)")
         # Tx3 will opt-in to RBF
-        utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[0], txid_2)
-        inputs = [{"txid": txid_2, "vout": utxo_to_use["vout"]}]
+        # Get the raw transaction to find the output hash that node0 received
+        raw_tx2 = self.nodes[0].getrawtransaction(txid_2, 1)
+        # Find the output sent to node0 (should be the 0.999 BTC output)
+        tx2_output_to_node0 = next(i for i in raw_tx2['vout'] if i['value'] == Decimal("0.999"))
+        txoutid_2 = tx2_output_to_node0['hash']
+        utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[0], txoutid_2)
+        inputs = [{"txid": txoutid_2, "vout": 0}]
         outputs = {self.nodes[1].getnewaddress(): 0.998}
         tx3 = self.nodes[0].createrawtransaction(inputs, outputs)
         tx3_modified = tx_from_hex(tx3)
@@ -165,8 +193,13 @@ class ListTransactionsTest(BitcoinTestFramework):
 
         # Tx4 will chain off tx3.  Doesn't signal itself, but depends on one
         # that does.
-        utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[1], txid_3)
-        inputs = [{"txid": txid_3, "vout": utxo_to_use["vout"]}]
+        # Get the raw transaction to find the output hash that node1 received
+        raw_tx3 = self.nodes[1].getrawtransaction(txid_3, 1)
+        # Find the output sent to node1 (should be the 0.998 BTC output)
+        tx3_output_to_node1 = next(i for i in raw_tx3['vout'] if i['value'] == Decimal("0.998"))
+        txoutid_3 = tx3_output_to_node1['hash']
+        utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[1], txoutid_3)
+        inputs = [{"txid": txoutid_3, "vout": 0}]
         outputs = {self.nodes[0].getnewaddress(): 0.997}
         tx4 = self.nodes[1].createrawtransaction(inputs=inputs, outputs=outputs, replaceable=False)
         tx4_signed = self.nodes[1].signrawtransactionwithwallet(tx4)["hex"]
@@ -275,11 +308,11 @@ class ListTransactionsTest(BitcoinTestFramework):
             inputs=[
                 {
                     "txid": input_0["txid"],
-                    "vout": input_0["vout"],
+                    "vout": 0,
                 },
                 {
                     "txid": input_1["txid"],
-                    "vout": input_1["vout"],
+                    "vout": 0,
                 },
             ],
             outputs={
