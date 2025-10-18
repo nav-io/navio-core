@@ -97,7 +97,10 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
 
         self.log.info('A transaction not in the mempool')
         fee = Decimal('0.000007')
-        utxo_to_spend = self.wallet.get_utxo(txid=txid_in_block)  # use 0.3 BTC UTXO
+        # Get the output hash from the transaction (same method as MiniWallet uses)
+        decoded_tx = node.decoderawtransaction(raw_tx_in_block)
+        txoutid = next(out['hash'] for out in decoded_tx['vout'] if out['value'] == Decimal('0.3'))
+        utxo_to_spend = self.wallet.get_utxo(txid=txoutid)  # use 0.3 BTC UTXO
         tx = self.wallet.create_self_transfer(utxo_to_spend=utxo_to_spend, sequence=MAX_BIP125_RBF_SEQUENCE)['tx']
         tx.vout[0].nValue = int((Decimal('0.3') - fee) * COIN)
         raw_tx_0 = tx.serialize().hex()
@@ -166,8 +169,8 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
         )
 
         self.log.info('A transaction with missing inputs, that existed once in the past')
-        tx = tx_from_hex(raw_tx_0)
-        tx.vin[0].prevout.hash = tx.vout[1].GetHash()  # Set vout to 1, to spend the other outpoint (49 coins) of the in-chain-tx we want to double spend
+        tx = tx_from_hex(raw_tx_in_block)  # Use the original transaction that has two outputs
+        tx.vin[0].prevout.hash = tx.vout[1].hash()  # Set vout to 1, to spend the other outpoint (49 coins) of the in-chain-tx we want to double spend
         out_hash_1 = tx.vout[1].hash()
         raw_tx_1 = tx.serialize().hex()
         txid_1 = node.sendrawtransaction(hexstring=raw_tx_1, maxfeerate=0)
