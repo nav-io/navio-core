@@ -207,6 +207,10 @@ class MempoolPackagesTest(BitcoinTestFramework):
         tx_with_children = self.wallet.send_self_transfer_multi(from_node=self.nodes[0], num_outputs=10)
         parent_transaction = tx_with_children["txid"]
         transaction_package = tx_with_children["new_utxos"]
+        
+        # Get the parent transaction's output hashes for comparison
+        parent_raw_tx = self.nodes[0].getrawtransaction(parent_transaction, 1)
+        parent_output_hashes = [out['hash'] for out in parent_raw_tx['vout']]
 
         # Sign and send up to MAX_DESCENDANT transactions chained off the parent tx
         chain = [] # save sent txs for the purpose of checking node1's mempool later (see below)
@@ -215,7 +219,8 @@ class MempoolPackagesTest(BitcoinTestFramework):
             new_tx = self.wallet.send_self_transfer_multi(from_node=self.nodes[0], num_outputs=10, utxos_to_spend=[utxo])
             txid = new_tx["txid"]
             chain.append(txid)
-            if utxo['txid'] is parent_transaction:
+            # Check if this UTXO is from the parent transaction by comparing output hashes
+            if utxo['txid'] in parent_output_hashes:
                 tx_children.append(txid)
             transaction_package.extend(new_tx["new_utxos"])
 
