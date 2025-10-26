@@ -346,15 +346,15 @@ const char* serialize_ctx_id(const BlsctCTxId* blsct_ctx_id);
 BlsctRetVal* deserialize_ctx_id(const char* hex);
 
 // ctx in
-bool are_ctx_in_equal(void* vp_a, const void* vp_b);
-const BlsctCTxId* get_ctx_in_prev_out_hash(void* vp_ctx_in);
-uint32_t get_ctx_in_prev_out_n(void* vp_ctx_in);
-const BlsctScript* get_ctx_in_script_sig(void* vp_ctx_in);
-uint32_t get_ctx_in_sequence(void* vp_ctx_in);
-const BlsctScript* get_ctx_in_script_witness(void* vp_ctx_in);
-void delete_ctx_in(void* vp_ctx_in);
+bool are_ctx_in_equal(const void* vp_a, const void* vp_b);
+const BlsctCTxId* get_ctx_in_prev_out_hash(const void* vp_ctx_in);
+uint32_t get_ctx_in_prev_out_n(const void* vp_ctx_in);
+const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in);
+uint32_t get_ctx_in_sequence(const void* vp_ctx_in);
+const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in);
+void delete_ctx_in(const void* vp_ctx_in);
 BlsctRetVal* deserialize_ctx_in(const char* hex);
-const char* serialize_ctx_in(void* vp_ctx_in);
+const char* serialize_ctx_in(const void* vp_ctx_in);
 
 // ctx_ins
 bool are_ctx_ins_equal(const BlsctCTxIns* a, const BlsctCTxIns* b);

@@ -646,45 +646,45 @@ BlsctRetVal* deserialize_ctx_id(const char* hex) {
 }
 
 // ctx in
-bool are_ctx_in_equal(void* vp_a, void* vp_b) {
-    CTxIn* a = static_cast<CTxIn*>(vp_a);
-    CTxIn* b = static_cast<CTxIn*>(vp_a);
+bool are_ctx_in_equal(const void* vp_a, const void* vp_b) {
+    auto* a = static_cast<const CTxIn*>(vp_a);
+    auto* b = static_cast<const CTxIn*>(vp_a);
     return *a == *b;
 }
 
-const BlsctCTxId* get_ctx_in_prev_out_hash(void* vp_ctx_in) {
-    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+const BlsctCTxId* get_ctx_in_prev_out_hash(const void* vp_ctx_in) {
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
     auto copy = static_cast<BlsctCTxId*>(malloc(CTX_ID_SIZE));
     std::memcpy(copy, &ctx_in->prevout.hash, CTX_ID_SIZE);
     return copy;
 }
 
-uint32_t get_ctx_in_prev_out_n(void* vp_ctx_in) {
-    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+uint32_t get_ctx_in_prev_out_n(const void* vp_ctx_in) {
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
     return ctx_in->prevout.n;
 }
 
-const BlsctScript* get_ctx_in_script_sig(void* vp_ctx_in) {
-    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in) {
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_in->scriptSig, SCRIPT_SIZE);
     return copy;
 }
 
-uint32_t get_ctx_in_sequence(void* vp_ctx_in) {
-    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+uint32_t get_ctx_in_sequence(const void* vp_ctx_in) {
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
     return ctx_in->nSequence;
 }
 
-const BlsctScript* get_ctx_in_script_witness(void* vp_ctx_in) {
-    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in) {
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_in->scriptWitness, SCRIPT_SIZE);
     return copy;
 }
 
-void delete_ctx_in(void* vp_ctx_in) {
-    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+void delete_ctx_in(const void* vp_ctx_in) {
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
     delete ctx_in;
 }
 
@@ -698,8 +698,8 @@ BlsctRetVal* deserialize_ctx_in(const char* hex) {
     return succ(ctx_in, 0);
 }
 
-const char* serialize_ctx_in(void* vp_ctx_in) {
-    CTxIn* ctx_in = static_cast<CTxIn*>(vp_ctx_in);
+const char* serialize_ctx_in(const void* vp_ctx_in) {
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
 
     DataStream st{};
     ctx_in->Serialize(st);
