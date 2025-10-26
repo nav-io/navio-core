@@ -569,6 +569,14 @@ BlsctCTxRetVal* build_ctx(
     return rv;
 }
 
+const char* get_ctx_id(void* vp_ctx) {
+    CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
+    Txid ctxid = ctx->GetHash();
+    std::string ctxid_hex = ctxid.GetHex();
+
+    return StrToAllocCStr(ctxid_hex);
+}
+
 const BlsctCTxIns* get_ctx_ins(void* vp_ctx) {
     CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
     auto* wrapper = new BlsctCTxIns();
@@ -622,18 +630,6 @@ void delete_ctx(void* vp_ctx) {
 }
 
 // ctx id
-const char* get_ctx_id(
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size
-) {
-    CMutableTransaction ctx;
-    UnserializeCMutableTx(ctx, ser_ctx, ser_ctx_size);
-    Txid ctxid = ctx.GetHash();
-    std::string ctxid_hex = ctxid.GetHex();
-
-    return StrToAllocCStr(ctxid_hex);
-}
-
 const char* serialize_ctx_id(const BlsctCTxId* blsct_ctx_id) {
     return SerializeToHex(*blsct_ctx_id, CTX_ID_SIZE);
 }

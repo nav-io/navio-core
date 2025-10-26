@@ -329,17 +329,18 @@ void* create_tx_out_vec();
 void add_to_tx_out_vec(void* vp_tx_out_vec, const BlsctTxOut* tx_out);
 void delete_tx_out_vec(void* vp_tx_out_vec);
 
-const char* serialize_ctx(void* vp_ctx);
-BlsctRetVal* deserialize_ctx(const char* hex);
-
 // returns a serialized CMutableTransaction
 BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
 );
+// using void* insetead of const void* to avoid const_cast
 const char* get_ctx_id(void* vp_ctx);
 const BlsctCTxIns* get_ctx_ins(void* vp_ctx);
 const BlsctCTxOuts* get_ctx_outs(void* vp_ctx);
+const char* serialize_ctx(void* vp_ctx);
+BlsctRetVal* deserialize_ctx(const char* hex);
+void delete_ctx(void* vp_ctx);
 
 // ctx id
 const char* serialize_ctx_id(const BlsctCTxId* blsct_ctx_id);
