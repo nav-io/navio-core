@@ -22,9 +22,7 @@
 
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <limits>
-#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -37,11 +35,11 @@ const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
 UrlDecodeFn* const URL_DECODE = nullptr;
 
 struct BlsctCTxIns {
-    std::vector<CTxIn> vec;
+    std::vector<CTxIn>* vec;
 };
 
 struct BlsctCTxOuts {
-    std::vector<CTxOut> vec;
+    std::vector<CTxOut>* vec;
 };
 
 struct BlsctCTxIn {};
@@ -580,14 +578,14 @@ const char* get_ctx_id(void* vp_ctx) {
 const BlsctCTxIns* get_ctx_ins(void* vp_ctx) {
     CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
     auto* wrapper = new BlsctCTxIns();
-    wrapper->vec = ctx->vin;
+    wrapper->vec = &ctx->vin;
     return wrapper;
 }
 
 const BlsctCTxOuts* get_ctx_outs(void* vp_ctx) {
     CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
     auto* wrapper = new BlsctCTxOuts();
-    wrapper->vec = ctx->vout;
+    wrapper->vec = &ctx->vout;
     return wrapper;
 }
 
@@ -679,30 +677,6 @@ const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in) {
     return copy;
 }
 
-void delete_ctx_in(const void* vp_ctx_in) {
-    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
-    delete ctx_in;
-}
-
-BlsctRetVal* deserialize_ctx_in(const char* hex) {
-    auto st = set_up_data_stream_with_hex(hex);
-    if (st.size() == 0) err(BLSCT_FAILURE);
-
-    CTxIn* ctx_in = new CTxIn();
-    ctx_in->Unserialize(st);
-
-    return succ(ctx_in, 0);
-}
-
-const char* serialize_ctx_in(const void* vp_ctx_in) {
-    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
-
-    DataStream st{};
-    ctx_in->Serialize(st);
-
-    return data_stream_to_malloced_hex(st);
-}
-
 // ctx ins
 bool are_ctx_ins_equal(const void* vp_a, const void* vp_b) {
     auto* a = static_cast<const BlsctCTxIns*>(vp_a);
@@ -712,54 +686,17 @@ bool are_ctx_ins_equal(const void* vp_a, const void* vp_b) {
 
 size_t get_ctx_ins_size(const void* vp_ctx_ins) {
     auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
-    return ctx_ins->vec.size();
+    return ctx_ins->vec->size();
 }
 
 BlsctRetVal* get_ctx_in_at(const void* vp_ctx_ins, const size_t i) {
     auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
 
-    CTxIn local_ctx_in = ctx_ins->vec.at(i);
+    CTxIn local_ctx_in = ctx_ins->vec->at(i);
     CTxIn* heap_ctx_in = new(std::nothrow) CTxIn;
     *heap_ctx_in = local_ctx_in;
 
     return succ(heap_ctx_in, 0);
-}
-
-void delete_ctx_ins(const void* vp_ctx_ins) {
-    auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
-    delete ctx_ins;
-}
-
-BlsctRetVal* deserialize_ctx_ins(const char* hex) {
-    auto st = set_up_data_stream_with_hex(hex);
-    if (st.size() == 0) return err(BLSCT_FAILURE);
-
-    // tunserialize vector with the stream
-    size_t vec_size = ReadCompactSize(st);
-    std::vector<CTxIn> vec(vec_size);
-
-    for (size_t i=0; i<vec_size; ++i) {
-        vec[i].Unserialize(st);
-    }
-
-    // wrap the copy of the vector with BlsctCTxIns
-    auto* wrapper = new BlsctCTxIns();
-    wrapper->vec = vec;
-
-    return succ(wrapper, 0);
-}
-
-const char* serialize_ctx_ins(const void* vp_ctx_ins) {
-    auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
-
-    DataStream st{};
-
-    WriteCompactSize(st, ctx_ins->vec.size());
-    for(const auto& ctx_in: ctx_ins->vec) {
-        ctx_in.Serialize(st);
-    }
-
-    return data_stream_to_malloced_hex(st);
 }
 
 // ctx out
@@ -843,30 +780,6 @@ const BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out) {
     return succ(buf, pred.size());
 }
 
-void delete_ctx_out(const void* vp_ctx_out) {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
-    delete ctx_out;
-}
-
-BlsctRetVal* deserialize_ctx_out(const char* hex) {
-    auto st = set_up_data_stream_with_hex(hex);
-    if (st.size() == 0) err(BLSCT_FAILURE);
-
-    CTxOut* ctx_out = new CTxOut();
-    ctx_out->Unserialize(st);
-
-    return succ(ctx_out, 0);
-}
-
-const char* serialize_ctx_out(const void* vp_ctx_out) {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
-
-    DataStream st{};
-    ctx_out->Serialize(st);
-
-    return data_stream_to_malloced_hex(st);
-}
-
 // ctx outs
 bool are_ctx_outs_equal(const void* vp_a, const void* vp_b) {
     auto* a = static_cast<const BlsctCTxOuts*>(vp_a);
@@ -876,52 +789,16 @@ bool are_ctx_outs_equal(const void* vp_a, const void* vp_b) {
 
 size_t get_ctx_outs_size(const void* vp_ctx_outs) {
     auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
-    return ctx_outs->vec.size();
+    return ctx_outs->vec->size();
 }
 
 BlsctRetVal* get_ctx_out_at(const void* vp_ctx_outs, const size_t i) {
     auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
-    auto ctx_out = &ctx_outs->vec.at(i);
+    auto ctx_out = &ctx_outs->vec->at(i);
     auto ctx_out_size = sizeof(*ctx_out);
     auto ctx_out_copy = static_cast<BlsctCTxOut*>(malloc(ctx_out_size));
     std::memcpy(ctx_out_copy, ctx_out, ctx_out_size);
     return succ(ctx_out_copy, ctx_out_size);
-}
-
-void delete_ctx_outs(const void* vp_ctx_outs) {
-    auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
-    delete ctx_outs;
-}
-
-BlsctRetVal* deserialize_ctx_outs(const char* hex) {
-    auto st = set_up_data_stream_with_hex(hex);
-    if (st.size() == 0) err(BLSCT_FAILURE);
-
-    // unserialize vector with the stream
-    size_t vec_size = ReadCompactSize(st);
-    std::vector<CTxOut> vec(vec_size);
-
-    for (size_t i=0; i<vec_size; ++i) {
-        vec[i].Unserialize(st);
-    }
-
-    // wrap the vector with BlsctCTxOuts
-    auto* wrapper = new BlsctCTxOuts();
-    wrapper->vec = vec;
-
-    // setting size 0 since size will not be used
-    return succ(wrapper, 0);
-}
-
-const char* serialize_ctx_outs(const void* vp_ctx_outs) {
-    auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
-    DataStream st{};
-
-    WriteCompactSize(st, ctx_outs->vec.size());
-    for(const auto& ctx_in: ctx_outs->vec) {
-        ctx_in.Serialize(st);
-    }
-    return data_stream_to_malloced_hex(st);
 }
 
 // delegators of blsct/wallet/helpers

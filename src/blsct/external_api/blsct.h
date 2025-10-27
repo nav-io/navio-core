@@ -353,17 +353,11 @@ uint32_t get_ctx_in_prev_out_n(const void* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in);
 uint32_t get_ctx_in_sequence(const void* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in);
-void delete_ctx_in(const void* vp_ctx_in);
-BlsctRetVal* deserialize_ctx_in(const char* hex);
-const char* serialize_ctx_in(const void* vp_ctx_in);
 
 // ctx_ins
 bool are_ctx_ins_equal(const void* vp_a, const void* vp_b);
 size_t get_ctx_ins_size(const void* blsct_ctx_ins);
 BlsctRetVal* get_ctx_in_at(const void* vp_ctx_ins, const size_t i);
-const char* serialize_ctx_ins(const void* vp_ctx_ins);
-BlsctRetVal* deserialize_ctx_ins(const char* hex);
-void delete_ctx_ins(const void* vp_ctx_ins);
 
 // ctx out
 bool are_ctx_out_equal(const void* vp_a, const void* vp_b);
@@ -372,9 +366,6 @@ const BlsctScript* get_ctx_out_script_pub_key(const void* vp_ctx_out);
 const BlsctScript* get_ctx_out_script_pubkey(const void* vp_ctx_out);
 const BlsctTokenId* get_ctx_out_token_id(const void* vp_ctx_out);
 const BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out);
-void delete_ctx_out(const void* vp_ctx_out);
-BlsctRetVal* deserialize_ctx_out(const char* hex);
-const char* serialize_ctx_out(const void* vp_ctx_out);
 
 // ctx out blsct data
 const BlsctPoint* get_ctx_out_spending_key(void* vp_ctx_out);
@@ -388,9 +379,6 @@ uint16_t get_ctx_out_view_tag(void* vp_ctx_out);
 bool are_ctx_outs_equal(const void* vp_a, const void* vp_b);
 size_t get_ctx_outs_size(const void* vp_ctx_outs);
 BlsctRetVal* get_ctx_out_at(const void* vp_ctx_outs, const size_t i);
-void delete_ctx_outs(const void* vp_ctx_outs);
-const char* serialize_ctx_outs(const void* vp_ctx_outs);
-BlsctRetVal* deserialize_ctx_outs(const char* hex);
 
 // double public key
 BlsctRetVal* gen_double_pub_key(
