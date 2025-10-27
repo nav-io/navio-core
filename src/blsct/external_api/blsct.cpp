@@ -558,7 +558,7 @@ BlsctCTxRetVal* build_ctx(
 
     // move the ctx to newly created ctx in heap
     CMutableTransaction* ctx_in_heap = new(std::nothrow) CMutableTransaction;
-    *ctx_in_heap = maybe_ctx.value();
+    *ctx_in_heap = std::move(maybe_ctx.value());
 
     // ser_ctx is raw uint8_t array and not hex here
     rv->result = BLSCT_SUCCESS;
@@ -691,12 +691,8 @@ size_t get_ctx_ins_size(const void* vp_ctx_ins) {
 
 BlsctRetVal* get_ctx_in_at(const void* vp_ctx_ins, const size_t i) {
     auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
-
-    CTxIn local_ctx_in = ctx_ins->vec->at(i);
-    CTxIn* heap_ctx_in = new(std::nothrow) CTxIn;
-    *heap_ctx_in = local_ctx_in;
-
-    return succ(heap_ctx_in, 0);
+    CTxIn* ctx_in = &ctx_ins->vec->at(i);
+    return succ(ctx_in, 0);
 }
 
 // ctx out
@@ -794,11 +790,8 @@ size_t get_ctx_outs_size(const void* vp_ctx_outs) {
 
 BlsctRetVal* get_ctx_out_at(const void* vp_ctx_outs, const size_t i) {
     auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
-    auto ctx_out = &ctx_outs->vec->at(i);
-    auto ctx_out_size = sizeof(*ctx_out);
-    auto ctx_out_copy = static_cast<BlsctCTxOut*>(malloc(ctx_out_size));
-    std::memcpy(ctx_out_copy, ctx_out, ctx_out_size);
-    return succ(ctx_out_copy, ctx_out_size);
+    CTxOut* ctx_out = &ctx_outs->vec->at(i);
+    return succ(ctx_out, 0);
 }
 
 // delegators of blsct/wallet/helpers
