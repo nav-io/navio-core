@@ -639,6 +639,24 @@ BlsctRetVal* deserialize_ctx_id(const char* hex) {
     return succ(blsct_ctx_id, CTX_ID_SIZE);
 }
 
+// ctx ins
+bool are_ctx_ins_equal(const void* vp_a, const void* vp_b) {
+    auto* a = static_cast<const BlsctCTxIns*>(vp_a);
+    auto* b = static_cast<const BlsctCTxIns*>(vp_b);
+    return a->vec == b->vec;
+}
+
+size_t get_ctx_ins_size(const void* vp_ctx_ins) {
+    auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
+    return ctx_ins->vec->size();
+}
+
+const BlsctCTxIn* get_ctx_in_at(const void* vp_ctx_ins, const size_t i) {
+    auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
+    const CTxIn* ctx_in = &ctx_ins->vec->at(i);
+    return reinterpret_cast<const BlsctCTxIn*>(ctx_in);
+}
+
 // ctx in
 bool are_ctx_in_equal(const void* vp_a, const void* vp_b) {
     auto* a = static_cast<const CTxIn*>(vp_a);
@@ -677,22 +695,22 @@ const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in) {
     return copy;
 }
 
-// ctx ins
-bool are_ctx_ins_equal(const void* vp_a, const void* vp_b) {
-    auto* a = static_cast<const BlsctCTxIns*>(vp_a);
-    auto* b = static_cast<const BlsctCTxIns*>(vp_b);
+// ctx outs
+bool are_ctx_outs_equal(const void* vp_a, const void* vp_b) {
+    auto* a = static_cast<const BlsctCTxOuts*>(vp_a);
+    auto* b = static_cast<const BlsctCTxOuts*>(vp_b);
     return a->vec == b->vec;
 }
 
-size_t get_ctx_ins_size(const void* vp_ctx_ins) {
-    auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
-    return ctx_ins->vec->size();
+size_t get_ctx_outs_size(const void* vp_ctx_outs) {
+    auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
+    return ctx_outs->vec->size();
 }
 
-BlsctRetVal* get_ctx_in_at(const void* vp_ctx_ins, const size_t i) {
-    auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
-    CTxIn* ctx_in = &ctx_ins->vec->at(i);
-    return succ(ctx_in, 0);
+const BlsctCTxOut* get_ctx_out_at(const void* vp_ctx_outs, const size_t i) {
+    auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
+    const CTxOut* ctx_out = &ctx_outs->vec->at(i);
+    return reinterpret_cast<const BlsctCTxOut*>(ctx_out);
 }
 
 // ctx out
@@ -774,24 +792,6 @@ const BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out) {
 
     std::memcpy(buf, pred.data(), pred.size());
     return succ(buf, pred.size());
-}
-
-// ctx outs
-bool are_ctx_outs_equal(const void* vp_a, const void* vp_b) {
-    auto* a = static_cast<const BlsctCTxOuts*>(vp_a);
-    auto* b = static_cast<const BlsctCTxOuts*>(vp_b);
-    return a->vec == b->vec;
-}
-
-size_t get_ctx_outs_size(const void* vp_ctx_outs) {
-    auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
-    return ctx_outs->vec->size();
-}
-
-BlsctRetVal* get_ctx_out_at(const void* vp_ctx_outs, const size_t i) {
-    auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
-    CTxOut* ctx_out = &ctx_outs->vec->at(i);
-    return succ(ctx_out, 0);
 }
 
 // delegators of blsct/wallet/helpers

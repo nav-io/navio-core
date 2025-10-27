@@ -222,6 +222,8 @@ typedef uint8_t BlsctUint256[UINT256_SIZE];
 
 typedef uint8_t BlsctRangeProof;
 typedef uint8_t BlsctCTx;
+typedef uint8_t BlsctCTxIn;
+typedef uint8_t BlsctCTxOut;
 
 typedef struct {
   BLSCT_RESULT result;
@@ -357,7 +359,7 @@ const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in);
 // ctx_ins
 bool are_ctx_ins_equal(const void* vp_a, const void* vp_b);
 size_t get_ctx_ins_size(const void* blsct_ctx_ins);
-BlsctRetVal* get_ctx_in_at(const void* vp_ctx_ins, const size_t i);
+const BlsctCTxIn* get_ctx_in_at(const void* vp_ctx_ins, const size_t i);
 
 // ctx out
 bool are_ctx_out_equal(const void* vp_a, const void* vp_b);
@@ -373,12 +375,11 @@ const BlsctPoint* get_ctx_out_ephemeral_key(void* vp_jctx_out);
 const BlsctPoint* get_ctx_out_blinding_key(void* vp_ctx_out);
 const BlsctRetVal* get_ctx_out_range_proof(void* vp_ctx_out);
 uint16_t get_ctx_out_view_tag(void* vp_ctx_out);
-// delete?????
 
 // ctx_outs
 bool are_ctx_outs_equal(const void* vp_a, const void* vp_b);
 size_t get_ctx_outs_size(const void* vp_ctx_outs);
-BlsctRetVal* get_ctx_out_at(const void* vp_ctx_outs, const size_t i);
+const BlsctCTxOut* get_ctx_out_at(const void* vp_ctx_outs, const size_t i);
 
 // double public key
 BlsctRetVal* gen_double_pub_key(
