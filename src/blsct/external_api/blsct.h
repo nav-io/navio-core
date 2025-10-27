@@ -222,8 +222,6 @@ typedef uint8_t BlsctUint256[UINT256_SIZE];
 
 typedef uint8_t BlsctRangeProof;
 typedef uint8_t BlsctCTx;
-typedef uint8_t BlsctCTxIn;
-typedef uint8_t BlsctCTxOut;
 
 typedef struct {
   BLSCT_RESULT result;
@@ -348,6 +346,11 @@ void delete_ctx(void* vp_ctx);
 const char* serialize_ctx_id(const BlsctCTxId* blsct_ctx_id);
 BlsctRetVal* deserialize_ctx_id(const char* hex);
 
+// ctx_ins
+bool are_ctx_ins_equal(const void* vp_a, const void* vp_b);
+size_t get_ctx_ins_size(const void* blsct_ctx_ins);
+const void* get_ctx_in_at(const void* vp_ctx_ins, const size_t i);
+
 // ctx in
 bool are_ctx_in_equal(const void* vp_a, const void* vp_b);
 const BlsctCTxId* get_ctx_in_prev_out_hash(const void* vp_ctx_in);
@@ -356,10 +359,10 @@ const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in);
 uint32_t get_ctx_in_sequence(const void* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in);
 
-// ctx_ins
-bool are_ctx_ins_equal(const void* vp_a, const void* vp_b);
-size_t get_ctx_ins_size(const void* blsct_ctx_ins);
-const BlsctCTxIn* get_ctx_in_at(const void* vp_ctx_ins, const size_t i);
+// ctx_outs
+bool are_ctx_outs_equal(const void* vp_a, const void* vp_b);
+size_t get_ctx_outs_size(const void* vp_ctx_outs);
+const void* get_ctx_out_at(const void* vp_ctx_outs, const size_t i);
 
 // ctx out
 bool are_ctx_out_equal(const void* vp_a, const void* vp_b);
@@ -375,11 +378,6 @@ const BlsctPoint* get_ctx_out_ephemeral_key(void* vp_jctx_out);
 const BlsctPoint* get_ctx_out_blinding_key(void* vp_ctx_out);
 const BlsctRetVal* get_ctx_out_range_proof(void* vp_ctx_out);
 uint16_t get_ctx_out_view_tag(void* vp_ctx_out);
-
-// ctx_outs
-bool are_ctx_outs_equal(const void* vp_a, const void* vp_b);
-size_t get_ctx_outs_size(const void* vp_ctx_outs);
-const BlsctCTxOut* get_ctx_out_at(const void* vp_ctx_outs, const size_t i);
 
 // double public key
 BlsctRetVal* gen_double_pub_key(
