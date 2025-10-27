@@ -42,9 +42,6 @@ struct BlsctCTxOuts {
     std::vector<CTxOut>* vec;
 };
 
-struct BlsctCTxIn {};
-struct BlsctCTxOut {};
-
 static bool is_little_endian() {
     uint16_t n = 1;
     uint8_t* p = (uint8_t*) &n;
