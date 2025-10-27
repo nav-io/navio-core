@@ -285,9 +285,6 @@ typedef struct {
     uint64_t min_stake;
 } BlsctTxOut;
 
-typedef struct BlsctCTxIns BlsctCTxIns;
-typedef struct BlsctCTxOuts BlsctCTxOuts;
-
 void free_obj(void* x);
 void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 void init();
@@ -336,8 +333,8 @@ BlsctCTxRetVal* build_ctx(
 );
 // using void* insetead of const void* to avoid const_cast
 const char* get_ctx_id(void* vp_ctx);
-const BlsctCTxIns* get_ctx_ins(void* vp_ctx);
-const BlsctCTxOuts* get_ctx_outs(void* vp_ctx);
+const void* get_ctx_ins(void* vp_ctx);
+const void* get_ctx_outs(void* vp_ctx);
 const char* serialize_ctx(void* vp_ctx);
 BlsctRetVal* deserialize_ctx(const char* hex);
 void delete_ctx(void* vp_ctx);

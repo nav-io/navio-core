@@ -34,14 +34,6 @@ static bool g_is_little_endian;
 const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
 UrlDecodeFn* const URL_DECODE = nullptr;
 
-struct BlsctCTxIns {
-    std::vector<CTxIn>* vec;
-};
-
-struct BlsctCTxOuts {
-    std::vector<CTxOut>* vec;
-};
-
 static bool is_little_endian() {
     uint16_t n = 1;
     uint8_t* p = (uint8_t*) &n;
@@ -572,18 +564,14 @@ const char* get_ctx_id(void* vp_ctx) {
     return StrToAllocCStr(ctxid_hex);
 }
 
-const BlsctCTxIns* get_ctx_ins(void* vp_ctx) {
+const void* get_ctx_ins(void* vp_ctx) {
     CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
-    auto* wrapper = new BlsctCTxIns();
-    wrapper->vec = &ctx->vin;
-    return wrapper;
+    return &ctx->vin;
 }
 
-const BlsctCTxOuts* get_ctx_outs(void* vp_ctx) {
+const void* get_ctx_outs(void* vp_ctx) {
     CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
-    auto* wrapper = new BlsctCTxOuts();
-    wrapper->vec = &ctx->vout;
-    return wrapper;
+    return &ctx->vout;
 }
 
 const char* serialize_ctx(void* vp_ctx) {
@@ -638,19 +626,19 @@ BlsctRetVal* deserialize_ctx_id(const char* hex) {
 
 // ctx ins
 bool are_ctx_ins_equal(const void* vp_a, const void* vp_b) {
-    auto* a = static_cast<const BlsctCTxIns*>(vp_a);
-    auto* b = static_cast<const BlsctCTxIns*>(vp_b);
-    return a->vec == b->vec;
+    auto* a = static_cast<const std::vector<CTxIn>*>(vp_a);
+    auto* b = static_cast<const std::vector<CTxIn>*>(vp_b);
+    return a == b;
 }
 
 size_t get_ctx_ins_size(const void* vp_ctx_ins) {
-    auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
-    return ctx_ins->vec->size();
+    auto* ctx_ins = static_cast<const std::vector<CTxIn>*>(vp_ctx_ins);
+    return ctx_ins->size();
 }
 
 const void* get_ctx_in_at(const void* vp_ctx_ins, const size_t i) {
-    auto* ctx_ins = static_cast<const BlsctCTxIns*>(vp_ctx_ins);
-    const CTxIn* ctx_in = &ctx_ins->vec->at(i);
+    auto* ctx_ins = static_cast<const std::vector<CTxIn>*>(vp_ctx_ins);
+    const CTxIn* ctx_in = &ctx_ins->at(i);
     return static_cast<const void*>(ctx_in);
 }
 
@@ -694,19 +682,19 @@ const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in) {
 
 // ctx outs
 bool are_ctx_outs_equal(const void* vp_a, const void* vp_b) {
-    auto* a = static_cast<const BlsctCTxOuts*>(vp_a);
-    auto* b = static_cast<const BlsctCTxOuts*>(vp_b);
-    return a->vec == b->vec;
+    auto* a = static_cast<const std::vector<CTxOut>*>(vp_a);
+    auto* b = static_cast<const std::vector<CTxOut>*>(vp_b);
+    return a == b;
 }
 
 size_t get_ctx_outs_size(const void* vp_ctx_outs) {
-    auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
-    return ctx_outs->vec->size();
+    auto* ctx_outs = static_cast<const std::vector<CTxOut>*>(vp_ctx_outs);
+    return ctx_outs->size();
 }
 
 const void* get_ctx_out_at(const void* vp_ctx_outs, const size_t i) {
-    auto* ctx_outs = static_cast<const BlsctCTxOuts*>(vp_ctx_outs);
-    const CTxOut* ctx_out = &ctx_outs->vec->at(i);
+    auto* ctx_outs = static_cast<const std::vector<CTxOut>*>(vp_ctx_outs);
+    const CTxOut* ctx_out = &ctx_outs->at(i);
     return static_cast<const void*>(ctx_out);
 }
 
