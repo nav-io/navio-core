@@ -370,11 +370,11 @@ const BlsctTokenId* get_ctx_out_token_id(const void* vp_ctx_out);
 BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out);
 
 // ctx out blsct data
-const BlsctPoint* get_ctx_out_spending_key(void* vp_ctx_out);
-const BlsctPoint* get_ctx_out_ephemeral_key(void* vp_jctx_out);
-const BlsctPoint* get_ctx_out_blinding_key(void* vp_ctx_out);
-const BlsctRetVal* get_ctx_out_range_proof(void* vp_ctx_out);
-uint16_t get_ctx_out_view_tag(void* vp_ctx_out);
+const BlsctPoint* get_ctx_out_spending_key(const void* vp_ctx_out);
+const BlsctPoint* get_ctx_out_ephemeral_key(const void* vp_jctx_out);
+const BlsctPoint* get_ctx_out_blinding_key(const void* vp_ctx_out);
+const BlsctRetVal* get_ctx_out_range_proof(const void* vp_ctx_out);
+uint16_t get_ctx_out_view_tag(const void* vp_ctx_out);
 
 // double public key
 BlsctRetVal* gen_double_pub_key(
