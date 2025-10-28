@@ -1721,7 +1721,14 @@ int are_vector_predicate_equal(
     const BlsctVectorPredicate* b,
     const size_t b_size
 ) {
-    printf("sizes are a=%lu, b=%lu\n", a_size, b_size);
+    printf("** sizes are a=%lu, b=%lu\n", a_size, b_size);
+    for (size_t i = 0; i < a_size; ++i) {
+        printf("a[%lu]=%d\n", i, a[i]);
+    }
+    for (size_t i = 0; i < a_size; ++i) {
+        printf("   b[%lu]=%d\n", i, b[i]);
+    }
+
     if (a_size != b_size) {
         return 0;
     }
