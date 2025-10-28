@@ -1734,7 +1734,6 @@ int are_vector_predicate_equal(
     }
 
     for (size_t i = 0; i < a_size; ++i) {
-        printf("a[%lu]=%d, b[%lu]=%d\n", i, a[i], i, b[i]);
         if (a[i] != b[i]) {
             return 0;
         }
@@ -1760,8 +1759,11 @@ BlsctRetVal* deserialize_vector_predicate(
         return err(BLSCT_FAILURE);
     }
     size_t obj_size = vec.size();
+    for (size_t i = 0; i < obj_size; ++i) {
+        printf("vec[%lu]=%d\n", i, vec[i]);
+    }
     MALLOC_BYTES(BlsctVectorPredicate, x, obj_size);
-    RETURN_IF_MEM_ALLOC_FAILED(x);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(x);
     return succ(x, obj_size);
 }
 
