@@ -1764,6 +1764,9 @@ BlsctRetVal* deserialize_vector_predicate(
     }
     MALLOC_BYTES(BlsctVectorPredicate, x, obj_size);
     RETURN_ERR_IF_MEM_ALLOC_FAILED(x);
+
+    std::memcpy(x, &vec[0], obj_size);
+
     return succ(x, obj_size);
 }
 
