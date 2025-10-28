@@ -1723,7 +1723,7 @@ int are_vector_predicate_equal(
 ) {
     printf("** sizes are a=%lu, b=%lu\n", a_size, b_size);
     for (size_t i = 0; i < a_size; ++i) {
-        printf("a[%lu]=%d\n", i, a[i]);
+        printf("   a[%lu]=%d\n", i, a[i]);
     }
     for (size_t i = 0; i < a_size; ++i) {
         printf("   b[%lu]=%d\n", i, b[i]);
@@ -1732,7 +1732,6 @@ int are_vector_predicate_equal(
     if (a_size != b_size) {
         return 0;
     }
-    printf("sizes matched\n");
 
     for (size_t i = 0; i < a_size; ++i) {
         printf("a[%lu]=%d, b[%lu]=%d\n", i, a[i], i, b[i]);
