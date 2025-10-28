@@ -717,13 +717,6 @@ const BlsctScript* get_ctx_out_script_pub_key(const void* vp_ctx_out) {
     return copy;
 }
 
-const BlsctScript* get_ctx_out_script_pubkey(const void* vp_ctx_out) {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
-    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &ctx_out->scriptPubKey, SCRIPT_SIZE);
-    return copy;
-}
-
 const BlsctPoint* get_ctx_out_spending_key(const void* vp_ctx_out) {
     auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
@@ -769,7 +762,7 @@ const BlsctTokenId* get_ctx_out_token_id(const void* vp_ctx_out) {
     return copy;
 }
 
-const BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out) {
+BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out) {
     auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
     auto& pred = ctx_out->predicate;
     MALLOC_BYTES(uint8_t, buf, pred.size());
@@ -1027,7 +1020,7 @@ BlsctRetVal* deserialize_point(const char* hex) {
     return succ(blsct_point, POINT_SIZE);
 }
 
-int is_point_equal(const BlsctPoint* blsct_a, const BlsctPoint* blsct_b) {
+int are_point_equal(const BlsctPoint* blsct_a, const BlsctPoint* blsct_b) {
     if (blsct_a == nullptr || blsct_b == nullptr) {
         return 0;
     }
@@ -1356,7 +1349,7 @@ BlsctRetVal* deserialize_scalar(const char* hex) {
     return succ(blsct_scalar, SCALAR_SIZE);
 }
 
-int is_scalar_equal(const BlsctScalar* blsct_a, const BlsctScalar* blsct_b) {
+int are_scalar_equal(const BlsctScalar* blsct_a, const BlsctScalar* blsct_b) {
     if (blsct_a == nullptr || blsct_b == nullptr) {
         return 0;
     }
@@ -1719,6 +1712,47 @@ TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out) {
 
 uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out) {
     return tx_out->min_stake;
+}
+
+// vector predicate
+int are_vector_predicate_equal(
+    const BlsctVectorPredicate* a,
+    const size_t a_size,
+    const BlsctVectorPredicate* b,
+    const size_t b_size
+) {
+    if (a_size != b_size) {
+        return 0;
+    }
+    for (size_t i = 0; i < a_size; ++i) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+const char* serialize_vector_predicate(
+  const BlsctVectorPredicate* blsct_vector_predicate,
+  size_t obj_size
+) {
+    return SerializeToHex(
+        blsct_vector_predicate,
+        obj_size
+    );
+}
+
+BlsctRetVal* deserialize_vector_predicate(
+  const char* hex
+) {
+    std::vector<uint8_t> vec;
+    if (!TryParseHexWrap(hex, vec)) {
+        return err(BLSCT_FAILURE);
+    }
+    size_t obj_size = vec.size();
+    MALLOC_BYTES(BlsctVectorPredicate, x, obj_size);
+    RETURN_IF_MEM_ALLOC_FAILED(x);
+    return succ(x, obj_size);
 }
 
 // key derivation functions

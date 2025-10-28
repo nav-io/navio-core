@@ -220,8 +220,9 @@ typedef uint8_t BlsctSubAddrId[SUB_ADDR_ID_SIZE];
 typedef uint8_t BlsctTokenId[TOKEN_ID_SIZE];
 typedef uint8_t BlsctUint256[UINT256_SIZE];
 
-typedef uint8_t BlsctRangeProof;
 typedef uint8_t BlsctCTx;
+typedef uint8_t BlsctRangeProof;
+typedef uint8_t BlsctVectorPredicate;
 
 typedef struct {
   BLSCT_RESULT result;
@@ -365,9 +366,8 @@ const void* get_ctx_out_at(const void* vp_ctx_outs, const size_t i);
 bool are_ctx_out_equal(const void* vp_a, const void* vp_b);
 uint64_t get_ctx_out_value(const void* vp_ctx_out);
 const BlsctScript* get_ctx_out_script_pub_key(const void* vp_ctx_out);
-const BlsctScript* get_ctx_out_script_pubkey(const void* vp_ctx_out);
 const BlsctTokenId* get_ctx_out_token_id(const void* vp_ctx_out);
-const BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out);
+BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out);
 
 // ctx out blsct data
 const BlsctPoint* get_ctx_out_spending_key(void* vp_ctx_out);
@@ -421,7 +421,7 @@ BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
 const char* serialize_point(const BlsctPoint* blsct_point);
 BlsctRetVal* deserialize_point(const char* hex);
-int is_point_equal(const BlsctPoint* a, const BlsctPoint* b);
+int are_point_equal(const BlsctPoint* a, const BlsctPoint* b);
 const char* point_to_str(const BlsctPoint* blsct_point);
 BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
 bool is_valid_point(const BlsctPoint* blsct_point);
@@ -471,7 +471,7 @@ uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
 const char* serialize_scalar(const BlsctScalar* blsct_scalar);
 BlsctRetVal* deserialize_scalar(const char* hex);
 BlsctRetVal* deserialize_hex(const char* hex);
-int is_scalar_equal(const BlsctScalar* a, const BlsctScalar* b);
+int are_scalar_equal(const BlsctScalar* a, const BlsctScalar* b);
 const char* scalar_to_str(const BlsctScalar* blsct_scalar);
 BlsctPubKey* scalar_to_pub_key(const BlsctScalar* blsct_scalar);
 
@@ -577,6 +577,21 @@ const char* get_tx_out_memo(const BlsctTxOut* tx_out);
 const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out);
 TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out);
 uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
+
+// vector predicate
+int are_vector_predicate_equal(
+    const BlsctVectorPredicate* a,
+    const size_t a_size,
+    const BlsctVectorPredicate* b,
+    const size_t b_size
+);
+const char* serialize_vector_predicate(
+  const BlsctVectorPredicate* blsct_vector_predicate,
+  size_t obj_size
+);
+BlsctRetVal* deserialize_vector_predicate(
+  const char* hex
+);
 
 // key derivation functions
 
