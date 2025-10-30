@@ -47,9 +47,10 @@ class SignRawTransactionWithKeyTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
+        self.extra_args = [['-txindex'], ['-txindex']]
 
     def send_to_address(self, addr, amount):
-        input = {"txid": self.nodes[0].getblock(self.block_hash[self.blk_idx])["tx"][0], "vout": 0}
+        input = {"txid": self.nodes[0].getrawtransaction(self.nodes[0].getblock(self.block_hash[self.blk_idx])["tx"][0], 1)["vout"][0]["hash"]}
         output = {addr: amount}
         self.blk_idx += 1
         rawtx = self.nodes[0].createrawtransaction([input], output)

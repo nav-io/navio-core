@@ -591,7 +591,7 @@ static RPCHelpMan gettxspendingprevout()
                 "outputs",
                 RPCArg::Type::ARR,
                 RPCArg::Optional::NO,
-                "The transaction outputs that we want to check, and within each, the txid (string) vout (numeric).",
+                "The transaction outputs that we want to check, and within each, the txid (string).",
                 {
                     {
                         "",

@@ -53,14 +53,18 @@ class RPCMempoolInfoTest(BitcoinTestFramework):
             tx["txid"] for tx in [txA, txB, txC, txD, txE, txF, txG, txH]
         ]
 
+        outidA, outidB, outidC, outidD, outidE, outidF, outidG, outidH = [
+            tx["new_utxos"][0]["txid"] for tx in [txA, txB, txC, txD, txE, txF, txG, txH]
+        ]
+
         mempool = self.nodes[0].getrawmempool()
         assert_equal(len(mempool), 8)
         for txid in [txidA, txidB, txidC, txidD, txidE, txidF, txidG, txidH]:
             assert_equal(txid in mempool, True)
 
         self.log.info("Find transactions spending outputs")
-        result = self.nodes[0].gettxspendingprevout([ {'txid' : confirmed_utxo['txid']}, {'txid' : txidA, 'vout' : 1} ])
-        assert_equal(result, [ {'txid' : confirmed_utxo['txid'], 'vout' : 0, 'spendingtxid' : txidA}, {'txid' : txidA, 'vout' : 1, 'spendingtxid' : txidC} ])
+        result = self.nodes[0].gettxspendingprevout([ {'txid' : confirmed_utxo['txid']}, {'txid' : outidA} ])
+        assert_equal(result, [ {'txid' : confirmed_utxo['txid'], 'spendingtxid' : txidA}, {'txid' : outidA,  'spendingtxid' : txidC} ])
 
         self.log.info("Find transaction spending multiple outputs")
         result = self.nodes[0].gettxspendingprevout([ {'txid' : txE.vout[0].hash()}, {'txid' : txidF, 'vout' : 0} ])

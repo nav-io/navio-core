@@ -50,10 +50,9 @@ class RPCPackagesTest(BitcoinTestFramework):
         blockhash = self.generatetoaddress(node, 1, deterministic_address)[0]
         coinbase = node.getblock(blockhash=blockhash, verbosity=2)["tx"][0]
         coin = {
-                "txid": coinbase["txid"],
+                "txid": coinbase["vout"][0]["hash"],
                 "amount": coinbase["vout"][0]["value"],
                 "scriptPubKey": coinbase["vout"][0]["scriptPubKey"],
-                "vout": 0,
                 "height": 0
             }
 

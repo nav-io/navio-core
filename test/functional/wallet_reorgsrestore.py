@@ -27,6 +27,7 @@ class ReorgsRestoreTest(BitcoinTestFramework):
 
     def set_test_params(self):
         self.num_nodes = 3
+        self.extra_args = [['-txindex'], ['-txindex'], ['-txindex']]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -50,9 +51,9 @@ class ReorgsRestoreTest(BitcoinTestFramework):
 
         # Disconnect node0 from node2 to broadcast a conflict on their respective chains
         self.disconnect_nodes(0, 2)
-        nA = next(tx_out["vout"] for tx_out in self.nodes[0].gettransaction(txid_conflict_from)["details"] if tx_out["amount"] == Decimal("10"))
+        nA = next(tx_out["hash"] for tx_out in self.nodes[0].getrawtransaction(txid_conflict_from, 1)["vout"] if tx_out["value"] == Decimal("10"))
         inputs = []
-        inputs.append({"txid": txid_conflict_from, "vout": nA})
+        inputs.append({"txid": nA})
         outputs_1 = {}
         outputs_2 = {}
 

@@ -94,6 +94,14 @@ class ScanblocksTest(BitcoinTestFramework):
 
         genesis_coinbase_hash = bip158_basic_element_hash(genesis_coinbase_spk, 1, genesis_blockhash)
         false_positive_hash = bip158_basic_element_hash(false_positive_spk, 1, genesis_blockhash)
+        
+        # Debug output
+        print(f"genesis_coinbase_spk: {genesis_coinbase_spk.hex()}")
+        print(f"false_positive_spk: {false_positive_spk.hex()}")
+        print(f"genesis_blockhash: {genesis_blockhash}")
+        print(f"genesis_coinbase_hash: {genesis_coinbase_hash}")
+        print(f"false_positive_hash: {false_positive_hash}")
+        
         assert_equal(genesis_coinbase_hash, false_positive_hash)
 
         assert genesis_blockhash in node.scanblocks(
