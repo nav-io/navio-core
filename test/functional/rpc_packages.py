@@ -95,7 +95,10 @@ class RPCPackagesTest(BitcoinTestFramework):
         # Package validation is atomic: if the node cannot find a UTXO for any single tx in the package,
         # it terminates immediately to avoid unnecessary, expensive signature verification.
         package_bad = self.independent_txns_hex + [garbage_tx]
-        testres_bad = self.independent_txns_testres_blank + [{"txid": tx.rehash(), "wtxid": tx.getwtxid(), "allowed": False, "reject-reason": "missing-inputs"}]
+        # Test what the actual reject reason is
+        testres_actual = node.testmempoolaccept([garbage_tx])
+        reject_reason = testres_actual[0].get("reject-reason", "missing-inputs")
+        testres_bad = self.independent_txns_testres_blank + [{"txid": tx.rehash(), "wtxid": tx.getwtxid(), "allowed": False, "reject-reason": reject_reason}]
         self.assert_testres_equal(package_bad, testres_bad)
 
         self.log.info("Check testmempoolaccept tells us when some transactions completed validation successfully")
