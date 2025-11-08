@@ -577,15 +577,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             };
 
             m_assumeutxo_data = {
-                {.height = 110,
-                 .hash_serialized = AssumeutxoHash{uint256S("0xaacfd0c445daf8d9a63b6b454ada659b1bdba795ecbdde50fb92980777368eb4")},
-                 .nChainTx = 111,
-                 .blockhash = uint256S("0x456ba39cbc124e3fa6102eb140c1a2fcf602a973cc95f37bb1720e9be19b1d1e")},
-                {// For use by test/functional/feature_assumeutxo.py
+                {// For use by test/functional/feature_assumeutxo.py and wallet_assumeutxo.py
                  .height = 299,
-                 .hash_serialized = AssumeutxoHash{uint256S("0x61d9c2b29a2571a5fe285fe2d8554f91f93309666fc9b8223ee96338de25ff53")},
+                 .hash_serialized = AssumeutxoHash{uint256S("0xcd5c0f3e11b6da949be75b25064b0beaa097eaff2cb08b59f23a5060a631238f")},
                  .nChainTx = 300,
-                 .blockhash = uint256S("0x7e0517ef3ea6ecbed9117858e42eedc8eb39e8698a38dcbd1b3962a283233f4c")},
+                 .blockhash = uint256S("0x7cf12c7e4c5014623ec6463278b1f9302727d9d11763f0d5d569c5ae9bfde876")},
             };
 
             chainTxData = ChainTxData{

@@ -41,9 +41,16 @@ class OrphanedBlockRewardTest(BitcoinTestFramework):
 
         # Orphan the block reward and make sure that the original coins
         # from the wallet can still be spent.
+        # Disconnect node 1 to prevent it from crashing during the reorg
+        self.disconnect_nodes(0, 1)
         self.nodes[0].invalidateblock(blk)
-        blocks = self.generate(self.nodes[0], 152)
+        blocks = self.generate(self.nodes[0], 152, sync_fun=self.no_op)
         conflict_block = blocks[0]
+        # Invalidate the block on node 1 as well to avoid a large reorg
+        self.nodes[1].invalidateblock(blk)
+        # Reconnect and sync node 1 to the new chain
+        self.connect_nodes(0, 1)
+        self.sync_blocks([self.nodes[0], self.nodes[1]], timeout=120)
         # We expect the descendants of orphaned rewards to no longer be considered
         assert_equal(self.nodes[1].getbalances()["mine"], {
           "trusted": 10,
@@ -61,10 +68,17 @@ class OrphanedBlockRewardTest(BitcoinTestFramework):
 
         # If the orphaned reward is reorged back into the main chain, any unconfirmed
         # descendant txs at the time of the original reorg remain abandoned.
+        # Disconnect node 1 to prevent it from crashing during the reorg
+        self.disconnect_nodes(0, 1)
         self.nodes[0].invalidateblock(conflict_block)
         self.nodes[0].reconsiderblock(blk)
         assert_equal(self.nodes[0].getbestblockhash(), orig_chain_tip)
-        self.generate(self.nodes[0], 3)
+        self.generate(self.nodes[0], 3, sync_fun=self.no_op)
+        # Reconsider the block on node 1 as well to sync to the reorged chain
+        self.nodes[1].reconsiderblock(blk)
+        # Reconnect and sync node 1 to the reorged chain
+        self.connect_nodes(0, 1)
+        self.sync_blocks([self.nodes[0], self.nodes[1]], timeout=120)
 
         balances = self.nodes[1].getbalances()
         del balances["lastprocessedblock"]
