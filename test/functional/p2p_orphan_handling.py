@@ -187,11 +187,27 @@ class OrphanHandlingTest(BitcoinTestFramework):
 
         # Request would be scheduled with this delay because it is not a preferred relay peer.
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY)
-        peer_spy.assert_never_requested(int(tx_parent_arrives["txid"], 16))
+        # With the new output hash prevout system, we check if output hashes were requested, not transaction hashes
+        # The fake orphan uses transaction hashes as output hashes, so we need to check if the output hash was requested
+        fake_orphan_tx = tx_fake_orphan["tx"]
+        # Get output hash for the second input (tx_parent_arrives) - it should not be requested because it's already in mempool
+        tx_parent_arrives_output_hash = fake_orphan_tx.vin[1].prevout.hash
+        # Check that tx_parent_arrives was not requested by checking if its output hash was requested
+        # Since tx_parent_arrives is already in mempool, its output hash should not be requested
+        for getdata in peer_spy.getdata_received:
+            for request in getdata.inv:
+                # If the request is for tx_parent_arrives's output hash, it means we requested it
+                # But we shouldn't have because it's already in mempool
+                assert request.hash != tx_parent_arrives_output_hash, f"tx_parent_arrives output hash {tx_parent_arrives_output_hash} was requested but transaction is already in mempool"
         peer_spy.assert_never_requested(int(tx_parent_doesnt_arrive["txid"], 16))
         # Request would be scheduled with this delay because it is by txid.
         self.nodes[0].bumpmocktime(TXID_RELAY_DELAY)
-        peer_spy.wait_for_parent_requests([int(tx_parent_doesnt_arrive["txid"], 16)])
+        # With the new output hash prevout system, get the output hash that the fake orphan is trying to spend.
+        # The inputs are in the same order as utxos_to_spend: [tx_parent_doesnt_arrive, tx_parent_arrives]
+        fake_orphan_tx = tx_fake_orphan["tx"]
+        # Get output hash for the first input (tx_parent_doesnt_arrive)
+        expected_missing_parent_hash = fake_orphan_tx.vin[0].prevout.hash
+        peer_spy.wait_for_output_hash_requests([expected_missing_parent_hash])
         peer_spy.assert_never_requested(int(tx_parent_arrives["txid"], 16))
 
     @cleanup
@@ -323,9 +339,8 @@ class OrphanHandlingTest(BitcoinTestFramework):
         assert len(peer.last_message["getdata"].inv) >= 2, f"Expected at least 2 getdata requests, got {len(peer.last_message['getdata'].inv)}"
         
         # Wait for the specific parent requests we expect (by output hash)
-        # Create output hash requests for the expected hashes
-        output_hash_requests = [COutputHashRequest(hash_val) for hash_val in expected_output_hashes]
-        peer.wait_for_getoutputdata(output_hash_requests)
+        # The node sends getdata messages with output hashes, not getoutputdata messages
+        peer.wait_for_output_hash_requests(expected_output_hashes)
 
         # Even though the peer would send a notfound for the "old" confirmed transaction, the node
         # doesn't give up on the orphan. Once all of the missing parents are received, it should be
@@ -375,7 +390,12 @@ class OrphanHandlingTest(BitcoinTestFramework):
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY + TXID_RELAY_DELAY)
         # There are 3 missing parents. missing_parent_A and missing_parent_AB should be requested.
         # But inflight_parent_AB should not, because there is already an in-flight request for it.
-        peer_orphans.wait_for_parent_requests([int(missing_parent_A["txid"], 16), int(missing_parent_AB["txid"], 16)])
+        # With the new output hash prevout system, get the output hashes that child_A is trying to spend.
+        # The inputs are in the same order as utxos_to_spend: [missing_parent_A, missing_parent_AB, inflight_parent_AB]
+        child_A_tx = child_A["tx"]
+        # Get output hashes for the first two inputs (missing_parent_A and missing_parent_AB)
+        expected_missing_hashes = [child_A_tx.vin[0].prevout.hash, child_A_tx.vin[1].prevout.hash]
+        peer_orphans.wait_for_output_hash_requests(expected_missing_hashes)
 
         self.log.info("Test that the node does not request a parent if it has an in-flight orphan parent request")
         # Relay orphan child_B
@@ -383,7 +403,12 @@ class OrphanHandlingTest(BitcoinTestFramework):
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY + TXID_RELAY_DELAY)
         # Only missing_parent_B should be requested. Not inflight_parent_AB or missing_parent_AB
         # because they are already being requested from peer_txrequest and peer_orphans respectively.
-        peer_orphans.wait_for_parent_requests([int(missing_parent_B["txid"], 16)])
+        # With the new output hash prevout system, get the output hash that child_B is trying to spend for missing_parent_B.
+        # The inputs are in the same order as utxos_to_spend: [missing_parent_B, missing_parent_AB, inflight_parent_AB]
+        child_B_tx = child_B["tx"]
+        # Get output hash for the first input (missing_parent_B)
+        expected_missing_hash_B = [child_B_tx.vin[0].prevout.hash]
+        peer_orphans.wait_for_output_hash_requests(expected_missing_hash_B)
         peer_orphans.assert_never_requested(int(inflight_parent_AB["txid"], 16))
 
     @cleanup
@@ -400,13 +425,20 @@ class OrphanHandlingTest(BitcoinTestFramework):
         # The node should put missing_parent_orphan into the orphanage and request missing_grandparent
         self.relay_transaction(peer, missing_parent_orphan["tx"])
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY + TXID_RELAY_DELAY)
-        peer.wait_for_parent_requests([int(missing_grandparent["txid"], 16)])
+        # With the new output hash prevout system, get the output hash that missing_parent_orphan is trying to spend.
+        missing_parent_orphan_tx = missing_parent_orphan["tx"]
+        expected_grandparent_hash = missing_parent_orphan_tx.vin[0].prevout.hash
+        peer.wait_for_output_hash_requests([expected_grandparent_hash])
 
         # The node should put the orphan into the orphanage and request missing_parent, skipping
         # missing_parent_orphan because it already has it in the orphanage.
         self.relay_transaction(peer, orphan["tx"])
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY + TXID_RELAY_DELAY)
-        peer.wait_for_parent_requests([int(missing_parent["txid"], 16)])
+        # With the new output hash prevout system, get the output hash that orphan is trying to spend for missing_parent.
+        # The inputs are in the same order as utxos_to_spend: [missing_parent, missing_parent_orphan]
+        orphan_tx = orphan["tx"]
+        expected_missing_parent_hash = orphan_tx.vin[0].prevout.hash
+        peer.wait_for_output_hash_requests([expected_missing_parent_hash])
 
     @cleanup
     def test_orphan_inherit_rejection(self):

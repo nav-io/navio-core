@@ -204,6 +204,9 @@ class RpcCreateMultiSigTest(BitcoinTestFramework):
         vout = vout[0]
         scriptPubKey = tx["vout"][vout]["scriptPubKey"]["hex"]
         value = tx["vout"][vout]["value"]
+        # Ensure txoutid is 64 characters (pad with leading zero if needed)
+        if len(txoutid) == 63:
+            txoutid = '0' + txoutid
         prevtxs = [{"txid": txoutid, "scriptPubKey": scriptPubKey, "redeemScript": mredeem, "amount": value}]
 
         self.generate(node0, 1)

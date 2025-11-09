@@ -481,7 +481,9 @@ class ReplaceByFeeTest(BitcoinTestFramework):
         )["new_utxo"]
 
         # This transaction isn't shown as replaceable
-        assert_equal(self.nodes[0].getmempoolentry(tx1a_utxo["txid"])['bip125-replaceable'], False)
+        # Use transaction_txid if available (for output hash prevout system), otherwise use txid
+        tx1a_txid = tx1a_utxo.get("transaction_txid", tx1a_utxo["txid"])
+        assert_equal(self.nodes[0].getmempoolentry(tx1a_txid)['bip125-replaceable'], False)
 
         # Shouldn't be able to double-spend
         tx1b_hex = self.wallet.create_self_transfer(

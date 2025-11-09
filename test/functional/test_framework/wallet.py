@@ -157,9 +157,15 @@ class MiniWallet:
                 self.get_utxo(txid=spent["txid"])
             except StopIteration:
                 pass
+        # Get the transaction hash from the transaction details
+        tx_hash = tx.get('txid') or tx.get('hash')
         for out in tx['vout']:
             if out['scriptPubKey']['hex'] == self._scriptPubKey.hex():
-                self._utxos.append(self._create_utxo(txid=out['hash'], value=out["value"], height=0, coinbase=False, confirmations=0))
+                utxo = self._create_utxo(txid=out['hash'], value=out["value"], height=0, coinbase=False, confirmations=0)
+                # Add transaction_txid field if we have the transaction hash
+                if tx_hash:
+                    utxo['transaction_txid'] = tx_hash
+                self._utxos.append(utxo)
 
     def scan_txs(self, txs):
         for tx in txs:
@@ -215,21 +221,86 @@ class MiniWallet:
         Returns a utxo and marks it as spent (pops it from the internal list)
 
         Args:
-        txid: get the first utxo we find from a specific transaction
+        txid: get the first utxo we find from a specific transaction (can be hex string or int for output hash)
         """
         self._utxos = sorted(self._utxos, key=lambda k: (k['value'], -k['height']))  # Put the largest utxo last
         blocks_height = self._test_node.getblockchaininfo()['blocks']
         mature_coins = list(filter(lambda utxo: not utxo['coinbase'] or COINBASE_MATURITY - 1 <= blocks_height - utxo['height'], self._utxos))
         if txid:
+            # Convert txid to hex string if it's an int (for output hash support)
+            if isinstance(txid, int):
+                txid = f"{txid:064x}"
+            # First try to find by output hash (txid field in UTXO)
             utxo_filter: Any = filter(lambda utxo: txid == utxo['txid'], self._utxos)
+            try:
+                utxo = next(utxo_filter)
+                index = self._utxos.index(utxo)
+            except StopIteration:
+                # If not found by output hash, try to find by transaction hash
+                # First try to find by transaction_txid field (if UTXOs have it)
+                found_utxo = None
+                for utxo in self._utxos:
+                    if utxo.get('transaction_txid') == txid:
+                        found_utxo = utxo
+                        index = self._utxos.index(utxo)
+                        break
+                if found_utxo:
+                    utxo = found_utxo
+                else:
+                    # If not found by transaction_txid, try to look up the transaction
+                    # First check if it's in the mempool
+                    try:
+                        mempool = self._test_node.getrawmempool()
+                        if txid in mempool:
+                            # Transaction is in mempool, get it
+                            tx_details = self._test_node.getrawtransaction(txid, True)
+                            # Scan the transaction to add any missing UTXOs
+                            self.scan_tx(tx_details)
+                            # Find UTXOs from this transaction by matching output hashes
+                            for i, vout in enumerate(tx_details['vout']):
+                                output_hash = vout['hash']
+                                utxo_filter = filter(lambda utxo: output_hash == utxo['txid'], self._utxos)
+                                try:
+                                    utxo = next(utxo_filter)
+                                    index = self._utxos.index(utxo)
+                                    break
+                                except StopIteration:
+                                    continue
+                            else:
+                                raise StopIteration(f"No UTXO found with txid={txid}, confirmed_only={confirmed_only}")
+                        else:
+                            # Transaction is not in mempool, try to get it from blockchain (requires -txindex)
+                            try:
+                                tx_details = self._test_node.getrawtransaction(txid, True)
+                                # Scan the transaction to add any missing UTXOs
+                                self.scan_tx(tx_details)
+                                # Find UTXOs from this transaction by matching output hashes
+                                for i, vout in enumerate(tx_details['vout']):
+                                    output_hash = vout['hash']
+                                    utxo_filter = filter(lambda utxo: output_hash == utxo['txid'], self._utxos)
+                                    try:
+                                        utxo = next(utxo_filter)
+                                        index = self._utxos.index(utxo)
+                                        break
+                                    except StopIteration:
+                                        continue
+                                else:
+                                    raise StopIteration(f"No UTXO found with txid={txid}, confirmed_only={confirmed_only}")
+                            except Exception as e:
+                                # Transaction not found in mempool or blockchain
+                                raise StopIteration(f"No UTXO found with txid={txid}, confirmed_only={confirmed_only}")
+                    except Exception as e:
+                        raise StopIteration(f"No UTXO found with txid={txid}, confirmed_only={confirmed_only}")
         else:
             utxo_filter = reversed(mature_coins)  # By default the largest utxo
-        if confirmed_only:
-            utxo_filter = filter(lambda utxo: utxo['confirmations'] > 0, utxo_filter)
-        try:
-            utxo = next(utxo_filter)
-            index = self._utxos.index(utxo)
-        except StopIteration:
+            if confirmed_only:
+                utxo_filter = filter(lambda utxo: utxo['confirmations'] > 0, utxo_filter)
+            try:
+                utxo = next(utxo_filter)
+                index = self._utxos.index(utxo)
+            except StopIteration:
+                raise StopIteration(f"No UTXO found with txid={txid}, confirmed_only={confirmed_only}")
+        if confirmed_only and utxo['confirmations'] == 0:
             raise StopIteration(f"No UTXO found with txid={txid}, confirmed_only={confirmed_only}")
         if mark_as_spent:
             return self._utxos.pop(index)
@@ -332,16 +403,17 @@ class MiniWallet:
         if target_weight:
             self._bulk_tx(tx, target_weight)
 
+        txid = tx.rehash()
         return {
-            "new_utxos": [self._create_utxo(
+            "new_utxos": [dict(self._create_utxo(
                 txid=tx.vout[i].hash(),
                 value=Decimal(tx.vout[i].nValue) / COIN,
                 height=0,
                 coinbase=False,
                 confirmations=0,
-            ) for i in range(len(tx.vout))],
+            ), transaction_txid=txid) for i in range(len(tx.vout))],
             "fee": fee,
-            "txid": tx.rehash(),
+            "txid": txid,
             "wtxid": tx.getwtxid(),
             "hex": tx.serialize().hex(),
             "tx": tx,

@@ -2517,6 +2517,10 @@ void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic
         }
 
         CTransactionRef tx = FindTxForGetData(*tx_relay, ToGenTxid(inv));
+        // If not found by transaction hash, try looking up by output hash (for MSG_WITNESS_TX requests)
+        if (!tx && inv.type == MSG_WITNESS_TX) {
+            tx = FindTxByOutputHash(inv.hash);
+        }
         if (tx) {
             // WTX and WITNESS_TX imply we serialize with witness
             const auto maybe_with_witness = (inv.IsMsgTx() ? TX_NO_WITNESS : TX_WITH_WITNESS);
@@ -4449,18 +4453,21 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         {
             bool fRejectedParents = false; // It may be the case that the orphans parents have all been rejected
 
-            // Deduplicate parent txids, so that we don't have to loop over
-            // the same parent txid more than once down below.
-            std::vector<uint256> unique_parents;
-            unique_parents.reserve(tx.vin.size());
+            // Deduplicate parent output hashes, so that we don't have to loop over
+            // the same parent output hash more than once down below.
+            std::vector<uint256> unique_parent_output_hashes;
+            unique_parent_output_hashes.reserve(tx.vin.size());
             for (const CTxIn& txin : tx.vin) {
                 // We start with all parents, and then remove duplicates below.
-                unique_parents.push_back(txin.prevout.hash);
+                unique_parent_output_hashes.push_back(txin.prevout.hash);
             }
-            std::sort(unique_parents.begin(), unique_parents.end());
-            unique_parents.erase(std::unique(unique_parents.begin(), unique_parents.end()), unique_parents.end());
-            for (const uint256& parent_txid : unique_parents) {
-                if (m_recent_rejects.contains(parent_txid)) {
+            std::sort(unique_parent_output_hashes.begin(), unique_parent_output_hashes.end());
+            unique_parent_output_hashes.erase(std::unique(unique_parent_output_hashes.begin(), unique_parent_output_hashes.end()), unique_parent_output_hashes.end());
+            // Check if any parent transaction has been rejected
+            // With the new output hash prevout system, we need to look up the transaction hash from the output hash
+            for (const uint256& parent_output_hash : unique_parent_output_hashes) {
+                CTransactionRef parent_tx = FindTxByOutputHash(parent_output_hash);
+                if (parent_tx && m_recent_rejects.contains(parent_tx->GetHash().ToUint256())) {
                     fRejectedParents = true;
                     break;
                 }
@@ -4468,15 +4475,43 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             if (!fRejectedParents) {
                 const auto current_time{GetTime<std::chrono::microseconds>()};
 
-                for (const uint256& parent_txid : unique_parents) {
-                    // Here, we only have the txid (and not wtxid) of the
-                    // inputs, so we only request in txid mode, even for
-                    // wtxidrelay peers.
-                    // Eventually we should replace this with an improved
-                    // protocol for getting all unconfirmed parents.
-                    const auto gtxid{GenTxid::Txid(parent_txid)};
-                    AddKnownTx(*peer, parent_txid);
-                    if (!AlreadyHaveTx(gtxid)) AddTxAnnouncement(pfrom, gtxid, current_time);
+                // With the new output hash prevout system, we request parents by output hash
+                // Send getdata messages directly with output hashes
+                std::vector<CInv> vGetData;
+                for (const uint256& parent_output_hash : unique_parent_output_hashes) {
+                    // Check if we already have the transaction by looking up the transaction that contains this output hash
+                    CTransactionRef parent_tx = FindTxByOutputHash(parent_output_hash);
+                    if (parent_tx) {
+                        // If we found the transaction, check if we already have it
+                        const auto gtxid = GenTxid::Wtxid(parent_tx->GetWitnessHash());
+                        if (AlreadyHaveTx(gtxid)) {
+                            // Already have this transaction, skip requesting it
+                            continue;
+                        }
+                    } else {
+                        // If we didn't find it by output hash, check if the hash might be a transaction hash
+                        // (This can happen with fake orphans that use transaction hashes as output hashes)
+                        // Check both by txid and wtxid, and also check mempool directly
+                        const auto gtxid_txid = GenTxid::Txid(parent_output_hash);
+                        const auto gtxid_wtxid = GenTxid::Wtxid(parent_output_hash);
+                        if (AlreadyHaveTx(gtxid_txid) || AlreadyHaveTx(gtxid_wtxid)) {
+                            // Already have this transaction, skip requesting it
+                            continue;
+                        }
+                        // Also check mempool directly by hash (in case it's a transaction hash)
+                        {
+                            LOCK(m_mempool.cs);
+                            if (m_mempool.exists(gtxid_txid) || m_mempool.exists(gtxid_wtxid)) {
+                                // Already have this transaction in mempool, skip requesting it
+                                continue;
+                            }
+                        }
+                    }
+                    // Request the transaction by output hash using MSG_WITNESS_TX type
+                    vGetData.emplace_back(MSG_WITNESS_TX, parent_output_hash);
+                }
+                if (!vGetData.empty()) {
+                    MakeAndPushMessage(pfrom, NetMsgType::GETDATA, vGetData);
                 }
 
                 if (m_orphanage.AddTx(ptx, pfrom.GetId())) {
