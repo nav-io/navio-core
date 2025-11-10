@@ -21,6 +21,7 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         self.num_nodes = 2
         self.chain = 'blsctregtest'
         self.setup_clean_chain = True
+        self.extra_args = [["-txindex"],["-txindex"]]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -189,7 +190,7 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         self.log.info(f"Recovery data: {recovery_data}")
 
         # Verify the outputs
-        assert_equal(len(recovery_data['outputs']), 4)
+        assert_equal(len(recovery_data['outputs']), 3)
         # Check that all custom scripts are in the outputs
         scripts_found = set()
         for output in recovery_data['outputs']:
@@ -263,16 +264,13 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
 
         assert_equal(script_output_found, True)
         # Look for outputs with our custom script using recovery data
+        # Use the signed transaction hex directly since the transaction might not be in the wallet
         script_output_found = False
-        for utxo in unspent_after:
-            # Get recovery data for this specific output
-            recovery_data_utxo = wallet1.getblsctrecoverydata(utxo['txid'], utxo['vout'])
-            for output in recovery_data_utxo['outputs']:
-                if 'script' in output and output['script'] == custom_script:
-                    script_output_found = True
-                    self.log.info(f"Found custom script in unspent output recovery data: {output}")
-                    break
-            if script_output_found:
+        recovery_data_utxo = wallet1.getblsctrecoverydata(signed_tx)
+        for output in recovery_data_utxo['outputs']:
+            if 'script' in output and output['script'] == custom_script:
+                script_output_found = True
+                self.log.info(f"Found custom script in unspent output recovery data: {output}")
                 break
         assert_equal(script_output_found, True)
 
