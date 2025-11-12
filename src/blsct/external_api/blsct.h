@@ -695,7 +695,7 @@ void add_to_amount_recovery_req_vec(
 
 void delete_amount_recovery_req_vec(void* vp_amt_recovery_req_vec);
 
-int16_t get_amount_recovery_result_size(
+size_t get_amount_recovery_result_size(
     void* vp_amt_recovery_res_vec
 );
 
