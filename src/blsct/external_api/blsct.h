@@ -42,7 +42,7 @@
 /* return codes */
 #define BLSCT_RESULT uint8_t
 #define BLSCT_SUCCESS 0
-#define blsct_failure 1
+#define BLSCT_FAILURE 1
 #define BLSCT_EXCEPTION 2
 #define BLSCT_BAD_SIZE 10
 #define BLSCT_UNKNOWN_ENCODING 11
