@@ -153,10 +153,13 @@ class MiniWallet:
             # utxo that remained in this wallet. For example, by passing
             # mark_as_spent=False to get_utxo or by using an utxo returned by a
             # create_self_transfer* call.
-            try:
-                self.get_utxo(txid=spent["txid"])
-            except StopIteration:
-                pass
+            # Handle both "txid" and "hash" fields (for output hash prevout system)
+            spent_txid = spent.get("txid") or spent.get("hash")
+            if spent_txid:
+                try:
+                    self.get_utxo(txid=spent_txid)
+                except StopIteration:
+                    pass
         # Get the transaction hash from the transaction details
         tx_hash = tx.get('txid') or tx.get('hash')
         for out in tx['vout']:

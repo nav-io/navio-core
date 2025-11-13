@@ -73,7 +73,9 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         assert_greater_than(len(unspent), 0)
 
         utxo = unspent[0]
-        self.log.info(f"Using UTXO: {utxo['txid']}:{utxo['vout']}")
+        # UTXO might not have 'vout' field in the new output hash system
+        vout_info = f":{utxo.get('vout', 'N/A')}" if 'vout' in utxo else ""
+        self.log.info(f"Using UTXO: {utxo['txid']}{vout_info}")
 
         # Test 1: Create raw transaction with minimal inputs (wallet will fill missing data)
         inputs = [{"txid": utxo['txid']}]
@@ -85,7 +87,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Test 2: Create raw transaction with all optional fields provided
         inputs_with_data = [{
             "txid": utxo['txid'],
-            "vout": utxo['vout'],
+            "vout": utxo.get('vout', 0),  # Use 0 as default if vout not present
             "value": int(utxo['amount'] * COIN),
             "is_staked_commitment": False
         }]
@@ -182,10 +184,14 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         assert_greater_than(len(unspent), 0)
 
         utxo = unspent[0]
-        self.log.info(f"Using UTXO: {utxo['txid']}:{utxo['vout']}")
+        vout_info = f":{utxo.get('vout', 'N/A')}" if 'vout' in utxo else ""
+        self.log.info(f"Using UTXO: {utxo['txid']}{vout_info}")
 
         # Test 1: Decode a raw transaction
-        raw_tx = wallet1.createblsctrawtransaction([{"txid": utxo['txid'], "vout": utxo['vout']}], [])
+        input_data = {"txid": utxo['txid']}
+        if 'vout' in utxo:
+            input_data["vout"] = utxo.get('vout', 0)
+        raw_tx = wallet1.createblsctrawtransaction([input_data], [])
         decoded_tx = wallet1.decodeblsctrawtransaction(raw_tx)
         self.log.info(f"Decoded transaction: {decoded_tx}")
 
@@ -208,7 +214,10 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.log.info(f"Using UTXO: {utxo}")
 
         # Test 1: Get recovery data for a raw transaction (hex input)
-        raw_tx = wallet1.createblsctrawtransaction([{"txid": utxo['txid'], "vout": utxo['vout']}], [{"address": address1, "amount": 0.005, "memo": "Test script output"}])
+        input_data = {"txid": utxo['txid']}
+        if 'vout' in utxo:
+            input_data["vout"] = utxo.get('vout', 0)
+        raw_tx = wallet1.createblsctrawtransaction([input_data], [{"address": address1, "amount": 0.005, "memo": "Test script output"}])
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
         recovery_data = wallet1.getblsctrecoverydata(signed_tx)
