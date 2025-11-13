@@ -309,6 +309,12 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
     const size_t range_proof_size,
     const void* vp_blsct_nonce
 );
+void* create_amount_recovery_req_vec();
+void add_to_amount_recovery_req_vec(
+    void* vp_amt_recovery_req_vec,
+    void* vp_amt_recovery_req
+);
+void delete_amount_recovery_req_vec(void* vp_amt_recovery_req_vec);
 
 // amountry recovery and the result result
 
@@ -316,6 +322,22 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
 // a vector of the same size as the input vector
 BlsctAmountsRetVal* recover_amount(
     void* vp_amt_recovery_req_vec
+);
+
+size_t get_amount_recovery_result_size(
+    void* vp_amt_recovery_res_vec
+);
+bool get_amount_recovery_result_is_succ(
+    void* vp_amt_recovery_req_vec,
+    size_t idx
+);
+uint64_t get_amount_recovery_result_amount(
+    void* vp_amt_recovery_req_vec,
+    size_t idx
+);
+const char* get_amount_recovery_result_msg(
+    void* vp_amt_recovery_req_vec,
+    size_t idx
 );
 
 // ctx
@@ -412,19 +434,21 @@ BlsctRetVal* gen_out_point(
     const char* ctx_id_c_str,
     const uint32_t n
 );
+uint32_t get_out_point_n(const BlsctOutPoint* blsct_out_point);
 const char* serialize_out_point(const BlsctOutPoint* blsct_out_point);
 BlsctRetVal* deserialize_out_point(const char* hex);
-uint32_t get_out_point_n(const BlsctOutPoint* blsct_out_point);
 
 // point
+int are_point_equal(const BlsctPoint* a, const BlsctPoint* b);
 BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
-const char* serialize_point(const BlsctPoint* blsct_point);
-BlsctRetVal* deserialize_point(const char* hex);
-int are_point_equal(const BlsctPoint* a, const BlsctPoint* b);
+
 const char* point_to_str(const BlsctPoint* blsct_point);
 BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
 bool is_valid_point(const BlsctPoint* blsct_point);
+
+const char* serialize_point(const BlsctPoint* blsct_point);
+BlsctRetVal* deserialize_point(const char* hex);
 
 // public key
 BlsctRetVal* gen_random_public_key();
@@ -455,6 +479,14 @@ BlsctScalar* get_range_proof_delta_prime(const BlsctRangeProof* blsct_range_proo
 BlsctScalar* get_range_proof_alpha_hat(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
 BlsctScalar* get_range_proof_tau_x(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
 
+void* create_range_proof_vec();
+void add_to_range_proof_vec(
+    void* vp_range_proofs,
+    const BlsctRangeProof* blsct_range_proof,
+    size_t blsct_range_proof_size
+);
+void delete_range_proof_vec(const void* vp_range_proofs);
+
 const char* serialize_range_proof(
     const BlsctRangeProof* blsct_range_proof,
     const size_t obj_size
@@ -465,24 +497,22 @@ BlsctRetVal* deserialize_range_proof(
 );
 
 // scalar
+int are_scalar_equal(const BlsctScalar* a, const BlsctScalar* b);
 BlsctRetVal* gen_random_scalar();
 BlsctRetVal* gen_scalar(const uint64_t n);
 uint64_t scalar_to_uint64(const BlsctScalar* blsct_scalar);
-const char* serialize_scalar(const BlsctScalar* blsct_scalar);
-BlsctRetVal* deserialize_scalar(const char* hex);
-BlsctRetVal* deserialize_hex(const char* hex);
-int are_scalar_equal(const BlsctScalar* a, const BlsctScalar* b);
+
 const char* scalar_to_str(const BlsctScalar* blsct_scalar);
 BlsctPubKey* scalar_to_pub_key(const BlsctScalar* blsct_scalar);
+
+const char* serialize_scalar(const BlsctScalar* blsct_scalar);
+BlsctRetVal* deserialize_scalar(const char* hex);
 
 // script
 const char* serialize_script(const BlsctScript* blsct_script);
 BlsctRetVal* deserialize_script(const char* hex);
 
 // signature
-const char* serialize_signature(const BlsctSignature* blsct_signature);
-BlsctRetVal* deserialize_signature(const char* hex);
-
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,
     const char* blsct_msg
@@ -494,6 +524,9 @@ bool verify_msg_sig(
     const BlsctSignature* blsct_signature
 );
 
+const char* serialize_signature(const BlsctSignature* blsct_signature);
+BlsctRetVal* deserialize_signature(const char* hex);
+
 // sub addr
 BlsctSubAddr* derive_sub_address(
     const BlsctScalar* blsct_view_key,
@@ -502,7 +535,6 @@ BlsctSubAddr* derive_sub_address(
 );
 
 const char* serialize_sub_addr(const BlsctSignature* blsct_sub_addr);
-
 BlsctRetVal* deserialize_sub_addr(const char* hex);
 
 // sub addr id
@@ -511,9 +543,6 @@ BlsctSubAddrId* gen_sub_addr_id(
     const uint64_t address
 );
 
-const char* serialize_sub_addr_id(const BlsctSubAddrId* blsct_sub_addr_id);
-BlsctRetVal* deserialize_sub_addr_id(const char* hex);
-
 int64_t get_sub_addr_id_account(
     const BlsctSubAddrId* blsct_sub_addr_id
 );
@@ -521,6 +550,9 @@ int64_t get_sub_addr_id_account(
 uint64_t get_sub_addr_id_address(
     const BlsctSubAddrId* blsct_sub_addr_id
 );
+
+const char* serialize_sub_addr_id(const BlsctSubAddrId* blsct_sub_addr_id);
+BlsctRetVal* deserialize_sub_addr_id(const char* hex);
 
 // token id
 BlsctRetVal* gen_token_id_with_token_and_subid(
@@ -539,8 +571,6 @@ const char* serialize_token_id(const BlsctTokenId* blsct_token_id);
 BlsctRetVal* deserialize_token_id(const char* hex);
 
 // tx in
-
-// returns BlsctTxIn
 BlsctRetVal* build_tx_in(
     const uint64_t amount,
     const uint64_t gamma,
@@ -560,8 +590,6 @@ bool get_tx_in_staked_commitment(const BlsctTxIn* tx_in);
 bool get_tx_in_rbf(const BlsctTxIn* tx_in);
 
 // tx out
-
-// returns BlsctTxOut
 BlsctRetVal* build_tx_out(
     const BlsctSubAddr* blsct_dest,
     const uint64_t amount,
@@ -668,6 +696,7 @@ if (p == nullptr) { \
   return; \
 }
 
+BlsctRetVal* deserialize_hex(const char* hex);
 uint8_t* hex_to_malloced_buf(const char* hex);
 const char* buf_to_malloced_hex_c_str(const uint8_t* buf, size_t size);
 
@@ -675,44 +704,6 @@ const char* buf_to_malloced_hex_c_str(const uint8_t* buf, size_t size);
 void* create_uint64_vec();
 void add_to_uint64_vec(void* vp_uint64_vec, const uint64_t n);
 void delete_uint64_vec(const void* vp_vec);
-
-// range_proof vector
-void* create_range_proof_vec();
-void add_to_range_proof_vec(
-    void* vp_range_proofs,
-    const BlsctRangeProof* blsct_range_proof,
-    size_t blsct_range_proof_size
-);
-void delete_range_proof_vec(const void* vp_range_proofs);
-
-// amount recovery request vector
-void* create_amount_recovery_req_vec();
-
-void add_to_amount_recovery_req_vec(
-    void* vp_amt_recovery_req_vec,
-    void* vp_amt_recovery_req
-);
-
-void delete_amount_recovery_req_vec(void* vp_amt_recovery_req_vec);
-
-size_t get_amount_recovery_result_size(
-    void* vp_amt_recovery_res_vec
-);
-
-bool get_amount_recovery_result_is_succ(
-    void* vp_amt_recovery_req_vec,
-    size_t idx
-);
-
-uint64_t get_amount_recovery_result_amount(
-    void* vp_amt_recovery_req_vec,
-    size_t idx
-);
-
-const char* get_amount_recovery_result_msg(
-    void* vp_amt_recovery_req_vec,
-    size_t idx
-);
 
 } // extern "C"
 
