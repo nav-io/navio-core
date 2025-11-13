@@ -549,7 +549,6 @@ BlsctCTxRetVal* build_ctx(
     CMutableTransaction* ctx_in_heap = new(std::nothrow) CMutableTransaction;
     *ctx_in_heap = std::move(maybe_ctx.value());
 
-    // ser_ctx is raw uint8_t array and not hex here
     rv->result = BLSCT_SUCCESS;
     rv->ctx = static_cast<void*>(ctx_in_heap);
 
