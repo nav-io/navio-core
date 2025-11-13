@@ -26,6 +26,7 @@
 #include <validationinterface.h>
 
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <string_view>
@@ -792,8 +793,23 @@ void CTxMemPool::check(const CCoinsViewCache& active_coins_tip, int64_t spendhei
                 }
             }
             // We are iterating through the mempool entries sorted in order by ancestor count.
-            // All parents must have been checked before their children and their coins added to
-            // the mempoolDuplicate coins cache.
+            // All parents should have been checked before their children and their coins added to
+            // the mempoolDuplicate coins cache. However, if ordering information was incomplete
+            // (e.g. parent discovery failed when the transaction entered the mempool), ensure the
+            // parent coins are available by adding them on-demand.
+            if (!mempoolDuplicate.HaveCoin(txin.prevout)) {
+                // Try to pull the coin from the base chainstate if it exists there.
+                const Coin& base_coin = active_coins_tip.AccessCoin(txin.prevout);
+                if (!base_coin.IsSpent()) {
+                    mempoolDuplicate.AddCoin(txin.prevout, Coin(base_coin), /*possible_overwrite=*/false);
+                } else if (output_iter != mapOutputToTx.end()) {
+                    // Otherwise, try to hydrate the coin from a mempool parent transaction.
+                    indexed_transaction_set::const_iterator parent_it = mapTx.find(output_iter->second);
+                    if (parent_it != mapTx.end()) {
+                        AddCoins(mempoolDuplicate, parent_it->GetTx(), std::numeric_limits<int>::max());
+                    }
+                }
+            }
             assert(mempoolDuplicate.HaveCoin(txin.prevout));
             // Check whether its inputs are marked in mapNextTx.
             auto it3 = mapNextTx.find(txin.prevout);

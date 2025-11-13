@@ -220,7 +220,8 @@ class AssumeutxoTest(BitcoinTestFramework):
         spend_coin_blockhash = n1.getblockhash(START_HEIGHT + 1)
         assert_raises_rpc_error(-1, "Block not found on disk", n1.getblock, spend_coin_blockhash)
         prev_tx = n0.getblock(spend_coin_blockhash, 3)['tx'][0]
-        prevout = {"txid": prev_tx['txid'], "vout": 0, "scriptPubKey": prev_tx['vout'][0]['scriptPubKey']['hex']}
+        out_hash = prev_tx['vout'][0]['hash']
+        prevout = {"txid": out_hash, "vout": 0, "scriptPubKey": prev_tx['vout'][0]['scriptPubKey']['hex']}
         privkey = n0.get_deterministic_priv_key().key
         raw_tx = n1.createrawtransaction([prevout], {getnewdestination()[2]: 24.99})
         signed_tx = n1.signrawtransactionwithkey(raw_tx, [privkey], [prevout])['hex']
@@ -228,11 +229,11 @@ class AssumeutxoTest(BitcoinTestFramework):
 
         # gettxout now only checks vout 0, which should work for coinbase transactions
         # The transaction should exist in the snapshot UTXO set
-        assert n1.gettxout(prev_tx['txid']) is not None
+        assert n1.gettxout(out_hash) is not None
         n1.sendrawtransaction(signed_tx)
         assert signed_txid in n1.getrawmempool()
         # After spending, the output should no longer be available
-        assert n1.gettxout(prev_tx['txid']) is None
+        assert n1.gettxout(out_hash) is None
 
         PAUSE_HEIGHT = FINAL_HEIGHT - 40
 

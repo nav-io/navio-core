@@ -2037,33 +2037,29 @@ static RPCHelpMan gettxfromoutputhash()
                 }
             }
 
-            // Fallback: Search in blockchain using txindex if available
+            // Fallback: Search in blockchain by iterating over blocks.
             if (g_txindex) {
                 g_txindex->BlockUntilSyncedToCurrentChain();
+            }
 
-                // We need to iterate through all blocks to find the transaction
-                // This is expensive but necessary since there's no reverse index
-                const CBlockIndex* pindex = active_chainstate.m_chain.Tip();
-                while (pindex) {
-                    CBlock block;
-                    if (chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
-                        for (const auto& tx : block.vtx) {
-                            for (size_t i = 0; i < tx->vout.size(); i++) {
-                                if (tx->vout[i].GetHash() == output_hash) {
-                                    UniValue result(UniValue::VOBJ);
-                                    result.pushKV("txid", tx->GetHash().GetHex());
-                                    result.pushKV("vout", (int)i);
-                                    result.pushKV("blockhash", pindex->GetBlockHash().GetHex());
-                                    result.pushKV("confirmations", 1 + active_chainstate.m_chain.Height() - pindex->nHeight);
-                                    return result;
-                                }
+            const CBlockIndex* pindex = active_chainstate.m_chain.Tip();
+            while (pindex) {
+                CBlock block;
+                if (chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
+                    for (const auto& tx : block.vtx) {
+                        for (size_t i = 0; i < tx->vout.size(); i++) {
+                            if (tx->vout[i].GetHash() == output_hash) {
+                                UniValue result(UniValue::VOBJ);
+                                result.pushKV("txid", tx->GetHash().GetHex());
+                                result.pushKV("vout", (int)i);
+                                result.pushKV("blockhash", pindex->GetBlockHash().GetHex());
+                                result.pushKV("confirmations", 1 + active_chainstate.m_chain.Height() - pindex->nHeight);
+                                return result;
                             }
                         }
                     }
-                    pindex = pindex->pprev;
                 }
-            } else {
-                throw JSONRPCError(RPC_MISC_ERROR, "Transaction index not available. Use -txindex to enable blockchain transaction queries.");
+                pindex = pindex->pprev;
             }
 
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Output hash not found in blockchain or mempool");

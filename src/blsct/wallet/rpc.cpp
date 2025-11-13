@@ -1616,22 +1616,26 @@ RPCHelpMan fundblsctrawtransaction()
                         continue;
                     }
 
-                    auto wallet_tx = pwallet->GetWalletTx(output.outpoint.hash);
-                    if (!wallet_tx) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Transaction %s not found in wallet", output.outpoint.hash.GetHex()));
+                    std::optional<range_proof::RecoveredData<Mcl>> recovery_data;
+                    if (const wallet::CWalletOutput* wallet_output = pwallet->GetWalletOutput(output.outpoint)) {
+                        recovery_data = wallet_output->blsctRecoveryData;
+                    } else if (const wallet::CWalletTx* wallet_tx = pwallet->GetWalletTxFromOutpoint(output.outpoint)) {
+                        recovery_data = wallet_tx->GetBLSCTRecoveryData(output.outpoint);
+                    } else {
+                        auto recovery_result = blsct_km->RecoverOutputs({output.txout});
+                        if (recovery_result.is_completed && !recovery_result.amounts.empty()) {
+                            recovery_data = recovery_result.amounts[0];
+                        }
                     }
 
-                    // Get BLSCT recovery data for this output
-                    auto recovery_data = wallet_tx->GetBLSCTRecoveryData(output.outpoint);
-
-                    if (recovery_data.amount == 0 && recovery_data.gamma == Scalar(0) && recovery_data.id == 0 && recovery_data.message == "") {
+                    if (!recovery_data.has_value() || (recovery_data->amount == 0 && recovery_data->gamma == Scalar(0) && recovery_data->id == 0 && recovery_data->message == "")) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("BLSCT recovery data not available for output %s", output.outpoint.hash.GetHex()));
                     }
 
                     blsct::UnsignedInput input;
                     input.in.prevout = output.outpoint;
-                    input.value = Scalar(recovery_data.amount);
-                    input.gamma = recovery_data.gamma;
+                    input.value = Scalar(recovery_data->amount);
+                    input.gamma = recovery_data->gamma;
 
                     // Get the spending key for this output
                     blsct::PrivateKey spending_key;
@@ -1642,7 +1646,7 @@ RPCHelpMan fundblsctrawtransaction()
                     input.sk = spending_key;
 
                     unsigned_tx.AddInput(input);
-                    additional_input_value += recovery_data.amount;
+                    additional_input_value += recovery_data->amount;
 
                     if (additional_input_value >= additional_required) break;
                 }
@@ -1722,8 +1726,7 @@ RPCHelpMan decodeblsctrawtransaction()
             RPCResult::Type::OBJ, "", "", {
                                               {RPCResult::Type::ARR, "inputs", "Array of transaction inputs", {
                                                                                                                   {RPCResult::Type::OBJ, "", "", {
-                                                                                                                                                     {RPCResult::Type::STR_HEX, "txid", "The transaction id"},
-                                                                                                                                                     {RPCResult::Type::NUM, "vout", "The output number"},
+                                                                                                                                                {RPCResult::Type::STR_HEX, "txid", "The transaction id"},
                                                                                                                                                      {RPCResult::Type::NUM, "value", "The input value"},
                                                                                                                                                      {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                      {RPCResult::Type::BOOL, "is_staked_commitment", "Whether this input is a staked commitment"},
@@ -1822,16 +1825,17 @@ static RPCHelpMan getblsctrecoverydata()
             CMutableTransaction mtx;
             uint256 hash;
             bool is_hex_input = false;
+            const wallet::CWalletTx* wallet_tx_ptr = nullptr;
 
             // Parse input as either txid or hex
             std::string input = request.params[0].get_str();
             if (input.length() == 64) {
                 hash = uint256S(input);
-                auto tx = wallet->GetWalletTx(hash);
-                if (!tx) {
+                wallet_tx_ptr = wallet->GetWalletTx(hash);
+                if (!wallet_tx_ptr) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction not found in wallet");
                 }
-                mtx = CMutableTransaction(*tx->tx);
+                mtx = CMutableTransaction(*wallet_tx_ptr->tx);
             } else {
                 if (!DecodeHexTx(mtx, input)) {
                     throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction decode failed");
@@ -1867,21 +1871,22 @@ static RPCHelpMan getblsctrecoverydata()
                     output.pushKV("out_hash", out.GetHash().GetHex());
 
                     // Use RecoverOutputs for hex input
-                    auto result = blsct_km->RecoverOutputs({out});
-                    if (result.is_completed && !result.amounts.empty()) {
-                        auto recovery_data = result.amounts[0];
+                    auto recovery_result = blsct_km->RecoverOutputs({out});
+                    if (recovery_result.is_completed && !recovery_result.amounts.empty()) {
+                        const auto& recovery_data = recovery_result.amounts[0];
                         output.pushKV("amount", ValueFromAmount(recovery_data.amount));
                         output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
                         output.pushKV("message", recovery_data.message);
-                        if (recovery_data.amount > 0) {
-                            outputs.push_back(output);
-                        }
+                    } else {
+                        output.pushKV("amount", ValueFromAmount(0));
+                        output.pushKV("gamma", "");
+                        output.pushKV("message", "");
                     }
+                    outputs.push_back(output);
                 }
             } else {
                 // For txid input, use wallet transaction
-                auto wallet_tx = wallet->GetWalletTxFromOutpoint(COutPoint(hash));
-                if (!wallet_tx) {
+                if (!wallet_tx_ptr) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction not found in wallet");
                 }
 
@@ -1893,9 +1898,10 @@ static RPCHelpMan getblsctrecoverydata()
                     UniValue output(UniValue::VOBJ);
                     output.pushKV("vout", (int)i);
                     output.pushKV("script", HexStr(mtx.vout[i].scriptPubKey));
+                    output.pushKV("out_hash", mtx.vout[i].GetHash().GetHex());
 
                     // Get recovery data from wallet transaction
-                    auto recovery_data = wallet_tx->GetBLSCTRecoveryData(COutPoint(hash));
+                    auto recovery_data = wallet_tx_ptr->GetBLSCTRecoveryData(i);
                     output.pushKV("amount", ValueFromAmount(recovery_data.amount));
                     output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
                     output.pushKV("message", recovery_data.message);

@@ -219,12 +219,13 @@ class MiniWallet:
         assert_equal(self._mode, MiniWalletMode.ADDRESS_OP_TRUE)
         return self._address
 
-    def get_utxo(self, *, txid: str = '', vout: Optional[int] = None, mark_as_spent=True, confirmed_only=False) -> dict:
+    def get_utxo(self, *, txid: str = '', vout: Optional[int] = None, mark_as_spent=True, confirmed_only=False, blockhash: Optional[str] = None) -> dict:
         """
         Returns a utxo and marks it as spent (pops it from the internal list)
 
         Args:
         txid: get the first utxo we find from a specific transaction (can be hex string or int for output hash)
+        blockhash: optional block hash that contains the transaction (avoids requiring -txindex)
         """
         self._utxos = sorted(self._utxos, key=lambda k: (k['value'], -k['height']))  # Put the largest utxo last
         blocks_height = self._test_node.getblockchaininfo()['blocks']
@@ -274,7 +275,10 @@ class MiniWallet:
                         else:
                             # Transaction is not in mempool, try to get it from blockchain (requires -txindex)
                             try:
-                                tx_details = self._test_node.getrawtransaction(txid, True)
+                                if blockhash is not None:
+                                    tx_details = self._test_node.getrawtransaction(txid, True, blockhash)
+                                else:
+                                    tx_details = self._test_node.getrawtransaction(txid, True)
                                 # Scan the transaction to add any missing UTXOs
                                 self.scan_tx(tx_details)
                                 # Find UTXOs from this transaction by matching output hashes

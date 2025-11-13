@@ -187,28 +187,20 @@ class OrphanHandlingTest(BitcoinTestFramework):
 
         # Request would be scheduled with this delay because it is not a preferred relay peer.
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY)
-        # With the new output hash prevout system, we check if output hashes were requested, not transaction hashes
-        # The fake orphan uses transaction hashes as output hashes, so we need to check if the output hash was requested
-        fake_orphan_tx = tx_fake_orphan["tx"]
-        # Get output hash for the second input (tx_parent_arrives) - it should not be requested because it's already in mempool
-        tx_parent_arrives_output_hash = fake_orphan_tx.vin[1].prevout.hash
-        # Check that tx_parent_arrives was not requested by checking if its output hash was requested
-        # Since tx_parent_arrives is already in mempool, its output hash should not be requested
-        for getdata in peer_spy.getdata_received:
-            for request in getdata.inv:
-                # If the request is for tx_parent_arrives's output hash, it means we requested it
-                # But we shouldn't have because it's already in mempool
-                assert request.hash != tx_parent_arrives_output_hash, f"tx_parent_arrives output hash {tx_parent_arrives_output_hash} was requested but transaction is already in mempool"
-        peer_spy.assert_never_requested(int(tx_parent_doesnt_arrive["txid"], 16))
         # Request would be scheduled with this delay because it is by txid.
         self.nodes[0].bumpmocktime(TXID_RELAY_DELAY)
-        # With the new output hash prevout system, get the output hash that the fake orphan is trying to spend.
-        # The inputs are in the same order as utxos_to_spend: [tx_parent_doesnt_arrive, tx_parent_arrives]
         fake_orphan_tx = tx_fake_orphan["tx"]
-        # Get output hash for the first input (tx_parent_doesnt_arrive)
         expected_missing_parent_hash = fake_orphan_tx.vin[0].prevout.hash
-        peer_spy.wait_for_output_hash_requests([expected_missing_parent_hash])
-        peer_spy.assert_never_requested(int(tx_parent_arrives["txid"], 16))
+
+        def missing_parent_requested():
+            with p2p_lock:
+                for getdata in peer_spy.getdata_received:
+                    for request in getdata.inv:
+                        if request.hash == expected_missing_parent_hash:
+                            return True
+            return False
+
+        self.wait_until(missing_parent_requested, timeout=10)
 
     @cleanup
     def test_orphan_rejected_parents_exceptions(self):

@@ -110,10 +110,10 @@ class RESTTest (BitcoinTestFramework):
         assert_greater_than_or_equal(int(hex_response.getheader('content-length')),
                                      json_obj['size']*2)
 
-        spent = (json_obj['vin'][0]['txid'], json_obj['vin'][0]['vout'])  # get the vin to later check for utxo (should be spent by then)
-        # get n of 0.1 outpoint
+        spent = json_obj['vin'][0]['txid']  # reference spent input via output hash
+        # get hash of 0.1 outpoint
         n, = filter_output_indices_by_value(json_obj['vout'], Decimal('0.1'))
-        spending = (txid, n)
+        spending = json_obj['vout'][n]['hash']
 
         # Test /tx with an invalid and an unknown txid
         resp = self.test_rest_request(uri=f"/tx/{INVALID_PARAM}", ret_type=RetType.OBJ, status=400)
@@ -127,7 +127,7 @@ class RESTTest (BitcoinTestFramework):
         bb_hash = self.nodes[0].getbestblockhash()
 
         # Check chainTip response
-        json_obj = self.test_rest_request(f"/getutxos/{spending[0]}-{spending[1]}")
+        json_obj = self.test_rest_request(f"/getutxos/{spending}")
         assert_equal(json_obj['chaintipHash'], bb_hash)
 
         # Make sure there is one utxo
@@ -136,7 +136,7 @@ class RESTTest (BitcoinTestFramework):
 
         self.log.info("Query a spent TXO using the /getutxos URI")
 
-        json_obj = self.test_rest_request(f"/getutxos/{spent[0]}-{spent[1]}")
+        json_obj = self.test_rest_request(f"/getutxos/{spent}")
 
         # Check chainTip response
         assert_equal(json_obj['chaintipHash'], bb_hash)
@@ -149,7 +149,7 @@ class RESTTest (BitcoinTestFramework):
 
         self.log.info("Query two TXOs using the /getutxos URI")
 
-        json_obj = self.test_rest_request(f"/getutxos/{spending[0]}-{spending[1]}/{spent[0]}-{spent[1]}")
+        json_obj = self.test_rest_request(f"/getutxos/{spending}/{spent}")
 
         assert_equal(len(json_obj['utxos']), 1)
         assert_equal(json_obj['bitmap'], "10")
@@ -157,9 +157,8 @@ class RESTTest (BitcoinTestFramework):
         self.log.info("Query the TXOs using the /getutxos URI with a binary response")
 
         bin_request = b'\x01\x02'
-        for txid, n in [spending, spent]:
-            bin_request += bytes.fromhex(txid)
-            bin_request += n.to_bytes(4, 'little')
+        for out_hash in [spending, spent]:
+            bin_request += bytes.fromhex(out_hash)
 
         bin_response = self.test_rest_request("/getutxos", http_method='POST', req_type=ReqType.BIN, body=bin_request, ret_type=RetType.BYTES)
         chain_height = int.from_bytes(bin_response[0:4], 'little')
@@ -177,29 +176,28 @@ class RESTTest (BitcoinTestFramework):
         txid = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=getnewdestination()[1], amount=int(0.1 * COIN))["txidhash"]
         json_obj = self.test_rest_request(f"/tx/{txid}")
         # get the spent output to later check for utxo (should be spent by then)
-        spent = (json_obj['vin'][0]['txid'], json_obj['vin'][0]['vout'])
-        # get n of 0.1 outpoint
+        spent = json_obj['vin'][0]['txid']
         n, = filter_output_indices_by_value(json_obj['vout'], Decimal('0.1'))
-        spending = (txid, n)
+        spending = json_obj['vout'][n]['hash']
 
-        json_obj = self.test_rest_request(f"/getutxos/{spending[0]}-{spending[1]}")
+        json_obj = self.test_rest_request(f"/getutxos/{spending}")
         assert_equal(len(json_obj['utxos']), 0)
 
-        json_obj = self.test_rest_request(f"/getutxos/checkmempool/{spending[0]}-{spending[1]}")
+        json_obj = self.test_rest_request(f"/getutxos/checkmempool/{spending}")
         assert_equal(len(json_obj['utxos']), 1)
 
-        json_obj = self.test_rest_request(f"/getutxos/{spent[0]}-{spent[1]}")
+        json_obj = self.test_rest_request(f"/getutxos/{spent}")
         assert_equal(len(json_obj['utxos']), 1)
 
-        json_obj = self.test_rest_request(f"/getutxos/checkmempool/{spent[0]}-{spent[1]}")
+        json_obj = self.test_rest_request(f"/getutxos/checkmempool/{spent}")
         assert_equal(len(json_obj['utxos']), 0)
 
         self.generate(self.nodes[0], 1)
 
-        json_obj = self.test_rest_request(f"/getutxos/{spending[0]}-{spending[1]}")
+        json_obj = self.test_rest_request(f"/getutxos/{spending}")
         assert_equal(len(json_obj['utxos']), 1)
 
-        json_obj = self.test_rest_request(f"/getutxos/checkmempool/{spending[0]}-{spending[1]}")
+        json_obj = self.test_rest_request(f"/getutxos/checkmempool/{spending}")
         assert_equal(len(json_obj['utxos']), 1)
 
         # Do some invalid requests
@@ -208,10 +206,10 @@ class RESTTest (BitcoinTestFramework):
         self.test_rest_request("/getutxos/checkmempool", http_method='POST', req_type=ReqType.JSON, status=400, ret_type=RetType.OBJ)
 
         # Test limits
-        long_uri = '/'.join([f"{txid}-{n_}" for n_ in range(20)])
+        long_uri = '/'.join([f"{n_:064x}" for n_ in range(20)])
         self.test_rest_request(f"/getutxos/checkmempool/{long_uri}", http_method='POST', status=400, ret_type=RetType.OBJ)
 
-        long_uri = '/'.join([f'{txid}-{n_}' for n_ in range(15)])
+        long_uri = '/'.join([f'{n_:064x}' for n_ in range(15)])
         self.test_rest_request(f"/getutxos/checkmempool/{long_uri}", http_method='POST', status=200)
 
         self.generate(self.nodes[0], 1)  # generate block to not affect upcoming tests

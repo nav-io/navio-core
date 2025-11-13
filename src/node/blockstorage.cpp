@@ -132,7 +132,7 @@ bool BlockTreeDB::LoadBlockIndexGuts(const Consensus::Params& consensusParams, s
                 pindexNew->nStakeModifier = diskindex.nStakeModifier;
                 pindexNew->kernelHash     = diskindex.kernelHash;
 
-                if (!pindexNew->IsProofOfStake() && !CheckProofOfWork(pindexNew->GetBlockHash(), pindexNew->nBits, consensusParams)) {
+                if (!pindexNew->IsProofOfStake() && !consensusParams.signet_blocks && !CheckProofOfWork(pindexNew->GetBlockHash(), pindexNew->nBits, consensusParams)) {
                     return error("%s: CheckProofOfWork failed: %s", __func__, pindexNew->ToString());
                 }
 
@@ -1041,7 +1041,8 @@ bool BlockManager::ReadBlockFromDisk(CBlock& block, const FlatFilePos& pos) cons
 
 
     // Check the header
-    if (!block.IsProofOfStake() && !CheckProofOfWork(block.GetHash(), block.nBits, GetConsensus())) {
+    const bool enforce_pow = !GetConsensus().signet_blocks;
+    if (!block.IsProofOfStake() && enforce_pow && !CheckProofOfWork(block.GetHash(), block.nBits, GetConsensus())) {
         return error("ReadBlockFromDisk: Errors in block header at %s", pos.ToString());
     }
 
