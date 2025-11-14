@@ -21,6 +21,7 @@
 #include <streams.h>
 #include <util/transaction_identifier.h>
 
+#include <charconv>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -429,11 +430,6 @@ void delete_tx_out_vec(void* vp_tx_out_vec) {
     auto* tx_out_vec = reinterpret_cast<std::vector<BlsctTxOut>*>(vp_tx_out_vec);
     delete tx_out_vec;
 }
-
-// forward declration for build_ctx
-static blsct::PrivateKey blsct_scalar_to_priv_key(
-    const BlsctScalar* blsct_scalar
-);
 
 BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
@@ -1293,7 +1289,9 @@ uint8_t* hex_to_malloced_buf(const char* hex) {
     const char* p = hex;
 
     for (size_t i=0; i<buf_len; ++i) {
-        sscanf(p, "%2hhx", &buf[i]);
+        uint8_t byte = 0;
+        auto res = std::from_chars(p, p + 2, byte, 16);
+        buf[i] = byte;
         p += 2;
     }
     return buf;

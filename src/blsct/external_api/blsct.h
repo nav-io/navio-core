@@ -354,7 +354,7 @@ BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs
 );
-// using void* insetead of const void* to avoid const_cast
+// using void* instead of const void* to avoid const_cast
 const char* get_ctx_id(void* vp_ctx);
 const void* get_ctx_ins(void* vp_ctx);
 const void* get_ctx_outs(void* vp_ctx);
