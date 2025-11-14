@@ -1281,22 +1281,6 @@ void delete_range_proof_vec(const void* vp_range_proofs) {
     delete range_proofs;
 }
 
-uint8_t* hex_to_malloced_buf(const char* hex) {
-    size_t hex_len = std::strlen(hex);
-    size_t buf_len = hex_len / 2;
-
-    uint8_t* buf = static_cast<uint8_t*>(malloc(buf_len));
-    const char* p = hex;
-
-    for (size_t i=0; i<buf_len; ++i) {
-        uint8_t byte = 0;
-        auto res = std::from_chars(p, p + 2, byte, 16);
-        buf[i] = byte;
-        p += 2;
-    }
-    return buf;
-}
-
 // scalar
 BlsctRetVal* gen_random_scalar() {
     MALLOC(BlsctScalar, blsct_scalar);
@@ -1901,6 +1885,24 @@ if (vp_vec == nullptr) return;
     delete vec;
 }
 
+// Tested in Rust bindings
+uint8_t* hex_to_malloced_buf(const char* hex) {
+    size_t hex_len = std::strlen(hex);
+    size_t buf_len = hex_len / 2;
+
+    uint8_t* buf = static_cast<uint8_t*>(malloc(buf_len));
+    const char* p = hex;
+
+    for (size_t i=0; i<buf_len; ++i) {
+        uint8_t x = 0;
+        auto _ = std::from_chars(p, p+2, x, 16);
+        buf[i] = x;
+        p += 2;
+    }
+    return buf;
+}
+
+// Tested in Rust bindings
 const char* buf_to_malloced_hex_c_str(const uint8_t* buf, size_t size) {
     // +1 for null terminator at the end
     size_t hex_str_len = size * 2 + 1;
