@@ -573,6 +573,11 @@ const void* get_ctx_outs(void* vp_ctx) {
     return &ctx->vout;
 }
 
+void delete_ctx(void* vp_ctx) {
+    auto ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
+    delete ctx;
+}
+
 const char* serialize_ctx(void* vp_ctx) {
     DataStream st{};
     TransactionSerParams params { .allow_witness = true };
@@ -583,7 +588,7 @@ const char* serialize_ctx(void* vp_ctx) {
 
     return SerializeToHex(
         reinterpret_cast<uint8_t*>(st.data()),
-        ps.size()
+        st.size()
     );
 }
 
@@ -602,13 +607,8 @@ BlsctRetVal* deserialize_ctx(const char* hex) {
     ps << vec;
     ctx->Unserialize(ps);
 
-    // the object should be deleteed after use and will not need the size
+    // the object will be deleted after use. the size will not be used
     return succ(ctx, 0);
-}
-
-void delete_ctx(void* vp_ctx) {
-    auto ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
-    delete ctx;
 }
 
 // ctx id
