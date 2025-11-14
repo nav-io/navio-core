@@ -596,20 +596,17 @@ BlsctRetVal* deserialize_ctx(const char* hex) {
     CMutableTransaction* ctx = new CMutableTransaction();
 
     std::string hex_str(hex);
-    printf("Hex length: %lu", hex_str.size());
 
     std::vector<uint8_t> vec;
     if (!TryParseHexWrap(hex_str, vec)) {
         return err(BLSCT_FAILURE);
     }
-    printf("Vec size: %lu", vec.size());
 
     DataStream st;
     TransactionSerParams params { .allow_witness = true };
     ParamsStream ps {params, st};
-    ps << vec;
+    st.write(Span(st.data(), st.size()));
     ctx->Unserialize(ps);
-    printf("ps size: %lu", ps.size());
 
     // the object will be deleted after use. the size will not be used
     return succ(ctx, 0);
