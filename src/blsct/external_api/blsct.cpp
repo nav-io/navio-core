@@ -17,6 +17,7 @@
 #include <memory.h>
 #include <primitives/transaction.h>
 #include <serialize.h>
+#include <span.h>
 #include <streams.h>
 #include <util/transaction_identifier.h>
 
@@ -596,23 +597,17 @@ BlsctRetVal* deserialize_ctx(const char* hex) {
     CMutableTransaction* ctx = new CMutableTransaction();
 
     std::string hex_str(hex);
-    printf("Hex length: %zu\n", hex_str.size());
 
     std::vector<uint8_t> vec;
     if (!TryParseHexWrap(hex_str, vec)) {
         return err(BLSCT_FAILURE);
     }
-    printf("Vec size: %zu\n", vec.size());
 
     DataStream st;
     TransactionSerParams params { .allow_witness = true };
     ParamsStream ps {params, st};
-    for(size_t i=0; i<vec.size(); ++i) {
-        st << vec[i];
-    }
-    //st.write(Span(st.data(), st.size()));
+    st.write(MakeByteSpan(vec));
     ctx->Unserialize(ps);
-    printf("st size: %zu\n", st.size());
 
     // the object will be deleted after use. the size will not be used
     return succ(ctx, 0);
