@@ -682,18 +682,18 @@ BlsctPoint* calc_nonce(
 // Misc helper functions and macros migrated from blist.i
 #define HANDLE_MEM_ALLOC_FAILURE(name) \
 if (name == nullptr) { \
-  printf("ERROR: Memory allocation failed\n"); \
+  puts("ERROR: Memory allocation failed\n"); \
   return nullptr; \
 }
 
 #define RETURN_RET_VAL_IF_NULL(p, ret_val) \
 if (p == nullptr) { \
-  printf("ERROR: " #p " is null\n"); \
+  puts("ERROR: " #p " is null\n"); \
   return ret_val; \
 }
 #define RETURN_IF_NULL(p) \
 if (p == nullptr) { \
-  printf("ERROR: " #p " is null\n"); \
+  puts("ERROR: " #p " is null\n"); \
   return; \
 }
 
