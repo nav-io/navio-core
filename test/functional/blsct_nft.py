@@ -21,6 +21,15 @@ class NavioBlsctNftTest(BitcoinTestFramework):
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
 
+    def generate_blsct_blocks(self, node, address, num_blocks, batch_size=2):
+        blocks = []
+        remaining = num_blocks
+        while remaining > 0:
+            to_generate = min(batch_size, remaining)
+            blocks.extend(self.generatetoblsctaddress(node, to_generate, address))
+            remaining -= to_generate
+        return blocks
+
     def run_test(self):
         self.log.info("Creating wallet1 with BLSCT")
 
@@ -49,7 +58,7 @@ class NavioBlsctNftTest(BitcoinTestFramework):
 
         # Generate blocks and fund the BLSCT address
         self.log.info("Generating 101 blocks to the BLSCT address")
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 101, blsct_address)
+        block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 101)
 
         self.log.info(f"Generated blocks: {len(block_hashes)}")
 
@@ -62,7 +71,7 @@ class NavioBlsctNftTest(BitcoinTestFramework):
 
         self.log.info("Creating NFT collection and mining 1 block")
         token = wallet.createnft({"name": "Test"}, 1000)
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         tokens = self.nodes[0].listtokens()
         assert len(tokens) == 1, "length of tokens is not 1"
@@ -75,7 +84,7 @@ class NavioBlsctNftTest(BitcoinTestFramework):
         assert tokens[0]['mintedNft'] == {}, "incorrect current supply"
 
         wallet.mintnft(token['tokenId'], 1, blsct_address, {"id": "null"})
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         tokenInfo = self.nodes[0].gettoken(token['tokenId'])
 
@@ -98,7 +107,7 @@ class NavioBlsctNftTest(BitcoinTestFramework):
         self.log.info(f"Sending NFT with id #1 to NODE 2")
 
         wallet.sendnfttoblsctaddress(token['tokenId'], 1, blsct_address_2)
-        self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         nft_balance = wallet.getnftbalance(token['tokenId'])
         nft_balance_2 = wallet_2.getnftbalance(token['tokenId'])

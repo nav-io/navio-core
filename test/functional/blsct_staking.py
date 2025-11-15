@@ -23,6 +23,15 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
 
+    def generate_blsct_blocks(self, node, address, num_blocks, batch_size=2):
+        blocks = []
+        remaining = num_blocks
+        while remaining > 0:
+            to_generate = min(batch_size, remaining)
+            blocks.extend(self.generatetoblsctaddress(node, to_generate, address))
+            remaining -= to_generate
+        return blocks
+
     def run_test(self):
         # Minimum stake amount for BLSCT regtest is 100 NAV
         self.min_stake = 100
@@ -41,7 +50,7 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
 
         # Generate BLSCT address and mine blocks
         blsct_address = wallet.getnewaddress(label="", address_type="blsct")
-        self.generatetoblsctaddress(self.nodes[0], 101, blsct_address)
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 101)
 
         initial_balance = wallet.getbalance()
         self.log.info(f"Initial balance: {initial_balance}")
@@ -54,13 +63,13 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
         self.log.info(f"Testing stake amount at minimum ({self.min_stake} NAV)")
         stake_txid = wallet.stakelock(self.min_stake)
         assert len(stake_txid) == 64, "Transaction ID should be 64 characters"
-        self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         # Test staking more than minimum should succeed
         self.log.info(f"Testing stake amount above minimum ({self.min_stake + 50} NAV)")
         stake_txid2 = wallet.stakelock(self.min_stake + 50)
         assert len(stake_txid2) == 64, "Transaction ID should be 64 characters"
-        self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
     def test_basic_staking(self):
         self.log.info("Testing basic staking operations")
@@ -79,14 +88,14 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
             self.log.info(f"Staking {amount} NAV")
             stake_txid = wallet.stakelock(amount)
             assert len(stake_txid) == 64, f"Stake txid should be valid for {amount} NAV"
-            self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+            self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         # Test unstaking - try to unstake a specific amount
         self.log.info("Testing unstaking")
         try:
             unstake_txid = wallet.stakeunlock(200)
             assert len(unstake_txid) == 64, "Unstake txid should be valid"
-            self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+            self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
             self.log.info("Unstaking succeeded")
         except Exception as e:
             self.log.info(f"Unstaking failed (expected due to txfactory constraints): {e}")
@@ -105,7 +114,7 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
         stake_amount = 200
         self.log.info(f"Staking {stake_amount} NAV")
         wallet.stakelock(stake_amount)
-        self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         # Check available balance decreased
         balance_after_stake = wallet.getbalance()
@@ -130,7 +139,7 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
         stake_txid_simple = wallet.stakelock(self.min_stake)
         assert isinstance(stake_txid_simple, str), "Non-verbose output should be a string"
         assert len(stake_txid_simple) == 64, "Transaction ID should be 64 characters"
-        self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         # Test stakelock with verbose=true
         # Note: there might be a bug in verbose parameter handling
@@ -142,7 +151,7 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
             else:
                 # If verbose doesn't work as expected, just check it's a valid txid
                 assert len(stake_result_verbose) == 64, "Should still return valid txid"
-            self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+            self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
         except Exception as e:
             self.log.info(f"Verbose staking may have parameter handling issue: {e}")
 
