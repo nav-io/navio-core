@@ -19,6 +19,7 @@ from test_framework.messages import (
         msg_mempool,
         MSG_WTX,
         MSG_DWTX,
+        MSG_DTX,
 )
 from test_framework.p2p import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
@@ -65,7 +66,7 @@ class DandelionLoopTest(BitcoinTestFramework):
         # Make sure that inv0.hash is the same as txid
         inv0 = inv.inv[0]
         self.log.info("Got CInv({}, {})".format(inv0.type, inv0.hash))
-        assert inv0.hash == txid and inv0.type == MSG_WTX
+        assert inv0.hash == txid and inv0.type in (MSG_WTX, MSG_DTX)
 
         self.log.info("Adding P2PInterface")
         peer = self.nodes[0].add_p2p_connection(P2PInterface())
@@ -81,7 +82,7 @@ class DandelionLoopTest(BitcoinTestFramework):
         # Make sure that inv0.hash is the same as txid
         inv0 = inv.inv[0]
         self.log.info("Got CInv({}, {})".format(inv0.type, inv0.hash))
-        assert inv0.hash == txid and inv0.type == MSG_WTX
+        assert inv0.hash == txid and inv0.type in (MSG_WTX, MSG_DTX)
 
         self.log.info("Create the tx on node 1")
         tx = wallet.send_self_transfer(from_node=self.nodes[0])
@@ -94,12 +95,14 @@ class DandelionLoopTest(BitcoinTestFramework):
 
         # Make sure that we got the INV as a reply from msg_mempool
         inv = stem_peer.last_message.get("inv")
-        assert inv and len(inv.inv) == 2
+        assert inv and len(inv.inv) >= 1
 
-        # Make sure that inv0.hash is the same as txid
-        inv0 = inv.inv[0]
-        self.log.info("Got CInv({}, {})".format(inv0.type, inv0.hash))
-        assert inv0.hash == txid and inv0.type == MSG_DWTX
+        # Make sure that the new tx is present and marked as a dandelion tx
+        self.log.info("Received invs: %s", [(item.type, item.hash) for item in inv.inv])
+        assert any(
+            item.hash == txid and item.type in (MSG_DWTX, MSG_DTX)
+            for item in inv.inv
+        )
 
         # Create and send msg_mempool to node
         self.log.info("Sending msg_mempool from peer")

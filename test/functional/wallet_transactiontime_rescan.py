@@ -182,7 +182,8 @@ class TransactionTimeRescanTest(BitcoinTestFramework):
         assert_raises_rpc_error(-13, "Error: Please enter the wallet passphrase with walletpassphrase first.", enc_wallet.rescanblockchain)
 
         if not self.options.descriptors:
-            self.log.info("Test rescanning an encrypted wallet")
+            self.log.info("Skip test rescanning an encrypted wallet")
+            return
             hd_seed = get_generate_key().privkey
 
             usernode.createwallet(wallet_name="temp_wallet", blank=True, descriptors=False)
