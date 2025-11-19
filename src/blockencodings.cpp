@@ -19,7 +19,7 @@
 
 CBlockHeaderAndShortTxIDs::CBlockHeaderAndShortTxIDs(const CBlock& block) :
         nonce(GetRand<uint64_t>()),
-        shorttxids(block.vtx.size() - 1), prefilledtxn(1), header(block) {
+        shorttxids(block.vtx.size() - 1), prefilledtxn(1), header(block), posProof(block.posProof) {
     FillShortTxIDSelector();
     //TODO: Use our mempool prior to block acceptance to predictively fill more than just the coinbase
     prefilledtxn[0] = {0, block.vtx[0]};
@@ -31,7 +31,10 @@ CBlockHeaderAndShortTxIDs::CBlockHeaderAndShortTxIDs(const CBlock& block) :
 
 void CBlockHeaderAndShortTxIDs::FillShortTxIDSelector() const {
     DataStream stream{};
-    stream << header << nonce;
+    stream << header;
+    if (header.IsProofOfStake())
+        stream << posProof;
+    stream << nonce;
     CSHA256 hasher;
     hasher.Write((unsigned char*)&(*stream.begin()), stream.end() - stream.begin());
     uint256 shorttxidhash;
@@ -56,6 +59,7 @@ ReadStatus PartiallyDownloadedBlock::InitData(const CBlockHeaderAndShortTxIDs& c
     if (!header.IsNull() || !txn_available.empty()) return READ_STATUS_INVALID;
 
     header = cmpctblock.header;
+    posProof = cmpctblock.posProof;
     txn_available.resize(cmpctblock.BlockTxCount());
 
     int32_t lastprefilledindex = -1;
@@ -183,6 +187,7 @@ ReadStatus PartiallyDownloadedBlock::FillBlock(CBlock& block, const std::vector<
 
     uint256 hash = header.GetHash();
     block = header;
+    block.posProof = posProof;
     block.vtx.resize(txn_available.size());
 
     size_t tx_missing_offset = 0;

@@ -40,14 +40,11 @@ BOOST_FIXTURE_TEST_CASE(StakedCommitment, TestBLSCTChain100Setup)
 
     SeedInsecureRand(SeedRand::ZEROS);
     CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
-
     CWallet wallet(m_node.chain.get(), "", CreateMockableWalletDatabase());
     wallet.InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
-
     LOCK(wallet.cs_wallet);
     auto blsct_km = wallet.GetOrCreateBLSCTKeyMan();
     BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
-
     auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
 
     COutPoint outpoint{Txid::FromUint256(InsecureRand256()), /*nIn=*/0};

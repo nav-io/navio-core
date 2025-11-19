@@ -70,6 +70,8 @@ struct tallyitem
 
 static UniValue ListReceived(const CWallet& wallet, const UniValue& params, const bool by_label, const bool include_immature_coinbase) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
+    auto blsct_km = wallet.GetBLSCTKeyMan();
+
     // Minimum confirmations
     int nMinDepth = 1;
     if (!params[0].isNull())
@@ -80,7 +82,7 @@ static UniValue ListReceived(const CWallet& wallet, const UniValue& params, cons
     if (!params[1].isNull())
         fIncludeEmpty = params[1].get_bool();
 
-    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
 
     if (ParseIncludeWatchonly(params[2], wallet)) {
         filter |= ISMINE_WATCH_ONLY;
@@ -109,21 +111,35 @@ static UniValue ListReceived(const CWallet& wallet, const UniValue& params, cons
             continue;
         }
 
-        for (const CTxOut& txout : wtx.tx->vout) {
+        for (size_t i = 0; i < wtx.tx->vout.size(); i++) {
+            const CTxOut& txout = wtx.tx->vout[i];
             CTxDestination address;
-            if (!ExtractDestination(txout.scriptPubKey, address))
-                continue;
+            if (txout.HasBLSCTKeys()) {
+                address = blsct_km->GetDestination(txout);
+                if (address.index() == 0)
+                    continue;
+            } else {
+                if (!ExtractDestination(txout.scriptPubKey, address))
+                    continue;
+            }
 
             if (filtered_address && !(filtered_address == address)) {
                 continue;
             }
 
-            isminefilter mine = wallet.IsMine(address);
-            if (!(mine & filter))
-                continue;
+            isminefilter mine;
+            if (txout.HasBLSCTKeys()) {
+                mine = wallet.IsMine(txout);
+                if (!(mine & filter))
+                    continue;
+            } else {
+                mine = wallet.IsMine(address);
+                if (!(mine & filter))
+                    continue;
+            }
 
             tallyitem& item = mapTally[address];
-            item.nAmount += txout.nValue;
+            item.nAmount += txout.HasBLSCTRangeProof() ? wtx.GetBLSCTRecoveryData(i).amount : txout.nValue;
             item.nConf = std::min(item.nConf, nDepth);
             item.txids.push_back(wtx.GetHash());
             if (mine & ISMINE_WATCH_ONLY)

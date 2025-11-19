@@ -19,13 +19,13 @@ namespace blsct {
 // - 1-byte separator '1'
 // - 154-byte data
 // - 8-byte checksum
-constexpr size_t DOUBLE_PUBKEY_ENC_SIZE = 2 + 1 + bech32_mod::DOUBLE_PUBKEY_DATA_ENC_SIZE + 8;
+constexpr size_t DOUBLE_PUBKEY_ENC_SIZE = 3 + 1 + bech32_mod::DOUBLE_PUBKEY_DATA_ENC_SIZE + 8;
 
 namespace bech32_hrp {
-    const std::string Main = "nv";
-    const std::string TestNet = "tn";
-    const std::string SigNet = "tn";
-    const std::string RegTest = "nr";
+    const std::string Main = "nav";
+    const std::string TestNet = "tnv";
+    const std::string SigNet = "snv";
+    const std::string RegTest = "rnav";
 }
 
 /** Encode DoublePublicKey to Bech32 or Bech32m string. Encoding must be one of BECH32 or BECH32M. */

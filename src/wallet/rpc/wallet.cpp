@@ -92,13 +92,14 @@ static RPCHelpMan getwalletinfo()
 
             size_t kpExternalSize = pwallet->KeypoolCountExternalKeys();
             const auto bal = GetBalance(*pwallet);
+            const auto blsct_bal = GetBlsctBalance(*pwallet);
             obj.pushKV("walletname", pwallet->GetName());
             obj.pushKV("walletversion", pwallet->GetVersion());
             obj.pushKV("format", pwallet->GetDatabase().Format());
-            obj.pushKV("balance", ValueFromAmount(bal.m_mine_trusted));
-            obj.pushKV("staked_commitment_balance", ValueFromAmount(bal.m_mine_staked_commitment));
-            obj.pushKV("unconfirmed_balance", ValueFromAmount(bal.m_mine_untrusted_pending));
-            obj.pushKV("immature_balance", ValueFromAmount(bal.m_mine_immature));
+            obj.pushKV("balance", ValueFromAmount(bal.m_mine_trusted + blsct_bal.m_mine_trusted));
+            obj.pushKV("staked_commitment_balance", ValueFromAmount(bal.m_mine_staked_commitment + blsct_bal.m_mine_staked_commitment));
+            obj.pushKV("unconfirmed_balance", ValueFromAmount(bal.m_mine_untrusted_pending + blsct_bal.m_mine_untrusted_pending));
+            obj.pushKV("immature_balance", ValueFromAmount(bal.m_mine_immature + blsct_bal.m_mine_immature));
             obj.pushKV("txcount", (int)pwallet->mapWallet.size());
             const auto kp_oldest = pwallet->GetOldestKeyPoolTime();
             if (kp_oldest.has_value()) {
@@ -106,11 +107,19 @@ static RPCHelpMan getwalletinfo()
             }
             obj.pushKV("keypoolsize", (int64_t)kpExternalSize);
 
-            LegacyScriptPubKeyMan* spk_man = pwallet->GetLegacyScriptPubKeyMan();
-            if (spk_man) {
-                CKeyID seed_id = spk_man->GetHDChain().seed_id;
+            auto blsct_km = pwallet->GetBLSCTKeyMan();
+            if (blsct_km) {
+                CKeyID seed_id = blsct_km->GetHDChain().seed_id;
                 if (!seed_id.IsNull()) {
                     obj.pushKV("hdseedid", seed_id.GetHex());
+                }
+            } else {
+                LegacyScriptPubKeyMan* spk_man = pwallet->GetLegacyScriptPubKeyMan();
+                if (spk_man) {
+                    CKeyID seed_id = spk_man->GetHDChain().seed_id;
+                    if (!seed_id.IsNull()) {
+                        obj.pushKV("hdseedid", seed_id.GetHex());
+                    }
                 }
             }
 
@@ -349,6 +358,7 @@ static RPCHelpMan createwallet()
             {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Save wallet name to persistent settings and load on startup. True to add wallet to startup list, false to remove, null to leave unchanged."},
             {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true."},
             {"blsct", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a wallet with BLSCT keys."},
+            {"storage_output", RPCArg::Type::BOOL, RPCArg::Default{false}, "Enables the storage of outputs instead of full txs (experimental)."},
             {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the wallet from the specified seed (can be a master seed or an audit key)."},
         },
         RPCResult{
@@ -409,10 +419,14 @@ static RPCHelpMan createwallet()
                 flags &= ~WALLET_FLAG_DESCRIPTORS;
             }
 
+            if (!request.params[9].isNull() && request.params[9].get_bool()) {
+                flags |= WALLET_FLAG_BLSCT_OUTPUT_STORAGE;
+            }
+
             std::vector<unsigned char> seed;
             blsct::SeedType type = blsct::IMPORT_MASTER_KEY;
-            if (!request.params[9].isNull() && request.params[9].isStr()) {
-                seed = ParseHex(request.params[9].get_str());
+            if (!request.params[10].isNull() && request.params[10].isStr()) {
+                seed = ParseHex(request.params[10].get_str());
 
                 if (seed.size() == 80) {
                     type = blsct::IMPORT_VIEW_KEY;
@@ -513,72 +527,69 @@ static RPCHelpMan unloadwallet()
 
 static RPCHelpMan sethdseed()
 {
-    return RPCHelpMan{"sethdseed",
-                "\nSet or generate a new HD wallet seed. Non-HD wallets will not be upgraded to being a HD wallet. Wallets that are already\n"
-                "HD will have a new HD seed set so that new keys added to the keypool will be derived from this new seed.\n"
-                "\nNote that you will need to MAKE A NEW BACKUP of your wallet after setting the HD wallet seed." + HELP_REQUIRING_PASSPHRASE +
-                "Note: This command is only compatible with legacy wallets.\n",
-                {
-                    {"newkeypool", RPCArg::Type::BOOL, RPCArg::Default{true}, "Whether to flush old unused addresses, including change addresses, from the keypool and regenerate it.\n"
-                                         "If true, the next address from getnewaddress and change address from getrawchangeaddress will be from this new seed.\n"
-                                         "If false, addresses (including change addresses if the wallet already had HD Chain Split enabled) from the existing\n"
-                                         "keypool will be used until it has been depleted."},
-                    {"seed", RPCArg::Type::STR, RPCArg::DefaultHint{"random seed"}, "The WIF private key to use as the new HD seed.\n"
-                                         "The seed value can be retrieved using the dumpwallet command. It is the private key marked hdseed=1"},
-                },
-                RPCResult{RPCResult::Type::NONE, "", ""},
-                RPCExamples{
-                    HelpExampleCli("sethdseed", "")
-            + HelpExampleCli("sethdseed", "false")
-            + HelpExampleCli("sethdseed", "true \"wifkey\"")
-            + HelpExampleRpc("sethdseed", "true, \"wifkey\"")
-                },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
-    if (!pwallet) return UniValue::VNULL;
+    return RPCHelpMan{
+        "sethdseed",
+        "\nSet or generate a new HD wallet seed. Non-HD wallets will not be upgraded to being a HD wallet. Wallets that are already\n"
+        "HD will have a new HD seed set so that new keys added to the keypool will be derived from this new seed.\n"
+        "\nNote that you will need to MAKE A NEW BACKUP of your wallet after setting the HD wallet seed." +
+            HELP_REQUIRING_PASSPHRASE +
+            "Note: This command is only compatible with legacy wallets.\n",
+        {
+            {"newkeypool", RPCArg::Type::BOOL, RPCArg::Default{true}, "Whether to flush old unused addresses, including change addresses, from the keypool and regenerate it.\n"
+                                                                      "If true, the next address from getnewaddress and change address from getrawchangeaddress will be from this new seed.\n"
+                                                                      "If false, addresses (including change addresses if the wallet already had HD Chain Split enabled) from the existing\n"
+                                                                      "keypool will be used until it has been depleted."},
+            {"seed", RPCArg::Type::STR, RPCArg::DefaultHint{"random seed"}, "The WIF private key to use as the new HD seed.\n"
+                                                                            "The seed value can be retrieved using the dumpwallet command. It is the private key marked hdseed=1"},
+        },
+        RPCResult{RPCResult::Type::NONE, "", ""},
+        RPCExamples{
+            HelpExampleCli("sethdseed", "") + HelpExampleCli("sethdseed", "false") + HelpExampleCli("sethdseed", "true \"wifkey\"") + HelpExampleRpc("sethdseed", "true, \"wifkey\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
 
-    LegacyScriptPubKeyMan& spk_man = EnsureLegacyScriptPubKeyMan(*pwallet, true);
+            LegacyScriptPubKeyMan& spk_man = EnsureLegacyScriptPubKeyMan(*pwallet, true);
 
-    if (pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Cannot set a HD seed to a wallet with private keys disabled");
-    }
+            if (pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Cannot set a HD seed to a wallet with private keys disabled");
+            }
 
-    LOCK2(pwallet->cs_wallet, spk_man.cs_KeyStore);
+            LOCK2(pwallet->cs_wallet, spk_man.cs_KeyStore);
 
-    // Do not do anything to non-HD wallets
-    if (!pwallet->CanSupportFeature(FEATURE_HD)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Cannot set an HD seed on a non-HD wallet. Use the upgradewallet RPC in order to upgrade a non-HD wallet to HD");
-    }
+            // Do not do anything to non-HD wallets
+            if (!pwallet->CanSupportFeature(FEATURE_HD)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Cannot set an HD seed on a non-HD wallet. Use the upgradewallet RPC in order to upgrade a non-HD wallet to HD");
+            }
 
-    EnsureWalletIsUnlocked(*pwallet);
+            EnsureWalletIsUnlocked(*pwallet);
 
-    bool flush_key_pool = true;
-    if (!request.params[0].isNull()) {
-        flush_key_pool = request.params[0].get_bool();
-    }
+            bool flush_key_pool = true;
+            if (!request.params[0].isNull()) {
+                flush_key_pool = request.params[0].get_bool();
+            }
 
-    CPubKey master_pub_key;
-    if (request.params[1].isNull()) {
-        master_pub_key = spk_man.GenerateNewSeed();
-    } else {
-        CKey key = DecodeSecret(request.params[1].get_str());
-        if (!key.IsValid()) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key");
-        }
+            CPubKey master_pub_key;
+            if (request.params[1].isNull()) {
+                master_pub_key = spk_man.GenerateNewSeed();
+            } else {
+                CKey key = DecodeSecret(request.params[1].get_str());
+                if (!key.IsValid()) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key");
+                }
 
-        if (HaveKey(spk_man, key)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key (either as an HD seed or as a loose private key)");
-        }
+                if (HaveKey(spk_man, key)) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key (either as an HD seed or as a loose private key)");
+                }
 
-        master_pub_key = spk_man.DeriveNewSeed(key);
-    }
+                master_pub_key = spk_man.DeriveNewSeed(key);
+            }
 
-    spk_man.SetHDSeed(master_pub_key);
-    if (flush_key_pool) spk_man.NewKeyPool();
+            spk_man.SetHDSeed(master_pub_key);
+            if (flush_key_pool) spk_man.NewKeyPool();
 
-    return UniValue::VNULL;
-},
+            return UniValue::VNULL;
+        },
     };
 }
 
@@ -896,6 +907,7 @@ RPCHelpMan gettransaction();
 RPCHelpMan abandontransaction();
 RPCHelpMan rescanblockchain();
 RPCHelpMan abortrescan();
+
 
 Span<const CRPCCommand> GetWalletRPCCommands()
 {

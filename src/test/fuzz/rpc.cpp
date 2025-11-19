@@ -68,12 +68,12 @@ std::string g_limit_to_rpc_command;
 // reading or writing to a filename passed as an RPC parameter, RPC commands
 // resulting in network activity, etc.
 const std::vector<std::string> RPC_COMMANDS_NOT_SAFE_FOR_FUZZING{
-    "addconnection",          // avoid DNS lookups
-    "addnode",                // avoid DNS lookups
-    "addpeeraddress",         // avoid DNS lookups
-    "dumptxoutset",           // avoid writing to disk
-    "dumpwallet",             // avoid writing to disk
-    "echoipc",                // avoid assertion failure (Assertion `"EnsureAnyNodeContext(request.context).init" && check' failed.)
+    "addconnection",  // avoid DNS lookups
+    "addnode",        // avoid DNS lookups
+    "addpeeraddress", // avoid DNS lookups
+    "dumptxoutset",   // avoid writing to disk
+    "dumpwallet",     // avoid writing to disk
+    "echoipc",        // avoid assertion failure (Assertion `"EnsureAnyNodeContext(request.context).init" && check' failed.)
     "enumeratesigners",
     "generatetoaddress",      // avoid prohibitively slow execution (when `num_blocks` is large)
     "generatetoblsctaddress", // avoid prohibitively slow execution (when `num_blocks` is large)
@@ -195,7 +195,12 @@ const std::vector<std::string> RPC_COMMANDS_SAFE_FOR_FUZZING{
     "minttoken",
     "mintnft",
     "gettokenbalance",
-    "getnftbalance"
+    "getnftbalance",
+    "verifyblsctbalanceproof",
+    "getblsctbalanceproof",
+    "createblsctrawtransaction",
+    "signblsctrawtransaction",
+    "fundblsctaddress",
 };
 
 std::string ConsumeScalarRPCArgument(FuzzedDataProvider& fuzzed_data_provider, bool& good_data)

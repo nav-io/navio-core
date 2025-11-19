@@ -9,6 +9,7 @@
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/range_proof/generators.h>
 #include <blsct/wallet/verification.h>
+#include <script/interpreter.h>
 #include <util/strencodings.h>
 
 namespace blsct {
@@ -23,6 +24,8 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
     std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> vProofs;
     std::vector<Message> vMessages;
     std::vector<PublicKey> vPubKeys;
+
+
     MclG1Point balanceKey;
 
     if (blockReward > 0) {
@@ -31,6 +34,7 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
     }
 
     if (!tx.IsCoinBase()) {
+        size_t i = 0;
         for (auto& in : tx.vin) {
             Coin coin;
 
@@ -38,9 +42,24 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
                 return state.Invalid(TxValidationResult::TX_MISSING_INPUTS, "bad-input-unknown");
             }
 
-            vPubKeys.emplace_back(coin.out.blsctData.spendingKey);
-            auto in_hash = in.GetHash();
-            vMessages.emplace_back(in_hash.begin(), in_hash.end());
+            TransactionSignatureChecker checker(&tx, i++, 0, MissingDataBehavior::FAIL);
+            ScriptError serror;
+            uint32_t flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC;
+
+            if (!VerifyScript(coin.out.scriptPubKey, in.scriptSig, nullptr, flags, checker, &serror)) {
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-script-check");
+            }
+
+            for (const auto& pair : checker.GetKeyMessagePairs()) {
+                vPubKeys.emplace_back(pair.first);
+                vMessages.emplace_back(pair.second.begin(), pair.second.end());
+            }
+
+            if (!coin.out.blsctData.spendingKey.IsZero()) {
+                vPubKeys.emplace_back(coin.out.blsctData.spendingKey);
+                auto in_hash = in.GetHash();
+                vMessages.emplace_back(in_hash.begin(), in_hash.end());
+            }
 
             if (coin.out.HasBLSCTRangeProof())
                 balanceKey = balanceKey + coin.out.blsctData.rangeProof.Vs[0];

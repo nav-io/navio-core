@@ -17,6 +17,7 @@
 #include <blsct/wallet/import_wallet_type.h>
 #include <blsct/wallet/keyring.h>
 #include <logging.h>
+#include <util/strencodings.h>
 #include <wallet/crypter.h>
 #include <wallet/scriptpubkeyman.h>
 #include <wallet/walletdb.h>
@@ -50,18 +51,27 @@ private:
     bool AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey);
     bool AddCryptedKeyInner(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
 
+    bool AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId);
+    bool AddCryptedOutKeyInner(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
+
+
     wallet::WalletBatch* encrypted_batch GUARDED_BY(cs_KeyStore) = nullptr;
 
     using CryptedKeyMap = std::map<CKeyID, std::pair<PublicKey, std::vector<unsigned char>>>;
+    using CryptedOutKeyMap = std::map<uint256, std::pair<PublicKey, std::vector<unsigned char>>>;
     using SubAddressMap = std::map<CKeyID, SubAddressIdentifier>;
     using SubAddressStrMap = std::map<SubAddress, CKeyID>;
     using SubAddressPoolMapSet = std::map<int64_t, std::set<uint64_t>>;
+    using WatchOnlyScriptMap = std::map<CScriptID, wallet::CKeyMetadata>;
 
     CryptedKeyMap mapCryptedKeys GUARDED_BY(cs_KeyStore);
+    CryptedOutKeyMap mapCryptedOutKeys GUARDED_BY(cs_KeyStore);
     SubAddressMap mapSubAddresses GUARDED_BY(cs_KeyStore);
     SubAddressStrMap mapSubAddressesStr GUARDED_BY(cs_KeyStore);
     SubAddressPoolMapSet setSubAddressPool GUARDED_BY(cs_KeyStore);
     SubAddressPoolMapSet setSubAddressReservePool GUARDED_BY(cs_KeyStore);
+    std::set<CScript> setWatchOnly GUARDED_BY(cs_KeyStore);
+    WatchOnlyScriptMap m_script_metadata GUARDED_BY(cs_KeyStore);
 
     int64_t nTimeFirstKey GUARDED_BY(cs_KeyStore) = 0;
     //! Number of pre-generated SubAddresses
@@ -90,6 +100,7 @@ public:
 
     //! Adds a key to the store, and saves it to disk.
     bool AddKeyPubKey(const PrivateKey& key, const PublicKey& pubkey) override;
+    bool AddKeyOutKey(const PrivateKey& secret, const uint256& outId) override;
     bool AddViewKey(const PrivateKey& key, const PublicKey& pubkey) override;
     bool AddSpendKey(const PublicKey& pubkey) override;
 
@@ -97,17 +108,22 @@ public:
     bool LoadKey(const PrivateKey& key, const PublicKey& pubkey);
     bool LoadViewKey(const PrivateKey& key, const PublicKey& pubkey);
     bool LoadSpendKey(const PublicKey& pubkey);
+    bool LoadOutKey(const PrivateKey& key, const uint256& outId);
     //! Adds an encrypted key to the store, and saves it to disk.
     bool AddCryptedKey(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
+    bool AddCryptedOutKey(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
     //! Adds an encrypted key to the store, without saving it to disk (used by LoadWallet)
     bool LoadCryptedKey(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, bool checksum_valid);
+    bool LoadCryptedOutKey(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, bool checksum_valid);
     bool AddKeyPubKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& secret, const PublicKey& pubkey) EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
+    bool AddKeyOutKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& secret, const uint256& outId) EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
     bool AddSubAddressPoolWithDB(wallet::WalletBatch& batch, const SubAddressIdentifier& id, const SubAddress& subAddress, const bool& fLock = true);
     bool AddSubAddressPoolInner(const SubAddressIdentifier& id, const bool& fLock = true);
 
     /* KeyRing overrides */
     bool HaveKey(const CKeyID& address) const override;
     bool GetKey(const CKeyID& address, PrivateKey& keyOut) const override;
+    bool GetOutKey(const uint256& outId, PrivateKey& keyOut) const override;
 
     bool Encrypt(const wallet::CKeyingMaterial& master_key, wallet::WalletBatch* batch);
     bool CheckDecryptionKey(const wallet::CKeyingMaterial& master_key, bool accept_no_keys);
@@ -130,9 +146,33 @@ public:
     bool DeleteKeys();
 
     /** Detect ownership of outputs **/
-    bool IsMine(const CTxOut& txout) { return IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag); };
+    bool IsMine(const CTxOut& txout)
+    {
+        if (txout.blsctData.spendingKey.IsZero()) {
+            blsct::PublicKey extractedSpendingKey;
+            if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
+                return IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag);
+            }
+            return false;
+        }
+        return IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag);
+    };
     bool IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag);
-    CKeyID GetHashId(const CTxOut& txout) const { return GetHashId(txout.blsctData.blindingKey, txout.blsctData.spendingKey); }
+    bool IsMine(const CScript& script) const;
+    CKeyID GetHashId(const CTxOut& txout) const
+    {
+        if (!txout.scriptPubKey.IsSpendable()) {
+            return CKeyID();
+        }
+        if (txout.blsctData.spendingKey.IsZero()) {
+            blsct::PublicKey extractedSpendingKey;
+            if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
+                return GetHashId(txout.blsctData.blindingKey, extractedSpendingKey);
+            }
+            return CKeyID();
+        }
+        return GetHashId(txout.blsctData.blindingKey, txout.blsctData.spendingKey);
+    }
     CKeyID GetHashId(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey) const;
     CTxDestination GetDestination(const CTxOut& txout) const;
     blsct::PrivateKey GetMasterSeedKey() const;
@@ -140,9 +180,12 @@ public:
     blsct::PublicKey GetPublicSpendingKey() const;
     blsct::PrivateKey GetMasterTokenKey() const;
     blsct::PrivateKey GetSpendingKey() const;
-    blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out) const;
-    blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id) const;
-    blsct::PrivateKey GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id) const;
+    bool GetSpendingKeyForOutput(const CTxOut& out, blsct::PrivateKey& key) const;
+    bool GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key) const;
+    bool GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key) const;
+    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, blsct::PrivateKey& key);
+    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key);
+    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key);
     bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
 
     blsct::PrivateKey GetTokenKey(const uint256& tokenId) const;
@@ -184,6 +227,9 @@ public:
     {
         LogPrintf(("%s " + fmt).c_str(), m_storage.GetDisplayName(), parameters...);
     };
+
+    // Helper function to extract spending key from OP_BLSCHECKSIG script
+    bool ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKey& spendingKey) const;
 };
 } // namespace blsct
 

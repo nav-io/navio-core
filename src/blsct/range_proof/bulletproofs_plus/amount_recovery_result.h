@@ -19,6 +19,14 @@ struct AmountRecoveryResult
     std::vector<range_proof::RecoveredData<T>> amounts;
 
     static AmountRecoveryResult<T> failure();
+
+    SERIALIZE_METHODS(AmountRecoveryResult, obj)
+    {
+        READWRITE(
+            obj.is_completed,
+            obj.amounts
+        );
+    }
 };
 
 } // namespace bulletproofs_plus

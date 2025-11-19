@@ -299,6 +299,12 @@ public:
         }
     }
 
+    template <typename Stream>
+    CTxOut(deserialize_type, Stream& s)
+    {
+        Unserialize(s);
+    }
+
     void SetNull()
     {
         nValue = -1;
@@ -358,6 +364,7 @@ public:
     {
         return (a.nValue == b.nValue &&
                 a.scriptPubKey == b.scriptPubKey &&
+                a.predicate == b.predicate &&
                 a.tokenId == b.tokenId && a.blsctData == b.blsctData);
     }
 
@@ -648,6 +655,13 @@ template <typename Tx>
 static inline CTransactionRef MakeTransactionRef(Tx&& txIn)
 {
     return std::make_shared<const CTransaction>(std::forward<Tx>(txIn));
+}
+
+typedef std::shared_ptr<const CTxOut> CTxOutRef;
+template <typename Out>
+static inline CTxOutRef MakeOutputRef(CTxOut&& txOut)
+{
+    return std::make_shared<const CTxOut>(std::forward<Out>(txOut));
 }
 
 /** A generic txid reference (txid or wtxid). */

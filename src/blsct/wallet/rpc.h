@@ -10,14 +10,14 @@
 
 namespace wallet {
 class CWallet;
-}
+typedef std::multimap<int64_t, CWalletOutput*> OutputItems;
+} // namespace wallet
 
 namespace blsct {
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose);
 }
 
 class CRPCCommand;
-
 Span<const CRPCCommand> GetBLSCTWalletRPCCommands();
 
 #endif // BITCOIN_BLSCT_WALLET_RPC_H

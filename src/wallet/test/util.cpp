@@ -43,6 +43,7 @@ std::unique_ptr<CWallet> CreateSyncedWallet(interfaces::Chain& chain, CChain& cc
     assert(result.last_scanned_block == cchain.Tip()->GetBlockHash());
     assert(*result.last_scanned_height == cchain.Height());
     assert(result.last_failed_block.IsNull());
+
     return wallet;
 }
 

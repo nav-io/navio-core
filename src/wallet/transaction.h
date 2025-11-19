@@ -81,7 +81,7 @@ struct TxStateUnrecognized {
 using TxState = std::variant<TxStateConfirmed, TxStateInMempool, TxStateConflicted, TxStateInactive, TxStateUnrecognized>;
 
 //! Subset of states transaction sync logic is implemented to handle.
-using SyncTxState = std::variant<TxStateConfirmed, TxStateInMempool, TxStateInactive>;
+using SyncTxState = std::variant<TxStateConfirmed, TxStateInMempool, TxStateInactive, TxStateUnrecognized>;
 
 //! Try to interpret deserialized TxStateUnrecognized data as a recognized state.
 static inline TxState TxStateInterpretSerialized(TxStateUnrecognized data)
@@ -98,8 +98,21 @@ static inline TxState TxStateInterpretSerialized(TxStateUnrecognized data)
     return data;
 }
 
+static inline SyncTxState SyncTxStateInterpretSerialized(TxStateUnrecognized data)
+{
+    if (data.block_hash == uint256::ZERO) {
+        if (data.index == 0) return TxStateInactive{};
+    } else if (data.block_hash == uint256::ONE) {
+        if (data.index == -1) return TxStateInactive{/*abandoned=*/true};
+    } else if (data.index >= 0) {
+        return TxStateConfirmed{data.block_hash, /*height=*/-1, data.index};
+    }
+    return data;
+}
+
 //! Get TxState serialized block hash. Inverse of TxStateInterpretSerialized.
-static inline uint256 TxStateSerializedBlockHash(const TxState& state)
+template <typename T>
+static inline uint256 TxStateSerializedBlockHash(const T& state)
 {
     return std::visit(util::Overloaded{
         [](const TxStateInactive& inactive) { return inactive.abandoned ? uint256::ONE : uint256::ZERO; },
@@ -111,7 +124,8 @@ static inline uint256 TxStateSerializedBlockHash(const TxState& state)
 }
 
 //! Get TxState serialized block index. Inverse of TxStateInterpretSerialized.
-static inline int TxStateSerializedIndex(const TxState& state)
+template <typename T>
+static inline int TxStateSerializedIndex(const T& state)
 {
     return std::visit(util::Overloaded{
         [](const TxStateInactive& inactive) { return inactive.abandoned ? -1 : 0; },
@@ -170,6 +184,105 @@ public:
 
         s >> TX_WITH_WITNESS(tx) >> hashBlock >> vMerkleBranch >> nIndex;
     }
+};
+
+class CWalletOutput
+{
+public:
+    unsigned int fTimeReceivedIsTxTime;
+    unsigned int nTimeReceived; //!< time received by this node
+    int64_t nOrderPos;          //!< position in ordered transaction list
+    bool fCoinbase;             //!< whether the output is part of a coinbase transaction
+
+    CWalletOutput(CTxOutRef out, const TxState& state) : out(std::move(out)), m_state(state), m_state_spent(TxStateInactive{})
+    {
+        Init();
+    }
+
+    void Init()
+    {
+        fTimeReceivedIsTxTime = false;
+        nTimeReceived = 0;
+        nOrderPos = -1;
+        fCoinbase = false;
+    }
+
+    CTxOutRef out;
+    range_proof::RecoveredData<Mcl> blsctRecoveryData;
+    TxState m_state;
+    SyncTxState m_state_spent; //!< whether the output is spent or not
+
+    void updateState(interfaces::Chain& chain);
+    int64_t GetTxTime() const;
+
+    template <typename Stream>
+    void Serialize(Stream& s) const
+    {
+        uint256 serializedHash = TxStateSerializedBlockHash<TxState>(m_state);
+        int serializedIndex = TxStateSerializedIndex<TxState>(m_state);
+        s << out << serializedHash << serializedIndex << fTimeReceivedIsTxTime << nTimeReceived << blsctRecoveryData;
+
+        serializedHash = TxStateSerializedBlockHash<SyncTxState>(m_state_spent);
+        serializedIndex = TxStateSerializedIndex<SyncTxState>(m_state_spent);
+        s << serializedHash << serializedIndex << fCoinbase;
+    }
+
+    template <typename Stream>
+    void Unserialize(Stream& s)
+    {
+        Init();
+
+        uint256 serialized_block_hash;
+        int serializedIndex;
+        s >> out >> serialized_block_hash >> serializedIndex >> fTimeReceivedIsTxTime >> nTimeReceived >> blsctRecoveryData;
+
+        m_state = TxStateInterpretSerialized({serialized_block_hash, serializedIndex});
+
+        s >> serialized_block_hash >> serializedIndex >> fCoinbase;
+
+        m_state_spent = SyncTxStateInterpretSerialized({serialized_block_hash, serializedIndex});
+    }
+
+    template <typename T>
+    const T* state() const
+    {
+        return std::get_if<T>(&m_state);
+    }
+    template <typename T>
+    T* state()
+    {
+        return std::get_if<T>(&m_state);
+    }
+
+    template <typename T>
+    const T* state_spent() const
+    {
+        return std::get_if<T>(&m_state_spent);
+    }
+    template <typename T>
+    T* state_spent()
+    {
+        return std::get_if<T>(&m_state_spent);
+    }
+
+    bool InMempool() const;
+    bool IsCoinBase() const { return fCoinbase; }
+
+    bool IsSpent() const
+    {
+        return std::get_if<TxStateConfirmed>(&m_state_spent) || std::get_if<TxStateInMempool>(&m_state_spent);
+    };
+
+private:
+    // Disable copying of CWalletTx objects to prevent bugs where instances get
+    // copied in and out of the mapWallet map, and fields are updated in the
+    // wrong copy.
+    CWalletOutput(const CWalletOutput&) = default;
+    CWalletOutput& operator=(const CWalletOutput&) = default;
+
+public:
+    // Instead have an explicit copy function
+    void CopyFrom(const CWalletOutput&);
 };
 
 /**
@@ -285,8 +398,8 @@ public:
         std::vector<uint8_t> dummy_vector1; //!< Used to be vMerkleBranch
         std::vector<uint8_t> dummy_vector2; //!< Used to be vtxPrev
         bool dummy_bool = false; //!< Used to be fSpent
-        uint256 serializedHash = TxStateSerializedBlockHash(m_state);
-        int serializedIndex = TxStateSerializedIndex(m_state);
+        uint256 serializedHash = TxStateSerializedBlockHash<TxState>(m_state);
+        int serializedIndex = TxStateSerializedIndex<TxState>(m_state);
         s << TX_WITH_WITNESS(tx) << serializedHash << dummy_vector1 << serializedIndex << dummy_vector2 << mapValueCopy << vOrderForm << fTimeReceivedIsTxTime << nTimeReceived << fFromMe << dummy_bool << blsctRecoveryData;
     }
 

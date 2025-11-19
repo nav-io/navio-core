@@ -56,6 +56,25 @@ CAmount OutputGetCredit(const CWallet& wallet, const CTxOut& txout, const ismine
         return ((wallet.IsMine(txout) & filter) ? txout.nValue : 0);
 }
 
+CAmount OutputGetCredit(const CWallet& wallet, const CWalletOutput& wout, const isminefilter& filter, const TokenId& token_id, bool fIgnoreImmature)
+{
+    auto txout = *wout.out;
+    if (txout.tokenId != token_id) return 0;
+    if (!txout.HasBLSCTRangeProof() && !MoneyRange(txout.nValue))
+        throw std::runtime_error(std::string(__func__) + ": value out of range");
+    LOCK(wallet.cs_wallet);
+    if (fIgnoreImmature && wallet.IsOutputImmatureCoinBase(wout))
+        return 0;
+    if (txout.HasBLSCTRangeProof()) {
+        if (wallet.IsMine(txout) & filter) {
+            return wout.blsctRecoveryData.amount;
+        } else {
+            return 0;
+        }
+    } else
+        return ((wallet.IsMine(txout) & filter) ? txout.nValue : 0);
+}
+
 CAmount TxGetCredit(const CWallet& wallet, const CTransaction& tx, const isminefilter& filter, const TokenId& token_id)
 {
     CAmount nCredit = 0;
@@ -137,6 +156,17 @@ static CAmount GetCachableAmount(const CWallet& wallet, const CWalletTx& wtx, CW
     return amount.m_value[filter];
 }
 
+static CAmount GetAmount(const CWallet& wallet, const CWalletOutput& wout, CWalletTx::AmountType type, const isminefilter& filter, const TokenId& token_id, bool fIgnoreImmature)
+{
+    if (wout.IsSpent() && type == CWalletTx::DEBIT) {
+        return OutputGetCredit(wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id, fIgnoreImmature);
+    } else if (!wout.IsSpent() && (type == CWalletTx::CREDIT || type == CWalletTx::IMMATURE_CREDIT)) {
+        return OutputGetCredit(wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id, fIgnoreImmature);
+    }
+
+    return 0;
+}
+
 CAmount CachedTxGetCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter, const TokenId& token_id)
 {
     AssertLockHeld(wallet.cs_wallet);
@@ -182,6 +212,16 @@ CAmount CachedTxGetImmatureCredit(const CWallet& wallet, const CWalletTx& wtx, c
 
     if (wallet.IsTxImmatureCoinBase(wtx) && wallet.IsTxInMainChain(wtx)) {
         return GetCachableAmount(wallet, wtx, CWalletTx::IMMATURE_CREDIT, filter, token_id);
+    }
+
+    return 0;
+}
+
+CAmount OutputGetImmatureCredit(const CWallet& wallet, const CWalletOutput& wout, const isminefilter& filter, const TokenId& token_id)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (wallet.IsOutputImmatureCoinBase(wout) && wallet.IsOutputInMainChain(wout)) {
+        return GetAmount(wallet, wout, CWalletTx::IMMATURE_CREDIT, filter, token_id, false);
     }
 
     return 0;
@@ -350,8 +390,7 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
     if (!wtx.InMempool()) return false;
 
     // Trusted if all inputs are from us and are in the mempool:
-    for (const CTxIn& txin : wtx.tx->vin)
-    {
+    for (const CTxIn& txin : wtx.tx->vin) {
         // Transactions not sent by us: not trusted
         const CWalletTx* parent = wallet.GetWalletTx(txin.prevout.hash);
         if (parent == nullptr) return false;
@@ -364,6 +403,16 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
         if (!CachedTxIsTrusted(wallet, *parent, trusted_parents)) return false;
         trusted_parents.insert(parent->GetHash());
     }
+    return true;
+}
+
+bool IsOutputTrusted(const CWallet& wallet, const CWalletOutput& wout)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    int nDepth = wallet.GetOutputDepthInMainChain(wout);
+    if (nDepth >= 1) return true;
+    if (nDepth <= 0) return false;
+
     return true;
 }
 
@@ -381,8 +430,7 @@ Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse,
     {
         LOCK(wallet.cs_wallet);
         std::set<uint256> trusted_parents;
-        for (const auto& entry : wallet.mapWallet)
-        {
+        for (const auto& entry : wallet.mapWallet) {
             const CWalletTx& wtx = entry.second;
             const bool is_trusted{CachedTxIsTrusted(wallet, wtx, trusted_parents)};
             const int tx_depth{wallet.GetTxDepthInMainChain(wtx)};
@@ -400,6 +448,35 @@ Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse,
             }
             ret.m_mine_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id);
             ret.m_watchonly_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_WATCH_ONLY, token_id);
+        }
+    }
+    return ret;
+}
+
+Balance GetBlsctBalance(const CWallet& wallet, const int min_depth, const TokenId& token_id)
+{
+    Balance ret;
+    {
+        LOCK(wallet.cs_wallet);
+        for (const auto& entry : wallet.mapOutputs) {
+            const CWalletOutput& wout = entry.second;
+            if (wout.IsSpent()) continue;
+            const bool is_trusted{IsOutputTrusted(wallet, wout)};
+            const int out_depth{wallet.GetOutputDepthInMainChain(wout)};
+            const CAmount tx_credit_mine{OutputGetCredit(wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id)};
+            const CAmount tx_credit_staked_commitment{OutputGetCredit(wallet, wout, ISMINE_STAKED_COMMITMENT_BLSCT, token_id)};
+            const CAmount tx_credit_watchonly{OutputGetCredit(wallet, wout, ISMINE_WATCH_ONLY, token_id)};
+            if (is_trusted && out_depth >= min_depth) {
+                ret.m_mine_trusted += tx_credit_mine;
+                ret.m_watchonly_trusted += tx_credit_watchonly;
+                ret.m_mine_staked_commitment += tx_credit_staked_commitment;
+            }
+            if (!is_trusted && out_depth == 0 && wout.InMempool()) {
+                ret.m_mine_untrusted_pending += tx_credit_mine + tx_credit_staked_commitment;
+                ret.m_watchonly_untrusted_pending += tx_credit_watchonly;
+            }
+            ret.m_mine_immature += OutputGetImmatureCredit(wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id);
+            ret.m_watchonly_immature += OutputGetImmatureCredit(wallet, wout, ISMINE_WATCH_ONLY, token_id);
         }
     }
     return ret;

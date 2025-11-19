@@ -196,7 +196,8 @@ enum opcodetype {
     OP_NOP2 = OP_CHECKLOCKTIMEVERIFY,
     OP_CHECKSEQUENCEVERIFY = 0xb2,
     OP_NOP3 = OP_CHECKSEQUENCEVERIFY,
-    OP_NOP4 = 0xb3,
+    OP_BLSCHECKSIG = 0xb3,
+    OP_NOP4 = OP_BLSCHECKSIG,
     OP_NOP5 = 0xb4,
     OP_NOP6 = 0xb5,
     OP_NOP7 = 0xb6,
@@ -208,11 +209,12 @@ enum opcodetype {
     // Opcode added by BIP 342 (Tapscript)
     OP_CHECKSIGADD = 0xba,
 
+
     OP_INVALIDOPCODE = 0xff,
 };
 
 // Maximum value that an opcode can be
-static const unsigned int MAX_OPCODE = OP_NOP10;
+static const unsigned int MAX_OPCODE = OP_CHECKSIGADD;
 
 std::string GetOpName(opcodetype opcode);
 
@@ -552,6 +554,11 @@ public:
     bool IsUnspendable() const
     {
         return (size() > 0 && *begin() == OP_RETURN) || (size() > MAX_SCRIPT_SIZE);
+    }
+
+    bool IsSpendable() const
+    {
+        return (size() == 1 && *begin() == OP_TRUE);
     }
 
     bool IsFee() const

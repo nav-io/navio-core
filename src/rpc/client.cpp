@@ -29,6 +29,9 @@ public:
  */
 static const CRPCConvertParam vRPCConvertParams[] =
 {
+    {"createblsctrawtransaction", 0, "inputs"},
+    {"createblsctrawtransaction", 1, "outputs"},
+    { "createblsctbalanceproof", 0, "amount" },
     { "setmocktime", 0, "timestamp" },
     { "mockscheduler", 0, "delta_time" },
     { "utxoupdatepsbt", 1, "descriptors" },
@@ -76,6 +79,9 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "getbalance", 1, "minconf" },
     { "getbalance", 2, "include_watchonly" },
     { "getbalance", 3, "avoid_reuse" },
+    { "getblsctbalance", 0, "minconf" },
+    { "getblsctbalance", 1, "include_watchonly" },
+    { "getblsctbalance", 2, "avoid_reuse" },
     { "getnftbalance", 2, "minconf" },
     { "getnftbalance", 3, "include_watchonly" },
     { "getnftbalance", 4, "avoid_reuse" },
@@ -91,6 +97,9 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "listtransactions", 1, "count" },
     { "listtransactions", 2, "skip" },
     { "listtransactions", 3, "include_watchonly" },
+    { "listblscttransactions", 1, "count" },
+    { "listblscttransactions", 2, "skip" },
+    { "listblscttransactions", 3, "include_watchonly" },
     { "listpendingtransactions", 1, "count" },
     { "listpendingtransactions", 2, "skip" },
     { "listpendingtransactions", 3, "include_watchonly" },
@@ -118,6 +127,15 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "addmultisigaddress", 1, "keys" },
     { "createmultisig", 0, "nrequired" },
     { "createmultisig", 1, "keys" },
+    { "listblsctunspent", 0, "minconf" },
+    { "listblsctunspent", 1, "maxconf" },
+    { "listblsctunspent", 2, "addresses" },
+    { "listblsctunspent", 3, "query_options" },
+    { "listblsctunspent", 3, "minimumAmount" },
+    { "listblsctunspent", 3, "maximumAmount" },
+    { "listblsctunspent", 3, "maximumCount" },
+    { "listblsctunspent", 3, "minimumSumAmount" },
+    { "listblsctunspent", 3, "include_immature_coinbase" },
     { "listunspent", 0, "minconf" },
     { "listunspent", 1, "maxconf" },
     { "listunspent", 2, "addresses" },
@@ -317,6 +335,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "createwallet", 6, "load_on_startup"},
     { "createwallet", 7, "external_signer"},
     { "createwallet", 8, "blsct"},
+    { "createwallet", 9, "storage_output"},
     { "restorewallet", 2, "load_on_startup"},
     { "loadwallet", 1, "load_on_startup"},
     { "unloadwallet", 1, "load_on_startup"},
@@ -334,6 +353,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "minttoken", 2, "amount"},
     { "mintnft", 1, "nft_id"},
     { "mintnft", 3, "metadata"},
+    { "getblsctrecoverydata", 1, "vout" },
 };
 // clang-format on
 

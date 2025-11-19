@@ -203,7 +203,6 @@ public:
     uint32_t nTime{0};
     uint32_t nBits{0};
     uint32_t nNonce{0};
-    blsct::ProofOfStake posProof;
 
     uint64_t nStakeModifier{0}; // hash modifier for proof-of-stake
     uint256 kernelHash;
@@ -219,8 +218,7 @@ public:
           hashMerkleRoot{block.hashMerkleRoot},
           nTime{block.nTime},
           nBits{block.nBits},
-          nNonce{block.nNonce},
-          posProof{block.posProof}
+          nNonce{block.nNonce}
     {
     }
 
@@ -256,7 +254,6 @@ public:
         block.nTime = nTime;
         block.nBits = nBits;
         block.nNonce = nNonce;
-        block.posProof = posProof;
         return block;
     }
 
@@ -473,10 +470,7 @@ public:
         READWRITE(obj.hashMerkleRoot);
         READWRITE(obj.nTime);
         READWRITE(obj.nBits);
-        if (obj.IsProofOfStake())
-            READWRITE(obj.posProof);
-        else
-            READWRITE(obj.nNonce);
+        READWRITE(obj.nNonce);
         if (obj.nStatus & BLOCK_STAKE_MODIFIER_SET) READWRITE(obj.nStakeModifier);
         if (obj.nStatus & BLOCK_KERNEL_HASH) READWRITE(obj.kernelHash);
     }
@@ -490,7 +484,6 @@ public:
         block.nTime = nTime;
         block.nBits = nBits;
         block.nNonce = nNonce;
-        block.posProof = posProof;
         return block.GetHash();
     }
 

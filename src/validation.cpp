@@ -2432,7 +2432,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             if (!posProof.Verify(view, pindex->pprev, block, params.GetConsensus()))
                 return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
         } catch (const std::runtime_error& e) {
-            LogPrintf("%s: Validation of PoS proof failed: %s\n", __func__, e.what());
+            LogPrintf("%s: Validation of PoS proof failed: %s\n%s\n", __func__, e.what(), block.ToString());
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
         }
 
@@ -4012,7 +4012,8 @@ std::vector<unsigned char> ChainstateManager::GenerateCoinbaseCommitment(CBlock&
 bool HasValidProofOfWork(const std::vector<CBlockHeader>& headers, const Consensus::Params& consensusParams)
 {
     return std::all_of(headers.cbegin(), headers.cend(),
-            [&](const auto& header) { return header.IsProofOfStake() ? true : CheckProofOfWork(header.GetHash(), header.nBits, consensusParams);});
+                       [&](const auto& header) { 
+                       return header.IsProofOfStake() ? true : CheckProofOfWork(header.GetHash(), header.nBits, consensusParams); });
 }
 
 arith_uint256 CalculateHeadersWork(const std::vector<CBlockHeader>& headers)

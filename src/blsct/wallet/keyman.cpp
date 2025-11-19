@@ -4,6 +4,7 @@
 
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/keyman.h>
+#include <script/script.h>
 
 namespace blsct {
 bool KeyMan::IsHDEnabled() const
@@ -15,6 +16,30 @@ bool KeyMan::CanGenerateKeys() const
 {
     // A wallet can generate keys if it has an HD seed (IsHDEnabled)
     return IsHDEnabled();
+}
+
+bool KeyMan::AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId)
+{
+    LOCK(cs_KeyStore);
+    if (!m_storage.HasEncryptionKeys()) {
+        return KeyRing::AddKeyOutKey(key, outId);
+    }
+
+    if (m_storage.IsLocked()) {
+        return false;
+    }
+
+    std::vector<unsigned char> vchCryptedSecret;
+    auto keyVch = key.GetScalar().GetVch();
+    wallet::CKeyingMaterial vchSecret(keyVch.begin(), keyVch.end());
+    if (!wallet::EncryptSecret(m_storage.GetEncryptionKey(), vchSecret, outId, vchCryptedSecret)) {
+        return false;
+    }
+
+    if (!AddCryptedOutKey(outId, key.GetPublicKey(), vchCryptedSecret)) {
+        return false;
+    }
+    return true;
 }
 
 bool KeyMan::AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey)
@@ -46,6 +71,13 @@ bool KeyMan::AddKeyPubKey(const PrivateKey& secret, const PublicKey& pubkey)
     LOCK(cs_KeyStore);
     wallet::WalletBatch batch(m_storage.GetDatabase());
     return KeyMan::AddKeyPubKeyWithDB(batch, secret, pubkey);
+}
+
+bool KeyMan::AddKeyOutKey(const PrivateKey& secret, const uint256& outId)
+{
+    LOCK(cs_KeyStore);
+    wallet::WalletBatch batch(m_storage.GetDatabase());
+    return KeyMan::AddKeyOutKeyWithDB(batch, secret, outId);
 }
 
 bool KeyMan::AddViewKey(const PrivateKey& secret, const PublicKey& pubkey)
@@ -99,6 +131,27 @@ bool KeyMan::AddKeyPubKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& se
     return true;
 }
 
+bool KeyMan::AddKeyOutKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& secret, const uint256& outId)
+{
+    AssertLockHeld(cs_KeyStore);
+
+    bool needsDB = !encrypted_batch;
+    if (needsDB) {
+        encrypted_batch = &batch;
+    }
+    if (!AddKeyOutKeyInner(secret, outId)) {
+        if (needsDB) encrypted_batch = nullptr;
+        return false;
+    }
+    if (needsDB) encrypted_batch = nullptr;
+
+    if (!m_storage.HasEncryptionKeys()) {
+        return batch.WriteOutKey(outId,
+                                 secret);
+    }
+    return true;
+}
+
 bool KeyMan::AddSubAddressPoolWithDB(wallet::WalletBatch& batch, const SubAddressIdentifier& id, const SubAddress& subAddress, const bool& fLock)
 {
     LOCK(cs_KeyStore);
@@ -127,12 +180,31 @@ bool KeyMan::LoadCryptedKey(const PublicKey& vchPubKey, const std::vector<unsign
     return AddCryptedKeyInner(vchPubKey, vchCryptedSecret);
 }
 
+bool KeyMan::LoadCryptedOutKey(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, bool checksum_valid)
+{
+    // Set fDecryptionThoroughlyChecked to false when the checksum is invalid
+    if (!checksum_valid) {
+        fDecryptionThoroughlyChecked = false;
+    }
+
+    return AddCryptedOutKeyInner(outId, vchPubKey, vchCryptedSecret);
+}
+
 bool KeyMan::AddCryptedKeyInner(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret)
 {
     LOCK(cs_KeyStore);
     assert(mapKeys.empty());
 
     mapCryptedKeys[vchPubKey.GetID()] = make_pair(vchPubKey, vchCryptedSecret);
+    return true;
+}
+
+bool KeyMan::AddCryptedOutKeyInner(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret)
+{
+    LOCK(cs_KeyStore);
+    assert(mapOutKeys.empty());
+
+    mapCryptedOutKeys[outId] = make_pair(vchPubKey, vchCryptedSecret);
     return true;
 }
 
@@ -149,6 +221,23 @@ bool KeyMan::AddCryptedKey(const PublicKey& vchPubKey,
                                                     mapKeyMetadata[vchPubKey.GetID()]);
         else
             return wallet::WalletBatch(m_storage.GetDatabase()).WriteCryptedKey(vchPubKey, vchCryptedSecret, mapKeyMetadata[vchPubKey.GetID()]);
+    }
+}
+
+bool KeyMan::AddCryptedOutKey(const uint256& outId,
+                              const PublicKey& vchPubKey,
+                              const std::vector<unsigned char>& vchCryptedSecret)
+{
+    if (!AddCryptedOutKeyInner(outId, vchPubKey, vchCryptedSecret))
+        return false;
+    {
+        LOCK(cs_KeyStore);
+        if (encrypted_batch)
+            return encrypted_batch->WriteCryptedOutKey(outId,
+                                                       vchPubKey,
+                                                       vchCryptedSecret);
+        else
+            return wallet::WalletBatch(m_storage.GetDatabase()).WriteCryptedOutKey(outId, vchPubKey, vchCryptedSecret);
     }
 }
 
@@ -350,6 +439,11 @@ bool KeyMan::LoadKey(const PrivateKey& key, const PublicKey& pubkey)
     return AddKeyPubKeyInner(key, pubkey);
 }
 
+bool KeyMan::LoadOutKey(const PrivateKey& key, const uint256& outId)
+{
+    return AddKeyOutKeyInner(key, outId);
+}
+
 bool KeyMan::LoadViewKey(const PrivateKey& key, const PublicKey& pubkey)
 {
     return KeyRing::AddViewKey(key, pubkey);
@@ -402,6 +496,23 @@ bool KeyMan::GetKey(const CKeyID& id, PrivateKey& keyOut) const
         const PublicKey& vchPubKey = (*mi).second.first;
         const std::vector<unsigned char>& vchCryptedSecret = (*mi).second.second;
         return wallet::DecryptKey(m_storage.GetEncryptionKey(), vchCryptedSecret, vchPubKey, keyOut);
+    }
+    return false;
+}
+
+bool KeyMan::GetOutKey(const uint256& id, PrivateKey& keyOut) const
+{
+    LOCK(cs_KeyStore);
+    if (!m_storage.HasEncryptionKeys()) {
+        return KeyRing::GetOutKey(id, keyOut);
+    }
+
+    CryptedOutKeyMap::const_iterator mi = mapCryptedOutKeys.find(id);
+    if (mi != mapCryptedOutKeys.end()) {
+        const uint256& outId = (*mi).first;
+        const PublicKey& vchPubKey = (*mi).second.first;
+        const std::vector<unsigned char>& vchCryptedSecret = (*mi).second.second;
+        return wallet::DecryptKey(m_storage.GetEncryptionKey(), vchCryptedSecret, outId, vchPubKey, keyOut);
     }
     return false;
 }
@@ -528,31 +639,69 @@ blsct::PrivateKey KeyMan::GetSpendingKey() const
     return ret;
 }
 
-blsct::PrivateKey KeyMan::GetSpendingKeyForOutput(const CTxOut& out) const
+bool KeyMan::GetSpendingKeyForOutput(const CTxOut& out, blsct::PrivateKey& key) const
 {
     auto hashId = GetHashId(out);
 
-    return GetSpendingKeyForOutput(out, hashId);
+    return GetSpendingKeyForOutput(out, hashId, key);
 }
 
-blsct::PrivateKey KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& hashId) const
+bool KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& hashId, blsct::PrivateKey& key) const
 {
     SubAddressIdentifier id;
 
     if (!GetSubAddressId(hashId, id))
-        throw std::runtime_error(strprintf("%s: could not read subaddress id", __func__));
+        return false;
 
-    return GetSpendingKeyForOutput(out, id);
+    return GetSpendingKeyForOutput(out, id, key);
 }
 
-blsct::PrivateKey KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id) const
+bool KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key) const
 {
     if (!fViewKeyDefined || !viewKey.IsValid())
         throw std::runtime_error(strprintf("%s: the wallet has no view key available", __func__));
 
     auto sk = GetSpendingKey();
 
-    return CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
+    key = CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
+
+    return true;
+}
+
+bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, blsct::PrivateKey& key)
+{
+    auto hashId = GetHashId(out);
+
+    return GetSpendingKeyForOutput(out, hashId, key);
+}
+
+bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& hashId, blsct::PrivateKey& key)
+{
+    SubAddressIdentifier id;
+
+    if (!GetSubAddressId(hashId, id))
+        return false;
+
+    return GetSpendingKeyForOutput(out, id, key);
+}
+
+bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key)
+{
+    if (!fViewKeyDefined || !viewKey.IsValid())
+        throw std::runtime_error(strprintf("%s: the wallet has no view key available", __func__));
+
+    auto sk = GetSpendingKey();
+
+    auto outId = (HashWriter() << out.blsctData.blindingKey << viewKey.GetScalar() << sk.GetScalar() << id.account << id.address).GetHash();
+
+    if (GetOutKey(outId, key))
+        return true;
+
+    key = CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
+
+    AddKeyOutKey(key, outId);
+
+    return true;
 }
 
 blsct::PrivateKey KeyMan::GetTokenKey(const uint256& tokenId) const
@@ -584,6 +733,12 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
     }
 
     return rp.RecoverAmounts(reqs);
+}
+
+bool KeyMan::IsMine(const CScript& script) const
+{
+    LOCK(cs_KeyStore);
+    return setWatchOnly.count(script) > 0;
 }
 
 bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag)
@@ -908,5 +1063,37 @@ int64_t KeyMan::GetTimeFirstKey() const
 {
     LOCK(cs_KeyStore);
     return nTimeFirstKey;
+}
+
+bool KeyMan::ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKey& spendingKey) const
+{
+    // Parse the script to find OP_BLSCHECKSIG and extract the public key before it
+    CScript::const_iterator pc = script.begin();
+    opcodetype opcode;
+    std::vector<unsigned char> vch;
+    std::vector<unsigned char> lastData; // Keep track of the last data pushed
+
+    if (script.size() != 50) return false;
+
+    while (pc < script.end()) {
+        if (!script.GetOp(pc, opcode, vch)) {
+            return false;
+        }
+
+        if (opcode == OP_BLSCHECKSIG) {
+            // We found OP_BLSCHECKSIG, the public key should be the last data pushed before this opcode
+            if (lastData.size() == 48) { // BLS public keys are 48 bytes
+                return spendingKey.SetVch(lastData);
+            }
+            return false;
+        }
+
+        // If this is a data push (not an opcode), store it as the last data
+        if (opcode <= OP_PUSHDATA4) {
+            lastData = vch;
+        }
+    }
+
+    return false;
 }
 } // namespace blsct

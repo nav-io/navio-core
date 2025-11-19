@@ -2013,4 +2013,91 @@ RPCHelpMan restorewallet()
 },
     };
 }
+
+// RPCHelpMan importblsctscript()
+// {
+//     return RPCHelpMan{"importblsctscript",
+//                       "\nImport BLSCT scripts for watching. Requires a new wallet backup.\n"
+//                       "The imported scripts will be watch-only and cannot be used to spend.\n"
+//                       "Note: This call can take over an hour to complete if rescan is true, during that time, other rpc calls\n"
+//                       "may report that the imported scripts exist but related transactions are still missing.\n"
+//                       "The rescan parameter can be set to false if the script was never used to create transactions. If it is set to false,\n"
+//                       "but the script was used to create transactions, rescanblockchain needs to be called with the appropriate block range.\n"
+//                       "Note: Use \"getwalletinfo\" to query the scanning progress.\n",
+//                       {
+//                           {"label", RPCArg::Type::STR, RPCArg::Default{""}, "An optional label"},
+//                           {"scripts", RPCArg::Type::ARR, RPCArg::Optional::NO, "Array of scripts to import", {
+//                                                                                                                  {"script", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A script"},
+//                                                                                                              }},
+//                           {"have_solving_data", RPCArg::Type::BOOL, RPCArg::Default{false}, "Whether the wallet has the data to solve the script"},
+//                           {"apply_label", RPCArg::Type::BOOL, RPCArg::Default{false}, "Whether to apply the label to the imported scripts"},
+//                           {"timestamp", RPCArg::Type::NUM, RPCArg::Default{0}, "Creation time of the script expressed in " + UNIX_EPOCH_TIME + ".\n"
+//                                                                                                                                                "The timestamp of the oldest script will determine how far back blockchain rescans need to begin for missing wallet transactions.\n"
+//                                                                                                                                                "0 can be specified to scan the entire blockchain. Blocks up to 2 hours before the earliest script\n"
+//                                                                                                                                                "creation time of all scripts being imported will be scanned."},
+//                       },
+//                       RPCResult{RPCResult::Type::BOOL, "", "true if successful"},
+//                       RPCExamples{HelpExampleCli("importblsctscript", "\"my label\" '[\"<script1>\", \"<script2>\"]' false true 0")},
+//                       [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+//                           std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
+//                           if (!pwallet) return UniValue::VNULL;
+//                           CWallet& wallet{*pwallet};
+
+//                           // Make sure the results are valid at least up to the most recent block
+//                           // the user could have gotten from another RPC command prior to now
+//                           wallet.BlockUntilSyncedToCurrentChain();
+
+//                           std::string label = request.params[0].isNull() ? "" : request.params[0].get_str();
+
+//                           const UniValue& script_pub_keys = request.params[1];
+//                           if (!script_pub_keys.isArray()) {
+//                               throw JSONRPCError(RPC_TYPE_ERROR, "script_pub_keys must be an array");
+//                           }
+
+//                           std::set<CScript> scripts;
+//                           for (const UniValue& script : script_pub_keys.getValues()) {
+//                               if (!script.isStr()) {
+//                                   throw JSONRPCError(RPC_TYPE_ERROR, "script must be a string");
+//                               }
+
+//                               std::string script_str = script.get_str();
+//                               if (script_str.empty()) {
+//                                   throw JSONRPCError(RPC_INVALID_PARAMETER, "Empty script provided");
+//                               }
+
+//                               // Parse the script
+//                               std::vector<unsigned char> script_data;
+//                               if (!IsHex(script_str)) {
+//                                   throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid script: not hex");
+//                               }
+
+//                               try {
+//                                   script_data = ParseHex(script_str);
+//                               } catch (const std::exception& e) {
+//                                   throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid script: " + std::string(e.what()));
+//                               }
+
+//                               if (script_data.empty()) {
+//                                   throw JSONRPCError(RPC_INVALID_PARAMETER, "Empty script after parsing");
+//                               }
+
+//                               scripts.insert(CScript(script_data.begin(), script_data.end()));
+//                           }
+
+//                           if (scripts.empty()) {
+//                               throw JSONRPCError(RPC_INVALID_PARAMETER, "No scripts provided");
+//                           }
+
+//                           bool have_solving_data = request.params[2].isNull() ? false : request.params[2].get_bool();
+//                           bool apply_label = request.params[3].isNull() ? false : request.params[3].get_bool();
+//                           int64_t timestamp = request.params[4].isNull() ? 0 : request.params[4].getInt<int64_t>();
+
+//                           // Import the scripts
+//                           if (!wallet.importblsctscript(label, scripts, have_solving_data, apply_label, timestamp)) {
+//                               throw JSONRPCError(RPC_WALLET_ERROR, "Error importing BLSCT scripts");
+//                           }
+
+//                           return true;
+//                       }};
+// }
 } // namespace wallet

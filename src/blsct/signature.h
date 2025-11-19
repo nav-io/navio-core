@@ -21,6 +21,9 @@ class Signature
 {
 public:
     Signature();
+    Signature(const std::vector<uint8_t>& vch) {
+        SetVch(vch);
+    };
 
     static Signature Aggregate(const std::vector<blsct::Signature>& sigs);
 

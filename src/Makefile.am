@@ -165,10 +165,10 @@ BLSCT_H = \
   blsct/building_block/lazy_points.h \
   blsct/building_block/pedersen_commitment.h \
   blsct/building_block/weighted_inner_prod_arg.h \
+  blsct/chain.h \
   blsct/common.h \
   blsct/double_public_key.h \
   blsct/eip_2333/bls12_381_keygen.h \
-  blsct/external_api/blsct.h \
   blsct/key_io.h \
   blsct/private_key.h \
   blsct/public_key.h \
@@ -204,6 +204,7 @@ BLSCT_H = \
   blsct/tokens/predicate_parser.h \
   blsct/tokens/rpc.h \
   blsct/wallet/address.h \
+  blsct/wallet/balance_proof.h \
   blsct/wallet/hdchain.h \
   blsct/wallet/helpers.h \
   blsct/wallet/import_wallet_type.h \
@@ -213,6 +214,7 @@ BLSCT_H = \
   blsct/wallet/txfactory.h \
   blsct/wallet/txfactory_base.h \
   blsct/wallet/txfactory_global.h \
+  blsct/wallet/unsigned_transaction.h \
   blsct/wallet/verification.h
 
 BLSCT_CPP = \
@@ -226,6 +228,7 @@ BLSCT_CPP = \
   blsct/building_block/lazy_point.cpp \
   blsct/building_block/lazy_points.cpp \
   blsct/building_block/weighted_inner_prod_arg.cpp \
+  blsct/chain.cpp \
   blsct/common.cpp \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
@@ -266,6 +269,7 @@ BLSCT_CPP = \
   blsct/wallet/txfactory.cpp \
   blsct/wallet/txfactory_base.cpp \
   blsct/wallet/txfactory_global.cpp \
+  blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/verification.cpp
 
 .PHONY: FORCE check-symbols check-security
@@ -574,12 +578,13 @@ libbitcoin_node_a_SOURCES = \
   blsct/range_proof/generators.cpp \
   blsct/range_proof/msg_amt_cipher.cpp \
   blsct/range_proof/proof_base.cpp \
+  blsct/range_proof/rpc.cpp \
   blsct/set_mem_proof/set_mem_proof.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/tokens/info.cpp \
   blsct/tokens/rpc.cpp \
-  blsct/wallet/rpc.cpp \
+  blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/verification.cpp \
   blsct/signature.cpp \
   chain.cpp \
@@ -734,9 +739,11 @@ libbitcoin_wallet_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
   blsct/signature.cpp \
   blsct/wallet/address.cpp \
+  blsct/wallet/balance_proof.cpp \
   blsct/wallet/helpers.cpp \
   blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
+  blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/rpc.cpp \
   blsct/wallet/txfactory.cpp \
   blsct/wallet/txfactory_base.cpp \
@@ -905,6 +912,7 @@ libbitcoin_consensus_a_SOURCES = \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/pos/helpers.cpp \
   blsct/pos/proof.cpp \
+  blsct/public_key.cpp \
   blsct/signature.cpp \
   consensus/amount.h \
   consensus/merkle.cpp \
@@ -985,6 +993,7 @@ libbitcoin_common_a_SOURCES = \
   blsct/tokens/predicate_parser.cpp \
   blsct/wallet/address.cpp \
   blsct/wallet/txfactory_global.cpp \
+  blsct/wallet/unsigned_transaction.cpp \
   chainparams.cpp \
   coins.cpp \
   common/args.cpp \
@@ -1315,6 +1324,7 @@ libnaviokernel_la_SOURCES = \
   blsct/tokens/predicate_exec.cpp \
   blsct/tokens/predicate_parser.cpp \
   blsct/wallet/txfactory_global.cpp \
+  blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/verification.cpp \
   chain.cpp \
   clientversion.cpp \
@@ -1453,7 +1463,9 @@ if BUILD_LIBBLSCT_ONLY
 LIBBLSCT = libblsct.a
 noinst_LIBRARIES = $(LIBBLSCT)
 libblsct_a_SOURCES = \
+  blsct/external_api/blsct.h \
   blsct/external_api/blsct.cpp \
+  blsct/external_api/dummy_impl.cpp \
   common/args.cpp \
   common/system.cpp \
   common/url.cpp \
@@ -1478,6 +1490,7 @@ libblsct_a_SOURCES = \
   support/cleanse.cpp \
   support/lockedpool.cpp \
   uint256.cpp \
+  util/moneystr.cpp \
   util/rbf.cpp \
   util/strencodings.cpp \
   util/time.cpp \
@@ -1517,7 +1530,7 @@ libunivalue_blsct_a_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR
 libunivalue_blsct_a_CXXFLAGS = $(AM_CXXFLAGS) -fPIC
 
 libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) -fPIC
-libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -DLIBBLSCT -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
 
 if ENABLE_SSE41
 libblsct_a_CXXFLAGS += $(SSE41_CXXFLAGS)

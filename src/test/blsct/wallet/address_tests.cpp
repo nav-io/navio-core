@@ -40,7 +40,7 @@ BOOST_FIXTURE_TEST_CASE(address_test, BasicTestingSetup)
 
     BOOST_CHECK(subAddressDoubleKey.GetID().ToString() == "dc103f3afbfa5fccf51bfcba8a65fb14ddd0c1a7");
 
-    BOOST_CHECK(subAddress.GetString() == "nv1szddvednme8p63xcxhcm3h3k4tlw5vnesudwe66km0w6jrqyymqz969xmknnz0w9unqczu58sp0rhqjc4tdmgt6hmtn9tpavrzckfdfcuwyx4w0s7dgvjce34377psjen6ug4s2xfg9smrw6qx70xtja6s8wrt28dc");
+    BOOST_CHECK(subAddress.GetString() == "nav1szddvednme8p63xcxhcm3h3k4tlw5vnesudwe66km0w6jrqyymqz969xmknnz0w9unqczu58sp0rhqjc4tdmgt6hmtn9tpavrzckfdfcuwyx4w0s7dgvjce34377psjen6ug4s2xfg9smrw6qx70xtja6syg55uu8z");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

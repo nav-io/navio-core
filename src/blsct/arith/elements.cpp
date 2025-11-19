@@ -2,13 +2,17 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <algorithm>
 #include <blsct/arith/elements.h>
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
 #include <deque>
+#include <iterator>
+#include <random>
 #include <sstream>
 #include <tinyformat.h>
 #include <util/strencodings.h>
+#include <vector>
 
 template <typename T>
 OrderedElements<T>::OrderedElements(){};
@@ -21,16 +25,75 @@ OrderedElements<T>::OrderedElements(const std::set<T>& set)
 };
 template OrderedElements<MclG1Point>::OrderedElements(const std::set<MclG1Point>& set);
 
+struct XorShift32 {
+    uint32_t state;
+
+    explicit XorShift32(uint32_t seed) : state(seed)
+    {
+        if (state == 0) state = 0x1; // avoid zero state
+    }
+
+    uint32_t next()
+    {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return state;
+    }
+};
+
+// Deterministic shuffle using Fisher-Yates
 template <typename T>
-Elements<T> OrderedElements<T>::GetElements() const
+void _deterministic_shuffle(std::vector<T>& vec, XorShift32& rng)
+{
+    for (std::size_t i = vec.size() - 1; i > 0; --i) {
+        uint32_t j = rng.next() % (i + 1);
+        std::swap(vec[i], vec[j]);
+    }
+}
+
+void uint256_to_seed_array(const uint256& value, uint64_t seed_data[4])
+{
+    const unsigned char* bytes = value.begin(); // Little-endian
+
+    for (int i = 0; i < 4; ++i) {
+        std::memcpy(&seed_data[i], bytes + i * 8, sizeof(uint64_t));
+    }
+}
+
+uint32_t compress_seed(const uint64_t seed_data[4])
+{
+    // Fold the 4x64-bit seed into a 32-bit value deterministically
+    return static_cast<uint32_t>(
+        (seed_data[0] ^ (seed_data[0] >> 32) ^
+         seed_data[1] ^ (seed_data[1] >> 32) ^
+         seed_data[2] ^ (seed_data[2] >> 32) ^
+         seed_data[3] ^ (seed_data[3] >> 32)) &
+        0xFFFFFFFF);
+}
+
+template <typename T>
+Elements<T> OrderedElements<T>::GetElements(const uint256& seed) const
 {
     if (Size() == 0) return Elements<T>();
+
     std::vector<T> ret;
     std::copy(m_set.begin(), m_set.end(), std::back_inserter(ret));
 
-    return ret;
-};
-template Elements<MclG1Point> OrderedElements<MclG1Point>::GetElements() const;
+    if (seed != uint256()) {
+        uint64_t seed_data[4];
+        uint256_to_seed_array(seed, seed_data);
+
+        XorShift32 rng(compress_seed(seed_data));
+        _deterministic_shuffle(ret, rng);
+
+        if (ret.size() > 16) {
+            ret.resize(16);
+        }
+    }
+
+    return Elements<T>(ret); // assuming Elements<T> has a vector<T> constructor
+}
 
 template <typename T>
 size_t OrderedElements<T>::Size() const

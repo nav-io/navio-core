@@ -16,8 +16,8 @@ BOOST_AUTO_TEST_CASE(roundtrip)
     for (uint8_t hash = 0; hash < 5; ++hash) {
         for (int index = -2; index < 3; ++index) {
             TxState state = TxStateInterpretSerialized(TxStateUnrecognized{uint256{hash}, index});
-            BOOST_CHECK_EQUAL(TxStateSerializedBlockHash(state), uint256{hash});
-            BOOST_CHECK_EQUAL(TxStateSerializedIndex(state), index);
+            BOOST_CHECK_EQUAL(TxStateSerializedBlockHash<TxState>(state), uint256{hash});
+            BOOST_CHECK_EQUAL(TxStateSerializedIndex<TxState>(state), index);
         }
     }
 }

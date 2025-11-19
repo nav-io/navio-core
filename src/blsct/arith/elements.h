@@ -14,8 +14,8 @@
 #include <cstddef>
 #include <functional>
 #include <stdexcept>
+#include <uint256.h>
 #include <vector>
-
 
 template <typename T>
 class Elements
@@ -154,7 +154,7 @@ public:
     OrderedElements(const std::set<T>& vec);
     // OrderedElements(const OrderedElements& other) : m_set(other.m_set) {};
 
-    Elements<T> GetElements() const;
+    Elements<T> GetElements(const uint256& seed = uint256{}) const;
 
     size_t Size() const;
     void Add(const T& x);
