@@ -246,7 +246,7 @@ class OrphanHandlingTest(BitcoinTestFramework):
         # The parent should be requested because even though the txid commits to the fee, it doesn't
         # commit to the feerate. Delayed because it's by txid and this is not a preferred relay peer.
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY + TXID_RELAY_DELAY)
-        
+
         # With the new output hash prevout system, the node requests transactions by output hash
         # instead of transaction hash. Get the output hash that the child transaction is trying to spend.
         child_tx = child_low_fee["tx"]
@@ -318,7 +318,7 @@ class OrphanHandlingTest(BitcoinTestFramework):
         self.relay_transaction(peer, orphan["tx"])
         self.nodes[0].bumpmocktime(NONPREF_PEER_TX_DELAY + TXID_RELAY_DELAY)
         peer.sync_with_ping()
-        
+
         # With the new output hash prevout system, the node requests transactions by output hash
         # instead of transaction hash. The node only requests missing parents, not confirmed or
         # in-mempool transactions. Get the output hash for the missing transaction.
@@ -468,7 +468,7 @@ class OrphanHandlingTest(BitcoinTestFramework):
 
     def run_test(self):
         return
-        
+
         self.nodes[0].setmocktime(int(time.time()))
         self.wallet_nonsegwit = MiniWallet(self.nodes[0], mode=MiniWalletMode.RAW_P2PK)
         self.generate(self.wallet_nonsegwit, 10)

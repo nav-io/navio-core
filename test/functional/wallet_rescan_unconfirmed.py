@@ -60,7 +60,7 @@ class WalletRescanUnconfirmed(BitcoinTestFramework):
         # Get the output hash from the decoded transaction (same method as other tests)
         decoded_tx = node.decoderawtransaction(tx_parent_to_reorg["hex"])
         utxo_txid = w0_utxos[0]["txid"]
-        
+
         found = False
         for out in decoded_tx["vout"]:
             if out["hash"] == utxo_txid:
@@ -74,7 +74,7 @@ class WalletRescanUnconfirmed(BitcoinTestFramework):
 
         self.log.info("Mock a reorg, causing parent to re-enter mempools after its child")
         node.invalidateblock(block_to_reorg)
-        
+
         # Use txidhash for mempool transactions in modified Bitcoin Core
         assert tx_parent_to_reorg["txidhash"] in node.getrawmempool()
 

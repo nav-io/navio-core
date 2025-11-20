@@ -71,7 +71,7 @@ class MempoolWtxidTest(BitcoinTestFramework):
         parent["tx"].rehash()
         parent_txid = node.sendrawtransaction(parent["tx"].serialize().hex())
         parent = parent["tx"]
-        
+
         # Get the actual parent output value after the transaction is created
         parent_output_value = parent.vout[0].nValue
 

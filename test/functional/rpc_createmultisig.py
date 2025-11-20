@@ -32,7 +32,7 @@ class RpcCreateMultiSigTest(BitcoinTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 3
         self.supports_cli = False
-        self.extra_args = [["-txindex"], ["-txindex"], ["-txindex"]] 
+        self.extra_args = [["-txindex"], ["-txindex"], ["-txindex"]]
 
     def get_keys(self):
         self.pub = []

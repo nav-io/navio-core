@@ -82,7 +82,7 @@ class WalletChangeAddressTest(BitcoinTestFramework):
                 change_index = self.get_change_index(self.nodes[n], tx)
                 if change_index is not None:
                     change_indices_seen[n].append(change_index)
-        
+
         # Verify that change indices are in ascending order
         # Note: With -discardfee=1, some transactions might not create change outputs.
         # The wallet's change index counter may increment even when change isn't created,

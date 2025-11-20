@@ -33,7 +33,7 @@ class ImportPrunedFundsTest(BitcoinTestFramework):
     def run_test(self):
         self.log.info("Skipping test...")
         return
-        
+
         self.log.info("Mining blocks...")
         self.generate(self.nodes[0], COINBASE_MATURITY + 1)
 

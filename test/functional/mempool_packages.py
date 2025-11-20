@@ -207,7 +207,7 @@ class MempoolPackagesTest(BitcoinTestFramework):
         tx_with_children = self.wallet.send_self_transfer_multi(from_node=self.nodes[0], num_outputs=10)
         parent_transaction = tx_with_children["txid"]
         transaction_package = tx_with_children["new_utxos"]
-        
+
         # Get the parent transaction's output hashes for comparison
         parent_raw_tx = self.nodes[0].getrawtransaction(parent_transaction, 1)
         parent_output_hashes = [out['hash'] for out in parent_raw_tx['vout']]

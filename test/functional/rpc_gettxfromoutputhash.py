@@ -26,20 +26,20 @@ class GetTxFromOutputHashTest(BitcoinTestFramework):
         # Create a transaction with outputs
         tx_result = wallet.send_self_transfer(from_node=node)
         txid = tx_result['txid']
-        
+
         # Mine a block to confirm the transaction
         self.generate(wallet, 1)
 
         # Get the transaction details to find an output hash
         tx_details = node.getrawtransaction(txid, True)
-        
+
         # Find the first output and get its hash
         first_output = tx_details['vout'][0]
         output_hash = first_output['hash']
-        
+
         # Test the new RPC command
         result = node.gettxfromoutputhash(output_hash)
-        
+
         # Verify the result
         assert_equal(result['txid'], txid)
         assert_equal(result['vout'], 0)
@@ -59,11 +59,11 @@ class GetTxFromOutputHashTest(BitcoinTestFramework):
         # Create a new transaction but don't mine it
         mempool_tx_result = wallet.send_self_transfer(from_node=node)
         mempool_txid = mempool_tx_result['txid']
-        
+
         # Get the transaction details
         mempool_tx_details = node.getrawtransaction(mempool_txid, True)
         mempool_output_hash = mempool_tx_details['vout'][0]['hash']
-        
+
         # Test finding the mempool transaction
         mempool_result = node.gettxfromoutputhash(mempool_output_hash)
         assert_equal(mempool_result['txid'], mempool_txid)

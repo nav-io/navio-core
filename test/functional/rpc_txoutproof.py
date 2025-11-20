@@ -36,7 +36,6 @@ class MerkleBlockTest(BitcoinTestFramework):
         res = miniwallet.send_self_transfer(from_node=self.nodes[0])
         txid2 = res['txid']
         txoutid2 = res['new_utxo']['txid']
-        
 
         # This will raise an exception because the transaction is not yet in a block
         assert_raises_rpc_error(-5, "Transaction not yet in block", self.nodes[0].gettxoutproof, [txid1])

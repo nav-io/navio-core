@@ -41,7 +41,6 @@
 #include <util/vector.h>
 #include <validation.h>
 #include <validationinterface.h>
-#include <wallet/wallet.h>
 
 #include <numeric>
 #include <stdint.h>
@@ -1998,46 +1997,7 @@ static RPCHelpMan gettxfromoutputhash()
                 }
             }
 
-            // Search in wallet transactions using GetWalletTxFromOutpoint (much more efficient)
-            if (node.wallet_loader) {
-                for (const auto& wallet : node.wallet_loader->getWallets()) {
-                    // Cast to CWallet to access the actual implementation
-                    const wallet::CWallet* cwallet = dynamic_cast<const wallet::CWallet*>(wallet.get());
-                    if (cwallet) {
-                        LOCK(cwallet->cs_wallet);
-
-                        // Try to find the transaction using the output hash as a COutPoint
-                        COutPoint outpoint(output_hash);
-                        auto wallet_tx = cwallet->GetWalletTxFromOutpoint(outpoint);
-                        if (wallet_tx) {
-                            // Find the output index within the transaction
-                            int output_index = wallet_tx->GetOutputIndexFromHash(outpoint);
-                            if (output_index >= 0) {
-                                UniValue result(UniValue::VOBJ);
-                                result.pushKV("txid", wallet_tx->GetHash().GetHex());
-                                result.pushKV("vout", output_index);
-
-                                // Determine if confirmed and get block info
-                                uint256 block_hash = TxStateSerializedBlockHash<wallet::TxState>(wallet_tx->m_state);
-                                if (block_hash.IsNull()) {
-                                    result.pushKV("confirmations", 0);
-                                } else {
-                                    const CBlockIndex* pindex = chainman.m_blockman.LookupBlockIndex(block_hash);
-                                    if (pindex && active_chainstate.m_chain.Contains(pindex)) {
-                                        result.pushKV("blockhash", block_hash.GetHex());
-                                        result.pushKV("confirmations", 1 + active_chainstate.m_chain.Height() - pindex->nHeight);
-                                    } else {
-                                        result.pushKV("confirmations", 0);
-                                    }
-                                }
-                                return result;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Fallback: Search in blockchain by iterating over blocks.
+            // Search in blockchain by iterating over blocks.
             if (g_txindex) {
                 g_txindex->BlockUntilSyncedToCurrentChain();
             }
