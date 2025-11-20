@@ -510,11 +510,18 @@ RPCHelpMan getnftbalance()
                 const auto bal = GetBalance(*pwallet, min_depth, false, TokenId(token_id, it.first));
 
                 if ((bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0)) > 0) {
-                    UniValue metadata(UniValue::VOBJ);
+                    UniValue retObj(UniValue::VOBJ);
+
+                    UniValue metadata(UniValue::VARR);
                     for (auto& md_it : it.second) {
-                        metadata.pushKV(md_it.first, md_it.second);
+                        UniValue metadataObj(UniValue::VOBJ);
+                        metadataObj.pushKV("key", md_it.first);
+                        metadataObj.pushKV("value", md_it.second);
+                        metadata.push_back(metadataObj);
                     }
-                    ret.pushKV(strprintf("%llu", it.first), metadata);
+                    retObj.pushKV("index", strprintf("%llu", it.first));
+                    retObj.pushKV("metadata", metadata);
+                    ret.push_back(retObj);
                 }
             }
 

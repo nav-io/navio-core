@@ -76,12 +76,12 @@ class NavioBlsctNftTest(BitcoinTestFramework):
         tokens = self.nodes[0].listtokens()
         assert len(tokens) == 1, "length of tokens is not 1"
 
-        self.log.info(f"Created token: {token['tokenId']}")
+        self.log.info(f"Created NFT: {token['tokenId']}")
 
         assert tokens[0]['type'] == 'nft', "token type is not token"
-        assert tokens[0]['metadata'] == {'name': 'Test'}, "incorrect metadata"
+        assert tokens[0]['metadata'] == [{'key':'name', 'value':'Test'}], "incorrect metadata"
         assert tokens[0]['maxSupply'] == 1000, "incorrect max supply"
-        assert tokens[0]['mintedNft'] == {}, "incorrect current supply"
+        assert tokens[0]['mintedNft'] == [], "incorrect current supply"
 
         wallet.mintnft(token['tokenId'], 1, blsct_address, {"id": "null"})
         block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
@@ -89,9 +89,9 @@ class NavioBlsctNftTest(BitcoinTestFramework):
         tokenInfo = self.nodes[0].gettoken(token['tokenId'])
 
         assert tokenInfo['type'] == 'nft', "token type is not token"
-        assert tokenInfo['metadata'] == {'name': 'Test'}, "incorrect metadata"
+        assert tokenInfo['metadata'] ==[{'key':'name', 'value':'Test'}], "incorrect metadata"
         assert tokenInfo['maxSupply'] == 1000, "incorrect max supply"
-        assert tokenInfo['mintedNft'] == {'1': {'id': 'null'}}, "incorrect current supply"
+        assert tokenInfo['mintedNft'] == [{'index': '1', 'metadata': [{'key': 'id', 'value': 'null'}]}], "incorrect current supply"
 
         self.log.info(f"Minted 1 NFT")
 
@@ -101,8 +101,8 @@ class NavioBlsctNftTest(BitcoinTestFramework):
         self.log.info(f"Balance in NODE 1: {nft_balance}")
         self.log.info(f"Balance in NODE 2: {nft_balance_2}")
 
-        assert nft_balance == {'1': {'id': 'null'}}, "incorrect nft balance in node 1"
-        assert nft_balance_2 == {}, "incorrect nft balance in node 2"
+        assert nft_balance == [{'index': '1', 'metadata': [{'key': 'id', 'value': 'null'}]}], "incorrect nft balance in node 1"
+        assert nft_balance_2 == [], "incorrect nft balance in node 2"
 
         self.log.info(f"Sending NFT with id #1 to NODE 2")
 
@@ -115,8 +115,8 @@ class NavioBlsctNftTest(BitcoinTestFramework):
         self.log.info(f"Balance in NODE 1: {nft_balance}")
         self.log.info(f"Balance in NODE 2: {nft_balance_2}")
 
-        assert nft_balance_2 == {'1': {'id': 'null'}}, "incorrect nft balance in node 2"
-        assert nft_balance == {}, "incorrect nft balance in node"
+        assert nft_balance_2 == [{'index': '1', 'metadata': [{'key': 'id', 'value': 'null'}]}], "incorrect nft balance in node 2"
+        assert nft_balance == [], "incorrect nft balance in node"
 
 
 if __name__ == '__main__':

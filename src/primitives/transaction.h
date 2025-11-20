@@ -360,6 +360,7 @@ public:
     {
         return (a.nValue == b.nValue &&
                 a.scriptPubKey == b.scriptPubKey &&
+                a.predicate == b.predicate &&
                 a.tokenId == b.tokenId && a.blsctData == b.blsctData);
     }
 
