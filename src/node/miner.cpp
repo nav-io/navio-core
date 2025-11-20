@@ -272,7 +272,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
 
     std::vector<blsct::Signature> txSigs;
 
-    auto out = blsct::CreateOutput(destination.GetKeys(), nReward + nFees, "Reward");
+    auto out = blsct::CreateOutput(destination.GetKeys(), nReward, "Reward");
 
     txSigs.push_back(blsct::PrivateKey(out.blindingKey).Sign(out.out.GetHash()));
     txSigs.push_back(blsct::PrivateKey(out.gamma.Negate()).SignBalance());

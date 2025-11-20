@@ -19,29 +19,37 @@ std::vector<RPCResult> tokenInfoResult = {
     RPCResult{RPCResult::Type::NUM, "maxSupply", "the token max supply"},
     RPCResult{RPCResult::Type::NUM, "currentSupply", true, "the token current supply"},
     RPCResult{RPCResult::Type::OBJ_DYN, "mintedNft", true, "the nfts already minted", {{RPCResult::Type::OBJ_DYN, "index", "metadata", {{RPCResult::Type::STR, "xxxx", "value"}}}}},
-
 };
 
 void TokenToUniValue(UniValue& obj, const blsct::TokenEntry& token)
 {
     obj.pushKV("publicKey", token.info.publicKey.ToString());
     obj.pushKV("type", blsct::TokenTypeToString(token.info.type));
-    UniValue metadata{UniValue::VOBJ};
+    UniValue metadata{UniValue::VARR};
     for (auto& it : token.info.mapMetadata) {
-        metadata.pushKV(it.first, it.second);
+        UniValue metadataObj{UniValue::VOBJ};
+        metadataObj.pushKV("key", it.first);
+        metadataObj.pushKV("value", it.second);
+        metadata.push_back(metadataObj);
     }
     obj.pushKV("metadata", metadata);
     obj.pushKV("maxSupply", token.info.nTotalSupply);
     if (token.info.type == blsct::TokenType::TOKEN)
         obj.pushKV("currentSupply", token.nSupply);
     else if (token.info.type == blsct::TokenType::NFT) {
-        UniValue mintedNft{UniValue::VOBJ};
+        UniValue mintedNft{UniValue::VARR};
         for (auto& it : token.mapMintedNft) {
-            UniValue nftMetadata{UniValue::VOBJ};
+            UniValue nftMetadata{UniValue::VARR};
+            UniValue nftObject{UniValue::VOBJ};
             for (auto& it2 : it.second) {
-                nftMetadata.pushKV(it2.first, it2.second);
+                UniValue nftMetadataObj{UniValue::VOBJ};
+                nftMetadataObj.pushKV("key", it2.first);
+                nftMetadataObj.pushKV("value", it2.second);
+                nftMetadata.push_back(nftMetadataObj);
             }
-            mintedNft.pushKV(strprintf("%llu", it.first), nftMetadata);
+            nftObject.pushKV("index", strprintf("%llu", it.first));
+            nftObject.pushKV("metadata", nftMetadata);
+            mintedNft.push_back(nftObject);
         }
         obj.pushKV("mintedNft", mintedNft);
     }
@@ -62,7 +70,7 @@ gettoken()
             },
         },
         RPCResult{RPCResult::Type::OBJ, "", "", tokenInfoResult},
-        RPCExamples{HelpExampleCli("gettoken", "ba12afc43322f204fe6236b11a0f85b5d9edcb09f446176c73fe4abe99a17edd")},
+        RPCExamples{HelpExampleCli("gettoken", "ba12afc43322f204fe6236b11a0f85b5d9edcb09f446176c73fe4abe99a17edd") + HelpExampleRpc("gettoken", "ba12afc43322f204fe6236b11a0f85b5d9edcb09f446176c73fe4abe99a17edd")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             LOCK(cs_main);
             ChainstateManager& chainman = EnsureAnyChainman(request.context);
@@ -94,7 +102,7 @@ listtokens()
         RPCResult{RPCResult::Type::ARR, "", "", {
                                                     RPCResult{RPCResult::Type::OBJ, "", "", tokenInfoResult},
                                                 }},
-        RPCExamples{HelpExampleCli("listtokens", "")},
+        RPCExamples{HelpExampleCli("listtokens", "") + HelpExampleRpc("listtokens", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             LOCK(cs_main);
             ChainstateManager& chainman = EnsureAnyChainman(request.context);
