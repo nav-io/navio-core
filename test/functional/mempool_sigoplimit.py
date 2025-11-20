@@ -3,7 +3,6 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test sigop limit mempool policy (`-bytespersigop` parameter)"""
-from decimal import Decimal
 from math import ceil
 
 from test_framework.messages import (
@@ -25,7 +24,6 @@ from test_framework.script import (
     OP_TRUE,
 )
 from test_framework.script_util import (
-    keys_to_multisig_script,
     script_to_p2wsh_script,
 )
 from test_framework.test_framework import BitcoinTestFramework
@@ -33,10 +31,8 @@ from test_framework.util import (
     assert_equal,
     assert_greater_than,
     assert_greater_than_or_equal,
-    tx_from_hex,
 )
 from test_framework.wallet import MiniWallet
-from test_framework.wallet_util import generate_keypair
 
 DEFAULT_BYTES_PER_SIGOP = 20  # default setting
 

@@ -301,7 +301,6 @@ class ImportRescanTest(BitcoinTestFramework):
         # transaction can't be recognized using its outputs. The wallet rescan needs to know the
         # inputs of the transaction to detect it, so the parent must be processed before the child.
         # An equivalent test for descriptors exists in wallet_rescan_unconfirmed.py.
-        unspent_txid_map = {f"{txin['txid']}" : txin for txin in self.nodes[1].listunspent()}
         for variant in mempool_variants:
             # Find the unspent output that corresponds to this transaction
             unspent_output = next(txin for txin in self.nodes[1].listunspent() if txin["txid"] == variant.initial_outid)

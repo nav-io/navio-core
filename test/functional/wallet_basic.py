@@ -630,7 +630,6 @@ class WalletTest(BitcoinTestFramework):
         # Prevent potential race condition when calling wallet RPCs right after restart
         self.nodes[0].syncwithvalidationinterfacequeue()
 
-        node0_balance = self.nodes[0].getbalance()
         # With walletrejectlongchains we will not create the tx and store it in our wallet.
         # assert_raises_rpc_error(-6, f"too many unconfirmed ancestors [limit: {chainlimit * 2}]", self.nodes[0].sendtoaddress, sending_addr, node0_balance - Decimal('0.01'))
 

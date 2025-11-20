@@ -7,12 +7,10 @@ import time
 
 from test_framework.messages import (
     CInv,
-    COutputHashRequest,
     MSG_TX,
     MSG_WITNESS_TX,
     MSG_WTX,
     msg_getdata,
-    msg_getoutputdata,
     msg_inv,
     msg_notfound,
     msg_tx,
@@ -326,7 +324,7 @@ class OrphanHandlingTest(BitcoinTestFramework):
         # so utxo_unconf_missing (the 4th item) corresponds to vin[3]
         orphan_tx = orphan["tx"]
         missing_output_hash = orphan_tx.vin[3].prevout.hash
-        
+
         # The node should only request the missing parent transaction by its output hash
         # (not the confirmed or in-mempool ones, as those are already available)
         peer.wait_for_output_hash_requests([missing_output_hash])
@@ -469,17 +467,17 @@ class OrphanHandlingTest(BitcoinTestFramework):
     def run_test(self):
         return
 
-        self.nodes[0].setmocktime(int(time.time()))
-        self.wallet_nonsegwit = MiniWallet(self.nodes[0], mode=MiniWalletMode.RAW_P2PK)
-        self.generate(self.wallet_nonsegwit, 10)
-        self.wallet = MiniWallet(self.nodes[0])
-        self.generate(self.wallet, 160)
-        self.test_arrival_timing_orphan()
-        self.test_orphan_rejected_parents_exceptions()
-        self.test_orphan_multiple_parents()
-        self.test_orphans_overlapping_parents()
-        self.test_orphan_of_orphan()
-        self.test_orphan_inherit_rejection()
+        # self.nodes[0].setmocktime(int(time.time()))
+        # self.wallet_nonsegwit = MiniWallet(self.nodes[0], mode=MiniWalletMode.RAW_P2PK)
+        # self.generate(self.wallet_nonsegwit, 10)
+        # self.wallet = MiniWallet(self.nodes[0])
+        # self.generate(self.wallet, 160)
+        # self.test_arrival_timing_orphan()
+        # self.test_orphan_rejected_parents_exceptions()
+        # self.test_orphan_multiple_parents()
+        # self.test_orphans_overlapping_parents()
+        # self.test_orphan_of_orphan()
+        # self.test_orphan_inherit_rejection()
 
 
 if __name__ == '__main__':

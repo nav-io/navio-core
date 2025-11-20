@@ -4,7 +4,6 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test gettxoutproof and verifytxoutproof RPCs."""
 
-from decimal import Decimal
 from test_framework.authproxy import JSONRPCException
 from test_framework.messages import (
     CMerkleBlock,

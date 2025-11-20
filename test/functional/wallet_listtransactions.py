@@ -124,8 +124,6 @@ class ListTransactionsTest(BitcoinTestFramework):
         txid_1 = self.nodes[0].sendtoaddress(self.nodes[1].getnewaddress(), 1)
         # Get the transaction details
         raw_tx = self.nodes[0].getrawtransaction(txid_1, 1)
-        # Find the output index of the 1 BTC output sent to node1
-        txoutn_1 = next(i for i in raw_tx['vout'] if i['value'] == Decimal("1"))["n"]
         # Find the change output (the one that's not the amount we sent)
         change_output = None
         for vout in raw_tx['vout']:

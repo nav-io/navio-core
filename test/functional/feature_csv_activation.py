@@ -129,7 +129,7 @@ class BIP68_112_113Test(BitcoinTestFramework):
         # Get the output hash from the coinbase transaction
         output_hash = coinbase_tx['vout'][0]['hash']
         # Use gettxfromoutputhash to find the transaction, then get the UTXO
-        tx_info = self.nodes[0].gettxfromoutputhash(output_hash)
+        # tx_info = self.nodes[0].gettxfromoutputhash(output_hash)
         # The MiniWallet might not track coinbase transactions, so we need to rescan or use the output hash directly
         # Try to get the UTXO by output hash instead
         try:

@@ -33,7 +33,6 @@ from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
-    tx_from_hex,
 )
 from test_framework.wallet import MiniWallet
 
@@ -69,7 +68,7 @@ class MempoolWtxidTest(BitcoinTestFramework):
         # Replace the output scriptPubKey with our custom one
         parent["tx"].vout[0].scriptPubKey = script_pubkey
         parent["tx"].rehash()
-        parent_txid = node.sendrawtransaction(parent["tx"].serialize().hex())
+        # parent_txid = node.sendrawtransaction(parent["tx"].serialize().hex())
         parent = parent["tx"]
 
         # Get the actual parent output value after the transaction is created

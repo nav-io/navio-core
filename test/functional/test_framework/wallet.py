@@ -32,7 +32,6 @@ from test_framework.messages import (
     CTxIn,
     CTxInWitness,
     CTxOut,
-    uint256_from_str,
 )
 from test_framework.script import (
     CScript,
@@ -293,10 +292,10 @@ class MiniWallet:
                                         continue
                                 else:
                                     raise StopIteration(f"No UTXO found with txid={txid}, confirmed_only={confirmed_only}")
-                            except Exception as e:
+                            except Exception:
                                 # Transaction not found in mempool or blockchain
                                 raise StopIteration(f"No UTXO found with txid={txid}, confirmed_only={confirmed_only}")
-                    except Exception as e:
+                    except Exception:
                         raise StopIteration(f"No UTXO found with txid={txid}, confirmed_only={confirmed_only}")
         else:
             utxo_filter = reversed(mature_coins)  # By default the largest utxo

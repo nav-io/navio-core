@@ -375,6 +375,11 @@ void CTxMemPool::UpdateAncestorsOf(bool add, txiter it, setEntries &setAncestors
 
 void CTxMemPool::UpdateEntryForAncestors(txiter it, const setEntries &setAncestors)
 {
+    // m_count_with_ancestors is initialized to 1 (the transaction itself)
+    // We need to add the number of ancestors (setAncestors.size()) to get the total count
+    // But since it starts at 1, we need to add (setAncestors.size()) to get 1 + setAncestors.size()
+    // However, UpdateAncestorState does +=, so if we call it with updateCount = setAncestors.size(),
+    // we get: 1 + setAncestors.size(), which is correct.
     int64_t updateCount = setAncestors.size();
     int64_t updateSize = 0;
     CAmount updateFee = 0;
@@ -1365,6 +1370,7 @@ void CTxMemPool::GetTransactionAncestry(const uint256& txid, size_t& ancestors, 
     ancestors = descendants = 0;
 
     // First try to look up txid as a transaction hash
+    // mapTx is indexed by uint256 (via mempoolentry_txid which converts GetHash() to uint256)
     auto it = mapTx.find(txid);
     if (it != mapTx.end()) {
         ancestors = it->GetCountWithAncestors();

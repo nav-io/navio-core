@@ -396,7 +396,6 @@ def test_notmine_bumpfee(self, rbf_node, peer_node, dest_address):
     rbfid = rbf_node.sendrawtransaction(signedtx["hex"])
     entry = rbf_node.getmempoolentry(rbfid)
     old_fee = entry["fees"]["base"]
-    old_feerate = int(old_fee / entry["vsize"] * Decimal(1e8))
     assert_raises_rpc_error(-4, "Transaction contains inputs that don't belong to this wallet",
                             rbf_node.bumpfee, rbfid)
 
@@ -443,7 +442,7 @@ def test_bumpfee_with_abandoned_descendant_succeeds(self, rbf_node, rbf_node_add
     self.log.info('Test that fee can be bumped when it has abandoned descendant')
     # parent is send-to-self, so we don't have to check which output is change when creating the child tx
     parent_id = spend_one_input(rbf_node, rbf_node_address)["outid"]
-    parent_tx_id = spend_one_input(rbf_node, rbf_node_address)["txid"]
+    spend_one_input(rbf_node, rbf_node_address)
     # Submit child transaction with low fee
     res = rbf_node.send(outputs={dest_address: 0.00020000},
                              options={"inputs": [{"txid": parent_id}], "fee_rate": 2})

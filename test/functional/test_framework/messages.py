@@ -999,7 +999,7 @@ class CTxOut:
         if len(self.predicate) > 0:
             flags |= OUTPUT_PREDICATE_MARKER
         if ((self.tokenId.isNFT() or len(self.predicate) > 0) and self.nValue != 0):
-            flags |= OUTPUT_TRANSPARENT_VALUE_MARKER;
+            flags |= OUTPUT_TRANSPARENT_VALUE_MARKER
 
         r = b""
 

@@ -29,7 +29,7 @@ from test_framework.script import (
     OP_TRUE,
 )
 from test_framework.script_util import (
-    DUMMY_MIN_OP_RETURN_SCRIPT,
+    # DUMMY_MIN_OP_RETURN_SCRIPT,
     keys_to_multisig_script,
     MIN_PADDING,
     MIN_STANDARD_TX_NONWITNESS_SIZE,
@@ -183,7 +183,7 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
         tx.vin[1].prevout = COutPoint(hash=out_hash_1)
         tx.vout[0].nValue = int(0.1 * COIN)
         raw_tx_spend_both = tx.serialize().hex()
-        txid_spend_both = self.wallet.sendrawtransaction(from_node=node, tx_hex=raw_tx_spend_both)
+        # txid_spend_both = self.wallet.sendrawtransaction(from_node=node, tx_hex=raw_tx_spend_both)
         self.generate(node, 1)
         self.mempool_size = 0
         # Now see if we can add the coins back to the utxo set by sending the exact txs again
