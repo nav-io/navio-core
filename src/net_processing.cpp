@@ -1547,7 +1547,7 @@ void PeerManagerImpl::AddTxAnnouncement(const CNode& node, const GenTxid& gtxid,
     m_txrequest.ReceivedInv(nodeid, gtxid, preferred, current_time + delay);
 }
 
-void PeerManagerImpl::AddOutputHashAnnouncement(const CNode& node, const uint256& outputHash, std::chrono::microseconds current_time)
+void PeerManagerImpl::AddOutputHashAnnouncement(const CNode& node, const uint256& outputHash, std::chrono::microseconds current_time) EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
 {
     AssertLockHeld(::cs_main); // For m_txrequest
     NodeId nodeid = node.GetId();
@@ -2453,6 +2453,9 @@ CTransactionRef PeerManagerImpl::FindTxByOutputHash(const uint256& outputHash)
 
     // Check the most recent block
     {
+        // Acquire lock to check most recent block transactions
+        // This is safe as FindTxByOutputHash is not called while holding m_most_recent_block_mutex
+        // NOLINTNEXTLINE(thread-safety-analysis)
         LOCK(m_most_recent_block_mutex);
         if (m_most_recent_block_txs != nullptr) {
             for (const auto& [txid, tx] : *m_most_recent_block_txs) {
@@ -4473,8 +4476,6 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                 }
             }
             if (!fRejectedParents) {
-                const auto current_time{GetTime<std::chrono::microseconds>()};
-
                 // With the new output hash prevout system, we request parents by output hash
                 // Send getdata messages directly with output hashes
                 std::vector<CInv> vGetData;
