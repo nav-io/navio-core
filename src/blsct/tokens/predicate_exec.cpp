@@ -68,7 +68,7 @@ bool ExecutePredicate(const VectorPredicate& vch, CCoinsViewCache& view, const b
 {
     try {
         return ExecutePredicate(ParsePredicate(vch), view, fDisconnect);
-    } catch (const std::ios_base::failure& e) {
+    } catch (const std::ios_base::failure&) {
         // If predicate parsing fails, treat it as a no-op predicate
         // This can happen with invalid or random predicate data
         return true;

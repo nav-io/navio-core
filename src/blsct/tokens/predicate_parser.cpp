@@ -55,7 +55,7 @@ std::string PredicateToString(const VectorPredicate& vch)
             ret = "DATA";
 
         return ret;
-    } catch (const std::ios_base::failure& e) {
+    } catch (const std::ios_base::failure&) {
         // If predicate parsing fails, return a generic error message
         return "INVALID_PREDICATE";
     }

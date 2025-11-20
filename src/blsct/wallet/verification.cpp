@@ -80,7 +80,7 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
         if (out.predicate.size() > 0) {
             try {
                 parsedPredicate = ParsePredicate(out.predicate);
-            } catch (const std::ios_base::failure& e) {
+            } catch (const std::ios_base::failure&) {
                 // If predicate parsing fails, skip this output
                 continue;
             }

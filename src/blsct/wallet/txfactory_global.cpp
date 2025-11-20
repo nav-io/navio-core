@@ -227,7 +227,7 @@ CTransactionRef AggregateTransactions(const std::vector<CTransactionRef>& txs)
                             nFee += out.nValue;
                             continue;
                         }
-                    } catch (const std::ios_base::failure& e) {
+                    } catch (const std::ios_base::failure&) {
                         // If predicate parsing fails, treat as non-fee output
                     }
                 }
