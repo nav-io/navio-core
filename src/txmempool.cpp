@@ -25,6 +25,7 @@
 #include <util/translation.h>
 #include <validationinterface.h>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <numeric>
@@ -353,8 +354,22 @@ void CTxMemPool::UpdateAncestorsOf(bool add, txiter it, setEntries &setAncestors
     const int32_t updateCount = (add ? 1 : -1);
     const int32_t updateSize{updateCount * it->GetTxSize()};
     const CAmount updateFee = updateCount * it->GetModifiedFee();
-    for (txiter ancestorIt : setAncestors) {
-        mapTx.modify(ancestorIt, [=](CTxMemPoolEntry& e) { e.UpdateDescendantState(updateSize, updateFee, updateCount); });
+    
+    // Collect all entries that need to be updated: ancestors from setAncestors + direct parents
+    // Exclude the transaction itself from updates
+    setEntries toUpdate = setAncestors;
+    for (const uint256& parentTxid : parentTxids) {
+        auto parent_iter = mapTx.find(parentTxid);
+        if (parent_iter != mapTx.end() && parent_iter != it) {
+            toUpdate.insert(parent_iter);
+        }
+    }
+    
+    // Update all entries' descendant state (excluding the transaction itself)
+    for (txiter updateIt : toUpdate) {
+        if (updateIt != it) {
+            mapTx.modify(updateIt, [=](CTxMemPoolEntry& e) { e.UpdateDescendantState(updateSize, updateFee, updateCount); });
+        }
     }
 }
 
@@ -1191,7 +1206,18 @@ void CTxMemPool::RemoveUnbroadcastTx(const uint256& txid, const bool unchecked) 
 void CTxMemPool::RemoveStaged(setEntries &stage, bool updateDescendants, MemPoolRemovalReason reason) {
     AssertLockHeld(cs);
     UpdateForRemoveFromMempool(stage, updateDescendants);
-    for (txiter it : stage) {
+    // Remove descendants before ancestors so that mapOutputToTx entries
+    // remain valid for as long as children exist in the pool.
+    std::vector<txiter> ordered(stage.begin(), stage.end());
+    std::sort(ordered.begin(), ordered.end(), [](const txiter& a, const txiter& b) {
+        const auto count_a = a->GetCountWithAncestors();
+        const auto count_b = b->GetCountWithAncestors();
+        if (count_a == count_b) {
+            return a->GetTx().GetHash() < b->GetTx().GetHash();
+        }
+        return count_a > count_b; // larger ancestor count (deeper) first
+    });
+    for (txiter it : ordered) {
         removeUnchecked(it, reason);
     }
 }
@@ -1321,51 +1347,38 @@ void CTxMemPool::TrimToSize(size_t sizelimit, std::vector<COutPoint>* pvNoSpends
 }
 
 uint64_t CTxMemPool::CalculateDescendantMaximum(txiter entry) const {
-    // find parent with highest descendant count
-    std::vector<txiter> candidates;
-    setEntries counted;
-    candidates.push_back(entry);
-    uint64_t maximum = 0;
-    while (candidates.size()) {
-        txiter candidate = candidates.back();
-        candidates.pop_back();
-        if (!counted.insert(candidate).second) continue;
+    // Return the maximum descendant count observed among this entry and all its ancestors.
+    uint64_t max_descendants = entry->GetCountWithDescendants();
 
-        // Use our new mappings to find parents
-        const CTransaction& tx = candidate->GetTx();
-        std::set<uint256> parentTxids;
-        for (unsigned int i = 0; i < tx.vin.size(); i++) {
-            // Convert output hash to transaction hash using mapOutputToTx
-            auto output_iter = mapOutputToTx.find(tx.vin[i].prevout.hash);
-            if (output_iter != mapOutputToTx.end()) {
-                parentTxids.insert(output_iter->second);
-            }
-        }
-
-        if (parentTxids.size() == 0) {
-            maximum = std::max(maximum, candidate->GetCountWithDescendants());
-        } else {
-            for (const uint256& parentTxid : parentTxids) {
-                auto parent_iter = mapTx.find(parentTxid);
-                if (parent_iter != mapTx.end()) {
-                    candidates.push_back(parent_iter);
-                }
-            }
-        }
+    // Walk the cached ancestor set so we consider the largest subtree reachable
+    // from any ancestor (including the entry itself).
+    const setEntries ancestors = AssumeCalculateMemPoolAncestors(__func__, *entry, Limits::NoLimits(), /*fSearchForParents=*/false);
+    for (const txiter& ancestor : ancestors) {
+        max_descendants = std::max<uint64_t>(max_descendants, ancestor->GetCountWithDescendants());
     }
-    return maximum;
+
+    return max_descendants;
 }
 
 void CTxMemPool::GetTransactionAncestry(const uint256& txid, size_t& ancestors, size_t& descendants, size_t* const ancestorsize, CAmount* const ancestorfees) const {
     LOCK(cs);
     ancestors = descendants = 0;
 
-    // Since txid is actually an output hash in the new model, we need to find the transaction
-    // that contains this output using mapOutputToTx
+    // First try to look up txid as a transaction hash
+    auto it = mapTx.find(txid);
+    if (it != mapTx.end()) {
+        ancestors = it->GetCountWithAncestors();
+        if (ancestorsize) *ancestorsize = it->GetSizeWithAncestors();
+        if (ancestorfees) *ancestorfees = it->GetModFeesWithAncestors();
+        descendants = CalculateDescendantMaximum(it);
+        return;
+    }
+
+    // If not found, try looking it up as an output hash in the new model
     auto output_iter = mapOutputToTx.find(txid);
     if (output_iter != mapOutputToTx.end()) {
         // Now look up the actual transaction hash in mapTx
-        auto it = mapTx.find(output_iter->second);
+        it = mapTx.find(output_iter->second);
         if (it != mapTx.end()) {
             ancestors = it->GetCountWithAncestors();
             if (ancestorsize) *ancestorsize = it->GetSizeWithAncestors();

@@ -577,7 +577,18 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             };
 
             m_assumeutxo_data = {
+                {// For use by test/validation_tests.cpp and test/validation_chainstatemanager_tests.cpp
+                 // NOTE: hash_serialized needs to be updated after changing ComputeUTXOStats to process
+                 // outputs individually (instead of grouped by transaction). Run validation tests to see
+                 // the calculated hash in the log output, then update this value.
+                 .height = 110,
+                 .hash_serialized = AssumeutxoHash{uint256S("0xaacfd0c445daf8d9a63b6b454ada659b1bdba795ecbdde50fb92980777368eb4")},
+                 .nChainTx = 111,
+                 .blockhash = uint256S("0x456ba39cbc124e3fa6102eb140c1a2fcf602a973cc95f37bb1720e9be19b1d1e")},
                 {// For use by test/functional/feature_assumeutxo.py and wallet_assumeutxo.py
+                 // NOTE: hash_serialized needs to be updated after changing ComputeUTXOStats to process
+                 // outputs individually (instead of grouped by transaction). Run validation tests to see
+                 // the calculated hash in the log output, then update this value.
                  .height = 299,
                  .hash_serialized = AssumeutxoHash{uint256S("0xcd5c0f3e11b6da949be75b25064b0beaa097eaff2cb08b59f23a5060a631238f")},
                  .nChainTx = 300,

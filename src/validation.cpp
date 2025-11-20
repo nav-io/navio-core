@@ -373,7 +373,9 @@ void Chainstate::MaybeUpdateMempoolForReorg(
                     if (m_mempool->exists(GenTxid::Txid(outHash->second))) continue;
                 }
                 const Coin& coin{CoinsTip().AccessCoin(txin.prevout)};
-                assert(!coin.IsSpent());
+                if (coin.IsSpent()) {
+                    return true;
+                }
                 const auto mempool_spend_height{m_chain.Tip()->nHeight + 1};
                 if (coin.IsCoinBase() && mempool_spend_height - coin.nHeight < COINBASE_MATURITY) {
                     return true;
@@ -3413,7 +3415,9 @@ bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex*
     }
     if (m_mempool) {
         LimitMempoolSize(*m_mempool, this->CoinsTip());
-        m_mempool->check(this->CoinsTip(), this->m_chain.Height() + 1);
+        if (!fBlocksDisconnected) {
+            m_mempool->check(this->CoinsTip(), this->m_chain.Height() + 1);
+        }
     }
 
     CheckForkWarningConditions();
@@ -3556,6 +3560,10 @@ bool Chainstate::ActivateBestChain(BlockValidationState& state, std::shared_ptr<
                 // If any blocks were disconnected during the step(s), release them to the mempool now.
                 LogPrint(BCLog::MEMPOOL, "Reorg flushing %u disconnected txs\n", disconnectpool.size());
                 MaybeUpdateMempoolForReorg(disconnectpool, true);
+                if (m_mempool) {
+                    LimitMempoolSize(*m_mempool, this->CoinsTip());
+                    m_mempool->check(this->CoinsTip(), this->m_chain.Height() + 1);
+                }
             }
 
             const CBlockIndex* pindexFork = m_chain.FindFork(starting_tip);
@@ -5812,6 +5820,8 @@ bool ChainstateManager::PopulateAndValidateSnapshot(
     if (AssumeutxoHash{maybe_stats->hashSerialized} != au_data.hash_serialized) {
         LogPrintf("[snapshot] bad snapshot content hash: expected %s, got %s\n",
             au_data.hash_serialized.ToString(), maybe_stats->hashSerialized.ToString());
+        LogPrintf("[snapshot] To update chainparams, use: .hash_serialized = AssumeutxoHash{uint256S(\"0x%s\")},\n",
+            maybe_stats->hashSerialized.ToString());
         return false;
     }
 
