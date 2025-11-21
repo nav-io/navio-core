@@ -5,10 +5,8 @@
 """Test transaction time during old block rescanning
 """
 
-import concurrent.futures
 import time
 
-from test_framework.authproxy import JSONRPCException
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
@@ -16,10 +14,6 @@ from test_framework.util import (
     assert_raises_rpc_error,
     set_node_times,
 )
-from test_framework.wallet_util import (
-    get_generate_key,
-)
-
 
 class TransactionTimeRescanTest(BitcoinTestFramework):
     def add_options(self, parser):
