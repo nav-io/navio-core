@@ -354,7 +354,7 @@ void CTxMemPool::UpdateAncestorsOf(bool add, txiter it, setEntries &setAncestors
     const int32_t updateCount = (add ? 1 : -1);
     const int32_t updateSize{updateCount * it->GetTxSize()};
     const CAmount updateFee = updateCount * it->GetModifiedFee();
-    
+
     // Collect all entries that need to be updated: ancestors from setAncestors + direct parents
     // Exclude the transaction itself from updates
     setEntries toUpdate = setAncestors;
@@ -364,7 +364,7 @@ void CTxMemPool::UpdateAncestorsOf(bool add, txiter it, setEntries &setAncestors
             toUpdate.insert(parent_iter);
         }
     }
-    
+
     // Update all entries' descendant state (excluding the transaction itself)
     for (txiter updateIt : toUpdate) {
         if (updateIt != it) {

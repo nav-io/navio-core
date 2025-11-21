@@ -182,7 +182,7 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
         tx.vin[0].prevout = COutPoint(hash=out_hash_0)
         tx.vin[1].prevout = COutPoint(hash=out_hash_1)
         tx.vout[0].nValue = int(0.1 * COIN)
-        raw_tx_spend_both = tx.serialize().hex()
+        tx.serialize().hex()
         # txid_spend_both = self.wallet.sendrawtransaction(from_node=node, tx_hex=raw_tx_spend_both)
         self.generate(node, 1)
         self.mempool_size = 0

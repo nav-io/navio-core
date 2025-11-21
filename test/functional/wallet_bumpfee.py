@@ -395,7 +395,7 @@ def test_notmine_bumpfee(self, rbf_node, peer_node, dest_address):
     signedtx = peer_node.signrawtransactionwithwallet(signedtx["hex"])
     rbfid = rbf_node.sendrawtransaction(signedtx["hex"])
     entry = rbf_node.getmempoolentry(rbfid)
-    old_fee = entry["fees"]["base"]
+    entry["fees"]["base"]
     assert_raises_rpc_error(-4, "Transaction contains inputs that don't belong to this wallet",
                             rbf_node.bumpfee, rbfid)
 

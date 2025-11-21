@@ -3,8 +3,6 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-import time
-
 from test_framework.messages import (
     CInv,
     MSG_TX,
@@ -28,10 +26,6 @@ from test_framework.util import (
     tx_from_hex,
 )
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.wallet import (
-    MiniWallet,
-    MiniWalletMode,
-)
 
 # Time to bump forward (using setmocktime) before waiting for the node to send getdata(tx) in response
 # to an inv(tx), in seconds. This delay includes all possible delays + 1, so it should only be used

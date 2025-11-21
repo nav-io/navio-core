@@ -127,7 +127,7 @@ static bool ComputeUTXOStats(CCoinsView* view, CCoinsStats& stats, T hash_obj, c
         if (pcursor->GetKey(key) && pcursor->GetValue(coin)) {
             // Apply hash for this individual output
             ApplyCoinHash(hash_obj, key, coin);
-            
+
             // Update stats - process each output individually
             stats.nTransactionOutputs++;
             stats.coins_count++;
@@ -140,7 +140,7 @@ static bool ComputeUTXOStats(CCoinsView* view, CCoinsStats& stats, T hash_obj, c
         }
         pcursor->Next();
     }
-    
+
     // In the new model, we can't easily count distinct transactions since each output
     // has a unique hash. For compatibility, we approximate by setting nTransactions to coins_count.
     // Note: This may not match the actual transaction count, but nChainTx is set from

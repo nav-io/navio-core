@@ -3,20 +3,8 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the importprunedfunds and removeprunedfunds RPCs."""
-from decimal import Decimal
 
-from test_framework.address import key_to_p2wpkh
-from test_framework.blocktools import COINBASE_MATURITY
-from test_framework.messages import (
-    CMerkleBlock,
-    from_hex,
-)
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import (
-    assert_equal,
-    assert_raises_rpc_error,
-)
-from test_framework.wallet_util import generate_keypair
 
 
 class ImportPrunedFundsTest(BitcoinTestFramework):

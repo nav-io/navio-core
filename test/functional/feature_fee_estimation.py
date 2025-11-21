@@ -7,7 +7,6 @@ from copy import deepcopy
 from decimal import Decimal
 import os
 import random
-import time
 
 from test_framework.messages import (
     COIN,
