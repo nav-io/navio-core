@@ -968,8 +968,7 @@ BlsctRetVal* deserialize_key_id(const char* hex)
 
 // out point
 BlsctRetVal* gen_out_point(
-    const char* ctx_id_c_str,
-    const uint32_t out_index)
+    const char* ctx_id_c_str)
 {
     MALLOC(BlsctOutPoint, blsct_out_point);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_out_point);
@@ -977,7 +976,7 @@ BlsctRetVal* gen_out_point(
     std::string ctx_id_str(ctx_id_c_str, CTX_ID_STR_LEN);
 
     auto ctx_id = TxidFromString(ctx_id_str);
-    COutPoint out_point{ctx_id, out_index};
+    COutPoint out_point{ctx_id};
 
     SERIALIZE_AND_COPY_WITH_STREAM(
         out_point,
@@ -995,13 +994,6 @@ BlsctRetVal* deserialize_out_point(const char* hex)
     BlsctOutPoint* blsct_out_point =
         static_cast<BlsctOutPoint*>(DeserializeFromHex(hex, OUT_POINT_SIZE));
     return succ(blsct_out_point, OUT_POINT_SIZE);
-}
-
-uint32_t get_out_point_n(const BlsctOutPoint* blsct_out_point)
-{
-    COutPoint out_point;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_out_point, OUT_POINT_SIZE, out_point);
-    return out_point.n;
 }
 
 // point
