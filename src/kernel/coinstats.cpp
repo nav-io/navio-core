@@ -98,19 +98,6 @@ static void ApplyHash(T& hash_obj, const Txid& hash, const std::map<uint256, Coi
     }
 }
 
-static void ApplyStats(CCoinsStats& stats, const uint256& hash, const std::map<uint256, Coin>& outputs)
-{
-    assert(!outputs.empty());
-    stats.nTransactions++;
-    for (auto it = outputs.begin(); it != outputs.end(); ++it) {
-        stats.nTransactionOutputs++;
-        if (stats.total_amount.has_value()) {
-            stats.total_amount = CheckedAdd(*stats.total_amount, it->second.out.nValue);
-        }
-        stats.nBogoSize += GetBogoSize(it->second.out.scriptPubKey);
-    }
-}
-
 //! Calculate statistics about the unspent transaction output set
 template <typename T>
 static bool ComputeUTXOStats(CCoinsView* view, CCoinsStats& stats, T hash_obj, const std::function<void()>& interruption_point)

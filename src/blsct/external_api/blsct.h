@@ -415,7 +415,7 @@ BlsctRetVal* deserialize_key_id(const char* hex);
 // out point
 // txid is 32 bytes and represented as 64-char hex str
 BlsctRetVal* gen_out_point(
-    const char* ctx_id_c_str,);
+    const char* ctx_id_c_str);
 const char* serialize_out_point(const BlsctOutPoint* blsct_out_point);
 BlsctRetVal* deserialize_out_point(const char* hex);
 
