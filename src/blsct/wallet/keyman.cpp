@@ -5,7 +5,6 @@
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/keyman.h>
 #include <script/script.h>
-#include <wallet/wallet.h>
 
 namespace blsct {
 bool KeyMan::IsHDEnabled() const
@@ -29,10 +28,7 @@ bool KeyMan::AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId)
 
     // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
     // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
-    // m_storage is always a CWallet in practice, so we can use static_cast
-    const wallet::CWallet& wallet = static_cast<const wallet::CWallet&>(m_storage);
-
-    LOCK2(wallet.cs_wallet, cs_KeyStore);
+    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
     if (m_storage.IsLocked()) {
         return false;
     }
@@ -60,10 +56,7 @@ bool KeyMan::AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey)
 
     // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
     // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
-    // m_storage is always a CWallet in practice, so we can use static_cast
-    const wallet::CWallet& wallet = static_cast<const wallet::CWallet&>(m_storage);
-
-    LOCK2(wallet.cs_wallet, cs_KeyStore);
+    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
     if (m_storage.IsLocked()) {
         return false;
     }
@@ -509,10 +502,7 @@ bool KeyMan::GetKey(const CKeyID& id, PrivateKey& keyOut) const
 
     // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
     // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
-    // m_storage is always a CWallet in practice, so we can use static_cast
-    const wallet::CWallet& wallet = static_cast<const wallet::CWallet&>(m_storage);
-
-    LOCK2(wallet.cs_wallet, cs_KeyStore);
+    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
     CryptedKeyMap::const_iterator mi = mapCryptedKeys.find(id);
     if (mi != mapCryptedKeys.end()) {
         const PublicKey& vchPubKey = (*mi).second.first;
@@ -532,10 +522,7 @@ bool KeyMan::GetOutKey(const uint256& id, PrivateKey& keyOut) const
 
     // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
     // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
-    // m_storage is always a CWallet in practice, so we can use static_cast
-    const wallet::CWallet& wallet = static_cast<const wallet::CWallet&>(m_storage);
-
-    LOCK2(wallet.cs_wallet, cs_KeyStore);
+    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
     CryptedOutKeyMap::const_iterator mi = mapCryptedOutKeys.find(id);
     if (mi != mapCryptedOutKeys.end()) {
         const uint256& outId = (*mi).first;

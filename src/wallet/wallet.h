@@ -1018,6 +1018,7 @@ public:
 
     const CKeyingMaterial& GetEncryptionKey() const override;
     bool HasEncryptionKeys() const override;
+    RecursiveMutex& GetWalletMutex() const override { return cs_wallet; }
 
     /** Get last block processed height */
     int GetLastBlockHeight() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet)
