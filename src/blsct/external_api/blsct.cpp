@@ -675,12 +675,6 @@ const BlsctCTxId* get_ctx_in_prev_out_hash(const void* vp_ctx_in)
     return copy;
 }
 
-uint32_t get_ctx_in_prev_out_n(const void* vp_ctx_in)
-{
-    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
-    return ctx_in->prevout.n;
-}
-
 const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in)
 {
     auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);

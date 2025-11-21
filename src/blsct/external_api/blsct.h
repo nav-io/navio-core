@@ -363,7 +363,6 @@ const void* get_ctx_in_at(const void* vp_ctx_ins, const size_t i);
 // ctx in
 bool are_ctx_in_equal(const void* vp_a, const void* vp_b);
 const BlsctCTxId* get_ctx_in_prev_out_hash(const void* vp_ctx_in);
-uint32_t get_ctx_in_prev_out_n(const void* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in);
 uint32_t get_ctx_in_sequence(const void* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in);
