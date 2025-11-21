@@ -260,8 +260,8 @@ class MiniWallet:
                             # Scan the transaction to add any missing UTXOs
                             self.scan_tx(tx_details)
                             # Find UTXOs from this transaction by matching output hashes
-                            for i, vout in enumerate(tx_details['vout']):
-                                output_hash = vout['hash']
+                            for i, output in enumerate(tx_details['vout']):
+                                output_hash = output['hash']
                                 utxo_filter = filter(lambda utxo: output_hash == utxo['txid'], self._utxos)
                                 try:
                                     utxo = next(utxo_filter)
@@ -281,8 +281,8 @@ class MiniWallet:
                                 # Scan the transaction to add any missing UTXOs
                                 self.scan_tx(tx_details)
                                 # Find UTXOs from this transaction by matching output hashes
-                                for i, vout in enumerate(tx_details['vout']):
-                                    output_hash = vout['hash']
+                                for i, output in enumerate(tx_details['vout']):
+                                    output_hash = output['hash']
                                     utxo_filter = filter(lambda utxo: output_hash == utxo['txid'], self._utxos)
                                     try:
                                         utxo = next(utxo_filter)
