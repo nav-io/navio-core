@@ -504,7 +504,7 @@ RPCHelpMan getnftbalance()
 
             bool include_watchonly = ParseIncludeWatchonly(request.params[3], *pwallet);
 
-            UniValue ret(UniValue::VOBJ);
+            UniValue ret(UniValue::VARR);
 
             for (auto& it : token.mapMintedNft) {
                 const auto bal = GetBalance(*pwallet, min_depth, false, TokenId(token_id, it.first));

@@ -1977,6 +1977,11 @@ static RPCHelpMan gettxfromoutputhash()
             uint256 output_hash = ParseHashV(request.params[0], "outputhash");
             bool include_mempool = request.params[1].isNull() ? true : request.params[1].get_bool();
 
+            // BlockUntilSyncedToCurrentChain() requires cs_main to NOT be held
+            if (g_txindex) {
+                g_txindex->BlockUntilSyncedToCurrentChain();
+            }
+
             LOCK(cs_main);
             Chainstate& active_chainstate = chainman.ActiveChainstate();
 
@@ -1998,9 +2003,6 @@ static RPCHelpMan gettxfromoutputhash()
             }
 
             // Search in blockchain by iterating over blocks.
-            if (g_txindex) {
-                g_txindex->BlockUntilSyncedToCurrentChain();
-            }
 
             const CBlockIndex* pindex = active_chainstate.m_chain.Tip();
             while (pindex) {
