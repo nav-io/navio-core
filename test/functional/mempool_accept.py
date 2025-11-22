@@ -188,11 +188,11 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
         self.mempool_size = 0
         # Now see if we can add the coins back to the utxo set by sending the exact txs again
         self.check_mempool_result(
-            result_expected=[{'txid': txid_0, 'allowed': False, 'reject-reason': 'missing-inputs'}],
+            result_expected=[{'txid': txid_0, 'allowed': False, 'reject-reason': 'txn-already-known'}],
             rawtxs=[raw_tx_0],
         )
         self.check_mempool_result(
-            result_expected=[{'txid': txid_1, 'allowed': False, 'reject-reason': 'missing-inputs'}],
+            result_expected=[{'txid': txid_1, 'allowed': False, 'reject-reason': 'bad-txns-in-belowout'}],
             rawtxs=[raw_tx_1],
         )
 
