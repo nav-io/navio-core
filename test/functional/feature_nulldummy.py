@@ -23,7 +23,6 @@ from test_framework.blocktools import (
 )
 from test_framework.messages import (
     CTransaction,
-    tx_from_hex,
 )
 from test_framework.script import (
     OP_0,
@@ -33,6 +32,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
+    tx_from_hex,
 )
 from test_framework.wallet import getnewdestination
 from test_framework.wallet_util import generate_keypair
@@ -55,6 +55,7 @@ class NULLDUMMYTest(BitcoinTestFramework):
         # This script tests NULLDUMMY activation, which is part of the 'segwit' deployment, so we go through
         # normal segwit activation here (and don't use the default always-on behaviour).
         self.extra_args = [[
+            '-txindex',
             f'-testactivationheight=segwit@{COINBASE_MATURITY + 5}',
             '-addresstype=legacy',
             '-par=1',  # Use only one script thread to get the exact reject reason for testing
@@ -81,7 +82,8 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.coinbase_blocks = self.generate(self.nodes[0], 2)  # block height = 2
         coinbase_txid = []
         for i in self.coinbase_blocks:
-            coinbase_txid.append(self.nodes[0].getblock(i)['tx'][0])
+            print(self.nodes[0].getrawtransaction(self.nodes[0].getblock(i)['tx'][0],1)['vout'][0])
+            coinbase_txid.append(self.nodes[0].getrawtransaction(self.nodes[0].getblock(i)['tx'][0],1)['vout'][0]['hash'])
         self.generate(self.nodes[0], COINBASE_MATURITY)  # block height = COINBASE_MATURITY + 2
         self.lastblockhash = self.nodes[0].getbestblockhash()
         self.lastblockheight = COINBASE_MATURITY + 2
@@ -91,18 +93,22 @@ class NULLDUMMYTest(BitcoinTestFramework):
         test1txs = [self.create_transaction(txid=coinbase_txid[0], addr=self.ms_address, amount=49,
                                             privkey=self.nodes[0].get_deterministic_priv_key().key)]
         txid1 = self.nodes[0].sendrawtransaction(test1txs[0].serialize_with_witness().hex(), 0)
-        test1txs.append(self.create_transaction(txid=txid1, input_details=ms_unlock_details,
+        txoutid1 = self.nodes[0].getrawtransaction(txid1,1)['vout'][0]['hash']
+        test1txs.append(self.create_transaction(txid=txoutid1, input_details=ms_unlock_details,
                                                 addr=self.ms_address, amount=48,
                                                 privkey=self.privkey))
         txid2 = self.nodes[0].sendrawtransaction(test1txs[1].serialize_with_witness().hex(), 0)
+        txoutid2 = self.nodes[0].getrawtransaction(txid2,1)['vout'][0]['hash']
+
         test1txs.append(self.create_transaction(txid=coinbase_txid[1],
                                                 addr=self.wit_ms_address, amount=49,
                                                 privkey=self.nodes[0].get_deterministic_priv_key().key))
         txid3 = self.nodes[0].sendrawtransaction(test1txs[2].serialize_with_witness().hex(), 0)
+        txoutid3 = self.nodes[0].getrawtransaction(txid3,1)['vout'][0]['hash']
         self.block_submit(self.nodes[0], test1txs, accept=True)
 
         self.log.info("Test 2: Non-NULLDUMMY base multisig transaction should not be accepted to mempool before activation")
-        test2tx = self.create_transaction(txid=txid2, input_details=ms_unlock_details,
+        test2tx = self.create_transaction(txid=txoutid2, input_details=ms_unlock_details,
                                           addr=self.ms_address, amount=47,
                                           privkey=self.privkey)
         invalidate_nulldummy_tx(test2tx)
@@ -111,8 +117,10 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.log.info(f"Test 3: Non-NULLDUMMY base transactions should be accepted in a block before activation [{COINBASE_MATURITY + 4}]")
         self.block_submit(self.nodes[0], [test2tx], accept=True)
 
+        test2txoutid = self.nodes[0].getrawtransaction(test2tx.rehash(),1)['vout'][0]['hash']
+
         self.log.info("Test 4: Non-NULLDUMMY base multisig transaction is invalid after activation")
-        test4tx = self.create_transaction(txid=test2tx.hash, input_details=ms_unlock_details,
+        test4tx = self.create_transaction(txid=test2txoutid, input_details=ms_unlock_details,
                                           addr=getnewdestination()[2], amount=46,
                                           privkey=self.privkey)
         test6txs = [CTransaction(test4tx)]
@@ -121,7 +129,7 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.block_submit(self.nodes[0], [test4tx], accept=False)
 
         self.log.info("Test 5: Non-NULLDUMMY P2WSH multisig transaction invalid after activation")
-        test5tx = self.create_transaction(txid=txid3, input_details={"scriptPubKey": test1txs[2].vout[0].scriptPubKey.hex(),
+        test5tx = self.create_transaction(txid=txoutid3, input_details={"scriptPubKey": test1txs[2].vout[0].scriptPubKey.hex(),
                                           "amount": 49, "witnessScript": wms["redeemScript"]},
                                           addr=getnewdestination(address_type='p2sh-segwit')[2], amount=48,
                                           privkey=self.privkey)

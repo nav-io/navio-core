@@ -1037,7 +1037,6 @@ static RPCHelpMan gettxout()
         "\nReturns details about an unspent transaction output.\n",
         {
             {"txid", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction id"},
-            {"n", RPCArg::Type::NUM, RPCArg::Optional::NO, "vout number"},
             {"include_mempool", RPCArg::Type::BOOL, RPCArg::Default{true}, "Whether to include the mempool. Note that an unspent output that is spent in the mempool won't appear."},
         },
         {
@@ -1060,9 +1059,9 @@ static RPCHelpMan gettxout()
             "\nGet unspent transactions\n"
             + HelpExampleCli("listunspent", "") +
             "\nView the details\n"
-            + HelpExampleCli("gettxout", "\"txid\" 1") +
+            + HelpExampleCli("gettxout", "\"txid\"") +
             "\nAs a JSON-RPC call\n"
-            + HelpExampleRpc("gettxout", "\"txid\", 1")
+            + HelpExampleRpc("gettxout", "\"txid\"")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -1073,10 +1072,10 @@ static RPCHelpMan gettxout()
     UniValue ret(UniValue::VOBJ);
 
     auto hash{Txid::FromUint256(ParseHashV(request.params[0], "txid"))};
-    COutPoint out{hash, request.params[1].getInt<uint32_t>()};
+    COutPoint out{hash};
     bool fMempool = true;
-    if (!request.params[2].isNull())
-        fMempool = request.params[2].get_bool();
+    if (!request.params[1].isNull())
+        fMempool = request.params[1].get_bool();
 
     Coin coin;
     Chainstate& active_chainstate = chainman.ActiveChainstate();
@@ -2137,7 +2136,6 @@ static RPCHelpMan scantxoutset()
                     {RPCResult::Type::OBJ, "", "",
                     {
                         {RPCResult::Type::STR_HEX, "txid", "The transaction id"},
-                        {RPCResult::Type::NUM, "vout", "The vout value"},
                         {RPCResult::Type::STR_HEX, "scriptPubKey", "The script key"},
                         {RPCResult::Type::STR, "desc", "A specialized descriptor for the matched scriptPubKey"},
                         {RPCResult::Type::STR_AMOUNT, "amount", "The total amount in " + CURRENCY_UNIT + " of the unspent output"},
@@ -2236,7 +2234,6 @@ static RPCHelpMan scantxoutset()
 
             UniValue unspent(UniValue::VOBJ);
             unspent.pushKV("txid", outpoint.hash.GetHex());
-            unspent.pushKV("vout", (int32_t)outpoint.n);
             unspent.pushKV("scriptPubKey", HexStr(txo.scriptPubKey));
             unspent.pushKV("desc", descriptors[txo.scriptPubKey]);
             unspent.pushKV("amount", ValueFromAmount(txo.nValue));

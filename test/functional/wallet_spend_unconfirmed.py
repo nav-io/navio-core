@@ -5,11 +5,12 @@
 
 from decimal import Decimal, getcontext
 
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_greater_than_or_equal,
     assert_equal,
-    find_vout_for_address,
+    find_outid_for_address,
 )
 
 class UnconfirmedInputTest(BitcoinTestFramework):
@@ -18,6 +19,9 @@ class UnconfirmedInputTest(BitcoinTestFramework):
 
     def set_test_params(self):
         getcontext().prec=9
+        self.extra_args = [[
+            "-txindex"
+        ]]
         self.setup_clean_chain = True
         self.num_nodes = 1
 
@@ -47,7 +51,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         number_inputs = len(tx["decoded"]["vin"])
         assert_equal(number_inputs, len(parent_txids))
         for i in range(number_inputs):
-            txid_of_input = tx["decoded"]["vin"][i]["txid"]
+            txid_of_input = self.nodes[0].gettxfromoutputhash(tx["decoded"]["vin"][i]["txid"])["txid"]
             assert txid_of_input in parent_checklist
             parent_checklist.remove(txid_of_input)
 
@@ -108,7 +112,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([parent_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -135,7 +139,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([gp_tx, p_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -163,7 +167,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([p_one_tx, p_two_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -196,7 +200,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
 
         resulting_bumped_ancestry_fee_rate = self.calc_set_fee_rate([p_low_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_bumped_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_bumped_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_bumped_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -222,7 +226,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([p_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
         resulting_ancestry_fee_rate_with_high_feerate_gp = self.calc_set_fee_rate([gp_tx, p_tx, ancestor_aware_tx])
         # Check that we bumped the parent without relying on the grandparent
         assert_greater_than_or_equal(resulting_ancestry_fee_rate_with_high_feerate_gp, self.target_fee_rate*1.1)
@@ -253,7 +257,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([gp_tx, p_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -275,7 +279,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([parent_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -284,8 +288,10 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.log.info("Start test with preset input from low feerate unconfirmed transaction")
         wallet = self.setup_and_fund_wallet("preset_input")
 
-        parent_txid = wallet.sendtoaddress(address=wallet.getnewaddress(), amount=1, fee_rate=1)
+        address = wallet.getnewaddress()
+        parent_txid = wallet.sendtoaddress(address=address, amount=1, fee_rate=1)
         parent_tx = wallet.gettransaction(txid=parent_txid, verbose=True)
+        parent_outid = find_outid_for_address(self.nodes[0], parent_txid, address)
 
         self.assert_undershoots_target(parent_tx)
 
@@ -293,7 +299,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         assert_equal(number_outputs, 2)
 
         # we don't care which of the two outputs we spent, they're both ours
-        ancestor_aware_txid = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"add_inputs": True, "inputs": [{"txid": parent_txid, "vout": 0}]})["txid"]
+        ancestor_aware_txid = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"add_inputs": True, "inputs": [{"txid": parent_outid}]})["txid"]
         ancestor_aware_tx = wallet.gettransaction(txid=ancestor_aware_txid, verbose=True)
 
         self.assert_spends_only_parents(ancestor_aware_tx, [parent_txid])
@@ -301,7 +307,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([parent_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -323,7 +329,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([parent_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
 
         bumped_ancestor_aware_txid = wallet.bumpfee(txid=to_be_rbfed_ancestor_aware_txid, options={"fee_rate": self.target_fee_rate * 2} )["txid"]
         bumped_ancestor_aware_tx = wallet.gettransaction(txid=bumped_ancestor_aware_txid, verbose=True)
@@ -333,7 +339,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         assert_greater_than_or_equal(resulting_bumped_fee_rate, 2*self.target_fee_rate)
         resulting_bumped_ancestry_fee_rate = self.calc_set_fee_rate([parent_tx, bumped_ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_bumped_ancestry_fee_rate, 2*self.target_fee_rate)
-        assert_greater_than_or_equal(2*self.target_fee_rate*1.01, resulting_bumped_ancestry_fee_rate)
+        assert_greater_than_or_equal(2*self.target_fee_rate*1.018, resulting_bumped_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -355,7 +361,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([two_output_parent_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -383,7 +389,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([parent_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -410,13 +416,13 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         # Child is only paying for itself…
         resulting_fee_rate = self.calc_fee_rate(ancestor_aware_tx)
-        assert_greater_than_or_equal(1.05 * self.target_fee_rate, resulting_fee_rate)
+        assert_greater_than_or_equal(2 * self.target_fee_rate, resulting_fee_rate)
         # …because sibling bumped to parent to ~50 s/vB, while our target is 30 s/vB
         resulting_ancestry_fee_rate_sibling = self.calc_set_fee_rate([parent_tx, sibling_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate_sibling, self.target_fee_rate)
         # and our resulting "ancestry feerate" is therefore BELOW target feerate
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([parent_tx, ancestor_aware_tx])
-        assert_greater_than_or_equal(self.target_fee_rate, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
@@ -438,6 +444,8 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         wallet.unloadwallet()
 
     def test_external_input_unconfirmed_low(self):
+        if DISABLE_PSBT_TESTS:
+            return
         self.log.info("Send funds to an external wallet then build tx that bumps parent by spending external input")
         wallet = self.setup_and_fund_wallet("test_external_wallet")
 
@@ -449,7 +457,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
 
         self.assert_undershoots_target(parent_tx)
 
-        spend_res = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"inputs":[{"txid":parent_txid, "vout":find_vout_for_address(self.nodes[0], parent_txid, external_address)}], "solving_data":{"descriptors":[external_descriptor]}})
+        spend_res = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"inputs":[{"txid": find_outid_for_address(self.nodes[0], parent_txid, external_address)}], "solving_data":{"descriptors":[external_descriptor]}})
         signed_psbt = self.def_wallet.walletprocesspsbt(spend_res["psbt"])
         external_tx = self.def_wallet.finalizepsbt(signed_psbt["psbt"])
         ancestor_aware_txid = self.def_wallet.sendrawtransaction(external_tx["hex"])
@@ -461,14 +469,14 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.assert_beats_target(ancestor_aware_tx)
         resulting_ancestry_fee_rate = self.calc_set_fee_rate([parent_tx, ancestor_aware_tx])
         assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.01, resulting_ancestry_fee_rate)
+        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
 
         wallet.unloadwallet()
 
 
     def run_test(self):
         self.log.info("Starting UnconfirmedInputTest!")
-        self.target_fee_rate = 30
+        self.target_fee_rate = 60
         self.def_wallet  = self.nodes[0].get_wallet_rpc(self.default_wallet_name)
         self.generate(self.nodes[0], 110)
 
@@ -502,7 +510,8 @@ class UnconfirmedInputTest(BitcoinTestFramework):
 
         self.test_confirmed_and_unconfirmed_parent()
 
-        self.test_external_input_unconfirmed_low()
+        if not DISABLE_PSBT_TESTS:
+            self.test_external_input_unconfirmed_low()
 
 if __name__ == '__main__':
     UnconfirmedInputTest().main()

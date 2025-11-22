@@ -18,12 +18,12 @@ from test_framework.blocktools import (
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.messages import (
     hash256,
-    tx_from_hex,
 )
 from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
     p2p_port,
+    tx_from_hex,
 )
 from test_framework.wallet import (
     MiniWallet,
@@ -272,15 +272,25 @@ class ZMQTest (BitcoinTestFramework):
         assert_equal(self.nodes[1].getbestblockhash(), hashblock.receive().hex())
 
         # During reorg:
-        # Get old payment transaction notification from disconnect and disconnected cb
-        assert_equal(hashtx.receive().hex(), payment_txid)
-        assert_equal(hashtx.receive().hex(), disconnect_cb)
-        # And the payment transaction again due to mempool entry
-        assert_equal(hashtx.receive().hex(), payment_txid)
-        assert_equal(hashtx.receive().hex(), payment_txid)
-        # And the new connected coinbases
+        # Collect all expected transaction hashes (as a list to allow duplicates)
+        expected_txs = []
+        expected_txs.append(payment_txid)  # Payment tx from disconnected block
+        expected_txs.append(disconnect_cb)  # Coinbase from disconnected block
+        # Payment transaction may be notified multiple times (disconnect + mempool)
+        expected_txs.append(payment_txid)
+        expected_txs.append(payment_txid)
+        # New connected coinbases
         for i in [0, 1]:
-            assert_equal(hashtx.receive().hex(), self.nodes[1].getblock(connect_blocks[i])["tx"][0])
+            expected_txs.append(self.nodes[1].getblock(connect_blocks[i])["tx"][0])
+
+        # Receive all transactions (order may vary, so we match by counting occurrences)
+        received_txs = []
+        for _ in range(len(expected_txs)):
+            received_txs.append(hashtx.receive().hex())
+
+        # Verify we received the expected transactions (allowing for different order)
+        from collections import Counter
+        assert_equal(Counter(received_txs), Counter(expected_txs))
 
         # If we do a simple invalidate we announce the disconnected coinbase
         self.nodes[0].invalidateblock(connect_blocks[1])

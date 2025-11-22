@@ -8,6 +8,7 @@
 #include <node/miner.h>
 #include <random.h>
 #include <test/util/mining.h>
+#include <test/util/random.h>
 #include <test/util/script.h>
 #include <test/util/setup_common.h>
 #include <txmempool.h>
@@ -31,6 +32,7 @@ static void AssembleBlock(benchmark::Bench& bench)
         tx.vin.emplace_back(MineBlock(test_setup->m_node, P2WSH_OP_TRUE));
         tx.vin.back().scriptWitness = witness;
         tx.vout.emplace_back(1337, P2WSH_OP_TRUE);
+        tx.vout.back().predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
         if (NUM_BLOCKS - b >= COINBASE_MATURITY)
             txs.at(b) = MakeTransactionRef(tx);
     }

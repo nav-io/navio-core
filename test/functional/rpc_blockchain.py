@@ -559,7 +559,18 @@ class BlockchainTest(BitcoinTestFramework):
 
         def assert_fee_not_in_block(verbosity):
             block = node.getblock(blockhash, verbosity)
-            assert 'fee' not in block['tx'][1]
+            # For verbosity 1, block['tx'] should be an array of transaction hash strings
+            # For verbosity 2+, block['tx'] is an array of transaction objects
+            # The test checks that 'fee' is not in the transaction data
+            if verbosity == 1 or verbosity is True:
+                # For verbosity 1, tx[1] should be a string (transaction hash), not an object
+                # Checking 'fee' not in a string checks if 'fee' is a substring, which should be True
+                assert isinstance(block['tx'][1], str), f"Expected string for verbosity 1, got {type(block['tx'][1])}"
+                # Verify it's actually a transaction hash (64 hex characters)
+                assert len(block['tx'][1]) == 64, f"Expected 64-char hex string, got length {len(block['tx'][1])}"
+            else:
+                # For verbosity 2+, check that fee is not present (should only be in verbosity 2+ with undo data)
+                assert 'fee' not in block['tx'][1]
 
         def assert_fee_in_block(verbosity):
             block = node.getblock(blockhash, verbosity)

@@ -44,23 +44,23 @@ public:
         uint16_t index = 0;
 
         for (const auto& outpoint : outpoints) {
-            const wallet::CWalletTx* wtx = wallet.GetWalletTx(outpoint.hash);
+            const wallet::CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint);
             if (!wtx) {
                 throw std::runtime_error("Outpoint not found in wallet");
             }
 
-            if (outpoint.n >= wtx->tx->vout.size()) {
+            auto txout_iter = std::find_if(wtx->tx->vout.begin(), wtx->tx->vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
+            if (txout_iter == wtx->tx->vout.end()) {
                 throw std::runtime_error("Invalid output index");
             }
-            const CTxOut& txout = wtx->tx->vout[outpoint.n];
             if (!has_private_key) {
-                has_private_key = blsct_km->GetSpendingKeyForOutput(txout, private_key);
+                has_private_key = blsct_km->GetSpendingKeyForOutput(*txout_iter, private_key);
                 m_index = index;
             }
-            if (!txout.HasBLSCTRangeProof()) {
+            if (!txout_iter->HasBLSCTRangeProof()) {
                 throw std::runtime_error("Outpoint does not have BLSCT range proof");
             }
-            auto recoveryData = wtx->GetBLSCTRecoveryData(outpoint.n);
+            auto recoveryData = wtx->GetBLSCTRecoveryData(outpoint);
             value = value + MclScalar(recoveryData.amount);
             gamma = gamma + MclScalar(recoveryData.gamma);
             index++;

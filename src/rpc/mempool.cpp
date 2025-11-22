@@ -303,8 +303,8 @@ static void entryToJSON(const CTxMemPool& pool, UniValue& info, const CTxMemPool
     std::set<std::string> setDepends;
     for (const CTxIn& txin : tx.vin)
     {
-        if (pool.exists(GenTxid::Txid(txin.prevout.hash)))
-            setDepends.insert(txin.prevout.hash.ToString());
+        if (pool.mapOutputToTx.count(txin.prevout.hash))
+            setDepends.insert(pool.mapOutputToTx.at(txin.prevout.hash).ToString());
     }
 
     UniValue depends(UniValue::VARR);
@@ -583,37 +583,37 @@ static RPCHelpMan getmempoolentry()
 
 static RPCHelpMan gettxspendingprevout()
 {
-    return RPCHelpMan{"gettxspendingprevout",
+    return RPCHelpMan{
+        "gettxspendingprevout",
         "Scans the mempool to find transactions spending any of the given outputs",
         {
-            {"outputs", RPCArg::Type::ARR, RPCArg::Optional::NO, "The transaction outputs that we want to check, and within each, the txid (string) vout (numeric).",
+            {
+                "outputs",
+                RPCArg::Type::ARR,
+                RPCArg::Optional::NO,
+                "The transaction outputs that we want to check, and within each, the txid (string).",
                 {
-                    {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
+                    {
+                        "",
+                        RPCArg::Type::OBJ,
+                        RPCArg::Optional::OMITTED,
+                        "",
                         {
                             {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
-                            {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
                         },
                     },
                 },
             },
         },
         RPCResult{
-            RPCResult::Type::ARR, "", "",
-            {
-                {RPCResult::Type::OBJ, "", "",
-                {
-                    {RPCResult::Type::STR_HEX, "txid", "the transaction id of the checked output"},
-                    {RPCResult::Type::NUM, "vout", "the vout value of the checked output"},
-                    {RPCResult::Type::STR_HEX, "spendingtxid", /*optional=*/true, "the transaction id of the mempool transaction spending this output (omitted if unspent)"},
-                }},
-            }
-        },
-        RPCExamples{
-            HelpExampleCli("gettxspendingprevout", "\"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\",\\\"vout\\\":3}]\"")
-            + HelpExampleRpc("gettxspendingprevout", "\"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\",\\\"vout\\\":3}]\"")
-        },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-        {
+            RPCResult::Type::ARR, "", "", {
+                                              {RPCResult::Type::OBJ, "", "", {
+                                                                                 {RPCResult::Type::STR_HEX, "txid", "the transaction id of the checked output"},
+                                                                                 {RPCResult::Type::STR_HEX, "spendingtxid", /*optional=*/true, "the transaction id of the mempool transaction spending this output (omitted if unspent)"},
+                                                                             }},
+                                          }},
+        RPCExamples{HelpExampleCli("gettxspendingprevout", "\"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"") + HelpExampleRpc("gettxspendingprevout", "\"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             const UniValue& output_params = request.params[0].get_array();
             if (output_params.empty()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, outputs are missing");
@@ -628,16 +628,12 @@ static RPCHelpMan gettxspendingprevout()
                 RPCTypeCheckObj(o,
                                 {
                                     {"txid", UniValueType(UniValue::VSTR)},
-                                    {"vout", UniValueType(UniValue::VNUM)},
-                                }, /*fAllowNull=*/false, /*fStrict=*/true);
+                                },
+                                /*fAllowNull=*/false, /*fStrict=*/true);
 
                 const Txid txid = Txid::FromUint256(ParseHashO(o, "txid"));
-                const int nOutput{o.find_value("vout").getInt<int>()};
-                if (nOutput < 0) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, vout cannot be negative");
-                }
 
-                prevouts.emplace_back(txid, nOutput);
+                prevouts.emplace_back(txid);
             }
 
             const CTxMemPool& mempool = EnsureAnyMemPool(request.context);
@@ -648,7 +644,6 @@ static RPCHelpMan gettxspendingprevout()
             for (const COutPoint& prevout : prevouts) {
                 UniValue o(UniValue::VOBJ);
                 o.pushKV("txid", prevout.hash.ToString());
-                o.pushKV("vout", (uint64_t)prevout.n);
 
                 const CTransaction* spendingTx = mempool.GetConflictTx(prevout);
                 if (spendingTx != nullptr) {

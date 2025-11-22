@@ -39,6 +39,7 @@ class MempoolUpdateFromBlockTest(BitcoinTestFramework):
         first_block_hash = ''
         tx_id = []
         tx_size = []
+        tx_utxos = []  # Store the UTXOs from each transaction
         self.log.info('Creating {} transactions...'.format(size))
         for i in range(0, size):
             self.log.debug('Preparing transaction #{}...'.format(i))
@@ -47,10 +48,12 @@ class MempoolUpdateFromBlockTest(BitcoinTestFramework):
                 inputs = [wallet.get_utxo()]  # let MiniWallet provide a start UTXO
             else:
                 inputs = []
-                for j, tx in enumerate(tx_id[0:i]):
+                for j, utxos in enumerate(tx_utxos[0:i]):
                     # Transaction tx[K] is a child of each of previous transactions tx[0]..tx[K-1] at their output K-1.
                     vout = i - j - 1
-                    inputs.append(wallet.get_utxo(txid=tx_id[j], vout=vout))
+                    # In Navio, we use output hashes directly, not txid+vout
+                    if vout < len(utxos):
+                        inputs.append(utxos[vout])
 
             # Prepare outputs.
             tx_count = i + 1
@@ -69,6 +72,7 @@ class MempoolUpdateFromBlockTest(BitcoinTestFramework):
             )
             tx_id.append(new_tx['txid'])
             tx_size.append(new_tx['tx'].get_vsize())
+            tx_utxos.append(new_tx['new_utxos'])
 
             if tx_count in n_tx_to_mine:
                 # The created transactions are mined into blocks by batches.

@@ -40,6 +40,7 @@ class ResendWalletTransactionsTest(BitcoinTestFramework):
         parent_utxo, indep_utxo = node.listunspent()[:2]
         addr = node.getnewaddress()
         txid = node.send(outputs=[{addr: 1}], inputs=[parent_utxo])["txid"]
+        txoutid = next(out['hash'] for out in node.getrawtransaction(txid, 1)['vout'] if out['value'] == Decimal('1'))
 
         # Can take a few seconds due to transaction trickling
         peer_first.wait_for_broadcast([txid])
@@ -90,7 +91,7 @@ class ResendWalletTransactionsTest(BitcoinTestFramework):
         # ordering of mapWallet is, if the child is not before the parent, we will create a new
         # child (via bumpfee) and remove the old child (via removeprunedfunds) until we get the
         # ordering of child before parent.
-        child_inputs = [{"txid": txid, "vout": 0}]
+        child_inputs = [{"txid": txoutid, "vout": 0}]
         child_txid = node.sendall(recipients=[addr], inputs=child_inputs)["txid"]
         # Get the child tx's info for manual bumping
         child_tx_info = node.gettransaction(txid=child_txid, verbose=True)

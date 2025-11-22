@@ -54,7 +54,7 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans)
     // ecdsa_signature_parse_der_lax are executed during this test.
     // Specifically branches that run only when an ECDSA
     // signature's R and S values have leading zeros.
-    g_insecure_rand_ctx = FastRandomContext{uint256{33}};
+    g_insecure_rand_ctx = FastRandomContext{uint256{uint64_t{33}}};
 
     TxOrphanageTest orphanage;
     CKey key;
@@ -67,7 +67,6 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans)
     {
         CMutableTransaction tx;
         tx.vin.resize(1);
-        tx.vin[0].prevout.n = 0;
         tx.vin[0].prevout.hash = Txid::FromUint256(InsecureRand256());
         tx.vin[0].scriptSig << OP_1;
         tx.vout.resize(1);
@@ -84,8 +83,7 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans)
 
         CMutableTransaction tx;
         tx.vin.resize(1);
-        tx.vin[0].prevout.n = 0;
-        tx.vin[0].prevout.hash = txPrev->GetHash();
+        tx.vin[0].prevout.hash = txPrev->vout[0].GetHash();
         tx.vout.resize(1);
         tx.vout[0].nValue = 1*CENT;
         tx.vout[0].scriptPubKey = GetScriptForDestination(PKHash(key.GetPubKey()));
@@ -107,8 +105,11 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans)
         tx.vin.resize(2777);
         for (unsigned int j = 0; j < tx.vin.size(); j++)
         {
-            tx.vin[j].prevout.n = j;
-            tx.vin[j].prevout.hash = txPrev->GetHash();
+            if (j < txPrev->vout.size()) {
+                tx.vin[j].prevout.hash = txPrev->vout[j].GetHash();
+            } else {
+                tx.vin[j].prevout.hash = Txid::FromUint256(InsecureRand256());
+            }
         }
         SignatureData empty;
         BOOST_CHECK(SignSignature(keystore, *txPrev, tx, 0, SIGHASH_ALL, empty));

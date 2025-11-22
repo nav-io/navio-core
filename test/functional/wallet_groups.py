@@ -6,12 +6,10 @@
 
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.messages import (
-    tx_from_hex,
-)
 from test_framework.util import (
     assert_approx,
     assert_equal,
+    tx_from_hex,
 )
 
 
@@ -24,7 +22,7 @@ class WalletGroupTest(BitcoinTestFramework):
         self.num_nodes = 5
         self.extra_args = [
             [],
-            [],
+            ["-txindex"],
             ["-avoidpartialspends"],
             ["-maxapsfee=0.00002719"],
             ["-maxapsfee=0.00002720"],
@@ -117,14 +115,14 @@ class WalletGroupTest(BitcoinTestFramework):
         assert_approx(values[1], vexp=1.4, vspan=0.0001)
 
         input_txids = [vin["txid"] for vin in tx3["vin"]]
-        input_addrs = [self.nodes[1].gettransaction(txid)['details'][0]['address'] for txid in input_txids]
+        input_addrs = [self.nodes[1].gettransaction(self.nodes[1].gettxfromoutputhash(txid)['txid'])['details'][0]['address'] for txid in input_txids]
         assert_equal(input_addrs[0], input_addrs[1])
         # Node 2 enforces avoidpartialspends so needs no checking here
 
-        tx4_ungrouped_fee = 2820
-        tx4_grouped_fee = 4160
-        tx5_6_ungrouped_fee = 5520
-        tx5_6_grouped_fee = 8240
+        tx4_ungrouped_fee = 4860
+        tx4_grouped_fee = 6200
+        tx5_6_ungrouped_fee = 7560
+        tx5_6_grouped_fee = 10280
 
         self.log.info("Test wallet option maxapsfee")
         addr_aps = self.nodes[3].getnewaddress()
@@ -167,12 +165,12 @@ class WalletGroupTest(BitcoinTestFramework):
         self.sync_all()
         self.generate(self.nodes[0], 1)
 
-        self.log.info("Fill a wallet with 10,000 outputs corresponding to the same scriptPubKey")
+        self.log.info("Fill a wallet with 5,000 outputs corresponding to the same scriptPubKey")
         for _ in range(5):
             raw_tx = self.nodes[0].createrawtransaction([{"txid":"0"*64, "vout":0}], [{addr2[0]: 0.05}])
             tx = tx_from_hex(raw_tx)
             tx.vin = []
-            tx.vout = [tx.vout[0]] * 2000
+            tx.vout = [tx.vout[0]] * 1000
             funded_tx = self.nodes[0].fundrawtransaction(tx.serialize().hex())
             signed_tx = self.nodes[0].signrawtransactionwithwallet(funded_tx['hex'])
             self.nodes[0].sendrawtransaction(signed_tx['hex'])

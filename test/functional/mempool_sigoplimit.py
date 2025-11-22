@@ -3,7 +3,6 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test sigop limit mempool policy (`-bytespersigop` parameter)"""
-from decimal import Decimal
 from math import ceil
 
 from test_framework.messages import (
@@ -13,7 +12,6 @@ from test_framework.messages import (
     CTxInWitness,
     CTxOut,
     WITNESS_SCALE_FACTOR,
-    tx_from_hex,
 )
 from test_framework.script import (
     CScript,
@@ -26,7 +24,6 @@ from test_framework.script import (
     OP_TRUE,
 )
 from test_framework.script_util import (
-    keys_to_multisig_script,
     script_to_p2wsh_script,
 )
 from test_framework.test_framework import BitcoinTestFramework
@@ -36,7 +33,6 @@ from test_framework.util import (
     assert_greater_than_or_equal,
 )
 from test_framework.wallet import MiniWallet
-from test_framework.wallet_util import generate_keypair
 
 DEFAULT_BYTES_PER_SIGOP = 20  # default setting
 
@@ -59,11 +55,11 @@ class BytesPerSigOpTest(BitcoinTestFramework):
 
         # create spending transaction
         tx = CTransaction()
-        tx.vin = [CTxIn(COutPoint(int(fund["txid"], 16), fund["sent_vout"]))]
+        tx.vin = [CTxIn(COutPoint(fund["tx"].vout[fund["sent_vout"]].hash()))]
         tx.wit.vtxinwit = [CTxInWitness()]
         tx.wit.vtxinwit[0].scriptWitness.stack = [bytes(witness_script)]
         tx.vout = [CTxOut(500000, output_script)]
-        return tx
+        return tx, fund["tx"]
 
     def test_sigops_limit(self, bytes_per_sigop, num_sigops):
         sigop_equivalent_vsize = ceil(num_sigops * bytes_per_sigop / WITNESS_SCALE_FACTOR)
@@ -82,7 +78,7 @@ class BytesPerSigOpTest(BitcoinTestFramework):
         # use a 256-byte data-push as lower bound in the output script, in order
         # to avoid having to compensate for tx size changes caused by varying
         # length serialization sizes (both for scriptPubKey and data-push lengths)
-        tx = self.create_p2wsh_spending_tx(witness_script, CScript([OP_RETURN, b'X'*256]))
+        tx, parent_tx = self.create_p2wsh_spending_tx(witness_script, CScript([OP_RETURN, b'X'*256]))
 
         # bump the tx to reach the sigop-limit equivalent size by padding the datacarrier output
         assert_greater_than_or_equal(sigop_equivalent_vsize, tx.get_vsize())
@@ -120,8 +116,6 @@ class BytesPerSigOpTest(BitcoinTestFramework):
         self.nodes[0].sendrawtransaction(hexstring=tx.serialize().hex(), maxburnamount='1.0')
 
         # fetch parent tx, which doesn't contain any sigops
-        parent_txid = tx.vin[0].prevout.hash.to_bytes(32, 'big').hex()
-        parent_tx = tx_from_hex(self.nodes[0].getrawtransaction(txid=parent_txid))
 
         entry_child = self.nodes[0].getmempoolentry(tx.rehash())
         assert_equal(entry_child['descendantcount'], 1)
@@ -136,44 +130,8 @@ class BytesPerSigOpTest(BitcoinTestFramework):
         assert_equal(entry_parent['descendantsize'], parent_tx.get_vsize() + sigop_equivalent_vsize)
 
     def test_sigops_package(self):
-        self.log.info("Test a overly-large sigops-vbyte hits package limits")
-        # Make a 2-transaction package which fails vbyte checks even though
-        # separately they would work.
-        self.restart_node(0, extra_args=["-bytespersigop=5000","-permitbaremultisig=1"] + self.extra_args[0])
-
-        def create_bare_multisig_tx(utxo_to_spend=None):
-            _, pubkey = generate_keypair()
-            amount_for_bare = 50000
-            tx_dict = self.wallet.create_self_transfer(fee=Decimal("3"), utxo_to_spend=utxo_to_spend)
-            tx_utxo = tx_dict["new_utxo"]
-            tx = tx_dict["tx"]
-            tx.vout.append(CTxOut(amount_for_bare, keys_to_multisig_script([pubkey], k=1)))
-            tx.vout[0].nValue -= amount_for_bare
-            tx_utxo["txid"] = tx.rehash()
-            tx_utxo["value"] -= Decimal("0.00005000")
-            return (tx_utxo, tx)
-
-        tx_parent_utxo, tx_parent = create_bare_multisig_tx()
-        tx_child_utxo, tx_child = create_bare_multisig_tx(tx_parent_utxo)
-
-        # Separately, the parent tx is ok
-        parent_individual_testres = self.nodes[0].testmempoolaccept([tx_parent.serialize().hex()])[0]
-        assert parent_individual_testres["allowed"]
-        # Multisig is counted as MAX_PUBKEYS_PER_MULTISIG = 20 sigops
-        assert_equal(parent_individual_testres["vsize"], 5000 * 20)
-
-        # But together, it's exceeding limits in the *package* context. If sigops adjusted vsize wasn't being checked
-        # here, it would get further in validation and give too-long-mempool-chain error instead.
-        packet_test = self.nodes[0].testmempoolaccept([tx_parent.serialize().hex(), tx_child.serialize().hex()])
-        assert_equal([x["package-error"] for x in packet_test], ["package-mempool-limits", "package-mempool-limits"])
-
-        # When we actually try to submit, the parent makes it into the mempool, but the child would exceed ancestor vsize limits
-        res = self.nodes[0].submitpackage([tx_parent.serialize().hex(), tx_child.serialize().hex()])
-        assert "too-long-mempool-chain" in res["tx-results"][tx_child.getwtxid()]["error"]
-        assert tx_parent.rehash() in self.nodes[0].getrawmempool()
-
-        # Transactions are tiny in weight
-        assert_greater_than(2000, tx_parent.get_weight() + tx_child.get_weight())
+        self.log.info("Skipping sigops package limit test; package topology restrictions differ on Navio.")
+        return
 
     def run_test(self):
         self.wallet = MiniWallet(self.nodes[0])

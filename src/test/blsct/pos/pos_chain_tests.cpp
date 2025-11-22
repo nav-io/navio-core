@@ -47,9 +47,9 @@ BOOST_FIXTURE_TEST_CASE(StakedCommitment, TestBLSCTChain100Setup)
     BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
     auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
 
-    COutPoint outpoint{Txid::FromUint256(InsecureRand256()), /*nIn=*/0};
-    COutPoint outpoint2{Txid::FromUint256(InsecureRand256()), /*nIn=*/1};
-    COutPoint outpoint3{Txid::FromUint256(InsecureRand256()), /*nIn=*/2};
+    COutPoint outpoint{Txid::FromUint256(InsecureRand256())};
+    COutPoint outpoint2{Txid::FromUint256(InsecureRand256())};
+    COutPoint outpoint3{Txid::FromUint256(InsecureRand256())};
 
     Coin coin = CreateCoin(recvAddress);
     Coin coin2 = CreateCoin(recvAddress);
