@@ -1013,7 +1013,6 @@ private:
         EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex);
     void ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::vector<COutputHashRequest>& vOutputHashRequests, const std::atomic<bool>& interruptMsgProc) EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex);
     CTransactionRef FindTxByOutputHash(const uint256& outputHash) EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex);
-    void AddOutputHashAnnouncement(const CNode& node, const uint256& outputHash, std::chrono::microseconds current_time);
 
     /**
      * Validation logic for compact filters request handling.
@@ -1544,35 +1543,6 @@ void PeerManagerImpl::AddTxAnnouncement(const CNode& node, const GenTxid& gtxid,
     const bool overloaded = !node.HasPermission(NetPermissionFlags::Relay) &&
         m_txrequest.CountInFlight(nodeid) >= MAX_PEER_TX_REQUEST_IN_FLIGHT;
     if (overloaded) delay += OVERLOADED_PEER_TX_DELAY;
-    m_txrequest.ReceivedInv(nodeid, gtxid, preferred, current_time + delay);
-}
-
-void PeerManagerImpl::AddOutputHashAnnouncement(const CNode& node, const uint256& outputHash, std::chrono::microseconds current_time) EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
-{
-    AssertLockHeld(::cs_main); // For m_txrequest
-    NodeId nodeid = node.GetId();
-    if (!node.HasPermission(NetPermissionFlags::Relay) && m_txrequest.Count(nodeid) >= MAX_PEER_TX_ANNOUNCEMENTS) {
-        // Too many queued announcements from this peer
-        return;
-    }
-    const CNodeState* state = State(nodeid);
-
-    // Decide the TxRequestTracker parameters for this announcement:
-    // - "preferred": if fPreferredDownload is set (= outbound, or NetPermissionFlags::NoBan permission)
-    // - "reqtime": current time plus delays for:
-    //   - NONPREF_PEER_TX_DELAY for announcements from non-preferred connections
-    //   - OVERLOADED_PEER_TX_DELAY for announcements from peers which have at least
-    //     MAX_PEER_TX_REQUEST_IN_FLIGHT requests in flight (and don't have NetPermissionFlags::Relay).
-    auto delay{0us};
-    const bool preferred = state->fPreferredDownload;
-    if (!preferred) delay += NONPREF_PEER_TX_DELAY;
-    const bool overloaded = !node.HasPermission(NetPermissionFlags::Relay) &&
-                            m_txrequest.CountInFlight(nodeid) >= MAX_PEER_TX_REQUEST_IN_FLIGHT;
-    if (overloaded) delay += OVERLOADED_PEER_TX_DELAY;
-
-    // For output hash requests, we use a special GenTxid that represents output hash requests
-    // We'll use a special marker to distinguish output hash requests from regular tx requests
-    const auto gtxid{GenTxid::Wtxid(outputHash)}; // Use wtxid format but with output hash
     m_txrequest.ReceivedInv(nodeid, gtxid, preferred, current_time + delay);
 }
 
