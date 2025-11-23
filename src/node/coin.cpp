@@ -18,7 +18,9 @@ void FindCoins(const NodeContext& node, std::map<COutPoint, Coin>& coins)
     CCoinsViewMemPool mempool_view(&chain_view, *node.mempool);
     for (auto& coin : coins) {
         // mempool_view.mempool is the same as *node.mempool, so mempool_view.mempool.cs is already held
-        if (!mempool_view.GetCoin(coin.first, coin.second)) { // NOLINT(thread-safety-precise)
+        // The thread-safety analyzer cannot track that mempool_view.mempool.cs == node.mempool->cs
+        // NOLINTNEXTLINE(thread-safety-precise)
+        if (!mempool_view.GetCoin(coin.first, coin.second)) {
             // Either the coin is not in the CCoinsViewCache or is spent. Clear it.
             coin.second.Clear();
         }
