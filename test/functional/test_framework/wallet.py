@@ -233,6 +233,13 @@ class MiniWallet:
             # Convert txid to hex string if it's an int (for output hash support)
             if isinstance(txid, int):
                 txid = f"{txid:064x}"
+            elif isinstance(txid, str):
+                # Ensure txid is exactly 64 hex characters (pad with leading zeros if needed)
+                # This handles cases where hashes are missing leading zeros
+                if len(txid) < 64:
+                    txid = txid.zfill(64)
+                elif len(txid) > 64:
+                    raise ValueError(f"txid must be at most 64 hex characters, got {len(txid)}")
             # First try to find by output hash (txid field in UTXO)
             utxo_filter: Any = filter(lambda utxo: txid == utxo['txid'], self._utxos)
             try:
