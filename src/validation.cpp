@@ -329,7 +329,9 @@ void Chainstate::MaybeUpdateMempoolForReorg(
     // previously-confirmed transactions back to the mempool.
     // UpdateTransactionsFromBlock finds descendants of any transactions in
     // the disconnectpool that were added back and cleans up the mempool state.
-    m_mempool->UpdateTransactionsFromBlock(vHashUpdate);
+    std::set<uint256> unique_hashes(vHashUpdate.begin(), vHashUpdate.end());
+    std::vector<uint256> unique_vec(unique_hashes.begin(), unique_hashes.end());
+    m_mempool->UpdateTransactionsFromBlock(unique_vec, fAddToMempool);
 
     // Predicate to use for filtering transactions in removeForReorg.
     // Checks whether the transaction is still final and, if it spends a coinbase output, mature.
@@ -366,9 +368,14 @@ void Chainstate::MaybeUpdateMempoolForReorg(
         // If the transaction spends any coinbase outputs, it must be mature.
         if (it->GetSpendsCoinbase()) {
             for (const CTxIn& txin : tx.vin) {
-                if (m_mempool->exists(GenTxid::Txid(txin.prevout.hash))) continue;
+                auto outHash = m_mempool->mapOutputToTx.find(txin.prevout.hash);
+                if (outHash != m_mempool->mapOutputToTx.end()) {
+                    if (m_mempool->exists(GenTxid::Txid(outHash->second))) continue;
+                }
                 const Coin& coin{CoinsTip().AccessCoin(txin.prevout)};
-                assert(!coin.IsSpent());
+                if (coin.IsSpent()) {
+                    return true;
+                }
                 const auto mempool_spend_height{m_chain.Tip()->nHeight + 1};
                 if (coin.IsCoinBase() && mempool_spend_height - coin.nHeight < COINBASE_MATURITY) {
                     return true;
@@ -411,15 +418,26 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationS
         // it is available in our current ChainstateActive UTXO set,
         // or it's a UTXO provided by a transaction in our mempool.
         // Ensure the scriptPubKeys in Coins from CoinsView are correct.
-        const CTransactionRef& txFrom = pool.get(txin.prevout.hash);
-        if (txFrom) {
-            assert(txFrom->GetHash() == txin.prevout.hash);
-            assert(txFrom->vout.size() > txin.prevout.n);
-            assert(txFrom->vout[txin.prevout.n] == coin.out);
-        } else {
-            const Coin& coinFromUTXOSet = coins_tip.AccessCoin(txin.prevout);
-            assert(!coinFromUTXOSet.IsSpent());
-            assert(coinFromUTXOSet.out == coin.out);
+        auto txHash = pool.mapOutputToTx.find(txin.prevout.hash);
+        if (txHash != pool.mapOutputToTx.end()) {
+            const CTransactionRef& txFrom = pool.get(txHash->second);
+            if (txFrom) {
+                assert(txFrom->GetHash() == txHash->second);
+                // In the new format, outpoints are just transaction hashes, so we need to find
+                // the correct output by matching the output hash with the input's prevout hash
+                CTxOut out;
+                for (const CTxOut& out_ : txFrom->vout) {
+                    if (out_.GetHash() == txin.prevout.hash) {
+                        out = out_;
+                        break;
+                    }
+                }
+                assert(out == coin.out);
+            } else {
+                const Coin& coinFromUTXOSet = coins_tip.AccessCoin(txin.prevout);
+                assert(!coinFromUTXOSet.IsSpent());
+                assert(coinFromUTXOSet.out == coin.out);
+            }
         }
     }
 
@@ -799,7 +817,7 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
             // Are inputs missing because we already have the tx?
             for (size_t out = 0; out < tx.vout.size(); out++) {
                 // Optimistically just do efficient check of cache for outputs
-                if (coins_cache.HaveCoinInCache(COutPoint(hash, out))) {
+                if (coins_cache.HaveCoinInCache(COutPoint(tx.vout[out].GetHash()))) {
                     return state.Invalid(TxValidationResult::TX_CONFLICT, "txn-already-known");
                 }
             }
@@ -1471,10 +1489,12 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptPackage(const Package& package, 
     // The package must be 1 child with all of its unconfirmed parents. The package is expected to
     // be sorted, so the last transaction is the child.
     const auto& child = package.back();
-    std::unordered_set<uint256, SaltedTxidHasher> unconfirmed_parent_txids;
-    std::transform(package.cbegin(), package.cend() - 1,
-                   std::inserter(unconfirmed_parent_txids, unconfirmed_parent_txids.end()),
-                   [](const auto& tx) { return tx->GetHash(); });
+    std::unordered_set<uint256, SaltedTxidHasher> unconfirmed_parent_outids;
+    for (auto it = package.cbegin(); it != package.cend() - 1; ++it) {
+        for (const auto& output : (*it)->vout) {
+            unconfirmed_parent_outids.insert(output.GetHash());
+        }
+    }
 
     // All child inputs must refer to a preceding package transaction or a confirmed UTXO. The only
     // way to verify this is to look up the child's inputs in our current coins view (not including
@@ -1491,8 +1511,8 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptPackage(const Package& package, 
     // This should be connecting directly to CoinsTip, not to m_viewmempool, because we specifically
     // require inputs to be confirmed if they aren't in the package.
     m_view.SetBackend(m_active_chainstate.CoinsTip());
-    const auto package_or_confirmed = [this, &unconfirmed_parent_txids](const auto& input) {
-         return unconfirmed_parent_txids.count(input.prevout.hash) > 0 || m_view.HaveCoin(input.prevout);
+    const auto package_or_confirmed = [this, &unconfirmed_parent_outids](const auto& input) {
+        return unconfirmed_parent_outids.count(input.prevout.hash) > 0 || m_view.HaveCoin(input.prevout);
     };
     if (!std::all_of(child->vin.cbegin(), child->vin.cend(), package_or_confirmed)) {
         package_state_quit_early.Invalid(PackageValidationResult::PCKG_POLICY, "package-not-child-with-unconfirmed-parents");
@@ -1669,7 +1689,7 @@ PackageMempoolAcceptResult ProcessNewPackage(Chainstate& active_chainstate, CTxM
             auto args = MemPoolAccept::ATMPArgs::PackageTestAccept(chainparams, /*accept_time=*/ now, /*embargo_time=*/ now, coins_to_uncache);
             return MemPoolAccept(pool, active_chainstate).AcceptMultipleTransactions(package, args);
         } else {
-            auto args = MemPoolAccept::ATMPArgs::PackageChildWithParents(chainparams, /*accept_time=*/ now, /*embargo_time=*/ now, coins_to_uncache);
+            auto args = MemPoolAccept::ATMPArgs::PackageChildWithParents(chainparams, /*accept_time=*/now, /*embargo_time=*/now, coins_to_uncache);
             return MemPoolAccept(pool, active_chainstate).AcceptPackage(package, args);
         }
     }();
@@ -2060,8 +2080,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
 
     // undo transactions in reverse order
     for (int i = block.vtx.size() - 1; i >= 0; i--) {
-        const CTransaction &tx = *(block.vtx[i]);
-        Txid hash = tx.GetHash();
+        const CTransaction& tx = *(block.vtx[i]);
         bool is_coinbase = tx.IsCoinBase();
         bool is_bip30_exception = (is_coinbase && !fEnforceBIP30);
 
@@ -2078,7 +2097,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
                 }
             }
             if (!tx.vout[o].scriptPubKey.IsUnspendable()) {
-                COutPoint out(hash, o);
+                COutPoint out(tx.vout[o].GetHash());
                 Coin coin;
                 bool is_spent = view.SpendCoin(out, &coin);
                 if (!is_spent || tx.vout[o] != coin.out || pindex->nHeight != coin.nHeight || is_coinbase != coin.fCoinBase) {
@@ -2543,9 +2562,9 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     if (fEnforceBIP30 || pindex->nHeight >= BIP34_IMPLIES_BIP30_LIMIT) {
         for (const auto& tx : block.vtx) {
             for (size_t o = 0; o < tx->vout.size(); o++) {
-                if (view.HaveCoin(COutPoint(tx->GetHash(), o))) {
+                if (view.HaveCoin(COutPoint(tx->vout[o].GetHash()))) {
                     LogPrintf("ERROR: ConnectBlock(): tried to overwrite transaction\n");
-                    return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-txns-BIP30");
+                    return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, strprintf("bad-txns-BIP30: %s", tx->ToString()));
                 }
             }
         }
@@ -3319,7 +3338,7 @@ void Chainstate::PruneBlockIndexCandidates() {
  *
  * @returns true unless a system error occurred
  */
-bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex* pindexMostWork, const std::shared_ptr<const CBlock>& pblock, bool& fInvalidFound, ConnectTrace& connectTrace)
+bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex* pindexMostWork, const std::shared_ptr<const CBlock>& pblock, bool& fInvalidFound, ConnectTrace& connectTrace, DisconnectedBlockTransactions& disconnectpool, bool& fBlocksDisconnectedOut)
 {
     AssertLockHeld(cs_main);
     if (m_mempool) AssertLockHeld(m_mempool->cs);
@@ -3329,7 +3348,6 @@ bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex*
 
     // Disconnect active blocks which are no longer in the best chain.
     bool fBlocksDisconnected = false;
-    DisconnectedBlockTransactions disconnectpool{MAX_DISCONNECTED_TX_POOL_BYTES};
     while (m_chain.Tip() && m_chain.Tip() != pindexFork) {
         if (!DisconnectTip(state, &disconnectpool)) {
             // This is likely a fatal error, but keep the mempool consistent,
@@ -3393,11 +3411,14 @@ bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex*
     }
 
     if (fBlocksDisconnected) {
-        // If any blocks were disconnected, disconnectpool may be non empty.  Add
-        // any disconnected transactions back to the mempool.
-        MaybeUpdateMempoolForReorg(disconnectpool, true);
+        fBlocksDisconnectedOut = true;
     }
-    if (m_mempool) m_mempool->check(this->CoinsTip(), this->m_chain.Height() + 1);
+    if (m_mempool) {
+        LimitMempoolSize(*m_mempool, this->CoinsTip());
+        if (!fBlocksDisconnected) {
+            m_mempool->check(this->CoinsTip(), this->m_chain.Height() + 1);
+        }
+    }
 
     CheckForkWarningConditions();
 
@@ -3469,6 +3490,8 @@ bool Chainstate::ActivateBestChain(BlockValidationState& state, std::shared_ptr<
     CBlockIndex *pindexMostWork = nullptr;
     CBlockIndex *pindexNewTip = nullptr;
     bool exited_ibd{false};
+    DisconnectedBlockTransactions disconnectpool{MAX_DISCONNECTED_TX_POOL_BYTES};
+    bool blocks_disconnected = false;
     do {
         // Block until the validation queue drains. This should largely
         // never happen in normal operation, however may happen during
@@ -3501,11 +3524,15 @@ bool Chainstate::ActivateBestChain(BlockValidationState& state, std::shared_ptr<
 
                 bool fInvalidFound = false;
                 std::shared_ptr<const CBlock> nullBlockPtr;
-                if (!ActivateBestChainStep(state, pindexMostWork, pblock && pblock->GetHash() == pindexMostWork->GetBlockHash() ? pblock : nullBlockPtr, fInvalidFound, connectTrace)) {
+                bool step_disconnected = false;
+                if (!ActivateBestChainStep(state, pindexMostWork, pblock && pblock->GetHash() == pindexMostWork->GetBlockHash() ? pblock : nullBlockPtr, fInvalidFound, connectTrace, disconnectpool, step_disconnected)) {
                     // A system error occurred
                     return false;
                 }
                 blocks_connected = true;
+                if (step_disconnected) {
+                    blocks_disconnected = true;
+                }
 
                 if (fInvalidFound) {
                     // Wipe cache, we may need another branch now.
@@ -3528,6 +3555,16 @@ bool Chainstate::ActivateBestChain(BlockValidationState& state, std::shared_ptr<
                 }
             } while (!m_chain.Tip() || (starting_tip && CBlockIndexWorkComparator()(m_chain.Tip(), starting_tip)));
             if (!blocks_connected) return true;
+
+            if (blocks_disconnected) {
+                // If any blocks were disconnected during the step(s), release them to the mempool now.
+                LogPrint(BCLog::MEMPOOL, "Reorg flushing %u disconnected txs\n", disconnectpool.size());
+                MaybeUpdateMempoolForReorg(disconnectpool, true);
+                if (m_mempool) {
+                    LimitMempoolSize(*m_mempool, this->CoinsTip());
+                    m_mempool->check(this->CoinsTip(), this->m_chain.Height() + 1);
+                }
+            }
 
             const CBlockIndex* pindexFork = m_chain.FindFork(starting_tip);
             bool still_in_ibd = m_chainman.IsInitialBlockDownload();
@@ -3904,7 +3941,6 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
     // redundant with the call in AcceptBlockHeader.
     if (!CheckBlockHeader(block, state, consensusParams, fCheckPOW))
         return false;
-
     // Signet only: check block solution
     if (consensusParams.signet_blocks && fCheckPOW && !CheckSignetBlockSolution(block, consensusParams)) {
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-signet-blksig", "signet block signature validation failure");
@@ -3916,7 +3952,6 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
         uint256 hashMerkleRoot2 = BlockMerkleRoot(block, &mutated);
         if (block.hashMerkleRoot != hashMerkleRoot2)
             return state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-txnmrklroot", "hashMerkleRoot mismatch");
-
         // Check for merkle tree malleability (CVE-2012-2459): repeating sequences
         // of transactions in a block without affecting the merkle root of a block,
         // while still invalidating it.
@@ -4012,8 +4047,7 @@ std::vector<unsigned char> ChainstateManager::GenerateCoinbaseCommitment(CBlock&
 bool HasValidProofOfWork(const std::vector<CBlockHeader>& headers, const Consensus::Params& consensusParams)
 {
     return std::all_of(headers.cbegin(), headers.cend(),
-                       [&](const auto& header) { 
-                       return header.IsProofOfStake() ? true : CheckProofOfWork(header.GetHash(), header.nBits, consensusParams); });
+                       [&](const auto& header) { return header.IsProofOfStake() ? true : CheckProofOfWork(header.GetHash(), header.nBits, consensusParams); });
 }
 
 arith_uint256 CalculateHeadersWork(const std::vector<CBlockHeader>& headers)
@@ -5656,7 +5690,8 @@ bool ChainstateManager::PopulateAndValidateSnapshot(
 
     if (!maybe_au_data) {
         LogPrintf("[snapshot] assumeutxo height in snapshot metadata not recognized "
-                  "(%d) - refusing to load snapshot\n", base_height);
+                  "(%d) - refusing to load snapshot\n",
+                  base_height);
         return false;
     }
 
@@ -5687,9 +5722,7 @@ bool ChainstateManager::PopulateAndValidateSnapshot(
                       coins_count - coins_left);
             return false;
         }
-        if (coin.nHeight > base_height ||
-            outpoint.n >= std::numeric_limits<decltype(outpoint.n)>::max() // Avoid integer wrap-around in coinstats.cpp:ApplyHash
-        ) {
+        if (coin.nHeight > base_height) {
             LogPrintf("[snapshot] bad snapshot data after deserializing %d coins\n",
                       coins_count - coins_left);
             return false;
@@ -5707,9 +5740,9 @@ bool ChainstateManager::PopulateAndValidateSnapshot(
 
         if (coins_processed % 1000000 == 0) {
             LogPrintf("[snapshot] %d coins loaded (%.2f%%, %.2f MB)\n",
-                coins_processed,
-                static_cast<float>(coins_processed) * 100 / static_cast<float>(coins_count),
-                coins_cache.DynamicMemoryUsage() / (1000 * 1000));
+                      coins_processed,
+                      static_cast<float>(coins_processed) * 100 / static_cast<float>(coins_count),
+                      coins_cache.DynamicMemoryUsage() / (1000 * 1000));
         }
 
         // Batch write and flush (if we need to) every so often.
@@ -5787,6 +5820,8 @@ bool ChainstateManager::PopulateAndValidateSnapshot(
     if (AssumeutxoHash{maybe_stats->hashSerialized} != au_data.hash_serialized) {
         LogPrintf("[snapshot] bad snapshot content hash: expected %s, got %s\n",
             au_data.hash_serialized.ToString(), maybe_stats->hashSerialized.ToString());
+        LogPrintf("[snapshot] To update chainparams, use: .hash_serialized = AssumeutxoHash{uint256S(\"0x%s\")},\n",
+            maybe_stats->hashSerialized.ToString());
         return false;
     }
 

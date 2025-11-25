@@ -26,7 +26,6 @@ from .messages import (
     SEQUENCE_FINAL,
     hash256,
     ser_uint256,
-    tx_from_hex,
     uint256_from_str,
 )
 from .script import (
@@ -43,7 +42,7 @@ from .script_util import (
     keys_to_multisig_script,
     script_to_p2wsh_script,
 )
-from .util import assert_equal
+from .util import assert_equal, tx_from_hex
 
 WITNESS_SCALE_FACTOR = 4
 MAX_BLOCK_SIGOPS = 20000
@@ -131,7 +130,7 @@ def create_coinbase(height, pubkey=None, *, script_pubkey=None, extra_output_scr
     If extra_output_script is given, make a 0-value output to that
     script. This is useful to pad block weight/sigops as needed. """
     coinbase = CTransaction()
-    coinbase.vin.append(CTxIn(COutPoint(0, 0xffffffff), script_BIP34_coinbase_height(height), SEQUENCE_FINAL))
+    coinbase.vin.append(CTxIn(COutPoint(0), script_BIP34_coinbase_height(height), SEQUENCE_FINAL))
     coinbaseoutput = CTxOut()
     coinbaseoutput.nValue = nValue * COIN
     if nValue == 50:
@@ -161,7 +160,7 @@ def create_tx_with_script(prevtx, n, script_sig=b"", *, amount, script_pub_key=C
     """
     tx = CTransaction()
     assert n < len(prevtx.vout)
-    tx.vin.append(CTxIn(COutPoint(prevtx.sha256, n), script_sig, SEQUENCE_FINAL))
+    tx.vin.append(CTxIn(COutPoint(prevtx.vout[n].hash()), script_sig, SEQUENCE_FINAL))
     tx.vout.append(CTxOut(amount, script_pub_key))
     tx.calc_sha256()
     return tx
@@ -219,7 +218,7 @@ def send_to_witness(use_p2wsh, node, utxo, pubkey, encode_p2sh, amount, sign=Tru
     tx_to_witness = create_witness_tx(node, use_p2wsh, utxo, pubkey, encode_p2sh, amount)
     if (sign):
         signed = node.signrawtransactionwithwallet(tx_to_witness)
-        assert "errors" not in signed or len(["errors"]) == 0
+        assert "errors" not in signed or len(signed["errors"]) == 0
         return node.sendrawtransaction(signed["hex"])
     else:
         if (insert_redeem_script):

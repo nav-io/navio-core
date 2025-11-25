@@ -24,6 +24,15 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
     def run_test(self):
         self.test_legacy()
 
+    def generate_blsct_blocks(self, node, address, num_blocks, batch_size=2):
+        blocks = []
+        remaining = num_blocks
+        while remaining > 0:
+            to_generate = min(batch_size, remaining)
+            blocks.extend(self.generatetoblsctaddress(node, to_generate, address))
+            remaining -= to_generate
+        return blocks
+
     def test_legacy(self):
         self.log.info("Creating wallet1 with BLSCT")
 
@@ -52,7 +61,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
 
         # Generate blocks and fund the BLSCT address
         self.log.info("Generating 101 blocks to the BLSCT address")
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 101, blsct_address)
+        block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 101)
 
         self.log.info(f"Generated blocks: {len(block_hashes)}")
 
@@ -65,7 +74,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
 
         self.log.info("Creating token and mining 1 block")
         token = wallet.createtoken({"name": "Test"}, 1000)
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         tokens = self.nodes[0].listtokens()
         assert len(tokens) == 1, "length of tokens is not 1"
@@ -78,7 +87,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         assert tokens[0]['currentSupply'] == 0, "incorrect current supply"
 
         wallet.minttoken(token['tokenId'], blsct_address, 1)
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         tokenInfo = self.nodes[0].gettoken(token['tokenId'])
 
@@ -101,7 +110,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         self.log.info(f"Sending 0.5 token to NODE 2")
 
         wallet.sendtokentoblsctaddress(token['tokenId'], blsct_address_2, 0.5)
-        self.generatetoblsctaddress(self.nodes[0], 2, blsct_address)
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 2)
 
         token_balance = wallet.gettokenbalance(token['tokenId'])
         token_balance_2 = wallet_2.gettokenbalance(token['tokenId'])
@@ -143,7 +152,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
 
         # Generate blocks and fund the BLSCT address
         self.log.info("Generating 101 blocks to the BLSCT address")
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 101, blsct_address)
+        block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 101)
 
         self.log.info(f"Generated blocks: {len(block_hashes)}")
 
@@ -156,7 +165,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
 
         self.log.info("Creating token and mining 1 block")
         token = wallet.createtoken({"name": "Test"}, 1000)
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         tokens = self.nodes[0].listtokens()
         assert len(tokens) == 1, "length of tokens is not 1"
@@ -169,7 +178,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         assert tokens[0]['currentSupply'] == 0, "incorrect current supply"
 
         wallet.minttoken(token['tokenId'], blsct_address, 1)
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 1, blsct_address)
+        block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
         tokenInfo = self.nodes[0].gettoken(token['tokenId'])
 
@@ -192,7 +201,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         self.log.info(f"Sending 0.5 token to NODE 2")
 
         wallet.sendtokentoblsctaddress(token['tokenId'], blsct_address_2, 0.5)
-        self.generatetoblsctaddress(self.nodes[0], 2, blsct_address)
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 2)
 
         token_balance = wallet.gettokenbalance(token['tokenId'])
         token_balance_2 = wallet_2.gettokenbalance(token['tokenId'])

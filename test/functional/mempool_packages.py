@@ -84,12 +84,6 @@ class MempoolPackagesTest(BitcoinTestFramework):
             entry = self.nodes[0].getmempoolentry(x)
             assert_equal(entry, mempool[x])
 
-            # Check that gettxspendingprevout is consistent with getrawmempool
-            witnesstx = self.nodes[0].getrawtransaction(txid=x, verbose=True)
-            for tx_in in witnesstx["vin"]:
-                spending_result = self.nodes[0].gettxspendingprevout([ {'txid' : tx_in["txid"], 'vout' : tx_in["vout"]} ])
-                assert_equal(spending_result, [ {'txid' : tx_in["txid"], 'vout' : tx_in["vout"], 'spendingtxid' : x} ])
-
             # Check that the descendant calculations are correct
             assert_equal(entry['descendantcount'], descendant_count)
             descendant_fees += entry['fees']['base']
@@ -214,6 +208,10 @@ class MempoolPackagesTest(BitcoinTestFramework):
         parent_transaction = tx_with_children["txid"]
         transaction_package = tx_with_children["new_utxos"]
 
+        # Get the parent transaction's output hashes for comparison
+        parent_raw_tx = self.nodes[0].getrawtransaction(parent_transaction, 1)
+        parent_output_hashes = [out['hash'] for out in parent_raw_tx['vout']]
+
         # Sign and send up to MAX_DESCENDANT transactions chained off the parent tx
         chain = [] # save sent txs for the purpose of checking node1's mempool later (see below)
         for _ in range(DEFAULT_DESCENDANT_LIMIT - 1):
@@ -221,7 +219,8 @@ class MempoolPackagesTest(BitcoinTestFramework):
             new_tx = self.wallet.send_self_transfer_multi(from_node=self.nodes[0], num_outputs=10, utxos_to_spend=[utxo])
             txid = new_tx["txid"]
             chain.append(txid)
-            if utxo['txid'] is parent_transaction:
+            # Check if this UTXO is from the parent transaction by comparing output hashes
+            if utxo['txid'] in parent_output_hashes:
                 tx_children.append(txid)
             transaction_package.extend(new_tx["new_utxos"])
 

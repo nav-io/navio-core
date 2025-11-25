@@ -46,7 +46,6 @@ struct PrecomputedData
             uint256 txid;
             CSHA256().Write(PREFIX_O, 1).Write(ser, sizeof(ser)).Finalize(txid.begin());
             outpoints[i].hash = Txid::FromUint256(txid);
-            outpoints[i].n = i;
         }
 
         for (uint32_t i = 0; i < NUM_COINS; ++i) {
@@ -151,7 +150,8 @@ public:
     {
         auto it = m_data.find(outpoint);
         if (it == m_data.end()) {
-            if ((outpoint.n % 5) == 3) {
+            uint256 hash = outpoint.hash;
+            if ((hash.GetUint64(0) % 5) == 3) {
                 coin.Clear();
                 return true;
             }
@@ -177,7 +177,8 @@ public:
     {
         for (auto it = data.begin(); it != data.end(); it = erase ? data.erase(it) : std::next(it)) {
             if (it->second.flags & CCoinsCacheEntry::DIRTY) {
-                if (it->second.coin.IsSpent() && (it->first.n % 5) != 4) {
+                uint256 hash = it->first.hash;
+                if (it->second.coin.IsSpent() && (hash.GetUint64(0) % 5) != 4) {
                     m_data.erase(it->first);
                 } else if (erase) {
                     m_data[it->first] = std::move(it->second.coin);

@@ -55,14 +55,17 @@ class CreateTxWalletTest(BitcoinTestFramework):
 
         tx_data = df_wallet.send(outputs=[{test_wallet.getnewaddress(): 25}], options={"change_position": 0})
         txid = tx_data['txid']
-        vout = 1
+        tx_data = self.nodes[0].getrawtransaction(txid,1)
+        vout = tx_data['vout'][1]['hash']
 
         self.nodes[0].syncwithvalidationinterfacequeue()
         options = {"change_position": 0, "add_inputs": False}
         for i in range(1, 25):
-            options['inputs'] = [{'txid': txid, 'vout': vout}]
+            options['inputs'] = [{'txid': vout}]
             tx_data = test_wallet.send(outputs=[{test_wallet.getnewaddress(): 25 - i}], options=options)
             txid = tx_data['txid']
+            tx_data = self.nodes[0].getrawtransaction(txid,1)
+            vout = tx_data['vout'][1]['hash']
 
         # Sending one more chained transaction will fail
         options = {"minconf": 0, "include_unsafe": True, 'add_inputs': True}

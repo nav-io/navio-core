@@ -33,6 +33,10 @@ static bool CheckFilterLookups(BlockFilterIndex& filter_index, const CBlockIndex
                                uint256& last_header, const BlockManager& blockman)
 {
     BlockFilter expected_filter;
+
+    CBlock block;
+    blockman.ReadBlockFromDisk(block, *block_index);
+
     if (!ComputeFilter(filter_index.GetFilterType(), *block_index, expected_filter, blockman)) {
         BOOST_ERROR("ComputeFilter failed on block " << block_index->nHeight);
         return false;
@@ -80,6 +84,7 @@ CBlock BuildChainTestingSetup::CreateBlock(const CBlockIndex* prev,
     {
         CMutableTransaction tx_coinbase{*block.vtx.at(0)};
         tx_coinbase.vin.at(0).scriptSig = CScript{} << prev->nHeight + 1;
+        tx_coinbase.vout.at(0).predicate = blsct::DataPredicate(prev->nHeight + 1).GetVch();
         block.vtx.at(0) = MakeTransactionRef(std::move(tx_coinbase));
         block.hashMerkleRoot = BlockMerkleRoot(block);
     }
@@ -155,7 +160,6 @@ BOOST_FIXTURE_TEST_CASE(blockfilter_index_initial_sync, BuildChainTestingSetup)
             CheckFilterLookups(filter_index, block_index, last_header, m_node.chainman->m_blockman);
         }
     }
-
     // Create two forks.
     const CBlockIndex* tip;
     {

@@ -28,9 +28,11 @@
 struct NoLockLoggingTestingSetup : public TestingSetup {
     NoLockLoggingTestingSetup()
 #ifdef DEBUG_LOCKCONTENTION
-        : TestingSetup{ChainType::MAIN, /*extra_args=*/{"-debugexclude=lock"}} {}
+        : TestingSetup{ChainType::TESTNET, /*extra_args=*/{ "-debugexclude=lock" }} {}
 #else
-        : TestingSetup{ChainType::MAIN} {}
+        : TestingSetup{ChainType::TESTNET}
+    {
+    }
 #endif
 };
 

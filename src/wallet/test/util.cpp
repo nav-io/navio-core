@@ -58,7 +58,7 @@ std::unique_ptr<CWallet> CreateBLSCTWallet(interfaces::Chain& chain, CChain& cch
     {
         LOCK(wallet->cs_wallet);
         auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
-        blsct_km->SetHDSeed(MclScalar(uint256(1)));
+        blsct_km->SetHDSeed(MclScalar(uint256(uint64_t{1})));
         assert(blsct_km->NewSubAddressPool());
         assert(blsct_km->NewSubAddressPool(-1));
     }

@@ -20,6 +20,7 @@ from test_framework.wallet import MiniWallet
 class MempoolSpendCoinbaseTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
+        self.extra_args = [["-txindex"]]
 
     def run_test(self):
         wallet = MiniWallet(self.nodes[0])
@@ -33,8 +34,18 @@ class MempoolSpendCoinbaseTest(BitcoinTestFramework):
         # get mined. Coinbase at height chain_height-100+2 is
         # too immature to spend.
         coinbase_txid = lambda h: self.nodes[0].getblock(self.nodes[0].getblockhash(h))['tx'][0]
-        utxo_mature = wallet.get_utxo(txid=coinbase_txid(chain_height - 100 + 1))
-        utxo_immature = wallet.get_utxo(txid=coinbase_txid(chain_height - 100 + 2))
+        tx_mature = self.nodes[0].getrawtransaction(coinbase_txid(chain_height - 100 + 1), 1)
+        for tx in tx_mature['vout']:
+            if tx['value'] > 10:
+                tx_mature_vout = tx['hash']
+                break
+        tx_immature = self.nodes[0].getrawtransaction(coinbase_txid(chain_height - 100 + 2), 1)
+        for tx in tx_immature['vout']:
+            if tx['value'] > 10:
+                tx_immature_vout = tx['hash']
+                break
+        utxo_mature = wallet.get_utxo(txid=tx_mature_vout)
+        utxo_immature = wallet.get_utxo(txid=tx_immature_vout)
 
         spend_mature_id = wallet.send_self_transfer(from_node=self.nodes[0], utxo_to_spend=utxo_mature)["txid"]
 

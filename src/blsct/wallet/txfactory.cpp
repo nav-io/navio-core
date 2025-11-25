@@ -4,6 +4,7 @@
 
 #include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory.h>
+#include <limits>
 
 using T = Mcl;
 using Point = T::Point;
@@ -63,14 +64,17 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 
         recoveredInfo = wout->blsctRecoveryData;
     } else {
-        auto tx = wallet->GetWalletTx(outpoint.hash);
+        auto tx = wallet->GetWalletTxFromOutpoint(outpoint);
 
         if (tx == nullptr)
             return false;
 
-        out = tx->tx->vout[outpoint.n];
+        auto txout_iter = std::find_if(tx->tx->vout.begin(), tx->tx->vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
 
-        recoveredInfo = tx->GetBLSCTRecoveryData(outpoint.n);
+        if (txout_iter == tx->tx->vout.end())
+            return false;
+
+        recoveredInfo = tx->GetBLSCTRecoveryData(outpoint);
     }
 
     if (vInputs.count(out.tokenId) == 0)
@@ -142,14 +146,21 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
 
             recoveredInfo = wout->blsctRecoveryData;
         } else {
-            auto tx = wallet->GetWalletTx(output.outpoint.hash);
+            auto tx = wallet->GetWalletTxFromOutpoint(output.outpoint);
 
-            if (tx == nullptr)
+            if (tx == nullptr) {
                 continue;
+            }
 
-            out = tx->tx->vout[output.outpoint.n];
+            auto txout_iter = std::find_if(tx->tx->vout.begin(), tx->tx->vout.end(), [&](const CTxOut& out) { return out.GetHash() == output.outpoint.hash; });
 
-            recoveredInfo = tx->GetBLSCTRecoveryData(output.outpoint.n);
+            if (txout_iter == tx->tx->vout.end()) {
+                continue;
+            }
+
+            out = *txout_iter;
+
+            recoveredInfo = tx->GetBLSCTRecoveryData(output.outpoint);
         }
         auto value = out.HasBLSCTRangeProof() ? recoveredInfo.amount : out.nValue;
 
@@ -158,7 +169,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
             if (!blsct_km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
                 continue;
             }
-            inputCandidates.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash, output.outpoint.n), out.IsStakedCommitment()});
+            inputCandidates.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), out.IsStakedCommitment()});
         } catch (const std::exception& e) {
             LogPrintf("Error adding input: %s\n", e.what());
             continue;
@@ -186,7 +197,13 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
         coins_params.include_staked_commitment = true;
         coins_params.min_sum_amount = nAmountLimit;
 
-        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, nAmountLimit);
+        // For unstaking, we need to collect ALL staked commitments, not just up to the unstake amount
+        // This is because we need to check minimum stake constraints on the total
+        CAmount stakeCoinLimit = (type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) ?
+                                     CAmount(21000000) * COIN :
+                                     nAmountLimit; // Use max possible coins instead of std::numeric_limits
+
+        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, stakeCoinLimit);
     }
 
     if ((type == CreateTransactionType::NORMAL && !token_id.IsNull()) || type == CreateTransactionType::TX_MINT_TOKEN) {

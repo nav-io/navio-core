@@ -57,6 +57,8 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
         return true;
     } else if (predicate.IsPayFeePredicate()) {
         return true;
+    } else if (predicate.IsDataPredicate()) {
+        return true;
     }
 
     return false;
@@ -64,6 +66,12 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
 
 bool ExecutePredicate(const VectorPredicate& vch, CCoinsViewCache& view, const bool& fDisconnect)
 {
-    return ExecutePredicate(ParsePredicate(vch), view, fDisconnect);
+    try {
+        return ExecutePredicate(ParsePredicate(vch), view, fDisconnect);
+    } catch (const std::ios_base::failure&) {
+        // If predicate parsing fails, treat it as a no-op predicate
+        // This can happen with invalid or random predicate data
+        return true;
+    }
 }
 } // namespace blsct

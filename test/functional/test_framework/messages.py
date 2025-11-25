@@ -79,6 +79,8 @@ DEFAULT_MEMPOOL_EXPIRY_HOURS = 336  # hours
 TX_VERSION_BLSCT_MARKER = 1<<5
 OUTPUT_BLSCT_MARKER = 1<<0
 OUTPUT_TOKEN_MARKER = 1<<1
+OUTPUT_PREDICATE_MARKER = 1<<2
+OUTPUT_TRANSPARENT_VALUE_MARKER = 1<<3
 
 def sha256(s):
     return hashlib.sha256(s).digest()
@@ -221,9 +223,6 @@ def from_hex(obj, hex_string):
     return obj
 
 
-def tx_from_hex(hex_string):
-    """Deserialize from hex string to a transaction object"""
-    return from_hex(CTransaction(), hex_string)
 
 
 # like from_hex, but without the hex part
@@ -407,6 +406,25 @@ class CInv:
         return isinstance(other, CInv) and self.hash == other.hash and self.type == other.type
 
 
+class COutputHashRequest:
+    __slots__ = ("output_hash",)
+
+    def __init__(self, output_hash=0):
+        self.output_hash = output_hash
+
+    def deserialize(self, f):
+        self.output_hash = deser_uint256(f)
+
+    def serialize(self):
+        return ser_uint256(self.output_hash)
+
+    def __repr__(self):
+        return "COutputHashRequest(output_hash=%064x)" % (self.output_hash)
+
+    def __eq__(self, other):
+        return isinstance(other, COutputHashRequest) and self.output_hash == other.output_hash
+
+
 class CBlockLocator:
     __slots__ = ("nVersion", "vHave")
 
@@ -426,8 +444,7 @@ class CBlockLocator:
     def __repr__(self):
         return "CBlockLocator(vHave=%s)" % (repr(self.vHave))
 
-
-class COutPoint:
+class COutPoint_old:
     __slots__ = ("hash", "n")
 
     def __init__(self, hash=0, n=0):
@@ -436,16 +453,272 @@ class COutPoint:
 
     def deserialize(self, f):
         self.hash = deser_uint256(f)
-        self.n = struct.unpack("<I", f.read(4))[0]
+        self.n = int.from_bytes(f.read(4), "little")
 
     def serialize(self):
         r = b""
         r += ser_uint256(self.hash)
-        r += struct.pack("<I", self.n)
+        r += self.n.to_bytes(4, "little")
         return r
 
     def __repr__(self):
-        return "COutPoint(hash=%064x n=%i)" % (self.hash, self.n)
+        return "COutPoint_old(hash=%064x n=%i)" % (self.hash, self.n)
+
+
+class CTxIn_old:
+    __slots__ = ("nSequence", "prevout", "scriptSig")
+
+    def __init__(self, outpoint=None, scriptSig=b"", nSequence=0):
+        if outpoint is None:
+            self.prevout = COutPoint_old()
+        else:
+            self.prevout = outpoint
+        self.scriptSig = scriptSig
+        self.nSequence = nSequence
+
+    def deserialize(self, f):
+        self.prevout = COutPoint_old()
+        self.prevout.deserialize(f)
+        self.scriptSig = deser_string(f)
+        self.nSequence = int.from_bytes(f.read(4), "little")
+
+    def serialize(self):
+        r = b""
+        r += self.prevout.serialize()
+        r += ser_string(self.scriptSig)
+        r += self.nSequence.to_bytes(4, "little")
+        return r
+
+    def __repr__(self):
+        return "CTxIn_old(prevout=%s scriptSig=%s nSequence=%i)" \
+            % (repr(self.prevout), self.scriptSig.hex(),
+               self.nSequence)
+
+
+class CTxOut_old:
+    __slots__ = ("nValue", "scriptPubKey")
+
+    def __init__(self, nValue=0, scriptPubKey=b""):
+        self.nValue = nValue
+        self.scriptPubKey = scriptPubKey
+
+    def deserialize(self, f):
+        self.nValue = int.from_bytes(f.read(8), "little", signed=True)
+        self.scriptPubKey = deser_string(f)
+
+    def serialize(self):
+        r = b""
+        r += self.nValue.to_bytes(8, "little", signed=True)
+        r += ser_string(self.scriptPubKey)
+        return r
+
+    def __repr__(self):
+        return "CTxOut_old(nValue=%i.%08i scriptPubKey=%s)" \
+            % (self.nValue // COIN, self.nValue % COIN,
+               self.scriptPubKey.hex())
+
+
+class CScriptWitness_old:
+    __slots__ = ("stack",)
+
+    def __init__(self):
+        # stack is a vector of strings
+        self.stack = []
+
+    def __repr__(self):
+        return "CScriptWitness_old(%s)" % \
+               (",".join([x.hex() for x in self.stack]))
+
+    def is_null(self):
+        if self.stack:
+            return False
+        return True
+
+
+class CTxInWitness_old:
+    __slots__ = ("scriptWitness",)
+
+    def __init__(self):
+        self.scriptWitness = CScriptWitness_old()
+
+    def deserialize(self, f):
+        self.scriptWitness.stack = deser_string_vector(f)
+
+    def serialize(self):
+        return ser_string_vector(self.scriptWitness.stack)
+
+    def __repr__(self):
+        return repr(self.scriptWitness)
+
+    def is_null(self):
+        return self.scriptWitness.is_null()
+
+
+class CTxWitness_old:
+    __slots__ = ("vtxinwit",)
+
+    def __init__(self):
+        self.vtxinwit = []
+
+    def deserialize(self, f):
+        for i in range(len(self.vtxinwit)):
+            self.vtxinwit[i].deserialize(f)
+
+    def serialize(self):
+        r = b""
+        # This is different than the usual vector serialization --
+        # we omit the length of the vector, which is required to be
+        # the same length as the transaction's vin vector.
+        for x in self.vtxinwit:
+            r += x.serialize()
+        return r
+
+    def __repr__(self):
+        return "CTxWitness_old(%s)" % \
+               (';'.join([repr(x) for x in self.vtxinwit]))
+
+    def is_null(self):
+        for x in self.vtxinwit:
+            if not x.is_null():
+                return False
+        return True
+
+
+class CTransaction_old:
+    __slots__ = ("nLockTime", "version", "vin", "vout", "wit")
+
+    def __init__(self, tx=None):
+        if tx is None:
+            self.version = 2
+            self.vin = []
+            self.vout = []
+            self.wit = CTxWitness_old()
+            self.nLockTime = 0
+        else:
+            self.version = tx.version
+            self.vin = copy.deepcopy(tx.vin)
+            self.vout = copy.deepcopy(tx.vout)
+            self.nLockTime = tx.nLockTime
+            self.wit = copy.deepcopy(tx.wit)
+
+    def deserialize(self, f):
+        self.version = int.from_bytes(f.read(4), "little")
+        self.vin = deser_vector(f, CTxIn_old)
+        flags = 0
+        if len(self.vin) == 0:
+            flags = int.from_bytes(f.read(1), "little")
+            # Not sure why flags can't be zero, but this
+            # matches the implementation in bitcoind
+            if (flags != 0):
+                self.vin = deser_vector(f, CTxIn_old)
+                self.vout = deser_vector(f, CTxOut_old)
+        else:
+            self.vout = deser_vector(f, CTxOut_old)
+        if flags != 0:
+            self.wit.vtxinwit = [CTxInWitness_old() for _ in range(len(self.vin))]
+            self.wit.deserialize(f)
+        else:
+            self.wit = CTxWitness_old()
+        self.nLockTime = int.from_bytes(f.read(4), "little")
+
+    def serialize_without_witness(self):
+        r = b""
+        r += self.version.to_bytes(4, "little")
+        r += ser_vector(self.vin)
+        r += ser_vector(self.vout)
+        r += self.nLockTime.to_bytes(4, "little")
+        return r
+
+    # Only serialize with witness when explicitly called for
+    def serialize_with_witness(self):
+        flags = 0
+        if not self.wit.is_null():
+            flags |= 1
+        r = b""
+        r += self.version.to_bytes(4, "little")
+        if flags:
+            dummy = []
+            r += ser_vector(dummy)
+            r += flags.to_bytes(1, "little")
+        r += ser_vector(self.vin)
+        r += ser_vector(self.vout)
+        if flags & 1:
+            if (len(self.wit.vtxinwit) != len(self.vin)):
+                # vtxinwit must have the same length as vin
+                self.wit.vtxinwit = self.wit.vtxinwit[:len(self.vin)]
+                for _ in range(len(self.wit.vtxinwit), len(self.vin)):
+                    self.wit.vtxinwit.append(CTxInWitness_old())
+            r += self.wit.serialize()
+        r += self.nLockTime.to_bytes(4, "little")
+        return r
+
+    # Regular serialization is with witness -- must explicitly
+    # call serialize_without_witness to exclude witness data.
+    def serialize(self):
+        return self.serialize_with_witness()
+
+    @property
+    def wtxid_hex(self):
+        """Return wtxid (transaction hash with witness) as hex string."""
+        return hash256(self.serialize())[::-1].hex()
+
+    @property
+    def wtxid_int(self):
+        """Return wtxid (transaction hash with witness) as integer."""
+        return uint256_from_str(hash256(self.serialize_with_witness()))
+
+    @property
+    def txid_hex(self):
+        """Return txid (transaction hash without witness) as hex string."""
+        return hash256(self.serialize_without_witness())[::-1].hex()
+
+    @property
+    def txid_int(self):
+        """Return txid (transaction hash without witness) as integer."""
+        return uint256_from_str(hash256(self.serialize_without_witness()))
+
+    def is_valid(self):
+        for tout in self.vout:
+            if tout.nValue < 0 or tout.nValue > 21000000 * COIN:
+                return False
+        return True
+
+    # Calculate the transaction weight using witness and non-witness
+    # serialization size (does NOT use sigops).
+    def get_weight(self):
+        with_witness_size = len(self.serialize_with_witness())
+        without_witness_size = len(self.serialize_without_witness())
+        return (WITNESS_SCALE_FACTOR - 1) * without_witness_size + with_witness_size
+
+    def get_vsize(self):
+        return math.ceil(self.get_weight() / WITNESS_SCALE_FACTOR)
+
+    def __repr__(self):
+        return "CTransaction_old(version=%i vin=%s vout=%s wit=%s nLockTime=%i)" \
+            % (self.version, repr(self.vin), repr(self.vout), repr(self.wit), self.nLockTime)
+
+
+class COutPoint:
+    __slots__ = ("hash")
+
+    def __init__(self, hash=0):
+        self.hash = hash
+
+    def deserialize(self, f):
+        self.hash = deser_uint256(f)
+
+    def serialize(self):
+        r = b""
+        # Convert string hash to int if needed
+        if isinstance(self.hash, str):
+            hash_int = int(self.hash, 16)
+        else:
+            hash_int = self.hash
+        r += ser_uint256(hash_int)
+        return r
+
+    def __repr__(self):
+        return "COutPoint(hash=%064x)" % (self.hash)
 
 
 class CTxIn:
@@ -669,14 +942,29 @@ class TokenId:
             return True
         return False
 
-class CTxOut:
-    __slots__ = ("nValue", "scriptPubKey", "blsctData", "tokenId")
+    def isNFT(self):
+        return self.token != 0 and self.subid != -1
 
-    def __init__(self, nValue=0, scriptPubKey=b"", blsctData=CTxOutBLSCTData(), tokenId=TokenId()):
+class CTxOut:
+    __slots__ = ("nValue", "scriptPubKey", "blsctData", "tokenId", "predicate")
+
+    def __init__(self, nValue=0, scriptPubKey=b"", blsctData=CTxOutBLSCTData(), tokenId=TokenId(), predicate=b""):
         self.nValue = nValue
         self.scriptPubKey = scriptPubKey
         self.blsctData = blsctData
         self.tokenId = tokenId
+        if predicate == b"":
+            # Don't set random predicate for OP_RETURN scripts (like witness commitments)
+            # to match node behavior
+            if len(scriptPubKey) > 0 and scriptPubKey[0] == 0x6a:  # OP_RETURN = 0x6a
+                self.predicate = b""
+            else:
+                self.set_random_predicate()
+        else:
+            self.predicate = predicate
+
+    def set_random_predicate(self):
+        self.predicate = bytes.fromhex("0410") + random.randbytes(16)
 
     def deserialize(self, f):
         self.nValue = struct.unpack("<q", f.read(8))[0]
@@ -685,6 +973,8 @@ class CTxOut:
 
         if self.nValue == 9223372036854775807:
             flags = struct.unpack("<q", f.read(8))[0]
+            if flags & OUTPUT_TRANSPARENT_VALUE_MARKER:
+                self.nValue = struct.unpack("<q", f.read(8))[0]
 
         self.scriptPubKey = deser_string(f)
 
@@ -694,6 +984,11 @@ class CTxOut:
         if flags & OUTPUT_TOKEN_MARKER:
             self.tokenId.deserialize(f)
 
+        if flags & OUTPUT_PREDICATE_MARKER:
+            self.predicate = deser_string(f)
+        else:
+            self.predicate = b""
+
     def serialize(self):
         flags = 0
 
@@ -701,12 +996,18 @@ class CTxOut:
             flags |= OUTPUT_BLSCT_MARKER
         if not self.tokenId.isNull():
             flags |= OUTPUT_TOKEN_MARKER
+        if len(self.predicate) > 0:
+            flags |= OUTPUT_PREDICATE_MARKER
+        if ((self.tokenId.isNFT() or len(self.predicate) > 0) and self.nValue != 0):
+            flags |= OUTPUT_TRANSPARENT_VALUE_MARKER
 
         r = b""
 
         if flags != 0:
             r += struct.pack("<q", 9223372036854775807)
             r += struct.pack("<q", flags)
+            if flags & OUTPUT_TRANSPARENT_VALUE_MARKER:
+                r += struct.pack("<q", self.nValue)
         else:
             r += struct.pack("<q", self.nValue)
 
@@ -718,12 +1019,18 @@ class CTxOut:
         if flags & OUTPUT_TOKEN_MARKER:
             r += self.tokenId.serialize()
 
+        if (flags & OUTPUT_PREDICATE_MARKER):
+            r += ser_string(self.predicate)
+
         return r
 
+    def hash(self):
+        return uint256_from_str(hash256(self.serialize()))
+
     def __repr__(self):
-        return "CTxOut(nValue=%i.%08i scriptPubKey=%s)" \
+        return "CTxOut(nValue=%i.%08i scriptPubKey=%s predicate=%s)" \
             % (self.nValue // COIN, self.nValue % COIN,
-               self.scriptPubKey.hex())
+               self.scriptPubKey.hex(), self.predicate.hex())
 
 
 class CScriptWitness:
@@ -1611,6 +1918,23 @@ class msg_getdata:
 
     def __repr__(self):
         return "msg_getdata(inv=%s)" % (repr(self.inv))
+
+
+class msg_getoutputdata:
+    __slots__ = ("output_hashes",)
+    msgtype = b"getoutputdata"
+
+    def __init__(self, output_hashes=None):
+        self.output_hashes = output_hashes if output_hashes is not None else []
+
+    def deserialize(self, f):
+        self.output_hashes = deser_vector(f, COutputHashRequest)
+
+    def serialize(self):
+        return ser_vector(self.output_hashes)
+
+    def __repr__(self):
+        return "msg_getoutputdata(output_hashes=%s)" % (repr(self.output_hashes))
 
 
 class msg_getblocks:

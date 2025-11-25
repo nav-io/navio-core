@@ -261,7 +261,7 @@ static void MutateTxAddInput(CMutableTransaction& tx, const std::string& strInpu
     std::vector<std::string> vStrInputParts = SplitString(strInput, ':');
 
     // separate TXID:VOUT in string
-    if (vStrInputParts.size() < 2)
+    if (vStrInputParts.size() < 1)
         throw std::runtime_error("TX input missing separator");
 
     // extract and validate TXID
@@ -270,23 +270,13 @@ static void MutateTxAddInput(CMutableTransaction& tx, const std::string& strInpu
         throw std::runtime_error("invalid TX input txid");
     }
 
-    static const unsigned int minTxOutSz = 9;
-    static const unsigned int maxVout = MAX_BLOCK_WEIGHT / (WITNESS_SCALE_FACTOR * minTxOutSz);
-
-    // extract and validate vout
-    const std::string& strVout = vStrInputParts[1];
-    int64_t vout;
-    if (!ParseInt64(strVout, &vout) || vout < 0 || vout > static_cast<int64_t>(maxVout))
-        throw std::runtime_error("invalid TX input vout '" + strVout + "'");
-
-    // extract the optional sequence number
     uint32_t nSequenceIn = CTxIn::SEQUENCE_FINAL;
-    if (vStrInputParts.size() > 2) {
-        nSequenceIn = TrimAndParse<uint32_t>(vStrInputParts.at(2), "invalid TX sequence id");
+    if (vStrInputParts.size() > 1) {
+        nSequenceIn = TrimAndParse<uint32_t>(vStrInputParts.at(1), "invalid TX sequence id");
     }
 
     // append to transaction input list
-    CTxIn txin(Txid::FromUint256(txid), vout, CScript(), nSequenceIn);
+    CTxIn txin(Txid::FromUint256(txid), CScript(), nSequenceIn);
     tx.vin.push_back(txin);
 }
 
@@ -618,7 +608,6 @@ static void MutateTxSign(CMutableTransaction& tx, const std::string& flagStr)
 
             std::map<std::string, UniValue::VType> types = {
                 {"txid", UniValue::VSTR},
-                {"vout", UniValue::VNUM},
                 {"scriptPubKey", UniValue::VSTR},
             };
             if (!prevOut.checkObject(types))
@@ -629,11 +618,7 @@ static void MutateTxSign(CMutableTransaction& tx, const std::string& flagStr)
                 throw std::runtime_error("txid must be hexadecimal string (not '" + prevOut["txid"].get_str() + "')");
             }
 
-            const int nOut = prevOut["vout"].getInt<int>();
-            if (nOut < 0)
-                throw std::runtime_error("vout cannot be negative");
-
-            COutPoint out(Txid::FromUint256(txid), nOut);
+            COutPoint out(Txid::FromUint256(txid));
             std::vector<unsigned char> pkData(ParseHexUV(prevOut["scriptPubKey"], "scriptPubKey"));
             CScript scriptPubKey(pkData.begin(), pkData.end());
 

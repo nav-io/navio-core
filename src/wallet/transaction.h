@@ -375,10 +375,21 @@ public:
     std::map<uint32_t, range_proof::RecoveredData<Mcl>> blsctRecoveryData;
     TxState m_state;
 
+    range_proof::RecoveredData<Mcl> GetBLSCTRecoveryData(const COutPoint& outpoint) const
+    {
+        for (size_t i = 0; i < tx->vout.size(); i++) {
+            if (tx->vout[i].GetHash() == outpoint.hash) {
+                return GetBLSCTRecoveryData(i);
+            }
+        }
+        return range_proof::RecoveredData<Mcl>{0, 0, 0, ""};
+    }
+
     range_proof::RecoveredData<Mcl> GetBLSCTRecoveryData(const uint32_t& forOutput) const
     {
-        if (blsctRecoveryData.find(forOutput) == blsctRecoveryData.end())
+        if (blsctRecoveryData.find(forOutput) == blsctRecoveryData.end()) {
             return range_proof::RecoveredData<Mcl>{0, 0, 0, ""};
+        }
         return blsctRecoveryData.at(forOutput);
     };
 
@@ -480,6 +491,16 @@ public:
             i++;
         }
         return ret;
+    }
+
+    int32_t GetOutputIndexFromHash(const COutPoint& outpoint) const
+    {
+        for (int32_t i = 0; i < static_cast<int32_t>(tx->vout.size()); i++) {
+            if (tx->vout[i].GetHash() == outpoint.hash) {
+                return i;
+            }
+        }
+        return -1;
     }
 
 private:

@@ -27,7 +27,6 @@ BOOST_AUTO_TEST_CASE(test_transaction_signature_checker_bls_signature_storage)
     // Add a transaction input
     CTxIn txin;
     txin.prevout.hash = Txid::FromUint256(uint256::ONE); // Previous transaction hash
-    txin.prevout.n = 0;
     txin.nSequence = 0xffffffff;
     tx.vin.push_back(txin);
 
@@ -90,7 +89,6 @@ BOOST_AUTO_TEST_CASE(test_transaction_signature_checker_conditional_bls_signatur
     // Add a transaction input
     CTxIn txin;
     txin.prevout.hash = Txid::FromUint256(uint256::ZERO);
-    txin.prevout.n = 1;
     txin.nSequence = 0xffffffff;
     tx.vin.push_back(txin);
 
@@ -161,7 +159,6 @@ BOOST_AUTO_TEST_CASE(test_transaction_signature_checker_single_bls_signature)
     // Add a transaction input
     CTxIn txin;
     txin.prevout.hash = Txid::FromUint256(uint256::ZERO); // Different previous transaction hash
-    txin.prevout.n = 1;
     txin.nSequence = 0xffffffff;
     tx.vin.push_back(txin);
 
@@ -215,7 +212,6 @@ BOOST_AUTO_TEST_CASE(test_transaction_signature_checker_invalid_pubkey)
     // Add a transaction input
     CTxIn txin;
     txin.prevout.hash = Txid::FromUint256(uint256::ONE);
-    txin.prevout.n = 0;
     txin.nSequence = 0xffffffff;
     tx.vin.push_back(txin);
 

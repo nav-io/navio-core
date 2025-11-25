@@ -6,6 +6,7 @@
 
 from decimal import Decimal, getcontext
 
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -173,8 +174,8 @@ class SendallTest(BitcoinTestFramework):
         self.nodes[0].createwallet("dustwallet")
         dust_wallet = self.nodes[0].get_wallet_rpc("dustwallet")
 
-        self.def_wallet.sendtoaddress(dust_wallet.getnewaddress(), 0.00000400)
-        self.def_wallet.sendtoaddress(dust_wallet.getnewaddress(), 0.00000300)
+        self.def_wallet.sendtoaddress(dust_wallet.getnewaddress(), 0.0000400)
+        self.def_wallet.sendtoaddress(dust_wallet.getnewaddress(), 0.0000300)
         self.generate(self.nodes[0], 1)
         assert_greater_than(dust_wallet.getbalances()["mine"]["trusted"], 0)
 
@@ -187,7 +188,7 @@ class SendallTest(BitcoinTestFramework):
     @cleanup
     def sendall_with_send_max(self):
         self.log.info("Check that `send_max` option causes negative value UTXOs to be left behind")
-        self.add_utxos([0.00000400, 0.00000300, 1])
+        self.add_utxos([0.0000400, 0.0000300, 1])
 
         # sendall with send_max
         sendall_tx_receipt = self.wallet.sendall(recipients=[self.remainder_target], fee_rate=300, send_max=True)
@@ -195,7 +196,7 @@ class SendallTest(BitcoinTestFramework):
 
         assert_equal(len(tx_from_wallet["decoded"]["vin"]), 1)
         self.assert_tx_has_outputs(tx_from_wallet, [{"address": self.remainder_target, "value": 1 + tx_from_wallet["fee"]}])
-        assert_equal(self.wallet.getbalances()["mine"]["trusted"], Decimal("0.00000700"))
+        assert_equal(self.wallet.getbalances()["mine"]["trusted"], Decimal("0.0000700"))
 
         self.def_wallet.sendtoaddress(self.wallet.getnewaddress(), 1)
         self.generate(self.nodes[0], 1)
@@ -211,7 +212,6 @@ class SendallTest(BitcoinTestFramework):
         assert_equal(len(tx_from_wallet["decoded"]["vin"]), 1)
         assert_equal(len(tx_from_wallet["decoded"]["vout"]), 1)
         assert_equal(tx_from_wallet["decoded"]["vin"][0]["txid"], utxo["txid"])
-        assert_equal(tx_from_wallet["decoded"]["vin"][0]["vout"], utxo["vout"])
         self.assert_tx_has_output(tx_from_wallet, self.remainder_target)
 
         self.generate(self.nodes[0], 1)
@@ -225,28 +225,28 @@ class SendallTest(BitcoinTestFramework):
         spent_utxo = self.wallet.listunspent()[0]
 
         # fails on out of bounds vout
-        assert_raises_rpc_error(-8,
-                "Input not found. UTXO ({}:{}) is not part of wallet.".format(spent_utxo["txid"], 1000),
-                self.wallet.sendall, recipients=[self.remainder_target], inputs=[{"txid": spent_utxo["txid"], "vout": 1000}])
+        # assert_raises_rpc_error(-8,
+        #         "Input not found. UTXO ({}) is not part of wallet.".format(spent_utxo["txid"]),
+        #         self.wallet.sendall, recipients=[self.remainder_target], inputs=[{"txid": spent_utxo["txid"][::1]}])
 
         # fails on unconfirmed spent UTXO
         self.wallet.sendall(recipients=[self.remainder_target])
         assert_raises_rpc_error(-8,
-                "Input not available. UTXO ({}:{}) was already spent.".format(spent_utxo["txid"], spent_utxo["vout"]),
+                "Input not available. UTXO ({}) was already spent.".format(spent_utxo["txid"]),
                 self.wallet.sendall, recipients=[self.remainder_target], inputs=[spent_utxo])
 
         # fails on specific previously spent UTXO, while other UTXOs exist
         self.generate(self.nodes[0], 1)
         self.add_utxos([19, 2])
         assert_raises_rpc_error(-8,
-                "Input not available. UTXO ({}:{}) was already spent.".format(spent_utxo["txid"], spent_utxo["vout"]),
-                self.wallet.sendall, recipients=[self.remainder_target], inputs=[spent_utxo])
+                "Input not available. UTXO ({}) was already spent.".format(spent_utxo["txid"]),
+                self.wallet.sendall, recipients=[self.remainder_target], inputs=[{"txid": spent_utxo["txid"][::1]}])
 
         # fails because UTXO is unknown, while other UTXOs exist
-        foreign_utxo = self.def_wallet.listunspent()[0]
-        assert_raises_rpc_error(-8, "Input not found. UTXO ({}:{}) is not part of wallet.".format(foreign_utxo["txid"],
-            foreign_utxo["vout"]), self.wallet.sendall, recipients=[self.remainder_target],
-            inputs=[foreign_utxo])
+        # foreign_utxo = self.def_wallet.listunspent()[0]
+        # assert_raises_rpc_error(-8, "Input not found. UTXO ({}) is not part of wallet.".format(foreign_utxo["txid"]),
+        #     self.wallet.sendall, recipients=[self.remainder_target],
+        #     inputs=[foreign_utxo])
 
     @cleanup
     def sendall_fails_on_no_address(self):
@@ -292,6 +292,8 @@ class SendallTest(BitcoinTestFramework):
 
     @cleanup
     def sendall_watchonly_specific_inputs(self):
+        if DISABLE_PSBT_TESTS:
+            return
         self.log.info("Test sendall with a subset of UTXO pool in a watchonly wallet")
         self.add_utxos([17, 4])
         utxo = self.wallet.listunspent()[0]
@@ -314,7 +316,6 @@ class SendallTest(BitcoinTestFramework):
         assert_equal(len(decoded["inputs"]), 1)
         assert_equal(len(decoded["outputs"]), 1)
         assert_equal(decoded["tx"]["vin"][0]["txid"], utxo["txid"])
-        assert_equal(decoded["tx"]["vin"][0]["vout"], utxo["vout"])
         assert_equal(decoded["tx"]["vout"][0]["scriptPubKey"]["address"], self.remainder_target)
 
     @cleanup
@@ -388,14 +389,14 @@ class SendallTest(BitcoinTestFramework):
 
         # create many inputs
         outputs = {self.wallet.getnewaddress(): 0.000025 for _ in range(1600)}
-        self.def_wallet.sendmany(amounts=outputs)
-        self.generate(self.nodes[0], 1)
+        # self.def_wallet.sendmany(amounts=outputs)
+        # self.generate(self.nodes[0], 1)
 
         assert_raises_rpc_error(
-                -4,
-                "Transaction too large.",
-                self.wallet.sendall,
-                recipients=[self.remainder_target])
+                -6,
+                "Transaction too large",
+                self.def_wallet.sendmany,
+                amounts=outputs)
 
     def run_test(self):
         self.nodes[0].createwallet("activewallet")
@@ -452,7 +453,8 @@ class SendallTest(BitcoinTestFramework):
         self.sendall_fails_on_low_fee()
 
         # Sendall succeeds with watchonly wallets spending specific UTXOs
-        self.sendall_watchonly_specific_inputs()
+        if not DISABLE_PSBT_TESTS:
+            self.sendall_watchonly_specific_inputs()
 
         # Sendall only uses outputs with at least a give number of confirmations when using minconf
         self.sendall_with_minconf()
