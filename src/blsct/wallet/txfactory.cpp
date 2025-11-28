@@ -130,7 +130,8 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     AssertLockHeld(wallet->cs_wallet);
 
     CAmount nTotalAdded = 0;
-    auto availableCoins = wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE) ? AvailableBlsctCoins(*wallet, nullptr, coins_params) : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params);
+    bool is_blsct_storage = wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+    auto availableCoins = is_blsct_storage ? AvailableBlsctCoins(*wallet, nullptr, coins_params) : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params);
 
     for (const wallet::COutput& output : availableCoins.All()) {
         CTxOut out;
@@ -195,13 +196,14 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
 
     if (type == CreateTransactionType::STAKED_COMMITMENT || type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) {
         coins_params.include_staked_commitment = true;
-        coins_params.min_sum_amount = nAmountLimit;
 
         // For unstaking, we need to collect ALL staked commitments, not just up to the unstake amount
         // This is because we need to check minimum stake constraints on the total
-        CAmount stakeCoinLimit = (type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) ?
-                                     CAmount(21000000) * COIN :
-                                     nAmountLimit; // Use max possible coins instead of std::numeric_limits
+        // The same applies when staking: we want to include all the staked commitments to the new stake
+        CAmount stakeCoinLimit = CAmount(999000000) * COIN; // Use max possible coins instead of std::numeric_limits
+
+        coins_params.min_sum_amount = stakeCoinLimit;
+        coins_params.skip_locked = false;
 
         AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, stakeCoinLimit);
     }
