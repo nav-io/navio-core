@@ -161,7 +161,7 @@ public:
     bool IsMine(const CScript& script) const;
     CKeyID GetHashId(const CTxOut& txout) const
     {
-        if (!txout.scriptPubKey.IsSpendable()) {
+        if (!txout.scriptPubKey.IsSpendable() && !txout.IsStakedCommitment()) {
             return CKeyID();
         }
         if (txout.blsctData.spendingKey.IsZero()) {
