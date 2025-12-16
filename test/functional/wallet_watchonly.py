@@ -6,6 +6,7 @@
 """
 
 from test_framework.blocktools import COINBASE_MATURITY
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -92,15 +93,16 @@ class CreateWalletWatchonlyTest(BitcoinTestFramework):
         result = wo_wallet.gettransaction(txid=txid, include_watchonly=False)
         assert_equal(len(result["details"]), 0)
 
-        self.log.info('Testing walletcreatefundedpsbt watch-only defaults')
         inputs = []
         outputs = [{a1: 0.5}]
         options = {'changeAddress': wo_change}
         no_wo_options = {'changeAddress': wo_change, 'includeWatching': False}
 
-        result = wo_wallet.walletcreatefundedpsbt(inputs=inputs, outputs=outputs, **options)
-        assert_equal("psbt" in result, True)
-        assert_raises_rpc_error(-4, "Insufficient funds", wo_wallet.walletcreatefundedpsbt, inputs, outputs, 0, no_wo_options)
+        if not DISABLE_PSBT_TESTS:
+            self.log.info('Testing walletcreatefundedpsbt watch-only defaults')
+            result = wo_wallet.walletcreatefundedpsbt(inputs=inputs, outputs=outputs, **options)
+            assert_equal("psbt" in result, True)
+            assert_raises_rpc_error(-4, "Insufficient funds", wo_wallet.walletcreatefundedpsbt, inputs, outputs, 0, no_wo_options)
 
         self.log.info('Testing fundrawtransaction watch-only defaults')
         rawtx = wo_wallet.createrawtransaction(inputs=inputs, outputs=outputs)

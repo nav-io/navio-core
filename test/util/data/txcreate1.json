@@ -1,38 +1,35 @@
 {
-    "txid": "fe7d174f42dce0cffa7a527e9bc8368956057619ec817648f6138b98f2533e8f",
-    "hash": "fe7d174f42dce0cffa7a527e9bc8368956057619ec817648f6138b98f2533e8f",
+    "txid": "f10b5656763048b4020741f59837a101553c4af347b23138c502c5853ef02ead",
+    "hash": "f10b5656763048b4020741f59837a101553c4af347b23138c502c5853ef02ead",
     "version": 2,
-    "size": 201,
-    "vsize": 201,
-    "weight": 804,
+    "size": 189,
+    "vsize": 189,
+    "weight": 756,
     "locktime": 0,
     "vin": [
         {
             "txid": "5897de6bd6027a475eadd57019d4e6872c396d0716c4875a5f1a6fcfdf385c1f",
-            "vout": 0,
             "scriptSig": {
                 "asm": "",
                 "hex": ""
             },
-            "sequence": 4294967295
+            "sequence": 0
         },
         {
             "txid": "bf829c6bcf84579331337659d31f89dfd138f7f7785802d5501c92333145ca7c",
-            "vout": 18,
             "scriptSig": {
                 "asm": "",
                 "hex": ""
             },
-            "sequence": 4294967295
+            "sequence": 18
         },
         {
             "txid": "22a6f904655d53ae2ff70e701a0bbd90aa3975c0f40bfc6cc996a9049e31cdfc",
-            "vout": 1,
             "scriptSig": {
                 "asm": "",
                 "hex": ""
             },
-            "sequence": 4294967295
+            "sequence": 1
         }
     ],
     "vout": [
@@ -59,5 +56,5 @@
             }
         }
     ],
-    "hex": "02000000031f5c38dfcf6f1a5f5a87c416076d392c87e6d41970d5ad5e477a02d66bde97580000000000ffffffff7cca453133921c50d5025878f7f738d1df891fd359763331935784cf6b9c82bf1200000000fffffffffccd319e04a996c96cfc0bf4c07539aa90bd0b1a700ef72fae535d6504f9a6220100000000ffffffff0280a81201000000001976a9141fc11f39be1729bf973a7ab6a615ca4729d6457488ac0084d717000000001976a914f2d4db28cad6502226ee484ae24505c2885cb12d88ac00000000"
+    "hex": "02000000031f5c38dfcf6f1a5f5a87c416076d392c87e6d41970d5ad5e477a02d66bde975800000000007cca453133921c50d5025878f7f738d1df891fd359763331935784cf6b9c82bf0012000000fccd319e04a996c96cfc0bf4c07539aa90bd0b1a700ef72fae535d6504f9a62200010000000280a81201000000001976a9141fc11f39be1729bf973a7ab6a615ca4729d6457488ac0084d717000000001976a914f2d4db28cad6502226ee484ae24505c2885cb12d88ac00000000"
 }

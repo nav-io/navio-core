@@ -41,11 +41,11 @@ class WalletRescanUnconfirmed(BitcoinTestFramework):
             scriptPubKey=address_to_scriptpubkey(parent_address),
             amount=COIN,
         )
-        assert tx_parent_to_reorg["txid"] in node.getrawmempool()
+        assert tx_parent_to_reorg["txidhash"] in node.getrawmempool()
         block_to_reorg = self.generate(tester_wallet, 1)[0]
         assert_equal(len(node.getrawmempool()), 0)
         node.syncwithvalidationinterfacequeue()
-        assert_equal(w0.gettransaction(tx_parent_to_reorg["txid"])["confirmations"], 1)
+        assert_equal(w0.gettransaction(tx_parent_to_reorg["txidhash"])["confirmations"], 1)
 
         # Create an unconfirmed child transaction from the parent tx, sending all
         # the funds to an unspendable address. Importantly, no change output is created so the
@@ -56,14 +56,27 @@ class WalletRescanUnconfirmed(BitcoinTestFramework):
         self.log.info("Create a child tx and wait for it to propagate to all mempools")
         # The only UTXO available to spend is tx_parent_to_reorg.
         assert_equal(len(w0_utxos), 1)
-        assert_equal(w0_utxos[0]["txid"], tx_parent_to_reorg["txid"])
+
+        # Get the output hash from the decoded transaction (same method as other tests)
+        decoded_tx = node.decoderawtransaction(tx_parent_to_reorg["hex"])
+        utxo_txid = w0_utxos[0]["txid"]
+
+        found = False
+        for out in decoded_tx["vout"]:
+            if out["hash"] == utxo_txid:
+                found = True
+                break
+
+        assert_equal(found, True)
         tx_child_unconfirmed_sweep = w0.sendall([ADDRESS_BCRT1_UNSPENDABLE])
         assert tx_child_unconfirmed_sweep["txid"] in node.getrawmempool()
         node.syncwithvalidationinterfacequeue()
 
         self.log.info("Mock a reorg, causing parent to re-enter mempools after its child")
         node.invalidateblock(block_to_reorg)
-        assert tx_parent_to_reorg["txid"] in node.getrawmempool()
+
+        # Use txidhash for mempool transactions in modified Bitcoin Core
+        assert tx_parent_to_reorg["txidhash"] in node.getrawmempool()
 
         self.log.info("Import descriptor wallet on another node")
         descriptors_to_import = [{"desc": w0.getaddressinfo(parent_address)['parent_desc'], "timestamp": 0, "label": "w0 import"}]
@@ -76,7 +89,7 @@ class WalletRescanUnconfirmed(BitcoinTestFramework):
         # Check that parent address is correctly determined as ismine
         test_address(w1, parent_address, solvable=True, ismine=True)
         # This would raise a JSONRPCError if the transactions were not identified as belonging to the wallet.
-        assert_equal(w1.gettransaction(tx_parent_to_reorg["txid"])["confirmations"], 0)
+        assert_equal(w1.gettransaction(tx_parent_to_reorg["txidhash"])["confirmations"], 0)
         assert_equal(w1.gettransaction(tx_child_unconfirmed_sweep["txid"])["confirmations"], 0)
 
 if __name__ == '__main__':

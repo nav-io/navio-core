@@ -113,9 +113,8 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
 
     pblocktemplate.reset(new CBlockTemplate());
 
-    if (!pblocktemplate.get()) {
+    if (!pblocktemplate.get())
         return nullptr;
-    }
     CBlock* const pblock = &pblocktemplate->block; // pointer for convenience
 
     // Add dummy coinbase tx as first transaction
@@ -131,9 +130,8 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     pblock->nVersion = m_chainstate.m_chainman.m_versionbitscache.ComputeBlockVersion(pindexPrev, chainparams.GetConsensus());
     // -regtest only: allow overriding block.nVersion with
     // -blockversion=N to test forking scenarios
-    if (chainparams.MineBlocksOnDemand()) {
+    if (chainparams.MineBlocksOnDemand())
         pblock->nVersion = gArgs.GetIntArg("-blockversion", pblock->nVersion);
-    }
 
     pblock->nTime = TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime());
     m_lock_time_cutoff = pindexPrev->GetMedianTimePast();
@@ -157,6 +155,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     coinbaseTx.vout.resize(1);
     coinbaseTx.vout[0].scriptPubKey = scriptPubKeyIn;
     coinbaseTx.vout[0].nValue = nFees + GetBlockSubsidy(nHeight, chainparams.GetConsensus());
+    coinbaseTx.vout[0].predicate = blsct::DataPredicate(nHeight).GetVch();
     coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
     pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
     pblocktemplate->vchCoinbaseCommitment = m_chainstate.m_chainman.GenerateCoinbaseCommitment(*pblock, pindexPrev);
@@ -239,9 +238,15 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
 
         for (auto& out : tx.vout) {
             if (out.predicate.size() > 0) {
-                auto parsedPredicate = blsct::ParsePredicate(out.predicate);
-                if (!ExecutePredicate(parsedPredicate, viewNew)) {
-                    LogPrintf("%s: Failed validation of predicate of output %s\n", __func__, out.ToString());
+                try {
+                    auto parsedPredicate = blsct::ParsePredicate(out.predicate);
+                    if (!ExecutePredicate(parsedPredicate, viewNew)) {
+                        LogPrintf("%s: Failed validation of predicate of output %s\n", __func__, out.ToString());
+                        validPredicate = false;
+                        break;
+                    }
+                } catch (const std::ios_base::failure& e) {
+                    LogPrintf("%s: Invalid predicate in output %s\n", __func__, out.ToString());
                     validPredicate = false;
                     break;
                 }
@@ -434,7 +439,6 @@ void BlockAssembler::SortForBlock(const CTxMemPool::setEntries& package, std::ve
 void BlockAssembler::addPackageTxs(const CTxMemPool& mempool, int& nPackagesSelected, int& nDescendantsUpdated)
 {
     AssertLockHeld(mempool.cs);
-
     // mapModifiedTx will store sorted packages after they are modified
     // because some of their txs are already in the block
     indexed_modified_transaction_set mapModifiedTx;

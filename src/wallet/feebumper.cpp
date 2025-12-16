@@ -200,7 +200,7 @@ Result CreateRateBumpTransaction(CWallet& wallet, const uint256& txid, const CCo
     for (const CTxIn& txin : wtx.tx->vin) {
         const Coin& coin = coins.at(txin.prevout);
         if (coin.out.IsNull()) {
-            errors.push_back(Untranslated(strprintf("%s:%u is already spent", txin.prevout.hash.GetHex(), txin.prevout.n)));
+            errors.push_back(Untranslated(strprintf("%s is already spent", txin.prevout.hash.GetHex())));
             return Result::MISC_ERROR;
         }
         PreselectedInput& preset_txin = new_coin_control.Select(txin.prevout);
@@ -363,6 +363,7 @@ Result CommitTransaction(CWallet& wallet, const uint256& txid, CMutableTransacti
         errors.push_back(Untranslated("Invalid or non-wallet transaction id"));
         return Result::MISC_ERROR;
     }
+
     const CWalletTx& oldWtx = it->second;
 
     // make sure the transaction still has no descendants and hasn't been mined in the meantime
@@ -383,6 +384,7 @@ Result CommitTransaction(CWallet& wallet, const uint256& txid, CMutableTransacti
     if (!wallet.MarkReplaced(oldWtx.GetHash(), bumped_txid)) {
         errors.push_back(Untranslated("Created new bumpfee transaction but could not mark the original transaction as replaced"));
     }
+
     return Result::OK;
 }
 

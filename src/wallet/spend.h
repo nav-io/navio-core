@@ -107,7 +107,7 @@ CoinsResult AvailableCoinsListUnspent(const CWallet& wallet, const CCoinControl*
 /**
  * Find non-change parent output.
  */
-const CTxOut& FindNonChangeParentOutput(const CWallet& wallet, const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+CTxOut FindNonChangeParentOutput(const CWallet& wallet, const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 
 /**
  * Return list of available coins and locked coins grouped by non-change output address.

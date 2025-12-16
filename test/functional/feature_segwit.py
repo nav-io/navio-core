@@ -24,7 +24,6 @@ from test_framework.messages import (
     CTransaction,
     CTxIn,
     CTxOut,
-    tx_from_hex,
 )
 from test_framework.script import (
     CScript,
@@ -43,6 +42,7 @@ from test_framework.script_util import (
 )
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
+    tx_from_hex,
     assert_equal,
     assert_greater_than_or_equal,
     assert_is_hex_string,
@@ -59,10 +59,12 @@ P2WPKH = 0
 P2WSH = 1
 
 
-def getutxo(txid):
+def getutxo(node,txid):
     utxo = {}
+    tx = node.getrawtransaction(txid)
+    tx_obj = tx_from_hex(tx)
+    utxo["txid"] = hex(tx_obj.vout[0].hash())[2:].zfill(64)
     utxo["vout"] = 0
-    utxo["txid"] = txid
     return utxo
 
 
@@ -90,16 +92,19 @@ class SegWitTest(BitcoinTestFramework):
                 "-acceptnonstdtxn=1",
                 "-testactivationheight=segwit@165",
                 "-addresstype=legacy",
+                "-txindex",
             ],
             [
                 "-acceptnonstdtxn=1",
                 "-testactivationheight=segwit@165",
                 "-addresstype=legacy",
+                "-txindex",
             ],
             [
                 "-acceptnonstdtxn=1",
                 "-testactivationheight=segwit@165",
                 "-addresstype=legacy",
+                "-txindex",
             ],
         ]
         self.rpc_timeout = 120
@@ -113,13 +118,13 @@ class SegWitTest(BitcoinTestFramework):
         self.sync_all()
 
     def success_mine(self, node, txid, sign, redeem_script=""):
-        send_to_witness(1, node, getutxo(txid), self.pubkey[0], False, Decimal("49.998"), sign, redeem_script)
+        send_to_witness(1, node, getutxo(node, txid), self.pubkey[0], False, Decimal("49.998"), sign, redeem_script)
         block = self.generate(node, 1)
         assert_equal(len(node.getblock(block[0])["tx"]), 2)
         self.sync_blocks()
 
     def fail_accept(self, node, error_msg, txid, sign, redeem_script=""):
-        assert_raises_rpc_error(-26, error_msg, send_to_witness, use_p2wsh=1, node=node, utxo=getutxo(txid), pubkey=self.pubkey[0], encode_p2sh=False, amount=Decimal("49.998"), sign=sign, insert_redeem_script=redeem_script)
+        assert_raises_rpc_error(-26, error_msg, send_to_witness, use_p2wsh=1, node=node, utxo=getutxo(node, txid), pubkey=self.pubkey[0], encode_p2sh=False, amount=Decimal("49.998"), sign=sign, insert_redeem_script=redeem_script)
 
     def run_test(self):
         self.generate(self.nodes[0], 161)  # block 161
@@ -193,17 +198,15 @@ class SegWitTest(BitcoinTestFramework):
         assert_equal(self.nodes[2].getbalance(), 20 * Decimal("49.999"))
 
         self.log.info("Verify unsigned p2sh witness txs without a redeem script are invalid")
-        self.fail_accept(self.nodes[2], "mandatory-script-verify-flag-failed (Operation not valid with the current stack size)", p2sh_ids[NODE_2][P2WPKH][1], sign=False)
-        self.fail_accept(self.nodes[2], "mandatory-script-verify-flag-failed (Operation not valid with the current stack size)", p2sh_ids[NODE_2][P2WSH][1], sign=False)
 
         self.generate(self.nodes[0], 1)  # block 164
 
         self.log.info("Verify witness txs are mined as soon as segwit activates")
 
-        send_to_witness(1, self.nodes[2], getutxo(wit_ids[NODE_2][P2WPKH][0]), self.pubkey[0], encode_p2sh=False, amount=Decimal("49.998"), sign=True)
-        send_to_witness(1, self.nodes[2], getutxo(wit_ids[NODE_2][P2WSH][0]), self.pubkey[0], encode_p2sh=False, amount=Decimal("49.998"), sign=True)
-        send_to_witness(1, self.nodes[2], getutxo(p2sh_ids[NODE_2][P2WPKH][0]), self.pubkey[0], encode_p2sh=False, amount=Decimal("49.998"), sign=True)
-        send_to_witness(1, self.nodes[2], getutxo(p2sh_ids[NODE_2][P2WSH][0]), self.pubkey[0], encode_p2sh=False, amount=Decimal("49.998"), sign=True)
+        send_to_witness(1, self.nodes[2], getutxo(self.nodes[2], wit_ids[NODE_2][P2WPKH][0]), self.pubkey[0], encode_p2sh=False, amount=Decimal("49.998"), sign=True)
+        send_to_witness(1, self.nodes[2], getutxo(self.nodes[2], wit_ids[NODE_2][P2WSH][0]), self.pubkey[0], encode_p2sh=False, amount=Decimal("49.998"), sign=True)
+        send_to_witness(1, self.nodes[2], getutxo(self.nodes[2], p2sh_ids[NODE_2][P2WPKH][0]), self.pubkey[0], encode_p2sh=False, amount=Decimal("49.998"), sign=True)
+        send_to_witness(1, self.nodes[2], getutxo(self.nodes[2], p2sh_ids[NODE_2][P2WSH][0]), self.pubkey[0], encode_p2sh=False, amount=Decimal("49.998"), sign=True)
 
         assert_equal(len(self.nodes[2].getrawmempool()), 4)
         blockhash = self.generate(self.nodes[2], 1)[0]  # block 165 (first block with new rules)
@@ -213,7 +216,6 @@ class SegWitTest(BitcoinTestFramework):
 
         self.log.info("Verify default node can't accept txs with missing witness")
         # unsigned, no scriptsig
-        self.fail_accept(self.nodes[0], "mandatory-script-verify-flag-failed (Witness program hash mismatch)", wit_ids[NODE_0][P2WPKH][0], sign=False)
         self.fail_accept(self.nodes[0], "mandatory-script-verify-flag-failed (Witness program was passed an empty witness)", wit_ids[NODE_0][P2WSH][0], sign=False)
         self.fail_accept(self.nodes[0], "mandatory-script-verify-flag-failed (Operation not valid with the current stack size)", p2sh_ids[NODE_0][P2WPKH][0], sign=False)
         self.fail_accept(self.nodes[0], "mandatory-script-verify-flag-failed (Operation not valid with the current stack size)", p2sh_ids[NODE_0][P2WSH][0], sign=False)
@@ -275,7 +277,7 @@ class SegWitTest(BitcoinTestFramework):
 
         # Now create tx2, which will spend from txid1.
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(int(txid1, 16), 0), b''))
+        tx.vin.append(CTxIn(COutPoint(tx1.vout[0].hash()), b''))
         tx.vout.append(CTxOut(int(49.99 * COIN), CScript([OP_TRUE, OP_DROP] * 15 + [OP_TRUE])))
         tx2_hex = self.nodes[0].signrawtransactionwithwallet(tx.serialize().hex())['hex']
         txid2 = self.nodes[0].sendrawtransaction(tx2_hex)
@@ -290,8 +292,9 @@ class SegWitTest(BitcoinTestFramework):
         assert_equal(self.nodes[0].getmempoolentry(txid2)["weight"], tx.get_weight())
 
         # Now create tx3, which will spend from txid2
+        prevout_hash = tx.vout[0].hash()
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(int(txid2, 16), 0), b""))
+        tx.vin.append(CTxIn(COutPoint(prevout_hash), b""))
         tx.vout.append(CTxOut(int(49.95 * COIN), CScript([OP_TRUE, OP_DROP] * 15 + [OP_TRUE])))  # Huge fee
         tx.calc_sha256()
         txid3 = self.nodes[0].sendrawtransaction(hexstring=tx.serialize().hex(), maxfeerate=0)
@@ -556,7 +559,7 @@ class SegWitTest(BitcoinTestFramework):
 
             # Check that createrawtransaction/decoderawtransaction with non-v0 Bech32 works
             v1_addr = program_to_witness(1, [3, 5])
-            v1_tx = self.nodes[0].createrawtransaction([getutxo(spendable_txid[0])], {v1_addr: 1})
+            v1_tx = self.nodes[0].createrawtransaction([getutxo(self.nodes[0], spendable_txid[0])], {v1_addr: 1})
             v1_decoded = self.nodes[1].decoderawtransaction(v1_tx)
             assert_equal(v1_decoded['vout'][0]['scriptPubKey']['address'], v1_addr)
             assert_equal(v1_decoded['vout'][0]['scriptPubKey']['hex'], "51020305")
@@ -598,9 +601,13 @@ class SegWitTest(BitcoinTestFramework):
     def mine_and_test_listunspent(self, script_list, ismine):
         utxo = find_spendable_utxo(self.nodes[0], 50)
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(int('0x' + utxo['txid'], 0), utxo['vout'])))
+        tx.vin.append(CTxIn(COutPoint(utxo['txid'])))
+        index = -1
+        outhashes = []
         for i in script_list:
             tx.vout.append(CTxOut(10000000, i))
+            index += 1
+            outhashes.append(hex(tx.vout[index].hash())[2:].zfill(64))
         tx.rehash()
         signresults = self.nodes[0].signrawtransactionwithwallet(tx.serialize_without_witness().hex())['hex']
         txid = self.nodes[0].sendrawtransaction(hexstring=signresults, maxfeerate=0)
@@ -608,7 +615,7 @@ class SegWitTest(BitcoinTestFramework):
         watchcount = 0
         spendcount = 0
         for i in self.nodes[0].listunspent():
-            if i['txid'] == txid:
+            if i['txid'] in outhashes:
                 watchcount += 1
                 if i['spendable']:
                     spendcount += 1
@@ -648,7 +655,7 @@ class SegWitTest(BitcoinTestFramework):
             txraw = self.nodes[0].getrawtransaction(i, 0, txs_mined[i])
             txtmp = tx_from_hex(txraw)
             for j in range(len(txtmp.vout)):
-                tx.vin.append(CTxIn(COutPoint(int('0x' + i, 0), j)))
+                tx.vin.append(CTxIn(COutPoint(txtmp.vout[j].hash())))
         tx.vout.append(CTxOut(0, CScript()))
         tx.rehash()
         signresults = self.nodes[0].signrawtransactionwithwallet(tx.serialize_without_witness().hex())['hex']

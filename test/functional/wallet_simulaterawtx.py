@@ -84,12 +84,12 @@ class SimulateTxTest(BitcoinTestFramework):
         assert_raises_rpc_error(-8, "Transaction(s) are spending the same output more than once", w0.simulaterawtransaction, [tx1,tx1])
 
         tx1ob = node.decoderawtransaction(tx1)
-        tx1hex = tx1ob["txid"]
         tx1vout = 1 - tx1changepos
+        tx1hex = tx1ob["vout"][tx1vout]["hash"]
         # tx3 spends new w1 UTXO paying to w0
-        tx3 = node.createrawtransaction([{"txid": tx1hex, "vout": tx1vout}], {w0.getnewaddress(): 4.9999})
+        tx3 = node.createrawtransaction([{"txid": tx1hex}], {w0.getnewaddress(): 4.9999})
         # tx4 spends new w1 UTXO paying to w1
-        tx4 = node.createrawtransaction([{"txid": tx1hex, "vout": tx1vout}], {w1.getnewaddress(): 4.9999})
+        tx4 = node.createrawtransaction([{"txid": tx1hex}], {w1.getnewaddress(): 4.9999})
 
         # on their own, both should fail due to missing input(s)
         assert_raises_rpc_error(-8, "One or more transaction inputs are missing or have been spent already", w0.simulaterawtransaction, [tx3])

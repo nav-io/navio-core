@@ -20,19 +20,12 @@
 
 std::string COutPoint::ToString() const
 {
-    return strprintf("COutPoint(%s, %u)", hash.ToString().substr(0, 10), n);
+    return strprintf("COutPoint(%s)", hash.ToString().substr(0, 10));
 }
 
 CTxIn::CTxIn(COutPoint prevoutIn, CScript scriptSigIn, uint32_t nSequenceIn)
 {
     prevout = prevoutIn;
-    scriptSig = scriptSigIn;
-    nSequence = nSequenceIn;
-}
-
-CTxIn::CTxIn(Txid hashPrevTx, uint32_t nOut, CScript scriptSigIn, uint32_t nSequenceIn)
-{
-    prevout = COutPoint(hashPrevTx, nOut);
     scriptSig = scriptSigIn;
     nSequence = nSequenceIn;
 }
@@ -66,7 +59,8 @@ CTxOut::CTxOut(const CAmount& nValueIn, CScript scriptPubKeyIn, TokenId tokenIdI
 
 std::string CTxOut::ToString() const
 {
-    return strprintf("CTxOut(scriptPubKey=%s%s%s%s%s)",
+    return strprintf("CTxOut(hash=%s,scriptPubKey=%s%s%s%s%s)",
+                     GetHash().ToString().substr(0, 10),
                      HexStr(scriptPubKey).substr(0, 30),
                      HasBLSCTKeys() ? strprintf(", spendingKey=%s, blindingKey=%s, ephemeralKey=%s", HexStr(blsctData.spendingKey.GetVch()), HexStr(blsctData.blindingKey.GetVch()), HexStr(blsctData.ephemeralKey.GetVch())) : "",
                      tokenId.IsNull() ? "" : strprintf(", tokenId=%s", tokenId.ToString()),

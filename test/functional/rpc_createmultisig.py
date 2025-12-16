@@ -32,6 +32,7 @@ class RpcCreateMultiSigTest(BitcoinTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 3
         self.supports_cli = False
+        self.extra_args = [["-txindex"], ["-txindex"], ["-txindex"]]
 
     def get_keys(self):
         self.pub = []
@@ -194,19 +195,24 @@ class RpcCreateMultiSigTest(BitcoinTestFramework):
             wmulti.unloadwallet()
 
         spk = address_to_scriptpubkey(madd)
-        txid = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=spk, amount=1300)["txid"]
+        result = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=spk, amount=1500)
+        txid = result["txidhash"]
+        txoutid = result["txid"]
         tx = node0.getrawtransaction(txid, True)
         vout = [v["n"] for v in tx["vout"] if madd == v["scriptPubKey"]["address"]]
         assert len(vout) == 1
         vout = vout[0]
         scriptPubKey = tx["vout"][vout]["scriptPubKey"]["hex"]
         value = tx["vout"][vout]["value"]
-        prevtxs = [{"txid": txid, "vout": vout, "scriptPubKey": scriptPubKey, "redeemScript": mredeem, "amount": value}]
+        # Ensure txoutid is 64 characters (pad with leading zero if needed)
+        while len(txoutid) < 64:
+            txoutid = '0' + txoutid
+        prevtxs = [{"txid": txoutid, "scriptPubKey": scriptPubKey, "redeemScript": mredeem, "amount": value}]
 
         self.generate(node0, 1)
 
         outval = value - decimal.Decimal("0.00001000")
-        rawtx = node2.createrawtransaction([{"txid": txid, "vout": vout}], [{self.final: outval}])
+        rawtx = node2.createrawtransaction([{"txid": txoutid}], [{self.final: outval}])
 
         prevtx_err = dict(prevtxs[0])
         del prevtx_err["redeemScript"]

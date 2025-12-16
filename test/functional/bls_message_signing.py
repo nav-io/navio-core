@@ -41,11 +41,16 @@ class BLSMessageSigningTest(BitcoinTestFramework):
         self.test_complete_workflow(wallet)
 
     def test_complete_workflow(self, wallet):
-        """Test complete workflow: sign message, verify it, then verify with wrong message"""
-        self.log.info("Testing complete workflow: sign -> verify -> verify with wrong message")
+        """Test complete workflow: sign message, verify it, then verify with
+        wrong message"""
+        self.log.info("Testing complete workflow: sign -> verify -> verify "
+                      "with wrong message")
 
-        # Test private key (this is a test key - in real usage users would provide their own)
-        test_private_key = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        # Test private key (this is a test key - in real usage users would
+        # provide their own)
+        test_private_key = (
+            "1234567890abcdef1234567890abcdef1234567890abcdef"
+            "1234567890abcdef")
         original_message = "Hello, this is the original message!"
         wrong_message = "Hello, this is a different message!"
 
@@ -61,22 +66,28 @@ class BLSMessageSigningTest(BitcoinTestFramework):
         public_key = sign_result["public_key"]
 
         # Verify they are valid hex strings with correct lengths
-        assert len(signature) == 192, f"Signature should be 192 hex characters, got {len(signature)}"
-        assert len(public_key) == 96, f"Public key should be 96 hex characters, got {len(public_key)}"
-        assert all(c in '0123456789abcdef' for c in signature.lower()), "Signature should be valid hex"
-        assert all(c in '0123456789abcdef' for c in public_key.lower()), "Public key should be valid hex"
+        assert len(signature) == 192, (
+            f"Signature should be 192 hex characters, got {len(signature)}")
+        assert len(public_key) == 96, (
+            f"Public key should be 96 hex characters, got {len(public_key)}")
+        assert all(c in '0123456789abcdef' for c in signature.lower()), (
+            "Signature should be valid hex")
+        assert all(c in '0123456789abcdef' for c in public_key.lower()), (
+            "Public key should be valid hex")
 
-        # Step 2: Verify the signature with the original message (should succeed)
-        verify_result = wallet.verifyblsmessage(public_key, original_message, signature)
+        verify_result = wallet.verifyblsmessage(
+            public_key, original_message, signature)
         self.log.info(f"Verification with original message: {verify_result}")
 
         # Assert that verification result is a boolean
-        assert isinstance(verify_result, bool), f"Verification result should be boolean, got {type(verify_result)}"
+        assert isinstance(verify_result, bool), (
+            f"Verification result should be boolean got {type(verify_result)}")
         assert_equal(verify_result, True)
 
         # Step 3: Verify the signature with a different message (should fail)
-        wrong_verify_result = wallet.verifyblsmessage(public_key, wrong_message, signature)
-        self.log.info(f"Verification with wrong message: {wrong_verify_result}")
+        wrong_verify_result = wallet.verifyblsmessage(
+            public_key, wrong_message, signature)
+        self.log.info(f"Verification with wrong message {wrong_verify_result}")
         assert_equal(wrong_verify_result, False)
 
     def test_signblsmessage_errors(self, wallet):
@@ -85,25 +96,32 @@ class BLSMessageSigningTest(BitcoinTestFramework):
 
         # Test with invalid private key length
         invalid_private_key = "1234567890abcdef"  # 16 bytes instead of 32
-        assert_raises_rpc_error(-8, "Private key must be 32 bytes (64 hex characters)",
-                               wallet.signblsmessage, invalid_private_key, "test message")
+        assert_raises_rpc_error(
+            -8, "Private key must be 32 bytes (64 hex characters)",
+            wallet.signblsmessage, invalid_private_key, "test message")
 
         # Test with invalid hex characters
-        invalid_hex_private_key = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdeg"
-        assert_raises_rpc_error(-8, "Private key must be 32 bytes (64 hex characters)",
-                               wallet.signblsmessage, invalid_hex_private_key, "test message")
+        invalid_hex_private_key = (
+            "1234567890abcdef1234567890abcdef1234567890abcdef"
+            "1234567890abcdeg")
+        assert_raises_rpc_error(
+            -8, "Private key must be 32 bytes (64 hex characters)",
+            wallet.signblsmessage, invalid_hex_private_key, "test message")
 
         # Test with empty private key
-        assert_raises_rpc_error(-8, "Private key must be 32 bytes (64 hex characters)",
-                               wallet.signblsmessage, "", "test message")
+        assert_raises_rpc_error(
+            -8, "Private key must be 32 bytes (64 hex characters)",
+            wallet.signblsmessage, "", "test message")
 
         # Test with missing parameters
-        assert_raises_rpc_error(-1, "signblsmessage",
-                               wallet.signblsmessage)
+        assert_raises_rpc_error(-1, "signblsmessage", wallet.signblsmessage)
 
         # Test with only one parameter
-        assert_raises_rpc_error(-1, "signblsmessage",
-                               wallet.signblsmessage, "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")
+        assert_raises_rpc_error(
+            -1, "signblsmessage",
+            wallet.signblsmessage,
+            ("1234567890abcdef1234567890abcdef1234567890abcdef"
+             "1234567890abcdef"))
 
         self.log.info("signblsmessage error handling tests passed")
 
@@ -113,35 +131,51 @@ class BLSMessageSigningTest(BitcoinTestFramework):
 
         # Test with invalid public key length
         invalid_public_key = "1234567890abcdef"  # Too short
-        test_signature = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-        assert_raises_rpc_error(-8, "Public key must be 48 bytes (96 hex characters)",
-                               wallet.verifyblsmessage, invalid_public_key, "test message", test_signature)
+        test_signature = (
+            "1234567890abcdef1234567890abcdef1234567890abcdef"
+            "1234567890abcdef1234567890abcdef1234567890abcdef"
+            "1234567890abcdef1234567890abcdef1234567890abcdef"
+            "1234567890abcdef")
+        assert_raises_rpc_error(
+            -8, "Public key must be 48 bytes (96 hex characters)",
+            wallet.verifyblsmessage, invalid_public_key, "test message",
+            test_signature)
 
         # Test with invalid signature length
         invalid_signature = "1234567890abcdef"  # Too short
-        test_public_key = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-        assert_raises_rpc_error(-8, "Signature must be 96 bytes",
-                               wallet.verifyblsmessage, test_public_key, "test message", invalid_signature)
+        test_public_key = (
+            "1234567890abcdef1234567890abcdef1234567890abcdef"
+            "1234567890abcdef1234567890abcdef1234567890abcdef")
+        assert_raises_rpc_error(
+            -8, "Signature must be 96 bytes",
+            wallet.verifyblsmessage, test_public_key, "test message",
+            invalid_signature)
 
         # Test with invalid hex characters in public key
-        invalid_hex_public_key = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdeg"
-        assert_raises_rpc_error(-8, "Public key must be 48 bytes (96 hex characters)",
-                               wallet.verifyblsmessage, invalid_hex_public_key, "test message", test_signature)
+        invalid_hex_public_key = (
+            "1234567890abcdef1234567890abcdef1234567890abcdef"
+            "1234567890abcdef1234567890abcdef1234567890abcdeg")
+        assert_raises_rpc_error(
+            -8, "Public key must be 48 bytes (96 hex characters)",
+            wallet.verifyblsmessage, invalid_hex_public_key, "test message",
+            test_signature)
 
         # Test with missing parameters
         assert_raises_rpc_error(-1, "verifyblsmessage",
-                               wallet.verifyblsmessage)
+                                wallet.verifyblsmessage)
 
         # Test with only one parameter
         assert_raises_rpc_error(-1, "verifyblsmessage",
-                               wallet.verifyblsmessage, test_public_key)
+                                wallet.verifyblsmessage,
+                                test_public_key)
 
         # Test with only two parameters
-        assert_raises_rpc_error(-1, "verifyblsmessage",
-                               wallet.verifyblsmessage, test_public_key, "test message")
+        assert_raises_rpc_error(
+            -1, "verifyblsmessage",
+            wallet.verifyblsmessage, test_public_key, "test message")
 
         self.log.info("verifyblsmessage error handling tests passed")
 
+
 if __name__ == '__main__':
     BLSMessageSigningTest().main()
-

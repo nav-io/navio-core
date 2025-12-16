@@ -29,7 +29,7 @@ from .util import (
     PortSeed,
     assert_equal,
     check_json_precision,
-    find_vout_for_address,
+    find_outid_for_address,
     get_datadir_path,
     initialize_datadir,
     p2p_port,
@@ -716,8 +716,9 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         utxos = []
         for output in outputs:
             address = list(output.keys())[0]
-            vout = find_vout_for_address(node, send_res["txid"], address)
-            utxos.append({"txid": send_res["txid"], "vout": vout})
+            #vout = find_vout_for_address(node, send_res["txid"], address)
+            outid = find_outid_for_address(node, send_res["txid"], address)
+            utxos.append({"txid": outid, "txid_ref": send_res["txid"]})
         return utxos
 
     def sync_blocks(self, nodes=None, wait=1, timeout=60):

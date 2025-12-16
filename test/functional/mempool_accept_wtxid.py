@@ -29,23 +29,30 @@ from test_framework.script import (
     OP_TRUE,
     hash160,
 )
+from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
 )
+from test_framework.wallet import MiniWallet
 
 class MempoolWtxidTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
         self.setup_clean_chain = True
+        self.extra_args = [["-txindex"]]
 
     def run_test(self):
         node = self.nodes[0]
+        wallet = MiniWallet(node)
 
         self.log.info('Start with empty mempool and 101 blocks')
-        # The last 100 coinbase transactions are premature
-        blockhash = self.generate(node, 101)[0]
-        txid = node.getblock(blockhash=blockhash, verbosity=2)["tx"][0]["txid"]
+        # Generate blocks using wallet so coinbase outputs match wallet's scriptPubKey
+        self.generate(wallet, 101)
+        # Get a coinbase transaction from an earlier block that's mature (at least 100 blocks deep)
+        # Get block 1's coinbase (which is 100 blocks deep after generating 101 blocks)
+        blockhash_1 = node.getblockhash(1)
+        txid = node.getblock(blockhash=blockhash_1, verbosity=2)["tx"][0]["txid"]
         assert_equal(node.getmempoolinfo()['size'], 0)
 
         self.log.info("Submit parent with multiple script branches to mempool")
@@ -54,14 +61,20 @@ class MempoolWtxidTest(BitcoinTestFramework):
         witness_program = sha256(witness_script)
         script_pubkey = CScript([OP_0, witness_program])
 
-        parent = CTransaction()
-        parent.vin.append(CTxIn(COutPoint(int(txid, 16), 0), b""))
-        parent.vout.append(CTxOut(int(9.99998 * COIN), script_pubkey))
-        parent.rehash()
+        # Get the coinbase UTXO by transaction hash
+        coinbase_utxo = wallet.get_utxo(txid=txid)
+        # Create parent transaction with custom scriptPubKey
+        parent = wallet.create_self_transfer(utxo_to_spend=coinbase_utxo, fee=Decimal("0.00002"))
+        # Replace the output scriptPubKey with our custom one
+        parent["tx"].vout[0].scriptPubKey = script_pubkey
+        parent["tx"].rehash()
+        # Submit parent transaction to mempool
+        node.sendrawtransaction(parent["tx"].serialize().hex())
+        parent = parent["tx"]
 
-        privkeys = [node.get_deterministic_priv_key().key]
-        raw_parent = node.signrawtransactionwithkey(hexstring=parent.serialize().hex(), privkeys=privkeys)['hex']
-        parent_txid = node.sendrawtransaction(hexstring=raw_parent, maxfeerate=0)
+        # Get the actual parent output value after the transaction is created
+        parent_output_value = parent.vout[0].nValue
+
         self.generate(node, 1)
 
         peer_wtxid_relay = node.add_p2p_connection(P2PTxInvStore())
@@ -72,8 +85,10 @@ class MempoolWtxidTest(BitcoinTestFramework):
         child_script_pubkey = CScript([OP_0, child_witness_program])
 
         child_one = CTransaction()
-        child_one.vin.append(CTxIn(COutPoint(int(parent_txid, 16), 0), b""))
-        child_one.vout.append(CTxOut(int(9.99996 * COIN), child_script_pubkey))
+        child_one.vin.append(CTxIn(COutPoint(parent.vout[0].hash()), b""))
+        # Calculate child output value: parent output - fee (0.00002 COIN)
+        child_output_value = parent_output_value - int(0.00002 * COIN)
+        child_one.vout.append(CTxOut(child_output_value, child_script_pubkey))
         child_one.wit.vtxinwit.append(CTxInWitness())
         child_one.wit.vtxinwit[0].scriptWitness.stack = [b'Preimage', b'\x01', witness_script]
         child_one_wtxid = child_one.getwtxid()

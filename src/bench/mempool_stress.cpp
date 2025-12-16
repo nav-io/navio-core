@@ -6,11 +6,13 @@
 #include <kernel/mempool_entry.h>
 #include <policy/policy.h>
 #include <random.h>
+#include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <txmempool.h>
 #include <util/chaintype.h>
 #include <validation.h>
 
+#include <algorithm>
 #include <vector>
 
 static void AddTx(const CTransactionRef& tx, CTxMemPool& pool) EXCLUSIVE_LOCKS_REQUIRED(cs_main, pool.cs)
@@ -27,7 +29,7 @@ static void AddTx(const CTransactionRef& tx, CTxMemPool& pool) EXCLUSIVE_LOCKS_R
 
 struct Available {
     CTransactionRef ref;
-    size_t vin_left{0};
+    size_t vout_consumed{0};
     size_t tx_count;
     Available(CTransactionRef& ref, size_t tx_count) : ref(ref), tx_count(tx_count){}
 };
@@ -47,6 +49,7 @@ static std::vector<CTransactionRef> CreateOrderedCoins(FastRandomContext& det_ra
         for (auto& out : tx.vout) {
             out.scriptPubKey = CScript() << CScriptNum(tx_counter) << OP_EQUAL;
             out.nValue = 10 * COIN;
+            out.predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
         }
         ordered_coins.emplace_back(MakeTransactionRef(tx));
         available_coins.emplace_back(ordered_coins.back(), tx_counter++);
@@ -56,27 +59,31 @@ static std::vector<CTransactionRef> CreateOrderedCoins(FastRandomContext& det_ra
         size_t n_ancestors = det_rand.randrange(10)+1;
         for (size_t ancestor = 0; ancestor < n_ancestors && !available_coins.empty(); ++ancestor){
             size_t idx = det_rand.randrange(available_coins.size());
-            Available coin = available_coins[idx];
-            Txid hash = coin.ref->GetHash();
+            Available& coin = available_coins[idx];
             // biased towards taking min_ancestors parents, but maybe more
+            size_t available_outputs = coin.ref->vout.size() - coin.vout_consumed;
+            if (available_outputs == 0) {
+                available_coins.erase(available_coins.begin() + idx);
+                continue;
+            }
             size_t n_to_take = det_rand.randrange(2) == 0 ?
-                               min_ancestors :
-                               min_ancestors + det_rand.randrange(coin.ref->vout.size() - coin.vin_left);
+                                   std::min(static_cast<size_t>(min_ancestors), available_outputs) :
+                                   std::min(static_cast<size_t>(min_ancestors) + static_cast<size_t>(det_rand.randrange(available_outputs)), available_outputs);
             for (size_t i = 0; i < n_to_take; ++i) {
                 tx.vin.emplace_back();
-                tx.vin.back().prevout = COutPoint(hash, coin.vin_left++);
+                tx.vin.back().prevout = COutPoint(coin.ref->vout[coin.vout_consumed++].GetHash());
                 tx.vin.back().scriptSig = CScript() << coin.tx_count;
                 tx.vin.back().scriptWitness.stack.push_back(CScriptNum(coin.tx_count).getvch());
             }
-            if (coin.vin_left == coin.ref->vin.size()) {
-                coin = available_coins.back();
-                available_coins.pop_back();
+            if (coin.vout_consumed == coin.ref->vout.size()) {
+                available_coins.erase(available_coins.begin() + idx);
             }
-            tx.vout.resize(det_rand.randrange(10)+2);
-            for (auto& out : tx.vout) {
-                out.scriptPubKey = CScript() << CScriptNum(tx_counter) << OP_EQUAL;
-                out.nValue = 10 * COIN;
-            }
+        }
+        tx.vout.resize(det_rand.randrange(10) + 2);
+        for (auto& out : tx.vout) {
+            out.scriptPubKey = CScript() << CScriptNum(tx_counter) << OP_EQUAL;
+            out.nValue = 10 * COIN;
+            out.predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
         }
         ordered_coins.emplace_back(MakeTransactionRef(tx));
         available_coins.emplace_back(ordered_coins.back(), tx_counter++);

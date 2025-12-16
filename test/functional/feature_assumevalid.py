@@ -117,7 +117,7 @@ class AssumeValidTest(BitcoinTestFramework):
 
         # Create a transaction spending the coinbase output with an invalid (null) signature
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(self.block1.vtx[0].sha256, 0), scriptSig=b""))
+        tx.vin.append(CTxIn(COutPoint(self.block1.vtx[0].vout[0].hash()), scriptSig=b""))
         tx.vout.append(CTxOut(49 * 100000000, CScript([OP_TRUE])))
         tx.calc_sha256()
 
