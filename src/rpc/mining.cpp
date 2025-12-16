@@ -992,7 +992,7 @@ static RPCHelpMan getblocktemplate()
             result.pushKV("previousblockhash", pblock->hashPrevBlock.GetHex());
             result.pushKV("transactions", transactions);
             result.pushKV("coinbaseaux", aux);
-            result.pushKV("coinbasevalue", !consensusParams.fBLSCT ? (int64_t)pblock->vtx[0]->vout[0].nValue : (blockReward - pblocktemplate->vTxFees[0]));
+            result.pushKV("coinbasevalue", !consensusParams.fBLSCT ? (int64_t)pblock->vtx[0]->vout[0].nValue : (blockReward));
             result.pushKV("longpollid", active_chain.Tip()->GetBlockHash().GetHex() + ToString(nTransactionsUpdatedLast));
             result.pushKV("target", hashTarget.GetHex());
             result.pushKV("mintime", (int64_t)pindexPrev->GetMedianTimePast() + 1);

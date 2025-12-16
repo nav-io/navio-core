@@ -73,7 +73,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         self.log.info(f"Created token: {token['tokenId']}")
 
         assert tokens[0]['type'] == 'token', "token type is not token"
-        assert tokens[0]['metadata'] == {'name': 'Test'}, "incorrect metadata"
+        assert tokens[0]['metadata'] == [{'key':'name', 'value':'Test'}], "incorrect metadata"
         assert tokens[0]['maxSupply'] == 100000000000, "incorrect max supply"
         assert tokens[0]['currentSupply'] == 0, "incorrect current supply"
 
@@ -83,7 +83,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         tokenInfo = self.nodes[0].gettoken(token['tokenId'])
 
         assert tokenInfo['type'] == 'token', "token type is not token"
-        assert tokenInfo['metadata'] == {'name': 'Test'}, "incorrect metadata"
+        assert tokenInfo['metadata'] == [{'key':'name', 'value':'Test'}], "incorrect metadata"
         assert tokenInfo['maxSupply'] == 100000000000, "incorrect max supply"
         assert tokenInfo['currentSupply'] == 100000000, "incorrect current supply"
 

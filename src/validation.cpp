@@ -2683,11 +2683,11 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
 
         auto blockReward = pindex->nHeight == 1 ? params.GetConsensus().nBLSCTFirstBlockReward : params.GetConsensus().nBLSCTBlockReward;
 
-        if (!blsct::VerifyTx(*block.vtx[0], view, tx_state, nFees + blockReward)) {
+        if (!blsct::VerifyTx(*block.vtx[0], view, tx_state, blockReward)) {
             state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                           tx_state.GetRejectReason(), tx_state.GetDebugMessage());
-            return error("ConnectBlock(): VerifyTx on coinbase of block %s failed (fees: %s reward: %s)\n",
-                         block.GetHash().ToString(), FormatMoney(nFees), FormatMoney(blockReward));
+            return error("ConnectBlock(): VerifyTx on coinbase of block %s failed (reward: %s)\n",
+                         block.GetHash().ToString(), FormatMoney(blockReward));
         }
     } else if (block.vtx[0]->GetValueOut() > blockReward) {
         LogPrintf("ERROR: ConnectBlock(): coinbase pays too much (actual=%d vs limit=%d)\n", block.vtx[0]->GetValueOut(), blockReward);
