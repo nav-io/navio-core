@@ -13,14 +13,14 @@ const std::string& get_chain();
 extern "C" {
 #endif
 
-enum Chain {
+typedef enum {
     MainNet,
     TestNet,
     SigNet,
     RegTest
-};
+} BlsctChain;
 
-bool set_chain(enum Chain chain);
+void set_chain(BlsctChain chain);
 
 #ifdef __cplusplus
 } // extern "C"

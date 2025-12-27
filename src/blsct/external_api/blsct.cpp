@@ -45,14 +45,27 @@ static bool is_little_endian() {
 void init()
 {
     std::lock_guard<std::mutex> lock(g_init_mutex);
-
     Mcl::Init for_side_effect_only;
 
-    if (!set_chain(Chain::MainNet)) {
-        throw std::runtime_error("Chain has already been set");
-    }
+    set_chain(BlsctChain::MainNet);
     g_is_little_endian = is_little_endian();
     g_rpl = new(std::nothrow) bulletproofs_plus::RangeProofLogic<Mcl>();
+}
+
+void set_chain_mainnet() {
+    set_chain(BlsctChain::MainNet);
+}
+
+void set_chain_testnet() {
+    set_chain(BlsctChain::TestNet);
+}
+
+void set_chain_signet() {
+    set_chain(BlsctChain::SigNet);
+}
+
+void set_chain_regtest() {
+    set_chain(BlsctChain::RegTest);
 }
 
 BlsctRetVal* succ(

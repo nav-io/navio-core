@@ -290,6 +290,11 @@ void free_obj(void* x);
 void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 void init();
 
+void set_chain_mainnet();
+void set_chain_testnet();
+void set_chain_signet();
+void set_chain_regtest();
+
 const char* serialize_raw_obj(const uint8_t* ser_obj, const size_t ser_obj_size);
 BlsctRetVal* deserialize_raw_obj(const char* hex);
 

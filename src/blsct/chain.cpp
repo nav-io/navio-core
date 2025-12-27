@@ -7,18 +7,17 @@
 #include <mutex>
 
 static std::string g_chain;
-static std::mutex g_set_chain_mutex;
+static std::mutex g_chain_mutex;
 
 const std::string& get_chain() {
+    std::lock_guard<std::mutex> lock(g_chain_mutex);
+
     return g_chain;
 }
 
-bool set_chain(enum Chain chain)
+void set_chain(BlsctChain chain)
 {
-    std::lock_guard<std::mutex> lock(g_set_chain_mutex);
-    if (!g_chain.empty()) {
-        return false;
-    }
+    std::lock_guard<std::mutex> lock(g_chain_mutex);
 
     switch (chain) {
         case MainNet:
@@ -37,6 +36,5 @@ bool set_chain(enum Chain chain)
             g_chain = blsct::bech32_hrp::RegTest;
             break;
     }
-    return true;
 }
 
