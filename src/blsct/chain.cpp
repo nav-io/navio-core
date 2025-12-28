@@ -17,10 +17,10 @@ const std::string& get_chain() {
 
 bool set_chain(const std::string& chain) {
     static const std::array chains = {
-        blsct::bech32_hrp::Main,
-        blsct::bech32_hrp::TestNet,
-        blsct::bech32_hrp::SigNet,
-        blsct::bech32_hrp::RegTest,
+        blsct::bech32_hrp::Mainnet,
+        blsct::bech32_hrp::Testnet,
+        blsct::bech32_hrp::Signet,
+        blsct::bech32_hrp::Regtest,
     };
 
     std::lock_guard<std::mutex> lock(g_chain_mutex);

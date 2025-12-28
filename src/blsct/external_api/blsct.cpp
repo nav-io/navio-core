@@ -47,26 +47,26 @@ void init() {
     std::lock_guard<std::mutex> lock(g_init_mutex);
     Mcl::Init for_side_effect_only;
 
-    set_chain(blsct::bech32_hrp::Main);
+    set_chain(blsct::bech32_hrp::Mainnet);
     g_is_little_endian = is_little_endian();
     g_rpl = new(std::nothrow) bulletproofs_plus::RangeProofLogic<Mcl>();
 }
 
-BlsctChain get_blsct_chain() {
+enum BlsctChain get_blsct_chain() {
     auto& chain = get_chain();
 
-    if (chain == blsct::bech32_hrp::Main) { return MainNet; }
-    else if (chain == blsct::bech32_hrp::TestNet) { return TestNet; }
-    else if (chain == blsct::bech32_hrp::SigNet) { return SigNet; }
-    else if (chain == blsct::bech32_hrp::RegTest) { return RegTest; }
-    else { /* should not be visited */ return MainNet; }
+    if (chain == blsct::bech32_hrp::Mainnet) { return Mainnet; }
+    else if (chain == blsct::bech32_hrp::Testnet) { return Testnet; }
+    else if (chain == blsct::bech32_hrp::Signet) { return Signet; }
+    else if (chain == blsct::bech32_hrp::Regtest) { return Regtest; }
+    else { /* should not be visited */ return Mainnet; }
 }
 
-void set_blsct_chain(BlsctChain chain) {
-    if (chain == MainNet) set_chain(blsct::bech32_hrp::Main);
-    else if (chain == TestNet) set_chain(blsct::bech32_hrp::TestNet);
-    else if (chain == SigNet) set_chain(blsct::bech32_hrp::SigNet);
-    else if (chain == RegTest) set_chain(blsct::bech32_hrp::RegTest);
+void set_blsct_chain(enum BlsctChain chain) {
+    if (chain == Mainnet) set_chain(blsct::bech32_hrp::Mainnet);
+    else if (chain == Testnet) set_chain(blsct::bech32_hrp::Testnet);
+    else if (chain == Signet) set_chain(blsct::bech32_hrp::Signet);
+    else if (chain == Regtest) set_chain(blsct::bech32_hrp::Regtest);
 }
 
 BlsctRetVal* succ(
