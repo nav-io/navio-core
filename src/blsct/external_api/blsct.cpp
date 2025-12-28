@@ -889,9 +889,11 @@ BlsctDoublePubKey* sub_addr_to_dpk(
     MALLOC(BlsctDoublePubKey, blsct_dpk);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
 
-    printf("----> c\n"); fflush(stdout);
+    printf("----> c0\n"); fflush(stdout);
     blsct::PublicKey pk(Mcl::Point::Rand());
+    printf("----> c1\n"); fflush(stdout);
     blsct::PublicKey vk(Mcl::Point::Rand());
+    printf("----> c2\n"); fflush(stdout);
     blsct::DoublePublicKey dpk(pk, vk); // = sub_addr.GetKeys();
 
     printf("----> d\n"); fflush(stdout);
