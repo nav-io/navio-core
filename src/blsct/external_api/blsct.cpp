@@ -73,7 +73,7 @@ BlsctRetVal* succ(
     void* value,
     size_t value_size
 ) {
-    MALLOC(BlsctRetVal, p);
+    MALLOC_BYTES(BlsctRetVal, p, sizeof(BlsctRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
     p->result = BLSCT_SUCCESS;
@@ -85,7 +85,7 @@ BlsctRetVal* succ(
 BlsctRetVal* err(
     BLSCT_RESULT result
 ) {
-    MALLOC(BlsctRetVal, p);
+    MALLOC_BYTES(BlsctRetVal, p, sizeof(BlsctRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
     p->result = result;
@@ -96,7 +96,7 @@ BlsctRetVal* err(
 BlsctBoolRetVal* succ_bool(
     const bool value
 ) {
-    MALLOC(BlsctBoolRetVal, p);
+    MALLOC_BYTES(BlsctBoolRetVal, p, sizeof(BlsctBoolRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
     p->result = BLSCT_SUCCESS;
@@ -107,7 +107,7 @@ BlsctBoolRetVal* succ_bool(
 BlsctBoolRetVal* err_bool(
     const BLSCT_RESULT result
 ) {
-    MALLOC(BlsctBoolRetVal, p);
+    MALLOC_BYTES(BlsctBoolRetVal, p, sizeof(BlsctBoolRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
     p->result = result;
@@ -199,7 +199,7 @@ BlsctRetVal* decode_address(
             auto dpk = maybe_dpk.value();
             if (dpk.IsValid()) {
                 auto buf = dpk.GetVch();
-                MALLOC(BlsctDoublePubKey, dec_addr);
+                MALLOC_BYTES(BlsctDoublePubKey, dec_addr, DOUBLE_PUBLIC_KEY_SIZE);
                 RETURN_ERR_IF_MEM_ALLOC_FAILED(dec_addr);
                 std::memcpy(dec_addr, &buf[0], DOUBLE_PUBLIC_KEY_SIZE);
 
@@ -262,7 +262,7 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
 BlsctAmountsRetVal* recover_amount(
     void* vp_amt_recovery_req_vec
 ) {
-    MALLOC(BlsctAmountsRetVal, rv);
+    MALLOC_BYTES(BlsctAmountsRetVal, rv, sizeof(BlsctAmountsRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(rv);
     try {
         auto amt_recovery_req_vec =
@@ -453,7 +453,7 @@ BlsctCTxRetVal* build_ctx(
     UNVOID(std::vector<BlsctTxOut>, tx_outs);
 
     blsct::TxFactoryBase psbt;
-    MALLOC(BlsctCTxRetVal, rv);
+    MALLOC_BYTES(BlsctCTxRetVal, rv, sizeof(BlsctCTxRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(rv);
 
     for (size_t i=0; i<tx_ins->size(); ++i) {
@@ -842,7 +842,7 @@ BlsctRetVal* gen_double_pub_key(
     pk1.SetVch(blsct_pk1_vec);
     pk2.SetVch(blsct_pk2_vec);
 
-    MALLOC(BlsctDoublePubKey, blsct_dpk);
+    MALLOC_BYTES(BlsctDoublePubKey, blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
     RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_dpk);
     blsct::DoublePublicKey dpk(pk1, pk2);
     SERIALIZE_AND_COPY(dpk, blsct_dpk);
@@ -863,7 +863,7 @@ BlsctRetVal* dpk_to_sub_addr(
     blsct::SubAddress sub_addr(dpk);
 
     // allocate memory for serialized sub address
-    MALLOC(BlsctSubAddr, blsct_sub_addr);
+    MALLOC_BYTES(BlsctSubAddr, blsct_sub_addr, SUB_ADDR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_sub_addr);
 
     // serialize sub address
@@ -875,23 +875,18 @@ BlsctRetVal* dpk_to_sub_addr(
 BlsctDoublePubKey* sub_addr_to_dpk(
     const BlsctSubAddr* blsct_sub_addr
 ) {
-    fprintf(stderr, "----> 1\n"); fflush(stderr);
-
     // unserialize sub address
     blsct::SubAddress sub_addr;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
         blsct_sub_addr, SUB_ADDR_SIZE, sub_addr
     );
 
-    fprintf(stderr, "----> 2\n"); fflush(stderr);
     // allocate memory for serialized double public key
     MALLOC_BYTES(BlsctDoublePubKey, blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
 
-    fprintf(stderr, "----> 4\n"); fflush(stderr);
     blsct::DoublePublicKey dpk = sub_addr.GetKeys();
 
-    fprintf(stderr, "----> 5\n"); fflush(stderr);
     // serialize double public key
     SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
 
@@ -979,7 +974,7 @@ BlsctRetVal* gen_out_point(
     const char* ctx_id_c_str,
     const uint32_t out_index
 ) {
-    MALLOC(BlsctOutPoint, blsct_out_point);
+    MALLOC_BYTES(BlsctOutPoint, blsct_out_point, OUT_POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_out_point);
 
     std::string ctx_id_str(ctx_id_c_str, CTX_ID_STR_LEN);
@@ -1012,7 +1007,7 @@ uint32_t get_out_point_n(const BlsctOutPoint* blsct_out_point) {
 
 // point
 BlsctRetVal* gen_base_point() {
-    MALLOC(BlsctPoint, blsct_point);
+    MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
 
     auto x = Point::GetBasePoint();
@@ -1022,7 +1017,7 @@ BlsctRetVal* gen_base_point() {
 }
 
 BlsctRetVal* gen_random_point() {
-    MALLOC(BlsctPoint, blsct_point);
+    MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
 
     auto x = Point::Rand();
@@ -1050,7 +1045,7 @@ BlsctRetVal* deserialize_point(const char* hex) {
         return err(BLSCT_DESER_FAILED);
     }
 
-    MALLOC(BlsctPoint, blsct_point);
+    MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
     RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
     SERIALIZE_AND_COPY(point, blsct_point);
 
@@ -1081,7 +1076,7 @@ BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar) {
     Point g = Point::GetBasePoint();
     Point point = g * scalar;
 
-    MALLOC(BlsctPoint, blsct_point);
+    MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
     RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
     SERIALIZE_AND_COPY(point, blsct_point);
 
@@ -1102,7 +1097,7 @@ BlsctRetVal* gen_random_public_key() {
     auto vec = Point::Rand().GetVch();
     blsct::PublicKey pub_key(vec);
 
-    MALLOC(BlsctPubKey, blsct_pub_key);
+    MALLOC_BYTES(BlsctPubKey, blsct_pub_key, PUBLIC_KEY_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_pub_key);
     SERIALIZE_AND_COPY(pub_key, blsct_pub_key);
 
@@ -1114,7 +1109,7 @@ BlsctPoint* get_public_key_point(const BlsctPubKey* blsct_pub_key) {
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_pub_key, PUBLIC_KEY_SIZE, pub_key);
     auto point = pub_key.GetG1Point();
 
-    MALLOC(BlsctPoint, blsct_point);
+    MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
     SERIALIZE_AND_COPY(point, blsct_point);
 
@@ -1126,7 +1121,7 @@ BlsctPubKey* point_to_public_key(const BlsctPoint* blsct_point) {
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
     blsct::PublicKey pub_key(point);
 
-    MALLOC(BlsctPubKey, blsct_pub_key);
+    MALLOC_BYTES(BlsctPubKey, blsct_pub_key, PUBLIC_KEY_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_pub_key);
     SERIALIZE_AND_COPY(pub_key, blsct_pub_key);
 
@@ -1153,7 +1148,7 @@ BlsctRetVal* deserialize_public_key(const char* hex) {
         return err(BLSCT_DESER_FAILED);
     }
 
-    MALLOC(BlsctPubKey, blsct_pubkey);
+    MALLOC_BYTES(BlsctPubKey, blsct_pubkey, PUBLIC_KEY_SIZE);
     RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_pubkey);
     SERIALIZE_AND_COPY(pubkey, blsct_pubkey);
 
@@ -1323,7 +1318,7 @@ void delete_range_proof_vec(const void* vp_range_proofs) {
 
 // scalar
 BlsctRetVal* gen_random_scalar() {
-    MALLOC(BlsctScalar, blsct_scalar);
+    MALLOC_BYTES(BlsctScalar, blsct_scalar, SCALAR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_scalar);
 
     auto x = Scalar::Rand(true);
@@ -1336,7 +1331,7 @@ BlsctRetVal* gen_scalar(
     const uint64_t n
 ) {
     Scalar scalar(n);
-    MALLOC(BlsctScalar, blsct_scalar);
+    MALLOC_BYTES(BlsctScalar, blsct_scalar, SCALAR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_scalar);
     SERIALIZE_AND_COPY(scalar, blsct_scalar);
 
@@ -1365,7 +1360,7 @@ BlsctRetVal* deserialize_scalar(const char* hex) {
     Scalar scalar;
     scalar.SetVch(vec);
 
-    MALLOC(BlsctScalar, blsct_scalar);
+    MALLOC_BYTES(BlsctScalar, blsct_scalar, SCALAR_SIZE);
     RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_scalar);
     SERIALIZE_AND_COPY(scalar, blsct_scalar);
 
@@ -1510,7 +1505,7 @@ BlsctSubAddrId* gen_sub_addr_id(
     sub_addr_id.account = account;
     sub_addr_id.address = address;
 
-    MALLOC(BlsctSubAddrId, blsct_sub_addr_id);
+    MALLOC_BYTES(BlsctSubAddrId, blsct_sub_addr_id, SUB_ADDR_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_sub_addr_id);
     SERIALIZE_AND_COPY_WITH_STREAM(sub_addr_id, blsct_sub_addr_id);
 
@@ -1556,7 +1551,7 @@ BlsctRetVal* gen_token_id_with_token_and_subid(
         n >>= 8; // Shift the value right by 8 bits to process the next byte
     }
     TokenId token_id(token_uint256, subid);
-    MALLOC(BlsctTokenId, blsct_token_id);
+    MALLOC_BYTES(BlsctTokenId, blsct_token_id, TOKEN_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_token_id);
     SERIALIZE_AND_COPY_WITH_STREAM(token_id, blsct_token_id);
 
@@ -1574,7 +1569,7 @@ BlsctRetVal* gen_token_id(
 
 BlsctRetVal* gen_default_token_id() {
     TokenId token_id;
-    MALLOC(BlsctTokenId, blsct_token_id);
+    MALLOC_BYTES(BlsctTokenId, blsct_token_id, TOKEN_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_token_id);
     SERIALIZE_AND_COPY_WITH_STREAM(token_id, blsct_token_id);
 
@@ -1606,7 +1601,7 @@ BlsctRetVal* deserialize_token_id(const char* hex) {
     if (!TryParseHexWrap(hex, vec)) {
         return err(BLSCT_FAILURE);
     }
-    MALLOC(BlsctTokenId, blsct_token_id);
+    MALLOC_BYTES(BlsctTokenId, blsct_token_id, TOKEN_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_token_id);
     std::memcpy(blsct_token_id, &vec[0], vec.size());
 
@@ -1623,7 +1618,7 @@ BlsctRetVal* build_tx_in(
     const bool staked_commitment,
     const bool rbf
 ) {
-    MALLOC(BlsctTxIn, tx_in);
+    MALLOC_BYTES(BlsctTxIn, tx_in, sizeof(BlsctTxIn));
     RETURN_IF_MEM_ALLOC_FAILED(tx_in);
 
     tx_in->amount = amount;
@@ -1646,21 +1641,21 @@ uint64_t get_tx_in_gamma(const BlsctTxIn* tx_in) {
 }
 
 const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in) {
-    MALLOC(BlsctScalar, spending_key);
+    MALLOC_BYTES(BlsctScalar, spending_key, SCALAR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(spending_key);
     BLSCT_COPY(tx_in->spending_key, *spending_key);
     return spending_key;
 }
 
 const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in) {
-    MALLOC(BlsctTokenId, token_id);
+    MALLOC_BYTES(BlsctTokenId, token_id, TOKEN_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(token_id);
     BLSCT_COPY(tx_in->token_id, *token_id);
     return token_id;
 }
 
 const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in) {
-    MALLOC(BlsctOutPoint, out_point);
+    MALLOC_BYTES(BlsctOutPoint, out_point, OUT_POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(out_point);
     BLSCT_COPY(tx_in->out_point, *out_point);
     return out_point;
@@ -1683,7 +1678,7 @@ BlsctRetVal* build_tx_out(
     const TxOutputType output_type,
     const uint64_t min_stake
 ) {
-    MALLOC(BlsctTxOut, tx_out);
+    MALLOC_BYTES(BlsctTxOut, tx_out, sizeof(BlsctTxOut));
     RETURN_IF_MEM_ALLOC_FAILED(tx_out);
 
     BLSCT_COPY(blsct_dest, tx_out->dest);
@@ -1704,7 +1699,7 @@ BlsctRetVal* build_tx_out(
 }
 
 const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out) {
-    MALLOC(BlsctSubAddr, sub_addr);
+    MALLOC_BYTES(BlsctSubAddr, sub_addr, SUB_ADDR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(sub_addr);
     BLSCT_COPY(tx_out->dest, *sub_addr);
     return sub_addr;
@@ -1723,7 +1718,7 @@ const char* get_tx_out_memo(const BlsctTxOut* tx_out) {
 }
 
 const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out) {
-    MALLOC(BlsctTokenId, token_id);
+    MALLOC_BYTES(BlsctTokenId, token_id, TOKEN_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(token_id);
     BLSCT_COPY(tx_out->token_id, *token_id);
     return token_id;

@@ -101,7 +101,6 @@ BlsctRetVal* err(
 { \
     DataStream st{}; \
     src.Serialize(st); \
-    printf("src size: %lu, dest size: %lu\n", st.size(), sizeof(*dest)); \
     std::memcpy(dest, st.data(), st.size()); \
 }
 
@@ -116,8 +115,6 @@ BlsctRetVal* err(
 
 #define BLSCT_COPY(src, dest) std::memcpy(dest, src, sizeof(dest))
 #define BLSCT_COPY_BYTES(src, dest, n) std::memcpy(dest, src, n)
-
-#define MALLOC(T, name) T* name = (T*) malloc(sizeof(T))
 #define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
 #define RETURN_IF_MEM_ALLOC_FAILED(name) \
 if (name == nullptr) { \
