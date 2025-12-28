@@ -876,6 +876,7 @@ BlsctRetVal* dpk_to_sub_addr(
 BlsctDoublePubKey* sub_addr_to_dpk(
     const BlsctSubAddr* blsct_sub_addr
 ) {
+    /*
     fprintf(stderr, "----> 1\n"); fflush(stderr);
 
     // unserialize sub address
@@ -888,6 +889,7 @@ BlsctDoublePubKey* sub_addr_to_dpk(
     // allocate memory for serialized double public key
     MALLOC(BlsctDoublePubKey, blsct_dpk);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
+    */
 
     fprintf(stderr, "----> 3-0\n"); fflush(stderr);
     blsct::PublicKey pk(Mcl::Point::Rand());
@@ -897,10 +899,12 @@ BlsctDoublePubKey* sub_addr_to_dpk(
     blsct::DoublePublicKey dpk(pk, vk); // = sub_addr.GetKeys();
 
     fprintf(stderr, "----> 4\n"); fflush(stderr);
+    MALLOC(BlsctDoublePubKey, blsct_dpk);
+
+    fprintf(stderr, "----> 5\n"); fflush(stderr);
     // serialize double public key
     SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
 
-    fprintf(stderr, "----> 5\n"); fflush(stderr);
     return blsct_dpk;
 }
 
