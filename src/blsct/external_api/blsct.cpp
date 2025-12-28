@@ -875,26 +875,26 @@ BlsctRetVal* dpk_to_sub_addr(
 BlsctDoublePubKey* sub_addr_to_dpk(
     const BlsctSubAddr* blsct_sub_addr
 ) {
-    printf("----> 1\n");
+    printf("----> a\n");
     // unserialize sub address
     blsct::SubAddress sub_addr;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
         blsct_sub_addr, SUB_ADDR_SIZE, sub_addr
     );
 
-    printf("----> 3\n");
+    printf("----> b\n");
     // allocate memory for serialized double public key
     MALLOC(BlsctDoublePubKey, blsct_dpk);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
 
-    printf("----> 3\n");
-    blsct::DoublePublicKey dpk = sub_addr.GetKeys();
+    printf("----> c\n");
+    blsct::DoublePublicKey dpk; // = sub_addr.GetKeys();
 
-    printf("----> 4\n");
+    printf("----> d\n");
     // serialize double public key
     SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
 
-    printf("----> 5\n");
+    printf("----> e\n");
     return blsct_dpk;
 }
 
