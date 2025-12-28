@@ -1,4 +1,3 @@
-#include <blsct/arith/mcl/mcl.h>
 #include <blsct/bech32_mod.h>
 #include <blsct/common.h>
 #include <blsct/chain.h>
@@ -876,7 +875,6 @@ BlsctRetVal* dpk_to_sub_addr(
 BlsctDoublePubKey* sub_addr_to_dpk(
     const BlsctSubAddr* blsct_sub_addr
 ) {
-    /*
     fprintf(stderr, "----> 1\n"); fflush(stderr);
 
     // unserialize sub address
@@ -887,19 +885,11 @@ BlsctDoublePubKey* sub_addr_to_dpk(
 
     fprintf(stderr, "----> 2\n"); fflush(stderr);
     // allocate memory for serialized double public key
-    MALLOC(BlsctDoublePubKey, blsct_dpk);
+    MALLOC_BYTES(BlsctDoublePubKey, blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
-    */
-
-    blsct::PublicKey pk(Mcl::Point::Rand());
-    blsct::PublicKey vk(Mcl::Point::Rand());
-    fprintf(stderr, "----> 3\n"); fflush(stderr);
-    fprintf(stderr, "----> 3\n"); fflush(stderr);
-    fprintf(stderr, "----> 3\n"); fflush(stderr);
-    blsct::DoublePublicKey dpk(pk, vk); // = sub_addr.GetKeys();
 
     fprintf(stderr, "----> 4\n"); fflush(stderr);
-    MALLOC(BlsctDoublePubKey, blsct_dpk);
+    blsct::DoublePublicKey dpk = sub_addr.GetKeys();
 
     fprintf(stderr, "----> 5\n"); fflush(stderr);
     // serialize double public key
