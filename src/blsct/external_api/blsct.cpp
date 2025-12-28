@@ -1,5 +1,6 @@
 #include <blsct/bech32_mod.h>
 #include <blsct/common.h>
+#include <blsct/chain.h>
 #include <blsct/double_public_key.h>
 #include <blsct/external_api/blsct.h>
 #include <blsct/key_io.h>
@@ -42,30 +43,30 @@ static bool is_little_endian() {
     return *p == 1;
 }
 
-void init()
-{
+void init() {
     std::lock_guard<std::mutex> lock(g_init_mutex);
     Mcl::Init for_side_effect_only;
 
-    set_chain(BlsctChain::MainNet);
+    set_chain(blsct::bech32_hrp::Main);
     g_is_little_endian = is_little_endian();
     g_rpl = new(std::nothrow) bulletproofs_plus::RangeProofLogic<Mcl>();
 }
 
-void set_chain_mainnet() {
-    set_chain(BlsctChain::MainNet);
+BlsctChain get_blsct_chain() {
+    auto& chain = get_chain();
+
+    if (chain == blsct::bech32_hrp::Main) { return MainNet; }
+    else if (chain == blsct::bech32_hrp::TestNet) { return TestNet; }
+    else if (chain == blsct::bech32_hrp::SigNet) { return SigNet; }
+    else if (chain == blsct::bech32_hrp::RegTest) { return RegTest; }
+    else { /* should not be visited */ return MainNet; }
 }
 
-void set_chain_testnet() {
-    set_chain(BlsctChain::TestNet);
-}
-
-void set_chain_signet() {
-    set_chain(BlsctChain::SigNet);
-}
-
-void set_chain_regtest() {
-    set_chain(BlsctChain::RegTest);
+void set_blsct_chain(BlsctChain chain) {
+    if (chain == MainNet) set_chain(blsct::bech32_hrp::Main);
+    else if (chain == TestNet) set_chain(blsct::bech32_hrp::TestNet);
+    else if (chain == SigNet) set_chain(blsct::bech32_hrp::SigNet);
+    else if (chain == RegTest) set_chain(blsct::bech32_hrp::RegTest);
 }
 
 BlsctRetVal* succ(
@@ -869,6 +870,27 @@ BlsctRetVal* dpk_to_sub_addr(
     SERIALIZE_AND_COPY_WITH_STREAM(sub_addr, blsct_sub_addr);
 
     return succ(blsct_sub_addr, sizeof(blsct::SubAddress));
+}
+
+BlsctDoublePubKey* sub_addr_to_dpk(
+    const BlsctSubAddr* blsct_sub_addr
+) {
+    // unserialize sub address
+    blsct::SubAddress sub_addr;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+        blsct_sub_addr, SUB_ADDR_SIZE, sub_addr
+    );
+
+    blsct::DoublePublicKey dpk = sub_addr.GetKeys();
+
+    // allocate memory for serialized double public key
+    MALLOC(BlsctDoublePubKey, blsct_dpk);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
+
+    // serialize double public key
+    SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
+
+    return blsct_dpk;
 }
 
 BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(

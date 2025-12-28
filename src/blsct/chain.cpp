@@ -15,26 +15,20 @@ const std::string& get_chain() {
     return g_chain;
 }
 
-void set_chain(BlsctChain chain)
-{
+bool set_chain(const std::string& chain) {
+    static const std::array chains = {
+        blsct::bech32_hrp::Main,
+        blsct::bech32_hrp::TestNet,
+        blsct::bech32_hrp::SigNet,
+        blsct::bech32_hrp::RegTest,
+    };
+
     std::lock_guard<std::mutex> lock(g_chain_mutex);
 
-    switch (chain) {
-        case MainNet:
-            g_chain = blsct::bech32_hrp::Main;
-            break;
-
-        case TestNet:
-            g_chain = blsct::bech32_hrp::TestNet;
-            break;
-
-        case SigNet:
-            g_chain = blsct::bech32_hrp::SigNet;
-            break;
-
-        case RegTest:
-            g_chain = blsct::bech32_hrp::RegTest;
-            break;
+    if (std::find(chains.begin(), chains.end(), chain) == chains.end()) {
+        return false;
     }
+    g_chain = chain;
+    return true;
 }
 

@@ -286,14 +286,19 @@ typedef struct {
     uint64_t min_stake;
 } BlsctTxOut;
 
+typedef enum {
+    MainNet,
+    TestNet,
+    SigNet,
+    RegTest,
+} BlsctChain;
+
 void free_obj(void* x);
 void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 void init();
 
-void set_chain_mainnet();
-void set_chain_testnet();
-void set_chain_signet();
-void set_chain_regtest();
+BlsctChain get_blsct_chain();
+void set_blsct_chain(BlsctChain chain);
 
 const char* serialize_raw_obj(const uint8_t* ser_obj, const size_t ser_obj_size);
 BlsctRetVal* deserialize_raw_obj(const char* hex);
@@ -417,10 +422,6 @@ BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
     const uint64_t address
 );
 
-BlsctRetVal* dpk_to_sub_addr(
-    const BlsctDoublePubKey* blsct_dpk
-);
-
 const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk);
 BlsctRetVal* deserialize_dpk(const char* hex);
 
@@ -538,6 +539,10 @@ BlsctSubAddr* derive_sub_address(
     const BlsctScalar* blsct_view_key,
     const BlsctPubKey* blsct_spending_pub_key,
     const BlsctSubAddrId* blsct_sub_addr_id
+);
+
+BlsctDoublePubKey* sub_addr_to_dpk(
+    const BlsctSubAddr* blsct_sub_addr
 );
 
 const char* serialize_sub_addr(const BlsctSignature* blsct_sub_addr);
