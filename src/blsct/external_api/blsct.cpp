@@ -882,13 +882,13 @@ BlsctDoublePubKey* sub_addr_to_dpk(
         blsct_sub_addr, SUB_ADDR_SIZE, sub_addr
     );
 
-    printf("----> 2\n");
-    blsct::DoublePublicKey dpk = sub_addr.GetKeys();
-
     printf("----> 3\n");
     // allocate memory for serialized double public key
     MALLOC(BlsctDoublePubKey, blsct_dpk);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
+
+    printf("----> 3\n");
+    blsct::DoublePublicKey dpk = sub_addr.GetKeys();
 
     printf("----> 4\n");
     // serialize double public key
