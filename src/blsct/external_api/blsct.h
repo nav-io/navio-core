@@ -101,6 +101,7 @@ BlsctRetVal* err(
 { \
     DataStream st{}; \
     src.Serialize(st); \
+    printf("Serialized size: %lu, dest size: %lu\n", st.size(), sizeof(dest)); \
     std::memcpy(dest, st.data(), st.size()); \
 }
 
