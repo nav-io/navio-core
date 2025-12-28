@@ -1,3 +1,4 @@
+#include <blsct/arith/mcl/mcl.h>
 #include <blsct/bech32_mod.h>
 #include <blsct/common.h>
 #include <blsct/chain.h>
@@ -889,7 +890,9 @@ BlsctDoublePubKey* sub_addr_to_dpk(
     RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
 
     printf("----> c\n"); fflush(stdout);
-    blsct::DoublePublicKey dpk; // = sub_addr.GetKeys();
+    blsct::PublicKey pk(Mcl::Point::Rand());
+    blsct::PublicKey vk(Mcl::Point::Rand());
+    blsct::DoublePublicKey dpk(pk, vk); // = sub_addr.GetKeys();
 
     printf("----> d\n"); fflush(stdout);
     // serialize double public key
