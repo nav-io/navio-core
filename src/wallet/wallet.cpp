@@ -555,14 +555,20 @@ const CWalletTx* CWallet::GetWalletTx(const uint256& hash) const
 const CWalletTx* CWallet::GetWalletTxFromOutpoint(const COutPoint& outpoint) const
 {
     AssertLockHeld(cs_wallet);
-    for (const auto& [txid, wtx] : mapWallet) {
-        for (const auto& vout : wtx.tx->vout) {
-            if (vout.GetHash() == outpoint.hash) {
-                return &wtx;
-            }
-        }
+    // Use the index for O(1) lookup instead of O(n*m) full scan
+    auto it = mapOutpointHashToWalletTx.find(outpoint.hash);
+    if (it != mapOutpointHashToWalletTx.end()) {
+        return it->second;
     }
     return nullptr;
+}
+
+void CWallet::IndexWalletTxOutputs(CWalletTx& wtx)
+{
+    AssertLockHeld(cs_wallet);
+    for (const auto& vout : wtx.tx->vout) {
+        mapOutpointHashToWalletTx[vout.GetHash()] = &wtx;
+    }
 }
 
 const CWalletOutput* CWallet::GetWalletOutput(const COutPoint& outpoint) const
@@ -1225,6 +1231,8 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
         wtx.m_it_wtxOrdered = wtxOrdered.insert(std::make_pair(wtx.nOrderPos, &wtx));
         wtx.nTimeSmart = ComputeTimeSmart(wtx, rescanning_old_block);
         AddToSpends(wtx, &batch);
+        // Index the outputs for O(1) lookup in GetWalletTxFromOutpoint
+        IndexWalletTxOutputs(wtx);
 
         // Update birth time when tx time is older than it.
         MaybeUpdateBirthTime(wtx.GetTxTime());
@@ -1354,6 +1362,8 @@ bool CWallet::LoadToWallet(const uint256& hash, const UpdateWalletTxFn& fill_wtx
     }
     if (/* insertion took place */ ins.second) {
         wtx.m_it_wtxOrdered = wtxOrdered.insert(std::make_pair(wtx.nOrderPos, &wtx));
+        // Index the outputs for O(1) lookup in GetWalletTxFromOutpoint
+        IndexWalletTxOutputs(wtx);
     }
     AddToSpends(wtx);
     for (const CTxIn& txin : wtx.tx->vin) {
@@ -1383,20 +1393,6 @@ bool CWallet::LoadToWallet(const COutPoint& outpoint, const UpdateWalletOutputFn
     if (HaveChain()) {
         wout.updateState(chain());
     }
-    // if (/* insertion took place */ ins.second) {
-    //     wtx.m_it_wtxOrdered = wtxOrdered.insert(std::make_pair(wtx.nOrderPos, &wtx));
-    // }
-    // AddToSpends(wtx);
-    // for (const CTxIn& txin : wtx.tx->vin) {
-    //     auto it = mapWallet.find(txin.prevout.hash);
-    //     if (it != mapWallet.end()) {
-    //         CWalletTx& prevtx = it->second;
-    //         if (auto* prev = prevtx.state<TxStateConflicted>()) {
-    //             MarkConflicted(prev->conflicting_block_hash, prev->conflicting_block_height, wtx.GetHash());
-    //         }
-    //     }
-    // }
-
     // Update birth time when tx time is older than it.
     MaybeUpdateBirthTime(wout.GetTxTime());
 

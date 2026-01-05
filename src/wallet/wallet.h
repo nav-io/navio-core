@@ -485,6 +485,9 @@ public:
     std::unordered_map<uint256, CWalletTx, SaltedTxidHasher> mapWallet GUARDED_BY(cs_wallet);
     std::unordered_map<COutPoint, CWalletOutput, SaltedOutpointHasher> mapOutputs GUARDED_BY(cs_wallet);
 
+    /** Index from output hash to wallet transaction for O(1) lookup in GetWalletTxFromOutpoint */
+    std::unordered_map<uint256, const CWalletTx*, SaltedTxidHasher> mapOutpointHashToWalletTx GUARDED_BY(cs_wallet);
+
     typedef std::multimap<int64_t, CWalletTx*> TxItems;
     TxItems wtxOrdered;
 
@@ -511,6 +514,7 @@ public:
 
     const CWalletTx* GetWalletTx(const uint256& hash) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     const CWalletTx* GetWalletTxFromOutpoint(const COutPoint& outpoint) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void IndexWalletTxOutputs(CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     std::set<uint256> GetTxConflicts(const CWalletTx& wtx) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
