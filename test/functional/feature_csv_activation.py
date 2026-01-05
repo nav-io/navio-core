@@ -124,8 +124,20 @@ class BIP68_112_113Test(BitcoinTestFramework):
         return tx
 
     def send_generic_input_tx(self, coinbases):
-        input_txid = self.nodes[0].getblock(coinbases.pop(), 2)['tx'][0]['txid']
-        utxo_to_spend = self.miniwallet.get_utxo(txid=input_txid)
+        block_data = self.nodes[0].getblock(coinbases.pop(), 2)
+        coinbase_tx = block_data['tx'][0]
+        # Get the output hash from the coinbase transaction
+        output_hash = coinbase_tx['vout'][0]['hash']
+        # Use gettxfromoutputhash to find the transaction, then get the UTXO
+        # tx_info = self.nodes[0].gettxfromoutputhash(output_hash)
+        # The MiniWallet might not track coinbase transactions, so we need to rescan or use the output hash directly
+        # Try to get the UTXO by output hash instead
+        try:
+            utxo_to_spend = self.miniwallet.get_utxo(txid=output_hash)
+        except StopIteration:
+            # If not found, rescan UTXOs to include coinbase transactions
+            self.miniwallet.rescan_utxos()
+            utxo_to_spend = self.miniwallet.get_utxo(txid=output_hash)
         return self.miniwallet.send_self_transfer(from_node=self.nodes[0], utxo_to_spend=utxo_to_spend)['tx']
 
     def create_bip68txs(self, bip68inputs, txversion, locktime_delta=0):

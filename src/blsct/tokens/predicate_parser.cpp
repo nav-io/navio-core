@@ -27,6 +27,10 @@ ParsedPredicate ParsePredicate(const VectorPredicate& vch)
         PayFeePredicate p;
         ss >> p;
         return p;
+    } else if (op == DATA) {
+        DataPredicate p;
+        ss >> p;
+        return p;
     } else {
         throw std::ios_base::failure("unknown predicate operation");
     }
@@ -34,19 +38,26 @@ ParsedPredicate ParsePredicate(const VectorPredicate& vch)
 
 std::string PredicateToString(const VectorPredicate& vch)
 {
-    auto predicate = ParsePredicate(vch);
+    try {
+        auto predicate = ParsePredicate(vch);
 
-    std::string ret;
+        std::string ret;
 
-    if (predicate.IsCreateTokenPredicate())
-        ret = "CREATE_TOKEN";
-    else if (predicate.IsMintTokenPredicate())
-        ret = "MINT_TOKEN";
-    else if (predicate.IsMintNftPredicate())
-        ret = "MINT_NFT";
-    else if (predicate.IsPayFeePredicate())
-        ret = "PAY_FEE";
+        if (predicate.IsCreateTokenPredicate())
+            ret = "CREATE_TOKEN";
+        else if (predicate.IsMintTokenPredicate())
+            ret = "MINT_TOKEN";
+        else if (predicate.IsMintNftPredicate())
+            ret = "MINT_NFT";
+        else if (predicate.IsPayFeePredicate())
+            ret = "PAY_FEE";
+        else if (predicate.IsDataPredicate())
+            ret = "DATA";
 
-    return ret;
+        return ret;
+    } catch (const std::ios_base::failure&) {
+        // If predicate parsing fails, return a generic error message
+        return "INVALID_PREDICATE";
+    }
 }
 } // namespace blsct

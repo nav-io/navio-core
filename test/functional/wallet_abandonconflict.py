@@ -30,6 +30,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         # whitelist peers to speed up tx relay / mempool sync
         for args in self.extra_args:
             args.append("-whitelist=noban@127.0.0.1")
+            args.append("-txindex")
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -61,14 +62,14 @@ class AbandonConflictTest(BitcoinTestFramework):
         self.disconnect_nodes(0, 1)
 
         # Identify the 10btc outputs
-        nA = next(tx_out["vout"] for tx_out in alice.gettransaction(txA)["details"] if tx_out["amount"] == Decimal("10"))
-        nB = next(tx_out["vout"] for tx_out in alice.gettransaction(txB)["details"] if tx_out["amount"] == Decimal("10"))
-        nC = next(tx_out["vout"] for tx_out in alice.gettransaction(txC)["details"] if tx_out["amount"] == Decimal("10"))
+        txHashA = next(tx_out["hash"] for tx_out in alice.getrawtransaction(txA, 1)["vout"] if tx_out["value"] == Decimal("10"))
+        txHashB = next(tx_out["hash"] for tx_out in alice.getrawtransaction(txB, 1)["vout"] if tx_out["value"] == Decimal("10"))
+        txHashC = next(tx_out["hash"] for tx_out in alice.getrawtransaction(txC, 1)["vout"] if tx_out["value"] == Decimal("10"))
 
         inputs = []
         # spend 10btc outputs from txA and txB
-        inputs.append({"txid": txA, "vout": nA})
-        inputs.append({"txid": txB, "vout": nB})
+        inputs.append({"txid": txHashA})
+        inputs.append({"txid": txHashB})
         outputs = {}
 
         outputs[alice.getnewaddress()] = Decimal("14.99998")
@@ -77,20 +78,22 @@ class AbandonConflictTest(BitcoinTestFramework):
         txAB1 = self.nodes[0].sendrawtransaction(signed["hex"])
 
         # Identify the 14.99998btc output
-        nAB = next(tx_out["vout"] for tx_out in alice.gettransaction(txAB1)["details"] if tx_out["amount"] == Decimal("14.99998"))
+        txHashAB1 = next(tx_out["hash"] for tx_out in alice.getrawtransaction(txAB1, 1)["vout"] if tx_out["value"] == Decimal("14.99998"))
 
         #Create a child tx spending AB1 and C
         inputs = []
-        inputs.append({"txid": txAB1, "vout": nAB})
-        inputs.append({"txid": txC, "vout": nC})
+        inputs.append({"txid": txHashAB1})
+        inputs.append({"txid": txHashC})
         outputs = {}
         outputs[alice.getnewaddress()] = Decimal("24.9996")
         signed2 = alice.signrawtransactionwithwallet(alice.createrawtransaction(inputs, outputs))
         txABC2 = self.nodes[0].sendrawtransaction(signed2["hex"])
 
+        txHashABC2 = next(tx_out["hash"] for tx_out in alice.getrawtransaction(txABC2, 1)["vout"] if tx_out["value"] == Decimal("24.9996"))
+
         # Create a child tx spending ABC2
         signed3_change = Decimal("24.999")
-        inputs = [{"txid": txABC2, "vout": 0}]
+        inputs = [{"txid": txHashABC2}]
         outputs = {alice.getnewaddress(): signed3_change}
         signed3 = alice.signrawtransactionwithwallet(alice.createrawtransaction(inputs, outputs))
         # note tx is never directly referenced, only abandoned as a child of the above
@@ -176,7 +179,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         # Create a double spend of AB1 by spending again from only A's 10 output
         # Mine double spend from node 1
         inputs = []
-        inputs.append({"txid": txA, "vout": nA})
+        inputs.append({"txid": txHashA})
         outputs = {}
         outputs[self.nodes[1].getnewaddress()] = Decimal("3.9999")
         outputs[bob.getnewaddress()] = Decimal("5.9999")

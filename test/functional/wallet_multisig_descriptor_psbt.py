@@ -8,7 +8,8 @@ This is meant to be documentation as much as functional tests, so it is kept as 
 """
 
 from test_framework.address import base58_to_byte
-from test_framework.test_framework import BitcoinTestFramework
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
+from test_framework.test_framework import BitcoinTestFramework, SkipTest
 from test_framework.util import (
     assert_approx,
     assert_equal,
@@ -26,6 +27,8 @@ class WalletMultisigDescriptorPSBTTest(BitcoinTestFramework):
         self.extra_args = [["-keypool=100"]] * self.num_nodes
 
     def skip_test_if_missing_module(self):
+        if DISABLE_PSBT_TESTS:
+            raise SkipTest("PSBT functionality disabled")
         self.skip_if_no_wallet()
         self.skip_if_no_sqlite()
 

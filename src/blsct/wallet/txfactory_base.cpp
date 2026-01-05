@@ -214,7 +214,7 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
             if (output.is_staked_commitment)
                 inputFromStakedCommitments += output.amount;
 
-            tx.AddInput(output.amount, output.gamma, output.spendingKey, output.token_id, COutPoint(output.outpoint.hash, output.outpoint.n), output.is_staked_commitment);
+            tx.AddInput(output.amount, output.gamma, output.spendingKey, output.token_id, COutPoint(output.outpoint.hash), output.is_staked_commitment);
         }
 
         if (transactionData.nAmount + inputFromStakedCommitments < transactionData.minStake) {
@@ -234,7 +234,7 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
                 inputFromStakedCommitments += output.amount;
             }
 
-            tx.AddInput(output.amount, output.gamma, output.spendingKey, output.token_id, COutPoint(output.outpoint.hash, output.outpoint.n), output.is_staked_commitment);
+            tx.AddInput(output.amount, output.gamma, output.spendingKey, output.token_id, COutPoint(output.outpoint.hash), output.is_staked_commitment);
         }
 
         if (transactionData.type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) {

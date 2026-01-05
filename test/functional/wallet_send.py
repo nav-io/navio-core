@@ -13,7 +13,8 @@ from test_framework.messages import (
     ser_compact_size,
     WITNESS_SCALE_FACTOR,
 )
-from test_framework.test_framework import BitcoinTestFramework
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
+from test_framework.test_framework import BitcoinTestFramework, SkipTest
 from test_framework.util import (
     assert_equal,
     assert_fee_amount,
@@ -38,6 +39,8 @@ class WalletSendTest(BitcoinTestFramework):
         getcontext().prec = 8 # Satoshi precision for Decimal
 
     def skip_test_if_missing_module(self):
+        if DISABLE_PSBT_TESTS:
+            raise SkipTest("PSBT functionality disabled")
         self.skip_if_no_wallet()
 
     def test_send(self, from_wallet, to_wallet=None, amount=None, data=None,
@@ -523,7 +526,7 @@ class WalletSendTest(BitcoinTestFramework):
         ext_utxo = ext_fund.listunspent(addresses=[addr])[0]
 
         # An external input without solving data should result in an error
-        self.test_send(from_wallet=ext_wallet, to_wallet=self.nodes[0], amount=15, inputs=[ext_utxo], add_inputs=True, psbt=True, include_watching=True, expect_error=(-4, "Not solvable pre-selected input COutPoint(%s, %s)" % (ext_utxo["txid"][0:10], ext_utxo["vout"])))
+        self.test_send(from_wallet=ext_wallet, to_wallet=self.nodes[0], amount=15, inputs=[ext_utxo], add_inputs=True, psbt=True, include_watching=True, expect_error=(-4, "Not solvable pre-selected input COutPoint(%s)" % (ext_utxo["txid"][0:10])))
 
         # But funding should work when the solving data is provided
         res = self.test_send(from_wallet=ext_wallet, to_wallet=self.nodes[0], amount=15, inputs=[ext_utxo], add_inputs=True, psbt=True, include_watching=True, solving_data={"pubkeys": [addr_info['pubkey']], "scripts": [addr_info["embedded"]["scriptPubKey"], addr_info["embedded"]["embedded"]["scriptPubKey"]]})
@@ -538,7 +541,7 @@ class WalletSendTest(BitcoinTestFramework):
 
         dec = self.nodes[0].decodepsbt(signed["psbt"])
         for i, txin in enumerate(dec["tx"]["vin"]):
-            if txin["txid"] == ext_utxo["txid"] and txin["vout"] == ext_utxo["vout"]:
+            if txin["txid"] == ext_utxo["txid"]:
                 input_idx = i
                 break
         psbt_in = dec["inputs"][input_idx]
@@ -555,7 +558,7 @@ class WalletSendTest(BitcoinTestFramework):
             "Input weights should be specified in inputs rather than in options.",
             ext_wallet.send,
             outputs={self.nodes[0].getnewaddress(): 15},
-            options={"inputs": [ext_utxo], "input_weights": [{"txid": ext_utxo["txid"], "vout": ext_utxo["vout"], "weight": 1000}]}
+            options={"inputs": [ext_utxo], "input_weights": [{"txid": ext_utxo["txid"], "weight": 1000}]}
         )
 
         # Funding should also work when input weights are provided
@@ -563,7 +566,7 @@ class WalletSendTest(BitcoinTestFramework):
             from_wallet=ext_wallet,
             to_wallet=self.nodes[0],
             amount=15,
-            inputs=[{"txid": ext_utxo["txid"], "vout": ext_utxo["vout"], "weight": input_weight}],
+            inputs=[{"txid": ext_utxo["txid"], "weight": input_weight}],
             add_inputs=True,
             psbt=True,
             include_watching=True,

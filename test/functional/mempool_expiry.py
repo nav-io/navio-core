@@ -38,7 +38,8 @@ class MempoolExpiryTest(BitcoinTestFramework):
         # Send a parent transaction that will expire.
         parent = self.wallet.send_self_transfer(from_node=node)
         parent_txid = parent["txid"]
-        parent_utxo = self.wallet.get_utxo(txid=parent_txid)
+        parent_txoutid = parent["new_utxo"]["txid"]
+        parent_utxo = self.wallet.get_utxo(txid=parent_txoutid)
         independent_utxo = self.wallet.get_utxo()
 
         # Add prioritisation to this transaction to check that it persists after the expiry

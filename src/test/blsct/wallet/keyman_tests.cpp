@@ -23,7 +23,7 @@ BOOST_FIXTURE_TEST_CASE(wallet_test, TestingSetup)
 
     LOCK(wallet->cs_wallet);
     auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
-    blsct_km->SetHDSeed(MclScalar(uint256(1)));
+    blsct_km->SetHDSeed(MclScalar(uint256(uint64_t{1})));
     BOOST_CHECK(blsct_km->NewSubAddressPool());
     BOOST_CHECK(blsct_km->NewSubAddressPool(-1));
 

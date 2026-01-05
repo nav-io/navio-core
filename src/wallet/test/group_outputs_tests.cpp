@@ -47,7 +47,7 @@ static void addCoin(CoinsResult& coins,
     CWalletTx& wtx = (*ret.first).second;
     const auto& txout = wtx.tx->vout.at(0);
     coins.Add(*Assert(OutputTypeFromDestination(dest)),
-              {COutPoint(wtx.GetHash(), 0),
+              {COutPoint(wtx.tx->vout[0].GetHash()),
                    txout,
                    depth,
                    CalculateMaximumSignedInputSize(txout, &wallet, /*coin_control=*/nullptr),

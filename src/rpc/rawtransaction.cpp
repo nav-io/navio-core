@@ -10,6 +10,7 @@
 #include <consensus/validation.h>
 #include <core_io.h>
 #include <index/txindex.h>
+#include <interfaces/wallet.h>
 #include <key_io.h>
 #include <node/blockstorage.h>
 #include <node/coin.h>
@@ -119,6 +120,7 @@ static std::vector<RPCResult> DecodeTxDoc(const std::string& txid_field_doc)
         {RPCResult::Type::ARR, "vout", "", {
                                                {RPCResult::Type::OBJ, "", "", {
                                                                                   {RPCResult::Type::STR_AMOUNT, "value", "The value in " + CURRENCY_UNIT},
+                                                                                  {RPCResult::Type::STR_HEX, "hash", /*optional=*/true, "the output hash"},
                                                                                   {RPCResult::Type::NUM, "n", "index"},
                                                                                   {RPCResult::Type::OBJ, "scriptPubKey", "", ScriptPubKeyDoc()},
                                                                                   {RPCResult::Type::STR_HEX, "blindingKey", /*optional=*/true, "hex-encoded blinding key"},
@@ -168,7 +170,6 @@ static std::vector<RPCArg> CreateTxDoc()
                     "",
                     {
                         {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
-                        {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
                         {"sequence", RPCArg::Type::NUM, RPCArg::DefaultHint{"depends on the value of the 'replaceable' and 'locktime' arguments"}, "The sequence number"},
                     },
                 },
@@ -768,7 +769,6 @@ static RPCHelpMan signrawtransactionwithkey()
                         "",
                         {
                             {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
-                            {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
                             {"scriptPubKey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "script key"},
                             {"redeemScript", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(required for P2SH) redeem script"},
                             {"witnessScript", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(required for P2WSH or P2SH-P2WSH) witness script"},
@@ -793,7 +793,6 @@ static RPCHelpMan signrawtransactionwithkey()
                                               {RPCResult::Type::ARR, "errors", /*optional=*/true, "Script verification errors (if there are any)", {
                                                                                                                                                        {RPCResult::Type::OBJ, "", "", {
                                                                                                                                                                                           {RPCResult::Type::STR_HEX, "txid", "The hash of the referenced, previous transaction"},
-                                                                                                                                                                                          {RPCResult::Type::NUM, "vout", "The index of the output to spent and used as input"},
                                                                                                                                                                                           {RPCResult::Type::ARR, "witness", "", {
                                                                                                                                                                                                                                     {RPCResult::Type::STR_HEX, "witness", ""},
                                                                                                                                                                                                                                 }},
@@ -1106,13 +1105,22 @@ static RPCHelpMan decodepsbt()
                     have_a_utxo = true;
                 }
                 if (input.non_witness_utxo) {
-                    txout = input.non_witness_utxo->vout[psbtx.tx->vin[i].prevout.n];
+                    CTxOut txout;
 
-                    UniValue non_wit(UniValue::VOBJ);
-                    TxToUniv(*input.non_witness_utxo, /*block_hash=*/uint256(), /*entry=*/non_wit, /*include_hex=*/false);
-                    in.pushKV("non_witness_utxo", non_wit);
+                    for (auto& it : input.non_witness_utxo->vout) {
+                        if (it.GetHash() == psbtx.tx->vin[i].prevout.hash) {
+                            txout = it;
+                            break;
+                        }
+                    }
 
-                    have_a_utxo = true;
+                    if (txout != CTxOut()) {
+                        UniValue non_wit(UniValue::VOBJ);
+                        TxToUniv(*input.non_witness_utxo, /*block_hash=*/uint256(), /*entry=*/non_wit, /*include_hex=*/false);
+                        in.pushKV("non_witness_utxo", non_wit);
+
+                        have_a_utxo = true;
+                    }
                 }
                 if (have_a_utxo) {
                     if (MoneyRange(txout.nValue) && MoneyRange(total_in + txout.nValue)) {
@@ -1717,7 +1725,7 @@ static RPCHelpMan joinpsbts()
             for (auto& psbt : psbtxs) {
                 for (unsigned int i = 0; i < psbt.tx->vin.size(); ++i) {
                     if (!merged_psbt.AddInput(psbt.tx->vin[i], psbt.inputs[i])) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Input %s:%d exists in multiple PSBTs", psbt.tx->vin[i].prevout.hash.ToString(), psbt.tx->vin[i].prevout.n));
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Input %s exists in multiple PSBTs", psbt.tx->vin[i].prevout.hash.ToString()));
                     }
                 }
                 for (unsigned int i = 0; i < psbt.tx->vout.size(); ++i) {
@@ -1944,6 +1952,83 @@ RPCHelpMan descriptorprocesspsbt()
     };
 }
 
+static RPCHelpMan gettxfromoutputhash()
+{
+    return RPCHelpMan{
+        "gettxfromoutputhash",
+        "\nReturns the transaction hash that contains the specified output hash.\n"
+        "\nThis command searches through the blockchain and mempool to find which transaction contains an output with the given hash.\n",
+        {
+            {"outputhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The hash of the output to search for"},
+            {"include_mempool", RPCArg::Type::BOOL, RPCArg::Default{true}, "Include mempool transactions in the search"},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                                              {RPCResult::Type::STR_HEX, "txid", "The transaction hash that contains the output"},
+                                              {RPCResult::Type::NUM, "vout", "The output index within the transaction"},
+                                              {RPCResult::Type::STR_HEX, "blockhash", /*optional=*/true, "The block hash containing the transaction (if confirmed)"},
+                                              {RPCResult::Type::NUM, "confirmations", /*optional=*/true, "The number of confirmations (if confirmed)"},
+                                          }},
+        RPCExamples{HelpExampleCli("gettxfromoutputhash", "\"outputhash\"") + HelpExampleRpc("gettxfromoutputhash", "\"outputhash\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            const NodeContext& node = EnsureAnyNodeContext(request.context);
+            ChainstateManager& chainman = EnsureChainman(node);
+
+            uint256 output_hash = ParseHashV(request.params[0], "outputhash");
+            bool include_mempool = request.params[1].isNull() ? true : request.params[1].get_bool();
+
+            // BlockUntilSyncedToCurrentChain() requires cs_main to NOT be held
+            if (g_txindex) {
+                g_txindex->BlockUntilSyncedToCurrentChain();
+            }
+
+            LOCK(cs_main);
+            Chainstate& active_chainstate = chainman.ActiveChainstate();
+
+            // First, search in mempool if requested
+            if (include_mempool && node.mempool) {
+                LOCK(node.mempool->cs);
+                for (const auto& entry : node.mempool->mapTx) {
+                    const CTransaction& tx = *entry.GetSharedTx();
+                    for (size_t i = 0; i < tx.vout.size(); i++) {
+                        if (tx.vout[i].GetHash() == output_hash) {
+                            UniValue result(UniValue::VOBJ);
+                            result.pushKV("txid", tx.GetHash().GetHex());
+                            result.pushKV("vout", (int)i);
+                            result.pushKV("confirmations", 0);
+                            return result;
+                        }
+                    }
+                }
+            }
+
+            // Search in blockchain by iterating over blocks.
+
+            const CBlockIndex* pindex = active_chainstate.m_chain.Tip();
+            while (pindex) {
+                CBlock block;
+                if (chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
+                    for (const auto& tx : block.vtx) {
+                        for (size_t i = 0; i < tx->vout.size(); i++) {
+                            if (tx->vout[i].GetHash() == output_hash) {
+                                UniValue result(UniValue::VOBJ);
+                                result.pushKV("txid", tx->GetHash().GetHex());
+                                result.pushKV("vout", (int)i);
+                                result.pushKV("blockhash", pindex->GetBlockHash().GetHex());
+                                result.pushKV("confirmations", 1 + active_chainstate.m_chain.Height() - pindex->nHeight);
+                                return result;
+                            }
+                        }
+                    }
+                }
+                pindex = pindex->pprev;
+            }
+
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Output hash not found in blockchain or mempool");
+        },
+    };
+}
+
 void RegisterRawTransactionRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -1962,6 +2047,7 @@ void RegisterRawTransactionRPCCommands(CRPCTable& t)
         {"rawtransactions", &descriptorprocesspsbt},
         {"rawtransactions", &joinpsbts},
         {"rawtransactions", &analyzepsbt},
+        {"rawtransactions", &gettxfromoutputhash},
     };
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);

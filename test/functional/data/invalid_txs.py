@@ -79,7 +79,7 @@ class BadTxTemplate:
     def __init__(self, *, spend_tx=None, spend_block=None):
         self.spend_tx = spend_block.vtx[0] if spend_block else spend_tx
         self.spend_avail = sum(o.nValue for o in self.spend_tx.vout)
-        self.valid_txin = CTxIn(COutPoint(self.spend_tx.sha256, 0), b"", SEQUENCE_FINAL)
+        self.valid_txin = CTxIn(COutPoint(self.spend_tx.vout[0].hash()), b"", SEQUENCE_FINAL)
 
     @abc.abstractmethod
     def get_tx(self, *args, **kwargs):
@@ -124,25 +124,8 @@ class SizeTooSmall(BadTxTemplate):
         tx = CTransaction()
         tx.vin.append(self.valid_txin)
         tx.vout.append(CTxOut(0, CScript([OP_RETURN] + ([OP_0] * (MIN_PADDING - 2)))))
-        assert len(tx.serialize_without_witness()) == 64
+        assert len(tx.serialize_without_witness()) == 60
         assert MIN_STANDARD_TX_NONWITNESS_SIZE - 1 == 64
-        tx.calc_sha256()
-        return tx
-
-
-class BadInputOutpointIndex(BadTxTemplate):
-    # Won't be rejected - nonexistent outpoint index is treated as an orphan since the coins
-    # database can't distinguish between spent outpoints and outpoints which never existed.
-    reject_reason = None
-    expect_disconnect = False
-
-    def get_tx(self):
-        num_indices = len(self.spend_tx.vin)
-        bad_idx = num_indices + 100
-
-        tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(self.spend_tx.sha256, bad_idx), b"", SEQUENCE_FINAL))
-        tx.vout.append(CTxOut(0, basic_p2sh))
         tx.calc_sha256()
         return tx
 
@@ -167,7 +150,7 @@ class PrevoutNullInput(BadTxTemplate):
     def get_tx(self):
         tx = CTransaction()
         tx.vin.append(self.valid_txin)
-        tx.vin.append(CTxIn(COutPoint(hash=0, n=0xffffffff)))
+        tx.vin.append(CTxIn(COutPoint(hash=0)))
         tx.vout.append(CTxOut(1, basic_p2sh))
         tx.calc_sha256()
         return tx
@@ -179,7 +162,7 @@ class NonexistentInput(BadTxTemplate):
 
     def get_tx(self):
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(self.spend_tx.sha256 + 1, 0), b"", SEQUENCE_FINAL))
+        tx.vin.append(CTxIn(COutPoint(self.spend_tx.vout[0].hash() + 1), b"", SEQUENCE_FINAL))
         tx.vin.append(self.valid_txin)
         tx.vout.append(CTxOut(1, basic_p2sh))
         tx.calc_sha256()
@@ -200,7 +183,7 @@ class CreateNegative(BadTxTemplate):
     expect_disconnect = True
 
     def get_tx(self):
-        return create_tx_with_script(self.spend_tx, 0, amount=-1)
+        return create_tx_with_script(self.spend_tx, 0, amount=-10)
 
 
 class CreateTooLarge(BadTxTemplate):

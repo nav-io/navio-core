@@ -188,7 +188,7 @@ FUZZ_TARGET(wallet_notifications, .init = initialize_setup)
         // Add the initial entry
         chain.emplace_back();
         auto& [coins, block]{chain.back()};
-        coins.emplace(total_amount, COutPoint{Txid::FromUint256(uint256::ONE), 1});
+        coins.emplace(total_amount, COutPoint{Txid::FromUint256(uint256::ONE)});
     }
     LIMITED_WHILE(fuzzed_data_provider.ConsumeBool(), 200)
     {
@@ -244,7 +244,8 @@ FUZZ_TARGET(wallet_notifications, .init = initialize_setup)
                 for (const auto& tx : block.vtx) {
                     uint32_t i{0};
                     for (const auto& out : tx->vout) {
-                        coins_new.emplace(out.nValue, COutPoint{tx->GetHash(), i++});
+                        coins_new.emplace(out.nValue, COutPoint{tx->vout[i].GetHash()});
+                        i++;
                     }
                 }
                 chain.emplace_back(coins_new, CBlock{});

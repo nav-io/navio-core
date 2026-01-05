@@ -78,7 +78,12 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
         blsct::ParsedPredicate parsedPredicate;
 
         if (out.predicate.size() > 0) {
-            parsedPredicate = ParsePredicate(out.predicate);
+            try {
+                parsedPredicate = ParsePredicate(out.predicate);
+            } catch (const std::ios_base::failure&) {
+                // If predicate parsing fails, skip this output
+                continue;
+            }
 
             if (parsedPredicate.IsMintTokenPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());

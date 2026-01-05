@@ -48,6 +48,7 @@ const char* GETCFCHECKPT = "getcfcheckpt";
 const char* CFCHECKPT = "cfcheckpt";
 const char* WTXIDRELAY = "wtxidrelay";
 const char* SENDTXRCNCL = "sendtxrcncl";
+const char* GETOUTPUTDATA = "getoutputdata";
 } // namespace NetMsgType
 
 /** All known message types. Keep this in the same order as the list of
@@ -90,6 +91,7 @@ const static std::vector<std::string> g_all_net_message_types{
     NetMsgType::CFCHECKPT,
     NetMsgType::WTXIDRELAY,
     NetMsgType::SENDTXRCNCL,
+    NetMsgType::GETOUTPUTDATA,
 };
 
 CMessageHeader::CMessageHeader(const MessageStartChars& pchMessageStartIn, const char* pszCommand, unsigned int nMessageSizeIn)
@@ -227,4 +229,24 @@ GenTxid ToGenTxid(const CInv& inv)
 {
     assert(inv.IsGenTxMsg());
     return inv.IsMsgWtx() ? GenTxid::Wtxid(inv.hash) : GenTxid::Txid(inv.hash);
+}
+
+COutputHashRequest::COutputHashRequest()
+{
+    output_hash.SetNull();
+}
+
+COutputHashRequest::COutputHashRequest(const uint256& outputHashIn)
+{
+    output_hash = outputHashIn;
+}
+
+bool operator<(const COutputHashRequest& a, const COutputHashRequest& b)
+{
+    return a.output_hash < b.output_hash;
+}
+
+std::string COutputHashRequest::ToString() const
+{
+    return "output_hash=" + output_hash.ToString();
 }

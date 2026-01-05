@@ -18,6 +18,7 @@
 #include <primitives/transaction.h>
 #include <script/interpreter.h>
 #include <script/script.h>
+#include <util/transaction_identifier.h>
 #include <support/allocators/secure.h>
 #include <sync.h>
 #include <tinyformat.h>
@@ -142,7 +143,7 @@ constexpr CAmount HIGH_TX_FEE_PER_KB{COIN};
 //! -maxtxfee will warn if called with a higher fee than this amount (in satoshis)
 constexpr CAmount HIGH_MAX_TX_FEE{10 * HIGH_TX_FEE_PER_KB};
 //! Pre-calculated constants for input size estimation in *virtual size*
-static constexpr size_t DUMMY_NESTED_P2WPKH_INPUT_SIZE = 91;
+static constexpr size_t DUMMY_NESTED_P2WPKH_INPUT_SIZE = 87;
 
 class CCoinControl;
 
@@ -484,6 +485,9 @@ public:
     std::unordered_map<uint256, CWalletTx, SaltedTxidHasher> mapWallet GUARDED_BY(cs_wallet);
     std::unordered_map<COutPoint, CWalletOutput, SaltedOutpointHasher> mapOutputs GUARDED_BY(cs_wallet);
 
+    /** Index from output hash to wallet transaction for O(1) lookup in GetWalletTxFromOutpoint */
+    std::unordered_map<uint256, const CWalletTx*, SaltedTxidHasher> mapOutpointHashToWalletTx GUARDED_BY(cs_wallet);
+
     typedef std::multimap<int64_t, CWalletTx*> TxItems;
     TxItems wtxOrdered;
 
@@ -509,6 +513,8 @@ public:
     }
 
     const CWalletTx* GetWalletTx(const uint256& hash) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    const CWalletTx* GetWalletTxFromOutpoint(const COutPoint& outpoint) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void IndexWalletTxOutputs(CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     std::set<uint256> GetTxConflicts(const CWalletTx& wtx) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
@@ -561,7 +567,7 @@ public:
 
     // Whether this or any known scriptPubKey with the same single key has been spent.
     bool IsSpentKey(const CScript& scriptPubKey) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
-    void SetSpentKeyState(WalletBatch& batch, const uint256& hash, unsigned int n, bool used, std::set<CTxDestination>& tx_destinations) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void SetSpentKeyState(WalletBatch& batch, const Outid& hash, bool used, std::set<CTxDestination>& tx_destinations) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     /** Display address on an external signer. Returns false if external signer support is not compiled */
     bool DisplayAddress(const CTxDestination& dest) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
@@ -1016,6 +1022,7 @@ public:
 
     const CKeyingMaterial& GetEncryptionKey() const override;
     bool HasEncryptionKeys() const override;
+    RecursiveMutex& GetWalletMutex() const override { return cs_wallet; }
 
     /** Get last block processed height */
     int GetLastBlockHeight() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet)

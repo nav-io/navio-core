@@ -106,6 +106,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
     }
 
     auto nonce = vk * ret.blindingKey;
+
     nonces.Add(nonce);
 
     ret.value = nAmount;
@@ -219,11 +220,15 @@ CTransactionRef AggregateTransactions(const std::vector<CTransactionRef>& txs)
         for (auto& out : tx->vout) {
             if (out.IsFee()) {
                 if (out.predicate.size() > 0) {
-                    auto parsedPredicate = blsct::ParsePredicate(out.predicate);
-                    if (parsedPredicate.IsPayFeePredicate()) {
-                        feePublicKeys.push_back(parsedPredicate.GetPublicKey());
-                        nFee += out.nValue;
-                        continue;
+                    try {
+                        auto parsedPredicate = blsct::ParsePredicate(out.predicate);
+                        if (parsedPredicate.IsPayFeePredicate()) {
+                            feePublicKeys.push_back(parsedPredicate.GetPublicKey());
+                            nFee += out.nValue;
+                            continue;
+                        }
+                    } catch (const std::ios_base::failure&) {
+                        // If predicate parsing fails, treat as non-fee output
                     }
                 }
             }

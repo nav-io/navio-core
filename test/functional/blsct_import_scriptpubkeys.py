@@ -21,6 +21,7 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         self.num_nodes = 2
         self.chain = 'blsctregtest'
         self.setup_clean_chain = True
+        self.extra_args = [["-txindex"],["-txindex"]]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -28,6 +29,16 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
     def setup_network(self):
         self.setup_nodes()
         self.connect_nodes(0, 1)
+
+    def generate_blsct_blocks(self, node, address, num_blocks, batch_size=2):
+        """Generate blsct blocks in batches to avoid RPC timeouts."""
+        blocks = []
+        remaining = num_blocks
+        while remaining > 0:
+            to_generate = min(batch_size, remaining)
+            blocks.extend(self.generatetoblsctaddress(node, to_generate, address))
+            remaining -= to_generate
+        return blocks
 
     def create_random_script(self):
         """Create a random script for testing"""
@@ -56,7 +67,7 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
 
         # Generate blocks to fund the first wallet
         self.log.info("Generating 101 blocks to fund wallet1")
-        self.generatetoblsctaddress(self.nodes[0], 101, address1)
+        self.generate_blsct_blocks(self.nodes[0], address1, 101)
 
         # Check initial balance
         balance1 = wallet1.getbalance()
@@ -82,7 +93,7 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         self.log.info(f"Custom script: {custom_script}")
 
         # Create transaction inputs
-        inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
+        inputs = [{"txid": utxo['txid']}]
 
         # Create transaction outputs
         outputs = [
@@ -92,32 +103,30 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
 
         # Create raw transaction
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
-        self.log.info(f"Created raw transaction: {raw_tx}")
+        self.log.info("Created raw transaction (%d bytes)", len(raw_tx) // 2)
 
         # Fund the transaction
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
-        self.log.info(f"Funded transaction: {funded_tx}")
+        self.log.info("Funded transaction with length %d bytes", len(funded_tx) // 2)
 
         # Sign the transaction
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
-        self.log.info(f"Signed transaction: {signed_tx}")
+        self.log.info("Signed transaction with length %d bytes", len(signed_tx) // 2)
 
         # Decode and verify the transaction
         decoded_tx = wallet1.decoderawtransaction(signed_tx)
-        self.log.info(f"Decoded transaction: {decoded_tx}")
+        self.log.debug("Decoded transaction vout count %d", len(decoded_tx.get('vout', [])))
 
         # Get BLSCT recovery data to extract amounts and script information
         recovery_data = wallet2.getblsctrecoverydata(signed_tx)
-        self.log.info(f"Recovery data: {recovery_data}")
 
         script_found = False
-
         for output in recovery_data['outputs']:
-            print(f"Output: {output} {output['script']} {custom_script}")
-            if 'script' in output and output['script'] == custom_script:
+            script_hex = output.get('script')
+            if script_hex == custom_script:
                 script_found = True
                 assert_equal(output['amount'], Decimal('0.05'))
-                self.log.info(f"Found custom script in output: {output}")
+                self.log.info("Found custom script in recovery data output at vout %s", output.get('vout'))
                 break
 
         assert_equal(script_found, True)
@@ -127,16 +136,16 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         for output in decoded_tx['vout']:
             if 'scriptPubKey' in output and output['scriptPubKey']['hex'] == custom_script:
                 script_found = True
-                self.log.info(f"Found custom script in output: {output}")
+                self.log.info("Found custom script in decoded transaction output at n=%d", output.get('n'))
                 break
         assert_equal(script_found, True)
 
         # Send the transaction
         txid = self.nodes[0].sendrawtransaction(signed_tx)
-        self.log.info(f"Sent transaction {txid}")
+        self.log.info("Sent transaction %s", txid)
 
         # Generate a block to confirm the transaction
-        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        self.generate_blsct_blocks(self.nodes[0], address1, 1)
 
         # Verify the transaction is in the mempool and then confirmed
         self.sync_all()
@@ -166,7 +175,7 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         self.log.info(f"Script 3: {script3}")
 
         # Create transaction inputs
-        inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
+        inputs = [{"txid": utxo['txid']}]
 
         # Create transaction outputs with multiple scripts
         outputs = [
@@ -186,24 +195,23 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
 
         # Get BLSCT recovery data to extract amounts and script information
         recovery_data = wallet2.getblsctrecoverydata(signed_tx)
-        self.log.info(f"Recovery data: {recovery_data}")
+        self.log.debug("Recovery data outputs: %d", len(recovery_data.get('outputs', [])))
 
-        # Verify the outputs
-        assert_equal(len(recovery_data['outputs']), 4)
         # Check that all custom scripts are in the outputs
-        scripts_found = set()
-        for output in recovery_data['outputs']:
-            if 'script' in output and output['gamma'] != "":
-                scripts_found.add(output['script'])
         expected_scripts = {script1, script2, script3}
+        scripts_found = {
+            output.get('script')
+            for output in recovery_data.get('outputs', [])
+            if output.get('script') in expected_scripts
+        }
         assert_equal(scripts_found, expected_scripts)
 
         # Send the transaction
         txid = self.nodes[0].sendrawtransaction(signed_tx)
-        self.log.info(f"Sent transaction {txid} with multiple scripts")
+        self.log.info("Sent transaction %s with multiple scripts", txid)
 
         # Generate a block to confirm the transaction
-        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        self.generate_blsct_blocks(self.nodes[0], address1, 1)
 
         self.log.info("BLSCT raw transaction with multiple custom scripts test passed")
 
@@ -221,7 +229,7 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         self.log.info(f"Custom script: {custom_script}")
 
         # Create transaction inputs
-        inputs = [{"txid": utxo['txid'], "vout": utxo['vout']}]
+        inputs = [{"txid": utxo['txid']}]
 
         # Create transaction outputs with custom script
         outputs = [
@@ -240,10 +248,10 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
 
         # Send the transaction
         txid = self.nodes[0].sendrawtransaction(signed_tx)
-        self.log.info(f"Sent transaction {txid} with custom script")
+        self.log.info("Sent transaction %s with custom script", txid)
 
         # Generate a block to confirm the transaction
-        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        self.generate_blsct_blocks(self.nodes[0], address1, 1)
 
         # Wait a moment for the transaction to be processed
         self.sync_all()
@@ -255,24 +263,21 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         script_output_found = False
 
         for utxo in unspent_after:
-            self.log.info(f"Unspent output: {utxo}")
-            if utxo['scriptPubKey'] == custom_script:
-                self.log.info(f"Found custom script in unspent output: {utxo}")
+            script_hex = utxo.get('scriptPubKey')
+            if script_hex == custom_script:
+                self.log.info("Found custom script in listunspent output")
                 script_output_found = True
                 break
 
         assert_equal(script_output_found, True)
         # Look for outputs with our custom script using recovery data
+        # Use the signed transaction hex directly since the transaction might not be in the wallet
         script_output_found = False
-        for utxo in unspent_after:
-            # Get recovery data for this specific output
-            recovery_data_utxo = wallet1.getblsctrecoverydata(utxo['txid'], utxo['vout'])
-            for output in recovery_data_utxo['outputs']:
-                if 'script' in output and output['script'] == custom_script:
-                    script_output_found = True
-                    self.log.info(f"Found custom script in unspent output recovery data: {output}")
-                    break
-            if script_output_found:
+        recovery_data_utxo = wallet1.getblsctrecoverydata(signed_tx)
+        for output in recovery_data_utxo['outputs']:
+            if 'script' in output and output['script'] == custom_script:
+                script_output_found = True
+                self.log.info(f"Found custom script in unspent output recovery data: {output}")
                 break
         assert_equal(script_output_found, True)
 

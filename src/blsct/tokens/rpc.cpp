@@ -11,15 +11,20 @@
 #include <util/strencodings.h>
 #include <validation.h>
 
-std::vector<RPCResult> tokenInfoResult = {
-    RPCResult{RPCResult::Type::STR_HEX, "tokenId", "the token id"},
-    RPCResult{RPCResult::Type::STR_HEX, "publicKey", "the token public key"},
-    RPCResult{RPCResult::Type::STR, "type", "the token type"},
-    RPCResult{RPCResult::Type::OBJ_DYN, "metadata", "the token metadata", {{RPCResult::Type::STR, "xxxx", "value"}}},
-    RPCResult{RPCResult::Type::NUM, "maxSupply", "the token max supply"},
-    RPCResult{RPCResult::Type::NUM, "currentSupply", true, "the token current supply"},
-    RPCResult{RPCResult::Type::OBJ_DYN, "mintedNft", true, "the nfts already minted", {{RPCResult::Type::OBJ_DYN, "index", "metadata", {{RPCResult::Type::STR, "xxxx", "value"}}}}},
-};
+std::vector<RPCResult> metadataResult = {
+    {RPCResult::Type::OBJ, "metadata", "", {
+                                               {RPCResult::Type::STR, "key", "the metadata key"},
+                                               {RPCResult::Type::STR, "value", "the metadata value"},
+                                           }}};
+
+std::vector<RPCResult>
+    tokenInfoResult = {
+        RPCResult{RPCResult::Type::STR_HEX, "tokenId", "the token id"}, RPCResult{RPCResult::Type::STR_HEX, "publicKey", "the token public key"},
+        RPCResult{RPCResult::Type::STR, "type", "the token type"},
+        RPCResult{RPCResult::Type::ARR, "metadata", "the token metadata", metadataResult},
+        RPCResult{RPCResult::Type::NUM, "maxSupply", "the token max supply"},
+        RPCResult{RPCResult::Type::NUM, "currentSupply", true, "the token current supply"},
+        RPCResult{RPCResult::Type::ARR, "mintedNft", true, "the nfts already minted", {{RPCResult::Type::OBJ, "", "", {{RPCResult::Type::STR, "index", "the nft index"}, {RPCResult::Type::ARR, "metadata", "the token metadata", metadataResult}}}}}};
 
 void TokenToUniValue(UniValue& obj, const blsct::TokenEntry& token)
 {

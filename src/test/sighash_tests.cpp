@@ -97,7 +97,6 @@ void static RandomTransaction(CMutableTransaction& tx, bool fSingle)
         tx.vin.emplace_back();
         CTxIn &txin = tx.vin.back();
         txin.prevout.hash = Txid::FromUint256(InsecureRand256());
-        txin.prevout.n = InsecureRandBits(2);
         RandomScript(txin.scriptSig);
         txin.nSequence = (InsecureRandBool()) ? InsecureRand32() : std::numeric_limits<uint32_t>::max();
     }

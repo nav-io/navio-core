@@ -72,12 +72,13 @@ def is_same_type(node, tx):
     vins = node.getrawtransaction(tx, True)['vin']
     inputs = []
     for vin in vins:
-        prev_tx, n = vin['txid'], vin['vout']
+        prev_tx = vin['txid']
+        tx = node.gettxfromoutputhash(prev_tx)
         inputs.append(
             node.getrawtransaction(
-                prev_tx,
+                tx["txid"],
                 True,
-            )['vout'][n]['scriptPubKey']['address']
+            )['vout'][tx["vout"]]['scriptPubKey']['address']
         )
     has_legacy = False
     has_p2sh = False
