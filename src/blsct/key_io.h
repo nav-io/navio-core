@@ -22,10 +22,10 @@ namespace blsct {
 constexpr size_t DOUBLE_PUBKEY_ENC_SIZE = 3 + 1 + bech32_mod::DOUBLE_PUBKEY_DATA_ENC_SIZE + 8;
 
 namespace bech32_hrp {
-    const std::string Main = "nav";
-    const std::string TestNet = "tnv";
-    const std::string SigNet = "snv";
-    const std::string RegTest = "rnav";
+    const std::string Mainnet = "nav";
+    const std::string Testnet = "tnv";
+    const std::string Signet = "snv";
+    const std::string Regtest = "rnav";
 }
 
 /** Encode DoublePublicKey to Bech32 or Bech32m string. Encoding must be one of BECH32 or BECH32M. */

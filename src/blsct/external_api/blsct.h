@@ -115,8 +115,6 @@ BlsctRetVal* err(
 
 #define BLSCT_COPY(src, dest) std::memcpy(dest, src, sizeof(dest))
 #define BLSCT_COPY_BYTES(src, dest, n) std::memcpy(dest, src, n)
-
-#define MALLOC(T, name) T* name = (T*) malloc(sizeof(T))
 #define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
 #define RETURN_IF_MEM_ALLOC_FAILED(name) \
 if (name == nullptr) { \
@@ -191,6 +189,13 @@ inline void* DeserializeFromHex(const char* hex, const size_t obj_size) {
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+enum BlsctChain {
+    Mainnet,
+    Testnet,
+    Signet,
+    Regtest,
+};
 
 enum TxOutputType {
     Normal,
@@ -289,6 +294,9 @@ typedef struct {
 void free_obj(void* x);
 void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 void init();
+
+enum BlsctChain get_blsct_chain();
+void set_blsct_chain(enum BlsctChain chain);
 
 const char* serialize_raw_obj(const uint8_t* ser_obj, const size_t ser_obj_size);
 BlsctRetVal* deserialize_raw_obj(const char* hex);
@@ -412,6 +420,7 @@ BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
     const uint64_t address
 );
 
+
 BlsctRetVal* dpk_to_sub_addr(
     const BlsctDoublePubKey* blsct_dpk
 );
@@ -533,6 +542,10 @@ BlsctSubAddr* derive_sub_address(
     const BlsctScalar* blsct_view_key,
     const BlsctPubKey* blsct_spending_pub_key,
     const BlsctSubAddrId* blsct_sub_addr_id
+);
+
+BlsctDoublePubKey* sub_addr_to_dpk(
+    const BlsctSubAddr* blsct_sub_addr
 );
 
 const char* serialize_sub_addr(const BlsctSignature* blsct_sub_addr);
