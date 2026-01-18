@@ -1744,6 +1744,17 @@ uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out) {
     return tx_out->min_stake;
 }
 
+bool get_tx_out_subtract_fee_from_amount(const BlsctTxOut* tx_out) {
+    return tx_out->subtract_fee_from_amount;
+}
+
+const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out) {
+    MALLOC_BYTES(BlsctScalar, blinding_key, SCALAR_SIZE);
+    RETURN_IF_MEM_ALLOC_FAILED(blinding_key);
+    BLSCT_COPY(tx_out->blinding_key, *blinding_key);
+    return blinding_key;
+}
+
 // vector predicate
 int are_vector_predicate_equal(
     const BlsctVectorPredicate* a,

@@ -623,6 +623,8 @@ const char* get_tx_out_memo(const BlsctTxOut* tx_out);
 const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out);
 TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out);
 uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
+bool get_tx_out_subtract_fee_from_amount(const BlsctTxOut* tx_out);
+const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out);
 
 // vector predicate
 int are_vector_predicate_equal(
