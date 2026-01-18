@@ -289,6 +289,8 @@ typedef struct {
     BlsctTokenId token_id;
     TxOutputType output_type;
     uint64_t min_stake;
+    bool subtract_fee_from_amount;
+    BlsctScalar blinding_key;
 } BlsctTxOut;
 
 void free_obj(void* x);
@@ -452,7 +454,10 @@ BlsctRetVal* deserialize_out_point(const char* hex);
 int are_point_equal(const BlsctPoint* a, const BlsctPoint* b);
 BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
-
+BlsctPoint* scalar_muliply_point(
+    const BlsctPoint* blsct_point,
+    const BlsctScalar* blsct_scalar
+);
 const char* point_to_str(const BlsctPoint* blsct_point);
 BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
 bool is_valid_point(const BlsctPoint* blsct_point);
@@ -610,7 +615,9 @@ BlsctRetVal* build_tx_out(
     const char* memo_c_str,
     const BlsctTokenId* blsct_token_id,
     const TxOutputType output_type,
-    const uint64_t min_stake
+    const uint64_t min_stake,
+    const bool subtract_fee_from_amount,
+    const BlsctScalar* blsct_blinding_key
 );
 
 const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out);
@@ -619,6 +626,8 @@ const char* get_tx_out_memo(const BlsctTxOut* tx_out);
 const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out);
 TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out);
 uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
+bool get_tx_out_subtract_fee_from_amount(const BlsctTxOut* tx_out);
+const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out);
 
 // vector predicate
 int are_vector_predicate_equal(

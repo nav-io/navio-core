@@ -537,6 +537,12 @@ BlsctCTxRetVal* build_ctx(
             return rv;
         }
 
+        // unserialize blinding key
+        Scalar blinding_key;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            tx_out.blinding_key, SCALAR_SIZE, blinding_key
+        );
+
         // add all to TxFactoryBase
         psbt.AddOutput(
             dest,
@@ -544,7 +550,9 @@ BlsctCTxRetVal* build_ctx(
             memo_str,
             token_id,
             out_type,
-            tx_out.min_stake
+            tx_out.min_stake,
+            tx_out.subtract_fee_from_amount,
+            blinding_key
         );
     }
 
@@ -1060,6 +1068,25 @@ int are_point_equal(const BlsctPoint* blsct_a, const BlsctPoint* blsct_b) {
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_a, POINT_SIZE, a);
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_b, POINT_SIZE, b);
     return a == b ? 1 : 0;
+}
+
+BlsctPoint* scalar_muliply_point(
+    const BlsctPoint* blsct_point,
+    const BlsctScalar* blsct_scalar
+) {
+    Point p;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, p);
+
+    Scalar s;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, s);
+
+    Point sp = p * s;
+
+    MALLOC_BYTES(BlsctPoint, blsct_sp, POINT_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_sp);
+    SERIALIZE_AND_COPY(sp, blsct_sp);
+
+    return blsct_sp;
 }
 
 const char* point_to_str(const BlsctPoint* blsct_point) {
@@ -1676,7 +1703,9 @@ BlsctRetVal* build_tx_out(
     const char* memo_c_str,
     const BlsctTokenId* blsct_token_id,
     const TxOutputType output_type,
-    const uint64_t min_stake
+    const uint64_t min_stake,
+    const bool subtract_fee_from_amount,
+    const BlsctScalar* blsct_blinding_key
 ) {
     MALLOC_BYTES(BlsctTxOut, tx_out, sizeof(BlsctTxOut));
     RETURN_IF_MEM_ALLOC_FAILED(tx_out);
@@ -1694,6 +1723,8 @@ BlsctRetVal* build_tx_out(
     BLSCT_COPY(blsct_token_id, tx_out->token_id);
     tx_out->output_type = output_type;
     tx_out->min_stake = min_stake;
+    tx_out->subtract_fee_from_amount = subtract_fee_from_amount;
+    BLSCT_COPY(blsct_blinding_key, tx_out->blinding_key);
 
     return succ(tx_out, sizeof(BlsctTxOut));
 }
@@ -1730,6 +1761,17 @@ TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out) {
 
 uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out) {
     return tx_out->min_stake;
+}
+
+bool get_tx_out_subtract_fee_from_amount(const BlsctTxOut* tx_out) {
+    return tx_out->subtract_fee_from_amount;
+}
+
+const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out) {
+    MALLOC_BYTES(BlsctScalar, blinding_key, SCALAR_SIZE);
+    RETURN_IF_MEM_ALLOC_FAILED(blinding_key);
+    BLSCT_COPY(tx_out->blinding_key, *blinding_key);
+    return blinding_key;
 }
 
 // vector predicate
