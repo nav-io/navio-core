@@ -537,6 +537,12 @@ BlsctCTxRetVal* build_ctx(
             return rv;
         }
 
+        // unserialize blinding key
+        Scalar blinding_key;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            tx_out.blinding_key, SCALAR_SIZE, blinding_key
+        );
+
         // add all to TxFactoryBase
         psbt.AddOutput(
             dest,
@@ -544,7 +550,9 @@ BlsctCTxRetVal* build_ctx(
             memo_str,
             token_id,
             out_type,
-            tx_out.min_stake
+            tx_out.min_stake,
+            tx_out.subtract_fee_from_amount,
+            blinding_key
         );
     }
 
@@ -1676,7 +1684,9 @@ BlsctRetVal* build_tx_out(
     const char* memo_c_str,
     const BlsctTokenId* blsct_token_id,
     const TxOutputType output_type,
-    const uint64_t min_stake
+    const uint64_t min_stake,
+    const bool subtract_fee_from_amount,
+    const BlsctScalar* blsct_blinding_key
 ) {
     MALLOC_BYTES(BlsctTxOut, tx_out, sizeof(BlsctTxOut));
     RETURN_IF_MEM_ALLOC_FAILED(tx_out);
@@ -1694,6 +1704,8 @@ BlsctRetVal* build_tx_out(
     BLSCT_COPY(blsct_token_id, tx_out->token_id);
     tx_out->output_type = output_type;
     tx_out->min_stake = min_stake;
+    tx_out->subtract_fee_from_amount = subtract_fee_from_amount;
+    BLSCT_COPY(blsct_blinding_key, tx_out->blinding_key);
 
     return succ(tx_out, sizeof(BlsctTxOut));
 }

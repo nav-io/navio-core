@@ -90,7 +90,7 @@ public:
     TxFactoryBase(){};
 
     // Normal transfer
-    void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false);
+    void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false, const Scalar& blindingKey = Scalar::Rand());
     // Create Token
     void AddOutput(const Scalar& tokenKey, const blsct::TokenInfo& tokenInfo);
     // Mint Token

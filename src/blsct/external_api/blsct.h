@@ -289,6 +289,8 @@ typedef struct {
     BlsctTokenId token_id;
     TxOutputType output_type;
     uint64_t min_stake;
+    bool subtract_fee_from_amount;
+    BlsctScalar blinding_key;
 } BlsctTxOut;
 
 void free_obj(void* x);
@@ -610,7 +612,9 @@ BlsctRetVal* build_tx_out(
     const char* memo_c_str,
     const BlsctTokenId* blsct_token_id,
     const TxOutputType output_type,
-    const uint64_t min_stake
+    const uint64_t min_stake,
+    const bool subtract_fee_from_amount,
+    const BlsctScalar* blsct_blinding_key
 );
 
 const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out);
