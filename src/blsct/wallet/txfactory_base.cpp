@@ -23,7 +23,7 @@ void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmo
 
     if (fSubtractFeeFromAmount) {
         nFee = GetTransactioOutputWeight(out.out) * BLSCT_DEFAULT_FEE;
-        out = CreateOutput(destination.GetKeys(), nAmount - nFee, sMemo, token_id, Scalar::Rand(), type, minStake);
+        out = CreateOutput(destination.GetKeys(), nAmount - nFee, sMemo, token_id, blindingKey, type, minStake);
     };
 
     if (nAmounts.count(token_id) == 0)
