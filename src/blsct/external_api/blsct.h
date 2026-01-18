@@ -454,7 +454,10 @@ BlsctRetVal* deserialize_out_point(const char* hex);
 int are_point_equal(const BlsctPoint* a, const BlsctPoint* b);
 BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
-
+BlsctPoint* scalar_muliply_point(
+    const BlsctPoint* blsct_point,
+    const BlsctScalar* blsct_scalar
+);
 const char* point_to_str(const BlsctPoint* blsct_point);
 BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
 bool is_valid_point(const BlsctPoint* blsct_point);

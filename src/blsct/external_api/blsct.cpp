@@ -1070,6 +1070,25 @@ int are_point_equal(const BlsctPoint* blsct_a, const BlsctPoint* blsct_b) {
     return a == b ? 1 : 0;
 }
 
+BlsctPoint* scalar_muliply_point(
+    const BlsctPoint* blsct_point,
+    const BlsctScalar* blsct_scalar
+) {
+    Point p;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, p);
+
+    Scalar s;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_scalar, SCALAR_SIZE, s);
+
+    Point sp = p * s;
+
+    MALLOC_BYTES(BlsctPoint, blsct_sp, POINT_SIZE);
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_sp);
+    SERIALIZE_AND_COPY(sp, blsct_sp);
+
+    return blsct_sp;
+}
+
 const char* point_to_str(const BlsctPoint* blsct_point) {
     Point point;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
