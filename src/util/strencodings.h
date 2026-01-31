@@ -378,18 +378,12 @@ std::string Capitalize(std::string str);
  */
 std::optional<uint64_t> ParseByteUnits(std::string_view str, ByteUnit default_multiplier);
 
-struct AsciiCaseInsensitiveKeyEqual {
-    bool operator()(std::string_view s1, std::string_view s2) const
-    {
-        return ToLower(s1) == ToLower(s2);
-    }
-};
-
-struct AsciiCaseInsensitiveHash {
-    size_t operator()(std::string_view s) const
-    {
-        return std::hash<std::string>{}(ToLower(s));
-    }
-};
+/**
+ *  Locale-independent, ASCII-only comparator
+ *  @param[in] s1 a string to compare
+ *  @param[in] s2 another string to compare
+ *  @returns true if s1 == s2 when both strings are converted to lowercase
+ */
+bool CaseInsensitiveEqual(std::string_view s1, std::string_view s2);
 
 #endif // BITCOIN_UTIL_STRENCODINGS_H
