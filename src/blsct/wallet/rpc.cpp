@@ -1474,7 +1474,7 @@ RPCHelpMan createblsctrawtransaction()
 
                 auto rV = vk * blinding_key;
 
-                return blsct::PublicKey(sk + PrivateKey(Scalar(rV.GetHashWithSalt(0))).GetPoint());
+                return blsct::PublicKey(sk + blsct::PrivateKey(Scalar(rV.GetHashWithSalt(0))).GetPoint());
             };
 
             for (unsigned int idx = 0; idx < outputs.size(); idx++) {
