@@ -1806,8 +1806,8 @@ static RPCHelpMan getblsctrecoverydata()
         "getblsctrecoverydata",
         "\nGet BLSCT recovery data for transaction output(s)\n",
         {
-            {"txid_or_hex", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction id or raw transaction hex"},
-            {"vout", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The output index. If omitted, shows data for all outputs."},
+            {"txid_or_hex", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction id, raw transaction hex, or output outpoint hash"},
+            {"vout", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The output index. If omitted, shows data for all outputs. Ignored when an outpoint hash is provided."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -1832,16 +1832,27 @@ static RPCHelpMan getblsctrecoverydata()
             CMutableTransaction mtx;
             uint256 hash;
             bool is_hex_input = false;
+            bool is_outpoint_input = false;
+            COutPoint outpoint;
             const wallet::CWalletTx* wallet_tx_ptr = nullptr;
 
-            // Parse input as either txid or hex
+            // Parse input as either txid, outpoint hash, or raw hex
             std::string input = request.params[0].get_str();
-            if (input.length() == 64) {
+
+            if (input.length() == 64 && IsHex(input)) {
                 hash = uint256S(input);
                 wallet_tx_ptr = wallet->GetWalletTx(hash);
+
                 if (!wallet_tx_ptr) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction not found in wallet");
+                    // Fallback: treat input as an outpoint hash
+                    outpoint = COutPoint(hash);
+                    wallet_tx_ptr = wallet->GetWalletTxFromOutpoint(outpoint);
+                    if (!wallet_tx_ptr) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction or outpoint not found in wallet");
+                    }
+                    is_outpoint_input = true;
                 }
+
                 mtx = CMutableTransaction(*wallet_tx_ptr->tx);
             } else {
                 if (!DecodeHexTx(mtx, input)) {
@@ -1856,6 +1867,34 @@ static RPCHelpMan getblsctrecoverydata()
                 specific_vout = request.params[1].getInt<int>();
                 if (specific_vout < 0 || specific_vout >= (int)mtx.vout.size()) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "vout index out of range");
+                }
+            }
+
+            if (is_outpoint_input) {
+                const auto it = std::find_if(mtx.vout.begin(), mtx.vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
+                if (it == mtx.vout.end()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Outpoint not found in transaction");
+                }
+
+                int outpoint_vout = static_cast<int>(std::distance(mtx.vout.begin(), it));
+                if (specific_vout == -1) {
+                    specific_vout = outpoint_vout;
+                } else if (specific_vout != outpoint_vout) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Provided vout does not match outpoint");
+                }
+            }
+
+            if (is_outpoint_input) {
+                const auto it = std::find_if(mtx.vout.begin(), mtx.vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
+                if (it == mtx.vout.end()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Outpoint not found in transaction");
+                }
+
+                int outpoint_vout = static_cast<int>(std::distance(mtx.vout.begin(), it));
+                if (specific_vout == -1) {
+                    specific_vout = outpoint_vout;
+                } else if (specific_vout != outpoint_vout) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Provided vout does not match outpoint");
                 }
             }
 
@@ -1928,11 +1967,11 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
     return RPCHelpMan{
         "getblsctrecoverydatawithnonce",
         "\nGet BLSCT recovery data for outputs in a transaction using a specified nonce.\n"
-        "Only accepts hex transaction format.\n",
+        "Accepts a transaction hex string or an output outpoint hash.\n",
         {
-            {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"},
+            {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string or output outpoint hash"},
             {"nonce", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The nonce to use for recovery (hex string)"},
-            {"vout", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "If specified, only return data for this output index"},
+            {"vout", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "If specified, only return data for this output index. Ignored when an outpoint hash is provided."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -1957,13 +1996,34 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
 
             CMutableTransaction mtx;
             uint256 hash;
+            bool is_outpoint_input = false;
+            COutPoint outpoint;
 
-            // Parse hex transaction
+            // Parse hex transaction or outpoint hash
             std::string input = request.params[0].get_str();
-            if (!DecodeHexTx(mtx, input)) {
-                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction decode failed");
+            if (input.length() == 64 && IsHex(input)) {
+                hash = uint256S(input);
+
+                // Try to fetch via txid
+                if (const wallet::CWalletTx* wallet_tx_ptr = wallet->GetWalletTx(hash)) {
+                    mtx = CMutableTransaction(*wallet_tx_ptr->tx);
+                } else {
+                    // Fallback: treat input as an outpoint hash
+                    outpoint = COutPoint(hash);
+                    if (const wallet::CWalletTx* wallet_tx_ptr = wallet->GetWalletTxFromOutpoint(outpoint)) {
+                        mtx = CMutableTransaction(*wallet_tx_ptr->tx);
+                        is_outpoint_input = true;
+                    }
+                }
             }
-            hash = mtx.GetHash();
+
+            if (mtx.vout.empty()) {
+                // If not loaded from wallet, try to decode raw hex
+                if (!DecodeHexTx(mtx, input)) {
+                    throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction decode failed");
+                }
+                hash = mtx.GetHash();
+            }
 
             // Parse nonce
             std::string nonce_hex = request.params[1].get_str();
@@ -1979,6 +2039,20 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
                 specific_vout = request.params[2].getInt<int>();
                 if (specific_vout < 0 || specific_vout >= (int)mtx.vout.size()) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "vout index out of range");
+                }
+            }
+
+            if (is_outpoint_input) {
+                const auto it = std::find_if(mtx.vout.begin(), mtx.vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
+                if (it == mtx.vout.end()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Outpoint not found in transaction");
+                }
+
+                int outpoint_vout = static_cast<int>(std::distance(mtx.vout.begin(), it));
+                if (specific_vout == -1) {
+                    specific_vout = outpoint_vout;
+                } else if (specific_vout != outpoint_vout) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Provided vout does not match outpoint");
                 }
             }
 
