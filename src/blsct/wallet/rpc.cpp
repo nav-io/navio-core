@@ -5,6 +5,7 @@
 #include <blsct/wallet/balance_proof.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/unsigned_transaction.h>
+#include <blsct/public_key.h>
 #include <coins.h>
 #include <core_io.h>
 #include <primitives/transaction.h>
@@ -17,6 +18,7 @@
 #include <validation.h>
 #include <wallet/receive.h>
 #include <wallet/rpc/util.h>
+#include <limits>
 
 namespace blsct {
 static void ParseBLSCTRecipients(const UniValue& address_amounts, const UniValue& subtract_fee_outputs, const std::string& sMemo, std::vector<wallet::CBLSCTRecipient>& recipients)
@@ -1288,13 +1290,19 @@ RPCHelpMan createblsctrawtransaction()
                         RPCArg::Optional::OMITTED,
                         "",
                         {
+                            {"type", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Output type. Use \"atomic_swap\" for a hash/time locked output, otherwise omit for a standard payment"},
                             {"address", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The BLSCT address to send to"},
+                            {"address_a", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "First BLSCT address for an atomic_swap output (hashlock branch)"},
+                            {"address_b", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Second BLSCT address for an atomic_swap output (timelock branch)"},
                             {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT},
                             {"memo", RPCArg::Type::STR, RPCArg::Default{""}, "A memo used to store in the transaction.\n"
                                                                              "The recipient will see its value."},
                             {"token_id", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "The token id for token transactions"},
                             {"script", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The script in hex format to use for this output"},
                             {"nonce", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The nonce for this output (hex string)"},
+                            {"hash", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "32-byte hash (hex) for atomic_swap outputs"},
+                            {"locktime", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Locktime (block height or timestamp) for atomic_swap refund branch"},
+                            {"blinding_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Optional 32-byte blinding key to deterministically derive atomic_swap spending keys"},
                         },
                     },
                 },
@@ -1305,7 +1313,8 @@ RPCHelpMan createblsctrawtransaction()
         RPCExamples{
             HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"value\\\":1000000,\\\"gamma\\\":\\\"1234567890abcdef\\\",\\\"private_key\\\":\\\"abcdef1234567890\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01,\\\"memo\\\":\\\"memo\\\",\\\"token_id\\\":\\\"tokenid\\\"}]\"") +
             HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01}]\"") +
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01,\\\"script\\\":\\\"51\\\"}]\"")},
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01,\\\"script\\\":\\\"51\\\"}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"type\\\":\\\"atomic_swap\\\",\\\"address_a\\\":\\\"blsctAddr1\\\",\\\"address_b\\\":\\\"blsctAddr2\\\",\\\"amount\\\":0.01,\\\"hash\\\":\\\"00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff\\\",\\\"locktime\\\":750000}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -1450,24 +1459,30 @@ RPCHelpMan createblsctrawtransaction()
             // Parse outputs
             const UniValue& outputs = request.params[1].get_array();
             std::vector<blsct::UnsignedOutput> unsigned_outputs;
+
+            auto derive_spending_key = [&](const blsct::DoublePublicKey& dest_keys, const Scalar& blinding_key) -> blsct::PublicKey {
+                MclG1Point vk;
+                MclG1Point sk;
+
+                if (!dest_keys.GetViewKey(vk)) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Could not extract view key from BLSCT address");
+                }
+
+                if (!dest_keys.GetSpendKey(sk)) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Could not extract spend key from BLSCT address");
+                }
+
+                auto rV = vk * blinding_key;
+
+                return blsct::PublicKey(sk + PrivateKey(Scalar(rV.GetHashWithSalt(0))).GetPoint());
+            };
+
             for (unsigned int idx = 0; idx < outputs.size(); idx++) {
                 const UniValue& output = outputs[idx];
                 const UniValue& o = output.get_obj();
 
                 if (!o.exists("amount")) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Each output must have an address and amount");
-                }
-
-                blsct::SubAddress subAddress;
-                if (o.exists("address")) {
-                    std::string address = o["address"].get_str();
-                    CTxDestination destination = DecodeDestination(address);
-                    if (!IsValidDestination(destination) || destination.index() != 8) {
-                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
-                    }
-                    subAddress = std::get<blsct::DoublePublicKey>(destination);
-                } else {
-                    subAddress = blsct::DoublePublicKey(MclG1Point::GetBasePoint(), MclG1Point::GetBasePoint());
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Each output must include an amount");
                 }
 
                 CAmount nAmount = AmountFromValue(o["amount"]);
@@ -1484,21 +1499,113 @@ RPCHelpMan createblsctrawtransaction()
                 auto blindingKey = Scalar::Rand();
 
                 if (o.exists("blinding_key")) {
-                    blindingKey = Scalar(ParseHex(o["blinding_key"].get_str()));
+                    auto blinding_key_bytes = ParseHex(o["blinding_key"].get_str());
+                    if (blinding_key_bytes.size() != 32) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Blinding key must be 32 bytes (64 hex characters)");
+                    }
+                    blindingKey = Scalar(blinding_key_bytes);
                 }
 
-                // Check if script is provided
-                if (o.exists("script") && !o["script"].get_str().empty()) {
-                    std::string script_hex = o["script"].get_str();
-                    try {
-                        std::vector<unsigned char> script_bytes = ParseHex(script_hex);
-                        CScript script(script_bytes.begin(), script_bytes.end());
-                        unsigned_output = CreateOutput(std::make_pair(subAddress.GetKeys(), script), nAmount, memo, token_id, blindingKey, type, 0);
-                    } catch (const std::exception& e) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid script hex string: %s", e.what()));
+                if (blindingKey.IsZero()) {
+                    blindingKey = Scalar::Rand();
+                }
+
+                std::string output_type = o.exists("type") ? o["type"].get_str() : "";
+
+                if (!output_type.empty() && output_type != "atomic_swap") {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Unsupported output type: " + output_type);
+                }
+
+                if (output_type == "atomic_swap") {
+                    auto parse_address = [&](const std::string& address, const std::string& field_name) -> blsct::DoublePublicKey {
+                        CTxDestination destination = DecodeDestination(address);
+                        if (!IsValidDestination(destination) || destination.index() != 8) {
+                            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address for ") + field_name + ": " + address);
+                        }
+                        return std::get<blsct::DoublePublicKey>(destination);
+                    };
+
+                    if (!o.exists("address_a") || !o.exists("address_b")) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Atomic swap output requires address_a and address_b");
                     }
+
+                    blsct::DoublePublicKey address_a = parse_address(o["address_a"].get_str(), "address_a");
+                    blsct::DoublePublicKey address_b = parse_address(o["address_b"].get_str(), "address_b");
+
+                    if (!o.exists("hash")) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Atomic swap output requires a 32-byte hash");
+                    }
+
+                    std::vector<unsigned char> hash_bytes = ParseHex(o["hash"].get_str());
+                    if (hash_bytes.size() != 32) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Atomic swap hash must be 32 bytes (64 hex characters)");
+                    }
+
+                    if (!o.exists("locktime")) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Atomic swap output requires locktime");
+                    }
+
+                    int64_t locktime = o["locktime"].getInt<int64_t>();
+                    if (locktime < 0 || locktime > std::numeric_limits<uint32_t>::max()) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Locktime must be between 0 and 4294967295");
+                    }
+
+                    if (o.exists("script") && !o["script"].get_str().empty()) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Custom script is not allowed when type is atomic_swap");
+                    }
+
+                    auto spendingKeyA = derive_spending_key(address_a, blindingKey);
+                    auto spendingKeyB = derive_spending_key(address_b, blindingKey);
+
+                    auto spendingKeyABytes = spendingKeyA.GetVch();
+                    auto spendingKeyBBytes = spendingKeyB.GetVch();
+
+                    if (spendingKeyABytes.size() != blsct::PublicKey::SIZE || spendingKeyBBytes.size() != blsct::PublicKey::SIZE) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to derive valid spending keys for atomic_swap output");
+                    }
+
+                    CScript script;
+                    script << OP_IF
+                           << OP_SIZE << 32 << OP_EQUALVERIFY
+                           << OP_SHA256 << hash_bytes << OP_EQUALVERIFY
+                           << spendingKeyABytes
+                           << OP_ELSE
+                           << locktime
+                           << OP_CHECKLOCKTIMEVERIFY << OP_DROP
+                           << spendingKeyBBytes
+                           << OP_ENDIF
+                           << OP_BLSCHECKSIG;
+
+                    unsigned_output = CreateOutput(std::make_pair(address_a, script), nAmount, memo, token_id, blindingKey, type, 0);
+
+                    // Nullify the spending key 
+                    unsigned_output.out.blsctData.spendingKey = MclG1Point();
                 } else {
-                    unsigned_output = CreateOutput(subAddress.GetKeys(), nAmount, memo, token_id, blindingKey, type);
+                    blsct::SubAddress subAddress;
+                    if (o.exists("address")) {
+                        std::string address = o["address"].get_str();
+                        CTxDestination destination = DecodeDestination(address);
+                        if (!IsValidDestination(destination) || destination.index() != 8) {
+                            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
+                        }
+                        subAddress = std::get<blsct::DoublePublicKey>(destination);
+                    } else {
+                        subAddress = blsct::DoublePublicKey(MclG1Point::GetBasePoint(), MclG1Point::GetBasePoint());
+                    }
+
+                    // Check if script is provided
+                    if (o.exists("script") && !o["script"].get_str().empty()) {
+                        std::string script_hex = o["script"].get_str();
+                        try {
+                            std::vector<unsigned char> script_bytes = ParseHex(script_hex);
+                            CScript script(script_bytes.begin(), script_bytes.end());
+                            unsigned_output = CreateOutput(std::make_pair(subAddress.GetKeys(), script), nAmount, memo, token_id, blindingKey, type, 0);
+                        } catch (const std::exception& e) {
+                            throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid script hex string: %s", e.what()));
+                        }
+                    } else {
+                        unsigned_output = CreateOutput(subAddress.GetKeys(), nAmount, memo, token_id, blindingKey, type);
+                    }
                 }
 
                 unsigned_outputs.push_back(unsigned_output);
@@ -1806,8 +1913,8 @@ static RPCHelpMan getblsctrecoverydata()
         "getblsctrecoverydata",
         "\nGet BLSCT recovery data for transaction output(s)\n",
         {
-            {"txid_or_hex", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction id or raw transaction hex"},
-            {"vout", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The output index. If omitted, shows data for all outputs."},
+            {"txid_or_hex", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction id, raw transaction hex, or output outpoint hash"},
+            {"vout", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The output index. If omitted, shows data for all outputs. Ignored when an outpoint hash is provided."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -1832,16 +1939,27 @@ static RPCHelpMan getblsctrecoverydata()
             CMutableTransaction mtx;
             uint256 hash;
             bool is_hex_input = false;
+            bool is_outpoint_input = false;
+            COutPoint outpoint;
             const wallet::CWalletTx* wallet_tx_ptr = nullptr;
 
-            // Parse input as either txid or hex
+            // Parse input as either txid, outpoint hash, or raw hex
             std::string input = request.params[0].get_str();
-            if (input.length() == 64) {
+
+            if (input.length() == 64 && IsHex(input)) {
                 hash = uint256S(input);
                 wallet_tx_ptr = wallet->GetWalletTx(hash);
+
                 if (!wallet_tx_ptr) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction not found in wallet");
+                    // Fallback: treat input as an outpoint hash
+                    outpoint = COutPoint(hash);
+                    wallet_tx_ptr = wallet->GetWalletTxFromOutpoint(outpoint);
+                    if (!wallet_tx_ptr) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction or outpoint not found in wallet");
+                    }
+                    is_outpoint_input = true;
                 }
+
                 mtx = CMutableTransaction(*wallet_tx_ptr->tx);
             } else {
                 if (!DecodeHexTx(mtx, input)) {
@@ -1856,6 +1974,34 @@ static RPCHelpMan getblsctrecoverydata()
                 specific_vout = request.params[1].getInt<int>();
                 if (specific_vout < 0 || specific_vout >= (int)mtx.vout.size()) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "vout index out of range");
+                }
+            }
+
+            if (is_outpoint_input) {
+                const auto it = std::find_if(mtx.vout.begin(), mtx.vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
+                if (it == mtx.vout.end()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Outpoint not found in transaction");
+                }
+
+                int outpoint_vout = static_cast<int>(std::distance(mtx.vout.begin(), it));
+                if (specific_vout == -1) {
+                    specific_vout = outpoint_vout;
+                } else if (specific_vout != outpoint_vout) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Provided vout does not match outpoint");
+                }
+            }
+
+            if (is_outpoint_input) {
+                const auto it = std::find_if(mtx.vout.begin(), mtx.vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
+                if (it == mtx.vout.end()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Outpoint not found in transaction");
+                }
+
+                int outpoint_vout = static_cast<int>(std::distance(mtx.vout.begin(), it));
+                if (specific_vout == -1) {
+                    specific_vout = outpoint_vout;
+                } else if (specific_vout != outpoint_vout) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Provided vout does not match outpoint");
                 }
             }
 
@@ -1928,11 +2074,11 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
     return RPCHelpMan{
         "getblsctrecoverydatawithnonce",
         "\nGet BLSCT recovery data for outputs in a transaction using a specified nonce.\n"
-        "Only accepts hex transaction format.\n",
+        "Accepts a transaction hex string or an output outpoint hash.\n",
         {
-            {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"},
+            {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string or output outpoint hash"},
             {"nonce", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The nonce to use for recovery (hex string)"},
-            {"vout", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "If specified, only return data for this output index"},
+            {"vout", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "If specified, only return data for this output index. Ignored when an outpoint hash is provided."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -1957,13 +2103,34 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
 
             CMutableTransaction mtx;
             uint256 hash;
+            bool is_outpoint_input = false;
+            COutPoint outpoint;
 
-            // Parse hex transaction
+            // Parse hex transaction or outpoint hash
             std::string input = request.params[0].get_str();
-            if (!DecodeHexTx(mtx, input)) {
-                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction decode failed");
+            if (input.length() == 64 && IsHex(input)) {
+                hash = uint256S(input);
+
+                // Try to fetch via txid
+                if (const wallet::CWalletTx* wallet_tx_ptr = wallet->GetWalletTx(hash)) {
+                    mtx = CMutableTransaction(*wallet_tx_ptr->tx);
+                } else {
+                    // Fallback: treat input as an outpoint hash
+                    outpoint = COutPoint(hash);
+                    if (const wallet::CWalletTx* wallet_tx_ptr = wallet->GetWalletTxFromOutpoint(outpoint)) {
+                        mtx = CMutableTransaction(*wallet_tx_ptr->tx);
+                        is_outpoint_input = true;
+                    }
+                }
             }
-            hash = mtx.GetHash();
+
+            if (mtx.vout.empty()) {
+                // If not loaded from wallet, try to decode raw hex
+                if (!DecodeHexTx(mtx, input)) {
+                    throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction decode failed");
+                }
+                hash = mtx.GetHash();
+            }
 
             // Parse nonce
             std::string nonce_hex = request.params[1].get_str();
@@ -1979,6 +2146,20 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
                 specific_vout = request.params[2].getInt<int>();
                 if (specific_vout < 0 || specific_vout >= (int)mtx.vout.size()) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "vout index out of range");
+                }
+            }
+
+            if (is_outpoint_input) {
+                const auto it = std::find_if(mtx.vout.begin(), mtx.vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
+                if (it == mtx.vout.end()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Outpoint not found in transaction");
+                }
+
+                int outpoint_vout = static_cast<int>(std::distance(mtx.vout.begin(), it));
+                if (specific_vout == -1) {
+                    specific_vout = outpoint_vout;
+                } else if (specific_vout != outpoint_vout) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Provided vout does not match outpoint");
                 }
             }
 
