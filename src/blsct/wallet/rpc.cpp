@@ -1634,16 +1634,19 @@ RPCHelpMan fundblsctrawtransaction()
 {
     return RPCHelpMan{
         "fundblsctrawtransaction",
-        "\nAdd inputs to a BLSCT transaction until it has enough value to cover outputs and fee.\n",
+        "\nAdd inputs to a BLSCT transaction until it has enough value to cover outputs and fee.\n"
+        "If lock_unspents is true, selected inputs are locked. Use unlockblsctoutpoint to unlock them.\n",
         {
             {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The hex string of the raw transaction"},
             {"changeaddress", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The BLSCT address to receive the change"},
+            {"lock_unspents", RPCArg::Type::BOOL, RPCArg::Default{false}, "Lock selected unspent outputs"},
         },
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the funded transaction"},
         RPCExamples{
             HelpExampleCli("fundblsctrawtransaction", "\"hexstring\"") +
-            HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" \"changeaddress\"")},
+            HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" \"changeaddress\"") +
+            HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" \"changeaddress\" true")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -1676,10 +1679,12 @@ RPCHelpMan fundblsctrawtransaction()
             CAmount existing_input_value = 0;
             std::set<COutPoint> existing_inputs;
 
+            const bool lock_unspents = !request.params[2].isNull() && request.params[2].get_bool();
+
             // Find unspent outputs to use as inputs
             wallet::CoinFilterParams filter_coins;
             filter_coins.only_blsct = true;
-            filter_coins.skip_locked = false;
+            filter_coins.skip_locked = true;
             filter_coins.include_immature_coinbase = false;
             wallet::CoinsResult available_outputs = AvailableCoins(*pwallet, nullptr, std::nullopt, filter_coins);
 
@@ -1687,6 +1692,12 @@ RPCHelpMan fundblsctrawtransaction()
                 existing_input_value += input.value.GetUint64();
                 existing_inputs.insert(input.in.prevout);
             }
+
+            auto lock_outpoint_if_wallet = [&](const COutPoint& outpoint) {
+                if (pwallet->GetWalletTxFromOutpoint(outpoint)) {
+                    pwallet->LockCoin(outpoint);
+                }
+            };
 
             // Add fixed fee
             CAmount required_value = output_value + COIN / 100; // 0.01 fixed fee
@@ -1709,6 +1720,12 @@ RPCHelpMan fundblsctrawtransaction()
 
             // Check if we need a change output even without additional inputs
             if (additional_required <= 0) {
+                if (lock_unspents) {
+                    for (const auto& outpoint : existing_inputs) {
+                        lock_outpoint_if_wallet(outpoint);
+                    }
+                }
+
                 // Add change output if needed
                 CAmount total_input_value = existing_input_value;
 
@@ -1723,6 +1740,7 @@ RPCHelpMan fundblsctrawtransaction()
             }
 
             CAmount additional_input_value = 0;
+            std::vector<COutPoint> added_inputs;
             for (const auto& [type, outputs] : available_outputs.coins) {
                 for (const auto& output : outputs) {
                     // Skip if this output is already used as an input
@@ -1761,6 +1779,7 @@ RPCHelpMan fundblsctrawtransaction()
 
                     unsigned_tx.AddInput(input);
                     additional_input_value += recovery_data->amount;
+                    added_inputs.push_back(output.outpoint);
 
                     if (additional_input_value >= additional_required) break;
                 }
@@ -1770,6 +1789,15 @@ RPCHelpMan fundblsctrawtransaction()
 
             if (additional_input_value < additional_required) {
                 throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Insufficient funds");
+            }
+
+            if (lock_unspents) {
+                std::set<COutPoint> inputs_to_lock = existing_inputs;
+                inputs_to_lock.insert(added_inputs.begin(), added_inputs.end());
+
+                for (const auto& outpoint : inputs_to_lock) {
+                    lock_outpoint_if_wallet(outpoint);
+                }
             }
 
             // Add change output if needed
@@ -1783,6 +1811,52 @@ RPCHelpMan fundblsctrawtransaction()
             }
 
             return HexStr(unsigned_tx.Serialize());
+        },
+    };
+}
+
+RPCHelpMan unlockblsctoutpoint()
+{
+    return RPCHelpMan{
+        "unlockblsctoutpoint",
+        "\nUnlock a BLSCT outpoint that was previously locked for funding.\n",
+        {
+            {"outpoint_hash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output outpoint hash"},
+        },
+        RPCResult{
+            RPCResult::Type::BOOL, "", "Whether the outpoint was successfully unlocked"},
+        RPCExamples{
+            HelpExampleCli("unlockblsctoutpoint", "\"outpoint_hash\"") +
+            HelpExampleRpc("unlockblsctoutpoint", "\"outpoint_hash\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // Make sure the results are valid at least up to the most recent block
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            const uint256 hash = ParseHashV(request.params[0], "outpoint_hash");
+            const COutPoint outpoint(hash);
+
+            if (!pwallet->GetWalletTxFromOutpoint(outpoint)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, unknown outpoint");
+            }
+
+            if (pwallet->IsSpent(outpoint)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, expected unspent output");
+            }
+
+            if (!pwallet->IsLockedCoin(outpoint)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, expected locked output");
+            }
+
+            if (!pwallet->UnlockCoin(outpoint)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Unlocking coin failed");
+            }
+
+            return true;
         },
     };
 }
@@ -2336,6 +2410,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &createblsctbalanceproof},
         {"blsct", &createblsctrawtransaction},
         {"blsct", &fundblsctrawtransaction},
+        {"blsct", &unlockblsctoutpoint},
         {"blsct", &signblsctrawtransaction},
         {"blsct", &decodeblsctrawtransaction},
         {"blsct", &getblsctrecoverydata},
