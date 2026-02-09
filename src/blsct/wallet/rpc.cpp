@@ -889,6 +889,7 @@ RPCHelpMan listblsctunspent()
                                                                                  {RPCResult::Type::STR_AMOUNT, "amount", "the transaction output amount in " + CURRENCY_UNIT},
                                                                                  {RPCResult::Type::NUM, "confirmations", "The number of confirmations"},
                                                                                  {RPCResult::Type::BOOL, "spendable", "Whether we have the private keys to spend this output"},
+                                                                                 {RPCResult::Type::STR_HEX, "scriptPubKey", "The scriptPubKey of the output"},
                                                                              }},
                                           }},
 
@@ -987,6 +988,8 @@ RPCHelpMan listblsctunspent()
                 if (ExtractDestination(out.txout.scriptPubKey, script_address)) {
                     entry.pushKV("scriptAddress", EncodeDestination(script_address));
                 }
+
+                entry.pushKV("scriptPubKey", HexStr(out.txout.scriptPubKey));
 
                 if (fValidAddress) {
                     entry.pushKV("address", EncodeDestination(address));
@@ -1925,6 +1928,7 @@ RPCHelpMan decodeblsctrawtransaction()
                                                                                                                                                        {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "blinding_key", "The blinding key (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
+                                                                                                                                                       {RPCResult::Type::STR_HEX, "scriptPubKey", "The scriptPubKey of the output"},
                                                                                                                                                    }},
                                                                                                                 }},
                                               {RPCResult::Type::STR_AMOUNT, "fee", "The transaction fee in " + CURRENCY_UNIT},
@@ -1964,6 +1968,8 @@ RPCHelpMan decodeblsctrawtransaction()
                 } else {
                     output_obj.pushKV("scriptAddress", "");
                 }
+
+                output_obj.pushKV("scriptPubKey", HexStr(output.out.scriptPubKey));
 
                 output_obj.pushKV("amount", ValueFromAmount(output.value.GetUint64()));
 
