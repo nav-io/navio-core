@@ -5,6 +5,7 @@
 #include <common/system.h>
 #include <logging.h>
 #include <random.h>
+#include <test/util/setup_common.h>
 #include <util/string.h>
 #include <util/threadpool.h>
 #include <util/time.h>
@@ -16,7 +17,7 @@
 // General test values
 int NUM_WORKERS_DEFAULT = 0;
 constexpr char POOL_NAME[] = "test";
-constexpr auto WAIT_TIMEOUT = 120s;
+constexpr auto TASK_TIMEOUT = 120s;
 
 struct ThreadPoolFixture {
     ThreadPoolFixture() {
@@ -45,7 +46,7 @@ BOOST_FIXTURE_TEST_SUITE(threadpool_tests, ThreadPoolFixture)
 #define WAIT_FOR(futures)                                                         \
     do {                                                                          \
         for (const auto& f : futures) {                                           \
-            BOOST_REQUIRE(f.wait_for(WAIT_TIMEOUT) == std::future_status::ready); \
+            BOOST_REQUIRE(f.wait_for(TASK_TIMEOUT) == std::future_status::ready); \
         }                                                                         \
     } while (0)
 
@@ -141,7 +142,7 @@ BOOST_AUTO_TEST_CASE(wait_for_task_to_finish)
         UninterruptibleSleep(200ms);
         flag.store(true, std::memory_order_release);
     });
-    BOOST_CHECK(future.wait_for(WAIT_TIMEOUT) == std::future_status::ready);
+    BOOST_CHECK(future.wait_for(TASK_TIMEOUT) == std::future_status::ready);
     BOOST_CHECK(flag.load(std::memory_order_acquire));
 }
 
@@ -164,21 +165,17 @@ BOOST_AUTO_TEST_CASE(task_exception_propagates_to_future)
     ThreadPool threadPool(POOL_NAME);
     threadPool.Start(NUM_WORKERS_DEFAULT);
 
-    int num_tasks = 5;
-    std::string err_msg{"something wrong happened"};
+    const auto make_err{[&](size_t n) { return strprintf("error on thread #%s", n); }};
+
+    const int num_tasks = 5;
     std::vector<std::future<void>> futures;
     futures.reserve(num_tasks);
     for (int i = 0; i < num_tasks; i++) {
-        futures.emplace_back(Submit(threadPool, [err_msg, i]() {
-            throw std::runtime_error(err_msg + ToString(i));
-        }));
+        futures.emplace_back(Submit(threadPool, [&make_err, i] { throw std::runtime_error(make_err(i)); }));
     }
 
     for (int i = 0; i < num_tasks; i++) {
-        BOOST_CHECK_EXCEPTION(futures.at(i).get(), std::runtime_error, [&](const std::runtime_error& e) {
-            BOOST_CHECK_EQUAL(e.what(), err_msg + ToString(i));
-            return true;
-        });
+        BOOST_CHECK_EXCEPTION(futures[i].get(), std::runtime_error, HasReason{make_err(i)});
     }
 }
 
