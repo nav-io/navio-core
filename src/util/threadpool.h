@@ -139,6 +139,9 @@ public:
             threads_to_join.swap(m_workers);
         }
         m_cv.notify_all();
+        // Help draining queue
+        while (ProcessTask()) {}
+        // Free resources
         for (auto& worker : threads_to_join) worker.join();
 
         // Since we currently wait for tasks completion, sanity-check empty queue
@@ -187,18 +190,19 @@ public:
      * @brief Execute a single queued task synchronously.
      * Removes one task from the queue and executes it on the calling thread.
      */
-    void ProcessTask() EXCLUSIVE_LOCKS_REQUIRED(!m_mutex)
+    bool ProcessTask() EXCLUSIVE_LOCKS_REQUIRED(!m_mutex)
     {
         std::packaged_task<void()> task;
         {
             LOCK(m_mutex);
-            if (m_work_queue.empty()) return;
+            if (m_work_queue.empty()) return false;
 
             // Pop the task
             task = std::move(m_work_queue.front());
             m_work_queue.pop();
         }
         task();
+        return true;
     }
 
     /**
