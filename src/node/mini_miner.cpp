@@ -154,7 +154,15 @@ MiniMiner::MiniMiner(const std::vector<MiniMinerMempoolEntry>& manual_entries,
         // Just forward these args onto MiniMinerMempoolEntry
         auto [mapiter, success] = m_entries_by_txid.emplace(txid, entry);
         // Txids must be unique; this txid shouldn't already be an entry in m_entries_by_txid
-        if (Assume(success)) m_entries.push_back(mapiter);
+        if (Assume(success)) {
+            m_entries.push_back(mapiter);
+
+            // Populate m_mapOutputToTx for parent-child relationship tracking
+            const auto& tx = entry.GetTx();
+            for (size_t i = 0; i < tx.vout.size(); ++i) {
+                m_mapOutputToTx[tx.vout[i].GetHash()] = tx.GetHash();
+            }
+        }
     }
     // Descendant cache is already built, but we need to translate them to m_entries_by_txid iters.
     for (const auto& [txid, desc_txids] : descendant_caches) {
