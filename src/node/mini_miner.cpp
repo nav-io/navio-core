@@ -321,11 +321,12 @@ void MiniMiner::BuildMockTemplate(std::optional<CFeeRate> target_feerate)
             std::sort(ancestor_key.begin(), ancestor_key.end());
             ancestor_groups[ancestor_key].insert((*it)->first);
         }
-        // 2. For each group, calculate total fee and size
+        // 2. For each group, calculate total fee and size of the ancestor package
         for (const auto& [key, group] : ancestor_groups) {
             CAmount fee = 0;
             int64_t size = 0;
-            for (const auto& txid : group) {
+            // Sum fees and sizes for all transactions in the ancestor set (key), not just the group
+            for (const auto& txid : key) {
                 auto entry_it = m_entries_by_txid.find(txid);
                 if (entry_it != m_entries_by_txid.end()) {
                     fee += entry_it->second.GetModifiedFee();
@@ -350,9 +351,10 @@ void MiniMiner::BuildMockTemplate(std::optional<CFeeRate> target_feerate)
             }
         }
         if (!found) break;
-        // 4. Include all transactions in the best group
+        // 4. Include all transactions in the best ancestor package
         std::set<MockEntryMap::iterator, IteratorComparator> to_delete;
-        for (const auto& txid : ancestor_groups[best_key]) {
+        // Include all transactions in the ancestor set (best_key), not just those with this exact ancestor set
+        for (const auto& txid : best_key) {
             m_inclusion_order.emplace(Txid::FromUint256(txid), sequence_num);
             auto entry_it = m_entries_by_txid.find(txid);
             if (entry_it != m_entries_by_txid.end()) {
