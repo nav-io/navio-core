@@ -38,6 +38,7 @@ struct ThreadPoolFixture {
 // 9) Congestion test; create more workers than available cores.
 // 10) Ensure Interrupt() prevents further submissions.
 // 11) Start() must not cause a deadlock when called during Stop().
+// 12) Ensure queued tasks complete after Interrupt().
 BOOST_FIXTURE_TEST_SUITE(threadpool_tests, ThreadPoolFixture)
 
 #define WAIT_FOR(futures)                                                         \
@@ -349,6 +350,34 @@ BOOST_AUTO_TEST_CASE(start_mid_stop_does_not_deadlock)
 
     // If Stop() is stuck, joining the stopper thread will deadlock
     stopper_thread.join();
+}
+
+// Test 12, queued tasks complete after Interrupt()
+BOOST_AUTO_TEST_CASE(queued_tasks_complete_after_interrupt)
+{
+    ThreadPool threadPool(POOL_NAME);
+    threadPool.Start(NUM_WORKERS_DEFAULT);
+
+    std::counting_semaphore<> blocker(0);
+    const auto blocking_tasks = BlockWorkers(threadPool, blocker, NUM_WORKERS_DEFAULT);
+
+    // Queue tasks while all workers are busy, then interrupt
+    std::atomic<int> counter{0};
+    const int num_tasks = 10;
+    std::vector<std::future<void>> futures;
+    futures.reserve(num_tasks);
+    for (int i = 0; i < num_tasks; i++) {
+        futures.emplace_back(Submit(threadPool, [&counter]{ counter.fetch_add(1, std::memory_order_relaxed); }));
+    }
+    threadPool.Interrupt();
+
+    // Queued tasks must still complete despite the interrupt
+    blocker.release(NUM_WORKERS_DEFAULT);
+    WAIT_FOR(futures);
+    BOOST_CHECK_EQUAL(counter.load(), num_tasks);
+
+    threadPool.Stop();
+    WAIT_FOR(blocking_tasks);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
