@@ -1917,7 +1917,7 @@ RPCHelpMan decodeblsctrawtransaction()
             RPCResult::Type::OBJ, "", "", {
                                               {RPCResult::Type::ARR, "inputs", "Array of transaction inputs", {
                                                                                                                   {RPCResult::Type::OBJ, "", "", {
-                                                                                                                                                {RPCResult::Type::STR_HEX, "txid", "The transaction id"},
+                                                                                                                                                {RPCResult::Type::STR_HEX, "txid", "The previous output hash"},
                                                                                                                                                      {RPCResult::Type::NUM, "value", "The input value"},
                                                                                                                                                      {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                      {RPCResult::Type::BOOL, "is_staked_commitment", "Whether this input is a staked commitment"},
@@ -1927,6 +1927,7 @@ RPCHelpMan decodeblsctrawtransaction()
                                                                                                                     {RPCResult::Type::OBJ, "", "", {
                                                                                                                                                        {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "blinding_key", "The blinding key (hex string)"},
+                                                                                                                                                       {RPCResult::Type::STR_HEX, "outputHash", "The output hash identifier (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "scriptPubKey", "The scriptPubKey of the output"},
                                                                                                                                                    }},
@@ -1968,7 +1969,7 @@ RPCHelpMan decodeblsctrawtransaction()
                 } else {
                     output_obj.pushKV("scriptAddress", "");
                 }
-
+                output_obj.pushKV("outputHash", output.out.GetHash().ToString());
                 output_obj.pushKV("scriptPubKey", HexStr(output.out.scriptPubKey));
 
                 output_obj.pushKV("amount", ValueFromAmount(output.value.GetUint64()));
