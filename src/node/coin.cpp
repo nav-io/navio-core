@@ -16,10 +16,10 @@ void FindCoins(const NodeContext& node, std::map<COutPoint, Coin>& coins)
     LOCK2(cs_main, node.mempool->cs);
     CCoinsViewCache& chain_view = node.chainman->ActiveChainstate().CoinsTip();
     CCoinsViewMemPool mempool_view(&chain_view, *node.mempool);
+    // mempool_view.mempool.cs is the same mutex as node.mempool->cs (locked above via LOCK2).
+    // Assert this for the thread-safety analyzer, which cannot track the alias.
+    AssertLockHeld(mempool_view.mempool.cs);
     for (auto& coin : coins) {
-        // mempool_view.mempool is the same as *node.mempool, so mempool_view.mempool.cs is already held
-        // The thread-safety analyzer cannot track that mempool_view.mempool.cs == node.mempool->cs
-        // NOLINTNEXTLINE(thread-safety-precise)
         if (!mempool_view.GetCoin(coin.first, coin.second)) {
             // Either the coin is not in the CCoinsViewCache or is spent. Clear it.
             coin.second.Clear();
@@ -34,8 +34,6 @@ void FindTokens(const NodeContext& node, std::map<uint256, blsct::TokenEntry>& t
     LOCK2(cs_main, node.mempool->cs);
     CCoinsViewCache& chain_view = node.chainman->ActiveChainstate().CoinsTip();
     CCoinsViewMemPool mempool_view(&chain_view, *node.mempool);
-
-
     for (auto it = tokens.begin(); it != tokens.end();) {
         if (!mempool_view.GetToken(it->first, it->second)) {
             it = tokens.erase(it);
