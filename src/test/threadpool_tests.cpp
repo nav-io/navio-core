@@ -37,6 +37,7 @@ struct ThreadPoolFixture {
 // 8) Submit task when all threads are busy, stop pool and verify task gets executed.
 // 9) Congestion test; create more workers than available cores.
 // 10) Ensure Interrupt() prevents further submissions.
+// 11) Start() must not cause a deadlock when called during Stop().
 BOOST_FIXTURE_TEST_SUITE(threadpool_tests, ThreadPoolFixture)
 
 #define WAIT_FOR(futures)                                                         \
@@ -314,6 +315,40 @@ BOOST_AUTO_TEST_CASE(interrupt_blocks_new_submissions)
     threadPool.Stop();
     WAIT_FOR(blocking_tasks);
     BOOST_CHECK_EQUAL(threadPool.WorkersCount(), 0);
+}
+
+// Test 11, Start() must not cause a deadlock when called during Stop()
+BOOST_AUTO_TEST_CASE(start_mid_stop_does_not_deadlock)
+{
+    ThreadPool threadPool(POOL_NAME);
+    threadPool.Start(NUM_WORKERS_DEFAULT);
+
+    // Keep all workers busy so Stop() gets stuck waiting for them to finish during join()
+    std::counting_semaphore<> workers_blocker(0);
+    const auto blocking_tasks = BlockWorkers(threadPool, workers_blocker, NUM_WORKERS_DEFAULT);
+
+    std::thread stopper_thread([&threadPool] { threadPool.Stop(); });
+
+    // Stop() takes ownership of the workers before joining them, so WorkersCount()
+    // hits 0 the moment Stop() is waiting for them to join. That is our signal
+    // to call Start() right into the middle of the joining phase.
+    while (threadPool.WorkersCount() != 0) {
+        std::this_thread::yield(); // let the OS breathe so it can switch context
+    }
+    // Now we know for sure the stopper thread is hanging while workers are still alive.
+    // Restart the pool and resume workers so the stopper thread can proceed.
+    // This will throw an exception only if the pool handles Start-Stop race properly,
+    // otherwise it will proceed and hang the stopper_thread.
+    try {
+        threadPool.Start(NUM_WORKERS_DEFAULT);
+    } catch (std::exception& e) {
+        BOOST_CHECK_EQUAL(e.what(), "Thread pool has been interrupted or is stopping");
+    }
+    workers_blocker.release(NUM_WORKERS_DEFAULT);
+    WAIT_FOR(blocking_tasks);
+
+    // If Stop() is stuck, joining the stopper thread will deadlock
+    stopper_thread.join();
 }
 
 BOOST_AUTO_TEST_SUITE_END()
