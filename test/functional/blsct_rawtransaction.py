@@ -292,7 +292,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Transaction not found in wallet (for txid input)
         fake_txid = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-        assert_raises_rpc_error(-8, "Transaction not found in wallet",
+        assert_raises_rpc_error(-8, "Transaction or outpoint not found in wallet",
                                wallet1.getblsctrecoverydata, fake_txid)
 
         self.log.info("getblsctrecoverydata tests passed")

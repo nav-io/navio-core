@@ -1581,7 +1581,7 @@ RPCHelpMan createblsctrawtransaction()
 
                     unsigned_output = CreateOutput(std::make_pair(address_a, script), nAmount, memo, token_id, blindingKey, type, 0);
 
-                    // Nullify the spending key 
+                    // Nullify the spending key
                     unsigned_output.out.blsctData.spendingKey = MclG1Point();
                 } else {
                     blsct::SubAddress subAddress;
