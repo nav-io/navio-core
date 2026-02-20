@@ -8,23 +8,7 @@
 #include <string>
 
 const std::string& get_chain();
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-enum Chain {
-    MainNet,
-    TestNet,
-    SigNet,
-    RegTest
-};
-
-bool set_chain(enum Chain chain);
-
-#ifdef __cplusplus
-} // extern "C"
-#endif
+bool set_chain(const std::string& chain);
 
 #endif  // NAVIO_BLSCT_CHAIN_H
 

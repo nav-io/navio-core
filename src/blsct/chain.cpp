@@ -7,36 +7,28 @@
 #include <mutex>
 
 static std::string g_chain;
-static std::mutex g_set_chain_mutex;
+static std::mutex g_chain_mutex;
 
 const std::string& get_chain() {
+    std::lock_guard<std::mutex> lock(g_chain_mutex);
+
     return g_chain;
 }
 
-bool set_chain(enum Chain chain)
-{
-    std::lock_guard<std::mutex> lock(g_set_chain_mutex);
-    if (!g_chain.empty()) {
+bool set_chain(const std::string& chain) {
+    static const std::array chains = {
+        blsct::bech32_hrp::Mainnet,
+        blsct::bech32_hrp::Testnet,
+        blsct::bech32_hrp::Signet,
+        blsct::bech32_hrp::Regtest,
+    };
+
+    std::lock_guard<std::mutex> lock(g_chain_mutex);
+
+    if (std::find(chains.begin(), chains.end(), chain) == chains.end()) {
         return false;
     }
-
-    switch (chain) {
-        case MainNet:
-            g_chain = blsct::bech32_hrp::Main;
-            break;
-
-        case TestNet:
-            g_chain = blsct::bech32_hrp::TestNet;
-            break;
-
-        case SigNet:
-            g_chain = blsct::bech32_hrp::SigNet;
-            break;
-
-        case RegTest:
-            g_chain = blsct::bech32_hrp::RegTest;
-            break;
-    }
+    g_chain = chain;
     return true;
 }
 

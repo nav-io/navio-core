@@ -114,14 +114,12 @@ BlsctRetVal* err(
 
 #define BLSCT_COPY(src, dest) std::memcpy(dest, src, sizeof(dest))
 #define BLSCT_COPY_BYTES(src, dest, n) std::memcpy(dest, src, n)
-
-#define MALLOC(T, name) T* name = (T*)malloc(sizeof(T))
-#define MALLOC_BYTES(T, name, n) T* name = (T*)malloc(n)
-#define RETURN_IF_MEM_ALLOC_FAILED(name)              \
-    if (name == nullptr) {                            \
-        fputs("Failed to allocate memory\n", stderr); \
-        return nullptr;                               \
-    }
+#define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
+#define RETURN_IF_MEM_ALLOC_FAILED(name) \
+if (name == nullptr) { \
+    fputs("Failed to allocate memory\n", stderr); \
+    return nullptr; \
+}
 #define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
     if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
 
@@ -192,6 +190,13 @@ inline void* DeserializeFromHex(const char* hex, const size_t obj_size)
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+enum BlsctChain {
+    Mainnet,
+    Testnet,
+    Signet,
+    Regtest,
+};
 
 enum TxOutputType {
     Normal,
@@ -282,11 +287,16 @@ typedef struct {
     BlsctTokenId token_id;
     TxOutputType output_type;
     uint64_t min_stake;
+    bool subtract_fee_from_amount;
+    BlsctScalar blinding_key;
 } BlsctTxOut;
 
 void free_obj(void* x);
 void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 void init();
+
+enum BlsctChain get_blsct_chain();
+void set_blsct_chain(enum BlsctChain chain);
 
 const char* serialize_raw_obj(const uint8_t* ser_obj, const size_t ser_obj_size);
 BlsctRetVal* deserialize_raw_obj(const char* hex);
@@ -397,6 +407,7 @@ BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
     const int64_t account,
     const uint64_t address);
 
+
 BlsctRetVal* dpk_to_sub_addr(
     const BlsctDoublePubKey* blsct_dpk);
 
@@ -423,7 +434,10 @@ BlsctRetVal* deserialize_out_point(const char* hex);
 int are_point_equal(const BlsctPoint* a, const BlsctPoint* b);
 BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
-
+BlsctPoint* scalar_muliply_point(
+    const BlsctPoint* blsct_point,
+    const BlsctScalar* blsct_scalar
+);
 const char* point_to_str(const BlsctPoint* blsct_point);
 BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
 bool is_valid_point(const BlsctPoint* blsct_point);
@@ -507,6 +521,10 @@ BlsctSubAddr* derive_sub_address(
     const BlsctPubKey* blsct_spending_pub_key,
     const BlsctSubAddrId* blsct_sub_addr_id);
 
+BlsctDoublePubKey* sub_addr_to_dpk(
+    const BlsctSubAddr* blsct_sub_addr
+);
+
 const char* serialize_sub_addr(const BlsctSignature* blsct_sub_addr);
 BlsctRetVal* deserialize_sub_addr(const char* hex);
 
@@ -563,7 +581,10 @@ BlsctRetVal* build_tx_out(
     const char* memo_c_str,
     const BlsctTokenId* blsct_token_id,
     const TxOutputType output_type,
-    const uint64_t min_stake);
+    const uint64_t min_stake,
+    const bool subtract_fee_from_amount,
+    const BlsctScalar* blsct_blinding_key
+);
 
 const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out);
 uint64_t get_tx_out_amount(const BlsctTxOut* tx_out);
@@ -571,6 +592,8 @@ const char* get_tx_out_memo(const BlsctTxOut* tx_out);
 const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out);
 TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out);
 uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
+bool get_tx_out_subtract_fee_from_amount(const BlsctTxOut* tx_out);
+const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out);
 
 // vector predicate
 int are_vector_predicate_equal(
