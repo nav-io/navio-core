@@ -1008,7 +1008,7 @@ BlsctRetVal* deserialize_key_id(const char* hex)
 BlsctRetVal* gen_out_point(
     const char* ctx_id_c_str)
 {
-    MALLOC(BlsctOutPoint, blsct_out_point);
+    MALLOC_BYTES(BlsctOutPoint, blsct_out_point, OUT_POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_out_point);
 
     std::string ctx_id_str(ctx_id_c_str, CTX_ID_STR_LEN);
