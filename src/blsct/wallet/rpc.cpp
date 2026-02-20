@@ -1696,7 +1696,7 @@ RPCHelpMan fundblsctrawtransaction()
                 existing_inputs.insert(input.in.prevout);
             }
 
-            auto lock_outpoint_if_wallet = [&](const COutPoint& outpoint) {
+            auto lock_outpoint_if_wallet = [&](const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
                 if (pwallet->GetWalletTxFromOutpoint(outpoint)) {
                     pwallet->LockCoin(outpoint);
                 }
