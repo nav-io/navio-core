@@ -632,15 +632,19 @@ BOOST_FIXTURE_TEST_CASE(calculate_cluster, TestChain100Setup)
      *     txc0     txc1    txc2  ...    txc48
      * Note that each transaction's ancestor size is 1 or 3, and each descendant size is 1, 2 or 3.
      * However, all of these transactions are in the same cluster. */
-    std::vector<Txid> zigzag_txids;
+    std::vector<Txid> zigzag_txids;        // tx hashes for GatherClusters/GetIterVec
+    std::vector<uint256> zigzag_out_hashes; // output hashes for COutPoint construction (vout[1], vout[0] per txp)
     for (auto p{0}; p < 50; ++p) {
         const auto txp = make_tx({COutPoint{Txid::FromUint256(GetRandHash())}}, /*num_outputs=*/2);
         pool.addUnchecked(entry.Fee(CENT).FromTx(txp));
-        zigzag_txids.push_back(txp->vout[1].GetHash());
-        zigzag_txids.push_back(txp->vout[0].GetHash());
+        zigzag_txids.push_back(txp->GetHash());
+        zigzag_out_hashes.push_back(txp->vout[1].GetHash()); // index 2*p
+        zigzag_out_hashes.push_back(txp->vout[0].GetHash()); // index 2*p+1
     }
     for (auto c{0}; c < 49; ++c) {
-        const auto txc = make_tx({COutPoint{zigzag_txids[c]}, COutPoint{zigzag_txids[c + 3]}}, /*num_outputs=*/1);
+        // txc spends vout[1] of txp[c] and vout[0] of txp[c+1]
+        // zigzag_out_hashes[2*c] = txp[c]->vout[1], zigzag_out_hashes[2*(c+1)+1] = txp[c+1]->vout[0]
+        const auto txc = make_tx({COutPoint{zigzag_out_hashes[2 * c]}, COutPoint{zigzag_out_hashes[2 * (c + 1) + 1]}}, /*num_outputs=*/1);
         pool.addUnchecked(entry.Fee(CENT).FromTx(txc));
         zigzag_txids.push_back(txc->GetHash());
     }

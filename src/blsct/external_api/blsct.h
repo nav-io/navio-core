@@ -31,7 +31,7 @@
 #define SCALAR_SIZE 32
 #define TOKEN_ID_SIZE 40 // uint256 + uint64_t = 32 + 8 = 40
 #define UINT256_SIZE 32
-#define OUT_POINT_SIZE 36
+#define OUT_POINT_SIZE 32
 #define SIGNATURE_SIZE 96
 #define SCRIPT_SIZE 28
 #define MAX_MEMO_LEN 100
