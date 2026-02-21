@@ -1085,6 +1085,7 @@ static RPCHelpMan gettxout()
         const CTxMemPool& mempool = EnsureMemPool(node);
         LOCK(mempool.cs);
         CCoinsViewMemPool view(coins_view, mempool);
+        LOCK(view.mempool.cs);
         if (!view.GetCoin(out, coin) || mempool.isSpent(out)) {
             return UniValue::VNULL;
         }
