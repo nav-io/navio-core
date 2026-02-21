@@ -53,7 +53,7 @@ class ReorgsRestoreTest(BitcoinTestFramework):
         self.disconnect_nodes(0, 2)
         nA = next(tx_out["hash"] for tx_out in self.nodes[0].getrawtransaction(txid_conflict_from, 1)["vout"] if tx_out["value"] == Decimal("10"))
         inputs = []
-        inputs.append({"txid": nA})
+        inputs.append({"outid": nA})
         outputs_1 = {}
         outputs_2 = {}
 

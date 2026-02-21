@@ -1020,7 +1020,7 @@ public:
     //! Make a BLSCTKeyMan and set it for all types, internal, and external.
     void SetupBLSCTKeyMan();
 
-    const CKeyingMaterial& GetEncryptionKey() const override;
+    const CKeyingMaterial& GetEncryptionKey() const override EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     bool HasEncryptionKeys() const override;
     RecursiveMutex& GetWalletMutex() const override { return cs_wallet; }
 

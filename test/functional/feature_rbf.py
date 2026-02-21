@@ -150,7 +150,7 @@ class ReplaceByFeeTest(BitcoinTestFramework):
                 sequence=0,
                 fee=Decimal("0.1"),
             )["new_utxo"]
-            chain_txids.append(prevout["txid"])
+            chain_txids.append(prevout.get("transaction_txid", prevout["txid"]))
 
         # Whether the double-spend is allowed is evaluated by including all
         # child fees - 4 BTC - so this attempt is rejected.
@@ -609,7 +609,7 @@ class ReplaceByFeeTest(BitcoinTestFramework):
 
     def test_rpc(self):
         us0 = self.wallet.get_utxo()
-        ins = [us0]
+        ins = [{"outid": us0["txid"]}]
         outs = {ADDRESS_BCRT1_UNSPENDABLE: Decimal(1.0000000)}
         rawtx0 = self.nodes[0].createrawtransaction(ins, outs, 0, True)
         rawtx1 = self.nodes[0].createrawtransaction(ins, outs, 0, False)

@@ -51,7 +51,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         number_inputs = len(tx["decoded"]["vin"])
         assert_equal(number_inputs, len(parent_txids))
         for i in range(number_inputs):
-            txid_of_input = self.nodes[0].gettxfromoutputhash(tx["decoded"]["vin"][i]["txid"])["txid"]
+            txid_of_input = self.nodes[0].gettxfromoutputhash(tx["decoded"]["vin"][i]["outid"])["txid"]
             assert txid_of_input in parent_checklist
             parent_checklist.remove(txid_of_input)
 
@@ -299,7 +299,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         assert_equal(number_outputs, 2)
 
         # we don't care which of the two outputs we spent, they're both ours
-        ancestor_aware_txid = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"add_inputs": True, "inputs": [{"txid": parent_outid}]})["txid"]
+        ancestor_aware_txid = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"add_inputs": True, "inputs": [{"outid": parent_outid}]})["txid"]
         ancestor_aware_tx = wallet.gettransaction(txid=ancestor_aware_txid, verbose=True)
 
         self.assert_spends_only_parents(ancestor_aware_tx, [parent_txid])
@@ -457,7 +457,7 @@ class UnconfirmedInputTest(BitcoinTestFramework):
 
         self.assert_undershoots_target(parent_tx)
 
-        spend_res = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"inputs":[{"txid": find_outid_for_address(self.nodes[0], parent_txid, external_address)}], "solving_data":{"descriptors":[external_descriptor]}})
+        spend_res = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"inputs":[{"outid": find_outid_for_address(self.nodes[0], parent_txid, external_address)}], "solving_data":{"descriptors":[external_descriptor]}})
         signed_psbt = self.def_wallet.walletprocesspsbt(spend_res["psbt"])
         external_tx = self.def_wallet.finalizepsbt(signed_psbt["psbt"])
         ancestor_aware_txid = self.def_wallet.sendrawtransaction(external_tx["hex"])

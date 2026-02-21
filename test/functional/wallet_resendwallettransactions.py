@@ -91,7 +91,7 @@ class ResendWalletTransactionsTest(BitcoinTestFramework):
         # ordering of mapWallet is, if the child is not before the parent, we will create a new
         # child (via bumpfee) and remove the old child (via removeprunedfunds) until we get the
         # ordering of child before parent.
-        child_inputs = [{"txid": txoutid, "vout": 0}]
+        child_inputs = [{"outid": txoutid}]
         child_txid = node.sendall(recipients=[addr], inputs=child_inputs)["txid"]
         # Get the child tx's info for manual bumping
         child_tx_info = node.gettransaction(txid=child_txid, verbose=True)

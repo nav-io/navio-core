@@ -353,10 +353,11 @@ def test_segwit_bumpfee_succeeds(self, rbf_node, dest_address):
 
     segwit_out = rbf_node.getnewaddress(address_type='bech32')
     segwitid = rbf_node.send({segwit_out: "0.0009"}, options={"change_position": 1})["txid"]
+    segwit_tx_dec = rbf_node.getrawtransaction(segwitid, True)
+    segwit_outid = segwit_tx_dec['vout'][0]['hash']
 
     rbfraw = rbf_node.createrawtransaction([{
-        'txid': segwitid,
-        'vout': 0,
+        'outid': segwit_outid,
         "sequence": MAX_BIP125_RBF_SEQUENCE
     }], {dest_address: Decimal("0.0005"),
          rbf_node.getrawchangeaddress(): Decimal("0.0003")})
@@ -385,7 +386,7 @@ def test_notmine_bumpfee(self, rbf_node, peer_node, dest_address):
     fee = Decimal("0.001")
     utxos = [node.listunspent(minimumAmount=fee)[-1] for node in (rbf_node, peer_node)]
     inputs = [{
-        "txid": utxo["txid"],
+        "outid": utxo["outid"],
         "address": utxo["address"],
         "sequence": MAX_BIP125_RBF_SEQUENCE
     } for utxo in utxos]
@@ -423,7 +424,7 @@ def test_bumpfee_with_descendant_fails(self, rbf_node, rbf_node_address, dest_ad
     res = spend_one_input(rbf_node, rbf_node_address)
     parent_id = res["outid"]
     tx_id = res["txid"]
-    tx = rbf_node.createrawtransaction([{"txid": parent_id}], {dest_address: 0.00020000})
+    tx = rbf_node.createrawtransaction([{"outid": parent_id}], {dest_address: 0.00020000})
     tx = rbf_node.signrawtransactionwithwallet(tx)
     rbf_node.sendrawtransaction(tx["hex"])
     assert_raises_rpc_error(-8, "Transaction has descendants in the wallet", rbf_node.bumpfee, tx_id)
@@ -445,7 +446,7 @@ def test_bumpfee_with_abandoned_descendant_succeeds(self, rbf_node, rbf_node_add
     spend_one_input(rbf_node, rbf_node_address)
     # Submit child transaction with low fee
     res = rbf_node.send(outputs={dest_address: 0.00020000},
-                             options={"inputs": [{"txid": parent_id}], "fee_rate": 2})
+                             options={"inputs": [{"outid": parent_id}], "fee_rate": 2})
     child_id = res["txid"]
     assert child_id in rbf_node.getrawmempool()
 
@@ -483,7 +484,7 @@ def test_small_output_with_feerate_succeeds(self, rbf_node, dest_address):
         input_list = rbf_node.getrawtransaction(rbfid, 1)["vin"]
         new_item = list(input_list)[0]
         assert_equal(len(input_list), 1)
-        assert_equal(original_txin["txid"], new_item["txid"])
+        assert_equal(original_txin["outid"], new_item["outid"])
         rbfid_new_details = rbf_node.bumpfee(rbfid)
         rbfid_new = rbfid_new_details["txid"]
         raw_pool = rbf_node.getrawmempool()
@@ -501,7 +502,7 @@ def test_small_output_with_feerate_succeeds(self, rbf_node, dest_address):
     assert_greater_than(len(final_input_list), 1)
     # Original input is in final set
     assert [txin for txin in final_input_list
-            if txin["txid"] == original_txin["txid"]]
+            if txin["outid"] == original_txin["outid"]]
 
     self.generatetoaddress(rbf_node, 1, rbf_node.getnewaddress())
     assert_equal(rbf_node.gettransaction(rbfid)["confirmations"], 1)
@@ -689,7 +690,7 @@ def test_bumpfee_already_spent(self, rbf_node, dest_address):
     txid = spend_one_input(rbf_node, dest_address)["txid"]
     self.generate(rbf_node, 1)  # spend coin simply by mining block with tx
     spent_input = rbf_node.gettransaction(txid=txid, verbose=True)['decoded']['vin'][0]
-    assert_raises_rpc_error(-1, f"{spent_input['txid']} is already spent",
+    assert_raises_rpc_error(-1, f"{spent_input['outid']} is already spent",
                             rbf_node.bumpfee, txid, fee_rate=NORMAL)
 
 
@@ -705,7 +706,9 @@ def test_unconfirmed_not_spendable(self, rbf_node, rbf_node_address):
 
     # check that outputs from the bump transaction are not spendable
     # due to the replaces_txid check in CWallet::AvailableCoins
-    assert_equal([t for t in rbf_node.listunspent(minconf=0, include_unsafe=False) if t["txid"] == bumpid], [])
+    bump_tx_dec = rbf_node.getrawtransaction(bumpid, True)
+    bump_outids = {vout["hash"] for vout in bump_tx_dec["vout"]}
+    assert_equal([t for t in rbf_node.listunspent(minconf=0, include_unsafe=False) if t["outid"] in bump_outids], [])
 
     # submit a block with the rbf tx to clear the bump tx out of the mempool,
     # then invalidate the block so the rbf tx will be put back in the mempool.
@@ -730,7 +733,7 @@ def test_unconfirmed_not_spendable(self, rbf_node, rbf_node_address):
     # check that the main output from the rbf tx is spendable after confirmed
     self.generate(rbf_node, 1, sync_fun=self.no_op)
     spendable_count = sum(1 for t in rbf_node.listunspent(minconf=0, include_unsafe=False)
-                         if t["txid"] == rbfoutid and t["address"] == rbf_node_address and t["spendable"])
+                         if t["outid"] == rbfoutid and t["address"] == rbf_node_address and t["spendable"])
     assert_equal(spendable_count, 1)
     self.clear_mempool()
 

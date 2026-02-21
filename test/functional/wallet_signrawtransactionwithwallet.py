@@ -64,26 +64,26 @@ class SignRawTransactionWithWalletTest(BitcoinTestFramework):
 
         3) The transaction has no complete set of signatures
         4) Two script verification errors occurred
-        5) Script verification errors have certain properties ("txid", "vout", "scriptSig", "sequence", "error")
+        5) Script verification errors have certain properties ("outid", "scriptSig", "sequence", "error")
         6) The verification errors refer to the invalid (vin 1) and missing input (vin 2)"""
         self.log.info("Test script verification errors")
         privKeys = ['cUeKHd5orzT3mz8P9pxyREHfsWtVfgsfDjiZZBcjUBAaGk1BTj7N']
 
         inputs = [
             # Valid pay-to-pubkey script
-            {'txid': '9b907ef1e3c26fc71fe4a4b3580bc75264112f95050014157059c736f0202e71', 'vout': 0},
+            {'outid': '9b907ef1e3c26fc71fe4a4b3580bc75264112f95050014157059c736f0202e71'},
             # Invalid script
-            {'txid': '5b8673686910442c644b1f4993d8f7753c7c8fcb5c87ee40d56eaeef25204547', 'vout': 7},
+            {'outid': '5b8673686910442c644b1f4993d8f7753c7c8fcb5c87ee40d56eaeef25204547'},
             # Missing scriptPubKey
-            {'txid': '9b907ef1e3c26fc71fe4a4b3580bc75264112f95050014157059c736f0202e71', 'vout': 1},
+            {'outid': '9b907ef1e3c26fc71fe4a4b3580bc75264112f95050014157059c736f0202e71'},
         ]
 
         scripts = [
             # Valid pay-to-pubkey script
-            {'txid': '9b907ef1e3c26fc71fe4a4b3580bc75264112f95050014157059c736f0202e71', 'vout': 0,
+            {'outid': '9b907ef1e3c26fc71fe4a4b3580bc75264112f95050014157059c736f0202e71',
              'scriptPubKey': '76a91460baa0f494b38ce3c940dea67f3804dc52d1fb9488ac'},
             # Invalid script
-            {'txid': '5b8673686910442c644b1f4993d8f7753c7c8fcb5c87ee40d56eaeef25204547', 'vout': 7,
+            {'outid': '5b8673686910442c644b1f4993d8f7753c7c8fcb5c87ee40d56eaeef25204547',
              'scriptPubKey': 'badbadbadbad'}
         ]
 
@@ -94,7 +94,7 @@ class SignRawTransactionWithWalletTest(BitcoinTestFramework):
         # Make sure decoderawtransaction is at least marginally sane
         decodedRawTx = self.nodes[0].decoderawtransaction(rawTx)
         for i, inp in enumerate(inputs):
-            assert_equal(decodedRawTx["vin"][i]["txid"], inp["txid"])
+            assert_equal(decodedRawTx["vin"][i]["outid"], inp["outid"])
 
         # Make sure decoderawtransaction throws if there is extra data
         assert_raises_rpc_error(-22, "TX decode failed", self.nodes[0].decoderawtransaction, rawTx + "00")
@@ -109,14 +109,14 @@ class SignRawTransactionWithWalletTest(BitcoinTestFramework):
         assert_equal(len(rawTxSigned['errors']), 1)
 
         # 5) Script verification errors have certain properties
-        assert 'txid' in rawTxSigned['errors'][0]
+        assert 'outid' in rawTxSigned['errors'][0]
         assert 'witness' in rawTxSigned['errors'][0]
         assert 'scriptSig' in rawTxSigned['errors'][0]
         assert 'sequence' in rawTxSigned['errors'][0]
         assert 'error' in rawTxSigned['errors'][0]
 
         # 6) The verification errors refer to the invalid (vin 1) and missing input (vin 2)
-        assert_equal(rawTxSigned['errors'][0]['txid'], inputs[1]['txid'])
+        assert_equal(rawTxSigned['errors'][0]['outid'], inputs[1]['outid'])
         assert not rawTxSigned['errors'][0]['witness']
 
         # # Now test signing failure for transaction with input witnesses
@@ -132,7 +132,7 @@ class SignRawTransactionWithWalletTest(BitcoinTestFramework):
         # assert_equal(len(rawTxSigned['errors']), 1)
 
         # # 9) Script verification errors have certain properties
-        # assert 'txid' in rawTxSigned['errors'][0]
+        # assert 'outid' in rawTxSigned['errors'][0]
         # assert 'vout' in rawTxSigned['errors'][0]
         # assert 'witness' in rawTxSigned['errors'][0]
         # assert 'scriptSig' in rawTxSigned['errors'][0]
@@ -165,8 +165,7 @@ class SignRawTransactionWithWalletTest(BitcoinTestFramework):
         )
         prev_txs = [
             {
-                "txid": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
-                "vout": 0,
+                "outid": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
                 "scriptPubKey": "A914AE44AB6E9AA0B71F1CD2B453B69340E9BFBAEF6087",
                 "redeemScript": "4F9C",
                 "amount": 1,
@@ -193,7 +192,7 @@ class SignRawTransactionWithWalletTest(BitcoinTestFramework):
         utxo2 = self.nodes[0].listunspent()[0]
         amt = Decimal(1) + utxo2["amount"] - Decimal(0.00001)
         tx = self.nodes[0].createrawtransaction(
-            [{**utxo1, "sequence": 1},{"txid": utxo2["txid"], "vout": utxo2["vout"]}],
+            [{**utxo1, "sequence": 1},{"outid": utxo2["outid"]}],
             [{self.nodes[0].getnewaddress(): amt}],
             self.nodes[0].getblockcount()
         )
@@ -227,7 +226,7 @@ class SignRawTransactionWithWalletTest(BitcoinTestFramework):
         utxo2 = self.nodes[0].listunspent()[0]
         amt = Decimal(1) + utxo2["amount"] - Decimal(0.00001)
         tx = self.nodes[0].createrawtransaction(
-            [utxo1, {"txid": utxo2["txid"], "vout": utxo2["vout"]}],
+            [utxo1, {"outid": utxo2["outid"]}],
             [{self.nodes[0].getnewaddress(): amt}],
             self.nodes[0].getblockcount()
         )
@@ -250,11 +249,11 @@ class SignRawTransactionWithWalletTest(BitcoinTestFramework):
             addr = self.nodes[0].getnewaddress("", type)
             addrinfo = self.nodes[0].getaddressinfo(addr)
             pubkey = addrinfo["scriptPubKey"]
-            inputs = [{'txid': txid, 'vout': 3, 'sequence': 1000}]
+            inputs = [{'outid': txid, 'sequence': 1000}]
             outputs = {self.nodes[0].getnewaddress(): 1}
             rawtx = self.nodes[0].createrawtransaction(inputs, outputs)
 
-            prevtx = dict(txid=txid, scriptPubKey=pubkey, vout=3, amount=1)
+            prevtx = dict(outid=txid, scriptPubKey=pubkey, amount=1)
             succ = self.nodes[0].signrawtransactionwithwallet(rawtx, [prevtx])
             assert succ["complete"]
 
@@ -265,30 +264,20 @@ class SignRawTransactionWithWalletTest(BitcoinTestFramework):
             else:
                 assert_raises_rpc_error(-3, "Missing amount", self.nodes[0].signrawtransactionwithwallet, rawtx, [
                     {
-                        "txid": txid,
+                        "outid": txid,
                         "scriptPubKey": pubkey,
-                        "vout": 3,
                     }
                 ])
 
-            assert_raises_rpc_error(-3, "Missing vout", self.nodes[0].signrawtransactionwithwallet, rawtx, [
-                {
-                    "txid": txid,
-                    "scriptPubKey": pubkey,
-                    "amount": 1,
-                }
-            ])
-            assert_raises_rpc_error(-3, "Missing txid", self.nodes[0].signrawtransactionwithwallet, rawtx, [
+            assert_raises_rpc_error(-3, "Missing outid", self.nodes[0].signrawtransactionwithwallet, rawtx, [
                 {
                     "scriptPubKey": pubkey,
-                    "vout": 3,
                     "amount": 1,
                 }
             ])
             assert_raises_rpc_error(-3, "Missing scriptPubKey", self.nodes[0].signrawtransactionwithwallet, rawtx, [
                 {
-                    "txid": txid,
-                    "vout": 3,
+                    "outid": txid,
                     "amount": 1
                 }
             ])

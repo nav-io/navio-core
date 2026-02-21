@@ -35,7 +35,7 @@ void AddInputs(CMutableTransaction& rawTx, const UniValue& inputs_in, std::optio
         const UniValue& input = inputs[idx];
         const UniValue& o = input.get_obj();
 
-        Txid txid = Txid::FromUint256(ParseHashO(o, "txid"));
+        Txid txid = Txid::FromUint256(ParseHashO(o, "outid"));
 
         uint32_t nSequence;
 
@@ -151,7 +151,7 @@ CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniVal
 static void TxInErrorToJSON(const CTxIn& txin, UniValue& vErrorsRet, const std::string& strMessage)
 {
     UniValue entry(UniValue::VOBJ);
-    entry.pushKV("txid", txin.prevout.hash.ToString());
+    entry.pushKV("outid", txin.prevout.hash.ToString());
     UniValue witness(UniValue::VARR);
     for (unsigned int i = 0; i < txin.scriptWitness.stack.size(); i++) {
         witness.push_back(HexStr(txin.scriptWitness.stack[i]));
@@ -170,18 +170,18 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
         for (unsigned int idx = 0; idx < prevTxs.size(); ++idx) {
             const UniValue& p = prevTxs[idx];
             if (!p.isObject()) {
-                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "expected object with {\"txid'\",\"vout\",\"scriptPubKey\"}");
+                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "expected object with {\"outid\",\"scriptPubKey\"}");
             }
 
             const UniValue& prevOut = p.get_obj();
 
             RPCTypeCheckObj(prevOut,
                 {
-                    {"txid", UniValueType(UniValue::VSTR)},
+                    {"outid", UniValueType(UniValue::VSTR)},
                     {"scriptPubKey", UniValueType(UniValue::VSTR)},
                 });
 
-            Txid txid = Txid::FromUint256(ParseHashO(prevOut, "txid"));
+            Txid txid = Txid::FromUint256(ParseHashO(prevOut, "outid"));
 
             COutPoint out(txid);
             std::vector<unsigned char> pkData(ParseHexO(prevOut, "scriptPubKey"));

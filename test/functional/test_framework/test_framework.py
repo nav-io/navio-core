@@ -707,7 +707,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
     def create_outpoints(self, node, *, outputs):
         """Send funds to a given list of `{address: amount}` targets using the bitcoind
         wallet and return the corresponding outpoints as a list of dictionaries
-        `[{"txid": txid, "vout": vout1}, {"txid": txid, "vout": vout2}, ...]`.
+        `[{"outid": outid}, ...]`.
         The result can be used to specify inputs for RPCs like `createrawtransaction`,
         `createpsbt`, `lockunspent` etc."""
         assert all(len(output.keys()) == 1 for output in outputs)
@@ -718,7 +718,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             address = list(output.keys())[0]
             #vout = find_vout_for_address(node, send_res["txid"], address)
             outid = find_outid_for_address(node, send_res["txid"], address)
-            utxos.append({"txid": outid, "txid_ref": send_res["txid"]})
+            utxos.append({"outid": outid, "txid_ref": send_res["txid"]})
         return utxos
 
     def sync_blocks(self, nodes=None, wait=1, timeout=60):

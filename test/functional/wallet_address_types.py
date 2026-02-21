@@ -172,7 +172,7 @@ class AddressTypeTest(BitcoinTestFramework):
         # Use a ridiculously roundabout way to find the key origin info through
         # the PSBT logic. However, this does test consistency between the PSBT reported
         # fingerprints/paths and the descriptor logic.
-        psbt = self.nodes[node].createpsbt([{'txid':utxo['txid'], 'vout':utxo['vout']}],[{address:0.00010000}])
+        psbt = self.nodes[node].createpsbt([{'outid':utxo['outid']}],[{address:0.00010000}])
         psbt = self.nodes[node].walletprocesspsbt(psbt, False, "ALL", True)
         decode = self.nodes[node].decodepsbt(psbt['psbt'])
         key_descs = {}

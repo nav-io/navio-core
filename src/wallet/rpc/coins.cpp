@@ -303,11 +303,11 @@ RPCHelpMan lockunspent()
                 "Also see the listunspent call\n",
                 {
                     {"unlock", RPCArg::Type::BOOL, RPCArg::Optional::NO, "Whether to unlock (true) or lock (false) the specified transactions"},
-                    {"transactions", RPCArg::Type::ARR, RPCArg::Default{UniValue::VARR}, "The transaction outputs and within each, the txid (string) vout (numeric).",
+                    {"transactions", RPCArg::Type::ARR, RPCArg::Default{UniValue::VARR}, "The transaction outputs and within each, the outid (string).",
                         {
                             {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
                                 {
-                                    {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                                    {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
                                 },
                             },
                         },
@@ -321,15 +321,15 @@ RPCHelpMan lockunspent()
             "\nList the unspent transactions\n"
             + HelpExampleCli("listunspent", "") +
             "\nLock an unspent transaction\n"
-            + HelpExampleCli("lockunspent", "false \"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"") +
+            + HelpExampleCli("lockunspent", "false \"[{\\\"outid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"") +
             "\nList the locked transactions\n"
             + HelpExampleCli("listlockunspent", "") +
             "\nUnlock the transaction again\n"
-            + HelpExampleCli("lockunspent", "true \"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"") +
+            + HelpExampleCli("lockunspent", "true \"[{\\\"outid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"") +
             "\nLock the transaction persistently in the wallet database\n"
-            + HelpExampleCli("lockunspent", "false \"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\" true") +
+            + HelpExampleCli("lockunspent", "false \"[{\\\"outid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\" true") +
             "\nAs a JSON-RPC call\n"
-            + HelpExampleRpc("lockunspent", "false, \"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"")
+            + HelpExampleRpc("lockunspent", "false, \"[{\\\"outid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -366,10 +366,10 @@ RPCHelpMan lockunspent()
 
         RPCTypeCheckObj(o,
             {
-                {"txid", UniValueType(UniValue::VSTR)},
+                {"outid", UniValueType(UniValue::VSTR)},
             });
 
-        const Txid txid = Txid::FromUint256(ParseHashO(o, "txid"));
+        const Txid txid = Txid::FromUint256(ParseHashO(o, "outid"));
 
         const COutPoint outpt(txid);
 
@@ -424,7 +424,7 @@ RPCHelpMan listlockunspent()
                     {
                         {RPCResult::Type::OBJ, "", "",
                         {
-                            {RPCResult::Type::STR_HEX, "txid", "The identifier of the locked output"},
+                            {RPCResult::Type::STR_HEX, "outid", "The identifier (output hash) of the locked output"},
                         }},
                     }
                 },
@@ -432,11 +432,11 @@ RPCHelpMan listlockunspent()
             "\nList the unspent transactions\n"
             + HelpExampleCli("listunspent", "") +
             "\nLock an unspent transaction\n"
-            + HelpExampleCli("lockunspent", "false \"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\",\\\"vout\\\":1}]\"") +
+            + HelpExampleCli("lockunspent", "false \"[{\\\"outid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"") +
             "\nList the locked transactions\n"
             + HelpExampleCli("listlockunspent", "") +
             "\nUnlock the transaction again\n"
-            + HelpExampleCli("lockunspent", "true \"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\",\\\"vout\\\":1}]\"") +
+            + HelpExampleCli("lockunspent", "true \"[{\\\"outid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"") +
             "\nAs a JSON-RPC call\n"
             + HelpExampleRpc("listlockunspent", "")
                 },
@@ -455,7 +455,7 @@ RPCHelpMan listlockunspent()
     for (const COutPoint& outpt : vOutpts) {
         UniValue o(UniValue::VOBJ);
 
-        o.pushKV("txid", outpt.hash.GetHex());
+        o.pushKV("outid", outpt.hash.GetHex());
         ret.push_back(o);
     }
 
@@ -562,7 +562,7 @@ RPCHelpMan listunspent()
                     {
                         {RPCResult::Type::OBJ, "", "",
                         {
-                            {RPCResult::Type::STR_HEX, "txid", "the transaction id"},
+                            {RPCResult::Type::STR_HEX, "outid", "the output id"},
                             {RPCResult::Type::STR, "address", /*optional=*/true, "the bitcoin address"},
                             {RPCResult::Type::STR, "label", /*optional=*/true, "The associated label, or \"\" for the default label"},
                             {RPCResult::Type::STR, "scriptPubKey", "the script key"},
@@ -691,7 +691,7 @@ RPCHelpMan listunspent()
             continue;
 
         UniValue entry(UniValue::VOBJ);
-        entry.pushKV("txid", out.outpoint.hash.GetHex());
+        entry.pushKV("outid", out.outpoint.hash.GetHex());
 
         if (fValidAddress) {
             entry.pushKV("address", EncodeDestination(address));

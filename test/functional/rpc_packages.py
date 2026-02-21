@@ -50,7 +50,7 @@ class RPCPackagesTest(BitcoinTestFramework):
         blockhash = self.generatetoaddress(node, 1, deterministic_address)[0]
         coinbase = node.getblock(blockhash=blockhash, verbosity=2)["tx"][0]
         coin = {
-                "txid": coinbase["vout"][0]["hash"],
+                "outid": coinbase["vout"][0]["hash"],
                 "amount": coinbase["vout"][0]["value"],
                 "scriptPubKey": coinbase["vout"][0]["scriptPubKey"],
                 "height": 0
@@ -89,7 +89,7 @@ class RPCPackagesTest(BitcoinTestFramework):
 
         self.log.info("Test an otherwise valid package with an extra garbage tx appended")
         address = node.get_deterministic_priv_key().address
-        garbage_tx = node.createrawtransaction([{"txid": "00" * 32, "vout": 5}], {address: 1})
+        garbage_tx = node.createrawtransaction([{"outid": "00" * 32}], {address: 1})
         tx = tx_from_hex(garbage_tx)
         # Only the txid and wtxids are returned because validation is incomplete for the independent txns.
         # Package validation is atomic: if the node cannot find a UTXO for any single tx in the package,
@@ -102,7 +102,7 @@ class RPCPackagesTest(BitcoinTestFramework):
         self.assert_testres_equal(package_bad, testres_bad)
 
         self.log.info("Check testmempoolaccept tells us when some transactions completed validation successfully")
-        tx_bad_sig_hex = node.createrawtransaction([{"txid": coin["txid"], "vout": 0}],
+        tx_bad_sig_hex = node.createrawtransaction([{"outid": coin["outid"]}],
                                            {address : coin["amount"] - Decimal("0.0001")})
         tx_bad_sig = tx_from_hex(tx_bad_sig_hex)
         testres_bad_sig = node.testmempoolaccept(self.independent_txns_hex + [tx_bad_sig_hex])

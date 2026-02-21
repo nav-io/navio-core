@@ -331,7 +331,7 @@ class WalletMigrationTest(BitcoinTestFramework):
         assert_equal(imports0.getwalletinfo()["descriptors"], True)
         self.assert_is_sqlite("imports0")
         assert_raises_rpc_error(-5, "Invalid or non-wallet transaction id", imports0.gettransaction, received_watchonly_txid)
-        assert_raises_rpc_error(-5, "Invalid or non-wallet transaction id", imports0.gettransaction, received_sent_watchonly_utxo['txid'])
+        assert_raises_rpc_error(-5, "Invalid or non-wallet transaction id", imports0.gettransaction, received_sent_watchonly_utxo['txid_ref'])
         assert_raises_rpc_error(-5, "Invalid or non-wallet transaction id", imports0.gettransaction, sent_watchonly_txid)
         assert_equal(len(imports0.listtransactions(include_watchonly=True)), 1)
         imports0.gettransaction(received_txid)

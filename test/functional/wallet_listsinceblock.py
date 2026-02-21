@@ -220,7 +220,7 @@ class ListSinceBlockTest(BitcoinTestFramework):
             self.nodes[1].getnewaddress(): change,
         }
         utxo_dicts = [{
-            'txid': utxo['txid'],
+            'outid': utxo['outid'],
         }]
         txid1 = self.nodes[1].sendrawtransaction(
             self.nodes[1].signrawtransactionwithwallet(
@@ -295,7 +295,7 @@ class ListSinceBlockTest(BitcoinTestFramework):
             self.nodes[2].getnewaddress(): change,
         }
         utxo_dicts = [{
-            'txid': utxo['txid'],
+            'outid': utxo['outid'],
         }]
         signedtxres = self.nodes[2].signrawtransactionwithwallet(
             self.nodes[2].createrawtransaction(utxo_dicts, recipient_dict))

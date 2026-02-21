@@ -75,10 +75,10 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         utxo = unspent[0]
         # UTXO might not have 'vout' field in the new output hash system
         vout_info = f":{utxo.get('vout', 'N/A')}" if 'vout' in utxo else ""
-        self.log.info(f"Using UTXO: {utxo['txid']}{vout_info}")
+        self.log.info(f"Using UTXO: {utxo['outid']}{vout_info}")
 
         # Test 1: Create raw transaction with minimal inputs (wallet will fill missing data)
-        inputs = [{"txid": utxo['txid']}]
+        inputs = [{"outid": utxo['outid']}]
         outputs = [{"address": address2, "amount": 0.1, "memo": "Test transaction"}]
 
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
@@ -86,8 +86,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 2: Create raw transaction with all optional fields provided
         inputs_with_data = [{
-            "txid": utxo['txid'],
-            "vout": utxo.get('vout', 0),  # Use 0 as default if vout not present
+            "outid": utxo['outid'],
             "value": int(utxo['amount'] * COIN),
             "is_staked_commitment": False
         }]
@@ -185,12 +184,10 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         utxo = unspent[0]
         vout_info = f":{utxo.get('vout', 'N/A')}" if 'vout' in utxo else ""
-        self.log.info(f"Using UTXO: {utxo['txid']}{vout_info}")
+        self.log.info(f"Using UTXO: {utxo['outid']}{vout_info}")
 
         # Test 1: Decode a raw transaction
-        input_data = {"txid": utxo['txid']}
-        if 'vout' in utxo:
-            input_data["vout"] = utxo.get('vout', 0)
+        input_data = {"outid": utxo['outid']}
         raw_tx = wallet1.createblsctrawtransaction([input_data], [])
         decoded_tx = wallet1.decodeblsctrawtransaction(raw_tx)
         self.log.info(f"Decoded transaction: {decoded_tx}")
@@ -214,9 +211,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.log.info(f"Using UTXO: {utxo}")
 
         # Test 1: Get recovery data for a raw transaction (hex input)
-        input_data = {"txid": utxo['txid']}
-        if 'vout' in utxo:
-            input_data["vout"] = utxo.get('vout', 0)
+        input_data = {"outid": utxo['outid']}
         raw_tx = wallet1.createblsctrawtransaction([input_data], [{"address": address1, "amount": 0.005, "memo": "Test script output"}])
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
@@ -315,7 +310,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.log.info(f"Generated nonce: {nonce_hex}")
 
         # Test 1: Create raw transaction with nonce and no address
-        inputs = [{"txid": utxo['txid']}]
+        inputs = [{"outid": utxo['outid']}]
         outputs = [{"amount": 0.005, "memo": "Test nonce recovery", "blinding_key": nonce_hex}]
 
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
