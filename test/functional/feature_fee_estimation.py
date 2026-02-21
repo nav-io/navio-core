@@ -60,7 +60,6 @@ def small_txpuzzle_randfee(
     tx.vout.append(deepcopy(tx.vout[0]))
     tx.vout[1].nValue = int(amount * COIN)
     tx.rehash()
-    txid = tx.hash
     tx_hex = tx.serialize().hex()
 
     batch_reqs.append(from_node.sendrawtransaction.get_request(hexstring=tx_hex, maxfeerate=0))
