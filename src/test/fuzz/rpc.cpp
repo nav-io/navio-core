@@ -79,6 +79,7 @@ const std::vector<std::string> RPC_COMMANDS_NOT_SAFE_FOR_FUZZING{
     "generatetoblsctaddress", // avoid prohibitively slow execution (when `num_blocks` is large)
     "generatetodescriptor",   // avoid prohibitively slow execution (when `nblocks` is large)
     "gettxoutproof",          // avoid prohibitively slow execution
+    "gettxfromoutputhash",    // avoid prohibitively slow execution (full chain scan + disk reads)
     "importmempool",          // avoid reading from disk
     "importwallet",           // avoid reading from disk
     "loadtxoutset",           // avoid reading from disk
