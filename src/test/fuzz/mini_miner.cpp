@@ -112,6 +112,7 @@ FUZZ_TARGET(mini_miner_selection, .init = initialize_miner)
     // Make a copy to preserve determinism.
     std::deque<COutPoint> available_coins = g_available_coins;
     std::vector<CTransactionRef> transactions;
+    CAmount next_output_value{100};
 
     LOCK2(::cs_main, pool.cs);
     LIMITED_WHILE(fuzzed_data_provider.ConsumeBool(), 100)
@@ -126,7 +127,8 @@ FUZZ_TARGET(mini_miner_selection, .init = initialize_miner)
             available_coins.pop_front();
         }
         for (uint32_t n{0}; n < num_outputs; ++n) {
-            mtx.vout.emplace_back(100, P2WSH_OP_TRUE);
+            // COutPoint only stores output hash, so keep outputs unique to avoid collisions.
+            mtx.vout.emplace_back(next_output_value++, P2WSH_OP_TRUE);
         }
         CTransactionRef tx = MakeTransactionRef(mtx);
 
