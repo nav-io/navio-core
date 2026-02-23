@@ -30,6 +30,8 @@ struct PrecomputedData
 {
     //! Randomly generated COutPoint values.
     COutPoint outpoints[NUM_OUTPOINTS];
+    //! Canonical index for equivalent outpoints (same COutPoint key).
+    uint32_t canonical_outpoint[NUM_OUTPOINTS];
 
     //! Randomly generated Coin values.
     Coin coins[NUM_COINS];
@@ -46,7 +48,13 @@ struct PrecomputedData
             uint256 txid;
             CSHA256().Write(PREFIX_O, 1).Write(ser, sizeof(ser)).Finalize(txid.begin());
             outpoints[i].hash = Txid::FromUint256(txid);
-            outpoints[i].n = i;
+            canonical_outpoint[i] = i;
+            for (uint32_t j = 0; j < i; ++j) {
+                if (outpoints[j] == outpoints[i]) {
+                    canonical_outpoint[i] = canonical_outpoint[j];
+                    break;
+                }
+            }
         }
 
         for (uint32_t i = 0; i < NUM_COINS; ++i) {
@@ -151,7 +159,8 @@ public:
     {
         auto it = m_data.find(outpoint);
         if (it == m_data.end()) {
-            if ((outpoint.n % 5) == 3) {
+            uint256 hash = outpoint.hash;
+            if ((hash.GetUint64(0) % 5) == 3) {
                 coin.Clear();
                 return true;
             }
@@ -177,7 +186,8 @@ public:
     {
         for (auto it = data.begin(); it != data.end(); it = erase ? data.erase(it) : std::next(it)) {
             if (it->second.flags & CCoinsCacheEntry::DIRTY) {
-                if (it->second.coin.IsSpent() && (it->first.n % 5) != 4) {
+                uint256 hash = it->first.hash;
+                if (it->second.coin.IsSpent() && (hash.GetUint64(0) % 5) != 4) {
                     m_data.erase(it->first);
                 } else if (erase) {
                     m_data[it->first] = std::move(it->second.coin);
@@ -220,8 +230,14 @@ FUZZ_TARGET(coinscache_sim)
     // Initialize bottom simulated cache.
     sim_caches[0].Wipe();
 
+    /** Normalize an outpoint index to its canonical representative. */
+    auto canonicalize = [&](uint32_t outpointidx) -> uint32_t {
+        return data.canonical_outpoint[outpointidx];
+    };
+
     /** Helper lookup function in the simulated cache stack. */
     auto lookup = [&](uint32_t outpointidx, int sim_idx = -1) -> std::optional<std::pair<coinidx_type, uint32_t>> {
+        outpointidx = canonicalize(outpointidx);
         uint32_t cache_idx = sim_idx == -1 ? caches.size() : sim_idx;
         while (true) {
             const auto& entry = sim_caches[cache_idx].entry[outpointidx];
@@ -329,7 +345,7 @@ FUZZ_TARGET(coinscache_sim)
                 coin.nHeight = current_height;
                 caches.back()->AddCoin(data.outpoints[outpointidx], std::move(coin), sim.has_value());
                 // Apply to simulation data.
-                auto& entry = sim_caches[caches.size()].entry[outpointidx];
+                auto& entry = sim_caches[caches.size()].entry[canonicalize(outpointidx)];
                 entry.entrytype = EntryType::UNSPENT;
                 entry.coinidx = coinidx;
                 entry.height = current_height;
@@ -343,7 +359,7 @@ FUZZ_TARGET(coinscache_sim)
                 coin.nHeight = current_height;
                 caches.back()->AddCoin(data.outpoints[outpointidx], std::move(coin), true);
                 // Apply to simulation data.
-                auto& entry = sim_caches[caches.size()].entry[outpointidx];
+                auto& entry = sim_caches[caches.size()].entry[canonicalize(outpointidx)];
                 entry.entrytype = EntryType::UNSPENT;
                 entry.coinidx = coinidx;
                 entry.height = current_height;
@@ -354,7 +370,7 @@ FUZZ_TARGET(coinscache_sim)
                 // Invoke on real caches.
                 caches.back()->SpendCoin(data.outpoints[outpointidx], nullptr);
                 // Apply to simulation data.
-                sim_caches[caches.size()].entry[outpointidx].entrytype = EntryType::SPENT;
+                sim_caches[caches.size()].entry[canonicalize(outpointidx)].entrytype = EntryType::SPENT;
             },
 
             [&]() { // SpendCoin (with moveto)
@@ -365,7 +381,7 @@ FUZZ_TARGET(coinscache_sim)
                 Coin realcoin;
                 caches.back()->SpendCoin(data.outpoints[outpointidx], &realcoin);
                 // Apply to simulation data.
-                sim_caches[caches.size()].entry[outpointidx].entrytype = EntryType::SPENT;
+                sim_caches[caches.size()].entry[canonicalize(outpointidx)].entrytype = EntryType::SPENT;
                 // Compare *moveto with the value expected based on simulation data.
                 if (!sim.has_value()) {
                     assert(realcoin.IsSpent());
@@ -447,7 +463,9 @@ FUZZ_TARGET(coinscache_sim)
         size_t cache_size = 0;
 
         for (uint32_t outpointidx = 0; outpointidx < NUM_OUTPOINTS; ++outpointidx) {
-            cache_size += cache.HaveCoinInCache(data.outpoints[outpointidx]);
+            if (canonicalize(outpointidx) == outpointidx) {
+                cache_size += cache.HaveCoinInCache(data.outpoints[outpointidx]);
+            }
             const auto& real = cache.AccessCoin(data.outpoints[outpointidx]);
             auto sim = lookup(outpointidx, sim_idx);
             if (!sim.has_value()) {

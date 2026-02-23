@@ -241,7 +241,7 @@ OP_CHECKMULTISIGVERIFY = CScriptOp(0xaf)
 OP_NOP1 = CScriptOp(0xb0)
 OP_CHECKLOCKTIMEVERIFY = CScriptOp(0xb1)
 OP_CHECKSEQUENCEVERIFY = CScriptOp(0xb2)
-OP_NOP4 = CScriptOp(0xb3)
+OP_BLSCHECKSIG = CScriptOp(0xb3)
 OP_NOP5 = CScriptOp(0xb4)
 OP_NOP6 = CScriptOp(0xb5)
 OP_NOP7 = CScriptOp(0xb6)
@@ -359,7 +359,7 @@ OPCODE_NAMES.update({
     OP_NOP1: 'OP_NOP1',
     OP_CHECKLOCKTIMEVERIFY: 'OP_CHECKLOCKTIMEVERIFY',
     OP_CHECKSEQUENCEVERIFY: 'OP_CHECKSEQUENCEVERIFY',
-    OP_NOP4: 'OP_NOP4',
+    OP_BLSCHECKSIG: 'OP_BLSCHECKSIG',
     OP_NOP5: 'OP_NOP5',
     OP_NOP6: 'OP_NOP6',
     OP_NOP7: 'OP_NOP7',
@@ -586,7 +586,7 @@ class CScript(bytes):
         n = 0
         lastOpcode = OP_INVALIDOPCODE
         for (opcode, data, sop_idx) in self.raw_iter():
-            if opcode in (OP_CHECKSIG, OP_CHECKSIGVERIFY):
+            if opcode in (OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_BLSCHECKSIG):
                 n += 1
             elif opcode in (OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY):
                 if fAccurate and (OP_1 <= lastOpcode <= OP_16):

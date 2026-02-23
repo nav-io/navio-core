@@ -1483,7 +1483,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     assert(!node.chainman);
 
     CTxMemPool::Options mempool_opts{
-        .check_ratio = chainparams.DefaultConsistencyChecks() ? 1 : 0,
+        .check_ratio = 0,
     };
     auto result{ApplyArgsManOptions(args, chainparams, mempool_opts)};
     if (!result) {

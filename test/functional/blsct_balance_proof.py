@@ -22,6 +22,15 @@ class NavioBlsctBalanceProofTest(BitcoinTestFramework):
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
 
+    def generate_blsct_blocks(self, node, address, num_blocks, batch_size=2):
+        blocks = []
+        remaining = num_blocks
+        while remaining > 0:
+            to_generate = min(batch_size, remaining)
+            blocks.extend(self.generatetoblsctaddress(node, to_generate, address))
+            remaining -= to_generate
+        return blocks
+
     def run_test(self):
         self.log.info("Creating wallet1 with BLSCT")
 
@@ -48,7 +57,7 @@ class NavioBlsctBalanceProofTest(BitcoinTestFramework):
 
         # Generate blocks and fund the BLSCT address
         self.log.info(f"Generating 101 blocks to the BLSCT address {blsct_address}")
-        block_hashes = self.generatetoblsctaddress(self.nodes[0], 101, blsct_address)
+        block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 101)
 
         self.log.info(f"Generated blocks: {len(block_hashes)}")
 

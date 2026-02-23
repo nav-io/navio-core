@@ -45,7 +45,7 @@ static MclG1Point GenNonce()
 
 static TokenId GenTokenId()
 {
-    TokenId token_id(uint256(123));
+    TokenId token_id(uint256(uint64_t{123}));
     return token_id;
 }
 

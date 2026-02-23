@@ -69,5 +69,5 @@ template std::string base_blob<256>::ToString() const;
 template void base_blob<256>::SetHex(const char*);
 template void base_blob<256>::SetHex(const std::string&);
 
-const uint256 uint256::ZERO(0);
-const uint256 uint256::ONE(1);
+const uint256 uint256::ZERO(uint64_t{0});
+const uint256 uint256::ONE(uint64_t{1});

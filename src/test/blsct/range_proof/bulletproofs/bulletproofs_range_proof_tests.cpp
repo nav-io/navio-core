@@ -40,7 +40,7 @@ BOOST_AUTO_TEST_CASE(test_different_seed_type)
     Scalar a(4);
     Scalar b(5);
     Scalar t_hat(6);
-    TokenId token_id(uint256(1));
+    TokenId token_id(uint256(uint64_t{1}));
     blsct::Message msg { 2 };
 
     bulletproofs::RangeProofWithSeed<T> p;
@@ -160,7 +160,7 @@ BOOST_AUTO_TEST_CASE(test_token_id_equal)
         Scalar a(4);
         Scalar b(5);
         Scalar t_hat(6);
-        TokenId token_id(uint256(6));
+        TokenId token_id(uint256(uint64_t{6}));
 
         bulletproofs::RangeProofWithSeed<T> p;
         p.seed = token_id;
@@ -218,8 +218,8 @@ BOOST_AUTO_TEST_CASE(test_token_id_equal)
         Scalar a(4);
         Scalar b(5);
         Scalar t_hat(6);
-        TokenId token_id_1(uint256(1));
-        TokenId token_id_2(uint256(2));
+        TokenId token_id_1(uint256(uint64_t{1}));
+        TokenId token_id_2(uint256(uint64_t{2}));
 
         bulletproofs::RangeProofWithSeed<T> p;
         p.seed = token_id_1;
@@ -278,7 +278,7 @@ BOOST_AUTO_TEST_CASE(test_de_ser_token_id)
     Scalar a(4);
     Scalar b(5);
     Scalar t_hat(6);
-    TokenId token_id(uint256(123));
+    TokenId token_id(uint256(uint64_t{123}));
 
     bulletproofs::RangeProofWithSeed<T> p;
     p.Vs = Vs;

@@ -154,7 +154,7 @@ void TxOrphanage::AddChildrenToWorkSet(const CTransaction& tx)
 
 
     for (unsigned int i = 0; i < tx.vout.size(); i++) {
-        const auto it_by_prev = m_outpoint_to_orphan_it.find(COutPoint(tx.GetHash(), i));
+        const auto it_by_prev = m_outpoint_to_orphan_it.find(COutPoint(tx.vout[i].GetHash()));
         if (it_by_prev != m_outpoint_to_orphan_it.end()) {
             for (const auto& elem : it_by_prev->second) {
                 // Get this source peer's work set, emplacing an empty set if it didn't exist

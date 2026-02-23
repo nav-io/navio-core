@@ -116,7 +116,7 @@ WalletTxOut MakeWalletTxOut(const CWallet& wallet,
     result.txout = wtx.tx->vout[n];
     result.time = wtx.GetTxTime();
     result.depth_in_main_chain = depth;
-    result.is_spent = wallet.IsSpent(COutPoint(wtx.GetHash(), n));
+    result.is_spent = wallet.IsSpent(COutPoint(wtx.tx->vout[n].GetHash()));
     return result;
 }
 
@@ -487,12 +487,14 @@ public:
         result.reserve(outputs.size());
         for (const auto& output : outputs) {
             result.emplace_back();
-            auto it = m_wallet->mapWallet.find(output.hash);
-            if (it != m_wallet->mapWallet.end()) {
-                int depth = m_wallet->GetTxDepthInMainChain(it->second);
-                if (depth >= 0) {
-                    result.back() = MakeWalletTxOut(*m_wallet, it->second, output.n, depth);
-                }
+            auto tx = m_wallet->GetWalletTxFromOutpoint(output);
+
+            if (tx == nullptr)
+                continue;
+
+            int depth = m_wallet->GetTxDepthInMainChain(*tx);
+            if (depth >= 0) {
+                result.back() = MakeWalletTxOut(*m_wallet, *tx, tx->GetOutputIndexFromHash(output), depth);
             }
         }
         return result;

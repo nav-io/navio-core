@@ -11,6 +11,7 @@
 #include <key_io.h>
 #include <policy/policy.h>
 #include <primitives/transaction.h>
+#include <random.h>
 #include <rpc/request.h>
 #include <rpc/util.h>
 #include <script/sign.h>
@@ -34,14 +35,7 @@ void AddInputs(CMutableTransaction& rawTx, const UniValue& inputs_in, std::optio
         const UniValue& input = inputs[idx];
         const UniValue& o = input.get_obj();
 
-        Txid txid = Txid::FromUint256(ParseHashO(o, "txid"));
-
-        const UniValue& vout_v = o.find_value("vout");
-        if (!vout_v.isNum())
-            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing vout key");
-        int nOutput = vout_v.getInt<int>();
-        if (nOutput < 0)
-            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, vout cannot be negative");
+        Txid txid = Txid::FromUint256(ParseHashO(o, "outid"));
 
         uint32_t nSequence;
 
@@ -64,7 +58,7 @@ void AddInputs(CMutableTransaction& rawTx, const UniValue& inputs_in, std::optio
             }
         }
 
-        CTxIn in(COutPoint(txid, nOutput), CScript(), nSequence);
+        CTxIn in(COutPoint(txid), CScript(), nSequence);
 
         rawTx.vin.push_back(in);
     }
@@ -108,6 +102,8 @@ void AddOutputs(CMutableTransaction& rawTx, const UniValue& outputs_in)
             std::vector<unsigned char> data = ParseHexV(outputs[name_].getValStr(), "Data");
 
             CTxOut out(0, CScript() << OP_RETURN << data);
+            FastRandomContext rng;
+            out.predicate = blsct::DataPredicate(rng.rand256()).GetVch();
             rawTx.vout.push_back(out);
         } else {
             CTxDestination destination = DecodeDestination(name_);
@@ -123,6 +119,8 @@ void AddOutputs(CMutableTransaction& rawTx, const UniValue& outputs_in)
             CAmount nAmount = AmountFromValue(outputs[name_]);
 
             CTxOut out(nAmount, scriptPubKey);
+            FastRandomContext rng;
+            out.predicate = blsct::DataPredicate(rng.rand256()).GetVch();
             rawTx.vout.push_back(out);
         }
     }
@@ -153,8 +151,7 @@ CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniVal
 static void TxInErrorToJSON(const CTxIn& txin, UniValue& vErrorsRet, const std::string& strMessage)
 {
     UniValue entry(UniValue::VOBJ);
-    entry.pushKV("txid", txin.prevout.hash.ToString());
-    entry.pushKV("vout", (uint64_t)txin.prevout.n);
+    entry.pushKV("outid", txin.prevout.hash.ToString());
     UniValue witness(UniValue::VARR);
     for (unsigned int i = 0; i < txin.scriptWitness.stack.size(); i++) {
         witness.push_back(HexStr(txin.scriptWitness.stack[i]));
@@ -173,26 +170,20 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
         for (unsigned int idx = 0; idx < prevTxs.size(); ++idx) {
             const UniValue& p = prevTxs[idx];
             if (!p.isObject()) {
-                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "expected object with {\"txid'\",\"vout\",\"scriptPubKey\"}");
+                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "expected object with {\"outid\",\"scriptPubKey\"}");
             }
 
             const UniValue& prevOut = p.get_obj();
 
             RPCTypeCheckObj(prevOut,
                 {
-                    {"txid", UniValueType(UniValue::VSTR)},
-                    {"vout", UniValueType(UniValue::VNUM)},
+                    {"outid", UniValueType(UniValue::VSTR)},
                     {"scriptPubKey", UniValueType(UniValue::VSTR)},
                 });
 
-            Txid txid = Txid::FromUint256(ParseHashO(prevOut, "txid"));
+            Txid txid = Txid::FromUint256(ParseHashO(prevOut, "outid"));
 
-            int nOut = prevOut.find_value("vout").getInt<int>();
-            if (nOut < 0) {
-                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "vout cannot be negative");
-            }
-
-            COutPoint out(txid, nOut);
+            COutPoint out(txid);
             std::vector<unsigned char> pkData(ParseHexO(prevOut, "scriptPubKey"));
             CScript scriptPubKey(pkData.begin(), pkData.end());
 

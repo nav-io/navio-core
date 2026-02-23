@@ -20,11 +20,15 @@ bool KeyMan::CanGenerateKeys() const
 
 bool KeyMan::AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId)
 {
-    LOCK(cs_KeyStore);
+    // Check if encryption keys exist first (doesn't require lock)
     if (!m_storage.HasEncryptionKeys()) {
+        LOCK(cs_KeyStore);
         return KeyRing::AddKeyOutKey(key, outId);
     }
 
+    // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
+    // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
+    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
     if (m_storage.IsLocked()) {
         return false;
     }
@@ -44,11 +48,15 @@ bool KeyMan::AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId)
 
 bool KeyMan::AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey)
 {
-    LOCK(cs_KeyStore);
+    // Check if encryption keys exist first (doesn't require lock)
     if (!m_storage.HasEncryptionKeys()) {
+        LOCK(cs_KeyStore);
         return KeyRing::AddKeyPubKey(key, pubkey);
     }
 
+    // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
+    // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
+    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
     if (m_storage.IsLocked()) {
         return false;
     }
@@ -486,11 +494,15 @@ bool KeyMan::HaveKey(const CKeyID& id) const
 
 bool KeyMan::GetKey(const CKeyID& id, PrivateKey& keyOut) const
 {
-    LOCK(cs_KeyStore);
+    // Check if encryption keys exist first (doesn't require lock)
     if (!m_storage.HasEncryptionKeys()) {
+        LOCK(cs_KeyStore);
         return KeyRing::GetKey(id, keyOut);
     }
 
+    // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
+    // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
+    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
     CryptedKeyMap::const_iterator mi = mapCryptedKeys.find(id);
     if (mi != mapCryptedKeys.end()) {
         const PublicKey& vchPubKey = (*mi).second.first;
@@ -502,11 +514,15 @@ bool KeyMan::GetKey(const CKeyID& id, PrivateKey& keyOut) const
 
 bool KeyMan::GetOutKey(const uint256& id, PrivateKey& keyOut) const
 {
-    LOCK(cs_KeyStore);
+    // Check if encryption keys exist first (doesn't require lock)
     if (!m_storage.HasEncryptionKeys()) {
+        LOCK(cs_KeyStore);
         return KeyRing::GetOutKey(id, keyOut);
     }
 
+    // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
+    // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
+    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
     CryptedOutKeyMap::const_iterator mi = mapCryptedOutKeys.find(id);
     if (mi != mapCryptedOutKeys.end()) {
         const uint256& outId = (*mi).first;
@@ -728,6 +744,26 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
         if (out.blsctData.viewTag != CalculateViewTag(out.blsctData.blindingKey, viewKey.GetScalar()))
             continue;
         auto nonce = CalculateNonce(out.blsctData.blindingKey, viewKey.GetScalar());
+        bulletproofs_plus::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
+        reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Arith>::of(proof, nonce, i));
+    }
+
+    return rp.RecoverAmounts(reqs);
+}
+
+bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce)
+{
+    if (!fViewKeyDefined || !viewKey.IsValid())
+        return bulletproofs_plus::AmountRecoveryResult<Arith>::failure();
+
+    bulletproofs_plus::RangeProofLogic<Arith> rp;
+    std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
+    reqs.reserve(outs.size());
+
+    for (size_t i = 0; i < outs.size(); i++) {
+        CTxOut out = outs[i];
+        if (!out.HasBLSCTKeys() || !out.HasBLSCTRangeProof()) continue;
+        // Use the provided nonce instead of calculating it
         bulletproofs_plus::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
         reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Arith>::of(proof, nonce, i));
     }

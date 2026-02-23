@@ -50,7 +50,8 @@ static CMutableTransaction TestSimpleSpend(const CTransaction& from, uint32_t in
 {
     CMutableTransaction mtx;
     mtx.vout.emplace_back(from.vout[index].nValue - DEFAULT_TRANSACTION_MAXFEE, pubkey);
-    mtx.vin.push_back({CTxIn{from.GetHash(), index}});
+    mtx.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
+    mtx.vin.push_back({CTxIn{from.vout[index].GetHash()}});
     FillableSigningProvider keystore;
     keystore.AddKey(key);
     std::map<COutPoint, Coin> coins;
@@ -565,6 +566,7 @@ public:
             tx = res->tx;
         }
         wallet->CommitTransaction(tx, {}, {});
+
         CMutableTransaction blocktx;
         {
             LOCK(wallet->cs_wallet);
@@ -654,7 +656,7 @@ void TestCoinsResult(ListCoinsTest& context, OutputType out_type, CAmount amount
     CoinsResult available_coins = AvailableCoins(*context.wallet, nullptr, std::nullopt, filter);
     // Lock outputs so they are not spent in follow-up transactions
     for (uint32_t i = 0; i < wtx.tx->vout.size(); i++)
-        context.wallet->LockCoin({wtx.GetHash(), i});
+        context.wallet->LockCoin({wtx.tx->vout[i].GetHash()});
     for (const auto& [type, size] : expected_coins_sizes)
         BOOST_CHECK_EQUAL(size, available_coins.coins[type].size());
 }
@@ -952,7 +954,8 @@ BOOST_FIXTURE_TEST_CASE(wallet_sync_tx_invalid_state_test, TestingSetup)
 
     CMutableTransaction mtx;
     mtx.vout.emplace_back(COIN, GetScriptForDestination(op_dest));
-    mtx.vin.emplace_back(Txid::FromUint256(g_insecure_rand_ctx.rand256()), 0);
+    mtx.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
+    mtx.vin.emplace_back(Txid::FromUint256(g_insecure_rand_ctx.rand256()));
     const auto& tx_id_to_spend = wallet.AddToWallet(MakeTransactionRef(mtx), TxStateInMempool{})->GetHash();
 
     {
@@ -967,7 +970,8 @@ BOOST_FIXTURE_TEST_CASE(wallet_sync_tx_invalid_state_test, TestingSetup)
     // 2) Verify that the available balance of this new tx and the old one is updated (prev tx is marked dirty)
 
     mtx.vin.clear();
-    mtx.vin.emplace_back(tx_id_to_spend, 0);
+    mtx.vin.emplace_back(mtx.vout[0].GetHash());
+    mtx.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
     wallet.transactionAddedToMempool(MakeTransactionRef(mtx));
     const auto good_tx_id{mtx.GetHash()};
 

@@ -127,16 +127,16 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
         # and make sure the mempool code behaves correctly.
         b = [self.nodes[0].getblockhash(n) for n in range(first_block, first_block+4)]
         coinbase_txids = [self.nodes[0].getblock(h)['tx'][0] for h in b]
-        utxo_1 = wallet.get_utxo(txid=coinbase_txids[1])
-        utxo_2 = wallet.get_utxo(txid=coinbase_txids[2])
-        utxo_3 = wallet.get_utxo(txid=coinbase_txids[3])
+        utxo_1 = wallet.get_utxo(txid=coinbase_txids[1], blockhash=b[1])
+        utxo_2 = wallet.get_utxo(txid=coinbase_txids[2], blockhash=b[2])
+        utxo_3 = wallet.get_utxo(txid=coinbase_txids[3], blockhash=b[3])
         self.log.info("Create three transactions spending from coinbase utxos: spend_1, spend_2, spend_3")
         spend_1 = wallet.create_self_transfer(utxo_to_spend=utxo_1)
         spend_2 = wallet.create_self_transfer(utxo_to_spend=utxo_2)
         spend_3 = wallet.create_self_transfer(utxo_to_spend=utxo_3)
 
         self.log.info("Create another transaction which is time-locked to two blocks in the future")
-        utxo = wallet.get_utxo(txid=coinbase_txids[0])
+        utxo = wallet.get_utxo(txid=coinbase_txids[0], blockhash=b[0])
         timelock_tx = wallet.create_self_transfer(
             utxo_to_spend=utxo,
             locktime=self.nodes[0].getblockcount() + 2,

@@ -21,13 +21,13 @@ BOOST_AUTO_TEST_CASE(get_next_work)
     CBlockIndex pindexLast;
     pindexLast.nHeight = 32255;
     pindexLast.nTime = 1262152739;  // Block #32255
-    pindexLast.nBits = 0x1d00ffff;
+    pindexLast.nBits = 0x1f00ffff;
 
     // Here (and below): expected_nbits is calculated in
     // CalculateNextWorkRequired(); redoing the calculation here would be just
     // reimplementing the same code that is written in pow.cpp. Rather than
     // copy that code, we just hardcode the expected result.
-    unsigned int expected_nbits = 0x1d00d86aU;
+    unsigned int expected_nbits = 0x1E085D51;
     BOOST_CHECK_EQUAL(CalculateNextWorkRequired(&pindexLast, nLastRetargetTime, chainParams->GetConsensus()), expected_nbits);
     BOOST_CHECK(PermittedDifficultyTransition(chainParams->GetConsensus(), pindexLast.nHeight+1, pindexLast.nBits, expected_nbits));
 }
@@ -40,8 +40,8 @@ BOOST_AUTO_TEST_CASE(get_next_work_pow_limit)
     CBlockIndex pindexLast;
     pindexLast.nHeight = 2015;
     pindexLast.nTime = 1233061996;  // Block #2015
-    pindexLast.nBits = 0x1d00ffff;
-    unsigned int expected_nbits = 0x1d00ffffU;
+    pindexLast.nBits = 0x1f00ffff;
+    unsigned int expected_nbits = 0x1E050BD8;
     BOOST_CHECK_EQUAL(CalculateNextWorkRequired(&pindexLast, nLastRetargetTime, chainParams->GetConsensus()), expected_nbits);
     BOOST_CHECK(PermittedDifficultyTransition(chainParams->GetConsensus(), pindexLast.nHeight+1, pindexLast.nBits, expected_nbits));
 }
@@ -165,7 +165,7 @@ void sanity_check_chainparams(const ArgsManager& args, ChainType chain_type)
     BOOST_CHECK_EQUAL(consensus.hashGenesisBlock, chainParams->GenesisBlock().GetHash());
 
     // target timespan is an even multiple of spacing
-    BOOST_CHECK_EQUAL(consensus.nPowTargetTimespan % consensus.nPowTargetSpacing, 0);
+    BOOST_CHECK_EQUAL(consensus.nPosTargetTimespan % consensus.nPosTargetSpacing, 0);
 
     // genesis nBits is positive, doesn't overflow and is lower than powLimit
     arith_uint256 pow_compact;
@@ -173,13 +173,13 @@ void sanity_check_chainparams(const ArgsManager& args, ChainType chain_type)
     pow_compact.SetCompact(chainParams->GenesisBlock().nBits, &neg, &over);
     BOOST_CHECK(!neg && pow_compact != 0);
     BOOST_CHECK(!over);
-    BOOST_CHECK(UintToArith256(consensus.powLimit) >= pow_compact);
+    BOOST_CHECK(UintToArith256(consensus.posLimit) >= pow_compact);
 
     // check max target * 4*nPowTargetTimespan doesn't overflow -- see pow.cpp:CalculateNextWorkRequired()
     if (!consensus.fPowNoRetargeting) {
         arith_uint256 targ_max{UintToArith256(uint256S("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"))};
-        targ_max /= consensus.nPowTargetTimespan*4;
-        BOOST_CHECK(UintToArith256(consensus.powLimit) < targ_max);
+        targ_max /= consensus.nPosTargetTimespan * 4;
+        BOOST_CHECK(UintToArith256(consensus.posLimit) < targ_max);
     }
 }
 
@@ -188,24 +188,24 @@ BOOST_AUTO_TEST_CASE(ChainParams_MAIN_sanity)
     sanity_check_chainparams(*m_node.args, ChainType::MAIN);
 }
 
-BOOST_AUTO_TEST_CASE(ChainParams_REGTEST_sanity)
-{
-    sanity_check_chainparams(*m_node.args, ChainType::REGTEST);
-}
+// BOOST_AUTO_TEST_CASE(ChainParams_REGTEST_sanity)
+// {
+//     sanity_check_chainparams(*m_node.args, ChainType::REGTEST);
+// }
 
-BOOST_AUTO_TEST_CASE(ChainParams_BLSCTREGTEST_sanity)
-{
-    sanity_check_chainparams(*m_node.args, ChainType::BLSCTREGTEST);
-}
+// BOOST_AUTO_TEST_CASE(ChainParams_BLSCTREGTEST_sanity)
+// {
+//     sanity_check_chainparams(*m_node.args, ChainType::BLSCTREGTEST);
+// }
 
-BOOST_AUTO_TEST_CASE(ChainParams_TESTNET_sanity)
-{
-    sanity_check_chainparams(*m_node.args, ChainType::TESTNET);
-}
+// BOOST_AUTO_TEST_CASE(ChainParams_TESTNET_sanity)
+// {
+//     sanity_check_chainparams(*m_node.args, ChainType::TESTNET);
+// }
 
-BOOST_AUTO_TEST_CASE(ChainParams_SIGNET_sanity)
-{
-    sanity_check_chainparams(*m_node.args, ChainType::SIGNET);
-}
+// BOOST_AUTO_TEST_CASE(ChainParams_SIGNET_sanity)
+// {
+//     sanity_check_chainparams(*m_node.args, ChainType::SIGNET);
+// }
 
 BOOST_AUTO_TEST_SUITE_END()

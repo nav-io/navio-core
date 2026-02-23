@@ -30,7 +30,7 @@ BOOST_FIXTURE_TEST_CASE(validation_test, TestingSetup)
     auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
 
     const auto txid = Txid::FromUint256(InsecureRand256());
-    COutPoint outpoint(txid, /*nIn=*/0);
+    COutPoint outpoint(txid);
 
     Coin coin;
     auto out = blsct::CreateOutput(recvAddress, 1000 * COIN, "test");
