@@ -72,11 +72,39 @@ std::vector<std::future<void>> BlockWorkers(ThreadPool& threadPool, std::countin
     return blocking_tasks;
 }
 
-// Test 0, submit task to a non-started pool
-BOOST_AUTO_TEST_CASE(submit_task_before_start_fails)
+// Test 0, submit task to a non-started, interrupted, or stopped pool
+BOOST_AUTO_TEST_CASE(submit_fails_with_correct_error)
 {
     ThreadPool threadPool(POOL_NAME);
-    auto res = threadPool.Submit([]{ return false; });
+    const auto fn_empty = [&] {};
+
+    // Never started: Inactive
+    auto res = threadPool.Submit(fn_empty);
+    BOOST_CHECK(!res);
+    BOOST_CHECK_EQUAL(SubmitErrorString(res.error()), "No active workers");
+
+    // Interrupted (workers still alive): Interrupted, and Start() must be rejected too
+    std::counting_semaphore<> blocker(0);
+    threadPool.Start(NUM_WORKERS_DEFAULT);
+    const auto blocking_tasks = BlockWorkers(threadPool, blocker, NUM_WORKERS_DEFAULT);
+    threadPool.Interrupt();
+    res = threadPool.Submit(fn_empty);
+    BOOST_CHECK(!res);
+    BOOST_CHECK_EQUAL(SubmitErrorString(res.error()), "Interrupted");
+    BOOST_CHECK_EXCEPTION(threadPool.Start(NUM_WORKERS_DEFAULT), std::runtime_error, HasReason("Thread pool has been interrupted or is stopping"));
+    blocker.release(NUM_WORKERS_DEFAULT);
+    WAIT_FOR(blocking_tasks);
+
+    // Interrupted then stopped: Inactive
+    threadPool.Stop();
+    res = threadPool.Submit(fn_empty);
+    BOOST_CHECK(!res);
+    BOOST_CHECK_EQUAL(SubmitErrorString(res.error()), "No active workers");
+
+    // Started then stopped: Inactive
+    threadPool.Start(NUM_WORKERS_DEFAULT);
+    threadPool.Stop();
+    res = threadPool.Submit(fn_empty);
     BOOST_CHECK(!res);
     BOOST_CHECK_EQUAL(SubmitErrorString(res.error()), "No active workers");
 }
