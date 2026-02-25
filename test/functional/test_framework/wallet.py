@@ -133,7 +133,7 @@ class MiniWallet:
         assert_equal(True, res['success'])
         for utxo in res['unspents']:
             self._utxos.append(
-                self._create_utxo(txid=utxo["txid"],
+                self._create_utxo(txid=utxo["outid"],
                                   value=utxo["amount"],
                                   height=utxo["height"],
                                   coinbase=utxo["coinbase"],
@@ -152,8 +152,8 @@ class MiniWallet:
             # utxo that remained in this wallet. For example, by passing
             # mark_as_spent=False to get_utxo or by using an utxo returned by a
             # create_self_transfer* call.
-            # Handle both "txid" and "hash" fields (for output hash prevout system)
-            spent_txid = spent.get("txid") or spent.get("hash")
+            # Handle both "outid" and "hash" fields (for output hash prevout system)
+            spent_txid = spent.get("outid") or spent.get("hash")
             if spent_txid:
                 try:
                     self.get_utxo(txid=spent_txid)

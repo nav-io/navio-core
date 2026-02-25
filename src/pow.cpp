@@ -88,9 +88,6 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
     }
 
     if (height % params.DifficultyAdjustmentInterval() == 0) {
-        int64_t smallest_timespan = params.nPowTargetTimespan/4;
-        int64_t largest_timespan = params.nPowTargetTimespan*4;
-
         const arith_uint256 pow_limit = UintToArith256(params.powLimit);
         arith_uint256 observed_new_target;
         observed_new_target.SetCompact(new_nbits);
@@ -98,8 +95,7 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
         // Calculate the largest difficulty value possible:
         arith_uint256 largest_difficulty_target;
         largest_difficulty_target.SetCompact(old_nbits);
-        largest_difficulty_target *= largest_timespan;
-        largest_difficulty_target /= params.nPowTargetTimespan;
+        largest_difficulty_target *= 4;
 
         if (largest_difficulty_target > pow_limit) {
             largest_difficulty_target = pow_limit;
@@ -114,8 +110,7 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
         // Calculate the smallest difficulty value possible:
         arith_uint256 smallest_difficulty_target;
         smallest_difficulty_target.SetCompact(old_nbits);
-        smallest_difficulty_target *= smallest_timespan;
-        smallest_difficulty_target /= params.nPowTargetTimespan;
+        smallest_difficulty_target /= 4;
 
         if (smallest_difficulty_target > pow_limit) {
             smallest_difficulty_target = pow_limit;

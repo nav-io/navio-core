@@ -526,7 +526,7 @@ class WalletSendTest(BitcoinTestFramework):
         ext_utxo = ext_fund.listunspent(addresses=[addr])[0]
 
         # An external input without solving data should result in an error
-        self.test_send(from_wallet=ext_wallet, to_wallet=self.nodes[0], amount=15, inputs=[ext_utxo], add_inputs=True, psbt=True, include_watching=True, expect_error=(-4, "Not solvable pre-selected input COutPoint(%s)" % (ext_utxo["txid"][0:10])))
+        self.test_send(from_wallet=ext_wallet, to_wallet=self.nodes[0], amount=15, inputs=[ext_utxo], add_inputs=True, psbt=True, include_watching=True, expect_error=(-4, "Not solvable pre-selected input COutPoint(%s)" % (ext_utxo["outid"][0:10])))
 
         # But funding should work when the solving data is provided
         res = self.test_send(from_wallet=ext_wallet, to_wallet=self.nodes[0], amount=15, inputs=[ext_utxo], add_inputs=True, psbt=True, include_watching=True, solving_data={"pubkeys": [addr_info['pubkey']], "scripts": [addr_info["embedded"]["scriptPubKey"], addr_info["embedded"]["embedded"]["scriptPubKey"]]})
@@ -541,7 +541,7 @@ class WalletSendTest(BitcoinTestFramework):
 
         dec = self.nodes[0].decodepsbt(signed["psbt"])
         for i, txin in enumerate(dec["tx"]["vin"]):
-            if txin["txid"] == ext_utxo["txid"]:
+            if txin["outid"] == ext_utxo["outid"]:
                 input_idx = i
                 break
         psbt_in = dec["inputs"][input_idx]
@@ -558,7 +558,7 @@ class WalletSendTest(BitcoinTestFramework):
             "Input weights should be specified in inputs rather than in options.",
             ext_wallet.send,
             outputs={self.nodes[0].getnewaddress(): 15},
-            options={"inputs": [ext_utxo], "input_weights": [{"txid": ext_utxo["txid"], "weight": 1000}]}
+            options={"inputs": [ext_utxo], "input_weights": [{"outid": ext_utxo["outid"], "weight": 1000}]}
         )
 
         # Funding should also work when input weights are provided
@@ -566,7 +566,7 @@ class WalletSendTest(BitcoinTestFramework):
             from_wallet=ext_wallet,
             to_wallet=self.nodes[0],
             amount=15,
-            inputs=[{"txid": ext_utxo["txid"], "weight": input_weight}],
+            inputs=[{"outid": ext_utxo["outid"], "weight": input_weight}],
             add_inputs=True,
             psbt=True,
             include_watching=True,

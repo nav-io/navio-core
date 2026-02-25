@@ -835,10 +835,8 @@ class CCoinsViewMemPool : public CCoinsViewBacked
      * (not base). Used to track the origin of a coin, see GetNonBaseCoins().
      */
     mutable std::unordered_set<COutPoint, SaltedOutpointHasher> m_non_base_coins;
-protected:
-    const CTxMemPool& mempool;
-
 public:
+    const CTxMemPool& mempool;
     CCoinsViewMemPool(CCoinsView* baseIn, const CTxMemPool& mempoolIn);
     bool GetToken(const uint256& tokenId, blsct::TokenEntry& token) const override;
     /** GetCoin, returning whether it exists and is not spent. Also updates m_non_base_coins if the

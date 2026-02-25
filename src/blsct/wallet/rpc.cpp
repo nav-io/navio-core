@@ -883,7 +883,7 @@ RPCHelpMan listblsctunspent()
         RPCResult{
             RPCResult::Type::ARR, "", "", {
                                               {RPCResult::Type::OBJ, "", "", {
-                                                                                 {RPCResult::Type::STR_HEX, "txid", "the transaction id"},
+                                                                                 {RPCResult::Type::STR_HEX, "outid", "the output id"},
                                                                                  {RPCResult::Type::STR, "address", /*optional=*/true, "the navio address"},
                                                                                  {RPCResult::Type::STR, "label", /*optional=*/true, "The associated label, or \"\" for the default label"},
                                                                                  {RPCResult::Type::STR_AMOUNT, "amount", "the transaction output amount in " + CURRENCY_UNIT},
@@ -981,7 +981,7 @@ RPCHelpMan listblsctunspent()
                     continue;
 
                 UniValue entry(UniValue::VOBJ);
-                entry.pushKV("txid", out.outpoint.hash.GetHex());
+                entry.pushKV("outid", out.outpoint.hash.GetHex());
 
                 CTxDestination script_address;
 
@@ -1271,7 +1271,8 @@ RPCHelpMan createblsctrawtransaction()
                         RPCArg::Optional::OMITTED,
                         "",
                         {
-                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                            {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
+                            {"sequence", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The script sequence number"},
                             {"value", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The input value in satoshis"},
                             {"gamma", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The gamma value for the input (hex string)"},
                             {"private_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The private key for signing this input (hex string)"},
@@ -1337,9 +1338,8 @@ RPCHelpMan createblsctrawtransaction()
                 const UniValue& input = inputs[idx];
                 const UniValue& o = input.get_obj();
 
-                const Txid txid = Txid::FromUint256(ParseHashO(o, "txid"));
+                const Txid txid = Txid::FromUint256(ParseHashO(o, "outid"));
                 blsct::UnsignedInput unsigned_input;
-
                 unsigned_input.in.prevout = COutPoint(txid);
 
                 // Parse optional value field
@@ -1581,7 +1581,7 @@ RPCHelpMan createblsctrawtransaction()
 
                     unsigned_output = CreateOutput(std::make_pair(address_a, script), nAmount, memo, token_id, blindingKey, type, 0);
 
-                    // Nullify the spending key 
+                    // Nullify the spending key
                     unsigned_output.out.blsctData.spendingKey = MclG1Point();
                 } else {
                     blsct::SubAddress subAddress;
@@ -1696,7 +1696,7 @@ RPCHelpMan fundblsctrawtransaction()
                 existing_inputs.insert(input.in.prevout);
             }
 
-            auto lock_outpoint_if_wallet = [&](const COutPoint& outpoint) {
+            auto lock_outpoint_if_wallet = [&](const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
                 if (pwallet->GetWalletTxFromOutpoint(outpoint)) {
                     pwallet->LockCoin(outpoint);
                 }
@@ -1917,7 +1917,7 @@ RPCHelpMan decodeblsctrawtransaction()
             RPCResult::Type::OBJ, "", "", {
                                               {RPCResult::Type::ARR, "inputs", "Array of transaction inputs", {
                                                                                                                   {RPCResult::Type::OBJ, "", "", {
-                                                                                                                                                {RPCResult::Type::STR_HEX, "txid", "The previous output hash"},
+                                                                                                                                                {RPCResult::Type::STR_HEX, "outid", "The previous output hash"},
                                                                                                                                                      {RPCResult::Type::NUM, "value", "The input value"},
                                                                                                                                                      {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                      {RPCResult::Type::BOOL, "is_staked_commitment", "Whether this input is a staked commitment"},
@@ -1949,7 +1949,7 @@ RPCHelpMan decodeblsctrawtransaction()
             UniValue inputs(UniValue::VARR);
             for (const auto& input : unsigned_tx.GetInputs()) {
                 UniValue input_obj(UniValue::VOBJ);
-                input_obj.pushKV("txid", input.in.prevout.hash.GetHex());
+                input_obj.pushKV("outid", input.in.prevout.hash.GetHex());
                 input_obj.pushKV("value", ValueFromAmount(input.value.GetUint64()));
                 input_obj.pushKV("gamma", HexStr(input.gamma.GetVch()));
                 input_obj.pushKV("is_staked_commitment", input.is_staked_commitment);

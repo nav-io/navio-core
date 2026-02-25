@@ -115,7 +115,7 @@ class ListTransactionsTest(BitcoinTestFramework):
             """Find an unconfirmed output matching a certain txid."""
             utxo = node.listunspent(0, 0)
             for i in utxo:
-                if i["txid"] == txid_to_match:
+                if i["outid"] == txid_to_match:
                     return i
             return None
 
@@ -155,7 +155,7 @@ class ListTransactionsTest(BitcoinTestFramework):
         # Since listunspent returns output hashes as 'txid', we need to use the output hash
         # instead of the transaction ID when creating the raw transaction
         sent_output_hash = sent_output['hash']
-        inputs = [{"txid": sent_output_hash, "vout": 0}]
+        inputs = [{"outid": sent_output_hash}]
         outputs = {self.nodes[0].getnewaddress(): 0.999}
         tx2 = self.nodes[1].createrawtransaction(inputs=inputs, outputs=outputs, replaceable=False)
         tx2_signed = self.nodes[1].signrawtransactionwithwallet(tx2)["hex"]
@@ -175,7 +175,7 @@ class ListTransactionsTest(BitcoinTestFramework):
         tx2_output_to_node0 = next(i for i in raw_tx2['vout'] if i['value'] == Decimal("0.999"))
         txoutid_2 = tx2_output_to_node0['hash']
         utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[0], txoutid_2)
-        inputs = [{"txid": txoutid_2, "vout": 0}]
+        inputs = [{"outid": txoutid_2}]
         outputs = {self.nodes[1].getnewaddress(): 0.998}
         tx3 = self.nodes[0].createrawtransaction(inputs, outputs)
         tx3_modified = tx_from_hex(tx3)
@@ -197,7 +197,7 @@ class ListTransactionsTest(BitcoinTestFramework):
         tx3_output_to_node1 = next(i for i in raw_tx3['vout'] if i['value'] == Decimal("0.998"))
         txoutid_3 = tx3_output_to_node1['hash']
         utxo_to_use = get_unconfirmed_utxo_entry(self.nodes[1], txoutid_3)
-        inputs = [{"txid": txoutid_3, "vout": 0}]
+        inputs = [{"outid": txoutid_3}]
         outputs = {self.nodes[0].getnewaddress(): 0.997}
         tx4 = self.nodes[1].createrawtransaction(inputs=inputs, outputs=outputs, replaceable=False)
         tx4_signed = self.nodes[1].signrawtransactionwithwallet(tx4)["hex"]
@@ -305,12 +305,10 @@ class ListTransactionsTest(BitcoinTestFramework):
         raw_hex = self.nodes[0].createrawtransaction(
             inputs=[
                 {
-                    "txid": input_0["txid"],
-                    "vout": 0,
+                    "outid": input_0["outid"],
                 },
                 {
-                    "txid": input_1["txid"],
-                    "vout": 0,
+                    "outid": input_1["outid"],
                 },
             ],
             outputs={

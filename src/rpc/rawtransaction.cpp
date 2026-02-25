@@ -105,8 +105,7 @@ static std::vector<RPCResult> DecodeTxDoc(const std::string& txid_field_doc)
         {RPCResult::Type::ARR, "vin", "", {
                                               {RPCResult::Type::OBJ, "", "", {
                                                                                  {RPCResult::Type::STR_HEX, "coinbase", /*optional=*/true, "The coinbase value (only if coinbase transaction)"},
-                                                                                 {RPCResult::Type::STR_HEX, "txid", /*optional=*/true, "The transaction id (if not coinbase transaction)"},
-                                                                                 {RPCResult::Type::NUM, "vout", /*optional=*/true, "The output number (if not coinbase transaction)"},
+                                                                                 {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "The output id (if not coinbase transaction)"},
                                                                                  {RPCResult::Type::OBJ, "scriptSig", /*optional=*/true, "The script (if not coinbase transaction)", {
                                                                                                                                                                                         {RPCResult::Type::STR, "asm", "Disassembly of the signature script"},
                                                                                                                                                                                         {RPCResult::Type::STR_HEX, "hex", "The raw signature script bytes, hex-encoded"},
@@ -169,7 +168,7 @@ static std::vector<RPCArg> CreateTxDoc()
                     RPCArg::Optional::OMITTED,
                     "",
                     {
-                        {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                        {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
                         {"sequence", RPCArg::Type::NUM, RPCArg::DefaultHint{"depends on the value of the 'replaceable' and 'locktime' arguments"}, "The sequence number"},
                     },
                 },
@@ -768,7 +767,7 @@ static RPCHelpMan signrawtransactionwithkey()
                         RPCArg::Optional::OMITTED,
                         "",
                         {
-                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                            {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
                             {"scriptPubKey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "script key"},
                             {"redeemScript", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(required for P2SH) redeem script"},
                             {"witnessScript", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(required for P2WSH or P2SH-P2WSH) witness script"},
@@ -792,7 +791,7 @@ static RPCHelpMan signrawtransactionwithkey()
                                               {RPCResult::Type::BOOL, "complete", "If the transaction has a complete set of signatures"},
                                               {RPCResult::Type::ARR, "errors", /*optional=*/true, "Script verification errors (if there are any)", {
                                                                                                                                                        {RPCResult::Type::OBJ, "", "", {
-                                                                                                                                                                                          {RPCResult::Type::STR_HEX, "txid", "The hash of the referenced, previous transaction"},
+                                                                                                                                                                                          {RPCResult::Type::STR_HEX, "outid", "The hash of the referenced, previous output"},
                                                                                                                                                                                           {RPCResult::Type::ARR, "witness", "", {
                                                                                                                                                                                                                                     {RPCResult::Type::STR_HEX, "witness", ""},
                                                                                                                                                                                                                                 }},

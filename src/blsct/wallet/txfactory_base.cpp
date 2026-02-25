@@ -13,17 +13,17 @@ using Scalars = Elements<Scalar>;
 
 namespace blsct {
 
-void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount)
+void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey)
 {
     UnsignedOutput out;
 
-    out = CreateOutput(destination.GetKeys(), nAmount, sMemo, token_id, Scalar::Rand(), type, minStake);
+    out = CreateOutput(destination.GetKeys(), nAmount, sMemo, token_id, blindingKey, type, minStake);
 
     CAmount nFee = 0;
 
     if (fSubtractFeeFromAmount) {
         nFee = GetTransactioOutputWeight(out.out) * BLSCT_DEFAULT_FEE;
-        out = CreateOutput(destination.GetKeys(), nAmount - nFee, sMemo, token_id, Scalar::Rand(), type, minStake);
+        out = CreateOutput(destination.GetKeys(), nAmount - nFee, sMemo, token_id, blindingKey, type, minStake);
     };
 
     if (nAmounts.count(token_id) == 0)

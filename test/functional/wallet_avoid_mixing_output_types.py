@@ -72,7 +72,7 @@ def is_same_type(node, tx):
     vins = node.getrawtransaction(tx, True)['vin']
     inputs = []
     for vin in vins:
-        prev_tx = vin['txid']
+        prev_tx = vin['outid']
         tx = node.gettxfromoutputhash(prev_tx)
         inputs.append(
             node.getrawtransaction(

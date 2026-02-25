@@ -59,7 +59,7 @@ class WalletRescanUnconfirmed(BitcoinTestFramework):
 
         # Get the output hash from the decoded transaction (same method as other tests)
         decoded_tx = node.decoderawtransaction(tx_parent_to_reorg["hex"])
-        utxo_txid = w0_utxos[0]["txid"]
+        utxo_txid = w0_utxos[0]["outid"]
 
         found = False
         for out in decoded_tx["vout"]:

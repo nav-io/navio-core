@@ -161,7 +161,7 @@ class AvoidReuseTest(BitcoinTestFramework):
         txid = node.sendtoaddress(addr, 1)
         out = node.listunspent(minconf=0, query_options={'minimumAmount': 2})
         assert_equal(len(out), 1)
-        assert_equal(node.gettxfromoutputhash(out[0]['txid'])['txid'], txid)
+        assert_equal(node.gettxfromoutputhash(out[0]['outid'])['txid'], txid)
         changeaddr = out[0]['address']
 
         # Make sure it's starting out as change as expected

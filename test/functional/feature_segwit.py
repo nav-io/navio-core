@@ -63,8 +63,7 @@ def getutxo(node,txid):
     utxo = {}
     tx = node.getrawtransaction(txid)
     tx_obj = tx_from_hex(tx)
-    utxo["txid"] = hex(tx_obj.vout[0].hash())[2:].zfill(64)
-    utxo["vout"] = 0
+    utxo["outid"] = hex(tx_obj.vout[0].hash())[2:].zfill(64)
     return utxo
 
 
@@ -601,7 +600,7 @@ class SegWitTest(BitcoinTestFramework):
     def mine_and_test_listunspent(self, script_list, ismine):
         utxo = find_spendable_utxo(self.nodes[0], 50)
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(utxo['txid'])))
+        tx.vin.append(CTxIn(COutPoint(utxo['outid'])))
         index = -1
         outhashes = []
         for i in script_list:
@@ -615,7 +614,7 @@ class SegWitTest(BitcoinTestFramework):
         watchcount = 0
         spendcount = 0
         for i in self.nodes[0].listunspent():
-            if i['txid'] in outhashes:
+            if i['outid'] in outhashes:
                 watchcount += 1
                 if i['spendable']:
                     spendcount += 1

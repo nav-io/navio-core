@@ -89,12 +89,12 @@ class WalletTest(BitcoinTestFramework):
         assert_equal(len(self.nodes[2].listunspent()), 0)
 
         self.log.info("Test gettxout")
-        confirmed_outid = utxos[0]["txid"]
+        confirmed_outid = utxos[0]["outid"]
         # First, outputs that are unspent both in the chain and in the
         # mempool should appear with or without include_mempool
-        txout = self.nodes[0].gettxout(txid=confirmed_outid, include_mempool=False)
+        txout = self.nodes[0].gettxout(outid=confirmed_outid, include_mempool=False)
         assert_equal(txout['value'], 50)
-        txout = self.nodes[0].gettxout(txid=confirmed_outid, include_mempool=True)
+        txout = self.nodes[0].gettxout(outid=confirmed_outid, include_mempool=True)
         assert_equal(txout['value'], 50)
 
         # Send 21 BTC from 0 to 2 using sendtoaddress call.
@@ -127,7 +127,7 @@ class WalletTest(BitcoinTestFramework):
 
         # Exercise locking of unspent outputs
         unspent_0 = self.nodes[2].listunspent()[0]
-        unspent_0 = {"txid": unspent_0["txid"]}
+        unspent_0 = {"outid": unspent_0["outid"]}
         # Trying to unlock an output which isn't locked should error
         assert_raises_rpc_error(-8, "Invalid parameter, expected locked output", self.nodes[2].lockunspent, True, [unspent_0])
 
@@ -171,15 +171,15 @@ class WalletTest(BitcoinTestFramework):
         self.connect_nodes(1, 2)
         self.connect_nodes(0, 2)
 
-        assert_raises_rpc_error(-8, "txid must be of length 64 (not 34, for '0000000000000000000000000000000000')",
+        assert_raises_rpc_error(-8, "outid must be of length 64 (not 34, for '0000000000000000000000000000000000')",
                                 self.nodes[2].lockunspent, False,
-                                [{"txid": "0000000000000000000000000000000000"}])
-        assert_raises_rpc_error(-8, "txid must be hexadecimal string (not 'ZZZ0000000000000000000000000000000000000000000000000000000000000')",
+                                [{"outid": "0000000000000000000000000000000000"}])
+        assert_raises_rpc_error(-8, "outid must be hexadecimal string (not 'ZZZ0000000000000000000000000000000000000000000000000000000000000')",
                                 self.nodes[2].lockunspent, False,
-                                [{"txid": "ZZZ0000000000000000000000000000000000000000000000000000000000000"}])
+                                [{"outid": "ZZZ0000000000000000000000000000000000000000000000000000000000000"}])
         assert_raises_rpc_error(-8, "Invalid parameter, unknown transaction",
                                 self.nodes[2].lockunspent, False,
-                                [{"txid": "0000000000000000000000000000000000000000000000000000000000000000"}])
+                                [{"outid": "0000000000000000000000000000000000000000000000000000000000000000"}])
 
         # The lock on a manually selected output is ignored
         unspent_0 = self.nodes[1].listunspent()[0]
@@ -217,7 +217,7 @@ class WalletTest(BitcoinTestFramework):
         for utxo in node0utxos:
             inputs = []
             outputs = {}
-            inputs.append({"txid": utxo["txid"]})
+            inputs.append({"outid": utxo["outid"]})
             outputs[self.nodes[2].getnewaddress()] = utxo["amount"] - 3
             raw_tx = self.nodes[0].createrawtransaction(inputs, outputs)
             txns_to_send.append(self.nodes[0].signrawtransactionwithwallet(raw_tx))
@@ -233,7 +233,7 @@ class WalletTest(BitcoinTestFramework):
         assert_equal(self.nodes[2].getbalance(), 94)
 
         # Verify that a spent output cannot be locked anymore
-        spent_0 = {"txid": node0utxos[0]["txid"]}
+        spent_0 = {"outid": node0utxos[0]["outid"]}
         assert_raises_rpc_error(-8, "Invalid parameter, expected unspent output", self.nodes[0].lockunspent, False, [spent_0])
 
         # Send 10 BTC normal
@@ -349,7 +349,7 @@ class WalletTest(BitcoinTestFramework):
         # 3. sign and send
         # 4. check if recipient (node0) can list the zero value tx
         usp = self.nodes[1].listunspent(query_options={'minimumAmount': '49.998'})[0]
-        inputs = [{"txid": usp['txid']}]
+        inputs = [{"outid": usp['outid']}]
         outputs = {self.nodes[1].getnewaddress(): 49.998, self.nodes[0].getnewaddress(): 11.11}
 
         raw_tx = self.nodes[1].createrawtransaction(inputs, outputs).replace("c0833842", "00000000")  # replace 11.11 with 0.0 (int32)
@@ -363,7 +363,7 @@ class WalletTest(BitcoinTestFramework):
 
         unspent_txs = self.nodes[0].listunspent()
         # Zero-value outputs are ignored by listunspent; ensure it is not reported.
-        assert all(uTx['txid'] != zero_value_txid for uTx in unspent_txs)
+        assert all(uTx['outid'] != zero_value_txid for uTx in unspent_txs)
 
         self.log.info("Test -walletbroadcast")
         self.stop_nodes()
@@ -731,9 +731,9 @@ class WalletTest(BitcoinTestFramework):
             ])
             coins = wo_wallet.listunspent(minconf=0)
             assert_equal(len(coins), 2)
-            coin_a = next(c for c in coins if c["txid"] == outid_a)
+            coin_a = next(c for c in coins if c["outid"] == outid_a)
             assert_equal(coin_a["parent_descs"][0], multi_a)
-            coin_b = next(c for c in coins if c["txid"] == outid_b)
+            coin_b = next(c for c in coins if c["outid"] == outid_b)
             assert_equal(coin_b["parent_descs"][0], multi_b)
             self.nodes[0].unloadwallet("wo")
 
@@ -799,7 +799,7 @@ class WalletTest(BitcoinTestFramework):
             self.wallet.sendrawtransaction(from_node=self.nodes[0], tx_hex=t["hex"])
             # Check that listunspent ancestor{count, size, fees} yield the correct results
             wallet_unspent = watch_wallet.listunspent(minconf=0)
-            this_unspent = next(utxo_info for utxo_info in wallet_unspent if self.nodes[0].gettxfromoutputhash(utxo_info["txid"])["txid"] == t["txid"])
+            this_unspent = next(utxo_info for utxo_info in wallet_unspent if self.nodes[0].gettxfromoutputhash(utxo_info["outid"])["txid"] == t["txid"])
             assert_equal(this_unspent['ancestorcount'], i + 1)
             assert_equal(this_unspent['ancestorsize'], ancestor_vsize)
             assert_equal(this_unspent['ancestorfees'], ancestor_fees * COIN)

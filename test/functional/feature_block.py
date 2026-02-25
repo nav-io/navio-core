@@ -862,7 +862,7 @@ class FullBlockTest(BitcoinTestFramework):
         b_dup_2 = self.update_block('dup_2', [])
         #assert_equal(duplicate_tx.serialize(), b_dup_2.vtx[0].serialize())
         txid = hex(duplicate_tx.vout[0].hash())[2:].zfill(64)
-        assert_equal(self.nodes[0].gettxout(txid=txid)['confirmations'], 119)
+        assert_equal(self.nodes[0].gettxout(outid=txid)['confirmations'], 119)
         self.send_blocks([b_spend_dup_cb, b_dup_2], success=True)
 
         # Test tx.isFinal is properly rejected (not an exhaustive tx.isFinal test, that should be in data-driven transaction tests)

@@ -1373,8 +1373,8 @@ class TaprootTest(BitcoinTestFramework):
             balance = 0
             for unspent in unspents:
                 balance += int(unspent["amount"] * 100000000)
-                txid = int(unspent["txid"], 16)
-                fund_tx.vin.append(CTxIn(COutPoint(txid), CScript()))
+                outid = int(unspent["outid"], 16)
+                fund_tx.vin.append(CTxIn(COutPoint(outid), CScript()))
             # Add outputs
             cur_progress = done / len(spenders)
             next_progress = (done + count_this_tx) / len(spenders)

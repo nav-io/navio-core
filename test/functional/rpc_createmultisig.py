@@ -207,12 +207,12 @@ class RpcCreateMultiSigTest(BitcoinTestFramework):
         # Ensure txoutid is 64 characters (pad with leading zero if needed)
         while len(txoutid) < 64:
             txoutid = '0' + txoutid
-        prevtxs = [{"txid": txoutid, "scriptPubKey": scriptPubKey, "redeemScript": mredeem, "amount": value}]
+        prevtxs = [{"outid": txoutid, "scriptPubKey": scriptPubKey, "redeemScript": mredeem, "amount": value}]
 
         self.generate(node0, 1)
 
         outval = value - decimal.Decimal("0.00001000")
-        rawtx = node2.createrawtransaction([{"txid": txoutid}], [{self.final: outval}])
+        rawtx = node2.createrawtransaction([{"outid": txoutid}], [{self.final: outval}])
 
         prevtx_err = dict(prevtxs[0])
         del prevtx_err["redeemScript"]

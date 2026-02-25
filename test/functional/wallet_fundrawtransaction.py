@@ -79,7 +79,7 @@ class RawTransactionsTest(BitcoinTestFramework):
             if "desc" in utxo:
                 for prefix in prefixes:
                     if utxo["desc"].startswith(prefix):
-                        to_lock.append({"txid": utxo["txid"]})
+                        to_lock.append({"outid": utxo["outid"]})
         wallet.lockunspent(False, to_lock)
 
     def unlock_utxos(self, wallet):
@@ -213,11 +213,11 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.log.info("Test fundrawtxn with a vin > required amount")
         utx = get_unspent(self.nodes[2].listunspent(), 5)
 
-        inputs  = [ {'txid' : utx['txid'], 'vout' : utx['vout']}]
+        inputs  = [ {'outid' : utx['outid']}]
         outputs = { self.nodes[0].getnewaddress() : 1.0 }
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
         dec_tx  = self.nodes[2].decoderawtransaction(rawtx)
-        assert_equal(utx['txid'], dec_tx['vin'][0]['txid'])
+        assert_equal(utx['outid'], dec_tx['vin'][0]['outid'])
 
         rawtxfund = self.nodes[2].fundrawtransaction(rawtx)
         fee = rawtxfund['fee']
@@ -233,11 +233,11 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.log.info("Test fundrawtxn not having a change output")
         utx = get_unspent(self.nodes[2].listunspent(), 5)
 
-        inputs  = [ {'txid' : utx['txid'], 'vout' : utx['vout']}]
+        inputs  = [ {'outid' : utx['outid']}]
         outputs = {self.nodes[0].getnewaddress(): Decimal(5.0) - self.test_no_change_fee - self.fee_tolerance}
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
         dec_tx  = self.nodes[2].decoderawtransaction(rawtx)
-        assert_equal(utx['txid'], dec_tx['vin'][0]['txid'])
+        assert_equal(utx['outid'], dec_tx['vin'][0]['outid'])
 
         rawtxfund = self.nodes[2].fundrawtransaction(rawtx)
         fee = rawtxfund['fee']
@@ -253,11 +253,11 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.log.info("Test fundrawtxn with an invalid option")
         utx = get_unspent(self.nodes[2].listunspent(), 5)
 
-        inputs  = [ {'txid' : utx['txid'], 'vout' : utx['vout']} ]
+        inputs  = [ {'outid' : utx['outid']} ]
         outputs = { self.nodes[0].getnewaddress() : Decimal(4.0) }
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
         dec_tx  = self.nodes[2].decoderawtransaction(rawtx)
-        assert_equal(utx['txid'], dec_tx['vin'][0]['txid'])
+        assert_equal(utx['outid'], dec_tx['vin'][0]['outid'])
 
         assert_raises_rpc_error(-8, "Unknown named parameter foo", self.nodes[2].fundrawtransaction, rawtx, foo='bar')
 
@@ -268,11 +268,11 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.log.info("Test fundrawtxn with an invalid change address")
         utx = get_unspent(self.nodes[2].listunspent(), 5)
 
-        inputs  = [ {'txid' : utx['txid'], 'vout' : utx['vout']} ]
+        inputs  = [ {'outid' : utx['outid']} ]
         outputs = { self.nodes[0].getnewaddress() : Decimal(4.0) }
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
         dec_tx  = self.nodes[2].decoderawtransaction(rawtx)
-        assert_equal(utx['txid'], dec_tx['vin'][0]['txid'])
+        assert_equal(utx['outid'], dec_tx['vin'][0]['outid'])
 
         assert_raises_rpc_error(-5, "Change address must be a valid navio address", self.nodes[2].fundrawtransaction, rawtx, changeAddress='foobar')
 
@@ -280,11 +280,11 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.log.info("Test fundrawtxn with a provided change address")
         utx = get_unspent(self.nodes[2].listunspent(), 5)
 
-        inputs  = [ {'txid' : utx['txid'], 'vout' : utx['vout']} ]
+        inputs  = [ {'outid' : utx['outid']} ]
         outputs = { self.nodes[0].getnewaddress() : Decimal(4.0) }
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
         dec_tx  = self.nodes[2].decoderawtransaction(rawtx)
-        assert_equal(utx['txid'], dec_tx['vin'][0]['txid'])
+        assert_equal(utx['outid'], dec_tx['vin'][0]['outid'])
 
         change = self.nodes[2].getnewaddress()
         assert_raises_rpc_error(-8, "changePosition out of bounds", self.nodes[2].fundrawtransaction, rawtx, changeAddress=change, changePosition=2)
@@ -297,7 +297,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.log.info("Test fundrawtxn with a provided change type")
         utx = get_unspent(self.nodes[2].listunspent(), 5)
 
-        inputs  = [ {'txid' : utx['txid'], 'vout' : utx['vout']} ]
+        inputs  = [ {'outid' : utx['outid']} ]
         outputs = { self.nodes[0].getnewaddress() : Decimal(4.0) }
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
         assert_raises_rpc_error(-3, "JSON value of type null is not of expected type string", self.nodes[2].fundrawtransaction, rawtx, change_type=None)
@@ -310,7 +310,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.log.info("Test fundrawtxn with a vin < required amount")
         utx = get_unspent(self.nodes[2].listunspent(), 1)
 
-        inputs  = [ {'txid' : utx['txid'], 'vout' : utx['vout']}]
+        inputs  = [ {'outid' : utx['outid']}]
         outputs = { self.nodes[0].getnewaddress() : 1.0 }
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
 
@@ -318,7 +318,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         rawtx = rawtx[:82] + "0100" + rawtx[84:]
 
         dec_tx  = self.nodes[2].decoderawtransaction(rawtx)
-        assert_equal(utx['txid'], dec_tx['vin'][0]['txid'])
+        assert_equal(utx['outid'], dec_tx['vin'][0]['outid'])
         assert_equal("00", dec_tx['vin'][0]['scriptSig']['hex'])
 
         # Should fail without add_inputs:
@@ -334,7 +334,7 @@ class RawTransactionsTest(BitcoinTestFramework):
             else:
                 assert_equal(i, rawtxfund['changepos'])
 
-        assert_equal(utx['txid'], dec_tx['vin'][0]['txid'])
+        assert_equal(utx['outid'], dec_tx['vin'][0]['outid'])
         assert_equal("00", dec_tx['vin'][0]['scriptSig']['hex'])
 
         assert_equal(matchingOuts, 1)
@@ -345,11 +345,11 @@ class RawTransactionsTest(BitcoinTestFramework):
         utx = get_unspent(self.nodes[2].listunspent(), 1)
         utx2 = get_unspent(self.nodes[2].listunspent(), 5)
 
-        inputs  = [ {'txid' : utx['txid'], 'vout' : utx['vout']},{'txid' : utx2['txid'], 'vout' : utx2['vout']} ]
+        inputs  = [ {'outid' : utx['outid']},{'outid' : utx2['outid']} ]
         outputs = { self.nodes[0].getnewaddress() : 6.0 }
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
         dec_tx  = self.nodes[2].decoderawtransaction(rawtx)
-        assert_equal(utx['txid'], dec_tx['vin'][0]['txid'])
+        assert_equal(utx['outid'], dec_tx['vin'][0]['outid'])
 
         # Should fail without add_inputs:
         assert_raises_rpc_error(-4, ERR_NOT_ENOUGH_PRESET_INPUTS, self.nodes[2].fundrawtransaction, rawtx, add_inputs=False)
@@ -366,7 +366,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         matchingIns = 0
         for vinOut in dec_tx['vin']:
             for vinIn in inputs:
-                if vinIn['txid'] == vinOut['txid']:
+                if vinIn['outid'] == vinOut['outid']:
                     matchingIns+=1
 
         assert_equal(matchingIns, 2) #we now must see two vins identical to vins given as params
@@ -376,11 +376,11 @@ class RawTransactionsTest(BitcoinTestFramework):
         utx = get_unspent(self.nodes[2].listunspent(), 1)
         utx2 = get_unspent(self.nodes[2].listunspent(), 5)
 
-        inputs  = [ {'txid' : utx['txid'], 'vout' : utx['vout']},{'txid' : utx2['txid'], 'vout' : utx2['vout']} ]
+        inputs  = [ {'outid' : utx['outid']},{'outid' : utx2['outid']} ]
         outputs = { self.nodes[0].getnewaddress() : 6.0, self.nodes[0].getnewaddress() : 1.0 }
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
         dec_tx  = self.nodes[2].decoderawtransaction(rawtx)
-        assert_equal(utx['txid'], dec_tx['vin'][0]['txid'])
+        assert_equal(utx['outid'], dec_tx['vin'][0]['outid'])
 
         # Should fail without add_inputs:
         assert_raises_rpc_error(-4, ERR_NOT_ENOUGH_PRESET_INPUTS, self.nodes[2].fundrawtransaction, rawtx, add_inputs=False)
@@ -398,8 +398,7 @@ class RawTransactionsTest(BitcoinTestFramework):
     def test_invalid_input(self):
         self.log.info("Test fundrawtxn with an invalid vin")
         txid = "1c7f966dab21119bac53213a2bc7532bff1fa844c124fd750a7d0b1332440bd1"
-        vout = 0
-        inputs  = [ {'txid' : txid, 'vout' : vout} ] #invalid vin!
+        inputs  = [ {'outid' : txid} ] #invalid vin!
         outputs = { self.nodes[0].getnewaddress() : 1.0}
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
         assert_raises_rpc_error(-4, "Unable to find UTXO for external input", self.nodes[2].fundrawtransaction, rawtx)
@@ -736,7 +735,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         result = wwatch.fundrawtransaction(rawtx, True)
         res_dec = self.nodes[0].decoderawtransaction(result["hex"])
         assert_equal(len(res_dec["vin"]), 1)
-        assert_equal(res_dec["vin"][0]["txid"], self.watchonly_utxo['txid'])
+        assert_equal(res_dec["vin"][0]["outid"], self.watchonly_utxo['outid'])
 
         assert "fee" in result.keys()
         assert_greater_than(result["changepos"], -1)
@@ -756,7 +755,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         result = wwatch.fundrawtransaction(rawtx, includeWatching=True, changeAddress=w3.getrawchangeaddress(), subtractFeeFromOutputs=[0])
         res_dec = self.nodes[0].decoderawtransaction(result["hex"])
         assert_equal(len(res_dec["vin"]), 1)
-        assert res_dec["vin"][0]["txid"] == self.watchonly_utxo['txid']
+        assert res_dec["vin"][0]["outid"] == self.watchonly_utxo['outid']
 
         assert_greater_than(result["fee"], 0)
         assert_equal(result["changepos"], -1)
@@ -1022,19 +1021,17 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         # An external input without solving data should result in an error
         raw_tx = wallet.createrawtransaction([ext_utxo], {self.nodes[0].getnewaddress(): ext_utxo["amount"] / 2})
-        assert_raises_rpc_error(-4, "Not solvable pre-selected input COutPoint(%s)" % (ext_utxo["txid"][0:10]), wallet.fundrawtransaction, raw_tx)
+        assert_raises_rpc_error(-4, "Not solvable pre-selected input COutPoint(%s)" % (ext_utxo["outid"][0:10]), wallet.fundrawtransaction, raw_tx)
 
         # Error conditions
         assert_raises_rpc_error(-5, "'not a pubkey' is not hex", wallet.fundrawtransaction, raw_tx, solving_data={"pubkeys":["not a pubkey"]})
         assert_raises_rpc_error(-5, "'01234567890a0b0c0d0e0f' is not a valid public key", wallet.fundrawtransaction, raw_tx, solving_data={"pubkeys":["01234567890a0b0c0d0e0f"]})
         assert_raises_rpc_error(-5, "'not a script' is not hex", wallet.fundrawtransaction, raw_tx, solving_data={"scripts":["not a script"]})
         assert_raises_rpc_error(-8, "Unable to parse descriptor 'not a descriptor'", wallet.fundrawtransaction, raw_tx, solving_data={"descriptors":["not a descriptor"]})
-        assert_raises_rpc_error(-8, "Invalid parameter, missing vout key", wallet.fundrawtransaction, raw_tx, input_weights=[{"txid": ext_utxo["txid"]}])
-        assert_raises_rpc_error(-8, "Invalid parameter, vout cannot be negative", wallet.fundrawtransaction, raw_tx, input_weights=[{"txid": ext_utxo["txid"], "vout": -1}])
-        assert_raises_rpc_error(-8, "Invalid parameter, missing weight key", wallet.fundrawtransaction, raw_tx, input_weights=[{"txid": ext_utxo["txid"]}])
-        assert_raises_rpc_error(-8, "Invalid parameter, weight cannot be less than 165", wallet.fundrawtransaction, raw_tx, input_weights=[{"txid": ext_utxo["txid"], "weight": 164}])
-        assert_raises_rpc_error(-8, "Invalid parameter, weight cannot be less than 165", wallet.fundrawtransaction, raw_tx, input_weights=[{"txid": ext_utxo["txid"], "weight": -1}])
-        assert_raises_rpc_error(-8, "Invalid parameter, weight cannot be greater than", wallet.fundrawtransaction, raw_tx, input_weights=[{"txid": ext_utxo["txid"], "weight": 400001}])
+        assert_raises_rpc_error(-8, "Invalid parameter, missing weight key", wallet.fundrawtransaction, raw_tx, input_weights=[{"outid": ext_utxo["outid"]}])
+        assert_raises_rpc_error(-8, "Invalid parameter, weight cannot be less than 165", wallet.fundrawtransaction, raw_tx, input_weights=[{"outid": ext_utxo["outid"], "weight": 164}])
+        assert_raises_rpc_error(-8, "Invalid parameter, weight cannot be less than 165", wallet.fundrawtransaction, raw_tx, input_weights=[{"outid": ext_utxo["outid"], "weight": -1}])
+        assert_raises_rpc_error(-8, "Invalid parameter, weight cannot be greater than", wallet.fundrawtransaction, raw_tx, input_weights=[{"outid": ext_utxo["outid"], "weight": 400001}])
 
         # But funding should work when the solving data is provided
         funded_tx = wallet.fundrawtransaction(raw_tx, solving_data={"pubkeys": [addr_info['pubkey']], "scripts": [addr_info["embedded"]["scriptPubKey"]]})
@@ -1058,30 +1055,30 @@ class RawTransactionsTest(BitcoinTestFramework):
         high_input_weight = input_weight * 2
 
         # Funding should also work if the input weight is provided
-        funded_tx = wallet.fundrawtransaction(raw_tx, input_weights=[{"txid": ext_utxo["txid"], "weight": input_weight}], fee_rate=2)
+        funded_tx = wallet.fundrawtransaction(raw_tx, input_weights=[{"outid": ext_utxo["outid"], "weight": input_weight}], fee_rate=2)
         signed_tx = wallet.signrawtransactionwithwallet(funded_tx["hex"])
         signed_tx = self.nodes[0].signrawtransactionwithwallet(signed_tx["hex"])
         assert_equal(self.nodes[0].testmempoolaccept([signed_tx["hex"]])[0]["allowed"], True)
         assert_equal(signed_tx["complete"], True)
         # Reducing the weight should have a lower fee
-        funded_tx2 = wallet.fundrawtransaction(raw_tx, input_weights=[{"txid": ext_utxo["txid"], "weight": low_input_weight}], fee_rate=2)
+        funded_tx2 = wallet.fundrawtransaction(raw_tx, input_weights=[{"outid": ext_utxo["outid"], "weight": low_input_weight}], fee_rate=2)
         assert_greater_than(funded_tx["fee"], funded_tx2["fee"])
         # Increasing the weight should have a higher fee
-        funded_tx2 = wallet.fundrawtransaction(raw_tx, input_weights=[{"txid": ext_utxo["txid"], "weight": high_input_weight}], fee_rate=2)
+        funded_tx2 = wallet.fundrawtransaction(raw_tx, input_weights=[{"outid": ext_utxo["outid"], "weight": high_input_weight}], fee_rate=2)
         assert_greater_than(funded_tx2["fee"], funded_tx["fee"])
         # The provided weight should override the calculated weight when solving data is provided
-        funded_tx3 = wallet.fundrawtransaction(raw_tx, solving_data={"descriptors": [desc]}, input_weights=[{"txid": ext_utxo["txid"], "weight": high_input_weight}], fee_rate=2)
+        funded_tx3 = wallet.fundrawtransaction(raw_tx, solving_data={"descriptors": [desc]}, input_weights=[{"outid": ext_utxo["outid"], "weight": high_input_weight}], fee_rate=2)
         assert_equal(funded_tx2["fee"], funded_tx3["fee"])
         # The feerate should be met
-        funded_tx4 = wallet.fundrawtransaction(raw_tx, input_weights=[{"txid": ext_utxo["txid"], "weight": high_input_weight}], fee_rate=10)
+        funded_tx4 = wallet.fundrawtransaction(raw_tx, input_weights=[{"outid": ext_utxo["outid"], "weight": high_input_weight}], fee_rate=10)
         input_add_weight = high_input_weight - (41 * 4)
         tx4_weight = wallet.decoderawtransaction(funded_tx4["hex"])["weight"] + input_add_weight
         tx4_vsize = int(ceil(tx4_weight / 4))
         assert_fee_amount(funded_tx4["fee"], tx4_vsize, Decimal(0.0001))
 
         # Funding with weight at csuint boundaries should not cause problems
-        funded_tx = wallet.fundrawtransaction(raw_tx, input_weights=[{"txid": ext_utxo["txid"], "weight": 255}], fee_rate=2)
-        funded_tx = wallet.fundrawtransaction(raw_tx, input_weights=[{"txid": ext_utxo["txid"], "weight": 65539}], fee_rate=2)
+        funded_tx = wallet.fundrawtransaction(raw_tx, input_weights=[{"outid": ext_utxo["outid"], "weight": 255}], fee_rate=2)
+        funded_tx = wallet.fundrawtransaction(raw_tx, input_weights=[{"outid": ext_utxo["outid"], "weight": 65539}], fee_rate=2)
 
         self.nodes[2].unloadwallet("extfund")
 
@@ -1124,12 +1121,16 @@ class RawTransactionsTest(BitcoinTestFramework):
         source_tx = self.nodes[0].send(outputs=[{addr1: 5}, {addr2: 5}], change_position=0)
         self.generate(self.nodes[0], 1)
 
+        # Look up the output hashes for vout indices 1 and 2 (change at index 0)
+        source_tx_dec = self.nodes[0].getrawtransaction(source_tx["txid"], True)
+        outid_1 = source_tx_dec["vout"][1]["hash"]
+        outid_2 = source_tx_dec["vout"][2]["hash"]
+
         # Select only one input.
         options = {
             "inputs": [
                 {
-                    "txid": source_tx["txid"],
-                    "vout": 1  # change position was hardcoded to index 0
+                    "outid": outid_1
                 }
             ]
         }
@@ -1143,8 +1144,7 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         # Case (4), Explicit add_inputs=true and preset inputs (with preset inputs covering the target amount)
         options["inputs"].append({
-            "txid": source_tx["txid"],
-            "vout": 2  # change position was hardcoded to index 0
+            "outid": outid_2
         })
         tx = wallet.send(outputs=[{addr1: 8}], **options)
         assert tx["complete"]
@@ -1152,7 +1152,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         decoded_psbt_inputs = self.nodes[0].decodepsbt(tx["psbt"])['tx']['vin']
         assert_equal(len(decoded_psbt_inputs), 2)
         for input in decoded_psbt_inputs:
-            assert_equal(input["txid"], source_tx["txid"])
+            assert input["outid"] in [outid_1, outid_2]
 
         # Case (5), assert that inputs are added to the tx by explicitly setting add_inputs=true
         options = {"add_inputs": True, "add_to_wallet": True}
@@ -1174,8 +1174,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         # Case (2), 'walletcreatefundedpsbt' command
         # Default add_inputs value with preset inputs (add_inputs=false).
         inputs = [{
-            "txid": source_tx["txid"],
-            "vout": 1  # change position was hardcoded to index 0
+            "outid": outid_1
         }]
         outputs = {self.nodes[1].getnewaddress(): 8}
         assert_raises_rpc_error(-4, ERR_NOT_ENOUGH_PRESET_INPUTS, wallet.walletcreatefundedpsbt, inputs=inputs, outputs=outputs)
@@ -1186,15 +1185,14 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         # Case (4), Explicit add_inputs=true and preset inputs (with preset inputs covering the target amount)
         inputs.append({
-            "txid": source_tx["txid"],
-            "vout": 2  # change position was hardcoded to index 0
+            "outid": outid_2
         })
         psbt_tx = wallet.walletcreatefundedpsbt(outputs=[{addr1: 8}], inputs=inputs, **options)
         # Check that only the preset inputs were added to the tx
         decoded_psbt_inputs = self.nodes[0].decodepsbt(psbt_tx["psbt"])['tx']['vin']
         assert_equal(len(decoded_psbt_inputs), 2)
         for input in decoded_psbt_inputs:
-            assert_equal(input["txid"], source_tx["txid"])
+            assert input["outid"] in [outid_1, outid_2]
 
         # Case (5), 'walletcreatefundedpsbt' command
         # Explicit add_inputs=true, no preset inputs
@@ -1294,7 +1292,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         inputs = []
         for i in range(0, 2):
             utxo = self.create_outpoints(self.nodes[2], outputs=[{addr: 5}])[0]
-            inputs.append((utxo['txid'], utxo['vout']))
+            inputs.append((utxo['outid'],))
         self.sync_mempools()
 
         # Unsafe inputs are ignored by default.
@@ -1304,7 +1302,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         # But we can opt-in to use them for funding.
         fundedtx = wallet.fundrawtransaction(rawtx, include_unsafe=True)
         tx_dec = wallet.decoderawtransaction(fundedtx['hex'])
-        assert all((txin["txid"], txin["vout"]) in inputs for txin in tx_dec["vin"])
+        assert all((txin["outid"],) in inputs for txin in tx_dec["vin"])
         signedtx = wallet.signrawtransactionwithwallet(fundedtx['hex'])
         assert wallet.testmempoolaccept([signedtx['hex']])[0]["allowed"]
 
@@ -1312,7 +1310,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.generate(self.nodes[0], 1)
         fundedtx = wallet.fundrawtransaction(rawtx, include_unsafe=False)
         tx_dec = wallet.decoderawtransaction(fundedtx['hex'])
-        assert all((txin["txid"], txin["vout"]) in inputs for txin in tx_dec["vin"])
+        assert all((txin["outid"],) in inputs for txin in tx_dec["vin"])
         signedtx = wallet.signrawtransactionwithwallet(fundedtx['hex'])
         assert wallet.testmempoolaccept([signedtx['hex']])[0]["allowed"]
         self.nodes[0].unloadwallet("unsafe")
@@ -1420,7 +1418,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         assert_equal(len(tx1_inputs), 1)
 
         utxo1 = tx1_inputs[0]
-        assert unconfirmed_txid == utxo1['txid']
+        assert unconfirmed_txid == self.nodes[0].gettxfromoutputhash(utxo1['outid'])['txid']
 
         final_tx1 = wallet.signrawtransactionwithwallet(funded_tx1)['hex']
         txid1 = self.nodes[0].sendrawtransaction(final_tx1)
@@ -1430,7 +1428,7 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         self.log.info("Fail to craft a new TX with minconf above highest one")
         # Create a replacement tx to 'final_tx1' that has 1 BTC target instead of 0.1.
-        raw_tx2 = wallet.createrawtransaction([{'txid': utxo1['txid'], 'vout': utxo1['vout']}], {target_address: 1})
+        raw_tx2 = wallet.createrawtransaction([{'outid': utxo1['outid']}], {target_address: 1})
         assert_raises_rpc_error(-4, "Insufficient funds", wallet.fundrawtransaction, raw_tx2, {'add_inputs': True, 'minconf': 3, 'fee_rate': 10})
 
         self.log.info("Fail to broadcast a new TX with maxconf 0 due to BIP125 rules to verify it actually chose unconfirmed outputs")
@@ -1448,8 +1446,8 @@ class RawTransactionsTest(BitcoinTestFramework):
         tx2_inputs = self.nodes[0].decoderawtransaction(funded_tx2)['vin']
         assert_greater_than_or_equal(len(tx2_inputs), 2)
         for vin in tx2_inputs:
-            if vin['txid'] != unconfirmed_txid:
-                assert_greater_than_or_equal(self.nodes[0].gettxout(vin['txid'])['confirmations'], 2)
+            if self.nodes[0].gettxfromoutputhash(vin['outid'])['txid'] != unconfirmed_txid:
+                assert_greater_than_or_equal(self.nodes[0].gettxout(vin['outid'])['confirmations'], 2)
 
         final_tx2 = wallet.signrawtransactionwithwallet(funded_tx2)['hex']
         txid2 = self.nodes[0].sendrawtransaction(final_tx2)

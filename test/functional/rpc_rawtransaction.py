@@ -266,19 +266,19 @@ class RawTransactionsTest(BitcoinTestFramework):
         assert_raises_rpc_error(-3, "JSON value of type string is not of expected type array", self.nodes[0].createrawtransaction, 'foo', {})
         assert_raises_rpc_error(-3, "JSON value of type string is not of expected type object", self.nodes[0].createrawtransaction, ['foo'], {})
         assert_raises_rpc_error(-3, "JSON value of type null is not of expected type string", self.nodes[0].createrawtransaction, [{}], {})
-        assert_raises_rpc_error(-8, "txid must be of length 64 (not 3, for 'foo')", self.nodes[0].createrawtransaction, [{'txid': 'foo'}], {})
+        assert_raises_rpc_error(-8, "outid must be of length 64 (not 3, for 'foo')", self.nodes[0].createrawtransaction, [{'outid': 'foo'}], {})
         txid = "ZZZ7bb8b1697ea987f3b223ba7819250cae33efacb068d23dc24859824a77844"
-        assert_raises_rpc_error(-8, f"txid must be hexadecimal string (not '{txid}')", self.nodes[0].createrawtransaction, [{'txid': txid}], {})
+        assert_raises_rpc_error(-8, f"outid must be hexadecimal string (not '{txid}')", self.nodes[0].createrawtransaction, [{'outid': txid}], {})
         # sequence number out of range
         for invalid_seq in [-1, 4294967296]:
-            inputs = [{'txid': TXID, 'vout': 1, 'sequence': invalid_seq}]
+            inputs = [{'outid': TXID, 'sequence': invalid_seq}]
             address = getnewdestination()[2]
             outputs = {address: 1}
             assert_raises_rpc_error(-8, 'Invalid parameter, sequence number is out of range',
                                     self.nodes[0].createrawtransaction, inputs, outputs)
         # with valid sequence number
         for valid_seq in [1000, 4294967294]:
-            inputs = [{'txid': TXID, 'vout': 1, 'sequence': valid_seq}]
+            inputs = [{'outid': TXID, 'sequence': valid_seq}]
             address = getnewdestination()[2]
             outputs = {address: 1}
             rawtx = self.nodes[0].createrawtransaction(inputs, outputs)
@@ -303,7 +303,7 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         # Test `createrawtransaction` mismatch between sequence number(s) and `replaceable` option
         assert_raises_rpc_error(-8, "Invalid parameter combination: Sequence number(s) contradict replaceable option",
-                                self.nodes[0].createrawtransaction, [{'txid': TXID, 'vout': 0, 'sequence': MAX_BIP125_RBF_SEQUENCE+1}], {}, 0, True)
+                                self.nodes[0].createrawtransaction, [{'outid': TXID, 'sequence': MAX_BIP125_RBF_SEQUENCE+1}], {}, 0, True)
 
         # Test `createrawtransaction` invalid `locktime`
         assert_raises_rpc_error(-3, "JSON value of type string is not of expected type number", self.nodes[0].createrawtransaction, [], {}, 'foo')
@@ -315,31 +315,31 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         # Test that createrawtransaction accepts an array and object as outputs
         # One output
-        tx = tx_from_hex(self.nodes[2].createrawtransaction(inputs=[{'txid': TXID, 'vout': 9}], outputs={address: 99}))
+        tx = tx_from_hex(self.nodes[2].createrawtransaction(inputs=[{'outid': TXID}], outputs={address: 99}))
         assert_equal(len(tx.vout), 1)
         # assert_equal(
         #     tx.serialize().hex(),
-        #     self.nodes[2].createrawtransaction(inputs=[{'txid': TXID, 'vout': 9}], outputs=[{address: 99}]),
+        #     self.nodes[2].createrawtransaction(inputs=[{'outid': TXID}], outputs=[{address: 99}]),
         # )
         # Two outputs
         address2 = getnewdestination()[2]
-        tx = tx_from_hex(self.nodes[2].createrawtransaction(inputs=[{'txid': TXID, 'vout': 9}], outputs=OrderedDict([(address, 99), (address2, 99)])))
+        tx = tx_from_hex(self.nodes[2].createrawtransaction(inputs=[{'outid': TXID}], outputs=OrderedDict([(address, 99), (address2, 99)])))
         assert_equal(len(tx.vout), 2)
         # assert_equal(
         #     tx.serialize().hex(),
-        #     self.nodes[2].createrawtransaction(inputs=[{'txid': TXID, 'vout': 9}], outputs=[{address: 99}, {address2: 99}]),
+        #     self.nodes[2].createrawtransaction(inputs=[{'outid': TXID}], outputs=[{address: 99}, {address2: 99}]),
         # )
         # Multiple mixed outputs
-        tx = tx_from_hex(self.nodes[2].createrawtransaction(inputs=[{'txid': TXID, 'vout': 9}], outputs=multidict([(address, 99), (address2, 99), ('data', '99')])))
+        tx = tx_from_hex(self.nodes[2].createrawtransaction(inputs=[{'outid': TXID}], outputs=multidict([(address, 99), (address2, 99), ('data', '99')])))
         assert_equal(len(tx.vout), 3)
         # assert_equal(
         #     tx.serialize().hex(),
-        #     self.nodes[2].createrawtransaction(inputs=[{'txid': TXID, 'vout': 9}], outputs=[{address: 99}, {address2: 99}, {'data': '99'}]),
+        #     self.nodes[2].createrawtransaction(inputs=[{'outid': TXID}], outputs=[{address: 99}, {address2: 99}, {'data': '99'}]),
         # )
 
     def sendrawtransaction_tests(self):
         self.log.info("Test sendrawtransaction with missing input")
-        inputs = [{'txid': TXID, 'vout': 1}]  # won't exist
+        inputs = [{'outid': TXID}]  # won't exist
         address = getnewdestination()[2]
         outputs = {address: 4.998}
         rawtx = self.nodes[2].createrawtransaction(inputs, outputs)
@@ -534,7 +534,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         vout = next(o for o in rawTx['vout'] if o['value'] == Decimal('2.20000000'))
 
         bal = self.nodes[0].getbalance()
-        inputs = [{"txid": vout['hash'], "scriptPubKey": vout['scriptPubKey']['hex'], "amount": vout['value']}]
+        inputs = [{"outid": vout['hash'], "scriptPubKey": vout['scriptPubKey']['hex'], "amount": vout['value']}]
         outputs = {self.nodes[0].getnewaddress(): 2.19}
         rawTx = self.nodes[2].createrawtransaction(inputs, outputs)
         rawTxPartialSigned = self.nodes[1].signrawtransactionwithwallet(rawTx, inputs)
@@ -573,7 +573,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         vout = next(o for o in rawTx2['vout'] if o['value'] == Decimal('2.20000000'))
 
         bal = self.nodes[0].getbalance()
-        inputs = [{"txid": vout['hash'], "scriptPubKey": vout['scriptPubKey']['hex'], "redeemScript": mSigObjValid['hex'], "amount": vout['value']}]
+        inputs = [{"outid": vout['hash'], "scriptPubKey": vout['scriptPubKey']['hex'], "redeemScript": mSigObjValid['hex'], "amount": vout['value']}]
         outputs = {self.nodes[0].getnewaddress(): 2.19}
         rawTx2 = self.nodes[2].createrawtransaction(inputs, outputs)
         rawTxPartialSigned1 = self.nodes[1].signrawtransactionwithwallet(rawTx2, inputs)

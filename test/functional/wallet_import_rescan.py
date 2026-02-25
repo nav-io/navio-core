@@ -303,7 +303,7 @@ class ImportRescanTest(BitcoinTestFramework):
         # An equivalent test for descriptors exists in wallet_rescan_unconfirmed.py.
         for variant in mempool_variants:
             # Find the unspent output that corresponds to this transaction
-            unspent_output = next(txin for txin in self.nodes[1].listunspent() if txin["txid"] == variant.initial_outid)
+            unspent_output = next(txin for txin in self.nodes[1].listunspent() if txin["outid"] == variant.initial_outid)
             # Send full amount, subtracting fee from outputs, to ensure no change is created.
             child = self.nodes[1].send(
                 add_to_wallet=False,

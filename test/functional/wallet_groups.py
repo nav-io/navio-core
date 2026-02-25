@@ -114,7 +114,7 @@ class WalletGroupTest(BitcoinTestFramework):
         assert_approx(values[0], vexp=0.1, vspan=0.0001)
         assert_approx(values[1], vexp=1.4, vspan=0.0001)
 
-        input_txids = [vin["txid"] for vin in tx3["vin"]]
+        input_txids = [vin["outid"] for vin in tx3["vin"]]
         input_addrs = [self.nodes[1].gettransaction(self.nodes[1].gettxfromoutputhash(txid)['txid'])['details'][0]['address'] for txid in input_txids]
         assert_equal(input_addrs[0], input_addrs[1])
         # Node 2 enforces avoidpartialspends so needs no checking here
@@ -167,7 +167,7 @@ class WalletGroupTest(BitcoinTestFramework):
 
         self.log.info("Fill a wallet with 5,000 outputs corresponding to the same scriptPubKey")
         for _ in range(5):
-            raw_tx = self.nodes[0].createrawtransaction([{"txid":"0"*64, "vout":0}], [{addr2[0]: 0.05}])
+            raw_tx = self.nodes[0].createrawtransaction([{"outid":"0"*64}], [{addr2[0]: 0.05}])
             tx = tx_from_hex(raw_tx)
             tx.vin = []
             tx.vout = [tx.vout[0]] * 1000

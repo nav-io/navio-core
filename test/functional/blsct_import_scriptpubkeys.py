@@ -93,7 +93,7 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         self.log.info(f"Custom script: {custom_script}")
 
         # Create transaction inputs
-        inputs = [{"txid": utxo['txid']}]
+        inputs = [{"outid": utxo['outid']}]
 
         # Create transaction outputs
         outputs = [
@@ -175,7 +175,7 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         self.log.info(f"Script 3: {script3}")
 
         # Create transaction inputs
-        inputs = [{"txid": utxo['txid']}]
+        inputs = [{"outid": utxo['outid']}]
 
         # Create transaction outputs with multiple scripts
         outputs = [
@@ -229,7 +229,7 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         self.log.info(f"Custom script: {custom_script}")
 
         # Create transaction inputs
-        inputs = [{"txid": utxo['txid']}]
+        inputs = [{"outid": utxo['outid']}]
 
         # Create transaction outputs with custom script
         outputs = [

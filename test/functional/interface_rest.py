@@ -110,7 +110,7 @@ class RESTTest (BitcoinTestFramework):
         assert_greater_than_or_equal(int(hex_response.getheader('content-length')),
                                      json_obj['size']*2)
 
-        spent = json_obj['vin'][0]['txid']  # reference spent input via output hash
+        spent = json_obj['vin'][0]['outid']  # reference spent input via output hash
         # get hash of 0.1 outpoint
         n, = filter_output_indices_by_value(json_obj['vout'], Decimal('0.1'))
         spending = json_obj['vout'][n]['hash']
@@ -176,7 +176,7 @@ class RESTTest (BitcoinTestFramework):
         txid = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=getnewdestination()[1], amount=int(0.1 * COIN))["txidhash"]
         json_obj = self.test_rest_request(f"/tx/{txid}")
         # get the spent output to later check for utxo (should be spent by then)
-        spent = json_obj['vin'][0]['txid']
+        spent = json_obj['vin'][0]['outid']
         n, = filter_output_indices_by_value(json_obj['vout'], Decimal('0.1'))
         spending = json_obj['vout'][n]['hash']
 

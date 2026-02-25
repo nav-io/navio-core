@@ -61,8 +61,8 @@ class NULLDUMMYTest(BitcoinTestFramework):
             '-par=1',  # Use only one script thread to get the exact reject reason for testing
         ]]
 
-    def create_transaction(self, *, txid, input_details=None, addr, amount, privkey):
-        input = {"txid": txid, "vout": 0}
+    def create_transaction(self, *, outid, input_details=None, addr, amount, privkey):
+        input = {"outid": outid}
         output = {addr: amount}
         rawtx = self.nodes[0].createrawtransaction([input], output)
         # Details only needed for scripthash or witness spends
@@ -90,17 +90,17 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.lastblocktime = int(time.time()) + self.lastblockheight
 
         self.log.info(f"Test 1: NULLDUMMY compliant base transactions should be accepted to mempool and mined before activation [{COINBASE_MATURITY + 3}]")
-        test1txs = [self.create_transaction(txid=coinbase_txid[0], addr=self.ms_address, amount=49,
+        test1txs = [self.create_transaction(outid=coinbase_txid[0], addr=self.ms_address, amount=49,
                                             privkey=self.nodes[0].get_deterministic_priv_key().key)]
         txid1 = self.nodes[0].sendrawtransaction(test1txs[0].serialize_with_witness().hex(), 0)
         txoutid1 = self.nodes[0].getrawtransaction(txid1,1)['vout'][0]['hash']
-        test1txs.append(self.create_transaction(txid=txoutid1, input_details=ms_unlock_details,
+        test1txs.append(self.create_transaction(outid=txoutid1, input_details=ms_unlock_details,
                                                 addr=self.ms_address, amount=48,
                                                 privkey=self.privkey))
         txid2 = self.nodes[0].sendrawtransaction(test1txs[1].serialize_with_witness().hex(), 0)
         txoutid2 = self.nodes[0].getrawtransaction(txid2,1)['vout'][0]['hash']
 
-        test1txs.append(self.create_transaction(txid=coinbase_txid[1],
+        test1txs.append(self.create_transaction(outid=coinbase_txid[1],
                                                 addr=self.wit_ms_address, amount=49,
                                                 privkey=self.nodes[0].get_deterministic_priv_key().key))
         txid3 = self.nodes[0].sendrawtransaction(test1txs[2].serialize_with_witness().hex(), 0)
@@ -108,7 +108,7 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.block_submit(self.nodes[0], test1txs, accept=True)
 
         self.log.info("Test 2: Non-NULLDUMMY base multisig transaction should not be accepted to mempool before activation")
-        test2tx = self.create_transaction(txid=txoutid2, input_details=ms_unlock_details,
+        test2tx = self.create_transaction(outid=txoutid2, input_details=ms_unlock_details,
                                           addr=self.ms_address, amount=47,
                                           privkey=self.privkey)
         invalidate_nulldummy_tx(test2tx)
@@ -120,7 +120,7 @@ class NULLDUMMYTest(BitcoinTestFramework):
         test2txoutid = self.nodes[0].getrawtransaction(test2tx.rehash(),1)['vout'][0]['hash']
 
         self.log.info("Test 4: Non-NULLDUMMY base multisig transaction is invalid after activation")
-        test4tx = self.create_transaction(txid=test2txoutid, input_details=ms_unlock_details,
+        test4tx = self.create_transaction(outid=test2txoutid, input_details=ms_unlock_details,
                                           addr=getnewdestination()[2], amount=46,
                                           privkey=self.privkey)
         test6txs = [CTransaction(test4tx)]
@@ -129,7 +129,7 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.block_submit(self.nodes[0], [test4tx], accept=False)
 
         self.log.info("Test 5: Non-NULLDUMMY P2WSH multisig transaction invalid after activation")
-        test5tx = self.create_transaction(txid=txoutid3, input_details={"scriptPubKey": test1txs[2].vout[0].scriptPubKey.hex(),
+        test5tx = self.create_transaction(outid=txoutid3, input_details={"scriptPubKey": test1txs[2].vout[0].scriptPubKey.hex(),
                                           "amount": 49, "witnessScript": wms["redeemScript"]},
                                           addr=getnewdestination(address_type='p2sh-segwit')[2], amount=48,
                                           privkey=self.privkey)

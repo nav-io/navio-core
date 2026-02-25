@@ -245,7 +245,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
                         validPredicate = false;
                         break;
                     }
-                } catch (const std::ios_base::failure& e) {
+                } catch (const std::ios_base::failure&) {
                     LogPrintf("%s: Invalid predicate in output %s\n", __func__, out.ToString());
                     validPredicate = false;
                     break;

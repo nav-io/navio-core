@@ -221,7 +221,7 @@ class AssumeutxoTest(BitcoinTestFramework):
         assert_raises_rpc_error(-1, "Block not found on disk", n1.getblock, spend_coin_blockhash)
         prev_tx = n0.getblock(spend_coin_blockhash, 3)['tx'][0]
         out_hash = prev_tx['vout'][0]['hash']
-        prevout = {"txid": out_hash, "vout": 0, "scriptPubKey": prev_tx['vout'][0]['scriptPubKey']['hex']}
+        prevout = {"outid": out_hash, "scriptPubKey": prev_tx['vout'][0]['scriptPubKey']['hex']}
         privkey = n0.get_deterministic_priv_key().key
         raw_tx = n1.createrawtransaction([prevout], {getnewdestination()[2]: 24.99})
         signed_tx = n1.signrawtransactionwithkey(raw_tx, [privkey], [prevout])['hex']

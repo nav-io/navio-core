@@ -211,7 +211,7 @@ class SendallTest(BitcoinTestFramework):
         tx_from_wallet = self.wallet.gettransaction(txid = sendall_tx_receipt["txid"], verbose = True)
         assert_equal(len(tx_from_wallet["decoded"]["vin"]), 1)
         assert_equal(len(tx_from_wallet["decoded"]["vout"]), 1)
-        assert_equal(tx_from_wallet["decoded"]["vin"][0]["txid"], utxo["txid"])
+        assert_equal(tx_from_wallet["decoded"]["vin"][0]["outid"], utxo["outid"])
         self.assert_tx_has_output(tx_from_wallet, self.remainder_target)
 
         self.generate(self.nodes[0], 1)
@@ -227,20 +227,20 @@ class SendallTest(BitcoinTestFramework):
         # fails on out of bounds vout
         # assert_raises_rpc_error(-8,
         #         "Input not found. UTXO ({}) is not part of wallet.".format(spent_utxo["txid"]),
-        #         self.wallet.sendall, recipients=[self.remainder_target], inputs=[{"txid": spent_utxo["txid"][::1]}])
+        #         self.wallet.sendall, recipients=[self.remainder_target], inputs=[{"outid": spent_utxo["outid"][::1]}])
 
         # fails on unconfirmed spent UTXO
         self.wallet.sendall(recipients=[self.remainder_target])
         assert_raises_rpc_error(-8,
-                "Input not available. UTXO ({}) was already spent.".format(spent_utxo["txid"]),
+                "Input not available. UTXO ({}) was already spent.".format(spent_utxo["outid"]),
                 self.wallet.sendall, recipients=[self.remainder_target], inputs=[spent_utxo])
 
         # fails on specific previously spent UTXO, while other UTXOs exist
         self.generate(self.nodes[0], 1)
         self.add_utxos([19, 2])
         assert_raises_rpc_error(-8,
-                "Input not available. UTXO ({}) was already spent.".format(spent_utxo["txid"]),
-                self.wallet.sendall, recipients=[self.remainder_target], inputs=[{"txid": spent_utxo["txid"][::1]}])
+                "Input not available. UTXO ({}) was already spent.".format(spent_utxo["outid"]),
+                self.wallet.sendall, recipients=[self.remainder_target], inputs=[{"outid": spent_utxo["outid"][::1]}])
 
         # fails because UTXO is unknown, while other UTXOs exist
         # foreign_utxo = self.def_wallet.listunspent()[0]
@@ -315,7 +315,7 @@ class SendallTest(BitcoinTestFramework):
         decoded = self.nodes[0].decodepsbt(psbt)
         assert_equal(len(decoded["inputs"]), 1)
         assert_equal(len(decoded["outputs"]), 1)
-        assert_equal(decoded["tx"]["vin"][0]["txid"], utxo["txid"])
+        assert_equal(decoded["tx"]["vin"][0]["outid"], utxo["outid"])
         assert_equal(decoded["tx"]["vout"][0]["scriptPubKey"]["address"], self.remainder_target)
 
     @cleanup

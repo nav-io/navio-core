@@ -47,7 +47,7 @@ FUZZ_TARGET(rbf, .init = initialize_rbf)
             break;
         }
         const CTransaction another_tx{*another_mtx};
-        if (fuzzed_data_provider.ConsumeBool() && !mtx->vin.empty()) {
+        if (fuzzed_data_provider.ConsumeBool() && !mtx->vin.empty() && !another_tx.vout.empty()) {
             mtx->vin[0].prevout = COutPoint{another_tx.vout[0].GetHash()};
         }
         LOCK2(cs_main, pool.cs);

@@ -599,7 +599,7 @@ static RPCHelpMan gettxspendingprevout()
                         RPCArg::Optional::OMITTED,
                         "",
                         {
-                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                            {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
                         },
                     },
                 },
@@ -608,11 +608,11 @@ static RPCHelpMan gettxspendingprevout()
         RPCResult{
             RPCResult::Type::ARR, "", "", {
                                               {RPCResult::Type::OBJ, "", "", {
-                                                                                 {RPCResult::Type::STR_HEX, "txid", "the transaction id of the checked output"},
+                                                                                 {RPCResult::Type::STR_HEX, "outid", "the output id of the checked output"},
                                                                                  {RPCResult::Type::STR_HEX, "spendingtxid", /*optional=*/true, "the transaction id of the mempool transaction spending this output (omitted if unspent)"},
                                                                              }},
                                           }},
-        RPCExamples{HelpExampleCli("gettxspendingprevout", "\"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"") + HelpExampleRpc("gettxspendingprevout", "\"[{\\\"txid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"")},
+        RPCExamples{HelpExampleCli("gettxspendingprevout", "\"[{\\\"outid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"") + HelpExampleRpc("gettxspendingprevout", "\"[{\\\"outid\\\":\\\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\\\"}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             const UniValue& output_params = request.params[0].get_array();
             if (output_params.empty()) {
@@ -627,11 +627,11 @@ static RPCHelpMan gettxspendingprevout()
 
                 RPCTypeCheckObj(o,
                                 {
-                                    {"txid", UniValueType(UniValue::VSTR)},
+                                    {"outid", UniValueType(UniValue::VSTR)},
                                 },
                                 /*fAllowNull=*/false, /*fStrict=*/true);
 
-                const Txid txid = Txid::FromUint256(ParseHashO(o, "txid"));
+                const Txid txid = Txid::FromUint256(ParseHashO(o, "outid"));
 
                 prevouts.emplace_back(txid);
             }
@@ -643,7 +643,7 @@ static RPCHelpMan gettxspendingprevout()
 
             for (const COutPoint& prevout : prevouts) {
                 UniValue o(UniValue::VOBJ);
-                o.pushKV("txid", prevout.hash.ToString());
+                o.pushKV("outid", prevout.hash.ToString());
 
                 const CTransaction* spendingTx = mempool.GetConflictTx(prevout);
                 if (spendingTx != nullptr) {

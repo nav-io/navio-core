@@ -68,8 +68,8 @@ class AbandonConflictTest(BitcoinTestFramework):
 
         inputs = []
         # spend 10btc outputs from txA and txB
-        inputs.append({"txid": txHashA})
-        inputs.append({"txid": txHashB})
+        inputs.append({"outid": txHashA})
+        inputs.append({"outid": txHashB})
         outputs = {}
 
         outputs[alice.getnewaddress()] = Decimal("14.99998")
@@ -82,8 +82,8 @@ class AbandonConflictTest(BitcoinTestFramework):
 
         #Create a child tx spending AB1 and C
         inputs = []
-        inputs.append({"txid": txHashAB1})
-        inputs.append({"txid": txHashC})
+        inputs.append({"outid": txHashAB1})
+        inputs.append({"outid": txHashC})
         outputs = {}
         outputs[alice.getnewaddress()] = Decimal("24.9996")
         signed2 = alice.signrawtransactionwithwallet(alice.createrawtransaction(inputs, outputs))
@@ -93,7 +93,7 @@ class AbandonConflictTest(BitcoinTestFramework):
 
         # Create a child tx spending ABC2
         signed3_change = Decimal("24.999")
-        inputs = [{"txid": txHashABC2}]
+        inputs = [{"outid": txHashABC2}]
         outputs = {alice.getnewaddress(): signed3_change}
         signed3 = alice.signrawtransactionwithwallet(alice.createrawtransaction(inputs, outputs))
         # note tx is never directly referenced, only abandoned as a child of the above
@@ -123,7 +123,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         balances = alice.getbalances()['mine']
         assert_equal(balances['untrusted_pending'] + balances['trusted'], newbalance)
         # Also shouldn't show up in listunspent
-        assert not txABC2 in [utxo["txid"] for utxo in alice.listunspent(0)]
+        assert not txHashABC2 in [utxo["outid"] for utxo in alice.listunspent(0)]
         balance = newbalance
 
         # Abandon original transaction and verify inputs are available again
@@ -179,7 +179,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         # Create a double spend of AB1 by spending again from only A's 10 output
         # Mine double spend from node 1
         inputs = []
-        inputs.append({"txid": txHashA})
+        inputs.append({"outid": txHashA})
         outputs = {}
         outputs[self.nodes[1].getnewaddress()] = Decimal("3.9999")
         outputs[bob.getnewaddress()] = Decimal("5.9999")

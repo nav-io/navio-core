@@ -662,7 +662,7 @@ CreatedTransactionResult FundTransaction(CWallet& wallet, const CMutableTransact
 
     if (options.exists("input_weights")) {
         for (const UniValue& input : options["input_weights"].get_array().getValues()) {
-            Txid txid = Txid::FromUint256(ParseHashO(input, "txid"));
+            Txid txid = Txid::FromUint256(ParseHashO(input, "outid"));
 
             const UniValue& weight_v = input.find_value("weight");
             if (!weight_v.isNum()) {
@@ -780,8 +780,7 @@ RPCHelpMan fundrawtransaction()
                                  RPCArg::Optional::OMITTED,
                                  "",
                                  {
-                                     {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
-                                     {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output index"},
+                                     {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
                                      {"weight", RPCArg::Type::NUM, RPCArg::Optional::NO, "The maximum weight for this input, "
                                                                                          "including the weight of the outpoint and sequence number. "
                                                                                          "Note that serialized signature sizes are not guaranteed to be consistent, "
@@ -860,7 +859,7 @@ RPCHelpMan signrawtransactionwithwallet()
                         RPCArg::Optional::OMITTED,
                         "",
                         {
-                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                            {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
                             {"scriptPubKey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "script key"},
                             {"redeemScript", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(required for P2SH) redeem script"},
                             {"witnessScript", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(required for P2WSH or P2SH-P2WSH) witness script"},
@@ -884,7 +883,7 @@ RPCHelpMan signrawtransactionwithwallet()
                                               {RPCResult::Type::BOOL, "complete", "If the transaction has a complete set of signatures"},
                                               {RPCResult::Type::ARR, "errors", /*optional=*/true, "Script verification errors (if there are any)", {
                                                                                                                                                        {RPCResult::Type::OBJ, "", "", {
-                                                                                                                                                                                          {RPCResult::Type::STR_HEX, "txid", "The hash of the referenced, previous transaction"},
+                                                                                                                                                                                          {RPCResult::Type::STR_HEX, "outid", "The hash of the referenced, previous output"},
                                                                                                                                                                                           {RPCResult::Type::ARR, "witness", "", {
                                                                                                                                                                                                                                     {RPCResult::Type::STR_HEX, "witness", ""},
                                                                                                                                                                                                                                 }},
@@ -1199,7 +1198,7 @@ RPCHelpMan send()
                                        RPCArg::Default{UniValue::VARR},
                                        "Specify inputs instead of adding them automatically. A JSON array of JSON objects",
                                        {
-                                           {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                                           {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
                                            {"sequence", RPCArg::Type::NUM, RPCArg::Optional::NO, "The sequence number"},
                                            {"weight", RPCArg::Type::NUM, RPCArg::DefaultHint{"Calculated from wallet and solving data"}, "The maximum weight for this input, "
                                                                                                                                          "including the weight of the outpoint and sequence number. "
@@ -1235,7 +1234,7 @@ RPCHelpMan send()
                                   "Send 0.2 BTC with a fee rate of 1.1 " + CURRENCY_ATOM + "/vB using positional arguments\n" + HelpExampleCli("send", "'{\"" + EXAMPLE_ADDRESS[0] + "\": 0.2}' null \"unset\" 1.1\n") +
                                   "Send 0.2 BTC with a fee rate of 1 " + CURRENCY_ATOM + "/vB using the options argument\n" + HelpExampleCli("send", "'{\"" + EXAMPLE_ADDRESS[0] + "\": 0.2}' null \"unset\" null '{\"fee_rate\": 1}'\n") +
                                   "Send 0.3 BTC with a fee rate of 25 " + CURRENCY_ATOM + "/vB using named arguments\n" + HelpExampleCli("-named send", "outputs='{\"" + EXAMPLE_ADDRESS[0] + "\": 0.3}' fee_rate=25\n") +
-                                  "Create a transaction that should confirm the next block, with a specific input, and return result without adding to wallet or broadcasting to the network\n" + HelpExampleCli("send", "'{\"" + EXAMPLE_ADDRESS[0] + "\": 0.1}' 1 economical '{\"add_to_wallet\": false, \"inputs\": [{\"txid\":\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\", \"vout\":1}]}'")},
+                                  "Create a transaction that should confirm the next block, with a specific input, and return result without adding to wallet or broadcasting to the network\n" + HelpExampleCli("send", "'{\"" + EXAMPLE_ADDRESS[0] + "\": 0.1}' 1 economical '{\"add_to_wallet\": false, \"inputs\": [{\"outid\":\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\"}]}'")},
                       [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
                           std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
                           if (!pwallet) return UniValue::VNULL;
@@ -1310,7 +1309,7 @@ RPCHelpMan sendall()
                                                RPCArg::Optional::OMITTED,
                                                "",
                                                {
-                                                   {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                                                   {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
                                                    {"sequence", RPCArg::Type::NUM, RPCArg::DefaultHint{"depends on the value of the 'replaceable' and 'locktime' arguments"}, "The sequence number"},
                                                },
                                            },
@@ -1609,8 +1608,7 @@ RPCHelpMan walletcreatefundedpsbt()
                         RPCArg::Optional::OMITTED,
                         "",
                         {
-                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
-                            {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
+                            {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
                             {"sequence", RPCArg::Type::NUM, RPCArg::DefaultHint{"depends on the value of the 'locktime' and 'options.replaceable' arguments"}, "The sequence number"},
                             {"weight", RPCArg::Type::NUM, RPCArg::DefaultHint{"Calculated from wallet and solving data"}, "The maximum weight for this input, "
                                                                                                                           "including the weight of the outpoint and sequence number. "
@@ -1668,7 +1666,7 @@ RPCHelpMan walletcreatefundedpsbt()
                                               {RPCResult::Type::STR_AMOUNT, "fee", "Fee in " + CURRENCY_UNIT + " the resulting transaction pays"},
                                               {RPCResult::Type::NUM, "changepos", "The position of the added change output, or -1"},
                                           }},
-        RPCExamples{"\nCreate a transaction with no inputs\n" + HelpExampleCli("walletcreatefundedpsbt", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
+        RPCExamples{"\nCreate a transaction with no inputs\n" + HelpExampleCli("walletcreatefundedpsbt", "\"[{\\\"outid\\\":\\\"myid\\\"}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
