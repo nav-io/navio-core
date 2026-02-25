@@ -227,8 +227,7 @@ void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry
         if (tx.IsCoinBase()) {
             in.pushKV("coinbase", HexStr(txin.scriptSig));
         } else {
-            in.pushKV("txid", txin.prevout.hash.GetHex());
-            in.pushKV("vout", (int64_t)txin.prevout.n);
+            in.pushKV("outid", txin.prevout.hash.GetHex());
             UniValue o(UniValue::VOBJ);
             o.pushKV("asm", ScriptToAsmStr(txin.scriptSig, true));
             o.pushKV("hex", HexStr(txin.scriptSig));
@@ -270,6 +269,7 @@ void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry
 
         UniValue out(UniValue::VOBJ);
 
+        out.pushKV("hash", txout.GetHash().ToString());
         out.pushKV("value", ValueFromAmount(txout.nValue));
         out.pushKV("n", (int64_t)i);
 

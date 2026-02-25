@@ -5,6 +5,7 @@
 #include <coins.h>
 #include <script/signingprovider.h>
 #include <test/util/transaction_utils.h>
+#include <test/util/random.h>
 
 CMutableTransaction BuildCreditingTransaction(const CScript& scriptPubKey, int nValue)
 {
@@ -30,8 +31,7 @@ CMutableTransaction BuildSpendingTransaction(const CScript& scriptSig, const CSc
     txSpend.vin.resize(1);
     txSpend.vout.resize(1);
     txSpend.vin[0].scriptWitness = scriptWitness;
-    txSpend.vin[0].prevout.hash = txCredit.GetHash();
-    txSpend.vin[0].prevout.n = 0;
+    txSpend.vin[0].prevout.hash = txCredit.vout[0].GetHash();
     txSpend.vin[0].scriptSig = scriptSig;
     txSpend.vin[0].nSequence = CTxIn::SEQUENCE_FINAL;
     txSpend.vout[0].scriptPubKey = CScript();

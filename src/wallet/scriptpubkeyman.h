@@ -11,6 +11,7 @@
 #include <script/descriptor.h>
 #include <script/script.h>
 #include <script/signingprovider.h>
+#include <sync.h>
 #include <util/error.h>
 #include <util/message.h>
 #include <util/result.h>
@@ -49,6 +50,8 @@ public:
     virtual const CKeyingMaterial& GetEncryptionKey() const = 0;
     virtual bool HasEncryptionKeys() const = 0;
     virtual bool IsLocked() const = 0;
+    //! Get the wallet mutex for lock ordering when calling GetEncryptionKey()
+    virtual RecursiveMutex& GetWalletMutex() const = 0;
 };
 
 //! Constant representing an unknown spkm creation time

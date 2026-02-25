@@ -23,8 +23,7 @@ static inline CTransactionRef make_tx(const std::vector<CTransactionRef>& inputs
     tx.vin.resize(inputs.size());
     tx.vout.resize(output_values.size());
     for (size_t i = 0; i < inputs.size(); ++i) {
-        tx.vin[i].prevout.hash = inputs[i]->GetHash();
-        tx.vin[i].prevout.n = 0;
+        tx.vin[i].prevout.hash = inputs[i]->vout[0].GetHash();
         // Add a witness so wtxid != txid
         CScriptWitness witness;
         witness.stack.emplace_back(i + 10);
@@ -33,6 +32,8 @@ static inline CTransactionRef make_tx(const std::vector<CTransactionRef>& inputs
     for (size_t i = 0; i < output_values.size(); ++i) {
         tx.vout[i].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
         tx.vout[i].nValue = output_values[i];
+        // Use random data for each output to ensure unique hashes
+        tx.vout[i].predicate = blsct::DataPredicate(GetRandHash()).GetVch();
     }
     return MakeTransactionRef(tx);
 }
@@ -212,7 +213,7 @@ BOOST_FIXTURE_TEST_CASE(rbf_helper_functions, TestChain100Setup)
     const auto spends_unconfirmed = make_tx({tx1}, {36 * CENT});
     for (const auto& input : spends_unconfirmed->vin) {
         // Spends unconfirmed inputs.
-        BOOST_CHECK(pool.exists(GenTxid::Txid(input.prevout.hash)));
+        BOOST_CHECK(pool.mapOutputToTx.count(input.prevout.hash));
     }
     BOOST_CHECK(HasNoNewUnconfirmed(/*tx=*/ *spends_unconfirmed.get(),
                                     /*pool=*/ pool,

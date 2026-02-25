@@ -137,9 +137,9 @@ class FilterTest(BitcoinTestFramework):
         filter_peer = P2PBloomFilter()
 
         self.log.info("Create two tx before connecting, one relevant to the node another that is not")
-        rel_txid = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=filter_peer.watch_script_pubkey, amount=1 * COIN)["txid"]
+        rel_txid = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=filter_peer.watch_script_pubkey, amount=1 * COIN)["txidhash"]
         irr_result = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=getnewdestination()[1], amount=2 * COIN)
-        irr_txid = irr_result["txid"]
+        irr_txid = irr_result["txidhash"]
         irr_wtxid = irr_result["wtxid"]
 
         self.log.info("Send a mempool msg after connecting and check that the relevant tx is announced")
@@ -192,14 +192,14 @@ class FilterTest(BitcoinTestFramework):
 
         self.log.info('Check that we receive a tx if the filter matches a mempool tx')
         filter_peer.merkleblock_received = False
-        txid = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=filter_peer.watch_script_pubkey, amount=9 * COIN)["txid"]
+        txid = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=filter_peer.watch_script_pubkey, amount=9 * COIN)["txidhash"]
         filter_peer.wait_for_tx(txid)
         assert not filter_peer.merkleblock_received
 
         self.log.info('Check that after deleting filter all txs get relayed again')
         filter_peer.send_and_ping(msg_filterclear())
         for _ in range(5):
-            txid = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=getnewdestination()[1], amount=7 * COIN)["txid"]
+            txid = self.wallet.send_to(from_node=self.nodes[0], scriptPubKey=getnewdestination()[1], amount=7 * COIN)["txidhash"]
             filter_peer.wait_for_tx(txid)
 
         self.log.info('Check that request for filtered blocks is ignored if no filter is set')

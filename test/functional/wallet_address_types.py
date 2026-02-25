@@ -54,11 +54,12 @@ from decimal import Decimal
 import itertools
 
 from test_framework.blocktools import COINBASE_MATURITY
-from test_framework.test_framework import BitcoinTestFramework
 from test_framework.descriptors import (
     descsum_create,
     descsum_check,
 )
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
+from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_greater_than,
@@ -161,6 +162,8 @@ class AddressTypeTest(BitcoinTestFramework):
 
     def test_desc(self, node, address, multisig, typ, utxo):
         """Run sanity checks on a descriptor reported by getaddressinfo."""
+        if DISABLE_PSBT_TESTS:
+            return
         info = self.nodes[node].getaddressinfo(address)
         assert 'desc' in info
         assert_equal(info['desc'], utxo['desc'])
@@ -169,7 +172,7 @@ class AddressTypeTest(BitcoinTestFramework):
         # Use a ridiculously roundabout way to find the key origin info through
         # the PSBT logic. However, this does test consistency between the PSBT reported
         # fingerprints/paths and the descriptor logic.
-        psbt = self.nodes[node].createpsbt([{'txid':utxo['txid'], 'vout':utxo['vout']}],[{address:0.00010000}])
+        psbt = self.nodes[node].createpsbt([{'outid':utxo['outid']}],[{address:0.00010000}])
         psbt = self.nodes[node].walletprocesspsbt(psbt, False, "ALL", True)
         decode = self.nodes[node].decodepsbt(psbt['psbt'])
         key_descs = {}

@@ -6,7 +6,8 @@
 
 from test_framework.descriptors import descsum_create
 from test_framework.psbt import PSBT, PSBT_IN_SHA256
-from test_framework.test_framework import BitcoinTestFramework
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
+from test_framework.test_framework import BitcoinTestFramework, SkipTest
 from test_framework.util import assert_equal
 
 
@@ -211,6 +212,8 @@ class WalletMiniscriptTest(BitcoinTestFramework):
         self.rpc_timeout = 180
 
     def skip_test_if_missing_module(self):
+        if DISABLE_PSBT_TESTS:
+            raise SkipTest("PSBT functionality disabled")
         self.skip_if_no_wallet()
         self.skip_if_no_sqlite()
 
@@ -247,7 +250,9 @@ class WalletMiniscriptTest(BitcoinTestFramework):
             lambda: len(self.ms_wo_wallet.listunspent(minconf=0, addresses=[addr])) == 1
         )
         utxo = self.ms_wo_wallet.listunspent(minconf=0, addresses=[addr])[0]
-        assert utxo["txid"] == txid and utxo["solvable"]
+        tx_dec = self.funder.getrawtransaction(txid, True)
+        tx_outids = [vout["hash"] for vout in tx_dec["vout"]]
+        assert utxo["outid"] in tx_outids and utxo["solvable"]
 
     def signing_test(
         self, desc, sequence, locktime, sigs_count, stack_size, sha256_preimages
@@ -275,7 +280,9 @@ class WalletMiniscriptTest(BitcoinTestFramework):
         self.wait_until(lambda: txid in self.funder.getrawmempool())
         self.funder.generatetoaddress(1, self.funder.getnewaddress())
         utxo = self.ms_sig_wallet.listunspent(addresses=[addr])[0]
-        assert txid == utxo["txid"] and utxo["solvable"]
+        tx_dec = self.funder.getrawtransaction(txid, True)
+        tx_outids = [vout["hash"] for vout in tx_dec["vout"]]
+        assert utxo["outid"] in tx_outids and utxo["solvable"]
 
         self.log.info("Creating a transaction spending these funds")
         dest_addr = self.funder.getnewaddress()

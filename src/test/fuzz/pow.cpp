@@ -99,11 +99,20 @@ FUZZ_TARGET(pow_transition, .init = initialize_pow)
     uint32_t nbits{fuzzed_data_provider.ConsumeIntegral<uint32_t>()};
 
     const arith_uint256 pow_limit = UintToArith256(consensus_params.powLimit);
-    arith_uint256 old_target;
-    old_target.SetCompact(nbits);
-    if (old_target > pow_limit) {
-        nbits = pow_limit.GetCompact();
+    arith_uint256 max_old_target{~arith_uint256{0}};
+    max_old_target /= arith_uint256{static_cast<uint64_t>(consensus_params.nPowTargetTimespan) * 4};
+    if (max_old_target > pow_limit) {
+        max_old_target = pow_limit;
     }
+    arith_uint256 old_target;
+    bool old_target_negative{false};
+    bool old_target_overflow{false};
+    old_target.SetCompact(nbits, &old_target_negative, &old_target_overflow);
+    if (old_target_negative || old_target == 0 || old_target_overflow || old_target > max_old_target) {
+        old_target = max_old_target;
+    }
+    // Normalize compact encoding so transition checks use a canonical value.
+    nbits = old_target.GetCompact();
     // Create one difficulty adjustment period worth of headers
     for (int height = 0; height < consensus_params.DifficultyAdjustmentInterval(); ++height) {
         CBlockHeader header;

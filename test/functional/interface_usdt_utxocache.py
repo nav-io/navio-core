@@ -261,7 +261,7 @@ class UTXOCacheTracepointTest(BitcoinTestFramework):
 
         def compare_utxo_with_event(utxo, event):
             """Compare a utxo dict to the event produced by BPF"""
-            assert_equal(utxo["txid"], bytes(event.txid[::-1]).hex())
+            assert_equal(utxo["outid"], bytes(event.txid[::-1]).hex())
             assert_equal(utxo["index"], event.index)
             assert_equal(utxo["height"], event.height)
             assert_equal(utxo["value"], event.value)
@@ -289,23 +289,24 @@ class UTXOCacheTracepointTest(BitcoinTestFramework):
         for (block_index, tx) in enumerate(block["tx"]):
             for vin in tx["vin"]:
                 if "coinbase" not in vin:
+                    prevout_txid = self.nodes[0].gettxfromoutputhash(vin["outid"])["txid"]
                     prevout_tx = self.nodes[0].getrawtransaction(
-                        vin["txid"], True)
+                        prevout_txid, True)
                     prevout_tx_block = self.nodes[0].getblockheader(
                         prevout_tx["blockhash"])
                     spends_coinbase = "coinbase" in prevout_tx["vin"][0]
                     expected_utxocache_spents.append({
-                        "txid": vin["txid"],
-                        "index": vin["vout"],
+                        "outid": vin["outid"],
+                        "index": 0,
                         "height": prevout_tx_block["height"],
-                        "value": int(prevout_tx["vout"][vin["vout"]]["value"] * COIN),
+                        "value": int(next(v["value"] for v in prevout_tx["vout"] if v["hash"] == vin["outid"]) * COIN),
                         "is_coinbase": spends_coinbase,
                     })
             for (i, vout) in enumerate(tx["vout"]):
                 if vout["scriptPubKey"]["type"] != "nulldata":
                     expected_utxocache_adds.append({
-                        "txid": tx["txid"],
-                        "index": i,
+                        "outid": vout["hash"],
+                        "index": 0,
                         "height": block["height"],
                         "value": int(vout["value"] * COIN),
                         "is_coinbase": block_index == 0,

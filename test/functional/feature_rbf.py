@@ -105,7 +105,7 @@ class ReplaceByFeeTest(BitcoinTestFramework):
                 assert new_size < mempool_size
                 mempool_size = new_size
 
-        return self.wallet.get_utxo(txid=tx["txid"], vout=tx["sent_vout"])
+        return self.wallet.get_utxo(txid=tx["tx"].vout[tx["sent_vout"]].hash())
 
     def test_simple_doublespend(self):
         """Simple doublespend"""
@@ -150,7 +150,7 @@ class ReplaceByFeeTest(BitcoinTestFramework):
                 sequence=0,
                 fee=Decimal("0.1"),
             )["new_utxo"]
-            chain_txids.append(prevout["txid"])
+            chain_txids.append(prevout.get("transaction_txid", prevout["txid"]))
 
         # Whether the double-spend is allowed is evaluated by including all
         # child fees - 4 BTC - so this attempt is rejected.
@@ -481,7 +481,9 @@ class ReplaceByFeeTest(BitcoinTestFramework):
         )["new_utxo"]
 
         # This transaction isn't shown as replaceable
-        assert_equal(self.nodes[0].getmempoolentry(tx1a_utxo["txid"])['bip125-replaceable'], False)
+        # Use transaction_txid if available (for output hash prevout system), otherwise use txid
+        tx1a_txid = tx1a_utxo.get("transaction_txid", tx1a_utxo["txid"])
+        assert_equal(self.nodes[0].getmempoolentry(tx1a_txid)['bip125-replaceable'], False)
 
         # Shouldn't be able to double-spend
         tx1b_hex = self.wallet.create_self_transfer(
@@ -607,7 +609,7 @@ class ReplaceByFeeTest(BitcoinTestFramework):
 
     def test_rpc(self):
         us0 = self.wallet.get_utxo()
-        ins = [us0]
+        ins = [{"outid": us0["txid"]}]
         outs = {ADDRESS_BCRT1_UNSPENDABLE: Decimal(1.0000000)}
         rawtx0 = self.nodes[0].createrawtransaction(ins, outs, 0, True)
         rawtx1 = self.nodes[0].createrawtransaction(ins, outs, 0, False)

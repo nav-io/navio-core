@@ -49,8 +49,13 @@ RPCHelpMan verifyblsctbalanceproof()
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid proof format");
             }
 
-            // Verify the proof
-            bool valid = proof.Verify(coins_view, additional_commitment);
+            bool valid = false;
+            try {
+                // Verify the proof
+                valid = proof.Verify(coins_view, additional_commitment);
+            } catch (const std::exception&) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid proof format");
+            }
 
             UniValue result(UniValue::VOBJ);
             result.pushKV("valid", valid);

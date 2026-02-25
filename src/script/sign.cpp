@@ -564,7 +564,6 @@ bool ProduceSignature(const SigningProvider& provider, const BaseSignatureCreato
         result.emplace_back(subscript.begin(), subscript.end());
     }
     sigdata.scriptSig = PushAll(result);
-
     // Test solution
     sigdata.complete = solved && VerifyScript(sigdata.scriptSig, fromPubKey, &sigdata.scriptWitness, STANDARD_SCRIPT_VERIFY_FLAGS, creator.Checker());
     return sigdata.complete;
@@ -706,8 +705,16 @@ bool SignSignature(const SigningProvider &provider, const CTransaction& txFrom, 
 {
     assert(nIn < txTo.vin.size());
     const CTxIn& txin = txTo.vin[nIn];
-    assert(txin.prevout.n < txFrom.vout.size());
-    const CTxOut& txout = txFrom.vout[txin.prevout.n];
+    CTxOut txout;
+    for (const CTxOut& out : txFrom.vout) {
+        if (out.GetHash() == txin.prevout.hash) {
+            txout = out;
+            break;
+        }
+    }
+    if (txout == CTxOut()) {
+        return false;
+    }
 
     return SignSignature(provider, txout.scriptPubKey, txTo, nIn, txout.nValue, nHashType, sig_data);
 }

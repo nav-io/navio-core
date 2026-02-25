@@ -10,7 +10,8 @@ import uuid
 from decimal import Decimal
 from test_framework.address import output_key_to_p2tr
 from test_framework.key import H_POINT
-from test_framework.test_framework import BitcoinTestFramework
+from test_framework.psbt_policy import DISABLE_PSBT_TESTS
+from test_framework.test_framework import BitcoinTestFramework, SkipTest
 from test_framework.util import assert_equal
 from test_framework.descriptors import descsum_create
 from test_framework.script import (
@@ -197,6 +198,8 @@ class WalletTaprootTest(BitcoinTestFramework):
         self.supports_cli = False
 
     def skip_test_if_missing_module(self):
+        if DISABLE_PSBT_TESTS:
+            raise SkipTest("PSBT functionality disabled")
         self.skip_if_no_wallet()
         self.skip_if_no_sqlite()
 

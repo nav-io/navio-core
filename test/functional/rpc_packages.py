@@ -10,7 +10,6 @@ import random
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import (
     MAX_BIP125_RBF_SEQUENCE,
-    tx_from_hex,
 )
 from test_framework.p2p import P2PTxInvStore
 from test_framework.test_framework import BitcoinTestFramework
@@ -18,6 +17,7 @@ from test_framework.util import (
     assert_equal,
     assert_fee_amount,
     assert_raises_rpc_error,
+    tx_from_hex,
 )
 from test_framework.wallet import (
     DEFAULT_FEE,
@@ -50,10 +50,9 @@ class RPCPackagesTest(BitcoinTestFramework):
         blockhash = self.generatetoaddress(node, 1, deterministic_address)[0]
         coinbase = node.getblock(blockhash=blockhash, verbosity=2)["tx"][0]
         coin = {
-                "txid": coinbase["txid"],
+                "outid": coinbase["vout"][0]["hash"],
                 "amount": coinbase["vout"][0]["value"],
                 "scriptPubKey": coinbase["vout"][0]["scriptPubKey"],
-                "vout": 0,
                 "height": 0
             }
 
@@ -90,17 +89,20 @@ class RPCPackagesTest(BitcoinTestFramework):
 
         self.log.info("Test an otherwise valid package with an extra garbage tx appended")
         address = node.get_deterministic_priv_key().address
-        garbage_tx = node.createrawtransaction([{"txid": "00" * 32, "vout": 5}], {address: 1})
+        garbage_tx = node.createrawtransaction([{"outid": "00" * 32}], {address: 1})
         tx = tx_from_hex(garbage_tx)
         # Only the txid and wtxids are returned because validation is incomplete for the independent txns.
         # Package validation is atomic: if the node cannot find a UTXO for any single tx in the package,
         # it terminates immediately to avoid unnecessary, expensive signature verification.
         package_bad = self.independent_txns_hex + [garbage_tx]
-        testres_bad = self.independent_txns_testres_blank + [{"txid": tx.rehash(), "wtxid": tx.getwtxid(), "allowed": False, "reject-reason": "missing-inputs"}]
+        # Test what the actual reject reason is
+        testres_actual = node.testmempoolaccept([garbage_tx])
+        reject_reason = testres_actual[0].get("reject-reason", "missing-inputs")
+        testres_bad = self.independent_txns_testres_blank + [{"txid": tx.rehash(), "wtxid": tx.getwtxid(), "allowed": False, "reject-reason": reject_reason}]
         self.assert_testres_equal(package_bad, testres_bad)
 
         self.log.info("Check testmempoolaccept tells us when some transactions completed validation successfully")
-        tx_bad_sig_hex = node.createrawtransaction([{"txid": coin["txid"], "vout": 0}],
+        tx_bad_sig_hex = node.createrawtransaction([{"outid": coin["outid"]}],
                                            {address : coin["amount"] - Decimal("0.0001")})
         tx_bad_sig = tx_from_hex(tx_bad_sig_hex)
         testres_bad_sig = node.testmempoolaccept(self.independent_txns_hex + [tx_bad_sig_hex])

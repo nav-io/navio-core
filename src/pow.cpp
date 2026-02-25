@@ -77,10 +77,17 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
 {
     if (params.fPowAllowMinDifficultyBlocks) return true;
 
-    if (height % params.DifficultyAdjustmentInterval() == 0) {
-        int64_t smallest_timespan = params.nPowTargetTimespan/4;
-        int64_t largest_timespan = params.nPowTargetTimespan*4;
+    const arith_uint256 pow_limit = UintToArith256(params.powLimit);
+    const uint32_t pow_limit_compact = pow_limit.GetCompact();
+    // Allow an unrestricted adjustment when starting from the proof-of-work
+    // limit. This is useful for chains that begin at the minimum difficulty
+    // (e.g. during launch or after long downtimes) and need to ramp to an
+    // appropriate difficulty in a single retarget interval.
+    if (old_nbits == pow_limit_compact) {
+        return true;
+    }
 
+    if (height % params.DifficultyAdjustmentInterval() == 0) {
         const arith_uint256 pow_limit = UintToArith256(params.powLimit);
         arith_uint256 observed_new_target;
         observed_new_target.SetCompact(new_nbits);
@@ -88,8 +95,7 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
         // Calculate the largest difficulty value possible:
         arith_uint256 largest_difficulty_target;
         largest_difficulty_target.SetCompact(old_nbits);
-        largest_difficulty_target *= largest_timespan;
-        largest_difficulty_target /= params.nPowTargetTimespan;
+        largest_difficulty_target *= 4;
 
         if (largest_difficulty_target > pow_limit) {
             largest_difficulty_target = pow_limit;
@@ -104,8 +110,7 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
         // Calculate the smallest difficulty value possible:
         arith_uint256 smallest_difficulty_target;
         smallest_difficulty_target.SetCompact(old_nbits);
-        smallest_difficulty_target *= smallest_timespan;
-        smallest_difficulty_target /= params.nPowTargetTimespan;
+        smallest_difficulty_target /= 4;
 
         if (smallest_difficulty_target > pow_limit) {
             smallest_difficulty_target = pow_limit;
