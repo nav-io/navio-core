@@ -1267,8 +1267,8 @@ RPCHelpMan createblsctrawtransaction()
                         RPCArg::Optional::OMITTED,
                         "",
                         {
-                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
-                            {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
+                            {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
+                            {"sequence", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The script sequence number"},
                             {"value", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The input value in satoshis"},
                             {"gamma", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The gamma value for the input (hex string)"},
                             {"private_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The private key for signing this input (hex string)"},
@@ -1332,6 +1332,14 @@ RPCHelpMan createblsctrawtransaction()
 
                 blsct::UnsignedInput unsigned_input;
                 unsigned_input.in.prevout = COutPoint(txid, nOut);
+
+                if (o.exists("sequence")) {
+                    int64_t seqNr64 = o["sequence"].getInt<int64_t>();
+                    if (seqNr64 < 0 || seqNr64 > CTxIn::SEQUENCE_FINAL) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, sequence number is out of range");
+                    }
+                    unsigned_input.in.nSequence = static_cast<uint32_t>(seqNr64);
+                }
 
                 // Parse optional value field
                 if (o.exists("value")) {
