@@ -1275,7 +1275,7 @@ RPCHelpMan createblsctrawtransaction()
                             {"sequence", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The script sequence number"},
                             {"value", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The input value in satoshis"},
                             {"gamma", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The gamma value for the input (hex string)"},
-                            {"private_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The private key for signing this input (hex string)"},
+                            {"spending_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The private key for signing this input (hex string)"},
                             {"is_staked_commitment", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Whether this input is a staked commitment"},
                             {"scriptSig", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The scriptSig in hex format to use for this input"},
                         },
@@ -1315,7 +1315,7 @@ RPCHelpMan createblsctrawtransaction()
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"},
         RPCExamples{
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"value\\\":1000000,\\\"gamma\\\":\\\"1234567890abcdef\\\",\\\"private_key\\\":\\\"abcdef1234567890\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01,\\\"memo\\\":\\\"memo\\\",\\\"token_id\\\":\\\"tokenid\\\"}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"value\\\":1000000,\\\"gamma\\\":\\\"1234567890abcdef\\\",\\\"spending_key\\\":\\\"abcdef1234567890\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01,\\\"memo\\\":\\\"memo\\\",\\\"token_id\\\":\\\"tokenid\\\"}]\"") +
             HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01}]\"") +
             HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01,\\\"script\\\":\\\"51\\\"}]\"") +
             HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"type\\\":\\\"atomic_swap\\\",\\\"address_a\\\":\\\"blsctAddr1\\\",\\\"address_b\\\":\\\"blsctAddr2\\\",\\\"amount\\\":0.01,\\\"hash\\\":\\\"00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff\\\",\\\"locktime\\\":750000}]\"")},
@@ -1367,8 +1367,8 @@ RPCHelpMan createblsctrawtransaction()
                 }
 
                 // Parse optional private key field
-                if (o.exists("private_key")) {
-                    std::string sk_hex = o["private_key"].get_str();
+                if (o.exists("spending_key")) {
+                    std::string sk_hex = o["spending_key"].get_str();
                     if (!sk_hex.empty()) {
                         try {
                             std::vector<unsigned char> sk_bytes = ParseHex(sk_hex);
@@ -1420,7 +1420,7 @@ RPCHelpMan createblsctrawtransaction()
                 }
 
                 // If private key is not provided, try to get it from the wallet
-                if (!o.exists("private_key")) {
+                if (!o.exists("spending_key")) {
                     // Get the output to determine the token ID
                     auto wallet_tx = pwallet->GetWalletTxFromOutpoint(COutPoint(txid));
                     if (!wallet_tx) {
@@ -1930,6 +1930,7 @@ RPCHelpMan decodeblsctrawtransaction()
                                                                                                                                                        {RPCResult::Type::STR_HEX, "outputHash", "The output hash identifier (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "scriptPubKey", "The scriptPubKey of the output"},
+                                                                                                                                                       {RPCResult::Type::STR_HEX, "spending_key", "The output spending key (if available)"},
                                                                                                                                                    }},
                                                                                                                 }},
                                               {RPCResult::Type::STR_AMOUNT, "fee", "The transaction fee in " + CURRENCY_UNIT},
@@ -1976,6 +1977,22 @@ RPCHelpMan decodeblsctrawtransaction()
 
                 output_obj.pushKV("blinding_key", HexStr(output.blindingKey.GetVch()));
                 output_obj.pushKV("gamma", HexStr(output.gamma.GetVch()));
+
+                std::shared_ptr<wallet::CWallet> const wallet = wallet::GetWalletForJSONRPCRequest(request);
+                if (wallet) {
+                    LOCK(wallet->cs_wallet);
+
+                    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+
+                    // Get the spending key for this output
+                    blsct::PrivateKey spending_key;
+                    if (blsct_km->GetSpendingKeyForOutputWithCache(output.out, spending_key) && spending_key.IsValid()) {
+                        output_obj.pushKV("spending_key", HexStr(spending_key.GetScalar().GetVch()));
+                    }
+                } else {
+                    output_obj.pushKV("spending_key", "");
+                }
+
                 outputs.push_back(output_obj);
             }
             result.pushKV("outputs", outputs);
