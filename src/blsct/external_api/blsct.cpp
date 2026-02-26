@@ -337,7 +337,7 @@ BlsctAmountsRetVal* recover_amount(
                 succ_res.message.c_str(),
                 succ_res.message.size() + 1);
 
-            // gamma is omitted since it's a scalar
+            SERIALIZE_AND_COPY(succ_res.gamma, result.gamma);
         }
 
         rv->result = BLSCT_SUCCESS;
@@ -425,6 +425,17 @@ const char* get_amount_recovery_result_msg(
     return vec->at(idx).msg;
 }
 
+const BlsctScalar* get_amount_recovery_result_gamma(
+    void* vp_amt_recovery_req_vec,
+    size_t idx)
+{
+    RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, nullptr);
+
+    auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+
+    return &vec->at(idx).gamma;
+}
+
 // ctx
 void* create_tx_in_vec()
 {
@@ -485,8 +496,8 @@ BlsctCTxRetVal* build_ctx(
             return rv;
         }
 
-        // gamma is uint64_t and not serialized
-        Scalar gamma(tx_in.gamma);
+        Scalar gamma;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(tx_in.gamma, SCALAR_SIZE, gamma);
 
         // unserialize spending_key
         blsct::PrivateKey spending_key =
@@ -1681,7 +1692,7 @@ BlsctRetVal* deserialize_token_id(const char* hex)
 // tx_in
 BlsctRetVal* build_tx_in(
     const uint64_t amount,
-    const uint64_t gamma,
+    const BlsctScalar* gamma,
     const BlsctScalar* spending_key,
     const BlsctTokenId* token_id,
     const BlsctOutPoint* out_point,
@@ -1692,7 +1703,7 @@ BlsctRetVal* build_tx_in(
     RETURN_IF_MEM_ALLOC_FAILED(tx_in);
 
     tx_in->amount = amount;
-    tx_in->gamma = gamma;
+    BLSCT_COPY(gamma, tx_in->gamma);
     BLSCT_COPY(spending_key, tx_in->spending_key);
     BLSCT_COPY(token_id, tx_in->token_id);
     BLSCT_COPY(out_point, tx_in->out_point);
@@ -1707,9 +1718,9 @@ uint64_t get_tx_in_amount(const BlsctTxIn* tx_in)
     return tx_in->amount;
 }
 
-uint64_t get_tx_in_gamma(const BlsctTxIn* tx_in)
+const BlsctScalar* get_tx_in_gamma(const BlsctTxIn* tx_in)
 {
-    return tx_in->gamma;
+    return &tx_in->gamma;
 }
 
 const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in) {

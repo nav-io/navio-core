@@ -2,6 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/external_api/blsct.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <util/strencodings.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
@@ -46,6 +48,199 @@ BOOST_AUTO_TEST_CASE(test_cmutable_transaction_sizes)
     } catch(...) {
         BOOST_CHECK(false);
     }
+}
+
+BOOST_AUTO_TEST_CASE(test_build_tx_in_gamma_is_blsct_scalar)
+{
+    init();
+
+    // create a random scalar to use as gamma
+    auto gamma_rv = gen_random_scalar();
+    BOOST_REQUIRE(gamma_rv->result == BLSCT_SUCCESS);
+    auto* gamma = static_cast<BlsctScalar*>(gamma_rv->value);
+
+    // create a spending key
+    auto sk_rv = gen_random_scalar();
+    BOOST_REQUIRE(sk_rv->result == BLSCT_SUCCESS);
+    auto* spending_key = static_cast<BlsctScalar*>(sk_rv->value);
+
+    // create a token id
+    auto tid_rv = gen_default_token_id();
+    BOOST_REQUIRE(tid_rv->result == BLSCT_SUCCESS);
+    auto* token_id = static_cast<BlsctTokenId*>(tid_rv->value);
+
+    // create an out point
+    std::string txid_hex(64, '0');
+    auto op_rv = gen_out_point(txid_hex.c_str());
+    BOOST_REQUIRE(op_rv->result == BLSCT_SUCCESS);
+    auto* out_point = static_cast<BlsctOutPoint*>(op_rv->value);
+
+    auto* tx_in_rv = build_tx_in(
+        1000,
+        gamma,
+        spending_key,
+        token_id,
+        out_point,
+        false,
+        false);
+    BOOST_REQUIRE(tx_in_rv->result == BLSCT_SUCCESS);
+    auto* tx_in = static_cast<BlsctTxIn*>(tx_in_rv->value);
+
+    // verify the amount round-trips
+    BOOST_CHECK_EQUAL(get_tx_in_amount(tx_in), 1000ULL);
+
+    // verify the gamma round-trips as a full 32-byte scalar
+    const BlsctScalar* retrieved_gamma = get_tx_in_gamma(tx_in);
+    BOOST_REQUIRE(retrieved_gamma != nullptr);
+    BOOST_CHECK(are_scalar_equal(gamma, retrieved_gamma) == 1);
+
+    free_obj(gamma_rv);
+    free_obj(sk_rv);
+    free_obj(tid_rv);
+    free_obj(op_rv);
+    free_obj(tx_in_rv);
+}
+
+BOOST_AUTO_TEST_CASE(test_amount_recovery_returns_gamma)
+{
+    init();
+
+    uint64_t amount = 42;
+    std::string msg = "hello";
+    std::vector<uint8_t> msg_vec(msg.begin(), msg.end());
+
+    auto tid_rv = gen_default_token_id();
+    BOOST_REQUIRE(tid_rv->result == BLSCT_SUCCESS);
+    auto* blsct_token_id = static_cast<BlsctTokenId*>(tid_rv->value);
+
+    TokenId token_id;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id, TOKEN_ID_SIZE, token_id);
+
+    // build a range proof using the C++ API so we know the expected gamma
+    bulletproofs_plus::RangeProofLogic<Mcl> rpl;
+    Scalars vs;
+    vs.Add(Mcl::Scalar(static_cast<int64_t>(amount)));
+    auto nonce = Mcl::Point::Rand();
+    auto range_proof = rpl.Prove(vs, nonce, msg_vec, token_id);
+
+    // recover via C++ API to get expected gamma
+    auto cpp_req = bulletproofs_plus::AmountRecoveryRequest<Mcl>::of(range_proof, nonce);
+    auto cpp_result = rpl.RecoverAmounts({cpp_req});
+    BOOST_REQUIRE(cpp_result.is_completed);
+    BOOST_REQUIRE_EQUAL(cpp_result.amounts.size(), 1u);
+    Scalar expected_gamma = cpp_result.amounts[0].gamma;
+
+    // serialize range proof for the C API
+    DataStream rp_st{};
+    range_proof.Serialize(rp_st);
+    size_t rp_size = rp_st.size();
+    auto* rp_buf = static_cast<BlsctRangeProof*>(malloc(rp_size));
+    std::memcpy(rp_buf, rp_st.data(), rp_size);
+
+    // serialize nonce for the C API
+    BlsctPoint blsct_nonce;
+    SERIALIZE_AND_COPY(nonce, blsct_nonce);
+
+    auto* req = gen_amount_recovery_req(rp_buf, rp_size, &blsct_nonce);
+    BOOST_REQUIRE(req != nullptr);
+
+    void* req_vec = create_amount_recovery_req_vec();
+    add_to_amount_recovery_req_vec(req_vec, req);
+
+    auto* amounts_rv = recover_amount(req_vec);
+    BOOST_REQUIRE(amounts_rv->result == BLSCT_SUCCESS);
+
+    BOOST_CHECK(get_amount_recovery_result_is_succ(amounts_rv->value, 0));
+    BOOST_CHECK_EQUAL(get_amount_recovery_result_amount(amounts_rv->value, 0), amount);
+
+    // verify the gamma matches the expected value from the C++ recovery
+    const BlsctScalar* recovered_gamma = get_amount_recovery_result_gamma(amounts_rv->value, 0);
+    BOOST_REQUIRE(recovered_gamma != nullptr);
+
+    BlsctScalar expected_gamma_bytes;
+    SERIALIZE_AND_COPY(expected_gamma, expected_gamma_bytes);
+    BOOST_CHECK(are_scalar_equal(recovered_gamma, &expected_gamma_bytes) == 1);
+
+    free(rp_buf);
+    delete req;
+    delete_amount_recovery_req_vec(req_vec);
+    free_amounts_ret_val(amounts_rv);
+    free_obj(tid_rv);
+}
+
+BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
+{
+    init();
+
+    uint64_t amount = 100;
+    std::string msg = "rt";
+    std::vector<uint8_t> msg_vec(msg.begin(), msg.end());
+
+    auto tid_rv = gen_default_token_id();
+    BOOST_REQUIRE(tid_rv->result == BLSCT_SUCCESS);
+    auto* blsct_token_id = static_cast<BlsctTokenId*>(tid_rv->value);
+
+    TokenId token_id;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id, TOKEN_ID_SIZE, token_id);
+
+    // produce a range proof and recover to get a real gamma
+    bulletproofs_plus::RangeProofLogic<Mcl> rpl;
+    Scalars vs;
+    vs.Add(Mcl::Scalar(static_cast<int64_t>(amount)));
+    auto nonce = Mcl::Point::Rand();
+    auto range_proof = rpl.Prove(vs, nonce, msg_vec, token_id);
+
+    DataStream rp_st{};
+    range_proof.Serialize(rp_st);
+    auto* rp_buf = static_cast<BlsctRangeProof*>(malloc(rp_st.size()));
+    std::memcpy(rp_buf, rp_st.data(), rp_st.size());
+
+    BlsctPoint blsct_nonce;
+    SERIALIZE_AND_COPY(nonce, blsct_nonce);
+
+    auto* req = gen_amount_recovery_req(rp_buf, rp_st.size(), &blsct_nonce);
+    void* req_vec = create_amount_recovery_req_vec();
+    add_to_amount_recovery_req_vec(req_vec, req);
+
+    auto* amounts_rv = recover_amount(req_vec);
+    BOOST_REQUIRE(amounts_rv->result == BLSCT_SUCCESS);
+    BOOST_REQUIRE(get_amount_recovery_result_is_succ(amounts_rv->value, 0));
+
+    const BlsctScalar* recovered_gamma = get_amount_recovery_result_gamma(amounts_rv->value, 0);
+
+    // feed the recovered gamma directly into build_tx_in
+    auto sk_rv = gen_random_scalar();
+    BOOST_REQUIRE(sk_rv->result == BLSCT_SUCCESS);
+    auto* spending_key = static_cast<BlsctScalar*>(sk_rv->value);
+
+    std::string txid_hex(64, '0');
+    auto op_rv = gen_out_point(txid_hex.c_str());
+    BOOST_REQUIRE(op_rv->result == BLSCT_SUCCESS);
+    auto* out_point = static_cast<BlsctOutPoint*>(op_rv->value);
+
+    auto* tx_in_rv = build_tx_in(
+        amount,
+        recovered_gamma,
+        spending_key,
+        blsct_token_id,
+        out_point,
+        false,
+        false);
+    BOOST_REQUIRE(tx_in_rv->result == BLSCT_SUCCESS);
+    auto* tx_in = static_cast<BlsctTxIn*>(tx_in_rv->value);
+
+    // the gamma stored in the tx_in must equal the recovered gamma
+    const BlsctScalar* tx_in_gamma = get_tx_in_gamma(tx_in);
+    BOOST_CHECK(are_scalar_equal(recovered_gamma, tx_in_gamma) == 1);
+
+    free(rp_buf);
+    delete req;
+    delete_amount_recovery_req_vec(req_vec);
+    free_amounts_ret_val(amounts_rv);
+    free_obj(sk_rv);
+    free_obj(op_rv);
+    free_obj(tx_in_rv);
+    free_obj(tid_rv);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -268,11 +268,12 @@ typedef struct {
     bool is_succ;
     char* msg;
     uint64_t amount;
+    BlsctScalar gamma;
 } BlsctAmountRecoveryResult;
 
 typedef struct {
     uint64_t amount;
-    uint64_t gamma;
+    BlsctScalar gamma;
     BlsctScalar spending_key;
     BlsctTokenId token_id;
     BlsctOutPoint out_point;
@@ -336,6 +337,9 @@ uint64_t get_amount_recovery_result_amount(
     void* vp_amt_recovery_req_vec,
     size_t idx);
 const char* get_amount_recovery_result_msg(
+    void* vp_amt_recovery_req_vec,
+    size_t idx);
+const BlsctScalar* get_amount_recovery_result_gamma(
     void* vp_amt_recovery_req_vec,
     size_t idx);
 
@@ -559,7 +563,7 @@ BlsctRetVal* deserialize_token_id(const char* hex);
 // tx in
 BlsctRetVal* build_tx_in(
     const uint64_t amount,
-    const uint64_t gamma,
+    const BlsctScalar* gamma,
     const BlsctScalar* spending_key,
     const BlsctTokenId* token_id,
     const BlsctOutPoint* out_point,
@@ -567,7 +571,7 @@ BlsctRetVal* build_tx_in(
     const bool rbf);
 
 uint64_t get_tx_in_amount(const BlsctTxIn* tx_in);
-uint64_t get_tx_in_gamma(const BlsctTxIn* tx_in);
+const BlsctScalar* get_tx_in_gamma(const BlsctTxIn* tx_in);
 const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in);
 const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in);
 const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in);
