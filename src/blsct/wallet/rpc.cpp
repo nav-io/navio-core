@@ -1984,9 +1984,24 @@ RPCHelpMan decodeblsctrawtransaction()
 
                     auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
 
-                    // Get the spending key for this output
                     blsct::PrivateKey spending_key;
-                    if (blsct_km->GetSpendingKeyForOutputWithCache(output.out, spending_key) && spending_key.IsValid()) {
+                    bool found = blsct_km->GetSpendingKeyForOutputWithCache(output.out, spending_key) && spending_key.IsValid();
+
+                    if (!found) {
+                        // For HTLC and other complex scripts, try all BLS public keys in the script
+                        std::vector<blsct::PublicKey> script_keys;
+                        if (blsct_km->ExtractAllSpendingKeysFromScript(output.out.scriptPubKey, script_keys)) {
+                            for (const auto& candidate_key : script_keys) {
+                                auto hashId = blsct_km->GetHashId(output.out.blsctData.blindingKey, candidate_key);
+                                if (!hashId.IsNull() && blsct_km->GetSpendingKeyForOutputWithCache(output.out, hashId, spending_key) && spending_key.IsValid()) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (found) {
                         output_obj.pushKV("spending_key", HexStr(spending_key.GetScalar().GetVch()));
                     }
                 } else {

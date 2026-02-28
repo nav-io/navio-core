@@ -1132,4 +1132,36 @@ bool KeyMan::ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKe
 
     return false;
 }
+
+bool KeyMan::ExtractAllSpendingKeysFromScript(const CScript& script, std::vector<blsct::PublicKey>& spendingKeys) const
+{
+    CScript::const_iterator pc = script.begin();
+    opcodetype opcode;
+    std::vector<unsigned char> vch;
+    std::vector<std::vector<unsigned char>> candidates;
+    bool has_blschecksig = false;
+
+    while (pc < script.end()) {
+        if (!script.GetOp(pc, opcode, vch)) {
+            break;
+        }
+
+        if (opcode == OP_BLSCHECKSIG) {
+            has_blschecksig = true;
+        } else if (opcode <= OP_PUSHDATA4 && vch.size() == 48) {
+            candidates.push_back(vch);
+        }
+    }
+
+    if (!has_blschecksig) return false;
+
+    for (const auto& data : candidates) {
+        blsct::PublicKey key;
+        if (key.SetVch(data)) {
+            spendingKeys.push_back(key);
+        }
+    }
+
+    return !spendingKeys.empty();
+}
 } // namespace blsct

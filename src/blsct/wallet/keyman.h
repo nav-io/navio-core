@@ -231,6 +231,9 @@ public:
 
     // Helper function to extract spending key from OP_BLSCHECKSIG script
     bool ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKey& spendingKey) const;
+
+    // Extract all 48-byte BLS public keys from a script (for HTLC and other complex scripts)
+    bool ExtractAllSpendingKeysFromScript(const CScript& script, std::vector<blsct::PublicKey>& spendingKeys) const;
 };
 } // namespace blsct
 
