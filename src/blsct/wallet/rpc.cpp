@@ -5,7 +5,10 @@
 #include <blsct/wallet/balance_proof.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/unsigned_transaction.h>
+#include <blsct/common.h>
 #include <blsct/public_key.h>
+#include <blsct/public_keys.h>
+#include <blsct/tokens/predicate_parser.h>
 #include <coins.h>
 #include <core_io.h>
 #include <primitives/transaction.h>
@@ -1441,6 +1444,25 @@ RPCHelpMan createblsctrawtransaction()
                     unsigned_input.sk = spending_key;
                 }
 
+                // Validate: spending key must produce a public key matching the UTXO's spendingKey
+                if (unsigned_input.sk.IsValid()) {
+                    auto wallet_tx_check = pwallet->GetWalletTxFromOutpoint(COutPoint(txid));
+                    if (wallet_tx_check) {
+                        auto txout_iter = std::find_if(wallet_tx_check->tx->vout.begin(), wallet_tx_check->tx->vout.end(),
+                            [&](const CTxOut& out) { return out.GetHash() == txid; });
+                        if (txout_iter != wallet_tx_check->tx->vout.end() && !txout_iter->blsctData.spendingKey.IsZero()) {
+                            auto signing_pubkey = unsigned_input.sk.GetPublicKey();
+                            auto expected_pubkey = blsct::PublicKey(txout_iter->blsctData.spendingKey);
+                            if (signing_pubkey != expected_pubkey) {
+                                throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
+                                    "Input %d (%s): spending key does not match the UTXO spendingKey. "
+                                    "This transaction would fail signature verification on broadcast.",
+                                    idx, txid.GetHex()));
+                            }
+                        }
+                    }
+                }
+
                 unsigned_inputs.push_back(unsigned_input);
             }
 
@@ -1780,6 +1802,18 @@ RPCHelpMan fundblsctrawtransaction()
 
                     input.sk = spending_key;
 
+                    // Validate: spending key must match UTXO's spendingKey
+                    if (!output.txout.blsctData.spendingKey.IsZero()) {
+                        auto signing_pubkey = spending_key.GetPublicKey();
+                        auto expected_pubkey = blsct::PublicKey(output.txout.blsctData.spendingKey);
+                        if (signing_pubkey != expected_pubkey) {
+                            throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
+                                "Funding input (%s): derived spending key does not match the UTXO spendingKey. "
+                                "This transaction would fail signature verification on broadcast.",
+                                output.outpoint.hash.GetHex()));
+                        }
+                    }
+
                     unsigned_tx.AddInput(input);
                     additional_input_value += recovery_data->amount;
                     added_inputs.push_back(output.outpoint);
@@ -1880,8 +1914,6 @@ RPCHelpMan signblsctrawtransaction()
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
-            // Make sure the results are valid at least up to the most recent block
-            // the user could have gotten from another RPC command prior to now
             pwallet->BlockUntilSyncedToCurrentChain();
 
             LOCK(pwallet->cs_wallet);
@@ -1893,12 +1925,140 @@ RPCHelpMan signblsctrawtransaction()
             }
             auto& unsigned_tx = unsigned_tx_opt.value();
 
+            auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            // Pre-sign validation: check each component before signing
+            const auto& inputs = unsigned_tx.GetInputs();
+            const auto& outputs = unsigned_tx.GetOutputs();
+
+            // Validate outputs
+            for (size_t i = 0; i < outputs.size(); i++) {
+                const auto& out = outputs[i];
+                if (out.out.HasBLSCTKeys()) {
+                    auto expected_ephemeral = blsct::PrivateKey(out.blindingKey).GetPoint();
+                    if (expected_ephemeral != out.out.blsctData.ephemeralKey) {
+                        throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
+                            "Output %d: ephemeralKey mismatch - blindingKey does not correspond to the ephemeralKey stored in the output. "
+                            "This will cause a signature verification failure.", i));
+                    }
+                }
+                if (out.out.HasBLSCTRangeProof() && out.gamma.IsZero()) {
+                    throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
+                        "Output %d: has range proof but gamma is zero. "
+                        "This will cause a balance signature failure.", i));
+                }
+            }
+
+            // Validate inputs
+            CAmount total_input_value = 0;
+            for (size_t i = 0; i < inputs.size(); i++) {
+                const auto& in = inputs[i];
+                total_input_value += in.value.GetUint64();
+
+                if (!in.sk.IsValid()) {
+                    throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
+                        "Input %d (%s): spending key is invalid (zero or malformed). "
+                        "Transaction will fail signature check.", i, in.in.prevout.hash.GetHex()));
+                }
+
+                // Cross-check against UTXO spending key if available in wallet
+                auto wallet_tx = pwallet->GetWalletTxFromOutpoint(in.in.prevout);
+                if (wallet_tx) {
+                    auto txout_iter = std::find_if(wallet_tx->tx->vout.begin(), wallet_tx->tx->vout.end(),
+                        [&](const CTxOut& out) { return out.GetHash() == in.in.prevout.hash; });
+                    if (txout_iter != wallet_tx->tx->vout.end()) {
+                        if (!txout_iter->blsctData.spendingKey.IsZero()) {
+                            auto signing_pubkey = in.sk.GetPublicKey();
+                            auto expected_pubkey = blsct::PublicKey(txout_iter->blsctData.spendingKey);
+                            if (signing_pubkey != expected_pubkey) {
+                                throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
+                                    "Input %d (%s): spending key mismatch - the private key does not match "
+                                    "the spendingKey in the UTXO. Expected pubkey %s but got %s. "
+                                    "Transaction will fail signature check.",
+                                    i, in.in.prevout.hash.GetHex(),
+                                    expected_pubkey.ToString().substr(0, 16) + "...",
+                                    signing_pubkey.ToString().substr(0, 16) + "..."));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Validate value balance
+            CAmount total_output_value = 0;
+            for (const auto& out : outputs) {
+                total_output_value += out.value.GetUint64();
+            }
+            CAmount fee = unsigned_tx.GetFee();
+            if (total_input_value != total_output_value + fee) {
+                throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
+                    "Value balance mismatch: inputs=%s, outputs=%s, fee=%s. "
+                    "Expected inputs == outputs + fee. Difference: %s. "
+                    "This will cause a balance signature failure.",
+                    FormatMoney(total_input_value), FormatMoney(total_output_value),
+                    FormatMoney(fee), FormatMoney(total_input_value - total_output_value - fee)));
+            }
+
             // Sign the transaction
             const auto& tx_opt = unsigned_tx.Sign();
             if (!tx_opt) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign transaction");
             }
             auto tx = tx_opt.value();
+
+            // Post-sign verification: aggregate signature batch check
+            std::vector<blsct::PublicKey> vPubKeys;
+            std::vector<blsct::Message> vMessages;
+
+            for (const auto& out : outputs) {
+                auto outHash = out.out.GetHash();
+                if (out.out.HasBLSCTKeys()) {
+                    vPubKeys.emplace_back(out.out.blsctData.ephemeralKey);
+                    vMessages.emplace_back(outHash.begin(), outHash.end());
+                }
+                if (out.type == blsct::TX_CREATE_TOKEN || out.type == blsct::TX_MINT_TOKEN) {
+                    vPubKeys.emplace_back(blsct::PrivateKey(out.tokenKey).GetPublicKey());
+                    vMessages.emplace_back(outHash.begin(), outHash.end());
+                }
+            }
+
+            Scalar gammaAcc;
+            for (const auto& out : outputs) {
+                if (out.out.HasBLSCTRangeProof()) {
+                    gammaAcc = gammaAcc - out.gamma;
+                }
+            }
+            for (const auto& in : inputs) {
+                gammaAcc = gammaAcc + in.gamma;
+                vPubKeys.emplace_back(in.sk.GetPublicKey());
+                auto in_hash = in.in.GetHash();
+                vMessages.emplace_back(in_hash.begin(), in_hash.end());
+            }
+
+            // Balance key
+            vPubKeys.emplace_back(blsct::PrivateKey(gammaAcc).GetPublicKey());
+            vMessages.emplace_back(blsct::Common::BLSCTBALANCE);
+
+            // Fee key - find it from the signed tx
+            for (const auto& out : tx.vout) {
+                if (out.scriptPubKey.IsFee() && out.predicate.size() > 0) {
+                    try {
+                        auto parsedPredicate = blsct::ParsePredicate(out.predicate);
+                        if (parsedPredicate.IsPayFeePredicate()) {
+                            vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
+                            vMessages.emplace_back(blsct::Common::BLSCTFEE);
+                        }
+                    } catch (...) {}
+                }
+            }
+
+            bool sigValid = blsct::PublicKeys(vPubKeys).VerifyBatch(vMessages, tx.txSig, true);
+            if (!sigValid) {
+                throw JSONRPCError(RPC_WALLET_ERROR,
+                    "Post-sign verification FAILED: the aggregate signature does not verify. "
+                    "This transaction would be rejected with 'failed-signature-check'. "
+                    "Possible causes: corrupted spending keys, wrong gamma values, or serialization issues.");
+            }
 
             return EncodeHexTx(tx);
         },

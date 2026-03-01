@@ -34,7 +34,7 @@ struct UnsignedOutput {
     Scalar value;
     Scalar gamma;
     Scalar tokenKey;
-    CreateTransactionType type;
+    CreateTransactionType type{NORMAL};
 
     void
     GenerateKeys(Scalar blindingKey, DoublePublicKey destKeys);
@@ -48,6 +48,9 @@ struct UnsignedOutput {
         ::Serialize(s, blindingKey);
         ::Serialize(s, value);
         ::Serialize(s, gamma);
+        ::Serialize(s, tokenKey);
+        int32_t typeInt = static_cast<int32_t>(type);
+        ::Serialize(s, typeInt);
     }
 
     template <typename Stream>
@@ -57,6 +60,10 @@ struct UnsignedOutput {
         ::Unserialize(s, blindingKey);
         ::Unserialize(s, value);
         ::Unserialize(s, gamma);
+        ::Unserialize(s, tokenKey);
+        int32_t typeInt;
+        ::Unserialize(s, typeInt);
+        type = static_cast<CreateTransactionType>(typeInt);
     }
 };
 
@@ -65,7 +72,7 @@ struct UnsignedInput {
     Scalar value;
     Scalar gamma;
     PrivateKey sk;
-    bool is_staked_commitment;
+    bool is_staked_commitment{false};
 
     template <typename Stream>
     void Serialize(Stream& s) const
