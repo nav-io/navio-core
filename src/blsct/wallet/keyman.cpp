@@ -5,6 +5,7 @@
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/keyman.h>
 #include <script/script.h>
+#include <wallet/walletdb.h>
 
 namespace blsct {
 bool KeyMan::IsHDEnabled() const
@@ -1163,5 +1164,20 @@ bool KeyMan::ExtractAllSpendingKeysFromScript(const CScript& script, std::vector
     }
 
     return !spendingKeys.empty();
+}
+
+bool KeyMan::AddWatchOnly(const CScript& script)
+{
+    LOCK(cs_KeyStore);
+    setWatchOnly.insert(script);
+    wallet::WalletBatch batch(m_storage.GetDatabase());
+    wallet::CKeyMetadata meta;
+    return batch.WriteBLSCTWatchOnly(script, meta);
+}
+
+void KeyMan::LoadWatchOnly(const CScript& script)
+{
+    LOCK(cs_KeyStore);
+    setWatchOnly.insert(script);
 }
 } // namespace blsct

@@ -270,6 +270,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "importprivkey", 2, "rescan" },
     { "importaddress", 2, "rescan" },
     { "importaddress", 3, "p2sh" },
+    { "importblsctscript", 0, "descriptor" },
+    { "importblsctscript", 1, "rescan" },
     { "importpubkey", 2, "rescan" },
     { "importmempool", 1, "options" },
     { "importmempool", 1, "apply_fee_delta_priority" },

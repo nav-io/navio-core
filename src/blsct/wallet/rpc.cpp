@@ -24,6 +24,27 @@
 #include <limits>
 
 namespace blsct {
+
+CScript BuildHTLCScript(
+    const std::vector<unsigned char>& hash_bytes,
+    const std::vector<unsigned char>& spendingKeyA,
+    const std::vector<unsigned char>& spendingKeyB,
+    int64_t locktime)
+{
+    CScript script;
+    script << OP_IF
+           << OP_SIZE << 32 << OP_EQUALVERIFY
+           << OP_SHA256 << hash_bytes << OP_EQUALVERIFY
+           << spendingKeyA
+           << OP_ELSE
+           << locktime
+           << OP_CHECKLOCKTIMEVERIFY << OP_DROP
+           << spendingKeyB
+           << OP_ENDIF
+           << OP_BLSCHECKSIG;
+    return script;
+}
+
 static void ParseBLSCTRecipients(const UniValue& address_amounts, const UniValue& subtract_fee_outputs, const std::string& sMemo, std::vector<wallet::CBLSCTRecipient>& recipients)
 {
     std::set<CTxDestination> destinations;
@@ -892,6 +913,7 @@ RPCHelpMan listblsctunspent()
                                                                                  {RPCResult::Type::STR_AMOUNT, "amount", "the transaction output amount in " + CURRENCY_UNIT},
                                                                                  {RPCResult::Type::NUM, "confirmations", "The number of confirmations"},
                                                                                  {RPCResult::Type::BOOL, "spendable", "Whether we have the private keys to spend this output"},
+                                                                                 {RPCResult::Type::BOOL, "watchonly", "Whether this output matches a watch-only script (e.g. imported HTLC)"},
                                                                                  {RPCResult::Type::STR_HEX, "scriptPubKey", "The scriptPubKey of the output"},
                                                                              }},
                                           }},
@@ -1001,12 +1023,13 @@ RPCHelpMan listblsctunspent()
                     if (address_book_entry) {
                         entry.pushKV("label", address_book_entry->GetLabel());
                     }
-
-                    entry.pushKV("amount", ValueFromAmount(out.txout.nValue));
-                    entry.pushKV("confirmations", out.depth);
-                    entry.pushKV("spendable", out.spendable);
-                    results.push_back(entry);
                 }
+
+                entry.pushKV("amount", ValueFromAmount(out.txout.nValue));
+                entry.pushKV("confirmations", out.depth);
+                entry.pushKV("spendable", out.spendable);
+                entry.pushKV("watchonly", blsct_km->IsMine(out.txout.scriptPubKey));
+                results.push_back(entry);
             }
 
             return results;
@@ -1600,17 +1623,7 @@ RPCHelpMan createblsctrawtransaction()
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to derive valid spending keys for atomic_swap output");
                     }
 
-                    CScript script;
-                    script << OP_IF
-                           << OP_SIZE << 32 << OP_EQUALVERIFY
-                           << OP_SHA256 << hash_bytes << OP_EQUALVERIFY
-                           << spendingKeyABytes
-                           << OP_ELSE
-                           << locktime
-                           << OP_CHECKLOCKTIMEVERIFY << OP_DROP
-                           << spendingKeyBBytes
-                           << OP_ENDIF
-                           << OP_BLSCHECKSIG;
+                    CScript script = blsct::BuildHTLCScript(hash_bytes, spendingKeyABytes, spendingKeyBBytes, locktime);
 
                     unsigned_output = CreateOutput(std::make_pair(address_a, script), nAmount, memo, token_id, blindingKey, type, 0);
 

@@ -1227,6 +1227,20 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
     });
     result = std::max(result, watch_meta_res.m_result);
 
+    // Load BLSCT watchonly scripts
+    LoadResult blsct_watch_res = LoadRecords(pwallet, batch, DBKeys::BLSCTWATCHS,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        CScript script;
+        key >> script;
+        uint8_t fYes;
+        value >> fYes;
+        if (fYes == '1') {
+            pwallet->GetOrCreateBLSCTKeyMan()->LoadWatchOnly(script);
+        }
+        return DBErrors::LOAD_OK;
+    });
+    result = std::max(result, blsct_watch_res.m_result);
+
     // Load keypool
     LoadResult pool_res = LoadRecords(pwallet, batch, DBKeys::POOL,
         [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {

@@ -6,6 +6,7 @@
 #define BITCOIN_BLSCT_WALLET_RPC_H
 
 #include <blsct/wallet/txfactory.h>
+#include <script/script.h>
 #include <span.h>
 
 namespace wallet {
@@ -15,6 +16,11 @@ typedef std::multimap<int64_t, CWalletOutput*> OutputItems;
 
 namespace blsct {
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose);
+CScript BuildHTLCScript(
+    const std::vector<unsigned char>& hash_bytes,
+    const std::vector<unsigned char>& spendingKeyA,
+    const std::vector<unsigned char>& spendingKeyB,
+    int64_t locktime);
 }
 
 class CRPCCommand;

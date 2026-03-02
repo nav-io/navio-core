@@ -50,16 +50,45 @@ Funding transaction sequence
            }],
        )
 
-3. Optionally inspect it with `decodeblsctrawtransaction`.
-4. Add wallet-selected fee inputs and change with `fundblsctrawtransaction`.
-5. Sign it with `signblsctrawtransaction`.
-6. Optionally preflight it with `testmempoolaccept`.
-7. Broadcast it with `sendrawtransaction`.
-8. Recover the HTLC output data with `getblsctrecoverydata(<signed_hex_or_txid>)`
-   and keep/share the returned:
-   - `out_hash`, which becomes the later spend input's `outid`
-   - `amount`, converted to satoshis for the later spend input's `value`
-   - `gamma`, copied into the later spend input's `gamma`
+3. Add wallet-selected fee inputs and change with `fundblsctrawtransaction`.
+4. Sign it with `signblsctrawtransaction`.
+5. Optionally preflight with `testmempoolaccept`.
+6. Broadcast with `sendrawtransaction`.
+
+Receiver detection sequence (party B)
+--------------------------------------
+
+The receiver does **not** need to receive the raw transaction hex.  After
+the initial negotiation (step 1), the receiver imports the expected HTLC
+script into their wallet so it is detected automatically during block
+scanning:
+
+    receiver_wallet.importblsctscript({
+        "type": "atomic_swap",
+        "address_a": address_a,
+        "address_b": address_b,
+        "hash": secret_hash_hex,
+        "locktime": locktime,
+        "blinding_key": blinding_key_hex,
+    })
+
+Once the funder broadcasts and the output is mined, the receiver's wallet
+picks it up via the watch-only script match.  The receiver finds the
+output by calling `listblsctunspent`, which includes watch-only entries
+with `watchonly: true`:
+
+    utxos = receiver_wallet.listblsctunspent()
+    htlc_utxos = [u for u in utxos if u.get("watchonly")]
+
+Each entry contains `outid` (the output hash) and `scriptPubKey`.
+The receiver then recovers `amount` and `gamma` from the output using
+`getblsctrecoverydata`:
+
+    recovery = receiver_wallet.getblsctrecoverydata(utxo["outid"])
+
+Arbitrary (non-HTLC) scripts can also be imported in raw hex form:
+
+    wallet.importblsctscript({"type": "raw", "script": "<hex>"})
 
 Important units
 ---------------
@@ -138,10 +167,9 @@ Common failure cases
   `0xFFFFFFFF`.
 - Height-mode and timestamp-mode values must match between the script locktime
   and the spend input's `sequence`.
-- The spending party (if different from the funder) still needs `out_hash`,
-  `amount`, and `gamma` from the funding side, shared off-chain.  The
-  `blinding_key` is not among them -- the funder already knows it, and
-  the receiver recovers it via standard BLSCT output recovery.
+- Broadcasting the HTLC funding transaction before the receiver has verified
+  the raw hex (step 5 above) risks the funder committing funds to a script
+  the receiver cannot validate.
 """
 
 import hashlib
@@ -197,6 +225,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         self.test_sequence_final_cltv_fails(wallet1, wallet2, address1, address2)
         self.test_reserved_sequence_bits(wallet1, wallet2, address1, address2)
         self.test_height_time_mode_mismatch(wallet1, wallet2, address1, address2)
+        self.test_importblsctscript(wallet1, wallet2, address1, address2)
 
     def _create_and_broadcast_htlc(self, wallet, miner_addr, address_a, address_b,
                                     amount_btc, secret_hash_hex, locktime, blinding_key_hex):
@@ -600,6 +629,64 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         assert_raises_rpc_error(-26, "failed-script-check",
                                 self.nodes[0].sendrawtransaction, spend_signed)
         self.log.info("=== Height/time mode mismatch test PASSED ===")
+
+    def test_importblsctscript(self, wallet1, wallet2, address1, address2):
+        """Test that importblsctscript lets the receiver detect an HTLC
+        output on-chain without receiving any out-of-band data beyond the
+        initial negotiation parameters."""
+        self.log.info("=== Testing importblsctscript ===")
+
+        secret = bytes([0x42] * 32)
+        secret_hash = hashlib.sha256(secret).digest()
+        blinding_key_hex = "bb" * 32
+        current_height = self.nodes[0].getblockcount()
+        htlc_locktime = current_height + 50
+        htlc_amount_btc = 1.0
+        htlc_amount_sats = int(htlc_amount_btc * COIN)
+
+        # Receiver (wallet2) imports the expected HTLC script BEFORE it exists
+        result = wallet2.importblsctscript({
+            "type": "atomic_swap",
+            "address_a": address1,
+            "address_b": address2,
+            "hash": secret_hash.hex(),
+            "locktime": htlc_locktime,
+            "blinding_key": blinding_key_hex,
+        }, False)  # rescan=False, nothing to find yet
+        assert result["success"]
+        imported_script = result["script"]
+        self.log.info(f"Imported HTLC script: {imported_script[:40]}...")
+
+        # Funder (wallet1) creates and broadcasts the HTLC
+        signed_tx = self._create_and_broadcast_htlc(
+            wallet1, address1, address1, address2,
+            htlc_amount_btc, secret_hash.hex(), htlc_locktime, blinding_key_hex)
+
+        # Sync node1 so wallet2 sees the new block
+        self.sync_blocks()
+
+        # Wallet2 should now detect the HTLC output via the watch-only match.
+        # listblsctunspent includes watch-only entries with watchonly=true.
+        unspent = wallet2.listblsctunspent()
+        htlc_matches = [u for u in unspent
+                        if u.get("scriptPubKey") == imported_script]
+        assert len(htlc_matches) > 0, (
+            f"Receiver did not detect HTLC output via listblsctunspent. "
+            f"Got {len(unspent)} outputs, none matched script {imported_script[:40]}...")
+        htlc_utxo = htlc_matches[0]
+        assert htlc_utxo.get("watchonly"), "HTLC output should be marked watchonly"
+        self.log.info(f"Receiver detected HTLC output: {htlc_utxo['outid']}")
+
+        # Also test raw script import
+        raw_result = wallet2.importblsctscript({
+            "type": "raw",
+            "script": "51",  # OP_TRUE
+        }, False)
+        assert raw_result["success"]
+        assert raw_result["script"] == "51"
+        self.log.info("Raw script import succeeded")
+
+        self.log.info("=== importblsctscript test PASSED ===")
 
 
 if __name__ == '__main__':

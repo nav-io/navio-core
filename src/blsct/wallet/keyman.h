@@ -153,7 +153,7 @@ public:
             if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
                 return IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag);
             }
-            return false;
+            return IsMine(txout.scriptPubKey);
         }
         return IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag);
     };
@@ -234,6 +234,10 @@ public:
 
     // Extract all 48-byte BLS public keys from a script (for HTLC and other complex scripts)
     bool ExtractAllSpendingKeysFromScript(const CScript& script, std::vector<blsct::PublicKey>& spendingKeys) const;
+
+    /** Watch-only script management */
+    bool AddWatchOnly(const CScript& script);
+    void LoadWatchOnly(const CScript& script);
 };
 } // namespace blsct
 

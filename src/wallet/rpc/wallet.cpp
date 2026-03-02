@@ -862,6 +862,7 @@ RPCHelpMan importdescriptors();
 RPCHelpMan listdescriptors();
 RPCHelpMan backupwallet();
 RPCHelpMan restorewallet();
+RPCHelpMan importblsctscript();
 
 // coins
 RPCHelpMan getreceivedbyaddress();
@@ -937,6 +938,7 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &getbalances},
         {"wallet", &getwalletinfo},
         {"wallet", &importaddress},
+        {"wallet", &importblsctscript},
         {"wallet", &importdescriptors},
         {"wallet", &importmulti},
         {"wallet", &importprivkey},
