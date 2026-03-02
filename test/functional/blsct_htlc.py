@@ -31,11 +31,10 @@ Funding transaction sequence
    - `hash = sha256(secret)` as 32-byte hex
    - `locktime` as either a block height (`< 500000000`) or timestamp
      (`>= 500000000`)
-   The `blinding_key` does not need to be exchanged: both parties derive it
-   independently as the Diffie-Hellman shared secret of their view keys
-   (party A computes `viewPrivA * viewPubB`, party B computes
-   `viewPrivB * viewPubA`).  The resulting 32-byte value is used to
-   deterministically derive the HTLC branch spending keys.
+   The `blinding_key` does not need to be exchanged off-chain.  The funder
+   (party A) knows it because they created the output.  The receiver
+   (party B) recovers it from the output's `blsctData.blindingKey` using
+   their view private key -- the standard BLSCT output recovery path.
 2. Create the HTLC output:
 
        wallet.createblsctrawtransaction(
@@ -141,8 +140,8 @@ Common failure cases
   and the spend input's `sequence`.
 - The spending party (if different from the funder) still needs `out_hash`,
   `amount`, and `gamma` from the funding side, shared off-chain.  The
-  `blinding_key` is not among them -- it is derived independently by each
-  party as the DH shared secret of their view keys.
+  `blinding_key` is not among them -- the funder already knows it, and
+  the receiver recovers it via standard BLSCT output recovery.
 """
 
 import hashlib
