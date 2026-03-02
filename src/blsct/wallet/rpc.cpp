@@ -1314,6 +1314,7 @@ RPCHelpMan createblsctrawtransaction()
                     },
                 },
             },
+            {"type", RPCArg::Type::STR, RPCArg::Default{""}, "Transaction type: \"normal\", \"create_token\", \"mint_token\", or \"mint_nft\""},
         },
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"},
@@ -1344,6 +1345,16 @@ RPCHelpMan createblsctrawtransaction()
                 const Txid txid = Txid::FromUint256(ParseHashO(o, "outid"));
                 blsct::UnsignedInput unsigned_input;
                 unsigned_input.in.prevout = COutPoint(txid);
+
+                if (o.exists("sequence")) {
+                    uint32_t seq = o["sequence"].getInt<uint32_t>();
+                    if (seq != CTxIn::SEQUENCE_FINAL && (seq & (1U << 31))) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                            "Sequence value has bit 31 set (reserved for future relative timelocks). "
+                            "Valid absolute locktime range: 0 to 0x7FFFFFFF, or 0xFFFFFFFF for no lock.");
+                    }
+                    unsigned_input.in.nSequence = seq;
+                }
 
                 // Parse optional value field
                 if (o.exists("value")) {
@@ -1639,8 +1650,6 @@ RPCHelpMan createblsctrawtransaction()
             // Create unsigned transaction
             blsct::UnsignedTransaction unsigned_tx;
 
-            unsigned_tx = blsct::UnsignedTransaction();
-
             // Add inputs and outputs
             for (const auto& input : unsigned_inputs) {
                 unsigned_tx.AddInput(input);
@@ -1786,7 +1795,7 @@ RPCHelpMan fundblsctrawtransaction()
                     }
 
                     if (!recovery_data.has_value() || (recovery_data->amount == 0 && recovery_data->gamma == Scalar(0) && recovery_data->id == 0 && recovery_data->message == "")) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("BLSCT recovery data not available for output %s", output.outpoint.hash.GetHex()));
+                        continue;
                     }
 
                     blsct::UnsignedInput input;
@@ -1794,23 +1803,18 @@ RPCHelpMan fundblsctrawtransaction()
                     input.value = Scalar(recovery_data->amount);
                     input.gamma = recovery_data->gamma;
 
-                    // Get the spending key for this output
                     blsct::PrivateKey spending_key;
                     if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Spending key not available for output %s", output.outpoint.hash.GetHex()));
+                        continue;
                     }
 
                     input.sk = spending_key;
 
-                    // Validate: spending key must match UTXO's spendingKey
                     if (!output.txout.blsctData.spendingKey.IsZero()) {
                         auto signing_pubkey = spending_key.GetPublicKey();
                         auto expected_pubkey = blsct::PublicKey(output.txout.blsctData.spendingKey);
                         if (signing_pubkey != expected_pubkey) {
-                            throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
-                                "Funding input (%s): derived spending key does not match the UTXO spendingKey. "
-                                "This transaction would fail signature verification on broadcast.",
-                                output.outpoint.hash.GetHex()));
+                            continue;
                         }
                     }
 
@@ -2588,6 +2592,65 @@ static RPCHelpMan verifyblsmessage()
 }
 
 
+RPCHelpMan deriveblsctspendingkey()
+{
+    return RPCHelpMan{
+        "deriveblsctspendingkey",
+        "\nDerive the private spending key for an HTLC/atomic-swap output.\n"
+        "Given the blinding key used when creating the output and a BLSCT address owned by this wallet,\n"
+        "returns the private spending key needed to spend via the corresponding script branch.\n",
+        {
+            {"blinding_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 32-byte blinding key (hex) used when creating the HTLC output"},
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The BLSCT address to derive the spending key for (must be owned by this wallet)"},
+        },
+        RPCResult{
+            RPCResult::Type::STR_HEX, "spending_key", "The 32-byte private spending key (hex)"},
+        RPCExamples{
+            HelpExampleCli("deriveblsctspendingkey", "\"0102030405060708091011121314151617181920212223242526272829303132\" \"rnv1...\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            LOCK(pwallet->cs_wallet);
+            auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            auto blinding_key_bytes = ParseHex(request.params[0].get_str());
+            if (blinding_key_bytes.size() != 32) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Blinding key must be 32 bytes (64 hex characters)");
+            }
+            Scalar blindingKey(blinding_key_bytes);
+
+            std::string address_str = request.params[1].get_str();
+            CTxDestination dest = DecodeDestination(address_str);
+            if (!IsValidDestination(dest) || dest.index() != 8) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BLSCT address");
+            }
+            auto dpk = std::get<blsct::DoublePublicKey>(dest);
+
+            MclG1Point sk_point;
+            if (!dpk.GetSpendKey(sk_point)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Could not extract spend key from address");
+            }
+            CKeyID hashId = blsct::PublicKey(sk_point).GetID();
+
+            // blsctData.blindingKey in a real output is D * blindingKey_scalar
+            // (where D = sub-address spend key point), NOT blindingKey * G.
+            // CalculatePrivateSpendingKey computes t = blindingKey_point * viewKey,
+            // so we must set it to sk_point * blindingKey to match CreateOutput's
+            // GenerateKeys which stores sk * blindingKey.
+            CTxOut fakeOut;
+            fakeOut.blsctData.blindingKey = sk_point * blindingKey;
+
+            blsct::PrivateKey spendingKey;
+            if (!blsct_km->GetSpendingKeyForOutputWithCache(fakeOut, hashId, spendingKey) || !spendingKey.IsValid()) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive spending key — address may not belong to this wallet");
+            }
+
+            return HexStr(spendingKey.GetScalar().GetVch());
+        },
+    };
+}
+
 Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
 {
     static const CRPCCommand commands[]{
@@ -2616,6 +2679,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &getblsctrecoverydatawithnonce},
         {"blsct", &signblsmessage},
         {"blsct", &verifyblsmessage},
+        {"blsct", &deriveblsctspendingkey},
     };
     return commands;
 }

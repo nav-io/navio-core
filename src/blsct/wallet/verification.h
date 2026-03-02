@@ -11,6 +11,6 @@
 #include <consensus/validation.h>
 
 namespace blsct {
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0);
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0);
 }
 #endif // BLSCT_VERIFICATION_H

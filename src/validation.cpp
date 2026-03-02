@@ -842,9 +842,16 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
     // be mined yet.
     // Pass in m_view which has all of the relevant inputs cached. Note that, since m_view's
     // backend was removed, it no longer pulls coins from the mempool.
-    const std::optional<LockPoints> lock_points{CalculateLockPointsAtTip(m_active_chainstate.m_chain.Tip(), m_view, tx)};
-    if (!lock_points.has_value() || !CheckSequenceLocksAtTip(m_active_chainstate.m_chain.Tip(), *lock_points)) {
-        return state.Invalid(TxValidationResult::TX_PREMATURE_SPEND, "non-BIP68-final");
+    // BLSCT repurposes nSequence as per-input absolute locktime;
+    // skip the BIP 68 relative-locktime check (handled in VerifyTx).
+    std::optional<LockPoints> lock_points;
+    if (tx.IsBLSCT()) {
+        lock_points = LockPoints{};
+    } else {
+        lock_points = CalculateLockPointsAtTip(m_active_chainstate.m_chain.Tip(), m_view, tx);
+        if (!lock_points.has_value() || !CheckSequenceLocksAtTip(m_active_chainstate.m_chain.Tip(), *lock_points)) {
+            return state.Invalid(TxValidationResult::TX_PREMATURE_SPEND, "non-BIP68-final");
+        }
     }
 
     // The mempool holds txs for the next block, so pass height+1 to CheckTxInputs
@@ -1070,6 +1077,10 @@ bool MemPoolAccept::PolicyScriptChecks(const ATMPArgs& args, Workspace& ws)
     const CTransaction& tx = *ws.m_ptx;
     TxValidationState& state = ws.m_state;
 
+    // BLSCT transactions use blsct::VerifyTx with BLSCTSignatureChecker
+    // for script checks (including direct block-height CLTV validation).
+    if (tx.IsBLSCT()) return true;
+
     constexpr unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
 
     // Check input scripts and signatures.
@@ -1114,17 +1125,21 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
     // There is a similar check in CreateNewBlock() to prevent creating
     // invalid blocks (using TestBlockValidity), however allowing such
     // transactions into the mempool can be exploited as a DoS attack.
-    unsigned int currentBlockScriptVerifyFlags{GetBlockScriptFlags(*m_active_chainstate.m_chain.Tip(), m_active_chainstate.m_chainman)};
-    if (!CheckInputsFromMempoolAndCache(tx, state, m_view, m_pool, currentBlockScriptVerifyFlags,
-                                        ws.m_precomputed_txdata, m_active_chainstate.CoinsTip())) {
-        LogPrintf("BUG! PLEASE REPORT THIS! CheckInputScripts failed against latest-block but not STANDARD flags %s, %s\n", hash.ToString(), state.ToString());
-        return Assume(false);
+    if (!tx.IsBLSCT()) {
+        unsigned int currentBlockScriptVerifyFlags{GetBlockScriptFlags(*m_active_chainstate.m_chain.Tip(), m_active_chainstate.m_chainman)};
+        if (!CheckInputsFromMempoolAndCache(tx, state, m_view, m_pool, currentBlockScriptVerifyFlags,
+                                            ws.m_precomputed_txdata, m_active_chainstate.CoinsTip())) {
+            LogPrintf("BUG! PLEASE REPORT THIS! CheckInputScripts failed against latest-block but not STANDARD flags %s, %s\n", hash.ToString(), state.ToString());
+            return Assume(false);
+        }
     }
 
     if (args.m_chainparams.GetConsensus().fBLSCT) {
         CCoinsViewCache viewNew(&m_active_chainstate.CoinsTip());
+        int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
+        int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
 
-        if (!blsct::VerifyTx(tx, viewNew, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount)) {
+        if (!blsct::VerifyTx(tx, viewNew, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP)) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }
@@ -2627,15 +2642,19 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
 
             // Check that transaction is BIP68 final
             // BIP68 lock checks (as opposed to nLockTime checks) must
-            // be in ConnectBlock because they require the UTXO set
-            prevheights.resize(tx.vin.size());
-            for (size_t j = 0; j < tx.vin.size(); j++) {
-                prevheights[j] = view.AccessCoin(tx.vin[j].prevout).nHeight;
-            }
+            // be in ConnectBlock because they require the UTXO set.
+            // BLSCT repurposes nSequence as per-input absolute locktime;
+            // finality is checked in VerifyTx instead.
+            if (!tx.IsBLSCT()) {
+                prevheights.resize(tx.vin.size());
+                for (size_t j = 0; j < tx.vin.size(); j++) {
+                    prevheights[j] = view.AccessCoin(tx.vin[j].prevout).nHeight;
+                }
 
-            if (!SequenceLocks(tx, nLockTimeFlags, prevheights, *pindex)) {
-                LogPrintf("ERROR: %s: contains a non-BIP68-final transaction\n", __func__);
-                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-txns-nonfinal");
+                if (!SequenceLocks(tx, nLockTimeFlags, prevheights, *pindex)) {
+                    LogPrintf("ERROR: %s: contains a non-BIP68-final transaction\n", __func__);
+                    return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-txns-nonfinal");
+                }
             }
         }
 
@@ -2654,7 +2673,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             std::vector<CScriptCheck> vChecks;
             bool fCacheResults = fJustCheck; /* Don't cache results if we're actually connecting blocks (still consult the cache, though) */
             TxValidationState tx_state;
-            if (fScriptChecks && !CheckInputScripts(tx, tx_state, view, flags, fCacheResults, fCacheResults, txsdata[i], parallel_script_checks ? &vChecks : nullptr)) {
+            if (!tx.IsBLSCT() && fScriptChecks && !CheckInputScripts(tx, tx_state, view, flags, fCacheResults, fCacheResults, txsdata[i], parallel_script_checks ? &vChecks : nullptr)) {
                 // Any transaction validation failure in ConnectBlock is a block consensus failure
                 state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                               tx_state.GetRejectReason(), tx_state.GetDebugMessage());
@@ -2665,7 +2684,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
 
             if (tx.IsBLSCT()) {
                 if (params.GetConsensus().fBLSCT) {
-                    if (!blsct::VerifyTx(tx, view, tx_state, 0, params.GetConsensus().nPePoSMinStakeAmount)) {
+                    int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
+                    if (!blsct::VerifyTx(tx, view, tx_state, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP)) {
                         state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                                       tx_state.GetRejectReason(), tx_state.GetDebugMessage());
                         return error("ConnectBlock(): VerifyTx on transaction %s %s failed with %s",
@@ -2702,7 +2722,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
 
         auto blockReward = pindex->nHeight == 1 ? params.GetConsensus().nBLSCTFirstBlockReward : params.GetConsensus().nBLSCTBlockReward;
 
-        if (!blsct::VerifyTx(*block.vtx[0], view, tx_state, blockReward)) {
+        int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
+        if (!blsct::VerifyTx(*block.vtx[0], view, tx_state, blockReward, 0, pindex->nHeight, nMTP)) {
             state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                           tx_state.GetRejectReason(), tx_state.GetDebugMessage());
             return error("ConnectBlock(): VerifyTx on coinbase of block %s failed (reward: %s)\n",

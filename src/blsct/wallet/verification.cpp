@@ -10,10 +10,51 @@
 #include <blsct/range_proof/generators.h>
 #include <blsct/wallet/verification.h>
 #include <script/interpreter.h>
-#include <util/strencodings.h>
+#include <script/script.h>
 
 namespace blsct {
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake)
+
+// BLSCT nSequence encoding (per-input absolute locktime commitment):
+//
+//   0xFFFFFFFF (SEQUENCE_FINAL) : no locktime constraint
+//   Bit 31 set, != SEQUENCE_FINAL: reserved for future relative timelocks
+//   0 .. LOCKTIME_THRESHOLD-1   : absolute height-based locktime
+//                                 (spendable at block height >= nSequence)
+//   LOCKTIME_THRESHOLD .. 0x7FFFFFFF : absolute time-based locktime (Unix ts)
+//                                 (spendable when MTP >= nSequence)
+//
+// nSequence is part of CTxIn serialization and therefore covered by
+// CTxIn::GetHash(), which BLSCT uses as the BLS sighash -- so the
+// commitment is signature-bound and survives transaction aggregation.
+
+static constexpr uint32_t BLSCT_SEQUENCE_RELATIVE_FLAG = (1U << 31); // 0x80000000
+
+class BLSCTSignatureChecker : public TransactionSignatureChecker
+{
+    uint32_t m_input_locktime;
+
+public:
+    BLSCTSignatureChecker(const CTransaction* tx, unsigned int nIn)
+        : TransactionSignatureChecker(tx, nIn, 0, MissingDataBehavior::FAIL),
+          m_input_locktime(tx->vin[nIn].nSequence) {}
+
+    bool CheckLockTime(const CScriptNum& nLockTime) const override
+    {
+        if (nLockTime < 0) return false;
+
+        if (m_input_locktime == CTxIn::SEQUENCE_FINAL)
+            return false;
+
+        if (!(
+            (m_input_locktime <  LOCKTIME_THRESHOLD && nLockTime <  LOCKTIME_THRESHOLD) ||
+            (m_input_locktime >= LOCKTIME_THRESHOLD && nLockTime >= LOCKTIME_THRESHOLD)))
+            return false;
+
+        return nLockTime <= static_cast<int64_t>(m_input_locktime);
+    }
+};
+
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast)
 {
     if (!view.HaveInputs(tx)) {
         return state.Invalid(TxValidationResult::TX_MISSING_INPUTS, "bad-inputs-unknown");
@@ -25,7 +66,6 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
     std::vector<Message> vMessages;
     std::vector<PublicKey> vPubKeys;
 
-
     MclG1Point balanceKey;
 
     if (blockReward > 0) {
@@ -34,6 +74,21 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
     }
 
     if (!tx.IsCoinBase()) {
+        for (const auto& in : tx.vin) {
+            if (in.nSequence != CTxIn::SEQUENCE_FINAL) {
+                if (in.nSequence & BLSCT_SEQUENCE_RELATIVE_FLAG)
+                    return state.Invalid(TxValidationResult::TX_CONSENSUS, "reserved-sequence-bits");
+
+                if (in.nSequence < LOCKTIME_THRESHOLD) {
+                    if (static_cast<int64_t>(in.nSequence) > nSpendHeight)
+                        return state.Invalid(TxValidationResult::TX_PREMATURE_SPEND, "non-final-input");
+                } else {
+                    if (static_cast<int64_t>(in.nSequence) > nMedianTimePast)
+                        return state.Invalid(TxValidationResult::TX_PREMATURE_SPEND, "non-final-input");
+                }
+            }
+        }
+
         size_t i = 0;
         for (auto& in : tx.vin) {
             Coin coin;
@@ -42,11 +97,11 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
                 return state.Invalid(TxValidationResult::TX_MISSING_INPUTS, "bad-input-unknown");
             }
 
-            TransactionSignatureChecker checker(&tx, i++, 0, MissingDataBehavior::FAIL);
+            BLSCTSignatureChecker checker(&tx, i++);
             ScriptError serror;
-            uint32_t flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC;
+            uint32_t flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY;
 
-            if (!VerifyScript(coin.out.scriptPubKey, in.scriptSig, nullptr, flags, checker, &serror)) {
+            if (!VerifyScript(in.scriptSig, coin.out.scriptPubKey, nullptr, flags, checker, &serror)) {
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-script-check");
             }
 

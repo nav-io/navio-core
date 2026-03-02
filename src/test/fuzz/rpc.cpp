@@ -202,6 +202,7 @@ const std::vector<std::string> RPC_COMMANDS_SAFE_FOR_FUZZING{
     "createblsctrawtransaction",
     "signblsctrawtransaction",
     "fundblsctaddress",
+    "deriveblsctspendingkey",
 };
 
 std::string ConsumeScalarRPCArgument(FuzzedDataProvider& fuzzed_data_provider, bool& good_data)
