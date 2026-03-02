@@ -2067,7 +2067,7 @@ static std::vector<unsigned int> AllConsensusFlags()
 /** Precomputed list of all valid combinations of consensus-relevant script validation flags. */
 static const std::vector<unsigned int> ALL_CONSENSUS_FLAGS = AllConsensusFlags();
 
-static void AssetTest(const UniValue& test)
+[[maybe_unused]] static void AssetTest(const UniValue& test)
 {
     BOOST_CHECK(test.isObject());
 

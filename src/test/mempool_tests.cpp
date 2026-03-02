@@ -129,7 +129,6 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest)
     CTxMemPool& pool = *Assert(m_node.mempool);
     LOCK2(cs_main, pool.cs);
     TestMemPoolEntryHelper entry;
-    int nCount = 0;
 
     /* 3rd highest fee */
     CMutableTransaction tx1 = CMutableTransaction();

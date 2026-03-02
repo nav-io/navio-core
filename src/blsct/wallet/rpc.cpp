@@ -1929,7 +1929,7 @@ RPCHelpMan signblsctrawtransaction()
             }
             auto& unsigned_tx = unsigned_tx_opt.value();
 
-            auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+            pwallet->GetOrCreateBLSCTKeyMan();
 
             // Pre-sign validation: check each component before signing
             const auto& inputs = unsigned_tx.GetInputs();
