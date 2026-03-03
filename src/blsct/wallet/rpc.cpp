@@ -11,6 +11,7 @@
 #include <blsct/tokens/predicate_parser.h>
 #include <coins.h>
 #include <core_io.h>
+#include <logging.h>
 #include <primitives/transaction.h>
 #include <rpc/server.h>
 #include <rpc/server_util.h>
@@ -1721,6 +1722,7 @@ RPCHelpMan fundblsctrawtransaction()
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Output value is too large");
                 }
             }
+            LogDebug(BCLog::RPC, "fundblsctrawtransaction: total output value=%lld\n", output_value);
 
             // Calculate total input amount from existing inputs
             CAmount existing_input_value = 0;
@@ -1739,6 +1741,7 @@ RPCHelpMan fundblsctrawtransaction()
                 existing_input_value += input.value.GetUint64();
                 existing_inputs.insert(input.in.prevout);
             }
+            LogDebug(BCLog::RPC, "fundblsctrawtransaction: existing input value=%lld, existing inputs count=%zu\n", existing_input_value, existing_inputs.size());
 
             auto lock_outpoint_if_wallet = [&](const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
                 if (pwallet->GetWalletTxFromOutpoint(outpoint)) {
@@ -1752,6 +1755,7 @@ RPCHelpMan fundblsctrawtransaction()
 
             // Calculate how much more we need
             CAmount additional_required = required_value - existing_input_value;
+            LogDebug(BCLog::RPC, "fundblsctrawtransaction: required value=%lld, additional required=%lld\n", required_value, additional_required);
 
             // Get change address (needed for both cases)
             CTxDestination change_dest;
@@ -1789,9 +1793,11 @@ RPCHelpMan fundblsctrawtransaction()
             CAmount additional_input_value = 0;
             std::vector<COutPoint> added_inputs;
             for (const auto& [type, outputs] : available_outputs.coins) {
+                LogDebug(BCLog::RPC, "fundblsctrawtransaction: considering %zu available outputs of type %d\n", outputs.size(), static_cast<int>(type));
                 for (const auto& output : outputs) {
                     // Skip if this output is already used as an input
                     if (existing_inputs.count(output.outpoint) > 0) {
+                        LogDebug(BCLog::RPC, "fundblsctrawtransaction: skipping output %s (already used as input)\n", output.outpoint.ToString());
                         continue;
                     }
 
@@ -1808,6 +1814,7 @@ RPCHelpMan fundblsctrawtransaction()
                     }
 
                     if (!recovery_data.has_value() || (recovery_data->amount == 0 && recovery_data->gamma == Scalar(0) && recovery_data->id == 0 && recovery_data->message == "")) {
+                        LogDebug(BCLog::RPC, "fundblsctrawtransaction: skipping output %s (no valid recovery data)\n", output.outpoint.ToString());
                         continue;
                     }
 
@@ -1818,6 +1825,7 @@ RPCHelpMan fundblsctrawtransaction()
 
                     blsct::PrivateKey spending_key;
                     if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
+                        LogDebug(BCLog::RPC, "fundblsctrawtransaction: skipping output %s (could not retrieve valid spending key)\n", output.outpoint.ToString());
                         continue;
                     }
 
@@ -1827,10 +1835,12 @@ RPCHelpMan fundblsctrawtransaction()
                         auto signing_pubkey = spending_key.GetPublicKey();
                         auto expected_pubkey = blsct::PublicKey(output.txout.blsctData.spendingKey);
                         if (signing_pubkey != expected_pubkey) {
+                            LogDebug(BCLog::RPC, "fundblsctrawtransaction: skipping output %s (spending key mismatch)\n", output.outpoint.ToString());
                             continue;
                         }
                     }
 
+                    LogDebug(BCLog::RPC, "fundblsctrawtransaction: adding input %s with amount=%lld\n", output.outpoint.ToString(), recovery_data->amount);
                     unsigned_tx.AddInput(input);
                     additional_input_value += recovery_data->amount;
                     added_inputs.push_back(output.outpoint);
@@ -1840,8 +1850,10 @@ RPCHelpMan fundblsctrawtransaction()
 
                 if (additional_input_value >= additional_required) break;
             }
+            LogDebug(BCLog::RPC, "fundblsctrawtransaction: additional input value collected=%lld, additional required=%lld\n", additional_input_value, additional_required);
 
             if (additional_input_value < additional_required) {
+                LogDebug(BCLog::RPC, "fundblsctrawtransaction: insufficient funds (collected=%lld, required=%lld)\n", additional_input_value, additional_required);
                 throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Insufficient funds");
             }
 
