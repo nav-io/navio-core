@@ -1250,7 +1250,9 @@ RPCHelpMan createblsctbalanceproof()
             filter_coins.only_blsct = true;
             filter_coins.skip_locked = false;
             filter_coins.include_immature_coinbase = false;
-            wallet::CoinsResult available_coins = AvailableCoins(*pwallet, nullptr, std::nullopt, filter_coins);
+            wallet::CoinsResult available_coins = pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)
+                ? AvailableBlsctCoins(*pwallet, nullptr, filter_coins)
+                : AvailableCoins(*pwallet, nullptr, std::nullopt, filter_coins);
 
             if (available_coins.GetTotalAmount() < target_amount) {
                 throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Insufficient funds");
@@ -1722,7 +1724,7 @@ RPCHelpMan fundblsctrawtransaction()
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Output value is too large");
                 }
             }
-            LogDebug(BCLog::RPC, "fundblsctrawtransaction: total output value=%lld\n", output_value);
+            LogPrintf("fundblsctrawtransaction: total output value=%lld\n", output_value);
 
             // Calculate total input amount from existing inputs
             CAmount existing_input_value = 0;
@@ -1735,13 +1737,15 @@ RPCHelpMan fundblsctrawtransaction()
             filter_coins.only_blsct = true;
             filter_coins.skip_locked = true;
             filter_coins.include_immature_coinbase = false;
-            wallet::CoinsResult available_outputs = AvailableCoins(*pwallet, nullptr, std::nullopt, filter_coins);
+            wallet::CoinsResult available_outputs = pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)
+                ? AvailableBlsctCoins(*pwallet, nullptr, filter_coins)
+                : AvailableCoins(*pwallet, nullptr, std::nullopt, filter_coins);
 
             for (const auto& input : unsigned_tx.GetInputs()) {
                 existing_input_value += input.value.GetUint64();
                 existing_inputs.insert(input.in.prevout);
             }
-            LogDebug(BCLog::RPC, "fundblsctrawtransaction: existing input value=%lld, existing inputs count=%zu\n", existing_input_value, existing_inputs.size());
+            LogPrintf("fundblsctrawtransaction: existing input value=%lld, existing inputs count=%zu\n", existing_input_value, existing_inputs.size());
 
             auto lock_outpoint_if_wallet = [&](const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
                 if (pwallet->GetWalletTxFromOutpoint(outpoint)) {
@@ -1755,7 +1759,7 @@ RPCHelpMan fundblsctrawtransaction()
 
             // Calculate how much more we need
             CAmount additional_required = required_value - existing_input_value;
-            LogDebug(BCLog::RPC, "fundblsctrawtransaction: required value=%lld, additional required=%lld\n", required_value, additional_required);
+            LogPrintf("fundblsctrawtransaction: required value=%lld, additional required=%lld\n", required_value, additional_required);
 
             // Get change address (needed for both cases)
             CTxDestination change_dest;
@@ -1792,40 +1796,65 @@ RPCHelpMan fundblsctrawtransaction()
 
             CAmount additional_input_value = 0;
             std::vector<COutPoint> added_inputs;
+            size_t total_available = 0;
             for (const auto& [type, outputs] : available_outputs.coins) {
-                LogDebug(BCLog::RPC, "fundblsctrawtransaction: considering %zu available outputs of type %d\n", outputs.size(), static_cast<int>(type));
+                total_available += outputs.size();
+            }
+            LogPrintf("fundblsctrawtransaction: found %zu candidate outputs, need %lld additional\n", total_available, additional_required);
+
+            for (const auto& [type, outputs] : available_outputs.coins) {
                 for (const auto& output : outputs) {
-                    // Skip if this output is already used as an input
                     if (existing_inputs.count(output.outpoint) > 0) {
-                        LogDebug(BCLog::RPC, "fundblsctrawtransaction: skipping output %s (already used as input)\n", output.outpoint.ToString());
                         continue;
                     }
+
+                    LogPrintf("fundblsctrawtransaction: evaluating output %s nValue=%lld hasRangeProof=%d hasKeys=%d spendingKeyZero=%d\n",
+                        output.outpoint.ToString(), output.txout.nValue,
+                        output.txout.HasBLSCTRangeProof(), output.txout.HasBLSCTKeys(),
+                        output.txout.blsctData.spendingKey.IsZero());
 
                     std::optional<range_proof::RecoveredData<Mcl>> recovery_data;
                     if (const wallet::CWalletOutput* wallet_output = pwallet->GetWalletOutput(output.outpoint)) {
                         recovery_data = wallet_output->blsctRecoveryData;
+                        LogPrintf("fundblsctrawtransaction: recovery source=mapOutputs amount=%lld\n", recovery_data->amount);
                     } else if (const wallet::CWalletTx* wallet_tx = pwallet->GetWalletTxFromOutpoint(output.outpoint)) {
                         recovery_data = wallet_tx->GetBLSCTRecoveryData(output.outpoint);
+                        LogPrintf("fundblsctrawtransaction: recovery source=mapWallet amount=%lld\n", recovery_data->amount);
                     } else {
                         auto recovery_result = blsct_km->RecoverOutputs({output.txout});
                         if (recovery_result.is_completed && !recovery_result.amounts.empty()) {
                             recovery_data = recovery_result.amounts[0];
+                            LogPrintf("fundblsctrawtransaction: recovery source=RecoverOutputs amount=%lld\n", recovery_data->amount);
+                        } else {
+                            LogPrintf("fundblsctrawtransaction: recovery source=none (not in mapOutputs, mapWallet, or RecoverOutputs)\n");
                         }
                     }
 
-                    if (!recovery_data.has_value() || (recovery_data->amount == 0 && recovery_data->gamma == Scalar(0) && recovery_data->id == 0 && recovery_data->message == "")) {
-                        LogDebug(BCLog::RPC, "fundblsctrawtransaction: skipping output %s (no valid recovery data)\n", output.outpoint.ToString());
+                    CAmount input_amount = 0;
+                    Scalar input_gamma;
+                    bool has_recovery = recovery_data.has_value() &&
+                        !(recovery_data->amount == 0 && recovery_data->gamma == Scalar(0) && recovery_data->id == 0 && recovery_data->message == "");
+
+                    if (has_recovery) {
+                        input_amount = recovery_data->amount;
+                        input_gamma = recovery_data->gamma;
+                    } else if (!output.txout.HasBLSCTRangeProof() && output.txout.nValue > 0) {
+                        input_amount = output.txout.nValue;
+                        input_gamma = Scalar(0);
+                        LogPrintf("fundblsctrawtransaction: using transparent nValue=%lld for output %s\n", input_amount, output.outpoint.ToString());
+                    } else {
+                        LogPrintf("fundblsctrawtransaction: SKIP output %s reason=no_recovery_data\n", output.outpoint.ToString());
                         continue;
                     }
 
                     blsct::UnsignedInput input;
                     input.in.prevout = output.outpoint;
-                    input.value = Scalar(recovery_data->amount);
-                    input.gamma = recovery_data->gamma;
+                    input.value = Scalar(input_amount);
+                    input.gamma = input_gamma;
 
                     blsct::PrivateKey spending_key;
                     if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
-                        LogDebug(BCLog::RPC, "fundblsctrawtransaction: skipping output %s (could not retrieve valid spending key)\n", output.outpoint.ToString());
+                        LogPrintf("fundblsctrawtransaction: SKIP output %s reason=spending_key_derivation_failed\n", output.outpoint.ToString());
                         continue;
                     }
 
@@ -1835,14 +1864,17 @@ RPCHelpMan fundblsctrawtransaction()
                         auto signing_pubkey = spending_key.GetPublicKey();
                         auto expected_pubkey = blsct::PublicKey(output.txout.blsctData.spendingKey);
                         if (signing_pubkey != expected_pubkey) {
-                            LogDebug(BCLog::RPC, "fundblsctrawtransaction: skipping output %s (spending key mismatch)\n", output.outpoint.ToString());
+                            LogPrintf("fundblsctrawtransaction: SKIP output %s reason=spending_key_mismatch derived=%s expected=%s\n",
+                                output.outpoint.ToString(),
+                                signing_pubkey.ToString().substr(0, 16),
+                                expected_pubkey.ToString().substr(0, 16));
                             continue;
                         }
                     }
 
-                    LogDebug(BCLog::RPC, "fundblsctrawtransaction: adding input %s with amount=%lld\n", output.outpoint.ToString(), recovery_data->amount);
+                    LogPrintf("fundblsctrawtransaction: ACCEPTED output %s amount=%lld\n", output.outpoint.ToString(), input_amount);
                     unsigned_tx.AddInput(input);
-                    additional_input_value += recovery_data->amount;
+                    additional_input_value += input_amount;
                     added_inputs.push_back(output.outpoint);
 
                     if (additional_input_value >= additional_required) break;
@@ -1850,11 +1882,13 @@ RPCHelpMan fundblsctrawtransaction()
 
                 if (additional_input_value >= additional_required) break;
             }
-            LogDebug(BCLog::RPC, "fundblsctrawtransaction: additional input value collected=%lld, additional required=%lld\n", additional_input_value, additional_required);
+            LogPrintf("fundblsctrawtransaction: collected=%lld required=%lld\n", additional_input_value, additional_required);
 
             if (additional_input_value < additional_required) {
-                LogDebug(BCLog::RPC, "fundblsctrawtransaction: insufficient funds (collected=%lld, required=%lld)\n", additional_input_value, additional_required);
-                throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Insufficient funds");
+                throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, strprintf(
+                    "Insufficient funds: found %zu candidate outputs but collected %s, need %s. "
+                    "Check debug.log for per-output rejection reasons.",
+                    total_available, FormatMoney(additional_input_value), FormatMoney(additional_required)));
             }
 
             if (lock_unspents) {
