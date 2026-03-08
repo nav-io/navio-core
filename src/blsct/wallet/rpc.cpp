@@ -1203,7 +1203,7 @@ static RPCHelpMan setblsctseed()
                 }
 
                 // Use the raw 32-byte key data, not the DER-encoded CPrivKey
-                const auto& keydata = key.IsValid() ? std::vector<unsigned char>(key.begin(), key.end()) : std::vector<unsigned char>();
+                const auto& keydata = key.IsValid() ? std::vector<unsigned char>(UCharCast(key.begin()), UCharCast(key.end())) : std::vector<unsigned char>();
                 if (keydata.size() != 32) {
                     throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Failed to extract 32-byte key from WIF");
                 }
