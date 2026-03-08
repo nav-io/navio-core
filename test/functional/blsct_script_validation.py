@@ -132,7 +132,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
 
         inputs = [{"outid": oh, "value": amt, "gamma": gamma,
                    "spending_key": sk, "scriptSig": script_sig}]
-        outputs = [{"address": self.addr1, "amount": 0.99}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
 
         raw = self.w1.createblsctrawtransaction(inputs, outputs)
         funded = self.w1.fundblsctrawtransaction(raw)
@@ -160,7 +160,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
 
         inputs = [{"outid": oh, "value": amt, "gamma": gamma,
                    "spending_key": sk, "scriptSig": script_sig}]
-        outputs = [{"address": self.addr1, "amount": 0.99}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
 
         raw = self.w1.createblsctrawtransaction(inputs, outputs)
         funded = self.w1.fundblsctrawtransaction(raw)
@@ -188,7 +188,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
 
         inputs = [{"outid": oh, "value": amt, "gamma": gamma,
                    "spending_key": wrong_sk, "scriptSig": script_sig}]
-        outputs = [{"address": self.addr1, "amount": 0.99}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
 
         raw = self.w1.createblsctrawtransaction(inputs, outputs)
         funded = self.w1.fundblsctrawtransaction(raw)
@@ -213,7 +213,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
 
         inputs = [{"outid": oh, "value": amt, "gamma": gamma,
                    "spending_key": sk, "scriptSig": ""}]
-        outputs = [{"address": self.addr1, "amount": 0.99}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
 
         raw = self.w1.createblsctrawtransaction(inputs, outputs)
         funded = self.w1.fundblsctrawtransaction(raw)
@@ -247,7 +247,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
 
         inputs = [{"outid": oh, "value": amt, "gamma": gamma,
                    "spending_key": sk, "scriptSig": ssig}]
-        outputs = [{"address": self.addr1, "amount": 0.99}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
 
         raw = self.w1.createblsctrawtransaction(inputs, outputs)
         funded = self.w1.fundblsctrawtransaction(raw)
@@ -277,7 +277,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
 
         inputs = [{"outid": oh, "value": amt, "gamma": gamma,
                    "spending_key": sk, "scriptSig": ssig}]
-        outputs = [{"address": self.addr1, "amount": 0.99}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
 
         raw = self.w1.createblsctrawtransaction(inputs, outputs)
         funded = self.w1.fundblsctrawtransaction(raw)
@@ -302,7 +302,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
 
         inputs = [{"outid": oh, "value": amt, "gamma": gamma,
                    "spending_key": sk, "scriptSig": ""}]
-        outputs = [{"address": self.addr1, "amount": 0.99}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
 
         raw = self.w1.createblsctrawtransaction(inputs, outputs)
         funded = self.w1.fundblsctrawtransaction(raw)
@@ -327,7 +327,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
 
         inputs = [{"outid": oh, "value": amt, "gamma": gamma,
                    "spending_key": sk, "scriptSig": ""}]
-        outputs = [{"address": self.addr1, "amount": 0.99}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
 
         raw = self.w1.createblsctrawtransaction(inputs, outputs)
         funded = self.w1.fundblsctrawtransaction(raw)

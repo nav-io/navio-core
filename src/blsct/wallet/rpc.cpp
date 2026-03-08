@@ -1198,10 +1198,6 @@ static RPCHelpMan setblsctseed()
                     throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key");
                 }
 
-                if (blsct_km->HaveKey(key.GetPubKey().GetID())) {
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key (either as an BLSCT seed or as a loose private key)");
-                }
-
                 // Use the raw 32-byte key data, not the DER-encoded CPrivKey
                 const auto& keydata = key.IsValid() ? std::vector<unsigned char>(UCharCast(key.begin()), UCharCast(key.end())) : std::vector<unsigned char>();
                 if (keydata.size() != 32) {
@@ -1210,6 +1206,10 @@ static RPCHelpMan setblsctseed()
                 MclScalar scalar;
                 scalar.SetVch(keydata);
                 master_priv_key = blsct::PrivateKey(scalar);
+
+                if (blsct_km->HaveKey(master_priv_key.GetPublicKey().GetID())) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key (either as an BLSCT seed or as a loose private key)");
+                }
             }
 
             blsct_km->SetHDSeed(master_priv_key);
@@ -1314,7 +1314,7 @@ RPCHelpMan createblsctrawtransaction()
                         {
                             {"outid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output id"},
                             {"sequence", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The script sequence number"},
-                            {"value", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The input value in satoshis"},
+                            {"value", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The input value in navoshis"},
                             {"gamma", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The gamma value for the input (hex string)"},
                             {"spending_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The private key for signing this input (hex string)"},
                             {"is_staked_commitment", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Whether this input is a staked commitment"},
@@ -1339,7 +1339,7 @@ RPCHelpMan createblsctrawtransaction()
                             {"address", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The BLSCT address to send to"},
                             {"address_a", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "First BLSCT address for an atomic_swap output (hashlock branch)"},
                             {"address_b", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Second BLSCT address for an atomic_swap output (timelock branch)"},
-                            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT},
+                            {"amount", RPCArg::Type::NUM, RPCArg::Optional::NO, "The amount in navoshis"},
                             {"memo", RPCArg::Type::STR, RPCArg::Default{""}, "A memo used to store in the transaction.\n"
                                                                              "The recipient will see its value."},
                             {"token_id", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "The token id for token transactions"},
@@ -1357,10 +1357,10 @@ RPCHelpMan createblsctrawtransaction()
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"},
         RPCExamples{
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"value\\\":1000000,\\\"gamma\\\":\\\"1234567890abcdef\\\",\\\"spending_key\\\":\\\"abcdef1234567890\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01,\\\"memo\\\":\\\"memo\\\",\\\"token_id\\\":\\\"tokenid\\\"}]\"") +
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01}]\"") +
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":0.01,\\\"script\\\":\\\"51\\\"}]\"") +
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"type\\\":\\\"atomic_swap\\\",\\\"address_a\\\":\\\"blsctAddr1\\\",\\\"address_b\\\":\\\"blsctAddr2\\\",\\\"amount\\\":0.01,\\\"hash\\\":\\\"00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff\\\",\\\"locktime\\\":750000}]\"")},
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"value\\\":1000000,\\\"gamma\\\":\\\"1234567890abcdef\\\",\\\"spending_key\\\":\\\"abcdef1234567890\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000,\\\"memo\\\":\\\"memo\\\",\\\"token_id\\\":\\\"tokenid\\\"}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000,\\\"script\\\":\\\"51\\\"}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"type\\\":\\\"atomic_swap\\\",\\\"address_a\\\":\\\"blsctAddr1\\\",\\\"address_b\\\":\\\"blsctAddr2\\\",\\\"amount\\\":1000000,\\\"hash\\\":\\\"00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff\\\",\\\"locktime\\\":750000}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -1559,7 +1559,7 @@ RPCHelpMan createblsctrawtransaction()
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Each output must include an amount");
                 }
 
-                CAmount nAmount = AmountFromValue(o["amount"]);
+                CAmount nAmount = o["amount"].getInt<CAmount>();
                 if (nAmount < 0)
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid amount, must be positive");
 
@@ -2150,14 +2150,14 @@ RPCHelpMan decodeblsctrawtransaction()
                                               {RPCResult::Type::ARR, "inputs", "Array of transaction inputs", {
                                                                                                                   {RPCResult::Type::OBJ, "", "", {
                                                                                                                                                 {RPCResult::Type::STR_HEX, "outid", "The previous output hash"},
-                                                                                                                                                     {RPCResult::Type::NUM, "value", "The input value"},
+                                                                                                                                                     {RPCResult::Type::NUM, "value", "The input value in navoshis"},
                                                                                                                                                      {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                      {RPCResult::Type::BOOL, "is_staked_commitment", "Whether this input is a staked commitment"},
                                                                                                                                                  }},
                                                                                                               }},
                                               {RPCResult::Type::ARR, "outputs", "Array of transaction outputs", {
                                                                                                                     {RPCResult::Type::OBJ, "", "", {
-                                                                                                                                                       {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT},
+                                                                                                                                                       {RPCResult::Type::NUM, "amount", "The amount in navoshis"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "blinding_key", "The blinding key (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "outputHash", "The output hash identifier (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
@@ -2165,7 +2165,7 @@ RPCHelpMan decodeblsctrawtransaction()
                                                                                                                                                        {RPCResult::Type::STR_HEX, "spending_key", "The output spending key (if available)"},
                                                                                                                                                    }},
                                                                                                                 }},
-                                              {RPCResult::Type::STR_AMOUNT, "fee", "The transaction fee in " + CURRENCY_UNIT},
+                                              {RPCResult::Type::NUM, "fee", "The transaction fee in navoshis"},
                                           }},
         RPCExamples{HelpExampleCli("decodeblsctrawtransaction", "\"hexstring\"") + HelpExampleRpc("decodeblsctrawtransaction", "\"hexstring\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -2183,7 +2183,7 @@ RPCHelpMan decodeblsctrawtransaction()
             for (const auto& input : unsigned_tx.GetInputs()) {
                 UniValue input_obj(UniValue::VOBJ);
                 input_obj.pushKV("outid", input.in.prevout.hash.GetHex());
-                input_obj.pushKV("value", ValueFromAmount(input.value.GetUint64()));
+                input_obj.pushKV("value", (int64_t)input.value.GetUint64());
                 input_obj.pushKV("gamma", HexStr(input.gamma.GetVch()));
                 input_obj.pushKV("is_staked_commitment", input.is_staked_commitment);
                 inputs.push_back(input_obj);
@@ -2205,7 +2205,7 @@ RPCHelpMan decodeblsctrawtransaction()
                 output_obj.pushKV("outputHash", output.out.GetHash().ToString());
                 output_obj.pushKV("scriptPubKey", HexStr(output.out.scriptPubKey));
 
-                output_obj.pushKV("amount", ValueFromAmount(output.value.GetUint64()));
+                output_obj.pushKV("amount", (int64_t)output.value.GetUint64());
 
                 output_obj.pushKV("blinding_key", HexStr(output.blindingKey.GetVch()));
                 output_obj.pushKV("gamma", HexStr(output.gamma.GetVch()));
@@ -2245,7 +2245,7 @@ RPCHelpMan decodeblsctrawtransaction()
             result.pushKV("outputs", outputs);
 
             // Add fee
-            result.pushKV("fee", ValueFromAmount(unsigned_tx.GetFee()));
+            result.pushKV("fee", (int64_t)unsigned_tx.GetFee());
 
             return result;
         },
@@ -2269,6 +2269,7 @@ static RPCHelpMan getblsctrecoverydata()
                                                                                                                                                               {RPCResult::Type::STR_HEX, "out_hash", "The output hash (hex string)"},
                                                                                                                                                               {RPCResult::Type::STR_HEX, "script", "The script hex"},
                                                                                                                                                               {RPCResult::Type::STR_AMOUNT, "amount", "The recovered amount in " + CURRENCY_UNIT},
+                                                                                                                                                              {RPCResult::Type::NUM, "amount_navoshi", "The recovered amount in navoshis"},
                                                                                                                                                               {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                               {RPCResult::Type::STR, "message", "The memo/message associated with this output"},
                                                                                                                                                           }},
@@ -2373,10 +2374,12 @@ static RPCHelpMan getblsctrecoverydata()
                     if (recovery_result.is_completed && !recovery_result.amounts.empty()) {
                         const auto& recovery_data = recovery_result.amounts[0];
                         output.pushKV("amount", ValueFromAmount(recovery_data.amount));
+                        output.pushKV("amount_navoshi", recovery_data.amount);
                         output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
                         output.pushKV("message", recovery_data.message);
                     } else {
                         output.pushKV("amount", ValueFromAmount(0));
+                        output.pushKV("amount_navoshi", 0);
                         output.pushKV("gamma", "");
                         output.pushKV("message", "");
                     }
@@ -2401,6 +2404,7 @@ static RPCHelpMan getblsctrecoverydata()
                     // Get recovery data from wallet transaction
                     auto recovery_data = wallet_tx_ptr->GetBLSCTRecoveryData(i);
                     output.pushKV("amount", ValueFromAmount(recovery_data.amount));
+                    output.pushKV("amount_navoshi", recovery_data.amount);
                     output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
                     output.pushKV("message", recovery_data.message);
 
@@ -2434,6 +2438,7 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
                                                                                                                                                        {RPCResult::Type::STR_HEX, "out_hash", "The output hash (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "script", "The script hex"},
                                                                                                                                                        {RPCResult::Type::STR_AMOUNT, "amount", "The recovered amount in " + CURRENCY_UNIT},
+                                                                                                                                                       {RPCResult::Type::NUM, "amount_navoshi", "The recovered amount in navoshis"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR, "message", "The memo/message associated with this output"},
                                                                                                                                                    }},
@@ -2531,11 +2536,13 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
                 if (recovery_result.is_completed && !recovery_result.amounts.empty()) {
                     auto recovery_data = recovery_result.amounts[0];
                     output.pushKV("amount", ValueFromAmount(recovery_data.amount));
+                    output.pushKV("amount_navoshi", recovery_data.amount);
                     output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
                     output.pushKV("message", recovery_data.message);
                 } else {
                     // Recovery failed with specified nonce
                     output.pushKV("amount", ValueFromAmount(0));
+                    output.pushKV("amount_navoshi", 0);
                     output.pushKV("gamma", "");
                     output.pushKV("message", "");
                 }

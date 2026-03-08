@@ -97,8 +97,8 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
 
         # Create transaction outputs
         outputs = [
-            {"address": address2, "amount": 0.1, "memo": "Regular output"},
-            {"address": address2, "script": custom_script, "amount": 0.05, "memo": "Custom script output"}
+            {"address": address2, "amount": 10000000, "memo": "Regular output"},
+            {"address": address2, "script": custom_script, "amount": 5000000, "memo": "Custom script output"}
         ]
 
         # Create raw transaction
@@ -179,9 +179,9 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
 
         # Create transaction outputs with multiple scripts
         outputs = [
-            {"address": address2, "script": script1, "amount": 0.02, "memo": "Script 1 output"},
-            {"address": address2, "script": script2, "amount": 0.03, "memo": "Script 2 output"},
-            {"address": address2, "script": script3, "amount": 0.04, "memo": "Script 3 output"}
+            {"address": address2, "script": script1, "amount": 2000000, "memo": "Script 1 output"},
+            {"address": address2, "script": script2, "amount": 3000000, "memo": "Script 2 output"},
+            {"address": address2, "script": script3, "amount": 4000000, "memo": "Script 3 output"}
         ]
 
         # Create raw transaction
@@ -233,8 +233,8 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
 
         # Create transaction outputs with custom script
         outputs = [
-            {"address": address2, "amount": 0.05, "memo": "Regular output"},
-            {"address": address1, "script": custom_script, "amount": 0.01, "memo": "Custom script output"}
+            {"address": address2, "amount": 5000000, "memo": "Regular output"},
+            {"address": address1, "script": custom_script, "amount": 1000000, "memo": "Custom script output"}
         ]
 
         # Create raw transaction

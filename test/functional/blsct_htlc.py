@@ -43,7 +43,7 @@ Funding transaction sequence
                "type": "atomic_swap",
                "address_a": address_a,
                "address_b": address_b,
-               "amount": amount_btc,
+               "amount": amount_sats,
                "hash": secret_hash_hex,
                "locktime": locktime,
                "blinding_key": blinding_key_hex,
@@ -93,11 +93,10 @@ Arbitrary (non-HTLC) scripts can also be imported in raw hex form:
 Important units
 ---------------
 
-- HTLC output `amount` is expressed in whole-coin RPC units when creating
-  outputs.
-- Spend input `value` must be provided in satoshis.
-- `getblsctrecoverydata` returns `amount` in whole-coin RPC units, so convert it
-  to satoshis before reusing it as an input `value`.
+- All blsctraw RPC amounts (`amount` for outputs, `value` for inputs) are
+  expressed in navoshis.
+- `getblsctrecoverydata` returns both `amount` (in NAV) and `amount_navoshi`
+  (in navoshis).  Use `amount_navoshi` directly as an input `value`.
 
 Hashlock spend sequence (`address_a`, redeem/claim path)
 --------------------------------------------------------
@@ -119,7 +118,7 @@ Hashlock spend sequence (`address_a`, redeem/claim path)
                "spending_key": spending_key_hex,
                "scriptSig": "20" + secret_hex + "51",
            }],
-           [{"address": destination, "amount": spend_amount_btc}],
+           [{"address": destination, "amount": spend_amount_sats}],
        )
 
 4. Fund it with `fundblsctrawtransaction`.
@@ -150,7 +149,7 @@ Timelock spend sequence (`address_b`, refund/timeout path)
                "scriptSig": "00",
                "sequence": locktime,
            }],
-           [{"address": destination, "amount": spend_amount_btc}],
+           [{"address": destination, "amount": spend_amount_sats}],
        )
 
 5. Fund it with `fundblsctrawtransaction`.
@@ -180,6 +179,8 @@ from test_framework.util import assert_greater_than, assert_raises_rpc_error
 from test_framework.messages import COIN
 
 LOCKTIME_THRESHOLD = 500_000_000
+WALLET1_SEED_WIF = "cS9umN9w6cDMuRVYdbkfE4c7YUFLJRoXMfhQ569uY4odiQbVN8Rt"
+WALLET2_SEED_WIF = "cTdGmKFWpbvpKQ7ejrdzqYT2hhjyb3GPHnLAK7wdi5Em67YLwSm9"
 
 
 class BLSCTHTLCTest(BitcoinTestFramework):
@@ -201,6 +202,11 @@ class BLSCTHTLCTest(BitcoinTestFramework):
     def run_test(self):
         self.log.info("Setting up wallets and generating initial blocks")
 
+        # Create a non-participating miner wallet to fund the test wallets.
+        self.nodes[0].createwallet(wallet_name="miner", blsct=True)
+        miner = self.nodes[0].get_wallet_rpc("miner")
+        miner_addr = miner.getnewaddress(label="", address_type="blsct")
+
         # Create blank BLSCT wallets, then set their seeds explicitly.
         self.nodes[0].createwallet(wallet_name="wallet1", blsct=True, blank=True)
         self.nodes[1].createwallet(wallet_name="wallet2", blsct=True, blank=True)
@@ -208,14 +214,41 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         wallet1 = self.nodes[0].get_wallet_rpc("wallet1")
         wallet2 = self.nodes[1].get_wallet_rpc("wallet2")
 
-        wallet1.setblsctseed("01" * 32)
-        wallet2.setblsctseed("02" * 32)
+        wallet1.setblsctseed(WALLET1_SEED_WIF)
+        wallet2.setblsctseed(WALLET2_SEED_WIF)
 
         address1 = wallet1.getnewaddress(label="", address_type="blsct")
         address2 = wallet2.getnewaddress(label="", address_type="blsct")
 
-        self.log.info("Generating 101 blocks to fund wallet1")
-        self.generatetoblsctaddress(self.nodes[0], 101, address1)
+        # Mine blocks to the miner wallet, then fund the participating wallets.
+        fund_wallet1_amount = 50
+        fund_wallet2_amount = 10
+        required_miner_balance = fund_wallet1_amount + fund_wallet2_amount + 1
+
+        self.log.info("Generating initial blocks to fund miner wallet")
+        self.generatetoblsctaddress(self.nodes[0], 101, miner_addr)
+
+        miner_balance = miner.getbalance()
+        while miner_balance < required_miner_balance:
+            self.log.info(
+                "Miner spendable balance %s is below required %s, mining one more block",
+                miner_balance,
+                required_miner_balance,
+            )
+            self.generatetoblsctaddress(self.nodes[0], 1, miner_addr)
+            miner_balance = miner.getbalance()
+
+        self.log.info("Funding wallet1 from miner wallet")
+        miner.sendtoblsctaddress(address1, fund_wallet1_amount)
+        self.generatetoblsctaddress(self.nodes[0], 1, miner_addr)
+
+        self.log.info("Funding wallet2 from miner wallet")
+        miner.sendtoblsctaddress(address2, fund_wallet2_amount)
+        self.generatetoblsctaddress(self.nodes[0], 1, miner_addr)
+        self.sync_blocks()
+
+        # Store miner address for use in block generation throughout the tests.
+        self.miner_addr = miner_addr
 
         balance1 = wallet1.getbalance()
         self.log.info(f"Initial balance in wallet1: {balance1}")
@@ -231,15 +264,15 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         self.test_height_time_mode_mismatch(wallet1, wallet2, address1, address2)
         self.test_importblsctscript(wallet1, wallet2, address1, address2)
 
-    def _create_and_broadcast_htlc(self, wallet, miner_addr, address_a, address_b,
-                                    amount_btc, secret_hash_hex, locktime, blinding_key_hex):
+    def _create_and_broadcast_htlc(self, wallet, address_a, address_b,
+                                    amount_sats, secret_hash_hex, locktime, blinding_key_hex):
         """Create, fund, sign and broadcast an HTLC output.
         Returns the signed transaction hex."""
         outputs = [{
             "type": "atomic_swap",
             "address_a": address_a,
             "address_b": address_b,
-            "amount": amount_btc,
+            "amount": amount_sats,
             "hash": secret_hash_hex,
             "locktime": locktime,
             "blinding_key": blinding_key_hex,
@@ -250,7 +283,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         signed_tx = wallet.signblsctrawtransaction(funded_tx)
         txid = self.nodes[0].sendrawtransaction(signed_tx)
         self.log.info(f"HTLC creation tx broadcast: {txid}")
-        self.generatetoblsctaddress(self.nodes[0], 1, miner_addr)
+        self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
         return signed_tx
 
     def _recover_htlc_output(self, wallet, signed_tx_hex, expected_amount_sats):
@@ -258,7 +291,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         standard key derivation. Returns (out_hash, amount_sats, gamma_hex)."""
         recovery = wallet.getblsctrecoverydata(signed_tx_hex)
         for out in recovery["outputs"]:
-            recovered_sats = int(round(out["amount"] * COIN))
+            recovered_sats = out["amount_navoshi"]
             if recovered_sats == expected_amount_sats and out.get("gamma"):
                 return out["out_hash"], recovered_sats, out["gamma"]
         raise AssertionError(
@@ -278,15 +311,14 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         current_height = self.nodes[0].getblockcount()
         htlc_locktime = current_height + 200
         htlc_amount_sats = 1 * COIN
-        htlc_amount_btc = 1.0
 
         self.log.info(f"Secret hash: {secret_hash.hex()}")
         self.log.info(f"HTLC locktime: {htlc_locktime} (current height: {current_height})")
 
         # Step 1: Create and broadcast the HTLC output
         signed_tx = self._create_and_broadcast_htlc(
-            wallet1, address1, address1, address2,
-            htlc_amount_btc, secret_hash.hex(), htlc_locktime, blinding_key_hex)
+            wallet1, address1, address2,
+            htlc_amount_sats, secret_hash.hex(), htlc_locktime, blinding_key_hex)
 
         # Step 2: Recover the HTLC output data (wallet1 can recover since it owns address_a)
         out_hash, amount_sats, gamma_hex = self._recover_htlc_output(
@@ -300,7 +332,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         # Step 4: Build the scriptSig for the IF branch: <push 32-byte secret> <OP_TRUE>
         script_sig = "20" + secret.hex() + "51"
 
-        spend_amount = htlc_amount_btc - 0.01  # minus fee
+        spend_amount_sats = htlc_amount_sats - COIN // 100  # minus 0.01 fee
         spend_inputs = [{
             "outid": out_hash,
             "value": amount_sats,
@@ -308,7 +340,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             "spending_key": spending_key,
             "scriptSig": script_sig,
         }]
-        spend_outputs = [{"address": address1, "amount": spend_amount}]
+        spend_outputs = [{"address": address1, "amount": spend_amount_sats}]
 
         # Step 5: Create, fund, sign and broadcast the spending transaction
         spend_raw = wallet1.createblsctrawtransaction(spend_inputs, spend_outputs)
@@ -319,7 +351,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         spend_txid = self.nodes[0].sendrawtransaction(spend_signed)
         self.log.info(f"Hashlock spend tx broadcast: {spend_txid}")
 
-        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
 
         balance_after = wallet1.getbalance()
         self.log.info(f"Balance before spend: {balance_before}, after: {balance_after}")
@@ -341,14 +373,13 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         current_height = self.nodes[0].getblockcount()
         htlc_locktime = current_height + 5
         htlc_amount_sats = 1 * COIN
-        htlc_amount_btc = 1.0
 
         self.log.info(f"HTLC locktime: {htlc_locktime} (current height: {current_height})")
 
         # Step 1: Create and broadcast the HTLC output
         signed_tx = self._create_and_broadcast_htlc(
-            wallet1, address1, address1, address2,
-            htlc_amount_btc, secret_hash.hex(), htlc_locktime, blinding_key_hex)
+            wallet1, address1, address2,
+            htlc_amount_sats, secret_hash.hex(), htlc_locktime, blinding_key_hex)
 
         # Step 2: Recover the HTLC output data. Wallet1 can recover since
         # address_a belongs to it. In a real atomic swap the recovery data
@@ -360,7 +391,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         # Step 3: Mine blocks until the locktime is reached
         blocks_to_mine = htlc_locktime - self.nodes[0].getblockcount() + 1
         self.log.info(f"Mining {blocks_to_mine} blocks to reach locktime {htlc_locktime}")
-        self.generatetoblsctaddress(self.nodes[0], blocks_to_mine, address1)
+        self.generatetoblsctaddress(self.nodes[0], blocks_to_mine, self.miner_addr)
 
         current_height = self.nodes[0].getblockcount()
         self.log.info(f"Current height after mining: {current_height}")
@@ -374,7 +405,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         # Step 5: Build the scriptSig for the ELSE branch: <OP_FALSE>
         script_sig = "00"
 
-        spend_amount = htlc_amount_btc - 0.01  # minus fee
+        spend_amount_sats = htlc_amount_sats - COIN // 100  # minus 0.01 fee
         spend_inputs = [{
             "outid": out_hash,
             "value": amount_sats,
@@ -383,7 +414,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             "scriptSig": script_sig,
             "sequence": htlc_locktime,
         }]
-        spend_outputs = [{"address": address2, "amount": spend_amount}]
+        spend_outputs = [{"address": address2, "amount": spend_amount_sats}]
 
         # Step 6: Create spending tx. nSequence carries the per-input locktime
         # commitment (signature-bound via CTxIn::GetHash). CLTV checks
@@ -398,7 +429,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         spend_txid = self.nodes[0].sendrawtransaction(spend_signed)
         self.log.info(f"Timelock spend tx broadcast: {spend_txid}")
 
-        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
         self.sync_blocks()
 
         balance2_after = wallet2.getbalance()
@@ -418,8 +449,8 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         secret_hash = hashlib.sha256(secret).digest()
 
         signed_tx = self._create_and_broadcast_htlc(
-            wallet_creator, addr_a, addr_a, addr_b,
-            1.0, secret_hash.hex(), locktime, blinding_key_hex)
+            wallet_creator, addr_a, addr_b,
+            1 * COIN, secret_hash.hex(), locktime, blinding_key_hex)
 
         out_hash, amount_sats, gamma_hex = self._recover_htlc_output(
             wallet_creator, signed_tx, 1 * COIN)
@@ -434,7 +465,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             "scriptSig": "00",
             "sequence": sequence,
         }]
-        spend_outputs = [{"address": addr_b, "amount": 0.99}]
+        spend_outputs = [{"address": addr_b, "amount": 99000000}]
 
         spend_raw = wallet_spender.createblsctrawtransaction(spend_inputs, spend_outputs)
         spend_funded = wallet_spender.fundblsctrawtransaction(spend_raw)
@@ -456,13 +487,13 @@ class BLSCTHTLCTest(BitcoinTestFramework):
 
         blocks_needed = htlc_locktime - self.nodes[0].getblockcount()
         if blocks_needed > 0:
-            self.generatetoblsctaddress(self.nodes[0], blocks_needed, address1)
+            self.generatetoblsctaddress(self.nodes[0], blocks_needed, self.miner_addr)
 
         assert self.nodes[0].getblockcount() >= htlc_locktime
 
         txid = self.nodes[0].sendrawtransaction(spend_signed)
         self.log.info(f"Boundary spend accepted: {txid}")
-        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
         self.sync_blocks()
 
         self.log.info("=== Timelock exact boundary test PASSED ===")
@@ -501,7 +532,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             ts_lock, ts_lock, "06" * 32)
 
         for _ in range(12):
-            self.generatetoblsctaddress(self.nodes[0], 1, address1)
+            self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
             tip_hash = self.nodes[0].getbestblockhash()
             tip_mtp = self.nodes[0].getblockheader(tip_hash)["mediantime"]
             if tip_mtp >= ts_lock:
@@ -511,7 +542,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
 
         txid = self.nodes[0].sendrawtransaction(spend_signed)
         self.log.info(f"Timestamp spend accepted: {txid}")
-        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
         self.sync_blocks()
 
         self.log.info("=== Timestamp timelock test PASSED ===")
@@ -543,15 +574,15 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         blinding_key_hex = "08" * 32
 
         signed_tx = self._create_and_broadcast_htlc(
-            wallet1, address1, address1, address2,
-            1.0, secret_hash.hex(), htlc_locktime, blinding_key_hex)
+            wallet1, address1, address2,
+            1 * COIN, secret_hash.hex(), htlc_locktime, blinding_key_hex)
 
         out_hash, amount_sats, gamma_hex = self._recover_htlc_output(
             wallet1, signed_tx, 1 * COIN)
 
         blocks_needed = htlc_locktime - self.nodes[0].getblockcount() + 1
         if blocks_needed > 0:
-            self.generatetoblsctaddress(self.nodes[0], blocks_needed, address1)
+            self.generatetoblsctaddress(self.nodes[0], blocks_needed, self.miner_addr)
 
         spending_key = wallet2.deriveblsctspendingkey(blinding_key_hex, address2)
 
@@ -563,7 +594,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             "scriptSig": "00",
             # No "sequence" field → defaults to SEQUENCE_FINAL (0xFFFFFFFF)
         }]
-        spend_outputs = [{"address": address2, "amount": 0.99}]
+        spend_outputs = [{"address": address2, "amount": 99000000}]
 
         spend_raw = wallet2.createblsctrawtransaction(spend_inputs, spend_outputs)
         spend_funded = wallet2.fundblsctrawtransaction(spend_raw)
@@ -586,8 +617,8 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         blinding_key_hex = "09" * 32
 
         signed_tx = self._create_and_broadcast_htlc(
-            wallet1, address1, address1, address2,
-            1.0, secret_hash.hex(), htlc_locktime, blinding_key_hex)
+            wallet1, address1, address2,
+            1 * COIN, secret_hash.hex(), htlc_locktime, blinding_key_hex)
 
         out_hash, amount_sats, gamma_hex = self._recover_htlc_output(
             wallet1, signed_tx, 1 * COIN)
@@ -602,7 +633,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             "scriptSig": "00",
             "sequence": reserved_seq,
         }]
-        spend_outputs = [{"address": address2, "amount": 0.99}]
+        spend_outputs = [{"address": address2, "amount": 99000000}]
 
         assert_raises_rpc_error(-8, "reserved",
                                 wallet2.createblsctrawtransaction,
@@ -628,7 +659,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
 
         blocks_needed = htlc_locktime - self.nodes[0].getblockcount() + 1
         if blocks_needed > 0:
-            self.generatetoblsctaddress(self.nodes[0], blocks_needed, address1)
+            self.generatetoblsctaddress(self.nodes[0], blocks_needed, self.miner_addr)
 
         assert_raises_rpc_error(-26, "failed-script-check",
                                 self.nodes[0].sendrawtransaction, spend_signed)
@@ -645,8 +676,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         blinding_key_hex = "bb" * 32
         current_height = self.nodes[0].getblockcount()
         htlc_locktime = current_height + 50
-        htlc_amount_btc = 1.0
-        htlc_amount_sats = int(htlc_amount_btc * COIN)
+        htlc_amount_sats = 1 * COIN
 
         # Receiver (wallet2) imports the expected HTLC script BEFORE it exists
         result = wallet2.importblsctscript({
@@ -663,8 +693,8 @@ class BLSCTHTLCTest(BitcoinTestFramework):
 
         # Funder (wallet1) creates and broadcasts the HTLC
         signed_tx = self._create_and_broadcast_htlc(
-            wallet1, address1, address1, address2,
-            htlc_amount_btc, secret_hash.hex(), htlc_locktime, blinding_key_hex)
+            wallet1, address1, address2,
+            htlc_amount_sats, secret_hash.hex(), htlc_locktime, blinding_key_hex)
 
         # Sync node1 so wallet2 sees the new block
         self.sync_blocks()
