@@ -754,9 +754,6 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
 
 bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce)
 {
-    if (!fViewKeyDefined || !viewKey.IsValid())
-        return bulletproofs_plus::AmountRecoveryResult<Arith>::failure();
-
     bulletproofs_plus::RangeProofLogic<Arith> rp;
     std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
     reqs.reserve(outs.size());

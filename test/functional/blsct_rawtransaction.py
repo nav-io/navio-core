@@ -61,8 +61,15 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.test_signblsctrawtransaction(wallet1, wallet2, address1, address2)
         self.test_decodeblsctrawtransaction(wallet1, wallet2, address1, address2)
         self.test_getblsctrecoverydata(wallet1, wallet2, address1, address2)
+        self.test_deriveblsctnonce(wallet1, wallet2, address1, address2)
         self.test_getblsctrecoverydatawithnonce(wallet1, wallet2, address1, address2)
         self.test_integration_workflow(wallet1, wallet2, address1, address2)
+
+    def _find_output_by_message(self, recovery_data, message):
+        for output in recovery_data["outputs"]:
+            if output["message"] == message:
+                return output
+        raise AssertionError(f"No output found with message {message!r}: {recovery_data['outputs']}")
 
     def test_createblsctrawtransaction(self, wallet1, wallet2, address1, address2):
         """Test createblsctrawtransaction RPC method"""
@@ -292,44 +299,80 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         self.log.info("getblsctrecoverydata tests passed")
 
+    def test_deriveblsctnonce(self, wallet1, wallet2, address1, address2):
+        """Test shared-nonce derivation from stored blinding key + destination address."""
+        self.log.info("Testing deriveblsctnonce")
+
+        blinding_key_hex = "11" * 32
+
+        nonce1 = wallet1.deriveblsctnonce(blinding_key_hex, address2)
+        nonce2 = wallet2.deriveblsctnonce(blinding_key_hex, address2)
+
+        assert_equal(nonce1, nonce2)
+        assert_equal(len(nonce1), 96)
+
+        assert_raises_rpc_error(
+            -8,
+            "Blinding key must be 32 bytes (64 hex characters)",
+            wallet1.deriveblsctnonce,
+            "abcd",
+            address2,
+        )
+        assert_raises_rpc_error(
+            -5,
+            "Invalid BLSCT address",
+            wallet1.deriveblsctnonce,
+            blinding_key_hex,
+            "invalid_address",
+        )
+
+        self.log.info("deriveblsctnonce tests passed")
+
     def test_getblsctrecoverydatawithnonce(self, wallet1, wallet2, address1, address2):
-        """Test getblsctrecoverydatawithnonce RPC method with nonce and no address"""
+        """Test sender-side recovery via stored blinding key + destination address."""
         self.log.info("Testing getblsctrecoverydatawithnonce")
 
-        # Get some unspent outputs
-        unspent = wallet1.listblsctunspent()
-        assert_greater_than(len(unspent), 0)
+        blinding_key_hex = "22" * 32
+        memo = "Test nonce recovery"
 
-        utxo = unspent[0]
-        self.log.info(f"Using UTXO: {utxo}")
-
-        # Generate a random 32-byte nonce
-        import secrets
-        nonce_bytes = secrets.token_bytes(32)
-        nonce_hex = nonce_bytes.hex()
-        self.log.info(f"Generated nonce: {nonce_hex}")
-
-        # Test 1: Create raw transaction with nonce and no address
-        inputs = [{"outid": utxo['outid']}]
-        outputs = [{"amount": 500000, "memo": "Test nonce recovery", "blinding_key": nonce_hex}]
-
-        raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
-        self.log.info(f"Created raw transaction with nonce: {raw_tx[:100]}...")
+        # Create a recipient-addressed output, then derive its shared public nonce
+        # from the public destination address and the agreed blinding key.
+        raw_tx = wallet1.createblsctrawtransaction([], [{
+            "address": address2,
+            "amount": 500000,
+            "memo": memo,
+            "blinding_key": blinding_key_hex,
+        }])
+        self.log.info(f"Created raw transaction with recipient-derived nonce: {raw_tx[:100]}...")
 
         # Fund and sign the transaction
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
 
-        # Test recovery using the same nonce
+        # The creator can later recover this output using only the stored
+        # blinding key and recipient address, without the recipient's keys.
+        nonce_hex = wallet1.deriveblsctnonce(blinding_key_hex, address2)
+
+        # Test recovery using the shared public nonce
         recovery_data = wallet1.getblsctrecoverydatawithnonce(signed_tx, nonce_hex)
         self.log.info(f"Recovery data with nonce: {recovery_data}")
+
+        # Compare against the recipient wallet's standard recovery path.
+        recipient_recovery = wallet2.getblsctrecoverydata(signed_tx)
+        nonce_output = self._find_output_by_message(recovery_data, memo)
+        recipient_output = self._find_output_by_message(recipient_recovery, memo)
+
+        assert_equal(nonce_output["amount_navoshi"], recipient_output["amount_navoshi"])
+        assert_equal(nonce_output["gamma"], recipient_output["gamma"])
+        assert_equal(nonce_output["out_hash"], recipient_output["out_hash"])
+        assert_equal(nonce_output["script"], recipient_output["script"])
 
         # Verify the structure
         assert "txid" in recovery_data
         assert "outputs" in recovery_data
         assert isinstance(recovery_data["outputs"], list)
         assert len(recovery_data["outputs"]) > 0, "No outputs found in recovery data"
-        assert any(output["message"] == "Test nonce recovery" for output in recovery_data["outputs"]), "No output found with message 'Test nonce recovery'"
+        assert any(output["message"] == memo for output in recovery_data["outputs"]), f"No output found with message {memo!r}"
 
         if len(recovery_data["outputs"]) > 0:
             output = recovery_data["outputs"][0]
@@ -340,13 +383,29 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 2: Get recovery data for a specific vout with nonce
         if len(recovery_data["outputs"]) > 0:
-            specific_vout = recovery_data["outputs"][0]["vout"]
+            specific_vout = nonce_output["vout"]
             recovery_data_specific = wallet1.getblsctrecoverydatawithnonce(signed_tx, nonce_hex, specific_vout)
             self.log.info(f"Recovery data for vout {specific_vout} with nonce: {recovery_data_specific}")
 
             # Should have exactly one output
             assert_equal(len(recovery_data_specific["outputs"]), 1)
-            assert_equal(recovery_data_specific["outputs"][0]["vout"], specific_vout)
+            assert_equal(recovery_data_specific["outputs"][0], nonce_output)
+
+        # Test 3: Error cases
+        assert_raises_rpc_error(
+            -8,
+            "Nonce must be 48 bytes (96 hex characters)",
+            wallet1.getblsctrecoverydatawithnonce,
+            signed_tx,
+            "abcd",
+        )
+        assert_raises_rpc_error(
+            -8,
+            "Invalid nonce public key",
+            wallet1.getblsctrecoverydatawithnonce,
+            signed_tx,
+            "00" * 48,
+        )
 
         self.log.info("getblsctrecoverydatawithnonce tests passed")
 

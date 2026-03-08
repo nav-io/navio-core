@@ -19,6 +19,9 @@ Branch mapping
   revealing the 32-byte secret preimage.
 - `address_b` is the timelock branch. Whoever owns this address can spend after
   `locktime` via the CLTV branch.
+- In the current `atomic_swap` implementation, the blinded output itself is
+  constructed against `address_a`'s BLSCT destination. Shared-nonce recovery
+  therefore uses `address_a`, not `address_b`.
 - In a real swap protocol, "redeem" vs "refund" is determined entirely by which
   party you assign to `address_a` and `address_b`.
 
@@ -31,10 +34,13 @@ Funding transaction sequence
    - `hash = sha256(secret)` as 32-byte hex
    - `locktime` as either a block height (`< 500000000`) or timestamp
      (`>= 500000000`)
-   The `blinding_key` does not need to be exchanged off-chain.  The funder
-   (party A) knows it because they created the output.  The receiver
-   (party B) recovers it from the output's `blsctData.blindingKey` using
-   their view private key -- the standard BLSCT output recovery path.
+   The funder chooses a random 32-byte `blinding_key` locally when constructing
+   the output. The owner of `address_a` can later recover the HTLC output via
+   the normal `getblsctrecoverydata` path because the current `atomic_swap`
+   implementation blinds the output against `address_a`. A different party that
+   does not own `address_a` can still recover later if it retained or received
+   the `blinding_key`, by deriving the shared public nonce from
+   `address_a + blinding_key`.
 2. Create the HTLC output:
 
        wallet.createblsctrawtransaction(
@@ -52,18 +58,31 @@ Funding transaction sequence
 
 3. Add wallet-selected fee inputs and change with `fundblsctrawtransaction`.
 4. Sign it with `signblsctrawtransaction`.
-5. Optionally preflight with `testmempoolaccept`.
-6. Broadcast with `sendrawtransaction`.
+5. If you own `address_a`, recover the HTLC output data directly:
 
-Receiver detection sequence (party B)
---------------------------------------
+       recovery = wallet.getblsctrecoverydata(signed_tx_hex)
 
-The receiver does **not** need to receive the raw transaction hex.  After
-the initial negotiation (step 1), the receiver imports the expected HTLC
+6. If you do not own `address_a`, derive the recovery nonce from
+   `address_a` and `blinding_key`:
+
+       nonce_hex = wallet.deriveblsctnonce(blinding_key_hex, address_a)
+
+7. Then recover the HTLC output data from the signed tx hex:
+
+       recovery = wallet.getblsctrecoverydatawithnonce(signed_tx_hex, nonce_hex)
+
+8. Optionally preflight with `testmempoolaccept`.
+9. Broadcast with `sendrawtransaction`.
+
+Counterparty detection sequence
+-------------------------------
+
+The counterparty does **not** need to receive the raw transaction hex. After
+the initial negotiation (step 1), they import the expected HTLC
 script into their wallet so it is detected automatically during block
 scanning:
 
-    receiver_wallet.importblsctscript({
+    counterparty_wallet.importblsctscript({
         "type": "atomic_swap",
         "address_a": address_a,
         "address_b": address_b,
@@ -72,19 +91,21 @@ scanning:
         "blinding_key": blinding_key_hex,
     })
 
-Once the funder broadcasts and the output is mined, the receiver's wallet
-picks it up via the watch-only script match.  The receiver finds the
+Once the funder broadcasts and the output is mined, the counterparty wallet
+picks it up via the watch-only script match. The counterparty finds the
 output by calling `listblsctunspent`, which includes watch-only entries
 with `watchonly: true`:
 
-    utxos = receiver_wallet.listblsctunspent()
+    utxos = counterparty_wallet.listblsctunspent()
     htlc_utxos = [u for u in utxos if u.get("watchonly")]
 
 Each entry contains `outid` (the output hash) and `scriptPubKey`.
-The receiver then recovers `amount` and `gamma` from the output using
-`getblsctrecoverydata`:
+If the counterparty does not own `address_a`, it can derive the shared
+public nonce and recover `amount` and `gamma` from the output using
+`getblsctrecoverydatawithnonce`:
 
-    recovery = receiver_wallet.getblsctrecoverydata(utxo["outid"])
+    nonce_hex = counterparty_wallet.deriveblsctnonce(blinding_key_hex, address_a)
+    recovery = counterparty_wallet.getblsctrecoverydatawithnonce(utxo["outid"], nonce_hex)
 
 Arbitrary (non-HTLC) scripts can also be imported in raw hex form:
 
@@ -95,8 +116,9 @@ Important units
 
 - All blsctraw RPC amounts (`amount` for outputs, `value` for inputs) are
   expressed in navoshis.
-- `getblsctrecoverydata` returns both `amount` (in NAV) and `amount_navoshi`
-  (in navoshis).  Use `amount_navoshi` directly as an input `value`.
+- `getblsctrecoverydata` and `getblsctrecoverydatawithnonce` both return
+  `amount` (in NAV) and `amount_navoshi` (in navoshis). Use
+  `amount_navoshi` directly as an input `value`.
 
 Hashlock spend sequence (`address_a`, redeem/claim path)
 --------------------------------------------------------
@@ -162,6 +184,9 @@ Common failure cases
 
 - Omitting `sequence` on the timelock branch leaves `SEQUENCE_FINAL`
   (`0xFFFFFFFF`), which causes CLTV script validation to fail.
+- Passing the 32-byte `blinding_key` directly to
+  `getblsctrecoverydatawithnonce` is wrong. First derive the shared public
+  nonce with `deriveblsctnonce(blinding_key, address_a)`.
 - Setting bit 31 in `sequence` is rejected unless the value is exactly
   `0xFFFFFFFF`.
 - Height-mode and timestamp-mode values must match between the script locktime
@@ -287,8 +312,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         return signed_tx
 
     def _recover_htlc_output(self, wallet, signed_tx_hex, expected_amount_sats):
-        """Recover the HTLC output from a signed transaction using the wallet's
-        standard key derivation. Returns (out_hash, amount_sats, gamma_hex)."""
+        """Recover the HTLC output from raw tx hex via the owning wallet."""
         recovery = wallet.getblsctrecoverydata(signed_tx_hex)
         for out in recovery["outputs"]:
             recovered_sats = out["amount_navoshi"]
@@ -320,7 +344,8 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             wallet1, address1, address2,
             htlc_amount_sats, secret_hash.hex(), htlc_locktime, blinding_key_hex)
 
-        # Step 2: Recover the HTLC output data (wallet1 can recover since it owns address_a)
+        # Step 2: Recover the HTLC output data. wallet1 owns address_a, so the
+        # standard wallet recovery path works.
         out_hash, amount_sats, gamma_hex = self._recover_htlc_output(
             wallet1, signed_tx, htlc_amount_sats)
         self.log.info(f"HTLC output: hash={out_hash}, amount={amount_sats}, gamma={gamma_hex[:16]}...")
@@ -381,9 +406,8 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             wallet1, address1, address2,
             htlc_amount_sats, secret_hash.hex(), htlc_locktime, blinding_key_hex)
 
-        # Step 2: Recover the HTLC output data. Wallet1 can recover since
-        # address_a belongs to it. In a real atomic swap the recovery data
-        # (out_hash, value, gamma) would be shared off-chain with wallet2.
+        # Step 2: Recover the HTLC output data. wallet1 owns address_a, so the
+        # standard wallet recovery path works.
         out_hash, amount_sats, gamma_hex = self._recover_htlc_output(
             wallet1, signed_tx, htlc_amount_sats)
         self.log.info(f"HTLC output: hash={out_hash}, amount={amount_sats}")
@@ -678,7 +702,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         htlc_locktime = current_height + 50
         htlc_amount_sats = 1 * COIN
 
-        # Receiver (wallet2) imports the expected HTLC script BEFORE it exists
+        # Counterparty (wallet2) imports the expected HTLC script BEFORE it exists
         result = wallet2.importblsctscript({
             "type": "atomic_swap",
             "address_a": address1,
@@ -705,11 +729,21 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         htlc_matches = [u for u in unspent
                         if u.get("scriptPubKey") == imported_script]
         assert len(htlc_matches) > 0, (
-            f"Receiver did not detect HTLC output via listblsctunspent. "
+            f"Counterparty did not detect HTLC output via listblsctunspent. "
             f"Got {len(unspent)} outputs, none matched script {imported_script[:40]}...")
         htlc_utxo = htlc_matches[0]
         assert htlc_utxo.get("watchonly"), "HTLC output should be marked watchonly"
-        self.log.info(f"Receiver detected HTLC output: {htlc_utxo['outid']}")
+        self.log.info(f"Counterparty detected HTLC output: {htlc_utxo['outid']}")
+
+        nonce_hex = wallet2.deriveblsctnonce(blinding_key_hex, address1)
+        recovery = wallet2.getblsctrecoverydatawithnonce(htlc_utxo["outid"], nonce_hex)
+        recovered = [out for out in recovery["outputs"] if out["out_hash"] == htlc_utxo["outid"]]
+        assert len(recovered) == 1, (
+            f"Counterparty did not recover HTLC output via derived nonce. "
+            f"Recovery data: {recovery['outputs']}")
+        assert recovered[0]["amount_navoshi"] == htlc_amount_sats
+        assert recovered[0]["gamma"] != ""
+        self.log.info("Counterparty recovered HTLC output via derived shared public nonce")
 
         # Also test raw script import
         raw_result = wallet2.importblsctscript({

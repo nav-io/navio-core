@@ -2422,11 +2422,11 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
 {
     return RPCHelpMan{
         "getblsctrecoverydatawithnonce",
-        "\nGet BLSCT recovery data for outputs in a transaction using a specified nonce.\n"
+        "\nGet BLSCT recovery data for outputs in a transaction using a specified shared public nonce.\n"
         "Accepts a transaction hex string or an output outpoint hash.\n",
         {
             {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string or output outpoint hash"},
-            {"nonce", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The nonce to use for recovery (hex string)"},
+            {"nonce", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The shared public nonce to use for recovery (48-byte hex public key)"},
             {"vout", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "If specified, only return data for this output index. Ignored when an outpoint hash is provided."},
         },
         RPCResult{
@@ -2482,14 +2482,17 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
                 hash = mtx.GetHash();
             }
 
-            // Parse nonce
+            // Parse shared public nonce
             std::string nonce_hex = request.params[1].get_str();
             std::vector<unsigned char> nonce_bytes = ParseHex(nonce_hex);
-            if (nonce_bytes.size() != 32) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "Nonce must be 32 bytes");
+            if (nonce_bytes.size() != blsct::PublicKey::SIZE) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Nonce must be 48 bytes (96 hex characters)");
             }
-            MclScalar nonce_(nonce_bytes);
-            MclG1Point nonce = blsct::PrivateKey(nonce_).GetPublicKey().GetG1Point();
+            blsct::PublicKey nonce_pubkey(nonce_bytes);
+            if (!nonce_pubkey.IsValid()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid nonce public key");
+            }
+            MclG1Point nonce = nonce_pubkey.GetG1Point();
 
             int specific_vout = -1;
             if (!request.params[2].isNull()) {
@@ -2551,6 +2554,48 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
 
             result.pushKV("outputs", outputs);
             return result;
+        },
+    };
+}
+
+RPCHelpMan deriveblsctnonce()
+{
+    return RPCHelpMan{
+        "deriveblsctnonce",
+        "\nDerive the shared public nonce for a BLSCT output from a destination address and blinding key.\n"
+        "This can be used together with getblsctrecoverydatawithnonce for outputs whose amount was blinded\n"
+        "against the destination's public view key, including HTLC outputs constructed from address_a.\n",
+        {
+            {"blinding_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 32-byte blinding key (hex) used when creating the output"},
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The BLSCT destination address used to derive the shared public nonce"},
+        },
+        RPCResult{
+            RPCResult::Type::STR_HEX, "nonce", "The shared public nonce as a 48-byte public key (hex)"},
+        RPCExamples{
+            HelpExampleCli("deriveblsctnonce", "\"0102030405060708091011121314151617181920212223242526272829303132\" \"rnv1...\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            auto blinding_key_bytes = ParseHex(request.params[0].get_str());
+            if (blinding_key_bytes.size() != 32) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Blinding key must be 32 bytes (64 hex characters)");
+            }
+            Scalar blindingKey(blinding_key_bytes);
+
+            std::string address_str = request.params[1].get_str();
+            CTxDestination dest = DecodeDestination(address_str);
+            if (!IsValidDestination(dest) || dest.index() != 8) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BLSCT address");
+            }
+            auto dpk = std::get<blsct::DoublePublicKey>(dest);
+
+            MclG1Point vk_point;
+            if (!dpk.GetViewKey(vk_point)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Could not extract view key from address");
+            }
+
+            return HexStr(blsct::PublicKey(vk_point * blindingKey).GetVch());
         },
     };
 }
@@ -2752,6 +2797,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &decodeblsctrawtransaction},
         {"blsct", &getblsctrecoverydata},
         {"blsct", &getblsctrecoverydatawithnonce},
+        {"blsct", &deriveblsctnonce},
         {"blsct", &signblsmessage},
         {"blsct", &verifyblsmessage},
         {"blsct", &deriveblsctspendingkey},
