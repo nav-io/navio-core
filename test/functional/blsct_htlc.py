@@ -201,11 +201,15 @@ class BLSCTHTLCTest(BitcoinTestFramework):
     def run_test(self):
         self.log.info("Setting up wallets and generating initial blocks")
 
-        self.nodes[0].createwallet(wallet_name="wallet1", blsct=True)
-        self.nodes[1].createwallet(wallet_name="wallet2", blsct=True)
+        # Create blank BLSCT wallets, then set their seeds explicitly.
+        self.nodes[0].createwallet(wallet_name="wallet1", blsct=True, blank=True)
+        self.nodes[1].createwallet(wallet_name="wallet2", blsct=True, blank=True)
 
         wallet1 = self.nodes[0].get_wallet_rpc("wallet1")
         wallet2 = self.nodes[1].get_wallet_rpc("wallet2")
+
+        wallet1.setblsctseed("01" * 32)
+        wallet2.setblsctseed("02" * 32)
 
         address1 = wallet1.getnewaddress(label="", address_type="blsct")
         address2 = wallet2.getnewaddress(label="", address_type="blsct")

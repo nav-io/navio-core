@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/wallet/balance_proof.h>
+#include <blsct/wallet/helpers.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/unsigned_transaction.h>
 #include <blsct/common.h>
@@ -1189,10 +1190,10 @@ static RPCHelpMan setblsctseed()
             EnsureWalletIsUnlocked(*pwallet);
 
             blsct::PrivateKey master_priv_key;
-            if (request.params[1].isNull()) {
+            if (request.params[0].isNull()) {
                 master_priv_key = blsct_km->GenerateNewSeed();
             } else {
-                CKey key = DecodeSecret(request.params[1].get_str());
+                CKey key = DecodeSecret(request.params[0].get_str());
                 if (!key.IsValid()) {
                     throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key");
                 }
@@ -2035,12 +2036,9 @@ RPCHelpMan signblsctrawtransaction()
                             auto expected_pubkey = blsct::PublicKey(txout_iter->blsctData.spendingKey);
                             if (signing_pubkey != expected_pubkey) {
                                 throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
-                                    "Input %d (%s): spending key mismatch - the private key does not match "
-                                    "the spendingKey in the UTXO. Expected pubkey %s but got %s. "
-                                    "Transaction will fail signature check.",
-                                    i, in.in.prevout.hash.GetHex(),
-                                    expected_pubkey.ToString().substr(0, 16) + "...",
-                                    signing_pubkey.ToString().substr(0, 16) + "..."));
+                                    "Input %d (%s): spending key does not match the UTXO spendingKey. "
+                                    "This transaction would fail signature verification on broadcast.",
+                                    i, in.in.prevout.hash.GetHex()));
                             }
                         }
                     }
