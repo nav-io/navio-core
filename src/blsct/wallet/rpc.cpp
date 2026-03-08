@@ -1202,10 +1202,21 @@ static RPCHelpMan setblsctseed()
                     throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key (either as an BLSCT seed or as a loose private key)");
                 }
 
-                master_priv_key = key.GetPrivKey();
+                // Use the raw 32-byte key data, not the DER-encoded CPrivKey
+                const auto& keydata = key.IsValid() ? std::vector<unsigned char>(key.begin(), key.end()) : std::vector<unsigned char>();
+                if (keydata.size() != 32) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Failed to extract 32-byte key from WIF");
+                }
+                MclScalar scalar;
+                scalar.SetVch(keydata);
+                master_priv_key = blsct::PrivateKey(scalar);
             }
 
             blsct_km->SetHDSeed(master_priv_key);
+
+            if (!blsct_km->NewSubAddressPool() || !blsct_km->NewSubAddressPool(-1) || !blsct_km->NewSubAddressPool(-2)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Unable to generate initial blsct address pool");
+            }
 
             return UniValue::VNULL;
         },
