@@ -1702,13 +1702,15 @@ RPCHelpMan fundblsctrawtransaction()
             {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The hex string of the raw transaction"},
             {"changeaddress", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The BLSCT address to receive the change"},
             {"lock_unspents", RPCArg::Type::BOOL, RPCArg::Default{false}, "Lock selected unspent outputs"},
+            {"fee", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The absolute fee in navoshis. Defaults to 1000000"},
         },
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the funded transaction"},
         RPCExamples{
             HelpExampleCli("fundblsctrawtransaction", "\"hexstring\"") +
             HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" \"changeaddress\"") +
-            HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" \"changeaddress\" true")},
+            HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" \"changeaddress\" true") +
+            HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" null false 250000")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -1728,6 +1730,17 @@ RPCHelpMan fundblsctrawtransaction()
             }
             auto& unsigned_tx = unsigned_tx_opt.value();
 
+            const bool lock_unspents = !request.params[2].isNull() && request.params[2].get_bool();
+            CAmount fee = COIN / 100;
+            if (!request.params[3].isNull()) {
+                fee = request.params[3].getInt<CAmount>();
+            }
+            if (fee < 0 || !MoneyRange(fee)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Fee must be a non-negative amount in navoshis");
+            }
+
+            unsigned_tx.SetFee(fee);
+
             // Calculate total output amount
             CAmount output_value = 0;
             for (const auto& out : unsigned_tx.GetOutputs()) {
@@ -1741,8 +1754,6 @@ RPCHelpMan fundblsctrawtransaction()
             // Calculate total input amount from existing inputs
             CAmount existing_input_value = 0;
             std::set<COutPoint> existing_inputs;
-
-            const bool lock_unspents = !request.params[2].isNull() && request.params[2].get_bool();
 
             // Find unspent outputs to use as inputs
             wallet::CoinFilterParams filter_coins;
@@ -1765,11 +1776,8 @@ RPCHelpMan fundblsctrawtransaction()
                 }
             };
 
-            // Add fixed fee
-            CAmount required_value = output_value + COIN / 100; // 0.01 fixed fee
-            unsigned_tx.SetFee(COIN / 100);
-
             // Calculate how much more we need
+            CAmount required_value = output_value + fee;
             CAmount additional_required = required_value - existing_input_value;
             LogPrintf("fundblsctrawtransaction: required value=%lld, additional required=%lld\n", required_value, additional_required);
 

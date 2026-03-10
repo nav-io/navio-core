@@ -144,6 +144,16 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         change_address = wallet2.getnewaddress(label="", address_type="blsct")
         funded_tx_with_change = wallet1.fundblsctrawtransaction(raw_tx, change_address)
         self.log.info(f"Funded transaction with change: {funded_tx_with_change[:100]}...")
+
+        # Test with a custom absolute fee
+        custom_fee = 123456
+        funded_tx_with_fee = wallet1.fundblsctrawtransaction(raw_tx, None, False, custom_fee)
+        decoded_funded_tx = wallet1.decodeblsctrawtransaction(funded_tx_with_fee)
+        recipient_outputs = [o for o in decoded_funded_tx["outputs"] if o["amount_navoshi"] == 10000000]
+        assert_equal(decoded_funded_tx["fee"], custom_fee)
+        assert_equal(len(recipient_outputs), 1)
+        assert_equal(recipient_outputs[0]["amount_navoshi"], 10000000)
+
         # Test error cases
         # Invalid hex string
         assert_raises_rpc_error(-22, "Transaction deserialization failed",
@@ -152,6 +162,10 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Invalid change address
         assert_raises_rpc_error(-5, "Invalid BLSCT change address",
                                wallet1.fundblsctrawtransaction, raw_tx, "invalid_address")
+
+        # Invalid fee
+        assert_raises_rpc_error(-8, "Fee must be a non-negative amount in navoshis",
+                               wallet1.fundblsctrawtransaction, raw_tx, None, False, -1)
 
         # Test with insufficient funds (create a transaction larger than available balance)
         balance = wallet1.getbalance()
