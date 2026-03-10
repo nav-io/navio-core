@@ -2155,14 +2155,16 @@ RPCHelpMan decodeblsctrawtransaction()
                                                                                                                                                      {RPCResult::Type::BOOL, "is_staked_commitment", "Whether this input is a staked commitment"},
                                                                                                                                                  }},
                                                                                                               }},
-                                              {RPCResult::Type::ARR, "outputs", "Array of transaction outputs", {
+                                                                                                              {RPCResult::Type::ARR, "outputs", "Array of transaction outputs", {
                                                                                                                     {RPCResult::Type::OBJ, "", "", {
-                                                                                                                                                       {RPCResult::Type::NUM, "amount", "The amount in navoshis"},
+                                                                                                                                                       {RPCResult::Type::STR, "scriptAddress", "The decoded destination address for the output script, if any"},
+                                                                                                                                                       {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT},
+                                                                                                                                                       {RPCResult::Type::NUM, "amount_navoshi", "The amount in navoshis"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "blinding_key", "The blinding key (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "outputHash", "The output hash identifier (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "gamma", "The gamma value (hex string)"},
                                                                                                                                                        {RPCResult::Type::STR_HEX, "scriptPubKey", "The scriptPubKey of the output"},
-                                                                                                                                                       {RPCResult::Type::STR_HEX, "spending_key", "The output spending key (if available)"},
+                                                                                                                                                       {RPCResult::Type::STR_HEX, "spending_key", /*optional=*/true, "The output spending key (if available)"},
                                                                                                                                                    }},
                                                                                                                 }},
                                               {RPCResult::Type::NUM, "fee", "The transaction fee in navoshis"},
@@ -2205,10 +2207,13 @@ RPCHelpMan decodeblsctrawtransaction()
                 output_obj.pushKV("outputHash", output.out.GetHash().ToString());
                 output_obj.pushKV("scriptPubKey", HexStr(output.out.scriptPubKey));
 
-                output_obj.pushKV("amount", (int64_t)output.value.GetUint64());
+                const CAmount amount_navoshi = output.value.GetUint64();
+                output_obj.pushKV("amount", ValueFromAmount(amount_navoshi));
+                output_obj.pushKV("amount_navoshi", amount_navoshi);
 
                 output_obj.pushKV("blinding_key", HexStr(output.blindingKey.GetVch()));
                 output_obj.pushKV("gamma", HexStr(output.gamma.GetVch()));
+                output_obj.pushKV("spending_key", "");
 
                 std::shared_ptr<wallet::CWallet> const wallet = wallet::GetWalletForJSONRPCRequest(request);
                 if (wallet) {
@@ -2236,8 +2241,6 @@ RPCHelpMan decodeblsctrawtransaction()
                     if (found) {
                         output_obj.pushKV("spending_key", HexStr(spending_key.GetScalar().GetVch()));
                     }
-                } else {
-                    output_obj.pushKV("spending_key", "");
                 }
 
                 outputs.push_back(output_obj);

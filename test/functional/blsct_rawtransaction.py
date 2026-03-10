@@ -5,6 +5,8 @@
 
 """Test the BLSCT raw transaction RPC methods."""
 
+from decimal import Decimal
+
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -195,9 +197,16 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 1: Decode a raw transaction
         input_data = {"outid": utxo['outid']}
-        raw_tx = wallet1.createblsctrawtransaction([input_data], [])
+        decode_amount_navoshi = 10000000
+        raw_tx = wallet1.createblsctrawtransaction(
+            [input_data],
+            [{"address": address2, "amount": decode_amount_navoshi, "memo": "Decode test"}],
+        )
         decoded_tx = wallet1.decodeblsctrawtransaction(raw_tx)
         self.log.info(f"Decoded transaction: {decoded_tx}")
+        assert_equal(len(decoded_tx["outputs"]), 1)
+        assert_equal(decoded_tx["outputs"][0]["amount"], Decimal("0.10000000"))
+        assert_equal(decoded_tx["outputs"][0]["amount_navoshi"], decode_amount_navoshi)
 
         # Test 2: Error cases
         # Invalid hex string
