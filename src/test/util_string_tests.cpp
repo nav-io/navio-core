@@ -12,12 +12,6 @@ using namespace util;
 
 BOOST_AUTO_TEST_SUITE(util_string_tests)
 
-std::vector<std::byte> StringToBuffer(const std::string& str)
-{
-    auto span = std::as_bytes(std::span(str));
-    return {span.begin(), span.end()};
-}
-
 BOOST_AUTO_TEST_CASE(case_insensitive_equal_test)
 {
     BOOST_CHECK(!CaseInsensitiveEqual("A", "B"));
@@ -45,7 +39,7 @@ BOOST_AUTO_TEST_CASE(line_reader_test)
 {
     {
         // Check three lines terminated by \n and \r\n, trimming whitespace
-        const std::vector<std::byte> input{StringToBuffer("once upon a time\n there was a dog \r\nwho liked food\n")};
+        std::string_view input = "once upon a time\n there was a dog \r\nwho liked food\n";
         LineReader reader(input, /*max_line_length=*/128);
         BOOST_CHECK_EQUAL(reader.Consumed(), 0);
         BOOST_CHECK_EQUAL(reader.Remaining(), 51);
@@ -70,7 +64,7 @@ BOOST_AUTO_TEST_CASE(line_reader_test)
     {
         // Do not exceed max_line_length + 1 while searching for \n
         // Test with 22-character line + \n + 23-character line + \n
-        const std::vector<std::byte> input{StringToBuffer("once upon a time there\nwas a dog who liked tea\n")};
+        std::string_view input = "once upon a time there\nwas a dog who liked tea\n";
 
         LineReader reader1(input, /*max_line_length=*/22);
         // First line is exactly the length of max_line_length
@@ -88,26 +82,26 @@ BOOST_AUTO_TEST_CASE(line_reader_test)
     }
     {
         // Empty lines are empty
-        const std::vector<std::byte> input{StringToBuffer("\n")};
+        std::string_view input = "\n";
         LineReader reader(input, /*max_line_length=*/1024);
         BOOST_CHECK_EQUAL(reader.ReadLine(), "");
         BOOST_CHECK(!reader.ReadLine());
     }
     {
         // Empty buffers are null
-        const std::vector<std::byte> input{StringToBuffer("")};
+        std::string_view input;
         LineReader reader(input, /*max_line_length=*/1024);
         BOOST_CHECK(!reader.ReadLine());
     }
     {
         // Even one character is too long, if it's not \n
-        const std::vector<std::byte> input{StringToBuffer("ab\n")};
+        std::string_view input = "ab\n";
         LineReader reader(input, /*max_line_length=*/1);
         // First line is +1 character too long
         BOOST_CHECK_EXCEPTION(reader.ReadLine(), std::runtime_error, HasReason{"max_line_length exceeded by LineReader"});
     }
     {
-        const std::vector<std::byte> input{StringToBuffer("a\nb\n")};
+        std::string_view input = "a\nb\n";
         LineReader reader(input, /*max_line_length=*/1);
         BOOST_CHECK_EQUAL(reader.ReadLine(), "a");
         BOOST_CHECK_EQUAL(reader.ReadLine(), "b");
@@ -115,7 +109,7 @@ BOOST_AUTO_TEST_CASE(line_reader_test)
     }
     {
         // If ReadLine fails, the iterator is reset and we can ReadLength instead
-        const std::vector<std::byte> input{StringToBuffer("a\nbaboon\n")};
+        std::string_view input = "a\nbaboon\n";
         LineReader reader(input, /*max_line_length=*/1);
         BOOST_CHECK_EQUAL(reader.ReadLine(), "a");
         // "baboon" is too long
@@ -131,7 +125,7 @@ BOOST_AUTO_TEST_CASE(line_reader_test)
     }
     {
         // The end of the buffer (EOB) does not count as end of line \n
-        const std::vector<std::byte> input{StringToBuffer("once upon a time there")};
+        std::string_view input = "once upon a time there";
 
         LineReader reader(input, /*max_line_length=*/22);
         // First line is exactly the length of max_line_length, but that doesn't matter because \n is missing
@@ -143,7 +137,7 @@ BOOST_AUTO_TEST_CASE(line_reader_test)
     }
     {
         // Read specific number of bytes regardless of max_line_length or \n unless buffer is too short
-        const std::vector<std::byte> input{StringToBuffer("once upon a time\n there was a dog \r\nwho liked food")};
+        std::string_view input = "once upon a time\n there was a dog \r\nwho liked food";
         LineReader reader(input, /*max_line_length=*/1);
         BOOST_CHECK_EQUAL(reader.ReadLength(0), "");
         BOOST_CHECK_EQUAL(reader.ReadLength(3), "onc");
