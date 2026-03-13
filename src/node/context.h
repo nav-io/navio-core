@@ -26,6 +26,7 @@ class CTxMemPool;
 class ChainstateManager;
 class NetGroupManager;
 class PeerManager;
+class TorController;
 namespace p2pmsg {
 class WorkerPool;
 class Transport;
@@ -76,6 +77,7 @@ struct NodeContext {
     std::unique_ptr<const NetGroupManager> netgroupman;
     std::unique_ptr<CBlockPolicyEstimator> fee_estimator;
     std::unique_ptr<PeerManager> peerman;
+    std::unique_ptr<TorController> tor_controller;
     //! Cover-traffic candidate pool; registered as a validation interface so it
     //! evicts candidates whose inputs are spent.
     std::unique_ptr<aggregation::CandidatePool> agg_pool;
