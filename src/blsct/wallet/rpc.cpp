@@ -94,12 +94,13 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
 
     wallet::mapValue_t map_value;
     wallet.CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
+    const std::string outputHash = tx->vout[0].GetHash().GetHex();
     if (verbose) {
         UniValue entry(UniValue::VOBJ);
-        entry.pushKV("txid", tx->GetHash().GetHex());
+        entry.pushKV("outputHash", outputHash);
         return entry;
     }
-    return tx->GetHash().GetHex();
+    return outputHash;
 }
 } // namespace blsct
 
@@ -155,7 +156,7 @@ UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request,
     auto hash = blsct::SendTransaction(*pwallet, transactionData, false);
 
     UniValue ret{UniValue::VOBJ};
-    ret.pushKV("hash", hash);
+    ret.pushKV("outputHash", hash);
     ret.pushKV("tokenId", tokenInfo.publicKey.GetHash().ToString());
 
     return ret;
@@ -178,7 +179,7 @@ RPCHelpMan createnft()
          {"max_supply", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The NFT max supply."}},
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
-                                              {RPCResult::Type::STR_HEX, "hash", "The broadcasted transaction hash"},
+                                              {RPCResult::Type::STR_HEX, "outputHash", "The output hash of the broadcasted transaction"},
                                               {RPCResult::Type::STR_HEX, "tokenId", "The token id"},
                                           }},
         RPCExamples{HelpExampleRpc("createnft", "{'name':'My NFT Collection'} 1000")},
@@ -205,7 +206,7 @@ RPCHelpMan createtoken()
          {"max_supply", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The token max supply."}},
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
-                                              {RPCResult::Type::STR_HEX, "hash", "The broadcasted transaction hash"},
+                                              {RPCResult::Type::STR_HEX, "outputHash", "The output hash of the broadcasted transaction"},
                                               {RPCResult::Type::STR_HEX, "tokenId", "The token id"},
                                           }},
         RPCExamples{HelpExampleRpc("createtoken", "{\"name\":\"Token\"} 1000")},
@@ -234,7 +235,7 @@ RPCHelpMan minttoken()
          },
          {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The token amount to be minted."}},
         RPCResult{
-            RPCResult::Type::STR_HEX, "hash", "The transaction hash"},
+            RPCResult::Type::STR_HEX, "outputHash", "The output hash of the broadcasted transaction"},
         RPCExamples{HelpExampleRpc("minttoken", "d46a375d31843d6a303dc7a8c0e0cccaa2d89f442052226fd5337b4d77afcc80 " + BLSCT_EXAMPLE_ADDRESS[0] + " 1000")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
@@ -313,7 +314,7 @@ static RPCHelpMan mintnft()
              },
          }},
         RPCResult{
-            RPCResult::Type::STR_HEX, "hash", "The transaction hash"},
+            RPCResult::Type::STR_HEX, "outputHash", "The output hash of the broadcasted transaction"},
         RPCExamples{HelpExampleRpc("mintnft", "d46a375d31843d6a303dc7a8c0e0cccaa2d89f442052226fd5337b4d77afcc80 1 " + BLSCT_EXAMPLE_ADDRESS[0] + " {\"desc\":\"Your first NFT\"}")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
@@ -573,13 +574,13 @@ RPCHelpMan sendtoblsctaddress()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "txid", "The transaction id."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
             },
         },
         RPCExamples{
@@ -634,13 +635,13 @@ RPCHelpMan sendtokentoblsctaddress()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "txid", "The transaction id."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
             },
         },
         RPCExamples{
@@ -711,13 +712,13 @@ RPCHelpMan sendnfttoblsctaddress()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "txid", "The transaction id."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
             },
         },
         RPCExamples{
@@ -785,13 +786,13 @@ RPCHelpMan stakelock()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "txid", "The transaction id."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
             },
         },
         RPCExamples{
@@ -841,13 +842,13 @@ RPCHelpMan stakeunlock()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "txid", "The transaction id."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
             },
         },
         RPCExamples{
@@ -2782,6 +2783,76 @@ RPCHelpMan deriveblsctspendingkey()
     };
 }
 
+RPCHelpMan getblsctoutput()
+{
+    return RPCHelpMan{
+        "getblsctoutput",
+        "Look up a BLSCT output by its output hash.\n",
+        {
+            {"output_hash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The output hash to look up."},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                {RPCResult::Type::STR_HEX, "outputHash", "The output hash"},
+                {RPCResult::Type::NUM, "amount", "The recovered amount in navoshis"},
+                {RPCResult::Type::STR, "memo", "The recovered memo"},
+                {RPCResult::Type::STR_HEX, "tokenId", "The token id (if applicable)"},
+                {RPCResult::Type::NUM, "confirmations", "The number of confirmations"},
+                {RPCResult::Type::BOOL, "spendable", "Whether the output is spendable (not spent)"},
+            }},
+        RPCExamples{HelpExampleRpc("getblsctoutput", "\"a685e520f85d111a6c55bd2b8226f6b916a3bcdd3b549c75e0abddc55df70951\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            uint256 output_hash(ParseHashV(request.params[0], "output_hash"));
+
+            // Try mapOutpointHashToWalletTx first (transaction storage mode)
+            auto it = pwallet->mapOutpointHashToWalletTx.find(output_hash);
+            if (it != pwallet->mapOutpointHashToWalletTx.end()) {
+                const wallet::CWalletTx* wtx = it->second;
+                for (size_t i = 0; i < wtx->tx->vout.size(); i++) {
+                    if (wtx->tx->vout[i].GetHash() == output_hash) {
+                        auto recoveryData = wtx->GetBLSCTRecoveryData(i);
+                        const auto& tokenId = wtx->tx->vout[i].tokenId;
+
+                        UniValue result(UniValue::VOBJ);
+                        result.pushKV("outputHash", output_hash.GetHex());
+                        result.pushKV("amount", recoveryData.amount);
+                        result.pushKV("memo", recoveryData.message);
+                        result.pushKV("tokenId", tokenId.IsNull() ? "" : tokenId.ToString());
+                        result.pushKV("confirmations", pwallet->GetTxDepthInMainChain(*wtx));
+                        result.pushKV("spendable", true);
+                        return result;
+                    }
+                }
+            }
+
+            // Try mapOutputs (output storage mode)
+            for (const auto& [outpoint, wout] : pwallet->mapOutputs) {
+                if (wout.out && wout.out->GetHash() == output_hash) {
+                    const auto& tokenId = wout.out->tokenId;
+
+                    UniValue result(UniValue::VOBJ);
+                    result.pushKV("outputHash", output_hash.GetHex());
+                    result.pushKV("amount", wout.blsctRecoveryData.amount);
+                    result.pushKV("memo", wout.blsctRecoveryData.message);
+                    result.pushKV("tokenId", tokenId.IsNull() ? "" : tokenId.ToString());
+                    result.pushKV("confirmations", pwallet->GetOutputDepthInMainChain(wout));
+                    result.pushKV("spendable", !wout.IsSpent());
+                    return result;
+                }
+            }
+
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Output not found");
+        },
+    };
+}
+
 Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
 {
     static const CRPCCommand commands[]{
@@ -2812,6 +2883,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &signblsmessage},
         {"blsct", &verifyblsmessage},
         {"blsct", &deriveblsctspendingkey},
+        {"blsct", &getblsctoutput},
     };
     return commands;
 }
