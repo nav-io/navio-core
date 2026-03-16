@@ -2022,13 +2022,13 @@ RPCHelpMan importblsctscript()
 {
     return RPCHelpMan{"importblsctscript",
                       "\nImport a BLSCT script for watching.\n"
-                      "Supports two modes via the \"type\" field in the descriptor object:\n"
+                      "Supports two modes via the \"type\" field in the script descriptor object:\n"
                       "  \"atomic_swap\" - reconstruct an HTLC script from pre-agreed swap parameters.\n"
                       "  \"raw\"         - import an arbitrary script from its hex encoding.\n"
                       "\nThe wallet will detect matching on-chain outputs during block scanning.\n"
                       "Note: Use \"getwalletinfo\" to query the scanning progress.\n",
                       {
-                          {"descriptor", RPCArg::Type::OBJ, RPCArg::Optional::NO, "Script descriptor",
+                          {"script_descriptor", RPCArg::Type::OBJ, RPCArg::Optional::NO, "Script descriptor",
                            {
                                {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "\"atomic_swap\" or \"raw\""},
                                {"address_a", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "(atomic_swap) BLSCT address for the hashlock branch"},

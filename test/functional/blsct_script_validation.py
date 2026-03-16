@@ -73,7 +73,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
             "type": "atomic_swap",
             "address_a": self.addr1,
             "address_b": self.addr2,
-            "amount": 1.0,
+            "amount": COIN,
             "hash": secret_hash_hex,
             "locktime": locktime,
             "blinding_key": blinding_key_hex,
@@ -89,7 +89,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         """Return (out_hash, amount_sats, gamma_hex) for the HTLC output."""
         recovery = wallet.getblsctrecoverydata(signed_tx_hex)
         for out in recovery["outputs"]:
-            sats = int(round(out["amount"] * COIN))
+            sats = out["amount_navoshi"]
             if sats == expected_sats and out.get("gamma"):
                 return out["out_hash"], sats, out["gamma"]
         raise AssertionError(
@@ -101,7 +101,7 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         outputs = [{
             "address": self.addr1,
             "script": script_hex,
-            "amount": 1.0,
+            "amount": COIN,
             "blinding_key": blinding_key_hex,
         }]
         raw = self.w1.createblsctrawtransaction([], outputs)
