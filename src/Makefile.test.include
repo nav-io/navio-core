@@ -208,6 +208,7 @@ BITCOIN_TESTS += \
   test/blsct/wallet/keyman_tests.cpp \
   test/blsct/wallet/txfactory_global_tests.cpp \
   test/blsct/wallet/txfactory_tests.cpp \
+  test/blsct/wallet/output_storage_tests.cpp \
   test/blsct/wallet/validation_tests.cpp \
   wallet/test/feebumper_tests.cpp \
   wallet/test/spend_tests.cpp \

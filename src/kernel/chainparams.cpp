@@ -633,7 +633,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.SegwitHeight = 0; // Always active unless overridden
             consensus.fBLSCT = true;
             consensus.nPePoSMinStakeAmount = 100 * COIN;
-            consensus.nLastPOWHeight = 1000;
+            consensus.nLastPOWHeight = 25000;
             consensus.MinBIP9WarningHeight = 0;
             consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
             consensus.posLimit = uint256S("0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");

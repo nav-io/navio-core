@@ -69,12 +69,12 @@ CAmount OutputGetCredit(const CWallet& wallet, const CWalletOutput& wout, const 
 {
     auto txout = *wout.out;
     if (txout.tokenId != token_id) return 0;
-    if (!txout.HasBLSCTRangeProof() && !MoneyRange(txout.nValue))
+    if (!wout.fBLSCTOutput && !MoneyRange(txout.nValue))
         throw std::runtime_error(std::string(__func__) + ": value out of range");
     LOCK(wallet.cs_wallet);
     if (fIgnoreImmature && wallet.IsOutputImmatureCoinBase(wout))
         return 0;
-    if (txout.HasBLSCTRangeProof()) {
+    if (wout.fBLSCTOutput) {
         if (wallet.IsMine(txout) & filter) {
             return wout.blsctRecoveryData.amount;
         } else {
@@ -500,7 +500,21 @@ std::vector<StakedCommitmentInfo> GetStakedCommitmentInfo(const CWallet& wallet)
     AssertLockHeld(wallet.cs_wallet);
     std::vector<StakedCommitmentInfo> ret;
 
-    {
+    if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        for (const auto& entry : wallet.mapOutputs) {
+            const COutPoint& outpoint = entry.first;
+            const CWalletOutput& wout = entry.second;
+            if (!wout.fStakedCommitment) continue;
+            const int out_depth{wallet.GetOutputDepthInMainChain(wout)};
+            if (out_depth < 1) continue;
+            if (wallet.IsSpent(outpoint) || wout.IsSpent()) continue;
+            if (wallet.IsMine(*wout.out) == ISMINE_STAKED_COMMITMENT_BLSCT) {
+                ret.push_back({outpoint.hash, 0, wout.out->blsctData.rangeProof.Vs[0],
+                               wout.blsctRecoveryData.amount,
+                               wout.blsctRecoveryData.gamma});
+            }
+        }
+    } else {
         for (const auto& entry : wallet.mapWallet) {
             const CWalletTx& wtx = entry.second;
             const int tx_depth{wallet.GetTxDepthInMainChain(wtx)};

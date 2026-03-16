@@ -193,6 +193,11 @@ public:
         rangeProof.Vs.Clear();
     }
 
+    void StripRangeProof()
+    {
+        rangeProof.Vs.Clear();
+    }
+
     bool IsNull() const
     {
         return viewTag == 0 && rangeProof.Vs.Size() == 0;

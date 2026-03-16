@@ -404,6 +404,7 @@ BASE_SCRIPTS = [
     'blsct_setblsctseed.py',
     'blsct_script_validation.py',
     'blsct_balance_proof.py',
+    'blsct_output_storage.py',
     'blsct_rawtransaction.py',
     'blsct_import_scriptpubkeys.py',
     'bls_message_signing.py'

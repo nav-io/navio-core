@@ -417,10 +417,16 @@ static RPCHelpMan createwallet()
             if (!request.params[8].isNull() && request.params[8].get_bool()) {
                 flags |= WALLET_FLAG_BLSCT;
                 flags &= ~WALLET_FLAG_DESCRIPTORS;
+                // Output storage mode is default for BLSCT wallets
+                flags |= WALLET_FLAG_BLSCT_OUTPUT_STORAGE;
             }
 
-            if (!request.params[9].isNull() && request.params[9].get_bool()) {
-                flags |= WALLET_FLAG_BLSCT_OUTPUT_STORAGE;
+            if (!request.params[9].isNull()) {
+                if (request.params[9].get_bool()) {
+                    flags |= WALLET_FLAG_BLSCT_OUTPUT_STORAGE;
+                } else {
+                    flags &= ~WALLET_FLAG_BLSCT_OUTPUT_STORAGE;
+                }
             }
 
             std::vector<unsigned char> seed;

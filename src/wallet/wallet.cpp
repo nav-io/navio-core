@@ -377,6 +377,7 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
     const SecureString& passphrase = options.create_passphrase;
 
     if (wallet_creation_flags & WALLET_FLAG_DESCRIPTORS) options.require_format = DatabaseFormat::SQLITE;
+    if (wallet_creation_flags & WALLET_FLAG_BLSCT) options.require_format = DatabaseFormat::SQLITE;
 
     // Indicate that the wallet is actually supposed to be blank and not just blank to make it encrypted
     bool create_blank = (wallet_creation_flags & WALLET_FLAG_BLANK_WALLET);
@@ -1148,6 +1149,8 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
 
     if (rescanning_old_block || fInsertedNew) {
         if (wout.out->HasBLSCTRangeProof()) {
+            wout.fBLSCTOutput = true;
+            wout.fStakedCommitment = wout.out->IsStakedCommitment();
             auto blsct_man = GetBLSCTKeyMan();
             if (blsct_man) {
                 auto result = blsct_man->RecoverOutputs({*wout.out});
@@ -1156,7 +1159,17 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
                     wout.blsctRecoveryData = xs[0];
                 }
             }
+            // Save the original output hash before any stripping
+            wout.outputHash = wout.out->GetHash();
+            // Strip range proof data to save space; BLSCT keys are preserved
+            // Don't strip staked commitments as their Vs[0] is needed for unstaking
+            if (!wout.fStakedCommitment) {
+                auto strippedOut = std::make_shared<CTxOut>(*wout.out);
+                strippedOut->blsctData.StripRangeProof();
+                wout.out = strippedOut;
+            }
         } else {
+            wout.fBLSCTOutput = false;
             wout.blsctRecoveryData.amount = wout.out->nValue;
         }
     }
@@ -1670,18 +1683,22 @@ void CWallet::transactionAddedToMempool(const CTransactionRef& tx)
     LOCK(cs_wallet);
     SyncTransaction(tx, TxStateInMempool{});
 
-    auto it = mapWallet.find(tx->GetHash());
-    if (it != mapWallet.end()) {
-        RefreshMempoolStatus(it->second, chain());
+    if (!IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) || !tx->IsBLSCT()) {
+        auto it = mapWallet.find(tx->GetHash());
+        if (it != mapWallet.end()) {
+            RefreshMempoolStatus(it->second, chain());
+        }
     }
 }
 
 void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRemovalReason reason)
 {
     LOCK(cs_wallet);
-    auto it = mapWallet.find(tx->GetHash());
-    if (it != mapWallet.end()) {
-        RefreshMempoolStatus(it->second, chain());
+    if (!IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) || !tx->IsBLSCT()) {
+        auto it = mapWallet.find(tx->GetHash());
+        if (it != mapWallet.end()) {
+            RefreshMempoolStatus(it->second, chain());
+        }
     }
     // Handle transactions that were removed from the mempool because they
     // conflict with transactions in a newly connected block.
