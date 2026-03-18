@@ -301,7 +301,7 @@ void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry
     }
 
     if (have_undo) {
-        const CAmount fee = amt_total_in - amt_total_out;
+        const CAmount fee = tx.IsBLSCT() ? tx.GetBLSCTFee() : amt_total_in - amt_total_out;
         CHECK_NONFATAL(MoneyRange(fee));
         entry.pushKV("fee", ValueFromAmount(fee));
     }

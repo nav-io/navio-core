@@ -256,8 +256,8 @@ class BLSCTRawTransactionScriptTest(BitcoinTestFramework):
         # Wait a moment for the transaction to be processed
         self.sync_all()
 
-        # Also check listunspent for the new outputs
-        unspent_after = wallet1.listunspent()
+        # Also check listblsctunspent for the new outputs
+        unspent_after = wallet1.listblsctunspent()
         self.log.info(f"Unspent outputs after transaction: {len(unspent_after)}")
 
         script_output_found = False

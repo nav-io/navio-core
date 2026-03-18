@@ -572,6 +572,7 @@ public:
 
     // Return sum of txouts.
     CAmount GetValueOut() const;
+    CAmount GetBLSCTFee() const;
 
     /**
      * Get the total transaction size in bytes, including witness data.

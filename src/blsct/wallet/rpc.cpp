@@ -471,7 +471,9 @@ RPCHelpMan gettokenbalance()
 
             bool include_watchonly = ParseIncludeWatchonly(request.params[3], *pwallet);
 
-            const auto bal = GetBalance(*pwallet, min_depth, false, token_id);
+            const auto bal = pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)
+                ? GetBlsctBalance(*pwallet, min_depth, token_id)
+                : GetBalance(*pwallet, min_depth, false, token_id);
 
             return ValueFromAmount(bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0));
         },
@@ -536,7 +538,9 @@ RPCHelpMan getnftbalance()
             UniValue ret(UniValue::VARR);
 
             for (auto& it : token.mapMintedNft) {
-                const auto bal = GetBalance(*pwallet, min_depth, false, TokenId(token_id, it.first));
+                const auto bal = pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)
+                    ? GetBlsctBalance(*pwallet, min_depth, TokenId(token_id, it.first))
+                    : GetBalance(*pwallet, min_depth, false, TokenId(token_id, it.first));
 
                 if ((bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0)) > 0) {
                     UniValue retObj(UniValue::VOBJ);
@@ -1384,6 +1388,20 @@ RPCHelpMan createblsctrawtransaction()
                 const Txid txid = Txid::FromUint256(ParseHashO(o, "outid"));
                 blsct::UnsignedInput unsigned_input;
                 unsigned_input.in.prevout = COutPoint(txid);
+                CTxOut wallet_prevout;
+                std::optional<range_proof::RecoveredData<Mcl>> wallet_recovery_data;
+
+                if (const wallet::CWalletOutput* wallet_output = pwallet->GetWalletOutput(unsigned_input.in.prevout)) {
+                    wallet_prevout = *wallet_output->out;
+                    wallet_recovery_data = wallet_output->blsctRecoveryData;
+                } else if (const wallet::CWalletTx* wallet_tx = pwallet->GetWalletTxFromOutpoint(unsigned_input.in.prevout)) {
+                    auto txout_iter = std::find_if(wallet_tx->tx->vout.begin(), wallet_tx->tx->vout.end(),
+                        [&](const CTxOut& out) { return out.GetHash() == txid; });
+                    if (txout_iter != wallet_tx->tx->vout.end()) {
+                        wallet_prevout = *txout_iter;
+                        wallet_recovery_data = wallet_tx->GetBLSCTRecoveryData(unsigned_input.in.prevout);
+                    }
+                }
 
                 if (o.exists("sequence")) {
                     uint32_t seq = o["sequence"].getInt<uint32_t>();
@@ -1449,45 +1467,31 @@ RPCHelpMan createblsctrawtransaction()
 
                 // If value or gamma are not provided, try to get them from the wallet
                 if (!o.exists("value") || !o.exists("gamma")) {
-                    // Get the transaction from the wallet
-                    auto wallet_tx = pwallet->GetWalletTxFromOutpoint(COutPoint(txid));
-                    if (!wallet_tx) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Transaction %s not found in wallet", txid.GetHex()));
+                    if (!wallet_recovery_data) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Output %s not found in wallet", txid.GetHex()));
                     }
 
-                    // Get BLSCT recovery data for this output
-                    auto recovery_data = wallet_tx->GetBLSCTRecoveryData(COutPoint(txid));
-                    if (recovery_data.amount == 0 && recovery_data.gamma == Scalar(0) && recovery_data.id == 0 && recovery_data.message == "") {
+                    if (wallet_recovery_data->amount == 0 && wallet_recovery_data->gamma == Scalar(0) && wallet_recovery_data->id == 0 && wallet_recovery_data->message == "") {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("BLSCT recovery data not available for output %s", txid.GetHex()));
                     }
 
-                    // Set value if not provided
                     if (!o.exists("value")) {
-                        unsigned_input.value = Scalar(recovery_data.amount);
+                        unsigned_input.value = Scalar(wallet_recovery_data->amount);
                     }
 
-                    // Set gamma if not provided
                     if (!o.exists("gamma")) {
-                        unsigned_input.gamma = recovery_data.gamma;
+                        unsigned_input.gamma = wallet_recovery_data->gamma;
                     }
                 }
 
                 // If private key is not provided, try to get it from the wallet
                 if (!o.exists("spending_key")) {
-                    // Get the output to determine the token ID
-                    auto wallet_tx = pwallet->GetWalletTxFromOutpoint(COutPoint(txid));
-                    if (!wallet_tx) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Transaction %s not found in wallet", txid.GetHex()));
+                    if (wallet_prevout.IsNull()) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Output %s not found in wallet", txid.GetHex()));
                     }
 
-                    auto txout_iter = std::find_if(wallet_tx->tx->vout.begin(), wallet_tx->tx->vout.end(), [&](const CTxOut& out) { return out.GetHash() == txid; });
-                    if (txout_iter == wallet_tx->tx->vout.end()) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Output %s not found in transaction %s", txid.GetHex(), wallet_tx->tx->GetHash().GetHex()));
-                    }
-
-                    // Get the spending key for this output
                     blsct::PrivateKey spending_key;
-                    if (!blsct_km->GetSpendingKeyForOutputWithCache(*txout_iter, spending_key) || !spending_key.IsValid()) {
+                    if (!blsct_km->GetSpendingKeyForOutputWithCache(wallet_prevout, spending_key) || !spending_key.IsValid()) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Spending key not available for output %s", txid.GetHex()));
                     }
 
@@ -1495,22 +1499,15 @@ RPCHelpMan createblsctrawtransaction()
                 }
 
                 // Validate: spending key must produce a public key matching the UTXO's spendingKey
-                if (unsigned_input.sk.IsValid()) {
-                    auto wallet_tx_check = pwallet->GetWalletTxFromOutpoint(COutPoint(txid));
-                    if (wallet_tx_check) {
-                        auto txout_iter = std::find_if(wallet_tx_check->tx->vout.begin(), wallet_tx_check->tx->vout.end(),
-                            [&](const CTxOut& out) { return out.GetHash() == txid; });
-                        if (txout_iter != wallet_tx_check->tx->vout.end() && !txout_iter->blsctData.spendingKey.IsZero()) {
-                            auto signing_pubkey = unsigned_input.sk.GetPublicKey();
-                            auto expected_pubkey = blsct::PublicKey(txout_iter->blsctData.spendingKey);
-                            if (signing_pubkey != expected_pubkey) {
-                                throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
-                                    "Input %d (%s): spending key does not match the UTXO spendingKey. "
-                                    "This transaction would fail signature verification on broadcast.",
-                                    idx, txid.GetHex()));
-                            }
+                if (unsigned_input.sk.IsValid() && !wallet_prevout.IsNull() && !wallet_prevout.blsctData.spendingKey.IsZero()) {
+                    auto signing_pubkey = unsigned_input.sk.GetPublicKey();
+                    auto expected_pubkey = blsct::PublicKey(wallet_prevout.blsctData.spendingKey);
+                    if (signing_pubkey != expected_pubkey) {
+                        throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
+                            "Input %d (%s): spending key does not match the UTXO spendingKey. "
+                            "This transaction would fail signature verification on broadcast.",
+                            idx, txid.GetHex()));
                         }
-                    }
                 }
 
                 unsigned_inputs.push_back(unsigned_input);

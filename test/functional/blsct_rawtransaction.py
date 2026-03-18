@@ -32,6 +32,15 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.setup_nodes()
         self.connect_nodes(0, 1)
 
+    def generate_blsct_blocks(self, node, address, num_blocks, batch_size=2):
+        blocks = []
+        remaining = num_blocks
+        while remaining > 0:
+            to_generate = min(batch_size, remaining)
+            blocks.extend(self.generatetoblsctaddress(node, to_generate, address))
+            remaining -= to_generate
+        return blocks
+
     def run_test(self):
         self.log.info("Setting up wallets and generating initial blocks")
 
@@ -51,7 +60,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Generate blocks to fund the first wallet
         self.log.info("Generating 101 blocks to fund wallet1")
-        self.generatetoblsctaddress(self.nodes[0], 101, address1)
+        self.generate_blsct_blocks(self.nodes[0], address1, 101)
 
         # Check initial balance
         balance1 = wallet1.getbalance()
@@ -285,26 +294,27 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Mine a block to confirm
         self.generatetoblsctaddress(self.nodes[0], 1, address1)
 
-        # Get the last received transaction to get the actual txid
-        transactions = wallet1.listtransactions("*", 1, 0)
-        assert_greater_than(len(transactions), 0)
-        last_tx = transactions[0]
-        actual_txid = last_tx["txid"]
-        self.log.info(f"Last received transaction: {actual_txid}")
+        # In output-storage mode the wallet does not retain full transaction history,
+        # so use the wallet-owned outpoint hash path instead of listtransactions+txid.
+        recovery_data_signed = wallet1.getblsctrecoverydata(signed_tx)
+        assert_greater_than(len(recovery_data_signed["outputs"]), 0)
+        actual_outid = recovery_data_signed["outputs"][0]["out_hash"]
+        self.log.info(f"Wallet-owned output hash: {actual_outid}")
 
-        # Get recovery data by txid
-        recovery_data_txid = wallet1.getblsctrecoverydata(actual_txid)
-        recovery_data_signed = wallet1.getblsctrecoverydata(actual_txid)
-        self.log.info(f"Recovery data from txid: {recovery_data_txid}")
-        self.log.info(f"Recovery data from signed: {recovery_data_signed}")
+        # Get recovery data by outpoint hash
+        recovery_data_outid = wallet1.getblsctrecoverydata(actual_outid)
+        self.log.info(f"Recovery data from outid: {recovery_data_outid}")
+        self.log.info(f"Recovery data from signed tx: {recovery_data_signed}")
 
-        assert_equal(recovery_data_txid, recovery_data_signed)
+        # The outpoint hash input returns the matching output only.
+        assert_equal(len(recovery_data_outid["outputs"]), 1)
+        assert_equal(recovery_data_outid["outputs"][0], recovery_data_signed["outputs"][0])
 
-        # Verify we can get recovery data for specific vout
-        if len(recovery_data_txid["outputs"]) > 0:
-            specific_vout = recovery_data_txid["outputs"][0]["vout"]
-            recovery_data_specific_txid = wallet1.getblsctrecoverydata(actual_txid, specific_vout)
-            assert_equal(len(recovery_data_specific_txid["outputs"]), 1)
+        # Verify we can get recovery data for the specific recovered vout
+        specific_vout = recovery_data_outid["outputs"][0]["vout"]
+        recovery_data_specific_outid = wallet1.getblsctrecoverydata(actual_outid, specific_vout)
+        assert_equal(len(recovery_data_specific_outid["outputs"]), 1)
+        assert_equal(recovery_data_specific_outid["outputs"][0], recovery_data_outid["outputs"][0])
 
         # Test 4: Error cases
         # Invalid hex string
@@ -315,7 +325,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         assert_raises_rpc_error(-8, "vout index out of range",
                                wallet1.getblsctrecoverydata, signed_tx, 999)
 
-        # Transaction not found in wallet (for txid input)
+        # Transaction or outpoint not found in wallet
         fake_txid = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
         assert_raises_rpc_error(-8, "Transaction or outpoint not found in wallet",
                                wallet1.getblsctrecoverydata, fake_txid)

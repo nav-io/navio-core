@@ -117,6 +117,27 @@ CAmount CTransaction::GetValueOut() const
     return nValueOut;
 }
 
+CAmount CTransaction::GetBLSCTFee() const
+{
+    CAmount nFee = 0;
+    if (!IsBLSCT()) {
+        return nFee;
+    }
+
+    for (const auto& tx_out : vout) {
+        if (!tx_out.IsFee()) {
+            continue;
+        }
+        if (!MoneyRange(tx_out.nValue) || !MoneyRange(nFee + tx_out.nValue)) {
+            throw std::runtime_error(std::string(__func__) + ": fee out of range");
+        }
+        nFee += tx_out.nValue;
+    }
+
+    assert(MoneyRange(nFee));
+    return nFee;
+}
+
 unsigned int CTransaction::GetTotalSize() const
 {
     return ::GetSerializeSize(TX_WITH_WITNESS(*this));
