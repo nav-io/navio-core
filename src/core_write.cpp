@@ -276,7 +276,8 @@ void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry
         UniValue o(UniValue::VOBJ);
         ScriptToUniv(txout.scriptPubKey, /*out=*/o, /*include_hex=*/true, /*include_address=*/true);
         out.pushKV("scriptPubKey", o);
-        if (tx.IsBLSCT()) {
+        const bool include_blsct_fields = tx.IsBLSCT() || txout.HasBLSCTKeys() || txout.HasBLSCTRangeProof() || txout.blsctData.viewTag != 0;
+        if (include_blsct_fields) {
             out.pushKV("ephemeralKey", HexStr(txout.blsctData.ephemeralKey.GetVch()));
             out.pushKV("spendingKey", HexStr(txout.blsctData.spendingKey.GetVch()));
             out.pushKV("blindingKey", HexStr(txout.blsctData.blindingKey.GetVch()));
@@ -286,7 +287,13 @@ void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry
             }
             out.pushKV("rangeProof", rp);
             out.pushKV("viewTag", txout.blsctData.viewTag);
+        }
+        if (include_blsct_fields || !txout.tokenId.IsNull()) {
             out.pushKV("tokenId", txout.tokenId.ToString());
+        }
+        if (!txout.predicate.empty()) {
+            out.pushKV("predicateHex", HexStr(txout.predicate));
+            out.pushKV("predicate", blsct::PredicateToString(txout.predicate));
         }
         vout.push_back(out);
 

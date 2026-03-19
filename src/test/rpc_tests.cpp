@@ -2,15 +2,19 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/tokens/predicate_parser.h>
 #include <core_io.h>
 #include <interfaces/chain.h>
 #include <node/context.h>
+#include <primitives/transaction.h>
 #include <rpc/blockchain.h>
 #include <rpc/client.h>
 #include <rpc/server.h>
 #include <rpc/util.h>
+#include <script/script.h>
 #include <test/util/setup_common.h>
 #include <univalue.h>
+#include <util/strencodings.h>
 #include <util/time.h>
 
 #include <any>
@@ -164,6 +168,25 @@ BOOST_AUTO_TEST_CASE(rpc_rawparams)
     BOOST_CHECK_THROW(CallRPC("sendrawtransaction null"), std::runtime_error);
     BOOST_CHECK_THROW(CallRPC("sendrawtransaction DEADBEEF"), std::runtime_error);
     BOOST_CHECK_THROW(CallRPC(std::string("sendrawtransaction ") + rawtx + " extra"), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(rpc_decoderawtransaction_txout_fields)
+{
+    CMutableTransaction mtx;
+    mtx.vin.emplace_back(COutPoint{uint256::ONE}, CScript{});
+
+    CTxOut out{0, CScript{} << OP_TRUE};
+    out.tokenId = TokenId{uint256::ONE};
+    out.predicate = blsct::DataPredicate(uint256::ONE).GetVch();
+    mtx.vout.emplace_back(out);
+
+    const UniValue result = CallRPC("decoderawtransaction " + EncodeHexTx(CTransaction{std::move(mtx)}));
+    const UniValue vout = result.get_obj().find_value("vout").get_array();
+    BOOST_REQUIRE_EQUAL(vout.size(), 1);
+
+    const UniValue rpc_out = vout[0].get_obj();
+    BOOST_CHECK_EQUAL(rpc_out.find_value("tokenId").get_str(), out.tokenId.ToString());
+    BOOST_CHECK_EQUAL(rpc_out.find_value("predicateHex").get_str(), HexStr(out.predicate));
 }
 
 BOOST_AUTO_TEST_CASE(rpc_togglenetwork)
