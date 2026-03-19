@@ -5,6 +5,11 @@
 #include <blsct/external_api/blsct.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <util/strencodings.h>
+#include <blsct/eip_2333/bls12_381_keygen.h>
+#include <blsct/tokens/predicate_parser.h>
+#include <blsct/wallet/unsigned_transaction.h>
+#include <core_io.h>
+#include <hash.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <test/util/random.h>
@@ -27,6 +32,31 @@ uint8_t hex_to_uint(char c) {
     } else {
         throw std::invalid_argument("Unexpected hex char found");
     }
+}
+
+template <typename T>
+T& RequireSuccess(BlsctRetVal* rv)
+{
+    BOOST_REQUIRE(rv != nullptr);
+    BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
+    BOOST_REQUIRE(rv->value != nullptr);
+    return *static_cast<T*>(rv->value);
+}
+
+static std::map<std::string, std::string> ReadStringMap(const void* vp_string_map)
+{
+    std::map<std::string, std::string> out;
+    const size_t size = get_string_map_size(vp_string_map);
+    for (size_t i = 0; i < size; ++i) {
+        const char* key = get_string_map_key_at(vp_string_map, i);
+        const char* value = get_string_map_value_at(vp_string_map, i);
+        BOOST_REQUIRE(key != nullptr);
+        BOOST_REQUIRE(value != nullptr);
+        out[key] = value;
+        free_obj((void*)key);
+        free_obj((void*)value);
+    }
+    return out;
 }
 
 // This test checks if there is any structural change in
@@ -243,5 +273,332 @@ BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
     free_obj(tid_rv);
 }
 
-BOOST_AUTO_TEST_SUITE_END()
+BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
+{
+    init();
 
+    auto* metadata = create_string_map();
+    BOOST_REQUIRE(metadata != nullptr);
+    add_to_string_map(metadata, "name", "Collection");
+    add_to_string_map(metadata, "symbol", "COLL");
+
+    auto* collection_hash_rv = calc_collection_token_hash(metadata, 1000);
+    BOOST_REQUIRE(collection_hash_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(collection_hash_rv->result, BLSCT_SUCCESS);
+    auto* collection_hash = static_cast<BlsctUint256*>(collection_hash_rv->value);
+
+    const std::map<std::string, std::string> expected_metadata{{"name", "Collection"}, {"symbol", "COLL"}};
+    const uint256 expected_collection_hash = (HashWriter{} << expected_metadata << CAmount{1000}).GetHash();
+    BOOST_CHECK(std::memcmp(collection_hash, expected_collection_hash.begin(), UINT256_SIZE) == 0);
+
+    auto* master_token_key_rv = gen_scalar(42);
+    BOOST_REQUIRE(master_token_key_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(master_token_key_rv->result, BLSCT_SUCCESS);
+    auto* master_token_key = static_cast<BlsctScalar*>(master_token_key_rv->value);
+
+    auto* token_key_rv = derive_collection_token_key(master_token_key, collection_hash);
+    BOOST_REQUIRE(token_key_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(token_key_rv->result, BLSCT_SUCCESS);
+    auto* token_key = static_cast<BlsctScalar*>(token_key_rv->value);
+
+    MclScalar expected_token_key = BLS12_381_KeyGen::derive_child_SK_hash(MclScalar(uint64_t{42}), expected_collection_hash);
+    MclScalar token_key_native;
+    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(token_key, SCALAR_SIZE, token_key_native);
+    BOOST_CHECK(token_key_native == expected_token_key);
+
+    const BlsctPubKey* token_public_key = derive_collection_token_public_key(master_token_key, collection_hash);
+    BOOST_REQUIRE(token_public_key != nullptr);
+
+    auto* token_info_rv = build_token_info(BlsctToken, token_public_key, metadata, 1000);
+    auto& token_info = RequireSuccess<blsct::TokenInfo>(token_info_rv);
+    BOOST_CHECK_EQUAL(get_token_info_type(&token_info), BlsctToken);
+    BOOST_CHECK_EQUAL(get_token_info_total_supply(&token_info), 1000U);
+
+    void* token_info_metadata = get_token_info_metadata(&token_info);
+    BOOST_REQUIRE(token_info_metadata != nullptr);
+    BOOST_CHECK(ReadStringMap(token_info_metadata) == expected_metadata);
+    delete_string_map(token_info_metadata);
+
+    const char* token_info_hex = serialize_token_info(&token_info);
+    BOOST_REQUIRE(token_info_hex != nullptr);
+    auto* token_info_roundtrip_rv = deserialize_token_info(token_info_hex);
+    auto& token_info_roundtrip = RequireSuccess<blsct::TokenInfo>(token_info_roundtrip_rv);
+    BOOST_CHECK_EQUAL(token_info_roundtrip.nTotalSupply, token_info.nTotalSupply);
+    BOOST_CHECK(token_info_roundtrip.publicKey == token_info.publicKey);
+    BOOST_CHECK(token_info_roundtrip.mapMetadata == token_info.mapMetadata);
+
+    auto* create_pred_rv = build_create_token_predicate(&token_info);
+    BOOST_REQUIRE(create_pred_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(create_pred_rv->result, BLSCT_SUCCESS);
+    auto* create_pred = static_cast<BlsctVectorPredicate*>(create_pred_rv->value);
+    BOOST_CHECK_EQUAL(get_vector_predicate_type(create_pred, create_pred_rv->value_size), BlsctCreateTokenPredicateType);
+
+    auto* parsed_token_info_rv = get_create_token_predicate_token_info(create_pred, create_pred_rv->value_size);
+    auto& parsed_token_info = RequireSuccess<blsct::TokenInfo>(parsed_token_info_rv);
+    BOOST_CHECK(parsed_token_info.publicKey == token_info.publicKey);
+    BOOST_CHECK_EQUAL(parsed_token_info.nTotalSupply, token_info.nTotalSupply);
+    BOOST_CHECK(parsed_token_info.mapMetadata == token_info.mapMetadata);
+
+    auto* mint_pred_rv = build_mint_token_predicate(token_public_key, 25);
+    BOOST_REQUIRE(mint_pred_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(mint_pred_rv->result, BLSCT_SUCCESS);
+    auto* mint_pred = static_cast<BlsctVectorPredicate*>(mint_pred_rv->value);
+    BOOST_CHECK_EQUAL(get_vector_predicate_type(mint_pred, mint_pred_rv->value_size), BlsctMintTokenPredicateType);
+    BOOST_CHECK_EQUAL(get_mint_token_predicate_amount(mint_pred, mint_pred_rv->value_size), 25U);
+
+    const BlsctPubKey* mint_pred_pub_key = get_mint_token_predicate_public_key(mint_pred, mint_pred_rv->value_size);
+    BOOST_REQUIRE(mint_pred_pub_key != nullptr);
+    const char* token_pub_hex = serialize_public_key(reinterpret_cast<const BlsctPoint*>(token_public_key));
+    const char* mint_pub_hex = serialize_public_key(reinterpret_cast<const BlsctPoint*>(mint_pred_pub_key));
+    BOOST_REQUIRE(token_pub_hex != nullptr);
+    BOOST_REQUIRE(mint_pub_hex != nullptr);
+    BOOST_CHECK_EQUAL(std::string(token_pub_hex), std::string(mint_pub_hex));
+
+    auto* nft_metadata = create_string_map();
+    BOOST_REQUIRE(nft_metadata != nullptr);
+    add_to_string_map(nft_metadata, "rarity", "legendary");
+
+    auto* mint_nft_pred_rv = build_mint_nft_predicate(token_public_key, 7, nft_metadata);
+    BOOST_REQUIRE(mint_nft_pred_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(mint_nft_pred_rv->result, BLSCT_SUCCESS);
+    auto* mint_nft_pred = static_cast<BlsctVectorPredicate*>(mint_nft_pred_rv->value);
+    BOOST_CHECK_EQUAL(get_vector_predicate_type(mint_nft_pred, mint_nft_pred_rv->value_size), BlsctMintNftPredicateType);
+    BOOST_CHECK_EQUAL(get_mint_nft_predicate_nft_id(mint_nft_pred, mint_nft_pred_rv->value_size), 7U);
+
+    void* parsed_nft_metadata = get_mint_nft_predicate_metadata(mint_nft_pred, mint_nft_pred_rv->value_size);
+    BOOST_REQUIRE(parsed_nft_metadata != nullptr);
+    const std::map<std::string, std::string> expected_nft_metadata{{"rarity", "legendary"}};
+    BOOST_CHECK(ReadStringMap(parsed_nft_metadata) == expected_nft_metadata);
+    delete_string_map(parsed_nft_metadata);
+
+    auto* view_key_rv = gen_scalar(11);
+    auto* spend_key_rv = gen_scalar(12);
+    BOOST_REQUIRE(view_key_rv != nullptr);
+    BOOST_REQUIRE(spend_key_rv != nullptr);
+    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+    BOOST_REQUIRE(spend_pub_key != nullptr);
+    auto* sub_addr_id = gen_sub_addr_id(0, 1);
+    BOOST_REQUIRE(sub_addr_id != nullptr);
+    auto* dest = derive_sub_address(static_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
+    BOOST_REQUIRE(dest != nullptr);
+    auto* blinding_key_rv = gen_scalar(99);
+    BOOST_REQUIRE(blinding_key_rv != nullptr);
+
+    auto* create_output_rv = build_unsigned_create_token_output(token_key, &token_info);
+    BOOST_REQUIRE(create_output_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(create_output_rv->result, BLSCT_SUCCESS);
+    const char* create_output_hex = serialize_unsigned_output(create_output_rv->value);
+    BOOST_REQUIRE(create_output_hex != nullptr);
+    {
+        DataStream st{ParseHex(create_output_hex)};
+        blsct::UnsignedOutput output;
+        st >> output;
+        auto parsed = blsct::ParsePredicate(output.out.predicate);
+        BOOST_CHECK(parsed.IsCreateTokenPredicate());
+        BOOST_CHECK_EQUAL(parsed.GetTokenInfo().nTotalSupply, 1000);
+    }
+
+    auto* mint_output_rv = build_unsigned_mint_token_output(dest, 25, static_cast<const BlsctScalar*>(blinding_key_rv->value), token_key, token_public_key);
+    BOOST_REQUIRE(mint_output_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(mint_output_rv->result, BLSCT_SUCCESS);
+    const char* mint_output_hex = serialize_unsigned_output(mint_output_rv->value);
+    BOOST_REQUIRE(mint_output_hex != nullptr);
+    {
+        DataStream st{ParseHex(mint_output_hex)};
+        blsct::UnsignedOutput output;
+        st >> output;
+        auto parsed = blsct::ParsePredicate(output.out.predicate);
+        BOOST_CHECK(parsed.IsMintTokenPredicate());
+        BOOST_CHECK_EQUAL(parsed.GetAmount(), 25);
+    }
+
+    auto* mint_nft_output_rv = build_unsigned_mint_nft_output(dest, static_cast<const BlsctScalar*>(blinding_key_rv->value), token_key, token_public_key, 7, nft_metadata);
+    BOOST_REQUIRE(mint_nft_output_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(mint_nft_output_rv->result, BLSCT_SUCCESS);
+    const char* mint_nft_output_hex = serialize_unsigned_output(mint_nft_output_rv->value);
+    BOOST_REQUIRE(mint_nft_output_hex != nullptr);
+    {
+        DataStream st{ParseHex(mint_nft_output_hex)};
+        blsct::UnsignedOutput output;
+        st >> output;
+        auto parsed = blsct::ParsePredicate(output.out.predicate);
+        BOOST_CHECK(parsed.IsMintNftPredicate());
+        BOOST_CHECK_EQUAL(parsed.GetNftId(), 7U);
+        BOOST_CHECK(parsed.GetNftMetaData() == expected_nft_metadata);
+    }
+
+    delete_string_map(metadata);
+    delete_string_map(nft_metadata);
+    delete_token_info(token_info_roundtrip_rv->value);
+    free(token_info_roundtrip_rv);
+    delete_token_info(parsed_token_info_rv->value);
+    free(parsed_token_info_rv);
+    delete_token_info(token_info_rv->value);
+    free(token_info_rv);
+    free_obj((void*)token_public_key);
+    free_obj((void*)mint_pred_pub_key);
+    free_obj((void*)token_pub_hex);
+    free_obj((void*)mint_pub_hex);
+    free_obj((void*)spend_pub_key);
+    free_obj((void*)sub_addr_id);
+    free_obj((void*)dest);
+    free_obj((void*)create_output_hex);
+    free_obj((void*)mint_output_hex);
+    free_obj((void*)mint_nft_output_hex);
+    delete_unsigned_output(create_output_rv->value);
+    free(create_output_rv);
+    delete_unsigned_output(mint_output_rv->value);
+    free(mint_output_rv);
+    delete_unsigned_output(mint_nft_output_rv->value);
+    free(mint_nft_output_rv);
+    free_obj(master_token_key_rv->value);
+    free(master_token_key_rv);
+    free_obj(token_key_rv->value);
+    free(token_key_rv);
+    free_obj(collection_hash_rv->value);
+    free(collection_hash_rv);
+    free_obj((void*)token_info_hex);
+    free_obj(create_pred_rv->value);
+    free(create_pred_rv);
+    free_obj(mint_pred_rv->value);
+    free(mint_pred_rv);
+    free_obj(mint_nft_pred_rv->value);
+    free(mint_nft_pred_rv);
+    free_obj(view_key_rv->value);
+    free(view_key_rv);
+    free_obj(spend_key_rv->value);
+    free(spend_key_rv);
+    free_obj(blinding_key_rv->value);
+    free(blinding_key_rv);
+}
+
+BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
+{
+    init();
+
+    auto* view_key_rv = gen_scalar(21);
+    auto* spend_key_rv = gen_scalar(22);
+    auto* input_spending_key_rv = gen_scalar(23);
+    auto* gamma_rv = gen_scalar(24);
+    auto* blinding_key_rv = gen_scalar(25);
+    auto* default_token_id_rv = gen_default_token_id();
+    BOOST_REQUIRE(view_key_rv != nullptr);
+    BOOST_REQUIRE(spend_key_rv != nullptr);
+    BOOST_REQUIRE(input_spending_key_rv != nullptr);
+    BOOST_REQUIRE(gamma_rv != nullptr);
+    BOOST_REQUIRE(blinding_key_rv != nullptr);
+    BOOST_REQUIRE(default_token_id_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(default_token_id_rv->result, BLSCT_SUCCESS);
+
+    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+    BOOST_REQUIRE(spend_pub_key != nullptr);
+    auto* sub_addr_id = gen_sub_addr_id(0, 2);
+    BOOST_REQUIRE(sub_addr_id != nullptr);
+    auto* dest = derive_sub_address(static_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
+    BOOST_REQUIRE(dest != nullptr);
+
+    auto* out_point_rv = gen_out_point("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+    BOOST_REQUIRE(out_point_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(out_point_rv->result, BLSCT_SUCCESS);
+
+    auto* tx_in_rv = build_tx_in(
+        1000,
+        static_cast<const BlsctScalar*>(gamma_rv->value),
+        static_cast<const BlsctScalar*>(input_spending_key_rv->value),
+        static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+        static_cast<const BlsctOutPoint*>(out_point_rv->value),
+        false,
+        false);
+    BOOST_REQUIRE(tx_in_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(tx_in_rv->result, BLSCT_SUCCESS);
+
+    auto* unsigned_input_rv = build_unsigned_input(static_cast<const BlsctTxIn*>(tx_in_rv->value));
+    BOOST_REQUIRE(unsigned_input_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(unsigned_input_rv->result, BLSCT_SUCCESS);
+
+    auto* tx_out_rv = build_tx_out(
+        dest,
+        500,
+        "memo",
+        static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+        TxOutputType::Normal,
+        0,
+        false,
+        static_cast<const BlsctScalar*>(blinding_key_rv->value));
+    BOOST_REQUIRE(tx_out_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(tx_out_rv->result, BLSCT_SUCCESS);
+
+    auto* unsigned_output_rv = build_unsigned_output(static_cast<const BlsctTxOut*>(tx_out_rv->value));
+    BOOST_REQUIRE(unsigned_output_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(unsigned_output_rv->result, BLSCT_SUCCESS);
+
+    void* unsigned_tx = create_unsigned_transaction();
+    BOOST_REQUIRE(unsigned_tx != nullptr);
+    add_unsigned_transaction_input(unsigned_tx, unsigned_input_rv->value);
+    add_unsigned_transaction_output(unsigned_tx, unsigned_output_rv->value);
+    set_unsigned_transaction_fee(unsigned_tx, 125);
+
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_inputs_size(unsigned_tx), 1U);
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_outputs_size(unsigned_tx), 1U);
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_fee(unsigned_tx), 125U);
+
+    const char* unsigned_tx_hex = serialize_unsigned_transaction(unsigned_tx);
+    BOOST_REQUIRE(unsigned_tx_hex != nullptr);
+    auto* unsigned_tx_roundtrip_rv = deserialize_unsigned_transaction(unsigned_tx_hex);
+    BOOST_REQUIRE(unsigned_tx_roundtrip_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(unsigned_tx_roundtrip_rv->result, BLSCT_SUCCESS);
+
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_inputs_size(unsigned_tx_roundtrip_rv->value), 1U);
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_outputs_size(unsigned_tx_roundtrip_rv->value), 1U);
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_fee(unsigned_tx_roundtrip_rv->value), 125U);
+
+    auto* signed_tx_rv = sign_unsigned_transaction(unsigned_tx_roundtrip_rv->value);
+    BOOST_REQUIRE(signed_tx_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(signed_tx_rv->result, BLSCT_SUCCESS);
+    const char* signed_tx_hex = static_cast<const char*>(signed_tx_rv->value);
+    BOOST_REQUIRE(signed_tx_hex != nullptr);
+
+    CMutableTransaction decoded;
+    BOOST_REQUIRE(DecodeHexTx(decoded, signed_tx_hex));
+    CTransaction signed_tx(decoded);
+    BOOST_CHECK(signed_tx.IsBLSCT());
+    BOOST_CHECK_EQUAL(signed_tx.vin.size(), 1U);
+    BOOST_CHECK_EQUAL(signed_tx.vout.size(), 2U);
+    BOOST_CHECK_EQUAL(signed_tx.vout.back().nValue, 125);
+    auto fee_predicate = blsct::ParsePredicate(signed_tx.vout.back().predicate);
+    BOOST_CHECK(fee_predicate.IsPayFeePredicate());
+
+    free_obj(view_key_rv->value);
+    free(view_key_rv);
+    free_obj(spend_key_rv->value);
+    free(spend_key_rv);
+    free_obj(input_spending_key_rv->value);
+    free(input_spending_key_rv);
+    free_obj(gamma_rv->value);
+    free(gamma_rv);
+    free_obj(blinding_key_rv->value);
+    free(blinding_key_rv);
+    free_obj(default_token_id_rv->value);
+    free(default_token_id_rv);
+    free_obj((void*)spend_pub_key);
+    free_obj((void*)sub_addr_id);
+    free_obj((void*)dest);
+    free_obj(out_point_rv->value);
+    free(out_point_rv);
+    free_obj(tx_in_rv->value);
+    free(tx_in_rv);
+    delete_unsigned_input(unsigned_input_rv->value);
+    free(unsigned_input_rv);
+    free_obj(tx_out_rv->value);
+    free(tx_out_rv);
+    delete_unsigned_output(unsigned_output_rv->value);
+    free(unsigned_output_rv);
+    free_obj((void*)unsigned_tx_hex);
+    delete_unsigned_transaction(unsigned_tx);
+    delete_unsigned_transaction(unsigned_tx_roundtrip_rv->value);
+    free(unsigned_tx_roundtrip_rv);
+    free_obj(signed_tx_rv->value);
+    free(signed_tx_rv);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
