@@ -839,14 +839,20 @@ BlsctRetVal* deserialize_ctx(const char* hex)
 
     std::vector<uint8_t> vec;
     if (!TryParseHexWrap(hex_str, vec)) {
+        delete ctx;
         return err(BLSCT_FAILURE);
     }
 
-    DataStream st;
-    TransactionSerParams params{.allow_witness = true};
-    ParamsStream ps{params, st};
-    st.write(MakeByteSpan(vec));
-    ctx->Unserialize(ps);
+    try {
+        DataStream st;
+        TransactionSerParams params{.allow_witness = true};
+        ParamsStream ps{params, st};
+        st.write(MakeByteSpan(vec));
+        ctx->Unserialize(ps);
+    } catch (const std::exception&) {
+        delete ctx;
+        return err(BLSCT_DESER_FAILED);
+    }
 
     // the object will be deleted after use. the size will not be used
     return succ(ctx, 0);
@@ -2442,17 +2448,28 @@ BlsctRetVal* sign_unsigned_transaction(const void* vp_unsigned_transaction)
 {
     RETURN_RET_VAL_IF_NULL(vp_unsigned_transaction, err(BLSCT_FAILURE));
 
-    auto signed_tx = static_cast<const blsct::UnsignedTransaction*>(vp_unsigned_transaction)->Sign();
-    if (!signed_tx.has_value()) {
-        return err(BLSCT_FAILURE);
-    }
+    try {
+        auto signed_tx = static_cast<const blsct::UnsignedTransaction*>(vp_unsigned_transaction)->Sign();
+        if (!signed_tx.has_value()) {
+            return err(BLSCT_FAILURE);
+        }
 
-    const auto hex = EncodeHexTx(signed_tx.value());
-    const char* hex_c_str = StrToAllocCStr(hex);
-    if (hex_c_str == nullptr) {
-        return err(BLSCT_MEM_ALLOC_FAILED);
+        DataStream st{};
+        TransactionSerParams params{.allow_witness = true};
+        ParamsStream ps{params, st};
+
+        CMutableTransaction mutable_tx(signed_tx.value());
+        mutable_tx.Serialize(ps);
+
+        const auto hex = HexStr(st);
+        const char* hex_c_str = StrToAllocCStr(hex);
+        if (hex_c_str == nullptr) {
+            return err(BLSCT_MEM_ALLOC_FAILED);
+        }
+        return succ(const_cast<char*>(hex_c_str), hex.size() + 1);
+    } catch (const std::exception&) {
+        return err(BLSCT_EXCEPTION);
     }
-    return succ(const_cast<char*>(hex_c_str), hex.size() + 1);
 }
 
 // vector predicate
