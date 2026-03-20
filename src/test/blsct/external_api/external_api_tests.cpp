@@ -171,7 +171,7 @@ BOOST_AUTO_TEST_CASE(test_amount_recovery_returns_gamma)
     BlsctPoint blsct_nonce;
     SERIALIZE_AND_COPY(nonce, blsct_nonce);
 
-    auto* req = gen_amount_recovery_req(rp_buf, rp_size, &blsct_nonce);
+    auto* req = gen_amount_recovery_req(rp_buf, rp_size, &blsct_nonce, nullptr);
     BOOST_REQUIRE(req != nullptr);
 
     void* req_vec = create_amount_recovery_req_vec();
@@ -228,7 +228,7 @@ BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
     BlsctPoint blsct_nonce;
     SERIALIZE_AND_COPY(nonce, blsct_nonce);
 
-    auto* req = gen_amount_recovery_req(rp_buf, rp_st.size(), &blsct_nonce);
+    auto* req = gen_amount_recovery_req(rp_buf, rp_st.size(), &blsct_nonce, nullptr);
     void* req_vec = create_amount_recovery_req_vec();
     add_to_amount_recovery_req_vec(req_vec, req);
 

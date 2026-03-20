@@ -276,6 +276,7 @@ typedef struct {
     BlsctRangeProof* range_proof;
     size_t range_proof_size;
     BlsctPoint nonce;
+    BlsctTokenId token_id;
 } BlsctAmountRecoveryReq;
 
 typedef struct {
@@ -328,7 +329,8 @@ BlsctRetVal* encode_address(
 BlsctAmountRecoveryReq* gen_amount_recovery_req(
     const void* vp_blsct_range_proof,
     const size_t range_proof_size,
-    const void* vp_blsct_nonce);
+    const void* vp_blsct_nonce,
+    const void* vp_blsct_token_id);
 void* create_amount_recovery_req_vec();
 void add_to_amount_recovery_req_vec(
     void* vp_amt_recovery_req_vec,

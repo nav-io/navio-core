@@ -448,7 +448,8 @@ BlsctRetVal* encode_address(
 BlsctAmountRecoveryReq* gen_amount_recovery_req(
     const void* vp_blsct_range_proof,
     const size_t range_proof_size,
-    const void* vp_blsct_nonce)
+    const void* vp_blsct_nonce,
+    const void* vp_blsct_token_id)
 {
     auto req = new (std::nothrow) BlsctAmountRecoveryReq;
     RETURN_IF_MEM_ALLOC_FAILED(req);
@@ -459,6 +460,11 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
     BLSCT_COPY_BYTES(vp_blsct_range_proof, req->range_proof, range_proof_size);
     req->range_proof_size = range_proof_size;
     BLSCT_COPY(vp_blsct_nonce, req->nonce);
+    if (vp_blsct_token_id == nullptr) {
+        SERIALIZE_AND_COPY_WITH_STREAM(TokenId(), req->token_id);
+    } else {
+        BLSCT_COPY(vp_blsct_token_id, req->token_id);
+    }
     return req;
 }
 
@@ -474,16 +480,22 @@ BlsctAmountsRetVal* recover_amount(
         // construct AmountRecoveryRequest vector
         std::vector<bulletproofs_plus::AmountRecoveryRequest<Mcl>> reqs;
 
-        for (auto ar_req : *amt_recovery_req_vec) {
+        for (size_t i = 0; i < amt_recovery_req_vec->size(); ++i) {
+            const auto& ar_req = amt_recovery_req_vec->at(i);
             bulletproofs_plus::RangeProof<Mcl> range_proof;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.range_proof, ar_req.range_proof_size, range_proof);
-
+ 
             Mcl::Point nonce;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.nonce, POINT_SIZE, nonce);
 
+            TokenId token_id;
+            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.token_id, TOKEN_ID_SIZE, token_id);
+
+            auto proof_w_seed = bulletproofs_plus::RangeProofWithSeed<Mcl>(range_proof, token_id);
             auto req = bulletproofs_plus::AmountRecoveryRequest<Mcl>::of(
-                range_proof,
-                nonce);
+                proof_w_seed,
+                nonce,
+                i);
             reqs.push_back(req);
         }
 
@@ -503,7 +515,7 @@ BlsctAmountsRetVal* recover_amount(
         result_vec->resize(amt_recovery_req_vec->size());
 
         // mark all the results as failed
-        for (auto result : *result_vec) {
+        for (auto &result : *result_vec) {
             result.is_succ = false;
         }
 
