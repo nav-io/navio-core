@@ -42,7 +42,7 @@ static bulletproofs_plus::RangeProofLogic<Mcl>* g_rpl;
 static bool g_is_little_endian;
 
 #if defined(__clang__) || defined(__GNUC__)
-#define BLSCT_WEAK_SYMBOL __attribute__((weak))
+#define BLSCT_WEAK_SYMBOL __attribute__((weak, visibility("default")))
 #else
 #define BLSCT_WEAK_SYMBOL
 #endif
