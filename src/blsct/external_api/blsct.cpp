@@ -41,15 +41,8 @@ static std::mutex g_init_mutex;
 static bulletproofs_plus::RangeProofLogic<Mcl>* g_rpl;
 static bool g_is_little_endian;
 
-#if defined(__clang__) || defined(__GNUC__)
-#define BLSCT_WEAK_SYMBOL __attribute__((weak, visibility("default")))
-#else
-#define BLSCT_WEAK_SYMBOL
-#endif
-
-BLSCT_WEAK_SYMBOL const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
-BLSCT_WEAK_SYMBOL UrlDecodeFn* const URL_DECODE = nullptr;
-#undef BLSCT_WEAK_SYMBOL
+const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
+UrlDecodeFn* const URL_DECODE = nullptr;
 
 static bool is_little_endian()
 {
