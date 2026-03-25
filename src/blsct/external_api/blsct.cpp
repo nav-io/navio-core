@@ -906,21 +906,39 @@ BlsctRetVal* aggregate_transactions(const void* vp_tx_hex_vec)
     txs.reserve(tx_hex_vec->size());
 
     for (const auto& tx_hex : *tx_hex_vec) {
-        CMutableTransaction mutable_tx;
-        if (!DecodeHexTx(mutable_tx, tx_hex)) {
+        std::vector<uint8_t> tx_bytes;
+        if (!TryParseHexWrap(tx_hex, tx_bytes) || tx_bytes.empty()) {
             return err(BLSCT_DESER_FAILED);
         }
+
+        CMutableTransaction mutable_tx;
+        try {
+            DataStream st{};
+            TransactionSerParams params{.allow_witness = true};
+            ParamsStream ps{params, st};
+            st.write(MakeByteSpan(tx_bytes));
+            mutable_tx.Unserialize(ps);
+        } catch (const std::exception&) {
+            return err(BLSCT_DESER_FAILED);
+        }
+
         txs.push_back(MakeTransactionRef(std::move(mutable_tx)));
     }
 
     try {
         const auto aggregated_tx = blsct::AggregateTransactions(txs);
-        const auto hex = EncodeHexTx(*aggregated_tx);
-        const char* hex_c_str = StrToAllocCStr(hex);
+
+        DataStream st{};
+        TransactionSerParams params{.allow_witness = true};
+        ParamsStream ps{params, st};
+        aggregated_tx->Serialize(ps);
+        const char* hex_c_str = SerializeToHex(
+            reinterpret_cast<uint8_t*>(st.data()),
+            st.size());
         if (hex_c_str == nullptr) {
             return err(BLSCT_MEM_ALLOC_FAILED);
         }
-        return succ(const_cast<char*>(hex_c_str), hex.size() + 1);
+        return succ(const_cast<char*>(hex_c_str), st.size() * 2 + 1);
     } catch (const std::exception&) {
         return err(BLSCT_FAILURE);
     }
