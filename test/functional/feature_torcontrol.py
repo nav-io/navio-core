@@ -107,17 +107,23 @@ class TorControlTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
 
+    def next_port(self):
+        self._port_counter = getattr(self, '_port_counter', 0) + 1
+        return p2p_port(self.num_nodes + self._port_counter)
+
+    def restart_with_mock(self, mock_tor):
+        mock_tor.start()
+        self.restart_node(0, extra_args=[
+            f"-torcontrol=127.0.0.1:{mock_tor.port}",
+            "-listenonion=1",
+            "-debug=tor",
+        ])
+
     def test_basic(self):
         self.log.info("Test Tor control basic functionality")
-        tor_control_port = p2p_port(self.num_nodes + 1)
-        mock_tor = MockTorControlServer(tor_control_port)
-        mock_tor.start()
 
-        self.restart_node(0, extra_args=[
-            f"-torcontrol=127.0.0.1:{tor_control_port}",
-            "-listenonion=1",
-            "-debug=tor"
-        ])
+        mock_tor = MockTorControlServer(self.next_port())
+        self.restart_with_mock(mock_tor)
 
         # Waiting for Tor control commands
         self.wait_until(lambda: len(mock_tor.received_commands) >= 4, timeout=10)
@@ -134,15 +140,8 @@ class TorControlTest(BitcoinTestFramework):
     def test_partial_data(self):
         self.log.info("Test that partial Tor control responses are buffered until complete")
 
-        tor_port = p2p_port(self.num_nodes + 2)
-        mock_tor = MockTorControlServer(tor_port, manual_mode=True)
-        mock_tor.start()
-
-        self.restart_node(0, extra_args=[
-            f"-torcontrol=127.0.0.1:{tor_port}",
-            "-listenonion=1",
-            "-debug=tor"
-        ])
+        mock_tor = MockTorControlServer(self.next_port(), manual_mode=True)
+        self.restart_with_mock(mock_tor)
 
         # Wait for connection and PROTOCOLINFO command
         mock_tor.conn_ready.wait(timeout=10)
@@ -169,9 +168,32 @@ class TorControlTest(BitcoinTestFramework):
         # Clean up
         mock_tor.stop()
 
+    def test_oversized_line(self):
+        self.log.info("Test that Tor control disconnects on oversized response lines")
+
+        mock_tor = MockTorControlServer(self.next_port(), manual_mode=True)
+        self.restart_with_mock(mock_tor)
+
+        # Wait for connection and PROTOCOLINFO command.
+        mock_tor.conn_ready.wait(timeout=10)
+        self.wait_until(lambda: len(mock_tor.received_commands) >= 1, timeout=10)
+        assert_equal(mock_tor.received_commands[0], "PROTOCOLINFO 1")
+
+        # Send a single line longer than MAX_LINE_LENGTH. The node should disconnect.
+        MAX_LINE_LENGTH = 100000
+        mock_tor.send_raw("250-" + ("A" * (MAX_LINE_LENGTH + 1)) + "\r\n")
+        ensure_for(duration=2, f=lambda: self.nodes[0].process.poll() is None)
+
+        # Connection should be dropped and retried, causing another PROTOCOLINFO.
+        self.wait_until(lambda: len(mock_tor.received_commands) >= 2, timeout=10)
+        assert_equal(mock_tor.received_commands[1], "PROTOCOLINFO 1")
+
+        mock_tor.stop()
+
     def run_test(self):
         self.test_basic()
         self.test_partial_data()
+        self.test_oversized_line()
 
 if __name__ == '__main__':
     TorControlTest(__file__).main()
