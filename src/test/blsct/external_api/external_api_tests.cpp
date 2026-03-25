@@ -601,4 +601,139 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     free(signed_tx_rv);
 }
 
+BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
+{
+    init();
+
+    const auto build_signed_tx = [](const uint64_t seed_base, const char* out_point_hex, const uint64_t output_amount, const uint64_t fee) {
+        auto* view_key_rv = gen_scalar(seed_base + 1);
+        auto* spend_key_rv = gen_scalar(seed_base + 2);
+        auto* input_spending_key_rv = gen_scalar(seed_base + 3);
+        auto* gamma_rv = gen_scalar(seed_base + 4);
+        auto* blinding_key_rv = gen_scalar(seed_base + 5);
+        auto* default_token_id_rv = gen_default_token_id();
+
+        BOOST_REQUIRE(view_key_rv != nullptr);
+        BOOST_REQUIRE(spend_key_rv != nullptr);
+        BOOST_REQUIRE(input_spending_key_rv != nullptr);
+        BOOST_REQUIRE(gamma_rv != nullptr);
+        BOOST_REQUIRE(blinding_key_rv != nullptr);
+        BOOST_REQUIRE(default_token_id_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(default_token_id_rv->result, BLSCT_SUCCESS);
+
+        const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+        BOOST_REQUIRE(spend_pub_key != nullptr);
+
+        auto* sub_addr_id = gen_sub_addr_id(0, seed_base);
+        BOOST_REQUIRE(sub_addr_id != nullptr);
+        auto* dest = derive_sub_address(static_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
+        BOOST_REQUIRE(dest != nullptr);
+
+        auto* out_point_rv = gen_out_point(out_point_hex);
+        BOOST_REQUIRE(out_point_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(out_point_rv->result, BLSCT_SUCCESS);
+
+        auto* tx_in_rv = build_tx_in(
+            1000,
+            static_cast<const BlsctScalar*>(gamma_rv->value),
+            static_cast<const BlsctScalar*>(input_spending_key_rv->value),
+            static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+            static_cast<const BlsctOutPoint*>(out_point_rv->value),
+            false,
+            false);
+        BOOST_REQUIRE(tx_in_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(tx_in_rv->result, BLSCT_SUCCESS);
+
+        auto* unsigned_input_rv = build_unsigned_input(static_cast<const BlsctTxIn*>(tx_in_rv->value));
+        BOOST_REQUIRE(unsigned_input_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(unsigned_input_rv->result, BLSCT_SUCCESS);
+
+        auto* tx_out_rv = build_tx_out(
+            dest,
+            output_amount,
+            "aggregate",
+            static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+            TxOutputType::Normal,
+            0,
+            false,
+            static_cast<const BlsctScalar*>(blinding_key_rv->value));
+        BOOST_REQUIRE(tx_out_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(tx_out_rv->result, BLSCT_SUCCESS);
+
+        auto* unsigned_output_rv = build_unsigned_output(static_cast<const BlsctTxOut*>(tx_out_rv->value));
+        BOOST_REQUIRE(unsigned_output_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(unsigned_output_rv->result, BLSCT_SUCCESS);
+
+        void* unsigned_tx = create_unsigned_transaction();
+        BOOST_REQUIRE(unsigned_tx != nullptr);
+        add_unsigned_transaction_input(unsigned_tx, unsigned_input_rv->value);
+        add_unsigned_transaction_output(unsigned_tx, unsigned_output_rv->value);
+        set_unsigned_transaction_fee(unsigned_tx, fee);
+
+        auto* signed_tx_rv = sign_unsigned_transaction(unsigned_tx);
+        BOOST_REQUIRE(signed_tx_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(signed_tx_rv->result, BLSCT_SUCCESS);
+        const std::string signed_tx_hex(static_cast<const char*>(signed_tx_rv->value));
+
+        free_obj(view_key_rv->value);
+        free(view_key_rv);
+        free_obj(spend_key_rv->value);
+        free(spend_key_rv);
+        free_obj(input_spending_key_rv->value);
+        free(input_spending_key_rv);
+        free_obj(gamma_rv->value);
+        free(gamma_rv);
+        free_obj(blinding_key_rv->value);
+        free(blinding_key_rv);
+        free_obj(default_token_id_rv->value);
+        free(default_token_id_rv);
+        free_obj((void*)spend_pub_key);
+        free_obj((void*)sub_addr_id);
+        free_obj((void*)dest);
+        free_obj(out_point_rv->value);
+        free(out_point_rv);
+        free_obj(tx_in_rv->value);
+        free(tx_in_rv);
+        delete_unsigned_input(unsigned_input_rv->value);
+        free(unsigned_input_rv);
+        free_obj(tx_out_rv->value);
+        free(tx_out_rv);
+        delete_unsigned_output(unsigned_output_rv->value);
+        free(unsigned_output_rv);
+        delete_unsigned_transaction(unsigned_tx);
+        free_obj(signed_tx_rv->value);
+        free(signed_tx_rv);
+
+        return signed_tx_hex;
+    };
+
+    const std::string tx1 = build_signed_tx(31, "1111111111111111111111111111111111111111111111111111111111111111", 400, 125);
+    const std::string tx2 = build_signed_tx(41, "2222222222222222222222222222222222222222222222222222222222222222", 300, 200);
+
+    void* tx_hex_vec = create_tx_hex_vec();
+    BOOST_REQUIRE(tx_hex_vec != nullptr);
+    add_to_tx_hex_vec(tx_hex_vec, tx1.c_str());
+    add_to_tx_hex_vec(tx_hex_vec, tx2.c_str());
+
+    auto* aggregate_rv = aggregate_transactions(tx_hex_vec);
+    BOOST_REQUIRE(aggregate_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(aggregate_rv->result, BLSCT_SUCCESS);
+    const char* aggregate_hex = static_cast<const char*>(aggregate_rv->value);
+    BOOST_REQUIRE(aggregate_hex != nullptr);
+
+    CMutableTransaction decoded;
+    BOOST_REQUIRE(DecodeHexTx(decoded, aggregate_hex));
+    CTransaction aggregated_tx(decoded);
+    BOOST_CHECK(aggregated_tx.IsBLSCT());
+    BOOST_CHECK_EQUAL(aggregated_tx.vin.size(), 2U);
+    BOOST_CHECK_EQUAL(aggregated_tx.vout.size(), 3U);
+    BOOST_CHECK_EQUAL(aggregated_tx.vout.back().nValue, 325);
+    auto fee_predicate = blsct::ParsePredicate(aggregated_tx.vout.back().predicate);
+    BOOST_CHECK(fee_predicate.IsPayFeePredicate());
+
+    delete_tx_hex_vec(tx_hex_vec);
+    free_obj(aggregate_rv->value);
+    free(aggregate_rv);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

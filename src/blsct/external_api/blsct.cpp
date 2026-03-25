@@ -41,9 +41,6 @@ static std::mutex g_init_mutex;
 static bulletproofs_plus::RangeProofLogic<Mcl>* g_rpl;
 static bool g_is_little_endian;
 
-const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
-UrlDecodeFn* const URL_DECODE = nullptr;
-
 static bool is_little_endian()
 {
     uint16_t n = 1;
@@ -874,6 +871,59 @@ BlsctRetVal* deserialize_ctx_id(const char* hex)
     BlsctCTxId* blsct_ctx_id = static_cast<BlsctCTxId*>(
         DeserializeFromHex(hex, CTX_ID_SIZE));
     return succ(blsct_ctx_id, CTX_ID_SIZE);
+}
+
+void* create_tx_hex_vec()
+{
+    auto* tx_hex_vec = new (std::nothrow) std::vector<std::string>;
+    return static_cast<void*>(tx_hex_vec);
+}
+
+void add_to_tx_hex_vec(void* vp_tx_hex_vec, const char* tx_hex)
+{
+    RETURN_IF_NULL(vp_tx_hex_vec);
+    RETURN_IF_NULL(tx_hex);
+    auto* tx_hex_vec = static_cast<std::vector<std::string>*>(vp_tx_hex_vec);
+    tx_hex_vec->emplace_back(tx_hex);
+}
+
+void delete_tx_hex_vec(void* vp_tx_hex_vec)
+{
+    if (vp_tx_hex_vec == nullptr) return;
+    delete static_cast<std::vector<std::string>*>(vp_tx_hex_vec);
+}
+
+BlsctRetVal* aggregate_transactions(const void* vp_tx_hex_vec)
+{
+    RETURN_RET_VAL_IF_NULL(vp_tx_hex_vec, err(BLSCT_FAILURE));
+
+    const auto* tx_hex_vec = static_cast<const std::vector<std::string>*>(vp_tx_hex_vec);
+    if (tx_hex_vec->empty()) {
+        return err(BLSCT_FAILURE);
+    }
+
+    std::vector<CTransactionRef> txs;
+    txs.reserve(tx_hex_vec->size());
+
+    for (const auto& tx_hex : *tx_hex_vec) {
+        CMutableTransaction mutable_tx;
+        if (!DecodeHexTx(mutable_tx, tx_hex)) {
+            return err(BLSCT_DESER_FAILED);
+        }
+        txs.push_back(MakeTransactionRef(std::move(mutable_tx)));
+    }
+
+    try {
+        const auto aggregated_tx = blsct::AggregateTransactions(txs);
+        const auto hex = EncodeHexTx(*aggregated_tx);
+        const char* hex_c_str = StrToAllocCStr(hex);
+        if (hex_c_str == nullptr) {
+            return err(BLSCT_MEM_ALLOC_FAILED);
+        }
+        return succ(const_cast<char*>(hex_c_str), hex.size() + 1);
+    } catch (const std::exception&) {
+        return err(BLSCT_FAILURE);
+    }
 }
 
 // ctx ins

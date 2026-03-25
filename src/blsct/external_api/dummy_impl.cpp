@@ -8,6 +8,7 @@
 #include <uint256.h>
 #include <util/fs.h>
 #include <blsct/double_public_key.h>
+#include <common/url.h>
 
 #include <chrono>
 #include <cstddef>
@@ -73,6 +74,9 @@ namespace blsct {
 const size_t AES256_KEYSIZE = 0;
 const size_t AES_BLOCKSIZE = 0;
 const size_t OUTPUT_SIZE = 0;
+
+const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
+UrlDecodeFn* const URL_DECODE = nullptr;
 
 ///
 
@@ -582,4 +586,3 @@ bool SettingsSpan::empty() const NOT_IMPL
 void SettingsSpan::begin() const NOT_IMPL
 
 } // namespace common
-

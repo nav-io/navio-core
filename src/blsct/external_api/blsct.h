@@ -385,6 +385,12 @@ BlsctRetVal* deserialize_ctx(const char* hex);
 const char* serialize_ctx_id(const BlsctCTxId* blsct_ctx_id);
 BlsctRetVal* deserialize_ctx_id(const char* hex);
 
+// signed transaction aggregation
+void* create_tx_hex_vec();
+void add_to_tx_hex_vec(void* vp_tx_hex_vec, const char* tx_hex);
+void delete_tx_hex_vec(void* vp_tx_hex_vec);
+BlsctRetVal* aggregate_transactions(const void* vp_tx_hex_vec);
+
 // ctx_ins
 bool are_ctx_ins_equal(const void* vp_a, const void* vp_b);
 size_t get_ctx_ins_size(const void* blsct_ctx_ins);
