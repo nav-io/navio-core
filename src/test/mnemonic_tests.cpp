@@ -93,6 +93,14 @@ BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_7)
     BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(entropy), expected);
 }
 
+BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_8_128bit)
+{
+    // 128-bit entropy -> 12 words (known vector, verifies EntropyToMnemonic directly)
+    auto entropy = ParseHex("77c2b00716cec7213839159e404db50d");
+    std::string expected = "jelly better achieve collect unaware mountain thought cargo oxygen act hood bridge";
+    BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(entropy), expected);
+}
+
 BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_160bit)
 {
     // 160-bit entropy -> 15 words (BIP-39 test vector)
@@ -179,6 +187,24 @@ BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_roundtrip_224)
     BOOST_CHECK_EQUAL(HexStr(result.value()), HexStr(entropy));
 }
 
+BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_224bit)
+{
+    // 224-bit entropy (28 bytes = 56 hex chars) -> 21 words
+    auto entropy = ParseHex("ba0c3c78818c00052c7cde0eb37d00bbf28c3793c25c05c78c8569ba");
+    BOOST_CHECK_EQUAL(entropy.size(), 28U);
+    std::string mnemonic_str = mnemonic::EntropyToMnemonic(entropy);
+    // Must produce exactly 21 words
+    std::istringstream iss(mnemonic_str);
+    std::string word;
+    int count = 0;
+    while (iss >> word) count++;
+    BOOST_CHECK_EQUAL(count, 21);
+    // Must roundtrip back to same entropy
+    auto result = mnemonic::MnemonicToEntropy(mnemonic_str);
+    BOOST_REQUIRE(result.has_value());
+    BOOST_CHECK_EQUAL(HexStr(result.value()), HexStr(entropy));
+}
+
 BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_invalid_checksum)
 {
     std::string bad = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
@@ -198,6 +224,68 @@ BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_wrong_word_count)
     std::string bad = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
     auto result = mnemonic::MnemonicToEntropy(bad);
     BOOST_CHECK(!result.has_value());
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_empty_string)
+{
+    auto result = mnemonic::MnemonicToEntropy("");
+    BOOST_CHECK(!result.has_value());
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_invalid_word_counts)
+{
+    // Only 12, 15, 18, 21, 24 are valid word counts
+    // Test other counts that are between valid sizes
+    std::string w13 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(w13).has_value());
+
+    std::string w14 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about abandon abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(w14).has_value());
+
+    std::string w16 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about abandon abandon abandon abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(w16).has_value());
+
+    std::string w17 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about abandon abandon abandon abandon abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(w17).has_value());
+
+    std::string w19 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about abandon abandon abandon abandon abandon abandon abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(w19).has_value());
+
+    std::string w20 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about abandon abandon abandon abandon abandon abandon abandon abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(w20).has_value());
+
+    std::string w22 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(w22).has_value());
+
+    std::string w23 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(w23).has_value());
+
+    // Single word
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy("abandon").has_value());
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_invalid_checksum_15_words)
+{
+    // Valid 15-word mnemonic with last word replaced to break checksum
+    std::string bad = "gravity machine north sort system female filter attitude volume fold club stay feature office ecology stable narrow abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(bad).has_value());
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_invalid_checksum_18_words)
+{
+    // Valid 18-word mnemonic with last word replaced to break checksum
+    std::string bad = "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(bad).has_value());
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_invalid_checksum_21_words)
+{
+    // Generate valid 21-word mnemonic, then corrupt last word
+    auto entropy = ParseHex("8197a4a47f0425faeaa69deebc05ca29c0a5b5cc76ceacc0");
+    std::string valid = mnemonic::EntropyToMnemonic(entropy);
+    auto last_space = valid.rfind(' ');
+    std::string bad = valid.substr(0, last_space + 1) + "abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(bad).has_value());
 }
 
 BOOST_AUTO_TEST_CASE(validate_correct_mnemonic)
@@ -250,9 +338,83 @@ BOOST_AUTO_TEST_CASE(validate_bad_checksum)
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon above"));
 }
 
+BOOST_AUTO_TEST_CASE(validate_bad_checksum_15_words)
+{
+    BOOST_CHECK(!mnemonic::Validate(
+        "gravity machine north sort system female filter attitude volume fold club stay feature office ecology stable narrow abandon"));
+}
+
+BOOST_AUTO_TEST_CASE(validate_bad_checksum_18_words)
+{
+    BOOST_CHECK(!mnemonic::Validate(
+        "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve abandon"));
+}
+
+BOOST_AUTO_TEST_CASE(validate_bad_checksum_21_words)
+{
+    auto entropy = ParseHex("8197a4a47f0425faeaa69deebc05ca29c0a5b5cc76ceacc0");
+    std::string valid = mnemonic::EntropyToMnemonic(entropy);
+    auto last_space = valid.rfind(' ');
+    std::string bad = valid.substr(0, last_space + 1) + "abandon";
+    BOOST_CHECK(!mnemonic::Validate(bad));
+}
+
 BOOST_AUTO_TEST_CASE(validate_empty_string)
 {
     BOOST_CHECK(!mnemonic::Validate(""));
+}
+
+BOOST_AUTO_TEST_CASE(validate_uppercase_rejected)
+{
+    std::string upper = "ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABOUT";
+    BOOST_CHECK(!mnemonic::Validate(upper));
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(upper).has_value());
+}
+
+BOOST_AUTO_TEST_CASE(validate_mixed_case_rejected)
+{
+    std::string mixed = "Abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    BOOST_CHECK(!mnemonic::Validate(mixed));
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(mixed).has_value());
+}
+
+BOOST_AUTO_TEST_CASE(validate_wrong_word_count_11)
+{
+    // 11 words is not a valid BIP-39 length (must be 12, 15, 18, 21, or 24)
+    std::string eleven = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
+    BOOST_CHECK(!mnemonic::Validate(eleven));
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(eleven).has_value());
+}
+
+BOOST_AUTO_TEST_CASE(validate_leading_trailing_whitespace)
+{
+    // Leading/trailing whitespace is normalized by >> operator, so should still validate
+    std::string leading = " abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    BOOST_CHECK(mnemonic::Validate(leading));
+
+    std::string trailing = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about ";
+    BOOST_CHECK(mnemonic::Validate(trailing));
+
+    std::string both = " abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about ";
+    BOOST_CHECK(mnemonic::Validate(both));
+
+    // Verify MnemonicToEntropy also handles whitespace
+    auto result = mnemonic::MnemonicToEntropy(leading);
+    BOOST_CHECK(result.has_value());
+}
+
+BOOST_AUTO_TEST_CASE(validate_newline_whitespace)
+{
+    // Newline between words is whitespace and should be normalized by >> operator
+    // Construct the string programmatically to avoid any literal encoding issues
+    std::string newline_test;
+    for (int i = 0; i < 11; i++) {
+        if (i == 1) newline_test += "\n"; // newline between 2nd and 3rd word
+        else if (i > 0) newline_test += " ";
+        newline_test += "abandon";
+    }
+    newline_test += " about";
+    BOOST_CHECK(mnemonic::Validate(newline_test));
 }
 
 BOOST_AUTO_TEST_CASE(generate_produces_24_words)
