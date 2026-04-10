@@ -109,12 +109,68 @@ BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_160bit)
     BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(entropy), expected);
 }
 
-BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_192bit)
+BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_256bit_2)
 {
-    // 192-bit entropy -> 18 words (BIP-39 test vector)
+    // 256-bit entropy -> 24 words (BIP-39 test vector)
     auto entropy = ParseHex("f585c11aec520db57dd353c69554b21a89b20fb0650966fa0a9d6f74fd989d8f");
     std::string expected = "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold";
     BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(entropy), expected);
+}
+
+BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_192bit)
+{
+    // Genuine 192-bit entropy (24 bytes = 48 hex chars) -> 18 words
+    auto entropy = ParseHex("000102030405060708090a0b0c0d0e0f1011121314151617");
+    BOOST_CHECK_EQUAL(entropy.size(), 24U);
+    std::string mnemonic_str = mnemonic::EntropyToMnemonic(entropy);
+    // Must produce exactly 18 words
+    std::istringstream iss(mnemonic_str);
+    std::string word;
+    int count = 0;
+    while (iss >> word) count++;
+    BOOST_CHECK_EQUAL(count, 18);
+    // Must roundtrip back to same entropy
+    auto result = mnemonic::MnemonicToEntropy(mnemonic_str);
+    BOOST_REQUIRE(result.has_value());
+    BOOST_CHECK_EQUAL(HexStr(result.value()), HexStr(entropy));
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_roundtrip_192)
+{
+    // Genuine 192-bit (18 words) roundtrip
+    auto entropy = ParseHex("000102030405060708090a0b0c0d0e0f1011121314151617");
+    std::string mnemonic_str = mnemonic::EntropyToMnemonic(entropy);
+    auto result = mnemonic::MnemonicToEntropy(mnemonic_str);
+    BOOST_REQUIRE(result.has_value());
+    BOOST_CHECK_EQUAL(HexStr(result.value()), HexStr(entropy));
+}
+
+BOOST_AUTO_TEST_CASE(validate_correct_mnemonic_18_words)
+{
+    // 192-bit -> 18 words
+    auto entropy = ParseHex("000102030405060708090a0b0c0d0e0f1011121314151617");
+    std::string mnemonic_str = mnemonic::EntropyToMnemonic(entropy);
+    BOOST_CHECK(mnemonic::Validate(mnemonic_str));
+}
+
+BOOST_AUTO_TEST_CASE(validate_bad_checksum_18_words)
+{
+    // Generate valid 18-word mnemonic, then corrupt last word
+    auto entropy = ParseHex("000102030405060708090a0b0c0d0e0f1011121314151617");
+    std::string valid = mnemonic::EntropyToMnemonic(entropy);
+    auto last_space = valid.rfind(' ');
+    std::string bad = valid.substr(0, last_space + 1) + "abandon";
+    BOOST_CHECK(!mnemonic::Validate(bad));
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_invalid_checksum_18_words)
+{
+    // Generate valid 18-word mnemonic, then corrupt last word
+    auto entropy = ParseHex("000102030405060708090a0b0c0d0e0f1011121314151617");
+    std::string valid = mnemonic::EntropyToMnemonic(entropy);
+    auto last_space = valid.rfind(' ');
+    std::string bad = valid.substr(0, last_space + 1) + "abandon";
+    BOOST_CHECK(!mnemonic::MnemonicToEntropy(bad).has_value());
 }
 
 BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_invalid_length)
@@ -167,9 +223,9 @@ BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_roundtrip_160)
     BOOST_CHECK_EQUAL(HexStr(result.value()), HexStr(entropy));
 }
 
-BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_roundtrip_192)
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_roundtrip_256_2)
 {
-    // 192-bit (18 words)
+    // 256-bit (24 words)
     auto entropy = ParseHex("f585c11aec520db57dd353c69554b21a89b20fb0650966fa0a9d6f74fd989d8f");
     std::string mnemonic = "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold";
     auto result = mnemonic::MnemonicToEntropy(mnemonic);
@@ -271,9 +327,9 @@ BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_invalid_checksum_15_words)
     BOOST_CHECK(!mnemonic::MnemonicToEntropy(bad).has_value());
 }
 
-BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_invalid_checksum_18_words)
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_invalid_checksum_24_words)
 {
-    // Valid 18-word mnemonic with last word replaced to break checksum
+    // Valid 24-word mnemonic with last word replaced to break checksum
     std::string bad = "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve abandon";
     BOOST_CHECK(!mnemonic::MnemonicToEntropy(bad).has_value());
 }
@@ -303,9 +359,9 @@ BOOST_AUTO_TEST_CASE(validate_correct_mnemonic_15_words)
         "gravity machine north sort system female filter attitude volume fold club stay feature office ecology stable narrow fog"));
 }
 
-BOOST_AUTO_TEST_CASE(validate_correct_mnemonic_18_words)
+BOOST_AUTO_TEST_CASE(validate_correct_mnemonic_24_words_2)
 {
-    // 192-bit -> 18 words
+    // 256-bit -> 24 words
     BOOST_CHECK(mnemonic::Validate(
         "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold"));
 }
@@ -344,7 +400,7 @@ BOOST_AUTO_TEST_CASE(validate_bad_checksum_15_words)
         "gravity machine north sort system female filter attitude volume fold club stay feature office ecology stable narrow abandon"));
 }
 
-BOOST_AUTO_TEST_CASE(validate_bad_checksum_18_words)
+BOOST_AUTO_TEST_CASE(validate_bad_checksum_24_words)
 {
     BOOST_CHECK(!mnemonic::Validate(
         "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve abandon"));

@@ -1950,6 +1950,8 @@ bool WalletBatch::WriteBLSCTMnemonicEntropy(const std::vector<unsigned char>& en
     return WriteIC(DBKeys::BLSCTMNEMONIC, entropy);
 }
 
+//! Erase the BIP-39 mnemonic entropy from the wallet database.
+//! Currently unused -- reserved for future wallet migration or explicit mnemonic deletion.
 bool WalletBatch::EraseBLSCTMnemonicEntropy()
 {
     return EraseIC(DBKeys::BLSCTMNEMONIC);

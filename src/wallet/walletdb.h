@@ -69,6 +69,7 @@ extern const std::string BESTBLOCK;
 extern const std::string BESTBLOCK_NOMERKLE;
 extern const std::string BLSCTHDCHAIN;
 extern const std::string BLSCTKEY;
+extern const std::string BLSCTMNEMONIC;
 extern const std::string BLSCTKEYMETA;
 extern const std::string BLSCTSUBADDRESS;
 extern const std::string BLSCTSUBADDRESSSTR;
@@ -315,6 +316,8 @@ public:
     bool WriteHDChain(const CHDChain& chain);
     bool WriteBLSCTHDChain(const blsct::HDChain& chain);
     bool WriteBLSCTMnemonicEntropy(const std::vector<unsigned char>& entropy);
+    //! Erase the BIP-39 mnemonic entropy from the wallet database.
+    //! Currently unused -- reserved for future wallet migration or explicit mnemonic deletion.
     bool EraseBLSCTMnemonicEntropy();
 
     //! Delete records of the given types

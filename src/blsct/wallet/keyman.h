@@ -17,6 +17,7 @@
 #include <blsct/wallet/import_wallet_type.h>
 #include <blsct/wallet/keyring.h>
 #include <logging.h>
+#include <support/allocators/secure.h>
 #include <util/strencodings.h>
 #include <wallet/crypter.h>
 #include <wallet/scriptpubkeyman.h>
@@ -26,6 +27,8 @@ namespace blsct {
 
 const int64_t CHANGE_ACCOUNT = -1;
 const int64_t STAKING_ACCOUNT = -2;
+
+using SecureBytes = std::vector<unsigned char, secure_allocator<unsigned char>>;
 
 class Manager
 {
@@ -46,7 +49,7 @@ class KeyMan : public Manager, public KeyRing
 {
 private:
     blsct::HDChain m_hd_chain;
-    std::vector<unsigned char> m_mnemonic_entropy GUARDED_BY(cs_KeyStore);
+    SecureBytes m_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains;
 
     bool AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey);
@@ -90,7 +93,7 @@ public:
     void LoadMnemonicEntropy(const std::vector<unsigned char>& entropy)
     {
         LOCK(cs_KeyStore);
-        m_mnemonic_entropy = entropy;
+        m_mnemonic_entropy.assign(entropy.begin(), entropy.end());
     }
 
     bool HasMnemonicEntropy() const
@@ -102,7 +105,7 @@ public:
     std::vector<unsigned char> GetMnemonicEntropy() const
     {
         LOCK(cs_KeyStore);
-        return m_mnemonic_entropy;
+        return std::vector<unsigned char>(m_mnemonic_entropy.begin(), m_mnemonic_entropy.end());
     }
 
     /* Returns true if the wallet can generate new keys */

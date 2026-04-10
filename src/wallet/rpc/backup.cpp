@@ -771,6 +771,8 @@ RPCHelpMan dumpmnemonic()
             const CWallet& wallet = *pwallet;
             const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
 
+            EnsureWalletIsUnlocked(wallet);
+
             if (!blsct_km.HasMnemonicEntropy()) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Wallet does not have a mnemonic");
             }
