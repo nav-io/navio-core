@@ -1,6 +1,6 @@
 #include <blsct/bech32_mod.h>
-#include <blsct/common.h>
 #include <blsct/chain.h>
+#include <blsct/common.h>
 #include <blsct/double_public_key.h>
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/external_api/blsct.h>
@@ -36,6 +36,35 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
+
+// ---------------------------------------------------------------------------
+// NOTE: convert between fake handle types and concrete C++ types.
+// callers outside never see the concrete types.
+// ---------------------------------------------------------------------------
+template <typename Cpp, typename Handle>
+static inline Cpp* to_cpp(Handle* h)
+{
+    return reinterpret_cast<Cpp*>(h);
+}
+
+template <typename Cpp, typename Handle>
+static inline const Cpp* to_cpp(const Handle* h)
+{
+    return reinterpret_cast<const Cpp*>(h);
+}
+
+template <typename Handle, typename Cpp>
+static inline Handle* to_handle(Cpp* p)
+{
+    return reinterpret_cast<Handle*>(p);
+}
+
+template <typename Handle, typename Cpp>
+static inline const Handle* to_handle(const Cpp* p)
+{
+    return reinterpret_cast<const Handle*>(p);
+}
 
 static std::mutex g_init_mutex;
 static bulletproofs_plus::RangeProofLogic<Mcl>* g_rpl;
@@ -48,7 +77,8 @@ static bool is_little_endian()
     return *p == 1;
 }
 
-void init() {
+void init()
+{
     std::lock_guard<std::mutex> lock(g_init_mutex);
     Mcl::Init for_side_effect_only;
 
@@ -57,27 +87,39 @@ void init() {
     g_rpl = new (std::nothrow) bulletproofs_plus::RangeProofLogic<Mcl>();
 }
 
-enum BlsctChain get_blsct_chain() {
+enum BlsctChain get_blsct_chain()
+{
     auto& chain = get_chain();
 
-    if (chain == blsct::bech32_hrp::Mainnet) { return Mainnet; }
-    else if (chain == blsct::bech32_hrp::Testnet) { return Testnet; }
-    else if (chain == blsct::bech32_hrp::Signet) { return Signet; }
-    else if (chain == blsct::bech32_hrp::Regtest) { return Regtest; }
-    else { /* should not be visited */ return Mainnet; }
+    if (chain == blsct::bech32_hrp::Mainnet) {
+        return Mainnet;
+    } else if (chain == blsct::bech32_hrp::Testnet) {
+        return Testnet;
+    } else if (chain == blsct::bech32_hrp::Signet) {
+        return Signet;
+    } else if (chain == blsct::bech32_hrp::Regtest) {
+        return Regtest;
+    } else { /* should not be visited */
+        return Mainnet;
+    }
 }
 
-void set_blsct_chain(enum BlsctChain chain) {
-    if (chain == Mainnet) set_chain(blsct::bech32_hrp::Mainnet);
-    else if (chain == Testnet) set_chain(blsct::bech32_hrp::Testnet);
-    else if (chain == Signet) set_chain(blsct::bech32_hrp::Signet);
-    else if (chain == Regtest) set_chain(blsct::bech32_hrp::Regtest);
+void set_blsct_chain(enum BlsctChain chain)
+{
+    if (chain == Mainnet)
+        set_chain(blsct::bech32_hrp::Mainnet);
+    else if (chain == Testnet)
+        set_chain(blsct::bech32_hrp::Testnet);
+    else if (chain == Signet)
+        set_chain(blsct::bech32_hrp::Signet);
+    else if (chain == Regtest)
+        set_chain(blsct::bech32_hrp::Regtest);
 }
 
 BlsctRetVal* succ(
     void* value,
-    size_t value_size
-) {
+    size_t value_size)
+{
     MALLOC_BYTES(BlsctRetVal, p, sizeof(BlsctRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
@@ -88,8 +130,8 @@ BlsctRetVal* succ(
 }
 
 BlsctRetVal* err(
-    BLSCT_RESULT result
-) {
+    BLSCT_RESULT result)
+{
     MALLOC_BYTES(BlsctRetVal, p, sizeof(BlsctRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
@@ -99,8 +141,8 @@ BlsctRetVal* err(
 }
 
 BlsctBoolRetVal* succ_bool(
-    const bool value
-) {
+    const bool value)
+{
     MALLOC_BYTES(BlsctBoolRetVal, p, sizeof(BlsctBoolRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
@@ -110,8 +152,8 @@ BlsctBoolRetVal* succ_bool(
 }
 
 BlsctBoolRetVal* err_bool(
-    const BLSCT_RESULT result
-) {
+    const BLSCT_RESULT result)
+{
     MALLOC_BYTES(BlsctBoolRetVal, p, sizeof(BlsctBoolRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
@@ -244,23 +286,23 @@ static std::optional<blsct::ParsedPredicate> ParseOpaquePredicate(
     }
 }
 
-static std::map<std::string, std::string> StringMapFromOpaque(const void* vp_string_map)
+static std::map<std::string, std::string> StringMapFromOpaque(const BlsctStringMap* vp_string_map)
 {
     if (vp_string_map == nullptr) return {};
-    return *static_cast<const std::map<std::string, std::string>*>(vp_string_map);
+    return *to_cpp<const std::map<std::string, std::string>>(vp_string_map);
 }
 
-static void* CloneStringMap(const std::map<std::string, std::string>& src)
+static BlsctStringMap* CloneStringMap(const std::map<std::string, std::string>& src)
 {
     auto* copy = new (std::nothrow) std::map<std::string, std::string>(src);
-    return static_cast<void*>(copy);
+    return to_handle<BlsctStringMap>(copy);
 }
 
-static const char* StringMapEntryAt(const void* vp_string_map, const size_t idx, const bool want_key)
+static const char* StringMapEntryAt(const BlsctStringMap* vp_string_map, const size_t idx, const bool want_key)
 {
     RETURN_RET_VAL_IF_NULL(vp_string_map, nullptr);
 
-    const auto* map_ptr = static_cast<const std::map<std::string, std::string>*>(vp_string_map);
+    const auto* map_ptr = to_cpp<const std::map<std::string, std::string>>(vp_string_map);
     if (idx >= map_ptr->size()) {
         return nullptr;
     }
@@ -356,7 +398,7 @@ void free_obj(void* x)
 
 void free_amounts_ret_val(BlsctAmountsRetVal* rv)
 {
-    auto result_vec = static_cast<const std::vector<BlsctAmountRecoveryResult>*>(rv->value);
+    auto result_vec = to_cpp<std::vector<BlsctAmountRecoveryResult>>(rv->value);
 
     for (auto res : *result_vec) {
         free(res.msg);
@@ -403,15 +445,13 @@ BlsctRetVal* decode_address(
 }
 
 BlsctRetVal* encode_address(
-    const void* void_blsct_dpk,
+    const BlsctDoublePubKey* blsct_dpk,
     const enum AddressEncoding encoding)
 {
     if (encoding != Bech32 && encoding != Bech32M) {
         return err(BLSCT_UNKNOWN_ENCODING);
     }
     try {
-        UNVOID(BlsctDoublePubKey, blsct_dpk);
-
         auto blsct_dpk_u8 = U8C(blsct_dpk);
         std::vector<uint8_t> dpk_vec(blsct_dpk_u8, blsct_dpk_u8 + sizeof(BlsctDoublePubKey));
         auto dpk = blsct::DoublePublicKey(dpk_vec);
@@ -436,10 +476,10 @@ BlsctRetVal* encode_address(
 
 // amount recovery
 BlsctAmountRecoveryReq* gen_amount_recovery_req(
-    const void* vp_blsct_range_proof,
+    const BlsctRangeProof* vp_blsct_range_proof,
     const size_t range_proof_size,
-    const void* vp_blsct_nonce,
-    const void* vp_blsct_token_id)
+    const BlsctPoint* vp_blsct_nonce,
+    const BlsctTokenId* vp_blsct_token_id)
 {
     auto req = new (std::nothrow) BlsctAmountRecoveryReq;
     RETURN_IF_MEM_ALLOC_FAILED(req);
@@ -459,13 +499,13 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
 }
 
 BlsctAmountsRetVal* recover_amount(
-    void* vp_amt_recovery_req_vec
-) {
+    BlsctAmountRecoveryReqVec* vp_amt_recovery_req_vec)
+{
     MALLOC_BYTES(BlsctAmountsRetVal, rv, sizeof(BlsctAmountsRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(rv);
     try {
         auto amt_recovery_req_vec =
-            static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
+            to_cpp<const std::vector<BlsctAmountRecoveryReq>>(vp_amt_recovery_req_vec);
 
         // construct AmountRecoveryRequest vector
         std::vector<bulletproofs_plus::AmountRecoveryRequest<Mcl>> reqs;
@@ -474,7 +514,7 @@ BlsctAmountsRetVal* recover_amount(
             const auto& ar_req = amt_recovery_req_vec->at(i);
             bulletproofs_plus::RangeProof<Mcl> range_proof;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.range_proof, ar_req.range_proof_size, range_proof);
- 
+
             Mcl::Point nonce;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.nonce, POINT_SIZE, nonce);
 
@@ -505,7 +545,7 @@ BlsctAmountsRetVal* recover_amount(
         result_vec->resize(amt_recovery_req_vec->size());
 
         // mark all the results as failed
-        for (auto &result : *result_vec) {
+        for (auto& result : *result_vec) {
             result.is_succ = false;
         }
 
@@ -536,7 +576,7 @@ BlsctAmountsRetVal* recover_amount(
         }
 
         rv->result = BLSCT_SUCCESS;
-        rv->value = TO_VOID(result_vec);
+        rv->value = to_handle<BlsctAmountRecoveryResultVec>(result_vec);
         return rv;
 
     } catch (...) {
@@ -546,29 +586,29 @@ BlsctAmountsRetVal* recover_amount(
     return rv;
 }
 
-void* create_amount_recovery_req_vec()
+BlsctAmountRecoveryReqVec* create_amount_recovery_req_vec()
 {
     auto vec = new (std::nothrow) std::vector<BlsctAmountRecoveryReq>;
     RETURN_RET_VAL_IF_NULL(vec, nullptr);
-    return static_cast<void*>(vec);
+    return to_handle<BlsctAmountRecoveryReqVec>(vec);
 }
 
 void add_to_amount_recovery_req_vec(
-    void* vp_amt_recovery_req_vec,
-    void* vp_amt_recovery_req)
+    BlsctAmountRecoveryReqVec* vp_amt_recovery_req_vec,
+    BlsctAmountRecoveryReq* vp_amt_recovery_req)
 {
     RETURN_IF_NULL(vp_amt_recovery_req_vec);
     RETURN_IF_NULL(vp_amt_recovery_req);
 
-    auto vec = static_cast<std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
-    auto req = static_cast<BlsctAmountRecoveryReq*>(vp_amt_recovery_req);
+    auto vec = to_cpp<std::vector<BlsctAmountRecoveryReq>>(vp_amt_recovery_req_vec);
+    auto req = vp_amt_recovery_req;
     vec->push_back(*req);
 }
 
-void delete_amount_recovery_req_vec(void* vp_amt_recovery_req_vec)
+void delete_amount_recovery_req_vec(BlsctAmountRecoveryReqVec* vp_amt_recovery_req_vec)
 {
     RETURN_IF_NULL(vp_amt_recovery_req_vec);
-    auto vec = static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
+    auto vec = to_cpp<const std::vector<BlsctAmountRecoveryReq>>(vp_amt_recovery_req_vec);
     for (auto& req : *vec) {
         free(req.range_proof);
     }
@@ -577,103 +617,103 @@ void delete_amount_recovery_req_vec(void* vp_amt_recovery_req_vec)
 
 // functions to retrieve attrs of amount recovery result
 size_t get_amount_recovery_result_size(
-    void* vp_amt_recovery_res_vec)
+    BlsctAmountRecoveryResultVec* vp_amt_recovery_res_vec)
 {
     if (vp_amt_recovery_res_vec == nullptr) {
         return -1;
     }
-    auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_res_vec);
+    auto vec = to_cpp<std::vector<BlsctAmountRecoveryResult>>(vp_amt_recovery_res_vec);
 
     return vec->size();
 }
 
 bool get_amount_recovery_result_is_succ(
-    void* vp_amt_recovery_req_vec,
+    BlsctAmountRecoveryResultVec* vp_amt_recovery_req_vec,
     size_t idx)
 {
     RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, false);
 
-    auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+    auto vec = to_cpp<std::vector<BlsctAmountRecoveryResult>>(vp_amt_recovery_req_vec);
 
     return vec->at(idx).is_succ;
 }
 
 uint64_t get_amount_recovery_result_amount(
-    void* vp_amt_recovery_req_vec,
+    BlsctAmountRecoveryResultVec* vp_amt_recovery_req_vec,
     size_t idx)
 {
     RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, -1);
 
-    auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+    auto vec = to_cpp<std::vector<BlsctAmountRecoveryResult>>(vp_amt_recovery_req_vec);
 
     return vec->at(idx).amount;
 }
 
 const char* get_amount_recovery_result_msg(
-    void* vp_amt_recovery_req_vec,
+    BlsctAmountRecoveryResultVec* vp_amt_recovery_req_vec,
     size_t idx)
 {
     RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, nullptr);
 
-    auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+    auto vec = to_cpp<std::vector<BlsctAmountRecoveryResult>>(vp_amt_recovery_req_vec);
 
     return vec->at(idx).msg;
 }
 
 const BlsctScalar* get_amount_recovery_result_gamma(
-    void* vp_amt_recovery_req_vec,
+    BlsctAmountRecoveryResultVec* vp_amt_recovery_req_vec,
     size_t idx)
 {
     RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, nullptr);
 
-    auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+    auto vec = to_cpp<std::vector<BlsctAmountRecoveryResult>>(vp_amt_recovery_req_vec);
 
     return &vec->at(idx).gamma;
 }
 
 // ctx
-void* create_tx_in_vec()
+BlsctTxInVec* create_tx_in_vec()
 {
     auto* tx_in_vec = new (std::nothrow) std::vector<BlsctTxIn>;
-    return reinterpret_cast<void*>(tx_in_vec);
+    return to_handle<BlsctTxInVec>(tx_in_vec);
 }
 
-void add_to_tx_in_vec(void* vp_tx_in_vec, const BlsctTxIn* tx_in)
+void add_to_tx_in_vec(BlsctTxInVec* vp_tx_in_vec, const BlsctTxIn* tx_in)
 {
-    auto* tx_in_vec = reinterpret_cast<std::vector<BlsctTxIn>*>(vp_tx_in_vec);
+    auto* tx_in_vec = to_cpp<std::vector<BlsctTxIn>>(vp_tx_in_vec);
     tx_in_vec->push_back(*tx_in);
 }
 
-void delete_tx_in_vec(void* vp_tx_in_vec)
+void delete_tx_in_vec(BlsctTxInVec* vp_tx_in_vec)
 {
-    auto* tx_in_vec = reinterpret_cast<std::vector<BlsctTxIn>*>(vp_tx_in_vec);
+    auto* tx_in_vec = to_cpp<std::vector<BlsctTxIn>>(vp_tx_in_vec);
     delete tx_in_vec;
 }
 
-void* create_tx_out_vec()
+BlsctTxOutVec* create_tx_out_vec()
 {
     auto* tx_out_vec = new (std::nothrow) std::vector<BlsctTxOut>;
-    return reinterpret_cast<void*>(tx_out_vec);
+    return to_handle<BlsctTxOutVec>(tx_out_vec);
 }
 
-void add_to_tx_out_vec(void* vp_tx_out_vec, const BlsctTxOut* tx_out)
+void add_to_tx_out_vec(BlsctTxOutVec* vp_tx_out_vec, const BlsctTxOut* tx_out)
 {
-    auto* tx_out_vec = reinterpret_cast<std::vector<BlsctTxOut>*>(vp_tx_out_vec);
+    auto* tx_out_vec = to_cpp<std::vector<BlsctTxOut>>(vp_tx_out_vec);
     tx_out_vec->push_back(*tx_out);
 }
 
-void delete_tx_out_vec(void* vp_tx_out_vec)
+void delete_tx_out_vec(BlsctTxOutVec* vp_tx_out_vec)
 {
-    auto* tx_out_vec = reinterpret_cast<std::vector<BlsctTxOut>*>(vp_tx_out_vec);
+    auto* tx_out_vec = to_cpp<std::vector<BlsctTxOut>>(vp_tx_out_vec);
     delete tx_out_vec;
 }
 
 BlsctCTxRetVal* build_ctx(
-    const void* void_tx_ins,
-    const void* void_tx_outs)
+    const BlsctTxInVec* void_tx_ins,
+    const BlsctTxOutVec* void_tx_outs)
 {
-    UNVOID(std::vector<BlsctTxIn>, tx_ins);
-    UNVOID(std::vector<BlsctTxOut>, tx_outs);
+    auto tx_ins = to_cpp<const std::vector<BlsctTxIn>>(void_tx_ins);
+    auto tx_outs = to_cpp<const std::vector<BlsctTxOut>>(void_tx_outs);
 
     blsct::TxFactoryBase psbt;
     MALLOC_BYTES(BlsctCTxRetVal, rv, sizeof(BlsctCTxRetVal));
@@ -758,8 +798,7 @@ BlsctCTxRetVal* build_ctx(
         // unserialize blinding key
         Scalar blinding_key;
         UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-            tx_out.blinding_key, SCALAR_SIZE, blinding_key
-        );
+            tx_out.blinding_key, SCALAR_SIZE, blinding_key);
 
         // add all to TxFactoryBase
         psbt.AddOutput(
@@ -770,8 +809,7 @@ BlsctCTxRetVal* build_ctx(
             out_type,
             tx_out.min_stake,
             tx_out.subtract_fee_from_amount,
-            blinding_key
-        );
+            blinding_key);
     }
 
     // build ctx
@@ -787,45 +825,45 @@ BlsctCTxRetVal* build_ctx(
     *ctx_in_heap = std::move(maybe_ctx.value());
 
     rv->result = BLSCT_SUCCESS;
-    rv->ctx = static_cast<void*>(ctx_in_heap);
+    rv->ctx = to_handle<BlsctCtx>(ctx_in_heap);
 
     return rv;
 }
 
-const char* get_ctx_id(void* vp_ctx)
+const char* get_ctx_id(BlsctCtx* vp_ctx)
 {
-    CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
+    CMutableTransaction* ctx = to_cpp<CMutableTransaction>(vp_ctx);
     Txid ctxid = ctx->GetHash();
     std::string ctxid_hex = ctxid.GetHex();
 
     return StrToAllocCStr(ctxid_hex);
 }
 
-const void* get_ctx_ins(void* vp_ctx)
+const BlsctCTxInVec* get_ctx_ins(BlsctCtx* vp_ctx)
 {
-    CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
-    return &ctx->vin;
+    CMutableTransaction* ctx = to_cpp<CMutableTransaction>(vp_ctx);
+    return to_handle<BlsctCTxInVec>(&ctx->vin);
 }
 
-const void* get_ctx_outs(void* vp_ctx)
+const BlsctCTxOutVec* get_ctx_outs(BlsctCtx* vp_ctx)
 {
-    CMutableTransaction* ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
-    return &ctx->vout;
+    CMutableTransaction* ctx = to_cpp<CMutableTransaction>(vp_ctx);
+    return to_handle<BlsctCTxOutVec>(&ctx->vout);
 }
 
-void delete_ctx(void* vp_ctx)
+void delete_ctx(BlsctCtx* vp_ctx)
 {
-    auto ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
+    auto ctx = to_cpp<CMutableTransaction>(vp_ctx);
     delete ctx;
 }
 
-const char* serialize_ctx(void* vp_ctx)
+const char* serialize_ctx(BlsctCtx* vp_ctx)
 {
     DataStream st{};
     TransactionSerParams params{.allow_witness = true};
     ParamsStream ps{params, st};
 
-    auto ctx = reinterpret_cast<CMutableTransaction*>(vp_ctx);
+    auto ctx = to_cpp<CMutableTransaction>(vp_ctx);
     ctx->Serialize(ps);
 
     return SerializeToHex(
@@ -873,31 +911,31 @@ BlsctRetVal* deserialize_ctx_id(const char* hex)
     return succ(blsct_ctx_id, CTX_ID_SIZE);
 }
 
-void* create_tx_hex_vec()
+BlsctTxHexVec* create_tx_hex_vec()
 {
     auto* tx_hex_vec = new (std::nothrow) std::vector<std::string>;
-    return static_cast<void*>(tx_hex_vec);
+    return to_handle<BlsctTxHexVec>(tx_hex_vec);
 }
 
-void add_to_tx_hex_vec(void* vp_tx_hex_vec, const char* tx_hex)
+void add_to_tx_hex_vec(BlsctTxHexVec* vp_tx_hex_vec, const char* tx_hex)
 {
     RETURN_IF_NULL(vp_tx_hex_vec);
     RETURN_IF_NULL(tx_hex);
-    auto* tx_hex_vec = static_cast<std::vector<std::string>*>(vp_tx_hex_vec);
+    auto* tx_hex_vec = to_cpp<std::vector<std::string>>(vp_tx_hex_vec);
     tx_hex_vec->emplace_back(tx_hex);
 }
 
-void delete_tx_hex_vec(void* vp_tx_hex_vec)
+void delete_tx_hex_vec(BlsctTxHexVec* vp_tx_hex_vec)
 {
     if (vp_tx_hex_vec == nullptr) return;
-    delete static_cast<std::vector<std::string>*>(vp_tx_hex_vec);
+    delete to_cpp<std::vector<std::string>>(vp_tx_hex_vec);
 }
 
-BlsctRetVal* aggregate_transactions(const void* vp_tx_hex_vec)
+BlsctRetVal* aggregate_transactions(const BlsctTxHexVec* vp_tx_hex_vec)
 {
     RETURN_RET_VAL_IF_NULL(vp_tx_hex_vec, err(BLSCT_FAILURE));
 
-    const auto* tx_hex_vec = static_cast<const std::vector<std::string>*>(vp_tx_hex_vec);
+    const auto* tx_hex_vec = to_cpp<const std::vector<std::string>>(vp_tx_hex_vec);
     if (tx_hex_vec->empty()) {
         return err(BLSCT_FAILURE);
     }
@@ -945,137 +983,137 @@ BlsctRetVal* aggregate_transactions(const void* vp_tx_hex_vec)
 }
 
 // ctx ins
-bool are_ctx_ins_equal(const void* vp_a, const void* vp_b)
+bool are_ctx_ins_equal(const BlsctCTxInVec* vp_a, const BlsctCTxInVec* vp_b)
 {
-    auto* a = static_cast<const std::vector<CTxIn>*>(vp_a);
-    auto* b = static_cast<const std::vector<CTxIn>*>(vp_b);
+    auto* a = to_cpp<const std::vector<CTxIn>>(vp_a);
+    auto* b = to_cpp<const std::vector<CTxIn>>(vp_b);
     return a == b;
 }
 
-size_t get_ctx_ins_size(const void* vp_ctx_ins)
+size_t get_ctx_ins_size(const BlsctCTxInVec* vp_ctx_ins)
 {
-    auto* ctx_ins = static_cast<const std::vector<CTxIn>*>(vp_ctx_ins);
+    auto* ctx_ins = to_cpp<const std::vector<CTxIn>>(vp_ctx_ins);
     return ctx_ins->size();
 }
 
-const void* get_ctx_in_at(const void* vp_ctx_ins, const size_t i)
+const BlsctCTxIn* get_ctx_in_at(const BlsctCTxInVec* vp_ctx_ins, const size_t i)
 {
-    auto* ctx_ins = static_cast<const std::vector<CTxIn>*>(vp_ctx_ins);
+    auto* ctx_ins = to_cpp<const std::vector<CTxIn>>(vp_ctx_ins);
     const CTxIn* ctx_in = &ctx_ins->at(i);
-    return static_cast<const void*>(ctx_in);
+    return to_handle<BlsctCTxIn>(ctx_in);
 }
 
 // ctx in
-bool are_ctx_in_equal(const void* vp_a, const void* vp_b)
+bool are_ctx_in_equal(const BlsctCTxIn* vp_a, const BlsctCTxIn* vp_b)
 {
-    auto* a = static_cast<const CTxIn*>(vp_a);
-    auto* b = static_cast<const CTxIn*>(vp_a);
+    auto* a = to_cpp<const CTxIn>(vp_a);
+    auto* b = to_cpp<const CTxIn>(vp_b);
     return *a == *b;
 }
 
-const BlsctCTxId* get_ctx_in_prev_out_hash(const void* vp_ctx_in)
+const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* vp_ctx_in)
 {
-    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
+    auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
     auto copy = static_cast<BlsctCTxId*>(malloc(CTX_ID_SIZE));
     std::memcpy(copy, &ctx_in->prevout.hash, CTX_ID_SIZE);
     return copy;
 }
 
-const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in)
+const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* vp_ctx_in)
 {
-    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
+    auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_in->scriptSig, SCRIPT_SIZE);
     return copy;
 }
 
-uint32_t get_ctx_in_sequence(const void* vp_ctx_in)
+uint32_t get_ctx_in_sequence(const BlsctCTxIn* vp_ctx_in)
 {
-    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
+    auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
     return ctx_in->nSequence;
 }
 
-const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in)
+const BlsctScript* get_ctx_in_script_witness(const BlsctCTxIn* vp_ctx_in)
 {
-    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
+    auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_in->scriptWitness, SCRIPT_SIZE);
     return copy;
 }
 
 // ctx outs
-bool are_ctx_outs_equal(const void* vp_a, const void* vp_b)
+bool are_ctx_outs_equal(const BlsctCTxOutVec* vp_a, const BlsctCTxOutVec* vp_b)
 {
-    auto* a = static_cast<const std::vector<CTxOut>*>(vp_a);
-    auto* b = static_cast<const std::vector<CTxOut>*>(vp_b);
+    auto* a = to_cpp<const std::vector<CTxOut>>(vp_a);
+    auto* b = to_cpp<const std::vector<CTxOut>>(vp_b);
     return a == b;
 }
 
-size_t get_ctx_outs_size(const void* vp_ctx_outs)
+size_t get_ctx_outs_size(const BlsctCTxOutVec* vp_ctx_outs)
 {
-    auto* ctx_outs = static_cast<const std::vector<CTxOut>*>(vp_ctx_outs);
+    auto* ctx_outs = to_cpp<const std::vector<CTxOut>>(vp_ctx_outs);
     return ctx_outs->size();
 }
 
-const void* get_ctx_out_at(const void* vp_ctx_outs, const size_t i)
+const BlsctCTxOut* get_ctx_out_at(const BlsctCTxOutVec* vp_ctx_outs, const size_t i)
 {
-    auto* ctx_outs = static_cast<const std::vector<CTxOut>*>(vp_ctx_outs);
+    auto* ctx_outs = to_cpp<const std::vector<CTxOut>>(vp_ctx_outs);
     const CTxOut* ctx_out = &ctx_outs->at(i);
-    return static_cast<const void*>(ctx_out);
+    return to_handle<BlsctCTxOut>(ctx_out);
 }
 
 // ctx out
-bool are_ctx_out_equal(const void* vp_a, const void* vp_b)
+bool are_ctx_out_equal(const BlsctCTxOut* vp_a, const BlsctCTxOut* vp_b)
 {
-    auto* a = static_cast<const CTxOut*>(vp_a);
-    auto* b = static_cast<const CTxOut*>(vp_b);
+    auto* a = to_cpp<const CTxOut>(vp_a);
+    auto* b = to_cpp<const CTxOut>(vp_b);
     return *a == *b;
 }
 
-uint64_t get_ctx_out_value(const void* vp_ctx_out)
+uint64_t get_ctx_out_value(const BlsctCTxOut* vp_ctx_out)
 {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     return ctx_out->nValue;
 }
 
-const BlsctScript* get_ctx_out_script_pub_key(const void* vp_ctx_out)
+const BlsctScript* get_ctx_out_script_pub_key(const BlsctCTxOut* vp_ctx_out)
 {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_out->scriptPubKey, SCRIPT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_ctx_out_spending_key(const void* vp_ctx_out)
+const BlsctPoint* get_ctx_out_spending_key(const BlsctCTxOut* vp_ctx_out)
 {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
     auto org = ctx_out->blsctData.spendingKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_ctx_out_ephemeral_key(const void* vp_ctx_out)
+const BlsctPoint* get_ctx_out_ephemeral_key(const BlsctCTxOut* vp_ctx_out)
 {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
     auto org = ctx_out->blsctData.ephemeralKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctPoint* get_ctx_out_blinding_key(const void* vp_ctx_out)
+const BlsctPoint* get_ctx_out_blinding_key(const BlsctCTxOut* vp_ctx_out)
 {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
     auto org = ctx_out->blsctData.blindingKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
-const BlsctRetVal* get_ctx_out_range_proof(const void* vp_ctx_out)
+const BlsctRetVal* get_ctx_out_range_proof(const BlsctCTxOut* vp_ctx_out)
 {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     DataStream st{};
     ctx_out->blsctData.rangeProof.Serialize(st);
     auto copy = static_cast<BlsctRangeProof*>(malloc(st.size()));
@@ -1084,23 +1122,23 @@ const BlsctRetVal* get_ctx_out_range_proof(const void* vp_ctx_out)
     ;
 };
 
-uint16_t get_ctx_out_view_tag(const void* vp_ctx_out)
+uint16_t get_ctx_out_view_tag(const BlsctCTxOut* vp_ctx_out)
 {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     return ctx_out->blsctData.viewTag;
 }
 
-const BlsctTokenId* get_ctx_out_token_id(const void* vp_ctx_out)
+const BlsctTokenId* get_ctx_out_token_id(const BlsctCTxOut* vp_ctx_out)
 {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
     std::memcpy(copy, &ctx_out->tokenId, TOKEN_ID_SIZE);
     return copy;
 }
 
-BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out)
+BlsctRetVal* get_ctx_out_vector_predicate(const BlsctCTxOut* vp_ctx_out)
 {
-    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     auto& pred = ctx_out->predicate;
     MALLOC_BYTES(uint8_t, buf, pred.size());
     RETURN_IF_MEM_ALLOC_FAILED(buf)
@@ -1193,13 +1231,12 @@ BlsctRetVal* dpk_to_sub_addr(
 }
 
 BlsctDoublePubKey* sub_addr_to_dpk(
-    const BlsctSubAddr* blsct_sub_addr
-) {
+    const BlsctSubAddr* blsct_sub_addr)
+{
     // unserialize sub address
     blsct::SubAddress sub_addr;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-        blsct_sub_addr, SUB_ADDR_SIZE, sub_addr
-    );
+        blsct_sub_addr, SUB_ADDR_SIZE, sub_addr);
 
     // allocate memory for serialized double public key
     MALLOC_BYTES(BlsctDoublePubKey, blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
@@ -1318,7 +1355,8 @@ BlsctRetVal* deserialize_out_point(const char* hex)
 }
 
 // point
-BlsctRetVal* gen_base_point() {
+BlsctRetVal* gen_base_point()
+{
     MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
 
@@ -1328,7 +1366,8 @@ BlsctRetVal* gen_base_point() {
     return succ(blsct_point, POINT_SIZE);
 }
 
-BlsctRetVal* gen_random_point() {
+BlsctRetVal* gen_random_point()
+{
     MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
 
@@ -1379,8 +1418,8 @@ int are_point_equal(const BlsctPoint* blsct_a, const BlsctPoint* blsct_b)
 
 BlsctPoint* scalar_muliply_point(
     const BlsctPoint* blsct_point,
-    const BlsctScalar* blsct_scalar
-) {
+    const BlsctScalar* blsct_scalar)
+{
     Point p;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, p);
 
@@ -1396,7 +1435,8 @@ BlsctPoint* scalar_muliply_point(
     return blsct_sp;
 }
 
-const char* point_to_str(const BlsctPoint* blsct_point) {
+const char* point_to_str(const BlsctPoint* blsct_point)
+{
     Point point;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
     auto str = point.GetString();
@@ -1497,13 +1537,13 @@ BlsctRetVal* deserialize_public_key(const char* hex)
 
 // range proof
 BlsctRetVal* build_range_proof(
-    const void* vp_uint64_vec,
+    const BlsctUint64Vec* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
     const char* blsct_msg,
     const BlsctTokenId* blsct_token_id)
 {
     try {
-        auto uint64_vec = static_cast<const std::vector<uint64_t>*>(vp_uint64_vec);
+        auto uint64_vec = to_cpp<const std::vector<uint64_t>>(vp_uint64_vec);
         // uint64_t to Scalar
         Scalars vs;
         for (uint64_t v : *uint64_vec) {
@@ -1553,10 +1593,10 @@ BlsctRetVal* build_range_proof(
 }
 
 BlsctBoolRetVal* verify_range_proofs(
-    const void* vp_range_proofs)
+    const BlsctRangeProofVec* vp_range_proofs)
 {
     try {
-        auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+        auto range_proofs = to_cpp<const std::vector<bulletproofs_plus::RangeProof<Mcl>>>(vp_range_proofs);
 
         std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> range_proof_w_seeds;
 
@@ -1625,19 +1665,19 @@ BlsctRetVal* deserialize_range_proof(
     return succ(blsct_range_proof, range_proof_size);
 }
 
-void* create_range_proof_vec()
+BlsctRangeProofVec* create_range_proof_vec()
 {
     auto vec = new (std::nothrow) std::vector<bulletproofs_plus::RangeProof<Mcl>>;
     HANDLE_MEM_ALLOC_FAILURE(vec);
-    return static_cast<void*>(vec);
+    return to_handle<BlsctRangeProofVec>(vec);
 }
 
 void add_to_range_proof_vec(
-    void* vp_range_proofs,
+    BlsctRangeProofVec* vp_range_proofs,
     const BlsctRangeProof* blsct_range_proof,
     size_t blsct_range_proof_size)
 {
-    auto range_proofs = static_cast<std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+    auto range_proofs = to_cpp<std::vector<bulletproofs_plus::RangeProof<Mcl>>>(vp_range_proofs);
     // unserialize range proof
     bulletproofs_plus::RangeProof<Mcl> range_proof;
 
@@ -1651,15 +1691,16 @@ void add_to_range_proof_vec(
     range_proofs->push_back(std::move(range_proof));
 }
 
-void delete_range_proof_vec(const void* vp_range_proofs)
+void delete_range_proof_vec(const BlsctRangeProofVec* vp_range_proofs)
 {
     if (vp_range_proofs == nullptr) return;
-    auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+    auto range_proofs = to_cpp<const std::vector<bulletproofs_plus::RangeProof<Mcl>>>(vp_range_proofs);
     delete range_proofs;
 }
 
 // scalar
-BlsctRetVal* gen_random_scalar() {
+BlsctRetVal* gen_random_scalar()
+{
     MALLOC_BYTES(BlsctScalar, blsct_scalar, SCALAR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_scalar);
 
@@ -1962,39 +2003,39 @@ BlsctRetVal* deserialize_token_id(const char* hex)
 }
 
 // generic string map helpers
-void* create_string_map()
+BlsctStringMap* create_string_map()
 {
     auto* string_map = new (std::nothrow) std::map<std::string, std::string>;
-    return static_cast<void*>(string_map);
+    return to_handle<BlsctStringMap>(string_map);
 }
 
-void add_to_string_map(void* vp_string_map, const char* key, const char* value)
+void add_to_string_map(BlsctStringMap* vp_string_map, const char* key, const char* value)
 {
     RETURN_IF_NULL(vp_string_map);
     RETURN_IF_NULL(key);
     RETURN_IF_NULL(value);
-    auto* string_map = static_cast<std::map<std::string, std::string>*>(vp_string_map);
+    auto* string_map = to_cpp<std::map<std::string, std::string>>(vp_string_map);
     (*string_map)[key] = value;
 }
 
-void delete_string_map(const void* vp_string_map)
+void delete_string_map(const BlsctStringMap* vp_string_map)
 {
     if (vp_string_map == nullptr) return;
-    delete static_cast<const std::map<std::string, std::string>*>(vp_string_map);
+    delete to_cpp<const std::map<std::string, std::string>>(vp_string_map);
 }
 
-size_t get_string_map_size(const void* vp_string_map)
+size_t get_string_map_size(const BlsctStringMap* vp_string_map)
 {
     RETURN_RET_VAL_IF_NULL(vp_string_map, 0);
-    return static_cast<const std::map<std::string, std::string>*>(vp_string_map)->size();
+    return to_cpp<const std::map<std::string, std::string>>(vp_string_map)->size();
 }
 
-const char* get_string_map_key_at(const void* vp_string_map, size_t idx)
+const char* get_string_map_key_at(const BlsctStringMap* vp_string_map, size_t idx)
 {
     return StringMapEntryAt(vp_string_map, idx, /*want_key=*/true);
 }
 
-const char* get_string_map_value_at(const void* vp_string_map, size_t idx)
+const char* get_string_map_value_at(const BlsctStringMap* vp_string_map, size_t idx)
 {
     return StringMapEntryAt(vp_string_map, idx, /*want_key=*/false);
 }
@@ -2003,7 +2044,7 @@ const char* get_string_map_value_at(const void* vp_string_map, size_t idx)
 BlsctRetVal* build_token_info(
     enum BlsctTokenType type,
     const BlsctPubKey* blsct_public_key,
-    const void* vp_metadata,
+    const BlsctStringMap* vp_metadata,
     const uint64_t total_supply)
 {
     RETURN_RET_VAL_IF_NULL(blsct_public_key, err(BLSCT_FAILURE));
@@ -2028,16 +2069,16 @@ BlsctRetVal* build_token_info(
     return succ(static_cast<void*>(token_info), sizeof(blsct::TokenInfo));
 }
 
-void delete_token_info(void* vp_token_info)
+void delete_token_info(BlsctTokenInfo* vp_token_info)
 {
     if (vp_token_info == nullptr) return;
-    delete static_cast<blsct::TokenInfo*>(vp_token_info);
+    delete to_cpp<blsct::TokenInfo>(vp_token_info);
 }
 
-const char* serialize_token_info(const void* vp_token_info)
+const char* serialize_token_info(const BlsctTokenInfo* vp_token_info)
 {
     RETURN_RET_VAL_IF_NULL(vp_token_info, nullptr);
-    return SerializeSerializableObject(*static_cast<const blsct::TokenInfo*>(vp_token_info));
+    return SerializeSerializableObject(*to_cpp<const blsct::TokenInfo>(vp_token_info));
 }
 
 BlsctRetVal* deserialize_token_info(const char* hex)
@@ -2045,36 +2086,36 @@ BlsctRetVal* deserialize_token_info(const char* hex)
     return DeserializeSerializableObject<blsct::TokenInfo>(hex);
 }
 
-enum BlsctTokenType get_token_info_type(const void* vp_token_info)
+enum BlsctTokenType get_token_info_type(const BlsctTokenInfo* vp_token_info)
 {
     RETURN_RET_VAL_IF_NULL(vp_token_info, BlsctToken);
-    return TokenTypeToC(static_cast<const blsct::TokenInfo*>(vp_token_info)->type);
+    return TokenTypeToC(to_cpp<const blsct::TokenInfo>(vp_token_info)->type);
 }
 
-const BlsctPubKey* get_token_info_public_key(const void* vp_token_info)
+const BlsctPubKey* get_token_info_public_key(const BlsctTokenInfo* vp_token_info)
 {
     RETURN_RET_VAL_IF_NULL(vp_token_info, nullptr);
     MALLOC_BYTES(BlsctPubKey, blsct_pub_key, PUBLIC_KEY_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_pub_key);
-    SERIALIZE_AND_COPY(static_cast<const blsct::TokenInfo*>(vp_token_info)->publicKey, blsct_pub_key);
+    SERIALIZE_AND_COPY(to_cpp<const blsct::TokenInfo>(vp_token_info)->publicKey, blsct_pub_key);
     return blsct_pub_key;
 }
 
-uint64_t get_token_info_total_supply(const void* vp_token_info)
+uint64_t get_token_info_total_supply(const BlsctTokenInfo* vp_token_info)
 {
     RETURN_RET_VAL_IF_NULL(vp_token_info, 0);
-    return static_cast<uint64_t>(static_cast<const blsct::TokenInfo*>(vp_token_info)->nTotalSupply);
+    return static_cast<uint64_t>(to_cpp<const blsct::TokenInfo>(vp_token_info)->nTotalSupply);
 }
 
-void* get_token_info_metadata(const void* vp_token_info)
+BlsctStringMap* get_token_info_metadata(const BlsctTokenInfo* vp_token_info)
 {
     RETURN_RET_VAL_IF_NULL(vp_token_info, nullptr);
-    return CloneStringMap(static_cast<const blsct::TokenInfo*>(vp_token_info)->mapMetadata);
+    return CloneStringMap(to_cpp<const blsct::TokenInfo>(vp_token_info)->mapMetadata);
 }
 
 // collection token hash and token key derivation
 BlsctRetVal* calc_collection_token_hash(
-    const void* vp_metadata,
+    const BlsctStringMap* vp_metadata,
     const uint64_t total_supply)
 {
     CAmount supply;
@@ -2133,8 +2174,8 @@ BlsctRetVal* build_tx_in(
     const BlsctTokenId* token_id,
     const BlsctOutPoint* out_point,
     const bool staked_commitment,
-    const bool rbf
-) {
+    const bool rbf)
+{
     MALLOC_BYTES(BlsctTxIn, tx_in, sizeof(BlsctTxIn));
     RETURN_IF_MEM_ALLOC_FAILED(tx_in);
 
@@ -2159,21 +2200,24 @@ const BlsctScalar* get_tx_in_gamma(const BlsctTxIn* tx_in)
     return &tx_in->gamma;
 }
 
-const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in) {
+const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in)
+{
     MALLOC_BYTES(BlsctScalar, spending_key, SCALAR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(spending_key);
     BLSCT_COPY(tx_in->spending_key, *spending_key);
     return spending_key;
 }
 
-const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in) {
+const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in)
+{
     MALLOC_BYTES(BlsctTokenId, token_id, TOKEN_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(token_id);
     BLSCT_COPY(tx_in->token_id, *token_id);
     return token_id;
 }
 
-const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in) {
+const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in)
+{
     MALLOC_BYTES(BlsctOutPoint, out_point, OUT_POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(out_point);
     BLSCT_COPY(tx_in->out_point, *out_point);
@@ -2199,8 +2243,8 @@ BlsctRetVal* build_tx_out(
     const TxOutputType output_type,
     const uint64_t min_stake,
     const bool subtract_fee_from_amount,
-    const BlsctScalar* blsct_blinding_key
-) {
+    const BlsctScalar* blsct_blinding_key)
+{
     MALLOC_BYTES(BlsctTxOut, tx_out, sizeof(BlsctTxOut));
     RETURN_IF_MEM_ALLOC_FAILED(tx_out);
 
@@ -2223,7 +2267,8 @@ BlsctRetVal* build_tx_out(
     return succ(tx_out, sizeof(BlsctTxOut));
 }
 
-const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out) {
+const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out)
+{
     MALLOC_BYTES(BlsctSubAddr, sub_addr, SUB_ADDR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(sub_addr);
     BLSCT_COPY(tx_out->dest, *sub_addr);
@@ -2244,7 +2289,8 @@ const char* get_tx_out_memo(const BlsctTxOut* tx_out)
     return memo_c_str;
 }
 
-const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out) {
+const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out)
+{
     MALLOC_BYTES(BlsctTokenId, token_id, TOKEN_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(token_id);
     BLSCT_COPY(tx_out->token_id, *token_id);
@@ -2261,11 +2307,13 @@ uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out)
     return tx_out->min_stake;
 }
 
-bool get_tx_out_subtract_fee_from_amount(const BlsctTxOut* tx_out) {
+bool get_tx_out_subtract_fee_from_amount(const BlsctTxOut* tx_out)
+{
     return tx_out->subtract_fee_from_amount;
 }
 
-const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out) {
+const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out)
+{
     MALLOC_BYTES(BlsctScalar, blinding_key, SCALAR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blinding_key);
     BLSCT_COPY(tx_out->blinding_key, *blinding_key);
@@ -2290,16 +2338,16 @@ BlsctRetVal* build_unsigned_input(const BlsctTxIn* tx_in)
     return succ(static_cast<void*>(unsigned_input), sizeof(blsct::UnsignedInput));
 }
 
-void delete_unsigned_input(void* vp_unsigned_input)
+void delete_unsigned_input(BlsctUnsignedInput* vp_unsigned_input)
 {
     if (vp_unsigned_input == nullptr) return;
-    delete static_cast<blsct::UnsignedInput*>(vp_unsigned_input);
+    delete to_cpp<blsct::UnsignedInput>(vp_unsigned_input);
 }
 
-const char* serialize_unsigned_input(const void* vp_unsigned_input)
+const char* serialize_unsigned_input(const BlsctUnsignedInput* vp_unsigned_input)
 {
     RETURN_RET_VAL_IF_NULL(vp_unsigned_input, nullptr);
-    return SerializeSerializableObject(*static_cast<const blsct::UnsignedInput*>(vp_unsigned_input));
+    return SerializeSerializableObject(*to_cpp<const blsct::UnsignedInput>(vp_unsigned_input));
 }
 
 BlsctRetVal* deserialize_unsigned_input(const char* hex)
@@ -2326,7 +2374,7 @@ BlsctRetVal* build_unsigned_output(const BlsctTxOut* tx_out)
 
 BlsctRetVal* build_unsigned_create_token_output(
     const BlsctScalar* blsct_token_key,
-    const void* vp_token_info)
+    const BlsctTokenInfo* vp_token_info)
 {
     RETURN_RET_VAL_IF_NULL(blsct_token_key, err(BLSCT_FAILURE));
     RETURN_RET_VAL_IF_NULL(vp_token_info, err(BLSCT_FAILURE));
@@ -2335,7 +2383,7 @@ BlsctRetVal* build_unsigned_create_token_output(
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_key, SCALAR_SIZE, token_key);
 
     auto* unsigned_output = new (std::nothrow) blsct::UnsignedOutput(
-        blsct::CreateOutput(token_key, *static_cast<const blsct::TokenInfo*>(vp_token_info)));
+        blsct::CreateOutput(token_key, *to_cpp<const blsct::TokenInfo>(vp_token_info)));
     if (unsigned_output == nullptr) {
         return err(BLSCT_MEM_ALLOC_FAILED);
     }
@@ -2387,7 +2435,7 @@ BlsctRetVal* build_unsigned_mint_nft_output(
     const BlsctScalar* blsct_token_key,
     const BlsctPubKey* blsct_token_public_key,
     const uint64_t nft_id,
-    const void* vp_metadata)
+    const BlsctStringMap* vp_metadata)
 {
     RETURN_RET_VAL_IF_NULL(blsct_dest, err(BLSCT_FAILURE));
     RETURN_RET_VAL_IF_NULL(blsct_blinding_key, err(BLSCT_FAILURE));
@@ -2415,16 +2463,16 @@ BlsctRetVal* build_unsigned_mint_nft_output(
     return succ(static_cast<void*>(unsigned_output), sizeof(blsct::UnsignedOutput));
 }
 
-void delete_unsigned_output(void* vp_unsigned_output)
+void delete_unsigned_output(BlsctUnsignedOutput* vp_unsigned_output)
 {
     if (vp_unsigned_output == nullptr) return;
-    delete static_cast<blsct::UnsignedOutput*>(vp_unsigned_output);
+    delete to_cpp<blsct::UnsignedOutput>(vp_unsigned_output);
 }
 
-const char* serialize_unsigned_output(const void* vp_unsigned_output)
+const char* serialize_unsigned_output(const BlsctUnsignedOutput* vp_unsigned_output)
 {
     RETURN_RET_VAL_IF_NULL(vp_unsigned_output, nullptr);
-    return SerializeSerializableObject(*static_cast<const blsct::UnsignedOutput*>(vp_unsigned_output));
+    return SerializeSerializableObject(*to_cpp<const blsct::UnsignedOutput>(vp_unsigned_output));
 }
 
 BlsctRetVal* deserialize_unsigned_output(const char* hex)
@@ -2432,29 +2480,29 @@ BlsctRetVal* deserialize_unsigned_output(const char* hex)
     return DeserializeSerializableObject<blsct::UnsignedOutput>(hex);
 }
 
-void* create_unsigned_transaction()
+BlsctUnsignedTransaction* create_unsigned_transaction()
 {
     auto* unsigned_tx = new (std::nothrow) blsct::UnsignedTransaction{};
-    return static_cast<void*>(unsigned_tx);
+    return to_handle<BlsctUnsignedTransaction>(unsigned_tx);
 }
 
-void add_unsigned_transaction_input(void* vp_unsigned_transaction, const void* vp_unsigned_input)
+void add_unsigned_transaction_input(BlsctUnsignedTransaction* vp_unsigned_transaction, const BlsctUnsignedInput* vp_unsigned_input)
 {
     RETURN_IF_NULL(vp_unsigned_transaction);
     RETURN_IF_NULL(vp_unsigned_input);
-    auto* unsigned_tx = static_cast<blsct::UnsignedTransaction*>(vp_unsigned_transaction);
-    unsigned_tx->AddInput(*static_cast<const blsct::UnsignedInput*>(vp_unsigned_input));
+    auto* unsigned_tx = to_cpp<blsct::UnsignedTransaction>(vp_unsigned_transaction);
+    unsigned_tx->AddInput(*to_cpp<const blsct::UnsignedInput>(vp_unsigned_input));
 }
 
-void add_unsigned_transaction_output(void* vp_unsigned_transaction, const void* vp_unsigned_output)
+void add_unsigned_transaction_output(BlsctUnsignedTransaction* vp_unsigned_transaction, const BlsctUnsignedOutput* vp_unsigned_output)
 {
     RETURN_IF_NULL(vp_unsigned_transaction);
     RETURN_IF_NULL(vp_unsigned_output);
-    auto* unsigned_tx = static_cast<blsct::UnsignedTransaction*>(vp_unsigned_transaction);
-    unsigned_tx->AddOutput(*static_cast<const blsct::UnsignedOutput*>(vp_unsigned_output));
+    auto* unsigned_tx = to_cpp<blsct::UnsignedTransaction>(vp_unsigned_transaction);
+    unsigned_tx->AddOutput(*to_cpp<const blsct::UnsignedOutput>(vp_unsigned_output));
 }
 
-void set_unsigned_transaction_fee(void* vp_unsigned_transaction, const uint64_t fee)
+void set_unsigned_transaction_fee(BlsctUnsignedTransaction* vp_unsigned_transaction, const uint64_t fee)
 {
     RETURN_IF_NULL(vp_unsigned_transaction);
 
@@ -2463,37 +2511,37 @@ void set_unsigned_transaction_fee(void* vp_unsigned_transaction, const uint64_t 
         return;
     }
 
-    static_cast<blsct::UnsignedTransaction*>(vp_unsigned_transaction)->SetFee(tx_fee);
+    to_cpp<blsct::UnsignedTransaction>(vp_unsigned_transaction)->SetFee(tx_fee);
 }
 
-uint64_t get_unsigned_transaction_fee(const void* vp_unsigned_transaction)
+uint64_t get_unsigned_transaction_fee(const BlsctUnsignedTransaction* vp_unsigned_transaction)
 {
     RETURN_RET_VAL_IF_NULL(vp_unsigned_transaction, 0);
-    return static_cast<uint64_t>(static_cast<const blsct::UnsignedTransaction*>(vp_unsigned_transaction)->GetFee());
+    return static_cast<uint64_t>(to_cpp<const blsct::UnsignedTransaction>(vp_unsigned_transaction)->GetFee());
 }
 
-size_t get_unsigned_transaction_inputs_size(const void* vp_unsigned_transaction)
+size_t get_unsigned_transaction_inputs_size(const BlsctUnsignedTransaction* vp_unsigned_transaction)
 {
     RETURN_RET_VAL_IF_NULL(vp_unsigned_transaction, 0);
-    return static_cast<const blsct::UnsignedTransaction*>(vp_unsigned_transaction)->GetInputs().size();
+    return to_cpp<const blsct::UnsignedTransaction>(vp_unsigned_transaction)->GetInputs().size();
 }
 
-size_t get_unsigned_transaction_outputs_size(const void* vp_unsigned_transaction)
+size_t get_unsigned_transaction_outputs_size(const BlsctUnsignedTransaction* vp_unsigned_transaction)
 {
     RETURN_RET_VAL_IF_NULL(vp_unsigned_transaction, 0);
-    return static_cast<const blsct::UnsignedTransaction*>(vp_unsigned_transaction)->GetOutputs().size();
+    return to_cpp<const blsct::UnsignedTransaction>(vp_unsigned_transaction)->GetOutputs().size();
 }
 
-void delete_unsigned_transaction(void* vp_unsigned_transaction)
+void delete_unsigned_transaction(BlsctUnsignedTransaction* vp_unsigned_transaction)
 {
     if (vp_unsigned_transaction == nullptr) return;
-    delete static_cast<blsct::UnsignedTransaction*>(vp_unsigned_transaction);
+    delete to_cpp<blsct::UnsignedTransaction>(vp_unsigned_transaction);
 }
 
-const char* serialize_unsigned_transaction(const void* vp_unsigned_transaction)
+const char* serialize_unsigned_transaction(const BlsctUnsignedTransaction* vp_unsigned_transaction)
 {
     RETURN_RET_VAL_IF_NULL(vp_unsigned_transaction, nullptr);
-    const auto bytes = static_cast<const blsct::UnsignedTransaction*>(vp_unsigned_transaction)->Serialize();
+    const auto bytes = to_cpp<const blsct::UnsignedTransaction>(vp_unsigned_transaction)->Serialize();
     return StrToAllocCStr(HexStr(bytes));
 }
 
@@ -2517,12 +2565,12 @@ BlsctRetVal* deserialize_unsigned_transaction(const char* hex)
     return succ(static_cast<void*>(unsigned_tx), sizeof(blsct::UnsignedTransaction));
 }
 
-BlsctRetVal* sign_unsigned_transaction(const void* vp_unsigned_transaction)
+BlsctRetVal* sign_unsigned_transaction(const BlsctUnsignedTransaction* vp_unsigned_transaction)
 {
     RETURN_RET_VAL_IF_NULL(vp_unsigned_transaction, err(BLSCT_FAILURE));
 
     try {
-        auto signed_tx = static_cast<const blsct::UnsignedTransaction*>(vp_unsigned_transaction)->Sign();
+        auto signed_tx = to_cpp<const blsct::UnsignedTransaction>(vp_unsigned_transaction)->Sign();
         if (!signed_tx.has_value()) {
             return err(BLSCT_FAILURE);
         }
@@ -2600,10 +2648,10 @@ enum BlsctPredicateType get_vector_predicate_type(
 }
 
 BlsctRetVal* build_create_token_predicate(
-    const void* vp_token_info)
+    const BlsctTokenInfo* vp_token_info)
 {
     RETURN_RET_VAL_IF_NULL(vp_token_info, err(BLSCT_FAILURE));
-    auto predicate = blsct::CreateTokenPredicate(*static_cast<const blsct::TokenInfo*>(vp_token_info)).GetVch();
+    auto predicate = blsct::CreateTokenPredicate(*to_cpp<const blsct::TokenInfo>(vp_token_info)).GetVch();
 
     MALLOC_BYTES(BlsctVectorPredicate, blsct_predicate, predicate.size());
     if (blsct_predicate == nullptr) {
@@ -2639,7 +2687,7 @@ BlsctRetVal* build_mint_token_predicate(
 BlsctRetVal* build_mint_nft_predicate(
     const BlsctPubKey* blsct_token_public_key,
     const uint64_t nft_id,
-    const void* vp_metadata)
+    const BlsctStringMap* vp_metadata)
 {
     RETURN_RET_VAL_IF_NULL(blsct_token_public_key, err(BLSCT_FAILURE));
 
@@ -2723,7 +2771,7 @@ uint64_t get_mint_nft_predicate_nft_id(
     return predicate->GetNftId();
 }
 
-void* get_mint_nft_predicate_metadata(
+BlsctStringMap* get_mint_nft_predicate_metadata(
     const BlsctVectorPredicate* blsct_vector_predicate,
     size_t obj_size)
 {
@@ -2852,24 +2900,24 @@ BlsctScalar* calc_priv_spending_key(
 // Misc helper functions
 
 // uint64_t vector
-void* create_uint64_vec()
+BlsctUint64Vec* create_uint64_vec()
 {
     auto vec = new (std::nothrow) std::vector<uint64_t>;
     HANDLE_MEM_ALLOC_FAILURE(vec);
-    return static_cast<void*>(vec);
+    return to_handle<BlsctUint64Vec>(vec);
 }
 
-void add_to_uint64_vec(void* vp_uint64_vec, const uint64_t n)
+void add_to_uint64_vec(BlsctUint64Vec* vp_uint64_vec, const uint64_t n)
 {
     RETURN_IF_NULL(vp_uint64_vec);
-    auto uint64_vec = static_cast<std::vector<uint64_t>*>(vp_uint64_vec);
+    auto uint64_vec = to_cpp<std::vector<uint64_t>>(vp_uint64_vec);
     uint64_vec->push_back(n);
 }
 
-void delete_uint64_vec(const void* vp_vec)
+void delete_uint64_vec(const BlsctUint64Vec* vp_vec)
 {
     if (vp_vec == nullptr) return;
-    auto vec = static_cast<const std::vector<uint64_t>*>(vp_vec);
+    auto vec = to_cpp<const std::vector<uint64_t>>(vp_vec);
     delete vec;
 }
 

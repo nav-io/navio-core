@@ -2,29 +2,30 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/external_api/blsct.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
-#include <util/strencodings.h>
-#include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/tokens/predicate_parser.h>
+#include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/unsigned_transaction.h>
+#include <blsct/wallet/verification.h>
 #include <core_io.h>
 #include <hash.h>
-#include <blsct/wallet/txfactory.h>
-#include <blsct/wallet/verification.h>
+#include <iostream>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <txdb.h>
+#include <util/strencodings.h>
 #include <wallet/receive.h>
 #include <wallet/test/util.h>
 #include <wallet/wallet.h>
-#include <iostream>
 
 #include <boost/test/unit_test.hpp>
 
 BOOST_FIXTURE_TEST_SUITE(external_api_tests, BasicTestingSetup)
 
-uint8_t hex_to_uint(char c) {
+uint8_t hex_to_uint(char c)
+{
     if (c >= '0' && c <= '9') {
         return c - '0';
     } else if (c >= 'a' && c <= 'f') {
@@ -35,15 +36,28 @@ uint8_t hex_to_uint(char c) {
 }
 
 template <typename T>
-T& RequireSuccess(BlsctRetVal* rv)
+T* RequireSuccess(BlsctRetVal* rv)
 {
     BOOST_REQUIRE(rv != nullptr);
     BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
     BOOST_REQUIRE(rv->value != nullptr);
-    return *static_cast<T*>(rv->value);
+    return static_cast<T*>(rv->value);
 }
 
-static std::map<std::string, std::string> ReadStringMap(const void* vp_string_map)
+// Cast opaque handle to C++ type for direct field access in tests
+template <typename Cpp, typename Handle>
+Cpp* as_cpp(Handle* h)
+{
+    return reinterpret_cast<Cpp*>(h);
+}
+
+template <typename Cpp, typename Handle>
+const Cpp* as_cpp(const Handle* h)
+{
+    return reinterpret_cast<const Cpp*>(h);
+}
+
+static std::map<std::string, std::string> ReadStringMap(const BlsctStringMap* vp_string_map)
 {
     std::map<std::string, std::string> out;
     const size_t size = get_string_map_size(vp_string_map);
@@ -68,14 +82,14 @@ BOOST_AUTO_TEST_CASE(test_cmutable_transaction_sizes)
     std::string tx_hex = "200000000100000000000000000000000000000000000000000000000000000000000000000503615d0200ffffffff02ffffffffffffff7f0100000000000000015101855f4e35c5fbe93bf5b8a7a2dc55420144388fd0736ce7d9c8289e793da409d89f2bf2f4f4ac9364d81922d9255c33880683ed1c387aa2555b28af1c6d2b4a2725af9551263c00962daeec3736de0724167d18579973ff9cfcaeedc9ed59036aaaa2ad79cef575dc618d14729169a88c87edb5d3303efab1109572ca4a98800d61c45d8ca9074a7beb9c5c4123e7af8054b4bce1a360c663b86e8af1f06dea120fce8d7529b90ff383fd69c7dd9a50215881df91544949b95eaeac780c133699bdb030b321c32c0efbafa29fe840fe93b01bffc47e096a4577f5ba7d6745506f5e658cbd21c0c7f4c5fc28fdb28dd1c27a8027da5ca650a48ced1c52725abc54a1bd54e9823341753de270ea7882fd54b5b7513d9184635b9dbf0812ccf769df4cb50985bfa52fa515fa7034a317b2da1453d2d919797a22e6889c8aada6fe25e2dfda8f57f57de8fc2a9fa957d264240d06b8548ad7eec8b644df2e89b9a5a1d83ecce4ca94005b7d61782743e74ed011f7cc96c634327b67cfbc954de4effa0d7884f88d27ac1c1686bad02f527975ed9f3e7b2570120dc68ad88ddd350119d00c6df24916d5fc361f20f4f4d4482711b5850b3f91c9315beb1af544d63ed7049b6a1af783e0171526ba9c31466de735527d2d1bfeaf292a73ecf0312e6e784ae18dc6949e4a452fadc0734bff7bdf56074434f7a311290ba2ec6cbe960e29829d2b8ad6fb7946e356580b5a40f9676274a8336c5eecc36a9ddb58bb81cd8d08dfda7714aa9634941a94076cbc3ed74561d9043146dc81f1ccafd4e06f98faae3da017fe07af9ac407d0b81e6e1e634e5b53f5f98728850298673e355093844d0443466fad33d233ed7c40c1788a43d4d48d63778e8cf80e9cd5d01e789637b0cae99a372dd0bc8b5dbf2bc2df9fea229d71eaebab6a9277bb3bb3ba07c14edef6a7fcdcf02e8c1e927872003b9683d3b3ff1e740d5ec8a8145361166b33da8dcda6edf5d7bf32f63d27a5b72e515e6641b672275eee06f3bd5abd6790eded07d49b9e55e5c29e136eb5ad4857f9f55b6e7be10d2002ed91244243ea0fe7b6dea43ea70eb0d3d438ae2a335ced8e1620392562a2c503d2c4b53bed0d39c3749cb032741cacd0ca73bc6d72d350184cc82a45ad8df2e3443599ba51dfd5dce328362f9032cb350f579234f36c282d4b0acdf27d6a8d66f62713adf6481c8c9f240f59a15c6e064a5c05b56e6c068801f639ee1e83003a6a8dd97d5c24b5236c30d43efa0d75709fcaba4ca72077232f537900b2697973d2a08ee405d4298d4a8afeb24f6066b9648b3265e10931756678606fc173b92525567648af5408ff6af65eece8bbe70c671f9f8b94f012dd97eb3f8efcbeae6b34fc2fa3932ffac63b68c7167eeea1b7798872c92e40c057663cd1bdd07ce887a175b0feb74c394f9232dbaf3c8bd84e5624c2b6ca3605cfe3a1acfd1c5871a54d5a5b497588916840d422eeabc75d528275e0f7db46d95654ec9453c20000000000000000266a24aa21a9ede2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf9000000008a8c3b2f2bafb7b71f9192b2b8e02df5caf27c04b535ef577c0703f820a110155984f294bc01fccaf6957b622156a97712e57526ce7ef914af67e7aea2fd3daf8a4176660300ea64be6ab6c87b1a597cb96f7d5ac0ab59fe115190bc33946ba3";
 
     DataStream st{ParseHex(tx_hex)};
-    TransactionSerParams params { .allow_witness = true };
-    ParamsStream ps {params, st};
+    TransactionSerParams params{.allow_witness = true};
+    ParamsStream ps{params, st};
 
     CMutableTransaction tx;
 
     try {
         tx.Unserialize(ps); // should not throw an exception
-    } catch(...) {
+    } catch (...) {
         BOOST_CHECK(false);
     }
 }
@@ -174,7 +188,7 @@ BOOST_AUTO_TEST_CASE(test_amount_recovery_returns_gamma)
     auto* req = gen_amount_recovery_req(rp_buf, rp_size, &blsct_nonce, nullptr);
     BOOST_REQUIRE(req != nullptr);
 
-    void* req_vec = create_amount_recovery_req_vec();
+    auto* req_vec = create_amount_recovery_req_vec();
     add_to_amount_recovery_req_vec(req_vec, req);
 
     auto* amounts_rv = recover_amount(req_vec);
@@ -229,7 +243,7 @@ BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
     SERIALIZE_AND_COPY(nonce, blsct_nonce);
 
     auto* req = gen_amount_recovery_req(rp_buf, rp_st.size(), &blsct_nonce, nullptr);
-    void* req_vec = create_amount_recovery_req_vec();
+    auto* req_vec = create_amount_recovery_req_vec();
     add_to_amount_recovery_req_vec(req_vec, req);
 
     auto* amounts_rv = recover_amount(req_vec);
@@ -310,34 +324,34 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     BOOST_REQUIRE(token_public_key != nullptr);
 
     auto* token_info_rv = build_token_info(BlsctToken, token_public_key, metadata, 1000);
-    auto& token_info = RequireSuccess<blsct::TokenInfo>(token_info_rv);
-    BOOST_CHECK_EQUAL(get_token_info_type(&token_info), BlsctToken);
-    BOOST_CHECK_EQUAL(get_token_info_total_supply(&token_info), 1000U);
+    auto* token_info = RequireSuccess<BlsctTokenInfo>(token_info_rv);
+    BOOST_CHECK_EQUAL(get_token_info_type(token_info), BlsctToken);
+    BOOST_CHECK_EQUAL(get_token_info_total_supply(token_info), 1000U);
 
-    void* token_info_metadata = get_token_info_metadata(&token_info);
+    auto* token_info_metadata = static_cast<BlsctStringMap*>(get_token_info_metadata(token_info));
     BOOST_REQUIRE(token_info_metadata != nullptr);
     BOOST_CHECK(ReadStringMap(token_info_metadata) == expected_metadata);
     delete_string_map(token_info_metadata);
 
-    const char* token_info_hex = serialize_token_info(&token_info);
+    const char* token_info_hex = serialize_token_info(token_info);
     BOOST_REQUIRE(token_info_hex != nullptr);
     auto* token_info_roundtrip_rv = deserialize_token_info(token_info_hex);
-    auto& token_info_roundtrip = RequireSuccess<blsct::TokenInfo>(token_info_roundtrip_rv);
-    BOOST_CHECK_EQUAL(token_info_roundtrip.nTotalSupply, token_info.nTotalSupply);
-    BOOST_CHECK(token_info_roundtrip.publicKey == token_info.publicKey);
-    BOOST_CHECK(token_info_roundtrip.mapMetadata == token_info.mapMetadata);
+    auto* token_info_roundtrip = RequireSuccess<BlsctTokenInfo>(token_info_roundtrip_rv);
+    BOOST_CHECK_EQUAL(as_cpp<blsct::TokenInfo>(token_info_roundtrip)->nTotalSupply, as_cpp<blsct::TokenInfo>(token_info)->nTotalSupply);
+    BOOST_CHECK(as_cpp<blsct::TokenInfo>(token_info_roundtrip)->publicKey == as_cpp<blsct::TokenInfo>(token_info)->publicKey);
+    BOOST_CHECK(as_cpp<blsct::TokenInfo>(token_info_roundtrip)->mapMetadata == as_cpp<blsct::TokenInfo>(token_info)->mapMetadata);
 
-    auto* create_pred_rv = build_create_token_predicate(&token_info);
+    auto* create_pred_rv = build_create_token_predicate(token_info);
     BOOST_REQUIRE(create_pred_rv != nullptr);
     BOOST_REQUIRE_EQUAL(create_pred_rv->result, BLSCT_SUCCESS);
     auto* create_pred = static_cast<BlsctVectorPredicate*>(create_pred_rv->value);
     BOOST_CHECK_EQUAL(get_vector_predicate_type(create_pred, create_pred_rv->value_size), BlsctCreateTokenPredicateType);
 
     auto* parsed_token_info_rv = get_create_token_predicate_token_info(create_pred, create_pred_rv->value_size);
-    auto& parsed_token_info = RequireSuccess<blsct::TokenInfo>(parsed_token_info_rv);
-    BOOST_CHECK(parsed_token_info.publicKey == token_info.publicKey);
-    BOOST_CHECK_EQUAL(parsed_token_info.nTotalSupply, token_info.nTotalSupply);
-    BOOST_CHECK(parsed_token_info.mapMetadata == token_info.mapMetadata);
+    auto* parsed_token_info = RequireSuccess<BlsctTokenInfo>(parsed_token_info_rv);
+    BOOST_CHECK(as_cpp<blsct::TokenInfo>(parsed_token_info)->publicKey == as_cpp<blsct::TokenInfo>(token_info)->publicKey);
+    BOOST_CHECK_EQUAL(as_cpp<blsct::TokenInfo>(parsed_token_info)->nTotalSupply, as_cpp<blsct::TokenInfo>(token_info)->nTotalSupply);
+    BOOST_CHECK(as_cpp<blsct::TokenInfo>(parsed_token_info)->mapMetadata == as_cpp<blsct::TokenInfo>(token_info)->mapMetadata);
 
     auto* mint_pred_rv = build_mint_token_predicate(token_public_key, 25);
     BOOST_REQUIRE(mint_pred_rv != nullptr);
@@ -365,7 +379,7 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     BOOST_CHECK_EQUAL(get_vector_predicate_type(mint_nft_pred, mint_nft_pred_rv->value_size), BlsctMintNftPredicateType);
     BOOST_CHECK_EQUAL(get_mint_nft_predicate_nft_id(mint_nft_pred, mint_nft_pred_rv->value_size), 7U);
 
-    void* parsed_nft_metadata = get_mint_nft_predicate_metadata(mint_nft_pred, mint_nft_pred_rv->value_size);
+    auto* parsed_nft_metadata = static_cast<BlsctStringMap*>(get_mint_nft_predicate_metadata(mint_nft_pred, mint_nft_pred_rv->value_size));
     BOOST_REQUIRE(parsed_nft_metadata != nullptr);
     const std::map<std::string, std::string> expected_nft_metadata{{"rarity", "legendary"}};
     BOOST_CHECK(ReadStringMap(parsed_nft_metadata) == expected_nft_metadata);
@@ -384,10 +398,10 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     auto* blinding_key_rv = gen_scalar(99);
     BOOST_REQUIRE(blinding_key_rv != nullptr);
 
-    auto* create_output_rv = build_unsigned_create_token_output(token_key, &token_info);
+    auto* create_output_rv = build_unsigned_create_token_output(token_key, token_info);
     BOOST_REQUIRE(create_output_rv != nullptr);
     BOOST_REQUIRE_EQUAL(create_output_rv->result, BLSCT_SUCCESS);
-    const char* create_output_hex = serialize_unsigned_output(create_output_rv->value);
+    const char* create_output_hex = serialize_unsigned_output(static_cast<BlsctUnsignedOutput*>(create_output_rv->value));
     BOOST_REQUIRE(create_output_hex != nullptr);
     {
         DataStream st{ParseHex(create_output_hex)};
@@ -401,7 +415,7 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     auto* mint_output_rv = build_unsigned_mint_token_output(dest, 25, static_cast<const BlsctScalar*>(blinding_key_rv->value), token_key, token_public_key);
     BOOST_REQUIRE(mint_output_rv != nullptr);
     BOOST_REQUIRE_EQUAL(mint_output_rv->result, BLSCT_SUCCESS);
-    const char* mint_output_hex = serialize_unsigned_output(mint_output_rv->value);
+    const char* mint_output_hex = serialize_unsigned_output(static_cast<BlsctUnsignedOutput*>(mint_output_rv->value));
     BOOST_REQUIRE(mint_output_hex != nullptr);
     {
         DataStream st{ParseHex(mint_output_hex)};
@@ -415,7 +429,7 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     auto* mint_nft_output_rv = build_unsigned_mint_nft_output(dest, static_cast<const BlsctScalar*>(blinding_key_rv->value), token_key, token_public_key, 7, nft_metadata);
     BOOST_REQUIRE(mint_nft_output_rv != nullptr);
     BOOST_REQUIRE_EQUAL(mint_nft_output_rv->result, BLSCT_SUCCESS);
-    const char* mint_nft_output_hex = serialize_unsigned_output(mint_nft_output_rv->value);
+    const char* mint_nft_output_hex = serialize_unsigned_output(static_cast<BlsctUnsignedOutput*>(mint_nft_output_rv->value));
     BOOST_REQUIRE(mint_nft_output_hex != nullptr);
     {
         DataStream st{ParseHex(mint_nft_output_hex)};
@@ -429,11 +443,11 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
 
     delete_string_map(metadata);
     delete_string_map(nft_metadata);
-    delete_token_info(token_info_roundtrip_rv->value);
+    delete_token_info(RequireSuccess<BlsctTokenInfo>(token_info_roundtrip_rv));
     free(token_info_roundtrip_rv);
-    delete_token_info(parsed_token_info_rv->value);
+    delete_token_info(RequireSuccess<BlsctTokenInfo>(parsed_token_info_rv));
     free(parsed_token_info_rv);
-    delete_token_info(token_info_rv->value);
+    delete_token_info(RequireSuccess<BlsctTokenInfo>(token_info_rv));
     free(token_info_rv);
     free_obj((void*)token_public_key);
     free_obj((void*)mint_pred_pub_key);
@@ -445,11 +459,11 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     free_obj((void*)create_output_hex);
     free_obj((void*)mint_output_hex);
     free_obj((void*)mint_nft_output_hex);
-    delete_unsigned_output(create_output_rv->value);
+    delete_unsigned_output(RequireSuccess<BlsctUnsignedOutput>(create_output_rv));
     free(create_output_rv);
-    delete_unsigned_output(mint_output_rv->value);
+    delete_unsigned_output(RequireSuccess<BlsctUnsignedOutput>(mint_output_rv));
     free(mint_output_rv);
-    delete_unsigned_output(mint_nft_output_rv->value);
+    delete_unsigned_output(RequireSuccess<BlsctUnsignedOutput>(mint_nft_output_rv));
     free(mint_nft_output_rv);
     free_obj(master_token_key_rv->value);
     free(master_token_key_rv);
@@ -532,10 +546,10 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     BOOST_REQUIRE(unsigned_output_rv != nullptr);
     BOOST_REQUIRE_EQUAL(unsigned_output_rv->result, BLSCT_SUCCESS);
 
-    void* unsigned_tx = create_unsigned_transaction();
+    auto* unsigned_tx = static_cast<BlsctUnsignedTransaction*>(create_unsigned_transaction());
     BOOST_REQUIRE(unsigned_tx != nullptr);
-    add_unsigned_transaction_input(unsigned_tx, unsigned_input_rv->value);
-    add_unsigned_transaction_output(unsigned_tx, unsigned_output_rv->value);
+    add_unsigned_transaction_input(unsigned_tx, static_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
+    add_unsigned_transaction_output(unsigned_tx, static_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
     set_unsigned_transaction_fee(unsigned_tx, 125);
 
     BOOST_CHECK_EQUAL(get_unsigned_transaction_inputs_size(unsigned_tx), 1U);
@@ -548,11 +562,11 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     BOOST_REQUIRE(unsigned_tx_roundtrip_rv != nullptr);
     BOOST_REQUIRE_EQUAL(unsigned_tx_roundtrip_rv->result, BLSCT_SUCCESS);
 
-    BOOST_CHECK_EQUAL(get_unsigned_transaction_inputs_size(unsigned_tx_roundtrip_rv->value), 1U);
-    BOOST_CHECK_EQUAL(get_unsigned_transaction_outputs_size(unsigned_tx_roundtrip_rv->value), 1U);
-    BOOST_CHECK_EQUAL(get_unsigned_transaction_fee(unsigned_tx_roundtrip_rv->value), 125U);
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_inputs_size(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value)), 1U);
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_outputs_size(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value)), 1U);
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_fee(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value)), 125U);
 
-    auto* signed_tx_rv = sign_unsigned_transaction(unsigned_tx_roundtrip_rv->value);
+    auto* signed_tx_rv = sign_unsigned_transaction(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value));
     BOOST_REQUIRE(signed_tx_rv != nullptr);
     BOOST_REQUIRE_EQUAL(signed_tx_rv->result, BLSCT_SUCCESS);
     const char* signed_tx_hex = static_cast<const char*>(signed_tx_rv->value);
@@ -587,15 +601,15 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     free(out_point_rv);
     free_obj(tx_in_rv->value);
     free(tx_in_rv);
-    delete_unsigned_input(unsigned_input_rv->value);
+    delete_unsigned_input(static_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
     free(unsigned_input_rv);
     free_obj(tx_out_rv->value);
     free(tx_out_rv);
-    delete_unsigned_output(unsigned_output_rv->value);
+    delete_unsigned_output(static_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
     free(unsigned_output_rv);
     free_obj((void*)unsigned_tx_hex);
     delete_unsigned_transaction(unsigned_tx);
-    delete_unsigned_transaction(unsigned_tx_roundtrip_rv->value);
+    delete_unsigned_transaction(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value));
     free(unsigned_tx_roundtrip_rv);
     free_obj(signed_tx_rv->value);
     free(signed_tx_rv);
@@ -664,10 +678,10 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
         BOOST_REQUIRE(unsigned_output_rv != nullptr);
         BOOST_REQUIRE_EQUAL(unsigned_output_rv->result, BLSCT_SUCCESS);
 
-        void* unsigned_tx = create_unsigned_transaction();
+        auto* unsigned_tx = static_cast<BlsctUnsignedTransaction*>(create_unsigned_transaction());
         BOOST_REQUIRE(unsigned_tx != nullptr);
-        add_unsigned_transaction_input(unsigned_tx, unsigned_input_rv->value);
-        add_unsigned_transaction_output(unsigned_tx, unsigned_output_rv->value);
+        add_unsigned_transaction_input(unsigned_tx, static_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
+        add_unsigned_transaction_output(unsigned_tx, static_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
         set_unsigned_transaction_fee(unsigned_tx, fee);
 
         auto* signed_tx_rv = sign_unsigned_transaction(unsigned_tx);
@@ -694,11 +708,11 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
         free(out_point_rv);
         free_obj(tx_in_rv->value);
         free(tx_in_rv);
-        delete_unsigned_input(unsigned_input_rv->value);
+        delete_unsigned_input(static_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
         free(unsigned_input_rv);
         free_obj(tx_out_rv->value);
         free(tx_out_rv);
-        delete_unsigned_output(unsigned_output_rv->value);
+        delete_unsigned_output(static_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
         free(unsigned_output_rv);
         delete_unsigned_transaction(unsigned_tx);
         free_obj(signed_tx_rv->value);
@@ -710,7 +724,7 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
     const std::string tx1 = build_signed_tx(31, "1111111111111111111111111111111111111111111111111111111111111111", 400, 125);
     const std::string tx2 = build_signed_tx(41, "2222222222222222222222222222222222222222222222222222222222222222", 300, 200);
 
-    void* tx_hex_vec = create_tx_hex_vec();
+    auto* tx_hex_vec = static_cast<BlsctTxHexVec*>(create_tx_hex_vec());
     BOOST_REQUIRE(tx_hex_vec != nullptr);
     add_to_tx_hex_vec(tx_hex_vec, tx1.c_str());
     add_to_tx_hex_vec(tx_hex_vec, tx2.c_str());
