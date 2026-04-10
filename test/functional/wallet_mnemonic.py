@@ -134,6 +134,12 @@ class WalletMnemonicTest(BitcoinTestFramework):
         seed_enc = w_enc.getblsctseed()
         assert len(seed_enc) > 0
 
+        self.log.info("Test dumpmnemonic on locked encrypted wallet errors")
+        w_enc.walletlock()
+        assert_raises_rpc_error(-13, "wallet passphrase", w_enc.dumpmnemonic)
+        # Re-unlock for any subsequent tests
+        w_enc.walletpassphrase("testpass", 999999)
+
         self.log.info("Test multi-address consistency: 5 addresses match after restore")
         node.createwallet(wallet_name="test_multiaddr", blsct=True)
         w_ma = node.get_wallet_rpc("test_multiaddr")
