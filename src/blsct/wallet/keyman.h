@@ -46,6 +46,7 @@ class KeyMan : public Manager, public KeyRing
 {
 private:
     blsct::HDChain m_hd_chain;
+    std::vector<unsigned char> m_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains;
 
     bool AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey);
@@ -85,6 +86,24 @@ public:
 
     bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false) override;
     bool IsHDEnabled() const override;
+
+    void LoadMnemonicEntropy(const std::vector<unsigned char>& entropy)
+    {
+        LOCK(cs_KeyStore);
+        m_mnemonic_entropy = entropy;
+    }
+
+    bool HasMnemonicEntropy() const
+    {
+        LOCK(cs_KeyStore);
+        return !m_mnemonic_entropy.empty();
+    }
+
+    std::vector<unsigned char> GetMnemonicEntropy() const
+    {
+        LOCK(cs_KeyStore);
+        return m_mnemonic_entropy;
+    }
 
     /* Returns true if the wallet can generate new keys */
     bool CanGenerateKeys() const;

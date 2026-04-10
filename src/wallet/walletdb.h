@@ -314,6 +314,8 @@ public:
     //! write the hdchain model (external chain child index counter)
     bool WriteHDChain(const CHDChain& chain);
     bool WriteBLSCTHDChain(const blsct::HDChain& chain);
+    bool WriteBLSCTMnemonicEntropy(const std::vector<unsigned char>& entropy);
+    bool EraseBLSCTMnemonicEntropy();
 
     //! Delete records of the given types
     bool EraseRecords(const std::unordered_set<std::string>& types);
@@ -341,6 +343,7 @@ bool LoadHDChain(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTCryptedKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTCryptedOutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTHDChain(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
+bool LoadBLSCTMnemonicEntropy(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCToutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadSpendKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);

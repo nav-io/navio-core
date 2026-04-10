@@ -8,7 +8,8 @@
 namespace blsct {
 enum SeedType {
     IMPORT_MASTER_KEY,
-    IMPORT_VIEW_KEY
+    IMPORT_VIEW_KEY,
+    IMPORT_MNEMONIC
 };
 
 } // namespace blsct

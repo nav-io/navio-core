@@ -36,6 +36,7 @@ const std::string ACTIVEINTERNALSPK{"activeinternalspk"};
 const std::string BESTBLOCK_NOMERKLE{"bestblock_nomerkle"};
 const std::string BESTBLOCK{"bestblock"};
 const std::string BLSCTHDCHAIN{"blscthdchain"};
+const std::string BLSCTMNEMONIC{"blsctmnemonic"};
 const std::string BLSCTKEY{"blsctkey"};
 const std::string BLSCTOUTKEY{"blsctoutkey"};
 const std::string BLSCTKEYMETA{"blsctkeymeta"};
@@ -76,7 +77,7 @@ const std::string WATCHS{"watchs"};
 const std::string BLSCTWATCHMETA{"blsctwatchmeta"};
 const std::string BLSCTWATCHS{"blsctwatchs"};
 const std::unordered_set<std::string> LEGACY_TYPES{CRYPTED_KEY, CSCRIPT, DEFAULTKEY, HDCHAIN, KEYMETA, KEY, OLD_KEY, POOL, WATCHMETA, WATCHS};
-const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTOUTKEY, BLSCTWATCHMETA, BLSCTWATCHS};
+const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTOUTKEY, BLSCTWATCHMETA, BLSCTWATCHS, BLSCTMNEMONIC};
 const std::unordered_set<std::string> BLSCTKEY_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, BLSCTOUTKEY, CRYPTED_BLSCTOUTKEY};
 } // namespace DBKeys
 
@@ -865,6 +866,22 @@ bool LoadBLSCTHDChain(CWallet* pwallet, DataStream& ssValue, std::string& strErr
     return true;
 }
 
+bool LoadBLSCTMnemonicEntropy(CWallet* pwallet, DataStream& ssValue, std::string& strErr)
+{
+    LOCK(pwallet->cs_wallet);
+    try {
+        std::vector<unsigned char> entropy;
+        ssValue >> entropy;
+        pwallet->GetOrCreateBLSCTKeyMan()->LoadMnemonicEntropy(entropy);
+    } catch (const std::exception& e) {
+        if (strErr.empty()) {
+            strErr = e.what();
+        }
+        return false;
+    }
+    return true;
+}
+
 static DBErrors LoadMinVersion(CWallet* pwallet, DatabaseBatch& batch) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet)
 {
     AssertLockHeld(pwallet->cs_wallet);
@@ -1013,6 +1030,12 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
         return LoadBLSCTHDChain(pwallet, value, err) ? DBErrors:: LOAD_OK : DBErrors::CORRUPT;
     });
     result = std::max(result, blsct_hd_chain_res.m_result);
+
+    LoadResult blsct_mnemonic_res = LoadRecords(pwallet, batch, DBKeys::BLSCTMNEMONIC,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        return LoadBLSCTMnemonicEntropy(pwallet, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
+    });
+    result = std::max(result, blsct_mnemonic_res.m_result);
 
     LoadResult blsctkey_res = LoadRecords(pwallet, batch, DBKeys::BLSCTKEY,
         [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
@@ -1920,6 +1943,16 @@ bool WalletBatch::WriteHDChain(const CHDChain& chain)
 bool WalletBatch::WriteBLSCTHDChain(const blsct::HDChain& chain)
 {
     return WriteIC(DBKeys::BLSCTHDCHAIN, chain);
+}
+
+bool WalletBatch::WriteBLSCTMnemonicEntropy(const std::vector<unsigned char>& entropy)
+{
+    return WriteIC(DBKeys::BLSCTMNEMONIC, entropy);
+}
+
+bool WalletBatch::EraseBLSCTMnemonicEntropy()
+{
+    return EraseIC(DBKeys::BLSCTMNEMONIC);
 }
 
 bool WalletBatch::WriteWalletFlags(const uint64_t flags)

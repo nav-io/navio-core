@@ -14,6 +14,7 @@
 #include <wallet/rpc/util.h>
 #include <wallet/wallet.h>
 #include <wallet/walletutil.h>
+#include <mnemonic/mnemonic.h>
 
 #include <optional>
 
@@ -360,14 +361,16 @@ static RPCHelpMan createwallet()
             {"blsct", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a wallet with BLSCT keys."},
             {"storage_output", RPCArg::Type::BOOL, RPCArg::Default{false}, "Enables the storage of outputs instead of full txs (experimental)."},
             {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the wallet from the specified seed (can be a master seed or an audit key)."},
+            {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words) to restore a BLSCT wallet from. Mutually exclusive with 'seed'."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
                                               {RPCResult::Type::STR, "name", "The wallet name if created successfully. If the wallet was created using a full path, the wallet_name will be the full path."},
                                               {RPCResult::Type::STR, "warning", /*optional=*/true, "Warning messages, if any, related to creating the wallet. Multiple messages will be delimited by newlines. (DEPRECATED, returned only if config option -deprecatedrpc=walletwarningfield is passed.)"},
                                               {RPCResult::Type::ARR, "warnings", /*optional=*/true, "Warning messages, if any, related to creating the wallet.", {
-                                                                                                                                                                     {RPCResult::Type::STR, "", ""},
-                                                                                                                                                                 }},
+                                                                                                                                     {RPCResult::Type::STR, "", ""},
+                                                                                                                                 }},
+                                              {RPCResult::Type::STR, "mnemonic", /*optional=*/true, "BIP-39 mnemonic phrase (24 words) for new BLSCT wallets. Only returned for new BLSCT wallets created without a seed or mnemonic."},
                                           }},
         RPCExamples{HelpExampleCli("createwallet", "\"testwallet\"") + HelpExampleRpc("createwallet", "\"testwallet\"") + HelpExampleCliNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"load_on_startup", true}}) + HelpExampleRpcNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"load_on_startup", true}})},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -436,6 +439,33 @@ static RPCHelpMan createwallet()
                 }
             }
 
+            // Track whether this is a brand-new wallet (no seed or mnemonic provided)
+            bool is_new_wallet = seed.empty();
+
+            std::string mnemonic_str;
+            if (!request.params[11].isNull() && request.params[11].isStr()) {
+                mnemonic_str = request.params[11].get_str();
+            }
+
+            // Validate mutual exclusivity
+            if (!seed.empty() && !mnemonic_str.empty()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot specify both 'seed' and 'mnemonic'");
+            }
+
+            // If mnemonic provided, convert to entropy
+            if (!mnemonic_str.empty()) {
+                is_new_wallet = false;
+                if (!mnemonic::Validate(mnemonic_str)) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid mnemonic phrase");
+                }
+                auto entropy_opt = mnemonic::MnemonicToEntropy(mnemonic_str);
+                if (!entropy_opt) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to decode mnemonic");
+                }
+                seed = entropy_opt.value();
+                type = blsct::IMPORT_MNEMONIC;
+            }
+
             DatabaseOptions options;
             DatabaseStatus status;
             ReadDatabaseArgs(*context.args, options);
@@ -457,6 +487,15 @@ static RPCHelpMan createwallet()
                 obj.pushKV("warning", Join(warnings, Untranslated("\n")).original);
             }
             PushWarnings(warnings, obj);
+
+            // If this is a new BLSCT wallet (not restored from mnemonic/seed), include the mnemonic
+            if ((flags & WALLET_FLAG_BLSCT) && is_new_wallet) {
+                auto blsct_km = wallet->GetBLSCTKeyMan();
+                if (blsct_km && blsct_km->HasMnemonicEntropy()) {
+                    auto entropy = blsct_km->GetMnemonicEntropy();
+                    obj.pushKV("mnemonic", mnemonic::EntropyToMnemonic(entropy));
+                }
+            }
 
             return obj;
         },
@@ -849,6 +888,7 @@ RPCHelpMan walletdisplayaddress();
 // backup
 RPCHelpMan getblsctseed();
 RPCHelpMan getblsctauditkey();
+RPCHelpMan dumpmnemonic();
 RPCHelpMan dumpprivkey();
 RPCHelpMan importprivkey();
 RPCHelpMan importaddress();
@@ -928,6 +968,7 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &getbalance},
         {"wallet", &getblsctseed},
         {"wallet", &getblsctauditkey},
+        {"wallet", &dumpmnemonic},
         {"wallet", &getnewaddress},
         {"wallet", &getrawchangeaddress},
         {"wallet", &getreceivedbyaddress},

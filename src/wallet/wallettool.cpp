@@ -9,6 +9,7 @@
 #include <wallet/wallettool.h>
 
 #include <common/args.h>
+#include <mnemonic/mnemonic.h>
 #include <util/fs.h>
 #include <util/translation.h>
 #include <wallet/dump.h>
@@ -142,6 +143,10 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         tfm::format(std::cerr, "The -seed option can only be used with the 'create' command.\n");
         return false;
     }
+    if (args.IsArgSet("-mnemonic") && command != "create") {
+        tfm::format(std::cerr, "The -mnemonic option can only be used with the 'create' command.\n");
+        return false;
+    }
     if (command == "create" && !args.IsArgSet("-wallet")) {
         tfm::format(std::cerr, "Wallet name must be provided when creating a new wallet.\n");
         return false;
@@ -179,9 +184,36 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
 
 
         std::string seed = args.GetArg("-seed", "");
-        blsct::SeedType type;
+        std::string mnemonic_str = args.GetArg("-mnemonic", "");
 
-        if (seed.size() == 64) {
+        // Validate mutual exclusivity
+        if (!seed.empty() && !mnemonic_str.empty()) {
+            tfm::format(std::cerr, "Cannot specify both -seed and -mnemonic\n");
+            return false;
+        }
+
+        // Track whether this is a new wallet (no seed or mnemonic provided)
+        bool is_new_wallet = seed.empty() && mnemonic_str.empty();
+
+        // Parse mnemonic if provided
+        if (!mnemonic_str.empty()) {
+            if (!mnemonic::Validate(mnemonic_str)) {
+                tfm::format(std::cerr, "Invalid mnemonic phrase\n");
+                return false;
+            }
+            auto entropy_opt = mnemonic::MnemonicToEntropy(mnemonic_str);
+            if (!entropy_opt) {
+                tfm::format(std::cerr, "Failed to decode mnemonic\n");
+                return false;
+            }
+            seed = HexStr(entropy_opt.value());
+        }
+
+        blsct::SeedType type = blsct::IMPORT_MASTER_KEY;
+
+        if (!mnemonic_str.empty()) {
+            type = blsct::IMPORT_MNEMONIC;
+        } else if (seed.size() == 64) {
             type = blsct::IMPORT_MASTER_KEY;
         } else if (seed.size() == 64 + 96) {
             type = blsct::IMPORT_VIEW_KEY;
@@ -190,6 +222,16 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
 
         const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type);
         if (wallet_instance) {
+            // Print the mnemonic for new BLSCT wallets
+            if (make_blsct && is_new_wallet) {
+                auto blsct_km = wallet_instance->GetBLSCTKeyMan();
+                if (blsct_km && blsct_km->HasMnemonicEntropy()) {
+                    auto entropy = blsct_km->GetMnemonicEntropy();
+                    tfm::format(std::cout, "\nMnemonic: %s\n\n", mnemonic::EntropyToMnemonic(entropy));
+                    tfm::format(std::cout, "IMPORTANT: Write down this mnemonic phrase and store it securely.\n");
+                    tfm::format(std::cout, "It is the only way to recover your wallet if you lose access.\n\n");
+                }
+            }
             WalletShowInfo(wallet_instance.get());
             wallet_instance->Close();
         }

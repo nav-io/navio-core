@@ -6,6 +6,8 @@
 #include <blsct/wallet/keyman.h>
 #include <script/script.h>
 
+#include <random.h>
+
 namespace blsct {
 bool KeyMan::IsHDEnabled() const
 {
@@ -365,31 +367,42 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
         return false;
     }
 
-    if (seed.size() == 32) {
-        if (type == IMPORT_MASTER_KEY) {
-            MclScalar scalarSeed;
-            scalarSeed.SetVch(seed);
-            SetHDSeed(scalarSeed);
-        }
-    } else if (seed.size() == 80) {
-        if (type == IMPORT_VIEW_KEY) {
-            std::vector<unsigned char> viewVch(seed.begin(), seed.begin() + 32);
-            std::vector<unsigned char> spendingVch(seed.begin() + 32, seed.end());
+    if (seed.size() == 32 && type == IMPORT_MNEMONIC) {
+        auto masterKey = PrivateKey(BLS12_381_KeyGen::derive_master_SK(seed));
+        SetHDSeed(masterKey);
+        LoadMnemonicEntropy(seed);
+        wallet::WalletBatch batch(m_storage.GetDatabase());
+        batch.WriteBLSCTMnemonicEntropy(seed);
+    } else if (seed.size() == 32 && type == IMPORT_MASTER_KEY) {
+        MclScalar scalarSeed;
+        scalarSeed.SetVch(seed);
+        SetHDSeed(scalarSeed);
+    } else if (seed.size() == 80 && type == IMPORT_VIEW_KEY) {
+        std::vector<unsigned char> viewVch(seed.begin(), seed.begin() + 32);
+        std::vector<unsigned char> spendingVch(seed.begin() + 32, seed.end());
 
-            MclScalar scalarView;
-            scalarView.SetVch(viewVch);
+        MclScalar scalarView;
+        scalarView.SetVch(viewVch);
 
-            MclG1Point pointSpending;
-            pointSpending.SetVch(spendingVch);
+        MclG1Point pointSpending;
+        pointSpending.SetVch(spendingVch);
 
-            if (!AddViewKey(scalarView, PrivateKey(scalarView).GetPublicKey()))
-                throw std::runtime_error(std::string(__func__) + ": AddViewKey failed");
+        if (!AddViewKey(scalarView, PrivateKey(scalarView).GetPublicKey()))
+            throw std::runtime_error(std::string(__func__) + ": AddViewKey failed");
 
-            if (!AddSpendKey(pointSpending))
-                throw std::runtime_error(std::string(__func__) + ": AddSpendKey failed");
-        }
+        if (!AddSpendKey(pointSpending))
+            throw std::runtime_error(std::string(__func__) + ": AddSpendKey failed");
+    } else if (seed.empty()) {
+        std::vector<unsigned char> entropy(32);
+        GetStrongRandBytes(entropy);
+
+        auto masterKey = PrivateKey(BLS12_381_KeyGen::derive_master_SK(entropy));
+        SetHDSeed(masterKey);
+        LoadMnemonicEntropy(entropy);
+        wallet::WalletBatch batch(m_storage.GetDatabase());
+        batch.WriteBLSCTMnemonicEntropy(entropy);
     } else {
-        SetHDSeed(GenerateNewSeed());
+        return false;
     }
 
     if (!NewSubAddressPool() || !NewSubAddressPool(-1) || !NewSubAddressPool(-2)) {
