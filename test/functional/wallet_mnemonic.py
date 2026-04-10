@@ -9,6 +9,9 @@ from test_framework.util import assert_equal, assert_raises_rpc_error
 
 
 class WalletMnemonicTest(BitcoinTestFramework):
+    def add_options(self, parser):
+        self.add_wallet_options(parser, blsct=True)
+
     def set_test_params(self):
         self.num_nodes = 1
 
