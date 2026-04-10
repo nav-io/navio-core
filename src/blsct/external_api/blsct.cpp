@@ -501,7 +501,9 @@ BlsctAmountsRetVal* recover_amount(
 
         // the vector to return has the same size as the request vector
         auto result_vec = new (std::nothrow) std::vector<BlsctAmountRecoveryResult>;
-        RETURN_ERR_IF_MEM_ALLOC_FAILED(result_vec);
+        rv->result = BLSCT_MEM_ALLOC_FAILED;
+        RETURN_VAL_IF_MEM_ALLOC_FAILED(result_vec, rv);
+        rv->result = BLSCT_SUCCESS;
         result_vec->resize(amt_recovery_req_vec->size());
 
         // mark all the results as failed
@@ -1390,7 +1392,7 @@ BlsctPoint* scalar_muliply_point(
     Point sp = p * s;
 
     MALLOC_BYTES(BlsctPoint, blsct_sp, POINT_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_sp);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_sp);
     SERIALIZE_AND_COPY(sp, blsct_sp);
 
     return blsct_sp;
@@ -1412,7 +1414,7 @@ BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar)
     Point point = g * scalar;
 
     MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
     SERIALIZE_AND_COPY(point, blsct_point);
 
     return blsct_point;
