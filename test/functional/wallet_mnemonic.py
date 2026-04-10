@@ -65,6 +65,22 @@ class WalletMnemonicTest(BitcoinTestFramework):
             node.createwallet, wallet_name="test_invalid",
             blsct=True, mnemonic="invalid words here that are not real")
 
+        self.log.info("Test dumpmnemonic on seed-imported BLSCT wallet errors")
+        node.createwallet(wallet_name="test_seed_wallet", blsct=True, seed="00" * 32)
+        w_seed = node.get_wallet_rpc("test_seed_wallet")
+        assert_raises_rpc_error(-4, "Wallet does not have a mnemonic", w_seed.dumpmnemonic)
+
+        self.log.info("Test full lifecycle roundtrip: create -> dump -> restore -> verify same keys")
+        node.createwallet(wallet_name="test_lifecycle", blsct=True)
+        w_lc = node.get_wallet_rpc("test_lifecycle")
+        mnemonic_lc = w_lc.dumpmnemonic()
+        addr_lc = w_lc.getnewaddress()
+        # Restore from mnemonic into a new wallet
+        node.createwallet(wallet_name="test_lifecycle_restored", blsct=True, mnemonic=mnemonic_lc)
+        w_lc2 = node.get_wallet_rpc("test_lifecycle_restored")
+        addr_lc2 = w_lc2.getnewaddress()
+        assert_equal(addr_lc, addr_lc2)
+
 
 if __name__ == '__main__':
     WalletMnemonicTest().main()

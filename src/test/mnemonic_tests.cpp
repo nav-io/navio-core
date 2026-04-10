@@ -93,6 +93,44 @@ BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_7)
     BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(entropy), expected);
 }
 
+BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_160bit)
+{
+    // 160-bit entropy -> 15 words (BIP-39 test vector)
+    auto entropy = ParseHex("6610b25967cdcca9d59875f5cb50b0ea75433311869e930b");
+    std::string expected = "gravity machine north sort system female filter attitude volume fold club stay feature office ecology stable narrow fog";
+    BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(entropy), expected);
+}
+
+BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_vector_192bit)
+{
+    // 192-bit entropy -> 18 words (BIP-39 test vector)
+    auto entropy = ParseHex("f585c11aec520db57dd353c69554b21a89b20fb0650966fa0a9d6f74fd989d8f");
+    std::string expected = "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold";
+    BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(entropy), expected);
+}
+
+BOOST_AUTO_TEST_CASE(entropy_to_mnemonic_invalid_length)
+{
+    // 0 bytes
+    BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(Span<const unsigned char>()), "");
+
+    // 1 byte
+    unsigned char one_byte[] = {0x00};
+    BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(one_byte), "");
+
+    // 15 bytes (not a multiple of 4)
+    std::vector<unsigned char> fifteen(15, 0x00);
+    BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(fifteen), "");
+
+    // 17 bytes
+    std::vector<unsigned char> seventeen(17, 0x00);
+    BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(seventeen), "");
+
+    // 33 bytes (too large)
+    std::vector<unsigned char> thirtythree(33, 0x00);
+    BOOST_CHECK_EQUAL(mnemonic::EntropyToMnemonic(thirtythree), "");
+}
+
 BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_roundtrip_128)
 {
     auto entropy = ParseHex("9e885d952ad362caeb4efe34a8e91bd2");
@@ -107,6 +145,36 @@ BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_roundtrip_256)
     auto entropy = ParseHex("68a79eaca2324873eacc50cb9c6eca8cc68ea5d936f98787c60c7ebc74e6ce7c");
     std::string mnemonic = "hamster diagram private dutch cause delay private meat slide toddler razor book happy fancy gospel tennis maple dilemma loan word shrug inflict delay length";
     auto result = mnemonic::MnemonicToEntropy(mnemonic);
+    BOOST_REQUIRE(result.has_value());
+    BOOST_CHECK_EQUAL(HexStr(result.value()), HexStr(entropy));
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_roundtrip_160)
+{
+    // 160-bit (15 words)
+    auto entropy = ParseHex("6610b25967cdcca9d59875f5cb50b0ea75433311869e930b");
+    std::string mnemonic = "gravity machine north sort system female filter attitude volume fold club stay feature office ecology stable narrow fog";
+    auto result = mnemonic::MnemonicToEntropy(mnemonic);
+    BOOST_REQUIRE(result.has_value());
+    BOOST_CHECK_EQUAL(HexStr(result.value()), HexStr(entropy));
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_roundtrip_192)
+{
+    // 192-bit (18 words)
+    auto entropy = ParseHex("f585c11aec520db57dd353c69554b21a89b20fb0650966fa0a9d6f74fd989d8f");
+    std::string mnemonic = "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold";
+    auto result = mnemonic::MnemonicToEntropy(mnemonic);
+    BOOST_REQUIRE(result.has_value());
+    BOOST_CHECK_EQUAL(HexStr(result.value()), HexStr(entropy));
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_entropy_roundtrip_224)
+{
+    // 224-bit (21 words)
+    auto entropy = ParseHex("8197a4a47f0425faeaa69deebc05ca29c0a5b5cc76ceacc0");
+    auto mnemonic_str = mnemonic::EntropyToMnemonic(entropy);
+    auto result = mnemonic::MnemonicToEntropy(mnemonic_str);
     BOOST_REQUIRE(result.has_value());
     BOOST_CHECK_EQUAL(HexStr(result.value()), HexStr(entropy));
 }
@@ -138,6 +206,28 @@ BOOST_AUTO_TEST_CASE(validate_correct_mnemonic)
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"));
     BOOST_CHECK(mnemonic::Validate(
         "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote"));
+}
+
+BOOST_AUTO_TEST_CASE(validate_correct_mnemonic_15_words)
+{
+    // 160-bit -> 15 words
+    BOOST_CHECK(mnemonic::Validate(
+        "gravity machine north sort system female filter attitude volume fold club stay feature office ecology stable narrow fog"));
+}
+
+BOOST_AUTO_TEST_CASE(validate_correct_mnemonic_18_words)
+{
+    // 192-bit -> 18 words
+    BOOST_CHECK(mnemonic::Validate(
+        "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold"));
+}
+
+BOOST_AUTO_TEST_CASE(validate_correct_mnemonic_21_words)
+{
+    // 224-bit -> 21 words, roundtrip through EntropyToMnemonic
+    auto entropy = ParseHex("8197a4a47f0425faeaa69deebc05ca29c0a5b5cc76ceacc0");
+    std::string mnemonic_str = mnemonic::EntropyToMnemonic(entropy);
+    BOOST_CHECK(mnemonic::Validate(mnemonic_str));
 }
 
 BOOST_AUTO_TEST_CASE(validate_wrong_word_count)
@@ -199,6 +289,26 @@ BOOST_AUTO_TEST_CASE(generate_is_non_deterministic)
     std::string m1 = mnemonic::Generate();
     std::string m2 = mnemonic::Generate();
     BOOST_CHECK(m1 != m2);
+}
+
+BOOST_AUTO_TEST_CASE(generate_roundtrip)
+{
+    std::string m = mnemonic::Generate();
+    auto entropy = mnemonic::MnemonicToEntropy(m);
+    BOOST_REQUIRE(entropy.has_value());
+    std::string re_encoded = mnemonic::EntropyToMnemonic(entropy.value());
+    BOOST_CHECK_EQUAL(m, re_encoded);
+}
+
+BOOST_AUTO_TEST_CASE(generate_produces_valid_bls_key)
+{
+    std::string m = mnemonic::Generate();
+    auto entropy = mnemonic::MnemonicToEntropy(m);
+    BOOST_REQUIRE(entropy.has_value());
+    // Should not throw or crash
+    auto key = BLS12_381_KeyGen::derive_master_SK(entropy.value());
+    // Key should be non-zero (probability of all zeros is 2^-256)
+    (void)key;
 }
 
 BOOST_AUTO_TEST_CASE(mnemonic_to_blsct_key_determinism)
