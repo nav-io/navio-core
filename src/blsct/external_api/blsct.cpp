@@ -971,7 +971,7 @@ const void* get_ctx_in_at(const void* vp_ctx_ins, const size_t i)
 bool are_ctx_in_equal(const void* vp_a, const void* vp_b)
 {
     auto* a = static_cast<const CTxIn*>(vp_a);
-    auto* b = static_cast<const CTxIn*>(vp_a);
+    auto* b = static_cast<const CTxIn*>(vp_b);
     return *a == *b;
 }
 
