@@ -57,6 +57,18 @@ const Cpp* as_cpp(const Handle* h)
     return reinterpret_cast<const Cpp*>(h);
 }
 
+template <typename T>
+void free_typed_obj(T* x)
+{
+    free_obj(x);
+}
+
+template <typename T>
+void free_typed_obj(const T* x)
+{
+    free_obj(const_cast<T*>(x));
+}
+
 static std::map<std::string, std::string> ReadStringMap(const BlsctStringMap* vp_string_map)
 {
     std::map<std::string, std::string> out;
@@ -67,8 +79,8 @@ static std::map<std::string, std::string> ReadStringMap(const BlsctStringMap* vp
         BOOST_REQUIRE(key != nullptr);
         BOOST_REQUIRE(value != nullptr);
         out[key] = value;
-        free_obj((void*)key);
-        free_obj((void*)value);
+        free_typed_obj(key);
+        free_typed_obj(value);
     }
     return out;
 }
@@ -449,16 +461,16 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     free(parsed_token_info_rv);
     delete_token_info(RequireSuccess<BlsctTokenInfo>(token_info_rv));
     free(token_info_rv);
-    free_obj((void*)token_public_key);
-    free_obj((void*)mint_pred_pub_key);
-    free_obj((void*)token_pub_hex);
-    free_obj((void*)mint_pub_hex);
-    free_obj((void*)spend_pub_key);
-    free_obj((void*)sub_addr_id);
-    free_obj((void*)dest);
-    free_obj((void*)create_output_hex);
-    free_obj((void*)mint_output_hex);
-    free_obj((void*)mint_nft_output_hex);
+    free_typed_obj(token_public_key);
+    free_typed_obj(mint_pred_pub_key);
+    free_typed_obj(token_pub_hex);
+    free_typed_obj(mint_pub_hex);
+    free_typed_obj(spend_pub_key);
+    free_typed_obj(sub_addr_id);
+    free_typed_obj(dest);
+    free_typed_obj(create_output_hex);
+    free_typed_obj(mint_output_hex);
+    free_typed_obj(mint_nft_output_hex);
     delete_unsigned_output(RequireSuccess<BlsctUnsignedOutput>(create_output_rv));
     free(create_output_rv);
     delete_unsigned_output(RequireSuccess<BlsctUnsignedOutput>(mint_output_rv));
@@ -471,7 +483,7 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     free(token_key_rv);
     free_obj(collection_hash_rv->value);
     free(collection_hash_rv);
-    free_obj((void*)token_info_hex);
+    free_typed_obj(token_info_hex);
     free_obj(create_pred_rv->value);
     free(create_pred_rv);
     free_obj(mint_pred_rv->value);
@@ -594,9 +606,9 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     free(blinding_key_rv);
     free_obj(default_token_id_rv->value);
     free(default_token_id_rv);
-    free_obj((void*)spend_pub_key);
-    free_obj((void*)sub_addr_id);
-    free_obj((void*)dest);
+    free_typed_obj(spend_pub_key);
+    free_typed_obj(sub_addr_id);
+    free_typed_obj(dest);
     free_obj(out_point_rv->value);
     free(out_point_rv);
     free_obj(tx_in_rv->value);
@@ -607,7 +619,7 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     free(tx_out_rv);
     delete_unsigned_output(static_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
     free(unsigned_output_rv);
-    free_obj((void*)unsigned_tx_hex);
+    free_typed_obj(unsigned_tx_hex);
     delete_unsigned_transaction(unsigned_tx);
     delete_unsigned_transaction(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value));
     free(unsigned_tx_roundtrip_rv);
@@ -701,9 +713,9 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
         free(blinding_key_rv);
         free_obj(default_token_id_rv->value);
         free(default_token_id_rv);
-        free_obj((void*)spend_pub_key);
-        free_obj((void*)sub_addr_id);
-        free_obj((void*)dest);
+        free_typed_obj(spend_pub_key);
+        free_typed_obj(sub_addr_id);
+        free_typed_obj(dest);
         free_obj(out_point_rv->value);
         free(out_point_rv);
         free_obj(tx_in_rv->value);
