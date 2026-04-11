@@ -1083,7 +1083,7 @@ bool are_ctx_outs_equal(const BlsctCTxOutVec* vp_a, const BlsctCTxOutVec* vp_b)
 {
     auto* a = to_cpp<const std::vector<CTxOut>>(vp_a);
     auto* b = to_cpp<const std::vector<CTxOut>>(vp_b);
-    return a == b;
+    return *a == *b;
 }
 
 size_t get_ctx_outs_size(const BlsctCTxOutVec* vp_ctx_outs)
