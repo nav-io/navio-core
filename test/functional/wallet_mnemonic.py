@@ -203,8 +203,8 @@ class WalletMnemonicTest(BitcoinTestFramework):
         self.log.info("Test createwallet with mnemonic does NOT return mnemonic in response")
         # First create a wallet to get a known mnemonic
         result_new = node.createwallet(wallet_name="test_source_mnemonic", blsct=True)
-        source_mnemonic = result_new["mnemonic"]
         assert "mnemonic" in result_new
+        source_mnemonic = result_new["mnemonic"]
         # Restore from that mnemonic - response should NOT include mnemonic key
         result_restore = node.createwallet(
             wallet_name="test_restore_no_mnemonic", blsct=True, mnemonic=source_mnemonic)
