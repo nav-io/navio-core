@@ -1938,6 +1938,9 @@ BlsctRetVal* deserialize_sub_addr_id(const char* hex)
 {
     BlsctSubAddrId* blsct_sub_addr_id =
         reinterpret_cast<BlsctSubAddrId*>(DeserializeFromHex(hex, SUB_ADDR_ID_SIZE));
+    if (blsct_sub_addr_id == nullptr) {
+        return err("failed to deserialize sub addr id");
+    }
     return succ_as(blsct_sub_addr_id, SUB_ADDR_ID_SIZE);
 }
 
