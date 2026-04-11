@@ -709,6 +709,8 @@ BlsctTxInVec* create_tx_in_vec()
 
 void add_to_tx_in_vec(BlsctTxInVec* vp_tx_in_vec, const BlsctTxIn* tx_in)
 {
+    RETURN_IF_NULL(vp_tx_in_vec);
+    RETURN_IF_NULL(tx_in);
     auto* tx_in_vec = to_cpp<std::vector<BlsctTxIn>>(vp_tx_in_vec);
     tx_in_vec->push_back(*tx_in);
 }
