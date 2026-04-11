@@ -115,10 +115,10 @@ public:
         return !m_crypted_mnemonic_entropy.empty();
     }
 
-    std::vector<unsigned char> GetMnemonicEntropy() const
+    SecureBytes GetMnemonicEntropy() const
     {
         LOCK(cs_KeyStore);
-        return std::vector<unsigned char>(m_mnemonic_entropy.begin(), m_mnemonic_entropy.end());
+        return m_mnemonic_entropy;
     }
 
     /* Returns true if the wallet can generate new keys */
