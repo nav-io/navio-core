@@ -1699,6 +1699,9 @@ BlsctRetVal* deserialize_range_proof(
 {
     BlsctRangeProof* blsct_range_proof =
         static_cast<BlsctRangeProof*>(DeserializeFromHex(hex, range_proof_size));
+    if (blsct_range_proof == nullptr) {
+        return err("Failed to deserialize range proof");
+    }
     return succ_as(blsct_range_proof, range_proof_size);
 }
 
