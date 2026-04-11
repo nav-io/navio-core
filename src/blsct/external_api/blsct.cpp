@@ -765,12 +765,18 @@ BlsctCTxRetVal* build_ctx(
     const BlsctTxInVec* void_tx_ins,
     const BlsctTxOutVec* void_tx_outs)
 {
+    MALLOC_BYTES(BlsctCTxRetVal, rv, sizeof(BlsctCTxRetVal));
+    RETURN_IF_MEM_ALLOC_FAILED(rv);
+
+    if (void_tx_ins == nullptr || void_tx_outs == nullptr) {
+        rv->result = BLSCT_FAILURE;
+        return rv;
+    }
+
     auto tx_ins = to_cpp<const std::vector<BlsctTxIn>>(void_tx_ins);
     auto tx_outs = to_cpp<const std::vector<BlsctTxOut>>(void_tx_outs);
 
     blsct::TxFactoryBase psbt;
-    MALLOC_BYTES(BlsctCTxRetVal, rv, sizeof(BlsctCTxRetVal));
-    RETURN_IF_MEM_ALLOC_FAILED(rv);
 
     for (size_t i = 0; i < tx_ins->size(); ++i) {
         // unserialize tx_in fields and add to TxFactoryBase
