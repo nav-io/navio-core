@@ -20,12 +20,6 @@ class WalletMnemonicTest(BitcoinTestFramework):
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
 
-    def bitcoin_wallet_process(self, *args):
-        default_args = ['-datadir={}'.format(self.nodes[0].datadir_path), '-chain=%s' % self.chain]
-        return subprocess.Popen(
-            [self.options.naviowallet] + default_args + list(args),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
     def navio_wallet_create(self, wallet_name, mnemonic=None, seed=None):
         """Run navio-wallet create with -blsct. Options must come BEFORE the command."""
         args = [
