@@ -1910,6 +1910,9 @@ BlsctRetVal* deserialize_sub_addr(const char* hex)
 {
     BlsctSubAddr* blsct_sub_addr =
         reinterpret_cast<BlsctSubAddr*>(DeserializeFromHex(hex, SUB_ADDR_SIZE));
+    if (blsct_sub_addr == nullptr) {
+        return err_as("failed to deserialize sub address");
+    }
     return succ_as(blsct_sub_addr, SUB_ADDR_SIZE);
 }
 
