@@ -1052,8 +1052,10 @@ BOOST_AUTO_TEST_CASE(test_ctx_in_field_accessors)
     BOOST_CHECK_EQUAL(get_ctx_in_sequence(in0), 0xffffffffU);
 
     // scriptWitness
-    const BlsctScript* witness = get_ctx_in_script_witness(in0);
+    const BlsctRetVal* witness = get_ctx_in_script_witness(in0);
     BOOST_REQUIRE(witness != nullptr);
+    BOOST_CHECK(witness->result == BLSCT_SUCCESS);
+    BOOST_CHECK(witness->value_size > 0);
 
     // are_ctx_in_equal — same input compared to itself
     BOOST_CHECK(are_ctx_in_equal(in0, in0));
@@ -1061,7 +1063,8 @@ BOOST_AUTO_TEST_CASE(test_ctx_in_field_accessors)
     delete_ctx(ctx);
     free_typed_obj(prev_hash);
     free_typed_obj(script_sig);
-    free_typed_obj(witness);
+    free_obj(witness->value);
+    free_obj(witness);
 }
 
 BOOST_AUTO_TEST_CASE(test_ctx_out_vector_and_field_accessors)

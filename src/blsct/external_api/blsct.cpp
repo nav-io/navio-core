@@ -1095,12 +1095,15 @@ uint32_t get_ctx_in_sequence(const BlsctCTxIn* vp_ctx_in)
     return ctx_in->nSequence;
 }
 
-const BlsctScript* get_ctx_in_script_witness(const BlsctCTxIn* vp_ctx_in)
+BlsctRetVal* get_ctx_in_script_witness(const BlsctCTxIn* vp_ctx_in)
 {
     auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
-    auto copy = reinterpret_cast<BlsctScript*>(blsct_malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &ctx_in->scriptWitness, SCRIPT_SIZE);
-    return copy;
+    DataStream st{};
+    st << ctx_in->scriptWitness.stack;
+    MALLOC_BYTES(uint8_t, buf, st.size());
+    RETURN_IF_MEM_ALLOC_FAILED(buf);
+    std::memcpy(buf, st.data(), st.size());
+    return succ_as(buf, st.size());
 }
 
 // ctx outs

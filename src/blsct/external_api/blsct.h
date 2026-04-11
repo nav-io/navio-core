@@ -462,7 +462,7 @@ bool are_ctx_in_equal(const BlsctCTxIn* vp_a, const BlsctCTxIn* vp_b);
 const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* vp_ctx_in);
 uint32_t get_ctx_in_sequence(const BlsctCTxIn* vp_ctx_in);
-const BlsctScript* get_ctx_in_script_witness(const BlsctCTxIn* vp_ctx_in);
+BlsctRetVal* get_ctx_in_script_witness(const BlsctCTxIn* vp_ctx_in);
 
 // ctx_outs
 bool are_ctx_outs_equal(const BlsctCTxOutVec* vp_a, const BlsctCTxOutVec* vp_b);
