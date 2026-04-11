@@ -41,7 +41,7 @@ T* RequireSuccess(BlsctRetVal* rv)
     BOOST_REQUIRE(rv != nullptr);
     BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
     BOOST_REQUIRE(rv->value != nullptr);
-    return static_cast<T*>(rv->value);
+    return reinterpret_cast<T*>(rv->value);
 }
 
 // Cast opaque handle to C++ type for direct field access in tests
@@ -113,23 +113,23 @@ BOOST_AUTO_TEST_CASE(test_build_tx_in_gamma_is_blsct_scalar)
     // create a random scalar to use as gamma
     auto gamma_rv = gen_random_scalar();
     BOOST_REQUIRE(gamma_rv->result == BLSCT_SUCCESS);
-    auto* gamma = static_cast<BlsctScalar*>(gamma_rv->value);
+    auto* gamma = reinterpret_cast<BlsctScalar*>(gamma_rv->value);
 
     // create a spending key
     auto sk_rv = gen_random_scalar();
     BOOST_REQUIRE(sk_rv->result == BLSCT_SUCCESS);
-    auto* spending_key = static_cast<BlsctScalar*>(sk_rv->value);
+    auto* spending_key = reinterpret_cast<BlsctScalar*>(sk_rv->value);
 
     // create a token id
     auto tid_rv = gen_default_token_id();
     BOOST_REQUIRE(tid_rv->result == BLSCT_SUCCESS);
-    auto* token_id = static_cast<BlsctTokenId*>(tid_rv->value);
+    auto* token_id = reinterpret_cast<BlsctTokenId*>(tid_rv->value);
 
     // create an out point
     std::string txid_hex(64, '0');
     auto op_rv = gen_out_point(txid_hex.c_str());
     BOOST_REQUIRE(op_rv->result == BLSCT_SUCCESS);
-    auto* out_point = static_cast<BlsctOutPoint*>(op_rv->value);
+    auto* out_point = reinterpret_cast<BlsctOutPoint*>(op_rv->value);
 
     auto* tx_in_rv = build_tx_in(
         1000,
@@ -140,7 +140,7 @@ BOOST_AUTO_TEST_CASE(test_build_tx_in_gamma_is_blsct_scalar)
         false,
         false);
     BOOST_REQUIRE(tx_in_rv->result == BLSCT_SUCCESS);
-    auto* tx_in = static_cast<BlsctTxIn*>(tx_in_rv->value);
+    auto* tx_in = reinterpret_cast<BlsctTxIn*>(tx_in_rv->value);
 
     // verify the amount round-trips
     BOOST_CHECK_EQUAL(get_tx_in_amount(tx_in), 1000ULL);
@@ -167,7 +167,7 @@ BOOST_AUTO_TEST_CASE(test_amount_recovery_returns_gamma)
 
     auto tid_rv = gen_default_token_id();
     BOOST_REQUIRE(tid_rv->result == BLSCT_SUCCESS);
-    auto* blsct_token_id = static_cast<BlsctTokenId*>(tid_rv->value);
+    auto* blsct_token_id = reinterpret_cast<BlsctTokenId*>(tid_rv->value);
 
     TokenId token_id;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id, TOKEN_ID_SIZE, token_id);
@@ -234,7 +234,7 @@ BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
 
     auto tid_rv = gen_default_token_id();
     BOOST_REQUIRE(tid_rv->result == BLSCT_SUCCESS);
-    auto* blsct_token_id = static_cast<BlsctTokenId*>(tid_rv->value);
+    auto* blsct_token_id = reinterpret_cast<BlsctTokenId*>(tid_rv->value);
 
     TokenId token_id;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id, TOKEN_ID_SIZE, token_id);
@@ -267,12 +267,12 @@ BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
     // feed the recovered gamma directly into build_tx_in
     auto sk_rv = gen_random_scalar();
     BOOST_REQUIRE(sk_rv->result == BLSCT_SUCCESS);
-    auto* spending_key = static_cast<BlsctScalar*>(sk_rv->value);
+    auto* spending_key = reinterpret_cast<BlsctScalar*>(sk_rv->value);
 
     std::string txid_hex(64, '0');
     auto op_rv = gen_out_point(txid_hex.c_str());
     BOOST_REQUIRE(op_rv->result == BLSCT_SUCCESS);
-    auto* out_point = static_cast<BlsctOutPoint*>(op_rv->value);
+    auto* out_point = reinterpret_cast<BlsctOutPoint*>(op_rv->value);
 
     auto* tx_in_rv = build_tx_in(
         amount,
@@ -283,7 +283,7 @@ BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
         false,
         false);
     BOOST_REQUIRE(tx_in_rv->result == BLSCT_SUCCESS);
-    auto* tx_in = static_cast<BlsctTxIn*>(tx_in_rv->value);
+    auto* tx_in = reinterpret_cast<BlsctTxIn*>(tx_in_rv->value);
 
     // the gamma stored in the tx_in must equal the recovered gamma
     const BlsctScalar* tx_in_gamma = get_tx_in_gamma(tx_in);
@@ -311,7 +311,7 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     auto* collection_hash_rv = calc_collection_token_hash(metadata, 1000);
     BOOST_REQUIRE(collection_hash_rv != nullptr);
     BOOST_REQUIRE_EQUAL(collection_hash_rv->result, BLSCT_SUCCESS);
-    auto* collection_hash = static_cast<BlsctUint256*>(collection_hash_rv->value);
+    auto* collection_hash = reinterpret_cast<BlsctUint256*>(collection_hash_rv->value);
 
     const std::map<std::string, std::string> expected_metadata{{"name", "Collection"}, {"symbol", "COLL"}};
     const uint256 expected_collection_hash = (HashWriter{} << expected_metadata << CAmount{1000}).GetHash();
@@ -320,12 +320,12 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     auto* master_token_key_rv = gen_scalar(42);
     BOOST_REQUIRE(master_token_key_rv != nullptr);
     BOOST_REQUIRE_EQUAL(master_token_key_rv->result, BLSCT_SUCCESS);
-    auto* master_token_key = static_cast<BlsctScalar*>(master_token_key_rv->value);
+    auto* master_token_key = reinterpret_cast<BlsctScalar*>(master_token_key_rv->value);
 
     auto* token_key_rv = derive_collection_token_key(master_token_key, collection_hash);
     BOOST_REQUIRE(token_key_rv != nullptr);
     BOOST_REQUIRE_EQUAL(token_key_rv->result, BLSCT_SUCCESS);
-    auto* token_key = static_cast<BlsctScalar*>(token_key_rv->value);
+    auto* token_key = reinterpret_cast<BlsctScalar*>(token_key_rv->value);
 
     MclScalar expected_token_key = BLS12_381_KeyGen::derive_child_SK_hash(MclScalar(uint64_t{42}), expected_collection_hash);
     MclScalar token_key_native;
@@ -356,7 +356,7 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     auto* create_pred_rv = build_create_token_predicate(token_info);
     BOOST_REQUIRE(create_pred_rv != nullptr);
     BOOST_REQUIRE_EQUAL(create_pred_rv->result, BLSCT_SUCCESS);
-    auto* create_pred = static_cast<BlsctVectorPredicate*>(create_pred_rv->value);
+    auto* create_pred = reinterpret_cast<BlsctVectorPredicate*>(create_pred_rv->value);
     BOOST_CHECK_EQUAL(get_vector_predicate_type(create_pred, create_pred_rv->value_size), BlsctCreateTokenPredicateType);
 
     auto* parsed_token_info_rv = get_create_token_predicate_token_info(create_pred, create_pred_rv->value_size);
@@ -368,7 +368,7 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     auto* mint_pred_rv = build_mint_token_predicate(token_public_key, 25);
     BOOST_REQUIRE(mint_pred_rv != nullptr);
     BOOST_REQUIRE_EQUAL(mint_pred_rv->result, BLSCT_SUCCESS);
-    auto* mint_pred = static_cast<BlsctVectorPredicate*>(mint_pred_rv->value);
+    auto* mint_pred = reinterpret_cast<BlsctVectorPredicate*>(mint_pred_rv->value);
     BOOST_CHECK_EQUAL(get_vector_predicate_type(mint_pred, mint_pred_rv->value_size), BlsctMintTokenPredicateType);
     BOOST_CHECK_EQUAL(get_mint_token_predicate_amount(mint_pred, mint_pred_rv->value_size), 25U);
 
@@ -387,7 +387,7 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     auto* mint_nft_pred_rv = build_mint_nft_predicate(token_public_key, 7, nft_metadata);
     BOOST_REQUIRE(mint_nft_pred_rv != nullptr);
     BOOST_REQUIRE_EQUAL(mint_nft_pred_rv->result, BLSCT_SUCCESS);
-    auto* mint_nft_pred = static_cast<BlsctVectorPredicate*>(mint_nft_pred_rv->value);
+    auto* mint_nft_pred = reinterpret_cast<BlsctVectorPredicate*>(mint_nft_pred_rv->value);
     BOOST_CHECK_EQUAL(get_vector_predicate_type(mint_nft_pred, mint_nft_pred_rv->value_size), BlsctMintNftPredicateType);
     BOOST_CHECK_EQUAL(get_mint_nft_predicate_nft_id(mint_nft_pred, mint_nft_pred_rv->value_size), 7U);
 
@@ -401,11 +401,11 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     auto* spend_key_rv = gen_scalar(12);
     BOOST_REQUIRE(view_key_rv != nullptr);
     BOOST_REQUIRE(spend_key_rv != nullptr);
-    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(reinterpret_cast<const BlsctScalar*>(spend_key_rv->value));
     BOOST_REQUIRE(spend_pub_key != nullptr);
     auto* sub_addr_id = gen_sub_addr_id(0, 1);
     BOOST_REQUIRE(sub_addr_id != nullptr);
-    auto* dest = derive_sub_address(static_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
+    auto* dest = derive_sub_address(reinterpret_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
     BOOST_REQUIRE(dest != nullptr);
     auto* blinding_key_rv = gen_scalar(99);
     BOOST_REQUIRE(blinding_key_rv != nullptr);
@@ -413,7 +413,7 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     auto* create_output_rv = build_unsigned_create_token_output(token_key, token_info);
     BOOST_REQUIRE(create_output_rv != nullptr);
     BOOST_REQUIRE_EQUAL(create_output_rv->result, BLSCT_SUCCESS);
-    const char* create_output_hex = serialize_unsigned_output(static_cast<BlsctUnsignedOutput*>(create_output_rv->value));
+    const char* create_output_hex = serialize_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(create_output_rv->value));
     BOOST_REQUIRE(create_output_hex != nullptr);
     {
         DataStream st{ParseHex(create_output_hex)};
@@ -424,10 +424,10 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
         BOOST_CHECK_EQUAL(parsed.GetTokenInfo().nTotalSupply, 1000);
     }
 
-    auto* mint_output_rv = build_unsigned_mint_token_output(dest, 25, static_cast<const BlsctScalar*>(blinding_key_rv->value), token_key, token_public_key);
+    auto* mint_output_rv = build_unsigned_mint_token_output(dest, 25, reinterpret_cast<const BlsctScalar*>(blinding_key_rv->value), token_key, token_public_key);
     BOOST_REQUIRE(mint_output_rv != nullptr);
     BOOST_REQUIRE_EQUAL(mint_output_rv->result, BLSCT_SUCCESS);
-    const char* mint_output_hex = serialize_unsigned_output(static_cast<BlsctUnsignedOutput*>(mint_output_rv->value));
+    const char* mint_output_hex = serialize_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(mint_output_rv->value));
     BOOST_REQUIRE(mint_output_hex != nullptr);
     {
         DataStream st{ParseHex(mint_output_hex)};
@@ -438,10 +438,10 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
         BOOST_CHECK_EQUAL(parsed.GetAmount(), 25);
     }
 
-    auto* mint_nft_output_rv = build_unsigned_mint_nft_output(dest, static_cast<const BlsctScalar*>(blinding_key_rv->value), token_key, token_public_key, 7, nft_metadata);
+    auto* mint_nft_output_rv = build_unsigned_mint_nft_output(dest, reinterpret_cast<const BlsctScalar*>(blinding_key_rv->value), token_key, token_public_key, 7, nft_metadata);
     BOOST_REQUIRE(mint_nft_output_rv != nullptr);
     BOOST_REQUIRE_EQUAL(mint_nft_output_rv->result, BLSCT_SUCCESS);
-    const char* mint_nft_output_hex = serialize_unsigned_output(static_cast<BlsctUnsignedOutput*>(mint_nft_output_rv->value));
+    const char* mint_nft_output_hex = serialize_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(mint_nft_output_rv->value));
     BOOST_REQUIRE(mint_nft_output_hex != nullptr);
     {
         DataStream st{ParseHex(mint_nft_output_hex)};
@@ -516,11 +516,11 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     BOOST_REQUIRE(default_token_id_rv != nullptr);
     BOOST_REQUIRE_EQUAL(default_token_id_rv->result, BLSCT_SUCCESS);
 
-    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(reinterpret_cast<const BlsctScalar*>(spend_key_rv->value));
     BOOST_REQUIRE(spend_pub_key != nullptr);
     auto* sub_addr_id = gen_sub_addr_id(0, 2);
     BOOST_REQUIRE(sub_addr_id != nullptr);
-    auto* dest = derive_sub_address(static_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
+    auto* dest = derive_sub_address(reinterpret_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
     BOOST_REQUIRE(dest != nullptr);
 
     auto* out_point_rv = gen_out_point("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
@@ -529,16 +529,16 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
 
     auto* tx_in_rv = build_tx_in(
         1000,
-        static_cast<const BlsctScalar*>(gamma_rv->value),
-        static_cast<const BlsctScalar*>(input_spending_key_rv->value),
-        static_cast<const BlsctTokenId*>(default_token_id_rv->value),
-        static_cast<const BlsctOutPoint*>(out_point_rv->value),
+        reinterpret_cast<const BlsctScalar*>(gamma_rv->value),
+        reinterpret_cast<const BlsctScalar*>(input_spending_key_rv->value),
+        reinterpret_cast<const BlsctTokenId*>(default_token_id_rv->value),
+        reinterpret_cast<const BlsctOutPoint*>(out_point_rv->value),
         false,
         false);
     BOOST_REQUIRE(tx_in_rv != nullptr);
     BOOST_REQUIRE_EQUAL(tx_in_rv->result, BLSCT_SUCCESS);
 
-    auto* unsigned_input_rv = build_unsigned_input(static_cast<const BlsctTxIn*>(tx_in_rv->value));
+    auto* unsigned_input_rv = build_unsigned_input(reinterpret_cast<const BlsctTxIn*>(tx_in_rv->value));
     BOOST_REQUIRE(unsigned_input_rv != nullptr);
     BOOST_REQUIRE_EQUAL(unsigned_input_rv->result, BLSCT_SUCCESS);
 
@@ -546,22 +546,22 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
         dest,
         500,
         "memo",
-        static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+        reinterpret_cast<const BlsctTokenId*>(default_token_id_rv->value),
         TxOutputType::Normal,
         0,
         false,
-        static_cast<const BlsctScalar*>(blinding_key_rv->value));
+        reinterpret_cast<const BlsctScalar*>(blinding_key_rv->value));
     BOOST_REQUIRE(tx_out_rv != nullptr);
     BOOST_REQUIRE_EQUAL(tx_out_rv->result, BLSCT_SUCCESS);
 
-    auto* unsigned_output_rv = build_unsigned_output(static_cast<const BlsctTxOut*>(tx_out_rv->value));
+    auto* unsigned_output_rv = build_unsigned_output(reinterpret_cast<const BlsctTxOut*>(tx_out_rv->value));
     BOOST_REQUIRE(unsigned_output_rv != nullptr);
     BOOST_REQUIRE_EQUAL(unsigned_output_rv->result, BLSCT_SUCCESS);
 
-    auto* unsigned_tx = static_cast<BlsctUnsignedTransaction*>(create_unsigned_transaction());
+    auto* unsigned_tx = reinterpret_cast<BlsctUnsignedTransaction*>(create_unsigned_transaction());
     BOOST_REQUIRE(unsigned_tx != nullptr);
-    add_unsigned_transaction_input(unsigned_tx, static_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
-    add_unsigned_transaction_output(unsigned_tx, static_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
+    add_unsigned_transaction_input(unsigned_tx, reinterpret_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
+    add_unsigned_transaction_output(unsigned_tx, reinterpret_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
     set_unsigned_transaction_fee(unsigned_tx, 125);
 
     BOOST_CHECK_EQUAL(get_unsigned_transaction_inputs_size(unsigned_tx), 1U);
@@ -574,14 +574,14 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     BOOST_REQUIRE(unsigned_tx_roundtrip_rv != nullptr);
     BOOST_REQUIRE_EQUAL(unsigned_tx_roundtrip_rv->result, BLSCT_SUCCESS);
 
-    BOOST_CHECK_EQUAL(get_unsigned_transaction_inputs_size(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value)), 1U);
-    BOOST_CHECK_EQUAL(get_unsigned_transaction_outputs_size(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value)), 1U);
-    BOOST_CHECK_EQUAL(get_unsigned_transaction_fee(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value)), 125U);
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_inputs_size(reinterpret_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value)), 1U);
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_outputs_size(reinterpret_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value)), 1U);
+    BOOST_CHECK_EQUAL(get_unsigned_transaction_fee(reinterpret_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value)), 125U);
 
-    auto* signed_tx_rv = sign_unsigned_transaction(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value));
+    auto* signed_tx_rv = sign_unsigned_transaction(reinterpret_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value));
     BOOST_REQUIRE(signed_tx_rv != nullptr);
     BOOST_REQUIRE_EQUAL(signed_tx_rv->result, BLSCT_SUCCESS);
-    const char* signed_tx_hex = static_cast<const char*>(signed_tx_rv->value);
+    const char* signed_tx_hex = reinterpret_cast<const char*>(signed_tx_rv->value);
     BOOST_REQUIRE(signed_tx_hex != nullptr);
 
     CMutableTransaction decoded;
@@ -613,15 +613,15 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     free(out_point_rv);
     free_obj(tx_in_rv->value);
     free(tx_in_rv);
-    delete_unsigned_input(static_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
+    delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
     free(unsigned_input_rv);
     free_obj(tx_out_rv->value);
     free(tx_out_rv);
-    delete_unsigned_output(static_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
+    delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
     free(unsigned_output_rv);
     free_typed_obj(unsigned_tx_hex);
     delete_unsigned_transaction(unsigned_tx);
-    delete_unsigned_transaction(static_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value));
+    delete_unsigned_transaction(reinterpret_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value));
     free(unsigned_tx_roundtrip_rv);
     free_obj(signed_tx_rv->value);
     free(signed_tx_rv);
@@ -647,12 +647,12 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
         BOOST_REQUIRE(default_token_id_rv != nullptr);
         BOOST_REQUIRE_EQUAL(default_token_id_rv->result, BLSCT_SUCCESS);
 
-        const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+        const BlsctPubKey* spend_pub_key = scalar_to_pub_key(reinterpret_cast<const BlsctScalar*>(spend_key_rv->value));
         BOOST_REQUIRE(spend_pub_key != nullptr);
 
         auto* sub_addr_id = gen_sub_addr_id(0, seed_base);
         BOOST_REQUIRE(sub_addr_id != nullptr);
-        auto* dest = derive_sub_address(static_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
+        auto* dest = derive_sub_address(reinterpret_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
         BOOST_REQUIRE(dest != nullptr);
 
         auto* out_point_rv = gen_out_point(out_point_hex);
@@ -661,16 +661,16 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
 
         auto* tx_in_rv = build_tx_in(
             1000,
-            static_cast<const BlsctScalar*>(gamma_rv->value),
-            static_cast<const BlsctScalar*>(input_spending_key_rv->value),
-            static_cast<const BlsctTokenId*>(default_token_id_rv->value),
-            static_cast<const BlsctOutPoint*>(out_point_rv->value),
+            reinterpret_cast<const BlsctScalar*>(gamma_rv->value),
+            reinterpret_cast<const BlsctScalar*>(input_spending_key_rv->value),
+            reinterpret_cast<const BlsctTokenId*>(default_token_id_rv->value),
+            reinterpret_cast<const BlsctOutPoint*>(out_point_rv->value),
             false,
             false);
         BOOST_REQUIRE(tx_in_rv != nullptr);
         BOOST_REQUIRE_EQUAL(tx_in_rv->result, BLSCT_SUCCESS);
 
-        auto* unsigned_input_rv = build_unsigned_input(static_cast<const BlsctTxIn*>(tx_in_rv->value));
+        auto* unsigned_input_rv = build_unsigned_input(reinterpret_cast<const BlsctTxIn*>(tx_in_rv->value));
         BOOST_REQUIRE(unsigned_input_rv != nullptr);
         BOOST_REQUIRE_EQUAL(unsigned_input_rv->result, BLSCT_SUCCESS);
 
@@ -678,28 +678,28 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
             dest,
             output_amount,
             "aggregate",
-            static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+            reinterpret_cast<const BlsctTokenId*>(default_token_id_rv->value),
             TxOutputType::Normal,
             0,
             false,
-            static_cast<const BlsctScalar*>(blinding_key_rv->value));
+            reinterpret_cast<const BlsctScalar*>(blinding_key_rv->value));
         BOOST_REQUIRE(tx_out_rv != nullptr);
         BOOST_REQUIRE_EQUAL(tx_out_rv->result, BLSCT_SUCCESS);
 
-        auto* unsigned_output_rv = build_unsigned_output(static_cast<const BlsctTxOut*>(tx_out_rv->value));
+        auto* unsigned_output_rv = build_unsigned_output(reinterpret_cast<const BlsctTxOut*>(tx_out_rv->value));
         BOOST_REQUIRE(unsigned_output_rv != nullptr);
         BOOST_REQUIRE_EQUAL(unsigned_output_rv->result, BLSCT_SUCCESS);
 
-        auto* unsigned_tx = static_cast<BlsctUnsignedTransaction*>(create_unsigned_transaction());
+        auto* unsigned_tx = reinterpret_cast<BlsctUnsignedTransaction*>(create_unsigned_transaction());
         BOOST_REQUIRE(unsigned_tx != nullptr);
-        add_unsigned_transaction_input(unsigned_tx, static_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
-        add_unsigned_transaction_output(unsigned_tx, static_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
+        add_unsigned_transaction_input(unsigned_tx, reinterpret_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
+        add_unsigned_transaction_output(unsigned_tx, reinterpret_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
         set_unsigned_transaction_fee(unsigned_tx, fee);
 
         auto* signed_tx_rv = sign_unsigned_transaction(unsigned_tx);
         BOOST_REQUIRE(signed_tx_rv != nullptr);
         BOOST_REQUIRE_EQUAL(signed_tx_rv->result, BLSCT_SUCCESS);
-        const std::string signed_tx_hex(static_cast<const char*>(signed_tx_rv->value));
+        const std::string signed_tx_hex(reinterpret_cast<const char*>(signed_tx_rv->value));
 
         free_obj(view_key_rv->value);
         free(view_key_rv);
@@ -720,11 +720,11 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
         free(out_point_rv);
         free_obj(tx_in_rv->value);
         free(tx_in_rv);
-        delete_unsigned_input(static_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
+        delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
         free(unsigned_input_rv);
         free_obj(tx_out_rv->value);
         free(tx_out_rv);
-        delete_unsigned_output(static_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
+        delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
         free(unsigned_output_rv);
         delete_unsigned_transaction(unsigned_tx);
         free_obj(signed_tx_rv->value);
@@ -744,7 +744,7 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
     auto* aggregate_rv = aggregate_transactions(tx_hex_vec);
     BOOST_REQUIRE(aggregate_rv != nullptr);
     BOOST_REQUIRE_EQUAL(aggregate_rv->result, BLSCT_SUCCESS);
-    const char* aggregate_hex = static_cast<const char*>(aggregate_rv->value);
+    const char* aggregate_hex = reinterpret_cast<const char*>(aggregate_rv->value);
     BOOST_REQUIRE(aggregate_hex != nullptr);
 
     CMutableTransaction decoded;
@@ -760,6 +760,488 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
     delete_tx_hex_vec(tx_hex_vec);
     free_obj(aggregate_rv->value);
     free(aggregate_rv);
+}
+
+// ---------------------------------------------------------------------------
+// Smoke tests for previously untested CTx accessor functions
+// ---------------------------------------------------------------------------
+
+// Helper: build a signed CMutableTransaction via the unsigned-tx C API
+static std::string BuildSignedTxHex(uint64_t seed_base, uint64_t input_amount, uint64_t output_amount, uint64_t fee)
+{
+    auto* view_key_rv = gen_scalar(seed_base + 1);
+    auto* spend_key_rv = gen_scalar(seed_base + 2);
+    auto* input_sk_rv = gen_scalar(seed_base + 3);
+    auto* gamma_rv = gen_scalar(seed_base + 4);
+    auto* blind_rv = gen_scalar(seed_base + 5);
+    auto* tid_rv = gen_default_token_id();
+    BOOST_REQUIRE(view_key_rv && spend_key_rv && input_sk_rv && gamma_rv && blind_rv && tid_rv);
+
+    const BlsctPubKey* spend_pub = scalar_to_pub_key(reinterpret_cast<const BlsctScalar*>(spend_key_rv->value));
+    auto* sub_id = gen_sub_addr_id(0, seed_base);
+    auto* dest = derive_sub_address(reinterpret_cast<const BlsctScalar*>(view_key_rv->value), spend_pub, sub_id);
+    BOOST_REQUIRE(spend_pub && sub_id && dest);
+
+    auto* op_rv = gen_out_point("aabbccdd0011223344556677889900aabbccddeeff00112233445566778899aa");
+    BOOST_REQUIRE(op_rv && op_rv->result == BLSCT_SUCCESS);
+
+    auto* in_rv = build_tx_in(input_amount,
+        reinterpret_cast<const BlsctScalar*>(gamma_rv->value),
+        reinterpret_cast<const BlsctScalar*>(input_sk_rv->value),
+        reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
+        reinterpret_cast<const BlsctOutPoint*>(op_rv->value), false, false);
+    BOOST_REQUIRE(in_rv && in_rv->result == BLSCT_SUCCESS);
+
+    auto* uin_rv = build_unsigned_input(reinterpret_cast<const BlsctTxIn*>(in_rv->value));
+    BOOST_REQUIRE(uin_rv && uin_rv->result == BLSCT_SUCCESS);
+
+    auto* out_rv = build_tx_out(dest, output_amount, "smoke",
+        reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
+        TxOutputType::Normal, 0, false,
+        reinterpret_cast<const BlsctScalar*>(blind_rv->value));
+    BOOST_REQUIRE(out_rv && out_rv->result == BLSCT_SUCCESS);
+
+    auto* uout_rv = build_unsigned_output(reinterpret_cast<const BlsctTxOut*>(out_rv->value));
+    BOOST_REQUIRE(uout_rv && uout_rv->result == BLSCT_SUCCESS);
+
+    auto* utx = reinterpret_cast<BlsctUnsignedTransaction*>(create_unsigned_transaction());
+    add_unsigned_transaction_input(utx, reinterpret_cast<BlsctUnsignedInput*>(uin_rv->value));
+    add_unsigned_transaction_output(utx, reinterpret_cast<BlsctUnsignedOutput*>(uout_rv->value));
+    set_unsigned_transaction_fee(utx, fee);
+
+    auto* signed_rv = sign_unsigned_transaction(utx);
+    BOOST_REQUIRE(signed_rv && signed_rv->result == BLSCT_SUCCESS);
+    std::string hex(reinterpret_cast<const char*>(signed_rv->value));
+
+    // cleanup
+    free_obj(view_key_rv->value); free(view_key_rv);
+    free_obj(spend_key_rv->value); free(spend_key_rv);
+    free_obj(input_sk_rv->value); free(input_sk_rv);
+    free_obj(gamma_rv->value); free(gamma_rv);
+    free_obj(blind_rv->value); free(blind_rv);
+    free_obj(tid_rv->value); free(tid_rv);
+    free_typed_obj(spend_pub);
+    free_typed_obj(sub_id);
+    free_typed_obj(dest);
+    free_obj(op_rv->value); free(op_rv);
+    free_obj(in_rv->value); free(in_rv);
+    delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(uin_rv->value)); free(uin_rv);
+    free_obj(out_rv->value); free(out_rv);
+    delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(uout_rv->value)); free(uout_rv);
+    delete_unsigned_transaction(utx);
+    free_obj(signed_rv->value); free(signed_rv);
+
+    return hex;
+}
+
+// Build a signed CMutableTransaction from hex
+static CMutableTransaction DecodeTx(const std::string& hex)
+{
+    CMutableTransaction tx;
+    BOOST_REQUIRE(DecodeHexTx(tx, hex));
+    return tx;
+}
+
+// Build a BlsctCtx* via the unsigned-tx C API (avoids build_ctx fee convergence issues)
+static BlsctCtx* BuildCtxViaApi(uint64_t input_amount, uint64_t output_amount, uint64_t fee = 125)
+{
+    auto* view_key_rv = gen_scalar(201);
+    auto* spend_key_rv = gen_scalar(202);
+    auto* input_sk_rv = gen_scalar(203);
+    auto* gamma_rv = gen_scalar(204);
+    auto* blind_rv = gen_scalar(205);
+    auto* tid_rv = gen_default_token_id();
+    BOOST_REQUIRE(view_key_rv && spend_key_rv && input_sk_rv && gamma_rv && blind_rv && tid_rv);
+
+    const BlsctPubKey* spend_pub = scalar_to_pub_key(reinterpret_cast<const BlsctScalar*>(spend_key_rv->value));
+    auto* sub_id = gen_sub_addr_id(0, 7);
+    auto* dest = derive_sub_address(reinterpret_cast<const BlsctScalar*>(view_key_rv->value), spend_pub, sub_id);
+    BOOST_REQUIRE(spend_pub && sub_id && dest);
+
+    auto* op_rv = gen_out_point("deadbeef0000000000000000000000000000000000000000000000000000cafe");
+    BOOST_REQUIRE(op_rv && op_rv->result == BLSCT_SUCCESS);
+
+    auto* in_rv = build_tx_in(input_amount,
+        reinterpret_cast<const BlsctScalar*>(gamma_rv->value),
+        reinterpret_cast<const BlsctScalar*>(input_sk_rv->value),
+        reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
+        reinterpret_cast<const BlsctOutPoint*>(op_rv->value), false, false);
+    BOOST_REQUIRE(in_rv && in_rv->result == BLSCT_SUCCESS);
+
+    auto* uin_rv = build_unsigned_input(reinterpret_cast<const BlsctTxIn*>(in_rv->value));
+    BOOST_REQUIRE(uin_rv && uin_rv->result == BLSCT_SUCCESS);
+
+    auto* out_rv = build_tx_out(dest, output_amount, "ctxtest",
+        reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
+        TxOutputType::Normal, 0, false,
+        reinterpret_cast<const BlsctScalar*>(blind_rv->value));
+    BOOST_REQUIRE(out_rv && out_rv->result == BLSCT_SUCCESS);
+
+    auto* uout_rv = build_unsigned_output(reinterpret_cast<const BlsctTxOut*>(out_rv->value));
+    BOOST_REQUIRE(uout_rv && uout_rv->result == BLSCT_SUCCESS);
+
+    auto* utx = reinterpret_cast<BlsctUnsignedTransaction*>(create_unsigned_transaction());
+    add_unsigned_transaction_input(utx, reinterpret_cast<BlsctUnsignedInput*>(uin_rv->value));
+    add_unsigned_transaction_output(utx, reinterpret_cast<BlsctUnsignedOutput*>(uout_rv->value));
+    set_unsigned_transaction_fee(utx, fee);
+
+    auto* signed_rv = sign_unsigned_transaction(utx);
+    BOOST_REQUIRE(signed_rv && signed_rv->result == BLSCT_SUCCESS);
+    const char* signed_hex = reinterpret_cast<const char*>(signed_rv->value);
+
+    CMutableTransaction mtx;
+    BOOST_REQUIRE(DecodeHexTx(mtx, signed_hex));
+
+    // Wrap as BlsctCtx (same ownership semantics as build_ctx)
+    auto* ctx_heap = new (std::nothrow) CMutableTransaction(std::move(mtx));
+    BOOST_REQUIRE(ctx_heap != nullptr);
+    auto* ctx = reinterpret_cast<BlsctCtx*>(ctx_heap);
+
+    // cleanup helpers
+    free_obj(view_key_rv->value); free(view_key_rv);
+    free_obj(spend_key_rv->value); free(spend_key_rv);
+    free_obj(input_sk_rv->value); free(input_sk_rv);
+    free_obj(gamma_rv->value); free(gamma_rv);
+    free_obj(blind_rv->value); free(blind_rv);
+    free_obj(tid_rv->value); free(tid_rv);
+    free_typed_obj(spend_pub);
+    free_typed_obj(sub_id);
+    free_typed_obj(dest);
+    free_obj(op_rv->value); free(op_rv);
+    free_obj(in_rv->value); free(in_rv);
+    delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(uin_rv->value)); free(uin_rv);
+    free_obj(out_rv->value); free(out_rv);
+    delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(uout_rv->value)); free(uout_rv);
+    delete_unsigned_transaction(utx);
+    free_obj(signed_rv->value); free(signed_rv);
+
+    return ctx;
+}
+
+BOOST_AUTO_TEST_CASE(test_build_ctx_and_serialization)
+{
+    init();
+
+    auto* ctx = BuildCtxViaApi(1000, 500);
+    BOOST_REQUIRE(ctx != nullptr);
+
+    // get_ctx_id returns a non-empty hex string
+    const char* ctx_id = get_ctx_id(ctx);
+    BOOST_REQUIRE(ctx_id != nullptr);
+    BOOST_CHECK_EQUAL(std::strlen(ctx_id), 64u); // 32 bytes = 64 hex chars
+
+    // serialize_ctx / deserialize_ctx round-trip
+    const char* ctx_hex = serialize_ctx(ctx);
+    BOOST_REQUIRE(ctx_hex != nullptr);
+    BOOST_CHECK(std::strlen(ctx_hex) > 0);
+
+    auto* deser_rv = deserialize_ctx(ctx_hex);
+    BOOST_REQUIRE(deser_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(deser_rv->result, BLSCT_SUCCESS);
+    auto* ctx2 = reinterpret_cast<BlsctCtx*>(deser_rv->value);
+    BOOST_REQUIRE(ctx2 != nullptr);
+
+    // deserialized ctx produces the same id
+    const char* ctx_id2 = get_ctx_id(ctx2);
+    BOOST_REQUIRE(ctx_id2 != nullptr);
+    BOOST_CHECK_EQUAL(std::string(ctx_id), std::string(ctx_id2));
+
+    delete_ctx(ctx);
+    delete_ctx(ctx2);
+    free_typed_obj(ctx_id);
+    free_typed_obj(ctx_hex);
+    free_typed_obj(ctx_id2);
+    free(deser_rv);
+}
+
+BOOST_AUTO_TEST_CASE(test_ctx_in_vector_accessors)
+{
+    init();
+
+    std::string tx_hex = BuildSignedTxHex(51, 1000, 400, 100);
+    CMutableTransaction mtx = DecodeTx(tx_hex);
+
+    // get_ctx_ins / get_ctx_ins_size / get_ctx_in_at via unsigned-tx path
+    // We use build_ctx to get a BlsctCtx and then extract ins from it
+    auto* ctx = BuildCtxViaApi(1000, 400);
+    BOOST_REQUIRE(ctx != nullptr);
+
+    const BlsctCTxInVec* ins = get_ctx_ins(ctx);
+    BOOST_REQUIRE(ins != nullptr);
+    BOOST_CHECK_EQUAL(get_ctx_ins_size(ins), 1u);
+
+    const BlsctCTxIn* in0 = get_ctx_in_at(ins, 0);
+    BOOST_REQUIRE(in0 != nullptr);
+
+    delete_ctx(ctx);
+}
+
+BOOST_AUTO_TEST_CASE(test_ctx_in_field_accessors)
+{
+    init();
+
+    auto* ctx = BuildCtxViaApi(1000, 500);
+    BOOST_REQUIRE(ctx != nullptr);
+
+    const BlsctCTxInVec* ins = get_ctx_ins(ctx);
+    const BlsctCTxIn* in0 = get_ctx_in_at(ins, 0);
+    BOOST_REQUIRE(in0 != nullptr);
+
+    // prev_out_hash is a 32-byte CTxId
+    const BlsctCTxId* prev_hash = get_ctx_in_prev_out_hash(in0);
+    BOOST_REQUIRE(prev_hash != nullptr);
+    // The out_point was "00...01", so prev_hash should be non-zero
+    bool all_zero = true;
+    for (size_t i = 0; i < CTX_ID_SIZE; ++i) {
+        if ((*prev_hash)[i] != 0) { all_zero = false; break; }
+    }
+    BOOST_CHECK(!all_zero);
+
+    // scriptSig (blsct inputs have empty scriptSig)
+    const BlsctScript* script_sig = get_ctx_in_script_sig(in0);
+    BOOST_REQUIRE(script_sig != nullptr);
+
+    // sequence — non-rbf input => 0xffffffff
+    BOOST_CHECK_EQUAL(get_ctx_in_sequence(in0), 0xffffffffU);
+
+    // scriptWitness
+    const BlsctScript* witness = get_ctx_in_script_witness(in0);
+    BOOST_REQUIRE(witness != nullptr);
+
+    // are_ctx_in_equal — same input compared to itself
+    BOOST_CHECK(are_ctx_in_equal(in0, in0));
+
+    delete_ctx(ctx);
+    free_typed_obj(prev_hash);
+    free_typed_obj(script_sig);
+    free_typed_obj(witness);
+}
+
+BOOST_AUTO_TEST_CASE(test_ctx_out_vector_and_field_accessors)
+{
+    init();
+
+    const uint64_t test_fee = 125;
+    auto* ctx = BuildCtxViaApi(2000, 800, test_fee);
+    BOOST_REQUIRE(ctx != nullptr);
+
+    const BlsctCTxOutVec* outs = get_ctx_outs(ctx);
+    BOOST_REQUIRE(outs != nullptr);
+
+    // 1 data output + 1 fee output = 2
+    BOOST_CHECK_EQUAL(get_ctx_outs_size(outs), 2u);
+
+    const BlsctCTxOut* out0 = get_ctx_out_at(outs, 0);
+    const BlsctCTxOut* out1 = get_ctx_out_at(outs, 1);
+    BOOST_REQUIRE(out0 != nullptr);
+    BOOST_REQUIRE(out1 != nullptr);
+
+    // In blsct transactions, data outputs have nValue=0 (amount is in range proof),
+    // fee outputs have nValue = fee amount.
+    // out0 = data output, out1 = fee output
+    const BlsctCTxOut* data_out = out0;
+    const BlsctCTxOut* fee_out = out1;
+
+    // data output nValue is 0 (actual amount is in the range proof)
+    BOOST_CHECK_EQUAL(get_ctx_out_value(data_out), 0u);
+
+    // fee output nValue is the fee amount
+    BOOST_CHECK_EQUAL(get_ctx_out_value(fee_out), test_fee);
+
+    // data output: scriptPubKey
+    const BlsctScript* spk = get_ctx_out_script_pub_key(data_out);
+    BOOST_REQUIRE(spk != nullptr);
+
+    // data output: token_id
+    const BlsctTokenId* tok = get_ctx_out_token_id(data_out);
+    BOOST_REQUIRE(tok != nullptr);
+
+    // data output: spending_key, ephemeral_key, blinding_key (blsctData fields)
+    const BlsctPoint* sk = get_ctx_out_spending_key(data_out);
+    BOOST_REQUIRE(sk != nullptr);
+
+    const BlsctPoint* ek = get_ctx_out_ephemeral_key(data_out);
+    BOOST_REQUIRE(ek != nullptr);
+
+    const BlsctPoint* bk = get_ctx_out_blinding_key(data_out);
+    BOOST_REQUIRE(bk != nullptr);
+
+    // data output: view_tag
+    uint16_t vt = get_ctx_out_view_tag(data_out);
+    (void)vt; // just check it doesn't crash
+
+    // data output: range_proof (non-empty)
+    const BlsctRetVal* rp_rv = get_ctx_out_range_proof(data_out);
+    BOOST_REQUIRE(rp_rv != nullptr);
+    BOOST_REQUIRE(rp_rv->value != nullptr);
+    BOOST_CHECK(rp_rv->value_size > 0);
+
+    // fee output: vector_predicate (PayFeePredicate)
+    auto* pred_rv = get_ctx_out_vector_predicate(fee_out);
+    BOOST_REQUIRE(pred_rv != nullptr);
+    BOOST_CHECK(pred_rv->value_size > 0);
+
+    // are_ctx_out_equal — same output compared to itself
+    BOOST_CHECK(are_ctx_out_equal(data_out, data_out));
+
+    // are_ctx_outs_equal — same vector compared to itself
+    BOOST_CHECK(are_ctx_outs_equal(outs, outs));
+
+    delete_ctx(ctx);
+    free_typed_obj(spk);
+    free_typed_obj(tok);
+    free_typed_obj(sk);
+    free_typed_obj(ek);
+    free_typed_obj(bk);
+    free_obj(const_cast<uint8_t*>(rp_rv->value));
+    free(const_cast<BlsctRetVal*>(rp_rv));
+    free_obj(pred_rv->value);
+    free(pred_rv);
+}
+
+BOOST_AUTO_TEST_CASE(test_ctx_ins_equality_across_instances)
+{
+    init();
+
+    // Build two identical ctxs via build_ctx and compare their ins/outs
+    auto* ctx_a = BuildCtxViaApi(1500, 600);
+    auto* ctx_b = BuildCtxViaApi(1500, 600);
+    BOOST_REQUIRE(ctx_a && ctx_b);
+
+    const BlsctCTxInVec* ins_a = get_ctx_ins(ctx_a);
+    const BlsctCTxInVec* ins_b = get_ctx_ins(ctx_b);
+
+    // Both have 1 input — vectors themselves may not be equal
+    // (different random keys), but structure is the same
+    BOOST_CHECK_EQUAL(get_ctx_ins_size(ins_a), 1u);
+    BOOST_CHECK_EQUAL(get_ctx_ins_size(ins_b), 1u);
+
+    const BlsctCTxOutVec* outs_a = get_ctx_outs(ctx_a);
+    const BlsctCTxOutVec* outs_b = get_ctx_outs(ctx_b);
+    BOOST_CHECK_EQUAL(get_ctx_outs_size(outs_a), 2u);
+    BOOST_CHECK_EQUAL(get_ctx_outs_size(outs_b), 2u);
+
+    delete_ctx(ctx_a);
+    delete_ctx(ctx_b);
+}
+
+// ---------------------------------------------------------------------------
+// Smoke tests for range proof functions
+// ---------------------------------------------------------------------------
+
+BOOST_AUTO_TEST_CASE(test_range_proof_build_and_verify)
+{
+    init();
+
+    auto* tid_rv = gen_default_token_id();
+    BOOST_REQUIRE(tid_rv && tid_rv->result == BLSCT_SUCCESS);
+    auto* blsct_tid = reinterpret_cast<BlsctTokenId*>(tid_rv->value);
+
+    // Create a nonce
+    auto* nonce_rv = gen_base_point();
+    BOOST_REQUIRE(nonce_rv && nonce_rv->result == BLSCT_SUCCESS);
+    auto* blsct_nonce = reinterpret_cast<BlsctPoint*>(nonce_rv->value);
+
+    // Create a uint64 vec with a single value
+    auto* u64_vec = create_uint64_vec();
+    BOOST_REQUIRE(u64_vec != nullptr);
+    add_to_uint64_vec(u64_vec, 42);
+
+    // Build range proof
+    auto* rp_rv = build_range_proof(u64_vec, blsct_nonce, "smoke_test", blsct_tid);
+    BOOST_REQUIRE(rp_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(rp_rv->result, BLSCT_SUCCESS);
+    BOOST_REQUIRE(rp_rv->value != nullptr);
+    BOOST_CHECK(rp_rv->value_size > 0);
+
+    auto* blsct_rp = reinterpret_cast<BlsctRangeProof*>(rp_rv->value);
+
+    // Accessor getters — each returns a malloc'd copy
+    BlsctPoint* rp_A = get_range_proof_A(blsct_rp, rp_rv->value_size);
+    BlsctPoint* rp_A_wip = get_range_proof_A_wip(blsct_rp, rp_rv->value_size);
+    BlsctPoint* rp_B = get_range_proof_B(blsct_rp, rp_rv->value_size);
+    BOOST_REQUIRE(rp_A && rp_A_wip && rp_B);
+
+    BlsctScalar* rp_r_prime = get_range_proof_r_prime(blsct_rp, rp_rv->value_size);
+    BlsctScalar* rp_s_prime = get_range_proof_s_prime(blsct_rp, rp_rv->value_size);
+    BlsctScalar* rp_delta_prime = get_range_proof_delta_prime(blsct_rp, rp_rv->value_size);
+    BlsctScalar* rp_alpha_hat = get_range_proof_alpha_hat(blsct_rp, rp_rv->value_size);
+    BlsctScalar* rp_tau_x = get_range_proof_tau_x(blsct_rp, rp_rv->value_size);
+    BOOST_REQUIRE(rp_r_prime && rp_s_prime && rp_delta_prime && rp_alpha_hat && rp_tau_x);
+
+    // Verify via range proof vec
+    auto* rp_vec = create_range_proof_vec();
+    BOOST_REQUIRE(rp_vec != nullptr);
+    add_to_range_proof_vec(rp_vec, blsct_rp, rp_rv->value_size);
+
+    auto* verify_rv = verify_range_proofs(rp_vec);
+    BOOST_REQUIRE(verify_rv != nullptr);
+    BOOST_CHECK_EQUAL(verify_rv->result, BLSCT_SUCCESS);
+    BOOST_CHECK(verify_rv->value);
+
+    // Serialize / deserialize round-trip
+    const char* rp_hex = serialize_range_proof(blsct_rp, rp_rv->value_size);
+    BOOST_REQUIRE(rp_hex != nullptr);
+
+    auto* deser_rv = deserialize_range_proof(rp_hex, rp_rv->value_size);
+    BOOST_REQUIRE(deser_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(deser_rv->result, BLSCT_SUCCESS);
+
+    // cleanup
+    free(rp_A);
+    free(rp_A_wip);
+    free(rp_B);
+    free(rp_r_prime);
+    free(rp_s_prime);
+    free(rp_delta_prime);
+    free(rp_alpha_hat);
+    free(rp_tau_x);
+    delete_range_proof_vec(rp_vec);
+    free(verify_rv);
+    free_typed_obj(rp_hex);
+    free_obj(deser_rv->value);
+    free(deser_rv);
+    free_obj(rp_rv->value);
+    free(rp_rv);
+    delete_uint64_vec(u64_vec);
+    free_obj(nonce_rv->value);
+    free(nonce_rv);
+    free_obj(tid_rv->value);
+    free(tid_rv);
+}
+
+// ---------------------------------------------------------------------------
+// Smoke test for are_vector_predicate_equal
+// ---------------------------------------------------------------------------
+
+BOOST_AUTO_TEST_CASE(test_vector_predicate_equality)
+{
+    init();
+
+    auto* pk_rv = gen_random_public_key();
+    BOOST_REQUIRE(pk_rv && pk_rv->result == BLSCT_SUCCESS);
+    auto* blsct_pk = reinterpret_cast<const BlsctPubKey*>(pk_rv->value);
+
+    auto* pred_a_rv = build_mint_token_predicate(blsct_pk, 100);
+    BOOST_REQUIRE(pred_a_rv && pred_a_rv->result == BLSCT_SUCCESS);
+    auto* pred_a = reinterpret_cast<const BlsctVectorPredicate*>(pred_a_rv->value);
+
+    auto* pred_b_rv = build_mint_token_predicate(blsct_pk, 100);
+    BOOST_REQUIRE(pred_b_rv && pred_b_rv->result == BLSCT_SUCCESS);
+    auto* pred_b = reinterpret_cast<const BlsctVectorPredicate*>(pred_b_rv->value);
+
+    // Same predicate bytes => equal
+    BOOST_CHECK_EQUAL(are_vector_predicate_equal(pred_a, pred_a_rv->value_size, pred_b, pred_b_rv->value_size), 1);
+
+    // Different size => not equal
+    BOOST_CHECK_EQUAL(are_vector_predicate_equal(pred_a, pred_a_rv->value_size, pred_b, pred_b_rv->value_size - 1), 0);
+
+    free_obj(pk_rv->value);
+    free(pk_rv);
+    free_obj(pred_a_rv->value);
+    free(pred_a_rv);
+    free_obj(pred_b_rv->value);
+    free(pred_b_rv);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

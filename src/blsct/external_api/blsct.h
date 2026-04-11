@@ -61,7 +61,7 @@ extern "C" {
 
 typedef struct {
     BLSCT_RESULT result;
-    void* value;
+    uint8_t* value;
     size_t value_size;
 } BlsctRetVal;
 
@@ -125,9 +125,7 @@ BlsctRetVal* err(
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
-#define TO_VOID(name) reinterpret_cast<void*>(name)
 
-#define UNVOID(T, name) const T* name = reinterpret_cast<const T*>(void_##name)
 
 inline bool TryParseHexWrap(
     const std::string& hex,
@@ -165,19 +163,19 @@ inline const char* SerializeToHex(
     return StrToAllocCStr(hex_str);
 }
 
-inline void* DeserializeFromHex(const char* hex, const size_t obj_size)
+inline uint8_t* DeserializeFromHex(const char* hex, const size_t obj_size)
 {
     std::vector<uint8_t> vec;
     if (!TryParseHexWrap(hex, vec)) {
-        return err(BLSCT_FAILURE);
+        return nullptr;
     }
 
     // check if the size is correct
     if (vec.size() != obj_size) {
-        return err(BLSCT_BAD_SIZE);
+        return nullptr;
     }
 
-    void* blsct_obj = malloc(obj_size);
+    uint8_t* blsct_obj = (uint8_t*)malloc(obj_size);
     if (blsct_obj == nullptr) {
         fputs("Failed to allocate memory\n", stderr);
         return nullptr;
@@ -244,11 +242,11 @@ typedef uint8_t BlsctCTx;
 typedef uint8_t BlsctRangeProof;
 typedef uint8_t BlsctVectorPredicate;
 
-// fake handle types — replace void* in the external API.
+// fake handle types — replace raw pointers in the external API.
 // Callers treat these as opaque pointers; the underlying C++ types
 // are hidden inside blsct.cpp. This let's us have type safety at the
 // boundary between internal and external code while remaining compatible
-// with external bindings that might use void*
+// with external bindings that might use opaque pointers
 typedef struct BlsctTxInVec_ BlsctTxInVec;
 typedef struct BlsctTxOutVec_ BlsctTxOutVec;
 typedef struct BlsctTxHexVec_ BlsctTxHexVec;
@@ -286,7 +284,7 @@ typedef struct {
 } BlsctCTxRetVal;
 
 BlsctRetVal* succ(
-    void* value,
+    uint8_t* value,
     size_t value_size);
 
 BlsctBoolRetVal* succ_bool(
@@ -330,7 +328,8 @@ typedef struct {
     BlsctScalar blinding_key;
 } BlsctTxOut;
 
-void free_obj(void* x);
+void free_obj_impl(uint8_t* x);
+
 void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 void init();
 
@@ -395,7 +394,7 @@ void delete_tx_out_vec(BlsctTxOutVec* vp_tx_out_vec);
 BlsctCTxRetVal* build_ctx(
     const BlsctTxInVec* void_tx_ins,
     const BlsctTxOutVec* void_tx_outs);
-// using void* instead of const void* to avoid const_cast
+// using non-const types to avoid const_cast
 const char* get_ctx_id(BlsctCtx* vp_ctx);
 const BlsctCTxInVec* get_ctx_ins(BlsctCtx* vp_ctx);
 const BlsctCTxOutVec* get_ctx_outs(BlsctCtx* vp_ctx);
@@ -831,5 +830,18 @@ void add_to_uint64_vec(BlsctUint64Vec* vp_uint64_vec, const uint64_t n);
 void delete_uint64_vec(const BlsctUint64Vec* vp_vec);
 
 } // extern "C"
+
+// Type-safe wrapper for the C deallocator.
+template <typename T>
+void free_obj(T* x)
+{
+    free_obj_impl(reinterpret_cast<uint8_t*>(x));
+}
+
+template <typename T>
+void free_obj(const T* x)
+{
+    free_obj_impl(reinterpret_cast<uint8_t*>(const_cast<T*>(x)));
+}
 
 #endif // NAVCOIN_BLSCT_EXTERNAL_API_BLSCT_H
