@@ -115,15 +115,21 @@ BlsctRetVal* err(
 #define BLSCT_COPY(src, dest) std::memcpy(dest, src, sizeof(dest))
 #define BLSCT_COPY_BYTES(src, dest, n) std::memcpy(dest, src, n)
 #define MALLOC_BYTES(T, name, n) T* name = (T*)malloc(n)
-#define RETURN_IF_MEM_ALLOC_FAILED(name)              \
-    if (name == nullptr) {                            \
-        fputs("Failed to allocate memory\n", stderr); \
-        return nullptr;                               \
-    }
+#define RETURN_IF_MEM_ALLOC_FAILED(name)                  \
+    do {                                                  \
+        if ((name) == nullptr) {                          \
+            fputs("Failed to allocate memory\n", stderr); \
+            return nullptr;                               \
+        }                                                 \
+    } while (0)
 #define RETURN_VAL_IF_MEM_ALLOC_FAILED(name, ret_val) \
-    if (name == nullptr) return ret_val;
-#define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
-    if (name == nullptr) return err(BLSCT_MEM_ALLOC_FAILED);
+    do {                                              \
+        if ((name) == nullptr) return (ret_val);      \
+    } while (0)
+#define RETURN_ERR_IF_MEM_ALLOC_FAILED(name)                       \
+    do {                                                           \
+        if ((name) == nullptr) return err(BLSCT_MEM_ALLOC_FAILED); \
+    } while (0)
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
