@@ -13,6 +13,7 @@
 #include <blsct/public_key.h>
 #include <blsct/range_proof/setup.h>
 #include <cstdint>
+#include <new>
 #include <primitives/transaction.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -114,7 +115,7 @@ BlsctRetVal* err(
 
 #define BLSCT_COPY(src, dest) std::memcpy(dest, src, sizeof(dest))
 #define BLSCT_COPY_BYTES(src, dest, n) std::memcpy(dest, src, n)
-#define MALLOC_BYTES(T, name, n) T* name = (T*)malloc(n)
+#define MALLOC_BYTES(T, name, n) T* name = (T*)blsct_malloc(n)
 #define RETURN_IF_MEM_ALLOC_FAILED(name)              \
     if (name == nullptr) {                            \
         fputs("Failed to allocate memory\n", stderr); \
@@ -125,6 +126,41 @@ BlsctRetVal* err(
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
+// ---------------------------------------------------------------------------
+// Unified allocation wrappers.
+// Every allocation through these gets a hidden header so free_obj_impl
+// can call the correct deallocator (free vs destructor+free).
+// ---------------------------------------------------------------------------
+
+enum BlsctAllocKind : uint8_t {
+    BLSCT_ALLOC_MALLOC = 0,
+    BLSCT_ALLOC_NEW = 1,
+};
+
+typedef void (*BlsctDtor)(void*);
+
+struct BlsctAllocHeader {
+    BlsctAllocKind kind;
+    BlsctDtor dtor; // only meaningful when kind == BLSCT_ALLOC_NEW
+};
+
+// blsct_malloc: malloc wrapper that prepends the header.
+// Returns pointer to user data (after header).
+void* blsct_malloc(size_t size);
+
+// blsct_new<T>: placement-new wrapper that prepends the header
+// and stores a type-erased destructor.
+template <typename T, typename... Args>
+inline T* blsct_new(Args&&... args)
+{
+    constexpr size_t header_size = sizeof(BlsctAllocHeader);
+    void* raw = malloc(header_size + sizeof(T));
+    if (raw == nullptr) return nullptr;
+    auto* hdr = static_cast<BlsctAllocHeader*>(raw);
+    hdr->kind = BLSCT_ALLOC_NEW;
+    hdr->dtor = [](void* p) { static_cast<T*>(p)->~T(); };
+    return new (static_cast<uint8_t*>(raw) + header_size) T(std::forward<Args>(args)...);
+}
 
 inline bool TryParseHexWrap(
     const std::string& hex,
@@ -174,7 +210,7 @@ inline uint8_t* DeserializeFromHex(const char* hex, const size_t obj_size)
         return nullptr;
     }
 
-    uint8_t* blsct_obj = (uint8_t*)malloc(obj_size);
+    uint8_t* blsct_obj = (uint8_t*)blsct_malloc(obj_size);
     if (blsct_obj == nullptr) {
         fputs("Failed to allocate memory\n", stderr);
         return nullptr;

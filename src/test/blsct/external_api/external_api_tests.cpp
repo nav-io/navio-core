@@ -189,7 +189,7 @@ BOOST_AUTO_TEST_CASE(test_amount_recovery_returns_gamma)
     DataStream rp_st{};
     range_proof.Serialize(rp_st);
     size_t rp_size = rp_st.size();
-    auto* rp_buf = static_cast<BlsctRangeProof*>(malloc(rp_size));
+    auto* rp_buf = static_cast<BlsctRangeProof*>(blsct_malloc(rp_size));
     std::memcpy(rp_buf, rp_st.data(), rp_size);
 
     // serialize nonce for the C API
@@ -216,7 +216,7 @@ BOOST_AUTO_TEST_CASE(test_amount_recovery_returns_gamma)
     SERIALIZE_AND_COPY(expected_gamma, expected_gamma_bytes);
     BOOST_CHECK(are_scalar_equal(recovered_gamma, &expected_gamma_bytes) == 1);
 
-    free(rp_buf);
+    free_obj(rp_buf);
     delete req;
     delete_amount_recovery_req_vec(req_vec);
     free_amounts_ret_val(amounts_rv);
@@ -247,7 +247,7 @@ BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
 
     DataStream rp_st{};
     range_proof.Serialize(rp_st);
-    auto* rp_buf = static_cast<BlsctRangeProof*>(malloc(rp_st.size()));
+    auto* rp_buf = static_cast<BlsctRangeProof*>(blsct_malloc(rp_st.size()));
     std::memcpy(rp_buf, rp_st.data(), rp_st.size());
 
     BlsctPoint blsct_nonce;
@@ -288,7 +288,7 @@ BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
     const BlsctScalar* tx_in_gamma = get_tx_in_gamma(tx_in);
     BOOST_CHECK(are_scalar_equal(recovered_gamma, tx_in_gamma) == 1);
 
-    free(rp_buf);
+    free_obj(rp_buf);
     delete req;
     delete_amount_recovery_req_vec(req_vec);
     free_amounts_ret_val(amounts_rv);
@@ -455,11 +455,11 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     delete_string_map(metadata);
     delete_string_map(nft_metadata);
     delete_token_info(RequireSuccess<BlsctTokenInfo>(token_info_roundtrip_rv));
-    free(token_info_roundtrip_rv);
+    free_obj(token_info_roundtrip_rv);
     delete_token_info(RequireSuccess<BlsctTokenInfo>(parsed_token_info_rv));
-    free(parsed_token_info_rv);
+    free_obj(parsed_token_info_rv);
     delete_token_info(RequireSuccess<BlsctTokenInfo>(token_info_rv));
-    free(token_info_rv);
+    free_obj(token_info_rv);
     free_typed_obj(token_public_key);
     free_typed_obj(mint_pred_pub_key);
     free_typed_obj(token_pub_hex);
@@ -471,30 +471,30 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     free_typed_obj(mint_output_hex);
     free_typed_obj(mint_nft_output_hex);
     delete_unsigned_output(RequireSuccess<BlsctUnsignedOutput>(create_output_rv));
-    free(create_output_rv);
+    free_obj(create_output_rv);
     delete_unsigned_output(RequireSuccess<BlsctUnsignedOutput>(mint_output_rv));
-    free(mint_output_rv);
+    free_obj(mint_output_rv);
     delete_unsigned_output(RequireSuccess<BlsctUnsignedOutput>(mint_nft_output_rv));
-    free(mint_nft_output_rv);
+    free_obj(mint_nft_output_rv);
     free_obj(master_token_key_rv->value);
-    free(master_token_key_rv);
+    free_obj(master_token_key_rv);
     free_obj(token_key_rv->value);
-    free(token_key_rv);
+    free_obj(token_key_rv);
     free_obj(collection_hash_rv->value);
-    free(collection_hash_rv);
+    free_obj(collection_hash_rv);
     free_typed_obj(token_info_hex);
     free_obj(create_pred_rv->value);
-    free(create_pred_rv);
+    free_obj(create_pred_rv);
     free_obj(mint_pred_rv->value);
-    free(mint_pred_rv);
+    free_obj(mint_pred_rv);
     free_obj(mint_nft_pred_rv->value);
-    free(mint_nft_pred_rv);
+    free_obj(mint_nft_pred_rv);
     free_obj(view_key_rv->value);
-    free(view_key_rv);
+    free_obj(view_key_rv);
     free_obj(spend_key_rv->value);
-    free(spend_key_rv);
+    free_obj(spend_key_rv);
     free_obj(blinding_key_rv->value);
-    free(blinding_key_rv);
+    free_obj(blinding_key_rv);
 }
 
 BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
@@ -594,36 +594,36 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     BOOST_CHECK(fee_predicate.IsPayFeePredicate());
 
     free_obj(view_key_rv->value);
-    free(view_key_rv);
+    free_obj(view_key_rv);
     free_obj(spend_key_rv->value);
-    free(spend_key_rv);
+    free_obj(spend_key_rv);
     free_obj(input_spending_key_rv->value);
-    free(input_spending_key_rv);
+    free_obj(input_spending_key_rv);
     free_obj(gamma_rv->value);
-    free(gamma_rv);
+    free_obj(gamma_rv);
     free_obj(blinding_key_rv->value);
-    free(blinding_key_rv);
+    free_obj(blinding_key_rv);
     free_obj(default_token_id_rv->value);
-    free(default_token_id_rv);
+    free_obj(default_token_id_rv);
     free_typed_obj(spend_pub_key);
     free_typed_obj(sub_addr_id);
     free_typed_obj(dest);
     free_obj(out_point_rv->value);
-    free(out_point_rv);
+    free_obj(out_point_rv);
     free_obj(tx_in_rv->value);
-    free(tx_in_rv);
+    free_obj(tx_in_rv);
     delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
-    free(unsigned_input_rv);
+    free_obj(unsigned_input_rv);
     free_obj(tx_out_rv->value);
-    free(tx_out_rv);
+    free_obj(tx_out_rv);
     delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
-    free(unsigned_output_rv);
+    free_obj(unsigned_output_rv);
     free_typed_obj(unsigned_tx_hex);
     delete_unsigned_transaction(unsigned_tx);
     delete_unsigned_transaction(reinterpret_cast<BlsctUnsignedTransaction*>(unsigned_tx_roundtrip_rv->value));
-    free(unsigned_tx_roundtrip_rv);
+    free_obj(unsigned_tx_roundtrip_rv);
     free_obj(signed_tx_rv->value);
-    free(signed_tx_rv);
+    free_obj(signed_tx_rv);
 }
 
 BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
@@ -701,33 +701,33 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
         const std::string signed_tx_hex(reinterpret_cast<const char*>(signed_tx_rv->value));
 
         free_obj(view_key_rv->value);
-        free(view_key_rv);
+        free_obj(view_key_rv);
         free_obj(spend_key_rv->value);
-        free(spend_key_rv);
+        free_obj(spend_key_rv);
         free_obj(input_spending_key_rv->value);
-        free(input_spending_key_rv);
+        free_obj(input_spending_key_rv);
         free_obj(gamma_rv->value);
-        free(gamma_rv);
+        free_obj(gamma_rv);
         free_obj(blinding_key_rv->value);
-        free(blinding_key_rv);
+        free_obj(blinding_key_rv);
         free_obj(default_token_id_rv->value);
-        free(default_token_id_rv);
+        free_obj(default_token_id_rv);
         free_typed_obj(spend_pub_key);
         free_typed_obj(sub_addr_id);
         free_typed_obj(dest);
         free_obj(out_point_rv->value);
-        free(out_point_rv);
+        free_obj(out_point_rv);
         free_obj(tx_in_rv->value);
-        free(tx_in_rv);
+        free_obj(tx_in_rv);
         delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(unsigned_input_rv->value));
-        free(unsigned_input_rv);
+        free_obj(unsigned_input_rv);
         free_obj(tx_out_rv->value);
-        free(tx_out_rv);
+        free_obj(tx_out_rv);
         delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(unsigned_output_rv->value));
-        free(unsigned_output_rv);
+        free_obj(unsigned_output_rv);
         delete_unsigned_transaction(unsigned_tx);
         free_obj(signed_tx_rv->value);
-        free(signed_tx_rv);
+        free_obj(signed_tx_rv);
 
         return signed_tx_hex;
     };
@@ -758,7 +758,7 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
 
     delete_tx_hex_vec(tx_hex_vec);
     free_obj(aggregate_rv->value);
-    free(aggregate_rv);
+    free_obj(aggregate_rv);
 }
 
 // ---------------------------------------------------------------------------
@@ -814,33 +814,33 @@ static std::string BuildSignedTxHex(uint64_t seed_base, uint64_t input_amount, u
 
     // cleanup
     free_obj(view_key_rv->value);
-    free(view_key_rv);
+    free_obj(view_key_rv);
     free_obj(spend_key_rv->value);
-    free(spend_key_rv);
+    free_obj(spend_key_rv);
     free_obj(input_sk_rv->value);
-    free(input_sk_rv);
+    free_obj(input_sk_rv);
     free_obj(gamma_rv->value);
-    free(gamma_rv);
+    free_obj(gamma_rv);
     free_obj(blind_rv->value);
-    free(blind_rv);
+    free_obj(blind_rv);
     free_obj(tid_rv->value);
-    free(tid_rv);
+    free_obj(tid_rv);
     free_typed_obj(spend_pub);
     free_typed_obj(sub_id);
     free_typed_obj(dest);
     free_obj(op_rv->value);
-    free(op_rv);
+    free_obj(op_rv);
     free_obj(in_rv->value);
-    free(in_rv);
+    free_obj(in_rv);
     delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(uin_rv->value));
-    free(uin_rv);
+    free_obj(uin_rv);
     free_obj(out_rv->value);
-    free(out_rv);
+    free_obj(out_rv);
     delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(uout_rv->value));
-    free(uout_rv);
+    free_obj(uout_rv);
     delete_unsigned_transaction(utx);
     free_obj(signed_rv->value);
-    free(signed_rv);
+    free_obj(signed_rv);
 
     return hex;
 }
@@ -910,33 +910,33 @@ static BlsctCtx* BuildCtxViaApi(uint64_t input_amount, uint64_t output_amount, u
 
     // cleanup helpers
     free_obj(view_key_rv->value);
-    free(view_key_rv);
+    free_obj(view_key_rv);
     free_obj(spend_key_rv->value);
-    free(spend_key_rv);
+    free_obj(spend_key_rv);
     free_obj(input_sk_rv->value);
-    free(input_sk_rv);
+    free_obj(input_sk_rv);
     free_obj(gamma_rv->value);
-    free(gamma_rv);
+    free_obj(gamma_rv);
     free_obj(blind_rv->value);
-    free(blind_rv);
+    free_obj(blind_rv);
     free_obj(tid_rv->value);
-    free(tid_rv);
+    free_obj(tid_rv);
     free_typed_obj(spend_pub);
     free_typed_obj(sub_id);
     free_typed_obj(dest);
     free_obj(op_rv->value);
-    free(op_rv);
+    free_obj(op_rv);
     free_obj(in_rv->value);
-    free(in_rv);
+    free_obj(in_rv);
     delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(uin_rv->value));
-    free(uin_rv);
+    free_obj(uin_rv);
     free_obj(out_rv->value);
-    free(out_rv);
+    free_obj(out_rv);
     delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(uout_rv->value));
-    free(uout_rv);
+    free_obj(uout_rv);
     delete_unsigned_transaction(utx);
     free_obj(signed_rv->value);
-    free(signed_rv);
+    free_obj(signed_rv);
 
     return ctx;
 }
@@ -974,7 +974,7 @@ BOOST_AUTO_TEST_CASE(test_build_ctx_and_serialization)
     free_typed_obj(ctx_id);
     free_typed_obj(ctx_hex);
     free_typed_obj(ctx_id2);
-    free(deser_rv);
+    free_obj(deser_rv);
 }
 
 BOOST_AUTO_TEST_CASE(test_ctx_in_vector_accessors)
@@ -1120,9 +1120,9 @@ BOOST_AUTO_TEST_CASE(test_ctx_out_vector_and_field_accessors)
     free_typed_obj(ek);
     free_typed_obj(bk);
     free_obj(const_cast<uint8_t*>(rp_rv->value));
-    free(const_cast<BlsctRetVal*>(rp_rv));
+    free_obj(const_cast<BlsctRetVal*>(rp_rv));
     free_obj(pred_rv->value);
-    free(pred_rv);
+    free_obj(pred_rv);
 }
 
 BOOST_AUTO_TEST_CASE(test_ctx_ins_equality_across_instances)
@@ -1214,26 +1214,26 @@ BOOST_AUTO_TEST_CASE(test_range_proof_build_and_verify)
     BOOST_REQUIRE_EQUAL(deser_rv->result, BLSCT_SUCCESS);
 
     // cleanup
-    free(rp_A);
-    free(rp_A_wip);
-    free(rp_B);
-    free(rp_r_prime);
-    free(rp_s_prime);
-    free(rp_delta_prime);
-    free(rp_alpha_hat);
-    free(rp_tau_x);
+    free_obj(rp_A);
+    free_obj(rp_A_wip);
+    free_obj(rp_B);
+    free_obj(rp_r_prime);
+    free_obj(rp_s_prime);
+    free_obj(rp_delta_prime);
+    free_obj(rp_alpha_hat);
+    free_obj(rp_tau_x);
     delete_range_proof_vec(rp_vec);
-    free(verify_rv);
+    free_obj(verify_rv);
     free_typed_obj(rp_hex);
     free_obj(deser_rv->value);
-    free(deser_rv);
+    free_obj(deser_rv);
     free_obj(rp_rv->value);
-    free(rp_rv);
+    free_obj(rp_rv);
     delete_uint64_vec(u64_vec);
     free_obj(nonce_rv->value);
-    free(nonce_rv);
+    free_obj(nonce_rv);
     free_obj(tid_rv->value);
-    free(tid_rv);
+    free_obj(tid_rv);
 }
 
 // ---------------------------------------------------------------------------
@@ -1263,11 +1263,11 @@ BOOST_AUTO_TEST_CASE(test_vector_predicate_equality)
     BOOST_CHECK_EQUAL(are_vector_predicate_equal(pred_a, pred_a_rv->value_size, pred_b, pred_b_rv->value_size - 1), 0);
 
     free_obj(pk_rv->value);
-    free(pk_rv);
+    free_obj(pk_rv);
     free_obj(pred_a_rv->value);
-    free(pred_a_rv);
+    free_obj(pred_a_rv);
     free_obj(pred_b_rv->value);
-    free(pred_b_rv);
+    free_obj(pred_b_rv);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

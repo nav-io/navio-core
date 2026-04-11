@@ -398,9 +398,28 @@ static BlsctRetVal* MallocAndCopyUint256(const uint256& value)
 
 //---------------------
 
+void* blsct_malloc(size_t size)
+{
+    constexpr size_t header_size = sizeof(BlsctAllocHeader);
+    void* raw = ::malloc(header_size + size);
+    if (raw == nullptr) return nullptr;
+    auto* hdr = static_cast<BlsctAllocHeader*>(raw);
+    hdr->kind = BLSCT_ALLOC_MALLOC;
+    hdr->dtor = nullptr;
+    return static_cast<uint8_t*>(raw) + header_size;
+}
+
 void free_obj_impl(uint8_t* x)
 {
-    if (x != nullptr) free(x);
+    if (x == nullptr) return;
+    constexpr size_t header_size = sizeof(BlsctAllocHeader);
+    auto* hdr = reinterpret_cast<BlsctAllocHeader*>(x - header_size);
+    if (hdr->kind == BLSCT_ALLOC_MALLOC) {
+        free(hdr);
+    } else {
+        if (hdr->dtor) hdr->dtor(x);
+        free(hdr);
+    }
 }
 
 void free_amounts_ret_val(BlsctAmountsRetVal* rv)
@@ -408,10 +427,10 @@ void free_amounts_ret_val(BlsctAmountsRetVal* rv)
     auto result_vec = to_cpp<std::vector<BlsctAmountRecoveryResult>>(rv->value);
 
     for (auto res : *result_vec) {
-        free(res.msg);
+        free_obj(res.msg);
     }
     delete result_vec;
-    free(rv);
+    free_obj(rv);
 }
 
 const char* serialize_raw_obj(const uint8_t* ser_obj, const size_t ser_obj_size)
@@ -494,7 +513,7 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
     auto req = new (std::nothrow) BlsctAmountRecoveryReq;
     RETURN_IF_MEM_ALLOC_FAILED(req);
 
-    req->range_proof = (BlsctRangeProof*)malloc(range_proof_size);
+    req->range_proof = (BlsctRangeProof*)blsct_malloc(range_proof_size);
     RETURN_IF_MEM_ALLOC_FAILED(req->range_proof);
 
     BLSCT_COPY_BYTES(vp_blsct_range_proof, req->range_proof, range_proof_size);
@@ -576,7 +595,7 @@ BlsctAmountsRetVal* recover_amount(
             result.amount = succ_res.amount;
 
             // write message to the result
-            result.msg = (char*)malloc(succ_res.message.size() + 1);
+            result.msg = (char*)blsct_malloc(succ_res.message.size() + 1);
             std::memcpy(
                 result.msg,
                 succ_res.message.c_str(),
@@ -620,7 +639,7 @@ void delete_amount_recovery_req_vec(BlsctAmountRecoveryReqVec* vp_amt_recovery_r
     RETURN_IF_NULL(vp_amt_recovery_req_vec);
     auto vec = to_cpp<const std::vector<BlsctAmountRecoveryReq>>(vp_amt_recovery_req_vec);
     for (auto& req : *vec) {
-        free(req.range_proof);
+        free_obj(req.range_proof);
     }
     delete vec;
 }
@@ -1024,7 +1043,7 @@ bool are_ctx_in_equal(const BlsctCTxIn* vp_a, const BlsctCTxIn* vp_b)
 const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* vp_ctx_in)
 {
     auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
-    auto copy = reinterpret_cast<BlsctCTxId*>(malloc(CTX_ID_SIZE));
+    auto copy = reinterpret_cast<BlsctCTxId*>(blsct_malloc(CTX_ID_SIZE));
     std::memcpy(copy, &ctx_in->prevout.hash, CTX_ID_SIZE);
     return copy;
 }
@@ -1032,7 +1051,7 @@ const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* vp_ctx_in)
 const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* vp_ctx_in)
 {
     auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
-    auto copy = reinterpret_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    auto copy = reinterpret_cast<BlsctScript*>(blsct_malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_in->scriptSig, SCRIPT_SIZE);
     return copy;
 }
@@ -1046,7 +1065,7 @@ uint32_t get_ctx_in_sequence(const BlsctCTxIn* vp_ctx_in)
 const BlsctScript* get_ctx_in_script_witness(const BlsctCTxIn* vp_ctx_in)
 {
     auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
-    auto copy = reinterpret_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    auto copy = reinterpret_cast<BlsctScript*>(blsct_malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_in->scriptWitness, SCRIPT_SIZE);
     return copy;
 }
@@ -1089,7 +1108,7 @@ uint64_t get_ctx_out_value(const BlsctCTxOut* vp_ctx_out)
 const BlsctScript* get_ctx_out_script_pub_key(const BlsctCTxOut* vp_ctx_out)
 {
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
-    auto copy = reinterpret_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    auto copy = reinterpret_cast<BlsctScript*>(blsct_malloc(SCRIPT_SIZE));
     std::memcpy(copy, &ctx_out->scriptPubKey, SCRIPT_SIZE);
     return copy;
 }
@@ -1097,7 +1116,7 @@ const BlsctScript* get_ctx_out_script_pub_key(const BlsctCTxOut* vp_ctx_out)
 const BlsctPoint* get_ctx_out_spending_key(const BlsctCTxOut* vp_ctx_out)
 {
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
-    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto copy = static_cast<BlsctPoint*>(blsct_malloc(POINT_SIZE));
     auto org = ctx_out->blsctData.spendingKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
@@ -1106,7 +1125,7 @@ const BlsctPoint* get_ctx_out_spending_key(const BlsctCTxOut* vp_ctx_out)
 const BlsctPoint* get_ctx_out_ephemeral_key(const BlsctCTxOut* vp_ctx_out)
 {
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
-    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto copy = static_cast<BlsctPoint*>(blsct_malloc(POINT_SIZE));
     auto org = ctx_out->blsctData.ephemeralKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
@@ -1115,7 +1134,7 @@ const BlsctPoint* get_ctx_out_ephemeral_key(const BlsctCTxOut* vp_ctx_out)
 const BlsctPoint* get_ctx_out_blinding_key(const BlsctCTxOut* vp_ctx_out)
 {
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
-    auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));
+    auto copy = static_cast<BlsctPoint*>(blsct_malloc(POINT_SIZE));
     auto org = ctx_out->blsctData.blindingKey.GetVch();
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
@@ -1126,7 +1145,7 @@ const BlsctRetVal* get_ctx_out_range_proof(const BlsctCTxOut* vp_ctx_out)
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     DataStream st{};
     ctx_out->blsctData.rangeProof.Serialize(st);
-    auto copy = static_cast<BlsctRangeProof*>(malloc(st.size()));
+    auto copy = static_cast<BlsctRangeProof*>(blsct_malloc(st.size()));
     std::memcpy(copy, st.data(), st.size());
     return succ_as(copy, st.size());
     ;
@@ -1141,7 +1160,7 @@ uint16_t get_ctx_out_view_tag(const BlsctCTxOut* vp_ctx_out)
 const BlsctTokenId* get_ctx_out_token_id(const BlsctCTxOut* vp_ctx_out)
 {
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
-    auto copy = static_cast<BlsctTokenId*>(malloc(TOKEN_ID_SIZE));
+    auto copy = static_cast<BlsctTokenId*>(blsct_malloc(TOKEN_ID_SIZE));
     std::memcpy(copy, &ctx_out->tokenId, TOKEN_ID_SIZE);
     return copy;
 }
@@ -1187,7 +1206,7 @@ BlsctPoint* calc_nonce(
         blinding_pub_key.GetG1Point(),
         view_key);
     BlsctPoint* blsct_nonce = static_cast<BlsctPoint*>(
-        malloc(POINT_SIZE));
+        blsct_malloc(POINT_SIZE));
     SERIALIZE_AND_COPY(nonce, blsct_nonce);
 
     return blsct_nonce;
@@ -1277,7 +1296,7 @@ BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
 
     auto dpk = std::get<blsct::DoublePublicKey>(sub_addr.GetDestination());
     BlsctDoublePubKey* blsct_dpk = reinterpret_cast<BlsctDoublePubKey*>(
-        malloc(DOUBLE_PUBLIC_KEY_SIZE));
+        blsct_malloc(DOUBLE_PUBLIC_KEY_SIZE));
     SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
 
     return blsct_dpk;
@@ -1315,7 +1334,7 @@ BlsctKeyId* calc_key_id(
         spending_pub_key.GetG1Point(),
         view_key);
     BlsctKeyId* blsct_key_id = reinterpret_cast<BlsctKeyId*>(
-        malloc(KEY_ID_SIZE));
+        blsct_malloc(KEY_ID_SIZE));
     SERIALIZE_AND_COPY_WITH_STREAM(key_id, blsct_key_id);
 
     return blsct_key_id;
@@ -1628,7 +1647,7 @@ BlsctBoolRetVal* verify_range_proofs(
     {                                                                                                            \
         bulletproofs_plus::RangeProof<Mcl> range_proof;                                                          \
         UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof);                      \
-        auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));                                                \
+        auto copy = static_cast<BlsctPoint*>(blsct_malloc(POINT_SIZE));                                          \
         auto org = range_proof.field.GetVch();                                                                   \
         std::memcpy(copy, &org[0], POINT_SIZE);                                                                  \
         return copy;                                                                                             \
@@ -1645,7 +1664,7 @@ DEFINE_RANGE_PROOF_POINT_GETTER(B)
     {                                                                                                             \
         bulletproofs_plus::RangeProof<Mcl> range_proof;                                                           \
         UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof);                       \
-        auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));                                               \
+        auto copy = static_cast<BlsctScalar*>(blsct_malloc(SCALAR_SIZE));                                         \
         auto org = range_proof.field.GetVch();                                                                    \
         std::memcpy(copy, &org[0], SCALAR_SIZE);                                                                  \
         return copy;                                                                                              \
@@ -1791,7 +1810,7 @@ BlsctPubKey* scalar_to_pub_key(
     auto pub_key = priv_key.GetPublicKey();
 
     BlsctPubKey* blsct_pub_key = static_cast<BlsctPubKey*>(
-        malloc(PUBLIC_KEY_SIZE));
+        blsct_malloc(PUBLIC_KEY_SIZE));
     SERIALIZE_AND_COPY(pub_key, blsct_pub_key);
     return blsct_pub_key;
 }
@@ -1836,7 +1855,7 @@ const BlsctSignature* sign_message(
     blsct::Signature sig = priv_key.Sign(msg);
 
     BlsctSignature* blsct_sig = reinterpret_cast<BlsctSignature*>(
-        malloc(SIGNATURE_SIZE));
+        blsct_malloc(SIGNATURE_SIZE));
     SERIALIZE_AND_COPY(sig, blsct_sig);
 
     return blsct_sig;
@@ -1876,7 +1895,7 @@ BlsctSubAddr* derive_sub_address(
 
     auto sub_addr = blsct::DeriveSubAddress(view_key, spending_pub_key, sub_addr_id);
     BlsctSubAddr* blsct_sub_addr = reinterpret_cast<BlsctSubAddr*>(
-        malloc(SUB_ADDR_SIZE));
+        blsct_malloc(SUB_ADDR_SIZE));
     SERIALIZE_AND_COPY_WITH_STREAM(sub_addr, blsct_sub_addr);
 
     return blsct_sub_addr;
@@ -2165,14 +2184,14 @@ const BlsctPubKey* derive_collection_token_public_key(
     auto token_key_rv = derive_collection_token_key(blsct_master_token_key, blsct_collection_token_hash);
     if (token_key_rv == nullptr || token_key_rv->result != BLSCT_SUCCESS) {
         if (token_key_rv != nullptr) {
-            free(token_key_rv);
+            free_obj(token_key_rv);
         }
         return nullptr;
     }
 
     const auto* pub_key = scalar_to_pub_key(reinterpret_cast<const BlsctScalar*>(token_key_rv->value));
     free_obj(token_key_rv->value);
-    free(token_key_rv);
+    free_obj(token_key_rv);
     return pub_key;
 }
 
@@ -2293,7 +2312,7 @@ uint64_t get_tx_out_amount(const BlsctTxOut* tx_out)
 const char* get_tx_out_memo(const BlsctTxOut* tx_out)
 {
     size_t memo_c_str_len = std::strlen(tx_out->memo_c_str);
-    char* memo_c_str = (char*)malloc(memo_c_str_len + 1);
+    char* memo_c_str = (char*)blsct_malloc(memo_c_str_len + 1);
     RETURN_IF_MEM_ALLOC_FAILED(memo_c_str);
     std::memcpy(memo_c_str, tx_out->memo_c_str, memo_c_str_len + 1);
     return memo_c_str;
@@ -2802,7 +2821,7 @@ BlsctScalar* from_seed_to_child_key(
 
     auto child_key = blsct::FromSeedToChildKey(seed);
     BlsctScalar* blsct_child_key = static_cast<BlsctScalar*>(
-        malloc(SCALAR_SIZE));
+        blsct_malloc(SCALAR_SIZE));
     SERIALIZE_AND_COPY(child_key, blsct_child_key);
 
     return blsct_child_key;
@@ -2816,7 +2835,7 @@ BlsctScalar* from_child_key_to_blinding_key(
 
     Scalar blinding_key = blsct::FromChildToBlindingKey(child_key);
     BlsctScalar* blsct_blinding_key = static_cast<BlsctScalar*>(
-        malloc(SCALAR_SIZE));
+        blsct_malloc(SCALAR_SIZE));
     SERIALIZE_AND_COPY(blinding_key, blsct_blinding_key);
 
     return blsct_blinding_key;
@@ -2830,7 +2849,7 @@ BlsctScalar* from_child_key_to_token_key(
 
     auto token_key = blsct::FromChildToTokenKey(child_key);
     BlsctScalar* blsct_token_key = static_cast<BlsctScalar*>(
-        malloc(SCALAR_SIZE));
+        blsct_malloc(SCALAR_SIZE));
     SERIALIZE_AND_COPY(token_key, blsct_token_key);
 
     return blsct_token_key;
@@ -2844,7 +2863,7 @@ BlsctScalar* from_child_key_to_tx_key(
 
     auto tx_key = blsct::FromChildToTransactionKey(child_key);
     BlsctScalar* blsct_tx_key = static_cast<BlsctScalar*>(
-        malloc(SCALAR_SIZE));
+        blsct_malloc(SCALAR_SIZE));
     SERIALIZE_AND_COPY(tx_key, blsct_tx_key);
 
     return blsct_tx_key;
@@ -2858,7 +2877,7 @@ BlsctScalar* from_tx_key_to_view_key(
 
     auto view_key = blsct::FromTransactionToViewKey(tx_key);
     BlsctScalar* blsct_view_key = static_cast<BlsctScalar*>(
-        malloc(SCALAR_SIZE));
+        blsct_malloc(SCALAR_SIZE));
     SERIALIZE_AND_COPY(view_key, blsct_view_key);
 
     return blsct_view_key;
@@ -2872,7 +2891,7 @@ BlsctScalar* from_tx_key_to_spending_key(
 
     auto spending_key = blsct::FromTransactionToSpendKey(tx_key);
     BlsctScalar* blsct_spending_key = static_cast<BlsctScalar*>(
-        malloc(SCALAR_SIZE));
+        blsct_malloc(SCALAR_SIZE));
     SERIALIZE_AND_COPY(spending_key, blsct_spending_key);
 
     return blsct_spending_key;
@@ -2901,7 +2920,7 @@ BlsctScalar* calc_priv_spending_key(
         account,
         address);
     BlsctScalar* blsct_priv_spending_key = static_cast<BlsctScalar*>(
-        malloc(SCALAR_SIZE));
+        blsct_malloc(SCALAR_SIZE));
     SERIALIZE_AND_COPY(priv_spending_key, blsct_priv_spending_key);
 
     return blsct_priv_spending_key;
@@ -2937,7 +2956,7 @@ uint8_t* hex_to_malloced_buf(const char* hex)
     size_t hex_len = std::strlen(hex);
     size_t buf_len = hex_len / 2;
 
-    uint8_t* buf = static_cast<uint8_t*>(malloc(buf_len));
+    uint8_t* buf = static_cast<uint8_t*>(blsct_malloc(buf_len));
     const char* p = hex;
 
     for (size_t i = 0; i < buf_len; ++i) {
@@ -2955,7 +2974,7 @@ const char* buf_to_malloced_hex_c_str(const uint8_t* buf, size_t size)
     // +1 for null terminator at the end
     size_t hex_str_len = size * 2 + 1;
 
-    char* hex_c_str = static_cast<char*>(malloc(hex_str_len));
+    char* hex_c_str = static_cast<char*>(blsct_malloc(hex_str_len));
     if (hex_c_str == nullptr) {
         return nullptr;
     }
