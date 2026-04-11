@@ -397,6 +397,9 @@ static RPCHelpMan createwallet()
             if (!request.params[4].isNull() && request.params[4].get_bool()) {
                 flags |= WALLET_FLAG_AVOID_REUSE;
             }
+            // TODO(@aguycalled, @gogo): Discuss whether to remove legacy BDB and descriptor wallet support.
+            // With BLSCT as the standard wallet type, keeping these options may lead to users
+            // misconfiguring wallets. Consider simplifying to BLSCT-only.
             if (request.params[5].isNull() || request.params[5].get_bool()) {
 #ifndef USE_SQLITE
                 throw JSONRPCError(RPC_WALLET_ERROR, "Compiled without sqlite support (required for descriptor wallets)");
@@ -417,6 +420,8 @@ static RPCHelpMan createwallet()
             }
 #endif
 
+            // TODO(@aguycalled, @gogo): Should blsct=true become the default? This would eliminate
+            // the need for the flag and reduce misconfiguration risk for new users.
             if (!request.params[8].isNull() && request.params[8].get_bool()) {
                 flags |= WALLET_FLAG_BLSCT;
                 flags &= ~WALLET_FLAG_DESCRIPTORS;

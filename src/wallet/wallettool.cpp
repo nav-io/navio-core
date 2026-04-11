@@ -158,16 +158,18 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         DatabaseOptions options;
         ReadDatabaseArgs(args, options);
         options.require_create = true;
-        // If -legacy is set, use it. Otherwise default to false.
+        // TODO(@aguycalled, @gogo): Discuss whether to remove -legacy and -descriptors options.
+        // With BLSCT as the standard wallet type, these options create confusion and increase
+        // the chance of users creating the wrong wallet type. Consider making -blsct the default.
         bool make_legacy = args.GetBoolArg("-legacy", false);
-        // If -blsct is set, use it. Otherwise default to false.
         bool make_blsct = args.GetBoolArg("-blsct", false);
-        // If neither -legacy, -blsct nor -descriptors is set, default to true. If -descriptors is set, use its value.
         bool make_descriptors = (!args.IsArgSet("-descriptors") && !args.IsArgSet("-legacy") && !args.IsArgSet("-blsct")) || (args.IsArgSet("-descriptors") && args.GetBoolArg("-descriptors", true));
         if (make_legacy + make_descriptors + make_blsct > 1) {
             tfm::format(std::cerr, "Only one of -legacy, -blsct or -descriptors can be set to true, not both\n");
             return false;
         }
+        // TODO(@aguycalled, @gogo): If legacy/descriptors are removed, this check can be simplified
+        // to just defaulting to BLSCT, removing the need for users to specify wallet type at all.
         if (!make_legacy && !make_descriptors && !make_blsct) {
             tfm::format(std::cerr, "One of -legacy, -blsct or -descriptors must be set to true (or omitted)\n");
             return false;
@@ -258,6 +260,8 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         WalletShowInfo(wallet_instance.get());
         wallet_instance->Close();
     } else if (command == "salvage") {
+        // TODO(@aguycalled, @gogo): If legacy BDB wallets are removed, the salvage command
+        // and all USE_BDB guards can be deleted entirely.
 #ifdef USE_BDB
         bilingual_str error;
         std::vector<bilingual_str> warnings;
