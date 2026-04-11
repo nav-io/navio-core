@@ -626,6 +626,25 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     free_obj(signed_tx_rv);
 }
 
+BOOST_AUTO_TEST_CASE(test_are_ctx_in_equal)
+{
+    init();
+
+    // create two CTxIns with different out_points
+    uint256 hash_a, hash_b;
+    hash_a.SetHex("1111111111111111111111111111111111111111111111111111111111111111");
+    hash_b.SetHex("2222222222222222222222222222222222222222222222222222222222222222");
+
+    CTxIn tx_in_a{COutPoint{hash_a}};
+    CTxIn tx_in_b{COutPoint{hash_b}};
+
+    // same object should be equal
+    BOOST_CHECK(are_ctx_in_equal(&tx_in_a, &tx_in_a));
+
+    // different out_points should not be equal
+    BOOST_CHECK(!are_ctx_in_equal(&tx_in_a, &tx_in_b));
+}
+
 BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
 {
     init();
