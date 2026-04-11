@@ -983,6 +983,7 @@ BOOST_AUTO_TEST_CASE(test_ctx_in_vector_accessors)
 
     std::string tx_hex = BuildSignedTxHex(51, 1000, 400, 100);
     CMutableTransaction mtx = DecodeTx(tx_hex);
+    BOOST_CHECK(!mtx.vin.empty());
 
     // get_ctx_ins / get_ctx_ins_size / get_ctx_in_at via unsigned-tx path
     // We use build_ctx to get a BlsctCtx and then extract ins from it
