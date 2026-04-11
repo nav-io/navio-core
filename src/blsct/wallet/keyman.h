@@ -50,6 +50,7 @@ class KeyMan : public Manager, public KeyRing
 private:
     blsct::HDChain m_hd_chain;
     SecureBytes m_mnemonic_entropy GUARDED_BY(cs_KeyStore);
+    std::vector<unsigned char> m_crypted_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains;
 
     bool AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey);
@@ -96,10 +97,22 @@ public:
         m_mnemonic_entropy.assign(entropy.begin(), entropy.end());
     }
 
+    void LoadCryptedMnemonicEntropy(const std::vector<unsigned char>& crypted_entropy)
+    {
+        LOCK(cs_KeyStore);
+        m_crypted_mnemonic_entropy = crypted_entropy;
+    }
+
     bool HasMnemonicEntropy() const
     {
         LOCK(cs_KeyStore);
         return !m_mnemonic_entropy.empty();
+    }
+
+    bool HasCryptedMnemonicEntropy() const
+    {
+        LOCK(cs_KeyStore);
+        return !m_crypted_mnemonic_entropy.empty();
     }
 
     std::vector<unsigned char> GetMnemonicEntropy() const

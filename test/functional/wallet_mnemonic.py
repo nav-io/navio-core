@@ -92,6 +92,22 @@ class WalletMnemonicTest(BitcoinTestFramework):
             node.createwallet, wallet_name="test_invalid",
             blsct=True, mnemonic="invalid words here that are not real")
 
+        self.log.info("Test createwallet with 12-word mnemonic errors (only 24-word supported)")
+        assert_raises_rpc_error(-8, "Only 24-word",
+            node.createwallet, wallet_name="test_12word",
+            blsct=True,
+            mnemonic="abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+
+        self.log.info("Test createwallet with mnemonic but without blsct errors")
+        assert_raises_rpc_error(-8, "requires blsct=true",
+            node.createwallet, wallet_name="test_mnemonic_no_blsct",
+            mnemonic="abandon " * 23 + "art")
+
+        self.log.info("Test createwallet with seed but without blsct errors")
+        assert_raises_rpc_error(-8, "requires blsct=true",
+            node.createwallet, wallet_name="test_seed_no_blsct",
+            seed="00" * 32)
+
         self.log.info("Test dumpmnemonic on seed-imported BLSCT wallet errors")
         node.createwallet(wallet_name="test_seed_wallet", blsct=True, seed="00" * 32)
         w_seed = node.get_wallet_rpc("test_seed_wallet")
@@ -139,6 +155,36 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert_raises_rpc_error(-13, "wallet passphrase", w_enc.dumpmnemonic)
         # Re-unlock for any subsequent tests
         w_enc.walletpassphrase("testpass", 999999)
+
+        self.log.info("Test encrypted wallet mnemonic survives lock/unlock cycle")
+        mnemonic_before_lock = w_enc.dumpmnemonic()
+        w_enc.walletlock()
+        w_enc.walletpassphrase("testpass", 999999)
+        mnemonic_after_unlock = w_enc.dumpmnemonic()
+        assert_equal(mnemonic_before_lock, mnemonic_after_unlock)
+
+        self.log.info("Test create-with-passphrase: mnemonic roundtrip through lock/unlock")
+        result_enc2 = node.createwallet(
+            wallet_name="test_enc_mnemonic", blsct=True, passphrase="pass2")
+        assert "mnemonic" in result_enc2
+        w_enc2 = node.get_wallet_rpc("test_enc_mnemonic")
+        w_enc2.walletpassphrase("pass2", 999999)
+        mnemonic_enc2 = w_enc2.dumpmnemonic()
+        assert_equal(mnemonic_enc2, result_enc2["mnemonic"])
+        # Lock and re-unlock to verify decryption path works
+        w_enc2.walletlock()
+        w_enc2.walletpassphrase("pass2", 999999)
+        mnemonic_enc2_after = w_enc2.dumpmnemonic()
+        assert_equal(mnemonic_enc2, mnemonic_enc2_after)
+
+        self.log.info("Test create-with-passphrase: restore from mnemonic matches")
+        node.createwallet(
+            wallet_name="test_enc_restored", blsct=True, mnemonic=mnemonic_enc2, passphrase="pass3")
+        w_enc3 = node.get_wallet_rpc("test_enc_restored")
+        w_enc3.walletpassphrase("pass3", 999999)
+        seed_enc2 = w_enc2.getblsctseed()
+        seed_enc3 = w_enc3.getblsctseed()
+        assert_equal(seed_enc2, seed_enc3)
 
         self.log.info("Test multi-address consistency: 5 addresses match after restore")
         node.createwallet(wallet_name="test_multiaddr", blsct=True)
@@ -209,6 +255,43 @@ class WalletMnemonicTest(BitcoinTestFramework):
             "test_cli_invalid_mnemonic", mnemonic="invalid words that are not in the wordlist at all")
         assert_equal(rc4, 1)
         assert "Invalid mnemonic" in stderr4
+
+        self.log.info("Test CLI tool: navio-wallet create with 12-word -mnemonic errors")
+        rc_12w, stdout_12w, stderr_12w = self.navio_wallet_create(
+            "test_cli_12word",
+            mnemonic="abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+        assert_equal(rc_12w, 1)
+        assert "Only 24-word" in stderr_12w
+
+        self.log.info("Test CLI tool: navio-wallet create with -mnemonic but without -blsct errors")
+        cli_no_blsct_args = [
+            '-datadir={}'.format(self.nodes[0].datadir_path),
+            '-chain={}'.format(self.chain),
+            '-wallet=test_cli_mnemonic_no_blsct',
+            '-mnemonic={}'.format(cli_mnemonic),
+            'create',
+        ]
+        p_no_blsct = subprocess.Popen(
+            [self.options.naviowallet] + cli_no_blsct_args,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout_nb, stderr_nb = p_no_blsct.communicate()
+        assert_equal(p_no_blsct.poll(), 1)
+        assert "requires -blsct" in stderr_nb
+
+        self.log.info("Test CLI tool: navio-wallet create with -seed but without -blsct errors")
+        cli_no_blsct_seed_args = [
+            '-datadir={}'.format(self.nodes[0].datadir_path),
+            '-chain={}'.format(self.chain),
+            '-wallet=test_cli_seed_no_blsct',
+            '-seed={}'.format("00" * 32),
+            'create',
+        ]
+        p_no_blsct_seed = subprocess.Popen(
+            [self.options.naviowallet] + cli_no_blsct_seed_args,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout_nbs, stderr_nbs = p_no_blsct_seed.communicate()
+        assert_equal(p_no_blsct_seed.poll(), 1)
+        assert "requires -blsct" in stderr_nbs
 
         self.log.info("Test roundtrip through CLI: CLI create -> RPC dumpmnemonic -> CLI restore")
         # Create a wallet via CLI

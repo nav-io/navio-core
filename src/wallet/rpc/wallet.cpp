@@ -360,8 +360,8 @@ static RPCHelpMan createwallet()
             {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true."},
             {"blsct", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a wallet with BLSCT keys."},
             {"storage_output", RPCArg::Type::BOOL, RPCArg::Default{false}, "Enables the storage of outputs instead of full txs (experimental)."},
-            {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the wallet from the specified seed (can be a master seed or an audit key)."},
-            {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words) to restore a BLSCT wallet from. Mutually exclusive with 'seed'."},
+            {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the BLSCT wallet from the specified seed (can be a master seed or an audit key). Requires blsct=true."},
+            {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words) to restore a BLSCT wallet from. Requires blsct=true. Mutually exclusive with 'seed'."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -426,6 +426,16 @@ static RPCHelpMan createwallet()
                 flags |= WALLET_FLAG_BLSCT_OUTPUT_STORAGE;
             }
 
+            // Reject seed/mnemonic when BLSCT is not enabled
+            bool has_seed_param = !request.params[10].isNull() && request.params[10].isStr() && !request.params[10].get_str().empty();
+            bool has_mnemonic_param = !request.params[11].isNull() && request.params[11].isStr() && !request.params[11].get_str().empty();
+            if (has_seed_param && !(flags & WALLET_FLAG_BLSCT)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "The 'seed' parameter requires blsct=true");
+            }
+            if (has_mnemonic_param && !(flags & WALLET_FLAG_BLSCT)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "The 'mnemonic' parameter requires blsct=true");
+            }
+
             std::vector<unsigned char> seed;
             blsct::SeedType type = blsct::IMPORT_MASTER_KEY;
             if (!request.params[10].isNull() && request.params[10].isStr()) {
@@ -461,6 +471,9 @@ static RPCHelpMan createwallet()
                 auto entropy_opt = mnemonic::MnemonicToEntropy(mnemonic_str);
                 if (!entropy_opt) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to decode mnemonic");
+                }
+                if (entropy_opt.value().size() != 32) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Only 24-word mnemonics are supported");
                 }
                 seed = entropy_opt.value();
                 type = blsct::IMPORT_MNEMONIC;

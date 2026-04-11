@@ -4,6 +4,7 @@
 
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/keyman.h>
+#include <hash.h>
 #include <script/script.h>
 
 #include <random.h>
@@ -372,7 +373,18 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
         SetHDSeed(masterKey);
         LoadMnemonicEntropy(seed);
         wallet::WalletBatch batch(m_storage.GetDatabase());
-        batch.WriteBLSCTMnemonicEntropy(seed);
+        if (m_storage.HasEncryptionKeys()) {
+            wallet::CKeyingMaterial plaintext(seed.begin(), seed.end());
+            std::vector<unsigned char> crypted_entropy;
+            uint256 iv = Hash(m_hd_chain.seed_id);
+            if (!wallet::EncryptSecret(m_storage.GetEncryptionKey(), plaintext, iv, crypted_entropy)) {
+                return false;
+            }
+            batch.WriteCryptedBLSCTMnemonicEntropy(crypted_entropy);
+            m_crypted_mnemonic_entropy = crypted_entropy;
+        } else {
+            batch.WriteBLSCTMnemonicEntropy(seed);
+        }
     } else if (seed.size() == 32 && type == IMPORT_MASTER_KEY) {
         MclScalar scalarSeed;
         scalarSeed.SetVch(seed);
@@ -400,7 +412,18 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
         SetHDSeed(masterKey);
         LoadMnemonicEntropy(entropy);
         wallet::WalletBatch batch(m_storage.GetDatabase());
-        batch.WriteBLSCTMnemonicEntropy(entropy);
+        if (m_storage.HasEncryptionKeys()) {
+            wallet::CKeyingMaterial plaintext(entropy.begin(), entropy.end());
+            std::vector<unsigned char> crypted_entropy;
+            uint256 iv = Hash(m_hd_chain.seed_id);
+            if (!wallet::EncryptSecret(m_storage.GetEncryptionKey(), plaintext, iv, crypted_entropy)) {
+                return false;
+            }
+            batch.WriteCryptedBLSCTMnemonicEntropy(crypted_entropy);
+            m_crypted_mnemonic_entropy = crypted_entropy;
+        } else {
+            batch.WriteBLSCTMnemonicEntropy(entropy);
+        }
     } else {
         return false;
     }
@@ -444,6 +467,17 @@ bool KeyMan::CheckDecryptionKey(const wallet::CKeyingMaterial& master_key, bool 
         if (keyFail || (!keyPass && !accept_no_keys))
             return false;
         fDecryptionThoroughlyChecked = true;
+
+        // Decrypt mnemonic entropy if present
+        if (!m_crypted_mnemonic_entropy.empty() && m_mnemonic_entropy.empty()) {
+            wallet::CKeyingMaterial plaintext;
+            uint256 iv = Hash(m_hd_chain.seed_id);
+            if (!wallet::DecryptSecret(master_key, m_crypted_mnemonic_entropy, iv, plaintext)) {
+                LogPrintf("Failed to decrypt mnemonic entropy\n");
+                return false;
+            }
+            m_mnemonic_entropy.assign(plaintext.begin(), plaintext.end());
+        }
     }
     return true;
 }
@@ -585,6 +619,28 @@ bool KeyMan::Encrypt(const wallet::CKeyingMaterial& master_key, wallet::WalletBa
             return false;
         }
     }
+
+    // Encrypt mnemonic entropy if present
+    if (!m_mnemonic_entropy.empty()) {
+        wallet::CKeyingMaterial plaintext(m_mnemonic_entropy.begin(), m_mnemonic_entropy.end());
+        std::vector<unsigned char> crypted_entropy;
+        uint256 iv = Hash(m_hd_chain.seed_id);
+        if (!wallet::EncryptSecret(master_key, plaintext, iv, crypted_entropy)) {
+            encrypted_batch = nullptr;
+            return false;
+        }
+        if (!encrypted_batch->WriteCryptedBLSCTMnemonicEntropy(crypted_entropy)) {
+            encrypted_batch = nullptr;
+            return false;
+        }
+        if (!encrypted_batch->EraseBLSCTMnemonicEntropy()) {
+            encrypted_batch = nullptr;
+            return false;
+        }
+        m_crypted_mnemonic_entropy = crypted_entropy;
+        m_mnemonic_entropy.clear();
+    }
+
     encrypted_batch = nullptr;
     return true;
 }

@@ -186,6 +186,16 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         std::string seed = args.GetArg("-seed", "");
         std::string mnemonic_str = args.GetArg("-mnemonic", "");
 
+        // Reject seed/mnemonic when BLSCT is not enabled
+        if (!seed.empty() && !make_blsct) {
+            tfm::format(std::cerr, "The -seed option requires -blsct\n");
+            return false;
+        }
+        if (!mnemonic_str.empty() && !make_blsct) {
+            tfm::format(std::cerr, "The -mnemonic option requires -blsct\n");
+            return false;
+        }
+
         // Validate mutual exclusivity
         if (!seed.empty() && !mnemonic_str.empty()) {
             tfm::format(std::cerr, "Cannot specify both -seed and -mnemonic\n");
@@ -204,6 +214,10 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             auto entropy_opt = mnemonic::MnemonicToEntropy(mnemonic_str);
             if (!entropy_opt) {
                 tfm::format(std::cerr, "Failed to decode mnemonic\n");
+                return false;
+            }
+            if (entropy_opt.value().size() != 32) {
+                tfm::format(std::cerr, "Only 24-word mnemonics are supported\n");
                 return false;
             }
             seed = HexStr(entropy_opt.value());
