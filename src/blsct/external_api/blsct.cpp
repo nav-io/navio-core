@@ -171,6 +171,10 @@ BlsctBoolRetVal* err_bool(
 
 BlsctRetVal* err_as(const char* msg)
 {
+    if (msg != nullptr) {
+        fputs(msg, stderr);
+        fputc('\n', stderr);
+    }
     return err(BLSCT_DESER_FAILED);
 }
 
@@ -423,6 +427,7 @@ void* blsct_malloc(size_t size)
     void* raw = ::malloc(header_size + size);
     if (raw == nullptr) return nullptr;
     auto* hdr = static_cast<BlsctAllocHeader*>(raw);
+    hdr->magic = BLSCT_ALLOC_MAGIC;
     hdr->kind = BLSCT_ALLOC_MALLOC;
     hdr->dtor = nullptr;
     return static_cast<uint8_t*>(raw) + header_size;
@@ -433,6 +438,9 @@ void free_obj_impl(uint8_t* x)
     if (x == nullptr) return;
     constexpr size_t header_size = sizeof(BlsctAllocHeader);
     auto* hdr = reinterpret_cast<BlsctAllocHeader*>(x - header_size);
+    if (hdr->magic != BLSCT_ALLOC_MAGIC) {
+        return;
+    }
     if (hdr->kind == BLSCT_ALLOC_MALLOC) {
         free(hdr);
     } else {
@@ -1082,16 +1090,20 @@ bool are_ctx_in_equal(const BlsctCTxIn* vp_a, const BlsctCTxIn* vp_b)
 
 const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* vp_ctx_in)
 {
+    if (vp_ctx_in == nullptr) return nullptr;
     auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
     auto copy = reinterpret_cast<BlsctCTxId*>(blsct_malloc(CTX_ID_SIZE));
+    RETURN_IF_MEM_ALLOC_FAILED(copy);
     std::memcpy(copy, &ctx_in->prevout.hash, CTX_ID_SIZE);
     return copy;
 }
 
 const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* vp_ctx_in)
 {
+    if (vp_ctx_in == nullptr) return nullptr;
     auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
     auto copy = reinterpret_cast<BlsctScript*>(blsct_malloc(SCRIPT_SIZE));
+    RETURN_IF_MEM_ALLOC_FAILED(copy);
     std::memset(copy, 0, SCRIPT_SIZE);
 
     const size_t script_size = ctx_in->scriptSig.size();
@@ -1110,6 +1122,7 @@ uint32_t get_ctx_in_sequence(const BlsctCTxIn* vp_ctx_in)
 
 BlsctRetVal* get_ctx_in_script_witness(const BlsctCTxIn* vp_ctx_in)
 {
+    if (vp_ctx_in == nullptr) return err(BLSCT_FAILURE);
     auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
     DataStream st{};
     st << ctx_in->scriptWitness.stack;
@@ -1130,12 +1143,14 @@ bool are_ctx_outs_equal(const BlsctCTxOutVec* vp_a, const BlsctCTxOutVec* vp_b)
 
 size_t get_ctx_outs_size(const BlsctCTxOutVec* vp_ctx_outs)
 {
+    if (vp_ctx_outs == nullptr) return 0;
     auto* ctx_outs = to_cpp<const std::vector<CTxOut>>(vp_ctx_outs);
     return ctx_outs->size();
 }
 
 const BlsctCTxOut* get_ctx_out_at(const BlsctCTxOutVec* vp_ctx_outs, const size_t i)
 {
+    if (vp_ctx_outs == nullptr) return nullptr;
     auto* ctx_outs = to_cpp<const std::vector<CTxOut>>(vp_ctx_outs);
     const CTxOut* ctx_out = &ctx_outs->at(i);
     return to_handle<BlsctCTxOut>(ctx_out);
@@ -1144,6 +1159,7 @@ const BlsctCTxOut* get_ctx_out_at(const BlsctCTxOutVec* vp_ctx_outs, const size_
 // ctx out
 bool are_ctx_out_equal(const BlsctCTxOut* vp_a, const BlsctCTxOut* vp_b)
 {
+    if (vp_a == nullptr || vp_b == nullptr) return false;
     auto* a = to_cpp<const CTxOut>(vp_a);
     auto* b = to_cpp<const CTxOut>(vp_b);
     return *a == *b;
@@ -1151,55 +1167,77 @@ bool are_ctx_out_equal(const BlsctCTxOut* vp_a, const BlsctCTxOut* vp_b)
 
 uint64_t get_ctx_out_value(const BlsctCTxOut* vp_ctx_out)
 {
+    if (vp_ctx_out == nullptr) return 0;
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     return ctx_out->nValue;
 }
 
 const BlsctScript* get_ctx_out_script_pub_key(const BlsctCTxOut* vp_ctx_out)
 {
+    if (vp_ctx_out == nullptr) return nullptr;
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     auto copy = reinterpret_cast<BlsctScript*>(blsct_malloc(SCRIPT_SIZE));
+    RETURN_IF_MEM_ALLOC_FAILED(copy);
     std::memcpy(copy, &ctx_out->scriptPubKey, SCRIPT_SIZE);
     return copy;
 }
 
 const BlsctPoint* get_ctx_out_spending_key(const BlsctCTxOut* vp_ctx_out)
 {
+    if (vp_ctx_out == nullptr) return nullptr;
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     auto copy = static_cast<BlsctPoint*>(blsct_malloc(POINT_SIZE));
+    RETURN_IF_MEM_ALLOC_FAILED(copy);
     auto org = ctx_out->blsctData.spendingKey.GetVch();
+    if (org.size() != POINT_SIZE) {
+        free_obj(copy);
+        return nullptr;
+    }
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
 const BlsctPoint* get_ctx_out_ephemeral_key(const BlsctCTxOut* vp_ctx_out)
 {
+    if (vp_ctx_out == nullptr) return nullptr;
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     auto copy = static_cast<BlsctPoint*>(blsct_malloc(POINT_SIZE));
+    RETURN_IF_MEM_ALLOC_FAILED(copy);
     auto org = ctx_out->blsctData.ephemeralKey.GetVch();
+    if (org.size() != POINT_SIZE) {
+        free_obj(copy);
+        return nullptr;
+    }
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
 const BlsctPoint* get_ctx_out_blinding_key(const BlsctCTxOut* vp_ctx_out)
 {
+    if (vp_ctx_out == nullptr) return nullptr;
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     auto copy = static_cast<BlsctPoint*>(blsct_malloc(POINT_SIZE));
+    RETURN_IF_MEM_ALLOC_FAILED(copy);
     auto org = ctx_out->blsctData.blindingKey.GetVch();
+    if (org.size() != POINT_SIZE) {
+        free_obj(copy);
+        return nullptr;
+    }
     std::memcpy(copy, &org[0], POINT_SIZE);
     return copy;
 }
 
 const BlsctRetVal* get_ctx_out_range_proof(const BlsctCTxOut* vp_ctx_out)
 {
+    if (vp_ctx_out == nullptr) return err(BLSCT_FAILURE);
     auto* ctx_out = to_cpp<const CTxOut>(vp_ctx_out);
     DataStream st{};
     ctx_out->blsctData.rangeProof.Serialize(st);
     auto copy = static_cast<BlsctRangeProof*>(blsct_malloc(st.size()));
+    RETURN_RET_VAL_IF_NULL(copy, err(BLSCT_MEM_ALLOC_FAILED));
     std::memcpy(copy, st.data(), st.size());
     return succ_as(copy, st.size());
-    ;
-};
+}
 
 uint16_t get_ctx_out_view_tag(const BlsctCTxOut* vp_ctx_out)
 {
@@ -1312,21 +1350,27 @@ BlsctRetVal* dpk_to_sub_addr(
 BlsctDoublePubKey* sub_addr_to_dpk(
     const BlsctSubAddr* blsct_sub_addr)
 {
-    // unserialize sub address
-    blsct::SubAddress sub_addr;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-        blsct_sub_addr, SUB_ADDR_SIZE, sub_addr);
+    BlsctDoublePubKey* blsct_dpk = nullptr;
+    try {
+        // unserialize sub address
+        blsct::SubAddress sub_addr;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
+            blsct_sub_addr, SUB_ADDR_SIZE, sub_addr);
 
-    // allocate memory for serialized double public key
-    MALLOC_BYTES(BlsctDoublePubKey, blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
-    RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
+        // allocate memory for serialized double public key
+        MALLOC_BYTES(BlsctDoublePubKey, blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
+        RETURN_IF_MEM_ALLOC_FAILED(blsct_dpk);
 
-    blsct::DoublePublicKey dpk = sub_addr.GetKeys();
+        blsct::DoublePublicKey dpk = sub_addr.GetKeys();
 
-    // serialize double public key
-    SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
+        // serialize double public key
+        SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
 
-    return blsct_dpk;
+        return blsct_dpk;
+    } catch (...) {
+        free_obj(blsct_dpk);
+        return nullptr;
+    }
 }
 
 BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(

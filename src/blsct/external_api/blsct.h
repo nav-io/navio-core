@@ -62,6 +62,7 @@ extern "C" {
 
 typedef struct {
     BLSCT_RESULT result;
+    // Owned bytes from API. Free with free_obj(), not free().
     uint8_t* value;
     size_t value_size;
 } BlsctRetVal;
@@ -143,7 +144,10 @@ enum BlsctAllocKind : uint8_t {
 
 typedef void (*BlsctDtor)(void*);
 
+inline constexpr uint32_t BLSCT_ALLOC_MAGIC = 0x424c5343; // "BLSC"
+
 struct BlsctAllocHeader {
+    uint32_t magic;
     BlsctAllocKind kind;
     BlsctDtor dtor; // only meaningful when kind == BLSCT_ALLOC_NEW
 };
@@ -161,6 +165,7 @@ inline T* blsct_new(Args&&... args)
     void* raw = malloc(header_size + sizeof(T));
     if (raw == nullptr) return nullptr;
     auto* hdr = static_cast<BlsctAllocHeader*>(raw);
+    hdr->magic = BLSCT_ALLOC_MAGIC;
     hdr->kind = BLSCT_ALLOC_NEW;
     hdr->dtor = [](void* p) { static_cast<T*>(p)->~T(); };
     return new (static_cast<uint8_t*>(raw) + header_size) T(std::forward<Args>(args)...);
@@ -462,6 +467,7 @@ bool are_ctx_in_equal(const BlsctCTxIn* vp_a, const BlsctCTxIn* vp_b);
 const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* vp_ctx_in);
 uint32_t get_ctx_in_sequence(const BlsctCTxIn* vp_ctx_in);
+// Returns owned serialized witness bytes. Caller frees with free_obj().
 BlsctRetVal* get_ctx_in_script_witness(const BlsctCTxIn* vp_ctx_in);
 
 // ctx_outs
@@ -871,6 +877,7 @@ void delete_uint64_vec(const BlsctUint64Vec* vp_vec);
 } // extern "C"
 
 // Type-safe wrapper for the C deallocator.
+// Use for every pointer returned by blsct_malloc()/blsct_new() and BlsctRetVal.value.
 template <typename T>
 void free_obj(T* x)
 {
