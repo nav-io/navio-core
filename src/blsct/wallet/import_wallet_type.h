@@ -14,4 +14,4 @@ enum SeedType {
 
 } // namespace blsct
 
-#endif // NAVIO_BLSCT_KEYMAN_H
+#endif // NAVIO_BLSCT_IMPORT_WALLET_TYPE_H
