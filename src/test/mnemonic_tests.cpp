@@ -10,7 +10,9 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <algorithm>
 #include <set>
+#include <sstream>
 #include <string>
 
 BOOST_FIXTURE_TEST_SUITE(mnemonic_tests, BasicTestingSetup)
