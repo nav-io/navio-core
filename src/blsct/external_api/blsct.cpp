@@ -1125,7 +1125,7 @@ BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out)
     auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
     auto& pred = ctx_out->predicate;
     MALLOC_BYTES(uint8_t, buf, pred.size());
-    RETURN_IF_MEM_ALLOC_FAILED(buf)
+    RETURN_IF_MEM_ALLOC_FAILED(buf);
 
     std::memcpy(buf, pred.data(), pred.size());
     return succ(buf, pred.size());
