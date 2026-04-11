@@ -293,6 +293,7 @@ class WalletMnemonicTest(BitcoinTestFramework):
         rc5, stdout5, stderr5 = self.navio_wallet_create(cli_wallet2)
         assert_equal(rc5, 0)
         mnemonic_line5 = [l for l in stdout5.split('\n') if l.startswith('Mnemonic:')]
+        assert_equal(len(mnemonic_line5), 1)
         cli_mnemonic2 = mnemonic_line5[0].replace('Mnemonic:', '').strip()
         # Load the CLI-created wallet via RPC and verify dumpmnemonic matches
         node.loadwallet(cli_wallet2)
