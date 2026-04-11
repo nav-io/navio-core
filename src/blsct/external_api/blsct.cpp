@@ -1322,6 +1322,9 @@ BlsctRetVal* deserialize_dpk(const char* hex)
 {
     BlsctDoublePubKey* blsct_dpk = reinterpret_cast<BlsctDoublePubKey*>(
         DeserializeFromHex(hex, DOUBLE_PUBLIC_KEY_SIZE));
+    if (blsct_dpk == nullptr) {
+        return err_as("failed to deserialize double public key");
+    }
     return succ_as(blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
 }
 
