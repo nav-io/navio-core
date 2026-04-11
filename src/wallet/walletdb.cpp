@@ -873,6 +873,10 @@ bool LoadBLSCTMnemonicEntropy(CWallet* pwallet, DataStream& ssValue, std::string
     try {
         std::vector<unsigned char> entropy;
         ssValue >> entropy;
+        if (entropy.size() != 32) {
+            strErr = "Error reading wallet database: BLSCT mnemonic entropy has invalid size (expected 32 bytes)";
+            return false;
+        }
         pwallet->GetOrCreateBLSCTKeyMan()->LoadMnemonicEntropy(entropy);
     } catch (const std::exception& e) {
         if (strErr.empty()) {
@@ -889,6 +893,10 @@ bool LoadCryptedBLSCTMnemonicEntropy(CWallet* pwallet, DataStream& ssValue, std:
     try {
         std::vector<unsigned char> crypted_entropy;
         ssValue >> crypted_entropy;
+        if (crypted_entropy.size() != 48) {
+            strErr = "Error reading wallet database: BLSCT crypted mnemonic entropy has invalid size (expected 48 bytes)";
+            return false;
+        }
         pwallet->GetOrCreateBLSCTKeyMan()->LoadCryptedMnemonicEntropy(crypted_entropy);
     } catch (const std::exception& e) {
         if (strErr.empty()) {
