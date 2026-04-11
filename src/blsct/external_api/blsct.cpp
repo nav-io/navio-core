@@ -939,6 +939,9 @@ BlsctRetVal* deserialize_ctx_id(const char* hex)
 {
     BlsctCTxId* blsct_ctx_id = reinterpret_cast<BlsctCTxId*>(
         DeserializeFromHex(hex, CTX_ID_SIZE));
+    if (blsct_ctx_id == nullptr) {
+        return err(BLSCT_DESER_FAILED);
+    }
     return succ_as(blsct_ctx_id, CTX_ID_SIZE);
 }
 
