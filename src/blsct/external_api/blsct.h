@@ -114,14 +114,22 @@ BlsctRetVal* err(
 
 #define BLSCT_COPY(src, dest) std::memcpy(dest, src, sizeof(dest))
 #define BLSCT_COPY_BYTES(src, dest, n) std::memcpy(dest, src, n)
-#define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
-#define RETURN_IF_MEM_ALLOC_FAILED(name) \
-if (name == nullptr) { \
-    fputs("Failed to allocate memory\n", stderr); \
-    return nullptr; \
-}
-#define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
-    if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
+#define MALLOC_BYTES(T, name, n) T* name = (T*)malloc(n)
+#define RETURN_IF_MEM_ALLOC_FAILED(name)                  \
+    do {                                                  \
+        if ((name) == nullptr) {                          \
+            fputs("Failed to allocate memory\n", stderr); \
+            return nullptr;                               \
+        }                                                 \
+    } while (0)
+#define RETURN_VAL_IF_MEM_ALLOC_FAILED(name, ret_val) \
+    do {                                              \
+        if ((name) == nullptr) return (ret_val);      \
+    } while (0)
+#define RETURN_ERR_IF_MEM_ALLOC_FAILED(name)                       \
+    do {                                                           \
+        if ((name) == nullptr) return err(BLSCT_MEM_ALLOC_FAILED); \
+    } while (0)
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
@@ -462,8 +470,7 @@ BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
 BlsctPoint* scalar_muliply_point(
     const BlsctPoint* blsct_point,
-    const BlsctScalar* blsct_scalar
-);
+    const BlsctScalar* blsct_scalar);
 const char* point_to_str(const BlsctPoint* blsct_point);
 BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
 bool is_valid_point(const BlsctPoint* blsct_point);
@@ -548,8 +555,7 @@ BlsctSubAddr* derive_sub_address(
     const BlsctSubAddrId* blsct_sub_addr_id);
 
 BlsctDoublePubKey* sub_addr_to_dpk(
-    const BlsctSubAddr* blsct_sub_addr
-);
+    const BlsctSubAddr* blsct_sub_addr);
 
 const char* serialize_sub_addr(const BlsctSignature* blsct_sub_addr);
 BlsctRetVal* deserialize_sub_addr(const char* hex);
@@ -642,8 +648,7 @@ BlsctRetVal* build_tx_out(
     const TxOutputType output_type,
     const uint64_t min_stake,
     const bool subtract_fee_from_amount,
-    const BlsctScalar* blsct_blinding_key
-);
+    const BlsctScalar* blsct_blinding_key);
 
 const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out);
 uint64_t get_tx_out_amount(const BlsctTxOut* tx_out);

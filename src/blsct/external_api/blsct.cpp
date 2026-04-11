@@ -1,6 +1,6 @@
 #include <blsct/bech32_mod.h>
-#include <blsct/common.h>
 #include <blsct/chain.h>
+#include <blsct/common.h>
 #include <blsct/double_public_key.h>
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/external_api/blsct.h>
@@ -32,7 +32,6 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -48,7 +47,8 @@ static bool is_little_endian()
     return *p == 1;
 }
 
-void init() {
+void init()
+{
     std::lock_guard<std::mutex> lock(g_init_mutex);
     Mcl::Init for_side_effect_only;
 
@@ -57,27 +57,39 @@ void init() {
     g_rpl = new (std::nothrow) bulletproofs_plus::RangeProofLogic<Mcl>();
 }
 
-enum BlsctChain get_blsct_chain() {
+enum BlsctChain get_blsct_chain()
+{
     auto& chain = get_chain();
 
-    if (chain == blsct::bech32_hrp::Mainnet) { return Mainnet; }
-    else if (chain == blsct::bech32_hrp::Testnet) { return Testnet; }
-    else if (chain == blsct::bech32_hrp::Signet) { return Signet; }
-    else if (chain == blsct::bech32_hrp::Regtest) { return Regtest; }
-    else { /* should not be visited */ return Mainnet; }
+    if (chain == blsct::bech32_hrp::Mainnet) {
+        return Mainnet;
+    } else if (chain == blsct::bech32_hrp::Testnet) {
+        return Testnet;
+    } else if (chain == blsct::bech32_hrp::Signet) {
+        return Signet;
+    } else if (chain == blsct::bech32_hrp::Regtest) {
+        return Regtest;
+    } else { /* should not be visited */
+        return Mainnet;
+    }
 }
 
-void set_blsct_chain(enum BlsctChain chain) {
-    if (chain == Mainnet) set_chain(blsct::bech32_hrp::Mainnet);
-    else if (chain == Testnet) set_chain(blsct::bech32_hrp::Testnet);
-    else if (chain == Signet) set_chain(blsct::bech32_hrp::Signet);
-    else if (chain == Regtest) set_chain(blsct::bech32_hrp::Regtest);
+void set_blsct_chain(enum BlsctChain chain)
+{
+    if (chain == Mainnet)
+        set_chain(blsct::bech32_hrp::Mainnet);
+    else if (chain == Testnet)
+        set_chain(blsct::bech32_hrp::Testnet);
+    else if (chain == Signet)
+        set_chain(blsct::bech32_hrp::Signet);
+    else if (chain == Regtest)
+        set_chain(blsct::bech32_hrp::Regtest);
 }
 
 BlsctRetVal* succ(
     void* value,
-    size_t value_size
-) {
+    size_t value_size)
+{
     MALLOC_BYTES(BlsctRetVal, p, sizeof(BlsctRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
@@ -88,8 +100,8 @@ BlsctRetVal* succ(
 }
 
 BlsctRetVal* err(
-    BLSCT_RESULT result
-) {
+    BLSCT_RESULT result)
+{
     MALLOC_BYTES(BlsctRetVal, p, sizeof(BlsctRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
@@ -99,8 +111,8 @@ BlsctRetVal* err(
 }
 
 BlsctBoolRetVal* succ_bool(
-    const bool value
-) {
+    const bool value)
+{
     MALLOC_BYTES(BlsctBoolRetVal, p, sizeof(BlsctBoolRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
@@ -110,8 +122,8 @@ BlsctBoolRetVal* succ_bool(
 }
 
 BlsctBoolRetVal* err_bool(
-    const BLSCT_RESULT result
-) {
+    const BLSCT_RESULT result)
+{
     MALLOC_BYTES(BlsctBoolRetVal, p, sizeof(BlsctBoolRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(p);
 
@@ -356,7 +368,16 @@ void free_obj(void* x)
 
 void free_amounts_ret_val(BlsctAmountsRetVal* rv)
 {
+    if (rv == nullptr) {
+        return;
+    }
+
     auto result_vec = static_cast<const std::vector<BlsctAmountRecoveryResult>*>(rv->value);
+
+    if (result_vec == nullptr) {
+        free(rv);
+        return;
+    }
 
     for (auto res : *result_vec) {
         free(res.msg);
@@ -459,10 +480,11 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
 }
 
 BlsctAmountsRetVal* recover_amount(
-    void* vp_amt_recovery_req_vec
-) {
+    void* vp_amt_recovery_req_vec)
+{
     MALLOC_BYTES(BlsctAmountsRetVal, rv, sizeof(BlsctAmountsRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(rv);
+    rv->value = nullptr;
     try {
         auto amt_recovery_req_vec =
             static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
@@ -474,7 +496,7 @@ BlsctAmountsRetVal* recover_amount(
             const auto& ar_req = amt_recovery_req_vec->at(i);
             bulletproofs_plus::RangeProof<Mcl> range_proof;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.range_proof, ar_req.range_proof_size, range_proof);
- 
+
             Mcl::Point nonce;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.nonce, POINT_SIZE, nonce);
 
@@ -501,11 +523,13 @@ BlsctAmountsRetVal* recover_amount(
 
         // the vector to return has the same size as the request vector
         auto result_vec = new (std::nothrow) std::vector<BlsctAmountRecoveryResult>;
-        RETURN_ERR_IF_MEM_ALLOC_FAILED(result_vec);
+        rv->result = BLSCT_MEM_ALLOC_FAILED;
+        RETURN_VAL_IF_MEM_ALLOC_FAILED(result_vec, rv);
+        rv->result = BLSCT_SUCCESS;
         result_vec->resize(amt_recovery_req_vec->size());
 
         // mark all the results as failed
-        for (auto &result : *result_vec) {
+        for (auto& result : *result_vec) {
             result.is_succ = false;
         }
 
@@ -758,8 +782,7 @@ BlsctCTxRetVal* build_ctx(
         // unserialize blinding key
         Scalar blinding_key;
         UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-            tx_out.blinding_key, SCALAR_SIZE, blinding_key
-        );
+            tx_out.blinding_key, SCALAR_SIZE, blinding_key);
 
         // add all to TxFactoryBase
         psbt.AddOutput(
@@ -770,8 +793,7 @@ BlsctCTxRetVal* build_ctx(
             out_type,
             tx_out.min_stake,
             tx_out.subtract_fee_from_amount,
-            blinding_key
-        );
+            blinding_key);
     }
 
     // build ctx
@@ -1103,7 +1125,7 @@ BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out)
     auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
     auto& pred = ctx_out->predicate;
     MALLOC_BYTES(uint8_t, buf, pred.size());
-    RETURN_IF_MEM_ALLOC_FAILED(buf)
+    RETURN_IF_MEM_ALLOC_FAILED(buf);
 
     std::memcpy(buf, pred.data(), pred.size());
     return succ(buf, pred.size());
@@ -1193,13 +1215,12 @@ BlsctRetVal* dpk_to_sub_addr(
 }
 
 BlsctDoublePubKey* sub_addr_to_dpk(
-    const BlsctSubAddr* blsct_sub_addr
-) {
+    const BlsctSubAddr* blsct_sub_addr)
+{
     // unserialize sub address
     blsct::SubAddress sub_addr;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
-        blsct_sub_addr, SUB_ADDR_SIZE, sub_addr
-    );
+        blsct_sub_addr, SUB_ADDR_SIZE, sub_addr);
 
     // allocate memory for serialized double public key
     MALLOC_BYTES(BlsctDoublePubKey, blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
@@ -1318,7 +1339,8 @@ BlsctRetVal* deserialize_out_point(const char* hex)
 }
 
 // point
-BlsctRetVal* gen_base_point() {
+BlsctRetVal* gen_base_point()
+{
     MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
 
@@ -1328,7 +1350,8 @@ BlsctRetVal* gen_base_point() {
     return succ(blsct_point, POINT_SIZE);
 }
 
-BlsctRetVal* gen_random_point() {
+BlsctRetVal* gen_random_point()
+{
     MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
 
@@ -1379,8 +1402,8 @@ int are_point_equal(const BlsctPoint* blsct_a, const BlsctPoint* blsct_b)
 
 BlsctPoint* scalar_muliply_point(
     const BlsctPoint* blsct_point,
-    const BlsctScalar* blsct_scalar
-) {
+    const BlsctScalar* blsct_scalar)
+{
     Point p;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, p);
 
@@ -1390,13 +1413,14 @@ BlsctPoint* scalar_muliply_point(
     Point sp = p * s;
 
     MALLOC_BYTES(BlsctPoint, blsct_sp, POINT_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_sp);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_sp);
     SERIALIZE_AND_COPY(sp, blsct_sp);
 
     return blsct_sp;
 }
 
-const char* point_to_str(const BlsctPoint* blsct_point) {
+const char* point_to_str(const BlsctPoint* blsct_point)
+{
     Point point;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_point, POINT_SIZE, point);
     auto str = point.GetString();
@@ -1412,7 +1436,7 @@ BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar)
     Point point = g * scalar;
 
     MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
+    RETURN_IF_MEM_ALLOC_FAILED(blsct_point);
     SERIALIZE_AND_COPY(point, blsct_point);
 
     return blsct_point;
@@ -1659,7 +1683,8 @@ void delete_range_proof_vec(const void* vp_range_proofs)
 }
 
 // scalar
-BlsctRetVal* gen_random_scalar() {
+BlsctRetVal* gen_random_scalar()
+{
     MALLOC_BYTES(BlsctScalar, blsct_scalar, SCALAR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_scalar);
 
@@ -2133,8 +2158,8 @@ BlsctRetVal* build_tx_in(
     const BlsctTokenId* token_id,
     const BlsctOutPoint* out_point,
     const bool staked_commitment,
-    const bool rbf
-) {
+    const bool rbf)
+{
     MALLOC_BYTES(BlsctTxIn, tx_in, sizeof(BlsctTxIn));
     RETURN_IF_MEM_ALLOC_FAILED(tx_in);
 
@@ -2159,21 +2184,24 @@ const BlsctScalar* get_tx_in_gamma(const BlsctTxIn* tx_in)
     return &tx_in->gamma;
 }
 
-const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in) {
+const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in)
+{
     MALLOC_BYTES(BlsctScalar, spending_key, SCALAR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(spending_key);
     BLSCT_COPY(tx_in->spending_key, *spending_key);
     return spending_key;
 }
 
-const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in) {
+const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in)
+{
     MALLOC_BYTES(BlsctTokenId, token_id, TOKEN_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(token_id);
     BLSCT_COPY(tx_in->token_id, *token_id);
     return token_id;
 }
 
-const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in) {
+const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in)
+{
     MALLOC_BYTES(BlsctOutPoint, out_point, OUT_POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(out_point);
     BLSCT_COPY(tx_in->out_point, *out_point);
@@ -2199,8 +2227,8 @@ BlsctRetVal* build_tx_out(
     const TxOutputType output_type,
     const uint64_t min_stake,
     const bool subtract_fee_from_amount,
-    const BlsctScalar* blsct_blinding_key
-) {
+    const BlsctScalar* blsct_blinding_key)
+{
     MALLOC_BYTES(BlsctTxOut, tx_out, sizeof(BlsctTxOut));
     RETURN_IF_MEM_ALLOC_FAILED(tx_out);
 
@@ -2223,7 +2251,8 @@ BlsctRetVal* build_tx_out(
     return succ(tx_out, sizeof(BlsctTxOut));
 }
 
-const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out) {
+const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out)
+{
     MALLOC_BYTES(BlsctSubAddr, sub_addr, SUB_ADDR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(sub_addr);
     BLSCT_COPY(tx_out->dest, *sub_addr);
@@ -2244,7 +2273,8 @@ const char* get_tx_out_memo(const BlsctTxOut* tx_out)
     return memo_c_str;
 }
 
-const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out) {
+const BlsctTokenId* get_tx_out_token_id(const BlsctTxOut* tx_out)
+{
     MALLOC_BYTES(BlsctTokenId, token_id, TOKEN_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(token_id);
     BLSCT_COPY(tx_out->token_id, *token_id);
@@ -2261,11 +2291,13 @@ uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out)
     return tx_out->min_stake;
 }
 
-bool get_tx_out_subtract_fee_from_amount(const BlsctTxOut* tx_out) {
+bool get_tx_out_subtract_fee_from_amount(const BlsctTxOut* tx_out)
+{
     return tx_out->subtract_fee_from_amount;
 }
 
-const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out) {
+const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out)
+{
     MALLOC_BYTES(BlsctScalar, blinding_key, SCALAR_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blinding_key);
     BLSCT_COPY(tx_out->blinding_key, *blinding_key);

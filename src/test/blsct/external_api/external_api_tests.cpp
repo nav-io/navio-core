@@ -755,4 +755,23 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
     free(aggregate_rv);
 }
 
+// Thin wrapper to test RETURN_ERR_IF_MEM_ALLOC_FAILED macro in isolation.
+// With a correct macro, calling this with nullptr should return err(BLSCT_MEM_ALLOC_FAILED).
+// With the buggy macro (missing return), err() is called but the result is discarded,
+// and the function falls through to return succ(nullptr, 0) → BLSCT_SUCCESS.
+static BlsctRetVal* test_return_err_if_mem_alloc_failed_macro()
+{
+    void* p = nullptr;
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(p);
+    return succ(p, 0);
+}
+
+BOOST_AUTO_TEST_CASE(test_return_err_if_mem_alloc_failed_returns_error)
+{
+    auto* rv = test_return_err_if_mem_alloc_failed_macro();
+    BOOST_REQUIRE(rv != nullptr);
+    BOOST_CHECK_EQUAL(rv->result, BLSCT_MEM_ALLOC_FAILED);
+    free_obj(rv);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
