@@ -8,9 +8,10 @@
 namespace blsct {
 enum SeedType {
     IMPORT_MASTER_KEY,
-    IMPORT_VIEW_KEY
+    IMPORT_VIEW_KEY,
+    IMPORT_MNEMONIC
 };
 
 } // namespace blsct
 
-#endif // NAVIO_BLSCT_KEYMAN_H
+#endif // NAVIO_BLSCT_IMPORT_WALLET_TYPE_H
