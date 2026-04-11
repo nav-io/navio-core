@@ -443,12 +443,16 @@ void free_obj_impl(uint8_t* x)
 
 void free_amounts_ret_val(BlsctAmountsRetVal* rv)
 {
-    auto result_vec = to_cpp<std::vector<BlsctAmountRecoveryResult>>(rv->value);
+    if (rv == nullptr) return;
 
-    for (auto res : *result_vec) {
-        free_obj(res.msg);
+    if (rv->value != nullptr) {
+        auto result_vec = to_cpp<std::vector<BlsctAmountRecoveryResult>>(rv->value);
+
+        for (auto& res : *result_vec) {
+            free_obj(res.msg);
+        }
+        delete result_vec;
     }
-    delete result_vec;
     free_obj(rv);
 }
 
@@ -551,6 +555,8 @@ BlsctAmountsRetVal* recover_amount(
 {
     MALLOC_BYTES(BlsctAmountsRetVal, rv, sizeof(BlsctAmountsRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(rv);
+    rv->result = BLSCT_FAILURE;
+    rv->value = nullptr;
     try {
         auto amt_recovery_req_vec =
             to_cpp<const std::vector<BlsctAmountRecoveryReq>>(vp_amt_recovery_req_vec);
@@ -1047,6 +1053,7 @@ BlsctRetVal* aggregate_transactions(const BlsctTxHexVec* vp_tx_hex_vec)
 // ctx ins
 bool are_ctx_ins_equal(const BlsctCTxInVec* vp_a, const BlsctCTxInVec* vp_b)
 {
+    if (vp_a == nullptr || vp_b == nullptr) return false;
     auto* a = to_cpp<const std::vector<CTxIn>>(vp_a);
     auto* b = to_cpp<const std::vector<CTxIn>>(vp_b);
     return *a == *b;
@@ -1115,6 +1122,7 @@ BlsctRetVal* get_ctx_in_script_witness(const BlsctCTxIn* vp_ctx_in)
 // ctx outs
 bool are_ctx_outs_equal(const BlsctCTxOutVec* vp_a, const BlsctCTxOutVec* vp_b)
 {
+    if (vp_a == nullptr || vp_b == nullptr) return false;
     auto* a = to_cpp<const std::vector<CTxOut>>(vp_a);
     auto* b = to_cpp<const std::vector<CTxOut>>(vp_b);
     return *a == *b;

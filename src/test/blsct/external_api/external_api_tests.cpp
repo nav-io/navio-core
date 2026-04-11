@@ -1149,6 +1149,26 @@ BOOST_AUTO_TEST_CASE(test_ctx_out_vector_and_field_accessors)
     free_obj(pred_rv);
 }
 
+BOOST_AUTO_TEST_CASE(test_ctx_vector_equal_handles_null_inputs)
+{
+    init();
+
+    BOOST_CHECK(!are_ctx_ins_equal(nullptr, nullptr));
+    BOOST_CHECK(!are_ctx_outs_equal(nullptr, nullptr));
+}
+
+BOOST_AUTO_TEST_CASE(test_free_amounts_ret_val_handles_empty_failure)
+{
+    init();
+
+    auto* rv = static_cast<BlsctAmountsRetVal*>(blsct_malloc(sizeof(BlsctAmountsRetVal)));
+    BOOST_REQUIRE(rv != nullptr);
+    rv->result = BLSCT_FAILURE;
+    rv->value = nullptr;
+
+    free_amounts_ret_val(rv);
+}
+
 BOOST_AUTO_TEST_CASE(test_ctx_ins_equality_across_instances)
 {
     init();
