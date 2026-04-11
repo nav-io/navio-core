@@ -362,6 +362,27 @@ void KeyMan::SetHDSeed(const PrivateKey& key)
     wallet::WalletBatch batch(m_storage.GetDatabase());
 }
 
+bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy)
+{
+    auto masterKey = PrivateKey(BLS12_381_KeyGen::derive_master_SK(entropy));
+    SetHDSeed(masterKey);
+    LoadMnemonicEntropy(entropy);
+    wallet::WalletBatch batch(m_storage.GetDatabase());
+    if (m_storage.HasEncryptionKeys()) {
+        wallet::CKeyingMaterial plaintext(entropy.begin(), entropy.end());
+        std::vector<unsigned char> crypted_entropy;
+        uint256 iv = Hash(m_hd_chain.seed_id);
+        if (!wallet::EncryptSecret(m_storage.GetEncryptionKey(), plaintext, iv, crypted_entropy)) {
+            return false;
+        }
+        batch.WriteCryptedBLSCTMnemonicEntropy(crypted_entropy);
+        m_crypted_mnemonic_entropy = crypted_entropy;
+    } else {
+        batch.WriteBLSCTMnemonicEntropy(entropy);
+    }
+    return true;
+}
+
 bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force)
 {
     if ((CanGenerateKeys() && !force) || m_storage.IsLocked()) {
@@ -369,22 +390,7 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
     }
 
     if (seed.size() == 32 && type == IMPORT_MNEMONIC) {
-        auto masterKey = PrivateKey(BLS12_381_KeyGen::derive_master_SK(seed));
-        SetHDSeed(masterKey);
-        LoadMnemonicEntropy(seed);
-        wallet::WalletBatch batch(m_storage.GetDatabase());
-        if (m_storage.HasEncryptionKeys()) {
-            wallet::CKeyingMaterial plaintext(seed.begin(), seed.end());
-            std::vector<unsigned char> crypted_entropy;
-            uint256 iv = Hash(m_hd_chain.seed_id);
-            if (!wallet::EncryptSecret(m_storage.GetEncryptionKey(), plaintext, iv, crypted_entropy)) {
-                return false;
-            }
-            batch.WriteCryptedBLSCTMnemonicEntropy(crypted_entropy);
-            m_crypted_mnemonic_entropy = crypted_entropy;
-        } else {
-            batch.WriteBLSCTMnemonicEntropy(seed);
-        }
+        if (!SetupMnemonicFromEntropy(seed)) return false;
     } else if (seed.size() == 32 && type == IMPORT_MASTER_KEY) {
         MclScalar scalarSeed;
         scalarSeed.SetVch(seed);
@@ -407,23 +413,7 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
     } else if (seed.empty()) {
         std::vector<unsigned char> entropy(32);
         GetStrongRandBytes(entropy);
-
-        auto masterKey = PrivateKey(BLS12_381_KeyGen::derive_master_SK(entropy));
-        SetHDSeed(masterKey);
-        LoadMnemonicEntropy(entropy);
-        wallet::WalletBatch batch(m_storage.GetDatabase());
-        if (m_storage.HasEncryptionKeys()) {
-            wallet::CKeyingMaterial plaintext(entropy.begin(), entropy.end());
-            std::vector<unsigned char> crypted_entropy;
-            uint256 iv = Hash(m_hd_chain.seed_id);
-            if (!wallet::EncryptSecret(m_storage.GetEncryptionKey(), plaintext, iv, crypted_entropy)) {
-                return false;
-            }
-            batch.WriteCryptedBLSCTMnemonicEntropy(crypted_entropy);
-            m_crypted_mnemonic_entropy = crypted_entropy;
-        } else {
-            batch.WriteBLSCTMnemonicEntropy(entropy);
-        }
+        if (!SetupMnemonicFromEntropy(entropy)) return false;
     } else {
         return false;
     }

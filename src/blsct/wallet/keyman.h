@@ -59,6 +59,8 @@ private:
     bool AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId);
     bool AddCryptedOutKeyInner(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
 
+    bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy);
+
 
     wallet::WalletBatch* encrypted_batch GUARDED_BY(cs_KeyStore) = nullptr;
 
