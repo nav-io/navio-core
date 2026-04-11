@@ -1364,6 +1364,9 @@ BlsctRetVal* deserialize_key_id(const char* hex)
 {
     BlsctKeyId* blsct_key_id = reinterpret_cast<BlsctKeyId*>(
         DeserializeFromHex(hex, KEY_ID_SIZE));
+    if (blsct_key_id == nullptr) {
+        return err_as("Failed to deserialize key id from hex.");
+    }
     return succ_as(blsct_key_id, KEY_ID_SIZE);
 }
 
