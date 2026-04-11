@@ -1054,7 +1054,13 @@ const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* vp_ctx_in)
 {
     auto* ctx_in = to_cpp<const CTxIn>(vp_ctx_in);
     auto copy = reinterpret_cast<BlsctScript*>(blsct_malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &ctx_in->scriptSig, SCRIPT_SIZE);
+    std::memset(copy, 0, SCRIPT_SIZE);
+
+    const size_t script_size = ctx_in->scriptSig.size();
+    const size_t bytes_to_copy = script_size < SCRIPT_SIZE ? script_size : SCRIPT_SIZE;
+    if (bytes_to_copy > 0) {
+        std::memcpy(copy, ctx_in->scriptSig.data(), bytes_to_copy);
+    }
     return copy;
 }
 
