@@ -1267,7 +1267,7 @@ BlsctRetVal* dpk_to_sub_addr(
     // serialize sub address
     SERIALIZE_AND_COPY_WITH_STREAM(sub_addr, blsct_sub_addr);
 
-    return succ_as(blsct_sub_addr, sizeof(blsct::SubAddress));
+    return succ_as(blsct_sub_addr, SUB_ADDR_SIZE);
 }
 
 BlsctDoublePubKey* sub_addr_to_dpk(
