@@ -1419,6 +1419,9 @@ BlsctRetVal* deserialize_out_point(const char* hex)
 {
     BlsctOutPoint* blsct_out_point =
         reinterpret_cast<BlsctOutPoint*>(DeserializeFromHex(hex, OUT_POINT_SIZE));
+    if (blsct_out_point == nullptr) {
+        return err(BLSCT_DESER_FAILED);
+    }
     return succ_as(blsct_out_point, OUT_POINT_SIZE);
 }
 
