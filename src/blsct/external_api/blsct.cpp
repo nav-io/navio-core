@@ -169,6 +169,25 @@ BlsctBoolRetVal* err_bool(
     return p;
 }
 
+BlsctRetVal* err_as(const char* msg)
+{
+    return err(BLSCT_DESER_FAILED);
+}
+
+BlsctAmountsRetVal* err_amounts(
+    const BLSCT_RESULT result)
+{
+    MALLOC_BYTES(BlsctAmountsRetVal, p, sizeof(BlsctAmountsRetVal));
+    if (p == nullptr) {
+        fputs("Failed to allocate memory\n", stderr);
+        return nullptr;
+    }
+
+    p->result = result;
+    p->value = nullptr;
+    return p;
+}
+
 static inline DataStream set_up_data_stream_with_hex(const char* hex)
 {
     // set up a stream with the given hex
@@ -570,7 +589,10 @@ BlsctAmountsRetVal* recover_amount(
 
         // the vector to return has the same size as the request vector
         auto result_vec = new (std::nothrow) std::vector<BlsctAmountRecoveryResult>;
-        RETURN_ERR_IF_MEM_ALLOC_FAILED(result_vec);
+        if (result_vec == nullptr) {
+            rv->result = BLSCT_MEM_ALLOC_FAILED;
+            return rv;
+        }
         result_vec->resize(amt_recovery_req_vec->size());
 
         // mark all the results as failed
@@ -1475,7 +1497,10 @@ BlsctPoint* scalar_muliply_point(
     Point sp = p * s;
 
     MALLOC_BYTES(BlsctPoint, blsct_sp, POINT_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_sp);
+    if (blsct_sp == nullptr) {
+        fputs("Failed to allocate memory\n", stderr);
+        return nullptr;
+    }
     SERIALIZE_AND_COPY(sp, blsct_sp);
 
     return blsct_sp;
@@ -1498,7 +1523,10 @@ BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar)
     Point point = g * scalar;
 
     MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
+    if (blsct_point == nullptr) {
+        fputs("Failed to allocate memory\n", stderr);
+        return nullptr;
+    }
     SERIALIZE_AND_COPY(point, blsct_point);
 
     return blsct_point;
@@ -1709,7 +1737,7 @@ BlsctRetVal* deserialize_range_proof(
     BlsctRangeProof* blsct_range_proof =
         static_cast<BlsctRangeProof*>(DeserializeFromHex(hex, range_proof_size));
     if (blsct_range_proof == nullptr) {
-        return err("Failed to deserialize range proof");
+        return err(BLSCT_DESER_FAILED);
     }
     return succ_as(blsct_range_proof, range_proof_size);
 }
@@ -1846,7 +1874,7 @@ BlsctRetVal* deserialize_script(const char* hex)
     BlsctScript* blsct_script =
         reinterpret_cast<BlsctScript*>(DeserializeFromHex(hex, SCRIPT_SIZE));
     if (blsct_script == nullptr) {
-        return err("failed to deserialize script");
+        return err(BLSCT_DESER_FAILED);
     }
     return succ_as(blsct_script, SCRIPT_SIZE);
 }
@@ -1861,7 +1889,7 @@ BlsctRetVal* deserialize_signature(const char* hex)
     BlsctSignature* blsct_signature =
         reinterpret_cast<BlsctSignature*>(DeserializeFromHex(hex, SIGNATURE_SIZE));
     if (blsct_signature == nullptr) {
-        return err("failed to deserialize signature");
+        return err(BLSCT_DESER_FAILED);
     }
     return succ_as(blsct_signature, SIGNATURE_SIZE);
 }
@@ -1968,7 +1996,7 @@ BlsctRetVal* deserialize_sub_addr_id(const char* hex)
     BlsctSubAddrId* blsct_sub_addr_id =
         reinterpret_cast<BlsctSubAddrId*>(DeserializeFromHex(hex, SUB_ADDR_ID_SIZE));
     if (blsct_sub_addr_id == nullptr) {
-        return err("failed to deserialize sub addr id");
+        return err(BLSCT_DESER_FAILED);
     }
     return succ_as(blsct_sub_addr_id, SUB_ADDR_ID_SIZE);
 }

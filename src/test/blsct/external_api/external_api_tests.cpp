@@ -639,10 +639,10 @@ BOOST_AUTO_TEST_CASE(test_are_ctx_in_equal)
     CTxIn tx_in_b{COutPoint{hash_b}};
 
     // same object should be equal
-    BOOST_CHECK(are_ctx_in_equal(&tx_in_a, &tx_in_a));
+    BOOST_CHECK(are_ctx_in_equal(reinterpret_cast<const BlsctCTxIn*>(&tx_in_a), reinterpret_cast<const BlsctCTxIn*>(&tx_in_a)));
 
     // different out_points should not be equal
-    BOOST_CHECK(!are_ctx_in_equal(&tx_in_a, &tx_in_b));
+    BOOST_CHECK(!are_ctx_in_equal(reinterpret_cast<const BlsctCTxIn*>(&tx_in_a), reinterpret_cast<const BlsctCTxIn*>(&tx_in_b)));
 }
 
 BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
