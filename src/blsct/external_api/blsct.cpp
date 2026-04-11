@@ -1837,6 +1837,9 @@ BlsctRetVal* deserialize_signature(const char* hex)
 {
     BlsctSignature* blsct_signature =
         reinterpret_cast<BlsctSignature*>(DeserializeFromHex(hex, SIGNATURE_SIZE));
+    if (blsct_signature == nullptr) {
+        return err("failed to deserialize signature");
+    }
     return succ_as(blsct_signature, SIGNATURE_SIZE);
 }
 
