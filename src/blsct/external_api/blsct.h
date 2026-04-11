@@ -13,6 +13,7 @@
 #include <blsct/public_key.h>
 #include <blsct/range_proof/setup.h>
 #include <cstdint>
+#include <new>
 #include <primitives/transaction.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -61,7 +62,8 @@ extern "C" {
 
 typedef struct {
     BLSCT_RESULT result;
-    void* value;
+    // Owned bytes from API. Free with free_obj(), not free().
+    uint8_t* value;
     size_t value_size;
 } BlsctRetVal;
 
@@ -114,20 +116,60 @@ BlsctRetVal* err(
 
 #define BLSCT_COPY(src, dest) std::memcpy(dest, src, sizeof(dest))
 #define BLSCT_COPY_BYTES(src, dest, n) std::memcpy(dest, src, n)
-#define MALLOC_BYTES(T, name, n) T* name = (T*) malloc(n)
-#define RETURN_IF_MEM_ALLOC_FAILED(name) \
-if (name == nullptr) { \
-    fputs("Failed to allocate memory\n", stderr); \
-    return nullptr; \
-}
-#define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
-    if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
+#define MALLOC_BYTES(T, name, n) T* name = (T*)blsct_malloc(n)
+#define RETURN_IF_MEM_ALLOC_FAILED(name)              \
+    if (name == nullptr) {                            \
+        fputs("Failed to allocate memory\n", stderr); \
+        return nullptr;                               \
+    }
+#define RETURN_ERR_IF_MEM_ALLOC_FAILED(name)         \
+    do {                                             \
+        if ((name) == nullptr) {                     \
+            return err(BLSCT_MEM_ALLOC_FAILED);      \
+        }                                            \
+    } while (0)
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
-#define TO_VOID(name) reinterpret_cast<void*>(name)
+// ---------------------------------------------------------------------------
+// Unified allocation wrappers.
+// Every allocation through these gets a hidden header so free_obj_impl
+// can call the correct deallocator (free vs destructor+free).
+// ---------------------------------------------------------------------------
 
-#define UNVOID(T, name) const T* name = reinterpret_cast<const T*>(void_##name)
+enum BlsctAllocKind : uint8_t {
+    BLSCT_ALLOC_MALLOC = 0,
+    BLSCT_ALLOC_NEW = 1,
+};
+
+typedef void (*BlsctDtor)(void*);
+
+inline constexpr uint32_t BLSCT_ALLOC_MAGIC = 0x424c5343; // "BLSC"
+
+struct BlsctAllocHeader {
+    uint32_t magic;
+    BlsctAllocKind kind;
+    BlsctDtor dtor; // only meaningful when kind == BLSCT_ALLOC_NEW
+};
+
+// blsct_malloc: malloc wrapper that prepends the header.
+// Returns pointer to user data (after header).
+void* blsct_malloc(size_t size);
+
+// blsct_new<T>: placement-new wrapper that prepends the header
+// and stores a type-erased destructor.
+template <typename T, typename... Args>
+inline T* blsct_new(Args&&... args)
+{
+    constexpr size_t header_size = sizeof(BlsctAllocHeader);
+    void* raw = malloc(header_size + sizeof(T));
+    if (raw == nullptr) return nullptr;
+    auto* hdr = static_cast<BlsctAllocHeader*>(raw);
+    hdr->magic = BLSCT_ALLOC_MAGIC;
+    hdr->kind = BLSCT_ALLOC_NEW;
+    hdr->dtor = [](void* p) { static_cast<T*>(p)->~T(); };
+    return new (static_cast<uint8_t*>(raw) + header_size) T(std::forward<Args>(args)...);
+}
 
 inline bool TryParseHexWrap(
     const std::string& hex,
@@ -165,19 +207,19 @@ inline const char* SerializeToHex(
     return StrToAllocCStr(hex_str);
 }
 
-inline void* DeserializeFromHex(const char* hex, const size_t obj_size)
+inline uint8_t* DeserializeFromHex(const char* hex, const size_t obj_size)
 {
     std::vector<uint8_t> vec;
     if (!TryParseHexWrap(hex, vec)) {
-        return err(BLSCT_FAILURE);
+        return nullptr;
     }
 
     // check if the size is correct
     if (vec.size() != obj_size) {
-        return err(BLSCT_BAD_SIZE);
+        return nullptr;
     }
 
-    void* blsct_obj = malloc(obj_size);
+    uint8_t* blsct_obj = (uint8_t*)blsct_malloc(obj_size);
     if (blsct_obj == nullptr) {
         fputs("Failed to allocate memory\n", stderr);
         return nullptr;
@@ -244,6 +286,29 @@ typedef uint8_t BlsctCTx;
 typedef uint8_t BlsctRangeProof;
 typedef uint8_t BlsctVectorPredicate;
 
+// fake handle types — replace raw pointers in the external API.
+// Callers treat these as opaque pointers; the underlying C++ types
+// are hidden inside blsct.cpp. This let's us have type safety at the
+// boundary between internal and external code while remaining compatible
+// with external bindings that might use opaque pointers
+typedef struct BlsctTxInVec_ BlsctTxInVec;
+typedef struct BlsctTxOutVec_ BlsctTxOutVec;
+typedef struct BlsctTxHexVec_ BlsctTxHexVec;
+typedef struct BlsctStringMap_ BlsctStringMap;
+typedef struct BlsctAmountRecoveryReqVec_ BlsctAmountRecoveryReqVec;
+typedef struct BlsctAmountRecoveryResultVec_ BlsctAmountRecoveryResultVec;
+typedef struct BlsctTokenInfo_ BlsctTokenInfo;
+typedef struct BlsctUnsignedInput_ BlsctUnsignedInput;
+typedef struct BlsctUnsignedOutput_ BlsctUnsignedOutput;
+typedef struct BlsctUnsignedTransaction_ BlsctUnsignedTransaction;
+typedef struct BlsctCtx_ BlsctCtx;
+typedef struct BlsctUint64Vec_ BlsctUint64Vec;
+typedef struct BlsctRangeProofVec_ BlsctRangeProofVec;
+typedef struct BlsctCTxIn_ BlsctCTxIn;
+typedef struct BlsctCTxOut_ BlsctCTxOut;
+typedef struct BlsctCTxInVec_ BlsctCTxInVec;
+typedef struct BlsctCTxOutVec_ BlsctCTxOutVec;
+
 typedef struct {
     BLSCT_RESULT result;
     bool value;
@@ -251,19 +316,19 @@ typedef struct {
 
 typedef struct {
     BLSCT_RESULT result;
-    void* value; // = std::vector<BlsctAmountRecoveryResult>
+    BlsctAmountRecoveryResultVec* value;
 } BlsctAmountsRetVal;
 
 typedef struct {
     BLSCT_RESULT result;
-    void* ctx;
+    BlsctCtx* ctx;
 
     size_t in_amount_err_index;  // holds the first index of the tx_in whose amount exceeds the maximum
     size_t out_amount_err_index; // holds the first index of the tx_out whose amount exceeds the maximum
 } BlsctCTxRetVal;
 
 BlsctRetVal* succ(
-    void* value,
+    uint8_t* value,
     size_t value_size);
 
 BlsctBoolRetVal* succ_bool(
@@ -307,7 +372,8 @@ typedef struct {
     BlsctScalar blinding_key;
 } BlsctTxOut;
 
-void free_obj(void* x);
+void free_obj_impl(uint8_t* x);
+
 void free_amounts_ret_val(BlsctAmountsRetVal* rv); // free attrs as well
 void init();
 
@@ -322,63 +388,63 @@ BlsctRetVal* decode_address(
     const char* blsct_enc_addr);
 
 BlsctRetVal* encode_address(
-    const void* void_blsct_dpk,
+    const BlsctDoublePubKey* blsct_dpk,
     const enum AddressEncoding encoding);
 
 // amount recovery request
 BlsctAmountRecoveryReq* gen_amount_recovery_req(
-    const void* vp_blsct_range_proof,
+    const BlsctRangeProof* vp_blsct_range_proof,
     const size_t range_proof_size,
-    const void* vp_blsct_nonce,
-    const void* vp_blsct_token_id);
-void* create_amount_recovery_req_vec();
+    const BlsctPoint* vp_blsct_nonce,
+    const BlsctTokenId* vp_blsct_token_id);
+BlsctAmountRecoveryReqVec* create_amount_recovery_req_vec();
 void add_to_amount_recovery_req_vec(
-    void* vp_amt_recovery_req_vec,
-    void* vp_amt_recovery_req);
-void delete_amount_recovery_req_vec(void* vp_amt_recovery_req_vec);
+    BlsctAmountRecoveryReqVec* vp_amt_recovery_req_vec,
+    BlsctAmountRecoveryReq* vp_amt_recovery_req);
+void delete_amount_recovery_req_vec(BlsctAmountRecoveryReqVec* vp_amt_recovery_req_vec);
 
 // amountry recovery and the result result
 
 // returns a structure whose value field is
 // a vector of the same size as the input vector
 BlsctAmountsRetVal* recover_amount(
-    void* vp_amt_recovery_req_vec);
+    BlsctAmountRecoveryReqVec* vp_amt_recovery_req_vec);
 
 size_t get_amount_recovery_result_size(
-    void* vp_amt_recovery_res_vec);
+    BlsctAmountRecoveryResultVec* vp_amt_recovery_res_vec);
 bool get_amount_recovery_result_is_succ(
-    void* vp_amt_recovery_req_vec,
+    BlsctAmountRecoveryResultVec* vp_amt_recovery_req_vec,
     size_t idx);
 uint64_t get_amount_recovery_result_amount(
-    void* vp_amt_recovery_req_vec,
+    BlsctAmountRecoveryResultVec* vp_amt_recovery_req_vec,
     size_t idx);
 const char* get_amount_recovery_result_msg(
-    void* vp_amt_recovery_req_vec,
+    BlsctAmountRecoveryResultVec* vp_amt_recovery_req_vec,
     size_t idx);
 const BlsctScalar* get_amount_recovery_result_gamma(
-    void* vp_amt_recovery_req_vec,
+    BlsctAmountRecoveryResultVec* vp_amt_recovery_req_vec,
     size_t idx);
 
 // ctx
-void* create_tx_in_vec();
-void add_to_tx_in_vec(void* vp_tx_in_vec, const BlsctTxIn* tx_in);
-void delete_tx_in_vec(void* vp_tx_in_vec);
+BlsctTxInVec* create_tx_in_vec();
+void add_to_tx_in_vec(BlsctTxInVec* vp_tx_in_vec, const BlsctTxIn* tx_in);
+void delete_tx_in_vec(BlsctTxInVec* vp_tx_in_vec);
 
-void* create_tx_out_vec();
-void add_to_tx_out_vec(void* vp_tx_out_vec, const BlsctTxOut* tx_out);
-void delete_tx_out_vec(void* vp_tx_out_vec);
+BlsctTxOutVec* create_tx_out_vec();
+void add_to_tx_out_vec(BlsctTxOutVec* vp_tx_out_vec, const BlsctTxOut* tx_out);
+void delete_tx_out_vec(BlsctTxOutVec* vp_tx_out_vec);
 
 // returns a serialized CMutableTransaction
 BlsctCTxRetVal* build_ctx(
-    const void* void_tx_ins,
-    const void* void_tx_outs);
-// using void* instead of const void* to avoid const_cast
-const char* get_ctx_id(void* vp_ctx);
-const void* get_ctx_ins(void* vp_ctx);
-const void* get_ctx_outs(void* vp_ctx);
-void delete_ctx(void* vp_ctx);
+    const BlsctTxInVec* void_tx_ins,
+    const BlsctTxOutVec* void_tx_outs);
+// using non-const types to avoid const_cast
+const char* get_ctx_id(BlsctCtx* vp_ctx);
+const BlsctCTxInVec* get_ctx_ins(BlsctCtx* vp_ctx);
+const BlsctCTxOutVec* get_ctx_outs(BlsctCtx* vp_ctx);
+void delete_ctx(BlsctCtx* vp_ctx);
 
-const char* serialize_ctx(void* vp_ctx);
+const char* serialize_ctx(BlsctCtx* vp_ctx);
 BlsctRetVal* deserialize_ctx(const char* hex);
 
 // ctx id
@@ -386,41 +452,42 @@ const char* serialize_ctx_id(const BlsctCTxId* blsct_ctx_id);
 BlsctRetVal* deserialize_ctx_id(const char* hex);
 
 // signed transaction aggregation
-void* create_tx_hex_vec();
-void add_to_tx_hex_vec(void* vp_tx_hex_vec, const char* tx_hex);
-void delete_tx_hex_vec(void* vp_tx_hex_vec);
-BlsctRetVal* aggregate_transactions(const void* vp_tx_hex_vec);
+BlsctTxHexVec* create_tx_hex_vec();
+void add_to_tx_hex_vec(BlsctTxHexVec* vp_tx_hex_vec, const char* tx_hex);
+void delete_tx_hex_vec(BlsctTxHexVec* vp_tx_hex_vec);
+BlsctRetVal* aggregate_transactions(const BlsctTxHexVec* vp_tx_hex_vec);
 
 // ctx_ins
-bool are_ctx_ins_equal(const void* vp_a, const void* vp_b);
-size_t get_ctx_ins_size(const void* blsct_ctx_ins);
-const void* get_ctx_in_at(const void* vp_ctx_ins, const size_t i);
+bool are_ctx_ins_equal(const BlsctCTxInVec* vp_a, const BlsctCTxInVec* vp_b);
+size_t get_ctx_ins_size(const BlsctCTxInVec* blsct_ctx_ins);
+const BlsctCTxIn* get_ctx_in_at(const BlsctCTxInVec* vp_ctx_ins, const size_t i);
 
 // ctx in
-bool are_ctx_in_equal(const void* vp_a, const void* vp_b);
-const BlsctCTxId* get_ctx_in_prev_out_hash(const void* vp_ctx_in);
-const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in);
-uint32_t get_ctx_in_sequence(const void* vp_ctx_in);
-const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in);
+bool are_ctx_in_equal(const BlsctCTxIn* vp_a, const BlsctCTxIn* vp_b);
+const BlsctCTxId* get_ctx_in_prev_out_hash(const BlsctCTxIn* vp_ctx_in);
+const BlsctScript* get_ctx_in_script_sig(const BlsctCTxIn* vp_ctx_in);
+uint32_t get_ctx_in_sequence(const BlsctCTxIn* vp_ctx_in);
+// Returns owned serialized witness bytes. Caller frees with free_obj().
+BlsctRetVal* get_ctx_in_script_witness(const BlsctCTxIn* vp_ctx_in);
 
 // ctx_outs
-bool are_ctx_outs_equal(const void* vp_a, const void* vp_b);
-size_t get_ctx_outs_size(const void* vp_ctx_outs);
-const void* get_ctx_out_at(const void* vp_ctx_outs, const size_t i);
+bool are_ctx_outs_equal(const BlsctCTxOutVec* vp_a, const BlsctCTxOutVec* vp_b);
+size_t get_ctx_outs_size(const BlsctCTxOutVec* vp_ctx_outs);
+const BlsctCTxOut* get_ctx_out_at(const BlsctCTxOutVec* vp_ctx_outs, const size_t i);
 
 // ctx out
-bool are_ctx_out_equal(const void* vp_a, const void* vp_b);
-uint64_t get_ctx_out_value(const void* vp_ctx_out);
-const BlsctScript* get_ctx_out_script_pub_key(const void* vp_ctx_out);
-const BlsctTokenId* get_ctx_out_token_id(const void* vp_ctx_out);
-BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out);
+bool are_ctx_out_equal(const BlsctCTxOut* vp_a, const BlsctCTxOut* vp_b);
+uint64_t get_ctx_out_value(const BlsctCTxOut* vp_ctx_out);
+const BlsctScript* get_ctx_out_script_pub_key(const BlsctCTxOut* vp_ctx_out);
+const BlsctTokenId* get_ctx_out_token_id(const BlsctCTxOut* vp_ctx_out);
+BlsctRetVal* get_ctx_out_vector_predicate(const BlsctCTxOut* vp_ctx_out);
 
 // ctx out blsct data
-const BlsctPoint* get_ctx_out_spending_key(const void* vp_ctx_out);
-const BlsctPoint* get_ctx_out_ephemeral_key(const void* vp_jctx_out);
-const BlsctPoint* get_ctx_out_blinding_key(const void* vp_ctx_out);
-const BlsctRetVal* get_ctx_out_range_proof(const void* vp_ctx_out);
-uint16_t get_ctx_out_view_tag(const void* vp_ctx_out);
+const BlsctPoint* get_ctx_out_spending_key(const BlsctCTxOut* vp_ctx_out);
+const BlsctPoint* get_ctx_out_ephemeral_key(const BlsctCTxOut* vp_jctx_out);
+const BlsctPoint* get_ctx_out_blinding_key(const BlsctCTxOut* vp_ctx_out);
+const BlsctRetVal* get_ctx_out_range_proof(const BlsctCTxOut* vp_ctx_out);
+uint16_t get_ctx_out_view_tag(const BlsctCTxOut* vp_ctx_out);
 
 // double public key
 BlsctRetVal* gen_double_pub_key(
@@ -462,8 +529,7 @@ BlsctRetVal* gen_base_point();
 BlsctRetVal* gen_random_point();
 BlsctPoint* scalar_muliply_point(
     const BlsctPoint* blsct_point,
-    const BlsctScalar* blsct_scalar
-);
+    const BlsctScalar* blsct_scalar);
 const char* point_to_str(const BlsctPoint* blsct_point);
 BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar);
 bool is_valid_point(const BlsctPoint* blsct_point);
@@ -480,13 +546,13 @@ BlsctRetVal* deserialize_public_key(const char* hex);
 
 // range proof
 BlsctRetVal* build_range_proof(
-    const void* vp_uint64_vec,
+    const BlsctUint64Vec* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
     const char* blsct_msg,
     const BlsctTokenId* blsct_token_id);
 
 BlsctBoolRetVal* verify_range_proofs(
-    const void* vp_range_proofs);
+    const BlsctRangeProofVec* vp_range_proofs);
 
 BlsctPoint* get_range_proof_A(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
 BlsctPoint* get_range_proof_A_wip(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
@@ -498,12 +564,12 @@ BlsctScalar* get_range_proof_delta_prime(const BlsctRangeProof* blsct_range_proo
 BlsctScalar* get_range_proof_alpha_hat(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
 BlsctScalar* get_range_proof_tau_x(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size);
 
-void* create_range_proof_vec();
+BlsctRangeProofVec* create_range_proof_vec();
 void add_to_range_proof_vec(
-    void* vp_range_proofs,
+    BlsctRangeProofVec* vp_range_proofs,
     const BlsctRangeProof* blsct_range_proof,
     size_t blsct_range_proof_size);
-void delete_range_proof_vec(const void* vp_range_proofs);
+void delete_range_proof_vec(const BlsctRangeProofVec* vp_range_proofs);
 
 const char* serialize_range_proof(
     const BlsctRangeProof* blsct_range_proof,
@@ -548,8 +614,7 @@ BlsctSubAddr* derive_sub_address(
     const BlsctSubAddrId* blsct_sub_addr_id);
 
 BlsctDoublePubKey* sub_addr_to_dpk(
-    const BlsctSubAddr* blsct_sub_addr
-);
+    const BlsctSubAddr* blsct_sub_addr);
 
 const char* serialize_sub_addr(const BlsctSignature* blsct_sub_addr);
 BlsctRetVal* deserialize_sub_addr(const char* hex);
@@ -583,30 +648,30 @@ const char* serialize_token_id(const BlsctTokenId* blsct_token_id);
 BlsctRetVal* deserialize_token_id(const char* hex);
 
 // generic string map helpers
-void* create_string_map();
-void add_to_string_map(void* vp_string_map, const char* key, const char* value);
-void delete_string_map(const void* vp_string_map);
-size_t get_string_map_size(const void* vp_string_map);
-const char* get_string_map_key_at(const void* vp_string_map, size_t idx);
-const char* get_string_map_value_at(const void* vp_string_map, size_t idx);
+BlsctStringMap* create_string_map();
+void add_to_string_map(BlsctStringMap* vp_string_map, const char* key, const char* value);
+void delete_string_map(const BlsctStringMap* vp_string_map);
+size_t get_string_map_size(const BlsctStringMap* vp_string_map);
+const char* get_string_map_key_at(const BlsctStringMap* vp_string_map, size_t idx);
+const char* get_string_map_value_at(const BlsctStringMap* vp_string_map, size_t idx);
 
 // token info helpers
 BlsctRetVal* build_token_info(
     enum BlsctTokenType type,
     const BlsctPubKey* blsct_public_key,
-    const void* vp_metadata,
+    const BlsctStringMap* vp_metadata,
     const uint64_t total_supply);
-void delete_token_info(void* vp_token_info);
-const char* serialize_token_info(const void* vp_token_info);
+void delete_token_info(BlsctTokenInfo* vp_token_info);
+const char* serialize_token_info(const BlsctTokenInfo* vp_token_info);
 BlsctRetVal* deserialize_token_info(const char* hex);
-enum BlsctTokenType get_token_info_type(const void* vp_token_info);
-const BlsctPubKey* get_token_info_public_key(const void* vp_token_info);
-uint64_t get_token_info_total_supply(const void* vp_token_info);
-void* get_token_info_metadata(const void* vp_token_info);
+enum BlsctTokenType get_token_info_type(const BlsctTokenInfo* vp_token_info);
+const BlsctPubKey* get_token_info_public_key(const BlsctTokenInfo* vp_token_info);
+uint64_t get_token_info_total_supply(const BlsctTokenInfo* vp_token_info);
+BlsctStringMap* get_token_info_metadata(const BlsctTokenInfo* vp_token_info);
 
 // collection token hash and token key derivation
 BlsctRetVal* calc_collection_token_hash(
-    const void* vp_metadata,
+    const BlsctStringMap* vp_metadata,
     const uint64_t total_supply);
 BlsctRetVal* derive_collection_token_key(
     const BlsctScalar* blsct_master_token_key,
@@ -642,8 +707,7 @@ BlsctRetVal* build_tx_out(
     const TxOutputType output_type,
     const uint64_t min_stake,
     const bool subtract_fee_from_amount,
-    const BlsctScalar* blsct_blinding_key
-);
+    const BlsctScalar* blsct_blinding_key);
 
 const BlsctSubAddr* get_tx_out_destination(const BlsctTxOut* tx_out);
 uint64_t get_tx_out_amount(const BlsctTxOut* tx_out);
@@ -669,14 +733,14 @@ enum BlsctPredicateType get_vector_predicate_type(
     const BlsctVectorPredicate* blsct_vector_predicate,
     size_t obj_size);
 BlsctRetVal* build_create_token_predicate(
-    const void* vp_token_info);
+    const BlsctTokenInfo* vp_token_info);
 BlsctRetVal* build_mint_token_predicate(
     const BlsctPubKey* blsct_token_public_key,
     const uint64_t amount);
 BlsctRetVal* build_mint_nft_predicate(
     const BlsctPubKey* blsct_token_public_key,
     const uint64_t nft_id,
-    const void* vp_metadata);
+    const BlsctStringMap* vp_metadata);
 BlsctRetVal* get_create_token_predicate_token_info(
     const BlsctVectorPredicate* blsct_vector_predicate,
     size_t obj_size);
@@ -692,20 +756,20 @@ const BlsctPubKey* get_mint_nft_predicate_public_key(
 uint64_t get_mint_nft_predicate_nft_id(
     const BlsctVectorPredicate* blsct_vector_predicate,
     size_t obj_size);
-void* get_mint_nft_predicate_metadata(
+BlsctStringMap* get_mint_nft_predicate_metadata(
     const BlsctVectorPredicate* blsct_vector_predicate,
     size_t obj_size);
 
 // unsigned input/output/transaction helpers
 BlsctRetVal* build_unsigned_input(const BlsctTxIn* tx_in);
-void delete_unsigned_input(void* vp_unsigned_input);
-const char* serialize_unsigned_input(const void* vp_unsigned_input);
+void delete_unsigned_input(BlsctUnsignedInput* vp_unsigned_input);
+const char* serialize_unsigned_input(const BlsctUnsignedInput* vp_unsigned_input);
 BlsctRetVal* deserialize_unsigned_input(const char* hex);
 
 BlsctRetVal* build_unsigned_output(const BlsctTxOut* tx_out);
 BlsctRetVal* build_unsigned_create_token_output(
     const BlsctScalar* blsct_token_key,
-    const void* vp_token_info);
+    const BlsctTokenInfo* vp_token_info);
 BlsctRetVal* build_unsigned_mint_token_output(
     const BlsctSubAddr* blsct_dest,
     const uint64_t amount,
@@ -718,22 +782,22 @@ BlsctRetVal* build_unsigned_mint_nft_output(
     const BlsctScalar* blsct_token_key,
     const BlsctPubKey* blsct_token_public_key,
     const uint64_t nft_id,
-    const void* vp_metadata);
-void delete_unsigned_output(void* vp_unsigned_output);
-const char* serialize_unsigned_output(const void* vp_unsigned_output);
+    const BlsctStringMap* vp_metadata);
+void delete_unsigned_output(BlsctUnsignedOutput* vp_unsigned_output);
+const char* serialize_unsigned_output(const BlsctUnsignedOutput* vp_unsigned_output);
 BlsctRetVal* deserialize_unsigned_output(const char* hex);
 
-void* create_unsigned_transaction();
-void add_unsigned_transaction_input(void* vp_unsigned_transaction, const void* vp_unsigned_input);
-void add_unsigned_transaction_output(void* vp_unsigned_transaction, const void* vp_unsigned_output);
-void set_unsigned_transaction_fee(void* vp_unsigned_transaction, const uint64_t fee);
-uint64_t get_unsigned_transaction_fee(const void* vp_unsigned_transaction);
-size_t get_unsigned_transaction_inputs_size(const void* vp_unsigned_transaction);
-size_t get_unsigned_transaction_outputs_size(const void* vp_unsigned_transaction);
-void delete_unsigned_transaction(void* vp_unsigned_transaction);
-const char* serialize_unsigned_transaction(const void* vp_unsigned_transaction);
+BlsctUnsignedTransaction* create_unsigned_transaction();
+void add_unsigned_transaction_input(BlsctUnsignedTransaction* vp_unsigned_transaction, const BlsctUnsignedInput* vp_unsigned_input);
+void add_unsigned_transaction_output(BlsctUnsignedTransaction* vp_unsigned_transaction, const BlsctUnsignedOutput* vp_unsigned_output);
+void set_unsigned_transaction_fee(BlsctUnsignedTransaction* vp_unsigned_transaction, const uint64_t fee);
+uint64_t get_unsigned_transaction_fee(const BlsctUnsignedTransaction* vp_unsigned_transaction);
+size_t get_unsigned_transaction_inputs_size(const BlsctUnsignedTransaction* vp_unsigned_transaction);
+size_t get_unsigned_transaction_outputs_size(const BlsctUnsignedTransaction* vp_unsigned_transaction);
+void delete_unsigned_transaction(BlsctUnsignedTransaction* vp_unsigned_transaction);
+const char* serialize_unsigned_transaction(const BlsctUnsignedTransaction* vp_unsigned_transaction);
 BlsctRetVal* deserialize_unsigned_transaction(const char* hex);
-BlsctRetVal* sign_unsigned_transaction(const void* vp_unsigned_transaction);
+BlsctRetVal* sign_unsigned_transaction(const BlsctUnsignedTransaction* vp_unsigned_transaction);
 
 // key derivation functions
 
@@ -806,10 +870,24 @@ uint8_t* hex_to_malloced_buf(const char* hex);
 const char* buf_to_malloced_hex_c_str(const uint8_t* buf, size_t size);
 
 // uint64 vector
-void* create_uint64_vec();
-void add_to_uint64_vec(void* vp_uint64_vec, const uint64_t n);
-void delete_uint64_vec(const void* vp_vec);
+BlsctUint64Vec* create_uint64_vec();
+void add_to_uint64_vec(BlsctUint64Vec* vp_uint64_vec, const uint64_t n);
+void delete_uint64_vec(const BlsctUint64Vec* vp_vec);
 
 } // extern "C"
+
+// Type-safe wrapper for the C deallocator.
+// Use for every pointer returned by blsct_malloc()/blsct_new() and BlsctRetVal.value.
+template <typename T>
+void free_obj(T* x)
+{
+    free_obj_impl(reinterpret_cast<uint8_t*>(x));
+}
+
+template <typename T>
+void free_obj(const T* x)
+{
+    free_obj_impl(reinterpret_cast<uint8_t*>(const_cast<T*>(x)));
+}
 
 #endif // NAVCOIN_BLSCT_EXTERNAL_API_BLSCT_H
