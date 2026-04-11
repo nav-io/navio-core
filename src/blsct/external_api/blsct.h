@@ -126,7 +126,6 @@ BlsctRetVal* err(
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
 
-
 inline bool TryParseHexWrap(
     const std::string& hex,
     std::vector<uint8_t>& out_vec)

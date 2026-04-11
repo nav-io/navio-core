@@ -11,7 +11,6 @@
 #include <blsct/wallet/verification.h>
 #include <core_io.h>
 #include <hash.h>
-#include <iostream>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <txdb.h>
@@ -786,19 +785,19 @@ static std::string BuildSignedTxHex(uint64_t seed_base, uint64_t input_amount, u
     BOOST_REQUIRE(op_rv && op_rv->result == BLSCT_SUCCESS);
 
     auto* in_rv = build_tx_in(input_amount,
-        reinterpret_cast<const BlsctScalar*>(gamma_rv->value),
-        reinterpret_cast<const BlsctScalar*>(input_sk_rv->value),
-        reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
-        reinterpret_cast<const BlsctOutPoint*>(op_rv->value), false, false);
+                              reinterpret_cast<const BlsctScalar*>(gamma_rv->value),
+                              reinterpret_cast<const BlsctScalar*>(input_sk_rv->value),
+                              reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
+                              reinterpret_cast<const BlsctOutPoint*>(op_rv->value), false, false);
     BOOST_REQUIRE(in_rv && in_rv->result == BLSCT_SUCCESS);
 
     auto* uin_rv = build_unsigned_input(reinterpret_cast<const BlsctTxIn*>(in_rv->value));
     BOOST_REQUIRE(uin_rv && uin_rv->result == BLSCT_SUCCESS);
 
     auto* out_rv = build_tx_out(dest, output_amount, "smoke",
-        reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
-        TxOutputType::Normal, 0, false,
-        reinterpret_cast<const BlsctScalar*>(blind_rv->value));
+                                reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
+                                TxOutputType::Normal, 0, false,
+                                reinterpret_cast<const BlsctScalar*>(blind_rv->value));
     BOOST_REQUIRE(out_rv && out_rv->result == BLSCT_SUCCESS);
 
     auto* uout_rv = build_unsigned_output(reinterpret_cast<const BlsctTxOut*>(out_rv->value));
@@ -814,22 +813,34 @@ static std::string BuildSignedTxHex(uint64_t seed_base, uint64_t input_amount, u
     std::string hex(reinterpret_cast<const char*>(signed_rv->value));
 
     // cleanup
-    free_obj(view_key_rv->value); free(view_key_rv);
-    free_obj(spend_key_rv->value); free(spend_key_rv);
-    free_obj(input_sk_rv->value); free(input_sk_rv);
-    free_obj(gamma_rv->value); free(gamma_rv);
-    free_obj(blind_rv->value); free(blind_rv);
-    free_obj(tid_rv->value); free(tid_rv);
+    free_obj(view_key_rv->value);
+    free(view_key_rv);
+    free_obj(spend_key_rv->value);
+    free(spend_key_rv);
+    free_obj(input_sk_rv->value);
+    free(input_sk_rv);
+    free_obj(gamma_rv->value);
+    free(gamma_rv);
+    free_obj(blind_rv->value);
+    free(blind_rv);
+    free_obj(tid_rv->value);
+    free(tid_rv);
     free_typed_obj(spend_pub);
     free_typed_obj(sub_id);
     free_typed_obj(dest);
-    free_obj(op_rv->value); free(op_rv);
-    free_obj(in_rv->value); free(in_rv);
-    delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(uin_rv->value)); free(uin_rv);
-    free_obj(out_rv->value); free(out_rv);
-    delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(uout_rv->value)); free(uout_rv);
+    free_obj(op_rv->value);
+    free(op_rv);
+    free_obj(in_rv->value);
+    free(in_rv);
+    delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(uin_rv->value));
+    free(uin_rv);
+    free_obj(out_rv->value);
+    free(out_rv);
+    delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(uout_rv->value));
+    free(uout_rv);
     delete_unsigned_transaction(utx);
-    free_obj(signed_rv->value); free(signed_rv);
+    free_obj(signed_rv->value);
+    free(signed_rv);
 
     return hex;
 }
@@ -862,19 +873,19 @@ static BlsctCtx* BuildCtxViaApi(uint64_t input_amount, uint64_t output_amount, u
     BOOST_REQUIRE(op_rv && op_rv->result == BLSCT_SUCCESS);
 
     auto* in_rv = build_tx_in(input_amount,
-        reinterpret_cast<const BlsctScalar*>(gamma_rv->value),
-        reinterpret_cast<const BlsctScalar*>(input_sk_rv->value),
-        reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
-        reinterpret_cast<const BlsctOutPoint*>(op_rv->value), false, false);
+                              reinterpret_cast<const BlsctScalar*>(gamma_rv->value),
+                              reinterpret_cast<const BlsctScalar*>(input_sk_rv->value),
+                              reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
+                              reinterpret_cast<const BlsctOutPoint*>(op_rv->value), false, false);
     BOOST_REQUIRE(in_rv && in_rv->result == BLSCT_SUCCESS);
 
     auto* uin_rv = build_unsigned_input(reinterpret_cast<const BlsctTxIn*>(in_rv->value));
     BOOST_REQUIRE(uin_rv && uin_rv->result == BLSCT_SUCCESS);
 
     auto* out_rv = build_tx_out(dest, output_amount, "ctxtest",
-        reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
-        TxOutputType::Normal, 0, false,
-        reinterpret_cast<const BlsctScalar*>(blind_rv->value));
+                                reinterpret_cast<const BlsctTokenId*>(tid_rv->value),
+                                TxOutputType::Normal, 0, false,
+                                reinterpret_cast<const BlsctScalar*>(blind_rv->value));
     BOOST_REQUIRE(out_rv && out_rv->result == BLSCT_SUCCESS);
 
     auto* uout_rv = build_unsigned_output(reinterpret_cast<const BlsctTxOut*>(out_rv->value));
@@ -898,22 +909,34 @@ static BlsctCtx* BuildCtxViaApi(uint64_t input_amount, uint64_t output_amount, u
     auto* ctx = reinterpret_cast<BlsctCtx*>(ctx_heap);
 
     // cleanup helpers
-    free_obj(view_key_rv->value); free(view_key_rv);
-    free_obj(spend_key_rv->value); free(spend_key_rv);
-    free_obj(input_sk_rv->value); free(input_sk_rv);
-    free_obj(gamma_rv->value); free(gamma_rv);
-    free_obj(blind_rv->value); free(blind_rv);
-    free_obj(tid_rv->value); free(tid_rv);
+    free_obj(view_key_rv->value);
+    free(view_key_rv);
+    free_obj(spend_key_rv->value);
+    free(spend_key_rv);
+    free_obj(input_sk_rv->value);
+    free(input_sk_rv);
+    free_obj(gamma_rv->value);
+    free(gamma_rv);
+    free_obj(blind_rv->value);
+    free(blind_rv);
+    free_obj(tid_rv->value);
+    free(tid_rv);
     free_typed_obj(spend_pub);
     free_typed_obj(sub_id);
     free_typed_obj(dest);
-    free_obj(op_rv->value); free(op_rv);
-    free_obj(in_rv->value); free(in_rv);
-    delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(uin_rv->value)); free(uin_rv);
-    free_obj(out_rv->value); free(out_rv);
-    delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(uout_rv->value)); free(uout_rv);
+    free_obj(op_rv->value);
+    free(op_rv);
+    free_obj(in_rv->value);
+    free(in_rv);
+    delete_unsigned_input(reinterpret_cast<BlsctUnsignedInput*>(uin_rv->value));
+    free(uin_rv);
+    free_obj(out_rv->value);
+    free(out_rv);
+    delete_unsigned_output(reinterpret_cast<BlsctUnsignedOutput*>(uout_rv->value));
+    free(uout_rv);
     delete_unsigned_transaction(utx);
-    free_obj(signed_rv->value); free(signed_rv);
+    free_obj(signed_rv->value);
+    free(signed_rv);
 
     return ctx;
 }
@@ -993,7 +1016,10 @@ BOOST_AUTO_TEST_CASE(test_ctx_in_field_accessors)
     // The out_point was "00...01", so prev_hash should be non-zero
     bool all_zero = true;
     for (size_t i = 0; i < CTX_ID_SIZE; ++i) {
-        if ((*prev_hash)[i] != 0) { all_zero = false; break; }
+        if ((*prev_hash)[i] != 0) {
+            all_zero = false;
+            break;
+        }
     }
     BOOST_CHECK(!all_zero);
 
