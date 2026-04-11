@@ -217,7 +217,7 @@ BOOST_AUTO_TEST_CASE(test_amount_recovery_returns_gamma)
     BOOST_CHECK(are_scalar_equal(recovered_gamma, &expected_gamma_bytes) == 1);
 
     free_obj(rp_buf);
-    delete req;
+    free_obj(req);
     delete_amount_recovery_req_vec(req_vec);
     free_amounts_ret_val(amounts_rv);
     free_obj(tid_rv);
@@ -289,7 +289,7 @@ BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
     BOOST_CHECK(are_scalar_equal(recovered_gamma, tx_in_gamma) == 1);
 
     free_obj(rp_buf);
-    delete req;
+    free_obj(req);
     delete_amount_recovery_req_vec(req_vec);
     free_amounts_ret_val(amounts_rv);
     free_obj(sk_rv);
@@ -923,7 +923,7 @@ static BlsctCtx* BuildCtxViaApi(uint64_t input_amount, uint64_t output_amount, u
     BOOST_REQUIRE(DecodeHexTx(mtx, signed_hex));
 
     // Wrap as BlsctCtx (same ownership semantics as build_ctx)
-    auto* ctx_heap = new (std::nothrow) CMutableTransaction(std::move(mtx));
+    auto* ctx_heap = blsct_new<CMutableTransaction>(std::move(mtx));
     BOOST_REQUIRE(ctx_heap != nullptr);
     auto* ctx = reinterpret_cast<BlsctCtx*>(ctx_heap);
 

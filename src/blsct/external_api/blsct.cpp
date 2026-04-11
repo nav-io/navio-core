@@ -265,7 +265,7 @@ static BlsctRetVal* DeserializeSerializableObject(const char* hex)
 
     try {
         DataStream st{vec};
-        auto* obj = new (std::nothrow) T{};
+        auto* obj = blsct_new<T>();
         if (obj == nullptr) {
             return err(BLSCT_MEM_ALLOC_FAILED);
         }
@@ -320,7 +320,7 @@ static std::map<std::string, std::string> StringMapFromOpaque(const BlsctStringM
 
 static BlsctStringMap* CloneStringMap(const std::map<std::string, std::string>& src)
 {
-    auto* copy = new (std::nothrow) std::map<std::string, std::string>(src);
+    auto* copy = blsct_new<std::map<std::string, std::string>>(src);
     return to_handle<BlsctStringMap>(copy);
 }
 
@@ -451,7 +451,7 @@ void free_amounts_ret_val(BlsctAmountsRetVal* rv)
         for (auto& res : *result_vec) {
             free_obj(res.msg);
         }
-        delete result_vec;
+        free_obj(result_vec);
     }
     free_obj(rv);
 }
@@ -533,7 +533,7 @@ BlsctAmountRecoveryReq* gen_amount_recovery_req(
     const BlsctPoint* vp_blsct_nonce,
     const BlsctTokenId* vp_blsct_token_id)
 {
-    auto req = new (std::nothrow) BlsctAmountRecoveryReq;
+    auto req = blsct_new<BlsctAmountRecoveryReq>();
     RETURN_IF_MEM_ALLOC_FAILED(req);
 
     req->range_proof = (BlsctRangeProof*)blsct_malloc(range_proof_size);
@@ -594,7 +594,7 @@ BlsctAmountsRetVal* recover_amount(
         }
 
         // the vector to return has the same size as the request vector
-        auto result_vec = new (std::nothrow) std::vector<BlsctAmountRecoveryResult>;
+        auto result_vec = blsct_new<std::vector<BlsctAmountRecoveryResult>>();
         if (result_vec == nullptr) {
             rv->result = BLSCT_MEM_ALLOC_FAILED;
             return rv;
@@ -645,7 +645,7 @@ BlsctAmountsRetVal* recover_amount(
 
 BlsctAmountRecoveryReqVec* create_amount_recovery_req_vec()
 {
-    auto vec = new (std::nothrow) std::vector<BlsctAmountRecoveryReq>;
+    auto vec = blsct_new<std::vector<BlsctAmountRecoveryReq>>();
     RETURN_RET_VAL_IF_NULL(vec, nullptr);
     return to_handle<BlsctAmountRecoveryReqVec>(vec);
 }
@@ -669,7 +669,7 @@ void delete_amount_recovery_req_vec(BlsctAmountRecoveryReqVec* vp_amt_recovery_r
     for (auto& req : *vec) {
         free_obj(req.range_proof);
     }
-    delete vec;
+    free_obj(vec);
 }
 
 // functions to retrieve attrs of amount recovery result
@@ -731,7 +731,7 @@ const BlsctScalar* get_amount_recovery_result_gamma(
 // ctx
 BlsctTxInVec* create_tx_in_vec()
 {
-    auto* tx_in_vec = new (std::nothrow) std::vector<BlsctTxIn>;
+    auto* tx_in_vec = blsct_new<std::vector<BlsctTxIn>>();
     return to_handle<BlsctTxInVec>(tx_in_vec);
 }
 
@@ -746,12 +746,12 @@ void add_to_tx_in_vec(BlsctTxInVec* vp_tx_in_vec, const BlsctTxIn* tx_in)
 void delete_tx_in_vec(BlsctTxInVec* vp_tx_in_vec)
 {
     auto* tx_in_vec = to_cpp<std::vector<BlsctTxIn>>(vp_tx_in_vec);
-    delete tx_in_vec;
+    free_obj(tx_in_vec);
 }
 
 BlsctTxOutVec* create_tx_out_vec()
 {
-    auto* tx_out_vec = new (std::nothrow) std::vector<BlsctTxOut>;
+    auto* tx_out_vec = blsct_new<std::vector<BlsctTxOut>>();
     return to_handle<BlsctTxOutVec>(tx_out_vec);
 }
 
@@ -764,7 +764,7 @@ void add_to_tx_out_vec(BlsctTxOutVec* vp_tx_out_vec, const BlsctTxOut* tx_out)
 void delete_tx_out_vec(BlsctTxOutVec* vp_tx_out_vec)
 {
     auto* tx_out_vec = to_cpp<std::vector<BlsctTxOut>>(vp_tx_out_vec);
-    delete tx_out_vec;
+    free_obj(tx_out_vec);
 }
 
 BlsctCTxRetVal* build_ctx(
@@ -886,7 +886,7 @@ BlsctCTxRetVal* build_ctx(
     }
 
     // move the ctx to newly created ctx in heap
-    CMutableTransaction* ctx_in_heap = new (std::nothrow) CMutableTransaction;
+    CMutableTransaction* ctx_in_heap = blsct_new<CMutableTransaction>();
     *ctx_in_heap = std::move(maybe_ctx.value());
 
     rv->result = BLSCT_SUCCESS;
@@ -919,7 +919,7 @@ const BlsctCTxOutVec* get_ctx_outs(BlsctCtx* vp_ctx)
 void delete_ctx(BlsctCtx* vp_ctx)
 {
     auto ctx = to_cpp<CMutableTransaction>(vp_ctx);
-    delete ctx;
+    free_obj(ctx);
 }
 
 const char* serialize_ctx(BlsctCtx* vp_ctx)
@@ -938,13 +938,13 @@ const char* serialize_ctx(BlsctCtx* vp_ctx)
 
 BlsctRetVal* deserialize_ctx(const char* hex)
 {
-    CMutableTransaction* ctx = new CMutableTransaction();
+    CMutableTransaction* ctx = blsct_new<CMutableTransaction>();
 
     std::string hex_str(hex);
 
     std::vector<uint8_t> vec;
     if (!TryParseHexWrap(hex_str, vec)) {
-        delete ctx;
+        free_obj(ctx);
         return err(BLSCT_FAILURE);
     }
 
@@ -955,7 +955,7 @@ BlsctRetVal* deserialize_ctx(const char* hex)
         st.write(MakeByteSpan(vec));
         ctx->Unserialize(ps);
     } catch (const std::exception&) {
-        delete ctx;
+        free_obj(ctx);
         return err(BLSCT_DESER_FAILED);
     }
 
@@ -981,7 +981,7 @@ BlsctRetVal* deserialize_ctx_id(const char* hex)
 
 BlsctTxHexVec* create_tx_hex_vec()
 {
-    auto* tx_hex_vec = new (std::nothrow) std::vector<std::string>;
+    auto* tx_hex_vec = blsct_new<std::vector<std::string>>();
     return to_handle<BlsctTxHexVec>(tx_hex_vec);
 }
 
@@ -996,7 +996,7 @@ void add_to_tx_hex_vec(BlsctTxHexVec* vp_tx_hex_vec, const char* tx_hex)
 void delete_tx_hex_vec(BlsctTxHexVec* vp_tx_hex_vec)
 {
     if (vp_tx_hex_vec == nullptr) return;
-    delete to_cpp<std::vector<std::string>>(vp_tx_hex_vec);
+    free_obj(to_cpp<std::vector<std::string>>(vp_tx_hex_vec));
 }
 
 BlsctRetVal* aggregate_transactions(const BlsctTxHexVec* vp_tx_hex_vec)
@@ -1764,7 +1764,7 @@ BlsctRetVal* deserialize_range_proof(
 
 BlsctRangeProofVec* create_range_proof_vec()
 {
-    auto vec = new (std::nothrow) std::vector<bulletproofs_plus::RangeProof<Mcl>>;
+    auto vec = blsct_new<std::vector<bulletproofs_plus::RangeProof<Mcl>>>();
     HANDLE_MEM_ALLOC_FAILURE(vec);
     return to_handle<BlsctRangeProofVec>(vec);
 }
@@ -1792,7 +1792,7 @@ void delete_range_proof_vec(const BlsctRangeProofVec* vp_range_proofs)
 {
     if (vp_range_proofs == nullptr) return;
     auto range_proofs = to_cpp<const std::vector<bulletproofs_plus::RangeProof<Mcl>>>(vp_range_proofs);
-    delete range_proofs;
+    free_obj(range_proofs);
 }
 
 // scalar
@@ -2114,7 +2114,7 @@ BlsctRetVal* deserialize_token_id(const char* hex)
 // generic string map helpers
 BlsctStringMap* create_string_map()
 {
-    auto* string_map = new (std::nothrow) std::map<std::string, std::string>;
+    auto* string_map = blsct_new<std::map<std::string, std::string>>();
     return to_handle<BlsctStringMap>(string_map);
 }
 
@@ -2130,7 +2130,7 @@ void add_to_string_map(BlsctStringMap* vp_string_map, const char* key, const cha
 void delete_string_map(const BlsctStringMap* vp_string_map)
 {
     if (vp_string_map == nullptr) return;
-    delete to_cpp<const std::map<std::string, std::string>>(vp_string_map);
+    free_obj(to_cpp<const std::map<std::string, std::string>>(vp_string_map));
 }
 
 size_t get_string_map_size(const BlsctStringMap* vp_string_map)
@@ -2166,11 +2166,11 @@ BlsctRetVal* build_token_info(
     blsct::PublicKey public_key;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_public_key, PUBLIC_KEY_SIZE, public_key);
 
-    auto* token_info = new (std::nothrow) blsct::TokenInfo{
+    auto* token_info = blsct_new<blsct::TokenInfo>(
         TokenTypeFromC(type),
         public_key,
         StringMapFromOpaque(vp_metadata),
-        supply};
+        supply);
     if (token_info == nullptr) {
         return err(BLSCT_MEM_ALLOC_FAILED);
     }
@@ -2181,7 +2181,7 @@ BlsctRetVal* build_token_info(
 void delete_token_info(BlsctTokenInfo* vp_token_info)
 {
     if (vp_token_info == nullptr) return;
-    delete to_cpp<blsct::TokenInfo>(vp_token_info);
+    free_obj(to_cpp<blsct::TokenInfo>(vp_token_info));
 }
 
 const char* serialize_token_info(const BlsctTokenInfo* vp_token_info)
@@ -2439,7 +2439,7 @@ BlsctRetVal* build_unsigned_input(const BlsctTxIn* tx_in)
         return err(BLSCT_VALUE_OUTSIDE_THE_RANGE);
     }
 
-    auto* unsigned_input = new (std::nothrow) blsct::UnsignedInput(std::move(input.value()));
+    auto* unsigned_input = blsct_new<blsct::UnsignedInput>(std::move(input.value()));
     if (unsigned_input == nullptr) {
         return err(BLSCT_MEM_ALLOC_FAILED);
     }
@@ -2450,7 +2450,7 @@ BlsctRetVal* build_unsigned_input(const BlsctTxIn* tx_in)
 void delete_unsigned_input(BlsctUnsignedInput* vp_unsigned_input)
 {
     if (vp_unsigned_input == nullptr) return;
-    delete to_cpp<blsct::UnsignedInput>(vp_unsigned_input);
+    free_obj(to_cpp<blsct::UnsignedInput>(vp_unsigned_input));
 }
 
 const char* serialize_unsigned_input(const BlsctUnsignedInput* vp_unsigned_input)
@@ -2473,7 +2473,7 @@ BlsctRetVal* build_unsigned_output(const BlsctTxOut* tx_out)
         return err(BLSCT_BAD_OUT_TYPE);
     }
 
-    auto* unsigned_output = new (std::nothrow) blsct::UnsignedOutput(std::move(output.value()));
+    auto* unsigned_output = blsct_new<blsct::UnsignedOutput>(std::move(output.value()));
     if (unsigned_output == nullptr) {
         return err(BLSCT_MEM_ALLOC_FAILED);
     }
@@ -2491,7 +2491,7 @@ BlsctRetVal* build_unsigned_create_token_output(
     Scalar token_key;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_key, SCALAR_SIZE, token_key);
 
-    auto* unsigned_output = new (std::nothrow) blsct::UnsignedOutput(
+    auto* unsigned_output = blsct_new<blsct::UnsignedOutput>(
         blsct::CreateOutput(token_key, *to_cpp<const blsct::TokenInfo>(vp_token_info)));
     if (unsigned_output == nullptr) {
         return err(BLSCT_MEM_ALLOC_FAILED);
@@ -2529,7 +2529,7 @@ BlsctRetVal* build_unsigned_mint_token_output(
     blsct::PublicKey token_public_key;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_public_key, PUBLIC_KEY_SIZE, token_public_key);
 
-    auto* unsigned_output = new (std::nothrow) blsct::UnsignedOutput(
+    auto* unsigned_output = blsct_new<blsct::UnsignedOutput>(
         blsct::CreateOutput(destination.GetKeys(), mint_amount, blinding_key, token_key, token_public_key));
     if (unsigned_output == nullptr) {
         return err(BLSCT_MEM_ALLOC_FAILED);
@@ -2563,7 +2563,7 @@ BlsctRetVal* build_unsigned_mint_nft_output(
     blsct::PublicKey token_public_key;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_public_key, PUBLIC_KEY_SIZE, token_public_key);
 
-    auto* unsigned_output = new (std::nothrow) blsct::UnsignedOutput(
+    auto* unsigned_output = blsct_new<blsct::UnsignedOutput>(
         blsct::CreateOutput(destination.GetKeys(), blinding_key, token_key, token_public_key, nft_id, StringMapFromOpaque(vp_metadata)));
     if (unsigned_output == nullptr) {
         return err(BLSCT_MEM_ALLOC_FAILED);
@@ -2575,7 +2575,7 @@ BlsctRetVal* build_unsigned_mint_nft_output(
 void delete_unsigned_output(BlsctUnsignedOutput* vp_unsigned_output)
 {
     if (vp_unsigned_output == nullptr) return;
-    delete to_cpp<blsct::UnsignedOutput>(vp_unsigned_output);
+    free_obj(to_cpp<blsct::UnsignedOutput>(vp_unsigned_output));
 }
 
 const char* serialize_unsigned_output(const BlsctUnsignedOutput* vp_unsigned_output)
@@ -2591,7 +2591,7 @@ BlsctRetVal* deserialize_unsigned_output(const char* hex)
 
 BlsctUnsignedTransaction* create_unsigned_transaction()
 {
-    auto* unsigned_tx = new (std::nothrow) blsct::UnsignedTransaction{};
+    auto* unsigned_tx = blsct_new<blsct::UnsignedTransaction>();
     return to_handle<BlsctUnsignedTransaction>(unsigned_tx);
 }
 
@@ -2644,7 +2644,7 @@ size_t get_unsigned_transaction_outputs_size(const BlsctUnsignedTransaction* vp_
 void delete_unsigned_transaction(BlsctUnsignedTransaction* vp_unsigned_transaction)
 {
     if (vp_unsigned_transaction == nullptr) return;
-    delete to_cpp<blsct::UnsignedTransaction>(vp_unsigned_transaction);
+    free_obj(to_cpp<blsct::UnsignedTransaction>(vp_unsigned_transaction));
 }
 
 const char* serialize_unsigned_transaction(const BlsctUnsignedTransaction* vp_unsigned_transaction)
@@ -2666,7 +2666,7 @@ BlsctRetVal* deserialize_unsigned_transaction(const char* hex)
         return err(BLSCT_DESER_FAILED);
     }
 
-    auto* unsigned_tx = new (std::nothrow) blsct::UnsignedTransaction(std::move(tx.value()));
+    auto* unsigned_tx = blsct_new<blsct::UnsignedTransaction>(std::move(tx.value()));
     if (unsigned_tx == nullptr) {
         return err(BLSCT_MEM_ALLOC_FAILED);
     }
@@ -2821,7 +2821,7 @@ BlsctRetVal* get_create_token_predicate_token_info(
         return err(BLSCT_FAILURE);
     }
 
-    auto* token_info = new (std::nothrow) blsct::TokenInfo(predicate->GetTokenInfo());
+    auto* token_info = blsct_new<blsct::TokenInfo>(predicate->GetTokenInfo());
     if (token_info == nullptr) {
         return err(BLSCT_MEM_ALLOC_FAILED);
     }
@@ -3011,7 +3011,7 @@ BlsctScalar* calc_priv_spending_key(
 // uint64_t vector
 BlsctUint64Vec* create_uint64_vec()
 {
-    auto vec = new (std::nothrow) std::vector<uint64_t>;
+    auto vec = blsct_new<std::vector<uint64_t>>();
     HANDLE_MEM_ALLOC_FAILURE(vec);
     return to_handle<BlsctUint64Vec>(vec);
 }
@@ -3027,7 +3027,7 @@ void delete_uint64_vec(const BlsctUint64Vec* vp_vec)
 {
     if (vp_vec == nullptr) return;
     auto vec = to_cpp<const std::vector<uint64_t>>(vp_vec);
-    delete vec;
+    free_obj(vec);
 }
 
 // Tested in Rust bindings
