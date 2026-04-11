@@ -600,7 +600,7 @@ bool LoadBLSCTOutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, s
         ssValue >> key;
 
         if (!pwallet->GetOrCreateBLSCTKeyMan()->LoadOutKey(key, outId)) {
-            strErr = "Error reading wallet database: BLSCTKeyMan::LoadKey failed";
+            strErr = "Error reading wallet database: BLSCTKeyMan::LoadOutKey failed";
             return false;
         }
     } catch (const std::exception& e) {
