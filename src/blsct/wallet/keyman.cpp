@@ -472,6 +472,12 @@ bool KeyMan::CheckDecryptionKey(const wallet::CKeyingMaterial& master_key, bool 
     return true;
 }
 
+void KeyMan::ClearMnemonicEntropy()
+{
+    LOCK(cs_KeyStore);
+    m_mnemonic_entropy.clear();
+}
+
 void KeyMan::LoadKeyMetadata(const CKeyID& keyID, const wallet::CKeyMetadata& meta)
 {
     LOCK(cs_KeyStore);

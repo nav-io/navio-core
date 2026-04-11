@@ -164,6 +164,7 @@ public:
 
     bool Encrypt(const wallet::CKeyingMaterial& master_key, wallet::WalletBatch* batch);
     bool CheckDecryptionKey(const wallet::CKeyingMaterial& master_key, bool accept_no_keys);
+    void ClearMnemonicEntropy();
 
     SubAddress GenerateNewSubAddress(const int64_t& account, SubAddressIdentifier& id);
     SubAddress GetSubAddress(const SubAddressIdentifier& id = {0, 0}) const;
