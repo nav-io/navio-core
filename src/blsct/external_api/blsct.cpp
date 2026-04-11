@@ -1018,7 +1018,7 @@ bool are_ctx_ins_equal(const BlsctCTxInVec* vp_a, const BlsctCTxInVec* vp_b)
 {
     auto* a = to_cpp<const std::vector<CTxIn>>(vp_a);
     auto* b = to_cpp<const std::vector<CTxIn>>(vp_b);
-    return a == b;
+    return *a == *b;
 }
 
 size_t get_ctx_ins_size(const BlsctCTxInVec* vp_ctx_ins)
