@@ -121,8 +121,12 @@ BlsctRetVal* err(
         fputs("Failed to allocate memory\n", stderr); \
         return nullptr;                               \
     }
-#define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
-    if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
+#define RETURN_ERR_IF_MEM_ALLOC_FAILED(name)         \
+    do {                                             \
+        if ((name) == nullptr) {                     \
+            return err(BLSCT_MEM_ALLOC_FAILED);      \
+        }                                            \
+    } while (0)
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
