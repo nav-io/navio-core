@@ -649,7 +649,7 @@ size_t get_amount_recovery_result_size(
     BlsctAmountRecoveryResultVec* vp_amt_recovery_res_vec)
 {
     if (vp_amt_recovery_res_vec == nullptr) {
-        return -1;
+        return (size_t)0;
     }
     auto vec = to_cpp<std::vector<BlsctAmountRecoveryResult>>(vp_amt_recovery_res_vec);
 
