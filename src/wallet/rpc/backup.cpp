@@ -771,6 +771,8 @@ RPCHelpMan dumpmnemonic()
             const CWallet& wallet = *pwallet;
             const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
 
+            pwallet->WalletLogPrintf("dumpmnemonic called\n");
+
             EnsureWalletIsUnlocked(wallet);
 
             if (!blsct_km.HasMnemonicEntropy()) {
