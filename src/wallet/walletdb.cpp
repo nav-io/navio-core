@@ -1983,7 +1983,11 @@ bool WalletBatch::WriteBLSCTMnemonicEntropy(const std::vector<unsigned char>& en
 
 bool WalletBatch::WriteCryptedBLSCTMnemonicEntropy(const std::vector<unsigned char>& crypted_entropy)
 {
-    return WriteIC(DBKeys::CRYPTED_BLSCTMNEMONIC, crypted_entropy);
+    // Store the encrypted entropy and remove any plaintext copy in the same batch.
+    if (!WriteIC(DBKeys::CRYPTED_BLSCTMNEMONIC, crypted_entropy)) {
+        return false;
+    }
+    return EraseIC(DBKeys::BLSCTMNEMONIC);
 }
 
 //! Erase the BIP-39 mnemonic entropy from the wallet database.

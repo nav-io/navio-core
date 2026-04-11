@@ -629,10 +629,6 @@ bool KeyMan::Encrypt(const wallet::CKeyingMaterial& master_key, wallet::WalletBa
             encrypted_batch = nullptr;
             return false;
         }
-        if (!encrypted_batch->EraseBLSCTMnemonicEntropy()) {
-            encrypted_batch = nullptr;
-            return false;
-        }
         m_crypted_mnemonic_entropy = crypted_entropy;
         m_mnemonic_entropy.clear();
     }
