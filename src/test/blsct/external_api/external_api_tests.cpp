@@ -1013,7 +1013,8 @@ BOOST_AUTO_TEST_CASE(test_ctx_in_field_accessors)
     // prev_out_hash is a 32-byte CTxId
     const BlsctCTxId* prev_hash = get_ctx_in_prev_out_hash(in0);
     BOOST_REQUIRE(prev_hash != nullptr);
-    // The out_point was "00...01", so prev_hash should be non-zero
+    // BuildCtxViaApi uses a hard-coded non-zero outpoint hash (currently starting with
+    // "deadbeef..."), so prev_hash should be non-zero.
     bool all_zero = true;
     for (size_t i = 0; i < CTX_ID_SIZE; ++i) {
         if ((*prev_hash)[i] != 0) {
