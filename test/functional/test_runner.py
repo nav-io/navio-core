@@ -160,7 +160,7 @@ BASE_SCRIPTS = [
     'rpc_signer.py',
     'wallet_signer.py --descriptors',
     'wallet_importmulti.py --legacy-wallet',
-    # 'mempool_limit.py', # TODO: Investigate how we can fix this test at a later date
+    'mempool_limit.py', # TODO: Investigate how we can fix this test at a later date
     'rpc_txoutproof.py',
     'wallet_listreceivedby.py --legacy-wallet',
     'wallet_listreceivedby.py --descriptors',
