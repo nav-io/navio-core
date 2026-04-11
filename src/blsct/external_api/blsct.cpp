@@ -1845,6 +1845,9 @@ BlsctRetVal* deserialize_script(const char* hex)
 {
     BlsctScript* blsct_script =
         reinterpret_cast<BlsctScript*>(DeserializeFromHex(hex, SCRIPT_SIZE));
+    if (blsct_script == nullptr) {
+        return err("failed to deserialize script");
+    }
     return succ_as(blsct_script, SCRIPT_SIZE);
 }
 
