@@ -9,6 +9,7 @@
 #include <interfaces/chain.h>
 #include <key_io.h>
 #include <merkleblock.h>
+#include <mnemonic/mnemonic.h>
 #include <rpc/util.h>
 #include <script/descriptor.h>
 #include <script/script.h>
@@ -747,6 +748,39 @@ RPCHelpMan getblsctauditkey()
             }
 
             return strprintf("%s%s", strViewKey, strSpendingKey);
+        },
+    };
+}
+
+
+RPCHelpMan dumpmnemonic()
+{
+    return RPCHelpMan{
+        "dumpmnemonic",
+        "\nDumps the BLSCT wallet mnemonic phrase (BIP-39), which can be used to reconstruct the wallet.\n"
+        "The mnemonic can only be retrieved from wallets created with a BIP-39 mnemonic.\n"
+        "Note: This command is only compatible with BLSCT wallets.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::STR, "mnemonic", "The BIP-39 mnemonic phrase"},
+        RPCExamples{HelpExampleCli("dumpmnemonic", "") + HelpExampleRpc("dumpmnemonic", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            const CWallet& wallet = *pwallet;
+            const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
+
+            pwallet->WalletLogPrintf("dumpmnemonic called\n");
+
+            EnsureWalletIsUnlocked(wallet);
+
+            if (!blsct_km.HasMnemonicEntropy()) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Wallet does not have a mnemonic");
+            }
+
+            auto entropy = blsct_km.GetMnemonicEntropy();
+            return mnemonic::EntropyToMnemonic(entropy);
         },
     };
 }

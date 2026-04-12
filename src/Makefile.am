@@ -211,6 +211,8 @@ BLSCT_H = \
   blsct/wallet/import_wallet_type.h \
   blsct/wallet/keyman.h \
   blsct/wallet/keyring.h \
+  mnemonic/mnemonic.h \
+  mnemonic/wordlist.h \
   blsct/wallet/rpc.h \
   blsct/wallet/txfactory.h \
   blsct/wallet/txfactory_base.h \
@@ -744,6 +746,8 @@ libbitcoin_wallet_a_SOURCES = \
   blsct/wallet/helpers.cpp \
   blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
+  mnemonic/mnemonic.cpp \
+  mnemonic/wordlist.cpp \
   blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/rpc.cpp \
   blsct/wallet/txfactory.cpp \
@@ -1327,6 +1331,8 @@ libnaviokernel_la_SOURCES = \
   blsct/wallet/txfactory_global.cpp \
   blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/verification.cpp \
+  mnemonic/mnemonic.cpp \
+  mnemonic/wordlist.cpp \
   chain.cpp \
   clientversion.cpp \
   coins.cpp \

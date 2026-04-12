@@ -4,6 +4,7 @@
 
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/helpers.h>
+#include <random.h>
 
 namespace blsct {
 uint64_t CalculateViewTag(const MclG1Point& blindingKey, const MclScalar& viewKey)
@@ -79,6 +80,8 @@ MclScalar FromTransactionToSpendKey(const MclScalar& seed)
 
 MclScalar GenRandomSeed()
 {
-    return BLS12_381_KeyGen::derive_master_SK(MclScalar::Rand(true).GetVch());
+    std::vector<unsigned char> seed(32);
+    GetStrongRandBytes(seed);
+    return BLS12_381_KeyGen::derive_master_SK(seed);
 }
 } // namespace blsct

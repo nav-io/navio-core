@@ -13,7 +13,7 @@ import sys
 from subprocess import check_output
 
 
-HEADER_ID_PREFIX = 'BITCOIN_'
+HEADER_ID_PREFIXES = ['BITCOIN_', 'NAVIO_']
 HEADER_ID_SUFFIX = '_H'
 
 EXCLUDE_FILES_WITH_PREFIX = ['contrib/devtools/bitcoin-tidy',
@@ -26,6 +26,8 @@ EXCLUDE_FILES_WITH_PREFIX = ['contrib/devtools/bitcoin-tidy',
                              'src/tinyformat.h',
                              'src/bench/nanobench.h',
                              'src/test/fuzz/FuzzedDataProvider.h']
+
+NAVIO_PREFIX_PATTERNS = ['src/blsct', 'src/mnemonic']
 
 
 def _get_header_file_lst() -> list[str]:
@@ -48,6 +50,7 @@ def _get_header_id(header_file: str) -> str:
         string.
 
         eg: 'src/wallet/walletdb.h' -> 'BITCOIN_WALLET_WALLETDB_H'
+        eg: 'src/blsct/arith/elements.h' -> 'NAVIO_BLSCT_ARITH_ELEMENTS_H'
 
     Args:
         header_file: Filepath to header file.
@@ -60,7 +63,13 @@ def _get_header_id(header_file: str) -> str:
     header_id_base = header_id_base.replace('.h', '').replace('-', '_')
     header_id_base = header_id_base.upper()
 
-    header_id = f'{HEADER_ID_PREFIX}{header_id_base}{HEADER_ID_SUFFIX}'
+    prefix = 'BITCOIN_'
+    for pattern in NAVIO_PREFIX_PATTERNS:
+        if header_file.startswith(pattern):
+            prefix = 'NAVIO_'
+            break
+
+    header_id = f'{prefix}{header_id_base}{HEADER_ID_SUFFIX}'
 
     return header_id
 
