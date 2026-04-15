@@ -59,6 +59,11 @@ constexpr std::chrono::duration<double> RECONNECT_TIMEOUT_MAX{600.0};
  * this is belt-and-suspenders sanity limit to prevent memory exhaustion.
  */
 constexpr int MAX_LINE_LENGTH = 100000;
+/** Maximum number of lines received on TorControlConnection per reply to avoid
+ * memory exhaustion. The largest expected now is 5 (PROTOCOLINFO), but future
+ * changes to this file might need to re-evaluate MAX_LINE_COUNT.
+ */
+constexpr int MAX_LINE_COUNT = 1000;
 /** Timeout for socket operations */
 constexpr auto SOCKET_SEND_TIMEOUT = 10s;
 static const uint16_t DEFAULT_TOR_SOCKS_PORT = 9050;
@@ -173,6 +178,9 @@ bool TorControlConnection::ProcessBuffer()
     util::LineReader reader(m_recv_buffer, MAX_LINE_LENGTH);
 
     while (auto line = reader.ReadLine()) {
+        if (m_message.lines.size() == MAX_LINE_COUNT) {
+            throw std::runtime_error(strprintf("Control port reply exceeded %d lines, disconnecting", MAX_LINE_COUNT));
+        }
         // Skip short lines
         if (line->size() < 4) continue;
 
