@@ -58,7 +58,7 @@ jobs:
 
   test-each-commit:
     name: '[commits]'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     if:
       github.event_name == 'pull_request' && github.event.pull_request.commits
       != 1
@@ -319,14 +319,14 @@ jobs:
             runner: ubuntu-24.04
 
           - name: mac-cross
-            label: 'macOS cross-compile, Ubuntu 22.04, no tests'
+            label: 'macOS cross-compile, Ubuntu 24.04, no tests'
             file_env: ./ci/test/00_setup_env_mac_cross.sh
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
 
           - name: win64
-            label: 'Win64 cross-compile, Ubuntu 22.04, unit tests only'
+            label: 'Win64 cross-compile, Ubuntu 24.04, unit tests only'
             file_env: ./ci/test/00_setup_env_win64.sh
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
 
           - name: arm
             label: 'Ubuntu 24.04, ARM64, unit tests only'
