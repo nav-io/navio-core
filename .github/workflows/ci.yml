@@ -283,6 +283,11 @@ jobs:
             file_env: ./ci/test/00_setup_env_mac_cross.sh
             runner: ubuntu-22.04
 
+          # Disabled: previous-releases job needs further setup before enabling.
+          # - name: previous-releases
+          #   file_env: ./ci/test/00_setup_env_native_previous_releases.sh
+          #   runner: ubuntu-24.04
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
