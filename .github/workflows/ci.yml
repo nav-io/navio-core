@@ -283,6 +283,10 @@ jobs:
             file_env: ./ci/test/00_setup_env_mac_cross.sh
             runner: ubuntu-22.04
 
+          - name: arm
+            file_env: ./ci/test/00_setup_env_arm.sh
+            runner: ubuntu-24.04-arm
+
           # Disabled: previous-releases job needs further setup before enabling.
           # - name: previous-releases
           #   file_env: ./ci/test/00_setup_env_native_previous_releases.sh
