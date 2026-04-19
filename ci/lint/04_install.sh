@@ -24,7 +24,7 @@ if [ ! -d "${PYTHON_PATH}/bin" ]; then
   (
     ${CI_RETRY_EXE} git clone https://github.com/pyenv/pyenv.git
     cd pyenv/plugins/python-build || exit 1
-    ./install.sh
+    ${SUDO} ./install.sh
   )
   # For dependencies see https://github.com/pyenv/pyenv/wiki#suggested-build-environment
   ${CI_RETRY_EXE} ${SUDO} apt-get install -y build-essential libssl-dev zlib1g-dev \
