@@ -4,7 +4,7 @@
 
 include(AddWindowsResources)
 
-configure_file(${PROJECT_SOURCE_DIR}/cmake/navio-build-config.h.in navio-build-config.h USE_SOURCE_PERMISSIONS @ONLY)
+configure_file(${PROJECT_SOURCE_DIR}/cmake/navio-build-config.h.in config/bitcoin-config.h USE_SOURCE_PERMISSIONS @ONLY)
 include_directories(${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 #=============================
@@ -153,7 +153,6 @@ add_library(navio_common STATIC EXCLUDE_FROM_ALL
   common/interfaces.cpp
   common/run_command.cpp
   common/settings.cpp
-  common/signmessage.cpp
   common/system.cpp
   common/url.cpp
   compressor.cpp
@@ -196,9 +195,10 @@ target_link_libraries(navio_common
     navio_util
     univalue
     secp256k1
-    bls_interface
     $<TARGET_NAME_IF_EXISTS:USDT::headers>
     $<$<PLATFORM_ID:Windows>:ws2_32>
+  PUBLIC
+    bls_interface
 )
 
 include(InstallBinaryComponent)
@@ -231,7 +231,6 @@ add_library(navio_node STATIC EXCLUDE_FROM_ALL
   blockencodings.cpp
   blockfilter.cpp
   consensus/tx_verify.cpp
-  dandelion.cpp
   dbwrapper.cpp
   deploymentstatus.cpp
   flatfile.cpp
@@ -329,12 +328,13 @@ target_link_libraries(navio_node
     leveldb
     minisketch
     univalue
-    bls_interface
     Boost::headers
     $<TARGET_NAME_IF_EXISTS:libevent::core>
     $<TARGET_NAME_IF_EXISTS:libevent::extra>
     $<TARGET_NAME_IF_EXISTS:libevent::pthreads>
     $<TARGET_NAME_IF_EXISTS:USDT::headers>
+  PUBLIC
+    bls_interface
 )
 
 # naviod

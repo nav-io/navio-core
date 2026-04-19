@@ -5,6 +5,26 @@
 include(CheckCXXSourceCompiles)
 include(CheckCXXSymbolExists)
 
+include(CheckIncludeFileCXX)
+check_include_file_cxx(endian.h HAVE_ENDIAN_H)
+check_include_file_cxx(sys/endian.h HAVE_SYS_ENDIAN_H)
+check_include_file_cxx(ifaddrs.h HAVE_IFADDRS)
+
+check_cxx_symbol_exists(htobe16 "endian.h" HAVE_DECL_HTOBE16)
+check_cxx_symbol_exists(htole16 "endian.h" HAVE_DECL_HTOLE16)
+check_cxx_symbol_exists(be16toh "endian.h" HAVE_DECL_BE16TOH)
+check_cxx_symbol_exists(le16toh "endian.h" HAVE_DECL_LE16TOH)
+check_cxx_symbol_exists(htobe32 "endian.h" HAVE_DECL_HTOBE32)
+check_cxx_symbol_exists(htole32 "endian.h" HAVE_DECL_HTOLE32)
+check_cxx_symbol_exists(be32toh "endian.h" HAVE_DECL_BE32TOH)
+check_cxx_symbol_exists(le32toh "endian.h" HAVE_DECL_LE32TOH)
+check_cxx_symbol_exists(htobe64 "endian.h" HAVE_DECL_HTOBE64)
+check_cxx_symbol_exists(htole64 "endian.h" HAVE_DECL_HTOLE64)
+check_cxx_symbol_exists(be64toh "endian.h" HAVE_DECL_BE64TOH)
+check_cxx_symbol_exists(le64toh "endian.h" HAVE_DECL_LE64TOH)
+
+check_cxx_symbol_exists(gmtime_r "time.h" HAVE_GMTIME_R)
+
 check_cxx_symbol_exists(O_CLOEXEC "fcntl.h" HAVE_O_CLOEXEC)
 check_cxx_symbol_exists(fdatasync "unistd.h" HAVE_FDATASYNC)
 check_cxx_symbol_exists(fork "unistd.h" HAVE_DECL_FORK)

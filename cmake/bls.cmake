@@ -23,8 +23,6 @@ ExternalProject_Add(mcl_build
     ARCH=${CMAKE_SYSTEM_PROCESSOR}
     CC=${CMAKE_C_COMPILER}
     CXX=${CMAKE_CXX_COMPILER}
-    AR=${CMAKE_AR}
-    RANLIB=${CMAKE_RANLIB}
     -C ${MCL_SRC_DIR}
     lib/libmcl.a
   BUILD_IN_SOURCE TRUE
@@ -41,8 +39,6 @@ ExternalProject_Add(bls_build
     ARCH=${CMAKE_SYSTEM_PROCESSOR}
     CC=${CMAKE_C_COMPILER}
     CXX=${CMAKE_CXX_COMPILER}
-    AR=${CMAKE_AR}
-    RANLIB=${CMAKE_RANLIB}
     -C ${BLS_SRC_DIR}
     lib/libbls384_256.a
   BUILD_IN_SOURCE TRUE

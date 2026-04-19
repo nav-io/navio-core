@@ -43,6 +43,7 @@ target_link_libraries(navio_util
     core_interface
     navio_clientversion
     navio_crypto
+    bls_interface
     $<$<PLATFORM_ID:Windows>:ws2_32>
     $<$<PLATFORM_ID:Windows>:iphlpapi>
     $<$<PLATFORM_ID:Windows>:bcrypt>
