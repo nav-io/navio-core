@@ -12,11 +12,12 @@ on:
     branches: [master]
 
 concurrency:
-  group: ${{ github.event_name != 'pull_request' && github.run_id || github.ref }}
+  group:
+    ${{ github.event_name != 'pull_request' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 env:
-  CI_FAILFAST_TEST_LEAVE_DANGLING: 1  # GHA does not care about dangling processes and setting this variable avoids killing the CI script itself on error
+  CI_FAILFAST_TEST_LEAVE_DANGLING: 1 # GHA does not care about dangling processes and setting this variable avoids killing the CI script itself on error
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -46,7 +47,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: /lint_test_runner
-          key: lint-runner-${{ runner.os }}-${{ hashFiles('test/lint/test_runner/**') }}
+          key:
+            lint-runner-${{ runner.os }}-${{
+            hashFiles('test/lint/test_runner/**') }}
 
       - name: Run lint
         env:
@@ -57,13 +60,17 @@ jobs:
   test-each-commit:
     name: 'test each commit'
     runs-on: ubuntu-22.04
-    if: github.event_name == 'pull_request' && github.event.pull_request.commits != 1
-    timeout-minutes: 360  # Use maximum time, see https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idtimeout-minutes. Assuming a worst case time of 1 hour per commit, this leads to a --max-count=6 below.
+    if:
+      github.event_name == 'pull_request' && github.event.pull_request.commits
+      != 1
+    timeout-minutes: 360 # Use maximum time, see https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idtimeout-minutes. Assuming a worst case time of 1 hour per commit, this leads to a --max-count=6 below.
     env:
       MAX_COUNT: 6
     steps:
       - name: Determine fetch depth
-        run: echo "FETCH_DEPTH=$((${{ github.event.pull_request.commits }} + 2))" >> "$GITHUB_ENV"
+        run:
+          echo "FETCH_DEPTH=$((${{ github.event.pull_request.commits }} + 2))"
+          >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -109,7 +116,9 @@ jobs:
     runs-on: macos-13
 
     # No need to run on the read-only mirror, unless it is a PR.
-    if: github.repository != 'navio-core/gui' || github.event_name == 'pull_request'
+    if:
+      github.repository != 'navio-core/gui' || github.event_name ==
+      'pull_request'
 
     timeout-minutes: 120
 
@@ -130,7 +139,9 @@ jobs:
       - name: Install Homebrew packages
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
-        run: brew install automake libtool pkg-config gnu-getopt ccache boost libevent miniupnpc libnatpmp zeromq
+        run:
+          brew install automake libtool pkg-config gnu-getopt ccache boost
+          libevent miniupnpc libnatpmp zeromq
 
       - name: Set Ccache directory
         run: echo "CCACHE_DIR=${RUNNER_TEMP}/ccache_dir" >> "$GITHUB_ENV"
@@ -148,7 +159,9 @@ jobs:
 
       - name: Save Ccache cache
         uses: actions/cache/save@v5
-        if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'
+        if:
+          github.event_name != 'pull_request' &&
+          steps.ccache-cache.outputs.cache-hit != 'true'
         with:
           path: ${{ env.CCACHE_DIR }}
           # https://github.com/actions/cache/blob/main/tips-and-workarounds.md#update-a-cache
@@ -161,7 +174,9 @@ jobs:
     runs-on: windows-2022
 
     # No need to run on the read-only mirror, unless it is a PR.
-    if: github.repository != 'navio-core/gui' || github.event_name == 'pull_request'
+    if:
+      github.repository != 'navio-core/gui' || github.event_name ==
+      'pull_request'
 
     env:
       CCACHE_MAXSIZE: '200M'
@@ -194,7 +209,8 @@ jobs:
             C:\ProgramData\chocolatey\lib\ccache
             C:\ProgramData\chocolatey\bin\ccache.exe
             C:\ccache\cl.exe
-          key: ${{ github.job }}-ccache-installation-${{ env.CI_CCACHE_VERSION }}
+          key:
+            ${{ github.job }}-ccache-installation-${{ env.CI_CCACHE_VERSION }}
 
       - name: Install Ccache
         if: steps.ccache-installation-cache.outputs.cache-hit != 'true'
@@ -230,7 +246,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/AppData/Local/vcpkg/archives
-          key: ${{ github.job }}-vcpkg-binary-${{ hashFiles('vcpkg_commit', 'msbuild_version', 'toolset_version', 'build_msvc/vcpkg.json') }}
+          key:
+            ${{ github.job }}-vcpkg-binary-${{ hashFiles('vcpkg_commit',
+            'msbuild_version', 'toolset_version', 'build_msvc/vcpkg.json') }}
 
       - name: Generate project files
         run: py -3 build_msvc\msvc-autogen.py
@@ -246,7 +264,9 @@ jobs:
 
       - name: Save Ccache cache
         uses: actions/cache/save@v5
-        if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'
+        if:
+          github.event_name != 'pull_request' &&
+          steps.ccache-cache.outputs.cache-hit != 'true'
         with:
           path: ~/AppData/Local/ccache
           # https://github.com/actions/cache/blob/main/tips-and-workarounds.md#update-a-cache
@@ -266,8 +286,14 @@ jobs:
 
       - name: Run functional tests
         env:
-          TEST_RUNNER_EXTRA: ${{ github.event_name != 'pull_request' && '--extended' || '' }}
-        run: py -3 test\functional\test_runner.py --jobs $env:NUMBER_OF_PROCESSORS --ci --quiet --tmpdirprefix=$env:RUNNER_TEMP --combinedlogslen=99999999 --timeout-factor=$env:TEST_RUNNER_TIMEOUT_FACTOR $env:TEST_RUNNER_EXTRA --exclude mempool_limit
+          TEST_RUNNER_EXTRA:
+            ${{ github.event_name != 'pull_request' && '--extended' || '' }}
+        run:
+          py -3 test\functional\test_runner.py --jobs $env:NUMBER_OF_PROCESSORS
+          --ci --quiet --tmpdirprefix=$env:RUNNER_TEMP
+          --combinedlogslen=99999999
+          --timeout-factor=$env:TEST_RUNNER_TIMEOUT_FACTOR
+          $env:TEST_RUNNER_EXTRA --exclude mempool_limit
 
   linux:
     name: ${{ matrix.label }}
@@ -314,7 +340,9 @@ jobs:
             runner: ubuntu-24.04
 
           - name: i686-multiprocess
-            label: 'Ubuntu 22.04, 32-bit, multiprocess, DEBUG, unit + functional tests'
+            label:
+              'Ubuntu 22.04, 32-bit, multiprocess, DEBUG, unit + functional
+              tests'
             file_env: ./ci/test/00_setup_env_i686_multiprocess.sh
             runner: ubuntu-24.04
 
@@ -357,7 +385,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: /tmp/ci-cache/${{ matrix.name }}
-          key: ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-${{ github.sha }}
+          key:
+            ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-${{ github.sha
+            }}
           restore-keys: |
             ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-
             ci-${{ matrix.name }}-
@@ -373,4 +403,6 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: /tmp/ci-cache/${{ matrix.name }}
-          key: ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-${{ github.sha }}
+          key:
+            ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-${{ github.sha
+            }}
