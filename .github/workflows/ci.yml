@@ -247,30 +247,6 @@ jobs:
             file_env: ./ci/test/00_setup_env_native_tidy.sh
             runner: ubuntu-24.04
 
-          - name: win64
-            file_env: ./ci/test/00_setup_env_win64.sh
-            runner: ubuntu-22.04
-
-          - name: i686-centos
-            file_env: ./ci/test/00_setup_env_i686_centos.sh
-            runner: ubuntu-24.04
-
-          - name: tsan
-            file_env: ./ci/test/00_setup_env_native_tsan.sh
-            runner: ubuntu-24.04
-
-          - name: msan
-            file_env: ./ci/test/00_setup_env_native_msan.sh
-            runner: ubuntu-24.04
-
-          - name: fuzz
-            file_env: ./ci/test/00_setup_env_native_fuzz.sh
-            runner: ubuntu-24.04
-
-          - name: i686-multiprocess
-            file_env: ./ci/test/00_setup_env_i686_multiprocess.sh
-            runner: ubuntu-24.04
-
           - name: no-wallet-libblsct
             file_env: ./ci/test/00_setup_env_native_libblsct_only.sh
             runner: ubuntu-24.04
@@ -283,9 +259,33 @@ jobs:
             file_env: ./ci/test/00_setup_env_mac_cross.sh
             runner: ubuntu-22.04
 
+          - name: win64
+            file_env: ./ci/test/00_setup_env_win64.sh
+            runner: ubuntu-22.04
+
           - name: arm
             file_env: ./ci/test/00_setup_env_arm.sh
             runner: ubuntu-24.04-arm
+
+          - name: i686-centos
+            file_env: ./ci/test/00_setup_env_i686_centos.sh
+            runner: ubuntu-24.04
+
+          - name: i686-multiprocess
+            file_env: ./ci/test/00_setup_env_i686_multiprocess.sh
+            runner: ubuntu-24.04
+
+          - name: fuzz
+            file_env: ./ci/test/00_setup_env_native_fuzz.sh
+            runner: ubuntu-24.04
+
+          - name: tsan
+            file_env: ./ci/test/00_setup_env_native_tsan.sh
+            runner: ubuntu-24.04
+
+          - name: msan
+            file_env: ./ci/test/00_setup_env_native_msan.sh
+            runner: ubuntu-24.04
 
           # Disabled: previous-releases job needs further setup before enabling.
           # - name: previous-releases
