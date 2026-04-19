@@ -98,6 +98,33 @@ static void RescanWallet(CWallet& wallet, const WalletRescanReserver& reserver, 
     }
 }
 
+static void RescanWalletFromHeight(CWallet& wallet, const WalletRescanReserver& reserver, int start_height, bool update = true)
+{
+    wallet.BlockUntilSyncedToCurrentChain();
+
+    uint256 start_block;
+    {
+        LOCK(wallet.cs_wallet);
+        int tip_height = wallet.GetLastBlockHeight();
+        if (start_height < 0 || start_height > tip_height) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid start_height");
+        }
+
+        CHECK_NONFATAL(wallet.chain().findAncestorByHeight(wallet.GetLastBlockHash(), start_height, FoundBlock().hash(start_block)));
+    }
+
+    CWallet::ScanResult result =
+        wallet.ScanForWalletTransactions(start_block, start_height, /*max_height=*/{}, reserver, /*fUpdate=*/update, /*save_progress=*/false);
+    switch (result.status) {
+    case CWallet::ScanResult::SUCCESS:
+        break;
+    case CWallet::ScanResult::FAILURE:
+        throw JSONRPCError(RPC_MISC_ERROR, "Rescan failed. Potentially corrupted data files.");
+    case CWallet::ScanResult::USER_ABORT:
+        throw JSONRPCError(RPC_MISC_ERROR, "Rescan aborted.");
+    }
+}
+
 static void EnsureBlockDataFromTime(const CWallet& wallet, int64_t timestamp)
 {
     auto& chain{wallet.chain()};
@@ -111,6 +138,19 @@ static void EnsureBlockDataFromTime(const CWallet& wallet, int64_t timestamp)
     uint256 tip_hash{WITH_LOCK(wallet.cs_wallet, return wallet.GetLastBlockHash())};
     if (found && !chain.hasBlocks(tip_hash, height)) {
         throw JSONRPCError(RPC_WALLET_ERROR, strprintf("Pruned blocks from height %d required to import keys. Use RPC call getblockchaininfo to determine your pruned height.", height));
+    }
+}
+
+static void EnsureBlockDataFromHeight(const CWallet& wallet, int start_height)
+{
+    auto& chain{wallet.chain()};
+    if (!chain.havePruned()) {
+        return;
+    }
+
+    uint256 tip_hash{WITH_LOCK(wallet.cs_wallet, return wallet.GetLastBlockHash())};
+    if (!chain.hasBlocks(tip_hash, start_height)) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Can't rescan beyond pruned data. Use RPC call getblockchaininfo to determine your pruned height.");
     }
 }
 
@@ -2039,6 +2079,7 @@ RPCHelpMan importblsctscript()
                                {"script", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(raw) the script hex to import"},
                            }},
                           {"rescan", RPCArg::Type::BOOL, RPCArg::Default{true}, "Rescan the blockchain after import"},
+                          {"start_height", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Block height where the rescan should start. Requires rescan=true."},
                       },
                       RPCResult{RPCResult::Type::OBJ, "", "",
                        {
@@ -2051,17 +2092,39 @@ RPCHelpMan importblsctscript()
                                         "\"hash\":\"abcd...\",\"locktime\":200,\"blinding_key\":\"1234...\"}'") +
                           HelpExampleCli("importblsctscript",
                                         "'{\"type\":\"raw\",\"script\":\"51\"}'") +
+                          HelpExampleCli("importblsctscript",
+                                        "'{\"type\":\"raw\",\"script\":\"51\"}' true 120") +
                           HelpExampleRpc("importblsctscript",
-                                        "{\"type\":\"raw\",\"script\":\"51\"}")},
+                                        "{\"type\":\"raw\",\"script\":\"51\"}, true, 120")},
                       [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
                           std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
                           if (!pwallet) return UniValue::VNULL;
 
                           bool fRescan = true;
-                          if (!request.params[1].isNull())
+                          if (!request.params[1].isNull()) {
                               fRescan = request.params[1].get_bool();
+                          }
 
-                          if (fRescan && pwallet->chain().havePruned()) {
+                          bool has_start_height = !request.params[2].isNull();
+                          int start_height = 0;
+                          if (has_start_height) {
+                              start_height = request.params[2].getInt<int>();
+                              if (!fRescan) {
+                                  throw JSONRPCError(RPC_INVALID_PARAMETER, "start_height requires rescan=true");
+                              }
+
+                              pwallet->BlockUntilSyncedToCurrentChain();
+                              {
+                                  LOCK(pwallet->cs_wallet);
+                                  int tip_height = pwallet->GetLastBlockHeight();
+                                  if (start_height < 0 || start_height > tip_height) {
+                                      throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid start_height");
+                                  }
+                              }
+                              EnsureBlockDataFromHeight(*pwallet, start_height);
+                          }
+
+                          if (fRescan && !has_start_height && pwallet->chain().havePruned()) {
                               throw JSONRPCError(RPC_WALLET_ERROR, "Rescan is disabled when blocks are pruned");
                           }
 
@@ -2074,6 +2137,7 @@ RPCHelpMan importblsctscript()
                           std::string type_str = desc["type"].get_str();
 
                           CScript script;
+                          std::optional<blsct::PublicKey> watch_only_recovery_nonce;
 
                           if (type_str == "atomic_swap") {
                               for (const auto& field : {"address_a", "address_b", "hash", "locktime", "blinding_key"}) {
@@ -2104,6 +2168,10 @@ RPCHelpMan importblsctscript()
                                   throw JSONRPCError(RPC_INVALID_PARAMETER, "blinding_key must be 32 bytes (64 hex chars)");
 
                               Scalar blindingKey(bk_bytes);
+                              MclG1Point address_a_view_key;
+                              if (!address_a.GetViewKey(address_a_view_key))
+                                  throw JSONRPCError(RPC_INVALID_PARAMETER, "Could not extract view key from address_a");
+                              watch_only_recovery_nonce = blsct::PublicKey(address_a_view_key * blindingKey);
 
                               auto derive_key = [](const blsct::DoublePublicKey& dpk, const Scalar& bk) -> blsct::PublicKey {
                                   MclG1Point vk, sk;
@@ -2140,13 +2208,17 @@ RPCHelpMan importblsctscript()
                           {
                               LOCK(pwallet->cs_wallet);
                               auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
-                              if (!blsct_km->AddWatchOnly(script)) {
+                              if (!blsct_km->AddWatchOnly(script, watch_only_recovery_nonce)) {
                                   throw JSONRPCError(RPC_WALLET_ERROR, "Error adding script to watch-only set");
                               }
                           }
 
                           if (fRescan) {
-                              RescanWallet(*pwallet, reserver);
+                              if (has_start_height) {
+                                  RescanWalletFromHeight(*pwallet, reserver, start_height);
+                              } else {
+                                  RescanWallet(*pwallet, reserver);
+                              }
                           }
 
                           UniValue result(UniValue::VOBJ);

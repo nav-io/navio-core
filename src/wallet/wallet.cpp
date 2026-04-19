@@ -1151,19 +1151,29 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
         if (wout.out->HasBLSCTRangeProof()) {
             wout.fBLSCTOutput = true;
             wout.fStakedCommitment = wout.out->IsStakedCommitment();
+            bool has_recovery_data = false;
             auto blsct_man = GetBLSCTKeyMan();
             if (blsct_man) {
-                auto result = blsct_man->RecoverOutputs({*wout.out});
-                if (result.is_completed) {
-                    auto xs = result.amounts;
-                    wout.blsctRecoveryData = xs[0];
+                auto try_store_recovery = [&](const auto& result) {
+                    if (result.is_completed && !result.amounts.empty()) {
+                        wout.blsctRecoveryData = result.amounts[0];
+                        has_recovery_data = true;
+                    }
+                };
+
+                try_store_recovery(blsct_man->RecoverOutputs({*wout.out}));
+                if (!has_recovery_data) {
+                    if (const auto watch_only_nonce = blsct_man->GetWatchOnlyRecoveryNonce(wout.out->scriptPubKey)) {
+                        try_store_recovery(blsct_man->RecoverOutputsWithNonce({*wout.out}, watch_only_nonce->GetG1Point()));
+                    }
                 }
             }
             // Save the original output hash before any stripping
             wout.outputHash = wout.out->GetHash();
-            // Strip range proof data to save space; BLSCT keys are preserved
-            // Don't strip staked commitments as their Vs[0] is needed for unstaking
-            if (!wout.fStakedCommitment) {
+            // Strip range proof data to save space once recovery data has been cached.
+            // Keep the full proof for outputs that still require explicit nonce recovery.
+            // Don't strip staked commitments as their Vs[0] is needed for unstaking.
+            if (!wout.fStakedCommitment && has_recovery_data) {
                 auto strippedOut = std::make_shared<CTxOut>(*wout.out);
                 strippedOut->blsctData.StripRangeProof();
                 wout.out = strippedOut;

@@ -22,6 +22,8 @@
 #include <wallet/scriptpubkeyman.h>
 #include <wallet/walletdb.h>
 
+#include <optional>
+
 namespace blsct {
 
 const int64_t CHANGE_ACCOUNT = -1;
@@ -63,6 +65,7 @@ private:
     using SubAddressStrMap = std::map<SubAddress, CKeyID>;
     using SubAddressPoolMapSet = std::map<int64_t, std::set<uint64_t>>;
     using WatchOnlyScriptMap = std::map<CScriptID, wallet::CKeyMetadata>;
+    using WatchOnlyNonceMap = std::map<CScriptID, blsct::PublicKey>;
 
     CryptedKeyMap mapCryptedKeys GUARDED_BY(cs_KeyStore);
     CryptedOutKeyMap mapCryptedOutKeys GUARDED_BY(cs_KeyStore);
@@ -72,6 +75,7 @@ private:
     SubAddressPoolMapSet setSubAddressReservePool GUARDED_BY(cs_KeyStore);
     std::set<CScript> setWatchOnly GUARDED_BY(cs_KeyStore);
     WatchOnlyScriptMap m_script_metadata GUARDED_BY(cs_KeyStore);
+    WatchOnlyNonceMap m_watch_only_nonces GUARDED_BY(cs_KeyStore);
 
     int64_t nTimeFirstKey GUARDED_BY(cs_KeyStore) = 0;
     //! Number of pre-generated SubAddresses
@@ -236,8 +240,10 @@ public:
     bool ExtractAllSpendingKeysFromScript(const CScript& script, std::vector<blsct::PublicKey>& spendingKeys) const;
 
     /** Watch-only script management */
-    bool AddWatchOnly(const CScript& script);
+    bool AddWatchOnly(const CScript& script, const std::optional<blsct::PublicKey>& recovery_nonce = std::nullopt);
     void LoadWatchOnly(const CScript& script);
+    void LoadWatchOnlyRecoveryNonce(const CScript& script, const blsct::PublicKey& nonce);
+    std::optional<blsct::PublicKey> GetWatchOnlyRecoveryNonce(const CScript& script) const;
 };
 } // namespace blsct
 

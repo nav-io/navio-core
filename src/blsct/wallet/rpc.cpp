@@ -2297,6 +2297,7 @@ static RPCHelpMan getblsctrecoverydata()
             bool is_outpoint_input = false;
             COutPoint outpoint;
             const wallet::CWalletTx* wallet_tx_ptr = nullptr;
+            const wallet::CWalletOutput* wallet_output_ptr = nullptr;
 
             // Parse input as either txid, outpoint hash, or raw hex
             std::string input = request.params[0].get_str();
@@ -2308,14 +2309,19 @@ static RPCHelpMan getblsctrecoverydata()
                 if (!wallet_tx_ptr) {
                     // Fallback: treat input as an outpoint hash
                     outpoint = COutPoint(hash);
-                    wallet_tx_ptr = wallet->GetWalletTxFromOutpoint(outpoint);
-                    if (!wallet_tx_ptr) {
+                    wallet_output_ptr = wallet->GetWalletOutput(outpoint);
+                    if (!wallet_output_ptr) {
+                        wallet_tx_ptr = wallet->GetWalletTxFromOutpoint(outpoint);
+                    }
+                    if (!wallet_tx_ptr && !wallet_output_ptr) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction or outpoint not found in wallet");
                     }
                     is_outpoint_input = true;
                 }
 
-                mtx = CMutableTransaction(*wallet_tx_ptr->tx);
+                if (wallet_tx_ptr) {
+                    mtx = CMutableTransaction(*wallet_tx_ptr->tx);
+                }
             } else {
                 if (!DecodeHexTx(mtx, input)) {
                     throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction decode failed");
@@ -2327,26 +2333,12 @@ static RPCHelpMan getblsctrecoverydata()
             int specific_vout = -1;
             if (!request.params[1].isNull()) {
                 specific_vout = request.params[1].getInt<int>();
-                if (specific_vout < 0 || specific_vout >= (int)mtx.vout.size()) {
+                if (specific_vout < 0 || (!wallet_output_ptr && specific_vout >= (int)mtx.vout.size())) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "vout index out of range");
                 }
             }
 
-            if (is_outpoint_input) {
-                const auto it = std::find_if(mtx.vout.begin(), mtx.vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
-                if (it == mtx.vout.end()) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Outpoint not found in transaction");
-                }
-
-                int outpoint_vout = static_cast<int>(std::distance(mtx.vout.begin(), it));
-                if (specific_vout == -1) {
-                    specific_vout = outpoint_vout;
-                } else if (specific_vout != outpoint_vout) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Provided vout does not match outpoint");
-                }
-            }
-
-            if (is_outpoint_input) {
+            if (is_outpoint_input && wallet_tx_ptr) {
                 const auto it = std::find_if(mtx.vout.begin(), mtx.vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
                 if (it == mtx.vout.end()) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Outpoint not found in transaction");
@@ -2394,6 +2386,19 @@ static RPCHelpMan getblsctrecoverydata()
                     }
                     outputs.push_back(output);
                 }
+            } else if (wallet_output_ptr) {
+                UniValue output(UniValue::VOBJ);
+                output.pushKV("vout", 0);
+                output.pushKV("script", HexStr(wallet_output_ptr->out->scriptPubKey));
+                output.pushKV("out_hash", wallet_output_ptr->GetOutputHash().GetHex());
+
+                const auto& recovery_data = wallet_output_ptr->blsctRecoveryData;
+                output.pushKV("amount", ValueFromAmount(recovery_data.amount));
+                output.pushKV("amount_navoshi", recovery_data.amount);
+                output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
+                output.pushKV("message", recovery_data.message);
+
+                outputs.push_back(output);
             } else {
                 // For txid input, use wallet transaction
                 if (!wallet_tx_ptr) {
@@ -2464,6 +2469,7 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
             uint256 hash;
             bool is_outpoint_input = false;
             COutPoint outpoint;
+            const wallet::CWalletOutput* wallet_output_ptr = nullptr;
 
             // Parse hex transaction or outpoint hash
             std::string input = request.params[0].get_str();
@@ -2476,14 +2482,17 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
                 } else {
                     // Fallback: treat input as an outpoint hash
                     outpoint = COutPoint(hash);
-                    if (const wallet::CWalletTx* wallet_tx_ptr = wallet->GetWalletTxFromOutpoint(outpoint)) {
+                    wallet_output_ptr = wallet->GetWalletOutput(outpoint);
+                    if (wallet_output_ptr) {
+                        is_outpoint_input = true;
+                    } else if (const wallet::CWalletTx* wallet_tx_ptr = wallet->GetWalletTxFromOutpoint(outpoint)) {
                         mtx = CMutableTransaction(*wallet_tx_ptr->tx);
                         is_outpoint_input = true;
                     }
                 }
             }
 
-            if (mtx.vout.empty()) {
+            if (mtx.vout.empty() && !wallet_output_ptr) {
                 // If not loaded from wallet, try to decode raw hex
                 if (!DecodeHexTx(mtx, input)) {
                     throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction decode failed");
@@ -2506,12 +2515,12 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
             int specific_vout = -1;
             if (!request.params[2].isNull()) {
                 specific_vout = request.params[2].getInt<int>();
-                if (specific_vout < 0 || specific_vout >= (int)mtx.vout.size()) {
+                if (specific_vout < 0 || (!wallet_output_ptr && specific_vout >= (int)mtx.vout.size())) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "vout index out of range");
                 }
             }
 
-            if (is_outpoint_input) {
+            if (is_outpoint_input && !wallet_output_ptr) {
                 const auto it = std::find_if(mtx.vout.begin(), mtx.vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
                 if (it == mtx.vout.end()) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Outpoint not found in transaction");
@@ -2532,33 +2541,52 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
             // Use BLSCT key manager to recover outputs with specified nonce
             auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
 
-            for (size_t i = 0; i < mtx.vout.size(); i++) {
-                if (specific_vout != -1 && specific_vout != (int)i) {
-                    continue;
-                }
-
-                const CTxOut& out = mtx.vout[i];
+            auto append_output = [&](const CTxOut& out, int vout_index, const uint256* out_hash_override = nullptr, const range_proof::RecoveredData<Mcl>* recovery_override = nullptr) {
                 UniValue output(UniValue::VOBJ);
-                output.pushKV("vout", (int)i);
-                output.pushKV("out_hash", out.GetHash().GetHex());
+                output.pushKV("vout", vout_index);
+                output.pushKV("out_hash", (out_hash_override ? *out_hash_override : out.GetHash()).GetHex());
                 output.pushKV("script", HexStr(out.scriptPubKey));
 
-                // Use the specified nonce for recovery
-                auto recovery_result = blsct_km->RecoverOutputsWithNonce({out}, nonce);
-                if (recovery_result.is_completed && !recovery_result.amounts.empty()) {
-                    auto recovery_data = recovery_result.amounts[0];
-                    output.pushKV("amount", ValueFromAmount(recovery_data.amount));
-                    output.pushKV("amount_navoshi", recovery_data.amount);
-                    output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
-                    output.pushKV("message", recovery_data.message);
+                if (recovery_override) {
+                    output.pushKV("amount", ValueFromAmount(recovery_override->amount));
+                    output.pushKV("amount_navoshi", recovery_override->amount);
+                    output.pushKV("gamma", HexStr(recovery_override->gamma.GetVch()));
+                    output.pushKV("message", recovery_override->message);
                 } else {
-                    // Recovery failed with specified nonce
-                    output.pushKV("amount", ValueFromAmount(0));
-                    output.pushKV("amount_navoshi", 0);
-                    output.pushKV("gamma", "");
-                    output.pushKV("message", "");
+                    // Use the specified nonce for recovery
+                    auto recovery_result = blsct_km->RecoverOutputsWithNonce({out}, nonce);
+                    if (recovery_result.is_completed && !recovery_result.amounts.empty()) {
+                        auto recovery_data = recovery_result.amounts[0];
+                        output.pushKV("amount", ValueFromAmount(recovery_data.amount));
+                        output.pushKV("amount_navoshi", recovery_data.amount);
+                        output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
+                        output.pushKV("message", recovery_data.message);
+                    } else {
+                        // Recovery failed with specified nonce
+                        output.pushKV("amount", ValueFromAmount(0));
+                        output.pushKV("amount_navoshi", 0);
+                        output.pushKV("gamma", "");
+                        output.pushKV("message", "");
+                    }
                 }
                 outputs.push_back(output);
+            };
+
+            if (wallet_output_ptr) {
+                const uint256 output_hash = wallet_output_ptr->GetOutputHash();
+                if (wallet_output_ptr->fBLSCTOutput && !wallet_output_ptr->out->HasBLSCTRangeProof()) {
+                    append_output(*wallet_output_ptr->out, 0, &output_hash, &wallet_output_ptr->blsctRecoveryData);
+                } else {
+                    append_output(*wallet_output_ptr->out, 0, &output_hash);
+                }
+            } else {
+                for (size_t i = 0; i < mtx.vout.size(); i++) {
+                    if (specific_vout != -1 && specific_vout != (int)i) {
+                        continue;
+                    }
+
+                    append_output(mtx.vout[i], static_cast<int>(i));
+                }
             }
 
             result.pushKV("outputs", outputs);

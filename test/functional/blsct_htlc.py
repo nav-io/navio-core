@@ -198,6 +198,7 @@ Common failure cases
 
 import hashlib
 import time
+from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_greater_than, assert_raises_rpc_error
@@ -216,6 +217,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         self.num_nodes = 2
         self.chain = 'blsctregtest'
         self.setup_clean_chain = True
+        self.rpc_timeout = 120
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -701,16 +703,17 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         current_height = self.nodes[0].getblockcount()
         htlc_locktime = current_height + 50
         htlc_amount_sats = 1 * COIN
-
-        # Counterparty (wallet2) imports the expected HTLC script BEFORE it exists
-        result = wallet2.importblsctscript({
+        script_descriptor = {
             "type": "atomic_swap",
             "address_a": address1,
             "address_b": address2,
             "hash": secret_hash.hex(),
             "locktime": htlc_locktime,
             "blinding_key": blinding_key_hex,
-        }, False)  # rescan=False, nothing to find yet
+        }
+
+        # Counterparty (wallet2) imports the expected HTLC script BEFORE it exists
+        result = wallet2.importblsctscript(script_descriptor, False)  # rescan=False, nothing to find yet
         assert result["success"]
         imported_script = result["script"]
         self.log.info(f"Imported HTLC script: {imported_script[:40]}...")
@@ -733,7 +736,17 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             f"Got {len(unspent)} outputs, none matched script {imported_script[:40]}...")
         htlc_utxo = htlc_matches[0]
         assert htlc_utxo.get("watchonly"), "HTLC output should be marked watchonly"
+        assert htlc_utxo["amount"] == Decimal("1"), "Imported HTLC output should have recovered amount in output storage"
         self.log.info(f"Counterparty detected HTLC output: {htlc_utxo['outid']}")
+
+        stored_recovery = wallet2.getblsctrecoverydata(htlc_utxo["outid"])
+        stored_outputs = [out for out in stored_recovery["outputs"] if out["out_hash"] == htlc_utxo["outid"]]
+        assert len(stored_outputs) == 1, (
+            f"Counterparty did not recover HTLC output into output storage. "
+            f"Recovery data: {stored_recovery['outputs']}")
+        assert stored_outputs[0]["amount_navoshi"] == htlc_amount_sats
+        assert stored_outputs[0]["gamma"] != ""
+        self.log.info("Counterparty recovered HTLC output into watch-only output storage")
 
         nonce_hex = wallet2.deriveblsctnonce(blinding_key_hex, address1)
         recovery = wallet2.getblsctrecoverydatawithnonce(htlc_utxo["outid"], nonce_hex)
@@ -744,6 +757,33 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         assert recovered[0]["amount_navoshi"] == htlc_amount_sats
         assert recovered[0]["gamma"] != ""
         self.log.info("Counterparty recovered HTLC output via derived shared public nonce")
+
+        # Fresh wallets importing after the HTLC exists should respect start_height.
+        # _create_and_broadcast_htlc mines the funding tx into the current tip.
+        htlc_block_height = self.nodes[0].getblockcount()
+        self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
+
+        self.nodes[1].createwallet(wallet_name="wallet2_rescan_hit", blsct=True, blank=True)
+        self.nodes[1].createwallet(wallet_name="wallet2_rescan_miss", blsct=True, blank=True)
+        wallet2_rescan_hit = self.nodes[1].get_wallet_rpc("wallet2_rescan_hit")
+        wallet2_rescan_miss = self.nodes[1].get_wallet_rpc("wallet2_rescan_miss")
+
+        hit_result = wallet2_rescan_hit.importblsctscript(script_descriptor, True, htlc_block_height)
+        assert hit_result["success"]
+        hit_matches = [
+            u for u in wallet2_rescan_hit.listblsctunspent()
+            if u.get("scriptPubKey") == hit_result["script"]
+        ]
+        assert len(hit_matches) > 0, "Rescan from the HTLC block height should find the imported output"
+
+        miss_result = wallet2_rescan_miss.importblsctscript(script_descriptor, True, htlc_block_height + 1)
+        assert miss_result["success"]
+        miss_matches = [
+            u for u in wallet2_rescan_miss.listblsctunspent()
+            if u.get("scriptPubKey") == miss_result["script"]
+        ]
+        assert len(miss_matches) == 0, "Rescan from a later height should not find the historical HTLC output"
+        self.log.info("Height-based importblsctscript rescan start works as expected")
 
         # Also test raw script import
         raw_result = wallet2.importblsctscript({

@@ -1163,18 +1163,43 @@ bool KeyMan::ExtractAllSpendingKeysFromScript(const CScript& script, std::vector
     return !spendingKeys.empty();
 }
 
-bool KeyMan::AddWatchOnly(const CScript& script)
+bool KeyMan::AddWatchOnly(const CScript& script, const std::optional<blsct::PublicKey>& recovery_nonce)
 {
     LOCK(cs_KeyStore);
-    setWatchOnly.insert(script);
     wallet::WalletBatch batch(m_storage.GetDatabase());
+    setWatchOnly.insert(script);
+    if (recovery_nonce) {
+        m_watch_only_nonces[CScriptID(script)] = *recovery_nonce;
+    }
     wallet::CKeyMetadata meta;
-    return batch.WriteBLSCTWatchOnly(script, meta);
+    if (!batch.WriteBLSCTWatchOnly(script, meta)) {
+        return false;
+    }
+    if (recovery_nonce && !batch.WriteBLSCTWatchOnlyNonce(script, *recovery_nonce)) {
+        return false;
+    }
+    return true;
 }
 
 void KeyMan::LoadWatchOnly(const CScript& script)
 {
     LOCK(cs_KeyStore);
     setWatchOnly.insert(script);
+}
+
+void KeyMan::LoadWatchOnlyRecoveryNonce(const CScript& script, const blsct::PublicKey& nonce)
+{
+    LOCK(cs_KeyStore);
+    m_watch_only_nonces[CScriptID(script)] = nonce;
+}
+
+std::optional<blsct::PublicKey> KeyMan::GetWatchOnlyRecoveryNonce(const CScript& script) const
+{
+    LOCK(cs_KeyStore);
+    const auto it = m_watch_only_nonces.find(CScriptID(script));
+    if (it == m_watch_only_nonces.end()) {
+        return std::nullopt;
+    }
+    return it->second;
 }
 } // namespace blsct
