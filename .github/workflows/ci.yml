@@ -305,7 +305,7 @@ jobs:
       matrix:
         include:
           - name: tidy
-            label: '[tidy] Ubuntu 24.04, clang-tidy'
+            label: '[tidy]'
             file_env: ./ci/test/00_setup_env_native_tidy.sh
             runner: ubuntu-24.04
 
