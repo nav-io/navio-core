@@ -37,13 +37,13 @@ jobs:
           sudo chown "$USER:$USER" /python_build /lint_test_runner
 
       - name: Cache Python build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /python_build
           key: lint-python-${{ runner.os }}-${{ hashFiles('.python-version') }}
 
       - name: Cache lint test runner
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /lint_test_runner
           key: lint-runner-${{ runner.os }}-${{ hashFiles('test/lint/test_runner/**') }}
@@ -137,7 +137,7 @@ jobs:
 
       - name: Restore Ccache cache
         id: ccache-cache
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ github.job }}-ccache-${{ github.run_id }}
@@ -147,7 +147,7 @@ jobs:
         run: ./ci/test_run_all.sh
 
       - name: Save Ccache cache
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v5
         if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -188,7 +188,7 @@ jobs:
 
       - name: Ccache installation cache
         id: ccache-installation-cache
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: |
             C:\ProgramData\chocolatey\lib\ccache
@@ -205,7 +205,7 @@ jobs:
 
       - name: Restore Ccache cache
         id: ccache-cache
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v5
         with:
           path: ~/AppData/Local/ccache
           key: ${{ github.job }}-ccache-${{ github.run_id }}
@@ -221,13 +221,13 @@ jobs:
           Get-Content -Path "$env:GITHUB_WORKSPACE\vcpkg_commit"
 
       - name: vcpkg tools cache
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: C:/vcpkg/downloads/tools
           key: ${{ github.job }}-vcpkg-tools
 
       - name: vcpkg binary cache
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: ~/AppData/Local/vcpkg/archives
           key: ${{ github.job }}-vcpkg-binary-${{ hashFiles('vcpkg_commit', 'msbuild_version', 'toolset_version', 'build_msvc/vcpkg.json') }}
@@ -245,7 +245,7 @@ jobs:
         run: ccache --show-stats
 
       - name: Save Ccache cache
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v5
         if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'
         with:
           path: ~/AppData/Local/ccache
@@ -354,7 +354,7 @@ jobs:
         run: echo "MAKEJOBS=-j$(nproc)" >> "$GITHUB_ENV"
 
       - name: Restore cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: /tmp/ci-cache/${{ matrix.name }}
           key: ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-${{ github.sha }}
@@ -370,7 +370,7 @@ jobs:
 
       - name: Save cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: /tmp/ci-cache/${{ matrix.name }}
           key: ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-${{ github.sha }}
