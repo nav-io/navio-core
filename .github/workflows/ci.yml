@@ -6,12 +6,10 @@ name: CI
 on:
   # See: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request.
   pull_request:
+    branches: [master]
   # See: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#push.
   push:
-    branches:
-      - '**'
-    tags-ignore:
-      - '**'
+    branches: [master]
 
 concurrency:
   group: ${{ github.event_name != 'pull_request' && github.run_id || github.ref }}
