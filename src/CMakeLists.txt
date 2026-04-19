@@ -313,6 +313,7 @@ add_library(navio_node STATIC EXCLUDE_FROM_ALL
   validationinterface.cpp
   versionbits.cpp
   blsct/tokens/rpc.cpp
+  blsct/range_proof/rpc.cpp
   blsct/range_proof/bulletproofs/range_proof_logic.cpp
   blsct/wallet/unsigned_transaction.cpp
   blsct/wallet/verification.cpp
@@ -390,6 +391,7 @@ if(BUILD_STAKER)
     navio_crypto
     bls_interface
     libevent::core
+    libevent::extra
   )
   install_binary_component(navio-staker HAS_MANPAGE)
 endif()

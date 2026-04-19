@@ -36,6 +36,8 @@ add_library(navio_util STATIC EXCLUDE_FROM_ALL
   ../randomenv.cpp
   ../streams.cpp
   ../sync.cpp
+  ../support/cleanse.cpp
+  ../support/lockedpool.cpp
 )
 
 target_link_libraries(navio_util
