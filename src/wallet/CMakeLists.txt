@@ -1,0 +1,94 @@
+# Copyright (c) 2024-present The Navio Core developers
+# Distributed under the MIT software license, see the accompanying
+# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+add_library(navio_wallet STATIC EXCLUDE_FROM_ALL
+  coincontrol.cpp
+  coinselection.cpp
+  context.cpp
+  crypter.cpp
+  db.cpp
+  dump.cpp
+  external_signer_scriptpubkeyman.cpp
+  feebumper.cpp
+  fees.cpp
+  interfaces.cpp
+  load.cpp
+  receive.cpp
+  rpc/addresses.cpp
+  rpc/backup.cpp
+  rpc/coins.cpp
+  rpc/encrypt.cpp
+  rpc/signmessage.cpp
+  rpc/spend.cpp
+  rpc/transactions.cpp
+  rpc/util.cpp
+  rpc/wallet.cpp
+  scriptpubkeyman.cpp
+  spend.cpp
+  sqlite.cpp
+  transaction.cpp
+  wallet.cpp
+  walletdb.cpp
+  walletutil.cpp
+  # blsct wallet sources
+  ../blsct/arith/elements.cpp
+  ../blsct/arith/mcl/mcl_g1point.cpp
+  ../blsct/arith/mcl/mcl_scalar.cpp
+  ../blsct/building_block/g_h_gi_hi_zero_verifier.cpp
+  ../blsct/building_block/generator_deriver.cpp
+  ../blsct/building_block/imp_inner_prod_arg.cpp
+  ../blsct/building_block/lazy_point.cpp
+  ../blsct/building_block/lazy_points.cpp
+  ../blsct/building_block/weighted_inner_prod_arg.cpp
+  ../blsct/common.cpp
+  ../blsct/double_public_key.cpp
+  ../blsct/eip_2333/bls12_381_keygen.cpp
+  ../blsct/pos/helpers.cpp
+  ../blsct/pos/pos.cpp
+  ../blsct/pos/proof.cpp
+  ../blsct/pos/proof_logic.cpp
+  ../blsct/private_key.cpp
+  ../blsct/public_key.cpp
+  ../blsct/public_keys.cpp
+  ../blsct/range_proof/bulletproofs/amount_recovery_request.cpp
+  ../blsct/range_proof/bulletproofs/amount_recovery_result.cpp
+  ../blsct/range_proof/bulletproofs/range_proof.cpp
+  ../blsct/range_proof/bulletproofs/range_proof_logic.cpp
+  ../blsct/range_proof/bulletproofs/range_proof_with_transcript.cpp
+  ../blsct/range_proof/bulletproofs_plus/amount_recovery_request.cpp
+  ../blsct/range_proof/bulletproofs_plus/amount_recovery_result.cpp
+  ../blsct/range_proof/bulletproofs_plus/range_proof.cpp
+  ../blsct/range_proof/bulletproofs_plus/range_proof_logic.cpp
+  ../blsct/range_proof/bulletproofs_plus/range_proof_with_transcript.cpp
+  ../blsct/range_proof/bulletproofs_plus/util.cpp
+  ../blsct/range_proof/common.cpp
+  ../blsct/range_proof/generators.cpp
+  ../blsct/range_proof/msg_amt_cipher.cpp
+  ../blsct/range_proof/proof_base.cpp
+  ../blsct/set_mem_proof/set_mem_proof.cpp
+  ../blsct/set_mem_proof/set_mem_proof_prover.cpp
+  ../blsct/set_mem_proof/set_mem_proof_setup.cpp
+  ../blsct/signature.cpp
+  ../blsct/wallet/address.cpp
+  ../blsct/wallet/balance_proof.cpp
+  ../blsct/wallet/helpers.cpp
+  ../blsct/wallet/keyman.cpp
+  ../blsct/wallet/keyring.cpp
+  ../blsct/wallet/rpc.cpp
+  ../blsct/wallet/txfactory.cpp
+  ../blsct/wallet/txfactory_base.cpp
+  ../blsct/wallet/txfactory_global.cpp
+  ../blsct/wallet/unsigned_transaction.cpp
+  ../blsct/wallet/verification.cpp
+)
+target_link_libraries(navio_wallet
+  PRIVATE
+    core_interface
+    navio_common
+    SQLite3::SQLite3
+    univalue
+    bls_interface
+    Boost::headers
+    $<TARGET_NAME_IF_EXISTS:USDT::headers>
+)
