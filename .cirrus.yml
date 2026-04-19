@@ -47,6 +47,7 @@ env:  # Global defaults
 # - arm64: For an aarch64 machine, recommended to have 2 CPUs and 8 GB of memory.
 
 base_template: &BASE_TEMPLATE
+  skip: $CIRRUS_BRANCH == 'ci/github-actions'
   merge_base_script:
     # Unconditionally install git (used in fingerprint_script).
     - bash -c "$PACKAGE_MANAGER_INSTALL git"
