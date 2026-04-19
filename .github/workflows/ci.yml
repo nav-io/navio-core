@@ -244,17 +244,17 @@ jobs:
       matrix:
         include:
           - name: tidy
-            label: 'Linux (Ubuntu 24.04), clang-tidy'
+            label: 'Ubuntu 24.04, clang-tidy'
             file_env: ./ci/test/00_setup_env_native_tidy.sh
             runner: ubuntu-24.04
 
           - name: no-wallet-libblsct
-            label: 'Linux (Debian Bullseye), no wallet, libblsct only'
+            label: 'Debian Bullseye, no wallet, libblsct only'
             file_env: ./ci/test/00_setup_env_native_libblsct_only.sh
             runner: ubuntu-24.04
 
           - name: no-wallet-libnaviokernel
-            label: 'Linux (Ubuntu 22.04), no wallet, libnaviokernel'
+            label: 'Ubuntu 22.04, no wallet, libnaviokernel'
             file_env: ./ci/test/00_setup_env_native_nowallet_libnaviokernel.sh
             runner: ubuntu-24.04
 
@@ -269,38 +269,38 @@ jobs:
             runner: ubuntu-22.04
 
           - name: arm
-            label: 'Linux (Ubuntu 24.04 ARM64), unit tests only'
+            label: 'Ubuntu 24.04 ARM64, unit tests only'
             file_env: ./ci/test/00_setup_env_arm.sh
             runner: ubuntu-24.04-arm
 
           - name: i686-centos
-            label: 'Linux 32-bit (CentOS Stream 9), dash, unit + functional tests'
+            label: '32-bit CentOS Stream 9, dash, unit + functional tests'
             file_env: ./ci/test/00_setup_env_i686_centos.sh
             runner: ubuntu-24.04
 
           - name: i686-multiprocess
-            label: 'Linux 32-bit (Ubuntu 22.04), multiprocess, DEBUG, unit + functional tests'
+            label: '32-bit Ubuntu 22.04, multiprocess, DEBUG, unit + functional tests'
             file_env: ./ci/test/00_setup_env_i686_multiprocess.sh
             runner: ubuntu-24.04
 
           - name: fuzz
-            label: 'Linux (Ubuntu 24.04), fuzzer, address + undefined + integer sanitizers, no depends'
+            label: 'Ubuntu 24.04, fuzzer, address + undefined + integer sanitizers, no depends'
             file_env: ./ci/test/00_setup_env_native_fuzz.sh
             runner: ubuntu-24.04
 
           - name: tsan
-            label: 'Linux (Ubuntu 24.04), ThreadSanitizer, depends'
+            label: 'Ubuntu 24.04, ThreadSanitizer, depends'
             file_env: ./ci/test/00_setup_env_native_tsan.sh
             runner: ubuntu-24.04
 
           - name: msan
-            label: 'Linux (Ubuntu 22.04), MemorySanitizer, depends'
+            label: 'Ubuntu 22.04, MemorySanitizer, depends'
             file_env: ./ci/test/00_setup_env_native_msan.sh
             runner: ubuntu-24.04
 
           # Disabled: previous-releases job needs further setup before enabling.
           # - name: previous-releases
-          #   label: 'Linux (Ubuntu 24.04), previous releases, depends, DEBUG'
+          #   label: 'Ubuntu 24.04, previous releases, depends, DEBUG'
           #   file_env: ./ci/test/00_setup_env_native_previous_releases.sh
           #   runner: ubuntu-24.04
 
