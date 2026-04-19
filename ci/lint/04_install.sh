@@ -38,7 +38,7 @@ command -v python3
 python3 --version
 
 export LINT_RUNNER_PATH="/lint_test_runner"
-if [ ! -d "${LINT_RUNNER_PATH}" ]; then
+if [ ! -f "${LINT_RUNNER_PATH}/test_runner" ]; then
   ${CI_RETRY_EXE} ${SUDO} apt-get install -y cargo
   (
     cd ./test/lint/test_runner || exit 1
