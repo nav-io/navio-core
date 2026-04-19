@@ -22,7 +22,7 @@ env:
 
 jobs:
   lint:
-    name: Lint
+    name: '[lint]'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -58,7 +58,7 @@ jobs:
         run: ./ci/lint_run_all.sh
 
   test-each-commit:
-    name: 'test each commit'
+    name: '[commits]'
     runs-on: ubuntu-22.04
     if:
       github.event_name == 'pull_request' && github.event.pull_request.commits
@@ -305,7 +305,7 @@ jobs:
       matrix:
         include:
           - name: tidy
-            label: 'Ubuntu 24.04, clang-tidy'
+            label: '[tidy] Ubuntu 24.04, clang-tidy'
             file_env: ./ci/test/00_setup_env_native_tidy.sh
             runner: ubuntu-24.04
 
