@@ -68,7 +68,7 @@ jobs:
           #" ${{ env.TEST_BASE }}
 
   macos-native-x86_64:
-    name: 'macOS 13 native, x86_64, no depends, sqlite only'
+    name: 'macOS 13, x86_64, native, no depends, sqlite only'
     # Use latest image, but hardcode version to avoid silent upgrades (and breaks).
     # See: https://github.com/actions/runner-images#available-images.
     runs-on: macos-13
@@ -259,32 +259,32 @@ jobs:
             runner: ubuntu-24.04
 
           - name: mac-cross
-            label: 'macOS cross-compile (Ubuntu 22.04), no tests'
+            label: 'macOS cross-compile, Ubuntu 22.04, no tests'
             file_env: ./ci/test/00_setup_env_mac_cross.sh
             runner: ubuntu-22.04
 
           - name: win64
-            label: 'Win64 cross-compile (Ubuntu 22.04), unit tests only'
+            label: 'Win64 cross-compile, Ubuntu 22.04, unit tests only'
             file_env: ./ci/test/00_setup_env_win64.sh
             runner: ubuntu-22.04
 
           - name: arm
-            label: 'Ubuntu 24.04 ARM64, unit tests only'
+            label: 'Ubuntu 24.04, ARM64, unit tests only'
             file_env: ./ci/test/00_setup_env_arm.sh
             runner: ubuntu-24.04-arm
 
           - name: i686-centos
-            label: '32-bit CentOS Stream 9, dash, unit + functional tests'
+            label: 'CentOS Stream 9, 32-bit, dash, unit + functional tests'
             file_env: ./ci/test/00_setup_env_i686_centos.sh
             runner: ubuntu-24.04
 
           - name: i686-multiprocess
-            label: '32-bit Ubuntu 22.04, multiprocess, DEBUG, unit + functional tests'
+            label: 'Ubuntu 22.04, 32-bit, multiprocess, DEBUG, unit + functional tests'
             file_env: ./ci/test/00_setup_env_i686_multiprocess.sh
             runner: ubuntu-24.04
 
           - name: fuzz
-            label: 'Ubuntu 24.04, fuzzer, address + undefined + integer sanitizers, no depends'
+            label: 'Ubuntu 24.04, fuzzer, ASan + UBSan + integer, no depends'
             file_env: ./ci/test/00_setup_env_native_fuzz.sh
             runner: ubuntu-24.04
 
