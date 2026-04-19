@@ -1,0 +1,42 @@
+name: Lint
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare cache directories
+        run: |
+          sudo mkdir -p /python_build /lint_test_runner
+          sudo chown "$USER:$USER" /python_build /lint_test_runner
+
+      - name: Cache Python build
+        uses: actions/cache@v4
+        with:
+          path: /python_build
+          key: lint-python-${{ runner.os }}-${{ hashFiles('.python-version') }}
+
+      - name: Cache lint test runner
+        uses: actions/cache@v4
+        with:
+          path: /lint_test_runner
+          key: lint-runner-${{ runner.os }}-${{ hashFiles('test/lint/test_runner/**') }}
+
+      - name: Run lint
+        env:
+          # 06_script.sh uses CIRRUS_PR to gate per-commit checks on PRs
+          CIRRUS_PR: ${{ github.event.pull_request.number }}
+        run: ./ci/lint_run_all.sh
