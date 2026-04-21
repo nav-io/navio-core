@@ -23,7 +23,6 @@ MclScalar FromChildToBlindingKey(const MclScalar& seed);
 MclScalar FromChildToTokenKey(const MclScalar& seed);
 MclScalar FromTransactionToViewKey(const MclScalar& seed);
 MclScalar FromTransactionToSpendKey(const MclScalar& seed);
-MclScalar GenRandomSeed();
 } // namespace blsct
 
 #endif // NAVIO_BLSCT_WALLET_HELPERS_H

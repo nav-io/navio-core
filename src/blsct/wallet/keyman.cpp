@@ -254,7 +254,9 @@ bool KeyMan::AddCryptedOutKey(const uint256& outId,
 
 PrivateKey KeyMan::GenerateNewSeed()
 {
-    return GenRandomSeed();
+    std::vector<unsigned char> seed(32);
+    GetStrongRandBytes(seed);
+    return BLS12_381_KeyGen::derive_master_SK(seed);
 }
 
 void KeyMan::LoadHDChain(const blsct::HDChain& chain)

@@ -18,7 +18,6 @@
 #include <blsct/wallet/txfactory_base.h>
 #include <blsct/wallet/unsigned_transaction.h>
 #include <common/url.h>
-#include <core_io.h>
 #include <crypto/common.h>
 #include <memory.h>
 #include <primitives/transaction.h>
