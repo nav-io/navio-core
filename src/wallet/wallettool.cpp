@@ -9,6 +9,9 @@
 #include <wallet/wallettool.h>
 
 #include <common/args.h>
+#include <mnemonic/mnemonic.h>
+#include <random.h>
+#include <support/cleanse.h>
 #include <util/fs.h>
 #include <util/translation.h>
 #include <wallet/dump.h>
@@ -142,6 +145,10 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         tfm::format(std::cerr, "The -seed option can only be used with the 'create' command.\n");
         return false;
     }
+    if (args.IsArgSet("-mnemonic") && command != "create") {
+        tfm::format(std::cerr, "The -mnemonic option can only be used with the 'create' command.\n");
+        return false;
+    }
     if (command == "create" && !args.IsArgSet("-wallet")) {
         tfm::format(std::cerr, "Wallet name must be provided when creating a new wallet.\n");
         return false;
@@ -153,16 +160,18 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         DatabaseOptions options;
         ReadDatabaseArgs(args, options);
         options.require_create = true;
-        // If -legacy is set, use it. Otherwise default to false.
+        // TODO(@aguycalled, @gogo): Discuss whether to remove -legacy and -descriptors options.
+        // With BLSCT as the standard wallet type, these options create confusion and increase
+        // the chance of users creating the wrong wallet type. Consider making -blsct the default.
         bool make_legacy = args.GetBoolArg("-legacy", false);
-        // If -blsct is set, use it. Otherwise default to false.
         bool make_blsct = args.GetBoolArg("-blsct", false);
-        // If neither -legacy, -blsct nor -descriptors is set, default to true. If -descriptors is set, use its value.
         bool make_descriptors = (!args.IsArgSet("-descriptors") && !args.IsArgSet("-legacy") && !args.IsArgSet("-blsct")) || (args.IsArgSet("-descriptors") && args.GetBoolArg("-descriptors", true));
         if (make_legacy + make_descriptors + make_blsct > 1) {
             tfm::format(std::cerr, "Only one of -legacy, -blsct or -descriptors can be set to true, not both\n");
             return false;
         }
+        // TODO(@aguycalled, @gogo): If legacy/descriptors are removed, this check can be simplified
+        // to just defaulting to BLSCT, removing the need for users to specify wallet type at all.
         if (!make_legacy && !make_descriptors && !make_blsct) {
             tfm::format(std::cerr, "One of -legacy, -blsct or -descriptors must be set to true (or omitted)\n");
             return false;
@@ -179,9 +188,60 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
 
 
         std::string seed = args.GetArg("-seed", "");
-        blsct::SeedType type;
+        std::string mnemonic_str = args.GetArg("-mnemonic", "");
 
-        if (seed.size() == 64) {
+        // Reject seed/mnemonic when BLSCT is not enabled
+        if (!seed.empty() && !make_blsct) {
+            tfm::format(std::cerr, "The -seed option requires -blsct\n");
+            return false;
+        }
+        if (!mnemonic_str.empty() && !make_blsct) {
+            tfm::format(std::cerr, "The -mnemonic option requires -blsct\n");
+            return false;
+        }
+
+        // Validate mutual exclusivity
+        if (!seed.empty() && !mnemonic_str.empty()) {
+            tfm::format(std::cerr, "Cannot specify both -seed and -mnemonic\n");
+            return false;
+        }
+
+        // Parse mnemonic if provided
+        if (!mnemonic_str.empty()) {
+            if (!mnemonic::Validate(mnemonic_str)) {
+                tfm::format(std::cerr, "Invalid mnemonic phrase\n");
+                return false;
+            }
+            auto entropy_opt = mnemonic::MnemonicToEntropy(mnemonic_str);
+            if (!entropy_opt) {
+                tfm::format(std::cerr, "Failed to decode mnemonic\n");
+                return false;
+            }
+            if (entropy_opt.value().size() != 32) {
+                tfm::format(std::cerr, "Only 24-word mnemonics are supported\n");
+                return false;
+            }
+            seed = HexStr(entropy_opt.value());
+        }
+
+        // For new BLSCT wallets (no seed or mnemonic), generate entropy here
+        // so we can print the mnemonic before the wallet is potentially locked.
+        std::string mnemonic_response;
+        bool is_mnemonic_derived = !mnemonic_str.empty();
+        if (seed.empty() && mnemonic_str.empty() && make_blsct) {
+            std::vector<unsigned char> entropy(32);
+            GetStrongRandBytes(entropy);
+            seed = HexStr(entropy);
+            is_mnemonic_derived = true;
+            mnemonic_response = mnemonic::EntropyToMnemonic(entropy);
+            memory_cleanse(entropy.data(), entropy.size());
+        }
+
+        blsct::SeedType type = blsct::IMPORT_MASTER_KEY;
+
+        if (is_mnemonic_derived) {
+            type = blsct::IMPORT_MNEMONIC;
+        } else if (seed.size() == 64) {
             type = blsct::IMPORT_MASTER_KEY;
         } else if (seed.size() == 64 + 96) {
             type = blsct::IMPORT_VIEW_KEY;
@@ -189,7 +249,15 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         }
 
         const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type);
+        // Cleanse seed hex now that MakeWallet has consumed it
+        memory_cleanse(seed.data(), seed.size());
         if (wallet_instance) {
+            if (!mnemonic_response.empty()) {
+                tfm::format(std::cout, "\nMnemonic: %s\n\n", mnemonic_response);
+                tfm::format(std::cout, "IMPORTANT: Write down this mnemonic phrase and store it securely.\n");
+                tfm::format(std::cout, "It is the only way to recover your wallet if you lose access.\n\n");
+                memory_cleanse(mnemonic_response.data(), mnemonic_response.size());
+            }
             WalletShowInfo(wallet_instance.get());
             wallet_instance->Close();
         }
@@ -202,6 +270,8 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         WalletShowInfo(wallet_instance.get());
         wallet_instance->Close();
     } else if (command == "salvage") {
+        // TODO(@aguycalled, @gogo): If legacy BDB wallets are removed, the salvage command
+        // and all USE_BDB guards can be deleted entirely.
 #ifdef USE_BDB
         bilingual_str error;
         std::vector<bilingual_str> warnings;

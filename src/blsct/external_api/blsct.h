@@ -208,6 +208,20 @@ enum AddressEncoding {
     Bech32M
 };
 
+enum BlsctTokenType {
+    BlsctToken = 0,
+    BlsctNft = 1
+};
+
+enum BlsctPredicateType {
+    BlsctCreateTokenPredicateType = 0,
+    BlsctMintTokenPredicateType = 1,
+    BlsctMintNftPredicateType = 2,
+    BlsctPayFeePredicateType = 3,
+    BlsctDataPredicateType = 4,
+    BlsctInvalidPredicateType = 255
+};
+
 using Point = Mcl::Point;
 using Scalar = Mcl::Scalar;
 using Scalars = Elements<Scalar>;
@@ -262,17 +276,19 @@ typedef struct {
     BlsctRangeProof* range_proof;
     size_t range_proof_size;
     BlsctPoint nonce;
+    BlsctTokenId token_id;
 } BlsctAmountRecoveryReq;
 
 typedef struct {
     bool is_succ;
     char* msg;
     uint64_t amount;
+    BlsctScalar gamma;
 } BlsctAmountRecoveryResult;
 
 typedef struct {
     uint64_t amount;
-    uint64_t gamma;
+    BlsctScalar gamma;
     BlsctScalar spending_key;
     BlsctTokenId token_id;
     BlsctOutPoint out_point;
@@ -313,7 +329,8 @@ BlsctRetVal* encode_address(
 BlsctAmountRecoveryReq* gen_amount_recovery_req(
     const void* vp_blsct_range_proof,
     const size_t range_proof_size,
-    const void* vp_blsct_nonce);
+    const void* vp_blsct_nonce,
+    const void* vp_blsct_token_id);
 void* create_amount_recovery_req_vec();
 void add_to_amount_recovery_req_vec(
     void* vp_amt_recovery_req_vec,
@@ -336,6 +353,9 @@ uint64_t get_amount_recovery_result_amount(
     void* vp_amt_recovery_req_vec,
     size_t idx);
 const char* get_amount_recovery_result_msg(
+    void* vp_amt_recovery_req_vec,
+    size_t idx);
+const BlsctScalar* get_amount_recovery_result_gamma(
     void* vp_amt_recovery_req_vec,
     size_t idx);
 
@@ -364,6 +384,12 @@ BlsctRetVal* deserialize_ctx(const char* hex);
 // ctx id
 const char* serialize_ctx_id(const BlsctCTxId* blsct_ctx_id);
 BlsctRetVal* deserialize_ctx_id(const char* hex);
+
+// signed transaction aggregation
+void* create_tx_hex_vec();
+void add_to_tx_hex_vec(void* vp_tx_hex_vec, const char* tx_hex);
+void delete_tx_hex_vec(void* vp_tx_hex_vec);
+BlsctRetVal* aggregate_transactions(const void* vp_tx_hex_vec);
 
 // ctx_ins
 bool are_ctx_ins_equal(const void* vp_a, const void* vp_b);
@@ -556,10 +582,43 @@ uint64_t get_token_id_subid(const BlsctTokenId* blsct_token_id);
 const char* serialize_token_id(const BlsctTokenId* blsct_token_id);
 BlsctRetVal* deserialize_token_id(const char* hex);
 
+// generic string map helpers
+void* create_string_map();
+void add_to_string_map(void* vp_string_map, const char* key, const char* value);
+void delete_string_map(const void* vp_string_map);
+size_t get_string_map_size(const void* vp_string_map);
+const char* get_string_map_key_at(const void* vp_string_map, size_t idx);
+const char* get_string_map_value_at(const void* vp_string_map, size_t idx);
+
+// token info helpers
+BlsctRetVal* build_token_info(
+    enum BlsctTokenType type,
+    const BlsctPubKey* blsct_public_key,
+    const void* vp_metadata,
+    const uint64_t total_supply);
+void delete_token_info(void* vp_token_info);
+const char* serialize_token_info(const void* vp_token_info);
+BlsctRetVal* deserialize_token_info(const char* hex);
+enum BlsctTokenType get_token_info_type(const void* vp_token_info);
+const BlsctPubKey* get_token_info_public_key(const void* vp_token_info);
+uint64_t get_token_info_total_supply(const void* vp_token_info);
+void* get_token_info_metadata(const void* vp_token_info);
+
+// collection token hash and token key derivation
+BlsctRetVal* calc_collection_token_hash(
+    const void* vp_metadata,
+    const uint64_t total_supply);
+BlsctRetVal* derive_collection_token_key(
+    const BlsctScalar* blsct_master_token_key,
+    const BlsctUint256* blsct_collection_token_hash);
+const BlsctPubKey* derive_collection_token_public_key(
+    const BlsctScalar* blsct_master_token_key,
+    const BlsctUint256* blsct_collection_token_hash);
+
 // tx in
 BlsctRetVal* build_tx_in(
     const uint64_t amount,
-    const uint64_t gamma,
+    const BlsctScalar* gamma,
     const BlsctScalar* spending_key,
     const BlsctTokenId* token_id,
     const BlsctOutPoint* out_point,
@@ -567,7 +626,7 @@ BlsctRetVal* build_tx_in(
     const bool rbf);
 
 uint64_t get_tx_in_amount(const BlsctTxIn* tx_in);
-uint64_t get_tx_in_gamma(const BlsctTxIn* tx_in);
+const BlsctScalar* get_tx_in_gamma(const BlsctTxIn* tx_in);
 const BlsctScalar* get_tx_in_spending_key(const BlsctTxIn* tx_in);
 const BlsctTokenId* get_tx_in_token_id(const BlsctTxIn* tx_in);
 const BlsctOutPoint* get_tx_in_out_point(const BlsctTxIn* tx_in);
@@ -606,6 +665,75 @@ const char* serialize_vector_predicate(
     size_t obj_size);
 BlsctRetVal* deserialize_vector_predicate(
     const char* hex);
+enum BlsctPredicateType get_vector_predicate_type(
+    const BlsctVectorPredicate* blsct_vector_predicate,
+    size_t obj_size);
+BlsctRetVal* build_create_token_predicate(
+    const void* vp_token_info);
+BlsctRetVal* build_mint_token_predicate(
+    const BlsctPubKey* blsct_token_public_key,
+    const uint64_t amount);
+BlsctRetVal* build_mint_nft_predicate(
+    const BlsctPubKey* blsct_token_public_key,
+    const uint64_t nft_id,
+    const void* vp_metadata);
+BlsctRetVal* get_create_token_predicate_token_info(
+    const BlsctVectorPredicate* blsct_vector_predicate,
+    size_t obj_size);
+const BlsctPubKey* get_mint_token_predicate_public_key(
+    const BlsctVectorPredicate* blsct_vector_predicate,
+    size_t obj_size);
+uint64_t get_mint_token_predicate_amount(
+    const BlsctVectorPredicate* blsct_vector_predicate,
+    size_t obj_size);
+const BlsctPubKey* get_mint_nft_predicate_public_key(
+    const BlsctVectorPredicate* blsct_vector_predicate,
+    size_t obj_size);
+uint64_t get_mint_nft_predicate_nft_id(
+    const BlsctVectorPredicate* blsct_vector_predicate,
+    size_t obj_size);
+void* get_mint_nft_predicate_metadata(
+    const BlsctVectorPredicate* blsct_vector_predicate,
+    size_t obj_size);
+
+// unsigned input/output/transaction helpers
+BlsctRetVal* build_unsigned_input(const BlsctTxIn* tx_in);
+void delete_unsigned_input(void* vp_unsigned_input);
+const char* serialize_unsigned_input(const void* vp_unsigned_input);
+BlsctRetVal* deserialize_unsigned_input(const char* hex);
+
+BlsctRetVal* build_unsigned_output(const BlsctTxOut* tx_out);
+BlsctRetVal* build_unsigned_create_token_output(
+    const BlsctScalar* blsct_token_key,
+    const void* vp_token_info);
+BlsctRetVal* build_unsigned_mint_token_output(
+    const BlsctSubAddr* blsct_dest,
+    const uint64_t amount,
+    const BlsctScalar* blsct_blinding_key,
+    const BlsctScalar* blsct_token_key,
+    const BlsctPubKey* blsct_token_public_key);
+BlsctRetVal* build_unsigned_mint_nft_output(
+    const BlsctSubAddr* blsct_dest,
+    const BlsctScalar* blsct_blinding_key,
+    const BlsctScalar* blsct_token_key,
+    const BlsctPubKey* blsct_token_public_key,
+    const uint64_t nft_id,
+    const void* vp_metadata);
+void delete_unsigned_output(void* vp_unsigned_output);
+const char* serialize_unsigned_output(const void* vp_unsigned_output);
+BlsctRetVal* deserialize_unsigned_output(const char* hex);
+
+void* create_unsigned_transaction();
+void add_unsigned_transaction_input(void* vp_unsigned_transaction, const void* vp_unsigned_input);
+void add_unsigned_transaction_output(void* vp_unsigned_transaction, const void* vp_unsigned_output);
+void set_unsigned_transaction_fee(void* vp_unsigned_transaction, const uint64_t fee);
+uint64_t get_unsigned_transaction_fee(const void* vp_unsigned_transaction);
+size_t get_unsigned_transaction_inputs_size(const void* vp_unsigned_transaction);
+size_t get_unsigned_transaction_outputs_size(const void* vp_unsigned_transaction);
+void delete_unsigned_transaction(void* vp_unsigned_transaction);
+const char* serialize_unsigned_transaction(const void* vp_unsigned_transaction);
+BlsctRetVal* deserialize_unsigned_transaction(const char* hex);
+BlsctRetVal* sign_unsigned_transaction(const void* vp_unsigned_transaction);
 
 // key derivation functions
 

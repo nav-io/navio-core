@@ -160,7 +160,7 @@ BASE_SCRIPTS = [
     'rpc_signer.py',
     'wallet_signer.py --descriptors',
     'wallet_importmulti.py --legacy-wallet',
-    'mempool_limit.py',
+    'mempool_limit.py', # TODO: Investigate how we can fix this test at a later date
     'rpc_txoutproof.py',
     'wallet_listreceivedby.py --legacy-wallet',
     'wallet_listreceivedby.py --descriptors',
@@ -204,6 +204,7 @@ BASE_SCRIPTS = [
     'wallet_createwallet.py --legacy-wallet',
     'wallet_createwallet.py --usecli',
     'wallet_createwallet.py --descriptors',
+    'wallet_mnemonic.py',
     'wallet_watchonly.py --legacy-wallet',
     'wallet_watchonly.py --usecli --legacy-wallet',
     'wallet_reindex.py --legacy-wallet',

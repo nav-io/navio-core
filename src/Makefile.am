@@ -211,6 +211,8 @@ BLSCT_H = \
   blsct/wallet/import_wallet_type.h \
   blsct/wallet/keyman.h \
   blsct/wallet/keyring.h \
+  mnemonic/mnemonic.h \
+  mnemonic/wordlist.h \
   blsct/wallet/rpc.h \
   blsct/wallet/txfactory.h \
   blsct/wallet/txfactory_base.h \
@@ -744,6 +746,8 @@ libbitcoin_wallet_a_SOURCES = \
   blsct/wallet/helpers.cpp \
   blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
+  mnemonic/mnemonic.cpp \
+  mnemonic/wordlist.cpp \
   blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/rpc.cpp \
   blsct/wallet/txfactory.cpp \
@@ -1328,6 +1332,8 @@ libnaviokernel_la_SOURCES = \
   blsct/wallet/txfactory_global.cpp \
   blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/verification.cpp \
+  mnemonic/mnemonic.cpp \
+  mnemonic/wordlist.cpp \
   chain.cpp \
   clientversion.cpp \
   coins.cpp \
@@ -1460,6 +1466,29 @@ CLEANFILES += $(LIBMCL)
 
 EXTRA_DIST = $(CTAES_DIST)
 
+libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) -fPIC
+libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -DLIBBLSCT -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+
+if ENABLE_SSE41
+libblsct_a_CXXFLAGS += $(SSE41_CXXFLAGS)
+libblsct_a_CPPFLAGS += -DENABLE_SSE41
+endif
+
+if ENABLE_AVX2
+libblsct_a_CXXFLAGS += $(AVX2_CXXFLAGS)
+libblsct_a_CPPFLAGS += -DENABLE_AVX2
+endif
+
+if ENABLE_X86_SHANI
+libblsct_a_CXXFLAGS += $(X86_SHANI_CXXFLAGS)
+libblsct_a_CPPFLAGS += -DENABLE_X86_SHANI
+endif
+
+if ENABLE_ARM_SHANI
+libblsct_a_CXXFLAGS += $(ARM_SHANI_CXXFLAGS)
+libblsct_a_CPPFLAGS += -DENABLE_ARM_SHANI
+endif
+
 # blsct library #
 if BUILD_LIBBLSCT_ONLY
 LIBBLSCT = libblsct.a
@@ -1529,29 +1558,6 @@ noinst_LIBRARIES += $(LIBUNIVALUE_BLSCT)
 libunivalue_blsct_a_SOURCES = $(UNIVALUE_LIB_SOURCES_INT) $(UNIVALUE_DIST_HEADERS_INT) $(UNIVALUE_LIB_HEADERS_INT) $(UNIVALUE_TEST_FILES_INT)
 libunivalue_blsct_a_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
 libunivalue_blsct_a_CXXFLAGS = $(AM_CXXFLAGS) -fPIC
-
-libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) -fPIC
-libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -DLIBBLSCT -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
-
-if ENABLE_SSE41
-libblsct_a_CXXFLAGS += $(SSE41_CXXFLAGS)
-libblsct_a_CPPFLAGS += -DENABLE_SSE41
-endif
-
-if ENABLE_AVX2
-libblsct_a_CXXFLAGS += $(AVX2_CXXFLAGS)
-libblsct_a_CPPFLAGS += -DENABLE_AVX2
-endif
-
-if ENABLE_X86_SHANI
-libblsct_a_CXXFLAGS += $(X86_SHANI_CXXFLAGS)
-libblsct_a_CPPFLAGS += -DENABLE_X86_SHANI
-endif
-
-if ENABLE_ARM_SHANI
-libblsct_a_CXXFLAGS += $(ARM_SHANI_CXXFLAGS)
-libblsct_a_CPPFLAGS += -DENABLE_ARM_SHANI
-endif
 
 $(LIBBLSCT): $(LIBBLS) $(LIBMCL) $(LIBUNIVALUE_BLSCT)
 

@@ -23,9 +23,24 @@ if [ -z "$DANGER_RUN_CI_ON_HOST" ]; then
       --label="${CI_IMAGE_LABEL}" \
       --tag="${CONTAINER_NAME}" \
       "${BASE_READ_ONLY_DIR}"
-  docker volume create "${CONTAINER_NAME}_ccache" || true
-  docker volume create "${CONTAINER_NAME}_depends" || true
-  docker volume create "${CONTAINER_NAME}_depends_sources" || true
+  # When CI_HOST_CACHE_DIR is set (e.g. GitHub Actions), use bind mounts so the
+  # host runner can cache ccache and depends between jobs. Otherwise fall back to
+  # named Docker volumes (existing Cirrus CI behaviour).
+  if [ -n "${CI_HOST_CACHE_DIR}" ]; then
+    mkdir -p "${CI_HOST_CACHE_DIR}/ccache" \
+             "${CI_HOST_CACHE_DIR}/depends/built" \
+             "${CI_HOST_CACHE_DIR}/depends/sources"
+    CCACHE_MOUNT="type=bind,src=${CI_HOST_CACHE_DIR}/ccache,dst=${CCACHE_DIR}"
+    DEPENDS_BUILT_MOUNT="type=bind,src=${CI_HOST_CACHE_DIR}/depends/built,dst=${DEPENDS_DIR}/built"
+    DEPENDS_SOURCES_MOUNT="type=bind,src=${CI_HOST_CACHE_DIR}/depends/sources,dst=${DEPENDS_DIR}/sources"
+  else
+    docker volume create "${CONTAINER_NAME}_ccache" || true
+    docker volume create "${CONTAINER_NAME}_depends" || true
+    docker volume create "${CONTAINER_NAME}_depends_sources" || true
+    CCACHE_MOUNT="type=volume,src=${CONTAINER_NAME}_ccache,dst=${CCACHE_DIR}"
+    DEPENDS_BUILT_MOUNT="type=volume,src=${CONTAINER_NAME}_depends,dst=${DEPENDS_DIR}/built"
+    DEPENDS_SOURCES_MOUNT="type=volume,src=${CONTAINER_NAME}_depends_sources,dst=${DEPENDS_DIR}/sources"
+  fi
   docker volume create "${CONTAINER_NAME}_depends_SDKs_android" || true
   docker volume create "${CONTAINER_NAME}_previous_releases" || true
 
@@ -47,9 +62,9 @@ if [ -z "$DANGER_RUN_CI_ON_HOST" ]; then
   # shellcheck disable=SC2086
   CI_CONTAINER_ID=$(docker run --cap-add LINUX_IMMUTABLE $CI_CONTAINER_CAP --rm --interactive --detach --tty \
                   --mount "type=bind,src=$BASE_READ_ONLY_DIR,dst=$BASE_READ_ONLY_DIR,readonly" \
-                  --mount "type=volume,src=${CONTAINER_NAME}_ccache,dst=$CCACHE_DIR" \
-                  --mount "type=volume,src=${CONTAINER_NAME}_depends,dst=$DEPENDS_DIR/built" \
-                  --mount "type=volume,src=${CONTAINER_NAME}_depends_sources,dst=$DEPENDS_DIR/sources" \
+                  --mount "${CCACHE_MOUNT}" \
+                  --mount "${DEPENDS_BUILT_MOUNT}" \
+                  --mount "${DEPENDS_SOURCES_MOUNT}" \
                   --mount "type=volume,src=${CONTAINER_NAME}_depends_SDKs_android,dst=$DEPENDS_DIR/SDKs/android" \
                   --mount "type=volume,src=${CONTAINER_NAME}_previous_releases,dst=$PREVIOUS_RELEASES_DIR" \
                   --env-file /tmp/env \

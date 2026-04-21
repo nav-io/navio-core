@@ -69,11 +69,13 @@ extern const std::string BESTBLOCK;
 extern const std::string BESTBLOCK_NOMERKLE;
 extern const std::string BLSCTHDCHAIN;
 extern const std::string BLSCTKEY;
+extern const std::string BLSCTMNEMONIC;
 extern const std::string BLSCTKEYMETA;
 extern const std::string BLSCTSUBADDRESS;
 extern const std::string BLSCTSUBADDRESSSTR;
 extern const std::string BLSCTSUBADDRESSPOOL;
 extern const std::string CRYPTED_BLSCTKEY;
+extern const std::string CRYPTED_BLSCTMNEMONIC;
 extern const std::string CRYPTED_KEY;
 extern const std::string CSCRIPT;
 extern const std::string DEFAULTKEY;
@@ -317,6 +319,10 @@ public:
     //! write the hdchain model (external chain child index counter)
     bool WriteHDChain(const CHDChain& chain);
     bool WriteBLSCTHDChain(const blsct::HDChain& chain);
+    bool WriteBLSCTMnemonicEntropy(const std::vector<unsigned char>& entropy);
+    bool WriteCryptedBLSCTMnemonicEntropy(const std::vector<unsigned char>& crypted_entropy);
+    //! Erase the BIP-39 mnemonic entropy from the wallet database.
+    bool EraseBLSCTMnemonicEntropy();
 
     //! Delete records of the given types
     bool EraseRecords(const std::unordered_set<std::string>& types);
@@ -344,6 +350,8 @@ bool LoadHDChain(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTCryptedKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTCryptedOutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTHDChain(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
+bool LoadBLSCTMnemonicEntropy(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
+bool LoadCryptedBLSCTMnemonicEntropy(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCToutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadSpendKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
