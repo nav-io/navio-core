@@ -108,11 +108,11 @@ jobs:
           ./autogen.sh && CC=clang CXX=clang++ ./configure && make clean && make -j $(nproc) check && ./test/functional/test_runner.py -j $(( $(nproc) * 2 ))
           #" ${{ env.TEST_BASE }}
 
-  macos-native-x86_64:
-    name: 'macOS 13, x86_64, native, no depends, sqlite only'
+  macos-native-arm64:
+    name: 'macOS 15 native, arm64, no depends, sqlite only'
     # Use latest image, but hardcode version to avoid silent upgrades (and breaks).
     # See: https://github.com/actions/runner-images#available-images.
-    runs-on: macos-13
+    runs-on: macos-15
 
     # No need to run on the read-only mirror, unless it is a PR.
     if:
@@ -132,7 +132,7 @@ jobs:
 
       - name: Clang version
         run: |
-          sudo xcode-select --switch /Applications/Xcode_15.0.app
+          sudo xcode-select --switch /Applications/Xcode_16.4.app
           clang --version
 
       - name: Install Homebrew packages
@@ -160,6 +160,7 @@ jobs:
         uses: actions/cache/save@v5
         if:
           github.event_name != 'pull_request' &&
+          github.ref_name == github.event.repository.default_branch &&
           steps.ccache-cache.outputs.cache-hit != 'true'
         with:
           path: ${{ env.CCACHE_DIR }}

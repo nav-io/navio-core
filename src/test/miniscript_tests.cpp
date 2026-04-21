@@ -293,7 +293,7 @@ const std::vector<unsigned char> NUMS_PK{ParseHex("50929b74c1a04954b78b4b6035e97
 
 using Fragment = miniscript::Fragment;
 using NodeRef = miniscript::NodeRef<CPubKey>;
-using miniscript::operator"" _mst;
+using miniscript::operator""_mst;
 using Node = miniscript::Node<CPubKey>;
 
 /** Compute all challenges (pubkeys, hashes, timelocks) that occur in a given Miniscript. */
