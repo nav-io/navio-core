@@ -32,7 +32,11 @@ fi
 
 if [ -n "$PIP_PACKAGES" ]; then
   # shellcheck disable=SC2086
-  ${CI_RETRY_EXE} pip3 install --user $PIP_PACKAGES
+  if [ "$CI_OS_NAME" = "macos" ]; then
+    ${CI_RETRY_EXE} pip3 install --user --break-system-packages $PIP_PACKAGES
+  else
+    ${CI_RETRY_EXE} pip3 install --user $PIP_PACKAGES
+  fi
 fi
 
 if [[ ${USE_MEMORY_SANITIZER} == "true" ]]; then

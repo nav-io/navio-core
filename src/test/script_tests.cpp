@@ -2,9 +2,6 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <test/data/bip341_wallet_vectors.json.h>
-#include <test/data/script_tests.json.h>
-
 #include <common/system.h>
 #include <core_io.h>
 #include <key.h>
@@ -16,6 +13,8 @@
 #include <script/signingprovider.h>
 #include <script/solver.h>
 #include <streams.h>
+#include <test/data/bip341_wallet_vectors.json.h>
+#include <test/data/script_tests.json.h>
 #include <test/util/json.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
@@ -27,14 +26,14 @@
 #include <script/navioconsensus.h>
 #endif
 
+#include <univalue.h>
+
+#include <boost/test/unit_test.hpp>
+
 #include <cstdint>
 #include <fstream>
 #include <string>
 #include <vector>
-
-#include <boost/test/unit_test.hpp>
-
-#include <univalue.h>
 
 // Uncomment if you want to output updated JSON tests.
 // #define UPDATE_JSON_TESTS
@@ -1475,7 +1474,8 @@ BOOST_FIXTURE_TEST_CASE(script_CHECKMULTISIG23, BasicTestingSetup)
     BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
 
     keys.clear();
-    keys.push_back(key2); keys.push_back(key2); // Can't reuse sig
+    keys.push_back(key2);
+    keys.push_back(key2); // Can't reuse sig
     CScript badsig1 = sign_multisig(scriptPubKey23, keys, CTransaction(txTo23));
     BOOST_CHECK(!VerifyScript(badsig1, scriptPubKey23, nullptr, gFlags, MutableTransactionSignatureChecker(&txTo23, 0, txFrom23.vout[0].nValue, MissingDataBehavior::ASSERT_FAIL), &err));
     BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
@@ -1530,9 +1530,8 @@ BOOST_FIXTURE_TEST_CASE(script_combineSigs, BasicTestingSetup)
     FillableSigningProvider keystore;
     std::vector<CKey> keys;
     std::vector<CPubKey> pubkeys;
-    for (int i = 0; i < 3; i++)
-    {
-        CKey key = GenerateRandomKey(/*compressed=*/i%2 == 1);
+    for (int i = 0; i < 3; i++) {
+        CKey key = GenerateRandomKey(/*compressed=*/i % 2 == 1);
         keys.push_back(key);
         pubkeys.push_back(key.GetPubKey());
         BOOST_CHECK(keystore.AddKey(key));
@@ -1836,14 +1835,16 @@ BOOST_FIXTURE_TEST_CASE(script_HasValidOps, BasicTestingSetup)
     BOOST_CHECK(!script.HasValidOps());
 }
 
-static CMutableTransaction TxFromHex(const std::string& str)
+// TODO: need to investigate why this was not being used
+[[maybe_unused]] static CMutableTransaction TxFromHex(const std::string& str)
 {
     CMutableTransaction tx;
     SpanReader{ParseHex(str)} >> TX_NO_WITNESS(tx);
     return tx;
 }
 
-static std::vector<CTxOut> TxOutsFromJSON(const UniValue& univalue)
+// TODO: need to investigate why this was not being used
+[[maybe_unused]] static std::vector<CTxOut> TxOutsFromJSON(const UniValue& univalue)
 {
     assert(univalue.isArray());
     std::vector<CTxOut> prevouts;
@@ -1855,7 +1856,8 @@ static std::vector<CTxOut> TxOutsFromJSON(const UniValue& univalue)
     return prevouts;
 }
 
-static CScriptWitness ScriptWitnessFromJSON(const UniValue& univalue)
+// TODO: need to investigate why this was not being used
+[[maybe_unused]] static CScriptWitness ScriptWitnessFromJSON(const UniValue& univalue)
 {
     assert(univalue.isArray());
     CScriptWitness scriptwitness;
@@ -2067,84 +2069,85 @@ static std::vector<unsigned int> AllConsensusFlags()
 /** Precomputed list of all valid combinations of consensus-relevant script validation flags. */
 static const std::vector<unsigned int> ALL_CONSENSUS_FLAGS = AllConsensusFlags();
 
-static void AssetTest(const UniValue& test)
-{
-    BOOST_CHECK(test.isObject());
-
-    CMutableTransaction mtx = TxFromHex(test["tx"].get_str());
-    const std::vector<CTxOut> prevouts = TxOutsFromJSON(test["prevouts"]);
-    BOOST_CHECK(prevouts.size() == mtx.vin.size());
-    size_t idx = test["index"].getInt<int64_t>();
-    uint32_t test_flags{ParseScriptFlags(test["flags"].get_str())};
-    bool fin = test.exists("final") && test["final"].get_bool();
-
-    if (test.exists("success")) {
-        mtx.vin[idx].scriptSig = ScriptFromHex(test["success"]["scriptSig"].get_str());
-        mtx.vin[idx].scriptWitness = ScriptWitnessFromJSON(test["success"]["witness"]);
-        CTransaction tx(mtx);
-        PrecomputedTransactionData txdata;
-        txdata.Init(tx, std::vector<CTxOut>(prevouts));
-        CachingTransactionSignatureChecker txcheck(&tx, idx, prevouts[idx].nValue, true, txdata);
-
-#if defined(HAVE_CONSENSUS_LIB)
-        DataStream stream;
-        stream << TX_WITH_WITNESS(tx);
-        std::vector<UTXO> utxos;
-        utxos.resize(prevouts.size());
-        for (size_t i = 0; i < prevouts.size(); i++) {
-            utxos[i].scriptPubKey = prevouts[i].scriptPubKey.data();
-            utxos[i].scriptPubKeySize = prevouts[i].scriptPubKey.size();
-            utxos[i].value = prevouts[i].nValue;
-        }
-#endif
-
-        for (const auto flags : ALL_CONSENSUS_FLAGS) {
-            // "final": true tests are valid for all flags. Others are only valid with flags that are
-            // a subset of test_flags.
-            if (fin || ((flags & test_flags) == flags)) {
-                bool ret = VerifyScript(tx.vin[idx].scriptSig, prevouts[idx].scriptPubKey, &tx.vin[idx].scriptWitness, flags, txcheck, nullptr);
-                BOOST_CHECK(ret);
-#if defined(HAVE_CONSENSUS_LIB)
-                int lib_ret = navioconsensus_verify_script_with_spent_outputs(prevouts[idx].scriptPubKey.data(), prevouts[idx].scriptPubKey.size(), prevouts[idx].nValue, UCharCast(stream.data()), stream.size(), utxos.data(), utxos.size(), idx, flags, nullptr);
-                BOOST_CHECK(lib_ret == 1);
-#endif
-            }
-        }
-    }
-
-    if (test.exists("failure")) {
-        mtx.vin[idx].scriptSig = ScriptFromHex(test["failure"]["scriptSig"].get_str());
-        mtx.vin[idx].scriptWitness = ScriptWitnessFromJSON(test["failure"]["witness"]);
-        CTransaction tx(mtx);
-        PrecomputedTransactionData txdata;
-        txdata.Init(tx, std::vector<CTxOut>(prevouts));
-        CachingTransactionSignatureChecker txcheck(&tx, idx, prevouts[idx].nValue, true, txdata);
-
-#if defined(HAVE_CONSENSUS_LIB)
-        DataStream stream;
-        stream << TX_WITH_WITNESS(tx);
-        std::vector<UTXO> utxos;
-        utxos.resize(prevouts.size());
-        for (size_t i = 0; i < prevouts.size(); i++) {
-            utxos[i].scriptPubKey = prevouts[i].scriptPubKey.data();
-            utxos[i].scriptPubKeySize = prevouts[i].scriptPubKey.size();
-            utxos[i].value = prevouts[i].nValue;
-        }
-#endif
-
-        for (const auto flags : ALL_CONSENSUS_FLAGS) {
-            // If a test is supposed to fail with test_flags, it should also fail with any superset thereof.
-            if ((flags & test_flags) == test_flags) {
-                bool ret = VerifyScript(tx.vin[idx].scriptSig, prevouts[idx].scriptPubKey, &tx.vin[idx].scriptWitness, flags, txcheck, nullptr);
-                BOOST_CHECK(!ret);
-#if defined(HAVE_CONSENSUS_LIB)
-                int lib_ret = navioconsensus_verify_script_with_spent_outputs(prevouts[idx].scriptPubKey.data(), prevouts[idx].scriptPubKey.size(), prevouts[idx].nValue, UCharCast(stream.data()), stream.size(), utxos.data(), utxos.size(), idx, flags, nullptr);
-                BOOST_CHECK(lib_ret == 0);
-#endif
-            }
-        }
-    }
-}
+// TODO: need to regenerate the test data with the new format
+// static void AssetTest(const UniValue& test)
+// {
+//     BOOST_CHECK(test.isObject());
+//
+//     CMutableTransaction mtx = TxFromHex(test["tx"].get_str());
+//     const std::vector<CTxOut> prevouts = TxOutsFromJSON(test["prevouts"]);
+//     BOOST_CHECK(prevouts.size() == mtx.vin.size());
+//     size_t idx = test["index"].getInt<int64_t>();
+//     uint32_t test_flags{ParseScriptFlags(test["flags"].get_str())};
+//     bool fin = test.exists("final") && test["final"].get_bool();
+//
+//     if (test.exists("success")) {
+//         mtx.vin[idx].scriptSig = ScriptFromHex(test["success"]["scriptSig"].get_str());
+//         mtx.vin[idx].scriptWitness = ScriptWitnessFromJSON(test["success"]["witness"]);
+//         CTransaction tx(mtx);
+//         PrecomputedTransactionData txdata;
+//         txdata.Init(tx, std::vector<CTxOut>(prevouts));
+//         CachingTransactionSignatureChecker txcheck(&tx, idx, prevouts[idx].nValue, true, txdata);
+//
+// #if defined(HAVE_CONSENSUS_LIB)
+//         DataStream stream;
+//         stream << TX_WITH_WITNESS(tx);
+//         std::vector<UTXO> utxos;
+//         utxos.resize(prevouts.size());
+//         for (size_t i = 0; i < prevouts.size(); i++) {
+//             utxos[i].scriptPubKey = prevouts[i].scriptPubKey.data();
+//             utxos[i].scriptPubKeySize = prevouts[i].scriptPubKey.size();
+//             utxos[i].value = prevouts[i].nValue;
+//         }
+// #endif
+//
+//         for (const auto flags : ALL_CONSENSUS_FLAGS) {
+//             // "final": true tests are valid for all flags. Others are only valid with flags that are
+//             // a subset of test_flags.
+//             if (fin || ((flags & test_flags) == flags)) {
+//                 bool ret = VerifyScript(tx.vin[idx].scriptSig, prevouts[idx].scriptPubKey, &tx.vin[idx].scriptWitness, flags, txcheck, nullptr);
+//                 BOOST_CHECK(ret);
+// #if defined(HAVE_CONSENSUS_LIB)
+//                 int lib_ret = navioconsensus_verify_script_with_spent_outputs(prevouts[idx].scriptPubKey.data(), prevouts[idx].scriptPubKey.size(), prevouts[idx].nValue, UCharCast(stream.data()), stream.size(), utxos.data(), utxos.size(), idx, flags, nullptr);
+//                 BOOST_CHECK(lib_ret == 1);
+// #endif
+//             }
+//         }
+//     }
+//
+//     if (test.exists("failure")) {
+//         mtx.vin[idx].scriptSig = ScriptFromHex(test["failure"]["scriptSig"].get_str());
+//         mtx.vin[idx].scriptWitness = ScriptWitnessFromJSON(test["failure"]["witness"]);
+//         CTransaction tx(mtx);
+//         PrecomputedTransactionData txdata;
+//         txdata.Init(tx, std::vector<CTxOut>(prevouts));
+//         CachingTransactionSignatureChecker txcheck(&tx, idx, prevouts[idx].nValue, true, txdata);
+//
+// #if defined(HAVE_CONSENSUS_LIB)
+//         DataStream stream;
+//         stream << TX_WITH_WITNESS(tx);
+//         std::vector<UTXO> utxos;
+//         utxos.resize(prevouts.size());
+//         for (size_t i = 0; i < prevouts.size(); i++) {
+//             utxos[i].scriptPubKey = prevouts[i].scriptPubKey.data();
+//             utxos[i].scriptPubKeySize = prevouts[i].scriptPubKey.size();
+//             utxos[i].value = prevouts[i].nValue;
+//         }
+// #endif
+//
+//         for (const auto flags : ALL_CONSENSUS_FLAGS) {
+//             // If a test is supposed to fail with test_flags, it should also fail with any superset thereof.
+//             if ((flags & test_flags) == test_flags) {
+//                 bool ret = VerifyScript(tx.vin[idx].scriptSig, prevouts[idx].scriptPubKey, &tx.vin[idx].scriptWitness, flags, txcheck, nullptr);
+//                 BOOST_CHECK(!ret);
+// #if defined(HAVE_CONSENSUS_LIB)
+//                 int lib_ret = navioconsensus_verify_script_with_spent_outputs(prevouts[idx].scriptPubKey.data(), prevouts[idx].scriptPubKey.size(), prevouts[idx].nValue, UCharCast(stream.data()), stream.size(), utxos.data(), utxos.size(), idx, flags, nullptr);
+//                 BOOST_CHECK(lib_ret == 0);
+// #endif
+//             }
+//         }
+//     }
+// }
 
 // TODO: need to regenerate the test data with the new format
 // BOOST_FIXTURE_TEST_CASE(script_assets_test, BasicTestingSetup)

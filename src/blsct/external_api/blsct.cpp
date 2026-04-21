@@ -120,7 +120,8 @@ BlsctBoolRetVal* err_bool(
     return p;
 }
 
-static inline DataStream set_up_data_stream_with_hex(const char* hex)
+// TODO: need to investigate why this was not being used
+[[maybe_unused]] static inline DataStream set_up_data_stream_with_hex(const char* hex)
 {
     // set up a stream with the given hex
     DataStream st{};
@@ -146,14 +147,17 @@ static blsct::PrivateKey blsct_scalar_to_priv_key(
     return priv_key;
 }
 
-static inline const char* data_stream_to_malloced_hex(DataStream& st)
+// TODO: need to investigate why this was not being used
+[[maybe_unused]] static inline const char* data_stream_to_malloced_hex(DataStream& st)
 {
-    auto data = reinterpret_cast<uint8_t*>(st.data());
+    // TODO: need to investigate why this was not being used
+    [[maybe_unused]] auto data = reinterpret_cast<uint8_t*>(st.data());
     MALLOC_BYTES(uint8_t, buf, st.size());
     return buf == nullptr ? nullptr : SerializeToHex(buf, st.size());
 }
 
-static inline void UnserializeCMutableTx(
+// TODO: need to investigate why this was not being used
+[[maybe_unused]] static inline void UnserializeCMutableTx(
     CMutableTransaction& ctx,
     const uint8_t* ser_ctx,
     const size_t ser_ctx_size)
