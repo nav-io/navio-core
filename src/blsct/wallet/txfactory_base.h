@@ -6,8 +6,6 @@
 #include <blsct/wallet/address.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <primitives/transaction.h>
-#include <wallet/coincontrol.h>
-#include <wallet/spend.h>
 
 namespace blsct {
 struct CreateTransactionData {

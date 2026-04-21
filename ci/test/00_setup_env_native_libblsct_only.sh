@@ -13,4 +13,5 @@ export DEP_OPTS="NO_WALLET=1 CC=clang-13 CXX='clang++-13 -stdlib=libc++'"
 export GOAL="install"
 export RUN_UNIT_TESTS=false
 export RUN_FUNCTIONAL_TESTS=false
+export RUN_CHECK_LIBBLSCT_SYMBOLS=true
 export BITCOIN_CONFIG="--enable-build-libblsct-only"
