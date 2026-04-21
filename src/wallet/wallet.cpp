@@ -3729,6 +3729,10 @@ bool CWallet::Lock()
             memory_cleanse(vMasterKey.data(), vMasterKey.size() * sizeof(decltype(vMasterKey)::value_type));
             vMasterKey.clear();
         }
+        auto blsct_km = GetBLSCTKeyMan();
+        if (blsct_km) {
+            blsct_km->ClearMnemonicEntropy();
+        }
     }
 
     NotifyStatusChanged(this);

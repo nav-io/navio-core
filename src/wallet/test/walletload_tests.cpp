@@ -213,8 +213,9 @@ BOOST_FIXTURE_TEST_CASE(wallet_load_ckey, TestingSetup)
 BOOST_FIXTURE_TEST_CASE(wallet_load_verif_crypted_blsct, TestingSetup)
 {
     // The test duplicates the db so each case has its own db instance.
-    int NUMBER_OF_TESTS = 5;
+    int NUMBER_OF_TESTS = 7;
     std::vector<std::unique_ptr<WalletDatabase>> dbs;
+    std::unique_ptr<WalletDatabase> plain_db;
     blsct::PrivateKey viewKey, spendKey, tokenKey;
     blsct::DoublePublicKey dest;
 
@@ -240,6 +241,8 @@ BOOST_FIXTURE_TEST_CASE(wallet_load_verif_crypted_blsct, TestingSetup)
         BOOST_CHECK(viewKey.IsValid());
         BOOST_CHECK(blsct_km->GetKey(masterKeysMetadata.spend_id, spendKey));
         BOOST_CHECK(blsct_km->GetKey(masterKeysMetadata.token_id, tokenKey));
+
+        plain_db = DuplicateMockDatabase(wallet->GetDatabase());
 
         // Encrypt the wallet and duplicate database
         BOOST_CHECK(wallet->EncryptWallet("encrypt"));
@@ -361,6 +364,63 @@ BOOST_FIXTURE_TEST_CASE(wallet_load_verif_crypted_blsct, TestingSetup)
         BOOST_CHECK(viewKey == viewKey2);
         BOOST_CHECK(spendKey == spendKey2);
         BOOST_CHECK(tokenKey == tokenKey2);
+    }
+
+    {
+        // Sixth test case:
+        // Verify a wallet with a plaintext mnemonic entropy record loads successfully.
+        std::shared_ptr<CWallet> wallet(new CWallet(m_node.chain.get(), "", std::move(plain_db)));
+        BOOST_CHECK_EQUAL(wallet->LoadWallet(), DBErrors::LOAD_OK);
+        auto blsct_km = wallet->GetBLSCTKeyMan();
+        BOOST_CHECK(blsct_km != nullptr);
+        BOOST_CHECK(blsct_km->HasMnemonicEntropy());
+        BOOST_CHECK_EQUAL(blsct_km->GetMnemonicEntropy().size(), 32);
+    }
+
+    {
+        // Seventh test case:
+        // Reject plaintext mnemonic entropy records that do not contain 32 bytes.
+        std::unique_ptr<WalletDatabase> db = get_db(dbs);
+        {
+            std::unique_ptr<DatabaseBatch> batch = db->MakeBatch(false);
+            BOOST_CHECK(batch);
+            BOOST_CHECK(batch->Write(DBKeys::BLSCTMNEMONIC, std::vector<unsigned char>(31, 0x42), true));
+        }
+
+        bool found = false;
+        DebugLogHelper logHelper("BLSCT mnemonic entropy has invalid size", [&](const std::string* s) {
+            found = true;
+            return false;
+        });
+
+        std::shared_ptr<CWallet> wallet(new CWallet(m_node.chain.get(), "", std::move(db)));
+        BOOST_CHECK_EQUAL(wallet->LoadWallet(), DBErrors::CORRUPT);
+        BOOST_CHECK(found);
+    }
+
+    {
+        // Eighth test case:
+        // Reject crypted mnemonic entropy records that are not the expected size.
+        std::unique_ptr<WalletDatabase> db = get_db(dbs);
+        {
+            std::unique_ptr<DatabaseBatch> batch = db->MakeBatch(false);
+            BOOST_CHECK(batch);
+            std::vector<unsigned char> crypted_entropy;
+            BOOST_CHECK(batch->Read(DBKeys::CRYPTED_BLSCTMNEMONIC, crypted_entropy));
+            BOOST_CHECK(crypted_entropy.size() > 0);
+            crypted_entropy.pop_back();
+            BOOST_CHECK(batch->Write(DBKeys::CRYPTED_BLSCTMNEMONIC, crypted_entropy, true));
+        }
+
+        bool found = false;
+        DebugLogHelper logHelper("BLSCT crypted mnemonic entropy has invalid size", [&](const std::string* s) {
+            found = true;
+            return false;
+        });
+
+        std::shared_ptr<CWallet> wallet(new CWallet(m_node.chain.get(), "", std::move(db)));
+        BOOST_CHECK_EQUAL(wallet->LoadWallet(), DBErrors::CORRUPT);
+        BOOST_CHECK(found);
     }
 }
 

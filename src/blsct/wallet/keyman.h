@@ -17,6 +17,7 @@
 #include <blsct/wallet/import_wallet_type.h>
 #include <blsct/wallet/keyring.h>
 #include <logging.h>
+#include <support/allocators/secure.h>
 #include <util/strencodings.h>
 #include <wallet/crypter.h>
 #include <wallet/scriptpubkeyman.h>
@@ -26,6 +27,8 @@ namespace blsct {
 
 const int64_t CHANGE_ACCOUNT = -1;
 const int64_t STAKING_ACCOUNT = -2;
+
+using SecureBytes = std::vector<unsigned char, secure_allocator<unsigned char>>;
 
 class Manager
 {
@@ -46,6 +49,8 @@ class KeyMan : public Manager, public KeyRing
 {
 private:
     blsct::HDChain m_hd_chain;
+    SecureBytes m_mnemonic_entropy GUARDED_BY(cs_KeyStore);
+    std::vector<unsigned char> m_crypted_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains;
 
     bool AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey);
@@ -53,6 +58,8 @@ private:
 
     bool AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId);
     bool AddCryptedOutKeyInner(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
+
+    bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy);
 
 
     wallet::WalletBatch* encrypted_batch GUARDED_BY(cs_KeyStore) = nullptr;
@@ -85,6 +92,36 @@ public:
 
     bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false) override;
     bool IsHDEnabled() const override;
+
+    void LoadMnemonicEntropy(const std::vector<unsigned char>& entropy)
+    {
+        LOCK(cs_KeyStore);
+        m_mnemonic_entropy.assign(entropy.begin(), entropy.end());
+    }
+
+    void LoadCryptedMnemonicEntropy(const std::vector<unsigned char>& crypted_entropy)
+    {
+        LOCK(cs_KeyStore);
+        m_crypted_mnemonic_entropy = crypted_entropy;
+    }
+
+    bool HasMnemonicEntropy() const
+    {
+        LOCK(cs_KeyStore);
+        return !m_mnemonic_entropy.empty();
+    }
+
+    bool HasCryptedMnemonicEntropy() const
+    {
+        LOCK(cs_KeyStore);
+        return !m_crypted_mnemonic_entropy.empty();
+    }
+
+    SecureBytes GetMnemonicEntropy() const
+    {
+        LOCK(cs_KeyStore);
+        return m_mnemonic_entropy;
+    }
 
     /* Returns true if the wallet can generate new keys */
     bool CanGenerateKeys() const;
@@ -127,6 +164,7 @@ public:
 
     bool Encrypt(const wallet::CKeyingMaterial& master_key, wallet::WalletBatch* batch);
     bool CheckDecryptionKey(const wallet::CKeyingMaterial& master_key, bool accept_no_keys);
+    void ClearMnemonicEntropy();
 
     SubAddress GenerateNewSubAddress(const int64_t& account, SubAddressIdentifier& id);
     SubAddress GetSubAddress(const SubAddressIdentifier& id = {0, 0}) const;
