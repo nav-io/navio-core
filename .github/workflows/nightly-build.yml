@@ -21,8 +21,12 @@ permissions:
 jobs:
   nightly-build:
     runs-on: ubuntu-24.04
+    # navio-builder runs full Guix cross-builds across multiple hosts and can be long-running.
     timeout-minutes: 720
     env:
+      NAVIO_BUILDER_COMMIT: 17d018f8d81427cc13d584cb815ddeb80c4d59a8
+      # navio-builder's build script checks out this exact remote-tracking ref name.
+      NAVIO_BUILDER_REF_NAME: testnet-with-consensus-changes
       TARGET_BRANCH:
         ${{ github.event_name == 'workflow_dispatch' && inputs.branch ||
         'testnet-with-consensus-changes' }}
@@ -38,6 +42,8 @@ jobs:
       - name: Prepare navio-builder workspace
         run: |
           git clone https://github.com/aguycalled/navio-builder.git /tmp/navio-builder
+          cd /tmp/navio-builder
+          git checkout -f "${NAVIO_BUILDER_COMMIT}"
           sudo mkdir -p /navio
           sudo chown -R "$USER:$USER" /navio
           cp -a /tmp/navio-builder/. /navio/
@@ -47,9 +53,9 @@ jobs:
           git clone --origin origin "https://github.com/${{ github.repository }}.git" /navio/navio-core
           cd /navio/navio-core
           git config --unset-all remote.origin.fetch
-          git config --add remote.origin.fetch "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/testnet-with-consensus-changes"
+          git config --add remote.origin.fetch "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${NAVIO_BUILDER_REF_NAME}"
           git fetch --all --tags
-          git rev-parse --verify refs/remotes/origin/testnet-with-consensus-changes
+          git rev-parse --verify "refs/remotes/origin/${NAVIO_BUILDER_REF_NAME}"
 
       - name: Build binaries
         run: |
