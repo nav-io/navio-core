@@ -46,12 +46,13 @@ jobs:
         run: |
           git clone --origin origin "https://github.com/${{ github.repository }}.git" /navio/navio-core
           cd /navio/navio-core
+          git config --unset-all remote.origin.fetch
+          git config --add remote.origin.fetch "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/testnet-with-consensus-changes"
           git fetch --all --tags
-          git checkout -f "origin/${TARGET_BRANCH}"
+          git rev-parse --verify refs/remotes/origin/testnet-with-consensus-changes
 
       - name: Build binaries
         run: |
-          perl -0pi -e "s#git checkout -f origin/testnet-with-consensus-changes#git checkout -f origin/$ENV{TARGET_BRANCH}#" /navio/build
           chmod +x /navio/build
           /navio/build
 
