@@ -24,12 +24,11 @@ jobs:
     # navio-builder runs full Guix cross-builds across multiple hosts and can be long-running.
     timeout-minutes: 720
     env:
+      # Pin to navio-builder main HEAD as of 2026-04-22 for reproducibility and supply-chain safety.
       NAVIO_BUILDER_COMMIT: 17d018f8d81427cc13d584cb815ddeb80c4d59a8
       # navio-builder's build script checks out this exact remote-tracking ref name.
       NAVIO_BUILDER_REF_NAME: testnet-with-consensus-changes
-      TARGET_BRANCH:
-        ${{ github.event_name == 'workflow_dispatch' && inputs.branch ||
-        'testnet-with-consensus-changes' }}
+      TARGET_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || 'testnet-with-consensus-changes' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
