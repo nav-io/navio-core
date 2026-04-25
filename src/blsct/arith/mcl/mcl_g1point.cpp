@@ -194,6 +194,18 @@ bool MclG1Point::SetVch(const std::vector<uint8_t>& b)
         mclBnG1_clear(&m_point);
         return false;
     }
+    // Enforce prime-order subgroup membership. BLS12-381 G1 has a cofactor,
+    // so curve membership alone is insufficient: an attacker could submit a
+    // point on E(F_p) that lies outside the order-r subgroup where the
+    // discrete-log assumption does not apply. mclBnG1_isValidOrder returns 1
+    // iff the point has order dividing r.
+    //
+    // The point at infinity (zero commitment) is explicitly permitted — it
+    // is the identity in G1 and is used throughout commitment arithmetic.
+    if (!mclBnG1_isZero(&m_point) && mclBnG1_isValidOrder(&m_point) != 1) {
+        mclBnG1_clear(&m_point);
+        return false;
+    }
     return true;
 }
 
