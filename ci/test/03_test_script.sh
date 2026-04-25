@@ -121,7 +121,13 @@ if [ -n "$ANDROID_TOOLS_URL" ]; then
   exit 0
 fi
 
-BITCOIN_CONFIG_ALL="${BITCOIN_CONFIG_ALL} --enable-external-signer --prefix=$BASE_OUTDIR"
+# FIXME: macOS native CI still fails Boost.Process detection here.
+if [ "$CI_OS_NAME" = "macos" ] && [ "${DANGER_RUN_CI_ON_HOST}" = "1" ]; then
+    :
+else
+    BITCOIN_CONFIG_ALL="${BITCOIN_CONFIG_ALL} --enable-external-signer"
+fi
+BITCOIN_CONFIG_ALL="${BITCOIN_CONFIG_ALL} --prefix=$BASE_OUTDIR"
 
 if [ -n "$CONFIG_SHELL" ]; then
   "$CONFIG_SHELL" -c "./autogen.sh"
