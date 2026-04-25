@@ -7,6 +7,8 @@
 #include <logging.h>
 #include <util/strencodings.h>
 
+#include <limits>
+
 using Arith = Mcl;
 using Point = Arith::Point;
 using Scalar = Arith::Scalar;
@@ -41,6 +43,20 @@ bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* 
 
     auto kernel_hash = blsct::CalculateKernelHash(pindexPrev, block);
     auto next_target = blsct::GetNextTargetRequired(pindexPrev, &block, params);
+
+    // Consensus-level sanity check: reject blocks whose saturating min-value
+    // exceeds the int64 CAmount range. No legitimate BLSCT stake commitment
+    // can open to a value in that regime, so the PoPS proof is vacuously
+    // invalid. This closes an overflow/truncation path that previously let an
+    // attacker mint under pathologically tight `nBits` by silently reducing
+    // the threshold mod 2^64.
+    uint64_t min_value_u64 = blsct::ProofOfStake::SaturateToU64(
+        blsct::ProofOfStake::CalculateMinValue(kernel_hash, next_target));
+    if (min_value_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        LogPrint(BCLog::POPS, "PoPS rejected: min_value %llu exceeds CAmount range\n",
+                 static_cast<unsigned long long>(min_value_u64));
+        return false;
+    }
 
     LogPrint(BCLog::POPS, "Verifying PoPS:\n   Prev block %s\n   Eta fiat shamir: %s\n   Eta phi: %s\n   Kernel Hash: %s\n   Next Target: %d\n   Staked Commitments:%s\n", pindexPrev->GetBlockHash().ToString(), HexStr(eta_fiat_shamir), HexStr(eta_phi), kernel_hash.ToString(), next_target, staked_commitments.GetString());
 

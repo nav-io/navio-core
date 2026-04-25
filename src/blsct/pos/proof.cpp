@@ -6,6 +6,8 @@
 #include <blsct/range_proof/generators.h>
 #include <util/strencodings.h>
 
+#include <limits>
+
 using Arith = Mcl;
 using Point = Arith::Point;
 using Scalar = Arith::Scalar;
@@ -37,6 +39,7 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
 
     auto kernel_hash = CalculateKernelHash(prev_time, stake_modifier, time);
     uint256 min_value = CalculateMinValue(kernel_hash, next_target);
+    uint64_t min_value_u64 = SaturateToU64(min_value);
 
     range_proof::GammaSeed<Arith> gamma_seed(Scalars({f}));
     RangeProver rp;
@@ -45,10 +48,10 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
     //           << "\n\t m=" << m.GetUint64()
     //           << "\n\t kernel_hash=" << kernel_hash.ToString()
     //           << "\n\t next_target=" << next_target
-    //           << "\n\t min_value=" << min_value.GetUint64(0)
+    //           << "\n\t min_value=" << min_value_u64
     //           << "\n\n";
 
-    rangeProof = rp.Prove(Scalars({m}), gamma_seed, {}, eta_phi, min_value.GetUint64(0));
+    rangeProof = rp.Prove(Scalars({m}), gamma_seed, {}, eta_phi, min_value_u64);
 
     rangeProof.Vs.Clear();
 }
@@ -85,20 +88,21 @@ ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commi
 bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi, const Point& phi)
 {
     auto min_value = CalculateMinValue(kernel_hash, next_target);
+    uint64_t min_value_u64 = SaturateToU64(min_value);
 
-    auto ret = VerifyKernelHash(range_proof, min_value, eta_phi, phi);
+    auto ret = VerifyKernelHash(range_proof, min_value_u64, eta_phi, phi);
 
     // std::cout << __func__ << ": Verifying Range proof with"
     //           << "\n\t kernel_hash=" << kernel_hash.ToString()
     //           << "\n\t next_target=" << next_target
     //           << "\n\t kernelhashres=" << ret
-    //           << "\n\t min_value=" << CalculateMinValue(kernel_hash, next_target).GetUint64(0)
+    //           << "\n\t min_value=" << min_value_u64
     //           << "\n\n";
 
     return ret;
 }
 
-bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint256& min_value, const blsct::Message& eta_phi, const Point& phi)
+bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint64_t& min_value, const blsct::Message& eta_phi, const Point& phi)
 {
     auto range_proof_with_value = range_proof;
 
@@ -107,7 +111,7 @@ bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint256
 
     RangeProver rp;
     std::vector<bulletproofs_plus::RangeProofWithSeed<Arith>> proofs;
-    bulletproofs_plus::RangeProofWithSeed<Arith> proof{range_proof_with_value, eta_phi, (CAmount)min_value.GetUint64(0)};
+    bulletproofs_plus::RangeProofWithSeed<Arith> proof{range_proof_with_value, eta_phi, (CAmount)min_value};
 
     proofs.emplace_back(proof);
 
@@ -118,5 +122,21 @@ uint256 ProofOfStake::CalculateMinValue(const uint256& kernel_hash, const unsign
 {
     if (next_target == 0) return uint256();
     return ArithToUint256(UintToArith256(kernel_hash) / arith_uint256().SetCompact(next_target));
+}
+
+// Saturate a uint256 into uint64: if any byte above the low 8 bytes is set,
+// the value exceeds 2^64 - 1 and we clamp to UINT64_MAX instead of silently
+// truncating. In the eligibility check this makes the range proof
+// unconstructible (v < 2^64 can never satisfy v >= UINT64_MAX), which is the
+// intended semantics: no representable CAmount can satisfy an impossibly tight
+// target. Prior behaviour `min_value.GetUint64(0)` took the low 64 bits and
+// allowed overflow to silently relax the threshold.
+uint64_t ProofOfStake::SaturateToU64(const uint256& v)
+{
+    const unsigned char* data = v.begin();
+    for (size_t i = 8; i < 32; ++i) {
+        if (data[i] != 0) return std::numeric_limits<uint64_t>::max();
+    }
+    return v.GetUint64(0);
 }
 } // namespace blsct
