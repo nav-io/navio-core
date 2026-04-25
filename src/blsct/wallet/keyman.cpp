@@ -800,10 +800,27 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
     std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
     reqs.reserve(outs.size());
 
-    for (size_t i = 0; i < outs.size(); i++) {
-        CTxOut out = outs[i];
+    // Collect candidate blinding keys for parallel view-tag calculation.
+    // We only do the v·R scalar mult for outputs that are structurally BLSCT;
+    // per-output scalar mult is the hot cost, so batching amortises thread overhead.
+    std::vector<size_t> candidateIdx;
+    std::vector<MclG1Point> candidateBlindingKeys;
+    candidateIdx.reserve(outs.size());
+    candidateBlindingKeys.reserve(outs.size());
+
+    for (size_t i = 0; i < outs.size(); ++i) {
+        const CTxOut& out = outs[i];
         if (!out.HasBLSCTKeys() || !out.HasBLSCTRangeProof()) continue;
-        if (out.blsctData.viewTag != CalculateViewTag(out.blsctData.blindingKey, viewKey.GetScalar()))
+        candidateIdx.push_back(i);
+        candidateBlindingKeys.push_back(out.blsctData.blindingKey);
+    }
+
+    auto tags = CalculateViewTagBatch(candidateBlindingKeys, viewKey.GetScalar());
+
+    for (size_t k = 0; k < candidateIdx.size(); ++k) {
+        size_t i = candidateIdx[k];
+        const CTxOut& out = outs[i];
+        if (out.blsctData.viewTag != tags[k])
             continue;
         auto nonce = CalculateNonce(out.blsctData.blindingKey, viewKey.GetScalar());
         bulletproofs_plus::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
