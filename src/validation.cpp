@@ -4119,6 +4119,21 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
         }
     }
 
+    // Hard finality checkpoints (PoPS long-range-attack defence).
+    // Reject any candidate whose block at a listed height has a different
+    // hash than the agreed, release-baked value. Evaluated regardless of
+    // m_options.checkpoints_enabled so an operator cannot opt out of
+    // anti-long-range protection at node startup.
+    {
+        const auto& finality = consensusParams.finalityCheckpoints;
+        auto it = finality.find(nHeight);
+        if (it != finality.end() && block.GetHash() != it->second) {
+            LogPrintf("ERROR: %s: finality checkpoint mismatch at height %d (have %s, expected %s)\n",
+                      __func__, nHeight, block.GetHash().ToString(), it->second.ToString());
+            return state.Invalid(BlockValidationResult::BLOCK_CHECKPOINT, "finality-checkpoint-mismatch");
+        }
+    }
+
     // Check timestamp against prev
     if (block.GetBlockTime() <= pindexPrev->GetMedianTimePast())
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "time-too-old", "block's timestamp is too early");

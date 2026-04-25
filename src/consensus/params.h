@@ -125,6 +125,15 @@ struct Params {
     int nLastPOWHeight;
     /** Whether BLSCT is activated */
     bool fBLSCT;
+    /**
+     * Hard finality checkpoints. (height -> expected block hash).
+     * Any fork whose block at a listed height has a different hash is
+     * rejected, regardless of accumulated work. Populated per-release from
+     * agreed-upon hashes. Primary defence against long-range "posterior
+     * corruption" attacks in PoPS: even if a historical validator's secret
+     * material leaks, a rewritten history cannot outrun the checkpoint.
+     */
+    std::map<int, uint256> finalityCheckpoints;
 
     std::chrono::seconds PowTargetSpacing() const
     {

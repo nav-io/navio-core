@@ -176,6 +176,13 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000052b2559353df4117b7348b64");
         consensus.defaultAssumeValid = uint256S("0x00000000000000000001a0a448d6cf2546b06801389cc030b2b18c6491266815"); // 804000
 
+        // Finality checkpoints: populated per release. Any fork disagreeing
+        // with these (height, hash) pairs is rejected regardless of
+        // accumulated chain work. Closes the long-range-attack window.
+        consensus.finalityCheckpoints = {
+            // {height, uint256S("0x...")},
+        };
+
         /**
          * The message start string is designed to be unlikely to occur in normal data.
          * The characters are rarely used upper ASCII, not valid as UTF-8, and produce
@@ -378,6 +385,12 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
 
                 consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000000000000000001899d8142b0");
                 consensus.defaultAssumeValid = uint256S("0x0000004429ef154f7e00b4f6b46bfbe2d2678ecd351d95bbfca437ab9a5b84ec"); // 138000
+
+                // See mainnet comment above. Testnet checkpoints are cut per
+                // testnet release; populate from agreed hashes.
+                consensus.finalityCheckpoints = {
+                    // {height, uint256S("0x...")},
+                };
                 m_assumed_blockchain_size = 1;
                 m_assumed_chain_state_size = 0;
                 chainTxData = ChainTxData{
