@@ -16,9 +16,6 @@
 #include <util/fs.h>
 #include <util/time.h>
 #include <util/translation.h>
-#ifdef USE_BDB
-#include <wallet/bdb.h>
-#endif
 #ifdef USE_SQLITE
 #include <wallet/sqlite.h>
 #endif
@@ -2073,17 +2070,11 @@ std::unique_ptr<WalletDatabase> MakeDatabase(const fs::path& path, const Databas
 
     std::optional<DatabaseFormat> format;
     if (exists) {
-        if (IsBDBFile(BDBDataFile(path))) {
-            format = DatabaseFormat::BERKELEY;
-        }
+#ifdef USE_SQLITE
         if (IsSQLiteFile(SQLiteDataFile(path))) {
-            if (format) {
-                error = Untranslated(strprintf("Failed to load database path '%s'. Data is in ambiguous format.", fs::PathToString(path)));
-                status = DatabaseStatus::FAILED_BAD_FORMAT;
-                return nullptr;
-            }
             format = DatabaseFormat::SQLITE;
         }
+#endif
     } else if (options.require_existing) {
         error = Untranslated(strprintf("Failed to load database path '%s'. Path does not exist.", fs::PathToString(path)));
         status = DatabaseStatus::FAILED_NOT_FOUND;
@@ -2112,30 +2103,12 @@ std::unique_ptr<WalletDatabase> MakeDatabase(const fs::path& path, const Databas
     // Format is not set when a db doesn't already exist, so use the format specified by the options if it is set.
     if (!format && options.require_format) format = options.require_format;
 
-    // If the format is not specified or detected, choose the default format based on what is available. We prefer BDB over SQLite for now.
-    if (!format) {
-#ifdef USE_SQLITE
-        format = DatabaseFormat::SQLITE;
-#endif
-#ifdef USE_BDB
-        format = DatabaseFormat::BERKELEY;
-#endif
-    }
+    if (!format) format = DatabaseFormat::SQLITE;
 
-    if (format == DatabaseFormat::SQLITE) {
 #ifdef USE_SQLITE
-        return MakeSQLiteDatabase(path, options, status, error);
+    return MakeSQLiteDatabase(path, options, status, error);
 #else
-        error = Untranslated(strprintf("Failed to open database path '%s'. Build does not support SQLite database format.", fs::PathToString(path)));
-        status = DatabaseStatus::FAILED_BAD_FORMAT;
-        return nullptr;
-#endif
-    }
-
-#ifdef USE_BDB
-    return MakeBerkeleyDatabase(path, options, status, error);
-#else
-    error = Untranslated(strprintf("Failed to open database path '%s'. Build does not support Berkeley DB database format.", fs::PathToString(path)));
+    error = Untranslated(strprintf("Failed to open database path '%s'. Build does not support SQLite database format.", fs::PathToString(path)));
     status = DatabaseStatus::FAILED_BAD_FORMAT;
     return nullptr;
 #endif

@@ -176,12 +176,10 @@ bool CreateFromDump(const ArgsManager& args, const std::string& name, const fs::
         return false;
     }
     DatabaseFormat data_format;
-    if (file_format == "bdb") {
-        data_format = DatabaseFormat::BERKELEY;
-    } else if (file_format == "sqlite") {
+    if (file_format == "sqlite") {
         data_format = DatabaseFormat::SQLITE;
     } else {
-        error = strprintf(_("Unknown wallet file format \"%s\" provided. Please provide one of \"bdb\" or \"sqlite\"."), file_format);
+        error = strprintf(_("Unknown wallet file format \"%s\" provided. Please provide \"sqlite\"."), file_format);
         return false;
     }
     if (file_format != format_value) {

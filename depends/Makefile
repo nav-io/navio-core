@@ -34,7 +34,6 @@ BASE_CACHE ?= $(BASEDIR)/built
 SDK_PATH ?= $(BASEDIR)/SDKs
 NO_BOOST ?=
 NO_LIBEVENT ?=
-NO_BDB ?=
 NO_SQLITE ?=
 NO_WALLET ?=
 NO_ZMQ ?=
@@ -152,9 +151,8 @@ boost_packages_$(NO_BOOST) = $(boost_packages)
 
 libevent_packages_$(NO_LIBEVENT) = $(libevent_packages)
 
-bdb_packages_$(NO_BDB) = $(bdb_packages)
 sqlite_packages_$(NO_SQLITE) = $(sqlite_packages)
-wallet_packages_$(NO_WALLET) = $(bdb_packages_) $(sqlite_packages_)
+wallet_packages_$(NO_WALLET) = $(sqlite_packages_)
 
 upnp_packages_$(NO_UPNP) = $(upnp_packages)
 natpmp_packages_$(NO_NATPMP) = $(natpmp_packages)
@@ -238,7 +236,6 @@ $(host_prefix)/share/config.site : config.site.in $(host_prefix)/.stamp_$(final_
             -e 's|@LDFLAGS@|$(strip $(host_LDFLAGS) $(host_$(release_type)_LDFLAGS))|' \
             -e 's|@no_zmq@|$(NO_ZMQ)|' \
             -e 's|@no_wallet@|$(NO_WALLET)|' \
-            -e 's|@no_bdb@|$(NO_BDB)|' \
             -e 's|@no_sqlite@|$(NO_SQLITE)|' \
             -e 's|@no_upnp@|$(NO_UPNP)|' \
             -e 's|@no_usdt@|$(NO_USDT)|' \
