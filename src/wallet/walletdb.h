@@ -37,9 +37,8 @@ struct WalletContext;
  *   batch update as well as methods to act on the database. It should be agnostic to the database implementation.
  *
  * The following classes are implementation specific:
- * - BerkeleyEnvironment is an environment in which the database exists.
- * - BerkeleyDatabase represents a wallet database.
- * - BerkeleyBatch is a low-level database batch update.
+ * - SQLiteDatabase represents a wallet database.
+ * - SQLiteBatch is a low-level database batch update.
  */
 
 static const bool DEFAULT_FLUSHWALLET = true;

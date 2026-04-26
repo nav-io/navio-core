@@ -48,8 +48,6 @@ class FilelockTest(BitcoinTestFramework):
                     expected_msg = "Error: Error initializing wallet database environment"
                 self.nodes[1].assert_start_raises_init_error(extra_args=[f'-walletdir={wallet_dir}', f'-wallet={wallet_name}', '-noserver'], expected_msg=expected_msg, match=ErrorMatch.PARTIAL_REGEX)
 
-            if self.is_bdb_compiled():
-                check_wallet_filelock(False)
             if self.is_sqlite_compiled():
                 check_wallet_filelock(True)
 

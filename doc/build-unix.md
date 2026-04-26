@@ -54,12 +54,7 @@ SQLite is required for the descriptor wallet:
 
     sudo apt install libsqlite3-dev
 
-Berkeley DB is only required for the legacy wallet. Ubuntu and Debian have their own `libdb-dev` and `libdb++-dev` packages,
-but these will install Berkeley DB 5.3 or later. This will break binary wallet compatibility with the distributed
-executables, which are based on BerkeleyDB 4.8. If you do not care about wallet compatibility, pass
-`--with-incompatible-bdb` to configure. Otherwise, you can build Berkeley DB [yourself](#berkeley-db).
-
-To build Bitcoin Core without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
+To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
 
 Optional port mapping libraries (see: `--with-miniupnpc` and `--with-natpmp`):
 
@@ -72,28 +67,6 @@ ZMQ dependencies (provides ZMQ API):
 User-Space, Statically Defined Tracing (USDT) dependencies:
 
     sudo apt install systemtap-sdt-dev
-
-GUI dependencies:
-
-If you want to build navio-qt, make sure that the required packages for Qt development
-are installed. Qt 5 is necessary to build the GUI.
-To build without GUI pass `--without-gui`.
-
-To build with Qt 5 you need the following:
-
-    sudo apt-get install libqt5gui5 libqt5core5a libqt5dbus5 qttools5-dev qttools5-dev-tools
-
-Additionally, to support Wayland protocol for modern desktop environments:
-
-    sudo apt install qtwayland5
-
-libqrencode (optional) can be installed with:
-
-    sudo apt-get install libqrencode-dev
-
-Once these are installed, they will be found by configure and a navio-qt executable will be
-built by default.
-
 
 ### Fedora
 
@@ -111,12 +84,7 @@ SQLite is required for the descriptor wallet:
 
     sudo dnf install sqlite-devel
 
-Berkeley DB is only required for the legacy wallet. Fedora releases have only `libdb-devel` and `libdb-cxx-devel` packages, but these will install
-Berkeley DB 5.3 or later. This will break binary wallet compatibility with the distributed executables, which
-are based on Berkeley DB 4.8. If you do not care about wallet compatibility,
-pass `--with-incompatible-bdb` to configure. Otherwise, you can build Berkeley DB [yourself](#berkeley-db).
-
-To build Bitcoin Core without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
+To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
 
 Optional port mapping libraries (see: `--with-miniupnpc` and `--with-natpmp`):
 
@@ -130,55 +98,11 @@ User-Space, Statically Defined Tracing (USDT) dependencies:
 
     sudo dnf install systemtap-sdt-devel
 
-GUI dependencies:
-
-If you want to build navio-qt, make sure that the required packages for Qt development
-are installed. Qt 5 is necessary to build the GUI.
-To build without GUI pass `--without-gui`.
-
-To build with Qt 5 you need the following:
-
-    sudo dnf install qt5-qttools-devel qt5-qtbase-devel
-
-Additionally, to support Wayland protocol for modern desktop environments:
-
-    sudo dnf install qt5-qtwayland
-
-libqrencode (optional) can be installed with:
-
-    sudo dnf install qrencode-devel
-
-Once these are installed, they will be found by configure and a navio-qt executable will be
-built by default.
-
 ## Dependencies
 
 See [dependencies.md](dependencies.md) for a complete overview, and
 [depends](/depends/README.md) on how to compile them yourself, if you wish to
 not use the packages of your Linux distribution.
-
-### Berkeley DB
-
-The legacy wallet uses Berkeley DB. To ensure backwards compatibility it is
-recommended to use Berkeley DB 4.8. If you have to build it yourself, and don't
-want to use any other libraries built in depends, you can do:
-```bash
-make -C depends NO_BOOST=1 NO_LIBEVENT=1 NO_SQLITE=1 NO_NATPMP=1 NO_UPNP=1 NO_ZMQ=1 NO_USDT=1
-...
-to: /path/to/bitcoin/depends/x86_64-pc-linux-gnu
-```
-and configure using the following:
-```bash
-export BDB_PREFIX="/path/to/bitcoin/depends/x86_64-pc-linux-gnu"
-
-./configure \
-    BDB_LIBS="-L${BDB_PREFIX}/lib -ldb_cxx-4.8" \
-    BDB_CFLAGS="-I${BDB_PREFIX}/include"
-```
-
-**Note**: Make sure that `BDB_PREFIX` is an absolute path.
-
-**Note**: You only need Berkeley DB if the legacy wallet is enabled (see [*Disable-wallet mode*](#disable-wallet-mode)).
 
 Disable-wallet mode
 --------------------
@@ -187,7 +111,7 @@ be compiled in disable-wallet mode with:
 
     ./configure --disable-wallet
 
-In this case there is no dependency on SQLite or Berkeley DB.
+In this case there is no dependency on SQLite.
 
 Mining is also possible in disable-wallet mode using the `getblocktemplate` RPC call.
 
@@ -210,4 +134,3 @@ This example lists the steps necessary to setup and build a command line only di
     make check
     ./src/naviod
 
-If you intend to work with legacy Berkeley DB wallets, see [Berkeley DB](#berkeley-db) section.
