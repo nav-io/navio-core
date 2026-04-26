@@ -2225,7 +2225,6 @@ RPCHelpMan decodeblsctrawtransaction()
 
                 output_obj.pushKV("blinding_key", HexStr(output.blindingKey.GetVch()));
                 output_obj.pushKV("gamma", HexStr(output.gamma.GetVch()));
-                output_obj.pushKV("spending_key", "");
 
                 std::shared_ptr<wallet::CWallet> const wallet = wallet::GetWalletForJSONRPCRequest(request);
                 if (wallet) {
