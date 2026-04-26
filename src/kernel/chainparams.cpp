@@ -153,11 +153,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.posLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
-        consensus.nPosTargetTimespan = 30 * 60;
+        consensus.nPosTargetTimespan = 60 * 60;
         consensus.nPosTargetSpacing = 2 * 60;
-        consensus.nBLSCTBlockReward = 4 * COIN * (consensus.nPosTargetSpacing / 30);
-        consensus.nBLSCTFirstBlockReward = 75000000 * COIN;
-        consensus.nModifierInterval = 10 * 60;
+        consensus.nBLSCTBlockReward = 2 * COIN * (consensus.nPosTargetSpacing / 30);
+        consensus.nBLSCTFirstBlockReward = 81743678 * COIN;
+        consensus.nModifierInterval = 20 * 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
         consensus.fPosNoRetargeting = false;

@@ -77,6 +77,12 @@ static void ParseBLSCTRecipients(const UniValue& address_amounts, const UniValue
     }
 }
 
+template <typename Scalar>
+static std::string FormatRecoveredGamma(const Scalar& gamma)
+{
+    return gamma.IsZero() ? "" : HexStr(gamma.GetVch());
+}
+
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose)
 {
     // This should always try to sign, if we don't have private keys, don't try to do anything here.
@@ -2376,7 +2382,7 @@ static RPCHelpMan getblsctrecoverydata()
                         const auto& recovery_data = recovery_result.amounts[0];
                         output.pushKV("amount", ValueFromAmount(recovery_data.amount));
                         output.pushKV("amount_navoshi", recovery_data.amount);
-                        output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
+                        output.pushKV("gamma", blsct::FormatRecoveredGamma(recovery_data.gamma));
                         output.pushKV("message", recovery_data.message);
                     } else {
                         output.pushKV("amount", ValueFromAmount(0));
@@ -2395,7 +2401,7 @@ static RPCHelpMan getblsctrecoverydata()
                 const auto& recovery_data = wallet_output_ptr->blsctRecoveryData;
                 output.pushKV("amount", ValueFromAmount(recovery_data.amount));
                 output.pushKV("amount_navoshi", recovery_data.amount);
-                output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
+                output.pushKV("gamma", blsct::FormatRecoveredGamma(recovery_data.gamma));
                 output.pushKV("message", recovery_data.message);
 
                 outputs.push_back(output);
@@ -2419,7 +2425,7 @@ static RPCHelpMan getblsctrecoverydata()
                     auto recovery_data = wallet_tx_ptr->GetBLSCTRecoveryData(i);
                     output.pushKV("amount", ValueFromAmount(recovery_data.amount));
                     output.pushKV("amount_navoshi", recovery_data.amount);
-                    output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
+                    output.pushKV("gamma", blsct::FormatRecoveredGamma(recovery_data.gamma));
                     output.pushKV("message", recovery_data.message);
 
                     outputs.push_back(output);
@@ -2550,7 +2556,7 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
                 if (recovery_override) {
                     output.pushKV("amount", ValueFromAmount(recovery_override->amount));
                     output.pushKV("amount_navoshi", recovery_override->amount);
-                    output.pushKV("gamma", HexStr(recovery_override->gamma.GetVch()));
+                    output.pushKV("gamma", blsct::FormatRecoveredGamma(recovery_override->gamma));
                     output.pushKV("message", recovery_override->message);
                 } else {
                     // Use the specified nonce for recovery
@@ -2559,7 +2565,7 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
                         auto recovery_data = recovery_result.amounts[0];
                         output.pushKV("amount", ValueFromAmount(recovery_data.amount));
                         output.pushKV("amount_navoshi", recovery_data.amount);
-                        output.pushKV("gamma", HexStr(recovery_data.gamma.GetVch()));
+                        output.pushKV("gamma", blsct::FormatRecoveredGamma(recovery_data.gamma));
                         output.pushKV("message", recovery_data.message);
                     } else {
                         // Recovery failed with specified nonce

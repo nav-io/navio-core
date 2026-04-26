@@ -49,7 +49,8 @@ class BLSCTBlockRPCTest(BitcoinTestFramework):
         )
         funded_tx = wallet.fundblsctrawtransaction(raw_tx)
         decoded_funded = wallet.decodeblsctrawtransaction(funded_tx)
-        expected_fee = Decimal(decoded_funded["fee"]) / COIN
+        expected_fee_navoshi = decoded_funded["fee"]
+        expected_fee = Decimal(expected_fee_navoshi) / COIN
 
         signed_tx = wallet.signblsctrawtransaction(funded_tx)
         txid = node.sendrawtransaction(signed_tx)
@@ -62,10 +63,10 @@ class BLSCTBlockRPCTest(BitcoinTestFramework):
             assert_equal(tx["fee"], expected_fee)
 
         stats = node.getblockstats(blockhash, ["totalfee", "avgfee", "minfee", "maxfee"])
-        assert_equal(stats["totalfee"], expected_fee)
-        assert_equal(stats["avgfee"], expected_fee)
-        assert_equal(stats["minfee"], expected_fee)
-        assert_equal(stats["maxfee"], expected_fee)
+        assert_equal(stats["totalfee"], expected_fee_navoshi)
+        assert_equal(stats["avgfee"], expected_fee_navoshi)
+        assert_equal(stats["minfee"], expected_fee_navoshi)
+        assert_equal(stats["maxfee"], expected_fee_navoshi)
 
 
 if __name__ == "__main__":

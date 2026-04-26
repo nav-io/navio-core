@@ -286,7 +286,9 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     coinbaseTx.vout[0] = out.out;
     coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
     pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
-    if (pblock->vtx.size() > 1) {
+    // Preserve the original txid when there is only a single non-coinbase tx.
+    // Aggregation is only needed when there is more than one tx to merge.
+    if (pblock->vtx.size() > 2) {
         std::vector<CTransactionRef> vToAggregate(pblock->vtx.begin() + 1, pblock->vtx.begin() + pblock->vtx.size());
         auto aggregatedTx = blsct::AggregateTransactions(vToAggregate);
         pblock->vtx.resize(1);

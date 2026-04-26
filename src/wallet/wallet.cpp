@@ -1155,7 +1155,11 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
             auto blsct_man = GetBLSCTKeyMan();
             if (blsct_man) {
                 auto try_store_recovery = [&](const auto& result) {
-                    if (result.is_completed && !result.amounts.empty()) {
+                    // RecoverOutputs can return a zeroed placeholder when the wallet
+                    // can parse the output but lacks the correct recovery path. Do
+                    // not treat that as success or it will suppress the watch-only
+                    // nonce fallback for imported HTLC scripts.
+                    if (result.is_completed && !result.amounts.empty() && !result.amounts[0].gamma.IsZero()) {
                         wout.blsctRecoveryData = result.amounts[0];
                         has_recovery_data = true;
                     }
@@ -1324,7 +1328,31 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
             if (result.is_completed) {
                 auto xs = result.amounts;
                 for (auto& res : xs) {
-                    wtx.blsctRecoveryData[res.id] = res;
+                    if (!res.gamma.IsZero()) {
+                        wtx.blsctRecoveryData[res.id] = res;
+                    }
+                }
+            }
+
+            for (size_t i = 0; i < wtx.tx->vout.size(); ++i) {
+                if (wtx.blsctRecoveryData.count(i) != 0) {
+                    continue;
+                }
+
+                if (!wtx.tx->vout[i].HasBLSCTRangeProof()) {
+                    continue;
+                }
+
+                const auto watch_only_nonce = blsct_man->GetWatchOnlyRecoveryNonce(wtx.tx->vout[i].scriptPubKey);
+                if (!watch_only_nonce) {
+                    continue;
+                }
+
+                auto nonce_result = blsct_man->RecoverOutputsWithNonce({wtx.tx->vout[i]}, watch_only_nonce->GetG1Point());
+                if (nonce_result.is_completed && !nonce_result.amounts.empty() && !nonce_result.amounts[0].gamma.IsZero()) {
+                    auto recovered = nonce_result.amounts[0];
+                    recovered.id = i;
+                    wtx.blsctRecoveryData[i] = recovered;
                 }
             }
         }
