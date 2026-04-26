@@ -305,7 +305,7 @@ struct InputStack {
     //! Data elements.
     std::vector<std::vector<unsigned char>> stack;
     //! Construct an empty stack (valid).
-    InputStack() {}
+    InputStack() = default;
     //! Construct a valid single-element stack (with an element up to 75 bytes).
     InputStack(std::vector<unsigned char> in) : size(in.size() + 1), stack(Vector(std::move(in))) {}
     //! Change availability
@@ -1714,7 +1714,7 @@ enum class ParseContext {
     CLOSE_BRACKET,
 };
 
-int FindNextChar(Span<const char> in, const char m);
+int FindNextChar(Span<const char> in, char m);
 
 /** Parse a key string ending at the end of the fragment's text representation. */
 template<typename Key, typename Ctx>

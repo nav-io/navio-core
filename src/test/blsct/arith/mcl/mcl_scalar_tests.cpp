@@ -346,7 +346,7 @@ BOOST_AUTO_TEST_CASE(test_get_bits)
     auto u = uint256(n_vec);
     Scalar s(u);
 
-    std::string exp = n_bin;
+    const std::string& exp = n_bin;
     auto bs = s.ToBinaryVec();
 
     BOOST_CHECK(bs.size() == exp.size());

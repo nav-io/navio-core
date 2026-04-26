@@ -13,7 +13,7 @@
 #include <array> // For std::begin and std::end.
 #include <bit>
 
-#include <stdint.h>
+#include <cstdint>
 
 void KeccakF(uint64_t (&st)[25])
 {

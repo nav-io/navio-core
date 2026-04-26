@@ -59,7 +59,7 @@ public:
     uint256 blockhash;
     std::vector<CTransactionRef> txn;
 
-    BlockTransactions() {}
+    BlockTransactions() = default;
     explicit BlockTransactions(const BlockTransactionsRequest& req) :
         blockhash(req.blockhash), txn(req.indexes.size()) {}
 
@@ -108,7 +108,7 @@ public:
     blsct::ProofOfStake posProof;
 
     // Dummy for deserialization
-    CBlockHeaderAndShortTxIDs() {}
+    CBlockHeaderAndShortTxIDs() = default;
 
     CBlockHeaderAndShortTxIDs(const CBlock& block);
 

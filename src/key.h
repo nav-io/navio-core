@@ -75,6 +75,7 @@ public:
 
     CKey& operator=(const CKey& other)
     {
+        if (this == &other) return *this;
         if (other.keydata) {
             MakeKeyData();
             *keydata = *other.keydata;

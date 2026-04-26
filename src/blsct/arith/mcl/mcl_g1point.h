@@ -49,8 +49,8 @@ public:
     const Underlying& GetUnderlying() const;
 
     static MclG1Point GetBasePoint();
-    static MclG1Point MapToPoint(const std::vector<uint8_t>& vec, const Endianness e = Endianness::Little);
-    static MclG1Point MapToPoint(const std::string& s, const Endianness e = Endianness::Little);
+    static MclG1Point MapToPoint(const std::vector<uint8_t>& vec, Endianness e = Endianness::Little);
+    static MclG1Point MapToPoint(const std::string& s, Endianness e = Endianness::Little);
     static MclG1Point HashAndMap(const std::vector<uint8_t>& vec);
     static MclG1Point Rand();
 
@@ -63,7 +63,7 @@ public:
     std::string GetString(const uint8_t& radix = 16) const;
     void SetString(const std::string& hex);
 
-    Scalar GetHashWithSalt(const uint64_t salt) const;
+    Scalar GetHashWithSalt(uint64_t salt) const;
 
     template <typename Stream>
     void Serialize(Stream& s) const

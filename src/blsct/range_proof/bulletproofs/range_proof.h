@@ -27,7 +27,7 @@ struct RangeProof: public range_proof::ProofBase<T> {
     using Scalar = typename T::Scalar;
     using Points = Elements<Point>;
 
-    RangeProof(){};
+    RangeProof()= default;
 
     // RangeProof<T>(const RangeProof<T>& proof) : Vs(proof.Vs, proof.Ls, proof.Rs), A(proof.A), S(proof.S), T1(proof.T1), T2(proof.T2), mu(proof.mu), tau_x(proof.tau_x), a(proof.a), b(proof.b), t_hat(proof.t_hat){};
 
@@ -86,7 +86,7 @@ struct RangeProofWithSeed : public RangeProof<T> {
 
     RangeProofWithSeed(const RangeProof<T>& proof) : RangeProof<T>(proof), seed(TokenId()), min_value(0){};
 
-    RangeProofWithSeed(){};
+    RangeProofWithSeed()= default;
 
     bool operator==(const RangeProofWithSeed<T>& other) const;
     bool operator!=(const RangeProofWithSeed<T>& other) const;

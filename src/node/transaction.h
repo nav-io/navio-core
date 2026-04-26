@@ -57,7 +57,7 @@ static const CFeeRate DEFAULT_MAX_RAW_TX_FEE_RATE{COIN / 10};
  * @param[out] hashBlock       The block hash, if the tx was found via -txindex or block_index
  * @returns                    The tx if found, otherwise nullptr
  */
-CTransactionRef GetTransaction(const CBlockIndex* const block_index, const CTxMemPool* const mempool, const uint256& hash, uint256& hashBlock, const BlockManager& blockman);
+CTransactionRef GetTransaction(const CBlockIndex* block_index, const CTxMemPool* mempool, const uint256& hash, uint256& hashBlock, const BlockManager& blockman);
 } // namespace node
 
 #endif // BITCOIN_NODE_TRANSACTION_H

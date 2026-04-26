@@ -24,8 +24,7 @@
 #include <vector>
 
 CZMQNotificationInterface::CZMQNotificationInterface()
-{
-}
+= default;
 
 CZMQNotificationInterface::~CZMQNotificationInterface()
 {

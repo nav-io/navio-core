@@ -374,15 +374,15 @@ BOOST_AUTO_TEST_CASE(updatecoins_simulation_test)
                     auto utxod = FindRandomFrom(disconnected_coins);
                     tx = CMutableTransaction{std::get<0>(utxod->second)};
                     prevout = tx.vin[0].prevout;
-                    if (!CTransaction(tx).IsCoinBase() && !utxoset.count(prevout)) {
+                    if (!CTransaction(tx).IsCoinBase() && !utxoset.contains(prevout)) {
                         disconnected_coins.erase(utxod->first);
                         continue;
                     }
 
                     // If this tx is already IN the UTXO, then it must be a coinbase, and it must be a duplicate
-                    if (utxoset.count(utxod->first)) {
+                    if (utxoset.contains(utxod->first)) {
                         assert(CTransaction(tx).IsCoinBase());
-                        assert(duplicate_coins.count(utxod->first));
+                        assert(duplicate_coins.contains(utxod->first));
                     }
                     disconnected_coins.erase(utxod->first);
                 }
@@ -405,7 +405,7 @@ BOOST_AUTO_TEST_CASE(updatecoins_simulation_test)
 
                 // The test is designed to ensure spending a duplicate coinbase will work properly
                 // if that ever happens and not resurrect the previously overwritten coinbase
-                if (duplicate_coins.count(prevout)) {
+                if (duplicate_coins.contains(prevout)) {
                     spent_a_duplicate_coinbase = true;
                 }
 
@@ -781,6 +781,7 @@ template <typename... Args>
 static void CheckAddCoin(Args&&... args)
 {
     for (const CAmount base_value : {ABSENT, SPENT, VALUE1})
+        // NOLINTNEXTLINE(bugprone-use-after-move)
         CheckAddCoinBase(base_value, std::forward<Args>(args)...);
 }
 

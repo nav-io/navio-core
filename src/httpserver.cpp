@@ -316,7 +316,7 @@ static void http_request_cb(struct evhttp_request* req, void* arg)
         if (i->exactMatch)
             match = (strURI == i->prefix);
         else
-            match = (strURI.substr(0, i->prefix.size()) == i->prefix);
+            match = (strURI.starts_with(i->prefix));
         if (match) {
             path = strURI.substr(i->prefix.size());
             break;
@@ -328,7 +328,7 @@ static void http_request_cb(struct evhttp_request* req, void* arg)
         std::unique_ptr<HTTPWorkItem> item(new HTTPWorkItem(std::move(hreq), path, i->handler));
         assert(g_work_queue);
         if (g_work_queue->Enqueue(item.get())) {
-            item.release(); /* if true, queue took ownership */
+            (void)item.release(); /* if true, queue took ownership */
         } else {
             LogPrintf("WARNING: request rejected because http work queue depth exceeded, it can be increased with the -rpcworkqueue= setting\n");
             item->req->WriteReply(HTTP_SERVICE_UNAVAILABLE, "Work queue depth exceeded");

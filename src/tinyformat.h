@@ -508,7 +508,7 @@ class FormatArg
 {
     public:
         FormatArg()
-        { }
+        = default;
 
         template<typename T>
         explicit FormatArg(const T& value)

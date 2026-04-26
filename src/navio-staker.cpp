@@ -251,6 +251,7 @@ public:
     }
 };
 
+// NOLINTNEXTLINE(misc-no-recursion)
 static UniValue CallRPC(BaseRequestHandler* rh, const std::string& strMethod, const std::vector<std::string>& args, const std::optional<std::string>& rpcwallet = {})
 {
     std::string host;
@@ -327,7 +328,7 @@ static UniValue CallRPC(BaseRequestHandler* rh, const std::string& strMethod, co
         }
     }
     int r = evhttp_make_request(evcon.get(), req.get(), EVHTTP_REQ_POST, endpoint.c_str());
-    req.release(); // ownership moved to evcon in above call
+    (void)req.release(); // ownership moved to evcon in above call
     if (r != 0) {
         throw CConnectionFailed("send http request failed");
     }
@@ -482,7 +483,7 @@ void Setup()
     LogInstance().m_print_to_file = !gArgs.IsArgNegated("-debuglogfile");
     LogInstance().m_file_path = AbsPathForConfigVal(gArgs, gArgs.GetPathArg("-debuglogfile", DEFAULT_LOGFILE));
     LogInstance().m_print_to_console = gArgs.GetBoolArg("-printtoconsole", true);
-    SetLoggingCategories(gArgs);
+    (void)SetLoggingCategories(gArgs);
 
     if (gArgs.GetBoolArg("-stdinrpcpass", false)) {
         NO_STDIN_ECHO();

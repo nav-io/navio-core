@@ -40,7 +40,7 @@ constexpr size_t DOUBLE_PUBKEY_ENC_SIZE = 2 + 1 + bech32_mod::DOUBLE_PUBKEY_DATA
 /** Encode DoublePublicKey to Bech32 or Bech32m string. Encoding must be one of BECH32 or BECH32M. */
 std::string EncodeDoublePublicKey(
     const CChainParams& params,
-    const bech32_mod::Encoding encoding,
+    bech32_mod::Encoding encoding,
     const blsct::DoublePublicKey& dpk
 );
 

@@ -31,7 +31,7 @@ using Prover = SetMemProofProver<Arith>;
 
 BOOST_AUTO_TEST_CASE(test_extend_ys)
 {
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
     {
         Points ys;
         auto ys2 = Prover::ExtendYs(setup, ys, 1);
@@ -88,7 +88,7 @@ BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_good_inputs_of_power_of_2)
     auto y2 = Point::MapToPoint("y2", Endianness::Little);
     auto y4 = Point::MapToPoint("y4", Endianness::Little);
 
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
     range_proof::Generators<Arith> gen =
         setup.Gf().GetInstance(TokenId());
 
@@ -119,7 +119,7 @@ BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_good_inputs_of_non_power_of_2)
     auto y1 = Point::MapToPoint("y1", Endianness::Little);
     auto y2 = Point::MapToPoint("y2", Endianness::Little);
 
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
     range_proof::Generators<Arith> gen =
         setup.Gf().GetInstance(TokenId());
 
@@ -150,7 +150,7 @@ BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_sigma_not_included)
     auto y2 = Point::MapToPoint("y2", Endianness::Little);
     auto y4 = Point::MapToPoint("y4", Endianness::Little);
 
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
     range_proof::Generators<Arith> gen =
         setup.Gf().GetInstance(TokenId());
 
@@ -185,7 +185,7 @@ BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_sigma_not_included)
 
 BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_sigma_generated_from_other_inputs)
 {
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
     range_proof::Generators<Arith> gen =
         setup.Gf().GetInstance(TokenId());
 
@@ -234,7 +234,7 @@ BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_sigma_in_different_pos)
     auto y2 = Point::MapToPoint("y2", Endianness::Little);
     auto y3 = Point::MapToPoint("y4", Endianness::Little);
 
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
     range_proof::Generators<Arith> gen =
         setup.Gf().GetInstance(TokenId());
 
@@ -273,7 +273,7 @@ BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_different_eta)
     auto y2 = Point::MapToPoint("y2", Endianness::Little);
     auto y4 = Point::MapToPoint("y4", Endianness::Little);
 
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
     range_proof::Generators<Arith> gen =
         setup.Gf().GetInstance(TokenId());
 
@@ -311,7 +311,7 @@ BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_same_sigma_different_ys)
     auto y2_2 = Point::MapToPoint("y2_2", Endianness::Little);
     auto y4_2 = Point::MapToPoint("y4_2", Endianness::Little);
 
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
     range_proof::Generators<Arith> gen =
         setup.Gf().GetInstance(TokenId());
 
@@ -347,7 +347,7 @@ BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_same_sigma_different_ys)
 
 BOOST_AUTO_TEST_CASE(test_prove_verify_large_size_input)
 {
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
     range_proof::Generators<Arith> gen =
         setup.Gf().GetInstance(TokenId());
     Scalar m = Scalar::Rand();
@@ -404,7 +404,7 @@ static bulletproofs_plus::RangeProof<Arith> CreateTokenIdRangeProof(
 
 BOOST_AUTO_TEST_CASE(test_pos_scenario)
 {
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
 
     auto value = Scalar(12345);
     auto nonce = Point::Rand();

@@ -45,7 +45,7 @@ void ReplaceAll(std::string& in_out, const std::string& search, const std::strin
 
 [[nodiscard]] inline std::string_view RemovePrefixView(std::string_view str, std::string_view prefix)
 {
-    if (str.substr(0, prefix.size()) == prefix) {
+    if (str.starts_with(prefix)) {
         return str.substr(prefix.size());
     }
     return str;
@@ -65,6 +65,7 @@ void ReplaceAll(std::string& in_out, const std::string& search, const std::strin
  * @param unary_op  Apply this operator to each item
  */
 template <typename C, typename S, typename UnaryOp>
+// NOLINTNEXTLINE(misc-no-recursion)
 auto Join(const C& container, const S& separator, UnaryOp unary_op)
 {
     decltype(unary_op(*container.begin())) ret;
