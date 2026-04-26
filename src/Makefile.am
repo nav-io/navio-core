@@ -1278,7 +1278,7 @@ lib_LTLIBRARIES += $(LIBBITCOINKERNEL)
 
 libnaviokernel_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS) $(PTHREAD_FLAGS)
 libnaviokernel_la_LIBADD = $(LIBBITCOIN_CRYPTO) $(LIBLEVELDB) $(LIBMEMENV) $(LIBSECP256K1) $(LIBBLS) $(LIBMCL)
-libnaviokernel_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include $(BLS_INCLUDES) -DBUILD_BITCOIN_INTERNAL $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS)
+libnaviokernel_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include $(BLS_INCLUDES) -DBUILD_BITCOIN_INTERNAL -DBUILD_BITCOIN_KERNEL_LIB $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS)
 
 # libnaviokernel requires default symbol visibility, explicitly specify that
 # here so that things still work even when user configures with

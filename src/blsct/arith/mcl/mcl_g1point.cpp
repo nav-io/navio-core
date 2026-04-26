@@ -305,7 +305,11 @@ void MclG1Point::BatchNormalize(std::span<MclG1Point* const> pts)
 // of the minimal libblsct.a or libnavioconsensus.la public API surface.
 // Compile it out of those reduced builds; it is only consumed by full-node
 // code paths (e.g. pos/proof.h::Unserialize) which always link random.cpp.
-#if !defined(LIBBLSCT) && !defined(BUILD_BITCOIN_INTERNAL)
+// libnaviokernel.la also defines BUILD_BITCOIN_INTERNAL but pulls in the
+// blockstorage/validation/core_read TUs that instantiate the Unserialize
+// template, so it needs BatchCheckSubgroup; it links random.cpp, so it is
+// safe to compile in. We distinguish it via BUILD_BITCOIN_KERNEL_LIB.
+#if !defined(LIBBLSCT) && (!defined(BUILD_BITCOIN_INTERNAL) || defined(BUILD_BITCOIN_KERNEL_LIB))
 bool MclG1Point::BatchCheckSubgroup(std::span<const MclG1Point> pts)
 {
     if (pts.empty()) return true;
@@ -343,7 +347,7 @@ bool MclG1Point::BatchCheckSubgroup(std::span<const MclG1Point> pts)
     if (mclBnG1_isZero(&combined)) return true;
     return mclBnG1_isValidOrder(&combined) == 1;
 }
-#endif // !LIBBLSCT && !BUILD_BITCOIN_INTERNAL
+#endif // !LIBBLSCT && (!BUILD_BITCOIN_INTERNAL || BUILD_BITCOIN_KERNEL_LIB)
 
 std::string MclG1Point::GetString(const uint8_t& radix) const
 {
