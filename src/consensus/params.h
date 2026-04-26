@@ -126,6 +126,17 @@ struct Params {
     /** Whether BLSCT is activated */
     bool fBLSCT;
     /**
+     * Whether PoPS anti-grinding hardening is active:
+     *  - block time is bucketed into POPS_TIME_GRANULARITY_SECONDS intervals
+     *    before entering the kernel hash
+     *  - accumulated chain work (nChainWork) is bound into the kernel hash
+     *    so grinding on one private fork does not carry over to another
+     * Set true on mainnet and any network that shares its stake set; set
+     * false on testnet/regtest to allow existing chain state that predates
+     * the hardening to keep validating.
+     */
+    bool fPoPSHardened{true};
+    /**
      * Hard finality checkpoints. (height -> expected block hash).
      * Any fork whose block at a listed height has a different hash is
      * rejected, regardless of accumulated work. Populated per-release from

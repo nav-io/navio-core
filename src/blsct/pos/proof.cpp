@@ -19,7 +19,7 @@ using SetProof = SetMemProof<Arith>;
 using SetProver = SetMemProofProver<Arith>;
 
 namespace blsct {
-ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target)
+ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, bool hardened)
 {
     range_proof::GeneratorsFactory<Mcl> gf;
     range_proof::Generators<Arith> gen = gf.GetInstance(TokenId());
@@ -37,7 +37,7 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
 
     setMemProof = SetProver::Prove(setup, staked_commitments, sigma, m, f, eta_fiat_shamir, eta_phi);
 
-    auto kernel_hash = CalculateKernelHash(prev_time, stake_modifier, time);
+    auto kernel_hash = CalculateKernelHash(prev_time, stake_modifier, time, hardened);
     uint256 min_value = CalculateMinValue(kernel_hash, next_target);
     uint64_t min_value_u64 = SaturateToU64(min_value);
 

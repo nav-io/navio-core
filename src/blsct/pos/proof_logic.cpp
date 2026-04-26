@@ -41,7 +41,7 @@ bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* 
     auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindexPrev);
     auto eta_phi = blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, block);
 
-    auto kernel_hash = blsct::CalculateKernelHash(pindexPrev, block);
+    auto kernel_hash = blsct::CalculateKernelHash(pindexPrev, block, params);
     auto next_target = blsct::GetNextTargetRequired(pindexPrev, &block, params);
 
     // Consensus-level sanity check: reject blocks whose saturating min-value

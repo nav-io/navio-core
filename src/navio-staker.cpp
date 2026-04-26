@@ -785,10 +785,15 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
     proposal.hashPrevBlock = uint256S(result.find_value("previousblockhash").get_str());
     proposal.vtx = UniValueArrayToTransactions(result.find_value("transactions").get_array());
 
-    proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, proposal.nTime, next_target);
+    // Match consensus: testnet runs with PoPS hardening disabled (raw time,
+    // no chain-work binding) to keep validating its historical chain; other
+    // networks run with hardening on. Chain type is set at startup via
+    // SelectBaseParams(gArgs.GetChainType()).
+    const bool hardened = (gArgs.GetChainType() != ChainType::TESTNET);
+    proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, proposal.nTime, next_target, hardened);
     proposal.hashMerkleRoot = BlockMerkleRoot(proposal);
 
-    auto valid = blsct::ProofOfStake(proposal.posProof).Verify(staked_elements, eta_fiat_shamir, eta_phi, blsct::CalculateKernelHash(prev_time, modifier, proposal.nTime), next_target);
+    auto valid = blsct::ProofOfStake(proposal.posProof).Verify(staked_elements, eta_fiat_shamir, eta_phi, blsct::CalculateKernelHash(prev_time, modifier, proposal.nTime, hardened), next_target);
 
     if (valid == blsct::ProofOfStake::VALID) return proposal;
 

@@ -2488,7 +2488,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     pindex->SetStakeModifier(nStakeModifier, fGeneratedStakeModifier);
 
     if (block.IsProofOfStake()) {
-        pindex->SetKernelHash(blsct::CalculateKernelHash(pindex->pprev, block));
+        pindex->SetKernelHash(blsct::CalculateKernelHash(pindex->pprev, block, params.GetConsensus()));
     }
 
 
@@ -2617,6 +2617,14 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     int nOutputs = 0;
     int64_t nSigOpsCost = 0;
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
+
+    // Collect range proofs from every BLSCT tx in this block, verify once after
+    // the per-tx loop. Bulletproofs++ batch verify parallelises via std::async
+    // per-proof, so a block-wide batch gives more proofs-in-flight and spreads
+    // thread-spawn cost over more work.
+    std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> blockBLSCTProofs;
+    blockBLSCTProofs.reserve(block.vtx.size() * 4);
+
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
         const CTransaction &tx = *(block.vtx[i]);
@@ -2685,7 +2693,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             if (tx.IsBLSCT()) {
                 if (params.GetConsensus().fBLSCT) {
                     int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
-                    if (!blsct::VerifyTx(tx, view, tx_state, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP)) {
+                    if (!blsct::VerifyTxCollectProofs(tx, view, tx_state, blockBLSCTProofs, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP)) {
                         state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                                       tx_state.GetRejectReason(), tx_state.GetDebugMessage());
                         return error("ConnectBlock(): VerifyTx on transaction %s %s failed with %s",
@@ -2723,11 +2731,20 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         auto blockReward = pindex->nHeight == 1 ? params.GetConsensus().nBLSCTFirstBlockReward : params.GetConsensus().nBLSCTBlockReward;
 
         int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
-        if (!blsct::VerifyTx(*block.vtx[0], view, tx_state, blockReward, 0, pindex->nHeight, nMTP)) {
+        if (!blsct::VerifyTxCollectProofs(*block.vtx[0], view, tx_state, blockBLSCTProofs, blockReward, 0, pindex->nHeight, nMTP)) {
             state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                           tx_state.GetRejectReason(), tx_state.GetDebugMessage());
             return error("ConnectBlock(): VerifyTx on coinbase of block %s failed (reward: %s)\n",
                          block.GetHash().ToString(), FormatMoney(blockReward));
+        }
+
+        // Single batched bulletproofs++ verify across every BLSCT tx in the
+        // block. Amortises std::async dispatch and lets the internal
+        // parallelism saturate available cores.
+        if (!blsct::VerifyCollectedRangeProofs(blockBLSCTProofs)) {
+            state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "failed-block-rangeproof-check");
+            return error("ConnectBlock(): batched range-proof verify failed for block %s",
+                         block.GetHash().ToString());
         }
     } else if (block.vtx[0]->GetValueOut() > blockReward) {
         LogPrintf("ERROR: ConnectBlock(): coinbase pays too much (actual=%d vs limit=%d)\n", block.vtx[0]->GetValueOut(), blockReward);

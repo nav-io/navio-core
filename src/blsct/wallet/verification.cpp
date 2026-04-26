@@ -94,38 +94,11 @@ bool VerifyTxCore(const CTransaction& tx,
 
     auto& gf = GetSharedGenFactory();
 
-    // Batched balance-key MSM. Every `gen.G * MclScalar(value)` contribution
-    // is staged here; we invoke one scalar-mul per (distinct tokenId, sign)
-    // by accumulating scalars that share the same generator.
-    //
-    // Points that are already committed (BLSCT coin commitments, staked
-    // commitments, incoming `balanceKey` seeds) are added directly since they
-    // are not scalar-mul results.
-    struct GenAccum {
-        MclG1Point G;
-        MclScalar pos; // sum of positive scalars
-        MclScalar neg; // sum of negative scalars
-        bool has_pos{false};
-        bool has_neg{false};
-    };
-    std::vector<GenAccum> gen_accums;
-    gen_accums.reserve(tx.vout.size() + tx.vin.size() + 2);
-
-    auto find_or_add_gen = [&](const TokenId& tid) -> GenAccum& {
-        range_proof::Generators<Mcl> gen = gf.GetInstance(tid);
-        for (auto& a : gen_accums) {
-            if (a.G == gen.G) return a;
-        }
-        gen_accums.push_back({gen.G, MclScalar(0), MclScalar(0), false, false});
-        return gen_accums.back();
-    };
-
     MclG1Point balanceKey;
 
     if (blockReward > 0) {
-        auto& a = find_or_add_gen(TokenId());
-        a.pos = a.has_pos ? (a.pos + MclScalar(blockReward)) : MclScalar(blockReward);
-        a.has_pos = true;
+        range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId());
+        balanceKey = (gen.G * MclScalar(blockReward));
     }
 
     std::vector<Message> vMessages;
@@ -175,12 +148,10 @@ bool VerifyTxCore(const CTransaction& tx,
             }
 
             if (coin.out.HasBLSCTRangeProof()) {
-                // Input commitment already a point; fold directly.
                 balanceKey = balanceKey + coin.out.blsctData.rangeProof.Vs[0];
             } else {
-                auto& a = find_or_add_gen(coin.out.tokenId);
-                a.pos = a.has_pos ? (a.pos + MclScalar(coin.out.nValue)) : MclScalar(coin.out.nValue);
-                a.has_pos = true;
+                range_proof::Generators<Mcl> gen = gf.GetInstance(coin.out.tokenId);
+                balanceKey = balanceKey + (gen.G * MclScalar(coin.out.nValue));
             }
         }
     }
@@ -203,18 +174,16 @@ bool VerifyTxCore(const CTransaction& tx,
             if (parsedPredicate.IsMintTokenPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
                 vMessages.emplace_back(out_hash.begin(), out_hash.end());
-                auto& a = find_or_add_gen(TokenId(parsedPredicate.GetPublicKey().GetHash()));
-                a.pos = a.has_pos ? (a.pos + MclScalar(parsedPredicate.GetAmount())) : MclScalar(parsedPredicate.GetAmount());
-                a.has_pos = true;
+                range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash()));
+                balanceKey = balanceKey + (gen.G * MclScalar(parsedPredicate.GetAmount()));
             } else if (parsedPredicate.IsCreateTokenPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
                 vMessages.emplace_back(out_hash.begin(), out_hash.end());
             } else if (parsedPredicate.IsMintNftPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
                 vMessages.emplace_back(out_hash.begin(), out_hash.end());
-                auto& a = find_or_add_gen(TokenId(parsedPredicate.GetPublicKey().GetHash(), parsedPredicate.GetNftId()));
-                a.pos = a.has_pos ? (a.pos + MclScalar(1)) : MclScalar(1);
-                a.has_pos = true;
+                range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash(), parsedPredicate.GetNftId()));
+                balanceKey = balanceKey + (gen.G * MclScalar(1));
             } else if (out.scriptPubKey.IsFee() && parsedPredicate.IsPayFeePredicate()) {
                 vMessages.emplace_back(blsct::Common::BLSCTFEE);
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
@@ -250,17 +219,9 @@ bool VerifyTxCore(const CTransaction& tx,
                 }
                 nFee = out.nValue;
             }
-            auto& a = find_or_add_gen(out.tokenId);
-            a.neg = a.has_neg ? (a.neg + MclScalar(out.nValue)) : MclScalar(out.nValue);
-            a.has_neg = true;
+            range_proof::Generators<Mcl> gen = gf.GetInstance(out.tokenId);
+            balanceKey = balanceKey - (gen.G * MclScalar(out.nValue));
         }
-    }
-
-    // Fold all accumulated (G, scalar) pairs into balanceKey with one scalar
-    // multiplication per distinct generator, instead of one per value.
-    for (const auto& a : gen_accums) {
-        if (a.has_pos) balanceKey = balanceKey + (a.G * a.pos);
-        if (a.has_neg) balanceKey = balanceKey - (a.G * a.neg);
     }
 
     vMessages.emplace_back(blsct::Common::BLSCTBALANCE);

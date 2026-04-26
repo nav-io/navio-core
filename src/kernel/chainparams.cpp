@@ -145,6 +145,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.CSVHeight = 419328;    // 000000000000000004a1b34462cb8aeebd5799177f7a29cf28f2d1961716b5b5
         consensus.SegwitHeight = 481824; // 0000000000000000001c8018d9cb3b742ef25114f27563e3fc4a1902167f9893
         consensus.fBLSCT = false;
+        consensus.fPoPSHardened = true;
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nLastPOWHeight = 1000;
         consensus.MinBIP9WarningHeight = 483840; // segwit activation height + miner confirmation window
@@ -188,11 +189,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
          * The characters are rarely used upper ASCII, not valid as UTF-8, and produce
          * a large 32-bit integer with any alignment.
          */
-        pchMessageStart[0] = 0xdb;
-        pchMessageStart[1] = 0xd2;
-        pchMessageStart[2] = 0xb1;
-        pchMessageStart[3] = 0xac;
-        nDefaultPort = 8333;
+        pchMessageStart[0] = 0xbd;
+        pchMessageStart[1] = 0x5f;
+        pchMessageStart[2] = 0xc3;
+        pchMessageStart[3] = 0x00;
+        nDefaultPort = 48470;
         nPruneAfterHeight = 100000;
         m_assumed_blockchain_size = 1;
         m_assumed_chain_state_size = 9;
@@ -283,6 +284,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.CSVHeight = 770112;    // 00000000025e930139bac5c6c31a403776da130831ab85be56578f3fa75369bb
         consensus.SegwitHeight = 834624; // 00000000002b980fcd729daaa248fd9316a5200e9b367f4ff2c42453e84201ca
         consensus.fBLSCT = true;
+        // Testnet predates PoPS hardening (time bucketing + chain-work binding
+        // in the kernel hash). Keep the legacy rule here so existing testnet
+        // block history validates; mainnet and other networks run with
+        // hardening enabled.
+        consensus.fPoPSHardened = false;
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nLastPOWHeight = 1000;
         consensus.MinBIP9WarningHeight = 836640; // segwit activation height + miner confirmation window
@@ -428,6 +434,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.CSVHeight = 1;
             consensus.SegwitHeight = 1;
             consensus.fBLSCT = false;
+            consensus.fPoPSHardened = true;
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nLastPOWHeight = 1000;
             consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
@@ -507,6 +514,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.CSVHeight = 1;    // Always active unless overridden
             consensus.SegwitHeight = 0; // Always active unless overridden
             consensus.fBLSCT = false;
+            consensus.fPoPSHardened = true;
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nLastPOWHeight = 1000;
             consensus.MinBIP9WarningHeight = 0;
@@ -647,6 +655,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.CSVHeight = 1;    // Always active unless overridden
             consensus.SegwitHeight = 0; // Always active unless overridden
             consensus.fBLSCT = true;
+            consensus.fPoPSHardened = true;
             consensus.nPePoSMinStakeAmount = 100 * COIN;
             consensus.nLastPOWHeight = 25000;
             consensus.MinBIP9WarningHeight = 0;
