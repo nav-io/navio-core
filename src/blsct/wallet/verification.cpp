@@ -54,24 +54,82 @@ public:
     }
 };
 
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast)
+namespace {
+// Shared RangeProofLogic/GeneratorsFactory. Both have guarded `inline static`
+// init internally, but stack-allocating them per-call still pays mutex + field
+// copy costs. One static instance per thread is cheap and thread-safe because
+// the underlying tables are immutable after init.
+//
+// NOTE: we intentionally take addresses-of rather than references so callers
+// that want to hoist use the same instances.
+range_proof::GeneratorsFactory<Mcl>& GetSharedGenFactory()
+{
+    static range_proof::GeneratorsFactory<Mcl> gf;
+    return gf;
+}
+
+bulletproofs_plus::RangeProofLogic<Mcl>& GetSharedRPLogic()
+{
+    static bulletproofs_plus::RangeProofLogic<Mcl> rp;
+    return rp;
+}
+
+// Core verification body. Collects range proofs into `out_proofs` for deferred
+// batch verification. If `verify_rp_inline` is true, the call also verifies
+// the collected proofs before returning — this matches the legacy VerifyTx
+// contract.
+bool VerifyTxCore(const CTransaction& tx,
+                  CCoinsViewCache& view,
+                  TxValidationState& state,
+                  std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
+                  const CAmount& blockReward,
+                  const CAmount& minStake,
+                  int nSpendHeight,
+                  int64_t nMedianTimePast,
+                  bool verify_rp_inline)
 {
     if (!view.HaveInputs(tx)) {
         return state.Invalid(TxValidationResult::TX_MISSING_INPUTS, "bad-inputs-unknown");
     }
 
-    range_proof::GeneratorsFactory<Mcl> gf;
-    bulletproofs_plus::RangeProofLogic<Mcl> rp;
-    std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> vProofs;
-    std::vector<Message> vMessages;
-    std::vector<PublicKey> vPubKeys;
+    auto& gf = GetSharedGenFactory();
+
+    // Batched balance-key MSM. Every `gen.G * MclScalar(value)` contribution
+    // is staged here; we invoke one scalar-mul per (distinct tokenId, sign)
+    // by accumulating scalars that share the same generator.
+    //
+    // Points that are already committed (BLSCT coin commitments, staked
+    // commitments, incoming `balanceKey` seeds) are added directly since they
+    // are not scalar-mul results.
+    struct GenAccum {
+        MclG1Point G;
+        MclScalar pos; // sum of positive scalars
+        MclScalar neg; // sum of negative scalars
+        bool has_pos{false};
+        bool has_neg{false};
+    };
+    std::vector<GenAccum> gen_accums;
+    gen_accums.reserve(tx.vout.size() + tx.vin.size() + 2);
+
+    auto find_or_add_gen = [&](const TokenId& tid) -> GenAccum& {
+        range_proof::Generators<Mcl> gen = gf.GetInstance(tid);
+        for (auto& a : gen_accums) {
+            if (a.G == gen.G) return a;
+        }
+        gen_accums.push_back({gen.G, MclScalar(0), MclScalar(0), false, false});
+        return gen_accums.back();
+    };
 
     MclG1Point balanceKey;
 
     if (blockReward > 0) {
-        range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId());
-        balanceKey = (gen.G * MclScalar(blockReward));
+        auto& a = find_or_add_gen(TokenId());
+        a.pos = a.has_pos ? (a.pos + MclScalar(blockReward)) : MclScalar(blockReward);
+        a.has_pos = true;
     }
+
+    std::vector<Message> vMessages;
+    std::vector<PublicKey> vPubKeys;
 
     if (!tx.IsCoinBase()) {
         for (const auto& in : tx.vin) {
@@ -116,11 +174,13 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
                 vMessages.emplace_back(in_hash.begin(), in_hash.end());
             }
 
-            if (coin.out.HasBLSCTRangeProof())
+            if (coin.out.HasBLSCTRangeProof()) {
+                // Input commitment already a point; fold directly.
                 balanceKey = balanceKey + coin.out.blsctData.rangeProof.Vs[0];
-            else {
-                range_proof::Generators<Mcl> gen = gf.GetInstance(coin.out.tokenId);
-                balanceKey = balanceKey + (gen.G * MclScalar(coin.out.nValue));
+            } else {
+                auto& a = find_or_add_gen(coin.out.tokenId);
+                a.pos = a.has_pos ? (a.pos + MclScalar(coin.out.nValue)) : MclScalar(coin.out.nValue);
+                a.has_pos = true;
             }
         }
     }
@@ -143,16 +203,18 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
             if (parsedPredicate.IsMintTokenPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
                 vMessages.emplace_back(out_hash.begin(), out_hash.end());
-                range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash()));
-                balanceKey = balanceKey + (gen.G * MclScalar(parsedPredicate.GetAmount()));
+                auto& a = find_or_add_gen(TokenId(parsedPredicate.GetPublicKey().GetHash()));
+                a.pos = a.has_pos ? (a.pos + MclScalar(parsedPredicate.GetAmount())) : MclScalar(parsedPredicate.GetAmount());
+                a.has_pos = true;
             } else if (parsedPredicate.IsCreateTokenPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
                 vMessages.emplace_back(out_hash.begin(), out_hash.end());
             } else if (parsedPredicate.IsMintNftPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
                 vMessages.emplace_back(out_hash.begin(), out_hash.end());
-                range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash(), parsedPredicate.GetNftId()));
-                balanceKey = balanceKey + (gen.G * MclScalar(1));
+                auto& a = find_or_add_gen(TokenId(parsedPredicate.GetPublicKey().GetHash(), parsedPredicate.GetNftId()));
+                a.pos = a.has_pos ? (a.pos + MclScalar(1)) : MclScalar(1);
+                a.has_pos = true;
             } else if (out.scriptPubKey.IsFee() && parsedPredicate.IsPayFeePredicate()) {
                 vMessages.emplace_back(blsct::Common::BLSCTFEE);
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
@@ -169,7 +231,7 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
 
         if (out.HasBLSCTRangeProof()) {
             bulletproofs_plus::RangeProofWithSeed<Mcl> proof{out.blsctData.rangeProof, out.tokenId};
-            vProofs.emplace_back(proof);
+            out_proofs.emplace_back(proof);
             balanceKey = balanceKey - out.blsctData.rangeProof.Vs[0];
 
             if (out.GetStakedCommitmentRangeProof(stakedCommitmentRangeProof)) {
@@ -178,7 +240,7 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
 
                 proof = bulletproofs_plus::RangeProofWithSeed<Mcl>{stakedCommitmentRangeProof, TokenId(), minStake};
 
-                vProofs.push_back(proof);
+                out_proofs.push_back(proof);
             }
         } else {
             if (out.nValue == 0) continue;
@@ -188,9 +250,17 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
                 }
                 nFee = out.nValue;
             }
-            range_proof::Generators<Mcl> gen = gf.GetInstance(out.tokenId);
-            balanceKey = balanceKey - (gen.G * MclScalar(out.nValue));
+            auto& a = find_or_add_gen(out.tokenId);
+            a.neg = a.has_neg ? (a.neg + MclScalar(out.nValue)) : MclScalar(out.nValue);
+            a.has_neg = true;
         }
+    }
+
+    // Fold all accumulated (G, scalar) pairs into balanceKey with one scalar
+    // multiplication per distinct generator, instead of one per value.
+    for (const auto& a : gen_accums) {
+        if (a.has_pos) balanceKey = balanceKey + (a.G * a.pos);
+        if (a.has_neg) balanceKey = balanceKey - (a.G * a.neg);
     }
 
     vMessages.emplace_back(blsct::Common::BLSCTBALANCE);
@@ -201,11 +271,40 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
     if (!sigCheck)
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-signature-check");
 
-    auto rpCheck = rp.Verify(vProofs);
-
-    if (!rpCheck)
-        return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-rangeproof-check");
+    if (verify_rp_inline) {
+        auto& rp = GetSharedRPLogic();
+        if (!rp.Verify(out_proofs)) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-rangeproof-check");
+        }
+        out_proofs.clear(); // consumed
+    }
 
     return true;
+}
+} // namespace
+
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast)
+{
+    std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> proofs;
+    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true);
+}
+
+bool VerifyTxCollectProofs(const CTransaction& tx,
+                           CCoinsViewCache& view,
+                           TxValidationState& state,
+                           std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
+                           const CAmount& blockReward,
+                           const CAmount& minStake,
+                           int nSpendHeight,
+                           int64_t nMedianTimePast)
+{
+    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false);
+}
+
+bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& proofs)
+{
+    if (proofs.empty()) return true;
+    auto& rp = GetSharedRPLogic();
+    return rp.Verify(proofs);
 }
 } // namespace blsct

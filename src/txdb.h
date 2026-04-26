@@ -21,8 +21,13 @@
 class COutPoint;
 class uint256;
 
-//! -dbcache default (MiB)
-static const int64_t nDefaultDbCache = 450;
+//! -dbcache default (MiB). Upstream Bitcoin's 450 MiB was sized for 4 GiB
+//! boxes. On modern hardware it forces frequent chainstate flushes during
+//! IBD — bench traces on testnet showed 100+ms Connect-total spikes tied to
+//! leveldb flush. 2048 is still modest versus typical system RAM, large
+//! enough to cover many blocks' worth of BLSCT chainstate delta between
+//! flushes, and capped below `nMaxDbCache`.
+static const int64_t nDefaultDbCache = 2048;
 //! -dbbatchsize default (bytes)
 static const int64_t nDefaultDbBatchSize = 16 << 20;
 //! max. -dbcache (MiB)
