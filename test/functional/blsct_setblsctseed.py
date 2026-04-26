@@ -8,7 +8,12 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
 
-VALID_SEED_WIF = "cS9umN9w6cDMuRVYdbkfE4c7YUFLJRoXMfhQ569uY4odiQbVN8Rt"
+# Deterministic BLSCT seed. The 32-byte big-endian value must be < the BLS12-381
+# scalar field order r; this WIF encodes 0x01 repeated 32 times.
+VALID_SEED_WIF = "cMceqPhHedrhbcR9eXgzmfWy7kRqLyAxMYwFT6ABDWsiwUp9Nsq9"
+# Valid WIF whose 32-byte value is >= r (decodes to 0x886e..0b8e); used to
+# verify the round-trip range check rejects it.
+OUT_OF_RANGE_SEED_WIF = "cS9umN9w6cDMuRVYdbkfE4c7YUFLJRoXMfhQ569uY4odiQbVN8Rt"
 
 
 class BLSCTSetSeedTest(BitcoinTestFramework):
@@ -37,6 +42,12 @@ class BLSCTSetSeedTest(BitcoinTestFramework):
             "JSON value of type bool is not of expected type string",
             wallet_a.setblsctseed,
             True,
+        )
+        assert_raises_rpc_error(
+            -5,
+            "Key value is out of range",
+            wallet_a.setblsctseed,
+            OUT_OF_RANGE_SEED_WIF,
         )
 
         self.log.info("Set the same seed in two wallets and verify deterministic output")

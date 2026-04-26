@@ -205,8 +205,13 @@ from test_framework.util import assert_greater_than, assert_raises_rpc_error
 from test_framework.messages import COIN
 
 LOCKTIME_THRESHOLD = 500_000_000
-WALLET1_SEED_WIF = "cS9umN9w6cDMuRVYdbkfE4c7YUFLJRoXMfhQ569uY4odiQbVN8Rt"
-WALLET2_SEED_WIF = "cTdGmKFWpbvpKQ7ejrdzqYT2hhjyb3GPHnLAK7wdi5Em67YLwSm9"
+# Deterministic BLSCT seeds. The 32-byte big-endian value of each WIF must be
+# strictly less than the BLS12-381 scalar field order r (~2^254.85); otherwise
+# setblsctseed rejects the input with "Key value is out of range (>= group
+# order)". These two WIFs encode 0x01..01 and 0x02..02 respectively, which are
+# trivially below r.
+WALLET1_SEED_WIF = "cMceqPhHedrhbcR9eXgzmfWy7kRqLyAxMYwFT6ABDWsiwUp9Nsq9"
+WALLET2_SEED_WIF = "cMec2DGaTXkYJYfi7x3ZGjRXkeqmAvYAoWzMAcWj5fdLaqudWsNi"
 
 
 class BLSCTHTLCTest(BitcoinTestFramework):
