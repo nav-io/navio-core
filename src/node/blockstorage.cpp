@@ -31,6 +31,7 @@
 #include <undo.h>
 
 #include <future>
+#include <span>
 #include <thread>
 
 namespace {
@@ -728,7 +729,7 @@ bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos
         std::vector<MclG1Point*> g1_points;
         g1_points.reserve(256);
         CollectG1PointsFromUndo(const_cast<CBlockUndo&>(blockundo), g1_points);
-        MclG1Point::BatchNormalize(g1_points);
+        MclG1Point::BatchNormalize(std::span<MclG1Point* const>{g1_points.data(), g1_points.size()});
     }
 
     const auto& vtx = blockundo.vtxundo;
