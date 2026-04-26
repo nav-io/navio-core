@@ -221,7 +221,7 @@ BLSCT_H = \
   blsct/wallet/unsigned_transaction.h \
   blsct/wallet/verification.h
 
-BLSCT_CPP = \
+BLSCT_EXTERNAL_CPP = \
   blsct/arith/elements.cpp \
   blsct/arith/mcl/mcl_g1point.cpp \
   blsct/arith/mcl/mcl_scalar.cpp \
@@ -247,37 +247,43 @@ BLSCT_CPP = \
   blsct/public_keys.cpp \
   blsct/range_proof/bulletproofs/amount_recovery_request.cpp \
   blsct/range_proof/bulletproofs/amount_recovery_result.cpp \
-  blsct/range_proof/bulletproofs/range_proof.cpp \
   blsct/range_proof/bulletproofs/range_proof_logic.cpp \
   blsct/range_proof/bulletproofs/range_proof_with_transcript.cpp \
   blsct/range_proof/bulletproofs_plus/amount_recovery_request.cpp \
   blsct/range_proof/bulletproofs_plus/amount_recovery_result.cpp \
-  blsct/range_proof/bulletproofs_plus/range_proof.cpp \
   blsct/range_proof/bulletproofs_plus/range_proof_logic.cpp \
   blsct/range_proof/bulletproofs_plus/range_proof_with_transcript.cpp \
   blsct/range_proof/bulletproofs_plus/util.cpp \
   blsct/range_proof/common.cpp \
   blsct/range_proof/generators.cpp \
   blsct/range_proof/msg_amt_cipher.cpp \
+  blsct/signature.cpp \
+  blsct/tokens/predicate_parser.cpp \
+  blsct/wallet/address.cpp \
+  blsct/wallet/helpers.cpp \
+  blsct/wallet/txfactory_base.cpp \
+  blsct/wallet/txfactory_global.cpp \
+  blsct/wallet/unsigned_transaction.cpp
+
+BLSCT_CPP = \
+  $(BLSCT_EXTERNAL_CPP) \
+  blsct/pos/pos.cpp \
+  blsct/pos/proof_logic.cpp \
+  blsct/pos/proof.cpp \
+  blsct/range_proof/bulletproofs/range_proof.cpp \
+  blsct/range_proof/bulletproofs_plus/range_proof.cpp \
   blsct/range_proof/proof_base.cpp \
   blsct/set_mem_proof/set_mem_proof.cpp \
   blsct/set_mem_proof/set_mem_proof_prover.cpp \
   blsct/set_mem_proof/set_mem_proof_setup.cpp \
-  blsct/signature.cpp \
   blsct/tokens/info.cpp \
   blsct/tokens/predicate_exec.cpp \
-  blsct/tokens/predicate_parser.cpp \
-  blsct/wallet/address.cpp \
-  blsct/wallet/helpers.cpp \
-  blsct/wallet/keyman.cpp \
   blsct/wallet/keyring.cpp \
+  blsct/wallet/keyman.cpp \
   blsct/wallet/txfactory.cpp \
-  blsct/wallet/txfactory_base.cpp \
-  blsct/wallet/txfactory_global.cpp \
-  blsct/wallet/unsigned_transaction.cpp \
   blsct/wallet/verification.cpp
 
-.PHONY: FORCE check-symbols check-security
+.PHONY: FORCE check-symbols check-security check-libblsct-symbols
 # navio core #
 BITCOIN_CORE_H = \
   addrdb.h \
@@ -1470,7 +1476,7 @@ CLEANFILES += $(LIBMCL)
 EXTRA_DIST = $(CTAES_DIST)
 
 libblsct_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) -fPIC
-libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -DLIBBLSCT -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+libblsct_a_CPPFLAGS = $(AM_CPPFLAGS) $(BLS_INCLUDES) $(BOOST_CPPFLAGS) -DLIBBLSCT -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT) -I$(srcdir)/secp256k1/include
 
 if ENABLE_SSE41
 libblsct_a_CXXFLAGS += $(SSE41_CXXFLAGS)
@@ -1497,11 +1503,10 @@ if BUILD_LIBBLSCT_ONLY
 LIBBLSCT = libblsct.a
 noinst_LIBRARIES = $(LIBBLSCT)
 libblsct_a_SOURCES = \
+  arith_uint256.cpp \
   blsct/external_api/blsct.cpp \
-  blsct/external_api/dummy_impl.cpp \
-  common/args.cpp \
-  common/system.cpp \
-  common/url.cpp \
+  blsct/external_api/blsct_clientversion.cpp \
+  chain.cpp \
   crypto/hmac_sha256.cpp \
   crypto/ripemd160.cpp \
   crypto/sha256_arm_shani.cpp \
@@ -1510,51 +1515,16 @@ libblsct_a_SOURCES = \
   crypto/sha256_sse41.cpp \
   crypto/sha256_x86_shani.cpp \
   crypto/sha256.cpp \
-  hash.cpp \
   primitives/transaction.cpp \
-  rpc/util.cpp \
-  script/interpreter.cpp \
-  script/miniscript.cpp \
   script/script.cpp \
-  script/script_error.cpp \
-  script/sign.cpp \
-  script/signingprovider.cpp \
-  sync.cpp \
   support/cleanse.cpp \
   support/lockedpool.cpp \
   uint256.cpp \
+  util/check.cpp \
   util/moneystr.cpp \
-  util/rbf.cpp \
   util/strencodings.cpp \
   util/time.cpp \
-  wallet/coincontrol.cpp \
-  wallet/context.cpp \
-  wallet/crypter.cpp \
-  wallet/db.cpp \
-  wallet/dump.cpp \
-  wallet/external_signer_scriptpubkeyman.cpp \
-  wallet/feebumper.cpp \
-  wallet/fees.cpp \
-  wallet/interfaces.cpp \
-  wallet/load.cpp \
-  wallet/receive.cpp \
-  wallet/rpc/addresses.cpp \
-  wallet/rpc/backup.cpp \
-  wallet/rpc/coins.cpp \
-  wallet/rpc/encrypt.cpp \
-  wallet/rpc/spend.cpp \
-  wallet/rpc/signmessage.cpp \
-  wallet/rpc/transactions.cpp \
-  wallet/rpc/util.cpp \
-  wallet/rpc/wallet.cpp \
-  wallet/scriptpubkeyman.cpp \
-  wallet/spend.cpp \
-  wallet/transaction.cpp \
-  wallet/wallet.cpp \
-  wallet/walletdb.cpp \
-  wallet/walletutil.cpp \
-  wallet/coinselection.cpp \
-  $(BLSCT_CPP)
+  $(BLSCT_EXTERNAL_CPP)
 
 LIBUNIVALUE_BLSCT = libunivalue_blsct.a
 noinst_LIBRARIES += $(LIBUNIVALUE_BLSCT)
@@ -1563,6 +1533,11 @@ libunivalue_blsct_a_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR
 libunivalue_blsct_a_CXXFLAGS = $(AM_CXXFLAGS) -fPIC
 
 $(LIBBLSCT): $(LIBBLS) $(LIBMCL) $(LIBUNIVALUE_BLSCT)
+
+check-libblsct-symbols: $(LIBBLSCT)
+	@echo "Checking libblsct.a symbols..."
+	$(AM_V_at) $(PYTHON) $(abs_top_srcdir)/contrib/devtools/libblsct-symbol-check.py \
+	  $(LIBBLSCT) $(LIBBLS) $(LIBMCL) $(LIBUNIVALUE_BLSCT)
 
 CLEANFILES += $(LIBBLSCT) blsct/include/libblsct_a-blsct.o
 endif

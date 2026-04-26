@@ -1,0 +1,74 @@
+# Copyright (c) 2026 The Navio Core developers
+# Distributed under the MIT software license, see the accompanying
+# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+name: Nightly build artifacts
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to build
+        required: false
+        default: testnet-with-consensus-changes
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  nightly-build:
+    runs-on: ubuntu-24.04
+    # navio-builder runs full Guix cross-builds across multiple hosts and can be long-running.
+    timeout-minutes: 720
+    env:
+      # Pin to navio-builder main HEAD as of 2026-04-22 for reproducibility and supply-chain safety.
+      NAVIO_BUILDER_COMMIT: 17d018f8d81427cc13d584cb815ddeb80c4d59a8
+      # navio-builder's build script checks out this exact remote-tracking ref name.
+      NAVIO_BUILDER_REF_NAME: testnet-with-consensus-changes
+      TARGET_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || 'testnet-with-consensus-changes' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y git gpg unzip zip
+
+      - name: Prepare navio-builder workspace
+        run: |
+          git clone https://github.com/aguycalled/navio-builder.git /tmp/navio-builder
+          cd /tmp/navio-builder
+          git checkout -f "${NAVIO_BUILDER_COMMIT}"
+          sudo mkdir -p /navio
+          sudo chown -R "$USER:$USER" /navio
+          cp -a /tmp/navio-builder/. /navio/
+
+      - name: Prepare target repository
+        run: |
+          git clone --origin origin "https://github.com/${{ github.repository }}.git" /navio/navio-core
+          cd /navio/navio-core
+          git config --unset-all remote.origin.fetch
+          git config --add remote.origin.fetch "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${NAVIO_BUILDER_REF_NAME}"
+          git fetch --all --tags
+          git rev-parse --verify "refs/remotes/origin/${NAVIO_BUILDER_REF_NAME}"
+
+      - name: Build binaries
+        run: |
+          chmod +x /navio/build
+          /navio/build
+
+      - name: Upload nightly binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-binaries-${{ env.TARGET_BRANCH }}-${{ github.run_number }}
+          path: |
+            /navio/builds/*.zip
+            /navio/builds/*.tar.gz
+            /navio/builds/SHA256SUMS-*
+            /navio/builds/*.asc
+          if-no-files-found: error
+          retention-days: 30

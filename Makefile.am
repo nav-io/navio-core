@@ -45,7 +45,8 @@ DIST_SHARE = \
 
 BIN_CHECKS=$(top_srcdir)/contrib/devtools/symbol-check.py \
            $(top_srcdir)/contrib/devtools/security-check.py \
-           $(top_srcdir)/contrib/devtools/utils.py
+           $(top_srcdir)/contrib/devtools/utils.py \
+           $(top_srcdir)/contrib/devtools/libblsct-symbol-check.py
 
 COVERAGE_INFO = $(COV_TOOL_WRAPPER) baseline.info \
   test_bitcoin_filtered.info total_coverage.info \

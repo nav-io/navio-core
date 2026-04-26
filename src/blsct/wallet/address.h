@@ -5,10 +5,16 @@
 #ifndef NAVIO_BLSCT_ADDRESS_H
 #define NAVIO_BLSCT_ADDRESS_H
 
+#include <addresstype.h>
 #include <blsct/double_public_key.h>
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
+#include <pubkey.h>
+#include <util/time.h>
+
+#ifndef LIBBLSCT
 #include <key_io.h>
+#endif
 
 namespace blsct {
 static const std::string subAddressHeader = "SubAddress\0";
@@ -19,8 +25,8 @@ public:
     int64_t nTime;
     CKeyID hashId;
 
-    SubAddressPool() : nTime(GetTime()){};
-    SubAddressPool(const CKeyID& hashIdIn) : nTime(GetTime()), hashId(hashIdIn){};
+    SubAddressPool() : nTime(GetTime()) {};
+    SubAddressPool(const CKeyID& hashIdIn) : nTime(GetTime()), hashId(hashIdIn) {};
 
 
     SERIALIZE_METHODS(SubAddressPool, obj)
@@ -29,8 +35,7 @@ public:
     }
 };
 
-struct SubAddressIdentifier
-{
+struct SubAddressIdentifier {
     int64_t account;
     uint64_t address;
 
@@ -46,11 +51,11 @@ private:
     DoublePublicKey pk;
 
 public:
-    SubAddress(){};
+    SubAddress() {};
     SubAddress(const std::string& sAddress);
     SubAddress(const PrivateKey& viewKey, const PublicKey& spendKey, const SubAddressIdentifier& subAddressId);
-    SubAddress(const DoublePublicKey& pk) : pk(pk){};
-    SubAddress(const CTxDestination& dest) : pk(std::get<blsct::DoublePublicKey>(dest)){};
+    SubAddress(const DoublePublicKey& pk) : pk(pk) {};
+    SubAddress(const CTxDestination& dest) : pk(std::get<blsct::DoublePublicKey>(dest)) {};
 
     bool IsValid() const;
 

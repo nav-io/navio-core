@@ -4,7 +4,6 @@
 
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/helpers.h>
-#include <random.h>
 
 #include <atomic>
 #include <thread>
@@ -121,10 +120,4 @@ MclScalar FromTransactionToSpendKey(const MclScalar& seed)
     return BLS12_381_KeyGen::derive_child_SK(seed, 1);
 }
 
-MclScalar GenRandomSeed()
-{
-    std::vector<unsigned char> seed(32);
-    GetStrongRandBytes(seed);
-    return BLS12_381_KeyGen::derive_master_SK(seed);
-}
 } // namespace blsct
