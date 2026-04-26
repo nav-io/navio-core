@@ -238,10 +238,6 @@ BLSCT_EXTERNAL_CPP = \
   blsct/eip_2333/bls12_381_keygen.cpp \
   blsct/key_io.cpp \
   blsct/pos/helpers.cpp \
-  blsct/pos/pos.cpp \
-  blsct/pos/pos_check_queue.cpp \
-  blsct/pos/proof_logic.cpp \
-  blsct/pos/proof.cpp \
   blsct/private_key.cpp \
   blsct/public_key.cpp \
   blsct/public_keys.cpp \
@@ -268,6 +264,7 @@ BLSCT_EXTERNAL_CPP = \
 BLSCT_CPP = \
   $(BLSCT_EXTERNAL_CPP) \
   blsct/pos/pos.cpp \
+  blsct/pos/pos_check_queue.cpp \
   blsct/pos/proof_logic.cpp \
   blsct/pos/proof.cpp \
   blsct/range_proof/bulletproofs/range_proof.cpp \

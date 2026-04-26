@@ -2741,7 +2741,7 @@ RPCHelpMan getblsctoutput()
                         result.pushKV("memo", recoveryData.message);
                         result.pushKV("tokenId", tokenId.IsNull() ? "" : tokenId.ToString());
                         result.pushKV("confirmations", pwallet->GetTxDepthInMainChain(*wtx));
-                        result.pushKV("spendable", !pwallet->IsSpent(COutPoint(wtx->GetHash(), i)));
+                        result.pushKV("spendable", !pwallet->IsSpent(COutPoint(output_hash)));
                         return result;
                     }
                 }

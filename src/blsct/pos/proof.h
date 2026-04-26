@@ -15,6 +15,7 @@
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <uint256.h>
 
+#include <span>
 #include <stdexcept>
 
 using Arith = Mcl;
@@ -90,7 +91,7 @@ public:
         ::Unserialize(s, setMemProof);
         ::Unserialize(s, Using<bulletproofs_plus::RangeProofWithoutVs<Arith>>(rangeProof));
         auto collected = deferral.Take();
-        if (!MclG1Point::BatchCheckSubgroup(collected)) {
+        if (!MclG1Point::BatchCheckSubgroup(std::span<const MclG1Point>{collected.data(), collected.size()})) {
             throw std::ios_base::failure("ProofOfStake: G1 point failed subgroup check");
         }
     }
