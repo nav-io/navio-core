@@ -11,6 +11,8 @@
 #include <test/util/txmempool.h>
 
 #include <boost/test/unit_test.hpp>
+
+#include <algorithm>
 #include <optional>
 #include <vector>
 
@@ -497,11 +499,13 @@ BOOST_FIXTURE_TEST_CASE(miniminer_overlap, TestChain100Setup)
         BOOST_CHECK_EQUAL(tx3_bump_fee.value(),
             very_high_feerate.GetFee(tx_vsizes[0] + tx_vsizes[1] + tx_vsizes[2] + tx_vsizes[3]) - (low_fee + med_fee + high_fee + high_fee));
         // Total fees: if spending both tx6 and tx7, don't double-count fees.
+        // The combined bump fee uses the ancestor set (excluding ancestors already in block).
         node::MiniMiner mini_miner_tx6_tx7(pool, {COutPoint{tx6->vout[0].GetHash()}, COutPoint{tx7->vout[0].GetHash()}});
         BOOST_CHECK(mini_miner_tx6_tx7.IsReadyToCalculate());
         const auto tx6_tx7_bumpfee = mini_miner_tx6_tx7.CalculateTotalBumpFees(very_high_feerate);
         BOOST_CHECK(!mini_miner_tx6_tx7.IsReadyToCalculate());
         BOOST_CHECK(tx6_tx7_bumpfee.has_value());
+        // With very_high_feerate, no ancestors are in the block. Walk finds {tx4,tx5,tx6,tx7}.
         BOOST_CHECK_EQUAL(tx6_tx7_bumpfee.value(),
             very_high_feerate.GetFee(tx_vsizes[4] + tx_vsizes[5] + tx_vsizes[6] + tx_vsizes[7]) - (high_fee + low_fee + med_fee + high_fee));
     }
@@ -514,21 +518,27 @@ BOOST_FIXTURE_TEST_CASE(miniminer_overlap, TestChain100Setup)
         BOOST_CHECK(!mini_miner.IsReadyToCalculate());
         BOOST_CHECK_EQUAL(bump_fees.size(), all_unspent_outpoints.size());
         BOOST_CHECK(sanity_check(all_transactions, bump_fees));
+        // tx4 is in the block. tx6's ancestors not in block: {tx5, tx6}.
         const auto tx6_bumpfee = bump_fees.find(COutPoint{tx6->vout[0].GetHash()});
         BOOST_CHECK(tx6_bumpfee != bump_fees.end());
-        BOOST_CHECK_EQUAL(tx6_bumpfee->second, just_below_tx4.GetFee(tx_vsizes[5] + tx_vsizes[6]) - (low_fee + med_fee));
+        BOOST_CHECK_EQUAL(tx6_bumpfee->second,
+            std::max(just_below_tx4.GetFee(tx_vsizes[5] + tx_vsizes[6]) - (low_fee + med_fee),
+                     just_below_tx4.GetFee(tx_vsizes[6]) - med_fee));
+        // tx4 is in the block. tx7's ancestors not in block: {tx5, tx7}.
         const auto tx7_bumpfee = bump_fees.find(COutPoint{tx7->vout[0].GetHash()});
         BOOST_CHECK(tx7_bumpfee != bump_fees.end());
-        BOOST_CHECK_EQUAL(tx7_bumpfee->second, just_below_tx4.GetFee(tx_vsizes[5] + tx_vsizes[7]) - (low_fee + high_fee));
+        BOOST_CHECK_EQUAL(tx7_bumpfee->second,
+            std::max(just_below_tx4.GetFee(tx_vsizes[5] + tx_vsizes[7]) - (low_fee + high_fee),
+                     just_below_tx4.GetFee(tx_vsizes[7]) - high_fee));
         // Total fees: if spending both tx6 and tx7, don't double-count fees.
+        // Ancestor set of {tx6, tx7} not in block: {tx5, tx6, tx7}.
         node::MiniMiner mini_miner_tx6_tx7(pool, {COutPoint{tx6->vout[0].GetHash()}, COutPoint{tx7->vout[0].GetHash()}});
         BOOST_CHECK(mini_miner_tx6_tx7.IsReadyToCalculate());
         const auto tx6_tx7_bumpfee = mini_miner_tx6_tx7.CalculateTotalBumpFees(just_below_tx4);
         BOOST_CHECK(!mini_miner_tx6_tx7.IsReadyToCalculate());
         BOOST_CHECK(tx6_tx7_bumpfee.has_value());
-        // When spending both tx6 and tx7, we need to bump the entire ancestor package (tx4 + tx5 + tx6 + tx7) to the target feerate
-        // The expected value is the maximum of the individual bump fees, which is the tx6 bump fee
-        BOOST_CHECK_EQUAL(tx6_tx7_bumpfee.value(), just_below_tx4.GetFee(tx_vsizes[5] + tx_vsizes[6]) - (low_fee + med_fee));
+        BOOST_CHECK_EQUAL(tx6_tx7_bumpfee.value(),
+            just_below_tx4.GetFee(tx_vsizes[5] + tx_vsizes[6] + tx_vsizes[7]) - (low_fee + med_fee + high_fee));
     }
     // Feerate between tx6 and tx7's ancestor feerates: don't need to bump tx5 because tx7 already does.
     {
