@@ -1753,7 +1753,7 @@ RPCHelpMan fundblsctrawtransaction()
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Output value is too large");
                 }
             }
-            LogPrintf("fundblsctrawtransaction: total output value=%lld\n", output_value);
+            LogPrint(BCLog::WALLET, "fundblsctrawtransaction: total output value=%lld\n", output_value);
 
             // Calculate total input amount from existing inputs
             CAmount existing_input_value = 0;
