@@ -57,9 +57,12 @@ BOOST_AUTO_TEST_CASE(kernel_hash_buckets_block_time)
     const uint32_t prevTime = 1000000;
     const uint64_t modifier = 0xdeadbeefcafebabeULL;
 
-    uint256 a = blsct::CalculateKernelHash(prevTime, modifier, 1234567800);
-    uint256 b = blsct::CalculateKernelHash(prevTime, modifier, 1234567815);
-    uint256 c = blsct::CalculateKernelHash(prevTime, modifier, 1234567816);
+    // Pick a bucket-aligned base time so two offsets within [0, 16) share a
+    // bucket and the next 16s boundary lands in the following bucket.
+    const uint32_t bucket_base = 1234567808; // 1234567808 % 16 == 0
+    uint256 a = blsct::CalculateKernelHash(prevTime, modifier, bucket_base + 0);
+    uint256 b = blsct::CalculateKernelHash(prevTime, modifier, bucket_base + 15);
+    uint256 c = blsct::CalculateKernelHash(prevTime, modifier, bucket_base + 16);
 
     BOOST_CHECK(a == b);
     BOOST_CHECK(a != c);

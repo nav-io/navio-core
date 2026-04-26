@@ -9,8 +9,13 @@
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/range_proof/generators.h>
 #include <blsct/wallet/verification.h>
+#include <logging.h>
 #include <script/interpreter.h>
 #include <script/script.h>
+#include <util/time.h>
+
+#include <chrono>
+
 
 namespace blsct {
 
@@ -88,6 +93,10 @@ bool VerifyTxCore(const CTransaction& tx,
                   int64_t nMedianTimePast,
                   bool verify_rp_inline)
 {
+    using Clock = std::chrono::steady_clock;
+    const bool bench_on = LogAcceptCategory(BCLog::BENCH, BCLog::Level::Debug);
+    const auto t_begin = Clock::now();
+
     if (!view.HaveInputs(tx)) {
         return state.Invalid(TxValidationResult::TX_MISSING_INPUTS, "bad-inputs-unknown");
     }
@@ -103,6 +112,7 @@ bool VerifyTxCore(const CTransaction& tx,
 
     std::vector<Message> vMessages;
     std::vector<PublicKey> vPubKeys;
+    auto t_init = Clock::now();
 
     if (!tx.IsCoinBase()) {
         for (const auto& in : tx.vin) {
@@ -120,19 +130,35 @@ bool VerifyTxCore(const CTransaction& tx,
             }
         }
 
-        size_t i = 0;
-        for (auto& in : tx.vin) {
-            Coin coin;
-
-            if (!view.GetCoin(in.prevout, coin)) {
+        // Prefetch all spent coins serially. CCoinsViewCache::GetCoin mutates
+        // cacheCoins (emplace-on-miss) so batching the LevelDB reads here
+        // also warms the cache before the later verify loop reads from it.
+        const size_t n_in = tx.vin.size();
+        std::vector<Coin> coins(n_in);
+        for (size_t i = 0; i < n_in; ++i) {
+            if (!view.GetCoin(tx.vin[i].prevout, coins[i])) {
                 return state.Invalid(TxValidationResult::TX_MISSING_INPUTS, "bad-input-unknown");
             }
+        }
+        if (bench_on) {
+            const auto now = Clock::now();
+            LogPrint(BCLog::BENCH, "        - blsct prefetch %zu coins: %.2fms\n", n_in,
+                     std::chrono::duration<double, std::milli>(now - t_init).count());
+        }
 
-            BLSCTSignatureChecker checker(&tx, i++);
+        // Per-input prep runs serially: the aggregate-verify path below
+        // (blsAggregateVerifyNoCheck via PublicKeys::VerifyBatch) already
+        // parallelises miller-loop / hash-to-G2 across std::thread::
+        // hardware_concurrency() internally. Adding an outer thread pool
+        // here would spawn N workers that each contend with the library's
+        // own N workers — observed regression: 0.53 ms/txin → 2.46 ms/txin
+        // on a 752-input block (8-core host, 64 contending threads).
+        for (size_t i = 0; i < n_in; ++i) {
+            BLSCTSignatureChecker checker(&tx, i);
             ScriptError serror;
             uint32_t flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY;
 
-            if (!VerifyScript(in.scriptSig, coin.out.scriptPubKey, nullptr, flags, checker, &serror)) {
+            if (!VerifyScript(tx.vin[i].scriptSig, coins[i].out.scriptPubKey, nullptr, flags, checker, &serror)) {
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-script-check");
             }
 
@@ -141,20 +167,22 @@ bool VerifyTxCore(const CTransaction& tx,
                 vMessages.emplace_back(pair.second.begin(), pair.second.end());
             }
 
-            if (!coin.out.blsctData.spendingKey.IsZero()) {
-                vPubKeys.emplace_back(coin.out.blsctData.spendingKey);
-                auto in_hash = in.GetHash();
+            if (!coins[i].out.blsctData.spendingKey.IsZero()) {
+                vPubKeys.emplace_back(coins[i].out.blsctData.spendingKey);
+                auto in_hash = tx.vin[i].GetHash();
                 vMessages.emplace_back(in_hash.begin(), in_hash.end());
             }
 
-            if (coin.out.HasBLSCTRangeProof()) {
-                balanceKey = balanceKey + coin.out.blsctData.rangeProof.Vs[0];
+            if (coins[i].out.HasBLSCTRangeProof()) {
+                balanceKey = balanceKey + coins[i].out.blsctData.rangeProof.Vs[0];
             } else {
-                range_proof::Generators<Mcl> gen = gf.GetInstance(coin.out.tokenId);
-                balanceKey = balanceKey + (gen.G * MclScalar(coin.out.nValue));
+                range_proof::Generators<Mcl> gen = gf.GetInstance(coins[i].out.tokenId);
+                balanceKey = balanceKey + (gen.G * MclScalar(coins[i].out.nValue));
             }
         }
     }
+    const auto t_after_inputs = Clock::now();
+    const size_t pubkey_count_after_inputs = vPubKeys.size();
 
     CAmount nFee = 0;
     bulletproofs_plus::RangeProofWithSeed<Mcl> stakedCommitmentRangeProof;
@@ -227,7 +255,12 @@ bool VerifyTxCore(const CTransaction& tx,
     vMessages.emplace_back(blsct::Common::BLSCTBALANCE);
     vPubKeys.emplace_back(balanceKey);
 
+    const auto t_after_outputs = Clock::now();
+    const size_t total_pairs = vPubKeys.size();
+
     auto sigCheck = PublicKeys{vPubKeys}.VerifyBatch(vMessages, tx.txSig, true);
+
+    const auto t_after_sig = Clock::now();
 
     if (!sigCheck)
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-signature-check");
@@ -238,6 +271,29 @@ bool VerifyTxCore(const CTransaction& tx,
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-rangeproof-check");
         }
         out_proofs.clear(); // consumed
+    }
+
+    const auto t_end = Clock::now();
+
+    if (bench_on) {
+        using D = std::chrono::duration<double, std::milli>;
+        const size_t n_in = tx.vin.size();
+        const size_t n_out = tx.vout.size();
+        const size_t pubkeys_from_outputs = total_pairs - pubkey_count_after_inputs;
+        LogPrint(BCLog::BENCH,
+                 "        - blsct tx %s: vin=%zu vout=%zu pairs=%zu"
+                 " init=%.2f inputs=%.2f outputs=%.2f sig_verify=%.2f rp_inline=%.2f total=%.2fms"
+                 " (pairs_from_inputs=%zu pairs_from_outputs=%zu)\n",
+                 tx.GetHash().ToString().substr(0, 10),
+                 n_in, n_out, total_pairs,
+                 D(t_init - t_begin).count(),
+                 D(t_after_inputs - t_init).count(),
+                 D(t_after_outputs - t_after_inputs).count(),
+                 D(t_after_sig - t_after_outputs).count(),
+                 D(t_end - t_after_sig).count(),
+                 D(t_end - t_begin).count(),
+                 pubkey_count_after_inputs - (blockReward > 0 ? 1 : 0),
+                 pubkeys_from_outputs);
     }
 
     return true;

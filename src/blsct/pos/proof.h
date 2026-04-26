@@ -7,12 +7,15 @@
 
 #include <arith_uint256.h>
 #include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/pos/helpers.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/set_mem_proof/set_mem_proof.h>
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <uint256.h>
+
+#include <stdexcept>
 
 using Arith = Mcl;
 using Point = Arith::Point;
@@ -79,8 +82,17 @@ public:
     template <typename Stream>
     void Unserialize(Stream& s)
     {
+        // Defer the per-point prime-order subgroup check for every G1 point
+        // that appears in this proof; batch-check them all via a single
+        // random-linear-combination multiexp after decoding. Reduces
+        // ~dozens of scalar-mul-by-r calls to one.
+        MclG1Point::SubgroupCheckDeferralScope deferral;
         ::Unserialize(s, setMemProof);
         ::Unserialize(s, Using<bulletproofs_plus::RangeProofWithoutVs<Arith>>(rangeProof));
+        auto collected = deferral.Take();
+        if (!MclG1Point::BatchCheckSubgroup(collected)) {
+            throw std::ios_base::failure("ProofOfStake: G1 point failed subgroup check");
+        }
     }
 
     SetProof setMemProof;

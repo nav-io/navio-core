@@ -5,6 +5,7 @@
 #include <node/blockstorage.h>
 
 #include <arith_uint256.h>
+#include <blsct/arith/mcl/mcl_g1point.h>
 #include <chain.h>
 #include <consensus/params.h>
 #include <consensus/validation.h>
@@ -28,6 +29,33 @@
 #include <tinyformat.h>
 #include <uint256.h>
 #include <undo.h>
+
+#include <future>
+#include <thread>
+
+namespace {
+// Collect every G1 point stored inside the CBlockUndo so they can be
+// batch-normalised (single field inversion via Montgomery's trick) before
+// serialisation. After this pass, each point's z coord is 1 and the patched
+// normalise() shortcut inside mclBnG1_serialize returns early — turning N
+// expensive per-point inversions into O(1) amortised over the whole block.
+void CollectG1PointsFromUndo(CBlockUndo& blockundo, std::vector<MclG1Point*>& out)
+{
+    // Only collect the G1 points that will actually be written to the undo
+    // file under the stripped-for-undo format. Skipping the range-proof body
+    // here keeps the batch small and avoids pointlessly normalising points
+    // we then throw away.
+    for (auto& txundo : blockundo.vtxundo) {
+        for (auto& coin : txundo.vprevout) {
+            auto& bd = coin.out.blsctData;
+            if (!bd.ephemeralKey.IsZero()) out.push_back(&bd.ephemeralKey);
+            if (!bd.spendingKey.IsZero()) out.push_back(&bd.spendingKey);
+            if (!bd.blindingKey.IsZero()) out.push_back(&bd.blindingKey);
+            for (auto& p : bd.rangeProof.Vs.m_vec) out.push_back(&p);
+        }
+    }
+}
+} // namespace
 #include <util/batchpriority.h>
 #include <util/check.h>
 #include <util/fs.h>
@@ -672,23 +700,113 @@ bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos
         return error("%s: OpenUndoFile failed", __func__);
     }
 
+    // Serialize the undo body in parallel across vtxundo entries, then emit
+    // header + body + checksum in one bulk write.
+    //
+    // BLSCT undo entries each carry a full range proof (~dozen G1 points)
+    // whose serialization calls mclBnG1_serialize per point (~50µs each).
+    // A 365-input block produces ~365 × 15 ≈ 5500 G1 serializations, which
+    // dominated the old single-threaded path (~485 ms observed). Writing
+    // per-entry into per-thread buffers and concatenating in vector order
+    // keeps serialisation deterministic while saturating available cores.
+
+    // Undo is node-local storage (never sent on the wire); strip the range
+    // proof body (A, A_wip, B, Ls, Rs, scalars) from each BLSCT output and
+    // keep only the Pedersen commitment (Vs[0]) plus keys + viewTag. This
+    // scope flips CTxOutBLSCTData::{Serialize,Unserialize} into the compact
+    // form for the duration of the write. UndoReadFromDisk applies the
+    // matching scope on read.
+    CTxOutBLSCTData::StrippedForUndoScope strip_scope;
+
+    // Pre-pass: batch-normalise every G1 point that WILL be serialised to
+    // affine form with a single field inversion (Montgomery's trick). mcl's
+    // per-serialize normalise short-circuits on points where z == 1 (see the
+    // `if (P.z.isOne()) return;` guard in mcl/ec.hpp), so after this call
+    // the per-point serialisation skips the expensive F::inv and runs at
+    // memcpy speed.
+    {
+        std::vector<MclG1Point*> g1_points;
+        g1_points.reserve(256);
+        CollectG1PointsFromUndo(const_cast<CBlockUndo&>(blockundo), g1_points);
+        MclG1Point::BatchNormalize(g1_points);
+    }
+
+    const auto& vtx = blockundo.vtxundo;
+    const size_t n_tx = vtx.size();
+
+    const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
+    size_t num_threads = std::min<size_t>(hw, 8);
+    const size_t min_parallel = 32;
+    if (n_tx <= min_parallel) num_threads = 1;
+    if (num_threads < 1) num_threads = 1;
+
+    std::vector<std::vector<unsigned char>> chunks(num_threads);
+
+    if (num_threads == 1) {
+        chunks[0].reserve(GetSerializeSize(vtx));
+        VectorWriter w{chunks[0], 0};
+        for (const auto& entry : vtx) {
+            w << entry;
+        }
+    } else {
+        std::vector<std::future<void>> futures;
+        futures.reserve(num_threads);
+        const size_t chunk_size = (n_tx + num_threads - 1) / num_threads;
+        for (size_t t = 0; t < num_threads; ++t) {
+            const size_t lo = t * chunk_size;
+            const size_t hi = std::min(n_tx, lo + chunk_size);
+            if (lo >= hi) break;
+            futures.push_back(std::async(std::launch::async, [&, t, lo, hi]() {
+                VectorWriter w{chunks[t], 0};
+                for (size_t i = lo; i < hi; ++i) {
+                    w << vtx[i];
+                }
+            }));
+        }
+        for (auto& f : futures) f.get();
+    }
+
+    // Assemble final body: compact-size(n_tx) || serialized chunks || checksum.
+    // CBlockUndo's SERIALIZE_METHODS writes obj.vtxundo as a vector, which is
+    // encoded as compact-size length + per-entry bodies. We reconstruct that
+    // envelope manually so we can parallelise the inner bodies.
+    size_t body_bytes = 0;
+    for (const auto& c : chunks) body_bytes += c.size();
+
+    std::vector<unsigned char> body;
+    body.reserve(body_bytes + 16 + sizeof(uint256));
+    VectorWriter body_writer{body, 0};
+    WriteCompactSize(body_writer, n_tx);
+    for (auto& c : chunks) {
+        body_writer.write(MakeByteSpan(c));
+    }
+
+    // Checksum is over the same serialisation as before. Because our chunk
+    // output matches the stock serialiser byte-for-byte, we can hash the
+    // assembled body (without the leading MessageStart/size header) keyed
+    // by hashBlock to reproduce the identical checksum.
+    HashWriter hasher{};
+    hasher << hashBlock;
+    // Replay the exact same byte sequence that the hasher would see from
+    // `hasher << blockundo` (CBlockUndo serializes as `vtxundo`, which is
+    // the compact-size + bodies we just produced). Using the assembled body
+    // buffer avoids a second pass over the entries.
+    const size_t body_without_checksum = body.size();
+    hasher.write(MakeByteSpan(Span<const unsigned char>(body.data(), body_without_checksum)));
+    body_writer << hasher.GetHash();
+
     // Write index header
-    unsigned int nSize = GetSerializeSize(blockundo);
+    const unsigned int nSize = static_cast<unsigned int>(body_without_checksum);
     fileout << GetParams().MessageStart() << nSize;
 
-    // Write undo data
+    // Record the position of the undo body (before the bulk body write)
     long fileOutPos = ftell(fileout.Get());
     if (fileOutPos < 0) {
         return error("%s: ftell failed", __func__);
     }
     pos.nPos = (unsigned int)fileOutPos;
-    fileout << blockundo;
 
-    // calculate & write checksum
-    HashWriter hasher{};
-    hasher << hashBlock;
-    hasher << blockundo;
-    fileout << hasher.GetHash();
+    fileout.write(MakeByteSpan(body));
 
     return true;
 }
@@ -706,6 +824,9 @@ bool BlockManager::UndoReadFromDisk(CBlockUndo& blockundo, const CBlockIndex& in
     if (filein.IsNull()) {
         return error("%s: OpenUndoFile failed", __func__);
     }
+
+    // Match UndoWriteToDisk's stripped-for-undo format.
+    CTxOutBLSCTData::StrippedForUndoScope strip_scope;
 
     // Read block
     uint256 hashChecksum;
@@ -1032,8 +1153,12 @@ bool BlockManager::ReadBlockFromDisk(CBlock& block, const FlatFilePos& pos) cons
         return error("ReadBlockFromDisk: OpenBlockFile failed for %s", pos.ToString());
     }
 
-    // Read block
+    // Read block. Skip the G1 prime-order subgroup check on every point in
+    // the BLSCT proofs: the block was subgroup-checked on first receipt and
+    // is protected by the block hash on the owning BlockIndex. Re-running the
+    // check on every reload would cost ~10-18ms per PoS block during IBD.
     try {
+        MclG1Point::SubgroupCheckSkipScope skip_subgroup_check;
         filein >> TX_WITH_WITNESS(block);
     } catch (const std::exception& e) {
         return error("%s: Deserialize or I/O error - %s at %s", __func__, e.what(), pos.ToString());

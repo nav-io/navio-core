@@ -3,9 +3,15 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/arith/mcl/mcl_g1point.h>
+#include <random.h>
 #include <streams.h>
 
 #include <numeric>
+
+namespace {
+thread_local std::vector<MclG1Point>* g_mcl_g1_deferral_collector = nullptr;
+thread_local int g_mcl_g1_skip_depth = 0;
+}
 
 MclG1Point::MclG1Point()
 {
@@ -207,6 +213,130 @@ bool MclG1Point::SetVch(const std::vector<uint8_t>& b)
         return false;
     }
     return true;
+}
+
+bool MclG1Point::SetVchUnchecked(const std::vector<uint8_t>& b)
+{
+    if (mclBnG1_deserialize(&m_point, &b[0], b.size()) == 0) {
+        mclBnG1_clear(&m_point);
+        return false;
+    }
+    return true;
+}
+
+std::vector<MclG1Point>* MclG1Point::CurrentDeferralCollector()
+{
+    return g_mcl_g1_deferral_collector;
+}
+
+bool MclG1Point::IsSubgroupCheckSkipped()
+{
+    return g_mcl_g1_skip_depth > 0;
+}
+
+MclG1Point::SubgroupCheckSkipScope::SubgroupCheckSkipScope()
+    : m_prev_depth(g_mcl_g1_skip_depth)
+{
+    g_mcl_g1_skip_depth = m_prev_depth + 1;
+}
+
+MclG1Point::SubgroupCheckSkipScope::~SubgroupCheckSkipScope()
+{
+    g_mcl_g1_skip_depth = m_prev_depth;
+}
+
+MclG1Point::SubgroupCheckDeferralScope::SubgroupCheckDeferralScope()
+    : m_prev(g_mcl_g1_deferral_collector)
+{
+    g_mcl_g1_deferral_collector = &m_collected;
+}
+
+MclG1Point::SubgroupCheckDeferralScope::~SubgroupCheckDeferralScope()
+{
+    g_mcl_g1_deferral_collector = m_prev;
+}
+
+std::vector<MclG1Point> MclG1Point::SubgroupCheckDeferralScope::Take()
+{
+    return std::exchange(m_collected, {});
+}
+
+// mclBnG1_normalizeVec uses __builtin_alloca(sizeof(Fp) * n) inside
+// mcl::ec::normalizeVecJacobi. For BLS12-381 sizeof(Fp) ≈ 48 bytes, so
+// n=10000 asks for ~480 KB stack. Cap batch size so nested callers never
+// blow the stack — particularly important when UndoWriteToDisk feeds
+// thousands of G1 points from a single 2000+ input BLSCT block.
+static constexpr size_t kMclG1NormalizeChunk = 512;
+
+void MclG1Point::BatchNormalize(std::span<MclG1Point> pts)
+{
+    if (pts.empty()) return;
+    // MclG1Point wraps one mclBnG1 with no other non-static fields, so the
+    // span of MclG1Point is a contiguous array of mclBnG1 in memory.
+    static_assert(sizeof(MclG1Point) == sizeof(mclBnG1),
+                  "MclG1Point must be layout-compatible with mclBnG1");
+    auto* raw = reinterpret_cast<mclBnG1*>(&pts.data()->m_point);
+    for (size_t off = 0; off < pts.size(); off += kMclG1NormalizeChunk) {
+        const size_t chunk = std::min(kMclG1NormalizeChunk, pts.size() - off);
+        mclBnG1_normalizeVec(raw + off, raw + off, chunk);
+    }
+}
+
+void MclG1Point::BatchNormalize(std::span<MclG1Point* const> pts)
+{
+    if (pts.empty()) return;
+    // Scattered-pointer path: copy the inputs into a contiguous buffer,
+    // batch-normalise, then write back. Chunked for the same alloca-stack
+    // safety reason as the contiguous overload above.
+    for (size_t off = 0; off < pts.size(); off += kMclG1NormalizeChunk) {
+        const size_t chunk = std::min(kMclG1NormalizeChunk, pts.size() - off);
+        std::vector<mclBnG1> buffer(chunk);
+        for (size_t i = 0; i < chunk; ++i) {
+            buffer[i] = pts[off + i]->m_point;
+        }
+        mclBnG1_normalizeVec(buffer.data(), buffer.data(), chunk);
+        for (size_t i = 0; i < chunk; ++i) {
+            pts[off + i]->m_point = buffer[i];
+        }
+    }
+}
+
+bool MclG1Point::BatchCheckSubgroup(std::span<const MclG1Point> pts)
+{
+    if (pts.empty()) return true;
+
+    // Fast path: a single point — per-point check, avoids RNG + multiexp overhead.
+    if (pts.size() == 1) {
+        if (mclBnG1_isZero(&pts[0].m_point)) return true;
+        return mclBnG1_isValidOrder(&pts[0].m_point) == 1;
+    }
+
+    // Sample fresh 256-bit scalars r_i from OS randomness. Verification runs
+    // after the proof is committed on-chain, so the attacker cannot grind
+    // against the scalars.
+    std::vector<mclBnG1> bases;
+    std::vector<mclBnFr> exps;
+    bases.reserve(pts.size());
+    exps.reserve(pts.size());
+    for (const auto& p : pts) {
+        if (mclBnG1_isZero(&p.m_point)) continue;
+        bases.push_back(p.m_point);
+        uint256 r;
+        GetRandBytes(r);
+        mclBnFr scalar;
+        if (mclBnFr_setLittleEndianMod(&scalar, r.data(), r.size()) != 0) {
+            return false;
+        }
+        exps.push_back(scalar);
+    }
+
+    if (bases.empty()) return true;
+
+    mclBnG1 combined;
+    mclBnG1_mulVec(&combined, bases.data(), exps.data(), bases.size());
+
+    if (mclBnG1_isZero(&combined)) return true;
+    return mclBnG1_isValidOrder(&combined) == 1;
 }
 
 std::string MclG1Point::GetString(const uint8_t& radix) const

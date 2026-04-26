@@ -18,6 +18,26 @@
 #include <cassert>
 #include <stdexcept>
 
+namespace {
+thread_local int g_tx_blsct_stripped_undo_depth = 0;
+} // namespace
+
+CTxOutBLSCTData::StrippedForUndoScope::StrippedForUndoScope()
+    : m_prev_depth(g_tx_blsct_stripped_undo_depth)
+{
+    g_tx_blsct_stripped_undo_depth = m_prev_depth + 1;
+}
+
+CTxOutBLSCTData::StrippedForUndoScope::~StrippedForUndoScope()
+{
+    g_tx_blsct_stripped_undo_depth = m_prev_depth;
+}
+
+bool CTxOutBLSCTData::IsStrippedForUndo()
+{
+    return g_tx_blsct_stripped_undo_depth > 0;
+}
+
 std::string COutPoint::ToString() const
 {
     return strprintf("COutPoint(%s)", hash.ToString().substr(0, 10));

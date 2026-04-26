@@ -162,6 +162,26 @@ public:
     bulletproofs_plus::RangeProof<Mcl> rangeProof;
     uint16_t viewTag;
 
+    // RAII scope. While active on the current thread, Serialize() emits
+    // the stripped undo form (keys + Vs + viewTag only, no range proof body)
+    // and Unserialize() consumes that form. Used for block-undo files where
+    // the rangeProof body is dead weight: restored coins never have their
+    // proof re-verified. Observability paths (RPC, wallet, external API)
+    // that hit restored coins see an empty rangeProof body by design;
+    // the original transaction's output is still on disk with full data.
+    class StrippedForUndoScope
+    {
+    public:
+        StrippedForUndoScope();
+        ~StrippedForUndoScope();
+        StrippedForUndoScope(const StrippedForUndoScope&) = delete;
+        StrippedForUndoScope& operator=(const StrippedForUndoScope&) = delete;
+
+    private:
+        int m_prev_depth;
+    };
+    static bool IsStrippedForUndo();
+
     CTxOutBLSCTData()
     {
         viewTag = 0;
@@ -170,6 +190,17 @@ public:
     template <typename Stream>
     void Serialize(Stream& s) const
     {
+        if (IsStrippedForUndo()) {
+            // Stripped form: only Vs (contains Vs[0], the Pedersen commitment
+            // needed for balance-key math on future spends) and the BLSCT
+            // keys. Drops ~14 G1 points + 5 scalars per output.
+            ::Serialize(s, rangeProof.Vs);
+            ::Serialize(s, spendingKey);
+            ::Serialize(s, blindingKey);
+            ::Serialize(s, ephemeralKey);
+            ::Serialize(s, viewTag);
+            return;
+        }
         ::Serialize(s, rangeProof);
         ::Serialize(s, spendingKey);
         ::Serialize(s, blindingKey);
@@ -180,6 +211,17 @@ public:
     template <typename Stream>
     void Unserialize(Stream& s)
     {
+        if (IsStrippedForUndo()) {
+            // Matches the stripped Serialize() above. Range-proof body
+            // fields (A, A_wip, B, Ls, Rs, scalars) remain default.
+            rangeProof = bulletproofs_plus::RangeProof<Mcl>{};
+            ::Unserialize(s, rangeProof.Vs);
+            ::Unserialize(s, spendingKey);
+            ::Unserialize(s, blindingKey);
+            ::Unserialize(s, ephemeralKey);
+            ::Unserialize(s, viewTag);
+            return;
+        }
         ::Unserialize(s, rangeProof);
         ::Unserialize(s, spendingKey);
         ::Unserialize(s, blindingKey);

@@ -154,8 +154,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.nPosTargetTimespan = 30 * 60;
-        consensus.nPosTargetSpacing = 1 * 60;
-        consensus.nBLSCTBlockReward = 2 * COIN * (consensus.nPosTargetSpacing / 30);
+        consensus.nPosTargetSpacing = 2 * 60;
+        consensus.nBLSCTBlockReward = 4 * COIN * (consensus.nPosTargetSpacing / 30);
         consensus.nBLSCTFirstBlockReward = 75000000 * COIN;
         consensus.nModifierInterval = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
@@ -318,7 +318,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0; // No activation delay
 
         consensus.nMinimumChainWork = uint256{};
-        consensus.defaultAssumeValid = uint256{}; // 2500000
+        // Testnet assumed-valid block. Gates skipping of PoS proof verification
+        // during IBD (same model as Bitcoin's -assumevalid for scripts).
+        // Uses the block 4095 hash already referenced by chainTxData below;
+        // bump to a newer hash as testnet history grows.
+        consensus.defaultAssumeValid = uint256S("0xa7ba30f5b01b09534794064e9629e4fa75299d28c2fbc3074c318bd01d74483f"); // 4095
 
         pchMessageStart[0] = 0x1c;
         pchMessageStart[1] = 0x03;

@@ -39,6 +39,9 @@
 #include <primitives/transaction.h>
 #include <random.h>
 #include <reverse_iterator.h>
+
+#include <future>
+#include <limits>
 #include <script/script.h>
 #include <script/sigcache.h>
 #include <signet.h>
@@ -2420,6 +2423,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     }
 
     bool fScriptChecks = true;
+    bool fCheckPosProof = fCheckPOS;
     if (!m_chainman.AssumedValidBlock().IsNull()) {
         // We've been configured with the hash of a block which has been externally verified to have a valid history.
         // A suitable default value is included with the software and updated from time to time.  Because validity
@@ -2445,7 +2449,11 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                 //  artificially set the default assumed verified block further back.
                 // The test against the minimum chain work prevents the skipping when denied access to any chain at
                 //  least as good as the expected chain.
-                fScriptChecks = (GetBlockProofEquivalentTime(*m_chainman.m_best_header, *pindex, *m_chainman.m_best_header, params.GetConsensus()) <= 60 * 60 * 24 * 7 * 2);
+                const bool within_equivalent_time = GetBlockProofEquivalentTime(*m_chainman.m_best_header, *pindex, *m_chainman.m_best_header, params.GetConsensus()) <= 60 * 60 * 24 * 7 * 2;
+                fScriptChecks = within_equivalent_time;
+                // Same gate applied to PoS proof verification. finalityCheckpoints
+                // remains the hard anti-long-range floor regardless of this skip.
+                if (fCheckPosProof) fCheckPosProof = within_equivalent_time;
             }
         }
     }
@@ -2459,20 +2467,62 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
 
     auto time_2_{SteadyClock::now()};
 
-    if (params.GetConsensus().fBLSCT && block.IsProofOfStake() && fCheckPOS) {
-        auto posProof = blsct::ProofOfStakeLogic(block.posProof);
+    uint256 pos_kernel_hash;
+    if (params.GetConsensus().fBLSCT && block.IsProofOfStake()) {
+        pos_kernel_hash = blsct::CalculateKernelHash(pindex->pprev, block, params.GetConsensus());
+    }
 
-        try {
-            if (!posProof.Verify(view, pindex->pprev, block, params.GetConsensus()))
-                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
-        } catch (const std::runtime_error& e) {
-            LogPrintf("%s: Validation of PoS proof failed: %s\n%s\n", __func__, e.what(), block.ToString());
+    // PoS proof verification is dispatched asynchronously. All inputs are
+    // snapshotted NOW because the tx-verify loop below can mutate `view`
+    // (and therefore the staked-commitment set). The async task never reads
+    // `view` itself. The future is joined right before the script-check
+    // queue wait so the PoS verify overlaps with tx verification.
+    std::future<std::pair<bool, std::string>> pos_verify_future;
+    bool pos_verify_dispatched = false;
+
+    if (params.GetConsensus().fBLSCT && block.IsProofOfStake() && fCheckPosProof) {
+        auto staked_commitments_snapshot = view.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash());
+
+        if (staked_commitments_snapshot.Size() < 2) {
+            LogPrint(BCLog::POPS, "PoPS rejected. Staked commitments size is %d\n", staked_commitments_snapshot.Size());
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
         }
 
+        auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindex->pprev);
+        auto eta_phi = blsct::CalculateSetMemProofGeneratorSeed(pindex->pprev, block);
+        auto next_target = blsct::GetNextTargetRequired(pindex->pprev, &block, params.GetConsensus());
+
+        // Consensus-level sanity check: reject blocks whose saturating min-value
+        // exceeds the int64 CAmount range. Mirrors the check previously in
+        // ProofOfStakeLogic::Verify; must run synchronously before dispatch
+        // because it can reject the block.
+        uint64_t min_value_u64 = blsct::ProofOfStake::SaturateToU64(
+            blsct::ProofOfStake::CalculateMinValue(pos_kernel_hash, next_target));
+        if (min_value_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+            LogPrint(BCLog::POPS, "PoPS rejected: min_value %llu exceeds CAmount range\n",
+                     static_cast<unsigned long long>(min_value_u64));
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
+        }
+
+        pos_verify_future = std::async(std::launch::async,
+            [staked_commitments = std::move(staked_commitments_snapshot),
+             eta_fiat_shamir = std::move(eta_fiat_shamir),
+             eta_phi = std::move(eta_phi),
+             pos_kernel_hash,
+             next_target,
+             &pos_proof = block.posProof]() -> std::pair<bool, std::string> {
+                try {
+                    auto res = pos_proof.Verify(staked_commitments, eta_fiat_shamir, eta_phi, pos_kernel_hash, next_target);
+                    return {res == blsct::ProofOfStake::VALID, res == blsct::ProofOfStake::VALID ? "" : blsct::ProofOfStake::VerificationResultToString(res)};
+                } catch (const std::runtime_error& e) {
+                    return {false, std::string(e.what())};
+                }
+            });
+        pos_verify_dispatched = true;
+
         time_2_ = SteadyClock::now();
         time_verify += time_2_ - time_1;
-        LogPrint(BCLog::BENCH, "    - Verify proof of stake proof: %.2fms [%.2fs (%.2fms/blk)]\n",
+        LogPrint(BCLog::BENCH, "    - Dispatch proof of stake proof: %.2fms [%.2fs (%.2fms/blk)]\n",
                  Ticks<MillisecondsDouble>(time_2_ - time_1),
                  Ticks<SecondsDouble>(time_verify),
                  Ticks<MillisecondsDouble>(time_verify) / num_blocks_total);
@@ -2488,7 +2538,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     pindex->SetStakeModifier(nStakeModifier, fGeneratedStakeModifier);
 
     if (block.IsProofOfStake()) {
-        pindex->SetKernelHash(blsct::CalculateKernelHash(pindex->pprev, block, params.GetConsensus()));
+        pindex->SetKernelHash(pos_kernel_hash);
     }
 
 
@@ -2602,6 +2652,31 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
              Ticks<MillisecondsDouble>(time_forks) / num_blocks_total);
 
     CBlockUndo blockundo;
+
+    // Batch-prefetch every non-coinbase input in the block with parallel
+    // LevelDB reads before entering the per-tx loop. CheckTxInputs and
+    // HaveInputs then hit cache instead of paying one cold read per input
+    // on the main thread. Bench baseline on a 1002-input BLSCT tx showed
+    // ~3.7 ms/input outside VerifyTxCore — overwhelmingly LevelDB latency.
+    {
+        std::vector<COutPoint> prefetch_outpoints;
+        size_t est_total = 0;
+        for (const auto& tx_ref : block.vtx) est_total += tx_ref->vin.size();
+        prefetch_outpoints.reserve(est_total);
+        for (const auto& tx_ref : block.vtx) {
+            if (tx_ref->IsCoinBase()) continue;
+            for (const auto& in : tx_ref->vin) {
+                prefetch_outpoints.push_back(in.prevout);
+            }
+        }
+        if (!prefetch_outpoints.empty()) {
+            const auto t_prefetch_start = SteadyClock::now();
+            view.BatchPrefetch(prefetch_outpoints);
+            LogPrint(BCLog::BENCH, "      - BatchPrefetch %u inputs: %.2fms\n",
+                     (unsigned)prefetch_outpoints.size(),
+                     Ticks<MillisecondsDouble>(SteadyClock::now() - t_prefetch_start));
+        }
+    }
 
     // Precomputed transaction data pointers must not be invalidated
     // until after `control` has run the script checks (potentially
@@ -2755,6 +2830,20 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         LogPrintf("ERROR: %s: CheckQueue failed\n", __func__);
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "block-validation-failed");
     }
+
+    // Join the async PoS verify dispatched above. Must happen after the tx
+    // check queue drains so the captured snapshot stays valid through both
+    // pipelines; any PoS failure rejects the block just like a tx failure.
+    if (pos_verify_dispatched) {
+        const auto pos_res = pos_verify_future.get();
+        if (!pos_res.first) {
+            if (!pos_res.second.empty()) {
+                LogPrintf("%s: Validation of PoS proof failed: %s\n", __func__, pos_res.second);
+            }
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
+        }
+    }
+
     const auto time_5{SteadyClock::now()};
     time_verify += time_5 - time_3;
     LogPrint(BCLog::BENCH, "    - Verify %u txins: %.2fms (%.3fms/txin) [%.2fs (%.2fms/blk)]\n", nInputs - 1,

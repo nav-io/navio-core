@@ -176,6 +176,7 @@ BLSCT_H = \
   blsct/public_keys.h \
   blsct/pos/helpers.h \
   blsct/pos/pos.h \
+  blsct/pos/pos_check_queue.h \
   blsct/pos/proof.h \
   blsct/pos/proof_logic.h \
   blsct/range_proof/bulletproofs/amount_recovery_request.h \
@@ -238,6 +239,7 @@ BLSCT_CPP = \
   blsct/key_io.cpp \
   blsct/pos/helpers.cpp \
   blsct/pos/pos.cpp \
+  blsct/pos/pos_check_queue.cpp \
   blsct/pos/proof_logic.cpp \
   blsct/pos/proof.cpp \
   blsct/private_key.cpp \
@@ -1303,6 +1305,7 @@ libnaviokernel_la_SOURCES = \
   blsct/double_public_key.cpp \
   blsct/pos/helpers.cpp \
   blsct/pos/pos.cpp \
+  blsct/pos/pos_check_queue.cpp \
   blsct/pos/proof_logic.cpp \
   blsct/pos/proof.cpp \
   blsct/private_key.cpp \

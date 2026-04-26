@@ -31,6 +31,11 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
 
 bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
 {
+    return Verify(cache, pindexPrev, block, params, blsct::CalculateKernelHash(pindexPrev, block, params));
+}
+
+bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params, const uint256& kernel_hash)
+{
     auto staked_commitments = cache.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash());
 
     if (staked_commitments.Size() < 2) {
@@ -41,7 +46,6 @@ bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* 
     auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindexPrev);
     auto eta_phi = blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, block);
 
-    auto kernel_hash = blsct::CalculateKernelHash(pindexPrev, block, params);
     auto next_target = blsct::GetNextTargetRequired(pindexPrev, &block, params);
 
     // Consensus-level sanity check: reject blocks whose saturating min-value
