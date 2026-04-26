@@ -148,7 +148,7 @@ static std::vector<RPCResult> DecodeTxDoc(const std::string& txid_field_doc)
                                                                                                                                                               }},
                                                                                   {RPCResult::Type::STR, "tokenId", /*optional=*/true, "output's token id"},
                                                                                   {RPCResult::Type::STR_HEX, "predicateHex", /*optional=*/true, "hex-encoded output predicate"},
-                                                                                  {RPCResult::Type::STR_HEX, "predicate", /*optional=*/true, "human friendly output predicate"},
+                                                                                  {RPCResult::Type::STR, "predicate", /*optional=*/true, "human friendly output predicate"},
                                                                                   {RPCResult::Type::NUM, "viewTag", /*optional=*/true, "output's view tag"},
                                                                               }},
                                            }},
