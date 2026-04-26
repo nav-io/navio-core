@@ -2864,7 +2864,7 @@ RPCHelpMan getblsctoutput()
 
             // Try mapOutputs (output storage mode)
             for (const auto& [outpoint, wout] : pwallet->mapOutputs) {
-                if (wout.out && wout.out->GetHash() == output_hash) {
+                if (wout.out && wout.GetOutputHash() == output_hash) {
                     const auto& tokenId = wout.out->tokenId;
 
                     UniValue result(UniValue::VOBJ);
