@@ -236,11 +236,10 @@ BOOST_FIXTURE_TEST_CASE(output_storage_multiple_outputs, TestingSetup)
 
     // Add many outputs, verify they are all correctly stored and stripped
     const int NUM_OUTPUTS = 100;
-    CAmount expectedTotal = 0;
 
     for (int i = 0; i < NUM_OUTPUTS; i++) {
         CAmount amount = (i + 1) * COIN;
-        auto outResult = blsct::CreateOutput(recvAddress, amount, "multi" + std::to_string(i));
+        auto outResult = blsct::CreateOutput(recvAddress, amount, strprintf("multi%i", i));
         CTxOut txout = outResult.out;
         uint256 originalHash = txout.GetHash();
 
@@ -254,8 +253,6 @@ BOOST_FIXTURE_TEST_CASE(output_storage_multiple_outputs, TestingSetup)
         BOOST_CHECK(result->out->HasBLSCTKeys());         // Keys preserved
         BOOST_CHECK(result->outputHash == originalHash);   // Hash preserved
         BOOST_CHECK(result->blsctRecoveryData.amount == amount);
-
-        expectedTotal += amount;
     }
 
     BOOST_CHECK_EQUAL(wallet->mapOutputs.size(), NUM_OUTPUTS);

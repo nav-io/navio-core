@@ -21,6 +21,7 @@ requestor
 ser
 siz
 stap
+sting
 unparseable
 unser
 useable

@@ -719,7 +719,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         self.log.info(f"Imported HTLC script: {imported_script[:40]}...")
 
         # Funder (wallet1) creates and broadcasts the HTLC
-        signed_tx = self._create_and_broadcast_htlc(
+        self._create_and_broadcast_htlc(
             wallet1, address1, address2,
             htlc_amount_sats, secret_hash.hex(), htlc_locktime, blinding_key_hex)
 
