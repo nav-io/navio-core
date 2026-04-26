@@ -302,10 +302,10 @@ void MclG1Point::BatchNormalize(std::span<MclG1Point* const> pts)
 }
 
 // BatchCheckSubgroup pulls in OS randomness (GetRandBytes) which is not part
-// of the minimal libblsct.a public API surface. Compile it out of the
-// libblsct-only build; it is only consumed by full-node code paths
-// (e.g. pos/proof.h::Unserialize).
-#ifndef LIBBLSCT
+// of the minimal libblsct.a or libnavioconsensus.la public API surface.
+// Compile it out of those reduced builds; it is only consumed by full-node
+// code paths (e.g. pos/proof.h::Unserialize) which always link random.cpp.
+#if !defined(LIBBLSCT) && !defined(BUILD_BITCOIN_INTERNAL)
 bool MclG1Point::BatchCheckSubgroup(std::span<const MclG1Point> pts)
 {
     if (pts.empty()) return true;
@@ -343,7 +343,7 @@ bool MclG1Point::BatchCheckSubgroup(std::span<const MclG1Point> pts)
     if (mclBnG1_isZero(&combined)) return true;
     return mclBnG1_isValidOrder(&combined) == 1;
 }
-#endif // LIBBLSCT
+#endif // !LIBBLSCT && !BUILD_BITCOIN_INTERNAL
 
 std::string MclG1Point::GetString(const uint8_t& radix) const
 {
