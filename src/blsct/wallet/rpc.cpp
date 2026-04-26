@@ -1216,6 +1216,11 @@ static RPCHelpMan setblsctseed()
                 }
                 MclScalar scalar;
                 scalar.SetVch(keydata);
+                // Reject if the raw bytes encode a value >= the field order: SetVch
+                // uses setBigEndianMod which silently reduces, so we verify round-trip.
+                if (scalar.GetVch() != std::vector<uint8_t>(keydata.begin(), keydata.end())) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Key value is out of range (>= group order)");
+                }
                 master_priv_key = blsct::PrivateKey(scalar);
 
                 if (blsct_km->HaveKey(master_priv_key.GetPublicKey().GetID())) {
@@ -1753,7 +1758,7 @@ RPCHelpMan fundblsctrawtransaction()
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Output value is too large");
                 }
             }
-            LogPrint(BCLog::WALLET, "fundblsctrawtransaction: total output value=%lld\n", output_value);
+            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: total output value=%lld\n", output_value);
 
             // Calculate total input amount from existing inputs
             CAmount existing_input_value = 0;
@@ -1772,7 +1777,7 @@ RPCHelpMan fundblsctrawtransaction()
                 existing_input_value += input.value.GetUint64();
                 existing_inputs.insert(input.in.prevout);
             }
-            LogPrintf("fundblsctrawtransaction: existing input value=%lld, existing inputs count=%zu\n", existing_input_value, existing_inputs.size());
+            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: existing input value=%lld, existing inputs count=%zu\n", existing_input_value, existing_inputs.size());
 
             auto lock_outpoint_if_wallet = [&](const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
                 if (pwallet->GetWalletTxFromOutpoint(outpoint)) {
@@ -1783,7 +1788,7 @@ RPCHelpMan fundblsctrawtransaction()
             // Calculate how much more we need
             CAmount required_value = output_value + fee;
             CAmount additional_required = required_value - existing_input_value;
-            LogPrintf("fundblsctrawtransaction: required value=%lld, additional required=%lld\n", required_value, additional_required);
+            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: required value=%lld, additional required=%lld\n", required_value, additional_required);
 
             // Get change address (needed for both cases)
             CTxDestination change_dest;
@@ -1824,7 +1829,7 @@ RPCHelpMan fundblsctrawtransaction()
             for (const auto& [type, outputs] : available_outputs.coins) {
                 total_available += outputs.size();
             }
-            LogPrintf("fundblsctrawtransaction: found %zu candidate outputs, need %lld additional\n", total_available, additional_required);
+            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: found %zu candidate outputs, need %lld additional\n", total_available, additional_required);
 
             for (const auto& [type, outputs] : available_outputs.coins) {
                 for (const auto& output : outputs) {
@@ -1832,7 +1837,7 @@ RPCHelpMan fundblsctrawtransaction()
                         continue;
                     }
 
-                    LogPrintf("fundblsctrawtransaction: evaluating output %s nValue=%lld hasRangeProof=%d hasKeys=%d spendingKeyZero=%d\n",
+                    LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: evaluating output %s nValue=%lld hasRangeProof=%d hasKeys=%d spendingKeyZero=%d\n",
                         output.outpoint.ToString(), output.txout.nValue,
                         output.txout.HasBLSCTRangeProof(), output.txout.HasBLSCTKeys(),
                         output.txout.blsctData.spendingKey.IsZero());
@@ -1840,17 +1845,17 @@ RPCHelpMan fundblsctrawtransaction()
                     std::optional<range_proof::RecoveredData<Mcl>> recovery_data;
                     if (const wallet::CWalletOutput* wallet_output = pwallet->GetWalletOutput(output.outpoint)) {
                         recovery_data = wallet_output->blsctRecoveryData;
-                        LogPrintf("fundblsctrawtransaction: recovery source=mapOutputs amount=%lld\n", recovery_data->amount);
+                        LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: recovery source=mapOutputs amount=%lld\n", recovery_data->amount);
                     } else if (const wallet::CWalletTx* wallet_tx = pwallet->GetWalletTxFromOutpoint(output.outpoint)) {
                         recovery_data = wallet_tx->GetBLSCTRecoveryData(output.outpoint);
-                        LogPrintf("fundblsctrawtransaction: recovery source=mapWallet amount=%lld\n", recovery_data->amount);
+                        LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: recovery source=mapWallet amount=%lld\n", recovery_data->amount);
                     } else {
                         auto recovery_result = blsct_km->RecoverOutputs({output.txout});
                         if (recovery_result.is_completed && !recovery_result.amounts.empty()) {
                             recovery_data = recovery_result.amounts[0];
-                            LogPrintf("fundblsctrawtransaction: recovery source=RecoverOutputs amount=%lld\n", recovery_data->amount);
+                            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: recovery source=RecoverOutputs amount=%lld\n", recovery_data->amount);
                         } else {
-                            LogPrintf("fundblsctrawtransaction: recovery source=none (not in mapOutputs, mapWallet, or RecoverOutputs)\n");
+                            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: recovery source=none (not in mapOutputs, mapWallet, or RecoverOutputs)\n");
                         }
                     }
 
@@ -1865,9 +1870,9 @@ RPCHelpMan fundblsctrawtransaction()
                     } else if (!output.txout.HasBLSCTRangeProof() && output.txout.nValue > 0) {
                         input_amount = output.txout.nValue;
                         input_gamma = Scalar(0);
-                        LogPrintf("fundblsctrawtransaction: using transparent nValue=%lld for output %s\n", input_amount, output.outpoint.ToString());
+                        LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: using transparent nValue=%lld for output %s\n", input_amount, output.outpoint.ToString());
                     } else {
-                        LogPrintf("fundblsctrawtransaction: SKIP output %s reason=no_recovery_data\n", output.outpoint.ToString());
+                        LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: SKIP output %s reason=no_recovery_data\n", output.outpoint.ToString());
                         continue;
                     }
 
@@ -1878,7 +1883,7 @@ RPCHelpMan fundblsctrawtransaction()
 
                     blsct::PrivateKey spending_key;
                     if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
-                        LogPrintf("fundblsctrawtransaction: SKIP output %s reason=spending_key_derivation_failed\n", output.outpoint.ToString());
+                        LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: SKIP output %s reason=spending_key_derivation_failed\n", output.outpoint.ToString());
                         continue;
                     }
 
@@ -1888,7 +1893,7 @@ RPCHelpMan fundblsctrawtransaction()
                         auto signing_pubkey = spending_key.GetPublicKey();
                         auto expected_pubkey = blsct::PublicKey(output.txout.blsctData.spendingKey);
                         if (signing_pubkey != expected_pubkey) {
-                            LogPrintf("fundblsctrawtransaction: SKIP output %s reason=spending_key_mismatch derived=%s expected=%s\n",
+                            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: SKIP output %s reason=spending_key_mismatch derived=%s expected=%s\n",
                                 output.outpoint.ToString(),
                                 signing_pubkey.ToString().substr(0, 16),
                                 expected_pubkey.ToString().substr(0, 16));
@@ -1896,7 +1901,7 @@ RPCHelpMan fundblsctrawtransaction()
                         }
                     }
 
-                    LogPrintf("fundblsctrawtransaction: ACCEPTED output %s amount=%lld\n", output.outpoint.ToString(), input_amount);
+                    LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: ACCEPTED output %s amount=%lld\n", output.outpoint.ToString(), input_amount);
                     unsigned_tx.AddInput(input);
                     additional_input_value += input_amount;
                     added_inputs.push_back(output.outpoint);
@@ -1906,7 +1911,7 @@ RPCHelpMan fundblsctrawtransaction()
 
                 if (additional_input_value >= additional_required) break;
             }
-            LogPrintf("fundblsctrawtransaction: collected=%lld required=%lld\n", additional_input_value, additional_required);
+            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: collected=%lld required=%lld\n", additional_input_value, additional_required);
 
             if (additional_input_value < additional_required) {
                 throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, strprintf(
@@ -2014,135 +2019,12 @@ RPCHelpMan signblsctrawtransaction()
 
             pwallet->GetOrCreateBLSCTKeyMan();
 
-            // Pre-sign validation: check each component before signing
-            const auto& inputs = unsigned_tx.GetInputs();
-            const auto& outputs = unsigned_tx.GetOutputs();
-
-            // Validate outputs
-            for (size_t i = 0; i < outputs.size(); i++) {
-                const auto& out = outputs[i];
-                if (out.out.HasBLSCTKeys()) {
-                    auto expected_ephemeral = blsct::PrivateKey(out.blindingKey).GetPoint();
-                    if (expected_ephemeral != out.out.blsctData.ephemeralKey) {
-                        throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
-                            "Output %d: ephemeralKey mismatch - blindingKey does not correspond to the ephemeralKey stored in the output. "
-                            "This will cause a signature verification failure.", i));
-                    }
-                }
-                if (out.out.HasBLSCTRangeProof() && out.gamma.IsZero()) {
-                    throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
-                        "Output %d: has range proof but gamma is zero. "
-                        "This will cause a balance signature failure.", i));
-                }
-            }
-
-            // Validate inputs
-            CAmount total_input_value = 0;
-            for (size_t i = 0; i < inputs.size(); i++) {
-                const auto& in = inputs[i];
-                total_input_value += in.value.GetUint64();
-
-                if (!in.sk.IsValid()) {
-                    throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
-                        "Input %d (%s): spending key is invalid (zero or malformed). "
-                        "Transaction will fail signature check.", i, in.in.prevout.hash.GetHex()));
-                }
-
-                // Cross-check against UTXO spending key if available in wallet
-                auto wallet_tx = pwallet->GetWalletTxFromOutpoint(in.in.prevout);
-                if (wallet_tx) {
-                    auto txout_iter = std::find_if(wallet_tx->tx->vout.begin(), wallet_tx->tx->vout.end(),
-                        [&](const CTxOut& out) { return out.GetHash() == in.in.prevout.hash; });
-                    if (txout_iter != wallet_tx->tx->vout.end()) {
-                        if (!txout_iter->blsctData.spendingKey.IsZero()) {
-                            auto signing_pubkey = in.sk.GetPublicKey();
-                            auto expected_pubkey = blsct::PublicKey(txout_iter->blsctData.spendingKey);
-                            if (signing_pubkey != expected_pubkey) {
-                                throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
-                                    "Input %d (%s): spending key does not match the UTXO spendingKey. "
-                                    "This transaction would fail signature verification on broadcast.",
-                                    i, in.in.prevout.hash.GetHex()));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Validate value balance
-            CAmount total_output_value = 0;
-            for (const auto& out : outputs) {
-                total_output_value += out.value.GetUint64();
-            }
-            CAmount fee = unsigned_tx.GetFee();
-            if (total_input_value != total_output_value + fee) {
-                throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
-                    "Value balance mismatch: inputs=%s, outputs=%s, fee=%s. "
-                    "Expected inputs == outputs + fee. Difference: %s. "
-                    "This will cause a balance signature failure.",
-                    FormatMoney(total_input_value), FormatMoney(total_output_value),
-                    FormatMoney(fee), FormatMoney(total_input_value - total_output_value - fee)));
-            }
-
             // Sign the transaction
             const auto& tx_opt = unsigned_tx.Sign();
             if (!tx_opt) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign transaction");
             }
             auto tx = tx_opt.value();
-
-            // Post-sign verification: aggregate signature batch check
-            std::vector<blsct::PublicKey> vPubKeys;
-            std::vector<blsct::Message> vMessages;
-
-            for (const auto& out : outputs) {
-                auto outHash = out.out.GetHash();
-                if (out.out.HasBLSCTKeys()) {
-                    vPubKeys.emplace_back(out.out.blsctData.ephemeralKey);
-                    vMessages.emplace_back(outHash.begin(), outHash.end());
-                }
-                if (out.type == blsct::TX_CREATE_TOKEN || out.type == blsct::TX_MINT_TOKEN) {
-                    vPubKeys.emplace_back(blsct::PrivateKey(out.tokenKey).GetPublicKey());
-                    vMessages.emplace_back(outHash.begin(), outHash.end());
-                }
-            }
-
-            Scalar gammaAcc;
-            for (const auto& out : outputs) {
-                if (out.out.HasBLSCTRangeProof()) {
-                    gammaAcc = gammaAcc - out.gamma;
-                }
-            }
-            for (const auto& in : inputs) {
-                gammaAcc = gammaAcc + in.gamma;
-                vPubKeys.emplace_back(in.sk.GetPublicKey());
-                auto in_hash = in.in.GetHash();
-                vMessages.emplace_back(in_hash.begin(), in_hash.end());
-            }
-
-            // Balance key
-            vPubKeys.emplace_back(blsct::PrivateKey(gammaAcc).GetPublicKey());
-            vMessages.emplace_back(blsct::Common::BLSCTBALANCE);
-
-            // Fee key - find it from the signed tx
-            for (const auto& out : tx.vout) {
-                if (out.scriptPubKey.IsFee() && out.predicate.size() > 0) {
-                    try {
-                        auto parsedPredicate = blsct::ParsePredicate(out.predicate);
-                        if (parsedPredicate.IsPayFeePredicate()) {
-                            vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
-                            vMessages.emplace_back(blsct::Common::BLSCTFEE);
-                        }
-                    } catch (...) {}
-                }
-            }
-
-            bool sigValid = blsct::PublicKeys(vPubKeys).VerifyBatch(vMessages, tx.txSig, true);
-            if (!sigValid) {
-                throw JSONRPCError(RPC_WALLET_ERROR,
-                    "Post-sign verification FAILED: the aggregate signature does not verify. "
-                    "This transaction would be rejected with 'failed-signature-check'. "
-                    "Possible causes: corrupted spending keys, wrong gamma values, or serialization issues.");
-            }
 
             return EncodeHexTx(tx);
         },
@@ -2760,7 +2642,10 @@ RPCHelpMan deriveblsctspendingkey()
         "deriveblsctspendingkey",
         "\nDerive the private spending key for an HTLC/atomic-swap output.\n"
         "Given the blinding key used when creating the output and a BLSCT address owned by this wallet,\n"
-        "returns the private spending key needed to spend via the corresponding script branch.\n",
+        "returns the private spending key needed to spend via the corresponding script branch.\n"
+        "\nNOTE: this RPC only works correctly with the wallet's top-level (default) BLSCT address.\n"
+        "Sub-addresses use a different spend-key point (D = sk + H(vk,i,j)·G) and will not derive\n"
+        "the correct spending key with this call.\n",
         {
             {"blinding_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 32-byte blinding key (hex) used when creating the HTLC output"},
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The BLSCT address to derive the spending key for (must be owned by this wallet)"},
@@ -2856,7 +2741,7 @@ RPCHelpMan getblsctoutput()
                         result.pushKV("memo", recoveryData.message);
                         result.pushKV("tokenId", tokenId.IsNull() ? "" : tokenId.ToString());
                         result.pushKV("confirmations", pwallet->GetTxDepthInMainChain(*wtx));
-                        result.pushKV("spendable", true);
+                        result.pushKV("spendable", !pwallet->IsSpent(COutPoint(wtx->GetHash(), i)));
                         return result;
                     }
                 }

@@ -1080,8 +1080,13 @@ bool MemPoolAccept::PolicyScriptChecks(const ATMPArgs& args, Workspace& ws)
     const CTransaction& tx = *ws.m_ptx;
     TxValidationState& state = ws.m_state;
 
-    // BLSCT transactions use blsct::VerifyTx with BLSCTSignatureChecker
-    // for script checks (including direct block-height CLTV validation).
+    // BLSCT transactions use blsct::VerifyTx / BLSCTSignatureChecker for all
+    // consensus-layer checks, which runs in ConsensusScriptChecks below.
+    // Standard-policy checks intentionally bypassed here for BLSCT:
+    //   - CLTV / sequence finality  (handled by BLSCTSignatureChecker)
+    //   - Dust outputs              (BLSCT outputs carry encrypted amounts)
+    //   - Cleanstack / sigops       (not applicable to BLS-signed inputs)
+    //   - Extra OP_RETURN outputs   (predicates use OP_RETURN-based scripts)
     if (tx.IsBLSCT()) return true;
 
     constexpr unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;

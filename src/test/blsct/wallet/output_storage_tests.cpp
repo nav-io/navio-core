@@ -332,4 +332,89 @@ BOOST_FIXTURE_TEST_CASE(output_storage_spent_tracking, TestingSetup)
     BOOST_CHECK(updated->IsSpent());
 }
 
+// Tests for getblsctoutput lookup logic:
+// 1. Output-storage mode: stripped output must be found by its original hash.
+// 2. Output-storage mode: IsSpent() is correctly reflected.
+// 3. Tx-storage mode: output found via mapOutpointHashToWalletTx.
+
+BOOST_FIXTURE_TEST_CASE(getblsctoutput_output_storage_lookup, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    auto outResult = blsct::CreateOutput(recvAddress, 500 * COIN, "output-storage-lookup");
+    CTxOut txout = outResult.out;
+
+    // Save original hash *before* stripping.
+    uint256 originalHash = txout.GetHash();
+    COutPoint outpoint(originalHash);
+
+    auto outRef = std::make_shared<const CTxOut>(txout);
+    auto* wout = wallet->AddToWallet(outpoint, outRef, TxStateConfirmed{InsecureRand256(), 1, 0},
+                                     nullptr, true, false, TxStateInactive{}, false);
+    BOOST_REQUIRE(wout != nullptr);
+
+    // The wallet strips the range proof; GetOutputHash() must still return the original.
+    BOOST_CHECK(wout->GetOutputHash() == originalHash);
+    BOOST_CHECK(!wout->out->HasBLSCTRangeProof());
+
+    // Lookup by original hash using the same logic as getblsctoutput.
+    bool found = false;
+    for (const auto& [op, w] : wallet->mapOutputs) {
+        if (w.out && w.GetOutputHash() == originalHash) {
+            found = true;
+            BOOST_CHECK_EQUAL(w.blsctRecoveryData.amount, 500 * COIN);
+            BOOST_CHECK(!w.IsSpent());
+            break;
+        }
+    }
+    BOOST_CHECK(found);
+}
+
+BOOST_FIXTURE_TEST_CASE(getblsctoutput_output_storage_spent_flag, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    auto outResult = blsct::CreateOutput(recvAddress, 200 * COIN, "spent-flag");
+    CTxOut txout = outResult.out;
+    uint256 originalHash = txout.GetHash();
+    COutPoint outpoint(originalHash);
+
+    auto outRef = std::make_shared<const CTxOut>(txout);
+    wallet->AddToWallet(outpoint, outRef, TxStateConfirmed{InsecureRand256(), 1, 0},
+                        nullptr, true, false, TxStateInactive{}, false);
+
+    // Mark spent.
+    wallet->AddToWallet(outpoint, nullptr, TxStateConfirmed{InsecureRand256(), 1, 0},
+                        nullptr, true, false, TxStateConfirmed{InsecureRand256(), 2, 0}, false);
+
+    // getblsctoutput should report spendable=false for a spent output.
+    bool found = false;
+    for (const auto& [op, w] : wallet->mapOutputs) {
+        if (w.out && w.GetOutputHash() == originalHash) {
+            found = true;
+            BOOST_CHECK(w.IsSpent());
+            break;
+        }
+    }
+    BOOST_CHECK(found);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

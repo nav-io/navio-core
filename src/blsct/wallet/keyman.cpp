@@ -834,6 +834,9 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
 
 bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce)
 {
+    // No viewKey guard here: this function is used for watch-only scripts where
+    // a pre-computed nonce is supplied by the caller (e.g. from an imported
+    // script's recovery hint).  The viewKey is not consulted and may be absent.
     bulletproofs_plus::RangeProofLogic<Arith> rp;
     std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
     reqs.reserve(outs.size());
@@ -1245,18 +1248,23 @@ bool KeyMan::ExtractAllSpendingKeysFromScript(const CScript& script, std::vector
 
 bool KeyMan::AddWatchOnly(const CScript& script, const std::optional<blsct::PublicKey>& recovery_nonce)
 {
-    LOCK(cs_KeyStore);
+    // Acquire cs_wallet before cs_KeyStore to match the lock order used
+    // elsewhere in this file and in the wallet layer.  Callers that already
+    // hold cs_wallet (e.g. RPC handlers) are safe because it is a
+    // RecursiveMutex.
+    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
     wallet::WalletBatch batch(m_storage.GetDatabase());
-    setWatchOnly.insert(script);
-    if (recovery_nonce) {
-        m_watch_only_nonces[CScriptID(script)] = *recovery_nonce;
-    }
     wallet::CKeyMetadata meta;
     if (!batch.WriteBLSCTWatchOnly(script, meta)) {
         return false;
     }
     if (recovery_nonce && !batch.WriteBLSCTWatchOnlyNonce(script, *recovery_nonce)) {
         return false;
+    }
+    // Mutate in-memory state only after all DB writes succeed.
+    setWatchOnly.insert(script);
+    if (recovery_nonce) {
+        m_watch_only_nonces[CScriptID(script)] = *recovery_nonce;
     }
     return true;
 }

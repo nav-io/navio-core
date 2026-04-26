@@ -15,20 +15,27 @@
 #include <vector>
 
 namespace blsct {
+// NOTE: nSpendHeight = 0 / nMedianTimePast = 0 silently reject any input whose
+// nSequence encodes a locktime > 0 (height-based) or MTP > 0 (time-based).
+// Callers that do not have a real chain context (e.g. unit tests that only
+// create SEQUENCE_FINAL transactions) may safely pass the defaults.
+// Block-validation callers MUST pass real values.
 bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0);
 
 // Same semantics as VerifyTx, but defers the final bulletproofs++ batch check
 // to the caller. On success, appends the tx's range proofs to `out_proofs` so
 // the caller can invoke `RangeProofLogic::Verify` once per block over the
 // aggregated set. All other checks (script, signatures, predicate) run inline.
+// Block-validation callers MUST pass the real chain height and median-time-past
+// so that sequence-based locktime checks activate correctly.
 bool VerifyTxCollectProofs(const CTransaction& tx,
                            CCoinsViewCache& view,
                            TxValidationState& state,
                            std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
-                           const CAmount& blockReward = 0,
-                           const CAmount& minStake = 0,
-                           int nSpendHeight = 0,
-                           int64_t nMedianTimePast = 0);
+                           const CAmount& blockReward,
+                           const CAmount& minStake,
+                           int nSpendHeight,
+                           int64_t nMedianTimePast);
 
 // Batch verify collected range proofs. Call once per block after all
 // VerifyTxCollectProofs calls succeed.

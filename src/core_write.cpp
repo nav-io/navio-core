@@ -276,7 +276,7 @@ void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry
         UniValue o(UniValue::VOBJ);
         ScriptToUniv(txout.scriptPubKey, /*out=*/o, /*include_hex=*/true, /*include_address=*/true);
         out.pushKV("scriptPubKey", o);
-        const bool include_blsct_fields = tx.IsBLSCT() || txout.HasBLSCTKeys() || txout.HasBLSCTRangeProof() || txout.blsctData.viewTag != 0;
+        const bool include_blsct_fields = tx.IsBLSCT() || txout.HasBLSCTKeys() || txout.HasBLSCTRangeProof();
         if (include_blsct_fields) {
             out.pushKV("ephemeralKey", HexStr(txout.blsctData.ephemeralKey.GetVch()));
             out.pushKV("spendingKey", HexStr(txout.blsctData.spendingKey.GetVch()));

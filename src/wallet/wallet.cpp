@@ -1737,6 +1737,17 @@ void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRe
         if (it != mapWallet.end()) {
             RefreshMempoolStatus(it->second, chain());
         }
+    } else {
+        // In output-storage mode, mapWallet is not used for BLSCT txs.
+        // Walk the matching outpoints in mapOutputs and clear InMempool state
+        // so outputs do not remain stuck as unconfirmed after eviction/reorg.
+        for (const auto& vout : tx->vout) {
+            COutPoint outpoint(vout.GetHash());
+            auto it = mapOutputs.find(outpoint);
+            if (it != mapOutputs.end() && it->second.state<TxStateInMempool>()) {
+                it->second.m_state = TxStateInactive{};
+            }
+        }
     }
     // Handle transactions that were removed from the mempool because they
     // conflict with transactions in a newly connected block.

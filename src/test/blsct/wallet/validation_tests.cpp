@@ -4,6 +4,7 @@
 
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
+#include <primitives/transaction.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <txdb.h>
@@ -72,6 +73,56 @@ BOOST_FIXTURE_TEST_CASE(validation_reward_test, TestingSetup)
 
     BOOST_CHECK(!blsct::VerifyTx(CTransaction(tx), coins_view_cache, tx_state));
     BOOST_CHECK(blsct::VerifyTx(CTransaction(tx), coins_view_cache, tx_state, 900 * COIN));
+}
+
+// Verify that a BLSCT input with bit 31 set (reserved for future relative
+// timelocks) is rejected with "reserved-sequence-bits" regardless of height/MTP.
+BOOST_FIXTURE_TEST_CASE(validation_reserved_sequence_bits_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    const auto txid = Txid::FromUint256(InsecureRand256());
+    COutPoint outpoint(txid);
+
+    Coin coin;
+    auto out = blsct::CreateOutput(recvAddress, 1000 * COIN, "test");
+    coin.nHeight = 1;
+    coin.out = out.out;
+
+    {
+        CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+        coins_view_cache.SetBestBlock(InsecureRand256());
+        coins_view_cache.AddCoin(outpoint, std::move(coin), true);
+        BOOST_CHECK(coins_view_cache.Flush());
+    }
+
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+    auto tx = blsct::TxFactory(blsct_km);
+    BOOST_CHECK(tx.AddInput(coins_view_cache, outpoint));
+    tx.AddOutput(recvAddress, 900 * COIN, "test");
+    auto finalTxOpt = tx.BuildTx();
+    BOOST_REQUIRE(finalTxOpt.has_value());
+
+    // Inject reserved bit 31 into the first input's nSequence.
+    // 0x80000001 has bit 31 set and is != SEQUENCE_FINAL (0xFFFFFFFF).
+    CMutableTransaction mtx(finalTxOpt.value());
+    BOOST_REQUIRE(!mtx.vin.empty());
+    mtx.vin[0].nSequence = 0x80000001;
+
+    TxValidationState tx_state;
+    // Should be rejected with "reserved-sequence-bits" at any height/MTP.
+    BOOST_CHECK(!blsct::VerifyTx(CTransaction(mtx), coins_view_cache, tx_state, 0, 0, 1000, 0));
+    BOOST_CHECK_EQUAL(tx_state.GetRejectReason(), "reserved-sequence-bits");
 }
 
 BOOST_AUTO_TEST_SUITE_END()
