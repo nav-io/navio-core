@@ -39,7 +39,7 @@ class COutPoint
 public:
     Outid hash;
 
-    COutPoint() {}
+    COutPoint() = default;
     COutPoint(const Outid& hashIn) : hash(hashIn) {}
     COutPoint(const uint256& hashIn) : hash(Outid::FromUint256(hashIn)) {}
 

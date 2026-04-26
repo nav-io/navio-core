@@ -23,7 +23,7 @@ bool IsTopoSortedPackage(const Package& txns, std::unordered_set<uint256, Salted
     // than its child.
     for (const auto& tx : txns) {
         for (const auto& input : tx->vin) {
-            if (later_outids.find(input.prevout.hash) != later_outids.end()) {
+            if (later_outids.contains(input.prevout.hash)) {
                 // The parent is a subsequent transaction in the package.
                 return false;
             }
@@ -62,7 +62,7 @@ bool IsConsistentPackage(const Package& txns)
             return false;
         }
         for (const auto& input : tx->vin) {
-            if (inputs_seen.find(input.prevout) != inputs_seen.end()) {
+            if (inputs_seen.contains(input.prevout)) {
                 // This input is also present in another tx in the package.
                 return false;
             }
@@ -165,7 +165,7 @@ bool IsChildWithParentsTree(const Package& package)
 
         // Check if current parent spends any output from other parents
         for (const auto& input : (*it1)->vin) {
-            if (other_parent_outids.count(input.prevout.hash) > 0) return false;
+            if (other_parent_outids.contains(input.prevout.hash)) return false;
         }
     }
 

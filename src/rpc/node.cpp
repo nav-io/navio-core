@@ -23,7 +23,7 @@
 #include <util/any.h>
 #include <util/check.h>
 
-#include <stdint.h>
+#include <cstdint>
 #ifdef HAVE_MALLOC_INFO
 #include <malloc.h>
 #endif

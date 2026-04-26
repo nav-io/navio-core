@@ -393,7 +393,8 @@ BOOST_AUTO_TEST_CASE(test_to_binary_vec)
         Scalar a(UINT32_MAX);
         auto act = a.ToBinaryVec();
         std::vector<bool> exp;
-        for (size_t i=0; i<32; ++i) {
+        exp.reserve(32);
+for (size_t i=0; i<32; ++i) {
             exp.push_back(true);
         }
         BOOST_CHECK(act == exp);

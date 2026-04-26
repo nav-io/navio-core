@@ -9,6 +9,6 @@
 #include <cstdio>
 #include <vector>
 
-std::vector<uint8_t> pkcs5_pbkdf2_hmacsha512(const std::vector<uint8_t>, const std::vector<uint8_t>, const int);
+std::vector<uint8_t> pkcs5_pbkdf2_hmacsha512(std::vector<uint8_t>, std::vector<uint8_t>, int);
 
 #endif // BITCOIN_CRYPTO_PKCS5_PBKDF2_H

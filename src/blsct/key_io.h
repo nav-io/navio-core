@@ -30,14 +30,14 @@ namespace bech32_hrp {
 
 /** Encode DoublePublicKey to Bech32 or Bech32m string. Encoding must be one of BECH32 or BECH32M. */
 std::string EncodeDoublePublicKey(
-    const std::string bech32_mod_hrp,
-    const bech32_mod::Encoding encoding,
+    std::string bech32_mod_hrp,
+    bech32_mod::Encoding encoding,
     const blsct::DoublePublicKey& dpk
 );
 
 /** Decode a Bech32 or Bech32m string to a DoublePublicKey. */
 std::optional<blsct::DoublePublicKey> DecodeDoublePublicKey(
-    const std::string bech32_mod_hrp,
+    std::string bech32_mod_hrp,
     const std::string& str
 );
 

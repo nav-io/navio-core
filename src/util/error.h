@@ -36,7 +36,7 @@ enum class TransactionError {
     INVALID_PACKAGE,
 };
 
-bilingual_str TransactionErrorString(const TransactionError error);
+bilingual_str TransactionErrorString(TransactionError error);
 
 bilingual_str ResolveErrMsg(const std::string& optname, const std::string& strBind);
 

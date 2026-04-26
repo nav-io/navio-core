@@ -534,7 +534,7 @@ bool KeyMan::HaveKey(const CKeyID& id) const
     if (!m_storage.HasEncryptionKeys()) {
         return KeyRing::HaveKey(id);
     }
-    return mapCryptedKeys.count(id) > 0;
+    return mapCryptedKeys.contains(id);
 }
 
 bool KeyMan::GetKey(const CKeyID& id, PrivateKey& keyOut) const
@@ -837,7 +837,7 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputsWithNonce(c
 bool KeyMan::IsMine(const CScript& script) const
 {
     LOCK(cs_KeyStore);
-    return setWatchOnly.count(script) > 0;
+    return setWatchOnly.contains(script);
 }
 
 bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag)
@@ -874,7 +874,7 @@ bool KeyMan::AddSubAddress(const CKeyID& hashId, const SubAddressIdentifier& ind
 
 bool KeyMan::HaveSubAddress(const CKeyID& hashId) const
 {
-    return mapSubAddresses.count(hashId) > 0;
+    return mapSubAddresses.contains(hashId);
 }
 
 bool KeyMan::GetSubAddress(const CKeyID& hashId, SubAddress& address) const
@@ -913,12 +913,12 @@ bool KeyMan::AddSubAddressStr(const SubAddress& subAddress, const CKeyID& hashId
 bool KeyMan::HaveSubAddressStr(const SubAddress& subAddress) const
 {
     LOCK(cs_KeyStore);
-    return mapSubAddressesStr.count(subAddress) > 0;
+    return mapSubAddressesStr.contains(subAddress);
 }
 
 SubAddress KeyMan::GenerateNewSubAddress(const int64_t& account, SubAddressIdentifier& id)
 {
-    if (m_hd_chain.nSubAddressCounter.count(account) == 0)
+    if (!m_hd_chain.nSubAddressCounter.contains(account))
         m_hd_chain.nSubAddressCounter.insert(std::make_pair(account, 0));
 
     SubAddress subAddress{DoublePublicKey{}};
@@ -958,7 +958,7 @@ bool KeyMan::NewSubAddressPool(const int64_t& account)
     LOCK(cs_KeyStore);
     wallet::WalletBatch batch(m_storage.GetDatabase());
 
-    if (setSubAddressPool.count(account)) {
+    if (setSubAddressPool.contains(account)) {
         for (uint64_t nIndex : setSubAddressPool[account])
             batch.EraseSubAddressPool({account, nIndex});
         setSubAddressPool[account].clear();
@@ -1032,10 +1032,10 @@ void KeyMan::ReserveSubAddressFromPool(const int64_t& account, int64_t& nIndex, 
 
         if (!m_storage.IsLocked()) TopUpAccount(account);
 
-        if (setSubAddressPool.count(account) == 0)
+        if (!setSubAddressPool.contains(account))
             setSubAddressPool.insert(std::make_pair(account, std::set<uint64_t>()));
 
-        if (setSubAddressReservePool.count(account) == 0)
+        if (!setSubAddressReservePool.contains(account))
             setSubAddressReservePool.insert(std::make_pair(account, std::set<uint64_t>()));
 
         // Get the oldest key
@@ -1074,7 +1074,7 @@ void KeyMan::ReturnSubAddress(const SubAddressIdentifier& id)
     // Return to key pool
     {
         LOCK(cs_KeyStore);
-        if (setSubAddressPool.count(id.account) == 0)
+        if (!setSubAddressPool.contains(id.account))
             setSubAddressPool.insert(std::make_pair(id.account, std::set<uint64_t>()));
         setSubAddressPool[id.account].insert(id.address);
         setSubAddressReservePool[id.account].erase(id.address);
@@ -1107,14 +1107,14 @@ bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAd
 int KeyMan::GetSubAddressPoolSize(const int64_t& account) const
 {
     LOCK(cs_KeyStore);
-    return setSubAddressPool.count(account) > 0 ? setSubAddressPool.at(account).size() : 0;
+    return setSubAddressPool.contains(account) ? setSubAddressPool.at(account).size() : 0;
 }
 
 int64_t KeyMan::GetOldestSubAddressPoolTime(const int64_t& account)
 {
     LOCK(cs_KeyStore);
 
-    if (setSubAddressPool.count(account) == 0)
+    if (!setSubAddressPool.contains(account))
         setSubAddressPool.insert(std::make_pair(account, std::set<uint64_t>()));
 
     // if the keypool is empty, return <NOW>

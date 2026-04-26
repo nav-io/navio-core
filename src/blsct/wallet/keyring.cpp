@@ -39,7 +39,7 @@ bool KeyRing::AddSpendKey(const PublicKey& pubkey)
 bool KeyRing::HaveKey(const CKeyID& id) const
 {
     LOCK(cs_KeyStore);
-    return mapKeys.count(id) > 0;
+    return mapKeys.contains(id);
 }
 
 bool KeyRing::GetKey(const CKeyID& address, PrivateKey& keyOut) const

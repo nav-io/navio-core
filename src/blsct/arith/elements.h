@@ -23,7 +23,7 @@ class Elements
 public:
     using value_type = T;
 
-    Elements();
+    Elements() = default;
     Elements(const std::vector<T>& vec);
     Elements(const size_t& size, const T& default_value);
     Elements(const Elements& other);
@@ -50,7 +50,7 @@ public:
     static Elements<T> FirstNPow(const T& k, const size_t& n, const size_t& from_index = 0);
 
     static Elements<T> RepeatN(const T& k, const size_t& n);
-    static Elements<T> RandVec(const size_t& n, const bool exclude_zero = false);
+    static Elements<T> RandVec(const size_t& n, bool exclude_zero = false);
 
     /**
      * Scalars x Scalars
@@ -99,12 +99,12 @@ public:
     /**
      * Returns elements slice [fromIndex, vec.size())
      */
-    Elements<T> From(const size_t from_index) const;
+    Elements<T> From(size_t from_index) const;
 
     /**
      * Returns elements slice [0, toIndex)
      */
-    Elements<T> To(const size_t to_index) const;
+    Elements<T> To(size_t to_index) const;
 
     Elements<T> Negate() const;
 
@@ -150,7 +150,7 @@ class OrderedElements
 public:
     using value_type = T;
 
-    OrderedElements();
+    OrderedElements() = default;
     OrderedElements(const std::set<T>& vec);
     // OrderedElements(const OrderedElements& other) : m_set(other.m_set) {};
 

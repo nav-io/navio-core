@@ -54,7 +54,7 @@ struct BasicTestingSetup {
     util::SignalInterrupt m_interrupt;
     node::NodeContext m_node; // keep as first member to be destructed last
 
-    explicit BasicTestingSetup(const ChainType chainType = ChainType::MAIN, const std::vector<const char*>& extra_args = {});
+    explicit BasicTestingSetup(ChainType chainType = ChainType::MAIN, const std::vector<const char*>& extra_args = {});
     ~BasicTestingSetup();
 
     const fs::path m_path_root;
@@ -73,7 +73,7 @@ struct ChainTestingSetup : public BasicTestingSetup {
     bool m_coins_db_in_memory{true};
     bool m_block_tree_db_in_memory{true};
 
-    explicit ChainTestingSetup(const ChainType chainType = ChainType::MAIN, const std::vector<const char*>& extra_args = {});
+    explicit ChainTestingSetup(ChainType chainType = ChainType::MAIN, const std::vector<const char*>& extra_args = {});
     ~ChainTestingSetup();
 
     // Supplies a chainstate, if one is needed
@@ -84,10 +84,10 @@ struct ChainTestingSetup : public BasicTestingSetup {
  */
 struct TestingSetup : public ChainTestingSetup {
     explicit TestingSetup(
-        const ChainType chainType = ChainType::MAIN,
+        ChainType chainType = ChainType::MAIN,
         const std::vector<const char*>& extra_args = {},
-        const bool coins_db_in_memory = true,
-        const bool block_tree_db_in_memory = true);
+        bool coins_db_in_memory = true,
+        bool block_tree_db_in_memory = true);
 };
 
 /** Identical to TestingSetup, but chain set to regtest */
@@ -105,10 +105,10 @@ class CScript;
  */
 struct TestChain100Setup : public TestingSetup {
     TestChain100Setup(
-        const ChainType chain_type = ChainType::REGTEST,
+        ChainType chain_type = ChainType::REGTEST,
         const std::vector<const char*>& extra_args = {},
-        const bool coins_db_in_memory = true,
-        const bool block_tree_db_in_memory = true);
+        bool coins_db_in_memory = true,
+        bool block_tree_db_in_memory = true);
 
     /**
      * Create a new block with just given transactions, coinbase paying to
@@ -224,10 +224,10 @@ struct TestBLSCTChain100Setup : public TestingSetup {
 
     TestBLSCTChain100Setup(
         const blsct::SubAddress& coinbaseDest_ = blsct::SubAddress(),
-        const ChainType chain_type = ChainType::BLSCTREGTEST,
+        ChainType chain_type = ChainType::BLSCTREGTEST,
         const std::vector<const char*>& extra_args = {},
-        const bool coins_db_in_memory = true,
-        const bool block_tree_db_in_memory = true);
+        bool coins_db_in_memory = true,
+        bool block_tree_db_in_memory = true);
 
     /**
      * Create a new block with just given transactions, coinbase paying to

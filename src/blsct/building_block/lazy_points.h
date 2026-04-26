@@ -15,8 +15,8 @@ struct LazyPoints {
     using Scalars = Elements<Scalar>;
     using Points = Elements<Point>;
 
-    LazyPoints() {}
-    LazyPoints(const LazyPoints<T>& points): m_points{points.m_points} {}
+    LazyPoints() = default;
+    LazyPoints(const LazyPoints<T>& points) = default;
     LazyPoints(const Points& bases, const Scalars& exps);
 
     void Add(const LazyPoint<T>& point);

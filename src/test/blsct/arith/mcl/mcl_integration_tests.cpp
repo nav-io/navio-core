@@ -334,6 +334,7 @@ BOOST_AUTO_TEST_CASE(test_range_proof_65_g_part_only)
 //
 // For a given P, prover proves that it has vectors a, b s.t.
 // P = g^a h^b u^<a,b>
+// NOLINTNEXTLINE(misc-no-recursion)
 bool InnerProductArgument(
     const size_t& n,
     const Elements<MclG1Point>& gg, const Elements<MclG1Point>& hh,

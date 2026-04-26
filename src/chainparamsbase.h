@@ -36,7 +36,7 @@ private:
 /**
  * Creates and returns a std::unique_ptr<CBaseChainParams> of the chosen chain.
  */
-std::unique_ptr<CBaseChainParams> CreateBaseChainParams(const ChainType chain);
+std::unique_ptr<CBaseChainParams> CreateBaseChainParams(ChainType chain);
 
 /**
  *Set the arguments for chainparams
@@ -50,6 +50,6 @@ void SetupChainParamsBaseOptions(ArgsManager& argsman);
 const CBaseChainParams& BaseParams();
 
 /** Sets the params returned by Params() to those for the given chain. */
-void SelectBaseParams(const ChainType chain);
+void SelectBaseParams(ChainType chain);
 
 #endif // BITCOIN_CHAINPARAMSBASE_H

@@ -39,7 +39,7 @@
 #include <warnings.h>
 
 #include <memory>
-#include <stdint.h>
+#include <cstdint>
 
 using node::BlockAssembler;
 using node::CBlockTemplate;
@@ -902,7 +902,7 @@ static RPCHelpMan getblocktemplate()
 
                 UniValue deps(UniValue::VARR);
                 for (const CTxIn& in : tx.vin) {
-                    if (setTxIndex.count(in.prevout.hash))
+                    if (setTxIndex.contains(in.prevout.hash))
                         deps.push_back(setTxIndex[in.prevout.hash]);
                 }
                 entry.pushKV("depends", deps);
@@ -959,7 +959,7 @@ static RPCHelpMan getblocktemplate()
                 case ThresholdState::STARTED: {
                     const struct VBDeploymentInfo& vbinfo = VersionBitsDeploymentInfo[pos];
                     vbavailable.pushKV(gbt_vb_name(pos), consensusParams.vDeployments[pos].bit);
-                    if (setClientRules.find(vbinfo.name) == setClientRules.end()) {
+                    if (!setClientRules.contains(vbinfo.name)) {
                         if (!vbinfo.gbt_force) {
                             // If the client doesn't support this, don't indicate it in the [default] version
                             pblock->nVersion &= ~chainman.m_versionbitscache.Mask(consensusParams, pos);
@@ -971,7 +971,7 @@ static RPCHelpMan getblocktemplate()
                     // Add to rules only
                     const struct VBDeploymentInfo& vbinfo = VersionBitsDeploymentInfo[pos];
                     aRules.push_back(gbt_vb_name(pos));
-                    if (setClientRules.find(vbinfo.name) == setClientRules.end()) {
+                    if (!setClientRules.contains(vbinfo.name)) {
                         // Not supported by the client; make sure it's safe to proceed
                         if (!vbinfo.gbt_force) {
                             throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Support for '%s' rule requires explicit client support", vbinfo.name));

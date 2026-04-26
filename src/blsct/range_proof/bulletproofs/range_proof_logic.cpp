@@ -431,7 +431,7 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
         if (maybe_msg_amt == std::nullopt) {
             continue;
         }
-        auto msg_amt = maybe_msg_amt.value();
+        const auto& msg_amt = maybe_msg_amt.value();
 
         auto x = range_proof::RecoveredData<T>(
             req.id,

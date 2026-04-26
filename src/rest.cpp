@@ -788,7 +788,7 @@ static bool rest_getutxos(const std::any& context, HTTPRequest* req, const std::
 
         for (size_t i = (fCheckMemPool) ? 1 : 0; i < uriParts.size(); i++)
         {
-            std::string strTxid = uriParts[i];
+            const std::string& strTxid = uriParts[i];
 
             if (!IsHex(strTxid))
                 return RESTERR(req, HTTP_BAD_REQUEST, "Parse error");

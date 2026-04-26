@@ -127,7 +127,7 @@ struct BlockInfo {
 class Chain
 {
 public:
-    virtual ~Chain() {}
+    virtual ~Chain() = default;
 
     //! Get current chain height, not including genesis block (returns 0 if
     //! chain only contains genesis block, nullopt if chain does not contain
@@ -314,7 +314,7 @@ public:
     class Notifications
     {
     public:
-        virtual ~Notifications() {}
+        virtual ~Notifications() = default;
         virtual void transactionAddedToMempool(const CTransactionRef& tx) {}
         virtual void transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRemovalReason reason) {}
         virtual void blockConnected(ChainstateRole role, const BlockInfo& block) {}
@@ -376,7 +376,7 @@ public:
 class ChainClient
 {
 public:
-    virtual ~ChainClient() {}
+    virtual ~ChainClient() = default;
 
     //! Register rpcs.
     virtual void registerRpcs() = 0;

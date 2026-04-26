@@ -44,7 +44,7 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
         if ((CAmount)predicate.GetNftId() >= token.info.nTotalSupply || predicate.GetNftId() < 0)
             return false;
 
-        if ((token.mapMintedNft.find(predicate.GetNftId()) != token.mapMintedNft.end()) == !fDisconnect)
+        if ((token.mapMintedNft.contains(predicate.GetNftId())) == !fDisconnect)
             return false;
 
         if (fDisconnect)

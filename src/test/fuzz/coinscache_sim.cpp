@@ -9,10 +9,10 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/util.h>
 
-#include <assert.h>
+#include <cassert>
 #include <optional>
 #include <memory>
-#include <stdint.h>
+#include <cstdint>
 #include <vector>
 
 namespace {
@@ -173,7 +173,7 @@ public:
 
     bool HaveCoin(const COutPoint& outpoint) const final
     {
-        return m_data.count(outpoint);
+        return m_data.contains(outpoint);
     }
 
     uint256 GetBestBlock() const final { return {}; }

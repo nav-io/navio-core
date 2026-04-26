@@ -274,7 +274,7 @@ public:
          return false;
     }
 
-    virtual ~BaseSignatureChecker() {}
+    virtual ~BaseSignatureChecker() = default;
 };
 
 /** Enum to specify what *TransactionSignatureChecker's behavior should be

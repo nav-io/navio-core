@@ -255,7 +255,7 @@ struct OutputGroup
     /** Total weight of the UTXOs in this group. */
     int m_weight{0};
 
-    OutputGroup() {}
+    OutputGroup() = default;
     OutputGroup(const CoinSelectionParams& params) :
         m_long_term_feerate(params.m_long_term_feerate),
         m_subtract_fee_outputs(params.m_subtract_fee_outputs)
@@ -304,7 +304,7 @@ typedef std::map<CoinEligibilityFilter, OutputGroupTypeMap> FilteredOutputGroups
  * @param[in]   payment_value   Average payment value of the transaction output(s).
  * @param[in]   change_fee      Fee for creating a change output.
  */
-[[nodiscard]] CAmount GenerateChangeTarget(const CAmount payment_value, const CAmount change_fee, FastRandomContext& rng);
+[[nodiscard]] CAmount GenerateChangeTarget(CAmount payment_value, CAmount change_fee, FastRandomContext& rng);
 
 enum class SelectionAlgorithm : uint8_t
 {
@@ -314,7 +314,7 @@ enum class SelectionAlgorithm : uint8_t
     MANUAL = 3,
 };
 
-std::string GetAlgorithmName(const SelectionAlgorithm algo);
+std::string GetAlgorithmName(SelectionAlgorithm algo);
 
 struct SelectionResult
 {
@@ -380,10 +380,10 @@ public:
     void AddInputs(const std::set<std::shared_ptr<COutput>>& inputs, bool subtract_fee_outputs);
 
     /** How much individual inputs overestimated the bump fees for shared ancestries */
-    void SetBumpFeeDiscount(const CAmount discount);
+    void SetBumpFeeDiscount(CAmount discount);
 
     /** Calculates and stores the waste for this selection via GetSelectionWaste */
-    void ComputeAndSetWaste(const CAmount min_viable_change, const CAmount change_cost, const CAmount change_fee);
+    void ComputeAndSetWaste(CAmount min_viable_change, CAmount change_cost, CAmount change_fee);
     [[nodiscard]] CAmount GetWaste() const;
 
     /**
@@ -418,7 +418,7 @@ public:
      * @returns Amount for change output, 0 when there is no change.
      *
      */
-    CAmount GetChange(const CAmount min_viable_change, const CAmount change_fee) const;
+    CAmount GetChange(CAmount min_viable_change, CAmount change_fee) const;
 
     CAmount GetTarget() const { return m_target; }
 

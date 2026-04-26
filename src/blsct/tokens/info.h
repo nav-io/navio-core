@@ -28,7 +28,7 @@ public:
 
     TokenInfo(const TokenType& type, const blsct::PublicKey& publicKey, const std::map<std::string, std::string>& mapMetadata,
               const CAmount& nTotalSupply) : type(type), publicKey(publicKey), mapMetadata(mapMetadata), nTotalSupply(nTotalSupply){};
-    TokenInfo(){};
+    TokenInfo()= default;
 
     SERIALIZE_METHODS(TokenInfo, obj) { READWRITE(Using<CustomUintFormatter<1>>(obj.type), obj.publicKey, obj.mapMetadata, obj.nTotalSupply); };
 
@@ -50,7 +50,7 @@ public:
     CAmount nSupply;
     std::map<uint64_t, std::map<std::string, std::string>> mapMintedNft;
 
-    TokenEntry(){};
+    TokenEntry()= default;
     TokenEntry(const TokenInfo& info,
                const CAmount& nSupply = 0) : info(info), nSupply(nSupply){};
     TokenEntry(const TokenInfo& info,

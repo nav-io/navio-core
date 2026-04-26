@@ -26,12 +26,12 @@ void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmo
         out = CreateOutput(destination.GetKeys(), nAmount - nFee, sMemo, token_id, blindingKey, type, minStake);
     };
 
-    if (nAmounts.count(token_id) == 0)
+    if (!nAmounts.contains(token_id))
         nAmounts[token_id] = {0, 0, 0};
 
     nAmounts[token_id].nFromOutputs += nAmount - nFee;
 
-    if (vOutputs.count(token_id) == 0)
+    if (!vOutputs.contains(token_id))
         vOutputs[token_id] = std::vector<UnsignedOutput>();
 
     vOutputs[token_id].push_back(out);
@@ -46,7 +46,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const blsct::TokenInfo& to
 
     TokenId token_id{tokenInfo.publicKey.GetHash()};
 
-    if (vOutputs.count(token_id) == 0)
+    if (!vOutputs.contains(token_id))
         vOutputs[token_id] = std::vector<UnsignedOutput>();
 
     vOutputs[token_id].push_back(out);
@@ -62,7 +62,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
 
     TokenId token_id{tokenPublicKey.GetHash()};
 
-    if (vOutputs.count(token_id) == 0)
+    if (!vOutputs.contains(token_id))
         vOutputs[token_id] = std::vector<UnsignedOutput>();
 
     vOutputs[token_id].push_back(out);
@@ -78,7 +78,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
 
     TokenId token_id{tokenPublicKey.GetHash(), nftId};
 
-    if (vOutputs.count(token_id) == 0)
+    if (!vOutputs.contains(token_id))
         vOutputs[token_id] = std::vector<UnsignedOutput>();
 
     vOutputs[token_id].push_back(out);
@@ -190,12 +190,12 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
 bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, const PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)
 {
-    if (vInputs.count(token_id) == 0)
+    if (!vInputs.contains(token_id))
         vInputs[token_id] = std::vector<UnsignedInput>();
 
     vInputs[token_id].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), amount, gamma, spendingKey, stakedCommitment});
 
-    if (nAmounts.count(token_id) == 0)
+    if (!nAmounts.contains(token_id))
         nAmounts[token_id] = {0, 0, 0};
 
     nAmounts[token_id].nFromInputs += amount;

@@ -31,6 +31,7 @@ Signature Signature::Aggregate(const std::vector<blsct::Signature>& sigs)
     return aggr_sig;
 }
 
+// NOLINTNEXTLINE(misc-no-recursion)
 std::vector<uint8_t> Signature::GetVch() const
 {
     size_t ser_size = mclBn_getFpByteSize() * 2;

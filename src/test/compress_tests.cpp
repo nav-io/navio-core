@@ -6,7 +6,7 @@
 #include <script/script.h>
 #include <test/util/setup_common.h>
 
-#include <stdint.h>
+#include <cstdint>
 
 #include <boost/test/unit_test.hpp>
 

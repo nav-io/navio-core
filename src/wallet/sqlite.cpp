@@ -15,7 +15,7 @@
 #include <wallet/db.h>
 
 #include <sqlite3.h>
-#include <stdint.h>
+#include <cstdint>
 
 #include <optional>
 #include <utility>

@@ -39,7 +39,7 @@ struct SetMemProof {
     Scalar omega;
 
     // for unserialization
-    SetMemProof() {}
+    SetMemProof() = default;
 
     SetMemProof(
         // sigma
