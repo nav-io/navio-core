@@ -6,11 +6,12 @@
     "boost-multi-index",
     "boost-signals2",
     "boost-test",
+    "gmp",
     "libevent",
     "sqlite3",
     "zeromq"
   ],
-  "builtin-baseline": "9edb1b8e590cc086563301d735cae4b6e732d2d2",
+  "builtin-baseline": "67b207f199b5d2ee09f206d2e9e9171e7c7a3274",
   "overrides": [
     {
       "name": "libevent",

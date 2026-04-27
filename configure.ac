@@ -159,6 +159,12 @@ AC_ARG_WITH([natpmp],
             [use_natpmp=$withval],
             [use_natpmp=auto])
 
+AC_ARG_WITH([gmp],
+  [AS_HELP_STRING([--with-gmp],
+  [build mcl with GMP for ~20% speedup on bls12-381 ops (default is yes if libgmp/libgmpxx are found)])],
+  [use_gmp=$withval],
+  [use_gmp=auto])
+
 AC_ARG_ENABLE(tests,
     AS_HELP_STRING([--disable-tests],[do not compile tests (default is to compile)]),
     [use_tests=$enableval],
@@ -1421,6 +1427,46 @@ if test "$use_natpmp" != "no"; then
 
   CPPFLAGS="$TEMP_CPPFLAGS"
 fi
+
+dnl Check for libgmp/libgmpxx (used by herumi/mcl). With GMP, mcl is faster
+dnl on bls12-381 arithmetic; without it, mcl falls back to its internal VINT.
+if test "$use_gmp" != "no"; then
+  AC_CHECK_HEADERS([gmp.h gmpxx.h], [], [have_gmp=no])
+  if test "$have_gmp" != "no"; then
+    TEMP_LIBS="$LIBS"
+    AC_CHECK_LIB([gmp], [__gmpz_init], [GMP_LIBS="-lgmp"], [have_gmp=no])
+    if test "$have_gmp" != "no"; then
+      AC_LANG_PUSH([C++])
+      AC_CHECK_LIB([gmpxx], [main], [GMP_LIBS="-lgmpxx $GMP_LIBS"], [have_gmp=no], [-lgmp])
+      AC_LANG_POP([C++])
+    fi
+    LIBS="$TEMP_LIBS"
+  fi
+fi
+
+AC_MSG_CHECKING([whether to build mcl with GMP])
+if test "$have_gmp" = "no"; then
+  if test "$use_gmp" = "yes"; then
+    AC_MSG_ERROR([GMP requested but libgmp/libgmpxx not found. Use --without-gmp to disable.])
+  fi
+  AC_MSG_RESULT([no])
+  use_gmp=no
+  MCL_USE_GMP=0
+  GMP_LIBS=
+else
+  if test "$use_gmp" != "no"; then
+    AC_MSG_RESULT([yes])
+    use_gmp=yes
+    MCL_USE_GMP=1
+    LIBS="$LIBS $GMP_LIBS"
+  else
+    AC_MSG_RESULT([no])
+    MCL_USE_GMP=0
+    GMP_LIBS=
+  fi
+fi
+AC_SUBST(GMP_LIBS)
+AC_SUBST(MCL_USE_GMP)
 
 if test "$build_bitcoin_wallet$build_bitcoin_cli$build_bitcoin_tx$build_bitcoin_util$build_naviod$use_tests$use_bench$enable_fuzz_binary" = "nononononononono"; then
   use_boost=no

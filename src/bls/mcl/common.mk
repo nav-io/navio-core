@@ -113,9 +113,6 @@ CFLAGS+=$(CFLAGS_OPT_USER)
 endif
 CFLAGS+=$(CFLAGS_USER)
 MCL_USE_GMP?=1
-ifneq ($(OS),mac/mac-m1,)
-  MCL_USE_GMP=0
-endif
 MCL_USE_OPENSSL?=0
 ifeq ($(MCL_USE_GMP),0)
   CFLAGS+=-DMCL_USE_VINT
