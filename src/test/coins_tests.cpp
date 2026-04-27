@@ -1128,4 +1128,22 @@ BOOST_AUTO_TEST_CASE(coins_resource_is_used)
 }
 #endif
 
+BOOST_AUTO_TEST_CASE(ccoins_addcoin_exception_keeps_usage_balanced)
+{
+    CCoinsView root;
+    CCoinsViewCacheTest cache{&root};
+
+    const COutPoint outpoint{Txid::FromUint256(InsecureRand256())};
+
+    const Coin coin1{CTxOut{static_cast<CAmount>(InsecureRandRange(10)), CScript{} << g_insecure_rand_ctx.randbytes(29)}, 1, false};
+    cache.AddCoin(outpoint, Coin{coin1}, /*possible_overwrite=*/false);
+    cache.SelfTest();
+
+    const Coin coin2{CTxOut{static_cast<CAmount>(InsecureRandRange(20)), CScript{} << g_insecure_rand_ctx.randbytes(30)}, 2, false};
+    BOOST_CHECK_THROW(cache.AddCoin(outpoint, Coin{coin2}, /*possible_overwrite=*/false), std::logic_error);
+    cache.SelfTest();
+
+    BOOST_CHECK(cache.AccessCoin(outpoint) == coin1);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
