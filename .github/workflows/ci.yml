@@ -230,11 +230,22 @@ jobs:
       - name: Using vcpkg with MSBuild
         run: |
           Set-Location "$env:VCPKG_INSTALLATION_ROOT"
+          # Fetch latest vcpkg history so the builtin-baseline commit pinned
+          # in build_msvc/vcpkg.json is reachable from the runner image's
+          # local C:\vcpkg clone (image's HEAD lags vcpkg master).
+          git fetch --no-tags origin master
           Add-Content -Path "triplets\x64-windows-static.cmake" -Value "set(VCPKG_BUILD_TYPE release)"
           Add-Content -Path "triplets\x64-windows-static.cmake" -Value "set(VCPKG_PLATFORM_TOOLSET_VERSION $env:VCToolsVersion)"
           .\vcpkg.exe --vcpkg-root "$env:VCPKG_INSTALLATION_ROOT" integrate install
-          git rev-parse HEAD | Out-File -FilePath "$env:GITHUB_WORKSPACE\vcpkg_commit"
-          Get-Content -Path "$env:GITHUB_WORKSPACE\vcpkg_commit"
+
+      - name: Restore vcpkg downloads cache
+        id: vcpkg-downloads-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            C:/vcpkg/downloads
+            !C:/vcpkg/downloads/tools
+          key: ${{ github.job }}-vcpkg-downloads-${{ hashFiles('build_msvc/vcpkg.json') }}
 
       - name: vcpkg tools cache
         uses: actions/cache@v5
@@ -242,16 +253,26 @@ jobs:
           path: C:/vcpkg/downloads/tools
           key: ${{ github.job }}-vcpkg-tools
 
-      - name: vcpkg binary cache
-        uses: actions/cache@v5
+      - name: Restore vcpkg binary cache
+        id: vcpkg-binary-cache
+        uses: actions/cache/restore@v5
         with:
           path: ~/AppData/Local/vcpkg/archives
           key:
-            ${{ github.job }}-vcpkg-binary-${{ hashFiles('vcpkg_commit',
-            'msbuild_version', 'toolset_version', 'build_msvc/vcpkg.json') }}
+            ${{ github.job }}-vcpkg-binary-${{ hashFiles('msbuild_version',
+            'toolset_version', 'build_msvc/vcpkg.json') }}
 
       - name: Generate project files
         run: py -3 build_msvc\msvc-autogen.py
+
+      - name: Install vcpkg dependencies
+        # MSBuild's vcpkg autorestore runs per-project, so a project that
+        # compiles before its dep is restored (e.g. bls384_256.vcxproj
+        # needing gmpxx.h on a cold cache) fails. Pre-install the manifest
+        # so all headers exist on disk before MSBuild starts.
+        shell: cmd
+        working-directory: build_msvc
+        run: '"%VCPKG_INSTALLATION_ROOT%\vcpkg.exe" install --triplet x64-windows-static'
 
       - name: Build
         shell: cmd
@@ -271,6 +292,22 @@ jobs:
           path: ~/AppData/Local/ccache
           # https://github.com/actions/cache/blob/main/tips-and-workarounds.md#update-a-cache
           key: ${{ github.job }}-ccache-${{ github.run_id }}
+
+      - name: Save vcpkg binary cache
+        uses: actions/cache/save@v5
+        if: steps.vcpkg-binary-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: ${{ steps.vcpkg-binary-cache.outputs.cache-primary-key }}
+
+      - name: Save vcpkg downloads cache
+        uses: actions/cache/save@v5
+        if: steps.vcpkg-downloads-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            C:/vcpkg/downloads
+            !C:/vcpkg/downloads/tools
+          key: ${{ steps.vcpkg-downloads-cache.outputs.cache-primary-key }}
 
       - name: Run unit tests
         run: src\test_navio.exe -l test_suite

@@ -47,3 +47,14 @@ You can find installation instructions in the `build-*.md` file for your platfor
 | Dependency | Releases | Version used | Minimum required | Runtime |
 | --- | --- | --- | --- | --- |
 | [SQLite](../depends/packages/sqlite.mk) | [link](https://sqlite.org) | [3.38.5](https://github.com/bitcoin/bitcoin/pull/25378) | [3.7.17](https://github.com/bitcoin/bitcoin/pull/19077) | No |
+
+### BLSCT performance
+| Dependency | Releases | Version used | Minimum required | Runtime |
+| --- | --- | --- | --- | --- |
+| [GMP](../depends/packages/gmp.mk) | [link](https://gmplib.org/) | 6.3.0 | | No |
+
+GMP accelerates the BLS12-381 arithmetic used by BLSCT. It is auto-detected.
+The biggest wins are on point (de)serialization (~1.2–1.9× faster);
+signature and range-proof operations gain ~0–4%. When absent, mcl falls
+back to its internal `VINT` backend. See [build-gmp.md](build-gmp.md) for
+benchmark details and per-distro install instructions.
