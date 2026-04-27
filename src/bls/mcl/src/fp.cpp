@@ -1,3 +1,4 @@
+#include <ios>
 #include <mcl/op.hpp>
 #include <mcl/util.hpp>
 #include <cybozu/sha2.hpp>
