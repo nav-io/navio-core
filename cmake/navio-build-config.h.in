@@ -1,0 +1,127 @@
+// Copyright (c) 2024-present The Navio Core developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+#ifndef NAVIO_CONFIG_H
+#define NAVIO_CONFIG_H
+
+/* Version Build */
+#define CLIENT_VERSION_BUILD @CLIENT_VERSION_BUILD@
+
+/* Version is release */
+#define CLIENT_VERSION_IS_RELEASE @CLIENT_VERSION_IS_RELEASE@
+
+/* Major version */
+#define CLIENT_VERSION_MAJOR @CLIENT_VERSION_MAJOR@
+
+/* Minor version */
+#define CLIENT_VERSION_MINOR @CLIENT_VERSION_MINOR@
+
+/* Copyright holder(s) before %s replacement */
+#define COPYRIGHT_HOLDERS "@COPYRIGHT_HOLDERS@"
+
+/* Copyright holder(s) */
+#define COPYRIGHT_HOLDERS_FINAL "@COPYRIGHT_HOLDERS_FINAL@"
+
+/* Replacement for %s in copyright holders string */
+#define COPYRIGHT_HOLDERS_SUBSTITUTION "@CLIENT_NAME@"
+
+/* Copyright year */
+#define COPYRIGHT_YEAR @COPYRIGHT_YEAR@
+
+/* Define if external signer support is enabled */
+#cmakedefine ENABLE_EXTERNAL_SIGNER 1
+
+/* Define to 1 to enable tracepoints for Userspace, Statically Defined Tracing */
+#cmakedefine ENABLE_TRACING 1
+
+/* Define to 1 to enable wallet functions. */
+#cmakedefine ENABLE_WALLET 1
+
+/* Define to 1 if you have the declaration of `fork', and to 0 if you don't. */
+#cmakedefine01 HAVE_DECL_FORK
+
+/* Endian conversion function declarations */
+#cmakedefine01 HAVE_DECL_HTOBE16
+#cmakedefine01 HAVE_DECL_HTOLE16
+#cmakedefine01 HAVE_DECL_BE16TOH
+#cmakedefine01 HAVE_DECL_LE16TOH
+#cmakedefine01 HAVE_DECL_HTOBE32
+#cmakedefine01 HAVE_DECL_HTOLE32
+#cmakedefine01 HAVE_DECL_BE32TOH
+#cmakedefine01 HAVE_DECL_LE32TOH
+#cmakedefine01 HAVE_DECL_HTOBE64
+#cmakedefine01 HAVE_DECL_HTOLE64
+#cmakedefine01 HAVE_DECL_BE64TOH
+#cmakedefine01 HAVE_DECL_LE64TOH
+
+/* Define to 1 if <endian.h> is available. */
+#cmakedefine HAVE_ENDIAN_H 1
+
+/* Define to 1 if <sys/endian.h> is available. */
+#cmakedefine HAVE_SYS_ENDIAN_H 1
+
+/* Define to 1 if '*ifaddrs' are available. */
+#cmakedefine HAVE_IFADDRS 1
+
+/* Define to 1 if you have the declaration of `pipe2', and to 0 if you don't. */
+#cmakedefine01 HAVE_DECL_PIPE2
+
+/* Define to 1 if you have the declaration of `setsid', and to 0 if you don't. */
+#cmakedefine01 HAVE_DECL_SETSID
+
+/* Define to 1 if fdatasync is available. */
+#cmakedefine HAVE_FDATASYNC 1
+
+/* Define to 1 if gmtime_r is available. */
+#cmakedefine HAVE_GMTIME_R 1
+
+/* Define this symbol if the BSD getentropy system call is available with sys/random.h */
+#cmakedefine HAVE_GETENTROPY_RAND 1
+
+/* Define this symbol if the Linux getrandom function call is available */
+#cmakedefine HAVE_GETRANDOM 1
+
+/* Define this symbol if you have malloc_info */
+#cmakedefine HAVE_MALLOC_INFO 1
+
+/* Define this symbol if you have mallopt with M_ARENA_MAX */
+#cmakedefine HAVE_MALLOPT_ARENA_MAX 1
+
+/* Define to 1 if O_CLOEXEC flag is available. */
+#cmakedefine01 HAVE_O_CLOEXEC
+
+/* Define this symbol if you have posix_fallocate */
+#cmakedefine HAVE_POSIX_FALLOCATE 1
+
+/* Define this symbol if platform supports unix domain sockets */
+#cmakedefine HAVE_SOCKADDR_UN 1
+
+/* Define this symbol to build code that uses getauxval */
+#cmakedefine HAVE_STRONG_GETAUXVAL 1
+
+/* Define this symbol if the BSD sysctl() is available */
+#cmakedefine HAVE_SYSCTL 1
+
+/* Define this symbol if the BSD sysctl(KERN_ARND) is available */
+#cmakedefine HAVE_SYSCTL_ARND 1
+
+/* Define to 1 if std::system or ::wsystem is available. */
+#cmakedefine HAVE_SYSTEM 1
+
+/* Define to the version of this package. */
+#define CLIENT_VERSION_STRING "@CLIENT_VERSION_STRING@"
+
+/* Define to 1 if strerror_r returns char *. */
+#cmakedefine STRERROR_R_CHAR_P 1
+
+/* BLS_ETH mode required for bls and mcl libs */
+#define BLS_ETH 1
+
+/* Autotools compat aliases — avoid redefining C++ identifiers */
+#define PACKAGE_NAME "@CLIENT_NAME@"
+#define PACKAGE_BUGREPORT "@CLIENT_BUGREPORT@"
+#define PACKAGE_VERSION CLIENT_VERSION_STRING
+#define PACKAGE_URL "@PROJECT_HOMEPAGE_URL@"
+
+#endif // NAVIO_CONFIG_H

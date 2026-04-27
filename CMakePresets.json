@@ -1,0 +1,59 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 22,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "dev-mode",
+      "displayName": "Developer build (debug, tests enabled)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_TESTS": "ON",
+        "BUILD_BENCH": "OFF",
+        "WITH_CCACHE": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release build",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTS": "OFF",
+        "REDUCE_EXPORTS": "ON",
+        "WITH_CCACHE": "ON"
+      }
+    },
+    {
+      "name": "libblsct",
+      "displayName": "libblsct standalone build",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "BUILD_LIBBLSCT_ONLY": "ON",
+        "CMAKE_BUILD_TYPE": "Release",
+        "WITH_CCACHE": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "dev-mode",
+      "configurePreset": "dev-mode"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "libblsct",
+      "configurePreset": "libblsct"
+    }
+  ]
+}
