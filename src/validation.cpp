@@ -1731,6 +1731,15 @@ PackageMempoolAcceptResult ProcessNewPackage(Chainstate& active_chainstate, CTxM
 
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
 {
+    // Mainnet-style policy: only block 1 mints a PoW reward; subsequent
+    // PoW blocks (heights 2..nLastPOWHeight) have a subsidy of 0. PoS
+    // blocks (heights > nLastPOWHeight) fall through to the regular
+    // subsidy schedule below.
+    if (consensusParams.fOnlyFirstPoWBlockHasReward &&
+        nHeight > 1 && nHeight <= consensusParams.nLastPOWHeight) {
+        return 0;
+    }
+
     int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
     // Force block reward to zero when right shift is undefined.
     if (halvings >= 64)
@@ -1740,6 +1749,18 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
     // Subsidy is cut in half every 210,000 blocks which will occur approximately every 4 years.
     nSubsidy >>= halvings;
     return nSubsidy;
+}
+
+CAmount GetBLSCTBlockReward(int nHeight, const Consensus::Params& consensusParams, const bool& isPos)
+{
+    if (nHeight == 1) {
+        return consensusParams.nBLSCTFirstBlockReward;
+    }
+    if (consensusParams.fOnlyFirstPoWBlockHasReward &&
+        nHeight <= consensusParams.nLastPOWHeight && !isPos) {
+        return 0;
+    }
+    return consensusParams.nBLSCTBlockReward;
 }
 
 CoinsViews::CoinsViews(DBParams db_params, CoinsViewOptions options)
@@ -2808,7 +2829,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     if (block.IsBLSCT()) {
         TxValidationState tx_state;
 
-        auto blockReward = pindex->nHeight == 1 ? params.GetConsensus().nBLSCTFirstBlockReward : params.GetConsensus().nBLSCTBlockReward;
+        auto blockReward = GetBLSCTBlockReward(pindex->nHeight, params.GetConsensus(), block.IsProofOfStake());
 
         int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
         if (!blsct::VerifyTxCollectProofs(*block.vtx[0], view, tx_state, blockBLSCTProofs, blockReward, 0, pindex->nHeight, nMTP)) {

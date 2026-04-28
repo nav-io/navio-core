@@ -179,7 +179,7 @@ static UniValue generateBlsctBlocks(ChainstateManager& chainman, const CTxMemPoo
     while (nGenerate > 0 && !chainman.m_interrupt) {
         auto pindexBest = chainman.ActiveChainstate().m_chain.Tip();
 
-        auto blockReward = (pindexBest->nHeight + 1 == 1) ? consensusParams.nBLSCTFirstBlockReward : consensusParams.nBLSCTBlockReward;
+        auto blockReward = GetBLSCTBlockReward(pindexBest->nHeight + 1, consensusParams, false);
 
         std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler{chainman.ActiveChainstate(), &mempool}.CreateNewBLSCTBlock(blsct::SubAddress(destination), blockReward, {}));
         if (!pblocktemplate.get())
@@ -850,7 +850,7 @@ static RPCHelpMan getblocktemplate()
                             throw JSONRPCError(RPC_INVALID_PARAMETER, "invalid coinbase destination");
                     }
 
-                    auto blockReward = (pindexPrevNew->nHeight + 1) == 1 ? consensusParams.nBLSCTFirstBlockReward : consensusParams.nBLSCTBlockReward;
+                    auto blockReward = GetBLSCTBlockReward(pindexPrevNew->nHeight + 1, consensusParams, true);
 
                     pblocktemplate = BlockAssembler{active_chainstate, &mempool}.CreateNewBLSCTBlock(dest, blockReward, {}, true);
                 } else {
@@ -982,7 +982,7 @@ static RPCHelpMan getblocktemplate()
                 }
             }
 
-            auto blockReward = (int64_t)(pindexPrev->nHeight + 1) == 1 ? consensusParams.nBLSCTFirstBlockReward : consensusParams.nBLSCTBlockReward;
+            auto blockReward = GetBLSCTBlockReward(pindexPrev->nHeight + 1, consensusParams, true);
 
             result.pushKV("version", pblock->nVersion);
             result.pushKV("rules", aRules);

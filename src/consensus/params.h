@@ -126,6 +126,15 @@ struct Params {
     /** Whether BLSCT is activated */
     bool fBLSCT;
     /**
+     * If true, only the first block (height 1) receives a PoW block
+     * reward; every subsequent block in the PoW phase
+     * (heights (1, nLastPOWHeight]) has a reward of 0. PoS blocks
+     * (heights > nLastPOWHeight) are unaffected. Used on mainnet to mint
+     * the entire initial supply in a single premine block while keeping
+     * later PoW blocks reward-less.
+     */
+    bool fOnlyFirstPoWBlockHasReward{false};
+    /**
      * Whether PoPS anti-grinding hardening is active:
      *  - block time is bucketed into POPS_TIME_GRANULARITY_SECONDS intervals
      *    before entering the kernel hash
