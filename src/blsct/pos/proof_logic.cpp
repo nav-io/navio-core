@@ -18,7 +18,7 @@ using Prover = SetMemProofProver<Arith>;
 namespace blsct {
 ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scalar& m, const Scalar& f, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
 {
-    auto staked_commitments = cache.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash());
+    auto staked_commitments = cache.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash(), params.nStakedCommitmentLimit);
     auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindexPrev);
     auto eta_phi = blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, block);
 
@@ -36,7 +36,7 @@ bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* 
 
 bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params, const uint256& kernel_hash)
 {
-    auto staked_commitments = cache.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash());
+    auto staked_commitments = cache.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash(), params.nStakedCommitmentLimit);
 
     if (staked_commitments.Size() < 2) {
         LogPrint(BCLog::POPS, "PoPS rejected. Staked commitments size is %d\n", staked_commitments.Size());

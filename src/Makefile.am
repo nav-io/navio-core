@@ -38,6 +38,30 @@ LIBSECP256K1=secp256k1/libsecp256k1.la
 LIBMCL=bls/mcl/lib/libmcl.a
 LIBBLS=bls/lib/libbls384_256.a
 
+# When OpenMP is enabled (configure detects a working flag combination,
+# see configure.ac), libmcl.a is compiled with MCL_USE_OMP=1 which makes
+# the verifier's final MSM (mclBnG1_mulVecMT) actually run multi-threaded.
+# That introduces references to OpenMP runtime symbols (e.g. __kmpc_*)
+# that need to be satisfied at the final link of every binary linking
+# libmcl.a. We expose LIBMCL_LIBS so binaries can substitute it for the
+# bare $(LIBMCL) reference and pick up $(OPENMP_LIBS) automatically.
+if USE_OPENMP
+LIBMCL_OMP_FLAG = MCL_USE_OMP=1
+LIBMCL_LIBS = $(LIBMCL) $(OPENMP_LIBS)
+# MCL's common.mk adds the right OpenMP compile flag itself when MCL_USE_OMP=1
+# (e.g. -Xpreprocessor -fopenmp on macOS), but it does NOT know about
+# Homebrew's keg-only libomp prefix or any --with-libomp-prefix the user
+# passed to ./configure. We have to forward the OPENMP_CPPFLAGS so that
+# the #include <omp.h> inside libomp's runtime headers resolves.
+LIBMCL_OMP_EXTRA_CPPFLAGS = $(OPENMP_CPPFLAGS)
+LIBMCL_OMP_EXTRA_LIBS = $(OPENMP_LIBS)
+else
+LIBMCL_OMP_FLAG =
+LIBMCL_LIBS = $(LIBMCL)
+LIBMCL_OMP_EXTRA_CPPFLAGS =
+LIBMCL_OMP_EXTRA_LIBS =
+endif
+
 if ENABLE_ZMQ
 LIBBITCOIN_ZMQ=libbitcoin_zmq.a
 endif
@@ -90,11 +114,12 @@ $(LIBBLS):
 $(LIBMCL):
 	$(AM_V_at) \
 		MCL_USE_LLVM=0 \
+		$(LIBMCL_OMP_FLAG) \
 		ARCH='$(host_cpu)' \
 		CC='$(CC)' \
 		CXX='$(CXX)' \
-		CFLAGS='$(CXXFLAGS)' \
-		LDFLAGS='$(LDFLAGS)' \
+		CFLAGS='$(CXXFLAGS) $(LIBMCL_OMP_EXTRA_CPPFLAGS)' \
+		LDFLAGS='$(LDFLAGS) $(LIBMCL_OMP_EXTRA_LIBS)' \
 		ARFLAGS='$(ARFLAGS)' \
 		AR='$(AR)' \
 		RANLIB='$(RANLIB)' \
@@ -1132,7 +1157,7 @@ navio_bin_ldadd = \
   $(LIBLEVELDB) \
   $(LIBMEMENV) \
   $(LIBBLS) \
-  $(LIBMCL) \
+  $(LIBMCL_LIBS) \
   $(LIBSECP256K1)
 
 navio_bin_ldadd += $(BDB_LIBS) $(MINIUPNPC_LIBS) $(NATPMP_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE_LIBS)
@@ -1187,7 +1212,7 @@ navio_staker_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBBLS) \
-  $(LIBMCL)
+  $(LIBMCL_LIBS)
 
 navio_staker_LDADD += $(EVENT_LIBS)
 #
@@ -1209,7 +1234,7 @@ navio_tx_LDADD = \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBBLS) \
-  $(LIBMCL) \
+  $(LIBMCL_LIBS) \
   $(LIBSECP256K1)
 #
 
@@ -1228,7 +1253,7 @@ navio_wallet_LDADD = \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBBLS) \
-  $(LIBMCL) \
+  $(LIBMCL_LIBS) \
   $(LIBSECP256K1) \
   $(BDB_LIBS) \
   $(SQLITE_LIBS)
@@ -1255,7 +1280,7 @@ navio_util_LDADD = \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBBLS) \
-  $(LIBMCL) \
+  $(LIBMCL_LIBS) \
   $(LIBSECP256K1)
 #
 
@@ -1269,7 +1294,7 @@ navio_chainstate_LDADD = $(LIBBITCOINKERNEL)
 
 # libtool is unable to calculate this indirect dependency, presumably because it's a subproject.
 # libsecp256k1 only needs to be linked in when libnaviokernel is static.
-navio_chainstate_LDADD += $(LIBSECP256K1) $(LIBBLS) $(LIBMCL)
+navio_chainstate_LDADD += $(LIBSECP256K1) $(LIBBLS) $(LIBMCL_LIBS)
 #
 
 # naviokernel library #
@@ -1277,7 +1302,7 @@ if BUILD_BITCOIN_KERNEL_LIB
 lib_LTLIBRARIES += $(LIBBITCOINKERNEL)
 
 libnaviokernel_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS) $(PTHREAD_FLAGS)
-libnaviokernel_la_LIBADD = $(LIBBITCOIN_CRYPTO) $(LIBLEVELDB) $(LIBMEMENV) $(LIBSECP256K1) $(LIBBLS) $(LIBMCL)
+libnaviokernel_la_LIBADD = $(LIBBITCOIN_CRYPTO) $(LIBLEVELDB) $(LIBMEMENV) $(LIBSECP256K1) $(LIBBLS) $(LIBMCL_LIBS)
 libnaviokernel_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include $(BLS_INCLUDES) -DBUILD_BITCOIN_INTERNAL -DBUILD_BITCOIN_KERNEL_LIB $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS)
 
 # libnaviokernel requires default symbol visibility, explicitly specify that
@@ -1432,7 +1457,7 @@ libnavioconsensus_la_SOURCES = support/cleanse.cpp $(crypto_libbitcoin_crypto_ba
 libnavioconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
 libnavioconsensus_la_LIBADD = \
   $(LIBBLS) \
-  $(LIBMCL) \
+  $(LIBMCL_LIBS) \
   $(LIBSECP256K1)
 libnavioconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include $(BLS_INCLUDES) -DBUILD_BITCOIN_INTERNAL
 libnavioconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)

@@ -253,6 +253,18 @@ AC_ARG_ENABLE([zmq],
   [use_zmq=$enableval],
   [use_zmq=yes])
 
+AC_ARG_ENABLE([openmp],
+  [AS_HELP_STRING([--disable-openmp],
+  [disable OpenMP for the parallel verifier MSM in MCL (default: enabled if a working flag combination is found, e.g. via depends-built libomp or Homebrew libomp)])],
+  [use_openmp=$enableval],
+  [use_openmp=auto])
+
+AC_ARG_WITH([libomp-prefix],
+  [AS_HELP_STRING([--with-libomp-prefix=PATH],
+  [prefix where libomp is installed (default: auto-detect via depends, brew --prefix libomp, /opt/homebrew/opt/libomp, /usr/local/opt/libomp)])],
+  [libomp_prefix=$withval],
+  [libomp_prefix=auto])
+
 AC_ARG_WITH([libmultiprocess],
   [AS_HELP_STRING([--with-libmultiprocess=yes|no|auto],
   [Build with libmultiprocess library. (default: auto, i.e. detect with pkg-config)])],
@@ -1392,6 +1404,109 @@ if test "$use_usdt" != "no"; then
 fi
 AM_CONDITIONAL([ENABLE_USDT_TRACEPOINTS], [test "$use_usdt" = "yes"])
 
+dnl OpenMP detection. We probe several flag combinations because no single
+dnl spelling works across all toolchains we support:
+dnl   * Apple Clang only accepts `-Xpreprocessor -fopenmp` and needs `-lomp`
+dnl     to be linked explicitly. Homebrew installs libomp keg-only, so
+dnl     omp.h and libomp are only on the search path if we add the brew
+dnl     prefix ourselves.
+dnl   * LLVM clang accepts `-fopenmp` (links libomp) and `-fopenmp=libomp`.
+dnl   * GCC accepts `-fopenmp` (links libgomp).
+dnl When building against the depends tree, a static libomp.a (with
+dnl libgomp.a/libiomp5.a aliases) is provided in $depends/lib so any of
+dnl the above flag combinations can resolve the runtime symbols out of
+dnl the box.
+OPENMP_CXXFLAGS=
+OPENMP_LIBS=
+OPENMP_CPPFLAGS=
+have_openmp=no
+if test "$use_openmp" != "no"; then
+  dnl Build a list of -I/-L extras to try in addition to whatever is
+  dnl already on the search path. The first hit wins.
+  ac_openmp_extra_dirs=":"
+  if test "$libomp_prefix" != "auto" -a "$libomp_prefix" != "no"; then
+    ac_openmp_extra_dirs="$ac_openmp_extra_dirs $libomp_prefix"
+  fi
+  if test "$libomp_prefix" = "auto"; then
+    AC_PATH_PROG([BREW], [brew], [])
+    if test -n "$BREW"; then
+      ac_openmp_brew_prefix=`$BREW --prefix libomp 2>/dev/null`
+      if test -n "$ac_openmp_brew_prefix" -a -d "$ac_openmp_brew_prefix"; then
+        ac_openmp_extra_dirs="$ac_openmp_extra_dirs $ac_openmp_brew_prefix"
+      fi
+    fi
+    for ac_openmp_dir in /opt/homebrew/opt/libomp /usr/local/opt/libomp; do
+      if test -d "$ac_openmp_dir"; then
+        ac_openmp_extra_dirs="$ac_openmp_extra_dirs $ac_openmp_dir"
+      fi
+    done
+  fi
+
+  AC_LANG_PUSH([C++])
+  ac_openmp_save_CXXFLAGS="$CXXFLAGS"
+  ac_openmp_save_CPPFLAGS="$CPPFLAGS"
+  ac_openmp_save_LIBS="$LIBS"
+  for ac_openmp_dir in $ac_openmp_extra_dirs; do
+    if test "x$ac_openmp_dir" = "x:"; then
+      ac_openmp_extra_cppflags=
+      ac_openmp_extra_ldflags=
+      ac_openmp_where="default search path"
+    else
+      ac_openmp_extra_cppflags="-I$ac_openmp_dir/include"
+      ac_openmp_extra_ldflags="-L$ac_openmp_dir/lib"
+      ac_openmp_where="$ac_openmp_dir"
+    fi
+    for ac_openmp_try in "-fopenmp|-fopenmp" "-fopenmp=libomp|-fopenmp=libomp" "-Xpreprocessor -fopenmp|-lomp"; do
+      ac_openmp_cxx=`echo "$ac_openmp_try" | sed 's/|.*//'`
+      ac_openmp_lib=`echo "$ac_openmp_try" | sed 's/.*|//'`
+      AC_MSG_CHECKING([whether C++ compiler supports OpenMP via "$ac_openmp_cxx $ac_openmp_lib" (using $ac_openmp_where)])
+      CXXFLAGS="$ac_openmp_save_CXXFLAGS $ac_openmp_cxx"
+      CPPFLAGS="$ac_openmp_save_CPPFLAGS $ac_openmp_extra_cppflags"
+      LIBS="$ac_openmp_save_LIBS $ac_openmp_extra_ldflags $ac_openmp_lib"
+      AC_LINK_IFELSE(
+        [AC_LANG_PROGRAM(
+          [[#include <omp.h>]],
+          [[int n = 0;
+            _Pragma("omp parallel reduction(+:n)")
+            n += 1;
+            return omp_get_num_procs() > 0 ? 0 : n;]])],
+        [ac_openmp_works=yes],
+        [ac_openmp_works=no])
+      AC_MSG_RESULT([$ac_openmp_works])
+      if test "$ac_openmp_works" = "yes"; then
+        OPENMP_CXXFLAGS="$ac_openmp_cxx"
+        OPENMP_LIBS="$ac_openmp_extra_ldflags $ac_openmp_lib"
+        OPENMP_CPPFLAGS="$ac_openmp_extra_cppflags"
+        have_openmp=yes
+        break
+      fi
+    done
+    if test "$have_openmp" = "yes"; then
+      break
+    fi
+  done
+  CXXFLAGS="$ac_openmp_save_CXXFLAGS"
+  CPPFLAGS="$ac_openmp_save_CPPFLAGS"
+  LIBS="$ac_openmp_save_LIBS"
+  AC_LANG_POP([C++])
+fi
+if test "$have_openmp" = "yes"; then
+  AC_DEFINE([HAVE_OPENMP], [1], [Define to 1 if OpenMP is enabled (multi-threaded MCL MSM in the BLSCT verifier)])
+  dnl OPENMP_CPPFLAGS only carries -I when we needed an out-of-tree libomp
+  dnl (Homebrew or --with-libomp-prefix). When that is set, propagate it
+  dnl to AM_CPPFLAGS so omp.h is reachable in any TU that ends up needing
+  dnl it (mcl_util.h includes it transitively when MCL_USE_OMP=1).
+  if test -n "$OPENMP_CPPFLAGS"; then
+    CORE_CPPFLAGS="$CORE_CPPFLAGS $OPENMP_CPPFLAGS"
+  fi
+elif test "$use_openmp" = "yes"; then
+  AC_MSG_ERROR([--enable-openmp was requested, but no working OpenMP flag combination was found. Try --with-libomp-prefix=PATH, install libomp (e.g. `brew install libomp`), or build the libomp depends package.])
+fi
+AC_SUBST([OPENMP_CXXFLAGS])
+AC_SUBST([OPENMP_LIBS])
+AC_SUBST([OPENMP_CPPFLAGS])
+AM_CONDITIONAL([USE_OPENMP], [test "$have_openmp" = "yes"])
+
 if test "$build_naviod$use_bench$use_tests" = "nonono"; then
   use_upnp=no
   use_natpmp=no
@@ -1942,6 +2057,11 @@ echo "  with upnp       = $use_upnp"
 echo "  with natpmp     = $use_natpmp"
 echo "  use asm         = $use_asm"
 echo "  USDT tracing    = $use_usdt"
+echo "  OpenMP (MCL MT) = $have_openmp"
+if test "$have_openmp" = "yes"; then
+    echo "    OPENMP_CXXFLAGS = $OPENMP_CXXFLAGS"
+    echo "    OPENMP_LIBS     = $OPENMP_LIBS"
+fi
 echo "  sanitizers      = $use_sanitizers"
 echo "  debug enabled   = $enable_debug"
 echo "  gprof enabled   = $enable_gprof"

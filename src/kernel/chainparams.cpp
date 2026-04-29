@@ -137,6 +137,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.fBLSCT = true;
         consensus.fPoPSHardened = true;
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
+        consensus.nStakedCommitmentLimit = 16;
         consensus.nLastPOWHeight = 100;
         // Mint the entire initial supply in the first block; subsequent
         // PoW blocks (heights 2..nLastPOWHeight) carry a 0 reward. PoS
@@ -261,6 +262,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         // hardening enabled.
         consensus.fPoPSHardened = false;
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
+        consensus.nStakedCommitmentLimit = 16;
         consensus.nLastPOWHeight = 1000;
         consensus.MinBIP9WarningHeight = 836640; // segwit activation height + miner confirmation window
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -411,6 +413,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.fBLSCT = false;
             consensus.fPoPSHardened = true;
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
+            consensus.nStakedCommitmentLimit = 16;
             consensus.nLastPOWHeight = 1000;
             consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
             consensus.nPowTargetSpacing = 10 * 60;
@@ -491,6 +494,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.fBLSCT = false;
             consensus.fPoPSHardened = true;
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
+            consensus.nStakedCommitmentLimit = 16;
             consensus.nLastPOWHeight = 1000;
             consensus.MinBIP9WarningHeight = 0;
             consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -632,6 +636,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.fBLSCT = true;
             consensus.fPoPSHardened = true;
             consensus.nPePoSMinStakeAmount = 100 * COIN;
+            consensus.nStakedCommitmentLimit = 16;
             consensus.nLastPOWHeight = 25000;
             consensus.MinBIP9WarningHeight = 0;
             consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");

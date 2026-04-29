@@ -75,7 +75,7 @@ bench_bench_navio_LDADD = \
   $(LIBLEVELDB) \
   $(LIBMEMENV) \
   $(LIBBLS) \
-  $(LIBMCL) \
+  $(LIBMCL_LIBS) \
   $(LIBSECP256K1) \
   $(LIBUNIVALUE) \
   $(EVENT_PTHREADS_LIBS) \

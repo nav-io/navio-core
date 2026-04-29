@@ -2507,7 +2507,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     bool pos_verify_dispatched = false;
 
     if (params.GetConsensus().fBLSCT && block.IsProofOfStake() && fCheckPosProof) {
-        auto staked_commitments_snapshot = view.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash());
+        auto staked_commitments_snapshot = view.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash(), params.GetConsensus().nStakedCommitmentLimit);
 
         if (staked_commitments_snapshot.Size() < 2) {
             LogPrint(BCLog::POPS, "PoPS rejected. Staked commitments size is %d\n", staked_commitments_snapshot.Size());

@@ -10,6 +10,7 @@
 #include <uint256.h>
 
 #include <chrono>
+#include <cstddef>
 #include <limits>
 #include <map>
 #include <vector>
@@ -123,6 +124,22 @@ struct Params {
     unsigned int nModifierInterval;
     CAmount nPePoSMinStakeAmount;
     int nLastPOWHeight;
+    /**
+     * Maximum number of staked commitments sampled from the UTXO set's
+     * staked-commitment view to form the PoPS set-membership ring for a
+     * given block. The full set is shuffled deterministically using the
+     * block hash as a seed and then truncated to this size before being
+     * fed into both the prover (block creation) and the verifier
+     * (block validation). Because both sides MUST agree on the resulting
+     * vector, this is a consensus-critical value: changing it forks the
+     * chain.
+     *
+     * The set size also drives prover/verifier cost (n is rounded up to
+     * the next power of two before entering the inner-product argument),
+     * so it is exposed per-network rather than hardcoded to allow
+     * networks to tune the anonymity-set / verification-cost trade-off.
+     */
+    size_t nStakedCommitmentLimit;
     /** Whether BLSCT is activated */
     bool fBLSCT;
     /**
