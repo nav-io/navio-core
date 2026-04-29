@@ -11,6 +11,9 @@ $(package)_sha256_hash=74334cbb4dc8b73a768448a7561d5a3540404940b2267b1fb9813a646
 $(package)_cmake_utils_file_name=cmake-$($(package)_version).src.tar.xz
 $(package)_cmake_utils_sha256_hash=807f069c54dc20cb47b21c1f6acafdd9c649f3ae015609040d6182cab01140f4
 $(package)_extra_sources=$($(package)_cmake_utils_file_name)
+# Fallback when GitHub is unavailable (502) and bitcoincore.org does not mirror the cmake subtree tarball (404).
+# Same bytes as upstream; checksum above must remain valid.
+$(package)_cmake_utils_gh_mirror_base=https://ghfast.top/https://github.com/llvm/llvm-project/releases/download/llvmorg-$($(package)_version)
 
 # Build cmake out of the openmp/ subtree so that ${CMAKE_CURRENT_SOURCE_DIR}/../cmake
 # inside openmp's CMakeLists.txt resolves to the LLVM cmake helpers we drop
@@ -31,7 +34,9 @@ endef
 
 define $(package)_fetch_cmds
   $(call fetch_file,$(package),$($(package)_download_path),$($(package)_file_name),$($(package)_file_name),$($(package)_sha256_hash)) && \
-  $(call fetch_file,$(package),$($(package)_download_path),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_sha256_hash))
+  ( $(call fetch_file_inner,$(package),$($(package)_download_path),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_sha256_hash)) || \
+    $(call fetch_file_inner,$(package),$(FALLBACK_DOWNLOAD_PATH),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_sha256_hash)) || \
+    $(call fetch_file_inner,$(package),$($(package)_cmake_utils_gh_mirror_base),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_sha256_hash)) )
 endef
 
 define $(package)_extract_cmds
