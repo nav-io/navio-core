@@ -14,6 +14,7 @@
              ((gnu packages linux) #:select (linux-libre-headers-6.1 util-linux))
              (gnu packages llvm)
              (gnu packages mingw)
+             ((gnu packages perl) #:select (perl))
              (gnu packages moreutils)
              (gnu packages pkg-config)
              ((gnu packages python) #:select (python-minimal))
@@ -511,6 +512,7 @@ inspecting signatures in Mach-O binaries.")
         (list gcc-toolchain-10 "static")
         ;; Scripting
         python-minimal ;; (3.10)
+        perl ;; for LLVM standalone OpenMP (depends libomp), CMake FindPerl
         ;; Git
         git-minimal
         ;; Tests
