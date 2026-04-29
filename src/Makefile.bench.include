@@ -18,6 +18,7 @@ bench_bench_navio_SOURCES = \
   bench/bech32_mod.cpp \
   bench/blsct_view_tag.cpp \
   bench/blsct_rp_verify.cpp \
+  bench/blsct_setmem_verify.cpp \
   bench/bench.cpp \
   bench/bench.h \
   bench/bench_bitcoin.cpp \
