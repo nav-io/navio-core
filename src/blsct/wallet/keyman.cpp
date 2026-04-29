@@ -858,6 +858,45 @@ bool KeyMan::IsMine(const CScript& script) const
     return setWatchOnly.count(script) > 0;
 }
 
+wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
+{
+    const auto spendable_kind = [&]() {
+        return txout.IsStakedCommitment() ? wallet::ISMINE_STAKED_COMMITMENT_BLSCT
+                                          : wallet::ISMINE_SPENDABLE_BLSCT;
+    };
+
+    if (txout.blsctData.spendingKey.IsZero()) {
+        // The output's blsctData does not carry an explicit spending pubkey.
+        // First try to extract one from the scriptPubKey: this covers the
+        // standard `<48-byte pubkey> OP_BLSCHECKSIG` shape that some
+        // codepaths produce without populating blsctData.spendingKey. If we
+        // own the resulting subaddress, the output is fully spendable.
+        blsct::PublicKey extractedSpendingKey;
+        if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
+            if (IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag)) {
+                return spendable_kind();
+            }
+        }
+        // Otherwise, the only way it can be ours is via an imported watch-only
+        // script (e.g. an HTLC added through importblsctscript). We can decrypt
+        // the amount but cannot derive a signing key.
+        if (IsMine(txout.scriptPubKey)) {
+            return wallet::ISMINE_WATCH_ONLY;
+        }
+        return wallet::ISMINE_NO;
+    }
+
+    if (IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag)) {
+        return spendable_kind();
+    }
+    // Real BLSCT output that we don't own as a subaddress, but whose
+    // scriptPubKey was imported as watch-only.
+    if (IsMine(txout.scriptPubKey)) {
+        return wallet::ISMINE_WATCH_ONLY;
+    }
+    return wallet::ISMINE_NO;
+}
+
 bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag)
 {
     if (!fViewKeyDefined || !viewKey.IsValid())

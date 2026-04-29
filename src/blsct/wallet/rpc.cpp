@@ -383,12 +383,14 @@ RPCHelpMan getblsctbalance()
 {
     return RPCHelpMan{
         "getblsctbalance",
-        "\nReturns the total available balance.\n"
-        "The available balance is what the wallet considers currently spendable, and is\n"
-        "thus affected by options which limit spendability such as -spendzeroconfchange.\n",
+        "\nReturns the total available BLSCT balance.\n"
+        "Only outputs the wallet can sign for are counted by default; pass\n"
+        "include_watchonly=true to also include outputs imported as watch-only\n"
+        "scripts (e.g. via importblsctscript), whose amount the wallet can\n"
+        "decrypt but cannot spend.\n",
         {
             {"minconf", RPCArg::Type::NUM, RPCArg::Default{0}, "Only include transactions confirmed at least this many times."},
-            {"include_watchonly", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for watch-only wallets, otherwise false"}, "Also include balance in watch-only addresses (see 'importaddress')"},
+            {"include_watchonly", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for watch-only wallets, otherwise false"}, "Also include balance in watch-only addresses / scripts (see 'importblsctscript')"},
             {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{true}, "(only available if avoid_reuse wallet flag is set) Do not include balance in dirty outputs; addresses are considered dirty if they have previously been used in a transaction."},
         },
         RPCResult{
@@ -414,9 +416,46 @@ RPCHelpMan getblsctbalance()
 
             bool include_watchonly = ParseIncludeWatchonly(request.params[1], *pwallet);
 
-            const auto bal = GetBlsctBalance(*pwallet, min_depth);
+            // GetBlsctBalance only sees outputs stored in mapOutputs, which is
+            // populated only when WALLET_FLAG_BLSCT_OUTPUT_STORAGE is set. For
+            // legacy (e.g. bdb) BLSCT wallets the BLSCT outputs live in
+            // mapWallet, so we have to walk them directly to avoid the RPC
+            // reporting a confusing 0.
+            CAmount mine_trusted = 0;
+            CAmount watchonly_trusted = 0;
 
-            return ValueFromAmount(bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0));
+            if (pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+                const auto bal = wallet::GetBlsctBalance(*pwallet, min_depth);
+                mine_trusted = bal.m_mine_trusted;
+                watchonly_trusted = bal.m_watchonly_trusted;
+            } else {
+                std::set<uint256> trusted_parents;
+                for (const auto& entry : pwallet->mapWallet) {
+                    const wallet::CWalletTx& wtx = entry.second;
+                    if (!wallet::CachedTxIsTrusted(*pwallet, wtx, trusted_parents)) continue;
+                    if (pwallet->IsTxImmatureCoinBase(wtx)) continue;
+                    const int depth = pwallet->GetTxDepthInMainChain(wtx);
+                    if (depth < min_depth) continue;
+                    for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+                        const CTxOut& txout = wtx.tx->vout[i];
+                        if (!txout.HasBLSCTRangeProof()) continue;
+                        if (!txout.tokenId.IsNull()) continue;
+                        if (pwallet->IsSpent(COutPoint(txout.GetHash()))) continue;
+                        const wallet::isminetype mine = pwallet->IsMine(txout);
+                        const bool is_signable = (mine & (wallet::ISMINE_SPENDABLE_BLSCT | wallet::ISMINE_STAKED_COMMITMENT_BLSCT)) != 0;
+                        const bool is_watchonly = (mine & wallet::ISMINE_WATCH_ONLY) != 0;
+                        if (!is_signable && !is_watchonly) continue;
+                        const CAmount amount = wtx.GetBLSCTRecoveryData(i).amount;
+                        if (is_signable) {
+                            mine_trusted += amount;
+                        } else if (is_watchonly) {
+                            watchonly_trusted += amount;
+                        }
+                    }
+                }
+            }
+
+            return ValueFromAmount(mine_trusted + (include_watchonly ? watchonly_trusted : 0));
         },
     };
 }
@@ -925,8 +964,9 @@ RPCHelpMan listblsctunspent()
                                                                                  {RPCResult::Type::STR, "label", /*optional=*/true, "The associated label, or \"\" for the default label"},
                                                                                  {RPCResult::Type::STR_AMOUNT, "amount", "the transaction output amount in " + CURRENCY_UNIT},
                                                                                  {RPCResult::Type::NUM, "confirmations", "The number of confirmations"},
-                                                                                 {RPCResult::Type::BOOL, "spendable", "Whether we have the private keys to spend this output"},
-                                                                                 {RPCResult::Type::BOOL, "watchonly", "Whether this output matches a watch-only script (e.g. imported HTLC)"},
+                                                                                 {RPCResult::Type::BOOL, "spendable", "Whether the output may be selected for spending right now (depends on coin control / wallet state)"},
+                                                                                 {RPCResult::Type::BOOL, "signable", "Whether the wallet can derive a non-zero spending key for this output. Outputs imported via importblsctscript (e.g. HTLCs) are reported as signable=false because the wallet only holds view material for them."},
+                                                                                 {RPCResult::Type::BOOL, "watchonly", "Whether this output matches an imported watch-only scriptPubKey (e.g. an HTLC added via importblsctscript)"},
                                                                                  {RPCResult::Type::STR_HEX, "scriptPubKey", "The scriptPubKey of the output"},
                                                                              }},
                                           }},
@@ -963,6 +1003,11 @@ RPCHelpMan listblsctunspent()
 
             wallet::CoinFilterParams filter_coins;
             filter_coins.min_amount = 0;
+            // Surface watch-only outputs (e.g. HTLC scripts imported via
+            // importblsctscript) so callers can see them and filter via the
+            // per-entry `signable` / `watchonly` flags. Without this, the
+            // default `only_spendable=true` would silently drop them.
+            filter_coins.only_spendable = false;
 
             if (!request.params[3].isNull()) {
                 const UniValue& options = request.params[3].get_obj();
@@ -1040,8 +1085,16 @@ RPCHelpMan listblsctunspent()
 
                 entry.pushKV("amount", ValueFromAmount(out.txout.nValue));
                 entry.pushKV("confirmations", out.depth);
+                // `signable` answers the question downstream wallets actually
+                // care about: "can this wallet produce a signature for this
+                // output?". It is true iff IsMineMode classified the output
+                // as one we own via a subaddress (or staked commitment) and
+                // can therefore derive a non-zero spending key.
+                const wallet::isminetype mine = pwallet->IsMine(out.txout);
+                const bool signable = (mine & (wallet::ISMINE_SPENDABLE_BLSCT | wallet::ISMINE_STAKED_COMMITMENT_BLSCT)) != 0;
                 entry.pushKV("spendable", out.spendable);
-                entry.pushKV("watchonly", blsct_km->IsMine(out.txout.scriptPubKey));
+                entry.pushKV("signable", signable);
+                entry.pushKV("watchonly", (mine & wallet::ISMINE_WATCH_ONLY) != 0);
                 results.push_back(entry);
             }
 

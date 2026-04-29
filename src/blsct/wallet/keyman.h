@@ -190,15 +190,23 @@ public:
     /** Detect ownership of outputs **/
     bool IsMine(const CTxOut& txout)
     {
-        if (txout.blsctData.spendingKey.IsZero()) {
-            blsct::PublicKey extractedSpendingKey;
-            if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
-                return IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag);
-            }
-            return IsMine(txout.scriptPubKey);
-        }
-        return IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag);
+        return IsMineMode(txout) != wallet::ISMINE_NO;
     };
+    /**
+     * Classify ownership of a BLSCT output. Returns one of:
+     *   ISMINE_SPENDABLE_BLSCT          - paid to one of our subaddresses; the
+     *                                     wallet can derive the spending key
+     *                                     and produce a signature.
+     *   ISMINE_STAKED_COMMITMENT_BLSCT  - same, for staked commitments.
+     *   ISMINE_WATCH_ONLY               - the wallet only has decryption
+     *                                     material via an imported scriptPubKey
+     *                                     (e.g. an HTLC imported with
+     *                                     importblsctscript). The amount can
+     *                                     be recovered, but no signing key
+     *                                     is available.
+     *   ISMINE_NO                       - not ours.
+     */
+    wallet::isminetype IsMineMode(const CTxOut& txout);
     bool IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag);
     bool IsMine(const CScript& script) const;
     CKeyID GetHashId(const CTxOut& txout) const

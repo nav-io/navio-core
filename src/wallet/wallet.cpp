@@ -1895,11 +1895,13 @@ isminetype CWallet::IsMine(const CTxOut& txout) const
     if (txout.HasBLSCTKeys()) {
         auto blsct_man = GetBLSCTKeyMan();
         if (blsct_man) {
-            bool mine = blsct_man->IsMine(txout);
-            if (mine) {
-                return txout.IsStakedCommitment() ? ISMINE_STAKED_COMMITMENT_BLSCT : ISMINE_SPENDABLE_BLSCT;
-            }
-            return ISMINE_NO;
+            // IsMineMode distinguishes outputs we can sign for (paying to a
+            // subaddress we own) from outputs we only watch via an imported
+            // scriptPubKey. The latter must be reported as ISMINE_WATCH_ONLY
+            // so that balance and coin-selection code paths do not treat
+            // them as spendable: the wallet has no derivable spending key
+            // for an imported HTLC even though it can decrypt the amount.
+            return blsct_man->IsMineMode(txout);
         }
     }
     return IsMine(txout.scriptPubKey);

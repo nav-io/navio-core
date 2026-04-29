@@ -741,8 +741,25 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             f"Got {len(unspent)} outputs, none matched script {imported_script[:40]}...")
         htlc_utxo = htlc_matches[0]
         assert htlc_utxo.get("watchonly"), "HTLC output should be marked watchonly"
+        # `signable` reflects whether the wallet can derive a spending key for
+        # the output. Watch-only HTLCs cannot be signed for, even though the
+        # amount is recoverable, so this must be false.
+        assert htlc_utxo.get("signable") is False, "Imported HTLC output must be reported as signable=false"
         assert htlc_utxo["amount"] == Decimal("1"), "Imported HTLC output should have recovered amount in output storage"
         self.log.info(f"Counterparty detected HTLC output: {htlc_utxo['outid']}")
+
+        # The HTLC value must not show up in the default (signable-only)
+        # balance: getblsctbalance should ignore watch-only imports unless
+        # explicitly asked, and getwalletinfo.balance must agree.
+        signable_balance = wallet2.getblsctbalance()
+        watchonly_balance = wallet2.getblsctbalance(0, True)
+        assert signable_balance == Decimal("0"), (
+            f"getblsctbalance must exclude watch-only HTLCs by default, got {signable_balance}")
+        assert watchonly_balance >= Decimal("1"), (
+            f"getblsctbalance with include_watchonly=true must include the HTLC amount, got {watchonly_balance}")
+        wallet_info = wallet2.getwalletinfo()
+        assert Decimal(wallet_info["balance"]) == Decimal("0"), (
+            f"getwalletinfo.balance must exclude watch-only HTLCs, got {wallet_info['balance']}")
 
         stored_recovery = wallet2.getblsctrecoverydata(htlc_utxo["outid"])
         stored_outputs = [out for out in stored_recovery["outputs"] if out["out_hash"] == htlc_utxo["outid"]]

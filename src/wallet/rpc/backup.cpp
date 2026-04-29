@@ -2245,6 +2245,13 @@ RPCHelpMan importblsctscript()
                               if (!blsct_km->AddWatchOnly(script, watch_only_recovery_nonce)) {
                                   throw JSONRPCError(RPC_WALLET_ERROR, "Error adding script to watch-only set");
                               }
+                              // Importing a watch-only script changes how
+                              // existing transactions are classified by
+                              // IsMine (outputs paying to the new script
+                              // become ISMINE_WATCH_ONLY rather than
+                              // unrecognized), so any cached per-filter
+                              // credit/debit amounts must be recomputed.
+                              pwallet->MarkDirty();
                           }
 
                           if (fRescan) {
