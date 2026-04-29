@@ -26,7 +26,7 @@ define $(package)_config_cmds
 endef
 
 define $(package)_build_cmds
-  $(MAKE) libsqlite3.la
+  mkdir -p .deps && $(MAKE) libsqlite3.la
 endef
 
 define $(package)_stage_cmds
