@@ -524,7 +524,7 @@ inspecting signatures in Mach-O binaries.")
                  nss-certs
                  osslsigncode))
           ((string-contains target "-linux-")
-           (list (make-bitcoin-cross-toolchain target)))
+           (list (make-bitcoin-cross-toolchain target) cmake-minimal))
           ((string-contains target "darwin")
            (list clang-toolchain-17 binutils cmake-minimal python-signapple zip))
           (else '())))))
