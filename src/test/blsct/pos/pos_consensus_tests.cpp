@@ -7,16 +7,11 @@
 // pops_hardening_tests.cpp (primitives).
 
 #include <arith_uint256.h>
-#include <blsct/pos/helpers.h>
 #include <blsct/pos/pos.h>
-#include <blsct/pos/proof.h>
 #include <blsct/pos/proof_logic.h>
 #include <blsct/wallet/txfactory.h>
 #include <chain.h>
-#include <chainparams.h>
 #include <consensus/amount.h>
-#include <consensus/consensus.h>
-#include <consensus/validation.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <uint256.h>
@@ -123,7 +118,7 @@ BOOST_FIXTURE_TEST_CASE(invalid_pos_proof_is_rejected, TestBLSCTChain100Setup)
         BOOST_CHECK(!blsct::ProofOfStakeLogic::Verify(view, &index_alt, block, params));
     }
 
-    // ---- mutation 3: corrupt setMemProof by zeroing one of its G1 points.
+    // ---- mutation 2: corrupt setMemProof by zeroing one of its G1 points.
     {
         CBlock mutated = block;
         mutated.posProof.setMemProof.phi = MclG1Point();
@@ -315,24 +310,13 @@ BOOST_FIXTURE_TEST_CASE(staker_proof_verifies_under_consensus_at_real_difficulty
 // Reproduces the second half of the staker bug: navio-staker hard-codes
 //     hardened = (chain_type != ChainType::TESTNET);
 // The chain configures `fPoPSHardened` independently. If those two booleans
-// disagree (which currently happens on testnet, where chainparams now sets
-// `fPoPSHardened = true` but the staker still treats testnet as un-hardened),
-// the staker's proof is computed against the wrong kernel hash and consensus
-// rejects it. This test asserts that a proof built with the wrong `hardened`
-// flag is rejected by the consensus path — i.e. the staker MUST source the
-// flag from consensus, not derive it from the chain type.
+// disagree, the staker's proof is computed against the wrong kernel hash and
+// consensus rejects it.
+// This test asserts that a proof built with the wrong `hardened` flag is
+// rejected by the consensus path — i.e. the staker MUST source the flag from
+// consensus, not derive it from the chain type.
 BOOST_FIXTURE_TEST_CASE(staker_proof_with_wrong_hardened_flag_is_rejected, TestBLSCTChain100Setup)
 {
-    SeedInsecureRand(SeedRand::ZEROS);
-    CCoinsViewDB base{{.path = "test_hardened_flag", .cache_bytes = 1 << 23, .memory_only = true}, {}};
-
-    CWallet wallet(m_node.chain.get(), "", CreateMockableWalletDatabase());
-    wallet.InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
-    LOCK(wallet.cs_wallet);
-    auto blsct_km = wallet.GetOrCreateBLSCTKeyMan();
-    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
-    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
-
     auto out1 = blsct::CreateOutput(
         recvAddress, 1000 * COIN, "a", TokenId(), Scalar::Rand(),
         blsct::CreateTransactionType::STAKED_COMMITMENT, 999 * COIN);
@@ -379,12 +363,13 @@ BOOST_FIXTURE_TEST_CASE(staker_proof_with_wrong_hardened_flag_is_rejected, TestB
     BOOST_REQUIRE_EQUAL(next_target, kRealNBits);
 
     // Construct a proof with the WRONG hardened flag (false) on a chain
-    // where consensus expects hardening (true) — exactly what the testnet
-    // staker is doing today. The proof must be rejected by consensus.
+    // where consensus expects hardening (true) — the same ctor shape as
+    // navio-staker's GetBlockProposal (chain-work binding), differing only on
+    // `hardened`. The proof must be rejected by consensus.
     block.posProof = blsct::ProofOfStake(
         staked_commitments, eta_fiat_shamir, eta_phi,
         out1.value, out1.gamma,
-        index.nTime, index.nStakeModifier, block.nTime, next_target,
+        index.nTime, index.nStakeModifier, index.nChainWork, block.nTime, next_target,
         /*hardened=*/false);
     BOOST_CHECK(!blsct::ProofOfStakeLogic::Verify(view, &index, block, params));
 }
