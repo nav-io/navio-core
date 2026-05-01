@@ -32,6 +32,28 @@ define $(package)_set_vars
   $(package)_config_opts += -DCMAKE_BUILD_TYPE=Release
 endef
 
+# Cross-compiling to macOS ($(host) != $(build)): host CC is a multi-word
+# command starting with env (hosts/darwin.mk). CMake's ASM language then treats
+# "env" as the compiler and prepends -I flags to it, failing with
+# "env: invalid option -- 'I'".
+# Emit a toolchain snippet that selects clang directly and mirrors darwin_CC's
+# driver flags — Makefile cannot reliably pass spaced CMAKE_ASM_FLAGS in one -D.
+ifneq ($(host),$(build))
+ifeq ($(host_os),darwin)
+
+define libomp_preprocess_cmds
+	printf '%s\n' \
+	  'set(CMAKE_ASM_COMPILER "$(build_prefix)/bin/clang")' \
+	  'set(CMAKE_ASM_COMPILER_TARGET "$(host)")' \
+	  'set(CMAKE_ASM_FLAGS "-B$(build_prefix)/bin -isysroot$(OSX_SDK) -nostdlibinc -iwithsysroot/usr/include -iframeworkwithsysroot/System/Library/Frameworks")' \
+	  > $$(@D)/libomp_cross_asm.cmake || exit 1
+endef
+
+libomp_config_opts_darwin += -DCMAKE_TOOLCHAIN_FILE=../libomp_cross_asm.cmake
+
+endif
+endif
+
 define $(package)_fetch_cmds
   $(call fetch_file,$(package),$($(package)_download_path),$($(package)_file_name),$($(package)_file_name),$($(package)_sha256_hash)) && \
   ( $(call fetch_file_inner,$(package),$($(package)_download_path),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_sha256_hash)) || \
