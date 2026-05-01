@@ -55,8 +55,6 @@ BOOST_FIXTURE_TEST_SUITE(pos_consensus_tests, WalletTestingSetup)
 
 BOOST_FIXTURE_TEST_CASE(invalid_pos_proof_is_rejected, TestBLSCTChain100Setup)
 {
-    range_proof::GeneratorsFactory<Mcl> gf;
-
     SeedInsecureRand(SeedRand::ZEROS);
     CCoinsViewDB base{{.path = "test_cons", .cache_bytes = 1 << 23, .memory_only = true}, {}};
 
@@ -168,8 +166,6 @@ BOOST_FIXTURE_TEST_CASE(wrong_kernel_hash_is_rejected, TestBLSCTChain100Setup)
     // passes it into ProofOfStakeLogic::Verify. Feeding a bogus kernel hash
     // to the overload must reject the block even if the rest of the proof
     // is well-formed.
-    range_proof::GeneratorsFactory<Mcl> gf;
-
     SeedInsecureRand(SeedRand::ZEROS);
     CCoinsViewDB base{{.path = "test_kh", .cache_bytes = 1 << 23, .memory_only = true}, {}};
 
@@ -246,8 +242,6 @@ BOOST_FIXTURE_TEST_CASE(wrong_kernel_hash_is_rejected, TestBLSCTChain100Setup)
 // `nChainWork`, so the two formulas observably disagree.
 BOOST_FIXTURE_TEST_CASE(staker_proof_verifies_under_consensus_at_real_difficulty, TestBLSCTChain100Setup)
 {
-    range_proof::GeneratorsFactory<Mcl> gf;
-
     SeedInsecureRand(SeedRand::ZEROS);
     CCoinsViewDB base{{.path = "test_real_diff", .cache_bytes = 1 << 23, .memory_only = true}, {}};
 
@@ -329,7 +323,6 @@ BOOST_FIXTURE_TEST_CASE(staker_proof_verifies_under_consensus_at_real_difficulty
 // flag from consensus, not derive it from the chain type.
 BOOST_FIXTURE_TEST_CASE(staker_proof_with_wrong_hardened_flag_is_rejected, TestBLSCTChain100Setup)
 {
-    range_proof::GeneratorsFactory<Mcl> gf;
     SeedInsecureRand(SeedRand::ZEROS);
     CCoinsViewDB base{{.path = "test_hardened_flag", .cache_bytes = 1 << 23, .memory_only = true}, {}};
 
@@ -389,7 +382,7 @@ BOOST_FIXTURE_TEST_CASE(staker_proof_with_wrong_hardened_flag_is_rejected, TestB
     // where consensus expects hardening (true) — exactly what the testnet
     // staker is doing today. The proof must be rejected by consensus.
     block.posProof = blsct::ProofOfStake(
-        staked_commitments, MclScalar{eta_fiat_shamir}, eta_phi,
+        staked_commitments, eta_fiat_shamir, eta_phi,
         out1.value, out1.gamma,
         index.nTime, index.nStakeModifier, block.nTime, next_target,
         /*hardened=*/false);
