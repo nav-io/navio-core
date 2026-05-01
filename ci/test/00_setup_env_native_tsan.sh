@@ -11,4 +11,6 @@ export CI_IMAGE_NAME_TAG="docker.io/ubuntu:24.04"
 export PACKAGES="clang-17 llvm-17 libclang-rt-17-dev libc++abi-17-dev libc++-17-dev python3-zmq"
 export DEP_OPTS="CC=clang-17 CXX='clang++-17 -stdlib=libc++'"
 export GOAL="install"
-export BITCOIN_CONFIG="--enable-zmq CPPFLAGS='-DARENA_DEBUG -DDEBUG_LOCKORDER -DDEBUG_LOCKCONTENTION' CXXFLAGS='-g' --with-sanitizers=thread"
+# OpenMP inside MCL (parallel MSM) races with libomp in ways ThreadSanitizer flags as
+# data races; keep TSan CI single-threaded for the BLSCT crypto path.
+export BITCOIN_CONFIG="--enable-zmq --disable-openmp CPPFLAGS='-DARENA_DEBUG -DDEBUG_LOCKORDER -DDEBUG_LOCKCONTENTION' CXXFLAGS='-g' --with-sanitizers=thread"
