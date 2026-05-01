@@ -26,6 +26,7 @@ CScript BuildHTLCScript(
 class CRPCCommand;
 class RPCHelpMan;
 Span<const CRPCCommand> GetBLSCTWalletRPCCommands();
+RPCHelpMan sendtoblsctaddress();
 RPCHelpMan getblsctoutput();
 
 #endif // BITCOIN_BLSCT_WALLET_RPC_H

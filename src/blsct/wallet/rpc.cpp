@@ -666,7 +666,7 @@ RPCHelpMan sendtoblsctaddress()
 
             const std::string address = request.params[0].get_str();
 
-            const bool verbose{request.params[3].isNull() ? false : request.params[10].get_bool()};
+            const bool verbose{request.params[3].isNull() ? false : request.params[3].get_bool()};
 
             blsct::CreateTransactionData transactionData(address, AmountFromValue(request.params[1]), sMemo, TokenId(), blsct::CreateTransactionType::NORMAL, 0);
 
