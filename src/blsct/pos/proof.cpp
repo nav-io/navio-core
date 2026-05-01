@@ -33,6 +33,21 @@ bulletproofs_plus::RangeProofWithSeed<Arith> MakeKernelRangeProof(const RangePro
 namespace blsct {
 ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint256& kernel_hash, const unsigned int& next_target)
 {
+    // Refuse to prove against an empty staked-commitment set. The set
+    // membership proof is undefined for size 0 and `SetMemProofProver::Prove`
+    // can blow up deep inside `Elements::operator[]` with an opaque
+    // out-of-range exception (UINT32_MAX index, SIZE_MAX upper bound). The
+    // staker observed this on testnet (147190-testnet) when its outer
+    // Loop() had no exception guard and the whole process called
+    // std::terminate. Surface a clear, recoverable runtime_error here so
+    // callers can log and skip rather than (a) producing a meaningless
+    // proof or (b) tripping a generic vector-index error users cannot
+    // attribute to PoS at all. Consensus separately enforces a non-empty
+    // set, so this is a strict client-side precondition, not a relaxation.
+    if (staked_commitments.Size() == 0) {
+        throw std::runtime_error(std::string(__func__) + ": staked_commitments must be non-empty");
+    }
+
     range_proof::GeneratorsFactory<Mcl> gf;
     range_proof::Generators<Arith> gen = gf.GetInstance(TokenId());
 
