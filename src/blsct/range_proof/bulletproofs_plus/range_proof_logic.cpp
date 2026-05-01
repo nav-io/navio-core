@@ -413,10 +413,11 @@ bool RangeProofLogic<T>::VerifyProofs(
 
     futures.reserve(proof_transcripts.size());
 
-    for (const RangeProofWithTranscript<T>& pt : proof_transcripts) {
-        futures.emplace_back(std::async(std::launch::async, [this, &pt, &abort_flag]() -> bool {
+    for (size_t idx = 0; idx < proof_transcripts.size(); ++idx) {
+        futures.emplace_back(std::async(std::launch::async, [this, idx, &proof_transcripts, &abort_flag]() -> bool {
             if (abort_flag.load()) return false; // Early exit if another task has already failed
 
+            const RangeProofWithTranscript<T>& pt = proof_transcripts[idx];
             if (pt.proof.Ls.Size() != pt.proof.Rs.Size()) return false;
 
             range_proof::Generators<T> gens = m_common.Gf().GetInstance(pt.proof.seed);
