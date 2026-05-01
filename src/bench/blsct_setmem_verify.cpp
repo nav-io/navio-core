@@ -12,6 +12,7 @@
 #include <blsct/set_mem_proof/set_mem_proof.h>
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <blsct/set_mem_proof/set_mem_proof_setup.h>
+#include <util/string.h>
 
 #include <stdexcept>
 #include <string>
@@ -51,7 +52,7 @@ struct SetMemFixture {
 
         Ys.Add(sigma);
         for (size_t i = 1; i < n; ++i) {
-            std::string seed = "bench_setmem_y_" + std::to_string(i);
+            std::string seed = "bench_setmem_y_" + ToString(i);
             Ys.Add(Point::MapToPoint(seed, Endianness::Little));
         }
 
@@ -122,7 +123,7 @@ struct PoPSFixture {
 
         staked_commitments.Add(sigma);
         for (size_t i = 1; i < n; ++i) {
-            std::string seed = "bench_pops_y_" + std::to_string(i);
+            std::string seed = "bench_pops_y_" + ToString(i);
             staked_commitments.Add(Point::MapToPoint(seed, Endianness::Little));
         }
 
