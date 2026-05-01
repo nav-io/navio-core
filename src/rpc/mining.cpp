@@ -692,6 +692,8 @@ static RPCHelpMan getblocktemplate()
                                                                      {RPCResult::Type::STR_HEX, "eta_fiat_shamir", /*optional=*/true, "Only on Proof of Stake"},
                                                                      {RPCResult::Type::NUM, "modifier", /*optional=*/true, "Only on Proof of Stake"},
                                                                      {RPCResult::Type::NUM, "prev_time", /*optional=*/true, "Only on Proof of Stake"},
+                                                                     {RPCResult::Type::STR_HEX, "prev_chainwork", /*optional=*/true, "Accumulated chain work of the previous block as a 32-byte big-endian hex string. Required by stakers to compute the chain-work-bound kernel hash that consensus uses on hardened chains."},
+                                                                     {RPCResult::Type::BOOL, "pops_hardened", /*optional=*/true, "Whether PoPS hardening (time-bucketing + chain-work binding in the kernel hash) is in force for the next block. Stakers MUST construct the kernel hash accordingly; otherwise the resulting block is rejected with bad-blsct-pos-proof."},
                                                                      {RPCResult::Type::ARR, "staked_commitments", /*optional=*/true, "Only on Proof of Stake", {
                                                                                                                                                                    {RPCResult::Type::STR_HEX, "", "staked_commitment"},
                                                                                                                                                                }},
@@ -1031,6 +1033,14 @@ static RPCHelpMan getblocktemplate()
                 result.pushKV("eta_phi", HexStr(blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, *pblock)));
                 result.pushKV("prev_time", pindexPrev->nTime);
                 result.pushKV("modifier", pindexPrev->nStakeModifier);
+                // The previous block's accumulated chain work and the
+                // hardening flag are part of the kernel-hash inputs on
+                // hardened chains. Surface both so out-of-process stakers
+                // (navio-staker, third-party staking pools) can build
+                // proofs that pass consensus verification. See
+                // src/blsct/pos/helpers.cpp::CalculateKernelHashWithChainWork.
+                result.pushKV("prev_chainwork", ArithToUint256(pindexPrev->nChainWork).GetHex());
+                result.pushKV("pops_hardened", consensusParams.fPoPSHardened);
             }
 
             if (consensusParams.signet_blocks) {

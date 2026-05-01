@@ -779,21 +779,34 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
     uint64_t next_target = stoi(result.find_value("bits").get_str(), nullptr, 16);
     currentDifficulty.SetCompact(next_target);
 
+    // Source the kernel-hash inputs that depend on consensus state from the
+    // node, NOT from local guesses about the chain type. Previously the
+    // staker hard-coded `hardened = (chain_type != TESTNET)` and ignored
+    // accumulated chain work entirely, so any change in either input on the
+    // node side (e.g. testnet flipping `fPoPSHardened` to true) caused
+    // every produced block to be rejected with `bad-blsct-pos-proof`.
+    // `prev_chainwork` and `pops_hardened` were added to `getblocktemplate`
+    // for exactly this purpose.
+    const UniValue& prev_chainwork_val = result.find_value("prev_chainwork");
+    const UniValue& pops_hardened_val = result.find_value("pops_hardened");
+    if (!prev_chainwork_val.isStr() || !pops_hardened_val.isBool()) {
+        LogPrintf("%s: [%s] getblocktemplate is missing prev_chainwork / pops_hardened. Upgrade naviod to a version that exposes them; otherwise produced blocks will be rejected on hardened chains.\n", __func__, walletName);
+        return std::nullopt;
+    }
+    const arith_uint256 prev_chainwork = UintToArith256(uint256S(prev_chainwork_val.get_str()));
+    const bool hardened = pops_hardened_val.get_bool();
+
     proposal.nVersion = result.find_value("version").get_real();
     proposal.nTime = result.find_value("curtime").get_real();
     proposal.nBits = next_target;
     proposal.hashPrevBlock = uint256S(result.find_value("previousblockhash").get_str());
     proposal.vtx = UniValueArrayToTransactions(result.find_value("transactions").get_array());
 
-    // Match consensus: testnet runs with PoPS hardening disabled (raw time,
-    // no chain-work binding) to keep validating its historical chain; other
-    // networks run with hardening on. Chain type is set at startup via
-    // SelectBaseParams(gArgs.GetChainType()).
-    const bool hardened = (gArgs.GetChainType() != ChainType::TESTNET);
-    proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, proposal.nTime, next_target, hardened);
+    proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, prev_chainwork, proposal.nTime, next_target, hardened);
     proposal.hashMerkleRoot = BlockMerkleRoot(proposal);
 
-    auto valid = blsct::ProofOfStake(proposal.posProof).Verify(staked_elements, eta_fiat_shamir, eta_phi, blsct::CalculateKernelHash(prev_time, modifier, proposal.nTime, hardened), next_target);
+    const uint256 kernel_hash = blsct::CalculateKernelHashWithChainWork(prev_time, modifier, prev_chainwork, proposal.nTime, hardened);
+    auto valid = blsct::ProofOfStake(proposal.posProof).Verify(staked_elements, eta_fiat_shamir, eta_phi, kernel_hash, next_target);
 
     if (valid == blsct::ProofOfStake::VALID) return proposal;
 

@@ -24,9 +24,16 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
 
     auto next_target = blsct::GetNextTargetRequired(pindexPrev, &block, params);
 
+    // Compute the kernel hash via the EXACT same path consensus
+    // (`ConnectBlock` -> `blsct::CalculateKernelHash(pindexPrev, block,
+    // params)`) will use to verify this block. Otherwise the bulletproofs+
+    // range proof's `Scalar(min_value)` seed disagrees and every block is
+    // rejected with `bad-blsct-pos-proof`.
+    const uint256 kernel_hash = blsct::CalculateKernelHash(pindexPrev, block, params);
+
     LogPrint(BCLog::POPS, "Creating PoPS:\n    Eta fiat shamir: %s\n   Eta phi: %s\n   Next Target: %d\n   Staked Commitments:%s\n", HexStr(eta_fiat_shamir), HexStr(eta_phi), next_target, staked_commitments.GetString());
 
-    return ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f, pindexPrev->nTime, pindexPrev->nStakeModifier, block.nTime, next_target);
+    return ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f, kernel_hash, next_target);
 }
 
 bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)

@@ -46,7 +46,32 @@ public:
     {
     }
 
+    // Build a proof from a pre-computed kernel hash. This is the lowest-
+    // level constructor and is the only form whose semantics are stable
+    // against changes to how the consensus kernel hash is derived (e.g.
+    // PoPS hardening: time-bucketing + chain-work binding). All other
+    // constructors delegate here. Callers that need to match the consensus
+    // kernel hash (the staker, ProofOfStakeLogic::Create, ConnectBlock)
+    // MUST compute the kernel hash via the same code path consensus uses
+    // (`blsct::CalculateKernelHash(pindexPrev, block, params)` or
+    // `CalculateKernelHashWithChainWork(...)`) and pass it in here.
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint256& kernel_hash, const unsigned int& next_target);
+
+    // Legacy convenience constructor (no chain-work binding). Equivalent to
+    // computing `kernel_hash = CalculateKernelHash(prev_time, stake_modifier,
+    // time, hardened)` and calling the kernel-hash overload above. Retained
+    // for the bench harness and callers that explicitly want the no-chain-
+    // work kernel; consensus-tracking callers must NOT use this overload on
+    // hardened chains.
     ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, bool hardened = true);
+
+    // Chain-work-aware convenience constructor. Equivalent to computing
+    // `kernel_hash = CalculateKernelHashWithChainWork(prev_time,
+    // stake_modifier, prev_chain_work, time, hardened)` and delegating to
+    // the kernel-hash overload. This is what the staker (over RPC) and
+    // ProofOfStakeLogic::Create use to stay aligned with consensus on
+    // hardened chains.
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened = true);
 
     enum VerificationResult : uint32_t {
         NONE = 0,
