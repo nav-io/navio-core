@@ -1763,17 +1763,54 @@ RPCHelpMan createblsctrawtransaction()
     };
 }
 
+namespace {
+//! Consensus minimum absolute fee for this unsigned layout:
+//! serialized weight(tx) × nBLSCTDefaultFee (matches `VerifyTx` and `TxFactoryBase::BuildTx`).
+[[nodiscard]] static CAmount BlsCtConsensusMinimumFee(const blsct::UnsignedTransaction& utx, CAmount n_rate)
+{
+    constexpr int MAX_ITER = 32;
+    CAmount fee_try = utx.GetFee();
+    for (int i = 0; i < MAX_ITER; ++i) {
+        blsct::UnsignedTransaction probe(utx);
+        probe.SetFee(fee_try);
+        const auto signed_opt = probe.Sign();
+        if (!signed_opt) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Unable to derive minimum fee from transaction layout (dry-run signing failed)");
+        }
+        const int32_t wt = blsct::GetTransactionWeight(*signed_opt);
+        if (wt < 0) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Unexpected negative transaction weight while determining minimum fee");
+        }
+        const CAmount min_for = static_cast<CAmount>(wt) * n_rate;
+        if (!MoneyRange(min_for)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Computed minimum fee is out of valid range");
+        }
+        const CAmount next = std::max(fee_try, min_for);
+        if (next == fee_try) {
+            return fee_try;
+        }
+        fee_try = next;
+    }
+    return fee_try;
+}
+} // namespace
+
 RPCHelpMan fundblsctrawtransaction()
 {
     return RPCHelpMan{
         "fundblsctrawtransaction",
         "\nAdd inputs to a BLSCT transaction until it has enough value to cover outputs and fee.\n"
+        "The funded transaction fee is raised to satisfy the consensus rule:\n"
+        "fee ≥ transaction weight × the network's blsct default fee rate (see chainparams).\n"
+        "If estimate_fee is true, the RPC targets that minimum fee (optionally bumped by fee). When false,\n"
+        "fee is explicit (default 1000000) but still bumped if below the consensus minimum.\n"
         "If lock_unspents is true, selected inputs are locked. Use unlockblsctoutpoint to unlock them.\n",
         {
             {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The hex string of the raw transaction"},
             {"changeaddress", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The BLSCT address to receive the change"},
             {"lock_unspents", RPCArg::Type::BOOL, RPCArg::Default{false}, "Lock selected unspent outputs"},
-            {"fee", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The absolute fee in navoshis. Defaults to 1000000"},
+            {"fee", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Absolute fee navoshis. With estimate_fee true: optional minimum floor; omit for weight-only estimate. Otherwise defaults to 1000000"},
+            {"estimate_fee", RPCArg::Type::BOOL, RPCArg::Default{false}, "Estimate fee from weight × consensus rate (instead of explicit default or fee argument)"},
         },
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the funded transaction"},
@@ -1781,7 +1818,8 @@ RPCHelpMan fundblsctrawtransaction()
             HelpExampleCli("fundblsctrawtransaction", "\"hexstring\"") +
             HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" \"changeaddress\"") +
             HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" \"changeaddress\" true") +
-            HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" null false 250000")},
+            HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" null false 250000") +
+            HelpExampleCli("fundblsctrawtransaction", "\"hexstring\" null false null true")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -1799,209 +1837,217 @@ RPCHelpMan fundblsctrawtransaction()
             if (!unsigned_tx_opt) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Transaction deserialization failed");
             }
-            auto& unsigned_tx = unsigned_tx_opt.value();
+            const blsct::UnsignedTransaction seed(*unsigned_tx_opt);
 
             const bool lock_unspents = !request.params[2].isNull() && request.params[2].get_bool();
-            CAmount fee = COIN / 100;
+
+            bool estimate_fee = false;
+            if (request.params.size() > 4 && !request.params[4].isNull()) {
+                estimate_fee = request.params[4].get_bool();
+            }
+
+            std::optional<CAmount> optional_fee_nav;
             if (!request.params[3].isNull()) {
-                fee = request.params[3].getInt<CAmount>();
-            }
-            if (fee < 0 || !MoneyRange(fee)) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "Fee must be a non-negative amount in navoshis");
-            }
-
-            unsigned_tx.SetFee(fee);
-
-            // Calculate total output amount
-            CAmount output_value = 0;
-            for (const auto& out : unsigned_tx.GetOutputs()) {
-                output_value += out.value.GetUint64();
-                if (!MoneyRange(output_value)) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Output value is too large");
+                const CAmount f = request.params[3].getInt<CAmount>();
+                if (f < 0 || !MoneyRange(f)) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Fee must be a non-negative amount in navoshis");
                 }
+                optional_fee_nav = f;
             }
-            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: total output value=%lld\n", output_value);
 
-            // Calculate total input amount from existing inputs
-            CAmount existing_input_value = 0;
-            std::set<COutPoint> existing_inputs;
+            const CAmount n_rate = Params().GetConsensus().nBLSCTDefaultFee;
 
-            // Find unspent outputs to use as inputs
-            wallet::CoinFilterParams filter_coins;
-            filter_coins.only_blsct = true;
-            filter_coins.skip_locked = true;
-            filter_coins.include_immature_coinbase = false;
-            wallet::CoinsResult available_outputs = pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)
-                ? AvailableBlsctCoins(*pwallet, nullptr, filter_coins)
-                : AvailableCoins(*pwallet, nullptr, std::nullopt, filter_coins);
-
-            for (const auto& input : unsigned_tx.GetInputs()) {
-                existing_input_value += input.value.GetUint64();
-                existing_inputs.insert(input.in.prevout);
-            }
-            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: existing input value=%lld, existing inputs count=%zu\n", existing_input_value, existing_inputs.size());
-
+            CAmount working_fee = estimate_fee ? optional_fee_nav.value_or(0) : optional_fee_nav.value_or(COIN / 100);
             auto lock_outpoint_if_wallet = [&](const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
                 if (pwallet->GetWalletTxFromOutpoint(outpoint)) {
                     pwallet->LockCoin(outpoint);
                 }
             };
 
-            // Calculate how much more we need
-            CAmount required_value = output_value + fee;
-            CAmount additional_required = required_value - existing_input_value;
-            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: required value=%lld, additional required=%lld\n", required_value, additional_required);
+            for (unsigned fund_round = 0; fund_round < 16; ++fund_round) {
+                blsct::UnsignedTransaction unsigned_tx(seed);
+                unsigned_tx.SetFee(working_fee);
 
-            // Get change address (needed for both cases)
-            CTxDestination change_dest;
-            if (!request.params[1].isNull()) {
-                change_dest = DecodeDestination(request.params[1].get_str());
-                if (!IsValidDestination(change_dest) || change_dest.index() != 8) {
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BLSCT change address");
+                // Calculate total output amount
+                CAmount output_value = 0;
+                for (const auto& out : unsigned_tx.GetOutputs()) {
+                    output_value += out.value.GetUint64();
+                    if (!MoneyRange(output_value)) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Output value is too large");
+                    }
                 }
-            } else {
-                // Get new change address from wallet
-                change_dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(blsct::CHANGE_ACCOUNT).value());
-            }
+                LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: total output value=%lld\n", output_value);
 
-            // Check if we need a change output even without additional inputs
-            if (additional_required <= 0) {
-                if (lock_unspents) {
-                    for (const auto& outpoint : existing_inputs) {
-                        lock_outpoint_if_wallet(outpoint);
+                // Calculate total input amount from existing inputs
+                CAmount existing_input_value = 0;
+                std::set<COutPoint> existing_inputs;
+
+                // Find unspent outputs to use as inputs
+                wallet::CoinFilterParams filter_coins;
+                filter_coins.only_blsct = true;
+                filter_coins.skip_locked = true;
+                filter_coins.include_immature_coinbase = false;
+                wallet::CoinsResult available_outputs = pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)
+                    ? AvailableBlsctCoins(*pwallet, nullptr, filter_coins)
+                    : AvailableCoins(*pwallet, nullptr, std::nullopt, filter_coins);
+
+                for (const auto& input : unsigned_tx.GetInputs()) {
+                    existing_input_value += input.value.GetUint64();
+                    existing_inputs.insert(input.in.prevout);
+                }
+                LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: existing input value=%lld, existing inputs count=%zu\n", existing_input_value, existing_inputs.size());
+
+                const CAmount required_value = output_value + working_fee;
+                CAmount additional_required = required_value - existing_input_value;
+                LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: required value=%lld, additional required=%lld\n", required_value, additional_required);
+
+                // Get change address (needed for both cases)
+                CTxDestination change_dest;
+                if (!request.params[1].isNull()) {
+                    change_dest = DecodeDestination(request.params[1].get_str());
+                    if (!IsValidDestination(change_dest) || change_dest.index() != 8) {
+                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BLSCT change address");
+                    }
+                } else {
+                    change_dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(blsct::CHANGE_ACCOUNT).value());
+                }
+
+                enum class FundingPath { ENOUGH_ALREADY, NEED_MORE_INPUTS } path{};
+                std::vector<COutPoint> added_inputs;
+
+                if (additional_required <= 0) {
+                    path = FundingPath::ENOUGH_ALREADY;
+
+                    // Add change output if needed (locks deferred until fee converged)
+                    const CAmount total_input_value_early = existing_input_value;
+                    if (total_input_value_early > required_value) {
+                        const CAmount change_value = total_input_value_early - required_value;
+                        blsct::SubAddress change_subaddr(std::get<blsct::DoublePublicKey>(change_dest));
+                        blsct::UnsignedOutput change_output = CreateOutput(change_subaddr.GetKeys(), change_value, "", TokenId(), Scalar::Rand());
+                        unsigned_tx.AddOutput(change_output);
+                    }
+                } else {
+                    path = FundingPath::NEED_MORE_INPUTS;
+
+                    CAmount additional_input_value = 0;
+                    size_t total_available = 0;
+                    for (const auto& [type, outputs] : available_outputs.coins) {
+                        total_available += outputs.size();
+                    }
+                    LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: found %zu candidate outputs, need %lld additional\n", total_available, additional_required);
+
+                    for (const auto& [type, outputs] : available_outputs.coins) {
+                        for (const auto& output : outputs) {
+                            if (existing_inputs.count(output.outpoint) > 0) {
+                                continue;
+                            }
+
+                            std::optional<range_proof::RecoveredData<Mcl>> recovery_data;
+                            if (const wallet::CWalletOutput* wallet_output = pwallet->GetWalletOutput(output.outpoint)) {
+                                recovery_data = wallet_output->blsctRecoveryData;
+                            } else if (const wallet::CWalletTx* wallet_tx = pwallet->GetWalletTxFromOutpoint(output.outpoint)) {
+                                recovery_data = wallet_tx->GetBLSCTRecoveryData(output.outpoint);
+                            } else {
+                                auto recovery_result = blsct_km->RecoverOutputs({output.txout});
+                                if (recovery_result.is_completed && !recovery_result.amounts.empty()) {
+                                    recovery_data = recovery_result.amounts[0];
+                                }
+                            }
+
+                            CAmount input_amount = 0;
+                            Scalar input_gamma;
+                            const bool has_recovery = recovery_data.has_value() &&
+                                !(recovery_data->amount == 0 && recovery_data->gamma == Scalar(0) && recovery_data->id == 0 && recovery_data->message == "");
+
+                            if (has_recovery) {
+                                input_amount = recovery_data->amount;
+                                input_gamma = recovery_data->gamma;
+                            } else if (!output.txout.HasBLSCTRangeProof() && output.txout.nValue > 0) {
+                                input_amount = output.txout.nValue;
+                                input_gamma = Scalar(0);
+                            } else {
+                                continue;
+                            }
+
+                            blsct::UnsignedInput input;
+                            input.in.prevout = output.outpoint;
+                            input.value = Scalar(input_amount);
+                            input.gamma = input_gamma;
+
+                            blsct::PrivateKey spending_key;
+                            if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
+                                continue;
+                            }
+                            input.sk = spending_key;
+
+                            if (!output.txout.blsctData.spendingKey.IsZero()) {
+                                auto signing_pubkey = spending_key.GetPublicKey();
+                                auto expected_pubkey = blsct::PublicKey(output.txout.blsctData.spendingKey);
+                                if (signing_pubkey != expected_pubkey) {
+                                    continue;
+                                }
+                            }
+
+                            unsigned_tx.AddInput(input);
+                            additional_input_value += input_amount;
+                            added_inputs.push_back(output.outpoint);
+
+                            if (additional_input_value >= additional_required) break;
+                        }
+                        if (additional_input_value >= additional_required) break;
+                    }
+                    LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: collected=%lld required=%lld\n", additional_input_value, additional_required);
+
+                    if (additional_input_value < additional_required) {
+                        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, strprintf(
+                            "Insufficient funds: found %zu candidate outputs but collected %s, need %s. "
+                            "Check debug.log for per-output rejection reasons.",
+                            total_available, FormatMoney(additional_input_value), FormatMoney(additional_required)));
+                    }
+
+                    const CAmount total_input_value = existing_input_value + additional_input_value;
+                    if (total_input_value > required_value) {
+                        const CAmount change_value = total_input_value - required_value;
+                        blsct::SubAddress change_subaddr(std::get<blsct::DoublePublicKey>(change_dest));
+                        blsct::UnsignedOutput change_output = CreateOutput(change_subaddr.GetKeys(), change_value, "", TokenId(), Scalar::Rand());
+                        unsigned_tx.AddOutput(change_output);
                     }
                 }
 
-                // Add change output if needed
-                CAmount total_input_value = existing_input_value;
+                const CAmount consensus_floor = BlsCtConsensusMinimumFee(unsigned_tx, n_rate);
+                const CAmount desired_fee = estimate_fee
+                    ? std::max(consensus_floor, optional_fee_nav.value_or(0))
+                    : std::max(optional_fee_nav.value_or(COIN / 100), consensus_floor);
 
-                if (total_input_value > required_value) {
-                    CAmount change_value = total_input_value - required_value;
-                    blsct::SubAddress change_subaddr(std::get<blsct::DoublePublicKey>(change_dest));
-                    blsct::UnsignedOutput change_output = CreateOutput(change_subaddr.GetKeys(), change_value, "", TokenId(), Scalar::Rand());
-                    unsigned_tx.AddOutput(change_output);
-                }
-
-                return HexStr(unsigned_tx.Serialize());
-            }
-
-            CAmount additional_input_value = 0;
-            std::vector<COutPoint> added_inputs;
-            size_t total_available = 0;
-            for (const auto& [type, outputs] : available_outputs.coins) {
-                total_available += outputs.size();
-            }
-            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: found %zu candidate outputs, need %lld additional\n", total_available, additional_required);
-
-            for (const auto& [type, outputs] : available_outputs.coins) {
-                for (const auto& output : outputs) {
-                    if (existing_inputs.count(output.outpoint) > 0) {
-                        continue;
-                    }
-
-                    LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: evaluating output %s nValue=%lld hasRangeProof=%d hasKeys=%d spendingKeyZero=%d\n",
-                        output.outpoint.ToString(), output.txout.nValue,
-                        output.txout.HasBLSCTRangeProof(), output.txout.HasBLSCTKeys(),
-                        output.txout.blsctData.spendingKey.IsZero());
-
-                    std::optional<range_proof::RecoveredData<Mcl>> recovery_data;
-                    if (const wallet::CWalletOutput* wallet_output = pwallet->GetWalletOutput(output.outpoint)) {
-                        recovery_data = wallet_output->blsctRecoveryData;
-                        LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: recovery source=mapOutputs amount=%lld\n", recovery_data->amount);
-                    } else if (const wallet::CWalletTx* wallet_tx = pwallet->GetWalletTxFromOutpoint(output.outpoint)) {
-                        recovery_data = wallet_tx->GetBLSCTRecoveryData(output.outpoint);
-                        LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: recovery source=mapWallet amount=%lld\n", recovery_data->amount);
-                    } else {
-                        auto recovery_result = blsct_km->RecoverOutputs({output.txout});
-                        if (recovery_result.is_completed && !recovery_result.amounts.empty()) {
-                            recovery_data = recovery_result.amounts[0];
-                            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: recovery source=RecoverOutputs amount=%lld\n", recovery_data->amount);
+                if (working_fee >= desired_fee) {
+                    // Apply locks only on the converged funding attempt so retries do not lock coins prematurely.
+                    if (lock_unspents) {
+                        if (path == FundingPath::ENOUGH_ALREADY) {
+                            for (const auto& outpoint : existing_inputs) {
+                                lock_outpoint_if_wallet(outpoint);
+                            }
                         } else {
-                            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: recovery source=none (not in mapOutputs, mapWallet, or RecoverOutputs)\n");
+                            std::set<COutPoint> inputs_to_lock = existing_inputs;
+                            inputs_to_lock.insert(added_inputs.begin(), added_inputs.end());
+                            for (const auto& outpoint : inputs_to_lock) {
+                                lock_outpoint_if_wallet(outpoint);
+                            }
                         }
                     }
 
-                    CAmount input_amount = 0;
-                    Scalar input_gamma;
-                    bool has_recovery = recovery_data.has_value() &&
-                        !(recovery_data->amount == 0 && recovery_data->gamma == Scalar(0) && recovery_data->id == 0 && recovery_data->message == "");
+                    LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: converge round=%u working_fee=%lld desired_fee=%lld consensus_floor=%lld\n",
+                        fund_round, working_fee, desired_fee, consensus_floor);
 
-                    if (has_recovery) {
-                        input_amount = recovery_data->amount;
-                        input_gamma = recovery_data->gamma;
-                    } else if (!output.txout.HasBLSCTRangeProof() && output.txout.nValue > 0) {
-                        input_amount = output.txout.nValue;
-                        input_gamma = Scalar(0);
-                        LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: using transparent nValue=%lld for output %s\n", input_amount, output.outpoint.ToString());
-                    } else {
-                        LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: SKIP output %s reason=no_recovery_data\n", output.outpoint.ToString());
-                        continue;
-                    }
-
-                    blsct::UnsignedInput input;
-                    input.in.prevout = output.outpoint;
-                    input.value = Scalar(input_amount);
-                    input.gamma = input_gamma;
-
-                    blsct::PrivateKey spending_key;
-                    if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
-                        LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: SKIP output %s reason=spending_key_derivation_failed\n", output.outpoint.ToString());
-                        continue;
-                    }
-
-                    input.sk = spending_key;
-
-                    if (!output.txout.blsctData.spendingKey.IsZero()) {
-                        auto signing_pubkey = spending_key.GetPublicKey();
-                        auto expected_pubkey = blsct::PublicKey(output.txout.blsctData.spendingKey);
-                        if (signing_pubkey != expected_pubkey) {
-                            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: SKIP output %s reason=spending_key_mismatch derived=%s expected=%s\n",
-                                output.outpoint.ToString(),
-                                signing_pubkey.ToString().substr(0, 16),
-                                expected_pubkey.ToString().substr(0, 16));
-                            continue;
-                        }
-                    }
-
-                    LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: ACCEPTED output %s amount=%lld\n", output.outpoint.ToString(), input_amount);
-                    unsigned_tx.AddInput(input);
-                    additional_input_value += input_amount;
-                    added_inputs.push_back(output.outpoint);
-
-                    if (additional_input_value >= additional_required) break;
+                    return HexStr(unsigned_tx.Serialize());
                 }
 
-                if (additional_input_value >= additional_required) break;
-            }
-            LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: collected=%lld required=%lld\n", additional_input_value, additional_required);
+                LogPrint(BCLog::WALLETDB, "fundblsctrawtransaction: bump fee round=%u from=%lld to=%lld (consensus_floor=%lld estimate=%d)\n",
+                    fund_round, working_fee, desired_fee, consensus_floor, estimate_fee);
 
-            if (additional_input_value < additional_required) {
-                throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, strprintf(
-                    "Insufficient funds: found %zu candidate outputs but collected %s, need %s. "
-                    "Check debug.log for per-output rejection reasons.",
-                    total_available, FormatMoney(additional_input_value), FormatMoney(additional_required)));
+                working_fee = desired_fee;
             }
 
-            if (lock_unspents) {
-                std::set<COutPoint> inputs_to_lock = existing_inputs;
-                inputs_to_lock.insert(added_inputs.begin(), added_inputs.end());
-
-                for (const auto& outpoint : inputs_to_lock) {
-                    lock_outpoint_if_wallet(outpoint);
-                }
-            }
-
-            // Add change output if needed
-            CAmount total_input_value = existing_input_value + additional_input_value;
-
-            if (total_input_value > required_value) {
-                CAmount change_value = total_input_value - required_value;
-                blsct::SubAddress change_subaddr(std::get<blsct::DoublePublicKey>(change_dest));
-                blsct::UnsignedOutput change_output = CreateOutput(change_subaddr.GetKeys(), change_value, "", TokenId(), Scalar::Rand());
-                unsigned_tx.AddOutput(change_output);
-            }
-
-            return HexStr(unsigned_tx.Serialize());
+            throw JSONRPCError(RPC_WALLET_ERROR, "Could not converge BLSCT fund transaction fee; try simplifying the transaction inputs/outputs.");
         },
     };
 }

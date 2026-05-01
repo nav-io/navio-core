@@ -12,6 +12,7 @@ from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
     assert_greater_than,
+    assert_greater_than_or_equal,
 )
 from test_framework.messages import COIN
 
@@ -154,14 +155,26 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         funded_tx_with_change = wallet1.fundblsctrawtransaction(raw_tx, change_address)
         self.log.info(f"Funded transaction with change: {funded_tx_with_change[:100]}...")
 
-        # Test with a custom absolute fee
-        custom_fee = 123456
+        # Test with a custom absolute fee (above consensus minimum so it is not bumped)
+        custom_fee = int(10 * COIN)
         funded_tx_with_fee = wallet1.fundblsctrawtransaction(raw_tx, None, False, custom_fee)
         decoded_funded_tx = wallet1.decodeblsctrawtransaction(funded_tx_with_fee)
         recipient_outputs = [o for o in decoded_funded_tx["outputs"] if o["amount_navoshi"] == 10000000]
         assert_equal(decoded_funded_tx["fee"], custom_fee)
         assert_equal(len(recipient_outputs), 1)
         assert_equal(recipient_outputs[0]["amount_navoshi"], 10000000)
+
+        # Auto fee: consensus weight × fee rate (omit fee; estimate_fee true)
+        funded_auto = wallet1.fundblsctrawtransaction(raw_tx, None, False, None, True)
+        decoded_auto = wallet1.decodeblsctrawtransaction(funded_auto)
+        assert_greater_than(decoded_auto["fee"], 0)
+        wallet1.signblsctrawtransaction(funded_auto)  # must be signable
+
+        # Sub-minimum explicit fee is bumped to at least the consensus minimum
+        funded_bump = wallet1.fundblsctrawtransaction(raw_tx, None, False, 1)
+        decoded_bump = wallet1.decodeblsctrawtransaction(funded_bump)
+        assert_greater_than_or_equal(decoded_bump["fee"], 1)
+        assert decoded_bump["fee"] > 1, "expect 1 navoshi fee to be raised above strict minimum"
 
         # Test error cases
         # Invalid hex string

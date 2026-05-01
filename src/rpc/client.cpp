@@ -34,6 +34,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "createblsctbalanceproof", 0, "amount" },
     { "fundblsctrawtransaction", 2, "lock_unspents" },
     { "fundblsctrawtransaction", 3, "fee" },
+    { "fundblsctrawtransaction", 4, "estimate_fee" },
     { "setmocktime", 0, "timestamp" },
     { "mockscheduler", 0, "delta_time" },
     { "utxoupdatepsbt", 1, "descriptors" },
