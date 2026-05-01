@@ -594,8 +594,6 @@ libbitcoin_node_a_SOURCES = \
   blsct/double_public_key.cpp \
   blsct/eip_2333/bls12_381_keygen.cpp \
   blsct/pos/pos.cpp \
-  blsct/pos/pos_async_verifier.cpp \
-  blsct/pos/pos_check_queue.cpp \
   blsct/pos/proof.cpp \
   blsct/pos/proof_logic.cpp \
   blsct/private_key.cpp \
