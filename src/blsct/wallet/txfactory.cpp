@@ -4,6 +4,7 @@
 
 #include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory.h>
+#include <chainparams.h>
 #include <limits>
 
 using T = Mcl;
@@ -103,12 +104,21 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 std::optional<CMutableTransaction>
 TxFactory::BuildTx()
 {
-    return TxFactoryBase::BuildTx(std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value()));
+    return TxFactoryBase::BuildTx(
+        std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value()),
+        /*minStake=*/0,
+        /*type=*/NORMAL,
+        /*fSubtractedFee=*/false,
+        Params().GetConsensus().nBLSCTDefaultFee);
 }
 
 std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)
 {
     LOCK(wallet->cs_wallet);
+
+    if (transactionData.nBLSCTDefaultFee == ::BLSCT_DEFAULT_FEE) {
+        transactionData.nBLSCTDefaultFee = Params().GetConsensus().nBLSCTDefaultFee;
+    }
 
     std::vector<InputCandidates> inputCandidates;
 

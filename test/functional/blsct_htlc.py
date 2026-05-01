@@ -722,6 +722,12 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         assert result["success"]
         imported_script = result["script"]
         self.log.info(f"Imported HTLC script: {imported_script[:40]}...")
+        signable_balance_before = wallet2.getblsctbalance()
+        watchonly_balance_before = wallet2.getblsctbalance(0, True)
+        wallet_info_before = wallet2.getwalletinfo()
+        assert Decimal(wallet_info_before["balance"]) == signable_balance_before, (
+            "getwalletinfo.balance must track the default signable-only "
+            "getblsctbalance view before the watch-only HTLC is created")
 
         # Funder (wallet1) creates and broadcasts the HTLC
         self._create_and_broadcast_htlc(
@@ -753,13 +759,16 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         # explicitly asked, and getwalletinfo.balance must agree.
         signable_balance = wallet2.getblsctbalance()
         watchonly_balance = wallet2.getblsctbalance(0, True)
-        assert signable_balance == Decimal("0"), (
-            f"getblsctbalance must exclude watch-only HTLCs by default, got {signable_balance}")
-        assert watchonly_balance >= Decimal("1"), (
-            f"getblsctbalance with include_watchonly=true must include the HTLC amount, got {watchonly_balance}")
+        assert signable_balance == signable_balance_before, (
+            "getblsctbalance must exclude watch-only HTLCs by default; "
+            f"expected unchanged signable balance {signable_balance_before}, got {signable_balance}")
+        assert watchonly_balance >= watchonly_balance_before + Decimal("1"), (
+            "getblsctbalance with include_watchonly=true must include the "
+            f"HTLC amount; expected at least {watchonly_balance_before + Decimal('1')}, got {watchonly_balance}")
         wallet_info = wallet2.getwalletinfo()
-        assert Decimal(wallet_info["balance"]) == Decimal("0"), (
-            f"getwalletinfo.balance must exclude watch-only HTLCs, got {wallet_info['balance']}")
+        assert Decimal(wallet_info["balance"]) == signable_balance_before, (
+            "getwalletinfo.balance must exclude watch-only HTLCs and stay "
+            f"aligned with the signable balance view; got {wallet_info['balance']}")
 
         stored_recovery = wallet2.getblsctrecoverydata(htlc_utxo["outid"])
         stored_outputs = [out for out in stored_recovery["outputs"] if out["out_hash"] == htlc_utxo["outid"]]

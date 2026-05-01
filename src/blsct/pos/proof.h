@@ -15,6 +15,7 @@
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <uint256.h>
 
+#include <chrono>
 #include <span>
 #include <stdexcept>
 
@@ -29,6 +30,14 @@ namespace blsct {
 class ProofOfStake
 {
 public:
+    struct VerificationStats {
+        size_t sampled_set_size{0};
+        size_t padded_set_size{0};
+        std::chrono::microseconds setmem{};
+        std::chrono::microseconds range{};
+        std::chrono::microseconds total{};
+    };
+
     ProofOfStake()
     {
     }
@@ -64,8 +73,12 @@ public:
     }
 
     VerificationResult
-    Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernelHash, const unsigned int& posTarget) const;
-    VerificationResult Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target) const;
+    Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernelHash, const unsigned int& posTarget, VerificationStats* stats = nullptr) const;
+    VerificationResult Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, VerificationStats* stats = nullptr) const;
+
+    bool VerifySetMembership(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, VerificationStats* stats = nullptr) const;
+    bulletproofs_plus::RangeProofWithSeed<Arith> GetKernelRangeProof(const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi) const;
+    bulletproofs_plus::RangeProofWithSeed<Arith> GetKernelRangeProof(const uint64_t& min_value, const blsct::Message& eta_phi) const;
 
     static bool VerifyKernelHash(const RangeProof& range_proof, const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi, const Point& phi);
     static bool VerifyKernelHash(const RangeProof& range_proof, const uint64_t& min_value, const blsct::Message& eta_phi, const Point& phi);

@@ -123,6 +123,20 @@ struct Params {
     bool fPosNoRetargeting;
     unsigned int nModifierInterval;
     CAmount nPePoSMinStakeAmount;
+    /**
+     * Per-byte fee rate (sat / serialized byte) enforced as a consensus
+     * minimum on every BLSCT user transaction. Wallets MUST use this value
+     * when building a transaction's fee output, and `blsct::VerifyTx`
+     * rejects any non-coinbase BLSCT transaction whose `PayFeePredicate`
+     * output `nValue` is below
+     *
+     *     blsct::GetTransactionWeight(tx) * nBLSCTDefaultFee
+     *
+     * with `blsct-fee-below-min`. Promoting this from a hardcoded constant
+     * to a chainparam lets each network tune the minimum fee independently
+     * and forces a consensus rev to change it.
+     */
+    CAmount nBLSCTDefaultFee;
     int nLastPOWHeight;
     /**
      * Maximum number of staked commitments sampled from the UTXO set's

@@ -7,6 +7,7 @@
 
 #include <arith_uint256.h>
 #include <blsct/pos/pos.h>
+#include <blsct/pos/pos_async_verifier.h>
 #include <blsct/pos/proof_logic.h>
 #include <chain.h>
 #include <checkqueue.h>
@@ -1147,7 +1148,7 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
         int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
         int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
 
-        if (!blsct::VerifyTx(tx, viewNew, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP)) {
+        if (!blsct::VerifyTx(tx, viewNew, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee)) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }
@@ -2246,8 +2247,16 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const Ch
 
 static SteadyClock::duration time_check{};
 static SteadyClock::duration time_forks{};
+static SteadyClock::duration time_pos_dispatch{};
+static SteadyClock::duration time_blsct_sig_dispatch{};
 static SteadyClock::duration time_connect{};
 static SteadyClock::duration time_verify{};
+static SteadyClock::duration time_blsct_reward_tx_verify{};
+static SteadyClock::duration time_blsct_sig_verify{};
+static SteadyClock::duration time_blsct_block_rangeproofs{};
+static SteadyClock::duration time_script_wait{};
+static SteadyClock::duration time_blsct_sig_wait{};
+static SteadyClock::duration time_pos_wait{};
 static SteadyClock::duration time_pos_calc{};
 static SteadyClock::duration time_undo{};
 static SteadyClock::duration time_index{};
@@ -2498,13 +2507,18 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         pos_kernel_hash = blsct::CalculateKernelHash(pindex->pprev, block, params.GetConsensus());
     }
 
-    // PoS proof verification is dispatched asynchronously. All inputs are
+    // PoS set-membership verification is dispatched asynchronously. All inputs are
     // snapshotted NOW because the tx-verify loop below can mutate `view`
     // (and therefore the staked-commitment set). The async task never reads
-    // `view` itself. The future is joined right before the script-check
-    // queue wait so the PoS verify overlaps with tx verification.
+    // `view` itself. The kernel range proof is folded into the block-wide
+    // Bulletproofs+ batch on the main thread. The future is joined after the
+    // queued script checks drain so the set-membership verify overlaps with tx
+    // verification and script work.
     std::future<std::pair<bool, std::string>> pos_verify_future;
     bool pos_verify_dispatched = false;
+    std::optional<bulletproofs_plus::RangeProofWithSeed<Mcl>> pos_kernel_range_proof;
+    std::future<blsct::TxSignatureBatchResult> blsct_sig_verify_future;
+    bool blsct_sig_verify_dispatched = false;
 
     if (params.GetConsensus().fBLSCT && block.IsProofOfStake() && fCheckPosProof) {
         auto staked_commitments_snapshot = view.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash(), params.GetConsensus().nStakedCommitmentLimit);
@@ -2530,16 +2544,26 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
         }
 
-        pos_verify_future = std::async(std::launch::async,
+        pos_kernel_range_proof.emplace(block.posProof.GetKernelRangeProof(min_value_u64, eta_phi));
+        pos_verify_future = blsct::GetPosAsyncVerifier().Submit(
             [staked_commitments = std::move(staked_commitments_snapshot),
              eta_fiat_shamir = std::move(eta_fiat_shamir),
              eta_phi = std::move(eta_phi),
-             pos_kernel_hash,
-             next_target,
              &pos_proof = block.posProof]() -> std::pair<bool, std::string> {
                 try {
-                    auto res = pos_proof.Verify(staked_commitments, eta_fiat_shamir, eta_phi, pos_kernel_hash, next_target);
-                    return {res == blsct::ProofOfStake::VALID, res == blsct::ProofOfStake::VALID ? "" : blsct::ProofOfStake::VerificationResultToString(res)};
+                    const bool bench_on = LogAcceptCategory(BCLog::BENCH, BCLog::Level::Debug);
+                    blsct::ProofOfStake::VerificationStats pos_stats;
+                    const bool setmem_ok = pos_proof.VerifySetMembership(staked_commitments, eta_fiat_shamir, eta_phi, bench_on ? &pos_stats : nullptr);
+                    if (bench_on) {
+                        LogPrint(BCLog::BENCH,
+                                 "      - pos setmem: sample=%zu padded=%zu setmem=%.2fms total=%.2fms result=%s\n",
+                                 pos_stats.sampled_set_size,
+                                 pos_stats.padded_set_size,
+                                 Ticks<MillisecondsDouble>(pos_stats.setmem),
+                                 Ticks<MillisecondsDouble>(pos_stats.total),
+                                 setmem_ok ? "Valid" : blsct::ProofOfStake::VerificationResultToString(blsct::ProofOfStake::SM_INVALID));
+                    }
+                    return {setmem_ok, setmem_ok ? "" : blsct::ProofOfStake::VerificationResultToString(blsct::ProofOfStake::SM_INVALID)};
                 } catch (const std::runtime_error& e) {
                     return {false, std::string(e.what())};
                 }
@@ -2547,11 +2571,11 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         pos_verify_dispatched = true;
 
         time_2_ = SteadyClock::now();
-        time_verify += time_2_ - time_1;
-        LogPrint(BCLog::BENCH, "    - Dispatch proof of stake proof: %.2fms [%.2fs (%.2fms/blk)]\n",
+        time_pos_dispatch += time_2_ - time_1;
+        LogPrint(BCLog::BENCH, "    - Dispatch PoS setmem: %.2fms [%.2fs (%.2fms/blk)]\n",
                  Ticks<MillisecondsDouble>(time_2_ - time_1),
-                 Ticks<SecondsDouble>(time_verify),
-                 Ticks<MillisecondsDouble>(time_verify) / num_blocks_total);
+                 Ticks<SecondsDouble>(time_pos_dispatch),
+                 Ticks<MillisecondsDouble>(time_pos_dispatch) / num_blocks_total);
     }
 
     pindex->SetStakeEntropyBit(block.GetStakeEntropyBit());
@@ -2725,6 +2749,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // thread-spawn cost over more work.
     std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> blockBLSCTProofs;
     blockBLSCTProofs.reserve(block.vtx.size() * 4);
+    std::vector<blsct::PreparedTxSignatureCheck> blockBLSCTSigChecks;
+    blockBLSCTSigChecks.reserve(block.vtx.size());
 
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
@@ -2794,12 +2820,14 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             if (tx.IsBLSCT()) {
                 if (params.GetConsensus().fBLSCT) {
                     int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
-                    if (!blsct::VerifyTxCollectProofs(tx, view, tx_state, blockBLSCTProofs, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP)) {
+                    blsct::PreparedTxSignatureCheck sig_check;
+                    if (!blsct::PrepareTxForDeferredVerification(tx, view, tx_state, blockBLSCTProofs, sig_check, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee)) {
                         state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                                       tx_state.GetRejectReason(), tx_state.GetDebugMessage());
                         return error("ConnectBlock(): VerifyTx on transaction %s %s failed with %s",
                                      tx.GetHash().ToString(), tx.ToString(), state.ToString());
                     }
+                    blockBLSCTSigChecks.push_back(std::move(sig_check));
                 } else {
                     return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "blsct-tx-not-allowed");
                 }
@@ -2825,6 +2853,14 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
              Ticks<SecondsDouble>(time_connect),
              Ticks<MillisecondsDouble>(time_connect) / num_blocks_total);
 
+    SteadyClock::duration blsct_reward_tx_verify_time{};
+    SteadyClock::duration blsct_sig_dispatch_time{};
+    SteadyClock::duration blsct_sig_verify_time{};
+    SteadyClock::duration blsct_block_rangeproof_time{};
+    SteadyClock::duration script_wait_time{};
+    SteadyClock::duration blsct_sig_wait_time{};
+    SteadyClock::duration pos_wait_time{};
+
     CAmount blockReward = nFees + GetBlockSubsidy(pindex->nHeight, params.GetConsensus());
     if (block.IsBLSCT()) {
         TxValidationState tx_state;
@@ -2832,37 +2868,98 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         auto blockReward = GetBLSCTBlockReward(pindex->nHeight, params.GetConsensus(), block.IsProofOfStake());
 
         int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
-        if (!blsct::VerifyTxCollectProofs(*block.vtx[0], view, tx_state, blockBLSCTProofs, blockReward, 0, pindex->nHeight, nMTP)) {
+        const auto t_reward_verify_start = SteadyClock::now();
+        blsct::PreparedTxSignatureCheck sig_check;
+        if (!blsct::PrepareTxForDeferredVerification(*block.vtx[0], view, tx_state, blockBLSCTProofs, sig_check, blockReward, 0, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee)) {
             state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                           tx_state.GetRejectReason(), tx_state.GetDebugMessage());
             return error("ConnectBlock(): VerifyTx on coinbase of block %s failed (reward: %s)\n",
                          block.GetHash().ToString(), FormatMoney(blockReward));
         }
+        blockBLSCTSigChecks.push_back(std::move(sig_check));
+        blsct_reward_tx_verify_time = SteadyClock::now() - t_reward_verify_start;
+        time_blsct_reward_tx_verify += blsct_reward_tx_verify_time;
+        LogPrint(BCLog::BENCH, "      - BLSCT reward/stake tx collect: %.2fms [%.2fs (%.2fms/blk)]\n",
+                 Ticks<MillisecondsDouble>(blsct_reward_tx_verify_time),
+                 Ticks<SecondsDouble>(time_blsct_reward_tx_verify),
+                 Ticks<MillisecondsDouble>(time_blsct_reward_tx_verify) / num_blocks_total);
 
-        // Single batched bulletproofs++ verify across every BLSCT tx in the
-        // block. Amortises std::async dispatch and lets the internal
-        // parallelism saturate available cores.
+        if (!blockBLSCTSigChecks.empty()) {
+            const auto t_sig_dispatch_start = SteadyClock::now();
+            blsct_sig_verify_future = blsct::GetAggSigAsyncVerifier().Submit(
+                [sig_checks = std::move(blockBLSCTSigChecks)]() {
+                    return blsct::VerifyPreparedTxSignatures(sig_checks);
+                });
+            blsct_sig_verify_dispatched = true;
+            blsct_sig_dispatch_time = SteadyClock::now() - t_sig_dispatch_start;
+            time_blsct_sig_dispatch += blsct_sig_dispatch_time;
+            LogPrint(BCLog::BENCH, "      - Dispatch BLSCT agg sig verify: %.2fms [%.2fs (%.2fms/blk)]\n",
+                     Ticks<MillisecondsDouble>(blsct_sig_dispatch_time),
+                     Ticks<SecondsDouble>(time_blsct_sig_dispatch),
+                     Ticks<MillisecondsDouble>(time_blsct_sig_dispatch) / num_blocks_total);
+        }
+
+        if (pos_kernel_range_proof.has_value()) {
+            blockBLSCTProofs.push_back(*pos_kernel_range_proof);
+        }
+
+        // Single batched Bulletproofs++ verify across every BLSCT tx in the
+        // block plus the PoS kernel range proof. Amortises transcript/setup
+        // overhead and lets the internal parallelism saturate available cores.
+        const auto t_rangeproof_start = SteadyClock::now();
         if (!blsct::VerifyCollectedRangeProofs(blockBLSCTProofs)) {
+            if (pos_kernel_range_proof.has_value()) {
+                std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> pos_only_proof;
+                pos_only_proof.push_back(*pos_kernel_range_proof);
+                if (!blsct::VerifyCollectedRangeProofs(pos_only_proof)) {
+                    if (blsct_sig_verify_dispatched) blsct_sig_verify_future.wait();
+                    return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
+                }
+            }
+            if (blsct_sig_verify_dispatched) blsct_sig_verify_future.wait();
             state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "failed-block-rangeproof-check");
             return error("ConnectBlock(): batched range-proof verify failed for block %s",
                          block.GetHash().ToString());
         }
+        blsct_block_rangeproof_time = SteadyClock::now() - t_rangeproof_start;
+        time_blsct_block_rangeproofs += blsct_block_rangeproof_time;
+        LogPrint(BCLog::BENCH, "      - BLSCT block rangeproof batch (%zu proofs): %.2fms [%.2fs (%.2fms/blk)]\n",
+                 blockBLSCTProofs.size(),
+                 Ticks<MillisecondsDouble>(blsct_block_rangeproof_time),
+                 Ticks<SecondsDouble>(time_blsct_block_rangeproofs),
+                 Ticks<MillisecondsDouble>(time_blsct_block_rangeproofs) / num_blocks_total);
     } else if (block.vtx[0]->GetValueOut() > blockReward) {
         LogPrintf("ERROR: ConnectBlock(): coinbase pays too much (actual=%d vs limit=%d)\n", block.vtx[0]->GetValueOut(), blockReward);
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cb-amount");
     }
 
+    const auto t_script_wait_start = SteadyClock::now();
     if (!control.Wait()) {
+        if (blsct_sig_verify_dispatched) blsct_sig_verify_future.wait();
         LogPrintf("ERROR: %s: CheckQueue failed\n", __func__);
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "block-validation-failed");
     }
+    script_wait_time = SteadyClock::now() - t_script_wait_start;
+    time_script_wait += script_wait_time;
+    LogPrint(BCLog::BENCH, "      - Script check queue wait: %.2fms [%.2fs (%.2fms/blk)]\n",
+             Ticks<MillisecondsDouble>(script_wait_time),
+             Ticks<SecondsDouble>(time_script_wait),
+             Ticks<MillisecondsDouble>(time_script_wait) / num_blocks_total);
 
     // Join the async PoS verify dispatched above. Must happen after the tx
     // check queue drains so the captured snapshot stays valid through both
     // pipelines; any PoS failure rejects the block just like a tx failure.
     if (pos_verify_dispatched) {
+        const auto t_pos_wait_start = SteadyClock::now();
         const auto pos_res = pos_verify_future.get();
+        pos_wait_time = SteadyClock::now() - t_pos_wait_start;
+        time_pos_wait += pos_wait_time;
+        LogPrint(BCLog::BENCH, "      - Wait for async PoS setmem: %.2fms [%.2fs (%.2fms/blk)]\n",
+                 Ticks<MillisecondsDouble>(pos_wait_time),
+                 Ticks<SecondsDouble>(time_pos_wait),
+                 Ticks<MillisecondsDouble>(time_pos_wait) / num_blocks_total);
         if (!pos_res.first) {
+            if (blsct_sig_verify_dispatched) blsct_sig_verify_future.wait();
             if (!pos_res.second.empty()) {
                 LogPrintf("%s: Validation of PoS proof failed: %s\n", __func__, pos_res.second);
             }
@@ -2870,11 +2967,37 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         }
     }
 
+    if (blsct_sig_verify_dispatched) {
+        const auto t_sig_wait_start = SteadyClock::now();
+        try {
+            const auto sig_res = blsct_sig_verify_future.get();
+            blsct_sig_wait_time = SteadyClock::now() - t_sig_wait_start;
+            time_blsct_sig_wait += blsct_sig_wait_time;
+            blsct_sig_verify_time = sig_res.total;
+            time_blsct_sig_verify += blsct_sig_verify_time;
+            LogPrint(BCLog::BENCH, "      - BLSCT aggregate signatures: %.2fms [%.2fs (%.2fms/blk)]\n",
+                     Ticks<MillisecondsDouble>(blsct_sig_verify_time),
+                     Ticks<SecondsDouble>(time_blsct_sig_verify),
+                     Ticks<MillisecondsDouble>(time_blsct_sig_verify) / num_blocks_total);
+            LogPrint(BCLog::BENCH, "      - Wait for async BLSCT agg sig verify: %.2fms [%.2fs (%.2fms/blk)]\n",
+                     Ticks<MillisecondsDouble>(blsct_sig_wait_time),
+                     Ticks<SecondsDouble>(time_blsct_sig_wait),
+                     Ticks<MillisecondsDouble>(time_blsct_sig_wait) / num_blocks_total);
+            if (!sig_res.ok) {
+                state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "failed-signature-check", sig_res.failure_reason);
+                return error("ConnectBlock(): deferred BLSCT signature verify failed for transaction %s (%s)",
+                             sig_res.failed_txid.ToString(),
+                             sig_res.failure_reason.empty() ? "failed-signature-check" : sig_res.failure_reason);
+            }
+        } catch (const std::exception& e) {
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "failed-signature-check", e.what());
+        }
+    }
+
     const auto time_5{SteadyClock::now()};
-    time_verify += time_5 - time_3;
-    LogPrint(BCLog::BENCH, "    - Verify %u txins: %.2fms (%.3fms/txin) [%.2fs (%.2fms/blk)]\n", nInputs - 1,
-             Ticks<MillisecondsDouble>(time_5 - time_3),
-             nInputs <= 1 ? 0 : Ticks<MillisecondsDouble>(time_5 - time_3) / (nInputs - 1),
+    time_verify += time_5 - time_4;
+    LogPrint(BCLog::BENCH, "    - Verify block proofs/scripts: %.2fms [%.2fs (%.2fms/blk)]\n",
+             Ticks<MillisecondsDouble>(time_5 - time_4),
              Ticks<SecondsDouble>(time_verify),
              Ticks<MillisecondsDouble>(time_verify) / num_blocks_total);
 

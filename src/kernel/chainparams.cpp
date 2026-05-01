@@ -133,10 +133,19 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         m_chain_type = ChainType::MAIN;
         consensus.signet_blocks = false;
         consensus.signet_challenge.clear();
-        consensus.nSubsidyHalvingInterval = 210000;
+        // BIP34 (height-in-coinbase), BIP65 (CLTV), BIP66 (DERSIG), BIP68/112/113
+        // (CSV) and BIP141/143/147 (segwit) are all active from genesis on
+        // this network; there is no legacy chain history that predates them.
+        consensus.BIP34Height = 1;
+        consensus.BIP34Hash = uint256{};
+        consensus.BIP65Height = 1;
+        consensus.BIP66Height = 1;
+        consensus.CSVHeight = 1;
+        consensus.SegwitHeight = 0;
         consensus.fBLSCT = true;
         consensus.fPoPSHardened = true;
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
+        consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
         consensus.nLastPOWHeight = 100;
         // Mint the entire initial supply in the first block; subsequent
@@ -163,8 +172,16 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].min_activation_height = 0; // No activation delay
 
-        // Taproot (BIPs 340-342) is active from genesis on this network;
-        // no BIP9 signalling deployment is required.
+        // Taproot (BIPs 340-342) is active from genesis on this network.
+        // The deployment entry is still set (rather than left at the
+        // BIP9Deployment defaults) so that:
+        //  * the bit (2) does not collide with DEPLOYMENT_TESTDUMMY (28),
+        //  * versionbits invariants such as nTimeout == NO_TIMEOUT and
+        //    no-bit-reuse hold for this chain.
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].bit = 2;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0; // No activation delay
 
         consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000052b2559353df4117b7348b64");
         consensus.defaultAssumeValid = uint256S("0x00000000000000000001a0a448d6cf2546b06801389cc030b2b18c6491266815"); // 804000
@@ -190,10 +207,10 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         m_assumed_blockchain_size = 1;
         m_assumed_chain_state_size = 9;
 
-        genesis = CreateGenesisBlock(1231006505, 2149801696, 0x1d00ffff, 1, 50 * COIN);
+        genesis = CreateBLSCTGenesisBlock(1777481682, 0, 0x207fffff, 0x40000000UL, "ffffffffffffff7f0100000000000000015101a99ce23eabde4685106dfe66c9d5116c591a995d83f7c0ad0e551c1bae7b479b0475883553724c3cff9d8108f1f4c7ee06b3581950c813cdbb310dc80aa57f779c263b58f47760e7fc70ddc8cd923998519455d3ea983ec0309330fb7168180f9aa96f90180d17664842332b96ad3ee9944890f8d7bade481c073f47f95db8b987bac393a06ee380aafdbe18890e09c0c7ac255ac0699a19e1b5b0925eca8aad640e6d86274d624c186b8c4ff1d9b0fb80c9c4a0ce9363be86fb5667bc6eda74ab8cdd8a1b39269fda563b08f0e227b31f0eaf39cab020692a40225ce21694fc85f39305b0b77827b3cd24e8e5cf89782c8708998a9a211d76bc8e69489220c9548cb95a3d5f673fb0f647867ecb3f9e0528b2d9f3bcb04cfb7e0cd78278f20e5b8f82aef4c89cdd688944200ba4fa5481560d28f4e6fd6a7ec6721dc2878d9ba5e502701407edc9c70f3689b5c2ec8e1a06ab46037c03ae42a9c7b2027569e32d2aee2850a76214a98b74d0bfce59697c102984fa6f1adb3df5bd1e68c98b2afab586711aa5906f2f66dd8546fc12618fc034cb6370c96527dff837cd9c7cfc80a452b85ef0f9f432185c4f56b20439e085b9d51e8997290becaee8a7cfab02f6e04e593be4b38d7e911f46e73cce7abdfb10de60e1b49aa89856e8f377d2e80e428817651099e60da5e05ef10adfb6b31bdd60ade0204323f30713b61025ab5d980f93a9bae138036d33227116d7faa4b7919e134012c01b4ed46d934374a7641c129c9e3b13cfcd1da59947dcecf7bf7c6126ae743232d412918ce3d59290c097836517881d09fdbc2801eaf881c975a43609fcb71961c9ba0bc1446f65e230c9b9a67c2d780049afb7f32b124e9da5b70000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffae5bc62112e887afb5ece64a7853daee1d6e591ce1c3a57fa7374b63d6bcde6720b549447b76b80e230acb9d81548235ae6c6c44b740178a6263bd10a7912ebf1207409205690ef02ee46b7ca84446bbc884f593125402cadb2b623ba736f1218313907051f5af0c8fa648277afc39e3a34fd7285fb819157cd396746ccce3cce284601e77242ca95b9cb4f30acdd735b5c1a3d0269d1b7c05578ac345b804295cfb4428e29008667c5e3574d69968c7277cf65c3ae8d8283ff4cc6b10c1589935d2329e7159da6e0145d5c7ed277a97568c3b3f6b52de3ac9da14ac28bbe2ac44b99ce77ed713aa7534e1f82dfaf1a7f7bb20b70c1eb049e7268f21c5a3d550480e6cfe80f3f3a47d9865dbfac2be704d018d6b5453b7c39a14e4302b87e2ce711e438bd5d2acef5cb7f823e34378034d03e830f0b67f46ef350f2e420b00bb19df4075cf639fa4201c94f62312852261b4879078b711ab1961adec2f587964987232c232f64c69aabdcc972fa53ee6348070dd95485d87e83381c51bf3390342473c27308293d2abe5f43660e38e5dc0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000097f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb79550000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000012a05f2005820674b986160bb75605931023c4a8777136bec4ff116113184c7ed5802c796");
         consensus.hashGenesisBlock = genesis.GetHash();
-        assert(consensus.hashGenesisBlock == uint256S("0x00000000e563d370b42d83c98b811fb1bda076dd6c2b01dac9c1e21104c25277"));
-        assert(genesis.hashMerkleRoot == uint256S("0x923b312af9f8bafa4c0e3269ee492bf09b66ced16c19bfbc9e536fc11455a1b3"));
+        assert(consensus.hashGenesisBlock == uint256S("0x7a04d0211de9194390c69ea0ab0d67e3c18a00c5a0b4aae65a4b5cd919e5c3e6"));
+        assert(genesis.hashMerkleRoot == uint256S("0x86054bea52edd87ef7366fd103a66f263557736fd006f1a1942dc50ca40c507f"));
 
         // Note that of those which support the service bits prefix, most only support a subset of
         // possible options.
@@ -246,22 +263,19 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         m_chain_type = ChainType::TESTNET;
         consensus.signet_blocks = false;
         consensus.signet_challenge.clear();
-        consensus.nSubsidyHalvingInterval = 210000;
-        consensus.script_flag_exceptions.emplace( // BIP16 exception
-            uint256S("0x00000000dd30457c001f4095d208cc1296b0eed002427aa599874af7a432b105"), SCRIPT_VERIFY_NONE);
-        consensus.BIP34Height = 21111;
-        consensus.BIP34Hash = uint256S("0x0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8");
-        consensus.BIP65Height = 581885;  // 00000000007f6655f22f98e72ed80d8b06dc761d5da09df0fa1dc4be4f861eb6
-        consensus.BIP66Height = 330776;  // 000000002104c8c45e99a8853285a3b592602a3ccde2b832481da85e9e4ba182
-        consensus.CSVHeight = 770112;    // 00000000025e930139bac5c6c31a403776da130831ab85be56578f3fa75369bb
-        consensus.SegwitHeight = 834624; // 00000000002b980fcd729daaa248fd9316a5200e9b367f4ff2c42453e84201ca
+        // BIP34 (height-in-coinbase), BIP65 (CLTV), BIP66 (DERSIG), BIP68/112/113
+        // (CSV) and BIP141/143/147 (segwit) are all active from genesis on
+        // this network; there is no legacy chain history that predates them.
+        consensus.BIP34Height = 1;
+        consensus.BIP34Hash = uint256{};
+        consensus.BIP65Height = 1;
+        consensus.BIP66Height = 1;
+        consensus.CSVHeight = 1;
+        consensus.SegwitHeight = 0;
         consensus.fBLSCT = true;
-        // Testnet predates PoPS hardening (time bucketing + chain-work binding
-        // in the kernel hash). Keep the legacy rule here so existing testnet
-        // block history validates; mainnet and other networks run with
-        // hardening enabled.
-        consensus.fPoPSHardened = false;
+        consensus.fPoPSHardened = true;
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
+        consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
         consensus.nLastPOWHeight = 1000;
         consensus.MinBIP9WarningHeight = 836640; // segwit activation height + miner confirmation window
@@ -270,7 +284,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.nPosTargetTimespan = 30 * 60;
-        consensus.nPosTargetSpacing = 1 * 60;
+        consensus.nPosTargetSpacing = 2 * 60;
         consensus.nBLSCTBlockReward = 2 * COIN * (consensus.nPosTargetSpacing / 30);
         consensus.nBLSCTFirstBlockReward = 75000000 * COIN;
         consensus.nModifierInterval = 10 * 60;
@@ -291,24 +305,22 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0; // No activation delay
 
         consensus.nMinimumChainWork = uint256{};
-        // Testnet assumed-valid block. Gates skipping of PoS proof verification
-        // during IBD (same model as Bitcoin's -assumevalid for scripts).
-        // Uses the block 4095 hash already referenced by chainTxData below;
-        // bump to a newer hash as testnet history grows.
-        consensus.defaultAssumeValid = uint256S("0xa7ba30f5b01b09534794064e9629e4fa75299d28c2fbc3074c318bd01d74483f"); // 4095
+        // Fresh testnet7: no historical chain to assume-valid yet. Bump to a
+        // newer hash as testnet history accumulates.
+        consensus.defaultAssumeValid = uint256{};
 
-        pchMessageStart[0] = 0x1c;
-        pchMessageStart[1] = 0x03;
-        pchMessageStart[2] = 0xbb;
-        pchMessageStart[3] = 0x83;
+        pchMessageStart[0] = 0x24;
+        pchMessageStart[1] = 0x67;
+        pchMessageStart[2] = 0xd2;
+        pchMessageStart[3] = 0xc1;
         nDefaultPort = 33670;
         nPruneAfterHeight = 1000;
         m_assumed_blockchain_size = 1;
         m_assumed_chain_state_size = 3;
 
-        genesis = CreateBLSCTGenesisBlock(1763970344, 2, 0x207fffff, 0x40000000UL, "ffffffffffffff7f0100000000000000015101a99ce23eabde4685106dfe66c9d5116c591a995d83f7c0ad0e551c1bae7b479b0475883553724c3cff9d8108f1f4c7ee06b3581950c813cdbb310dc80aa57f779c263b58f47760e7fc70ddc8cd923998519455d3ea983ec0309330fb7168180f9aa96f90180d17664842332b96ad3ee9944890f8d7bade481c073f47f95db8b987bac393a06ee380aafdbe18890e09c0c7ac255ac0699a19e1b5b0925eca8aad640e6d86274d624c186b8c4ff1d9b0fb80c9c4a0ce9363be86fb5667bc6eda74ab8cdd8a1b39269fda563b08f0e227b31f0eaf39cab020692a40225ce21694fc85f39305b0b77827b3cd24e8e5cf89782c8708998a9a211d76bc8e69489220c9548cb95a3d5f673fb0f647867ecb3f9e0528b2d9f3bcb04cfb7e0cd78278f20e5b8f82aef4c89cdd688944200ba4fa5481560d28f4e6fd6a7ec6721dc2878d9ba5e502701407edc9c70f3689b5c2ec8e1a06ab46037c03ae42a9c7b2027569e32d2aee2850a76214a98b74d0bfce59697c102984fa6f1adb3df5bd1e68c98b2afab586711aa5906f2f66dd8546fc12618fc034cb6370c96527dff837cd9c7cfc80a452b85ef0f9f432185c4f56b20439e085b9d51e8997290becaee8a7cfab02f6e04e593be4b38d7e911f46e73cce7abdfb10de60e1b49aa89856e8f377d2e80e428817651099e60da5e05ef10adfb6b31bdd60ade0204323f30713b61025ab5d980f93a9bae138036d33227116d7faa4b7919e134012c01b4ed46d934374a7641c129c9e3b13cfcd1da59947dcecf7bf7c6126ae743232d412918ce3d59290c097836517881d09fdbc2801eaf881c975a43609fcb71961c9ba0bc1446f65e230c9b9a67c2d780049afb7f32b124e9da5b70000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffae5bc62112e887afb5ece64a7853daee1d6e591ce1c3a57fa7374b63d6bcde6720b549447b76b80e230acb9d81548235ae6c6c44b740178a6263bd10a7912ebf1207409205690ef02ee46b7ca84446bbc884f593125402cadb2b623ba736f1218313907051f5af0c8fa648277afc39e3a34fd7285fb819157cd396746ccce3cce284601e77242ca95b9cb4f30acdd735b5c1a3d0269d1b7c05578ac345b804295cfb4428e29008667c5e3574d69968c7277cf65c3ae8d8283ff4cc6b10c1589935d2329e7159da6e0145d5c7ed277a97568c3b3f6b52de3ac9da14ac28bbe2ac44b99ce77ed713aa7534e1f82dfaf1a7f7bb20b70c1eb049e7268f21c5a3d550480e6cfe80f3f3a47d9865dbfac2be704d018d6b5453b7c39a14e4302b87e2ce711e438bd5d2acef5cb7f823e34378034d03e830f0b67f46ef350f2e420b00bb19df4075cf639fa4201c94f62312852261b4879078b711ab1961adec2f587964987232c232f64c69aabdcc972fa53ee6348070dd95485d87e83381c51bf3390342473c27308293d2abe5f43660e38e5dc0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000097f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb79550000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000012a05f2005820674b986160bb75605931023c4a8777136bec4ff116113184c7ed5802c796");
+        genesis = CreateBLSCTGenesisBlock(1777481682, 0, 0x207fffff, 0x40000000UL, "ffffffffffffff7f0100000000000000015101a99ce23eabde4685106dfe66c9d5116c591a995d83f7c0ad0e551c1bae7b479b0475883553724c3cff9d8108f1f4c7ee06b3581950c813cdbb310dc80aa57f779c263b58f47760e7fc70ddc8cd923998519455d3ea983ec0309330fb7168180f9aa96f90180d17664842332b96ad3ee9944890f8d7bade481c073f47f95db8b987bac393a06ee380aafdbe18890e09c0c7ac255ac0699a19e1b5b0925eca8aad640e6d86274d624c186b8c4ff1d9b0fb80c9c4a0ce9363be86fb5667bc6eda74ab8cdd8a1b39269fda563b08f0e227b31f0eaf39cab020692a40225ce21694fc85f39305b0b77827b3cd24e8e5cf89782c8708998a9a211d76bc8e69489220c9548cb95a3d5f673fb0f647867ecb3f9e0528b2d9f3bcb04cfb7e0cd78278f20e5b8f82aef4c89cdd688944200ba4fa5481560d28f4e6fd6a7ec6721dc2878d9ba5e502701407edc9c70f3689b5c2ec8e1a06ab46037c03ae42a9c7b2027569e32d2aee2850a76214a98b74d0bfce59697c102984fa6f1adb3df5bd1e68c98b2afab586711aa5906f2f66dd8546fc12618fc034cb6370c96527dff837cd9c7cfc80a452b85ef0f9f432185c4f56b20439e085b9d51e8997290becaee8a7cfab02f6e04e593be4b38d7e911f46e73cce7abdfb10de60e1b49aa89856e8f377d2e80e428817651099e60da5e05ef10adfb6b31bdd60ade0204323f30713b61025ab5d980f93a9bae138036d33227116d7faa4b7919e134012c01b4ed46d934374a7641c129c9e3b13cfcd1da59947dcecf7bf7c6126ae743232d412918ce3d59290c097836517881d09fdbc2801eaf881c975a43609fcb71961c9ba0bc1446f65e230c9b9a67c2d780049afb7f32b124e9da5b70000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffae5bc62112e887afb5ece64a7853daee1d6e591ce1c3a57fa7374b63d6bcde6720b549447b76b80e230acb9d81548235ae6c6c44b740178a6263bd10a7912ebf1207409205690ef02ee46b7ca84446bbc884f593125402cadb2b623ba736f1218313907051f5af0c8fa648277afc39e3a34fd7285fb819157cd396746ccce3cce284601e77242ca95b9cb4f30acdd735b5c1a3d0269d1b7c05578ac345b804295cfb4428e29008667c5e3574d69968c7277cf65c3ae8d8283ff4cc6b10c1589935d2329e7159da6e0145d5c7ed277a97568c3b3f6b52de3ac9da14ac28bbe2ac44b99ce77ed713aa7534e1f82dfaf1a7f7bb20b70c1eb049e7268f21c5a3d550480e6cfe80f3f3a47d9865dbfac2be704d018d6b5453b7c39a14e4302b87e2ce711e438bd5d2acef5cb7f823e34378034d03e830f0b67f46ef350f2e420b00bb19df4075cf639fa4201c94f62312852261b4879078b711ab1961adec2f587964987232c232f64c69aabdcc972fa53ee6348070dd95485d87e83381c51bf3390342473c27308293d2abe5f43660e38e5dc0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000097f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb79550000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000012a05f2005820674b986160bb75605931023c4a8777136bec4ff116113184c7ed5802c796");
         consensus.hashGenesisBlock = genesis.GetHash();
-        assert(consensus.hashGenesisBlock == uint256S("0x4fc2a50072391d595ebd035debbf0060a9cb537106a2da7dd758505a51410445"));
+        assert(consensus.hashGenesisBlock == uint256S("0x7a04d0211de9194390c69ea0ab0d67e3c18a00c5a0b4aae65a4b5cd919e5c3e6"));
         assert(genesis.hashMerkleRoot == uint256S("0x86054bea52edd87ef7366fd103a66f263557736fd006f1a1942dc50ca40c507f"));
 
         vFixedSeeds.clear();
@@ -339,10 +351,10 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         m_assumeutxo_data = {};
 
         chainTxData = ChainTxData{
-            // Data from RPC: getchaintxstats 4095 a7ba30f5b01b09534794064e9629e4fa75299d28c2fbc3074c318bd01d74483f
-            .nTime = 1763970344,
-            .nTxCount = 5821,
-            .dTxRate = 0.02367497060462921,
+            // testnet7 reset: no chain history yet.
+            .nTime = 0,
+            .nTxCount = 0,
+            .dTxRate = 0,
         };
         }
     };
@@ -413,6 +425,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.fBLSCT = false;
             consensus.fPoPSHardened = true;
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
+            consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
             consensus.nLastPOWHeight = 1000;
             consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
@@ -494,6 +507,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.fBLSCT = false;
             consensus.fPoPSHardened = true;
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
+            consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
             consensus.nLastPOWHeight = 1000;
             consensus.MinBIP9WarningHeight = 0;
@@ -636,6 +650,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.fBLSCT = true;
             consensus.fPoPSHardened = true;
             consensus.nPePoSMinStakeAmount = 100 * COIN;
+            consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
             consensus.nLastPOWHeight = 25000;
             consensus.MinBIP9WarningHeight = 0;

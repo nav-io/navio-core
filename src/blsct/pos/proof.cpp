@@ -2,10 +2,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/common.h>
 #include <blsct/pos/proof.h>
 #include <blsct/range_proof/generators.h>
 #include <util/strencodings.h>
 
+#include <chrono>
 #include <limits>
 
 using Arith = Mcl;
@@ -17,6 +19,16 @@ using RangeProof = bulletproofs_plus::RangeProof<Arith>;
 using RangeProver = bulletproofs_plus::RangeProofLogic<Arith>;
 using SetProof = SetMemProof<Arith>;
 using SetProver = SetMemProofProver<Arith>;
+
+namespace {
+bulletproofs_plus::RangeProofWithSeed<Arith> MakeKernelRangeProof(const RangeProof& range_proof, const uint64_t& min_value, const blsct::Message& eta_phi, const Point& phi)
+{
+    auto range_proof_with_value = range_proof;
+    range_proof_with_value.Vs.Clear();
+    range_proof_with_value.Vs.Add(phi);
+    return bulletproofs_plus::RangeProofWithSeed<Arith>{range_proof_with_value, eta_phi, Scalar(min_value)};
+}
+} // namespace
 
 namespace blsct {
 ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, bool hardened)
@@ -56,19 +68,19 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
     rangeProof.Vs.Clear();
 }
 
-ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target) const
+ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, VerificationStats* stats) const
 {
-    return Verify(staked_commitments, eta_fiat_shamir, eta_phi, CalculateKernelHash(prev_time, stake_modifier, time), next_target);
+    return Verify(staked_commitments, eta_fiat_shamir, eta_phi, CalculateKernelHash(prev_time, stake_modifier, time), next_target, stats);
 }
 
-ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernel_hash, const unsigned int& next_target) const
+ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernel_hash, const unsigned int& next_target, VerificationStats* stats) const
 {
-    auto setup = SetMemProofSetup<Arith>::Get();
-
-    auto setmemres = SetProver::Verify(setup, staked_commitments, eta_fiat_shamir, eta_phi, setMemProof);
-
-    if (!setmemres)
+    if (!VerifySetMembership(staked_commitments, eta_fiat_shamir, eta_phi, stats)) {
         return ProofOfStake::SM_INVALID;
+    }
+
+    using Clock = std::chrono::steady_clock;
+    const auto t_after_setmem = stats ? Clock::now() : Clock::time_point{};
 
     // std::cout << __func__ << ": Verifying Setmem proof with"
     //           << "\n\t staked_commitments=" << staked_commitments.GetString()
@@ -78,11 +90,51 @@ ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commi
     //           << "\n\n";
 
     auto kernelhashres = ProofOfStake::VerifyKernelHash(rangeProof, kernel_hash, next_target, eta_phi, setMemProof.phi);
+    const auto t_end = stats ? Clock::now() : Clock::time_point{};
+    if (stats) {
+        stats->range = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_after_setmem);
+        stats->total += stats->range;
+    }
 
-    if (!kernelhashres)
+    if (!kernelhashres) {
         return ProofOfStake::RP_INVALID;
+    }
 
     return ProofOfStake::VALID;
+}
+
+bool ProofOfStake::VerifySetMembership(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, VerificationStats* stats) const
+{
+    using Clock = std::chrono::steady_clock;
+    const auto t_begin = stats ? Clock::now() : Clock::time_point{};
+    const size_t sampled_set_size = staked_commitments.Size();
+    const size_t padded_set_size = blsct::Common::GetFirstPowerOf2GreaterOrEqTo(sampled_set_size);
+    if (stats) {
+        *stats = {};
+        stats->sampled_set_size = sampled_set_size;
+        stats->padded_set_size = padded_set_size;
+    }
+
+    auto setup = SetMemProofSetup<Arith>::Get();
+    const bool setmemres = SetProver::Verify(setup, staked_commitments, eta_fiat_shamir, eta_phi, setMemProof);
+
+    if (stats) {
+        const auto t_end = Clock::now();
+        stats->setmem = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_begin);
+        stats->total = stats->setmem;
+    }
+
+    return setmemres;
+}
+
+bulletproofs_plus::RangeProofWithSeed<Arith> ProofOfStake::GetKernelRangeProof(const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi) const
+{
+    return GetKernelRangeProof(SaturateToU64(CalculateMinValue(kernel_hash, next_target)), eta_phi);
+}
+
+bulletproofs_plus::RangeProofWithSeed<Arith> ProofOfStake::GetKernelRangeProof(const uint64_t& min_value, const blsct::Message& eta_phi) const
+{
+    return MakeKernelRangeProof(rangeProof, min_value, eta_phi, setMemProof.phi);
 }
 
 bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi, const Point& phi)
@@ -104,16 +156,9 @@ bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint256
 
 bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint64_t& min_value, const blsct::Message& eta_phi, const Point& phi)
 {
-    auto range_proof_with_value = range_proof;
-
-    range_proof_with_value.Vs.Clear();
-    range_proof_with_value.Vs.Add(phi);
-
     RangeProver rp;
     std::vector<bulletproofs_plus::RangeProofWithSeed<Arith>> proofs;
-    bulletproofs_plus::RangeProofWithSeed<Arith> proof{range_proof_with_value, eta_phi, (CAmount)min_value};
-
-    proofs.emplace_back(proof);
+    proofs.emplace_back(MakeKernelRangeProof(range_proof, min_value, eta_phi, phi));
 
     return rp.Verify(proofs);
 }

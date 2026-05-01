@@ -89,8 +89,17 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
     if (wallet.IsWalletFlagSet(wallet::WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Error: Private keys are disabled for this wallet");
     }
+    // Override the wallet-built fee rate with the active chainparams' value
+    // so the resulting tx satisfies the consensus minimum-fee rule enforced
+    // by `blsct::VerifyTx`. Callers can still pre-set
+    // `transactionData.nBLSCTDefaultFee` explicitly; we only patch the
+    // default sentinel here.
+    blsct::CreateTransactionData txData = transactionData;
+    if (txData.nBLSCTDefaultFee == ::BLSCT_DEFAULT_FEE) {
+        txData.nBLSCTDefaultFee = Params().GetConsensus().nBLSCTDefaultFee;
+    }
     // Send
-    auto res = blsct::TxFactory::CreateTransaction(&wallet, wallet.GetBLSCTKeyMan(), transactionData);
+    auto res = blsct::TxFactory::CreateTransaction(&wallet, wallet.GetBLSCTKeyMan(), txData);
 
     if (!res) {
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
