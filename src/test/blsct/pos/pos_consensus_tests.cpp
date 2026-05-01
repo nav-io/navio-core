@@ -317,15 +317,32 @@ BOOST_FIXTURE_TEST_CASE(staker_proof_verifies_under_consensus_at_real_difficulty
 // consensus, not derive it from the chain type.
 BOOST_FIXTURE_TEST_CASE(staker_proof_with_wrong_hardened_flag_is_rejected, TestBLSCTChain100Setup)
 {
+    SeedInsecureRand(SeedRand::ZEROS);
+    // Avoid nested brace + designated-init for DBParams here: GCC 11 on the i686 CentOS CI
+    // job misparsed `CCoinsViewDB base{{.path = "test_wharden", ...}}`, leaving `base`
+    // undeclared and breaking the rest of this test body.
+    DBParams wrong_hard_flag_utxo_db;
+    wrong_hard_flag_utxo_db.path = fs::PathFromString("wrong_hard_utxo_db");
+    wrong_hard_flag_utxo_db.cache_bytes = static_cast<size_t>(1) << 23;
+    wrong_hard_flag_utxo_db.memory_only = true;
+    CCoinsViewDB coins_utxo_backend{wrong_hard_flag_utxo_db, CoinsViewOptions{}};
+
+    CWallet wallet(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet.InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet.cs_wallet);
+    auto blsct_km = wallet.GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    auto recv_address = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
     auto out1 = blsct::CreateOutput(
-        recvAddress, 1000 * COIN, "a", TokenId(), Scalar::Rand(),
+        recv_address, 1000 * COIN, "a", TokenId(), Scalar::Rand(),
         blsct::CreateTransactionType::STAKED_COMMITMENT, 999 * COIN);
     auto out2 = blsct::CreateOutput(
-        recvAddress, 1000 * COIN, "b", TokenId(), Scalar::Rand(),
+        recv_address, 1000 * COIN, "b", TokenId(), Scalar::Rand(),
         blsct::CreateTransactionType::STAKED_COMMITMENT, 999 * COIN);
     Coin coin1; coin1.nHeight = 1; coin1.out = out1.out;
     Coin coin2; coin2.nHeight = 1; coin2.out = out2.out;
-    CCoinsViewCache view{&base, /*deterministic=*/true};
+    CCoinsViewCache view{&coins_utxo_backend, /*deterministic=*/true};
     view.AddCoin(COutPoint{Txid::FromUint256(InsecureRand256())}, std::move(coin1), true);
     view.AddCoin(COutPoint{Txid::FromUint256(InsecureRand256())}, std::move(coin2), true);
 
