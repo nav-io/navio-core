@@ -11,8 +11,21 @@
 #include <hash.h>
 #include <pubkey.h>
 
+#include <vector>
+
 namespace blsct {
 uint64_t CalculateViewTag(const MclG1Point& blindingKey, const MclScalar& viewKey);
+
+// Threaded batch variant. Computes CalculateViewTag for each blindingKey in `blindingKeys`
+// against the shared `viewKey` in parallel. Thread count defaults to
+// std::thread::hardware_concurrency(); pass an explicit `threads` to cap.
+// For small batches (< kViewTagBatchSerialThreshold) falls back to the serial loop
+// to avoid thread-spawn overhead.
+std::vector<uint64_t> CalculateViewTagBatch(const std::vector<MclG1Point>& blindingKeys,
+                                            const MclScalar& viewKey,
+                                            size_t threads = 0);
+
+inline constexpr size_t kViewTagBatchSerialThreshold = 16;
 CKeyID CalculateHashId(const MclG1Point& blindingKey, const MclG1Point& spendingKey, const MclScalar& viewKey);
 MclScalar CalculatePrivateSpendingKey(const MclG1Point& blindingKey, const MclScalar& viewKey, const MclScalar& spendingKey, const int64_t& account, const uint64_t& address);
 MclG1Point CalculateNonce(const MclG1Point& blindingKey, const MclScalar& viewKey);

@@ -377,6 +377,7 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
     const SecureString& passphrase = options.create_passphrase;
 
     if (wallet_creation_flags & WALLET_FLAG_DESCRIPTORS) options.require_format = DatabaseFormat::SQLITE;
+    if (wallet_creation_flags & WALLET_FLAG_BLSCT) options.require_format = DatabaseFormat::SQLITE;
 
     // Indicate that the wallet is actually supposed to be blank and not just blank to make it encrypted
     bool create_blank = (wallet_creation_flags & WALLET_FLAG_BLANK_WALLET);
@@ -1144,15 +1145,41 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
 
     if (rescanning_old_block || fInsertedNew) {
         if (wout.out->HasBLSCTRangeProof()) {
+            wout.fBLSCTOutput = true;
+            wout.fStakedCommitment = wout.out->IsStakedCommitment();
+            bool has_recovery_data = false;
             auto blsct_man = GetBLSCTKeyMan();
             if (blsct_man) {
-                auto result = blsct_man->RecoverOutputs({*wout.out});
-                if (result.is_completed) {
-                    auto xs = result.amounts;
-                    wout.blsctRecoveryData = xs[0];
+                auto try_store_recovery = [&](const auto& result) {
+                    // RecoverOutputs can return a zeroed placeholder when the wallet
+                    // can parse the output but lacks the correct recovery path. Do
+                    // not treat that as success or it will suppress the watch-only
+                    // nonce fallback for imported HTLC scripts.
+                    if (result.is_completed && !result.amounts.empty() && !result.amounts[0].gamma.IsZero()) {
+                        wout.blsctRecoveryData = result.amounts[0];
+                        has_recovery_data = true;
+                    }
+                };
+
+                try_store_recovery(blsct_man->RecoverOutputs({*wout.out}));
+                if (!has_recovery_data) {
+                    if (const auto watch_only_nonce = blsct_man->GetWatchOnlyRecoveryNonce(wout.out->scriptPubKey)) {
+                        try_store_recovery(blsct_man->RecoverOutputsWithNonce({*wout.out}, watch_only_nonce->GetG1Point()));
+                    }
                 }
             }
+            // Save the original output hash before any stripping
+            wout.outputHash = wout.out->GetHash();
+            // Strip range proof data to save space once recovery data has been cached.
+            // Keep the full proof for outputs that still require explicit nonce recovery.
+            // Don't strip staked commitments as their Vs[0] is needed for unstaking.
+            if (!wout.fStakedCommitment && has_recovery_data) {
+                auto strippedOut = std::make_shared<CTxOut>(*wout.out);
+                strippedOut->blsctData.StripRangeProof();
+                wout.out = strippedOut;
+            }
         } else {
+            wout.fBLSCTOutput = false;
             wout.blsctRecoveryData.amount = wout.out->nValue;
         }
     }
@@ -1297,7 +1324,31 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
             if (result.is_completed) {
                 auto xs = result.amounts;
                 for (auto& res : xs) {
-                    wtx.blsctRecoveryData[res.id] = res;
+                    if (!res.gamma.IsZero()) {
+                        wtx.blsctRecoveryData[res.id] = res;
+                    }
+                }
+            }
+
+            for (size_t i = 0; i < wtx.tx->vout.size(); ++i) {
+                if (wtx.blsctRecoveryData.count(i) != 0) {
+                    continue;
+                }
+
+                if (!wtx.tx->vout[i].HasBLSCTRangeProof()) {
+                    continue;
+                }
+
+                const auto watch_only_nonce = blsct_man->GetWatchOnlyRecoveryNonce(wtx.tx->vout[i].scriptPubKey);
+                if (!watch_only_nonce) {
+                    continue;
+                }
+
+                auto nonce_result = blsct_man->RecoverOutputsWithNonce({wtx.tx->vout[i]}, watch_only_nonce->GetG1Point());
+                if (nonce_result.is_completed && !nonce_result.amounts.empty() && !nonce_result.amounts[0].gamma.IsZero()) {
+                    auto recovered = nonce_result.amounts[0];
+                    recovered.id = i;
+                    wtx.blsctRecoveryData[i] = recovered;
                 }
             }
         }
@@ -1666,18 +1717,33 @@ void CWallet::transactionAddedToMempool(const CTransactionRef& tx)
     LOCK(cs_wallet);
     SyncTransaction(tx, TxStateInMempool{});
 
-    auto it = mapWallet.find(tx->GetHash());
-    if (it != mapWallet.end()) {
-        RefreshMempoolStatus(it->second, chain());
+    if (!IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) || !tx->IsBLSCT()) {
+        auto it = mapWallet.find(tx->GetHash());
+        if (it != mapWallet.end()) {
+            RefreshMempoolStatus(it->second, chain());
+        }
     }
 }
 
 void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRemovalReason reason)
 {
     LOCK(cs_wallet);
-    auto it = mapWallet.find(tx->GetHash());
-    if (it != mapWallet.end()) {
-        RefreshMempoolStatus(it->second, chain());
+    if (!IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) || !tx->IsBLSCT()) {
+        auto it = mapWallet.find(tx->GetHash());
+        if (it != mapWallet.end()) {
+            RefreshMempoolStatus(it->second, chain());
+        }
+    } else {
+        // In output-storage mode, mapWallet is not used for BLSCT txs.
+        // Walk the matching outpoints in mapOutputs and clear InMempool state
+        // so outputs do not remain stuck as unconfirmed after eviction/reorg.
+        for (const auto& vout : tx->vout) {
+            COutPoint outpoint(vout.GetHash());
+            auto it = mapOutputs.find(outpoint);
+            if (it != mapOutputs.end() && it->second.state<TxStateInMempool>()) {
+                it->second.m_state = TxStateInactive{};
+            }
+        }
     }
     // Handle transactions that were removed from the mempool because they
     // conflict with transactions in a newly connected block.
@@ -1825,11 +1891,13 @@ isminetype CWallet::IsMine(const CTxOut& txout) const
     if (txout.HasBLSCTKeys()) {
         auto blsct_man = GetBLSCTKeyMan();
         if (blsct_man) {
-            bool mine = blsct_man->IsMine(txout);
-            if (mine) {
-                return txout.IsStakedCommitment() ? ISMINE_STAKED_COMMITMENT_BLSCT : ISMINE_SPENDABLE_BLSCT;
-            }
-            return ISMINE_NO;
+            // IsMineMode distinguishes outputs we can sign for (paying to a
+            // subaddress we own) from outputs we only watch via an imported
+            // scriptPubKey. The latter must be reported as ISMINE_WATCH_ONLY
+            // so that balance and coin-selection code paths do not treat
+            // them as spendable: the wallet has no derivable spending key
+            // for an imported HTLC even though it can decrypt the amount.
+            return blsct_man->IsMineMode(txout);
         }
     }
     return IsMine(txout.scriptPubKey);

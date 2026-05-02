@@ -740,59 +740,118 @@ std::vector<StakedCommitment> GetStakedCommitments(const std::unique_ptr<BaseReq
 
 std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>& rh, const StakedCommitment& staked_commitment)
 {
-    CBlock proposal;
+    // Wrap the whole proposal flow so that any failure (malformed RPC reply,
+    // mcl/G1 deserialisation throwing, range-proof construction asserting
+    // on a degenerate input, ...) is logged and treated as "no candidate
+    // this slot" instead of terminating the staker. The 147190-testnet
+    // crash:
+    //   terminate called after throwing an instance of 'std::runtime_error'
+    //     what():  index 4294967295 is out of range [0..18446744073709551615]
+    // came from `Elements<T>::ConfirmIndexInsideRange` deep inside proof
+    // construction with a degenerate input set; the staker's outer Loop()
+    // had no catch and the whole process died, killing the entire
+    // session's stake rate. Treat each slot as best-effort.
+    try {
+        CBlock proposal;
 
-    auto reply = ConnectAndCallRPC(rh.get(), "getblocktemplate", /* args=*/{"{\"rules\": [\"\"], \"coinbasedest\": \"" + coinbase_dest + "\"}"}, walletName);
-    const UniValue& result = reply.find_value("result");
-    const UniValue& error = reply.find_value("error");
+        auto reply = ConnectAndCallRPC(rh.get(), "getblocktemplate", /* args=*/{"{\"rules\": [\"\"], \"coinbasedest\": \"" + coinbase_dest + "\"}"}, walletName);
+        const UniValue& result = reply.find_value("result");
+        const UniValue& error = reply.find_value("error");
 
-    std::string strError;
-    auto nRet = 0;
+        std::string strError;
+        auto nRet = 0;
 
-    if (!error.isNull()) {
-        ParseError(error, strError, nRet);
-        LogPrintf("%s: [%s] Could not get block template (%s)\n", __func__, walletName, strError);
+        if (!error.isNull()) {
+            ParseError(error, strError, nRet);
+            LogPrintf("%s: [%s] Could not get block template (%s)\n", __func__, walletName, strError);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+            std::this_thread::sleep_for(std::chrono::milliseconds(10000));
 
+            return std::nullopt;
+        }
+
+        const UniValue& staked_commitments_val = result.find_value("staked_commitments");
+        if (!staked_commitments_val.isArray()) {
+            LogPrintf("%s: [%s] getblocktemplate did not return a staked_commitments array; is fBLSCT enabled?\n", __func__, walletName);
+            return std::nullopt;
+        }
+        auto staked_elements = UniValueArrayToStakedCommitments(staked_commitments_val.get_array());
+
+        bool fFound = false;
+
+        for (auto& sc : staked_elements)
+            fFound |= sc == staked_commitment.point;
+
+        if (!fFound)
+            return std::nullopt;
+
+        // The set-mem proof is undefined for an empty membership set and
+        // the consensus-side verifier outright rejects size < 2. Bailing
+        // here avoids feeding a degenerate `Points` into
+        // `SetMemProofProver::Prove`, which has previously aborted with
+        // an Elements out-of-range exception when the set is empty.
+        if (staked_elements.empty()) {
+            LogPrintf("%s: [%s] getblocktemplate returned an empty staked_commitments set; cannot construct a PoS proof.\n", __func__, walletName);
+            return std::nullopt;
+        }
+
+        auto eta_fiat_shamir = ParseHex(result.find_value("eta_fiat_shamir").get_str());
+        auto eta_phi = ParseHex(result.find_value("eta_phi").get_str());
+
+        MclScalar m = staked_commitment.value;
+        MclScalar f = staked_commitment.gamma;
+
+        uint32_t prev_time = result.find_value("prev_time").get_real();
+        uint64_t modifier = result.find_value("modifier").get_uint64();
+        uint64_t next_target = stoi(result.find_value("bits").get_str(), nullptr, 16);
+        currentDifficulty.SetCompact(next_target);
+
+        // Source the kernel-hash inputs that depend on consensus state from
+        // the node, NOT from local guesses about the chain type. Previously
+        // the staker hard-coded `hardened = (chain_type != TESTNET)` and
+        // ignored accumulated chain work entirely, so any change in either
+        // input on the node side (e.g. testnet flipping `fPoPSHardened` to
+        // true) caused every produced block to be rejected with
+        // `bad-blsct-pos-proof`. `prev_chainwork` and `pops_hardened` were
+        // added to `getblocktemplate` for exactly this purpose.
+        const UniValue& prev_chainwork_val = result.find_value("prev_chainwork");
+        const UniValue& pops_hardened_val = result.find_value("pops_hardened");
+        if (!prev_chainwork_val.isStr() || !pops_hardened_val.isBool()) {
+            LogPrintf("%s: [%s] getblocktemplate is missing prev_chainwork / pops_hardened. Upgrade naviod to a version that exposes them; otherwise produced blocks will be rejected on hardened chains.\n", __func__, walletName);
+            return std::nullopt;
+        }
+        const arith_uint256 prev_chainwork = UintToArith256(uint256S(prev_chainwork_val.get_str()));
+        const bool hardened = pops_hardened_val.get_bool();
+
+        proposal.nVersion = result.find_value("version").get_real();
+        proposal.nTime = result.find_value("curtime").get_real();
+        proposal.nBits = next_target;
+        proposal.hashPrevBlock = uint256S(result.find_value("previousblockhash").get_str());
+        proposal.vtx = UniValueArrayToTransactions(result.find_value("transactions").get_array());
+
+        proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, prev_chainwork, proposal.nTime, next_target, hardened);
+        proposal.hashMerkleRoot = BlockMerkleRoot(proposal);
+
+        const uint256 kernel_hash = blsct::CalculateKernelHashWithChainWork(prev_time, modifier, prev_chainwork, proposal.nTime, hardened);
+        auto valid = blsct::ProofOfStake(proposal.posProof).Verify(staked_elements, eta_fiat_shamir, eta_phi, kernel_hash, next_target);
+
+        if (valid == blsct::ProofOfStake::VALID) return proposal;
+
+        return std::nullopt;
+    } catch (const std::exception& e) {
+        // Surface the exception type+message so the next bug-report does
+        // not require gdb. Any throw from RPC parsing / mcl deserialisation
+        // / proof construction lands here. Skip this slot, sleep briefly so
+        // we do not hot-loop on a sticky failure (e.g. node restarting),
+        // then let Loop() try the next iteration.
+        LogPrintf("%s: [%s] Exception while building block proposal: %s. Skipping this slot.\n", __func__, walletName, e.what());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        return std::nullopt;
+    } catch (...) {
+        LogPrintf("%s: [%s] Unknown exception while building block proposal. Skipping this slot.\n", __func__, walletName);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
         return std::nullopt;
     }
-
-    auto staked_elements = UniValueArrayToStakedCommitments(result.find_value("staked_commitments").get_array());
-
-    bool fFound = false;
-
-    for (auto& sc : staked_elements)
-        fFound |= sc == staked_commitment.point;
-
-    if (!fFound)
-        return std::nullopt;
-
-    auto eta_fiat_shamir = ParseHex(result.find_value("eta_fiat_shamir").get_str());
-    auto eta_phi = ParseHex(result.find_value("eta_phi").get_str());
-
-    MclScalar m = staked_commitment.value;
-    MclScalar f = staked_commitment.gamma;
-
-    uint32_t prev_time = result.find_value("prev_time").get_real();
-    uint64_t modifier = result.find_value("modifier").get_uint64();
-    uint64_t next_target = stoi(result.find_value("bits").get_str(), nullptr, 16);
-    currentDifficulty.SetCompact(next_target);
-
-    proposal.nVersion = result.find_value("version").get_real();
-    proposal.nTime = result.find_value("curtime").get_real();
-    proposal.nBits = next_target;
-    proposal.hashPrevBlock = uint256S(result.find_value("previousblockhash").get_str());
-    proposal.vtx = UniValueArrayToTransactions(result.find_value("transactions").get_array());
-
-    proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, proposal.nTime, next_target);
-    proposal.hashMerkleRoot = BlockMerkleRoot(proposal);
-
-    auto valid = blsct::ProofOfStake(proposal.posProof).Verify(staked_elements, eta_fiat_shamir, eta_phi, blsct::CalculateKernelHash(prev_time, modifier, proposal.nTime), next_target);
-
-    if (valid == blsct::ProofOfStake::VALID) return proposal;
-
-    return std::nullopt;
 }
 
 
@@ -809,47 +868,60 @@ void Loop()
     LogPrintf("%s: [%s] Starting staking...\n", __func__, walletName);
 
     while (true) {
-        auto staked_commitments = GetStakedCommitments(rh);
-        CBlock proposal;
-        CAmount nTotalMoney = 0;
-        bool found = false;
+        // Each loop iteration is best-effort: if anything throws (RPC
+        // parsing, mcl deserialisation, range-proof construction,
+        // submitblock failure...) log it and keep the staker alive. The
+        // alternative — letting std::terminate kill the process on the
+        // first hiccup — burns the whole staking session for what is
+        // typically a transient condition (node restarting mid-RPC,
+        // wallet just-locked, single malformed reply, etc.).
+        try {
+            auto staked_commitments = GetStakedCommitments(rh);
+            CBlock proposal;
+            CAmount nTotalMoney = 0;
+            bool found = false;
 
-        for (auto& it : staked_commitments) {
-            nTotalMoney += it.value.GetUint64();
+            for (auto& it : staked_commitments) {
+                nTotalMoney += it.value.GetUint64();
 
-            if (!found) {
-                auto candidate = GetBlockProposal(rh, it);
+                if (!found) {
+                    auto candidate = GetBlockProposal(rh, it);
 
-                found = candidate.has_value();
-                if (found)
-                    proposal = candidate.value();
-            }
-        }
-
-        if (found) {
-            const UniValue& reply_submit = ConnectAndCallRPC(rh.get(), "submitblock", /* args=*/{EncodeHexBlock(proposal)}, walletName);
-
-            const UniValue& result_submit = reply_submit.find_value("result");
-            const UniValue& error_submit = reply_submit.find_value("error");
-
-            if (error_submit.isNull()) {
-                if (result_submit.isNull()) {
-                    nFound++;
-                    last_update = SteadyClock::now();
-                }
-                LogPrintf("%s: [%s] Found block %s (%s%s). Current difficulty: %s\n", __func__, walletName, proposal.GetHash().ToString(), result_submit.isNull() ? "ACCEPTED" : "REJECTED: ", result_submit.isNull() ? "" : reply_submit.write(0, 0), currentDifficulty.ToString());
-
-                auto elapsed = Ticks<std::chrono::minutes>(SteadyClock::now() - start);
-
-                if (elapsed > 60) {
-                    LogPrintf("%s: [%s] Stake rate: %.4f blocks/hour. Staking balance: %s\n", __func__, walletName, (nFound / elapsed) * 60.0f, FormatMoney(nTotalMoney));
+                    found = candidate.has_value();
+                    if (found)
+                        proposal = candidate.value();
                 }
             }
-        }
 
-        if (Ticks<std::chrono::milliseconds>(SteadyClock::now() - last_update) > 60000) {
-            last_update = SteadyClock::now();
-            LogPrintf("%s: [%s] Did not find a block yet. Current difficulty: %s\n", __func__, walletName, currentDifficulty.ToString());
+            if (found) {
+                const UniValue& reply_submit = ConnectAndCallRPC(rh.get(), "submitblock", /* args=*/{EncodeHexBlock(proposal)}, walletName);
+
+                const UniValue& result_submit = reply_submit.find_value("result");
+                const UniValue& error_submit = reply_submit.find_value("error");
+
+                if (error_submit.isNull()) {
+                    if (result_submit.isNull()) {
+                        nFound++;
+                        last_update = SteadyClock::now();
+                    }
+                    LogPrintf("%s: [%s] Found block %s (%s%s). Current difficulty: %s\n", __func__, walletName, proposal.GetHash().ToString(), result_submit.isNull() ? "ACCEPTED" : "REJECTED: ", result_submit.isNull() ? "" : reply_submit.write(0, 0), currentDifficulty.ToString());
+
+                    auto elapsed = Ticks<std::chrono::minutes>(SteadyClock::now() - start);
+
+                    if (elapsed > 60) {
+                        LogPrintf("%s: [%s] Stake rate: %.4f blocks/hour. Staking balance: %s\n", __func__, walletName, (nFound / elapsed) * 60.0f, FormatMoney(nTotalMoney));
+                    }
+                }
+            }
+
+            if (Ticks<std::chrono::milliseconds>(SteadyClock::now() - last_update) > 60000) {
+                last_update = SteadyClock::now();
+                LogPrintf("%s: [%s] Did not find a block yet. Current difficulty: %s\n", __func__, walletName, currentDifficulty.ToString());
+            }
+        } catch (const std::exception& e) {
+            LogPrintf("%s: [%s] Exception in staking loop: %s. Continuing.\n", __func__, walletName, e.what());
+        } catch (...) {
+            LogPrintf("%s: [%s] Unknown exception in staking loop. Continuing.\n", __func__, walletName);
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));

@@ -10,6 +10,7 @@
 #include <consensus/tx_verify.h>
 #include <node/miner.h>
 #include <policy/policy.h>
+#include <pow.h>
 #include <test/util/random.h>
 #include <test/util/txmempool.h>
 #include <timedata.h>
@@ -31,6 +32,8 @@ using node::CBlockTemplate;
 
 namespace miner_tests {
 struct MinerTestingSetup : public TestingSetup {
+    MinerTestingSetup()
+        : TestingSetup{ChainType::REGTEST, {"-testactivationheight=segwit@999999", "-testactivationheight=csv@999999"}} {}
     void TestPackageSelection(const CScript& scriptPubKey, const std::vector<CTransactionRef>& txFirst) EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     void TestBasicMining(const CScript& scriptPubKey, const std::vector<CTransactionRef>& txFirst, int baseheight) EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     void TestPrioritisedMining(const CScript& scriptPubKey, const std::vector<CTransactionRef>& txFirst) EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
@@ -67,29 +70,6 @@ BlockAssembler MinerTestingSetup::AssemblerForTest(CTxMemPool& tx_mempool)
     return BlockAssembler{m_node.chainman->ActiveChainstate(), &tx_mempool, options};
 }
 
-constexpr static struct {
-    unsigned char extranonce;
-    unsigned int nonce;
-} BLOCKINFO[]{{8, 582909131},  {0, 971462344},  {2, 1169481553}, {6, 66147495},  {7, 427785981},  {8, 80538907},
-              {8, 207348013},  {2, 1951240923}, {4, 215054351},  {1, 491520534}, {8, 1282281282}, {4, 639565734},
-              {3, 248274685},  {8, 1160085976}, {6, 396349768},  {5, 393780549}, {5, 1096899528}, {4, 965381630},
-              {0, 728758712},  {5, 318638310},  {3, 164591898},  {2, 274234550}, {2, 254411237},  {7, 561761812},
-              {2, 268342573},  {0, 402816691},  {1, 221006382},  {6, 538872455}, {7, 393315655},  {4, 814555937},
-              {7, 504879194},  {6, 467769648},  {3, 925972193},  {2, 200581872}, {3, 168915404},  {8, 430446262},
-              {5, 773507406},  {3, 1195366164}, {0, 433361157},  {3, 297051771}, {0, 558856551},  {2, 501614039},
-              {3, 528488272},  {2, 473587734},  {8, 230125274},  {2, 494084400}, {4, 357314010},  {8, 60361686},
-              {7, 640624687},  {3, 480441695},  {8, 1424447925}, {4, 752745419}, {1, 288532283},  {6, 669170574},
-              {5, 1900907591}, {3, 555326037},  {3, 1121014051}, {0, 545835650}, {8, 189196651},  {5, 252371575},
-              {0, 199163095},  {6, 558895874},  {6, 1656839784}, {6, 815175452}, {6, 718677851},  {5, 544000334},
-              {0, 340113484},  {6, 850744437},  {4, 496721063},  {8, 524715182}, {6, 574361898},  {6, 1642305743},
-              {6, 355110149},  {5, 1647379658}, {8, 1103005356}, {7, 556460625}, {3, 1139533992}, {5, 304736030},
-              {2, 361539446},  {2, 143720360},  {6, 201939025},  {7, 423141476}, {4, 574633709},  {3, 1412254823},
-              {4, 873254135},  {0, 341817335},  {6, 53501687},   {3, 179755410}, {5, 172209688},  {8, 516810279},
-              {4, 1228391489}, {8, 325372589},  {6, 550367589},  {0, 876291812}, {7, 412454120},  {7, 717202854},
-              {2, 222677843},  {6, 251778867},  {7, 842004420},  {7, 194762829}, {4, 96668841},   {1, 925485796},
-              {0, 792342903},  {6, 678455063},  {6, 773251385},  {5, 186617471}, {6, 883189502},  {7, 396077336},
-              {8, 254702874},  {0, 455592851}};
-
 static std::unique_ptr<CBlockIndex> CreateBlockIndex(int nHeight, CBlockIndex* active_chain_tip) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
 {
     auto index{std::make_unique<CBlockIndex>()};
@@ -105,6 +85,7 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
 {
     CTxMemPool& tx_mempool{MakeMempool()};
     LOCK(tx_mempool.cs);
+    const CAmount BLOCKSUBSIDY = txFirst[0]->GetValueOut();
     // Test the ancestor feerate transaction selection.
     TestMemPoolEntryHelper entry;
     int nCounter = 0;
@@ -124,14 +105,14 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
 
     // This tx has a medium fee: 10000 satoshis
     tx.vin[0].prevout.hash = txFirst[1]->vout[0].GetHash();
-    tx.vout[0].nValue = 5000000000LL - 10000;
+    tx.vout[0].nValue = BLOCKSUBSIDY - 10000;
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
     Txid hashMediumFeeTx = tx.vout[0].GetHash();
     tx_mempool.addUnchecked(entry.Fee(10000).Time(Now<NodeSeconds>()).SpendsCoinbase(true).FromTx(tx));
 
     // This tx has a high fee, but depends on the first transaction
     tx.vin[0].prevout.hash = hashParentTx;
-    tx.vout[0].nValue = 5000000000LL - 1000 - 50000; // 50k satoshi fee
+    tx.vout[0].nValue = BLOCKSUBSIDY - 1000 - 50000; // 50k satoshi fee
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
     Txid hashHighFeeTx = tx.vout[0].GetHash();
     tx_mempool.addUnchecked(entry.Fee(50000).Time(Now<NodeSeconds>()).SpendsCoinbase(false).FromTx(tx));
@@ -144,7 +125,7 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
 
     // Test that a package below the block min tx fee doesn't get included
     tx.vin[0].prevout.hash = hashHighFeeTx;
-    tx.vout[0].nValue = 5000000000LL - 1000 - 50000; // 0 fee
+    tx.vout[0].nValue = BLOCKSUBSIDY - 1000 - 50000; // 0 fee
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
     Txid hashFreeTx = tx.vout[0].GetHash();
     tx_mempool.addUnchecked(entry.Fee(0).FromTx(tx));
@@ -157,7 +138,7 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
     CAmount feeToUse = blockMinFeeRate.GetFee(2*freeTxSize) - 1;
 
     tx.vin[0].prevout.hash = hashFreeTx;
-    tx.vout[0].nValue = 5000000000LL - 1000 - 50000 - feeToUse;
+    tx.vout[0].nValue = BLOCKSUBSIDY - 1000 - 50000 - feeToUse;
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
     Txid hashLowFeeTx = tx.vout[0].GetHash();
     tx_mempool.addUnchecked(entry.Fee(feeToUse).FromTx(tx));
@@ -184,7 +165,7 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
     // Add a 0-fee transaction that has 2 outputs.
     tx.vin[0].prevout.hash = txFirst[2]->vout[0].GetHash();
     tx.vout.resize(2);
-    tx.vout[0].nValue = 5000000000LL - 100000000;
+    tx.vout[0].nValue = BLOCKSUBSIDY - 100000000;
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
     tx.vout[1].nValue = 100000000; // 1BTC output
     tx.vout[1].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
@@ -195,7 +176,7 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
     tx.vin[0].prevout.hash = hashFreeTx2;
     tx.vout.resize(1);
     feeToUse = blockMinFeeRate.GetFee(freeTxSize);
-    tx.vout[0].nValue = 5000000000LL - 100000000 - feeToUse;
+    tx.vout[0].nValue = BLOCKSUBSIDY - 100000000 - feeToUse;
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
     Txid hashLowFeeTx2 = tx.vout[0].GetHash();
     tx_mempool.addUnchecked(entry.Fee(feeToUse).SpendsCoinbase(false).FromTx(tx));
@@ -216,7 +197,7 @@ void MinerTestingSetup::TestBasicMining(const CScript& scriptPubKey, const std::
     entry.nFee = 11;
     entry.nHeight = 11;
 
-    const CAmount BLOCKSUBSIDY = 50 * COIN;
+    const CAmount BLOCKSUBSIDY = txFirst[0]->GetValueOut();
     const CAmount LOWFEE = CENT;
     const CAmount HIGHFEE = COIN;
     const CAmount HIGHERFEE = 4 * COIN;
@@ -358,8 +339,9 @@ void MinerTestingSetup::TestBasicMining(const CScript& scriptPubKey, const std::
 
         // subsidy changing
         int nHeight = m_node.chainman->ActiveChain().Height();
+        const int halving_height = Params().GetConsensus().nSubsidyHalvingInterval;
         // Create an actual 209999-long block chain (without valid blocks).
-        while (m_node.chainman->ActiveChain().Tip()->nHeight < 209999) {
+        while (m_node.chainman->ActiveChain().Tip()->nHeight < halving_height - 1) {
             CBlockIndex* prev = m_node.chainman->ActiveChain().Tip();
             CBlockIndex* next = new CBlockIndex();
             next->phashBlock = new uint256(InsecureRand256());
@@ -370,8 +352,8 @@ void MinerTestingSetup::TestBasicMining(const CScript& scriptPubKey, const std::
             m_node.chainman->ActiveChain().SetTip(*next);
         }
         BOOST_CHECK(AssemblerForTest(tx_mempool).CreateNewBlock(scriptPubKey));
-        // Extend to a 210000-long block chain.
-        while (m_node.chainman->ActiveChain().Tip()->nHeight < 210000) {
+        // Extend to the next block where the subsidy halves.
+        while (m_node.chainman->ActiveChain().Tip()->nHeight < halving_height) {
             CBlockIndex* prev = m_node.chainman->ActiveChain().Tip();
             CBlockIndex* next = new CBlockIndex();
             next->phashBlock = new uint256(InsecureRand256());
@@ -528,6 +510,7 @@ void MinerTestingSetup::TestPrioritisedMining(const CScript& scriptPubKey, const
 {
     CTxMemPool& tx_mempool{MakeMempool()};
     LOCK(tx_mempool.cs);
+    const CAmount BLOCKSUBSIDY = txFirst[0]->GetValueOut();
 
     TestMemPoolEntryHelper entry;
     int nCounter = 0;
@@ -538,14 +521,14 @@ void MinerTestingSetup::TestPrioritisedMining(const CScript& scriptPubKey, const
     tx.vin[0].prevout.hash = txFirst[0]->vout[0].GetHash();
     tx.vin[0].scriptSig = CScript() << OP_1;
     tx.vout.resize(1);
-    tx.vout[0].nValue = 5000000000LL; // 0 fee
+    tx.vout[0].nValue = BLOCKSUBSIDY; // 0 fee
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
     uint256 hashFreePrioritisedTx = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(0).Time(Now<NodeSeconds>()).SpendsCoinbase(true).FromTx(tx));
     tx_mempool.PrioritiseTransaction(hashFreePrioritisedTx, 5 * COIN);
 
     tx.vin[0].prevout.hash = txFirst[1]->vout[0].GetHash();
-    tx.vout[0].nValue = 5000000000LL - 1000;
+    tx.vout[0].nValue = BLOCKSUBSIDY - 1000;
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
     // This tx has a low fee: 1000 satoshis
     Txid hashParentTx = tx.vout[0].GetHash(); // save this txid for later use
@@ -553,14 +536,14 @@ void MinerTestingSetup::TestPrioritisedMining(const CScript& scriptPubKey, const
 
     // This tx has a medium fee: 10000 satoshis
     tx.vin[0].prevout.hash = txFirst[2]->vout[0].GetHash();
-    tx.vout[0].nValue = 5000000000LL - 10000;
+    tx.vout[0].nValue = BLOCKSUBSIDY - 10000;
     Txid hashMediumFeeTx = tx.vout[0].GetHash();
     tx_mempool.addUnchecked(entry.Fee(10000).Time(Now<NodeSeconds>()).SpendsCoinbase(true).FromTx(tx));
     tx_mempool.PrioritiseTransaction(hashMediumFeeTx, -5 * COIN);
 
     // This tx also has a low fee, but is prioritised
     tx.vin[0].prevout.hash = hashParentTx;
-    tx.vout[0].nValue = 5000000000LL - 1000 - 1000; // 1000 satoshi fee
+    tx.vout[0].nValue = BLOCKSUBSIDY - 1000 - 1000; // 1000 satoshi fee
     Txid hashPrioritsedChild = tx.vout[0].GetHash();
     tx_mempool.addUnchecked(entry.Fee(1000).Time(Now<NodeSeconds>()).SpendsCoinbase(false).FromTx(tx));
     tx_mempool.PrioritiseTransaction(hashPrioritsedChild, 2 * COIN);
@@ -572,7 +555,7 @@ void MinerTestingSetup::TestPrioritisedMining(const CScript& scriptPubKey, const
     // FreeParent's prioritisation should not be included in that entry.
     // When FreeChild is included, FreeChild's prioritisation should also not be included.
     tx.vin[0].prevout.hash = txFirst[3]->vout[0].GetHash();
-    tx.vout[0].nValue = 5000000000LL; // 0 fee
+    tx.vout[0].nValue = BLOCKSUBSIDY; // 0 fee
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
 
     tx_mempool.addUnchecked(entry.Fee(0).SpendsCoinbase(true).FromTx(tx));
@@ -580,14 +563,14 @@ void MinerTestingSetup::TestPrioritisedMining(const CScript& scriptPubKey, const
     tx_mempool.PrioritiseTransaction(hashFreeParent, 10 * COIN);
 
     tx.vin[0].prevout.hash = tx.vout[0].GetHash();
-    tx.vout[0].nValue = 5000000000LL; // 0 fee
+    tx.vout[0].nValue = BLOCKSUBSIDY; // 0 fee
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
     tx_mempool.addUnchecked(entry.Fee(0).SpendsCoinbase(false).FromTx(tx));
     Txid hashFreeChild = tx.GetHash();
     tx_mempool.PrioritiseTransaction(hashFreeChild, 1 * COIN);
 
     tx.vin[0].prevout.hash = tx.vout[0].GetHash();
-    tx.vout[0].nValue = 5000000000LL; // 0 fee
+    tx.vout[0].nValue = BLOCKSUBSIDY; // 0 fee
     tx.vout[0].predicate = blsct::DataPredicate(std::vector<unsigned char>(nCounter++)).GetVch();
     tx_mempool.addUnchecked(entry.Fee(0).SpendsCoinbase(false).FromTx(tx));
     Txid hashFreeGrandchild = tx.GetHash();
@@ -619,10 +602,9 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
 
     // We can't make transactions until we have inputs
     // Therefore, load 110 blocks :)
-    static_assert(std::size(BLOCKINFO) == 110, "Should have 110 blocks to import");
     int baseheight = 0;
     std::vector<CTransactionRef> txFirst;
-    for (const auto& bi : BLOCKINFO) {
+    for (int extranonce = 0; extranonce < COINBASE_MATURITY + 10; ++extranonce) {
         CBlock *pblock = &pblocktemplate->block; // pointer for convenience
         {
             LOCK(cs_main);
@@ -630,8 +612,8 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
             pblock->nTime = m_node.chainman->ActiveChain().Tip()->GetMedianTimePast()+1;
             CMutableTransaction txCoinbase(*pblock->vtx[0]);
             txCoinbase.nVersion = 1;
-            txCoinbase.vin[0].scriptSig = CScript{} << (m_node.chainman->ActiveChain().Height() + 1) << bi.extranonce;
-            txCoinbase.vout.resize(1); // Ignore the (optional) segwit commitment added by CreateNewBlock (as the hardcoded nonces don't account for this)
+            txCoinbase.vin[0].scriptSig = CScript{} << (m_node.chainman->ActiveChain().Height() + 1) << extranonce;
+            txCoinbase.vout.resize(1);
             txCoinbase.vout[0].scriptPubKey = CScript();
             txCoinbase.vout[0].predicate = blsct::DataPredicate(InsecureRand256()).GetVch();
             pblock->vtx[0] = MakeTransactionRef(std::move(txCoinbase));
@@ -640,7 +622,10 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
             if (txFirst.size() < 4)
                 txFirst.push_back(pblock->vtx[0]);
             pblock->hashMerkleRoot = BlockMerkleRoot(*pblock);
-            pblock->nNonce = bi.nonce;
+            pblock->nNonce = 0;
+            while (!CheckProofOfWork(pblock->GetHash(), pblock->nBits, Params().GetConsensus())) {
+                ++pblock->nNonce;
+            }
         }
         std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(*pblock);
         BOOST_CHECK(Assert(m_node.chainman)->ProcessNewBlock(shared_pblock, true, true, nullptr));

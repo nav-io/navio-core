@@ -7,12 +7,17 @@
 
 #include <arith_uint256.h>
 #include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/pos/helpers.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/set_mem_proof/set_mem_proof.h>
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <uint256.h>
+
+#include <chrono>
+#include <span>
+#include <stdexcept>
 
 using Arith = Mcl;
 using Point = Arith::Point;
@@ -25,6 +30,14 @@ namespace blsct {
 class ProofOfStake
 {
 public:
+    struct VerificationStats {
+        size_t sampled_set_size{0};
+        size_t padded_set_size{0};
+        std::chrono::microseconds setmem{};
+        std::chrono::microseconds range{};
+        std::chrono::microseconds total{};
+    };
+
     ProofOfStake()
     {
     }
@@ -33,7 +46,32 @@ public:
     {
     }
 
-    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target);
+    // Build a proof from a pre-computed kernel hash. This is the lowest-
+    // level constructor and is the only form whose semantics are stable
+    // against changes to how the consensus kernel hash is derived (e.g.
+    // PoPS hardening: time-bucketing + chain-work binding). All other
+    // constructors delegate here. Callers that need to match the consensus
+    // kernel hash (the staker, ProofOfStakeLogic::Create, ConnectBlock)
+    // MUST compute the kernel hash via the same code path consensus uses
+    // (`blsct::CalculateKernelHash(pindexPrev, block, params)` or
+    // `CalculateKernelHashWithChainWork(...)`) and pass it in here.
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint256& kernel_hash, const unsigned int& next_target);
+
+    // Legacy convenience constructor (no chain-work binding). Equivalent to
+    // computing `kernel_hash = CalculateKernelHash(prev_time, stake_modifier,
+    // time, hardened)` and calling the kernel-hash overload above. Retained
+    // for the bench harness and callers that explicitly want the no-chain-
+    // work kernel; consensus-tracking callers must NOT use this overload on
+    // hardened chains.
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, bool hardened = true);
+
+    // Chain-work-aware convenience constructor. Equivalent to computing
+    // `kernel_hash = CalculateKernelHashWithChainWork(prev_time,
+    // stake_modifier, prev_chain_work, time, hardened)` and delegating to
+    // the kernel-hash overload. This is what the staker (over RPC) and
+    // ProofOfStakeLogic::Create use to stay aligned with consensus on
+    // hardened chains.
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened = true);
 
     enum VerificationResult : uint32_t {
         NONE = 0,
@@ -60,13 +98,18 @@ public:
     }
 
     VerificationResult
-    Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernelHash, const unsigned int& posTarget) const;
-    VerificationResult Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target) const;
+    Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernelHash, const unsigned int& posTarget, VerificationStats* stats = nullptr) const;
+    VerificationResult Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, VerificationStats* stats = nullptr) const;
+
+    bool VerifySetMembership(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, VerificationStats* stats = nullptr) const;
+    bulletproofs_plus::RangeProofWithSeed<Arith> GetKernelRangeProof(const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi) const;
+    bulletproofs_plus::RangeProofWithSeed<Arith> GetKernelRangeProof(const uint64_t& min_value, const blsct::Message& eta_phi) const;
 
     static bool VerifyKernelHash(const RangeProof& range_proof, const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi, const Point& phi);
-    static bool VerifyKernelHash(const RangeProof& range_proof, const uint256& min_value, const blsct::Message& eta_phi, const Point& phi);
+    static bool VerifyKernelHash(const RangeProof& range_proof, const uint64_t& min_value, const blsct::Message& eta_phi, const Point& phi);
 
     static uint256 CalculateMinValue(const uint256& kernel_hash, const unsigned int& next_target);
+    static uint64_t SaturateToU64(const uint256& v);
 
     template <typename Stream>
     void Serialize(Stream& s) const
@@ -78,8 +121,17 @@ public:
     template <typename Stream>
     void Unserialize(Stream& s)
     {
+        // Defer the per-point prime-order subgroup check for every G1 point
+        // that appears in this proof; batch-check them all via a single
+        // random-linear-combination multiexp after decoding. Reduces
+        // ~dozens of scalar-mul-by-r calls to one.
+        MclG1Point::SubgroupCheckDeferralScope deferral;
         ::Unserialize(s, setMemProof);
         ::Unserialize(s, Using<bulletproofs_plus::RangeProofWithoutVs<Arith>>(rangeProof));
+        auto collected = deferral.Take();
+        if (!MclG1Point::BatchCheckSubgroup(std::span<const MclG1Point>{collected.data(), collected.size()})) {
+            throw std::ios_base::failure("ProofOfStake: G1 point failed subgroup check");
+        }
     }
 
     SetProof setMemProof;

@@ -5,6 +5,9 @@
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/helpers.h>
 
+#include <atomic>
+#include <thread>
+
 namespace blsct {
 uint64_t CalculateViewTag(const MclG1Point& blindingKey, const MclScalar& viewKey)
 {
@@ -12,6 +15,46 @@ uint64_t CalculateViewTag(const MclG1Point& blindingKey, const MclScalar& viewKe
     hash << (blindingKey * viewKey);
 
     return (hash.GetHash().GetUint64(0) & 0xFFFF);
+}
+
+std::vector<uint64_t> CalculateViewTagBatch(const std::vector<MclG1Point>& blindingKeys,
+                                            const MclScalar& viewKey,
+                                            size_t threads)
+{
+    const size_t n = blindingKeys.size();
+    std::vector<uint64_t> tags(n);
+
+    if (n < kViewTagBatchSerialThreshold) {
+        for (size_t i = 0; i < n; ++i) {
+            tags[i] = CalculateViewTag(blindingKeys[i], viewKey);
+        }
+        return tags;
+    }
+
+    if (threads == 0) {
+        threads = std::thread::hardware_concurrency();
+        if (threads == 0) threads = 1;
+    }
+    threads = std::min(threads, n);
+
+    std::atomic<size_t> next{0};
+    auto worker = [&]() {
+        for (;;) {
+            size_t i = next.fetch_add(1, std::memory_order_relaxed);
+            if (i >= n) return;
+            tags[i] = CalculateViewTag(blindingKeys[i], viewKey);
+        }
+    };
+
+    std::vector<std::thread> pool;
+    pool.reserve(threads - 1);
+    for (size_t t = 1; t < threads; ++t) {
+        pool.emplace_back(worker);
+    }
+    worker();
+    for (auto& th : pool) th.join();
+
+    return tags;
 }
 
 CKeyID CalculateHashId(const MclG1Point& blindingKey, const MclG1Point& spendingKey, const MclScalar& viewKey)

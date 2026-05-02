@@ -6,6 +6,7 @@
 #include <blsct/wallet/keyman.h>
 #include <hash.h>
 #include <script/script.h>
+#include <wallet/walletdb.h>
 
 #include <random.h>
 
@@ -801,10 +802,27 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
     std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
     reqs.reserve(outs.size());
 
-    for (size_t i = 0; i < outs.size(); i++) {
-        CTxOut out = outs[i];
+    // Collect candidate blinding keys for parallel view-tag calculation.
+    // We only do the v·R scalar mult for outputs that are structurally BLSCT;
+    // per-output scalar mult is the hot cost, so batching amortises thread overhead.
+    std::vector<size_t> candidateIdx;
+    std::vector<MclG1Point> candidateBlindingKeys;
+    candidateIdx.reserve(outs.size());
+    candidateBlindingKeys.reserve(outs.size());
+
+    for (size_t i = 0; i < outs.size(); ++i) {
+        const CTxOut& out = outs[i];
         if (!out.HasBLSCTKeys() || !out.HasBLSCTRangeProof()) continue;
-        if (out.blsctData.viewTag != CalculateViewTag(out.blsctData.blindingKey, viewKey.GetScalar()))
+        candidateIdx.push_back(i);
+        candidateBlindingKeys.push_back(out.blsctData.blindingKey);
+    }
+
+    auto tags = CalculateViewTagBatch(candidateBlindingKeys, viewKey.GetScalar());
+
+    for (size_t k = 0; k < candidateIdx.size(); ++k) {
+        size_t i = candidateIdx[k];
+        const CTxOut& out = outs[i];
+        if (out.blsctData.viewTag != tags[k])
             continue;
         auto nonce = CalculateNonce(out.blsctData.blindingKey, viewKey.GetScalar());
         bulletproofs_plus::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
@@ -816,9 +834,9 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
 
 bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce)
 {
-    if (!fViewKeyDefined || !viewKey.IsValid())
-        return bulletproofs_plus::AmountRecoveryResult<Arith>::failure();
-
+    // No viewKey guard here: this function is used for watch-only scripts where
+    // a pre-computed nonce is supplied by the caller (e.g. from an imported
+    // script's recovery hint).  The viewKey is not consulted and may be absent.
     bulletproofs_plus::RangeProofLogic<Arith> rp;
     std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
     reqs.reserve(outs.size());
@@ -838,6 +856,45 @@ bool KeyMan::IsMine(const CScript& script) const
 {
     LOCK(cs_KeyStore);
     return setWatchOnly.count(script) > 0;
+}
+
+wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
+{
+    const auto spendable_kind = [&]() {
+        return txout.IsStakedCommitment() ? wallet::ISMINE_STAKED_COMMITMENT_BLSCT
+                                          : wallet::ISMINE_SPENDABLE_BLSCT;
+    };
+
+    if (txout.blsctData.spendingKey.IsZero()) {
+        // The output's blsctData does not carry an explicit spending pubkey.
+        // First try to extract one from the scriptPubKey: this covers the
+        // standard `<48-byte pubkey> OP_BLSCHECKSIG` shape that some
+        // codepaths produce without populating blsctData.spendingKey. If we
+        // own the resulting subaddress, the output is fully spendable.
+        blsct::PublicKey extractedSpendingKey;
+        if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
+            if (IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag)) {
+                return spendable_kind();
+            }
+        }
+        // Otherwise, the only way it can be ours is via an imported watch-only
+        // script (e.g. an HTLC added through importblsctscript). We can decrypt
+        // the amount but cannot derive a signing key.
+        if (IsMine(txout.scriptPubKey)) {
+            return wallet::ISMINE_WATCH_ONLY;
+        }
+        return wallet::ISMINE_NO;
+    }
+
+    if (IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag)) {
+        return spendable_kind();
+    }
+    // Real BLSCT output that we don't own as a subaddress, but whose
+    // scriptPubKey was imported as watch-only.
+    if (IsMine(txout.scriptPubKey)) {
+        return wallet::ISMINE_WATCH_ONLY;
+    }
+    return wallet::ISMINE_NO;
 }
 
 bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag)
@@ -1194,5 +1251,82 @@ bool KeyMan::ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKe
     }
 
     return false;
+}
+
+bool KeyMan::ExtractAllSpendingKeysFromScript(const CScript& script, std::vector<blsct::PublicKey>& spendingKeys) const
+{
+    CScript::const_iterator pc = script.begin();
+    opcodetype opcode;
+    std::vector<unsigned char> vch;
+    std::vector<std::vector<unsigned char>> candidates;
+    bool has_blschecksig = false;
+
+    while (pc < script.end()) {
+        if (!script.GetOp(pc, opcode, vch)) {
+            break;
+        }
+
+        if (opcode == OP_BLSCHECKSIG) {
+            has_blschecksig = true;
+        } else if (opcode <= OP_PUSHDATA4 && vch.size() == 48) {
+            candidates.push_back(vch);
+        }
+    }
+
+    if (!has_blschecksig) return false;
+
+    for (const auto& data : candidates) {
+        blsct::PublicKey key;
+        if (key.SetVch(data)) {
+            spendingKeys.push_back(key);
+        }
+    }
+
+    return !spendingKeys.empty();
+}
+
+bool KeyMan::AddWatchOnly(const CScript& script, const std::optional<blsct::PublicKey>& recovery_nonce)
+{
+    // Acquire cs_wallet before cs_KeyStore to match the lock order used
+    // elsewhere in this file and in the wallet layer.  Callers that already
+    // hold cs_wallet (e.g. RPC handlers) are safe because it is a
+    // RecursiveMutex.
+    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
+    wallet::WalletBatch batch(m_storage.GetDatabase());
+    wallet::CKeyMetadata meta;
+    if (!batch.WriteBLSCTWatchOnly(script, meta)) {
+        return false;
+    }
+    if (recovery_nonce && !batch.WriteBLSCTWatchOnlyNonce(script, *recovery_nonce)) {
+        return false;
+    }
+    // Mutate in-memory state only after all DB writes succeed.
+    setWatchOnly.insert(script);
+    if (recovery_nonce) {
+        m_watch_only_nonces[CScriptID(script)] = *recovery_nonce;
+    }
+    return true;
+}
+
+void KeyMan::LoadWatchOnly(const CScript& script)
+{
+    LOCK(cs_KeyStore);
+    setWatchOnly.insert(script);
+}
+
+void KeyMan::LoadWatchOnlyRecoveryNonce(const CScript& script, const blsct::PublicKey& nonce)
+{
+    LOCK(cs_KeyStore);
+    m_watch_only_nonces[CScriptID(script)] = nonce;
+}
+
+std::optional<blsct::PublicKey> KeyMan::GetWatchOnlyRecoveryNonce(const CScript& script) const
+{
+    LOCK(cs_KeyStore);
+    const auto it = m_watch_only_nonces.find(CScriptID(script));
+    if (it == m_watch_only_nonces.end()) {
+        return std::nullopt;
+    }
+    return it->second;
 }
 } // namespace blsct

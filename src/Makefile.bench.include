@@ -16,6 +16,9 @@ bench_bench_navio_SOURCES = \
   bench/base58.cpp \
   bench/bech32.cpp \
   bench/bech32_mod.cpp \
+  bench/blsct_view_tag.cpp \
+  bench/blsct_rp_verify.cpp \
+  bench/blsct_setmem_verify.cpp \
   bench/bench.cpp \
   bench/bench.h \
   bench/bench_bitcoin.cpp \
@@ -73,7 +76,7 @@ bench_bench_navio_LDADD = \
   $(LIBLEVELDB) \
   $(LIBMEMENV) \
   $(LIBBLS) \
-  $(LIBMCL) \
+  $(LIBMCL_LIBS) \
   $(LIBSECP256K1) \
   $(LIBUNIVALUE) \
   $(EVENT_PTHREADS_LIBS) \

@@ -351,7 +351,13 @@ BASE_SCRIPTS = [
     'blsct_staking.py',
     'blsct_token.py',
     'blsct_nft.py',
+    'blsct_htlc.py',
+    'blsct_setblsctseed.py',
+    'blsct_script_validation.py',
     'blsct_balance_proof.py',
+    'blsct_pops_consensus.py',
+    'blsct_output_storage.py',
+    'blsct_block_rpc.py',
     'blsct_rawtransaction.py',
     'blsct_import_scriptpubkeys.py',
     'bls_message_signing.py'

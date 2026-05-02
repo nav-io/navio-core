@@ -1869,7 +1869,9 @@ static RPCHelpMan getblockstats()
         CAmount tx_total_out = 0;
         if (loop_outputs) {
             for (const CTxOut& out : tx->vout) {
-                tx_total_out += out.nValue;
+                if (!(tx->IsBLSCT() && out.IsFee())) {
+                    tx_total_out += out.nValue;
+                }
 
                 size_t out_size = GetSerializeSize(out) + PER_UTXO_OVERHEAD;
                 utxo_size_inc += out_size;
@@ -1928,7 +1930,7 @@ static RPCHelpMan getblockstats()
                 utxo_size_inc_actual -= prevout_size;
             }
 
-            CAmount txfee = tx_total_in - tx_total_out;
+            const CAmount txfee = tx->IsBLSCT() ? tx->GetBLSCTFee() : tx_total_in - tx_total_out;
             CHECK_NONFATAL(MoneyRange(txfee));
             if (do_medianfee) {
                 fee_array.push_back(txfee);

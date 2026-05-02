@@ -444,15 +444,20 @@ int blsAggregateVerifyNoCheck(const blsSignature *sig, const blsPublicKey *pubVe
 #if 1 // 1.1 times faster
 	GT e;
 	const char* msg = (const char*)msgVec;
-	constexpr size_t N = 16;
-	G1 g1Vec[N + 1];
-	G2 g2Vec[N + 1];
+	// N=256 amortises thread dispatch: for 1000-pair aggregate verifies,
+	// stock N=16 forced ~60 outer iterations × 8 async tasks each (~480
+	// thread spawns) which dominated per-tx cost. Heap-allocated vectors
+	// avoid pressuring the stack at larger N.
+	constexpr size_t N = 256;
+	std::vector<G1> g1Vec(N + 1);
+	std::vector<G2> g2Vec(N + 1);
 	bool initE = true;
 
 	std::vector<std::future<GT>> futuresMiller;
 	std::vector<std::future<bool>> futures;
 	size_t numThreads = std::thread::hardware_concurrency();
-	
+	if (numThreads < 1) numThreads = 1;
+
 	futures.reserve(numThreads);
 
 	while (n > 0) {
@@ -497,7 +502,7 @@ int blsAggregateVerifyNoCheck(const blsSignature *sig, const blsPublicKey *pubVe
 		// Prepare for parallel miller loop
 		auto millerLoopTask = [&](size_t start, size_t end, bool initE) {
 			GT localE;
-			millerLoopVec(localE, g1Vec + start, g2Vec + start, end - start, initE);
+			millerLoopVec(localE, g1Vec.data() + start, g2Vec.data() + start, end - start, initE);
 			return localE;
 		};
 

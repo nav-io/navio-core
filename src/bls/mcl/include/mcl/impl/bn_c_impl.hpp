@@ -421,6 +421,10 @@ void mclBnG1_normalize(mclBnG1 *y, const mclBnG1 *x)
 {
 	G1::normalize(*cast(y), *cast(x));
 }
+void mclBnG1_normalizeVec(mclBnG1 *y, const mclBnG1 *x, mclSize n)
+{
+	G1::normalizeVec(cast(y), cast(x), n);
+}
 void mclBnG1_add(mclBnG1 *z, const mclBnG1 *x, const mclBnG1 *y)
 {
 	G1::add(*cast(z),*cast(x), *cast(y));

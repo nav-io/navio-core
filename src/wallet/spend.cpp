@@ -535,10 +535,10 @@ CoinsResult AvailableBlsctCoins(const CWallet& wallet,
         if (mine == ISMINE_NO) {
             continue;
         }
-        if (params.include_staked_commitment && !output.IsStakedCommitment()) {
+        if (params.include_staked_commitment && !wout.fStakedCommitment) {
             continue;
         }
-        if (!params.include_staked_commitment && output.IsStakedCommitment()) {
+        if (!params.include_staked_commitment && wout.fStakedCommitment) {
             continue;
         }
         if (params.token_id != output.tokenId) {
@@ -552,7 +552,7 @@ CoinsResult AvailableBlsctCoins(const CWallet& wallet,
 
         mutableOutput.nValue = nValue;
 
-        result.Add(output.IsStakedCommitment() ? OutputType::BLSCT_STAKE : OutputType::BLSCT,
+        result.Add(wout.fStakedCommitment ? OutputType::BLSCT_STAKE : OutputType::BLSCT,
                    COutput(outpoint, mutableOutput, nDepth, -1, spendable, true, safeTx, wout.GetTxTime(), true, 0));
 
         outpoints.push_back(outpoint);

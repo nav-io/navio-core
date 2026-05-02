@@ -179,8 +179,7 @@ std::optional<WeightedInnerProdArgResult<T>> WeightedInnerProdArg::Run(
         res.Ls.Add(L);
         res.Rs.Add(R);
 
-        // GEN_FIAT_SHAMIR_VAR(e, fiat_shamir, retry);
-        Scalar e(7);
+        GEN_FIAT_SHAMIR_VAR(e, fiat_shamir, retry);
         Scalar e_sq = e.Square();
         Scalar e_inv = e.Invert();
         Scalar e_inv_sq = e_inv.Square();

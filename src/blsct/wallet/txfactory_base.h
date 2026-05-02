@@ -17,6 +17,12 @@ struct CreateTransactionData {
     std::string sMemo;
     TokenId token_id;
     CAmount minStake;
+    // Per-byte BLSCT fee rate the wallet will price the transaction at.
+    // Defaults to `BLSCT_DEFAULT_FEE`; production callers (RPC / wallet
+    // helpers) overwrite this with `Params().GetConsensus().nBLSCTDefaultFee`
+    // so wallet-built transactions match the consensus minimum-fee rule
+    // enforced by `blsct::VerifyTx`.
+    CAmount nBLSCTDefaultFee{::BLSCT_DEFAULT_FEE};
 
     Scalar tokenKey;
     std::map<std::string, std::string> nftMetadata;
@@ -88,7 +94,7 @@ public:
     TxFactoryBase(){};
 
     // Normal transfer
-    void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false, const Scalar& blindingKey = Scalar::Rand());
+    void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false, const Scalar& blindingKey = Scalar::Rand(), const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE);
     // Create Token
     void AddOutput(const Scalar& tokenKey, const blsct::TokenInfo& tokenInfo);
     // Mint Token
@@ -96,7 +102,7 @@ public:
     // Mint NFT
     void AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata);
     bool AddInput(const CAmount& amount, const MclScalar& gamma, const blsct::PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false);
-    std::optional<CMutableTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false);
+    std::optional<CMutableTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE);
     static std::optional<CMutableTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData);
 };
 

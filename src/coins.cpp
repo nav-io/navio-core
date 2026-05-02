@@ -10,6 +10,9 @@
 #include <util/strencodings.h>
 #include <util/trace.h>
 
+#include <future>
+#include <thread>
+
 bool CCoinsView::GetCoin(const COutPoint& outpoint, Coin& coin) const { return false; }
 bool CCoinsView::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const { return false; }
 bool CCoinsView::GetAllTokens(TokensMap& tokensMap) const { return false; };
@@ -125,8 +128,8 @@ void CCoinsViewCache::AddCoin(const COutPoint& outpoint, Coin&& coin, bool possi
            (int64_t)it->second.coin.out.nValue,
            (bool)it->second.coin.IsCoinBase());
     if (it->second.coin.out.IsStakedCommitment()) {
-        GetStakedCommitments();
         cacheStakedCommitments[it->second.coin.out.blsctData.rangeProof.Vs[0]] = STAKED_COMMITMENT_UNSPENT;
+        InvalidateStakedCommitmentsMemo();
         LogPrint(BCLog::POPS, "%s: Adding staked commitment %s from height %d\n", __func__, HexStr(it->second.coin.out.blsctData.rangeProof.Vs[0].GetVch()), (uint32_t)it->second.coin.nHeight);
     }
 }
@@ -235,6 +238,110 @@ bool CCoinsViewCache::SpendCoin(const COutPoint& outpoint, Coin* moveout)
 void CCoinsViewCache::RemoveStakedCommitment(const MclG1Point& commitment) {
     LogPrint(BCLog::POPS, "%s: Removing staked commitment %s\n", __func__, HexStr(commitment.GetVch()));
     cacheStakedCommitments[commitment] = STAKED_COMMITMENT_SPENT;
+    InvalidateStakedCommitmentsMemo();
+}
+
+namespace {
+// Read-only walk down the CCoinsView chain. Unlike CCoinsViewCache::GetCoin,
+// intermediate caches are searched via const find() — no emplace — so this
+// is safe to call from multiple threads concurrently provided no writer is
+// active on those caches. Falls through to the backing CCoinsViewDB whose
+// LevelDB Get is itself thread-safe.
+bool GetCoinReadOnly(const CCoinsView* v, const COutPoint& outpoint, Coin& coin)
+{
+    while (v != nullptr) {
+        if (const auto* cache = dynamic_cast<const CCoinsViewCache*>(v)) {
+            if (auto it = cache->CacheCoinsMap().find(outpoint); it != cache->CacheCoinsMap().end()) {
+                coin = it->second.coin;
+                return !coin.IsSpent();
+            }
+            v = cache->Base();
+            continue;
+        }
+        // Leaf view (CCoinsViewDB) — or any view without a read-only cache
+        // short-circuit. Its GetCoin must be thread-safe; LevelDB::Get is.
+        return v->GetCoin(outpoint, coin);
+    }
+    return false;
+}
+} // namespace
+
+void CCoinsViewCache::BatchPrefetch(const std::vector<COutPoint>& outpoints) const
+{
+    if (outpoints.empty()) return;
+
+    // Filter out outpoints that are already cached so we don't re-read them.
+    std::vector<size_t> to_fetch;
+    to_fetch.reserve(outpoints.size());
+    for (size_t i = 0; i < outpoints.size(); ++i) {
+        if (cacheCoins.find(outpoints[i]) == cacheCoins.end()) {
+            to_fetch.push_back(i);
+        }
+    }
+    if (to_fetch.empty()) return;
+
+    const size_t n = to_fetch.size();
+    const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
+    // Cap at 4 workers: benched at 2252 inputs, 4 threads hit ~413 ms vs
+    // 8 threads at ~430 ms on an 8-core host. Diminishing returns past 4
+    // because LevelDB is page-cache bound and Coin deserialisation has
+    // fixed per-item cost; beyond 4 workers the per-thread partition gets
+    // small enough that std::async dispatch overhead eats the gain. Plus
+    // smaller parallelism leaves cores for the concurrently running PoS
+    // verify future + script check queue.
+    size_t num_threads = std::min<size_t>(hw, 4);
+    const size_t min_parallel = 128;
+    if (n <= min_parallel) num_threads = 1;
+    if (num_threads < 1) num_threads = 1;
+
+    std::vector<Coin> fetched(n);
+    std::vector<char> present(n, 0);
+
+    auto fetch_range = [&](size_t lo, size_t hi) {
+        for (size_t k = lo; k < hi; ++k) {
+            const size_t idx = to_fetch[k];
+            Coin tmp;
+            // Read-only walk: does NOT mutate intermediate caches. Workers
+            // can run concurrently because they only call find() on the
+            // base caches and leaf LevelDB Get, both of which are safe for
+            // concurrent readers.
+            if (GetCoinReadOnly(base, outpoints[idx], tmp)) {
+                fetched[k] = std::move(tmp);
+                present[k] = 1;
+            }
+        }
+    };
+
+    if (num_threads == 1) {
+        fetch_range(0, n);
+    } else {
+        std::vector<std::future<void>> futures;
+        futures.reserve(num_threads);
+        const size_t chunk = (n + num_threads - 1) / num_threads;
+        for (size_t t = 0; t < num_threads; ++t) {
+            const size_t lo = t * chunk;
+            const size_t hi = std::min(n, lo + chunk);
+            if (lo >= hi) break;
+            futures.push_back(std::async(std::launch::async, fetch_range, lo, hi));
+        }
+        for (auto& f : futures) f.get();
+    }
+
+    // Populate cacheCoins serially: emplace mutates the map which is not
+    // thread-safe. cachedCoinsUsage only changes here so no lock needed.
+    for (size_t k = 0; k < n; ++k) {
+        if (!present[k]) continue;
+        const size_t idx = to_fetch[k];
+        auto res = cacheCoins.emplace(std::piecewise_construct,
+                                      std::forward_as_tuple(outpoints[idx]),
+                                      std::forward_as_tuple(std::move(fetched[k])));
+        if (res.second) {
+            if (res.first->second.coin.IsSpent()) {
+                res.first->second.flags = CCoinsCacheEntry::FRESH;
+            }
+            cachedCoinsUsage += res.first->second.coin.DynamicMemoryUsage();
+        }
+    }
 }
 
 const Coin& CCoinsViewCache::AccessCoin(const COutPoint& outpoint) const
@@ -281,17 +388,21 @@ uint256 CCoinsViewCache::GetBestBlock() const
 
 OrderedElements<MclG1Point> CCoinsViewCache::GetStakedCommitments() const
 {
-    auto ret = base->GetStakedCommitments();
+    if (!m_memo_staked_commitments) {
+        auto ret = base->GetStakedCommitments();
 
-    for (auto& it : cacheStakedCommitments) {
-        if (it.second == STAKED_COMMITMENT_UNSPENT) {
-            ret.Add(it.first);
-        } else {
-            ret.Remove(it.first);
+        for (auto& it : cacheStakedCommitments) {
+            if (it.second == STAKED_COMMITMENT_UNSPENT) {
+                ret.Add(it.first);
+            } else {
+                ret.Remove(it.first);
+            }
         }
+
+        m_memo_staked_commitments.emplace(std::move(ret));
     }
 
-    return ret;
+    return *m_memo_staked_commitments;
 };
 
 
@@ -373,6 +484,9 @@ bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn
     for (auto& it : cacheStakedCommitmentsIn) {
         cacheStakedCommitments[it.first] = it.second;
     };
+    if (!cacheStakedCommitmentsIn.empty()) {
+        InvalidateStakedCommitmentsMemo();
+    }
     if (erase)
         cacheStakedCommitmentsIn.clear();
     for (auto& it : cacheTokensIn) {

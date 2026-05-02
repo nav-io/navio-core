@@ -9,6 +9,7 @@
 #include <blsct/public_keys.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/tokens/info.h>
+#include <consensus/amount.h>
 #include <primitives/transaction.h>
 
 using T = Mcl;
@@ -17,7 +18,12 @@ using Points = Elements<Point>;
 using Scalar = T::Scalar;
 using Scalars = Elements<Scalar>;
 
-#define BLSCT_DEFAULT_FEE 125
+// Canonical default value for `Consensus::Params::nBLSCTDefaultFee`
+// (sat / serialized byte). Chainparams seed their per-network value from
+// this constant; callers without a chainparams handy (unit tests, helpers)
+// may also use it directly. The consensus rule itself reads from
+// `Consensus::Params::nBLSCTDefaultFee`, not from this constant.
+static constexpr CAmount BLSCT_DEFAULT_FEE = 125;
 
 namespace blsct {
 enum CreateTransactionType {
@@ -34,7 +40,7 @@ struct UnsignedOutput {
     Scalar value;
     Scalar gamma;
     Scalar tokenKey;
-    CreateTransactionType type;
+    CreateTransactionType type{NORMAL};
 
     void
     GenerateKeys(Scalar blindingKey, DoublePublicKey destKeys);
@@ -48,6 +54,9 @@ struct UnsignedOutput {
         ::Serialize(s, blindingKey);
         ::Serialize(s, value);
         ::Serialize(s, gamma);
+        ::Serialize(s, tokenKey);
+        int32_t typeInt = static_cast<int32_t>(type);
+        ::Serialize(s, typeInt);
     }
 
     template <typename Stream>
@@ -57,6 +66,10 @@ struct UnsignedOutput {
         ::Unserialize(s, blindingKey);
         ::Unserialize(s, value);
         ::Unserialize(s, gamma);
+        ::Unserialize(s, tokenKey);
+        int32_t typeInt;
+        ::Unserialize(s, typeInt);
+        type = static_cast<CreateTransactionType>(typeInt);
     }
 };
 
@@ -65,7 +78,7 @@ struct UnsignedInput {
     Scalar value;
     Scalar gamma;
     PrivateKey sk;
-    bool is_staked_commitment;
+    bool is_staked_commitment{false};
 
     template <typename Stream>
     void Serialize(Stream& s) const
