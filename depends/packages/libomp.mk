@@ -39,12 +39,18 @@ endef
 # "env: invalid option -- 'I'".
 # Emit a toolchain snippet that selects clang directly and mirrors darwin_CC's
 # driver flags — Makefile cannot reliably pass spaced CMAKE_ASM_FLAGS in one -D.
+#
+# Use $(clang_prog) — the same path darwin_CC uses — so this works both with
+# the depends-managed clang ($(build_prefix)/bin/clang) and with
+# FORCE_USE_SYSTEM_CLANG=1 (e.g. Guix builds), where clang lives in the
+# build environment's PATH (e.g. /root/.guix-profile/bin/clang) and nothing
+# is staged into $(build_prefix)/bin.
 ifneq ($(host),$(build))
 ifeq ($(host_os),darwin)
 
 define libomp_preprocess_cmds
 	printf '%s\n' \
-	  'set(CMAKE_ASM_COMPILER "$(build_prefix)/bin/clang")' \
+	  'set(CMAKE_ASM_COMPILER "$(clang_prog)")' \
 	  'set(CMAKE_ASM_COMPILER_TARGET "$(host)")' \
 	  'set(CMAKE_ASM_FLAGS "-B$(build_prefix)/bin -isysroot$(OSX_SDK) -nostdlibinc -iwithsysroot/usr/include -iframeworkwithsysroot/System/Library/Frameworks")' \
 	  > $$(@D)/libomp_cross_asm.cmake || exit 1
