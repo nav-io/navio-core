@@ -30,6 +30,7 @@ define $(package)_set_vars
   $(package)_config_opts += -DLIBOMP_INSTALL_ALIASES=ON
   $(package)_config_opts += -DCMAKE_INSTALL_LIBDIR=lib
   $(package)_config_opts += -DCMAKE_BUILD_TYPE=Release
+  $(package)_config_opts += -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 endef
 
 # Cross-compiling to macOS ($(host) != $(build)): host CC is a multi-word
