@@ -37,7 +37,8 @@ bool PoSCheckQueue::Flush(const CBlockIndex** failing)
     //       random-linear-combination batching across each proof's pairing
     //       equation. Requires crypto review.
     //   (2) bulletproofs_plus::RangeProofLogic<Mcl>::Verify(vector) over
-    //       every item's range proof — already batches via internal std::async.
+    //       every item's range proof — batches internally, but stays on the
+    //       caller thread when OpenMP-backed MSM is enabled.
     //
     // Until VerifyBatch lands, fallback: per-item standalone verify. This is
     // correctness-preserving but gives no crypto-batch speedup; the
