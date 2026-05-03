@@ -1459,6 +1459,17 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
         if (tx.IsBLSCT() && IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
             TxState tx_state = std::visit([](auto&& s) -> TxState { return s; }, state);
 
+            // If we happen to have a CWalletTx for this tx (locally-created
+            // sends live in both mapWallet and mapOutputs), keep its state in
+            // sync with the sync callback so depth/trust queries on mapWallet
+            // reflect the chain instead of staying stuck at TxStateInactive.
+            if (auto it = mapWallet.find(tx.GetHash()); it != mapWallet.end()) {
+                it->second.m_state = tx_state;
+                it->second.MarkDirty();
+                WalletBatch batch(GetDatabase(), /*flush_on_close=*/false);
+                batch.WriteTx(it->second);
+            }
+
             // loop though all outputs
             for (size_t i = 0; i < tx.vout.size(); i++) {
                 CTxOut txout = tx.vout[i];

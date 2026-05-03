@@ -302,16 +302,11 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
 
     // Compute fee:
     CAmount nDebit = CachedTxGetDebit(wallet, wtx, filter);
-    CAmount nNet = 0;
+    CAmount nChange = 0;   // sum of our BLSCT change outputs (recovered amount)
 
-    if (nDebit > 0) // debit>0 means we signed/sent this transaction
-    {
-        CAmount nValueOut = wtx.GetValueOut();
-        if (wtx.tx->IsBLSCT()) {
-            nNet = nDebit - nValueOut;
-        } else {
-            nFee = nDebit - nValueOut;
-        }
+    if (nDebit > 0 && !wtx.tx->IsBLSCT()) {
+        // Transparent tx: fee = inputs - explicit outputs.
+        nFee = nDebit - wtx.GetValueOut();
     }
 
     LOCK(wallet.cs_wallet);
@@ -327,7 +322,16 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
         //   2) the output is to us (received)
         if (nDebit > 0)
         {
-            if (OutputIsChange(wallet, txout) && (txout.HasBLSCTRangeProof() || !include_change)) continue;
+            // Accumulate BLSCT change separately so the synthetic send entry
+            // below reports the true balance debit (sent-to-others + fee),
+            // not the inflated inputs-minus-explicit-outputs figure.
+            if (OutputIsChange(wallet, txout)) {
+                if (txout.HasBLSCTRangeProof()) {
+                    nChange += wtx.GetBLSCTRecoveryData(i).amount;
+                    continue;
+                }
+                if (!include_change) continue;
+            }
 
         } else if (!(fIsMine & filter))
             continue;
@@ -348,7 +352,7 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
 
             auto recoveryData = wtx.GetBLSCTRecoveryData(i);
 
-            COutputEntry output = {address, recoveryData.amount, (int)i};
+            COutputEntry output = {address, recoveryData.amount, (int)i, recoveryData.message};
 
             // If we are receiving the output, add it as a "received" entry
             if (fIsMine & filter)
@@ -360,7 +364,7 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
                 address = CNoDestination();
             }
 
-            COutputEntry output = {address, txout.nValue, (int)i};
+            COutputEntry output = {address, txout.nValue, (int)i, {}};
 
             // If we are debited by the transaction, add the output as a "sent" entry
             if (nDebit > 0 && !wtx.tx->IsBLSCT())
@@ -373,7 +377,14 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
     }
 
     if (wtx.tx->IsBLSCT() && nDebit > 0) {
-        COutputEntry output = {CNoDestination(), nNet, -1};
+        // BLSCT block-level merging means we cannot attribute individual inputs to
+        // individual outputs. Emit one synthetic send that represents the actual
+        // balance debit net of our own change. Fee is reported separately so the
+        // consumer-side invariant (amount + fee per txid) matches getbalance.
+        const CAmount blsct_fee = wtx.tx->GetBLSCTFee();
+        const CAmount sent_to_others = nDebit - nChange - blsct_fee;
+        nFee = blsct_fee;
+        COutputEntry output = {CNoDestination(), sent_to_others, -1, {}};
         listSent.push_back(output);
     }
 }

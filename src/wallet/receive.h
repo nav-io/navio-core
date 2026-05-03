@@ -40,6 +40,7 @@ struct COutputEntry
     CTxDestination destination;
     CAmount amount;
     int vout;
+    std::string memo;   //!< BLSCT recovery message (empty for non-BLSCT outputs)
 };
 void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
                         std::list<COutputEntry>& listReceived,
