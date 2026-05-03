@@ -59,6 +59,7 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         self.test_send_to_other_wallet()
         self.test_send_to_self()
         self.test_unconfirmed_balance()
+        self.test_receive_then_stake_no_double_count()
         self.test_block_reorg()
         self.test_staked_commitments()
         self.test_many_transactions()
@@ -165,6 +166,39 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
 
         balance_after = self.wallet_a.getbalance()
         self.log.info(f"After confirmation: confirmed={balance_after}")
+
+    def test_receive_then_stake_no_double_count(self):
+        self.log.info("=== Test 4b: Confirmed receive then stake has no double accounting ===")
+
+        self.nodes[1].createwallet(wallet_name="wallet_c", blsct=True)
+        wallet_c = self.nodes[1].get_wallet_rpc("wallet_c")
+        addr_c = wallet_c.getnewaddress(label="", address_type="blsct")
+
+        received_amount = Decimal("11000.00000000")
+        stake_amount = Decimal("10000.00000000")
+
+        self.wallet_a.sendtoblsctaddress(addr_c, received_amount)
+        self.sync_mempools()
+        self.generate_blsct_blocks(self.nodes[0], self.addr_a, 1)
+
+        before_stake = wallet_c.getbalances()["mine"]
+        assert_equal(before_stake["trusted"], received_amount)
+        assert_equal(before_stake["staked_commitment_balance"], Decimal("0"))
+        assert_equal(before_stake["untrusted_pending"], Decimal("0"))
+
+        wallet_c.stakelock(stake_amount)
+
+        after_stake = wallet_c.getbalances()["mine"]
+        total_after_stake = (
+            after_stake["trusted"]
+            + after_stake["staked_commitment_balance"]
+            + after_stake["untrusted_pending"]
+            + after_stake["immature"]
+        )
+
+        assert_equal(after_stake["staked_commitment_balance"], Decimal("0"))
+        assert_greater_than(total_after_stake, received_amount - Decimal("1"))
+        assert total_after_stake < received_amount
 
     def test_block_reorg(self):
         self.log.info("=== Test 5: Block reorganization ===")

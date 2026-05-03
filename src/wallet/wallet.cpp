@@ -2651,6 +2651,24 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
             throw std::runtime_error(std::string(__func__) + ": Transaction broadcast failed: " + err_string);
         // TODO: if we expect the failure to be long term or permanent, instead delete wtx from the wallet and return failure.
     }
+
+    if (tx->IsBLSCT() && IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        WalletBatch batch(GetDatabase(), /*flush_on_close=*/false);
+        for (const CTxIn& txin : tx->vin) {
+            auto it = mapOutputs.find(txin.prevout);
+            if (it == mapOutputs.end()) continue;
+            CWalletOutput& spent_output = it->second;
+            if (spent_output.state_spent<TxStateInMempool>()) continue;
+            // CommitTransaction records self-created BLSCT txs in mapWallet
+            // immediately, but output-storage wallets populate mapOutputs for
+            // the same tx via the later sync callback. Mark parents spent now
+            // so interim balance RPCs do not count both parent and child.
+            spent_output.m_state_spent = TxStateInMempool{};
+            if (!batch.WriteOutput(txin.prevout, spent_output)) {
+                throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to update spent BLSCT output state");
+            }
+        }
+    }
 }
 
 DBErrors CWallet::LoadWallet()

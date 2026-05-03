@@ -472,6 +472,14 @@ Balance GetBlsctBalance(const CWallet& wallet, const int min_depth, const TokenI
     {
         LOCK(wallet.cs_wallet);
         for (const auto& entry : wallet.mapOutputs) {
+            // In BLSCT output-storage mode, locally-created BLSCT transactions
+            // are still recorded in mapWallet for broadcast/history purposes and
+            // their outputs are mirrored into mapOutputs by sync callbacks.
+            // Those child outputs must only be counted once.
+            if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) &&
+                wallet.GetWalletTxFromOutpoint(entry.first) != nullptr) {
+                continue;
+            }
             const CWalletOutput& wout = entry.second;
             if (wout.IsSpent()) continue;
             const bool is_trusted{IsOutputTrusted(wallet, wout)};

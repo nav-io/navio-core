@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/wallet/keyman.h>
 #include <core_io.h>
 #include <key_io.h>
 #include <policy/rbf.h>
@@ -426,6 +427,169 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
     }
 }
 
+//! Fill confirmations/block/time fields for an entry derived from a CWalletOutput.
+//! Mirrors WalletTxToJSON but sources everything from the output-only record.
+static void WalletOutputToJSON(const CWallet& wallet, const COutPoint& outpoint, const CWalletOutput& wout, UniValue& entry)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    interfaces::Chain& chain = wallet.chain();
+    int confirms = wallet.GetOutputDepthInMainChain(wout);
+    entry.pushKV("confirmations", confirms);
+    if (wout.IsCoinBase())
+        entry.pushKV("generated", true);
+    if (auto* conf = wout.state<TxStateConfirmed>()) {
+        entry.pushKV("blockhash", conf->confirmed_block_hash.GetHex());
+        entry.pushKV("blockheight", conf->confirmed_block_height);
+        entry.pushKV("blockindex", conf->position_in_block);
+        int64_t block_time;
+        if (chain.findBlock(conf->confirmed_block_hash, FoundBlock().time(block_time))) {
+            entry.pushKV("blocktime", block_time);
+        }
+    } else {
+        entry.pushKV("trusted", IsOutputTrusted(wallet, wout));
+    }
+    entry.pushKV("txid", outpoint.hash.GetHex());
+    // outid is the BLSCT-specific per-output identifier, preserved even after
+    // range-proof stripping (see CWalletOutput::GetOutputHash / outputHash).
+    entry.pushKV("outid", wout.GetOutputHash().GetHex());
+    // No wallet-level tx conflict tracking for output-only records.
+    entry.pushKV("walletconflicts", UniValue(UniValue::VARR));
+    entry.pushKV("time", int64_t{wout.nTimeReceived});
+    entry.pushKV("timereceived", int64_t{wout.nTimeReceived});
+    // We have no containing CWalletTx to inspect for RBF signalling.
+    entry.pushKV("bip125-replaceable", "unknown");
+}
+
+//! Resolve the on-chain destination of a CWalletOutput. BLSCT outputs use the
+//! KeyMan subaddress derivation (recovers the user-facing address even after
+//! the range proof has been stripped); non-BLSCT outputs fall back to the
+//! standard scriptPubKey extraction.
+static CTxDestination ResolveOutputDestination(const CWallet& wallet, const CWalletOutput& wout)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    if (wout.fBLSCTOutput) {
+        if (auto* km = wallet.GetBLSCTKeyMan()) {
+            return km->GetDestination(*wout.out);
+        }
+        return CNoDestination();
+    }
+    CTxDestination dest;
+    if (!ExtractDestination(wout.out->scriptPubKey, dest)) {
+        return CNoDestination();
+    }
+    return dest;
+}
+
+//! Emit one JSON entry for a CWalletOutput that is NOT mirrored by a CWalletTx.
+//! These are receive-side balance deltas (staking rewards, external BLSCT
+//! payments) stored exclusively in mapOutputs under the output-storage design.
+//! Categories mirror ListTransactions: orphan/immature/generate for coinbase,
+//! receive otherwise.
+static void ListOutputTransaction(const CWallet& wallet,
+                                  const COutPoint& outpoint,
+                                  const CWalletOutput& wout,
+                                  int nMinDepth, int nMaxDepth,
+                                  std::vector<std::pair<int64_t, UniValue>>& ret,
+                                  const isminefilter& filter_ismine,
+                                  const std::optional<std::string>& filter_label,
+                                  bool include_staking = true)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    const int depth = wallet.GetOutputDepthInMainChain(wout);
+    if (depth > nMaxDepth) return;
+    if (depth < nMinDepth) return;
+
+    const isminefilter mine = wallet.IsMine(*wout.out);
+    if (!(mine & filter_ismine)) return;
+
+    const CAmount amount = OutputGetCredit(wallet, wout, filter_ismine, TokenId());
+    if (amount == 0) return;
+
+    const CTxDestination dest = ResolveOutputDestination(wallet, wout);
+
+    std::string label;
+    const auto* address_book_entry = IsValidDestination(dest) ? wallet.FindAddressBookEntry(dest) : nullptr;
+    if (address_book_entry) {
+        label = address_book_entry->GetLabel();
+    }
+    if (label == "Staking" && !include_staking) return;
+    if (filter_label.has_value() && label != filter_label.value()) return;
+
+    UniValue entry(UniValue::VOBJ);
+    if (mine & ISMINE_WATCH_ONLY) {
+        entry.pushKV("involvesWatchonly", true);
+    }
+    MaybePushAddress(entry, dest);
+    PushParentDescriptors(wallet, wout.out->scriptPubKey, entry);
+
+    // Category follows the same rules as the CWalletTx path in ListTransactions.
+    if (wout.IsCoinBase()) {
+        if (depth < 1) {
+            entry.pushKV("category", "orphan");
+        } else if (wallet.IsOutputImmatureCoinBase(wout)) {
+            entry.pushKV("category", "immature");
+        } else {
+            entry.pushKV("category", "generate");
+        }
+    } else {
+        entry.pushKV("category", "receive");
+    }
+    entry.pushKV("amount", ValueFromAmount(amount));
+    if (address_book_entry) {
+        entry.pushKV("label", label);
+    }
+    entry.pushKV("vout", static_cast<int>(outpoint.n));
+    // These entries arrive by block sync; there is no user-abandon semantic.
+    entry.pushKV("abandoned", false);
+    WalletOutputToJSON(wallet, outpoint, wout, entry);
+    // Flag the shape so clients can detect output-storage-only entries.
+    entry.pushKV("output_storage", true);
+
+    ret.emplace_back(wout.nOrderPos, std::move(entry));
+}
+
+//! Walk wallet.mapOutputs, emitting one JSON entry per output that is not
+//! already reachable via the wtxOrdered / mapWallet walk. Local spends and
+//! their change outputs are deduped here via GetWalletTxFromOutpoint, matching
+//! the accounting path in GetBlsctBalance (src/wallet/receive.cpp).
+//! No-op on wallets without WALLET_FLAG_BLSCT_OUTPUT_STORAGE.
+static void ListMapOutputTransactions(const CWallet& wallet,
+                                      int nMinDepth, int nMaxDepth,
+                                      std::vector<std::pair<int64_t, UniValue>>& ret,
+                                      const isminefilter& filter_ismine,
+                                      const std::optional<std::string>& filter_label,
+                                      bool include_staking = true)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    if (!wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) return;
+    for (const auto& entry : wallet.mapOutputs) {
+        if (wallet.GetWalletTxFromOutpoint(entry.first) != nullptr) continue;
+        ListOutputTransaction(wallet, entry.first, entry.second,
+                              nMinDepth, nMaxDepth, ret,
+                              filter_ismine, filter_label, include_staking);
+    }
+}
+
+//! Adapter that wraps ListTransactions, attaching the parent CWalletTx's
+//! nOrderPos to every emitted entry so the combined stream can be sorted
+//! chronologically alongside ListMapOutputTransactions output.
+static void ListTransactionsOrdered(const CWallet& wallet, const CWalletTx& wtx,
+                                    int nMinDepth, int nMaxDepth, bool fLong,
+                                    std::vector<std::pair<int64_t, UniValue>>& ret,
+                                    const isminefilter& filter_ismine,
+                                    const std::optional<std::string>& filter_label,
+                                    bool include_change = false,
+                                    bool include_staking = true)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    std::vector<UniValue> tmp;
+    ListTransactions(wallet, wtx, nMinDepth, nMaxDepth, fLong, tmp,
+                     filter_ismine, filter_label, include_change, include_staking);
+    for (auto& e : tmp) {
+        ret.emplace_back(wtx.nOrderPos, std::move(e));
+    }
+}
+
 
 static std::vector<RPCResult> TransactionDescriptionString()
 {
@@ -527,30 +691,33 @@ RPCHelpMan listtransactions()
             if (nFrom < 0)
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative from");
 
-            std::vector<UniValue> ret;
+            // Under WALLET_FLAG_BLSCT_OUTPUT_STORAGE the received BLSCT outputs
+            // (including staking rewards) live only in mapOutputs; we merge them
+            // with the CWalletTx stream and sort by shared nOrderPos counter.
+            std::vector<std::pair<int64_t, UniValue>> entries;
             {
                 LOCK(pwallet->cs_wallet);
 
-                const CWallet::TxItems& txOrdered = pwallet->wtxOrdered;
-
-                // iterate backwards until we have nCount items to return:
-                for (CWallet::TxItems::const_reverse_iterator it = txOrdered.rbegin(); it != txOrdered.rend(); ++it) {
-                    CWalletTx* const pwtx = (*it).second;
-                    ListTransactions(*pwallet, *pwtx, 1, 100000000, true, ret, filter, filter_label);
-                    if ((int)ret.size() >= (nCount + nFrom)) break;
+                for (const auto& [order_pos, pwtx] : pwallet->wtxOrdered) {
+                    ListTransactionsOrdered(*pwallet, *pwtx, 1, 100000000, true, entries, filter, filter_label);
                 }
+                ListMapOutputTransactions(*pwallet, 1, 100000000, entries, filter, filter_label);
             }
 
-            // ret is newest to oldest
+            // Sort newest first, stably so intra-tx send-then-receive order is preserved.
+            std::stable_sort(entries.begin(), entries.end(),
+                             [](const auto& a, const auto& b) { return a.first > b.first; });
 
-            if (nFrom > (int)ret.size())
-                nFrom = ret.size();
-            if ((nFrom + nCount) > (int)ret.size())
-                nCount = ret.size() - nFrom;
+            if (nFrom > (int)entries.size())
+                nFrom = entries.size();
+            if ((nFrom + nCount) > (int)entries.size())
+                nCount = entries.size() - nFrom;
 
-            auto txs_rev_it{std::make_move_iterator(ret.rend())};
             UniValue result{UniValue::VARR};
-            result.push_backV(txs_rev_it - nFrom - nCount, txs_rev_it - nFrom); // Return oldest to newest
+            // Slice [nFrom, nFrom+nCount) from the newest-first sequence, emit oldest-to-newest.
+            for (int i = nFrom + nCount - 1; i >= nFrom; --i) {
+                result.push_back(std::move(entries[i].second));
+            }
             return result;
         },
     };
@@ -625,30 +792,31 @@ RPCHelpMan listpendingtransactions()
             if (nFrom < 0)
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative from");
 
-            std::vector<UniValue> ret;
+            // Pending view: confirmed txs are filtered out via depth<=0. Merge the
+            // wtxOrdered stream with mapOutputs (output-storage wallets) by the
+            // shared nOrderPos counter.
+            std::vector<std::pair<int64_t, UniValue>> entries;
             {
                 LOCK(pwallet->cs_wallet);
 
-                const CWallet::TxItems& txOrdered = pwallet->wtxOrdered;
-
-                // iterate backwards until we have nCount items to return:
-                for (CWallet::TxItems::const_reverse_iterator it = txOrdered.rbegin(); it != txOrdered.rend(); ++it) {
-                    CWalletTx* const pwtx = (*it).second;
-                    ListTransactions(*pwallet, *pwtx, -100000000, 0, true, ret, filter, filter_label);
-                    if ((int)ret.size() >= (nCount + nFrom)) break;
+                for (const auto& [order_pos, pwtx] : pwallet->wtxOrdered) {
+                    ListTransactionsOrdered(*pwallet, *pwtx, -100000000, 0, true, entries, filter, filter_label);
                 }
+                ListMapOutputTransactions(*pwallet, -100000000, 0, entries, filter, filter_label);
             }
 
-            // ret is newest to oldest
+            std::stable_sort(entries.begin(), entries.end(),
+                             [](const auto& a, const auto& b) { return a.first > b.first; });
 
-            if (nFrom > (int)ret.size())
-                nFrom = ret.size();
-            if ((nFrom + nCount) > (int)ret.size())
-                nCount = ret.size() - nFrom;
+            if (nFrom > (int)entries.size())
+                nFrom = entries.size();
+            if ((nFrom + nCount) > (int)entries.size())
+                nCount = entries.size() - nFrom;
 
-            auto txs_rev_it{std::make_move_iterator(ret.rend())};
             UniValue result{UniValue::VARR};
-            result.push_backV(txs_rev_it - nFrom - nCount, txs_rev_it - nFrom); // Return oldest to newest
+            for (int i = nFrom + nCount - 1; i >= nFrom; --i) {
+                result.push_back(std::move(entries[i].second));
+            }
             return result;
         },
     };
@@ -765,6 +933,20 @@ RPCHelpMan listsinceblock()
         }
     }
 
+    // Output-storage wallets: receive-side entries (staking, external receives)
+    // live in mapOutputs without a CWalletTx. Include them alongside mapWallet.
+    if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        std::vector<std::pair<int64_t, UniValue>> out_entries;
+        for (const auto& entry : wallet.mapOutputs) {
+            const COutPoint& outpoint = entry.first;
+            const CWalletOutput& wout = entry.second;
+            if (wallet.GetWalletTxFromOutpoint(outpoint) != nullptr) continue;
+            if (depth != -1 && abs(wallet.GetOutputDepthInMainChain(wout)) >= depth) continue;
+            ListOutputTransaction(wallet, outpoint, wout, -100000000, 100000000, out_entries, filter, filter_label);
+        }
+        for (auto& [_, e] : out_entries) transactions.push_back(std::move(e));
+    }
+
     // when a reorg'd block is requested, we also list any relevant transactions
     // in the blocks of the chain that was detached
     UniValue removed(UniValue::VARR);
@@ -779,6 +961,18 @@ RPCHelpMan listsinceblock()
                 // We want all transactions regardless of confirmation count to appear here,
                 // even negative confirmation ones, hence the big negative.
                 ListTransactions(wallet, it->second, -100000000, 100000000, true, removed, filter, filter_label, include_change);
+            }
+            if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+                // Also emit mapOutputs-only entries whose outpoint belongs to this detached tx.
+                std::vector<std::pair<int64_t, UniValue>> out_entries;
+                for (uint32_t n = 0; n < tx->vout.size(); ++n) {
+                    COutPoint op{tx->GetHash(), n};
+                    auto mit = wallet.mapOutputs.find(op);
+                    if (mit == wallet.mapOutputs.end()) continue;
+                    if (wallet.GetWalletTxFromOutpoint(op) != nullptr) continue;
+                    ListOutputTransaction(wallet, op, mit->second, -100000000, 100000000, out_entries, filter, filter_label);
+                }
+                for (auto& [_, e] : out_entries) removed.push_back(std::move(e));
             }
         }
         blockId = block.hashPrevBlock;
@@ -879,32 +1073,91 @@ RPCHelpMan gettransaction()
 
     UniValue entry(UniValue::VOBJ);
     auto it = pwallet->mapWallet.find(hash);
-    if (it == pwallet->mapWallet.end()) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid or non-wallet transaction id");
-    }
-    const CWalletTx& wtx = it->second;
+    if (it != pwallet->mapWallet.end()) {
+        const CWalletTx& wtx = it->second;
 
-    CAmount nCredit = CachedTxGetCredit(*pwallet, wtx, filter);
-    CAmount nDebit = CachedTxGetDebit(*pwallet, wtx, filter);
-    CAmount nNet = nCredit - nDebit;
-    CAmount nFee = (CachedTxIsFromMe(*pwallet, wtx, filter) ? wtx.tx->GetValueOut() - nDebit : 0);
+        CAmount nCredit = CachedTxGetCredit(*pwallet, wtx, filter);
+        CAmount nDebit = CachedTxGetDebit(*pwallet, wtx, filter);
+        CAmount nNet = nCredit - nDebit;
+        CAmount nFee = (CachedTxIsFromMe(*pwallet, wtx, filter) ? wtx.tx->GetValueOut() - nDebit : 0);
 
-    entry.pushKV("amount", ValueFromAmount(nNet - nFee));
-    if (CachedTxIsFromMe(*pwallet, wtx, filter))
-        entry.pushKV("fee", ValueFromAmount(nFee));
+        entry.pushKV("amount", ValueFromAmount(nNet - nFee));
+        if (CachedTxIsFromMe(*pwallet, wtx, filter))
+            entry.pushKV("fee", ValueFromAmount(nFee));
 
-    WalletTxToJSON(*pwallet, wtx, entry);
+        WalletTxToJSON(*pwallet, wtx, entry);
 
-    UniValue details(UniValue::VARR);
-    ListTransactions(*pwallet, wtx, 0, 100000000, false, details, filter, /*filter_label=*/std::nullopt);
-    entry.pushKV("details", details);
+        UniValue details(UniValue::VARR);
+        ListTransactions(*pwallet, wtx, 0, 100000000, false, details, filter, /*filter_label=*/std::nullopt);
+        entry.pushKV("details", details);
 
-    entry.pushKV("hex", EncodeHexTx(*wtx.tx));
+        entry.pushKV("hex", EncodeHexTx(*wtx.tx));
 
-    if (verbose) {
-        UniValue decoded(UniValue::VOBJ);
-        TxToUniv(*wtx.tx, /*block_hash=*/uint256(), /*entry=*/decoded, /*include_hex=*/false);
-        entry.pushKV("decoded", decoded);
+        if (verbose) {
+            UniValue decoded(UniValue::VOBJ);
+            TxToUniv(*wtx.tx, /*block_hash=*/uint256(), /*entry=*/decoded, /*include_hex=*/false);
+            entry.pushKV("decoded", decoded);
+        }
+    } else {
+        // Output-storage fallback: the tx may exist only as mapOutputs entries
+        // (BLSCT receive / staking reward that never became a CWalletTx).
+        std::vector<std::pair<COutPoint, const CWalletOutput*>> matched;
+        if (pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+            for (const auto& m : pwallet->mapOutputs) {
+                if (m.first.hash == hash) matched.emplace_back(m.first, &m.second);
+            }
+        }
+        if (matched.empty()) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid or non-wallet transaction id");
+        }
+
+        CAmount total = 0;
+        std::optional<TxStateConfirmed> any_conf;
+        int64_t min_time = std::numeric_limits<int64_t>::max();
+        for (const auto& [op, pw] : matched) {
+            total += OutputGetCredit(*pwallet, *pw, filter, TokenId());
+            if (auto* conf = pw->state<TxStateConfirmed>()) {
+                if (!any_conf) any_conf = *conf;
+            }
+            if (pw->nTimeReceived != 0 && (int64_t)pw->nTimeReceived < min_time) {
+                min_time = pw->nTimeReceived;
+            }
+        }
+        if (min_time == std::numeric_limits<int64_t>::max()) min_time = 0;
+
+        entry.pushKV("amount", ValueFromAmount(total));
+        // No raw tx retained under output-storage; omit fee/hex/decoded.
+        entry.pushKV("output_storage", true);
+
+        // Confirmation info from any confirmed output (all matched outputs
+        // share a block under normal operation).
+        int confirms = matched.front().second->state<TxStateConfirmed>()
+            ? pwallet->GetOutputDepthInMainChain(*matched.front().second)
+            : 0;
+        entry.pushKV("confirmations", confirms);
+        if (any_conf) {
+            entry.pushKV("blockhash", any_conf->confirmed_block_hash.GetHex());
+            entry.pushKV("blockheight", any_conf->confirmed_block_height);
+            entry.pushKV("blockindex", any_conf->position_in_block);
+            int64_t block_time;
+            if (pwallet->chain().findBlock(any_conf->confirmed_block_hash, FoundBlock().time(block_time))) {
+                entry.pushKV("blocktime", block_time);
+            }
+        }
+        entry.pushKV("txid", hash.GetHex());
+        entry.pushKV("walletconflicts", UniValue(UniValue::VARR));
+        entry.pushKV("time", min_time);
+        entry.pushKV("timereceived", min_time);
+        entry.pushKV("bip125-replaceable", "unknown");
+
+        UniValue details(UniValue::VARR);
+        std::vector<std::pair<int64_t, UniValue>> det_entries;
+        for (const auto& [op, pw] : matched) {
+            ListOutputTransaction(*pwallet, op, *pw, -100000000, 100000000,
+                                  det_entries, filter, /*filter_label=*/std::nullopt);
+        }
+        for (auto& [_, e] : det_entries) details.push_back(std::move(e));
+        entry.pushKV("details", details);
     }
 
     AppendLastProcessedBlock(entry, *pwallet);
