@@ -220,11 +220,23 @@ bool CCoinsViewCache::SpendCoin(const COutPoint& outpoint, Coin* moveout)
            (uint32_t)it->second.coin.nHeight,
            (int64_t)it->second.coin.out.nValue,
            (bool)it->second.coin.IsCoinBase());
+    // Capture the staked-commitment point BEFORE the potential move below.
+    // After `*moveout = std::move(it->second.coin)` the source CTxOut is
+    // moved-from (empty scriptPubKey / empty rangeProof.Vs), so an
+    // IsStakedCommitment() probe on it returns false and the removal is
+    // silently skipped — leaving spent stakes in the set and breaking the
+    // deterministic staked-commitment set that PoS set-membership proofs
+    // are verified against.
+    const bool was_staked_commitment = it->second.coin.out.IsStakedCommitment();
+    MclG1Point staked_point;
+    if (was_staked_commitment) {
+        staked_point = it->second.coin.out.blsctData.rangeProof.Vs[0];
+    }
     if (moveout) {
         *moveout = std::move(it->second.coin);
     }
-    if (it->second.coin.out.IsStakedCommitment()) {
-        RemoveStakedCommitment(it->second.coin.out.blsctData.rangeProof.Vs[0]);
+    if (was_staked_commitment) {
+        RemoveStakedCommitment(staked_point);
     }
     if (it->second.flags & CCoinsCacheEntry::FRESH) {
         cacheCoins.erase(it);
