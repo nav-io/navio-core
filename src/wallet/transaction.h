@@ -237,6 +237,8 @@ public:
         serializedHash = TxStateSerializedBlockHash<SyncTxState>(m_state_spent);
         serializedIndex = TxStateSerializedIndex<SyncTxState>(m_state_spent);
         s << serializedHash << serializedIndex << fCoinbase << fBLSCTOutput << fStakedCommitment << outputHash;
+        // nOrderPos persisted so chronological listtransactions ordering survives DB reloads.
+        s << nOrderPos;
     }
 
     template <typename Stream>
@@ -253,6 +255,12 @@ public:
         s >> serialized_block_hash >> serializedIndex >> fCoinbase >> fBLSCTOutput >> fStakedCommitment >> outputHash;
 
         m_state_spent = SyncTxStateInterpretSerialized({serialized_block_hash, serializedIndex});
+
+        // Backward compatible: older DBs omit nOrderPos; leave at -1 and let
+        // listtransactions fall back to nTimeReceived for ordering.
+        if (!s.eof()) {
+            s >> nOrderPos;
+        }
     }
 
     template <typename T>

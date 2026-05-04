@@ -402,6 +402,7 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
             }
             MaybePushAddress(entry, r.destination);
             PushParentDescriptors(wallet, wtx.tx->vout.at(r.vout).scriptPubKey, entry);
+            const CTxOut& rcv_out = wtx.tx->vout.at(r.vout);
             if (wtx.IsCoinBase())
             {
                 if (wallet.GetTxDepthInMainChain(wtx) < 1)
@@ -410,6 +411,13 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
                     entry.pushKV("category", "immature");
                 else
                     entry.pushKV("category", "generate");
+            }
+            else if (rcv_out.IsStakedCommitment())
+            {
+                // BLSCT staked commitment: coins locked into a stake, still
+                // ours but earmarked. Distinct category so clients can
+                // reconcile against getbalances.mine.staked_commitment_balance.
+                entry.pushKV("category", "stake");
             }
             else
             {
@@ -491,6 +499,21 @@ static CTxDestination ResolveOutputDestination(const CWallet& wallet, const CWal
 //! payments) stored exclusively in mapOutputs under the output-storage design.
 //! Categories mirror ListTransactions: orphan/immature/generate for coinbase,
 //! receive otherwise.
+//! Compute a sort key that is stable across DB reloads. Prefer nOrderPos when
+//! it was persisted; fall back to nTimeReceived for entries loaded from older
+//! wallets that did not serialize nOrderPos. Time is good enough for
+//! chronological display and tie-breaking is handled by stable_sort.
+static int64_t OrderingKey(int64_t order_pos, int64_t time_received)
+{
+    // Scale time_received into the high range so it never collides with small
+    // real nOrderPos values. Multiplying by 1e9 keeps the key comparable
+    // across the two domains without overflow (time_received fits in ~31 bits).
+    if (order_pos < 0) {
+        return time_received * 1'000'000'000LL;
+    }
+    return order_pos;
+}
+
 static void ListOutputTransaction(const CWallet& wallet,
                                   const COutPoint& outpoint,
                                   const CWalletOutput& wout,
@@ -546,6 +569,8 @@ static void ListOutputTransaction(const CWallet& wallet,
         } else {
             entry.pushKV("category", "generate");
         }
+    } else if (wout.fStakedCommitment) {
+        entry.pushKV("category", "stake");
     } else {
         entry.pushKV("category", "receive");
     }
@@ -565,7 +590,7 @@ static void ListOutputTransaction(const CWallet& wallet,
     // Flag the shape so clients can detect output-storage-only entries.
     entry.pushKV("output_storage", true);
 
-    ret.emplace_back(wout.nOrderPos, std::move(entry));
+    ret.emplace_back(OrderingKey(wout.nOrderPos, wout.nTimeReceived), std::move(entry));
 }
 
 //! Walk wallet.mapOutputs, emitting one JSON entry per output that is not
@@ -605,8 +630,9 @@ static void ListTransactionsOrdered(const CWallet& wallet, const CWalletTx& wtx,
     std::vector<UniValue> tmp;
     ListTransactions(wallet, wtx, nMinDepth, nMaxDepth, fLong, tmp,
                      filter_ismine, filter_label, include_change, include_staking);
+    const int64_t key = OrderingKey(wtx.nOrderPos, wtx.nTimeReceived);
     for (auto& e : tmp) {
-        ret.emplace_back(wtx.nOrderPos, std::move(e));
+        ret.emplace_back(key, std::move(e));
     }
 }
 
@@ -665,7 +691,8 @@ RPCHelpMan listtransactions()
                                                                                                                                                     "\"receive\"               Non-coinbase transactions received.\n"
                                                                                                                                                     "\"generate\"              Coinbase transactions received with more than 100 confirmations.\n"
                                                                                                                                                     "\"immature\"              Coinbase transactions received with 100 or fewer confirmations.\n"
-                                                                                                                                                    "\"orphan\"                Orphaned coinbase transactions received."},
+                                                                                                                                                    "\"orphan\"                Orphaned coinbase transactions received.\n"
+                                                                                                                                                    "\"stake\"                 BLSCT output locked into a staked commitment (still ours, earmarked for staking)."},
                                                                                                                  {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT + ". This is negative for the 'send' category, and is positive\n"
                                                                                                                                                                                             "for all other categories"},
                                                                                                                  {RPCResult::Type::STR, "label", /*optional=*/true, "A comment for the address/transaction, if any"},
@@ -703,7 +730,7 @@ RPCHelpMan listtransactions()
             int nFrom = 0;
             if (!request.params[2].isNull())
                 nFrom = request.params[2].getInt<int>();
-            isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+            isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
 
             if (ParseIncludeWatchonly(request.params[3], *pwallet)) {
                 filter |= ISMINE_WATCH_ONLY;
@@ -769,7 +796,8 @@ RPCHelpMan listpendingtransactions()
                                                                                                                                                     "\"receive\"               Non-coinbase transactions received.\n"
                                                                                                                                                     "\"generate\"              Coinbase transactions received with more than 100 confirmations.\n"
                                                                                                                                                     "\"immature\"              Coinbase transactions received with 100 or fewer confirmations.\n"
-                                                                                                                                                    "\"orphan\"                Orphaned coinbase transactions received."},
+                                                                                                                                                    "\"orphan\"                Orphaned coinbase transactions received.\n"
+                                                                                                                                                    "\"stake\"                 BLSCT output locked into a staked commitment (still ours, earmarked for staking)."},
                                                                                                                  {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT + ". This is negative for the 'send' category, and is positive\n"
                                                                                                                                                                                             "for all other categories"},
                                                                                                                  {RPCResult::Type::STR, "label", /*optional=*/true, "A comment for the address/transaction, if any"},
@@ -807,7 +835,7 @@ RPCHelpMan listpendingtransactions()
             int nFrom = 0;
             if (!request.params[2].isNull())
                 nFrom = request.params[2].getInt<int>();
-            isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+            isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
 
             if (ParseIncludeWatchonly(request.params[3], *pwallet)) {
                 filter |= ISMINE_WATCH_ONLY;
@@ -877,7 +905,8 @@ RPCHelpMan listsinceblock()
                                     "\"receive\"               Non-coinbase transactions received.\n"
                                     "\"generate\"              Coinbase transactions received with more than 100 confirmations.\n"
                                     "\"immature\"              Coinbase transactions received with 100 or fewer confirmations.\n"
-                                    "\"orphan\"                Orphaned coinbase transactions received."},
+                                    "\"orphan\"                Orphaned coinbase transactions received.\n"
+                                                                                                                                                    "\"stake\"                 BLSCT output locked into a staked commitment (still ours, earmarked for staking)."},
                                 {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT + ". This is negative for the 'send' category, and is positive\n"
                                     "for all other categories"},
                                 {RPCResult::Type::NUM, "vout", /*optional=*/true, "the vout value (omitted for BLSCT output-storage entries)"},
@@ -919,7 +948,7 @@ RPCHelpMan listsinceblock()
     std::optional<int> height;    // Height of the specified block or the common ancestor, if the block provided was in a deactivated chain.
     std::optional<int> altheight; // Height of the specified block, even if it's in a deactivated chain.
     int target_confirms = 1;
-    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
 
     uint256 blockId;
     if (!request.params[0].isNull() && !request.params[0].get_str().empty()) {
@@ -1054,7 +1083,8 @@ RPCHelpMan gettransaction()
                                     "\"receive\"               Non-coinbase transactions received.\n"
                                     "\"generate\"              Coinbase transactions received with more than 100 confirmations.\n"
                                     "\"immature\"              Coinbase transactions received with 100 or fewer confirmations.\n"
-                                    "\"orphan\"                Orphaned coinbase transactions received."},
+                                    "\"orphan\"                Orphaned coinbase transactions received.\n"
+                                                                                                                                                    "\"stake\"                 BLSCT output locked into a staked commitment (still ours, earmarked for staking)."},
                                 {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT},
                                 {RPCResult::Type::STR, "label", /*optional=*/true, "A comment for the address/transaction, if any"},
                                 {RPCResult::Type::NUM, "vout", /*optional=*/true, "the vout value (omitted for BLSCT output-storage entries, which are keyed by outid)"},
@@ -1096,7 +1126,7 @@ RPCHelpMan gettransaction()
 
     uint256 hash(ParseHashV(request.params[0], "txid"));
 
-    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
 
     if (ParseIncludeWatchonly(request.params[1], *pwallet)) {
         filter |= ISMINE_WATCH_ONLY;

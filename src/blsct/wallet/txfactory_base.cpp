@@ -161,7 +161,14 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         for (auto& change : mapChange) {
             if (change.second == 0) continue;
 
-            auto changeOutput = CreateOutput(changeDestination, change.second, "Change", change.first, MclScalar::Rand(), NORMAL, minStake);
+            // For unstake txs the "change" output IS the unlocked portion
+            // returning to the user — label it accordingly so clients (and
+            // listtransactions memo field) can distinguish it from ordinary
+            // change.
+            const std::string change_memo = (type == STAKED_COMMITMENT_UNSTAKE)
+                ? std::string{"Stake Unlock"}
+                : std::string{"Change"};
+            auto changeOutput = CreateOutput(changeDestination, change.second, change_memo, change.first, MclScalar::Rand(), NORMAL, minStake);
 
             gammaAcc = gammaAcc - changeOutput.gamma;
 
