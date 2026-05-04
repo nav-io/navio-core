@@ -120,7 +120,7 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         # depending on whether the coinbase is flagged BLSCT). Either way they
         # must appear in listtransactions with category=immature. ---
         self.log.info("Scenario: staking rewards appear in listtransactions")
-        blocks = self.generate_blsct_blocks(self.nodes[0], aa, 5)
+        self.generate_blsct_blocks(self.nodes[0], aa, 5)
         self.sync_all()
         ltx = wa.listtransactions("*", 100, 0, True)
         immature = [e for e in ltx if e.get("category") == "immature"]
@@ -134,7 +134,6 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
 
         # --- Scenario: incoming external (peer sends us) ---
         self.log.info("Scenario: incoming external receive")
-        bal_b_before = wb.getbalance()
         wa.sendtoblsctaddress(ab, Decimal("25.00000000"))
         self.sync_mempools()
         self.generate_blsct_blocks(self.nodes[0], aa, 1)
