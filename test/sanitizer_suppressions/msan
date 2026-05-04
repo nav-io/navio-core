@@ -1,3 +1,5 @@
 [memory]
 # false-positive in mcl
 fun:*mcl*
+# OpenMP runtime propagates x87 FPU control word which MSan does not track
+fun:*propagateFPControl*
