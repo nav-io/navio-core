@@ -109,7 +109,7 @@ $(LIBBLS):
 		ARFLAGS='$(ARFLAGS)' \
 		AR='$(AR)' \
 		RANLIB='$(RANLIB)' \
-		$(MAKE) $(AM_MAKEFLAGS) BLS_ETH=1 -C bls lib/libbls384_256.a
+		$(MAKE) $(AM_MAKEFLAGS) BLS_ETH=1 MCL_USE_GMP=$(MCL_USE_GMP) -C bls lib/libbls384_256.a
 	$(RANLIB) $(LIBBLS)
 
 $(LIBMCL):
@@ -124,7 +124,7 @@ $(LIBMCL):
 		ARFLAGS='$(ARFLAGS)' \
 		AR='$(AR)' \
 		RANLIB='$(RANLIB)' \
-		$(MAKE) $(AM_MAKEFLAGS) -C bls/mcl lib/libmcl.a
+		$(MAKE) $(AM_MAKEFLAGS) -C bls/mcl MCL_USE_GMP=$(MCL_USE_GMP) lib/libmcl.a
 	$(RANLIB) $(LIBMCL)
 
 # Make is not made aware of per-object dependencies to avoid limiting building parallelization

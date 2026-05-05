@@ -350,6 +350,7 @@ BASE_SCRIPTS = [
     'p2p_dandelionpp_probing.py',
     'blsct_staking.py',
     'blsct_listtransactions_stake.py',
+    'blsct_unconfirmed_spending.py',
     'blsct_token.py',
     'blsct_nft.py',
     'blsct_htlc.py',

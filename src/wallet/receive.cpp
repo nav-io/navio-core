@@ -400,8 +400,14 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
     AssertLockHeld(wallet.cs_wallet);
     int nDepth = wallet.GetTxDepthInMainChain(wtx);
     if (nDepth >= 1) return true;
-    if (nDepth == 0 && wtx.tx->IsBLSCT()) return false;
     if (nDepth < 0) return false;
+    // BLSCT inputs were previously dropped here unconditionally, which blocked
+    // unconfirmed-change spending for output-storage wallets too. Fall through
+    // to the classic from-me + mempool checks instead — a BLSCT tx we built
+    // ourselves whose inputs are also trusted is as safe as a standard
+    // unconfirmed change tx, and the caller still gates on `only_safe` via
+    // IsOutputTrusted / CoinControl::m_include_unsafe_inputs.
+    //
     // using wtx's cached debit
     if (!wallet.m_spend_zero_conf_change || !CachedTxIsFromMe(wallet, wtx, ISMINE_ALL)) return false;
 
@@ -436,9 +442,22 @@ bool IsOutputTrusted(const CWallet& wallet, const CWalletOutput& wout)
     AssertLockHeld(wallet.cs_wallet);
     int nDepth = wallet.GetOutputDepthInMainChain(wout);
     if (nDepth >= 1) return true;
-    if (nDepth <= 0) return false;
+    if (nDepth < 0) return false;
 
-    return true;
+    // nDepth == 0: in mempool, possibly conflicted. Trust only if the
+    // originating tx is one we built and we allow spending unconfirmed
+    // change (classic Bitcoin rule). External mempool receives stay
+    // untrusted — we cannot vouch for the sender's chain. This mirrors
+    // CachedTxIsTrusted for mapWallet-backed accounting so BLSCT wallets
+    // under output storage can spend their own unconfirmed change.
+    if (!wout.InMempool()) return false;
+    if (!wallet.m_spend_zero_conf_change) return false;
+
+    const COutPoint outpoint{wout.GetOutputHash()};
+    const CWalletTx* parent = wallet.GetWalletTxFromOutpoint(outpoint);
+    if (parent == nullptr) return false;
+
+    return CachedTxIsTrusted(wallet, *parent);
 }
 
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx)
