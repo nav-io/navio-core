@@ -922,7 +922,12 @@ RPCHelpMan stakeunlock()
             LOCK(pwallet->cs_wallet);
 
             UniValue address_amounts(UniValue::VOBJ);
-            auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "");
+            // BLSCT_STAKE resolves to the single staking-account destination,
+            // which is the same address stakelock writes to. Pass the same
+            // "Locked Stake" label so a partial unstake (the leftover stake
+            // portion returns to this destination) does not clobber the
+            // existing address-book label with an empty string.
+            auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Locked Stake");
             if (!op_dest) {
                 throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
             }

@@ -153,6 +153,48 @@ static UniValue ListReceived(const CWallet& wallet, const UniValue& params, cons
         }
     }
 
+    // Under WALLET_FLAG_BLSCT_OUTPUT_STORAGE receive-side BLSCT outputs live
+    // in mapOutputs without a matching CWalletTx (range proofs stripped,
+    // recovery data attached per-output). The mapWallet walk above misses
+    // them, so self-generated receive addresses show amount=0 despite the
+    // coins being credited. Merge mapOutputs into the same tally here,
+    // skipping outputs already represented by a CWalletTx (local sends whose
+    // change returns to us are covered by the wtx path).
+    if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        for (const auto& [outpoint, wout] : wallet.mapOutputs) {
+            if (wallet.GetWalletTxFromOutpoint(outpoint) != nullptr) continue;
+
+            const int nDepth = wallet.GetOutputDepthInMainChain(wout);
+            if (nDepth < nMinDepth) continue;
+
+            if (wout.IsCoinBase() && (nDepth < 1 || (wallet.IsOutputImmatureCoinBase(wout) && !include_immature_coinbase))) {
+                continue;
+            }
+
+            const CTxOut& txout = *wout.out;
+            CTxDestination address;
+            if (txout.HasBLSCTKeys()) {
+                if (!blsct_km) continue;
+                address = blsct_km->GetDestination(txout);
+                if (address.index() == 0) continue;
+            } else if (!ExtractDestination(txout.scriptPubKey, address)) {
+                continue;
+            }
+
+            if (filtered_address && !(filtered_address == address)) continue;
+
+            const isminefilter mine = txout.HasBLSCTKeys() ? wallet.IsMine(txout) : wallet.IsMine(address);
+            if (!(mine & filter)) continue;
+
+            tallyitem& item = mapTally[address];
+            item.nAmount += wout.blsctRecoveryData.amount;
+            item.nConf = std::min(item.nConf, nDepth);
+            item.txids.push_back(outpoint.hash);
+            if (mine & ISMINE_WATCH_ONLY) item.fIsWatchonly = true;
+            if (mine & ISMINE_STAKED_COMMITMENT_BLSCT) item.fIsStakedCommitment = true;
+        }
+    }
+
     // Reply
     UniValue ret(UniValue::VARR);
     std::map<std::string, tallyitem> label_tally;
@@ -748,10 +790,17 @@ RPCHelpMan listtransactions()
             {
                 LOCK(pwallet->cs_wallet);
 
+                // nMinDepth=0 so mempool receives appear alongside mempool
+                // sends. The send side of ListTransactions is ungated, so
+                // keeping this at 1 emitted the "-amount" row immediately but
+                // hid the matching "receive"/"stake" rows until confirmation,
+                // giving the appearance that a just-broadcast stake-lock tx
+                // had lost coins. Matches Bitcoin Core's classic behaviour
+                // where listtransactions shows mempool txs in full.
                 for (const auto& [order_pos, pwtx] : pwallet->wtxOrdered) {
-                    ListTransactionsOrdered(*pwallet, *pwtx, 1, 100000000, true, entries, filter, filter_label);
+                    ListTransactionsOrdered(*pwallet, *pwtx, 0, 100000000, true, entries, filter, filter_label);
                 }
-                ListMapOutputTransactions(*pwallet, 1, 100000000, entries, filter, filter_label);
+                ListMapOutputTransactions(*pwallet, 0, 100000000, entries, filter, filter_label);
             }
 
             // Sort newest first, stably so intra-tx send-then-receive order is preserved.
