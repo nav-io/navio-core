@@ -113,7 +113,7 @@ std::string HelpExampleRpcNamed(const std::string& methodname, const RPCArgList&
 
 CPubKey HexToPubKey(const std::string& hex_in);
 CPubKey AddrToPubKey(const FillableSigningProvider& keystore, const std::string& addr_in);
-CTxDestination AddAndGetMultisigDestination(const int required, const std::vector<CPubKey>& pubkeys, OutputType type, FillableSigningProvider& keystore, CScript& script_out);
+CTxDestination AddAndGetMultisigDestination(int required, const std::vector<CPubKey>& pubkeys, OutputType type, FillableSigningProvider& keystore, CScript& script_out);
 
 UniValue DescribeAddress(const CTxDestination& dest);
 
@@ -130,7 +130,7 @@ UniValue JSONRPCTransactionError(TransactionError terr, const std::string& err_s
 std::pair<int64_t, int64_t> ParseDescriptorRange(const UniValue& value);
 
 /** Evaluate a descriptor given as a string, or as a {"desc":...,"range":...} object, with default range of 1000. */
-std::vector<CScript> EvalDescriptorStringOrObject(const UniValue& scanobject, FlatSigningProvider& provider, const bool expand_priv = false);
+std::vector<CScript> EvalDescriptorStringOrObject(const UniValue& scanobject, FlatSigningProvider& provider, bool expand_priv = false);
 
 /**
  * Serializing JSON objects depends on the outer type. Only arrays and
@@ -158,6 +158,7 @@ struct RPCArgOptions {
                                          //!< methods set the also_positional flag and read values from both positions.
 };
 
+// NOLINTNEXTLINE(misc-no-recursion)
 struct RPCArg {
     enum class Type {
         OBJ,
@@ -219,6 +220,7 @@ struct RPCArg {
         CHECK_NONFATAL(type != Type::ARR && type != Type::OBJ && type != Type::OBJ_NAMED_PARAMS && type != Type::OBJ_USER_KEYS);
     }
 
+    // NOLINTNEXTLINE(misc-no-recursion)
     RPCArg(
         std::string name,
         Type type,
@@ -267,6 +269,7 @@ struct RPCArg {
     std::string ToDescriptionString(bool is_named_arg) const;
 };
 
+// NOLINTNEXTLINE(misc-no-recursion)
 struct RPCResult {
     enum class Type {
         OBJ,
@@ -292,6 +295,7 @@ struct RPCResult {
     const std::string m_description;
     const std::string m_cond;
 
+    // NOLINTNEXTLINE(misc-no-recursion)
     RPCResult(
         std::string cond,
         Type type,
@@ -319,6 +323,7 @@ struct RPCResult {
         std::vector<RPCResult> inner = {})
         : RPCResult{std::move(cond), type, std::move(m_key_name), /*optional=*/false, std::move(description), std::move(inner)} {}
 
+    // NOLINTNEXTLINE(misc-no-recursion)
     RPCResult(
         Type type,
         std::string m_key_name,
@@ -346,7 +351,7 @@ struct RPCResult {
         : RPCResult{type, std::move(m_key_name), /*optional=*/false, std::move(description), std::move(inner), skip_type_check} {}
 
     /** Append the sections of the result. */
-    void ToSections(Sections& sections, OuterType outer_type = OuterType::NONE, const int current_indent = 0) const;
+    void ToSections(Sections& sections, OuterType outer_type = OuterType::NONE, int current_indent = 0) const;
     /** Return the type string of the result when it is in an object (dict). */
     std::string ToStringObj() const;
     /** Return the description string, including the result type. */

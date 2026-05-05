@@ -74,11 +74,11 @@ public:
     MclScalar Cube() const;
     MclScalar Pow(const MclScalar& n) const;
 
-    static MclScalar Rand(const bool exclude_zero = true);
+    static MclScalar Rand(bool exclude_zero = true);
 
     uint64_t GetUint64() const;
 
-    std::vector<uint8_t> GetVch(const bool trim_preceeding_zeros = false) const;
+    std::vector<uint8_t> GetVch(bool trim_preceeding_zeros = false) const;
     void SetVch(const std::vector<uint8_t>& v);
 
     /**

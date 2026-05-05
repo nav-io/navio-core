@@ -199,7 +199,7 @@ private:
     const fs::path m_estimation_filepath;
 public:
     /** Create new BlockPolicyEstimator and initialize stats tracking classes with default values */
-    CBlockPolicyEstimator(const fs::path& estimation_filepath, const bool read_stale_estimates);
+    CBlockPolicyEstimator(const fs::path& estimation_filepath, bool read_stale_estimates);
     virtual ~CBlockPolicyEstimator();
 
     /** Process all the transactions that have been included in a block */
@@ -283,7 +283,7 @@ private:
     {
         unsigned int blockHeight{0};
         unsigned int bucketIndex{0};
-        TxStatsInfo() {}
+        TxStatsInfo() = default;
     };
 
     // map of txids to information about that transaction

@@ -79,7 +79,7 @@ MiniMiner::MiniMiner(const CTxMemPool& mempool, const std::vector<COutPoint>& ou
 
     // Add every entry to m_entries_by_txid and m_entries, except the ones that will be replaced.
     for (const auto& txiter : cluster) {
-        if (!m_to_be_replaced.count(txiter->GetTx().GetHash())) {
+        if (!m_to_be_replaced.contains(txiter->GetTx().GetHash())) {
             auto [mapiter, success] = m_entries_by_txid.emplace(txiter->GetTx().GetHash(),
                                                                 MiniMinerMempoolEntry{/*tx_in=*/txiter->GetSharedTx(),
                                                                                       /*vsize_self=*/txiter->GetTxSize(),
@@ -112,13 +112,13 @@ MiniMiner::MiniMiner(const CTxMemPool& mempool, const std::vector<COutPoint>& ou
         // Cache descendants for future use. Unlike the real mempool, a descendant MiniMinerMempoolEntry
         // will not exist without its ancestor MiniMinerMempoolEntry, so these sets won't be invalidated.
         std::vector<MockEntryMap::iterator> cached_descendants;
-        const bool remove{m_to_be_replaced.count(txid) > 0};
+        const bool remove{m_to_be_replaced.contains(txid)};
         CTxMemPool::setEntries descendants;
         mempool.CalculateDescendants(txiter, descendants);
-        Assume(descendants.count(txiter) > 0);
+        Assume(descendants.contains(txiter));
         for (const auto& desc_txiter : descendants) {
             const auto txid_desc = desc_txiter->GetTx().GetHash();
-            const bool remove_desc{m_to_be_replaced.count(txid_desc) > 0};
+            const bool remove_desc{m_to_be_replaced.contains(txid_desc)};
             auto desc_it{m_entries_by_txid.find(txid_desc)};
             Assume((desc_it == m_entries_by_txid.end()) == remove_desc);
             if (remove) Assume(remove_desc);
@@ -147,7 +147,7 @@ MiniMiner::MiniMiner(const std::vector<MiniMinerMempoolEntry>& manual_entries,
     for (const auto& entry : manual_entries) {
         const auto& txid = entry.GetTx().GetHash();
         // We need to know the descendant set of every transaction.
-        if (!Assume(descendant_caches.count(txid) > 0)) {
+        if (!Assume(descendant_caches.contains(txid))) {
             m_ready_to_calculate = false;
             return;
         }
@@ -222,7 +222,7 @@ void MiniMiner::DeleteAncestorPackage(const std::set<MockEntryMap::iterator, Ite
     Assume(ancestors.size() >= 1);
     // "Mine" all transactions in this ancestor set.
     for (auto& anc : ancestors) {
-        Assume(m_in_block.count(anc->first) == 0);
+        Assume(!m_in_block.contains(anc->first));
         m_in_block.insert(anc->first);
         m_total_fees += anc->second.GetModifiedFee();
         m_total_vsize += anc->second.GetTxSize();
@@ -249,7 +249,7 @@ void MiniMiner::DeleteAncestorPackage(const std::set<MockEntryMap::iterator, Ite
         descendants.erase(
             std::remove_if(descendants.begin(), descendants.end(),
                            [&txids_to_delete](const MockEntryMap::iterator& it) {
-                               return txids_to_delete.count(it->first) > 0;
+                               return txids_to_delete.contains(it->first);
                            }),
             descendants.end());
     }
@@ -316,7 +316,7 @@ void MiniMiner::BuildMockTemplate(std::optional<CFeeRate> target_feerate)
                     for (const auto& input : entry_it->second.GetTx().vin) {
                         auto output_iter = m_mapOutputToTx.find(input.prevout.hash);
                         if (output_iter != m_mapOutputToTx.end()) {
-                            if (m_entries_by_txid.count(output_iter->second) && ancestor_txids.count(output_iter->second) == 0) {
+                            if (m_entries_by_txid.contains(output_iter->second) && !ancestor_txids.contains(output_iter->second)) {
                                 to_process.insert(output_iter->second);
                             }
                         }
@@ -399,17 +399,6 @@ std::map<Txid, uint32_t> MiniMiner::Linearize()
 std::map<COutPoint, CAmount> MiniMiner::CalculateBumpFees(const CFeeRate& target_feerate)
 {
     if (!m_ready_to_calculate) return {};
-
-    // Store original cached ancestor values before BuildMockTemplate modifies them
-    std::map<uint256, std::pair<CAmount, int64_t>> original_ancestor_values;
-    for (const auto& [txid, entry] : m_entries_by_txid) {
-        original_ancestor_values[txid] = {entry.GetModFeesWithAncestors(), entry.GetSizeWithAncestors()};
-    }
-
-    // Also store the original m_entries_by_txid and m_mapOutputToTx for bump fee calculation
-    auto original_entries_by_txid = m_entries_by_txid;
-    auto original_mapOutputToTx = m_mapOutputToTx;
-
     // Build a block template until the target feerate is hit.
     BuildMockTemplate(target_feerate);
 
@@ -471,51 +460,16 @@ std::map<COutPoint, CAmount> MiniMiner::CalculateBumpFees(const CFeeRate& target
     //         target_feerate × ancestor_set_size - ancestor_set_fees
     // By picking the maximum from the two, we ensure that a transaction meets
     // both criteria.
+    //
+    // Note: After BuildMockTemplate, the cached ancestor values
+    // (GetSizeWithAncestors, GetModFeesWithAncestors) for remaining entries
+    // have been updated by DeleteAncestorPackage to reflect only unmined
+    // ancestors. We use these cached values directly.
     for (const auto& [txid, outpoints] : m_requested_outpoints_by_txid) {
         auto it = m_entries_by_txid.find(txid);
         Assume(it != m_entries_by_txid.end());
         if (it != m_entries_by_txid.end()) {
-            // Gather the full ancestor set for this transaction using the original data structures
-            std::set<uint256> ancestor_txids;
-            {
-                std::set<uint256> to_process;
-                to_process.insert(txid);
-                while (!to_process.empty()) {
-                    auto iter = to_process.begin();
-                    ancestor_txids.insert(*iter);
-                    auto entry_it = original_entries_by_txid.find(*iter);
-                    if (entry_it != original_entries_by_txid.end()) {
-                        for (const auto& input : entry_it->second.GetTx().vin) {
-                            // Use original m_mapOutputToTx to convert output hash to transaction hash
-                            auto output_iter = original_mapOutputToTx.find(input.prevout.hash);
-                            if (output_iter != original_mapOutputToTx.end()) {
-                                if (ancestor_txids.count(output_iter->second) == 0) {
-                                    to_process.insert(output_iter->second);
-                                }
-                            }
-                        }
-                    }
-                    to_process.erase(iter);
-                }
-            }
-
-            // Calculate package fee and size from the gathered ancestor set
-            // Only include ancestors that actually need bumping (those with feerates below target)
-            CAmount package_fee = 0;
-            int64_t package_size = 0;
-            for (const auto& ancestor_txid : ancestor_txids) {
-                auto entry_it = original_entries_by_txid.find(ancestor_txid);
-                if (entry_it != original_entries_by_txid.end()) {
-                    const auto& entry = entry_it->second;
-                    // Only include ancestors that need bumping (feerate below target)
-                    if (entry.GetModifiedFee() < target_feerate.GetFee(entry.GetTxSize())) {
-                        package_fee += entry.GetModifiedFee();
-                        package_size += entry.GetTxSize();
-                    }
-                }
-            }
-
-            CAmount bump_fee_with_ancestors = target_feerate.GetFee(package_size) - package_fee;
+            CAmount bump_fee_with_ancestors = target_feerate.GetFee(it->second.GetSizeWithAncestors()) - it->second.GetModFeesWithAncestors();
             CAmount bump_fee_individual = target_feerate.GetFee(it->second.GetTxSize()) - it->second.GetModifiedFee();
             const CAmount bump_fee{std::max(bump_fee_with_ancestors, bump_fee_individual)};
             Assume(bump_fee >= 0);
@@ -530,80 +484,45 @@ std::map<COutPoint, CAmount> MiniMiner::CalculateBumpFees(const CFeeRate& target
 std::optional<CAmount> MiniMiner::CalculateTotalBumpFees(const CFeeRate& target_feerate)
 {
     if (!m_ready_to_calculate) return std::nullopt;
-
-    // Store original cached ancestor values before BuildMockTemplate modifies them
-    std::map<uint256, std::pair<CAmount, int64_t>> original_ancestor_values;
-    for (const auto& [txid, entry] : m_entries_by_txid) {
-        original_ancestor_values[txid] = {entry.GetModFeesWithAncestors(), entry.GetSizeWithAncestors()};
-    }
-
-    // Also store the original m_entries_by_txid and m_mapOutputToTx for bump fee calculation
-    auto original_entries_by_txid = m_entries_by_txid;
-    auto original_mapOutputToTx = m_mapOutputToTx;
-
     // Build a block template until the target feerate is hit.
     BuildMockTemplate(target_feerate);
 
-    // Gather all ancestors that need to be bumped
-    std::set<uint256> all_ancestors;
-    std::set<uint256> to_process;
+    // All remaining ancestors that are not part of m_in_block must be bumped, but no other relatives.
+    // After BuildMockTemplate, mined entries have been removed from m_entries_by_txid and
+    // m_mapOutputToTx, so ancestor traversal naturally stops at mined transactions.
+    std::set<MockEntryMap::iterator, IteratorComparator> ancestors;
+    std::set<MockEntryMap::iterator, IteratorComparator> to_process;
     for (const auto& [txid, outpoints] : m_requested_outpoints_by_txid) {
         // Skip any ancestors that already have a miner score higher than the target feerate
         // (already "made it" into the block)
-        if (m_in_block.count(txid)) continue;
-        to_process.insert(txid);
-        all_ancestors.insert(txid);
+        if (m_in_block.contains(txid)) continue;
+        auto iter = m_entries_by_txid.find(txid);
+        if (iter == m_entries_by_txid.end()) continue;
+        to_process.insert(iter);
+        ancestors.insert(iter);
     }
 
-    std::set<uint256> has_been_processed;
     while (!to_process.empty()) {
         auto iter = to_process.begin();
-        const uint256& txid = *iter;
-        auto entry_it = original_entries_by_txid.find(txid);
-        if (entry_it != original_entries_by_txid.end()) {
-            const CTransaction& tx = entry_it->second.GetTx();
-            for (const auto& input : tx.vin) {
-                // Use original m_mapOutputToTx to convert output hash to transaction hash
-                auto output_iter = original_mapOutputToTx.find(input.prevout.hash);
-                if (output_iter != original_mapOutputToTx.end()) {
-                    if (!has_been_processed.count(output_iter->second)) {
-                        to_process.insert(output_iter->second);
-                    }
-                    all_ancestors.insert(output_iter->second);
+        const CTransaction& tx = (*iter)->second.GetTx();
+        for (const auto& input : tx.vin) {
+            // Use m_mapOutputToTx to convert output hash to transaction hash
+            auto output_iter = m_mapOutputToTx.find(input.prevout.hash);
+            if (output_iter != m_mapOutputToTx.end()) {
+                auto parent_it = m_entries_by_txid.find(output_iter->second);
+                if (parent_it != m_entries_by_txid.end() && !ancestors.contains(parent_it)) {
+                    to_process.insert(parent_it);
+                    ancestors.insert(parent_it);
                 }
             }
         }
-        has_been_processed.insert(txid);
         to_process.erase(iter);
     }
 
-    // Calculate the total bump fee for the entire ancestor package
-    // Only include ancestors that actually need bumping (those with feerates below target)
-    const auto ancestor_package_size = std::accumulate(all_ancestors.cbegin(), all_ancestors.cend(), int64_t{0},
-                                                       [&original_entries_by_txid, &target_feerate](int64_t sum, const uint256& txid) {
-                                                           auto it = original_entries_by_txid.find(txid);
-                                                           if (it != original_entries_by_txid.end()) {
-                                                               const auto& entry = it->second;
-                                                               // Only include ancestors that need bumping (feerate below target)
-                                                               if (entry.GetModifiedFee() < target_feerate.GetFee(entry.GetTxSize())) {
-                                                                   return sum + entry.GetTxSize();
-                                                               }
-                                                           }
-                                                           return sum;
-                                                       });
-    const auto ancestor_package_fee = std::accumulate(all_ancestors.cbegin(), all_ancestors.cend(), CAmount{0},
-                                                      [&original_entries_by_txid, &target_feerate](CAmount sum, const uint256& txid) {
-                                                          auto it = original_entries_by_txid.find(txid);
-                                                          if (it != original_entries_by_txid.end()) {
-                                                              const auto& entry = it->second;
-                                                              // Only include ancestors that need bumping (feerate below target)
-                                                              if (entry.GetModifiedFee() < target_feerate.GetFee(entry.GetTxSize())) {
-                                                                  return sum + entry.GetModifiedFee();
-                                                              }
-                                                          }
-                                                          return sum;
-                                                      });
-
-    return target_feerate.GetFee(ancestor_package_size) - ancestor_package_fee;
+    const auto ancestor_package_size = std::accumulate(ancestors.cbegin(), ancestors.cend(), int64_t{0},
+        [](int64_t sum, const auto it) {return sum + it->second.GetTxSize();});
+    const auto ancestor_package_fee = std::accumulate(ancestors.cbegin(), ancestors.cend(), CAmount{0},
+        [](CAmount sum, const auto it) {return sum + it->second.GetModifiedFee();});
+    return std::max(CAmount{0}, target_feerate.GetFee(ancestor_package_size) - ancestor_package_fee);
 }
 } // namespace node

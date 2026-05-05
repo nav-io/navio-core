@@ -53,7 +53,7 @@ static RPCHelpMan getwalletinfo()
             {{
                 {RPCResult::Type::STR, "walletname", "the wallet name"},
                 {RPCResult::Type::NUM, "walletversion", "the wallet version"},
-                {RPCResult::Type::STR, "format", "the database format (bdb or sqlite)"},
+                {RPCResult::Type::STR, "format", "the database format (sqlite)"},
                 {RPCResult::Type::STR_AMOUNT, "balance", "DEPRECATED. Identical to getbalances().mine.trusted"},
                 {RPCResult::Type::STR_AMOUNT, "staked_commitment_balance", "DEPRECATED. Identical to getbalances().mine.staked_commitment_balance"},
                 {RPCResult::Type::STR_AMOUNT, "unconfirmed_balance", "DEPRECATED. Identical to getbalances().mine.untrusted_pending"},
@@ -310,7 +310,7 @@ static RPCHelpMan setwalletflag()
     std::string flag_str = request.params[0].get_str();
     bool value = request.params[1].isNull() || request.params[1].get_bool();
 
-    if (!WALLET_FLAG_MAP.count(flag_str)) {
+    if (!WALLET_FLAG_MAP.contains(flag_str)) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Unknown wallet flag: %s", flag_str));
     }
 
@@ -335,7 +335,7 @@ static RPCHelpMan setwalletflag()
         pwallet->UnsetWalletFlag(flag);
     }
 
-    if (flag && value && WALLET_FLAG_CAVEATS.count(flag)) {
+    if (flag && value && WALLET_FLAG_CAVEATS.contains(flag)) {
         res.pushKV("warnings", WALLET_FLAG_CAVEATS.at(flag));
     }
 
@@ -355,9 +355,7 @@ static RPCHelpMan createwallet()
             {"blank", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a blank wallet. A blank wallet has no keys or HD seed. One can be set using setblsctseed."},
             {"passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Encrypt the wallet with this passphrase."},
             {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{false}, "Keep track of coin reuse, and treat dirty and clean coins differently with privacy considerations in mind."},
-            {"descriptors", RPCArg::Type::BOOL, RPCArg::Default{true}, "Create a native descriptor wallet. The wallet will use descriptors internally to handle address creation."
-                                                                       " Setting to \"false\" will create a legacy wallet; This is only possible with the -deprecatedrpc=create_bdb setting because, the legacy wallet type is being deprecated and"
-                                                                       " support for creating and opening legacy wallets will be removed in the future."},
+            {"descriptors", RPCArg::Type::BOOL, RPCArg::Default{true}, "Create a native descriptor wallet. The wallet will use descriptors internally to handle address creation."},
             {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Save wallet name to persistent settings and load on startup. True to add wallet to startup list, false to remove, null to leave unchanged."},
             {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true."},
             {"blsct", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a wallet with BLSCT keys."},
@@ -416,11 +414,6 @@ static RPCHelpMan createwallet()
 #endif
             }
 
-#ifndef USE_BDB
-            if (!(flags & WALLET_FLAG_DESCRIPTORS)) {
-                throw JSONRPCError(RPC_WALLET_ERROR, "Compiled without bdb support (required for legacy wallets)");
-            }
-#endif
 
             // TODO(@aguycalled, @gogo): Should blsct=true become the default? This would eliminate
             // the need for the flag and reduce misconfiguration risk for new users.
@@ -797,10 +790,10 @@ RPCHelpMan simulaterawtransaction()
         // broadcast, we will lose everything in these
         for (const auto& txin : mtx.vin) {
             const auto& outpoint = txin.prevout;
-            if (spent.count(outpoint)) {
+            if (spent.contains(outpoint)) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction(s) are spending the same output more than once");
             }
-            if (new_utxos.count(outpoint)) {
+            if (new_utxos.contains(outpoint)) {
                 changes -= new_utxos.at(outpoint);
                 new_utxos.erase(outpoint);
             } else {

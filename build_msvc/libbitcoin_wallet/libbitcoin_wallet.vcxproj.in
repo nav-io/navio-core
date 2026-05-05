@@ -8,8 +8,6 @@
     <ConfigurationType>StaticLibrary</ConfigurationType>
   </PropertyGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\src\wallet\bdb.cpp" />
-    <ClCompile Include="..\..\src\wallet\salvage.cpp" />
     <ClCompile Include="..\..\src\wallet\sqlite.cpp" />
 @SOURCE_FILES@
     <ProjectReference Include="..\..\src\bls\src\proj\bls384_256.vcxproj">

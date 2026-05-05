@@ -69,7 +69,7 @@ bool IsHex(std::string_view str)
 
 bool IsHexNumber(std::string_view str)
 {
-    if (str.substr(0, 2) == "0x") str.remove_prefix(2);
+    if (str.starts_with("0x")) str.remove_prefix(2);
     for (char c : str) {
         if (HexDigit(c) < 0) return false;
     }

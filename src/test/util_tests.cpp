@@ -28,8 +28,8 @@
 #include <limits>
 #include <map>
 #include <optional>
-#include <stdint.h>
-#include <string.h>
+#include <cstdint>
+#include <cstring>
 #include <thread>
 #include <univalue.h>
 #include <utility>
@@ -38,7 +38,7 @@
 #include <sys/types.h>
 
 #ifndef WIN32
-#include <signal.h>
+#include <csignal>
 #include <sys/wait.h>
 #endif
 
@@ -150,7 +150,7 @@ BOOST_AUTO_TEST_CASE(parse_hex)
     result = TryParseHex<uint8_t>("12 34 56 78").value();
     BOOST_CHECK(result.size() == 4 && result[0] == 0x12 && result[1] == 0x34 && result[2] == 0x56 && result[3] == 0x78);
 
-    // Leading space must be supported (used in BerkeleyEnvironment::Salvage)
+    // Leading space must be supported
     result = ParseHex(" 89 34 56 78");
     BOOST_CHECK(result.size() == 4 && result[0] == 0x89 && result[1] == 0x34 && result[2] == 0x56 && result[3] == 0x78);
     result = TryParseHex<uint8_t>(" 89 34 56 78").value();
@@ -1494,6 +1494,7 @@ struct Tracker
     Tracker(Tracker&& t) noexcept : origin(t.origin), copies(t.copies) {}
     Tracker& operator=(const Tracker& t) noexcept
     {
+        if (this == &t) return *this;
         origin = t.origin;
         copies = t.copies + 1;
         return *this;

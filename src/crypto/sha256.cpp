@@ -5,8 +5,8 @@
 #include <crypto/sha256.h>
 #include <crypto/common.h>
 
-#include <assert.h>
-#include <string.h>
+#include <cassert>
+#include <cstring>
 
 #include <compat/cpuid.h>
 

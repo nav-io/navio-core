@@ -32,7 +32,7 @@ public:
     //! during snapshot load to estimate progress of UTXO set reconstruction.
     uint64_t m_coins_count = 0;
 
-    SnapshotMetadata() { }
+    SnapshotMetadata() = default;
     SnapshotMetadata(
         const uint256& base_blockhash,
         uint64_t coins_count) :

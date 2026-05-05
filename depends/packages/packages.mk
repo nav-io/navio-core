@@ -6,7 +6,6 @@ boost_packages = boost
 
 libevent_packages = libevent
 
-bdb_packages=bdb
 sqlite_packages=sqlite
 
 zmq_packages=zeromq

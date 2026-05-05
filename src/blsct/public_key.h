@@ -24,7 +24,7 @@ public:
 
     int8_t fValid = -1;
 
-    PublicKey() {}
+    PublicKey() = default;
     PublicKey(const Point& pk)
     {
         try {
@@ -56,7 +56,7 @@ public:
 
     Point GetG1Point() const;
     std::vector<unsigned char> GetVch() const;
-    bool SetVch(const std::vector<unsigned char> vec);
+    bool SetVch(std::vector<unsigned char> vec);
 
     bool operator<(const PublicKey& b) const
     {

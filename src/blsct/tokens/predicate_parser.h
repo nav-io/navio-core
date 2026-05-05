@@ -23,7 +23,7 @@ enum PredicateOperation : uint8_t {
 struct CreateTokenPredicate {
     blsct::TokenInfo tokenInfo;
 
-    CreateTokenPredicate(){};
+    CreateTokenPredicate()= default;
     CreateTokenPredicate(const blsct::TokenInfo& tokenInfo) : tokenInfo(tokenInfo){};
 
     SERIALIZE_METHODS(CreateTokenPredicate, obj)
@@ -43,7 +43,7 @@ struct CreateTokenPredicate {
 struct DataPredicate {
     std::vector<unsigned char> data;
 
-    DataPredicate(){};
+    DataPredicate()= default;
     DataPredicate(const std::vector<unsigned char>& dataIn) : data(dataIn){};
     DataPredicate(const uint256& dataIn) : data(std::vector<unsigned char>(dataIn.begin(), dataIn.end())){};
     DataPredicate(const uint64_t& dataIn) : data(std::vector<unsigned char>(sizeof(dataIn)))
@@ -71,7 +71,7 @@ struct MintTokenPredicate {
     blsct::PublicKey publicKey;
     CAmount amount;
 
-    MintTokenPredicate(){};
+    MintTokenPredicate()= default;
     MintTokenPredicate(const blsct::PublicKey& publicKey, const CAmount& amount) : publicKey(publicKey), amount(amount){};
 
     SERIALIZE_METHODS(MintTokenPredicate, obj)
@@ -94,7 +94,7 @@ struct MintNftPredicate {
     uint64_t nftId;
     std::map<std::string, std::string> nftMetadata;
 
-    MintNftPredicate(){};
+    MintNftPredicate()= default;
     MintNftPredicate(const blsct::PublicKey& publicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata) : publicKey(publicKey), nftId(nftId), nftMetadata(nftMetadata){};
 
     SERIALIZE_METHODS(MintNftPredicate, obj)
@@ -116,7 +116,7 @@ struct MintNftPredicate {
 struct PayFeePredicate {
     blsct::PublicKey publicKey;
 
-    PayFeePredicate(){};
+    PayFeePredicate()= default;
     PayFeePredicate(const blsct::PublicKey& publicKey) : publicKey(publicKey){};
 
     SERIALIZE_METHODS(PayFeePredicate, obj)
@@ -136,7 +136,7 @@ struct PayFeePredicate {
 class ParsedPredicate
 {
 public:
-    ParsedPredicate() {}
+    ParsedPredicate() = default;
     ParsedPredicate(CreateTokenPredicate& predicate) : predicate_(predicate) {}
     ParsedPredicate(MintTokenPredicate& predicate) : predicate_(predicate) {}
     ParsedPredicate(MintNftPredicate& predicate) : predicate_(predicate) {}

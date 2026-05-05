@@ -14,7 +14,7 @@
 #else
 #include <sys/mman.h> // for mmap
 #include <sys/resource.h> // for getrlimit
-#include <limits.h> // for PAGESIZE
+#include <climits> // for PAGESIZE
 #include <unistd.h> // for sysconf
 #endif
 
@@ -51,8 +51,7 @@ Arena::Arena(void *base_in, size_t size_in, size_t alignment_in):
 }
 
 Arena::~Arena()
-{
-}
+= default;
 
 void* Arena::alloc(size_t size)
 {

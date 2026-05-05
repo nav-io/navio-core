@@ -23,7 +23,7 @@ static void microTask(CScheduler& s, std::mutex& mutex, int& counter, int delta,
     }
     auto noTime = std::chrono::steady_clock::time_point::min();
     if (rescheduleTime != noTime) {
-        CScheduler::Function f = std::bind(&microTask, std::ref(s), std::ref(mutex), std::ref(counter), -delta + 1, noTime);
+        CScheduler::Function f = [&s, &mutex, &counter, delta, noTime] { microTask(s, mutex, counter, -delta + 1, noTime); };
         s.schedule(f, rescheduleTime);
     }
 }
@@ -59,9 +59,10 @@ BOOST_AUTO_TEST_CASE(manythreads)
         auto t = now + std::chrono::microseconds(randomMsec(rng));
         auto tReschedule = now + std::chrono::microseconds(500 + randomMsec(rng));
         int whichCounter = zeroToNine(rng);
-        CScheduler::Function f = std::bind(&microTask, std::ref(microTasks),
-                                             std::ref(counterMutex[whichCounter]), std::ref(counter[whichCounter]),
-                                             randomDelta(rng), tReschedule);
+        const int delta{randomDelta(rng)};
+        CScheduler::Function f = [&microTasks, &mutex = counterMutex[whichCounter], &count = counter[whichCounter], delta, tReschedule] {
+            microTask(microTasks, mutex, count, delta, tReschedule);
+        };
         microTasks.schedule(f, t);
     }
     nTasks = microTasks.getQueueInfo(first, last);
@@ -73,21 +74,22 @@ BOOST_AUTO_TEST_CASE(manythreads)
     std::vector<std::thread> microThreads;
     microThreads.reserve(10);
     for (int i = 0; i < 5; i++)
-        microThreads.emplace_back(std::bind(&CScheduler::serviceQueue, &microTasks));
+        microThreads.emplace_back([&microTasks] { microTasks.serviceQueue(); });
 
     UninterruptibleSleep(std::chrono::microseconds{600});
     now = std::chrono::steady_clock::now();
 
     // More threads and more tasks:
     for (int i = 0; i < 5; i++)
-        microThreads.emplace_back(std::bind(&CScheduler::serviceQueue, &microTasks));
+        microThreads.emplace_back([&microTasks] { microTasks.serviceQueue(); });
     for (int i = 0; i < 100; i++) {
         auto t = now + std::chrono::microseconds(randomMsec(rng));
         auto tReschedule = now + std::chrono::microseconds(500 + randomMsec(rng));
         int whichCounter = zeroToNine(rng);
-        CScheduler::Function f = std::bind(&microTask, std::ref(microTasks),
-                                             std::ref(counterMutex[whichCounter]), std::ref(counter[whichCounter]),
-                                             randomDelta(rng), tReschedule);
+        const int delta{randomDelta(rng)};
+        CScheduler::Function f = [&microTasks, &mutex = counterMutex[whichCounter], &count = counter[whichCounter], delta, tReschedule] {
+            microTask(microTasks, mutex, count, delta, tReschedule);
+        };
         microTasks.schedule(f, t);
     }
 

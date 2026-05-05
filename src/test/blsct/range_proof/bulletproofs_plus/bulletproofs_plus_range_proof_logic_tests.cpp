@@ -313,7 +313,8 @@ static void RunTestCase(
     // recover value, gamma and message
     std::vector<bulletproofs_plus::AmountRecoveryRequest<T>> reqs;
 
-    for (size_t i = 0; i < proofs.size(); ++i) {
+    reqs.reserve(proofs.size());
+for (size_t i = 0; i < proofs.size(); ++i) {
         reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<T>::of(proofs[i], nonce));
     }
     auto recovery_result = rp.RecoverAmounts(reqs);

@@ -44,37 +44,40 @@ class DandelionLoopTest(BitcoinTestFramework):
         self.connect_nodes(2, 0)
 
     def run_test(self):
-        # There is a low probability that these tests will fail even if the
-        # implementation is correct. Thus, these tests are repeated upon
-        # failure. A true bug will result in repeated failures.
         self.log.info("Starting dandelion tests")
 
         self.log.info("Setting up wallet")
         wallet = MiniWallet(self.nodes[0])
 
-        self.log.info("Create the tx on node 1")
+        self.log.info("Sync nodes")
+        self.sync_all()
+
+        self.log.info("Adding decoy peers to reduce stem selection probability")
+        decoys = [self.nodes[0].add_p2p_connection(P2PInterface()) for _ in range(9)]
+
+        self.log.info("Create the tx on node 0")
         tx = wallet.send_self_transfer(from_node=self.nodes[0])
         txid = int(tx["wtxid"], 16)
         self.log.info("Sent tx {}".format(txid))
 
-        # Wait for the nodes to sync mempools
-        self.log.info("Sync nodes")
-        self.sync_all()
+        self.log.info("Wait for node 0 to accept tx")
+        self.wait_until(lambda: tx["txid"] in self.nodes[0].getrawmempool())
 
-        self.log.info("Adding P2PInterface")
-        peer = self.nodes[0].add_p2p_connection(P2PInterface())
+        for peer in decoys:
+            self.log.info("Send mempool request to check embargo state")
+            peer.send_and_ping(msg_mempool())
 
-        # Create and send msg_mempool to node to bypass mempool request
-        # security
-        peer.send_and_ping(msg_mempool())
+            msg = msg_getdata()
+            msg.inv.append(CInv(t=MSG_WTX, h=txid))
+            peer.send_and_ping(msg)
+            self.log.info("Sending msg_getdata: CInv({},{})".format(MSG_WTX, txid))
 
-        # Create and send msg_getdata for the tx
-        msg = msg_getdata()
-        msg.inv.append(CInv(t=MSG_WTX, h=txid))
-        peer.send_and_ping(msg)
-        self.log.info("Sending msg_getdata: CInv({},{})".format(MSG_WTX, txid))
+            if peer.last_message.get("notfound"):
+                self.log.info("Peer is non-stem, embargo working correctly")
+                return
 
-        assert peer.last_message.get("notfound")
+        self.log.error("Test failed - all peers were stem peers")
+        assert False
 
 
 if __name__ == "__main__":

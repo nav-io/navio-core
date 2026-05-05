@@ -53,7 +53,7 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
 
     Point sigma = gen.G * m + gen.H * f;
 
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
 
     setMemProof = SetProver::Prove(setup, staked_commitments, sigma, m, f, eta_fiat_shamir, eta_phi);
 

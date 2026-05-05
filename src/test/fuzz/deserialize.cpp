@@ -32,7 +32,7 @@
 #include <exception>
 #include <optional>
 #include <stdexcept>
-#include <stdint.h>
+#include <cstdint>
 #include <unistd.h>
 
 using node::SnapshotMetadata;

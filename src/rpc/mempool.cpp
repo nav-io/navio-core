@@ -303,7 +303,7 @@ static void entryToJSON(const CTxMemPool& pool, UniValue& info, const CTxMemPool
     std::set<std::string> setDepends;
     for (const CTxIn& txin : tx.vin)
     {
-        if (pool.mapOutputToTx.count(txin.prevout.hash))
+        if (pool.mapOutputToTx.contains(txin.prevout.hash))
             setDepends.insert(pool.mapOutputToTx.at(txin.prevout.hash).ToString());
     }
 

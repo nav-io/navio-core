@@ -39,8 +39,7 @@ public:
     };
 
     ProofOfStake()
-    {
-    }
+    = default;
 
     ProofOfStake(SetProof setMemProof, RangeProof rangeProof) : setMemProof(setMemProof), rangeProof(rangeProof)
     {

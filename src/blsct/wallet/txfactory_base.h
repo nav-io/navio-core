@@ -91,7 +91,7 @@ protected:
         nAmounts;
 
 public:
-    TxFactoryBase(){};
+    TxFactoryBase()= default;
 
     // Normal transfer
     void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false, const Scalar& blindingKey = Scalar::Rand(), const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE);

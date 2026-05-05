@@ -53,6 +53,6 @@ constexpr int MAX_DEPTH{2};
  * Whether the buffer, if it represents a valid descriptor, contains a derivation path deeper than
  * a given maximum depth. Note this may also be hit for deriv paths in origins.
  */
-bool HasDeepDerivPath(const FuzzBufferType& buff, const int max_depth = MAX_DEPTH);
+bool HasDeepDerivPath(const FuzzBufferType& buff, int max_depth = MAX_DEPTH);
 
 #endif // BITCOIN_TEST_FUZZ_UTIL_DESCRIPTOR_H

@@ -531,7 +531,6 @@ BITCOIN_CORE_H = \
   validation.h \
   validationinterface.h \
   versionbits.h \
-  wallet/bdb.h \
   wallet/coincontrol.h \
   wallet/coinselection.h \
   wallet/context.h \
@@ -545,7 +544,6 @@ BITCOIN_CORE_H = \
   wallet/receive.h \
   wallet/rpc/util.h \
   wallet/rpc/wallet.h \
-  wallet/salvage.h \
   wallet/scriptpubkeyman.h \
   wallet/spend.h \
   wallet/sqlite.h \
@@ -712,7 +710,6 @@ libbitcoin_node_a_SOURCES = \
 
 if ENABLE_WALLET
 libbitcoin_node_a_SOURCES += wallet/init.cpp
-libbitcoin_node_a_CPPFLAGS += $(BDB_CPPFLAGS)
 endif
 if !ENABLE_WALLET
 libbitcoin_node_a_SOURCES += dummywallet.cpp
@@ -733,7 +730,7 @@ endif
 #
 
 # wallet #
-libbitcoin_wallet_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(BOOST_CPPFLAGS) $(BDB_CPPFLAGS) $(SQLITE_CFLAGS)
+libbitcoin_wallet_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(BOOST_CPPFLAGS) $(SQLITE_CFLAGS)
 libbitcoin_wallet_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libbitcoin_wallet_a_SOURCES = \
   blsct/arith/elements.cpp \
@@ -818,9 +815,6 @@ libbitcoin_wallet_a_SOURCES = \
 
 if USE_SQLITE
 libbitcoin_wallet_a_SOURCES += wallet/sqlite.cpp
-endif
-if USE_BDB
-libbitcoin_wallet_a_SOURCES += wallet/bdb.cpp wallet/salvage.cpp
 endif
 #
 
@@ -1163,7 +1157,7 @@ navio_bin_ldadd = \
   $(LIBMCL_LIBS) \
   $(LIBSECP256K1)
 
-navio_bin_ldadd += $(BDB_LIBS) $(MINIUPNPC_LIBS) $(NATPMP_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE_LIBS)
+navio_bin_ldadd += $(MINIUPNPC_LIBS) $(NATPMP_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE_LIBS)
 
 naviod_SOURCES = $(navio_daemon_sources) init/naviod.cpp
 naviod_CPPFLAGS = $(navio_bin_cppflags)
@@ -1258,7 +1252,6 @@ navio_wallet_LDADD = \
   $(LIBBLS) \
   $(LIBMCL_LIBS) \
   $(LIBSECP256K1) \
-  $(BDB_LIBS) \
   $(SQLITE_LIBS)
 
 if TARGET_WINDOWS

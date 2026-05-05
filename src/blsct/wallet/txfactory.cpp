@@ -26,7 +26,7 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
     if (!recoveredInfo.is_completed)
         return false;
 
-    if (vInputs.count(coin.out.tokenId) == 0)
+    if (!vInputs.contains(coin.out.tokenId))
         vInputs[coin.out.tokenId] = std::vector<UnsignedInput>();
 
     try {
@@ -40,7 +40,7 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
         return false;
     }
 
-    if (nAmounts.count(coin.out.tokenId) == 0)
+    if (!nAmounts.contains(coin.out.tokenId))
         nAmounts[coin.out.tokenId] = {0, 0, 0};
 
     nAmounts[coin.out.tokenId].nFromInputs += recoveredInfo.amounts[0].amount;
@@ -78,7 +78,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
         recoveredInfo = tx->GetBLSCTRecoveryData(outpoint);
     }
 
-    if (vInputs.count(out.tokenId) == 0)
+    if (!vInputs.contains(out.tokenId))
         vInputs[out.tokenId] = std::vector<UnsignedInput>();
 
     try {
@@ -93,7 +93,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
         return false;
     }
 
-    if (nAmounts.count(out.tokenId) == 0)
+    if (!nAmounts.contains(out.tokenId))
         nAmounts[out.tokenId] = {0, 0, 0};
 
     nAmounts[out.tokenId].nFromInputs += recoveredInfo.amount;

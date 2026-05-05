@@ -39,7 +39,8 @@ FUZZ_TARGET(txorphan, .init = initialize_orphanage)
     TxOrphanage orphanage;
     std::vector<COutPoint> outpoints;
     // initial outpoints used to construct transactions later
-    for (uint8_t i = 0; i < 4; i++) {
+    outpoints.reserve(4);
+for (uint8_t i = 0; i < 4; i++) {
         outpoints.emplace_back(Txid::FromUint256(uint256{i}));
     }
     // if true, allow duplicate input when constructing tx

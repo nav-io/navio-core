@@ -37,9 +37,8 @@ struct WalletContext;
  *   batch update as well as methods to act on the database. It should be agnostic to the database implementation.
  *
  * The following classes are implementation specific:
- * - BerkeleyEnvironment is an environment in which the database exists.
- * - BerkeleyDatabase represents a wallet database.
- * - BerkeleyBatch is a low-level database batch update.
+ * - SQLiteDatabase represents a wallet database.
+ * - SQLiteBatch is a low-level database batch update.
  */
 
 static const bool DEFAULT_FLUSHWALLET = true;
@@ -254,12 +253,12 @@ public:
     bool WriteOutput(const COutPoint& outpoint, const CWalletOutput& out);
     bool EraseOutput(const COutPoint& outpoint);
 
-    bool WriteKeyMetadata(const CKeyMetadata& meta, const CPubKey& pubkey, const bool overwrite);
+    bool WriteKeyMetadata(const CKeyMetadata& meta, const CPubKey& pubkey, bool overwrite);
     bool WriteKey(const CPubKey& vchPubKey, const CPrivKey& vchPrivKey, const CKeyMetadata& keyMeta);
     bool WriteCryptedKey(const CPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, const CKeyMetadata& keyMeta);
     bool WriteMasterKey(unsigned int nID, const CMasterKey& kMasterKey);
 
-    bool WriteKeyMetadata(const CKeyMetadata& meta, const blsct::PublicKey& pubkey, const bool overwrite);
+    bool WriteKeyMetadata(const CKeyMetadata& meta, const blsct::PublicKey& pubkey, bool overwrite);
     bool WriteKey(const blsct::PublicKey& vchPubKey, const blsct::PrivateKey& vchPrivKey, const CKeyMetadata& keyMeta);
     bool WriteOutKey(const uint256& outId, const blsct::PrivateKey& privKey);
     bool WriteCryptedKey(const blsct::PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, const CKeyMetadata& keyMeta);
@@ -327,7 +326,7 @@ public:
     //! Delete records of the given types
     bool EraseRecords(const std::unordered_set<std::string>& types);
 
-    bool WriteWalletFlags(const uint64_t flags);
+    bool WriteWalletFlags(uint64_t flags);
     //! Begin a new transaction
     bool TxnBegin();
     //! Commit current transaction

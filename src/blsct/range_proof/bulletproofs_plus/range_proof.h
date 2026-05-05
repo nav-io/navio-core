@@ -81,7 +81,7 @@ struct RangeProofWithSeed : public RangeProof<T> {
 
     RangeProofWithSeed(const RangeProof<T>& proof) : RangeProof<T>(proof), seed(TokenId()), min_value(0){};
 
-    RangeProofWithSeed(){};
+    RangeProofWithSeed()= default;
 
     bool operator==(const RangeProofWithSeed<T>& other) const;
     bool operator!=(const RangeProofWithSeed<T>& other) const;
