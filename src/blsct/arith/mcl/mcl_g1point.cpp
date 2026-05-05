@@ -175,6 +175,7 @@ bool MclG1Point::IsZero() const
     return mclBnG1_isZero(&m_point);
 }
 
+// NOLINTNEXTLINE(misc-no-recursion)
 std::vector<uint8_t> MclG1Point::GetVch() const
 {
     std::vector<uint8_t> b(SERIALIZATION_SIZE);

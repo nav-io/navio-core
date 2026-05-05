@@ -193,8 +193,8 @@ using TokensMap = std::map<uint256, TokenCacheEntry>;
 class CTokensViewCursor
 {
 public:
-    CTokensViewCursor() {}
-    virtual ~CTokensViewCursor() {}
+    CTokensViewCursor() = default;
+    virtual ~CTokensViewCursor() = default;
 
     virtual bool GetKey(uint256& key) const = 0;
     virtual bool GetValue(blsct::TokenEntry& coin) const = 0;
@@ -210,7 +210,7 @@ class CCoinsViewCursor
 {
 public:
     CCoinsViewCursor(const uint256& hashBlockIn) : hashBlock(hashBlockIn) {}
-    virtual ~CCoinsViewCursor() {}
+    virtual ~CCoinsViewCursor() = default;
 
     virtual bool GetKey(COutPoint& key) const = 0;
     virtual bool GetValue(Coin& coin) const = 0;
@@ -263,7 +263,7 @@ public:
     virtual std::unique_ptr<CTokensViewCursor> CursorTokens() const;
 
     //! As we use CCoinsViews polymorphically, have a virtual destructor
-    virtual ~CCoinsView() {}
+    virtual ~CCoinsView() = default;
 
     //! Estimate database size (0 if not implemented)
     virtual size_t EstimateSize() const { return 0; }

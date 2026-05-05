@@ -33,8 +33,6 @@ Coin CreateCoin(const blsct::DoublePublicKey& recvAddress)
 
 BOOST_FIXTURE_TEST_CASE(StakedCommitment, TestBLSCTChain100Setup)
 {
-    auto setup = SetMemProofSetup<Arith>::Get();
-
     range_proof::GeneratorsFactory<Mcl> gf;
     range_proof::Generators<Arith> gen = gf.GetInstance(TokenId());
 

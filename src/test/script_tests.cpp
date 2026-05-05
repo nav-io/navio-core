@@ -1270,7 +1270,7 @@ BOOST_FIXTURE_TEST_CASE(script_build, BasicTestingSetup)
 #ifdef UPDATE_JSON_TESTS
         strGen += str + ",\n";
 #else
-        if (tests_set.count(str) == 0) {
+        if (!tests_set.contains(str)) {
             BOOST_CHECK_MESSAGE(false, "Missing auto script_valid test: " + test.GetComment() + " " + str);
         }
 #endif

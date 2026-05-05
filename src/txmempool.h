@@ -711,7 +711,7 @@ public:
     };
 
     /** Removes a transaction from the unbroadcast set */
-    void RemoveUnbroadcastTx(const uint256& txid, const bool unchecked = false);
+    void RemoveUnbroadcastTx(const uint256& txid, bool unchecked = false);
 
     /** Returns transactions in unbroadcast set */
     std::set<uint256> GetUnbroadcastTxs() const
@@ -724,7 +724,7 @@ public:
     bool IsUnbroadcastTx(const uint256& txid) const EXCLUSIVE_LOCKS_REQUIRED(cs)
     {
         AssertLockHeld(cs);
-        return m_unbroadcast_txids.count(txid) != 0;
+        return m_unbroadcast_txids.contains(txid);
     }
 
     /** Guards this internal counter for external reporting */

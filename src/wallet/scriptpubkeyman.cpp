@@ -25,7 +25,7 @@ const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
 
 util::Result<CTxDestination> LegacyScriptPubKeyMan::GetNewDestination(const OutputType type)
 {
-    if (LEGACY_OUTPUT_TYPES.count(type) == 0) {
+    if (!LEGACY_OUTPUT_TYPES.contains(type)) {
         return util::Error{_("Error: Legacy wallets only support the \"legacy\", \"p2sh-segwit\", and \"bech32\" address types")};
     }
     assert(type != OutputType::BECH32M);
@@ -94,6 +94,7 @@ bool HaveKeys(const std::vector<valtype>& pubkeys, const LegacyScriptPubKeyMan& 
 //! @param recurse_scripthash  whether to recurse into nested p2sh and p2wsh
 //!                            scripts or simply treat any script that has been
 //!                            stored in the keystore as spendable
+// NOLINTNEXTLINE(misc-no-recursion)
 IsMineResult IsMineInner(const LegacyScriptPubKeyMan& keystore, const CScript& scriptPubKey, IsMineSigVersion sigversion, bool recurse_scripthash = true)
 {
     IsMineResult ret = IsMineResult::NO;
@@ -287,7 +288,7 @@ bool LegacyScriptPubKeyMan::Encrypt(const CKeyingMaterial& master_key, WalletBat
 
 util::Result<CTxDestination> LegacyScriptPubKeyMan::GetReservedDestination(const OutputType type, bool internal, int64_t& index, CKeyPool& keypool)
 {
-    if (LEGACY_OUTPUT_TYPES.count(type) == 0) {
+    if (!LEGACY_OUTPUT_TYPES.contains(type)) {
         return util::Error{_("Error: Legacy wallets only support the \"legacy\", \"p2sh-segwit\", and \"bech32\" address types")};
     }
     assert(type != OutputType::BECH32M);
@@ -855,7 +856,7 @@ bool LegacyScriptPubKeyMan::AddCryptedKey(const CPubKey& vchPubKey,
 bool LegacyScriptPubKeyMan::HaveWatchOnly(const CScript& dest) const
 {
     LOCK(cs_KeyStore);
-    return setWatchOnly.count(dest) > 0;
+    return setWatchOnly.contains(dest);
 }
 
 bool LegacyScriptPubKeyMan::HaveWatchOnly() const
@@ -975,7 +976,7 @@ bool LegacyScriptPubKeyMan::HaveKey(const CKeyID& address) const
     if (!m_storage.HasEncryptionKeys()) {
         return FillableSigningProvider::HaveKey(address);
     }
-    return mapCryptedKeys.count(address) > 0;
+    return mapCryptedKeys.contains(address);
 }
 
 bool LegacyScriptPubKeyMan::GetKey(const CKeyID& address, CKey& keyOut) const
@@ -1162,7 +1163,7 @@ void LegacyScriptPubKeyMan::LoadKeyPool(int64_t nIndex, const CKeyPool& keypool)
     // creation time. Note that this may be overwritten by actually
     // stored metadata for that key later, which is fine.
     CKeyID keyid = keypool.vchPubKey.GetID();
-    if (mapKeyMetadata.count(keyid) == 0)
+    if (!mapKeyMetadata.contains(keyid))
         mapKeyMetadata[keyid] = CKeyMetadata(keypool.nTime);
 }
 
@@ -1444,7 +1445,7 @@ bool LegacyScriptPubKeyMan::ReserveKeyFromKeyPool(int64_t& nIndex, CKeyPool& key
             throw std::runtime_error(std::string(__func__) + ": keypool entry invalid");
         }
 
-        assert(m_index_to_reserved_key.count(nIndex) == 0);
+        assert(!m_index_to_reserved_key.contains(nIndex));
         m_index_to_reserved_key[nIndex] = keypool.vchPubKey.GetID();
         m_pool_key_to_index.erase(keypool.vchPubKey.GetID());
         WalletLogPrintf("keypool reserve %d\n", nIndex);
@@ -1475,8 +1476,8 @@ void LegacyScriptPubKeyMan::LearnAllRelatedScripts(const CPubKey& key)
 std::vector<CKeyPool> LegacyScriptPubKeyMan::MarkReserveKeysAsUsed(int64_t keypool_id)
 {
     AssertLockHeld(cs_KeyStore);
-    bool internal = setInternalKeyPool.count(keypool_id);
-    if (!internal) assert(setExternalKeyPool.count(keypool_id) || set_pre_split_keypool.count(keypool_id));
+    bool internal = setInternalKeyPool.contains(keypool_id);
+    if (!internal) assert(setExternalKeyPool.contains(keypool_id) || set_pre_split_keypool.contains(keypool_id));
     std::set<int64_t>* setKeyPool = internal ? &setInternalKeyPool : (set_pre_split_keypool.empty() ? &setExternalKeyPool : &set_pre_split_keypool);
     auto it = setKeyPool->begin();
 
@@ -1762,7 +1763,7 @@ std::optional<MigrationData> LegacyScriptPubKeyMan::MigrateToDescriptor()
                 keyid_it++;
                 continue;
             }
-            if (m_hd_chain.seed_id == meta.hd_seed_id || m_inactive_hd_chains.count(meta.hd_seed_id) > 0) {
+            if (m_hd_chain.seed_id == meta.hd_seed_id || m_inactive_hd_chains.contains(meta.hd_seed_id)) {
                 keyid_it = keyids.erase(keyid_it);
                 continue;
             }
@@ -2032,7 +2033,7 @@ util::Result<CTxDestination> DescriptorScriptPubKeyMan::GetNewDestination(const 
 isminetype DescriptorScriptPubKeyMan::IsMine(const CScript& script) const
 {
     LOCK(cs_desc_man);
-    if (m_map_script_pub_keys.count(script) > 0) {
+    if (m_map_script_pub_keys.contains(script)) {
         return ISMINE_SPENDABLE;
     }
     return ISMINE_NO;
@@ -2175,7 +2176,7 @@ bool DescriptorScriptPubKeyMan::TopUpWithDB(WalletBatch& batch, unsigned int siz
         }
         for (const auto& pk_pair : out_keys.pubkeys) {
             const CPubKey& pubkey = pk_pair.second;
-            if (m_map_pubkeys.count(pubkey) != 0) {
+            if (m_map_pubkeys.contains(pubkey)) {
                 // We don't need to give an error here.
                 // It doesn't matter which of many valid indexes the pubkey has, we just need an index where we can derive it and it's private key
                 continue;
@@ -2242,8 +2243,8 @@ bool DescriptorScriptPubKeyMan::AddDescriptorKeyWithDB(WalletBatch& batch, const
     assert(!m_storage.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS));
 
     // Check if provided key already exists
-    if (m_map_keys.find(pubkey.GetID()) != m_map_keys.end() ||
-        m_map_crypted_keys.find(pubkey.GetID()) != m_map_crypted_keys.end()) {
+    if (m_map_keys.contains(pubkey.GetID()) ||
+        m_map_crypted_keys.contains(pubkey.GetID())) {
         return true;
     }
 
@@ -2624,14 +2625,14 @@ void DescriptorScriptPubKeyMan::SetCache(const DescriptorCache& cache)
         }
         // Add all of the scriptPubKeys to the scriptPubKey set
         for (const CScript& script : scripts_temp) {
-            if (m_map_script_pub_keys.count(script) != 0) {
+            if (m_map_script_pub_keys.contains(script)) {
                 throw std::runtime_error(strprintf("Error: Already loaded script at index %d as being at index %d", i, m_map_script_pub_keys[script]));
             }
             m_map_script_pub_keys[script] = i;
         }
         for (const auto& pk_pair : out_keys.pubkeys) {
             const CPubKey& pubkey = pk_pair.second;
-            if (m_map_pubkeys.count(pubkey) != 0) {
+            if (m_map_pubkeys.contains(pubkey)) {
                 // We don't need to give an error here.
                 // It doesn't matter which of many valid indexes the pubkey has, we just need an index where we can derive it and it's private key
                 continue;

@@ -31,7 +31,7 @@ static void ParseBLSCTRecipients(const UniValue& address_amounts, const UniValue
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
         }
 
-        if (destinations.count(dest)) {
+        if (destinations.contains(dest)) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, duplicated address: ") + address);
         }
         destinations.insert(dest);
@@ -115,7 +115,7 @@ UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request,
     tokens[tokenId];
     pwallet->chain().findTokens(tokens);
 
-    if (tokens.count(tokenId))
+    if (tokens.contains(tokenId))
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Token already exists");
 
     auto token = tokens[tokenId];
@@ -231,7 +231,7 @@ RPCHelpMan minttoken()
             tokens[token_id];
             pwallet->chain().findTokens(tokens);
 
-            if (!tokens.count(token_id))
+            if (!tokens.contains(token_id))
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
 
             auto token = tokens[token_id];
@@ -320,7 +320,7 @@ static RPCHelpMan mintnft()
             tokens[token_id];
             pwallet->chain().findTokens(tokens);
 
-            if (!tokens.count(token_id))
+            if (!tokens.contains(token_id))
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
 
             auto token = tokens[token_id];
@@ -331,7 +331,7 @@ static RPCHelpMan mintnft()
             if (publicKey != token.info.publicKey)
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "You don't own the token");
 
-            if (token.mapMintedNft.count(nft_id))
+            if (token.mapMintedNft.contains(nft_id))
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "The NFT is already minted");
 
             blsct::CreateTransactionData
@@ -424,7 +424,7 @@ RPCHelpMan gettokenbalance()
             tokens[token_id];
             pwallet->chain().findTokens(tokens);
 
-            if (!tokens.count(token_id))
+            if (!tokens.contains(token_id))
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
 
             auto token = tokens[token_id];
@@ -486,7 +486,7 @@ RPCHelpMan getnftbalance()
             tokens[token_id];
             pwallet->chain().findTokens(tokens);
 
-            if (!tokens.count(token_id))
+            if (!tokens.contains(token_id))
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
 
             auto token = tokens[token_id];
@@ -636,7 +636,7 @@ RPCHelpMan sendtokentoblsctaddress()
             tokens[token_id];
             pwallet->chain().findTokens(tokens);
 
-            if (!tokens.count(token_id))
+            if (!tokens.contains(token_id))
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
 
             auto token = tokens[token_id];
@@ -714,7 +714,7 @@ RPCHelpMan sendnfttoblsctaddress()
             tokens[token_id];
             pwallet->chain().findTokens(tokens);
 
-            if (!tokens.count(token_id))
+            if (!tokens.contains(token_id))
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
 
             auto token = tokens[token_id];
@@ -977,7 +977,7 @@ RPCHelpMan listblsctunspent()
                 CTxDestination address = blsct_km->GetDestination(out.txout);
                 bool fValidAddress = address.index() > 0;
 
-                if (destinations.size() && (!fValidAddress || !destinations.count(address)))
+                if (destinations.size() && (!fValidAddress || !destinations.contains(address)))
                     continue;
 
                 UniValue entry(UniValue::VOBJ);
@@ -1747,7 +1747,7 @@ RPCHelpMan fundblsctrawtransaction()
             for (const auto& [type, outputs] : available_outputs.coins) {
                 for (const auto& output : outputs) {
                     // Skip if this output is already used as an input
-                    if (existing_inputs.count(output.outpoint) > 0) {
+                    if (existing_inputs.contains(output.outpoint)) {
                         continue;
                     }
 

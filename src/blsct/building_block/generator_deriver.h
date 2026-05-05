@@ -22,7 +22,7 @@ public:
 
     Point Derive(
         const Point& p,
-        const size_t index,
+        size_t index,
         const std::optional<Seed>& opt_token_id = TokenId()
     ) const;
 

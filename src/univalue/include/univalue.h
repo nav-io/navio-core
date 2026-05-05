@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+// NOLINTBEGIN(misc-no-recursion)
 class UniValue {
 public:
     enum VType { VNULL, VOBJ, VARR, VSTR, VNUM, VBOOL, };
@@ -201,5 +202,6 @@ static inline bool json_isspace(int ch)
 }
 
 extern const UniValue NullUniValue;
+// NOLINTEND(misc-no-recursion)
 
 #endif // BITCOIN_UNIVALUE_INCLUDE_UNIVALUE_H

@@ -43,6 +43,7 @@ public:
 
     base_uint& operator=(const base_uint& b)
     {
+        if (this == &b) return *this;
         for (int i = 0; i < WIDTH; i++)
             pn[i] = b.pn[i];
         return *this;
@@ -240,7 +241,7 @@ public:
 /** 256-bit unsigned big integer. */
 class arith_uint256 : public base_uint<256> {
 public:
-    arith_uint256() {}
+    arith_uint256() = default;
     arith_uint256(const base_uint<256>& b) : base_uint<256>(b) {}
     arith_uint256(uint64_t b) : base_uint<256>(b) {}
 

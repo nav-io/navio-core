@@ -102,7 +102,7 @@
 
 #ifndef WIN32
 #include <cerrno>
-#include <signal.h>
+#include <csignal>
 #include <sys/stat.h>
 #endif
 
@@ -429,7 +429,7 @@ static void registerSignalHandler(int signal, void(*handler)(int))
 static boost::signals2::connection rpc_notify_block_change_connection;
 static void OnRPCStarted()
 {
-    rpc_notify_block_change_connection = uiInterface.NotifyBlockTip_connect(std::bind(RPCNotifyBlockChange, std::placeholders::_2));
+    rpc_notify_block_change_connection = uiInterface.NotifyBlockTip_connect([](SynchronizationState, const CBlockIndex* index) { RPCNotifyBlockChange(index); });
 }
 
 static void OnRPCStopped()
@@ -1682,7 +1682,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     // No locking, as this happens before any background thread is started.
     boost::signals2::connection block_notify_genesis_wait_connection;
     if (WITH_LOCK(chainman.GetMutex(), return chainman.ActiveChain().Tip() == nullptr)) {
-        block_notify_genesis_wait_connection = uiInterface.NotifyBlockTip_connect(std::bind(BlockNotifyGenesisWait, std::placeholders::_2));
+        block_notify_genesis_wait_connection = uiInterface.NotifyBlockTip_connect([](SynchronizationState, const CBlockIndex* index) { BlockNotifyGenesisWait(index); });
     } else {
         fHaveGenesis = true;
     }

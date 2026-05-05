@@ -8,7 +8,7 @@
 #include <script/miniscript.h>
 #include <serialize.h>
 
-#include <assert.h>
+#include <cassert>
 
 namespace miniscript {
 namespace internal {

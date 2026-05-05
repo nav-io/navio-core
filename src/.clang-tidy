@@ -31,7 +31,7 @@ readability-container-contains,
 readability-redundant-declaration,
 readability-redundant-string-init,
 '
-HeaderFilterRegex: '.'
+HeaderFilterRegex: '^(?!.*(minisketch|leveldb|secp256k1|crc32c|bls)/).*$'
 WarningsAsErrors: '*'
 CheckOptions:
  - key: modernize-deprecated-headers.CheckHeaderFile

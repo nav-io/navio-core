@@ -10,7 +10,7 @@
 #include <test/util/random.h>
 #include <uint256.h>
 
-#include <stdint.h>
+#include <cstdint>
 #include <utility>
 
 COutPoint AddTestCoin(CCoinsViewCache& coins_view)

@@ -24,7 +24,7 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
 
     Point sigma = gen.G * m + gen.H * f;
 
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
 
     // std::cout << __func__ << ": Creating Setmem proof with"
     //           << "\n\t staked_commitments=" << staked_commitments.GetString()
@@ -60,7 +60,7 @@ ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commi
 
 ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernel_hash, const unsigned int& next_target) const
 {
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
 
     auto setmemres = SetProver::Verify(setup, staked_commitments, eta_fiat_shamir, eta_phi, setMemProof);
 

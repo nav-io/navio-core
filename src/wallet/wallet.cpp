@@ -1027,7 +1027,7 @@ bool CWallet::MarkReplaced(const uint256& originalHash, const uint256& newHash)
     CWalletTx& wtx = (*mi).second;
 
     // Ensure for now that we're not overwriting data
-    assert(wtx.mapValue.count("replaced_by_txid") == 0);
+    assert(!wtx.mapValue.contains("replaced_by_txid"));
 
     wtx.mapValue["replaced_by_txid"] = newHash.ToString();
 
@@ -1101,7 +1101,7 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
 {
     LOCK(cs_wallet);
 
-    if (out == nullptr && mapOutputs.count(outpoint) <= 0)
+    if (out == nullptr && !mapOutputs.contains(outpoint))
         return nullptr;
 
     WalletBatch batch(GetDatabase(), fFlushOnClose);
@@ -1409,7 +1409,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 CTxOut txout = tx.vout[i];
                 COutPoint outpoint(txout.GetHash());
 
-                bool fExisted = mapOutputs.count(outpoint) != 0;
+                bool fExisted = mapOutputs.contains(outpoint);
                 if (fExisted && !fUpdate) return false;
                 if (fExisted || IsMine(txout)) {
                     CWalletOutput* wout = AddToWallet(
@@ -1459,7 +1459,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             throw std::runtime_error("DB error zapping conflicted transaction, load failed");
         }
 
-        bool fExisted = mapWallet.count(tx.GetHash()) != 0;
+        bool fExisted = mapWallet.contains(tx.GetHash());
         if (fExisted && !fUpdate) return false;
 
         if (fExisted || IsMine(tx) || IsFromMe(tx)) {
@@ -1540,13 +1540,13 @@ bool CWallet::AbandonTransaction(const uint256& hashTx)
     }
 
     // If this transaction replaced another transaction, clear the replaced_by_txid from the original
-    if (origtx.mapValue.count("replaces_txid")) {
+    if (origtx.mapValue.contains("replaces_txid")) {
         uint256 replaced_hash;
         replaced_hash.SetHex(origtx.mapValue.at("replaces_txid"));
         auto replaced_it = mapWallet.find(replaced_hash);
         if (replaced_it != mapWallet.end()) {
             CWalletTx& replaced_wtx = replaced_it->second;
-            if (replaced_wtx.mapValue.count("replaced_by_txid")) {
+            if (replaced_wtx.mapValue.contains("replaced_by_txid")) {
                 replaced_wtx.mapValue.erase("replaced_by_txid");
                 WalletBatch batch(GetDatabase());
                 batch.WriteTx(replaced_wtx);
@@ -1633,7 +1633,7 @@ void CWallet::RecursiveUpdateTxState(const uint256& tx_hash, const TryUpdatingSt
             for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
                 std::pair<TxSpends::const_iterator, TxSpends::const_iterator> range = mapTxSpends.equal_range(COutPoint(wtx.tx->vout[i].GetHash()));
                 for (TxSpends::const_iterator iter = range.first; iter != range.second; ++iter) {
-                    if (!done.count(iter->second)) {
+                    if (!done.contains(iter->second)) {
                         todo.insert(iter->second);
                     }
                 }
@@ -1751,7 +1751,7 @@ void CWallet::blockDisconnected(const interfaces::BlockInfo& block)
 
         for (const CTxIn& tx_in : ptx->vin) {
             // No other wallet transactions conflicted with this transaction
-            if (mapTxSpends.count(tx_in.prevout) < 1) continue;
+            if (!mapTxSpends.contains(tx_in.prevout)) continue;
 
             std::pair<TxSpends::const_iterator, TxSpends::const_iterator> range = mapTxSpends.equal_range(tx_in.prevout);
 
@@ -2814,7 +2814,7 @@ void CWallet::MarkDestinationsDirty(const std::set<CTxDestination>& destinations
         if (wtx.m_is_cache_empty) continue;
         for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
             CTxDestination dst;
-            if (ExtractDestination(wtx.tx->vout[i].scriptPubKey, dst) && destinations.count(dst)) {
+            if (ExtractDestination(wtx.tx->vout[i].scriptPubKey, dst) && destinations.contains(dst)) {
                 wtx.MarkDirty();
                 break;
             }
@@ -2945,7 +2945,7 @@ bool CWallet::UnlockAllCoins()
 bool CWallet::IsLockedCoin(const COutPoint& output) const
 {
     AssertLockHeld(cs_wallet);
-    return setLockedCoins.count(output) > 0;
+    return setLockedCoins.contains(output);
 }
 
 void CWallet::ListLockedCoins(std::vector<COutPoint>& vOutpts) const
@@ -2985,7 +2985,7 @@ void CWallet::GetKeyBirthTimes(std::map<CKeyID, int64_t>& mapKeyBirth) const
 
         // Prepare to infer birth heights for keys without metadata
         for (const CKeyID& keyid : spk_man->GetKeys()) {
-            if (mapKeyBirth.count(keyid) == 0)
+            if (!mapKeyBirth.contains(keyid))
                 mapKeyFirstBlock[keyid] = &max_confirm;
         }
 
@@ -3802,7 +3802,7 @@ std::set<ScriptPubKeyMan*> CWallet::GetScriptPubKeyMans(const CScript& script) c
 
 ScriptPubKeyMan* CWallet::GetScriptPubKeyMan(const uint256& id) const
 {
-    if (m_spk_managers.count(id) > 0) {
+    if (m_spk_managers.contains(id)) {
         return m_spk_managers.at(id).get();
     }
     return nullptr;
@@ -3917,7 +3917,7 @@ void CWallet::ConnectScriptPubKeyManNotifiers()
     for (const auto& spk_man : GetActiveScriptPubKeyMans()) {
         spk_man->NotifyWatchonlyChanged.connect(NotifyWatchonlyChanged);
         spk_man->NotifyCanGetAddressesChanged.connect(NotifyCanGetAddressesChanged);
-        spk_man->NotifyFirstKeyTimeChanged.connect(std::bind(&CWallet::MaybeUpdateBirthTime, this, std::placeholders::_2));
+        spk_man->NotifyFirstKeyTimeChanged.connect([this](const ScriptPubKeyMan*, int64_t new_birth_time) { MaybeUpdateBirthTime(new_birth_time); });
     }
 }
 
@@ -4070,7 +4070,7 @@ void CWallet::DeactivateScriptPubKeyMan(uint256 id, OutputType type, bool intern
 
 bool CWallet::IsLegacy() const
 {
-    if (m_internal_spk_managers.count(OutputType::LEGACY) == 0) {
+    if (!m_internal_spk_managers.contains(OutputType::LEGACY)) {
         return false;
     }
     auto spk_man = dynamic_cast<LegacyScriptPubKeyMan*>(m_internal_spk_managers.at(OutputType::LEGACY));
@@ -4098,7 +4098,7 @@ std::optional<bool> CWallet::IsInternalScriptPubKeyMan(ScriptPubKeyMan* spk_man)
     }
 
     // only active ScriptPubKeyMan can be internal
-    if (!GetActiveScriptPubKeyMans().count(spk_man)) {
+    if (!GetActiveScriptPubKeyMans().contains(spk_man)) {
         return std::nullopt;
     }
 
@@ -4280,7 +4280,7 @@ bool CWallet::ApplyMigrationData(MigrationData& data, bilingual_str& error)
     }
 
     for (auto& desc_spkm : data.desc_spkms) {
-        if (m_spk_managers.count(desc_spkm->GetID()) > 0) {
+        if (m_spk_managers.contains(desc_spkm->GetID())) {
             error = _("Error: Duplicate descriptors created during migration. Your wallet may be corrupted.");
             return false;
         }
@@ -4396,7 +4396,7 @@ bool CWallet::ApplyMigrationData(MigrationData& data, bilingual_str& error)
                 }
 
                 // Skip invalid/non-watched scripts that will not be migrated
-                if (not_migrated_dests.count(addr_pair.first) > 0) {
+                if (not_migrated_dests.contains(addr_pair.first)) {
                     dests_to_delete.push_back(addr_pair.first);
                     continue;
                 }

@@ -360,7 +360,8 @@ BOOST_AUTO_TEST_CASE(test_CheckQueueControl_Locks)
         std::vector<std::thread> tg;
         std::atomic<int> nThreads {0};
         std::atomic<int> fails {0};
-        for (size_t i = 0; i < 3; ++i) {
+        tg.reserve(3);
+for (size_t i = 0; i < 3; ++i) {
             tg.emplace_back(
                     [&]{
                     CCheckQueueControl<FakeCheck> control(queue.get());

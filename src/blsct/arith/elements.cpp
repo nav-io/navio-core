@@ -15,10 +15,6 @@
 #include <vector>
 
 template <typename T>
-OrderedElements<T>::OrderedElements(){};
-template OrderedElements<MclG1Point>::OrderedElements();
-
-template <typename T>
 OrderedElements<T>::OrderedElements(const std::set<T>& set)
 {
     m_set = set;
@@ -182,13 +178,6 @@ template std::string OrderedElements<MclG1Point>::GetString(const uint8_t& radix
 
 
 // Elements
-
-template <typename T>
-Elements<T>::Elements()
-{
-}
-template Elements<MclG1Point>::Elements();
-template Elements<MclScalar>::Elements();
 
 template <typename T>
 Elements<T>::Elements(const std::vector<T>& vec)
@@ -452,6 +441,7 @@ template bool Elements<MclScalar>::operator>=(const MclScalar&) const;
 template <typename T>
 void Elements<T>::operator=(const Elements<T>& rhs)
 {
+    if (this == &rhs) return;
     m_vec.clear();
     for (size_t i = 0; i < rhs.m_vec.size(); ++i) {
         auto copy = T(rhs.m_vec[i]);

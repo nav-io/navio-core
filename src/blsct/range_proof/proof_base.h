@@ -16,7 +16,7 @@ struct ProofBase {
     using Scalar = typename T::Scalar;
     using Points = Elements<Point>;
 
-    ProofBase(){};
+    ProofBase()= default;
 
     ProofBase(const Points& Vs,
               const Points& Ls,

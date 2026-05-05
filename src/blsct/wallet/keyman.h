@@ -37,7 +37,7 @@ protected:
 
 public:
     explicit Manager(wallet::WalletStorage& storage) : m_storage(storage) {}
-    virtual ~Manager(){};
+    virtual ~Manager()= default;
 
     virtual bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force = false) { return false; }
 

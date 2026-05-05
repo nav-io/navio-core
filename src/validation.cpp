@@ -780,7 +780,7 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
                 // Transaction conflicts with a mempool tx, but we're not allowing replacements.
                 return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "bip125-replacement-disallowed");
             }
-            if (!ws.m_conflicts.count(ptxConflicting->GetHash()))
+            if (!ws.m_conflicts.contains(ptxConflicting->GetHash()))
             {
                 // Transactions that don't explicitly signal replaceability are
                 // *not* replaceable with the current logic, even if one of their
@@ -1602,9 +1602,9 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptPackage(const Package& package, 
 
     for (const auto& tx : package) {
         const auto& wtxid = tx->GetWitnessHash();
-        if (multi_submission_result.m_tx_results.count(wtxid) > 0) {
+        if (multi_submission_result.m_tx_results.contains(wtxid)) {
             // We shouldn't have re-submitted if the tx result was already in results_final.
-            Assume(results_final.count(wtxid) == 0);
+            Assume(!results_final.contains(wtxid));
             // If it was submitted, check to see if the tx is still in the mempool. It could have
             // been evicted due to LimitMempoolSize() above.
             const auto& txresult = multi_submission_result.m_tx_results.at(wtxid);
@@ -1620,7 +1620,7 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptPackage(const Package& package, 
             // Already-in-mempool transaction. Check to see if it's still there, as it could have
             // been evicted when LimitMempoolSize() was called.
             Assume(it->second.m_result_type != MempoolAcceptResult::ResultType::INVALID);
-            Assume(individual_results_nonfinal.count(wtxid) == 0);
+            Assume(!individual_results_nonfinal.contains(wtxid));
             // Query by txid to include the same-txid-different-witness ones.
             if (!m_pool.exists(GenTxid::Txid(tx->GetHash()))) {
                 package_state_final.Invalid(PackageValidationResult::PCKG_TX, "transaction failed");
@@ -2228,7 +2228,7 @@ static bool SelectBlockFromCandidates(std::vector<std::pair<int64_t, uint256>>& 
             //            LogPrint("stakemodifier", "SelectBlockFromCandidates: selection hash=%s index=%d proofhash=%s nStakeModifierPrev=%08x\n", hashBest.ToString(), pindex->nHeight, pindex->kernelHash.ToString(), nStakeModifierPrev);
             break;
         }
-        if (mapSelectedBlocks.count(pindex->GetBlockHash()) > 0) continue;
+        if (mapSelectedBlocks.contains(pindex->GetBlockHash())) continue;
         // compute the selection hash by hashing its proof-hash and the
         // previous proof-of-stake modifier
         HashWriter ss{};
@@ -4795,13 +4795,13 @@ bool Chainstate::ReplayBlocks()
     const CBlockIndex* pindexNew;            // New tip during the interrupted flush.
     const CBlockIndex* pindexFork = nullptr; // Latest block common to both the old and the new tip.
 
-    if (m_blockman.m_block_index.count(hashHeads[0]) == 0) {
+    if (!m_blockman.m_block_index.contains(hashHeads[0])) {
         return error("ReplayBlocks(): reorganization to unknown block requested");
     }
     pindexNew = &(m_blockman.m_block_index[hashHeads[0]]);
 
     if (!hashHeads[1].IsNull()) { // The old tip is allowed to be 0, indicating it's the first flush.
-        if (m_blockman.m_block_index.count(hashHeads[1]) == 0) {
+        if (!m_blockman.m_block_index.contains(hashHeads[1])) {
             return error("ReplayBlocks(): reorganization from unknown block requested");
         }
         pindexOld = &(m_blockman.m_block_index[hashHeads[1]]);
@@ -4931,7 +4931,7 @@ bool Chainstate::LoadGenesisBlock()
     // m_blockman.m_block_index. Note that we can't use m_chain here, since it is
     // set based on the coins db, not the block index db, which is the only
     // thing loaded at this point.
-    if (m_blockman.m_block_index.count(params.GenesisBlock().GetHash()))
+    if (m_blockman.m_block_index.contains(params.GenesisBlock().GetHash()))
         return true;
 
     try {
@@ -5279,7 +5279,7 @@ void ChainstateManager::CheckBlockIndex()
                         // as a candidate, but a background chainstate should
                         // only have it if it is an ancestor of the snapshot base.
                         if (is_active || GetSnapshotBaseBlock()->GetAncestor(pindex->nHeight) == pindex) {
-                            assert(c->setBlockIndexCandidates.count(pindex));
+                            assert(c->setBlockIndexCandidates.contains(pindex));
                         }
                     }
                     // If some parent is missing, then it could be that this block was in
@@ -5287,7 +5287,7 @@ void ChainstateManager::CheckBlockIndex()
                     // In this case it must be in m_blocks_unlinked -- see test below.
                 }
             } else { // If this block sorts worse than the current tip or some ancestor's block has never been seen, it cannot be in setBlockIndexCandidates.
-                assert(c->setBlockIndexCandidates.count(pindex) == 0);
+                assert(!c->setBlockIndexCandidates.contains(pindex));
             }
         }
         // Check whether this block is in m_blocks_unlinked.
@@ -5320,7 +5320,7 @@ void ChainstateManager::CheckBlockIndex()
             // setBlockIndexCandidates, then it must be in m_blocks_unlinked.
             for (auto c : GetAll()) {
                 const bool is_active = c == &ActiveChainstate();
-                if (!CBlockIndexWorkComparator()(pindex, c->m_chain.Tip()) && c->setBlockIndexCandidates.count(pindex) == 0) {
+                if (!CBlockIndexWorkComparator()(pindex, c->m_chain.Tip()) && !c->setBlockIndexCandidates.contains(pindex)) {
                     if (pindexFirstInvalid == nullptr) {
                         if (is_active || GetSnapshotBaseBlock()->GetAncestor(pindex->nHeight) == pindex) {
                             assert(foundInUnlinked);

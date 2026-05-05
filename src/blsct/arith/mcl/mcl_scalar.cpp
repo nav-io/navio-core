@@ -311,6 +311,7 @@ uint64_t MclScalar::GetUint64() const
     return ret;
 }
 
+// NOLINTNEXTLINE(misc-no-recursion)
 std::vector<uint8_t> MclScalar::GetVch(const bool trim_preceeding_zeros) const
 {
     auto seri_size = MclScalar::SERIALIZATION_SIZE;

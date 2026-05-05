@@ -28,8 +28,8 @@
 #include <limits>
 #include <map>
 #include <optional>
-#include <stdint.h>
-#include <string.h>
+#include <cstdint>
+#include <cstring>
 #include <thread>
 #include <univalue.h>
 #include <utility>
@@ -38,7 +38,7 @@
 #include <sys/types.h>
 
 #ifndef WIN32
-#include <signal.h>
+#include <csignal>
 #include <sys/wait.h>
 #endif
 
@@ -1494,6 +1494,7 @@ struct Tracker
     Tracker(Tracker&& t) noexcept : origin(t.origin), copies(t.copies) {}
     Tracker& operator=(const Tracker& t) noexcept
     {
+        if (this == &t) return *this;
         origin = t.origin;
         copies = t.copies + 1;
         return *this;

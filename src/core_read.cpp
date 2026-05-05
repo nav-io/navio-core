@@ -37,7 +37,7 @@ public:
             }
             mapOpNames[strName] = static_cast<opcodetype>(op);
             // Convenience: OP_ADD and just ADD are both recognized:
-            if (strName.compare(0, 3, "OP_") == 0) { // strName starts with "OP_"
+            if (strName.starts_with("OP_")) { // strName starts with "OP_"
                 mapOpNames[strName.substr(3)] = static_cast<opcodetype>(op);
             }
         }
@@ -81,7 +81,7 @@ CScript ParseScript(const std::string& s)
             }
 
             result << num.value();
-        } else if (w.substr(0, 2) == "0x" && w.size() > 2 && IsHex(std::string(w.begin() + 2, w.end()))) {
+        } else if (w.starts_with("0x") && w.size() > 2 && IsHex(std::string(w.begin() + 2, w.end()))) {
             // Raw hex data, inserted NOT pushed onto stack:
             std::vector<unsigned char> raw = ParseHex(std::string(w.begin() + 2, w.end()));
             result.insert(result.end(), raw.begin(), raw.end());
