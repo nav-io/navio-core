@@ -21,6 +21,7 @@ bench_bench_navio_SOURCES = \
   bench/bench_bitcoin.cpp \
   bench/bip324_ecdh.cpp \
   bench/block_assemble.cpp \
+  bench/blsct.cpp \
   bench/ccoins_caching.cpp \
   bench/chacha20.cpp \
   bench/checkblock.cpp \
