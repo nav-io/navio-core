@@ -664,7 +664,7 @@ CKeyID KeyMan::GetHashId(const blsct::PublicKey& blindingKey, const blsct::Publi
 blsct::PrivateKey KeyMan::GetMasterSeedKey() const
 {
     if (!IsHDEnabled())
-        throw std::runtime_error(strprintf("%s: the wallet has no HD enabled"));
+        throw std::runtime_error(strprintf("%s: the wallet has no HD enabled", __func__));
 
     auto seedId = m_hd_chain.seed_id;
 
@@ -679,7 +679,7 @@ blsct::PrivateKey KeyMan::GetMasterSeedKey() const
 blsct::PrivateKey KeyMan::GetMasterTokenKey() const
 {
     if (!IsHDEnabled())
-        throw std::runtime_error(strprintf("%s: the wallet has no HD enabled"));
+        throw std::runtime_error(strprintf("%s: the wallet has no HD enabled", __func__));
 
     auto tokenKeyId = m_hd_chain.token_id;
 
@@ -694,7 +694,7 @@ blsct::PrivateKey KeyMan::GetMasterTokenKey() const
 blsct::PrivateKey KeyMan::GetPrivateViewKey() const
 {
     if (!fViewKeyDefined)
-        throw std::runtime_error(strprintf("%s: the wallet has no view key available"));
+        throw std::runtime_error(strprintf("%s: the wallet has no view key available", __func__));
 
     return viewKey;
 }
@@ -707,7 +707,7 @@ blsct::PublicKey KeyMan::GetPublicSpendingKey() const
 blsct::PrivateKey KeyMan::GetSpendingKey() const
 {
     if (!fSpendKeyDefined)
-        throw std::runtime_error(strprintf("%s: the wallet has no spend key available"));
+        throw std::runtime_error(strprintf("%s: the wallet has no spend key available", __func__));
 
     auto spendingKeyId = m_hd_chain.spend_id;
 

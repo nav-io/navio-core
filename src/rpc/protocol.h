@@ -81,6 +81,7 @@ enum RPCErrorCode
     RPC_WALLET_NOT_SPECIFIED        = -19, //!< No wallet specified (error when there are multiple wallets loaded)
     RPC_WALLET_ALREADY_LOADED       = -35, //!< This same wallet is already loaded
     RPC_WALLET_ALREADY_EXISTS       = -36, //!< There is already a wallet with the same name
+    RPC_WALLET_BLANK                = -37, //!< Wallet has no BLSCT seed / HD not initialized (e.g. blank wallet)
 
     //! Backwards compatible aliases
     RPC_WALLET_INVALID_ACCOUNT_NAME = RPC_WALLET_INVALID_LABEL_NAME,

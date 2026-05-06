@@ -35,6 +35,13 @@ class BLSCTSetSeedTest(BitcoinTestFramework):
         wallet_a = self.nodes[0].get_wallet_rpc("seed_a")
         wallet_b = self.nodes[0].get_wallet_rpc("seed_b")
 
+        self.log.info("getblsctseed on blank wallet returns RPC_WALLET_BLANK (-37)")
+        assert_raises_rpc_error(
+            -37,
+            "Wallet has no BLSCT seed (blank wallet); use setblsctseed to initialize",
+            wallet_a.getblsctseed,
+        )
+
         self.log.info("Reject invalid seed values")
         assert_raises_rpc_error(-5, "Invalid private key", wallet_a.setblsctseed, "not_wif")
         assert_raises_rpc_error(

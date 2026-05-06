@@ -750,6 +750,10 @@ RPCHelpMan getblsctseed()
             const CWallet& wallet = *pwallet;
             const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
 
+            if (!blsct_km.IsHDEnabled()) {
+                throw JSONRPCError(RPC_WALLET_BLANK, "Wallet has no BLSCT seed (blank wallet); use setblsctseed to initialize");
+            }
+
             auto seed = blsct_km.GetMasterSeedKey();
             auto strSeed = seed.GetScalar().GetString();
 
