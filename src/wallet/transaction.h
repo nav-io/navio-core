@@ -211,6 +211,7 @@ public:
         fBLSCTOutput = false;
         fStakedCommitment = false;
         outputHash.SetNull();
+        blsctRecoveryData = {};
     }
 
     //! Get the original output hash (before any range proof stripping)

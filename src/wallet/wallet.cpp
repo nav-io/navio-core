@@ -1161,12 +1161,21 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
                     }
                 };
 
-                try_store_recovery(blsct_man->RecoverOutputs({*wout.out}));
+                // Only run view-key recovery when this wallet has a stake in the
+                // output (spendable, staked, or watch-only script). Otherwise a
+                // wallet that only has a keyman loaded can still produce bogus
+                // decrypted amounts for third-party outputs.
+                if (blsct_man->IsMineMode(*wout.out) != ISMINE_NO) {
+                    try_store_recovery(blsct_man->RecoverOutputs({*wout.out}));
+                }
                 if (!has_recovery_data) {
                     if (const auto watch_only_nonce = blsct_man->GetWatchOnlyRecoveryNonce(wout.out->scriptPubKey)) {
                         try_store_recovery(blsct_man->RecoverOutputsWithNonce({*wout.out}, watch_only_nonce->GetG1Point()));
                     }
                 }
+            }
+            if (!has_recovery_data) {
+                wout.blsctRecoveryData = {};
             }
             // Save the original output hash before any stripping
             wout.outputHash = wout.out->GetHash();
