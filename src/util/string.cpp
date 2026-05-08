@@ -34,7 +34,9 @@ std::optional<std::string_view> LineReader::ReadLine()
         // The \n itself does not count against max_line_length.
         if (c == '\n') {
             const std::string_view untrimmed_line(reinterpret_cast<const char*>(std::to_address(line_start)), count);
-            const std::string_view line = TrimStringView(untrimmed_line); // delete leading and trailing whitespace including \r and \n
+            std::string_view line = untrimmed_line;
+            if (line.ends_with('\n')) line.remove_suffix(1);
+            if (line.ends_with('\r')) line.remove_suffix(1);
             return line;
         }
         // If the character we just consumed gives us a line length greater
