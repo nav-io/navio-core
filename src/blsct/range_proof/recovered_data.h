@@ -25,7 +25,7 @@ struct RecoveredData
         const std::string& message
     ): id{id}, amount{amount}, gamma{gamma}, message{message} {}
 
-    RecoveredData() = default;
+    RecoveredData() : id(0), amount(0), gamma{}, message() {}
 
     size_t id;
     CAmount amount;

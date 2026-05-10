@@ -69,12 +69,12 @@ CAmount OutputGetCredit(const CWallet& wallet, const CWalletOutput& wout, const 
 {
     auto txout = *wout.out;
     if (txout.tokenId != token_id) return 0;
-    if (!txout.HasBLSCTRangeProof() && !MoneyRange(txout.nValue))
+    if (!wout.fBLSCTOutput && !MoneyRange(txout.nValue))
         throw std::runtime_error(std::string(__func__) + ": value out of range");
     LOCK(wallet.cs_wallet);
     if (fIgnoreImmature && wallet.IsOutputImmatureCoinBase(wout))
         return 0;
-    if (txout.HasBLSCTRangeProof()) {
+    if (wout.fBLSCTOutput) {
         if (wallet.IsMine(txout) & filter) {
             return wout.blsctRecoveryData.amount;
         } else {
@@ -302,16 +302,11 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
 
     // Compute fee:
     CAmount nDebit = CachedTxGetDebit(wallet, wtx, filter);
-    CAmount nNet = 0;
+    CAmount nChange = 0;   // sum of our BLSCT change outputs (recovered amount)
 
-    if (nDebit > 0) // debit>0 means we signed/sent this transaction
-    {
-        CAmount nValueOut = wtx.GetValueOut();
-        if (wtx.tx->IsBLSCT()) {
-            nNet = nDebit - nValueOut;
-        } else {
-            nFee = nDebit - nValueOut;
-        }
+    if (nDebit > 0 && !wtx.tx->IsBLSCT()) {
+        // Transparent tx: fee = inputs - explicit outputs.
+        nFee = nDebit - wtx.GetValueOut();
     }
 
     LOCK(wallet.cs_wallet);
@@ -327,7 +322,16 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
         //   2) the output is to us (received)
         if (nDebit > 0)
         {
-            if (OutputIsChange(wallet, txout) && (txout.HasBLSCTRangeProof() || !include_change)) continue;
+            // Accumulate BLSCT change separately so the synthetic send entry
+            // below reports the true balance debit (sent-to-others + fee),
+            // not the inflated inputs-minus-explicit-outputs figure.
+            if (OutputIsChange(wallet, txout)) {
+                if (txout.HasBLSCTRangeProof()) {
+                    nChange += wtx.GetBLSCTRecoveryData(i).amount;
+                    continue;
+                }
+                if (!include_change) continue;
+            }
 
         } else if (!(fIsMine & filter))
             continue;
@@ -348,7 +352,7 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
 
             auto recoveryData = wtx.GetBLSCTRecoveryData(i);
 
-            COutputEntry output = {address, recoveryData.amount, (int)i};
+            COutputEntry output = {address, recoveryData.amount, (int)i, recoveryData.message};
 
             // If we are receiving the output, add it as a "received" entry
             if (fIsMine & filter)
@@ -360,7 +364,7 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
                 address = CNoDestination();
             }
 
-            COutputEntry output = {address, txout.nValue, (int)i};
+            COutputEntry output = {address, txout.nValue, (int)i, {}};
 
             // If we are debited by the transaction, add the output as a "sent" entry
             if (nDebit > 0 && !wtx.tx->IsBLSCT())
@@ -373,7 +377,14 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
     }
 
     if (wtx.tx->IsBLSCT() && nDebit > 0) {
-        COutputEntry output = {CNoDestination(), nNet, -1};
+        // BLSCT block-level merging means we cannot attribute individual inputs to
+        // individual outputs. Emit one synthetic send that represents the actual
+        // balance debit net of our own change. Fee is reported separately so the
+        // consumer-side invariant (amount + fee per txid) matches getbalance.
+        const CAmount blsct_fee = wtx.tx->GetBLSCTFee();
+        const CAmount sent_to_others = nDebit - nChange - blsct_fee;
+        nFee = blsct_fee;
+        COutputEntry output = {CNoDestination(), sent_to_others, -1, {}};
         listSent.push_back(output);
     }
 }
@@ -389,8 +400,14 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
     AssertLockHeld(wallet.cs_wallet);
     int nDepth = wallet.GetTxDepthInMainChain(wtx);
     if (nDepth >= 1) return true;
-    if (nDepth == 0 && wtx.tx->IsBLSCT()) return false;
     if (nDepth < 0) return false;
+    // BLSCT inputs were previously dropped here unconditionally, which blocked
+    // unconfirmed-change spending for output-storage wallets too. Fall through
+    // to the classic from-me + mempool checks instead — a BLSCT tx we built
+    // ourselves whose inputs are also trusted is as safe as a standard
+    // unconfirmed change tx, and the caller still gates on `only_safe` via
+    // IsOutputTrusted / CoinControl::m_include_unsafe_inputs.
+    //
     // using wtx's cached debit
     if (!wallet.m_spend_zero_conf_change || !CachedTxIsFromMe(wallet, wtx, ISMINE_ALL)) return false;
 
@@ -425,9 +442,22 @@ bool IsOutputTrusted(const CWallet& wallet, const CWalletOutput& wout)
     AssertLockHeld(wallet.cs_wallet);
     int nDepth = wallet.GetOutputDepthInMainChain(wout);
     if (nDepth >= 1) return true;
-    if (nDepth <= 0) return false;
+    if (nDepth < 0) return false;
 
-    return true;
+    // nDepth == 0: in mempool, possibly conflicted. Trust only if the
+    // originating tx is one we built and we allow spending unconfirmed
+    // change (classic Bitcoin rule). External mempool receives stay
+    // untrusted — we cannot vouch for the sender's chain. This mirrors
+    // CachedTxIsTrusted for mapWallet-backed accounting so BLSCT wallets
+    // under output storage can spend their own unconfirmed change.
+    if (!wout.InMempool()) return false;
+    if (!wallet.m_spend_zero_conf_change) return false;
+
+    const COutPoint outpoint{wout.GetOutputHash()};
+    const CWalletTx* parent = wallet.GetWalletTxFromOutpoint(outpoint);
+    if (parent == nullptr) return false;
+
+    return CachedTxIsTrusted(wallet, *parent);
 }
 
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx)
@@ -473,6 +503,14 @@ Balance GetBlsctBalance(const CWallet& wallet, const int min_depth, const TokenI
     {
         LOCK(wallet.cs_wallet);
         for (const auto& entry : wallet.mapOutputs) {
+            // In BLSCT output-storage mode, locally-created BLSCT transactions
+            // are still recorded in mapWallet for broadcast/history purposes and
+            // their outputs are mirrored into mapOutputs by sync callbacks.
+            // Those child outputs must only be counted once.
+            if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) &&
+                wallet.GetWalletTxFromOutpoint(entry.first) != nullptr) {
+                continue;
+            }
             const CWalletOutput& wout = entry.second;
             if (wout.IsSpent()) continue;
             const bool is_trusted{IsOutputTrusted(wallet, wout)};
@@ -501,7 +539,21 @@ std::vector<StakedCommitmentInfo> GetStakedCommitmentInfo(const CWallet& wallet)
     AssertLockHeld(wallet.cs_wallet);
     std::vector<StakedCommitmentInfo> ret;
 
-    {
+    if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        for (const auto& entry : wallet.mapOutputs) {
+            const COutPoint& outpoint = entry.first;
+            const CWalletOutput& wout = entry.second;
+            if (!wout.fStakedCommitment) continue;
+            const int out_depth{wallet.GetOutputDepthInMainChain(wout)};
+            if (out_depth < 1) continue;
+            if (wallet.IsSpent(outpoint) || wout.IsSpent()) continue;
+            if (wallet.IsMine(*wout.out) == ISMINE_STAKED_COMMITMENT_BLSCT) {
+                ret.push_back({outpoint.hash, 0, wout.out->blsctData.rangeProof.Vs[0],
+                               wout.blsctRecoveryData.amount,
+                               wout.blsctRecoveryData.gamma});
+            }
+        }
+    } else {
         for (const auto& entry : wallet.mapWallet) {
             const CWalletTx& wtx = entry.second;
             const int tx_depth{wallet.GetTxDepthInMainChain(wtx)};

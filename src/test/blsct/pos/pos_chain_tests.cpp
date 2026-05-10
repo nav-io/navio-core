@@ -114,5 +114,78 @@ BOOST_FIXTURE_TEST_CASE(StakedCommitment, TestBLSCTChain100Setup)
     }
 }
 
+BOOST_FIXTURE_TEST_CASE(StakedCommitmentSpendWithMoveoutRemovesFromSet, TestBLSCTChain100Setup)
+{
+    // Reproduces the bug that left spent staked commitments in the set on the
+    // connect path. CCoinsViewCache::UpdateCoins (and DisconnectBlock) call
+    // SpendCoin(outpoint, &undo) with moveout non-null. SpendCoin moves the
+    // coin out before checking IsStakedCommitment(), so the check runs on a
+    // moved-from (empty) CTxOut and RemoveStakedCommitment is never called.
+    // Result: an unstake tx spends a commitment but the commitment stays in
+    // the set, inflating the set seen by PoS verifiers and breaking the
+    // deterministic shuffle agreement between producer and verifier.
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test_spend_moveout", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CWallet wallet(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet.InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet.cs_wallet);
+    auto blsct_km = wallet.GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    COutPoint outpoint1{Txid::FromUint256(InsecureRand256())};
+    COutPoint outpoint2{Txid::FromUint256(InsecureRand256())};
+    COutPoint outpoint3{Txid::FromUint256(InsecureRand256())};
+
+    Coin coin1 = CreateCoin(recvAddress);
+    Coin coin2 = CreateCoin(recvAddress);
+    Coin coin3 = CreateCoin(recvAddress);
+
+    auto commitment1 = coin1.out.blsctData.rangeProof.Vs[0];
+    auto commitment2 = coin2.out.blsctData.rangeProof.Vs[0];
+    auto commitment3 = coin3.out.blsctData.rangeProof.Vs[0];
+
+    CCoinsViewCache view{&base, /*deterministic=*/true};
+    view.SetBestBlock(InsecureRand256());
+
+    view.AddCoin(outpoint1, std::move(coin1), true);
+    view.AddCoin(outpoint2, std::move(coin2), true);
+    view.AddCoin(outpoint3, std::move(coin3), true);
+
+    BOOST_CHECK_EQUAL(view.GetStakedCommitments().Size(), 3U);
+    BOOST_CHECK(view.GetStakedCommitments().Exists(commitment1));
+    BOOST_CHECK(view.GetStakedCommitments().Exists(commitment2));
+    BOOST_CHECK(view.GetStakedCommitments().Exists(commitment3));
+
+    // This is the exact call shape used by UpdateCoins() on the connect path
+    // when an unstake tx consumes a staked-commitment output: the prevout is
+    // moved into the tx-undo record via SpendCoin(..., &undo).
+    Coin undo1;
+    BOOST_CHECK(view.SpendCoin(outpoint1, &undo1));
+
+    // Spent commitment must leave the set.
+    BOOST_CHECK_MESSAGE(!view.GetStakedCommitments().Exists(commitment1),
+                        "SpendCoin with moveout did not remove commitment1 from set");
+    BOOST_CHECK_EQUAL(view.GetStakedCommitments().Size(), 2U);
+
+    // undo captured the original CTxOut (so DisconnectBlock can restore it).
+    BOOST_CHECK(undo1.out.IsStakedCommitment());
+    BOOST_CHECK(undo1.out.blsctData.rangeProof.Vs[0] == commitment1);
+
+    // A second moveout spend further shrinks the set.
+    Coin undo2;
+    BOOST_CHECK(view.SpendCoin(outpoint2, &undo2));
+    BOOST_CHECK(!view.GetStakedCommitments().Exists(commitment2));
+    BOOST_CHECK(view.GetStakedCommitments().Exists(commitment3));
+    BOOST_CHECK_EQUAL(view.GetStakedCommitments().Size(), 1U);
+
+    // Flushing to the backing view must persist the removals.
+    BOOST_CHECK(view.Flush());
+    BOOST_CHECK(!base.GetStakedCommitments().Exists(commitment1));
+    BOOST_CHECK(!base.GetStakedCommitments().Exists(commitment2));
+    BOOST_CHECK(base.GetStakedCommitments().Exists(commitment3));
+    BOOST_CHECK_EQUAL(base.GetStakedCommitments().Size(), 1U);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 } // namespace wallet

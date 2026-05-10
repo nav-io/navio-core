@@ -23,6 +23,8 @@
 #include <wallet/scriptpubkeyman.h>
 #include <wallet/walletdb.h>
 
+#include <optional>
+
 namespace blsct {
 
 const int64_t CHANGE_ACCOUNT = -1;
@@ -70,6 +72,7 @@ private:
     using SubAddressStrMap = std::map<SubAddress, CKeyID>;
     using SubAddressPoolMapSet = std::map<int64_t, std::set<uint64_t>>;
     using WatchOnlyScriptMap = std::map<CScriptID, wallet::CKeyMetadata>;
+    using WatchOnlyNonceMap = std::map<CScriptID, blsct::PublicKey>;
 
     CryptedKeyMap mapCryptedKeys GUARDED_BY(cs_KeyStore);
     CryptedOutKeyMap mapCryptedOutKeys GUARDED_BY(cs_KeyStore);
@@ -79,6 +82,7 @@ private:
     SubAddressPoolMapSet setSubAddressReservePool GUARDED_BY(cs_KeyStore);
     std::set<CScript> setWatchOnly GUARDED_BY(cs_KeyStore);
     WatchOnlyScriptMap m_script_metadata GUARDED_BY(cs_KeyStore);
+    WatchOnlyNonceMap m_watch_only_nonces GUARDED_BY(cs_KeyStore);
 
     int64_t nTimeFirstKey GUARDED_BY(cs_KeyStore) = 0;
     //! Number of pre-generated SubAddresses
@@ -186,15 +190,23 @@ public:
     /** Detect ownership of outputs **/
     bool IsMine(const CTxOut& txout)
     {
-        if (txout.blsctData.spendingKey.IsZero()) {
-            blsct::PublicKey extractedSpendingKey;
-            if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
-                return IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag);
-            }
-            return false;
-        }
-        return IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag);
+        return IsMineMode(txout) != wallet::ISMINE_NO;
     };
+    /**
+     * Classify ownership of a BLSCT output. Returns one of:
+     *   ISMINE_SPENDABLE_BLSCT          - paid to one of our subaddresses; the
+     *                                     wallet can derive the spending key
+     *                                     and produce a signature.
+     *   ISMINE_STAKED_COMMITMENT_BLSCT  - same, for staked commitments.
+     *   ISMINE_WATCH_ONLY               - the wallet only has decryption
+     *                                     material via an imported scriptPubKey
+     *                                     (e.g. an HTLC imported with
+     *                                     importblsctscript). The amount can
+     *                                     be recovered, but no signing key
+     *                                     is available.
+     *   ISMINE_NO                       - not ours.
+     */
+    wallet::isminetype IsMineMode(const CTxOut& txout);
     bool IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag);
     bool IsMine(const CScript& script) const;
     CKeyID GetHashId(const CTxOut& txout) const
@@ -269,6 +281,15 @@ public:
 
     // Helper function to extract spending key from OP_BLSCHECKSIG script
     bool ExtractSpendingKeyFromScript(const CScript& script, blsct::PublicKey& spendingKey) const;
+
+    // Extract all 48-byte BLS public keys from a script (for HTLC and other complex scripts)
+    bool ExtractAllSpendingKeysFromScript(const CScript& script, std::vector<blsct::PublicKey>& spendingKeys) const;
+
+    /** Watch-only script management */
+    bool AddWatchOnly(const CScript& script, const std::optional<blsct::PublicKey>& recovery_nonce = std::nullopt);
+    void LoadWatchOnly(const CScript& script);
+    void LoadWatchOnlyRecoveryNonce(const CScript& script, const blsct::PublicKey& nonce);
+    std::optional<blsct::PublicKey> GetWatchOnlyRecoveryNonce(const CScript& script) const;
 };
 } // namespace blsct
 

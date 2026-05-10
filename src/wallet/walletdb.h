@@ -103,6 +103,7 @@ extern const std::string WATCHMETA;
 extern const std::string WATCHS;
 extern const std::string BLSCTWATCHMETA;
 extern const std::string BLSCTWATCHS;
+extern const std::string BLSCTWATCHNONCE;
 
 // Keys in this set pertain only to the legacy wallet (LegacyScriptPubKeyMan) and are removed during migration from legacy to descriptors.
 extern const std::unordered_set<std::string> LEGACY_TYPES;
@@ -277,6 +278,8 @@ public:
     bool EraseWatchOnly(const CScript& script);
     bool WriteBLSCTWatchOnly(const CScript& script, const CKeyMetadata& keymeta);
     bool EraseBLSCTWatchOnly(const CScript& script);
+    bool WriteBLSCTWatchOnlyNonce(const CScript& script, const blsct::PublicKey& nonce);
+    bool EraseBLSCTWatchOnlyNonce(const CScript& script);
 
     bool WriteBestBlock(const CBlockLocator& locator);
     bool ReadBestBlock(CBlockLocator& locator);

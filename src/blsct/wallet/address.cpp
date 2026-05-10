@@ -91,6 +91,6 @@ bool SubAddress::operator==(const SubAddress& rhs) const
 
 bool SubAddress::operator<(const SubAddress& rhs) const
 {
-    return pk == rhs.pk ? pk < rhs.pk : pk < rhs.pk;
+    return pk < rhs.pk;
 };
 } // namespace blsct

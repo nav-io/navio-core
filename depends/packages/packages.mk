@@ -1,5 +1,7 @@
 packages:=gmp
 
+libomp_packages = libomp
+
 boost_packages = boost
 
 libevent_packages = libevent

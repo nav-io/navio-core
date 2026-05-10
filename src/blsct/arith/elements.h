@@ -154,7 +154,23 @@ public:
     OrderedElements(const std::set<T>& vec);
     // OrderedElements(const OrderedElements& other) : m_set(other.m_set) {};
 
-    Elements<T> GetElements(const uint256& seed = uint256{}) const;
+    /**
+     * Returns the underlying set as a sorted vector. No shuffling and no
+     * size cap is applied. Callers in consensus code MUST use the
+     * (seed, max_size) overload below so that the resulting vector is
+     * deterministic and bounded by a chain parameter.
+     */
+    Elements<T> GetElements() const;
+
+    /**
+     * Deterministically shuffles the set using `seed` (typically the block
+     * hash) and truncates the result to at most `max_size` elements. Both
+     * `seed` and `max_size` are part of the consensus rules for any caller
+     * that feeds the output into a proof, so `max_size` must come from
+     * `Consensus::Params::nStakedCommitmentLimit` (or an equivalent
+     * chain-bound constant). Passing zero produces an empty vector.
+     */
+    Elements<T> GetElements(const uint256& seed, const size_t& max_size) const;
 
     size_t Size() const;
     void Add(const T& x);

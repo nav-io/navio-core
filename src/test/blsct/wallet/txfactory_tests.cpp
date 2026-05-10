@@ -15,6 +15,14 @@
 
 BOOST_AUTO_TEST_SUITE(blsct_txfactory_tests)
 
+static CAmount GetFeeValue(const CTransaction& tx)
+{
+    for (const auto& vout : tx.vout) {
+        if (vout.scriptPubKey.IsFee()) return vout.nValue;
+    }
+    return 0;
+}
+
 BOOST_FIXTURE_TEST_CASE(ismine_test, TestingSetup)
 {
     auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
@@ -84,6 +92,9 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_test, TestingSetup)
 
     BOOST_CHECK(finalTx.has_value());
     BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx.value()), coins_view_cache, tx_state));
+    const CAmount fee = GetFeeValue(CTransaction(finalTx.value()));
+    const CAmount expected_change = 1000 * COIN - 900 * COIN - fee;
+    BOOST_REQUIRE(fee > 0);
 
     bool fFoundChange = false;
 
@@ -93,7 +104,7 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_test, TestingSetup)
     auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
 
     for (auto& res : result.amounts) {
-        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00291625) * COIN) fFoundChange = true;
+        if (res.message == "Change" && res.amount == expected_change) fFoundChange = true;
     }
 
     BOOST_CHECK(fFoundChange);
@@ -145,6 +156,9 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
 
     BOOST_CHECK(finalTx.has_value());
     BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx.value()), coins_view_cache, tx_state));
+    const CAmount first_fee = GetFeeValue(CTransaction(finalTx.value()));
+    const CAmount expected_change = 1000 * COIN - 900 * COIN - first_fee;
+    BOOST_REQUIRE(first_fee > 0);
 
     bool fFoundChange = false;
     uint32_t nChangePosition = 0;
@@ -152,7 +166,7 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
 
     for (auto& res : result.amounts) {
-        if (res.message == "Change" && res.amount == (1000 - 900 - 0.00291625) * COIN) {
+        if (res.message == "Change" && res.amount == expected_change) {
             fFoundChange = true;
             nChangePosition = res.id;
         }
@@ -167,7 +181,7 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
 
     fFoundChange = false;
 
-    if (wtx->GetBLSCTRecoveryData(nChangePosition).message == "Change" && wtx->GetBLSCTRecoveryData(nChangePosition).amount == (1000 - 900 - 0.00291625) * COIN) {
+    if (wtx->GetBLSCTRecoveryData(nChangePosition).message == "Change" && wtx->GetBLSCTRecoveryData(nChangePosition).amount == expected_change) {
         fFoundChange = true;
     }
 
@@ -186,10 +200,13 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     tx2.AddOutput(randomAddress, 50 * COIN, "test");
 
     auto finalTx2 = tx2.BuildTx();
+    BOOST_REQUIRE(finalTx2.has_value());
     wallet->transactionAddedToMempool(MakeTransactionRef(finalTx2.value()));
+    const CAmount second_fee = GetFeeValue(CTransaction(finalTx2.value()));
+    BOOST_REQUIRE(second_fee > 0);
 
-    BOOST_CHECK(wallet->GetDebit(CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == (1000 - 900 - 0.00291625) * COIN);
-    BOOST_CHECK(TxGetCredit(*wallet, CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == (1000 - 900 - 0.00291625 - 50 - 0.00291625) * COIN);
+    BOOST_CHECK(wallet->GetDebit(CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == expected_change);
+    BOOST_CHECK(TxGetCredit(*wallet, CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == expected_change - 50 * COIN - second_fee);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

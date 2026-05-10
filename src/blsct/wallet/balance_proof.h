@@ -44,23 +44,33 @@ public:
         uint16_t index = 0;
 
         for (const auto& outpoint : outpoints) {
-            const wallet::CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint);
-            if (!wtx) {
+            CTxOut out;
+            range_proof::RecoveredData<Mcl> recoveryData;
+            bool has_blsct_output = false;
+
+            if (const wallet::CWalletOutput* wout = wallet.GetWalletOutput(outpoint)) {
+                out = *wout->out;
+                recoveryData = wout->blsctRecoveryData;
+                has_blsct_output = wout->fBLSCTOutput;
+            } else if (const wallet::CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint)) {
+                auto txout_iter = std::find_if(wtx->tx->vout.begin(), wtx->tx->vout.end(), [&](const CTxOut& txout) { return txout.GetHash() == outpoint.hash; });
+                if (txout_iter == wtx->tx->vout.end()) {
+                    throw std::runtime_error("Invalid output index");
+                }
+                out = *txout_iter;
+                recoveryData = wtx->GetBLSCTRecoveryData(outpoint);
+                has_blsct_output = txout_iter->HasBLSCTRangeProof();
+            } else {
                 throw std::runtime_error("Outpoint not found in wallet");
             }
 
-            auto txout_iter = std::find_if(wtx->tx->vout.begin(), wtx->tx->vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
-            if (txout_iter == wtx->tx->vout.end()) {
-                throw std::runtime_error("Invalid output index");
-            }
             if (!has_private_key) {
-                has_private_key = blsct_km->GetSpendingKeyForOutput(*txout_iter, private_key);
+                has_private_key = blsct_km->GetSpendingKeyForOutput(out, private_key);
                 m_index = index;
             }
-            if (!txout_iter->HasBLSCTRangeProof()) {
+            if (!has_blsct_output) {
                 throw std::runtime_error("Outpoint does not have BLSCT range proof");
             }
-            auto recoveryData = wtx->GetBLSCTRecoveryData(outpoint);
             value = value + MclScalar(recoveryData.amount);
             gamma = gamma + MclScalar(recoveryData.gamma);
             index++;

@@ -130,15 +130,30 @@ SetMemProof<T> SetMemProofProver<T>::Prove(
     }
     Points Ys = ExtendYs(setup, Ys_src, n);
 
-    // Prepare Index
+    // Cache Hi once: setup.hs.To(n) was previously computed three times.
+    Points Hi = setup.hs.To(n);
+
+    // Prepare Index. bL[i] = 1 if Y_i == sigma, else 0.
+    // Track matches so we can exploit the sparsity of bL/bR below to avoid
+    // O(n) point multiplications when computing A1 and A2.
+    const Scalar scalar_zero(0);
+    const Scalar scalar_one(1);
     Scalars bL;
-    for (auto Y_i: Ys.m_vec) {
-        auto v = Y_i == sigma ? Scalar(1) : Scalar(0);
-        bL.Add(v);
+    bL.m_vec.reserve(n);
+    size_t sigma_count = 0;
+    Point hi_sum_at_matches; // sum of Hi[i] over i where Y_i == sigma
+    for (size_t i = 0; i < n; ++i) {
+        if (Ys.m_vec[i] == sigma) {
+            bL.m_vec.push_back(scalar_one);
+            ++sigma_count;
+            hi_sum_at_matches = hi_sum_at_matches + Hi.m_vec[i];
+        } else {
+            bL.m_vec.push_back(scalar_zero);
+        }
     }
 
     // bL o bR = 0^n, bL - bR = 1^n, <bL, 1^n> = 1
-    Scalars ones = Scalars::RepeatN(Scalar(1), n);
+    Scalars ones = Scalars::RepeatN(scalar_one, n);
     Scalars bR = bL - ones;
 
     // Commit 1
@@ -159,19 +174,36 @@ SetMemProof<T> SetMemProofProver<T>::Prove(
     Scalar r_tau = Scalar::Rand(true);
     Scalar r_beta = Scalar::Rand(true);
 
-    Scalars sL;
-    for (size_t i=0; i<n; ++i) {
-        sL.Add(Scalar::Rand(true));
-    }
-    Scalars sR;
-    for (size_t i=0; i<n; ++i) {
-        sR.Add(Scalar::Rand(true));
-    }
+    Scalars sL = Scalars::RandVec(n, true);
+    Scalars sR = Scalars::RandVec(n, true);
 
-    Point A1 = h2 * alpha + (Ys * bL).Sum();
-    Point A2 = h2 * beta + (setup.hs.To(n) * bR).Sum();
+    // (Ys * bL).Sum() == sigma * sigma_count, since bL is the indicator of
+    // {i : Y_i == sigma} and every matched Y_i equals sigma. This avoids n
+    // point multiplications and n point additions.
+    Point ys_bL_sum;
+    if (sigma_count == 1) {
+        ys_bL_sum = sigma;
+    } else if (sigma_count > 1) {
+        ys_bL_sum = sigma * Scalar(static_cast<int64_t>(sigma_count));
+    }
+    Point A1 = h2 * alpha + ys_bL_sum;
+
+    // (Hi * bR).Sum() == hi_sum_at_matches - Hi.Sum(): bR[i] = -1 except 0
+    // at matched indices, so the sum collapses to a single Hi.Sum() (n
+    // additions) plus the already-accumulated hi_sum_at_matches.
+    Point A2 = h2 * beta + hi_sum_at_matches - Hi.Sum();
+
     Point S1 = h2 * r_alpha + setup.h * r_beta + setup.g * r_tau;
-    Point S2 = h2 * rho + (Ys * sL).Sum() + (setup.hs.To(n) * sR).Sum();
+
+    // S2 originally did two independent O(n) naive scalar-mul-and-sum loops.
+    // Combine them into a single 2n-element multi-scalar multiplication
+    // (Pippenger via mclBnG1_mulVecMT) which is several times faster.
+    LazyPoints<T> s2_terms;
+    s2_terms.Add(h2, rho);
+    s2_terms.Add(Ys, sL);
+    s2_terms.Add(Hi, sR);
+    Point S2 = s2_terms.Sum();
+
     Point S3 = h3 * r_tau + g2 * r_beta;
 
     // Set element image
@@ -219,7 +251,7 @@ retry: // retrying without generating fiat_shamir again to get different hashes
     Scalars r = r0 + r1 * x;
     Scalar t = (l * r).Sum();
 
-    Points Hi = setup.hs.To(Ys.Size());
+    // Hi was already cached above (== setup.hs.To(n) and Ys.Size() == n).
 
     GEN_FIAT_SHAMIR_VAR(c_factor, fiat_shamir, retry);
 
@@ -292,11 +324,12 @@ retry:
     GEN_FIAT_SHAMIR_VAR(z, fiat_shamir, retry);
     GEN_FIAT_SHAMIR_VAR(omega, fiat_shamir, retry);
 
-    Scalar y_inv = y.Invert();
+    // Note: y_inv / y_inv_to_n used to be precomputed here but were never
+    // referenced; the per-iteration y_inv_pow values come from
+    // ImpInnerProdArg::LoopWithYPows below. Removing them saves one scalar
+    // inversion plus n-1 scalar multiplications per Verify call.
     Scalars y_to_n = Scalars::FirstNPow(y, n);
-    Scalars y_inv_to_n = Scalars::FirstNPow(y_inv, n);
     Scalar z_sq = z.Square();
-    Points h_primes = setup.hs.To(n) * y_inv_to_n;
     Scalar x = ComputeX(setup, omega, y, z, proof.T1, proof.T2);
 
     G_H_Gi_Hi_ZeroVerifier<T> verifier(n);

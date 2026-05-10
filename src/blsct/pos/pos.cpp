@@ -130,8 +130,20 @@ CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& b
     return std::vector<unsigned char>(hash.begin(), hash.end());
 }
 
-uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block)
+uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
 {
-    return CalculateKernelHash(pindexPrev->nTime, pindexPrev->nStakeModifier, block.nTime);
+    // When hardened, bind accumulated chain work into the kernel hash: two
+    // competing forks diverge in nChainWork as soon as they split, so a
+    // grinding attack that searches for favourable (prevTime, stakeModifier,
+    // time) on one branch does not carry over to a parallel private branch
+    // rooted at the same ancestor. When not hardened (legacy pre-hardening
+    // networks, e.g. testnet with chain state predating the rule change),
+    // the chain-work binding is skipped and raw block time is hashed.
+    return CalculateKernelHashWithChainWork(
+        pindexPrev->nTime,
+        pindexPrev->nStakeModifier,
+        pindexPrev->nChainWork,
+        block.nTime,
+        params.fPoPSHardened);
 }
 } // namespace blsct

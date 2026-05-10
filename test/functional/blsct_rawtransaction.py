@@ -5,11 +5,14 @@
 
 """Test the BLSCT raw transaction RPC methods."""
 
+from decimal import Decimal
+
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
     assert_greater_than,
+    assert_greater_than_or_equal,
 )
 from test_framework.messages import COIN
 
@@ -30,6 +33,15 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.setup_nodes()
         self.connect_nodes(0, 1)
 
+    def generate_blsct_blocks(self, node, address, num_blocks, batch_size=2):
+        blocks = []
+        remaining = num_blocks
+        while remaining > 0:
+            to_generate = min(batch_size, remaining)
+            blocks.extend(self.generatetoblsctaddress(node, to_generate, address))
+            remaining -= to_generate
+        return blocks
+
     def run_test(self):
         self.log.info("Setting up wallets and generating initial blocks")
 
@@ -49,7 +61,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Generate blocks to fund the first wallet
         self.log.info("Generating 101 blocks to fund wallet1")
-        self.generatetoblsctaddress(self.nodes[0], 101, address1)
+        self.generate_blsct_blocks(self.nodes[0], address1, 101)
 
         # Check initial balance
         balance1 = wallet1.getbalance()
@@ -61,8 +73,15 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.test_signblsctrawtransaction(wallet1, wallet2, address1, address2)
         self.test_decodeblsctrawtransaction(wallet1, wallet2, address1, address2)
         self.test_getblsctrecoverydata(wallet1, wallet2, address1, address2)
+        self.test_deriveblsctnonce(wallet1, wallet2, address1, address2)
         self.test_getblsctrecoverydatawithnonce(wallet1, wallet2, address1, address2)
         self.test_integration_workflow(wallet1, wallet2, address1, address2)
+
+    def _find_output_by_message(self, recovery_data, message):
+        for output in recovery_data["outputs"]:
+            if output["message"] == message:
+                return output
+        raise AssertionError(f"No output found with message {message!r}: {recovery_data['outputs']}")
 
     def test_createblsctrawtransaction(self, wallet1, wallet2, address1, address2):
         """Test createblsctrawtransaction RPC method"""
@@ -79,7 +98,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 1: Create raw transaction with minimal inputs (wallet will fill missing data)
         inputs = [{"outid": utxo['outid']}]
-        outputs = [{"address": address2, "amount": 0.1, "memo": "Test transaction"}]
+        outputs = [{"address": address2, "amount": 10000000, "memo": "Test transaction"}]
 
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
         self.log.info(f"Created raw transaction: {raw_tx[:100]}...")
@@ -95,21 +114,21 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.log.info(f"Created raw transaction with data: {raw_tx_with_data[:100]}...")
         # Test 3: Create raw transaction with multiple outputs
         outputs_multi = [
-            {"address": address2, "amount": 0.05, "memo": "First output"},
-            {"address": address1, "amount": 0.03, "memo": "Second output"}
+            {"address": address2, "amount": 5000000, "memo": "First output"},
+            {"address": address1, "amount": 3000000, "memo": "Second output"}
         ]
 
         raw_tx_multi = wallet1.createblsctrawtransaction(inputs, outputs_multi)
         self.log.info(f"Created raw transaction with multiple outputs: {raw_tx_multi[:100]}...")
         # Test 4: Error cases
         # Invalid address
-        outputs_invalid = [{"address": "invalid_address", "amount": 0.1}]
+        outputs_invalid = [{"address": "invalid_address", "amount": 10000000}]
         assert_raises_rpc_error(-5, "Invalid BLSCT address",
                                wallet1.createblsctrawtransaction, inputs, outputs_invalid)
 
         # Negative amount
-        outputs_negative = [{"address": address2, "amount": -0.1}]
-        assert_raises_rpc_error(-3, "Amount out of range",
+        outputs_negative = [{"address": address2, "amount": -10000000}]
+        assert_raises_rpc_error(-8, "Invalid amount, must be positive",
                                wallet1.createblsctrawtransaction, inputs, outputs_negative)
 
         self.log.info("createblsctrawtransaction tests passed")
@@ -120,7 +139,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Create a raw transaction with insufficient inputs
         inputs = []  # No inputs
-        outputs = [{"address": address2, "amount": 0.1, "memo": "Test funding"}]
+        outputs = [{"address": address2, "amount": 10000000, "memo": "Test funding"}]
 
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
 
@@ -135,6 +154,28 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         change_address = wallet2.getnewaddress(label="", address_type="blsct")
         funded_tx_with_change = wallet1.fundblsctrawtransaction(raw_tx, change_address)
         self.log.info(f"Funded transaction with change: {funded_tx_with_change[:100]}...")
+
+        # Test with a custom absolute fee (above consensus minimum so it is not bumped)
+        custom_fee = int(10 * COIN)
+        funded_tx_with_fee = wallet1.fundblsctrawtransaction(raw_tx, None, False, custom_fee)
+        decoded_funded_tx = wallet1.decodeblsctrawtransaction(funded_tx_with_fee)
+        recipient_outputs = [o for o in decoded_funded_tx["outputs"] if o["amount_navoshi"] == 10000000]
+        assert_equal(decoded_funded_tx["fee"], custom_fee)
+        assert_equal(len(recipient_outputs), 1)
+        assert_equal(recipient_outputs[0]["amount_navoshi"], 10000000)
+
+        # Auto fee: consensus weight × fee rate (omit fee; estimate_fee true)
+        funded_auto = wallet1.fundblsctrawtransaction(raw_tx, None, False, None, True)
+        decoded_auto = wallet1.decodeblsctrawtransaction(funded_auto)
+        assert_greater_than(decoded_auto["fee"], 0)
+        wallet1.signblsctrawtransaction(funded_auto)  # must be signable
+
+        # Sub-minimum explicit fee is bumped to at least the consensus minimum
+        funded_bump = wallet1.fundblsctrawtransaction(raw_tx, None, False, 1)
+        decoded_bump = wallet1.decodeblsctrawtransaction(funded_bump)
+        assert_greater_than_or_equal(decoded_bump["fee"], 1)
+        assert decoded_bump["fee"] > 1, "expect 1 navoshi fee to be raised above strict minimum"
+
         # Test error cases
         # Invalid hex string
         assert_raises_rpc_error(-22, "Transaction deserialization failed",
@@ -144,9 +185,13 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         assert_raises_rpc_error(-5, "Invalid BLSCT change address",
                                wallet1.fundblsctrawtransaction, raw_tx, "invalid_address")
 
+        # Invalid fee
+        assert_raises_rpc_error(-8, "Fee must be a non-negative amount in navoshis",
+                               wallet1.fundblsctrawtransaction, raw_tx, None, False, -1)
+
         # Test with insufficient funds (create a transaction larger than available balance)
         balance = wallet1.getbalance()
-        large_outputs = [{"address": address2, "amount": balance + 1, "memo": "Too much"}]
+        large_outputs = [{"address": address2, "amount": int((balance + 1) * COIN), "memo": "Too much"}]
         large_raw_tx = wallet1.createblsctrawtransaction(inputs, large_outputs)
 
         assert_raises_rpc_error(-6, "Insufficient funds",
@@ -160,7 +205,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Create and fund a raw transaction
         inputs = []
-        outputs = [{"address": address2, "amount": 0.1, "memo": "Test signing"}]
+        outputs = [{"address": address2, "amount": 10000000, "memo": "Test signing"}]
 
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
@@ -188,9 +233,16 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 1: Decode a raw transaction
         input_data = {"outid": utxo['outid']}
-        raw_tx = wallet1.createblsctrawtransaction([input_data], [])
+        decode_amount_navoshi = 10000000
+        raw_tx = wallet1.createblsctrawtransaction(
+            [input_data],
+            [{"address": address2, "amount": decode_amount_navoshi, "memo": "Decode test"}],
+        )
         decoded_tx = wallet1.decodeblsctrawtransaction(raw_tx)
         self.log.info(f"Decoded transaction: {decoded_tx}")
+        assert_equal(len(decoded_tx["outputs"]), 1)
+        assert_equal(decoded_tx["outputs"][0]["amount"], Decimal("0.10000000"))
+        assert_equal(decoded_tx["outputs"][0]["amount_navoshi"], decode_amount_navoshi)
 
         # Test 2: Error cases
         # Invalid hex string
@@ -212,7 +264,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 1: Get recovery data for a raw transaction (hex input)
         input_data = {"outid": utxo['outid']}
-        raw_tx = wallet1.createblsctrawtransaction([input_data], [{"address": address1, "amount": 0.005, "memo": "Test script output"}])
+        raw_tx = wallet1.createblsctrawtransaction([input_data], [{"address": address1, "amount": 500000, "memo": "Test script output"}])
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
         recovery_data = wallet1.getblsctrecoverydata(signed_tx)
@@ -242,7 +294,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Test 3: Create and broadcast a transaction, then get recovery data by txid
         # Create a simple transaction
         inputs = []
-        outputs = [{"address": address2, "amount": 0.01, "memo": "Test recovery data"}]
+        outputs = [{"address": address2, "amount": 1000000, "memo": "Test recovery data"}]
 
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
@@ -255,26 +307,27 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # Mine a block to confirm
         self.generatetoblsctaddress(self.nodes[0], 1, address1)
 
-        # Get the last received transaction to get the actual txid
-        transactions = wallet1.listtransactions("*", 1, 0)
-        assert_greater_than(len(transactions), 0)
-        last_tx = transactions[0]
-        actual_txid = last_tx["txid"]
-        self.log.info(f"Last received transaction: {actual_txid}")
+        # In output-storage mode the wallet does not retain full transaction history,
+        # so use the wallet-owned outpoint hash path instead of listtransactions+txid.
+        recovery_data_signed = wallet1.getblsctrecoverydata(signed_tx)
+        assert_greater_than(len(recovery_data_signed["outputs"]), 0)
+        actual_outid = recovery_data_signed["outputs"][0]["out_hash"]
+        self.log.info(f"Wallet-owned output hash: {actual_outid}")
 
-        # Get recovery data by txid
-        recovery_data_txid = wallet1.getblsctrecoverydata(actual_txid)
-        recovery_data_signed = wallet1.getblsctrecoverydata(actual_txid)
-        self.log.info(f"Recovery data from txid: {recovery_data_txid}")
-        self.log.info(f"Recovery data from signed: {recovery_data_signed}")
+        # Get recovery data by outpoint hash
+        recovery_data_outid = wallet1.getblsctrecoverydata(actual_outid)
+        self.log.info(f"Recovery data from outid: {recovery_data_outid}")
+        self.log.info(f"Recovery data from signed tx: {recovery_data_signed}")
 
-        assert_equal(recovery_data_txid, recovery_data_signed)
+        # The outpoint hash input returns the matching output only.
+        assert_equal(len(recovery_data_outid["outputs"]), 1)
+        assert_equal(recovery_data_outid["outputs"][0], recovery_data_signed["outputs"][0])
 
-        # Verify we can get recovery data for specific vout
-        if len(recovery_data_txid["outputs"]) > 0:
-            specific_vout = recovery_data_txid["outputs"][0]["vout"]
-            recovery_data_specific_txid = wallet1.getblsctrecoverydata(actual_txid, specific_vout)
-            assert_equal(len(recovery_data_specific_txid["outputs"]), 1)
+        # Verify we can get recovery data for the specific recovered vout
+        specific_vout = recovery_data_outid["outputs"][0]["vout"]
+        recovery_data_specific_outid = wallet1.getblsctrecoverydata(actual_outid, specific_vout)
+        assert_equal(len(recovery_data_specific_outid["outputs"]), 1)
+        assert_equal(recovery_data_specific_outid["outputs"][0], recovery_data_outid["outputs"][0])
 
         # Test 4: Error cases
         # Invalid hex string
@@ -285,51 +338,87 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         assert_raises_rpc_error(-8, "vout index out of range",
                                wallet1.getblsctrecoverydata, signed_tx, 999)
 
-        # Transaction not found in wallet (for txid input)
+        # Transaction or outpoint not found in wallet
         fake_txid = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
         assert_raises_rpc_error(-8, "Transaction or outpoint not found in wallet",
                                wallet1.getblsctrecoverydata, fake_txid)
 
         self.log.info("getblsctrecoverydata tests passed")
 
+    def test_deriveblsctnonce(self, wallet1, wallet2, address1, address2):
+        """Test shared-nonce derivation from stored blinding key + destination address."""
+        self.log.info("Testing deriveblsctnonce")
+
+        blinding_key_hex = "11" * 32
+
+        nonce1 = wallet1.deriveblsctnonce(blinding_key_hex, address2)
+        nonce2 = wallet2.deriveblsctnonce(blinding_key_hex, address2)
+
+        assert_equal(nonce1, nonce2)
+        assert_equal(len(nonce1), 96)
+
+        assert_raises_rpc_error(
+            -8,
+            "Blinding key must be 32 bytes (64 hex characters)",
+            wallet1.deriveblsctnonce,
+            "abcd",
+            address2,
+        )
+        assert_raises_rpc_error(
+            -5,
+            "Invalid BLSCT address",
+            wallet1.deriveblsctnonce,
+            blinding_key_hex,
+            "invalid_address",
+        )
+
+        self.log.info("deriveblsctnonce tests passed")
+
     def test_getblsctrecoverydatawithnonce(self, wallet1, wallet2, address1, address2):
-        """Test getblsctrecoverydatawithnonce RPC method with nonce and no address"""
+        """Test sender-side recovery via stored blinding key + destination address."""
         self.log.info("Testing getblsctrecoverydatawithnonce")
 
-        # Get some unspent outputs
-        unspent = wallet1.listblsctunspent()
-        assert_greater_than(len(unspent), 0)
+        blinding_key_hex = "22" * 32
+        memo = "Test nonce recovery"
 
-        utxo = unspent[0]
-        self.log.info(f"Using UTXO: {utxo}")
-
-        # Generate a random 32-byte nonce
-        import secrets
-        nonce_bytes = secrets.token_bytes(32)
-        nonce_hex = nonce_bytes.hex()
-        self.log.info(f"Generated nonce: {nonce_hex}")
-
-        # Test 1: Create raw transaction with nonce and no address
-        inputs = [{"outid": utxo['outid']}]
-        outputs = [{"amount": 0.005, "memo": "Test nonce recovery", "blinding_key": nonce_hex}]
-
-        raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
-        self.log.info(f"Created raw transaction with nonce: {raw_tx[:100]}...")
+        # Create a recipient-addressed output, then derive its shared public nonce
+        # from the public destination address and the agreed blinding key.
+        raw_tx = wallet1.createblsctrawtransaction([], [{
+            "address": address2,
+            "amount": 500000,
+            "memo": memo,
+            "blinding_key": blinding_key_hex,
+        }])
+        self.log.info(f"Created raw transaction with recipient-derived nonce: {raw_tx[:100]}...")
 
         # Fund and sign the transaction
         funded_tx = wallet1.fundblsctrawtransaction(raw_tx)
         signed_tx = wallet1.signblsctrawtransaction(funded_tx)
 
-        # Test recovery using the same nonce
+        # The creator can later recover this output using only the stored
+        # blinding key and recipient address, without the recipient's keys.
+        nonce_hex = wallet1.deriveblsctnonce(blinding_key_hex, address2)
+
+        # Test recovery using the shared public nonce
         recovery_data = wallet1.getblsctrecoverydatawithnonce(signed_tx, nonce_hex)
         self.log.info(f"Recovery data with nonce: {recovery_data}")
+
+        # Compare against the recipient wallet's standard recovery path.
+        recipient_recovery = wallet2.getblsctrecoverydata(signed_tx)
+        nonce_output = self._find_output_by_message(recovery_data, memo)
+        recipient_output = self._find_output_by_message(recipient_recovery, memo)
+
+        assert_equal(nonce_output["amount_navoshi"], recipient_output["amount_navoshi"])
+        assert_equal(nonce_output["gamma"], recipient_output["gamma"])
+        assert_equal(nonce_output["out_hash"], recipient_output["out_hash"])
+        assert_equal(nonce_output["script"], recipient_output["script"])
 
         # Verify the structure
         assert "txid" in recovery_data
         assert "outputs" in recovery_data
         assert isinstance(recovery_data["outputs"], list)
         assert len(recovery_data["outputs"]) > 0, "No outputs found in recovery data"
-        assert any(output["message"] == "Test nonce recovery" for output in recovery_data["outputs"]), "No output found with message 'Test nonce recovery'"
+        assert any(output["message"] == memo for output in recovery_data["outputs"]), f"No output found with message {memo!r}"
 
         if len(recovery_data["outputs"]) > 0:
             output = recovery_data["outputs"][0]
@@ -340,13 +429,29 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Test 2: Get recovery data for a specific vout with nonce
         if len(recovery_data["outputs"]) > 0:
-            specific_vout = recovery_data["outputs"][0]["vout"]
+            specific_vout = nonce_output["vout"]
             recovery_data_specific = wallet1.getblsctrecoverydatawithnonce(signed_tx, nonce_hex, specific_vout)
             self.log.info(f"Recovery data for vout {specific_vout} with nonce: {recovery_data_specific}")
 
             # Should have exactly one output
             assert_equal(len(recovery_data_specific["outputs"]), 1)
-            assert_equal(recovery_data_specific["outputs"][0]["vout"], specific_vout)
+            assert_equal(recovery_data_specific["outputs"][0], nonce_output)
+
+        # Test 3: Error cases
+        assert_raises_rpc_error(
+            -8,
+            "Nonce must be 48 bytes (96 hex characters)",
+            wallet1.getblsctrecoverydatawithnonce,
+            signed_tx,
+            "abcd",
+        )
+        assert_raises_rpc_error(
+            -8,
+            "Invalid nonce public key",
+            wallet1.getblsctrecoverydatawithnonce,
+            signed_tx,
+            "00" * 48,
+        )
 
         self.log.info("getblsctrecoverydatawithnonce tests passed")
 
@@ -356,7 +461,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
         # Step 1: Create raw transaction
         inputs = []
-        outputs = [{"address": address2, "amount": 0.05, "memo": "Integration test"}]
+        outputs = [{"address": address2, "amount": 5000000, "memo": "Integration test"}]
 
         raw_tx = wallet1.createblsctrawtransaction(inputs, outputs)
         self.log.info("Step 1: Created raw transaction")

@@ -45,7 +45,7 @@ RPCHelpMan verifyblsctbalanceproof()
             blsct::BalanceProof proof;
             try {
                 ss >> proof;
-            } catch (const std::exception) {
+            } catch (const std::exception&) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid proof format");
             }
 

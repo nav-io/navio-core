@@ -4,6 +4,7 @@
 
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/rpc.h>
+#include <chainparams.h>
 #include <consensus/validation.h>
 #include <core_io.h>
 #include <key_io.h>
@@ -216,7 +217,9 @@ RPCHelpMan sendtoaddress()
     return RPCHelpMan{
         "sendtoaddress",
         "\nSend an amount to a given address." +
-            HELP_REQUIRING_PASSPHRASE,
+            HELP_REQUIRING_PASSPHRASE +
+            "\n\nOn BLSCT networks this call is routed like sendtoblsctaddress: use address, amount, "
+            "optional comment (stored as an on-chain memo), and optional verbose; other arguments are ignored.",
         {
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The bitcoin address to send to."},
             {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to send. eg 0.1"},
@@ -262,6 +265,25 @@ RPCHelpMan sendtoaddress()
             // Make sure the results are valid at least up to the most recent block
             // the user could have gotten from another RPC command prior to now
             pwallet->BlockUntilSyncedToCurrentChain();
+
+            if (Params().GetConsensus().fBLSCT) {
+                UniValue inner(UniValue::VARR);
+                inner.push_back(request.params[0]);
+                inner.push_back(request.params[1]);
+                if (request.params.size() > 2 && !request.params[2].isNull()) {
+                    inner.push_back(request.params[2]);
+                } else {
+                    inner.push_back("");
+                }
+                bool verbose_val = false;
+                if (request.params.size() > 10 && !request.params[10].isNull()) {
+                    verbose_val = request.params[10].get_bool();
+                }
+                inner.push_back(verbose_val);
+                JSONRPCRequest subreq = request;
+                subreq.params = inner;
+                return ::sendtoblsctaddress().HandleRequest(subreq);
+            }
 
             LOCK(pwallet->cs_wallet);
 
