@@ -225,7 +225,7 @@ retry: // retrying without generating fiat_shamir again to get different hashes
 
     // Commit 2
     Scalars l0 = bL - (ones * z);
-    Scalars l1 = sL;
+    const Scalars& l1 = sL;
     Scalars r0 = y_to_n * (bR * omega + ones * (omega * z)) + (ones * z_sq);
     Scalars r1 = y_to_n * sR;
     Scalar t1 = (l0 * r1).Sum() + (l1 * r0).Sum();

@@ -109,7 +109,7 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
 
     wallet::mapValue_t map_value;
     wallet.CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
-    const std::string outputHash = tx->vout[0].GetHash().GetHex();
+    std::string outputHash = tx->vout[0].GetHash().GetHex();
     if (verbose) {
         UniValue entry(UniValue::VOBJ);
         entry.pushKV("outputHash", outputHash);
@@ -1943,7 +1943,7 @@ RPCHelpMan fundblsctrawtransaction()
 
                     for (const auto& [type, outputs] : available_outputs.coins) {
                         for (const auto& output : outputs) {
-                            if (existing_inputs.count(output.outpoint) > 0) {
+                            if (existing_inputs.contains(output.outpoint)) {
                                 continue;
                             }
 

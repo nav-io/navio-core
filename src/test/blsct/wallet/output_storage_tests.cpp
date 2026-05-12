@@ -51,7 +51,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_basic, TestingSetup)
     BOOST_CHECK(result != nullptr);
 
     // Find the output in mapOutputs
-    BOOST_CHECK(wallet->mapOutputs.count(outpoint) > 0);
+    BOOST_CHECK(wallet->mapOutputs.contains(outpoint));
 
     const CWalletOutput& wout = wallet->mapOutputs.at(outpoint);
 

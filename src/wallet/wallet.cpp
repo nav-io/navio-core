@@ -1340,7 +1340,7 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
             }
 
             for (size_t i = 0; i < wtx.tx->vout.size(); ++i) {
-                if (wtx.blsctRecoveryData.count(i) != 0) {
+                if (wtx.blsctRecoveryData.contains(i)) {
                     continue;
                 }
 
@@ -1471,7 +1471,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             if (auto it = mapWallet.find(tx.GetHash()); it != mapWallet.end()) {
                 it->second.m_state = tx_state;
                 it->second.MarkDirty();
-                WalletBatch batch(GetDatabase(), /*flush_on_close=*/false);
+                WalletBatch batch(GetDatabase(), /*_fFlushOnClose=*/false);
                 batch.WriteTx(it->second);
             }
 
@@ -2669,7 +2669,7 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
     }
 
     if (tx->IsBLSCT() && IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
-        WalletBatch batch(GetDatabase(), /*flush_on_close=*/false);
+        WalletBatch batch(GetDatabase(), /*_fFlushOnClose=*/false);
         for (const CTxIn& txin : tx->vin) {
             auto it = mapOutputs.find(txin.prevout);
             if (it == mapOutputs.end()) continue;
