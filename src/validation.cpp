@@ -2546,7 +2546,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
 
         pos_kernel_range_proof.emplace(block.posProof.GetKernelRangeProof(min_value_u64, eta_phi));
         pos_verify_future = blsct::GetPosAsyncVerifier().Submit(
-            [staked_commitments = std::move(staked_commitments_snapshot),
+            [staked_commitments = staked_commitments_snapshot,
              eta_fiat_shamir = std::move(eta_fiat_shamir),
              eta_phi = std::move(eta_phi),
              &pos_proof = block.posProof]() -> std::pair<bool, std::string> {
