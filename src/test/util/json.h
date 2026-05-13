@@ -5,10 +5,10 @@
 #ifndef BITCOIN_TEST_UTIL_JSON_H
 #define BITCOIN_TEST_UTIL_JSON_H
 
-#include <string>
+#include <string_view>
 
 #include <univalue.h>
 
-UniValue read_json(const std::string& jsondata);
+UniValue read_json(std::string_view jsondata);
 
 #endif // BITCOIN_TEST_UTIL_JSON_H
