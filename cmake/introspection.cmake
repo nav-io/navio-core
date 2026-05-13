@@ -165,7 +165,7 @@ check_cxx_source_compiles("
   " HAVE_SYSCTL_ARND
 )
 
-if(NOT MSVC)
+if(NOT MSVC AND USE_ASM)
   include(CheckSourceCompilesWithFlags)
 
   # Check for SSE4.1 intrinsics.

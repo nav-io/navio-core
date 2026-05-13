@@ -271,4 +271,4 @@ class TxDownloadTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    TxDownloadTest().main()
+    TxDownloadTest(__file__).main()

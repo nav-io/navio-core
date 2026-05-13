@@ -829,4 +829,4 @@ class BLSCTHTLCTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    BLSCTHTLCTest().main()
+    BLSCTHTLCTest(__file__).main()

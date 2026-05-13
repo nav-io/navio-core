@@ -591,4 +591,4 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    NavioBlsctOutputStorageTest().main()
+    NavioBlsctOutputStorageTest(__file__).main()

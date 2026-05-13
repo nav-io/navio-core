@@ -313,4 +313,4 @@ class WalletMnemonicTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    WalletMnemonicTest().main()
+    WalletMnemonicTest(__file__).main()

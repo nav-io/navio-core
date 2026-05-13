@@ -359,4 +359,4 @@ class RPCPackagesTest(BitcoinTestFramework):
         peer.wait_for_broadcast([first_wtxid])
 
 if __name__ == "__main__":
-    RPCPackagesTest().main()
+    RPCPackagesTest(__file__).main()

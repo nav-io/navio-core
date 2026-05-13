@@ -156,4 +156,4 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
             self.log.info(f"Verbose staking may have parameter handling issue: {e}")
 
 if __name__ == '__main__':
-    NavioBlsctStakingTest().main()
+    NavioBlsctStakingTest(__file__).main()

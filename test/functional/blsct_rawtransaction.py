@@ -494,4 +494,4 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    BLSCTRawTransactionTest().main()
+    BLSCTRawTransactionTest(__file__).main()

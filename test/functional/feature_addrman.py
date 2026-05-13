@@ -167,4 +167,4 @@ class AddrmanTest(BitcoinTestFramework):
 
 
 if __name__ == "__main__":
-    AddrmanTest().main()
+    AddrmanTest(__file__).main()

@@ -119,6 +119,8 @@ option(BUILD_FOR_FUZZING "Build for fuzzing. Enabling this will disable all othe
 
 option(INSTALL_MAN "Install man pages." ON)
 
+option(USE_ASM "Build with assembly routines (CPU SIMD dispatch in SHA-256, etc)." ON)
+
 set(APPEND_CPPFLAGS "" CACHE STRING "Preprocessor flags appended to the command line after all other flags.")
 set(APPEND_CFLAGS "" CACHE STRING "C compiler flags appended to the command line after all other flags.")
 set(APPEND_CXXFLAGS "" CACHE STRING "(Objective) C++ compiler flags appended to the command line after all other flags.")
@@ -178,6 +180,7 @@ if(BUILD_LIBBLSCT_ONLY)
   set(BUILD_TESTS OFF)
   set(BUILD_BENCH OFF)
   set(BUILD_FUZZ_BINARY OFF)
+  set(ENABLE_EXTERNAL_SIGNER OFF)
 endif()
 
 include(TryAppendCXXFlags)
@@ -311,8 +314,14 @@ if(BUILD_FUZZ_BINARY)
   target_link_libraries(fuzzer_interface INTERFACE ${FUZZ_LIBS})
 endif()
 
-include(AddBoostIfNeeded)
-add_boost_if_needed()
+# Mirror autotools (configure.ac: use_boost gating): skip Boost detection
+# when only libblsct is being built. The libblsct-only build does not link
+# any consumer of Boost; gating here avoids requiring boost on those
+# minimal builds.
+if(NOT BUILD_LIBBLSCT_ONLY)
+  include(AddBoostIfNeeded)
+  add_boost_if_needed()
+endif()
 
 # Boost.Process v1 API (opstream/ipstream) was removed from the default
 # boost::process namespace in Boost 1.88. Disable external signer if the

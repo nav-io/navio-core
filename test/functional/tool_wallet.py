@@ -467,4 +467,4 @@ class ToolWalletTest(BitcoinTestFramework):
         self.test_chainless_conflicts()
 
 if __name__ == '__main__':
-    ToolWalletTest().main()
+    ToolWalletTest(__file__).main()
