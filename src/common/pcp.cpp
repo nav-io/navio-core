@@ -318,7 +318,7 @@ std::variant<MappingResult, MappingError> NATPMPRequestPortMap(const CNetAddr &g
     request[NATPMP_HDR_VERSION_OFS] = NATPMP_VERSION;
     request[NATPMP_HDR_OP_OFS] = NATPMP_REQUEST | NATPMP_OP_GETEXTERNAL;
 
-    auto recv_res = PCPSendRecv(*sock, "natpmp", std::span<const uint8_t>{request}, num_tries, timeout_per_try,
+    auto recv_res = PCPSendRecv(*sock, "natpmp", std::span<const uint8_t>(request.data(), request.size()), num_tries, timeout_per_try,
         [&](const std::span<const uint8_t> response) -> bool {
             if (response.size() < NATPMP_GETEXTERNAL_RESPONSE_SIZE) {
                 LogWarning("natpmp: Response too small\n");
@@ -356,7 +356,7 @@ std::variant<MappingResult, MappingError> NATPMPRequestPortMap(const CNetAddr &g
     WriteBE16(request.data() + NATPMP_MAP_REQUEST_EXTERNAL_PORT_OFS, port);
     WriteBE32(request.data() + NATPMP_MAP_REQUEST_LIFETIME_OFS, lifetime);
 
-    recv_res = PCPSendRecv(*sock, "natpmp", std::span<const uint8_t>{request}, num_tries, timeout_per_try,
+    recv_res = PCPSendRecv(*sock, "natpmp", std::span<const uint8_t>(request.data(), request.size()), num_tries, timeout_per_try,
         [&](const std::span<const uint8_t> response) -> bool {
             if (response.size() < NATPMP_MAP_RESPONSE_SIZE) {
                 LogWarning("natpmp: Response too small\n");
@@ -459,7 +459,7 @@ std::variant<MappingResult, MappingError> PCPRequestPortMap(const PCPMappingNonc
     request[ofs + PCP_HDR_VERSION_OFS] = PCP_VERSION;
     request[ofs + PCP_HDR_OP_OFS] = PCP_REQUEST | PCP_OP_MAP;
     WriteBE32(request.data() + ofs + PCP_HDR_LIFETIME_OFS, lifetime);
-    if (!PCPWrapAddress(std::span(request).subspan(ofs + PCP_REQUEST_HDR_IP_OFS, ADDR_IPV6_SIZE), internal)) return MappingError::NETWORK_ERROR;
+    if (!PCPWrapAddress(std::span<uint8_t>(request.data(), request.size()).subspan(ofs + PCP_REQUEST_HDR_IP_OFS, ADDR_IPV6_SIZE), internal)) return MappingError::NETWORK_ERROR;
 
     ofs += PCP_HDR_SIZE;
 
@@ -470,14 +470,14 @@ std::variant<MappingResult, MappingError> PCPRequestPortMap(const PCPMappingNonc
     request[ofs + PCP_MAP_PROTOCOL_OFS] = PCP_PROTOCOL_TCP;
     WriteBE16(request.data() + ofs + PCP_MAP_INTERNAL_PORT_OFS, port);
     WriteBE16(request.data() + ofs + PCP_MAP_EXTERNAL_PORT_OFS, port);
-    if (!PCPWrapAddress(std::span(request).subspan(ofs + PCP_MAP_EXTERNAL_IP_OFS, ADDR_IPV6_SIZE), bind)) return MappingError::NETWORK_ERROR;
+    if (!PCPWrapAddress(std::span<uint8_t>(request.data(), request.size()).subspan(ofs + PCP_MAP_EXTERNAL_IP_OFS, ADDR_IPV6_SIZE), bind)) return MappingError::NETWORK_ERROR;
 
     ofs += PCP_MAP_SIZE;
     Assume(ofs == request.size());
 
     // Receive loop.
     bool is_natpmp = false;
-    auto recv_res = PCPSendRecv(*sock, "pcp", std::span<const uint8_t>{request}, num_tries, timeout_per_try,
+    auto recv_res = PCPSendRecv(*sock, "pcp", std::span<const uint8_t>(request.data(), request.size()), num_tries, timeout_per_try,
         [&](const std::span<const uint8_t> response) -> bool {
             // Unsupported version according to RFC6887 appendix A and RFC6886 section 3.5, can fall back to NAT-PMP.
             if (response.size() == NATPMP_RESPONSE_HDR_SIZE && response[PCP_HDR_VERSION_OFS] == NATPMP_VERSION && response[PCP_RESPONSE_HDR_RESULT_OFS] == NATPMP_RESULT_UNSUPP_VERSION) {

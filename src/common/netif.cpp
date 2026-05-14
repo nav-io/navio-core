@@ -26,6 +26,9 @@
 #endif
 #elif defined(WIN32)
 #include <iphlpapi.h>
+// mingw-w64's winsock headers expose ADDRESS_FAMILY but not the POSIX
+// sa_family_t alias, so provide it here.
+using sa_family_t = ADDRESS_FAMILY;
 #elif defined(__APPLE__)
 #include <net/route.h>
 #include <sys/sysctl.h>
