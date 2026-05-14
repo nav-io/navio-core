@@ -165,7 +165,17 @@ check_cxx_source_compiles("
   " HAVE_SYSCTL_ARND
 )
 
-if(NOT MSVC)
+# Invalidate cached SIMD intrinsic checks if USE_ASM has been toggled off
+# since the last configure. Without this, stale HAVE_* TRUE values from a
+# previous USE_ASM=ON run would still be visible to consumers of these
+# cache variables when re-configuring with USE_ASM=OFF.
+if(NOT USE_ASM)
+  foreach(var HAVE_SSE41 HAVE_AVX2 HAVE_X86_SHANI HAVE_ARM_SHANI)
+    unset(${var} CACHE)
+  endforeach()
+endif()
+
+if(NOT MSVC AND USE_ASM)
   include(CheckSourceCompilesWithFlags)
 
   # Check for SSE4.1 intrinsics.

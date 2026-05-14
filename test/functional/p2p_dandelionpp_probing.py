@@ -66,4 +66,4 @@ class DandelionProbingTest(BitcoinTestFramework):
 
 
 if __name__ == "__main__":
-    DandelionProbingTest().main()
+    DandelionProbingTest(__file__).main()

@@ -143,4 +143,4 @@ class BlsctListTransactionsStakeTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    BlsctListTransactionsStakeTest().main()
+    BlsctListTransactionsStakeTest(__file__).main()

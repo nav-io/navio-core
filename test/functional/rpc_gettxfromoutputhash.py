@@ -82,4 +82,4 @@ class GetTxFromOutputHashTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    GetTxFromOutputHashTest().main()
+    GetTxFromOutputHashTest(__file__).main()

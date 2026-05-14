@@ -6,6 +6,10 @@ function(create_test_config)
   set(abs_top_srcdir ${PROJECT_SOURCE_DIR})
   set(abs_top_builddir ${PROJECT_BINARY_DIR})
   set(EXEEXT ${CMAKE_EXECUTABLE_SUFFIX})
+  # Binaries land in build/bin/ under CMake (autotools uses build/src/).
+  set(EXEDIR_REL bin)
+  # Fuzz binary is flat under CMake (autotools nests at src/test/fuzz/fuzz).
+  set(FUZZ_BIN_REL "bin/fuzz${CMAKE_EXECUTABLE_SUFFIX}")
 
   macro(set_configure_variable var conf_var)
     if(${var})
@@ -59,11 +63,20 @@ function(create_test_directory_links)
     functional/test_framework/*.py
   )
 
+  file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/functional/test_framework/crypto)
+  file(GLOB functional_test_framework_crypto
+    LIST_DIRECTORIES FALSE
+    RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    functional/test_framework/crypto/*.csv
+    functional/test_framework/crypto/*.py
+  )
+
   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fuzz)
   set(files_to_link
     ${functional}
     ${functional_data}
     ${functional_test_framework}
+    ${functional_test_framework_crypto}
     fuzz/test_runner.py
   )
 

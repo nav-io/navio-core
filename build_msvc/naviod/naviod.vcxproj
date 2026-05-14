@@ -65,6 +65,10 @@
     <ReplaceInFile FilePath="$(ConfigIniOut)"
                    Replace="@EXEEXT@" By=".exe"></ReplaceInFile>
     <ReplaceInFile FilePath="$(ConfigIniOut)"
+                   Replace="@EXEDIR_REL@" By="src"></ReplaceInFile>
+    <ReplaceInFile FilePath="$(ConfigIniOut)"
+                   Replace="@FUZZ_BIN_REL@" By="src\test\fuzz\fuzz.exe"></ReplaceInFile>
+    <ReplaceInFile FilePath="$(ConfigIniOut)"
                   Replace="@ENABLE_WALLET_TRUE@" By=""></ReplaceInFile>
     <ReplaceInFile FilePath="$(ConfigIniOut)"
                   Replace="@USE_SQLITE_TRUE@" By=""></ReplaceInFile>

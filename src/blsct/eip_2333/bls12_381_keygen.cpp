@@ -3,7 +3,6 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/eip_2333/bls12_381_keygen.h>
-#include <cmath>
 #include <crypto/sha256.h>
 #include <tinyformat.h>
 
@@ -25,7 +24,7 @@ std::array<uint8_t,L> BLS12_381_KeyGen::HKDF_Expand(const std::array<uint8_t,BLS
     std::array<uint8_t,L> output;
     uint8_t n;
 
-    const size_t num_loops = std::ceil(static_cast<float>(L) / DigestSize);
+    const size_t num_loops = (L + DigestSize - 1) / DigestSize;
     auto output_it = output.begin();
 
     for (size_t i=1; i<=num_loops; ++i) {

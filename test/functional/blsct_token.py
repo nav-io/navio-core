@@ -217,4 +217,4 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    NavioBlsctTokenTest().main()
+    NavioBlsctTokenTest(__file__).main()

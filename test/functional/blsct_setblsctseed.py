@@ -110,4 +110,4 @@ class BLSCTSetSeedTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    BLSCTSetSeedTest().main()
+    BLSCTSetSeedTest(__file__).main()

@@ -199,4 +199,4 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    BlsctUnconfirmedSpendingTest().main()
+    BlsctUnconfirmedSpendingTest(__file__).main()

@@ -121,6 +121,9 @@
 /* Define to 1 if strerror_r returns char *. */
 #cmakedefine STRERROR_R_CHAR_P 1
 
+/* Define this symbol to build in assembly routines (CPU SIMD dispatch). */
+#cmakedefine USE_ASM 1
+
 /* BLS_ETH mode required for bls and mcl libs */
 #define BLS_ETH 1
 

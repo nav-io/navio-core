@@ -343,16 +343,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: tidy
-            label: '[tidy]'
-            file_env: ./ci/test/00_setup_env_native_tidy.sh
-            runner: ubuntu-24.04
-
-          - name: no-wallet-libblsct
-            label: 'Debian Bullseye, no wallet, libblsct only'
-            file_env: ./ci/test/00_setup_env_native_libblsct_only.sh
-            runner: ubuntu-24.04
-
           - name: mac-cross
             label: 'macOS cross-compile, Ubuntu 24.04, no tests'
             file_env: ./ci/test/00_setup_env_mac_cross.sh
@@ -456,6 +446,55 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Replaces the autotools `tidy` matrix entry.
+          # Wallet and test code are included — tidy analyses all translation units.
+          # CMAKE_BUILD_TYPE=None avoids build-type CFLAGS; -O0 -g0 are supplied
+          # explicitly via APPEND_CXXFLAGS (mirrors autotools CXXFLAGS='-O0 -g0').
+          # APPEND_CPPFLAGS adds the clang resource-dir include (matches
+          # the autotools -I/usr/lib/llvm-17/lib/clang/17/include flag).
+          # There is no ENABLE_HARDENING option in the CMake build system;
+          # hardening flags are not added by default, matching --disable-hardening.
+          - name: tidy
+            label: '[tidy] Ubuntu 24.04, clang-17 (CMake)'
+            runner: ubuntu-24.04
+            packages: >-
+              clang-17 libclang-17-dev llvm-17-dev libomp-17-dev
+              clang-tidy-17 iwyu jq libevent-dev libboost-dev
+              libminiupnpc-dev libnatpmp-dev libzmq3-dev
+              systemtap-sdt-dev libsqlite3-dev
+            cc: clang-17
+            cxx: clang++-17
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=None
+              -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+              -DAPPEND_CPPFLAGS=-I/usr/lib/llvm-17/lib/clang/17/include
+              "-DAPPEND_CXXFLAGS=-O0 -g0"
+            tidy: true
+
+          # Replaces the autotools `no-wallet-libblsct` matrix entry.
+          # clang-13 (Bullseye default) is not packaged for Ubuntu 24.04 apt;
+          # clang-14 (available via llvm-toolchain-jammy-14) is the closest
+          # upstream-supported equivalent and produces identical ABI results.
+          # -stdlib=libc++ mirrors DEP_OPTS="CXX='clang++-13 -stdlib=libc++'"
+          # in 00_setup_env_native_libblsct_only.sh.
+          # NO_OPENMP=1 → -DWITH_MCL_OPENMP=OFF (already the default; explicit).
+          # NO_WALLET=1 → implied by BUILD_LIBBLSCT_ONLY=ON.
+          - name: no-wallet-libblsct
+            label: 'Ubuntu 24.04, no wallet, libblsct only (CMake)'
+            runner: ubuntu-24.04
+            packages: >-
+              clang-14 llvm-14 libc++abi-14-dev libc++-14-dev
+            cc: clang-14
+            cxx: clang++-14
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_CXX_FLAGS=-stdlib=libc++
+              -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
+              -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++
+              -DBUILD_LIBBLSCT_ONLY=ON
+              -DWITH_MCL_OPENMP=OFF
+            check_libblsct_symbols: true
+
           # Replaces the `no-wallet-libnaviokernel` autotools matrix entry.
           # -stdlib=libc++ is passed via CMAKE_{CXX,EXE_LINKER}_FLAGS rather
           # than the CXX env var because cmake strips compiler flags out of
@@ -523,13 +562,103 @@ jobs:
         run: cmake -B build -G Ninja ${{ matrix.cmake_flags }}
 
       - name: Build
-        run: cmake --build build -j$(nproc)
+        run: cmake --build build
 
       - name: Install
+        if: ${{ matrix.smoke_test }}
         run: DESTDIR="${RUNNER_TEMP}/install" cmake --install build
 
       - name: Smoke test
+        if: ${{ matrix.smoke_test }}
         run: ${{ matrix.smoke_test }}
+
+      - name: Check libblsct symbols
+        if: ${{ matrix.check_libblsct_symbols }}
+        run: |
+          # Artifact paths (CMake BUILD_LIBBLSCT_ONLY=ON):
+          #   libblsct.a    → build/lib/libblsct.a          (target: blsct)
+          #   libbls384_256 → src/bls/lib/libbls384_256.a   (ExternalProject in-source)
+          #   libmcl.a      → src/bls/mcl/lib/libmcl.a      (ExternalProject in-source)
+          #   libunivalue   → build/lib/libunivalue.a        (CMake target: univalue)
+          #   libsecp256k1  → build/lib/libsecp256k1.a       (subdirectory target)
+          python3 contrib/devtools/libblsct-symbol-check.py \
+            build/lib/libblsct.a \
+            src/bls/lib/libbls384_256.a \
+            src/bls/mcl/lib/libmcl.a \
+            build/lib/libunivalue.a \
+            build/lib/libsecp256k1.a
+
+      - name: Tidy
+        if: ${{ matrix.tidy }}
+        run: |
+          set -eo pipefail
+          cmake -B /tmp/tidy-build \
+            -DLLVM_DIR=/usr/lib/llvm-17/cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -S contrib/devtools/bitcoin-tidy
+          cmake --build /tmp/tidy-build
+          cmake --build /tmp/tidy-build --target bitcoin-tidy-tests
+          # Filter qt qrc/moc generated files from compile_commands.json in-place
+          # so that -p build (directory) works correctly with run-clang-tidy-17.
+          jq 'map(select(.file | test("src/qt/qrc_.*\\.cpp$|/moc_.*\\.cpp$") | not))' \
+            build/compile_commands.json > /tmp/compile_commands_filtered.json
+          mv /tmp/compile_commands_filtered.json build/compile_commands.json
+          # Run clang-tidy, tee output, then explicitly fail if any diagnostic
+          # was emitted. The previous `| grep -C5 "error" || [ $? -eq 1 ]`
+          # pattern masked real failures: grep exiting 1 (no match) was treated
+          # as success, hiding any clang-tidy output without a literal "error".
+          run-clang-tidy-17 -quiet \
+            -load=/tmp/tidy-build/libbitcoin-tidy.so \
+            -p build \
+            -j$(nproc) 2>&1 | tee /tmp/tidy.log
+          if grep -E "\.(cpp|h|hpp|cc|cxx):[0-9]+:[0-9]+: (error|warning):" /tmp/tidy.log; then
+            echo "::error::clang-tidy reported diagnostics"
+            exit 1
+          fi
+
+      - name: include-what-you-use
+        if: ${{ matrix.tidy }}
+        run: |
+          set -eo pipefail
+          # Mirrors the autotools tidy IWYU pass from ci/test/03_test_script.sh.
+          # Ubuntu 24.04's iwyu package layout varies by version: iwyu_tool
+          # lands on PATH but the include-fixer script may be exposed as
+          # `fix_includes`, `fix_includes.py`, or only via
+          # /usr/share/include-what-you-use/fix_includes.py. Probe known
+          # locations so we fail loudly with a diagnostic listing if none
+          # work instead of silently picking up a stale path.
+          iwyu_tool_bin=
+          for c in iwyu_tool iwyu_tool.py /usr/share/include-what-you-use/iwyu_tool.py; do
+            if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then
+              iwyu_tool_bin="$c"; break
+            fi
+          done
+          fix_includes_bin=
+          for c in fix_include fix_includes fix_include.py fix_includes.py /usr/share/include-what-you-use/fix_includes.py; do
+            if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then
+              fix_includes_bin="$c"; break
+            fi
+          done
+          if [ -z "$iwyu_tool_bin" ] || [ -z "$fix_includes_bin" ]; then
+            echo "::error::Required IWYU tools not found. Package contents:"
+            dpkg -L iwyu || true
+            exit 1
+          fi
+          echo "Using iwyu_tool: $iwyu_tool_bin"
+          echo "Using fix_includes: $fix_includes_bin"
+          "$iwyu_tool_bin" --version || true
+          "$fix_includes_bin" --version || true
+          "$iwyu_tool_bin" \
+            -p build -j"$(nproc)" \
+            -- -Xiwyu --cxx17ns \
+               -Xiwyu --mapping_file="${PWD}/contrib/devtools/iwyu/bitcoin.core.imp" \
+               -Xiwyu --max_line_length=160 \
+            2>&1 | tee /tmp/iwyu.log
+          ( cd src && "$fix_includes_bin" --nosafe_headers < /tmp/iwyu.log )
+          # Match upstream autotools behavior (ci/test/03_test_script.sh):
+          # surface the IWYU-suggested diff for visibility but do not fail
+          # the job — the codebase has not been cleaned for strict IWYU.
+          git --no-pager diff || true
 
       - name: Save Ccache cache
         if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'

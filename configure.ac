@@ -2,7 +2,7 @@ AC_PREREQ([2.69])
 define(_CLIENT_VERSION_MAJOR, 0)
 define(_CLIENT_VERSION_MINOR, 1)
 define(_CLIENT_VERSION_BUILD, 0)
-define(_CLIENT_VERSION_RC, 24)
+define(_CLIENT_VERSION_RC, 23)
 define(_CLIENT_VERSION_IS_RELEASE, false)
 define(_COPYRIGHT_YEAR, 2026)
 define(_COPYRIGHT_HOLDERS,[The %s developers])
@@ -801,7 +801,7 @@ case $host in
      fi
 
      AX_CHECK_LINK_FLAG([-Wl,-headerpad_max_install_names], [CORE_LDFLAGS="$CORE_LDFLAGS -Wl,-headerpad_max_install_names"], [], [$LDFLAG_WERROR])
-     CORE_CPPFLAGS="$CORE_CPPFLAGS -DMAC_OSX -DOBJC_OLD_DISPATCH_PROTOTYPES=0"
+     CORE_CPPFLAGS="$CORE_CPPFLAGS -DOBJC_OLD_DISPATCH_PROTOTYPES=0"
      OBJCXXFLAGS="$CXXFLAGS"
      ;;
    *android*)
@@ -2017,6 +2017,14 @@ AC_SUBST(HAVE_MM_PREFETCH)
 AC_SUBST(HAVE_STRONG_GETAUXVAL)
 AC_SUBST(ANDROID_ARCH)
 AC_SUBST(HAVE_EVHTTP_CONNECTION_GET_PEER_CONST_CHAR)
+dnl Autotools builds emit binaries into $(top_builddir)/src.  The CMake build
+dnl emits them into $(top_builddir)/bin.  Functional/util/fuzz test runners
+dnl consult @EXEDIR_REL@ via test/config.ini to locate them under either layout.
+AC_SUBST([EXEDIR_REL], [src])
+dnl Fuzz binary is nested under src/test/fuzz/ in autotools; CMake puts it
+dnl flat alongside the other executables.  Exposed separately so the fuzz
+dnl runner doesn't have to special-case the layouts.
+AC_SUBST([FUZZ_BIN_REL], [src/test/fuzz/fuzz])
 AC_CONFIG_FILES([Makefile src/Makefile doc/man/Makefile test/config.ini])
 AC_CONFIG_FILES([contrib/devtools/split-debug.sh],[chmod +x contrib/devtools/split-debug.sh])
 AM_COND_IF([HAVE_DOXYGEN], [AC_CONFIG_FILES([doc/Doxyfile])])

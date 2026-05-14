@@ -163,4 +163,4 @@ class BlsctPopsConsensusTest(BitcoinTestFramework):
 
 
 if __name__ == "__main__":
-    BlsctPopsConsensusTest().main()
+    BlsctPopsConsensusTest(__file__).main()
