@@ -334,7 +334,7 @@ std::variant<MappingResult, MappingError> NATPMPRequestPortMap(const CNetAddr &g
 
     struct in_addr external_addr;
     if (recv_res) {
-        const std::span<const uint8_t> response = *recv_res;
+        const std::span<const uint8_t> response(recv_res->data(), recv_res->size());
 
         Assume(response.size() >= NATPMP_GETEXTERNAL_RESPONSE_SIZE);
         uint16_t result_code = ReadBE16(response.data() + NATPMP_RESPONSE_HDR_RESULT_OFS);
@@ -376,7 +376,7 @@ std::variant<MappingResult, MappingError> NATPMPRequestPortMap(const CNetAddr &g
         interrupt);
 
     if (recv_res) {
-        const std::span<uint8_t> response = *recv_res;
+        const std::span<uint8_t> response(recv_res->data(), recv_res->size());
 
         Assume(response.size() >= NATPMP_MAP_RESPONSE_SIZE);
         uint16_t result_code = ReadBE16(response.data() + NATPMP_RESPONSE_HDR_RESULT_OFS);
@@ -516,7 +516,7 @@ std::variant<MappingResult, MappingError> PCPRequestPortMap(const PCPMappingNonc
         return MappingError::UNSUPP_VERSION;
     }
 
-    const std::span<const uint8_t> response = *recv_res;
+    const std::span<const uint8_t> response(recv_res->data(), recv_res->size());
     // If we get here, we got a valid MAP response to our request.
     // Check to see if we got the result we expected.
     Assume(response.size() >= (PCP_HDR_SIZE + PCP_MAP_SIZE));
