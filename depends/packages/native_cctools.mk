@@ -12,6 +12,10 @@ define $(package)_set_vars
   $(package)_ldflags+=-Wl,-rpath=\\$$$$$$$$\$$$$$$$$ORIGIN/../lib
   $(package)_cc=$(clang_prog)
   $(package)_cxx=$(clangxx_prog)
+  # cctools uses BSD-isms like u_char; gnu11 keeps those (the depends-wide
+  # C_STANDARD=c11 default added by the upstream funcs.mk sync breaks the build).
+  $(package)_cflags=-pipe -std=gnu11
+  $(package)_cxxflags=-pipe -std=gnu++11
 endef
 
 ifneq ($(strip $(FORCE_USE_SYSTEM_CLANG)),)
