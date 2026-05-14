@@ -348,11 +348,6 @@ jobs:
             file_env: ./ci/test/00_setup_env_mac_cross.sh
             runner: ubuntu-24.04
 
-          - name: win64
-            label: 'Win64 cross-compile, Ubuntu 24.04, unit tests only'
-            file_env: ./ci/test/00_setup_env_win64.sh
-            runner: ubuntu-24.04
-
           - name: arm
             label: 'Ubuntu 24.04, ARM64, unit tests only'
             file_env: ./ci/test/00_setup_env_arm.sh
@@ -530,6 +525,29 @@ jobs:
               file ./build/lib/libnaviokernel.so
               test -x ./build/bin/navio-chainstate
 
+          # Replaces the autotools `win64` matrix entry.
+          # Packages: g++-mingw-w64-x86-64-posix for the cross compiler,
+          # wine-binfmt + wine64 for ctest's CMAKE_CROSSCOMPILING_EMULATOR=wine
+          # to run x86_64 .exe binaries. wine32 is intentionally omitted —
+          # we only build x86_64, and pulling it in requires dpkg --add-architecture i386.
+          # REDUCE_EXPORTS=ON mirrors --enable-reduce-exports.
+          # APPEND_CXXFLAGS=-Wno-return-type suppresses missing-noreturn warnings
+          # that pre-11.0.0 mingw-w64 headers trigger (mirrors CXXFLAGS=-Wno-return-type).
+          # No functional tests (mirrors RUN_FUNCTIONAL_TESTS=false).
+          - name: win64-cross
+            label: 'Win64 cross-compile, Ubuntu 24.04, unit tests only (CMake)'
+            runner: ubuntu-24.04
+            packages: >-
+              g++-mingw-w64-x86-64-posix
+              wine-binfmt wine64
+              libboost-dev
+            cmake_flags: >-
+              -DCMAKE_TOOLCHAIN_FILE=cmake/x86_64-w64-mingw32.toolchain.cmake
+              -DCMAKE_BUILD_TYPE=Release
+              -DREDUCE_EXPORTS=ON
+              "-DAPPEND_CXXFLAGS=-Wno-return-type"
+            unit_test: true
+
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
@@ -607,6 +625,18 @@ jobs:
             -load=/tmp/tidy-build/libbitcoin-tidy.so \
             -p build \
             -j$(nproc) ) | grep -C5 "error" || [ $? -eq 1 ]
+
+      - name: Unit tests (wine)
+        # wine-binfmt registers .exe with binfmt_misc so the kernel transparently
+        # invokes wine for Windows PE binaries.  CMAKE_CROSSCOMPILING_EMULATOR=wine
+        # in cmake/x86_64-w64-mingw32.toolchain.cmake tells ctest to prepend wine
+        # when it launches test_navio.exe; binfmt_misc provides a second path that
+        # also works.  We update-binfmts explicitly to ensure the service is active
+        # on the GHA runner before ctest runs.
+        if: ${{ matrix.unit_test }}
+        run: |
+          sudo update-binfmts --enable wine
+          cd build && ctest --output-on-failure -j$(nproc)
 
       - name: Save Ccache cache
         if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'
