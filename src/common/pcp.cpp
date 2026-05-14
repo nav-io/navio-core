@@ -4,6 +4,7 @@
 
 #include <common/pcp.h>
 
+#include <algorithm>
 #include <atomic>
 #include <common/netif.h>
 #include <crypto/common.h>
@@ -317,7 +318,7 @@ std::variant<MappingResult, MappingError> NATPMPRequestPortMap(const CNetAddr &g
     request[NATPMP_HDR_VERSION_OFS] = NATPMP_VERSION;
     request[NATPMP_HDR_OP_OFS] = NATPMP_REQUEST | NATPMP_OP_GETEXTERNAL;
 
-    auto recv_res = PCPSendRecv(*sock, "natpmp", request, num_tries, timeout_per_try,
+    auto recv_res = PCPSendRecv(*sock, "natpmp", std::span<const uint8_t>{request}, num_tries, timeout_per_try,
         [&](const std::span<const uint8_t> response) -> bool {
             if (response.size() < NATPMP_GETEXTERNAL_RESPONSE_SIZE) {
                 LogWarning("natpmp: Response too small\n");
@@ -355,7 +356,7 @@ std::variant<MappingResult, MappingError> NATPMPRequestPortMap(const CNetAddr &g
     WriteBE16(request.data() + NATPMP_MAP_REQUEST_EXTERNAL_PORT_OFS, port);
     WriteBE32(request.data() + NATPMP_MAP_REQUEST_LIFETIME_OFS, lifetime);
 
-    recv_res = PCPSendRecv(*sock, "natpmp", request, num_tries, timeout_per_try,
+    recv_res = PCPSendRecv(*sock, "natpmp", std::span<const uint8_t>{request}, num_tries, timeout_per_try,
         [&](const std::span<const uint8_t> response) -> bool {
             if (response.size() < NATPMP_MAP_RESPONSE_SIZE) {
                 LogWarning("natpmp: Response too small\n");
@@ -476,7 +477,7 @@ std::variant<MappingResult, MappingError> PCPRequestPortMap(const PCPMappingNonc
 
     // Receive loop.
     bool is_natpmp = false;
-    auto recv_res = PCPSendRecv(*sock, "pcp", request, num_tries, timeout_per_try,
+    auto recv_res = PCPSendRecv(*sock, "pcp", std::span<const uint8_t>{request}, num_tries, timeout_per_try,
         [&](const std::span<const uint8_t> response) -> bool {
             // Unsupported version according to RFC6887 appendix A and RFC6886 section 3.5, can fall back to NAT-PMP.
             if (response.size() == NATPMP_RESPONSE_HDR_SIZE && response[PCP_HDR_VERSION_OFS] == NATPMP_VERSION && response[PCP_RESPONSE_HDR_RESULT_OFS] == NATPMP_RESULT_UNSUPP_VERSION) {
@@ -493,7 +494,8 @@ std::variant<MappingResult, MappingError> PCPRequestPortMap(const PCPMappingNonc
             }
             // Handle MAP opcode response. See RFC6887 Figure 10.
             // Check that returned mapping nonce matches our request.
-            if (!std::ranges::equal(response.subspan(PCP_HDR_SIZE + PCP_MAP_NONCE_OFS, PCP_MAP_NONCE_SIZE), nonce)) {
+            const auto nonce_span = response.subspan(PCP_HDR_SIZE + PCP_MAP_NONCE_OFS, PCP_MAP_NONCE_SIZE);
+            if (!std::equal(nonce_span.begin(), nonce_span.end(), nonce.begin(), nonce.end())) {
                 LogWarning("pcp: Mapping nonce mismatch\n");
                 return false; // Wasn't response to what we expected, try receiving next packet.
             }
