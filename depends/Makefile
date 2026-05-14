@@ -1,4 +1,6 @@
 .NOTPARALLEL :
+# Disable builtin variables, rules and suffixes.
+MAKEFLAGS += --no-builtin-rules --no-builtin-variables
 
 # Pattern rule to print variables, e.g. make print-top_srcdir
 print-%: FORCE
@@ -47,7 +49,7 @@ FALLBACK_DOWNLOAD_PATH ?= https://bitcoincore.org/depends-sources
 C_STANDARD ?= c11
 CXX_STANDARD ?= c++20
 
-BUILD = $(shell ./config.guess)
+BUILD = $(shell unset CC && ./config.guess)
 HOST ?= $(BUILD)
 PATCHES_PATH = $(BASEDIR)/patches
 BASEDIR = $(CURDIR)
@@ -143,8 +145,14 @@ include packages/packages.mk
 #     2. Before including packages/*.mk (excluding packages/packages.mk), since
 #        they rely on the build_id variables
 #
-build_id:=$(shell env CC='$(build_CC)' C_STANDARD='$(C_STANDARD)' CXX='$(build_CXX)' CXX_STANDARD='$(CXX_STANDARD)' AR='$(build_AR) 'NM='$(build_NM)' RANLIB='$(build_RANLIB)' STRIP='$(build_STRIP)' SHA256SUM='$(build_SHA256SUM)' DEBUG='$(DEBUG)' LTO='$(LTO)' NO_HARDEN='$(NO_HARDEN)' ./gen_id '$(BUILD_ID_SALT)' 'GUIX_ENVIRONMENT=$(realpath $(GUIX_ENVIRONMENT))')
-$(host_arch)_$(host_os)_id:=$(shell env CC='$(host_CC)' C_STANDARD='$(C_STANDARD)' CXX='$(host_CXX)' CXX_STANDARD='$(CXX_STANDARD)' AR='$(host_AR)' NM='$(host_NM)' RANLIB='$(host_RANLIB)' STRIP='$(host_STRIP)' SHA256SUM='$(build_SHA256SUM)' DEBUG='$(DEBUG)' LTO='$(LTO)' NO_HARDEN='$(NO_HARDEN)' ./gen_id '$(HOST_ID_SALT)' 'GUIX_ENVIRONMENT=$(realpath $(GUIX_ENVIRONMENT))')
+build_id:=$(shell env CC='$(build_CC)' C_STANDARD='$(C_STANDARD)' CXX='$(build_CXX)' CXX_STANDARD='$(CXX_STANDARD)' \
+                      AR='$(build_AR)' NM='$(build_NM)' RANLIB='$(build_RANLIB)' STRIP='$(build_STRIP)' SHA256SUM='$(build_SHA256SUM)' \
+                      DEBUG='$(DEBUG)' LTO='$(LTO)' NO_HARDEN='$(NO_HARDEN)' \
+                      ./gen_id '$(BUILD_ID_SALT)' 'GUIX_ENVIRONMENT=$(realpath $(GUIX_ENVIRONMENT))')
+$(host_arch)_$(host_os)_id:=$(shell env CC='$(host_CC)' C_STANDARD='$(C_STANDARD)' CXX='$(host_CXX)' CXX_STANDARD='$(CXX_STANDARD)' \
+                                        AR='$(host_AR)' NM='$(host_NM)' RANLIB='$(host_RANLIB)' STRIP='$(host_STRIP)' SHA256SUM='$(build_SHA256SUM)' \
+                                        DEBUG='$(DEBUG)' LTO='$(LTO)' NO_HARDEN='$(NO_HARDEN)' \
+                                        ./gen_id '$(HOST_ID_SALT)' 'GUIX_ENVIRONMENT=$(realpath $(GUIX_ENVIRONMENT))')
 
 boost_packages_$(NO_BOOST) = $(boost_packages)
 
@@ -233,6 +241,7 @@ $(host_prefix)/toolchain.cmake : toolchain.cmake.in $(host_prefix)/.stamp_$(fina
 	    -e 's|@zmq_packages@|$(zmq_packages_)|' \
 	    -e 's|@wallet_packages@|$(wallet_packages_)|' \
 	    -e 's|@usdt_packages@|$(usdt_packages_)|' \
+	    -e 's|@multiprocess_packages@|$(multiprocess_packages_)|' \
 	    $< > $@
 	touch $@
 
