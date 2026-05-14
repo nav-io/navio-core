@@ -17,7 +17,7 @@ else
 fi
 
 export CONTAINER_NAME=ci_native_asan
-export PACKAGES="systemtap-sdt-dev clang-17 llvm-17 libclang-rt-17-dev python3-zmq libevent-dev libboost-dev libminiupnpc-dev libnatpmp-dev libzmq3-dev libqrencode-dev libsqlite3-dev ${BPFCC_PACKAGE}"
+export PACKAGES="systemtap-sdt-dev clang-17 llvm-17 libclang-rt-17-dev python3-zmq libevent-dev libboost-dev libminiupnpc-dev libzmq3-dev libqrencode-dev libsqlite3-dev ${BPFCC_PACKAGE}"
 export NO_DEPENDS=1
 export GOAL="install"
 export BITCOIN_CONFIG="--enable-c++20 --enable-usdt --enable-zmq \

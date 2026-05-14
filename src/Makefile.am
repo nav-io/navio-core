@@ -333,6 +333,8 @@ BITCOIN_CORE_H = \
   common/args.h \
   common/bloom.h \
   common/init.h \
+  common/netif.h \
+  common/pcp.h \
   common/run_command.h \
   common/url.h \
   compat/assumptions.h \
@@ -570,7 +572,7 @@ obj/build.h: FORCE
 libbitcoin_util_a-clientversion.$(OBJEXT): obj/build.h
 
 # node #
-libbitcoin_node_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(LEVELDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(MINIUPNPC_CPPFLAGS) $(NATPMP_CPPFLAGS) $(EVENT_CFLAGS) $(EVENT_PTHREADS_CFLAGS)
+libbitcoin_node_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(LEVELDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(MINIUPNPC_CPPFLAGS) $(EVENT_CFLAGS) $(EVENT_PTHREADS_CFLAGS)
 libbitcoin_node_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libbitcoin_node_a_SOURCES = \
   addrdb.cpp \
@@ -1034,6 +1036,8 @@ libbitcoin_common_a_SOURCES = \
   common/config.cpp \
   common/init.cpp \
   common/interfaces.cpp \
+  common/netif.cpp \
+  common/pcp.cpp \
   common/run_command.cpp \
   common/settings.cpp \
   common/system.cpp \
@@ -1157,7 +1161,7 @@ navio_bin_ldadd = \
   $(LIBMCL_LIBS) \
   $(LIBSECP256K1)
 
-navio_bin_ldadd += $(MINIUPNPC_LIBS) $(NATPMP_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE_LIBS)
+navio_bin_ldadd += $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE_LIBS)
 
 naviod_SOURCES = $(navio_daemon_sources) init/naviod.cpp
 naviod_CPPFLAGS = $(navio_bin_cppflags)

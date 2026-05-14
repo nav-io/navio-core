@@ -560,11 +560,7 @@ void SetupServerArgs(ArgsManager& argsman)
 #else
     hidden_args.emplace_back("-upnp");
 #endif
-#ifdef USE_NATPMP
     argsman.AddArg("-natpmp", strprintf("Use NAT-PMP to map the listening port (default: %s)", DEFAULT_NATPMP ? "1 when listening and no -proxy" : "0"), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
-#else
-    hidden_args.emplace_back("-natpmp");
-#endif // USE_NATPMP
     argsman.AddArg("-whitebind=<[permissions@]addr>", "Bind to the given address and add permission flags to the peers connecting to it. "
         "Use [host]:port notation for IPv6. Allowed permissions: " + Join(NET_PERMISSIONS_DOC, ", ") + ". "
         "Specify multiple permissions separated by commas (default: download,noban,mempool,relay). Can be specified multiple times.", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);

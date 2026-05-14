@@ -153,11 +153,6 @@ AC_ARG_WITH([miniupnpc],
   [use_upnp=$withval],
   [use_upnp=auto])
 
-AC_ARG_WITH([natpmp],
-            [AS_HELP_STRING([--with-natpmp],
-                            [enable NAT-PMP (default is yes if libnatpmp is found)])],
-            [use_natpmp=$withval],
-            [use_natpmp=auto])
 
 AC_ARG_WITH([gmp],
   [AS_HELP_STRING([--with-gmp],
@@ -756,8 +751,8 @@ case $host in
          case $host in
            *aarch64*)
              dnl The preferred Homebrew prefix for Apple Silicon is /opt/homebrew.
-             dnl Therefore, as we do not use pkg-config to detect miniupnpc and libnatpmp
-             dnl packages, we should set the CPPFLAGS and LDFLAGS variables for them
+             dnl Therefore, as we do not use pkg-config to detect miniupnpc
+             dnl package, we should set the CPPFLAGS and LDFLAGS variables for it
              dnl explicitly.
              if test "$use_upnp" != "no" && $BREW list --versions miniupnpc >/dev/null; then
                miniupnpc_prefix=$($BREW --prefix miniupnpc 2>/dev/null)
@@ -767,15 +762,6 @@ case $host in
                  MINIUPNPC_CPPFLAGS="-I$miniupnpc_prefix/include"
                fi
                MINIUPNPC_LIBS="-L$miniupnpc_prefix/lib"
-             fi
-             if test "$use_natpmp" != "no" && $BREW list --versions libnatpmp >/dev/null; then
-               libnatpmp_prefix=$($BREW --prefix libnatpmp 2>/dev/null)
-               if test "$suppress_external_warnings" != "no"; then
-                 NATPMP_CPPFLAGS="-isystem $libnatpmp_prefix/include"
-               else
-                 NATPMP_CPPFLAGS="-I$libnatpmp_prefix/include"
-               fi
-               NATPMP_LIBS="-L$libnatpmp_prefix/lib"
              fi
              ;;
          esac
@@ -1300,7 +1286,6 @@ if test "$enable_fuzz" = "yes"; then
   use_tests=no
   use_external_signer=no
   use_upnp=no
-  use_natpmp=no
   use_zmq=no
   enable_fuzz_binary=yes
 
@@ -1322,7 +1307,6 @@ if test "$enable_build_libblsct_only" = "yes"; then
   use_tests=no
   use_external_signer=no
   use_upnp=no
-  use_natpmp=no
   use_zmq=no
   enable_fuzz=no
   enable_fuzz_binary=no
@@ -1495,7 +1479,6 @@ AM_CONDITIONAL([USE_OPENMP], [test "$have_openmp" = "yes"])
 
 if test "$build_naviod$use_bench$use_tests" = "nonono"; then
   use_upnp=no
-  use_natpmp=no
   use_zmq=no
 fi
 
@@ -1530,18 +1513,6 @@ if test "$use_upnp" != "no"; then
   CPPFLAGS="$TEMP_CPPFLAGS"
 fi
 
-dnl Check for libnatpmp (optional).
-if test "$use_natpmp" != "no"; then
-  TEMP_CPPFLAGS="$CPPFLAGS"
-  CPPFLAGS="$CPPFLAGS $NATPMP_CPPFLAGS"
-  AC_CHECK_HEADERS([natpmp.h], [], [have_natpmp=no])
-
-  if test "$have_natpmp" != "no"; then
-    AC_CHECK_LIB([natpmp], [initnatpmp], [NATPMP_LIBS="$NATPMP_LIBS -lnatpmp"], [have_natpmp=no], [$NATPMP_LIBS])
-  fi
-
-  CPPFLAGS="$TEMP_CPPFLAGS"
-fi
 
 dnl Check for libgmp/libgmpxx (used by herumi/mcl). With GMP, mcl is faster
 dnl on bls12-381 arithmetic; without it, mcl falls back to its internal VINT.
@@ -1871,26 +1842,6 @@ else
   fi
 fi
 
-dnl Enable NAT-PMP support.
-AC_MSG_CHECKING([whether to build with support for NAT-PMP])
-if test "$have_natpmp" = "no"; then
-  if test "$use_natpmp" = "yes"; then
-     AC_MSG_ERROR([NAT-PMP requested but cannot be built. Use --without-natpmp])
-  fi
-  AC_MSG_RESULT([no])
-  use_natpmp=no
-else
-  if test "$use_natpmp" != "no"; then
-    AC_MSG_RESULT([yes])
-    use_natpmp=yes
-    AC_DEFINE([USE_NATPMP], [1], [Define to 1 if UPnP support should be compiled in.])
-    if test "$TARGET_OS" = "windows"; then
-      NATPMP_CPPFLAGS="$NATPMP_CPPFLAGS -DSTATICLIB -DNATPMP_STATICLIB"
-    fi
-  else
-    AC_MSG_RESULT([no])
-  fi
-fi
 
 AC_MSG_CHECKING([whether to build test_navio])
 if test "$use_tests" = "yes"; then
@@ -1937,7 +1888,6 @@ AM_CONDITIONAL([ENABLE_ARM_CRC], [test "$enable_arm_crc" = "yes"])
 AM_CONDITIONAL([ENABLE_ARM_SHANI], [test "$enable_arm_shani" = "yes"])
 AM_CONDITIONAL([USE_ASM], [test "$use_asm" = "yes"])
 AM_CONDITIONAL([WORDS_BIGENDIAN], [test "$ac_cv_c_bigendian" = "yes"])
-AM_CONDITIONAL([USE_NATPMP], [test "$use_natpmp" = "yes"])
 AM_CONDITIONAL([USE_UPNP], [test "$use_upnp" = "yes"])
 AM_CONDITIONAL([BUILD_LIBBLSCT_ONLY], [test "$enable_build_libblsct_only" = "yes"])
 
@@ -2006,8 +1956,6 @@ AC_SUBST(USE_UPNP)
 AC_SUBST(TESTDEFS)
 AC_SUBST(MINIUPNPC_CPPFLAGS)
 AC_SUBST(MINIUPNPC_LIBS)
-AC_SUBST(NATPMP_CPPFLAGS)
-AC_SUBST(NATPMP_LIBS)
 AC_SUBST(HAVE_GMTIME_R)
 AC_SUBST(HAVE_FDATASYNC)
 AC_SUBST(HAVE_FULLFSYNC)
@@ -2079,7 +2027,6 @@ fi
 echo "  with fuzz binary = $enable_fuzz_binary"
 echo "  with bench      = $use_bench"
 echo "  with upnp       = $use_upnp"
-echo "  with natpmp     = $use_natpmp"
 echo "  use asm         = $use_asm"
 echo "  USDT tracing    = $use_usdt"
 echo "  OpenMP (MCL MT) = $have_openmp"

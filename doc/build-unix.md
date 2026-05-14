@@ -56,9 +56,9 @@ SQLite is required for the descriptor wallet:
 
 To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
 
-Optional port mapping libraries (see: `--with-miniupnpc` and `--with-natpmp`):
+Optional port mapping library (see: `--with-miniupnpc`):
 
-    sudo apt install libminiupnpc-dev libnatpmp-dev
+    sudo apt install libminiupnpc-dev
 
 ZMQ dependencies (provides ZMQ API):
 
@@ -86,9 +86,9 @@ SQLite is required for the descriptor wallet:
 
 To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
 
-Optional port mapping libraries (see: `--with-miniupnpc` and `--with-natpmp`):
+Optional port mapping library (see: `--with-miniupnpc`):
 
-    sudo dnf install miniupnpc-devel libnatpmp-devel
+    sudo dnf install miniupnpc-devel
 
 ZMQ dependencies (provides ZMQ API):
 
