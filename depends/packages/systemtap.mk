@@ -6,7 +6,12 @@ $(package)_sha256_hash=cbd50a4eba5b261394dc454c12448ddec73e55e6742fda7f508f9fbc1
 $(package)_patches=remove_SDT_ASM_SECTION_AUTOGROUP_SUPPORT_check.patch
 
 define $(package)_preprocess_cmds
-  patch -p1 < $($(package)_patch_dir)/remove_SDT_ASM_SECTION_AUTOGROUP_SUPPORT_check.patch && \
-  mkdir -p $($(package)_staging_prefix_dir)/include/sys && \
-  cp includes/sys/sdt.h $($(package)_staging_prefix_dir)/include/sys/sdt.h
+  patch -p1 < $($(package)_patch_dir)/remove_SDT_ASM_SECTION_AUTOGROUP_SUPPORT_check.patch
+endef
+
+# Install to a unique path to prevent accidental inclusion via other dependencies' -I flags.
+# depends/toolchain.cmake.in points USDT_INCLUDE_DIR at $(staging)/$(package)/include.
+define $(package)_stage_cmds
+  mkdir -p $($(package)_staging_prefix_dir)/$(package)/include/sys && \
+  cp includes/sys/sdt.h $($(package)_staging_prefix_dir)/$(package)/include/sys/sdt.h
 endef
