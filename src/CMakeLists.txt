@@ -12,6 +12,8 @@ endif()
 # Wire ENABLE_ZMQ from the WITH_ZMQ option.
 if(WITH_ZMQ)
   set(ENABLE_ZMQ 1)
+else()
+  set(ENABLE_ZMQ 0)
 endif()
 
 configure_file(${PROJECT_SOURCE_DIR}/cmake/navio-build-config.h.in config/bitcoin-config.h USE_SOURCE_PERMISSIONS @ONLY)
