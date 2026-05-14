@@ -147,12 +147,6 @@ AC_ARG_ENABLE([usdt],
   [use_usdt=$enableval],
   [use_usdt=yes])
 
-AC_ARG_WITH([miniupnpc],
-  [AS_HELP_STRING([--with-miniupnpc],
-  [enable UPNP (default is yes if libminiupnpc is found)])],
-  [use_upnp=$withval],
-  [use_upnp=auto])
-
 AC_ARG_WITH([natpmp],
             [AS_HELP_STRING([--with-natpmp],
                             [enable NAT-PMP (default is yes if libnatpmp is found)])],
@@ -756,18 +750,9 @@ case $host in
          case $host in
            *aarch64*)
              dnl The preferred Homebrew prefix for Apple Silicon is /opt/homebrew.
-             dnl Therefore, as we do not use pkg-config to detect miniupnpc and libnatpmp
-             dnl packages, we should set the CPPFLAGS and LDFLAGS variables for them
+             dnl Therefore, as we do not use pkg-config to detect libnatpmp
+             dnl package, we should set the CPPFLAGS and LDFLAGS variables for it
              dnl explicitly.
-             if test "$use_upnp" != "no" && $BREW list --versions miniupnpc >/dev/null; then
-               miniupnpc_prefix=$($BREW --prefix miniupnpc 2>/dev/null)
-               if test "$suppress_external_warnings" != "no"; then
-                 MINIUPNPC_CPPFLAGS="-isystem $miniupnpc_prefix/include"
-               else
-                 MINIUPNPC_CPPFLAGS="-I$miniupnpc_prefix/include"
-               fi
-               MINIUPNPC_LIBS="-L$miniupnpc_prefix/lib"
-             fi
              if test "$use_natpmp" != "no" && $BREW list --versions libnatpmp >/dev/null; then
                libnatpmp_prefix=$($BREW --prefix libnatpmp 2>/dev/null)
                if test "$suppress_external_warnings" != "no"; then
@@ -1299,7 +1284,6 @@ if test "$enable_fuzz" = "yes"; then
   use_bench=no
   use_tests=no
   use_external_signer=no
-  use_upnp=no
   use_natpmp=no
   use_zmq=no
   enable_fuzz_binary=yes
@@ -1321,7 +1305,6 @@ if test "$enable_build_libblsct_only" = "yes"; then
   use_bench=no
   use_tests=no
   use_external_signer=no
-  use_upnp=no
   use_natpmp=no
   use_zmq=no
   enable_fuzz=no
@@ -1494,40 +1477,8 @@ AC_SUBST([OPENMP_CPPFLAGS])
 AM_CONDITIONAL([USE_OPENMP], [test "$have_openmp" = "yes"])
 
 if test "$build_naviod$use_bench$use_tests" = "nonono"; then
-  use_upnp=no
   use_natpmp=no
   use_zmq=no
-fi
-
-dnl Check for libminiupnpc (optional)
-if test "$use_upnp" != "no"; then
-  TEMP_CPPFLAGS="$CPPFLAGS"
-  CPPFLAGS="$CPPFLAGS $MINIUPNPC_CPPFLAGS"
-  AC_CHECK_HEADERS([miniupnpc/miniupnpc.h miniupnpc/upnpcommands.h miniupnpc/upnperrors.h], [], [have_miniupnpc=no])
-
-  if test "$have_miniupnpc" != "no"; then
-    AC_CHECK_LIB([miniupnpc], [upnpDiscover], [MINIUPNPC_LIBS="$MINIUPNPC_LIBS -lminiupnpc"], [have_miniupnpc=no], [$MINIUPNPC_LIBS])
-
-    dnl The minimum supported miniUPnPc API version is set to 17. This excludes
-    dnl versions with known vulnerabilities.
-    AC_MSG_CHECKING([whether miniUPnPc API version is supported])
-    AC_PREPROC_IFELSE([AC_LANG_PROGRAM([[
-        @%:@include <miniupnpc/miniupnpc.h>
-      ]], [[
-        #if MINIUPNPC_API_VERSION >= 17
-        // Everything is okay
-        #else
-        #  error miniUPnPc API version is too old
-        #endif
-      ]])],[
-        AC_MSG_RESULT([yes])
-      ],[
-      AC_MSG_RESULT([no])
-      AC_MSG_WARN([miniUPnPc API version < 17 is unsupported, disabling UPnP support.])
-      have_miniupnpc=no
-    ])
-  fi
-  CPPFLAGS="$TEMP_CPPFLAGS"
 fi
 
 dnl Check for libnatpmp (optional).
@@ -1850,27 +1801,6 @@ else
   AC_MSG_RESULT([no])
 fi
 
-dnl enable upnp support
-AC_MSG_CHECKING([whether to build with support for UPnP])
-if test "$have_miniupnpc" = "no"; then
-  if test "$use_upnp" = "yes"; then
-     AC_MSG_ERROR([UPnP requested but cannot be built. Use --without-miniupnpc])
-  fi
-  AC_MSG_RESULT([no])
-  use_upnp=no
-else
-  if test "$use_upnp" != "no"; then
-    AC_MSG_RESULT([yes])
-    use_upnp=yes
-    AC_DEFINE([USE_UPNP], [1], [Define to 1 if UPnP support should be compiled in.])
-    if test "$TARGET_OS" = "windows"; then
-      MINIUPNPC_CPPFLAGS="$MINIUPNPC_CPPFLAGS -DMINIUPNP_STATICLIB"
-    fi
-  else
-    AC_MSG_RESULT([no])
-  fi
-fi
-
 dnl Enable NAT-PMP support.
 AC_MSG_CHECKING([whether to build with support for NAT-PMP])
 if test "$have_natpmp" = "no"; then
@@ -1938,7 +1868,6 @@ AM_CONDITIONAL([ENABLE_ARM_SHANI], [test "$enable_arm_shani" = "yes"])
 AM_CONDITIONAL([USE_ASM], [test "$use_asm" = "yes"])
 AM_CONDITIONAL([WORDS_BIGENDIAN], [test "$ac_cv_c_bigendian" = "yes"])
 AM_CONDITIONAL([USE_NATPMP], [test "$use_natpmp" = "yes"])
-AM_CONDITIONAL([USE_UPNP], [test "$use_upnp" = "yes"])
 AM_CONDITIONAL([BUILD_LIBBLSCT_ONLY], [test "$enable_build_libblsct_only" = "yes"])
 
 dnl for minisketch
@@ -2002,10 +1931,7 @@ AC_SUBST(ARM_SHANI_CXXFLAGS)
 AC_SUBST(LIBTOOL_APP_LDFLAGS)
 AC_SUBST(USE_SQLITE)
 AC_SUBST(ENABLE_EXTERNAL_SIGNER)
-AC_SUBST(USE_UPNP)
 AC_SUBST(TESTDEFS)
-AC_SUBST(MINIUPNPC_CPPFLAGS)
-AC_SUBST(MINIUPNPC_LIBS)
 AC_SUBST(NATPMP_CPPFLAGS)
 AC_SUBST(NATPMP_LIBS)
 AC_SUBST(HAVE_GMTIME_R)
@@ -2078,7 +2004,6 @@ else
 fi
 echo "  with fuzz binary = $enable_fuzz_binary"
 echo "  with bench      = $use_bench"
-echo "  with upnp       = $use_upnp"
 echo "  with natpmp     = $use_natpmp"
 echo "  use asm         = $use_asm"
 echo "  USDT tracing    = $use_usdt"
