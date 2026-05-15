@@ -1149,7 +1149,8 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
         // m_viewmempool). A cache on CoinsTip() alone rejected valid BLSCT txs
         // spending outputs that only exist from an unconfirmed parent with
         // "bad-inputs-unknown". Use a short-lived cache on m_viewmempool so
-        // predicate execution cannot dirt the shared MemPoolAccept::m_view.
+        // predicate execution cannot dirty that shared acceptance view (or its
+        // backing MemPoolAccept::m_view) while still resolving inputs identically.
         CCoinsViewCache verify_view(&m_viewmempool);
         const int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
         const int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
