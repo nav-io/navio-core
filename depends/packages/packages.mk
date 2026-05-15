@@ -10,7 +10,6 @@ sqlite_packages=sqlite
 
 zmq_packages=zeromq
 
-upnp_packages=miniupnpc
 natpmp_packages=libnatpmp
 
 multiprocess_packages = libmultiprocess capnp

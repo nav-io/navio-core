@@ -46,10 +46,6 @@ if test -z "$enable_multiprocess" && test -n "@multiprocess@"; then
   enable_multiprocess=yes
 fi
 
-if test -z "$with_miniupnpc" && test -n "@no_upnp@"; then
-  with_miniupnpc=no
-fi
-
 if test -z "$with_natpmp" && test -n "@no_natpmp@"; then
   with_natpmp=no
 fi

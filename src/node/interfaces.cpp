@@ -171,7 +171,7 @@ public:
         });
         args().WriteSettingsFile();
     }
-    void mapPort(bool use_upnp, bool use_natpmp) override { StartMapPort(use_upnp, use_natpmp); }
+    void mapPort(bool use_natpmp) override { StartMapPort(use_natpmp); }
     bool getProxy(Network net, Proxy& proxy_info) override { return GetProxy(net, proxy_info); }
     size_t getNodeCount(ConnectionDirection flags) override
     {
