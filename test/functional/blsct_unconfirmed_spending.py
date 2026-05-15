@@ -93,7 +93,7 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
         self.sync_all()
 
         self.test_chain_unconfirmed_self_sends()
-        self.test_testmempoolaccept_child_spends_mempool_change()
+        self.test_mempoolaccept_child_spends_mempool_change()
         self.test_chain_unconfirmed_then_confirm()
         self.test_external_mempool_receive_is_unsafe()
         self.test_reorg_restores_consistency()
@@ -125,7 +125,7 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
 
         self.assert_listtx_matches_balance(self.w0, "after 3-hop mempool chain")
 
-    def test_testmempoolaccept_child_spends_mempool_change(self):
+    def test_mempoolaccept_child_spends_mempool_change(self):
         """A child BLSCT tx must pass testmempoolaccept when its inputs only
         exist via an unconfirmed parent already in the mempool (ConsensusScriptChecks
         must use a mempool-backed coins view for blsct::VerifyTx)."""
