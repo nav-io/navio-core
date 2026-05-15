@@ -42,10 +42,24 @@
 #cmakedefine USE_SQLITE 1
 
 /* Define to 1 to enable ZMQ notifications. */
-#cmakedefine ENABLE_ZMQ 1
+#cmakedefine01 ENABLE_ZMQ
 
 /* Define to 1 if you have the declaration of `fork', and to 0 if you don't. */
 #cmakedefine01 HAVE_DECL_FORK
+
+/* Define to 1 if you have the <byteswap.h> header file. */
+#cmakedefine HAVE_BYTESWAP_H 1
+
+/* Byteswap function declarations */
+#cmakedefine01 HAVE_DECL_BSWAP_16
+#cmakedefine01 HAVE_DECL_BSWAP_32
+#cmakedefine01 HAVE_DECL_BSWAP_64
+
+/* Define to 1 if you have __builtin_clzl */
+#cmakedefine01 HAVE_BUILTIN_CLZL
+
+/* Define to 1 if you have __builtin_clzll */
+#cmakedefine01 HAVE_BUILTIN_CLZLL
 
 /* Endian conversion function declarations */
 #cmakedefine01 HAVE_DECL_HTOBE16
@@ -69,6 +83,12 @@
 
 /* Define to 1 if '*ifaddrs' are available. */
 #cmakedefine HAVE_IFADDRS 1
+
+/* Define to 1 if you have the declaration of 'getifaddrs', and to 0 if you don't. */
+#cmakedefine01 HAVE_DECL_GETIFADDRS
+
+/* Define to 1 if you have the declaration of 'freeifaddrs', and to 0 if you don't. */
+#cmakedefine01 HAVE_DECL_FREEIFADDRS
 
 /* Define to 1 if you have the declaration of `pipe2', and to 0 if you don't. */
 #cmakedefine01 HAVE_DECL_PIPE2
@@ -106,14 +126,14 @@
 /* Define this symbol to build code that uses getauxval */
 #cmakedefine HAVE_STRONG_GETAUXVAL 1
 
-/* Define this symbol if the BSD sysctl() is available */
-#cmakedefine HAVE_SYSCTL 1
+/* Define to 1 if the BSD sysctl() is available */
+#cmakedefine01 HAVE_SYSCTL
 
 /* Define this symbol if the BSD sysctl(KERN_ARND) is available */
 #cmakedefine HAVE_SYSCTL_ARND 1
 
 /* Define to 1 if std::system or ::wsystem is available. */
-#cmakedefine HAVE_SYSTEM 1
+#cmakedefine01 HAVE_SYSTEM
 
 /* Define to the version of this package. */
 #define CLIENT_VERSION_STRING "@CLIENT_VERSION_STRING@"

@@ -9,6 +9,10 @@ include(CheckIncludeFileCXX)
 check_include_file_cxx(endian.h HAVE_ENDIAN_H)
 check_include_file_cxx(sys/endian.h HAVE_SYS_ENDIAN_H)
 check_include_file_cxx(ifaddrs.h HAVE_IFADDRS)
+if(HAVE_IFADDRS)
+  check_cxx_symbol_exists(getifaddrs "ifaddrs.h" HAVE_DECL_GETIFADDRS)
+  check_cxx_symbol_exists(freeifaddrs "ifaddrs.h" HAVE_DECL_FREEIFADDRS)
+endif()
 
 check_cxx_symbol_exists(htobe16 "endian.h" HAVE_DECL_HTOBE16)
 check_cxx_symbol_exists(htole16 "endian.h" HAVE_DECL_HTOLE16)
@@ -24,6 +28,32 @@ check_cxx_symbol_exists(be64toh "endian.h" HAVE_DECL_BE64TOH)
 check_cxx_symbol_exists(le64toh "endian.h" HAVE_DECL_LE64TOH)
 
 check_cxx_symbol_exists(gmtime_r "time.h" HAVE_GMTIME_R)
+
+# Check for byteswap declarations (Linux byteswap.h).
+check_include_file_cxx(byteswap.h HAVE_BYTESWAP_H)
+if(HAVE_BYTESWAP_H)
+  check_cxx_symbol_exists(bswap_16 "byteswap.h" HAVE_DECL_BSWAP_16)
+  check_cxx_symbol_exists(bswap_32 "byteswap.h" HAVE_DECL_BSWAP_32)
+  check_cxx_symbol_exists(bswap_64 "byteswap.h" HAVE_DECL_BSWAP_64)
+endif()
+
+# Check for __builtin_clzl and __builtin_clzll.
+check_cxx_source_compiles("
+  int main()
+  {
+    unsigned long x = 1;
+    return __builtin_clzl(x);
+  }
+  " HAVE_BUILTIN_CLZL
+)
+check_cxx_source_compiles("
+  int main()
+  {
+    unsigned long long x = 1;
+    return __builtin_clzll(x);
+  }
+  " HAVE_BUILTIN_CLZLL
+)
 
 check_cxx_symbol_exists(O_CLOEXEC "fcntl.h" HAVE_O_CLOEXEC)
 check_cxx_symbol_exists(fdatasync "unistd.h" HAVE_FDATASYNC)
@@ -45,6 +75,8 @@ check_cxx_symbol_exists(std::system "cstdlib" HAVE_STD_SYSTEM)
 check_cxx_symbol_exists(::_wsystem "stdlib.h" HAVE__WSYSTEM)
 if(HAVE_STD_SYSTEM OR HAVE__WSYSTEM)
   set(HAVE_SYSTEM 1)
+else()
+  set(HAVE_SYSTEM 0)
 endif()
 
 check_cxx_source_compiles("
