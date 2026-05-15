@@ -135,10 +135,16 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
         assert txid_parent
         assert_greater_than(len(self.nodes[0].getrawmempool()), 0)
 
-        # Fund from wallet UTXOs including 0-conf trusted change from the parent.
+        # Fund a child transaction and verify it actually spends an output
+        # created by the unconfirmed parent. Without this assertion, coin
+        # selection could pick only confirmed inputs and make the test pass
+        # without exercising the regression.
         outputs = [{"address": self_addr, "amount": int(Decimal("2") * COIN), "memo": "mempool child test"}]
         raw = self.w0.createblsctrawtransaction([], outputs)
         funded = self.w0.fundblsctrawtransaction(raw)
+        funded_decoded = self.nodes[0].decoderawtransaction(funded)
+        assert any(vin["txid"] == txid_parent for vin in funded_decoded["vin"]), \
+            f"funded child does not spend mempool parent {txid_parent}: {funded_decoded['vin']}"
         signed = self.w0.signblsctrawtransaction(funded)
         res = self.nodes[0].testmempoolaccept([signed])[0]
         assert res["allowed"], f"expected allowed, got {res}"
