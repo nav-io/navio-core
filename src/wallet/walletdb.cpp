@@ -74,6 +74,7 @@ const std::string WATCHMETA{"watchmeta"};
 const std::string WATCHS{"watchs"};
 const std::string BLSCTWATCHMETA{"blsctwatchmeta"};
 const std::string BLSCTWATCHS{"blsctwatchs"};
+const std::string BLSCTWATCHNONCE{"blsctwatchnonce"};
 const std::unordered_set<std::string> LEGACY_TYPES{CRYPTED_KEY, CSCRIPT, DEFAULTKEY, HDCHAIN, KEYMETA, KEY, OLD_KEY, POOL, WATCHMETA, WATCHS};
 const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTOUTKEY, BLSCTWATCHMETA, BLSCTWATCHS, BLSCTMNEMONIC, CRYPTED_BLSCTMNEMONIC};
 const std::unordered_set<std::string> BLSCTKEY_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, BLSCTOUTKEY, CRYPTED_BLSCTOUTKEY};
@@ -344,6 +345,16 @@ bool WalletBatch::EraseBLSCTWatchOnly(const CScript& dest)
         return false;
     }
     return EraseIC(std::make_pair(DBKeys::BLSCTWATCHS, dest));
+}
+
+bool WalletBatch::WriteBLSCTWatchOnlyNonce(const CScript& dest, const blsct::PublicKey& nonce)
+{
+    return WriteIC(std::make_pair(DBKeys::BLSCTWATCHNONCE, dest), nonce);
+}
+
+bool WalletBatch::EraseBLSCTWatchOnlyNonce(const CScript& dest)
+{
+    return EraseIC(std::make_pair(DBKeys::BLSCTWATCHNONCE, dest));
 }
 
 bool WalletBatch::WriteBestBlock(const CBlockLocator& locator)
@@ -1277,6 +1288,31 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
         return DBErrors::LOAD_OK;
     });
     result = std::max(result, watch_meta_res.m_result);
+
+    // Load BLSCT watchonly scripts
+    LoadResult blsct_watch_res = LoadRecords(pwallet, batch, DBKeys::BLSCTWATCHS,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        CScript script;
+        key >> script;
+        uint8_t fYes;
+        value >> fYes;
+        if (fYes == '1') {
+            pwallet->GetOrCreateBLSCTKeyMan()->LoadWatchOnly(script);
+        }
+        return DBErrors::LOAD_OK;
+    });
+    result = std::max(result, blsct_watch_res.m_result);
+
+    LoadResult blsct_watch_nonce_res = LoadRecords(pwallet, batch, DBKeys::BLSCTWATCHNONCE,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        CScript script;
+        key >> script;
+        blsct::PublicKey nonce;
+        value >> nonce;
+        pwallet->GetOrCreateBLSCTKeyMan()->LoadWatchOnlyRecoveryNonce(script, nonce);
+        return DBErrors::LOAD_OK;
+    });
+    result = std::max(result, blsct_watch_nonce_res.m_result);
 
     // Load keypool
     LoadResult pool_res = LoadRecords(pwallet, batch, DBKeys::POOL,

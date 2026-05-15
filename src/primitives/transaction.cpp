@@ -18,6 +18,26 @@
 #include <cassert>
 #include <stdexcept>
 
+namespace {
+thread_local int g_tx_blsct_stripped_undo_depth = 0;
+} // namespace
+
+CTxOutBLSCTData::StrippedForUndoScope::StrippedForUndoScope()
+    : m_prev_depth(g_tx_blsct_stripped_undo_depth)
+{
+    g_tx_blsct_stripped_undo_depth = m_prev_depth + 1;
+}
+
+CTxOutBLSCTData::StrippedForUndoScope::~StrippedForUndoScope()
+{
+    g_tx_blsct_stripped_undo_depth = m_prev_depth;
+}
+
+bool CTxOutBLSCTData::IsStrippedForUndo()
+{
+    return g_tx_blsct_stripped_undo_depth > 0;
+}
+
 std::string COutPoint::ToString() const
 {
     return strprintf("COutPoint(%s)", hash.ToString().substr(0, 10));
@@ -115,6 +135,27 @@ CAmount CTransaction::GetValueOut() const
     }
     assert(MoneyRange(nValueOut));
     return nValueOut;
+}
+
+CAmount CTransaction::GetBLSCTFee() const
+{
+    CAmount nFee = 0;
+    if (!IsBLSCT()) {
+        return nFee;
+    }
+
+    for (const auto& tx_out : vout) {
+        if (!tx_out.IsFee()) {
+            continue;
+        }
+        if (!MoneyRange(tx_out.nValue) || !MoneyRange(nFee + tx_out.nValue)) {
+            throw std::runtime_error(std::string(__func__) + ": fee out of range");
+        }
+        nFee += tx_out.nValue;
+    }
+
+    assert(MoneyRange(nFee));
+    return nFee;
 }
 
 unsigned int CTransaction::GetTotalSize() const

@@ -20,12 +20,23 @@ struct MclUtil {
         std::vector<MclG1Point::Underlying> bases;
         std::vector<MclScalar::Underlying> exps;
 
-        for (auto point: points) {
+        bases.reserve(points.size());
+        exps.reserve(points.size());
+        for (const auto& point: points) {
             bases.push_back(point.m_base.GetUnderlying());
             exps.push_back(point.m_exp.GetUnderlying());
         }
         MclG1Point::Underlying pv;
-        mclBnG1_mulVec(&pv, bases.data(), exps.data(), points.size());
+        // Use the multi-threaded MSM. With cpuN = 0, MCL auto-detects the
+        // number of cores and internally falls back to single-threaded
+        // execution when n is small enough that threading would not help
+        // (see mcl/ec.hpp: mulVecMT). When MCL is built without
+        // MCL_USE_OMP, this symbol degrades to a plain mulVec call
+        // (see mcl/ec.hpp:1719-1722), so the call is always safe.
+        // The result is bit-identical regardless of cpuN because EC point
+        // addition is commutative and associative, which preserves
+        // consensus determinism.
+        mclBnG1_mulVecMT(&pv, bases.data(), exps.data(), points.size(), 0);
         return MclG1Point(pv);
     }
 };

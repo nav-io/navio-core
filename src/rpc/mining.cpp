@@ -179,7 +179,7 @@ static UniValue generateBlsctBlocks(ChainstateManager& chainman, const CTxMemPoo
     while (nGenerate > 0 && !chainman.m_interrupt) {
         auto pindexBest = chainman.ActiveChainstate().m_chain.Tip();
 
-        auto blockReward = (pindexBest->nHeight + 1 == 1) ? consensusParams.nBLSCTFirstBlockReward : consensusParams.nBLSCTBlockReward;
+        auto blockReward = GetBLSCTBlockReward(pindexBest->nHeight + 1, consensusParams, false);
 
         std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler{chainman.ActiveChainstate(), &mempool}.CreateNewBLSCTBlock(blsct::SubAddress(destination), blockReward, {}));
         if (!pblocktemplate.get())
@@ -692,6 +692,8 @@ static RPCHelpMan getblocktemplate()
                                                                      {RPCResult::Type::STR_HEX, "eta_fiat_shamir", /*optional=*/true, "Only on Proof of Stake"},
                                                                      {RPCResult::Type::NUM, "modifier", /*optional=*/true, "Only on Proof of Stake"},
                                                                      {RPCResult::Type::NUM, "prev_time", /*optional=*/true, "Only on Proof of Stake"},
+                                                                     {RPCResult::Type::STR_HEX, "prev_chainwork", /*optional=*/true, "Accumulated chain work of the previous block as a 32-byte big-endian hex string. Required by stakers to compute the chain-work-bound kernel hash that consensus uses on hardened chains."},
+                                                                     {RPCResult::Type::BOOL, "pops_hardened", /*optional=*/true, "Whether PoPS hardening (time-bucketing + chain-work binding in the kernel hash) is in force for the next block. Stakers MUST construct the kernel hash accordingly; otherwise the resulting block is rejected with bad-blsct-pos-proof."},
                                                                      {RPCResult::Type::ARR, "staked_commitments", /*optional=*/true, "Only on Proof of Stake", {
                                                                                                                                                                    {RPCResult::Type::STR_HEX, "", "staked_commitment"},
                                                                                                                                                                }},
@@ -850,7 +852,7 @@ static RPCHelpMan getblocktemplate()
                             throw JSONRPCError(RPC_INVALID_PARAMETER, "invalid coinbase destination");
                     }
 
-                    auto blockReward = (pindexPrevNew->nHeight + 1) == 1 ? consensusParams.nBLSCTFirstBlockReward : consensusParams.nBLSCTBlockReward;
+                    auto blockReward = GetBLSCTBlockReward(pindexPrevNew->nHeight + 1, consensusParams, true);
 
                     pblocktemplate = BlockAssembler{active_chainstate, &mempool}.CreateNewBLSCTBlock(dest, blockReward, {}, true);
                 } else {
@@ -982,7 +984,7 @@ static RPCHelpMan getblocktemplate()
                 }
             }
 
-            auto blockReward = (int64_t)(pindexPrev->nHeight + 1) == 1 ? consensusParams.nBLSCTFirstBlockReward : consensusParams.nBLSCTBlockReward;
+            auto blockReward = GetBLSCTBlockReward(pindexPrev->nHeight + 1, consensusParams, true);
 
             result.pushKV("version", pblock->nVersion);
             result.pushKV("rules", aRules);
@@ -1021,7 +1023,7 @@ static RPCHelpMan getblocktemplate()
             if (consensusParams.fBLSCT) {
                 UniValue stakedCommitments(UniValue::VARR);
 
-                auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements(pblock->GetBlockHeader().GetHash());
+                auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements(pblock->GetBlockHeader().GetHash(), consensusParams.nStakedCommitmentLimit);
 
                 for (size_t i = 0; i < stakedCommitmentsElements.Size(); ++i)
                     stakedCommitments.push_back(HexStr(stakedCommitmentsElements[i].GetVch()));
@@ -1031,6 +1033,14 @@ static RPCHelpMan getblocktemplate()
                 result.pushKV("eta_phi", HexStr(blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, *pblock)));
                 result.pushKV("prev_time", pindexPrev->nTime);
                 result.pushKV("modifier", pindexPrev->nStakeModifier);
+                // The previous block's accumulated chain work and the
+                // hardening flag are part of the kernel-hash inputs on
+                // hardened chains. Surface both so out-of-process stakers
+                // (navio-staker, third-party staking pools) can build
+                // proofs that pass consensus verification. See
+                // src/blsct/pos/helpers.cpp::CalculateKernelHashWithChainWork.
+                result.pushKV("prev_chainwork", ArithToUint256(pindexPrev->nChainWork).GetHex());
+                result.pushKV("pops_hardened", consensusParams.fPoPSHardened);
             }
 
             if (consensusParams.signet_blocks) {

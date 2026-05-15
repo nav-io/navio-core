@@ -163,4 +163,4 @@ class V2TransportTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    V2TransportTest().main()
+    V2TransportTest(__file__).main()

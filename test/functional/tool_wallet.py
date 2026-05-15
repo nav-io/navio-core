@@ -193,7 +193,7 @@ class ToolWalletTest(BitcoinTestFramework):
         locked_dir = self.nodes[0].wallets_path
         error = 'Error initializing wallet database environment "{}"!'.format(locked_dir)
         if self.options.descriptors:
-            error = f"SQLiteDatabase: Unable to obtain an exclusive lock on the database, is it being used by another instance of {self.config['environment']['PACKAGE_NAME']}?"
+            error = f"SQLiteDatabase: Unable to obtain an exclusive lock on the database, is it being used by another instance of {self.config['environment']['CLIENT_NAME']}?"
         self.assert_raises_tool_error(
             error,
             '-wallet=' + self.default_wallet_name,
@@ -467,4 +467,4 @@ class ToolWalletTest(BitcoinTestFramework):
         self.test_chainless_conflicts()
 
 if __name__ == '__main__':
-    ToolWalletTest().main()
+    ToolWalletTest(__file__).main()

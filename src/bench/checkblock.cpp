@@ -36,8 +36,11 @@ static void DeserializeAndCheckBlockTest(benchmark::Bench& bench)
     std::byte a{0};
     stream.write({&a, 1}); // Prevent compaction
 
+    // block413567 is a legacy Bitcoin mainnet block with many transactions.
+    // Navio BLSCT mainnet allows at most two txs per block, so CheckBlock
+    // would fail under MAIN. Use regtest (fBLSCT=false) so the fixture stays valid.
     ArgsManager bench_args;
-    const auto chainParams = CreateChainParams(bench_args, ChainType::MAIN);
+    const auto chainParams = CreateChainParams(bench_args, ChainType::REGTEST);
 
     bench.unit("block").run([&] {
         CBlock block; // Note that CBlock caches its checked state, so we need to recreate it here

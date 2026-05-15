@@ -216,6 +216,7 @@ void normalizeJacobi(E& P)
 {
 	typedef typename E::Fp F;
 	if (P.z.isZero()) return;
+	if (P.z.isOne()) return;
 	F::inv(P.z, P.z);
 	F rz2;
 	F::sqr(rz2, P.z);
@@ -504,6 +505,7 @@ void normalizeProj(E& P)
 {
 	typedef typename E::Fp F;
 	if (P.z.isZero()) return;
+	if (P.z.isOne()) return;
 	F::inv(P.z, P.z);
 	P.x *= P.z;
 	P.y *= P.z;

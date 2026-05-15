@@ -119,4 +119,4 @@ class NodeNetworkLimitedTest(BitcoinTestFramework):
         self.sync_blocks([self.nodes[0], self.nodes[1]])
 
 if __name__ == '__main__':
-    NodeNetworkLimitedTest().main()
+    NodeNetworkLimitedTest(__file__).main()

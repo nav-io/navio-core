@@ -5,6 +5,7 @@
 
 #include <txdb.h>
 
+#include <blsct/arith/mcl/mcl_g1point.h>
 #include <coins.h>
 #include <dbwrapper.h>
 #include <logging.h>
@@ -76,6 +77,10 @@ void CCoinsViewDB::ResizeCache(size_t new_cache_size)
 
 bool CCoinsViewDB::GetCoin(const COutPoint& outpoint, Coin& coin) const
 {
+    // Coins in LevelDB were subgroup-checked when their creating block was
+    // first received from the network; skip the per-G1-point check here.
+    // Matches the skip applied in ReadBlockFromDisk for block files.
+    MclG1Point::SubgroupCheckSkipScope skip_subgroup_check;
     return m_db->Read(CoinEntry(&outpoint), coin);
 }
 

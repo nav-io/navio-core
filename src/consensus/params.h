@@ -10,6 +10,7 @@
 #include <uint256.h>
 
 #include <chrono>
+#include <cstddef>
 #include <limits>
 #include <map>
 #include <vector>
@@ -122,9 +123,68 @@ struct Params {
     bool fPosNoRetargeting;
     unsigned int nModifierInterval;
     CAmount nPePoSMinStakeAmount;
+    /**
+     * Per-byte fee rate (sat / serialized byte) enforced as a consensus
+     * minimum on every BLSCT user transaction. Wallets MUST use this value
+     * when building a transaction's fee output, and `blsct::VerifyTx`
+     * rejects any non-coinbase BLSCT transaction whose `PayFeePredicate`
+     * output `nValue` is below
+     *
+     *     blsct::GetTransactionWeight(tx) * nBLSCTDefaultFee
+     *
+     * with `blsct-fee-below-min`. Promoting this from a hardcoded constant
+     * to a chainparam lets each network tune the minimum fee independently
+     * and forces a consensus rev to change it.
+     */
+    CAmount nBLSCTDefaultFee;
     int nLastPOWHeight;
+    /**
+     * Maximum number of staked commitments sampled from the UTXO set's
+     * staked-commitment view to form the PoPS set-membership ring for a
+     * given block. The full set is shuffled deterministically using the
+     * block hash as a seed and then truncated to this size before being
+     * fed into both the prover (block creation) and the verifier
+     * (block validation). Because both sides MUST agree on the resulting
+     * vector, this is a consensus-critical value: changing it forks the
+     * chain.
+     *
+     * The set size also drives prover/verifier cost (n is rounded up to
+     * the next power of two before entering the inner-product argument),
+     * so it is exposed per-network rather than hardcoded to allow
+     * networks to tune the anonymity-set / verification-cost trade-off.
+     */
+    size_t nStakedCommitmentLimit;
     /** Whether BLSCT is activated */
     bool fBLSCT;
+    /**
+     * If true, only the first block (height 1) receives a PoW block
+     * reward; every subsequent block in the PoW phase
+     * (heights (1, nLastPOWHeight]) has a reward of 0. PoS blocks
+     * (heights > nLastPOWHeight) are unaffected. Used on mainnet to mint
+     * the entire initial supply in a single premine block while keeping
+     * later PoW blocks reward-less.
+     */
+    bool fOnlyFirstPoWBlockHasReward{false};
+    /**
+     * Whether PoPS anti-grinding hardening is active:
+     *  - block time is bucketed into POPS_TIME_GRANULARITY_SECONDS intervals
+     *    before entering the kernel hash
+     *  - accumulated chain work (nChainWork) is bound into the kernel hash
+     *    so grinding on one private fork does not carry over to another
+     * Set true on mainnet and any network that shares its stake set; set
+     * false on testnet/regtest to allow existing chain state that predates
+     * the hardening to keep validating.
+     */
+    bool fPoPSHardened{true};
+    /**
+     * Hard finality checkpoints. (height -> expected block hash).
+     * Any fork whose block at a listed height has a different hash is
+     * rejected, regardless of accumulated work. Populated per-release from
+     * agreed-upon hashes. Primary defence against long-range "posterior
+     * corruption" attacks in PoPS: even if a historical validator's secret
+     * material leaks, a rewritten history cannot outrun the checkpoint.
+     */
+    std::map<int, uint256> finalityCheckpoints;
 
     std::chrono::seconds PowTargetSpacing() const
     {

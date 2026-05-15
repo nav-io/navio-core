@@ -69,8 +69,7 @@ retry:
         fiat_shamir << proof.Ls[i];
         fiat_shamir << proof.Rs[i];
 
-        // GEN_FIAT_SHAMIR_VAR(e, fiat_shamir, retry);
-        Scalar e(7);
+        GEN_FIAT_SHAMIR_VAR(e, fiat_shamir, retry);
         es.Add(e);
 
         ++i;

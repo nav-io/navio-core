@@ -232,11 +232,22 @@ jobs:
       - name: Using vcpkg with MSBuild
         run: |
           Set-Location "$env:VCPKG_INSTALLATION_ROOT"
+          # Fetch latest vcpkg history so the builtin-baseline commit pinned
+          # in build_msvc/vcpkg.json is reachable from the runner image's
+          # local C:\vcpkg clone (image's HEAD lags vcpkg master).
+          git fetch --no-tags origin master
           Add-Content -Path "triplets\x64-windows-static.cmake" -Value "set(VCPKG_BUILD_TYPE release)"
           Add-Content -Path "triplets\x64-windows-static.cmake" -Value "set(VCPKG_PLATFORM_TOOLSET_VERSION $env:VCToolsVersion)"
           .\vcpkg.exe --vcpkg-root "$env:VCPKG_INSTALLATION_ROOT" integrate install
-          git rev-parse HEAD | Out-File -FilePath "$env:GITHUB_WORKSPACE\vcpkg_commit"
-          Get-Content -Path "$env:GITHUB_WORKSPACE\vcpkg_commit"
+
+      - name: Restore vcpkg downloads cache
+        id: vcpkg-downloads-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            C:/vcpkg/downloads
+            !C:/vcpkg/downloads/tools
+          key: ${{ github.job }}-vcpkg-downloads-${{ hashFiles('build_msvc/vcpkg.json') }}
 
       - name: vcpkg tools cache
         uses: actions/cache@v5
@@ -244,16 +255,26 @@ jobs:
           path: C:/vcpkg/downloads/tools
           key: ${{ github.job }}-vcpkg-tools
 
-      - name: vcpkg binary cache
-        uses: actions/cache@v5
+      - name: Restore vcpkg binary cache
+        id: vcpkg-binary-cache
+        uses: actions/cache/restore@v5
         with:
           path: ~/AppData/Local/vcpkg/archives
           key:
-            ${{ github.job }}-vcpkg-binary-${{ hashFiles('vcpkg_commit',
-            'msbuild_version', 'toolset_version', 'build_msvc/vcpkg.json') }}
+            ${{ github.job }}-vcpkg-binary-${{ hashFiles('msbuild_version',
+            'toolset_version', 'build_msvc/vcpkg.json') }}
 
       - name: Generate project files
         run: py -3 build_msvc\msvc-autogen.py
+
+      - name: Install vcpkg dependencies
+        # MSBuild's vcpkg autorestore runs per-project, so a project that
+        # compiles before its dep is restored (e.g. bls384_256.vcxproj
+        # needing gmpxx.h on a cold cache) fails. Pre-install the manifest
+        # so all headers exist on disk before MSBuild starts.
+        shell: cmd
+        working-directory: build_msvc
+        run: '"%VCPKG_INSTALLATION_ROOT%\vcpkg.exe" install --triplet x64-windows-static'
 
       - name: Build
         shell: cmd
@@ -273,6 +294,22 @@ jobs:
           path: ~/AppData/Local/ccache
           # https://github.com/actions/cache/blob/main/tips-and-workarounds.md#update-a-cache
           key: ${{ github.job }}-ccache-${{ github.run_id }}
+
+      - name: Save vcpkg binary cache
+        uses: actions/cache/save@v5
+        if: steps.vcpkg-binary-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: ${{ steps.vcpkg-binary-cache.outputs.cache-primary-key }}
+
+      - name: Save vcpkg downloads cache
+        uses: actions/cache/save@v5
+        if: steps.vcpkg-downloads-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            C:/vcpkg/downloads
+            !C:/vcpkg/downloads/tools
+          key: ${{ steps.vcpkg-downloads-cache.outputs.cache-primary-key }}
 
       - name: Run unit tests
         run: src\test_navio.exe -l test_suite
@@ -306,21 +343,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: tidy
-            label: '[tidy]'
-            file_env: ./ci/test/00_setup_env_native_tidy.sh
-            runner: ubuntu-24.04
-
-          - name: no-wallet-libblsct
-            label: 'Debian Bullseye, no wallet, libblsct only'
-            file_env: ./ci/test/00_setup_env_native_libblsct_only.sh
-            runner: ubuntu-24.04
-
-          - name: no-wallet-libnaviokernel
-            label: 'Ubuntu 22.04, no wallet, libnaviokernel'
-            file_env: ./ci/test/00_setup_env_native_nowallet_libnaviokernel.sh
-            runner: ubuntu-24.04
-
           - name: mac-cross
             label: 'macOS cross-compile, Ubuntu 24.04, no tests'
             file_env: ./ci/test/00_setup_env_mac_cross.sh
@@ -408,3 +430,239 @@ jobs:
           key:
             ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-${{ github.sha
             }}
+
+  # CMake-driven matrix. Mirrors the structure of the autotools `linux:` matrix
+  # so scenarios can be added by appending one entry. Each entry supplies its
+  # own apt packages, compiler, CMake flags, and smoke-test commands; the
+  # surrounding steps (checkout, install, configure, build, install, test,
+  # ccache) are shared. As more scenarios are migrated off autotools they get
+  # added here.
+  linux-cmake:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Replaces the autotools `tidy` matrix entry.
+          # Wallet and test code are included — tidy analyses all translation units.
+          # CMAKE_BUILD_TYPE=None avoids build-type CFLAGS; -O0 -g0 are supplied
+          # explicitly via APPEND_CXXFLAGS (mirrors autotools CXXFLAGS='-O0 -g0').
+          # APPEND_CPPFLAGS adds the clang resource-dir include (matches
+          # the autotools -I/usr/lib/llvm-17/lib/clang/17/include flag).
+          # There is no ENABLE_HARDENING option in the CMake build system;
+          # hardening flags are not added by default, matching --disable-hardening.
+          - name: tidy
+            label: '[tidy] Ubuntu 24.04, clang-17 (CMake)'
+            runner: ubuntu-24.04
+            packages: >-
+              clang-17 libclang-17-dev llvm-17-dev libomp-17-dev
+              clang-tidy-17 iwyu jq libevent-dev libboost-dev
+              libminiupnpc-dev libnatpmp-dev libzmq3-dev
+              systemtap-sdt-dev libsqlite3-dev
+            cc: clang-17
+            cxx: clang++-17
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=None
+              -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+              -DAPPEND_CPPFLAGS=-I/usr/lib/llvm-17/lib/clang/17/include
+              "-DAPPEND_CXXFLAGS=-O0 -g0"
+            tidy: true
+
+          # Replaces the autotools `no-wallet-libblsct` matrix entry.
+          # clang-13 (Bullseye default) is not packaged for Ubuntu 24.04 apt;
+          # clang-14 (available via llvm-toolchain-jammy-14) is the closest
+          # upstream-supported equivalent and produces identical ABI results.
+          # -stdlib=libc++ mirrors DEP_OPTS="CXX='clang++-13 -stdlib=libc++'"
+          # in 00_setup_env_native_libblsct_only.sh.
+          # NO_OPENMP=1 → -DWITH_MCL_OPENMP=OFF (already the default; explicit).
+          # NO_WALLET=1 → implied by BUILD_LIBBLSCT_ONLY=ON.
+          - name: no-wallet-libblsct
+            label: 'Ubuntu 24.04, no wallet, libblsct only (CMake)'
+            runner: ubuntu-24.04
+            packages: >-
+              clang-14 llvm-14 libc++abi-14-dev libc++-14-dev
+            cc: clang-14
+            cxx: clang++-14
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_CXX_FLAGS=-stdlib=libc++
+              -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
+              -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++
+              -DBUILD_LIBBLSCT_ONLY=ON
+              -DWITH_MCL_OPENMP=OFF
+            check_libblsct_symbols: true
+
+          # Replaces the `no-wallet-libnaviokernel` autotools matrix entry.
+          # -stdlib=libc++ is passed via CMAKE_{CXX,EXE_LINKER}_FLAGS rather
+          # than the CXX env var because cmake strips compiler flags out of
+          # CXX when detecting the compiler, which would mean libstdc++/libc++
+          # mixing in the bls/mcl subprojects.
+          - name: nowallet-libnaviokernel
+            label: 'Ubuntu 22.04, no wallet, libnaviokernel (CMake)'
+            runner: ubuntu-22.04
+            packages: >-
+              clang-14 llvm-14 libc++abi-14-dev libc++-14-dev
+              libevent-dev libboost-dev python3-zmq
+            cc: clang-14
+            cxx: clang++-14
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_CXX_FLAGS=-stdlib=libc++
+              -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
+              -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++
+              -DENABLE_WALLET=OFF
+              -DREDUCE_EXPORTS=ON
+              -DBUILD_UTIL_CHAINSTATE=ON
+              -DBUILD_SHARED_LIBS=ON
+              -DBUILD_TESTS=OFF
+              -DBUILD_TX=ON
+              -DBUILD_UTIL=ON
+              -DENABLE_EXTERNAL_SIGNER=OFF
+            smoke_test: |
+              ./build/bin/naviod -version
+              ./build/bin/navio-cli --help | head -5
+              ./build/bin/navio-tx -help | head -5
+              ./build/bin/navio-util -help | head -5
+              test -f ./build/lib/libnaviokernel.so
+              file ./build/lib/libnaviokernel.so
+              test -x ./build/bin/navio-chainstate
+
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkgconf ccache \
+            ${{ matrix.packages }}
+
+      - name: Set Ccache directory
+        run: echo "CCACHE_DIR=${RUNNER_TEMP}/ccache_dir" >> "$GITHUB_ENV"
+
+      - name: Restore Ccache cache
+        id: ccache-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ github.job }}-${{ matrix.name }}-ccache-${{ github.run_id }}
+          restore-keys: ${{ github.job }}-${{ matrix.name }}-ccache-
+
+      - name: Configure
+        run: cmake -B build -G Ninja ${{ matrix.cmake_flags }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Install
+        if: ${{ matrix.smoke_test }}
+        run: DESTDIR="${RUNNER_TEMP}/install" cmake --install build
+
+      - name: Smoke test
+        if: ${{ matrix.smoke_test }}
+        run: ${{ matrix.smoke_test }}
+
+      - name: Check libblsct symbols
+        if: ${{ matrix.check_libblsct_symbols }}
+        run: |
+          # Artifact paths (CMake BUILD_LIBBLSCT_ONLY=ON):
+          #   libblsct.a    → build/lib/libblsct.a          (target: blsct)
+          #   libbls384_256 → src/bls/lib/libbls384_256.a   (ExternalProject in-source)
+          #   libmcl.a      → src/bls/mcl/lib/libmcl.a      (ExternalProject in-source)
+          #   libunivalue   → build/lib/libunivalue.a        (CMake target: univalue)
+          #   libsecp256k1  → build/lib/libsecp256k1.a       (subdirectory target)
+          python3 contrib/devtools/libblsct-symbol-check.py \
+            build/lib/libblsct.a \
+            src/bls/lib/libbls384_256.a \
+            src/bls/mcl/lib/libmcl.a \
+            build/lib/libunivalue.a \
+            build/lib/libsecp256k1.a
+
+      - name: Tidy
+        if: ${{ matrix.tidy }}
+        run: |
+          set -eo pipefail
+          cmake -B /tmp/tidy-build \
+            -DLLVM_DIR=/usr/lib/llvm-17/cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -S contrib/devtools/bitcoin-tidy
+          cmake --build /tmp/tidy-build
+          cmake --build /tmp/tidy-build --target bitcoin-tidy-tests
+          # Filter qt qrc/moc generated files from compile_commands.json in-place
+          # so that -p build (directory) works correctly with run-clang-tidy-17.
+          jq 'map(select(.file | test("src/qt/qrc_.*\\.cpp$|/moc_.*\\.cpp$") | not))' \
+            build/compile_commands.json > /tmp/compile_commands_filtered.json
+          mv /tmp/compile_commands_filtered.json build/compile_commands.json
+          # Run clang-tidy, tee output, then explicitly fail if any diagnostic
+          # was emitted. The previous `| grep -C5 "error" || [ $? -eq 1 ]`
+          # pattern masked real failures: grep exiting 1 (no match) was treated
+          # as success, hiding any clang-tidy output without a literal "error".
+          run-clang-tidy-17 -quiet \
+            -load=/tmp/tidy-build/libbitcoin-tidy.so \
+            -p build \
+            -j$(nproc) 2>&1 | tee /tmp/tidy.log
+          if grep -E "\.(cpp|h|hpp|cc|cxx):[0-9]+:[0-9]+: (error|warning):" /tmp/tidy.log; then
+            echo "::error::clang-tidy reported diagnostics"
+            exit 1
+          fi
+
+      - name: include-what-you-use
+        if: ${{ matrix.tidy }}
+        run: |
+          set -eo pipefail
+          # Mirrors the autotools tidy IWYU pass from ci/test/03_test_script.sh.
+          # Ubuntu 24.04's iwyu package layout varies by version: iwyu_tool
+          # lands on PATH but the include-fixer script may be exposed as
+          # `fix_includes`, `fix_includes.py`, or only via
+          # /usr/share/include-what-you-use/fix_includes.py. Probe known
+          # locations so we fail loudly with a diagnostic listing if none
+          # work instead of silently picking up a stale path.
+          iwyu_tool_bin=
+          for c in iwyu_tool iwyu_tool.py /usr/share/include-what-you-use/iwyu_tool.py; do
+            if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then
+              iwyu_tool_bin="$c"; break
+            fi
+          done
+          fix_includes_bin=
+          for c in fix_include fix_includes fix_include.py fix_includes.py /usr/share/include-what-you-use/fix_includes.py; do
+            if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then
+              fix_includes_bin="$c"; break
+            fi
+          done
+          if [ -z "$iwyu_tool_bin" ] || [ -z "$fix_includes_bin" ]; then
+            echo "::error::Required IWYU tools not found. Package contents:"
+            dpkg -L iwyu || true
+            exit 1
+          fi
+          echo "Using iwyu_tool: $iwyu_tool_bin"
+          echo "Using fix_includes: $fix_includes_bin"
+          "$iwyu_tool_bin" --version || true
+          "$fix_includes_bin" --version || true
+          "$iwyu_tool_bin" \
+            -p build -j"$(nproc)" \
+            -- -Xiwyu --cxx17ns \
+               -Xiwyu --mapping_file="${PWD}/contrib/devtools/iwyu/bitcoin.core.imp" \
+               -Xiwyu --max_line_length=160 \
+            2>&1 | tee /tmp/iwyu.log
+          ( cd src && "$fix_includes_bin" --nosafe_headers < /tmp/iwyu.log )
+          # Match upstream autotools behavior (ci/test/03_test_script.sh):
+          # surface the IWYU-suggested diff for visibility but do not fail
+          # the job — the codebase has not been cleaned for strict IWYU.
+          git --no-pager diff || true
+
+      - name: Save Ccache cache
+        if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.ccache-cache.outputs.cache-primary-key }}

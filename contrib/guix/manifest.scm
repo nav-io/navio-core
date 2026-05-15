@@ -14,6 +14,7 @@
              ((gnu packages linux) #:select (linux-libre-headers-6.1 util-linux))
              (gnu packages llvm)
              (gnu packages mingw)
+             ((gnu packages perl) #:select (perl))
              (gnu packages moreutils)
              (gnu packages pkg-config)
              ((gnu packages python) #:select (python-minimal))
@@ -198,6 +199,7 @@ and abstract ELF, PE and MachO formats.")
                (base32
                 "1j47vwq4caxfv0xw68kw5yh00qcpbd56d7rq6c483ma3y7s96yyz"))))
     (build-system cmake-build-system)
+    (arguments '(#:tests? #f))
     (inputs (list openssl))
     (home-page "https://github.com/mtrojnar/osslsigncode")
     (synopsis "Authenticode signing and timestamping tool")
@@ -510,6 +512,7 @@ inspecting signatures in Mach-O binaries.")
         (list gcc-toolchain-10 "static")
         ;; Scripting
         python-minimal ;; (3.10)
+        perl ;; for LLVM standalone OpenMP (depends libomp), CMake FindPerl
         ;; Git
         git-minimal
         ;; Tests
@@ -523,7 +526,7 @@ inspecting signatures in Mach-O binaries.")
                  nss-certs
                  osslsigncode))
           ((string-contains target "-linux-")
-           (list (make-bitcoin-cross-toolchain target)))
+           (list (make-bitcoin-cross-toolchain target) cmake-minimal))
           ((string-contains target "darwin")
            (list clang-toolchain-17 binutils cmake-minimal python-signapple zip))
           (else '())))))

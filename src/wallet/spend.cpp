@@ -499,10 +499,10 @@ CoinsResult AvailableBlsctCoins(const CWallet& wallet,
         if (nDepth < 0)
             continue;
 
-        // Coins with no confirmations can not be spent
-        if (nDepth == 0) {
-            continue;
-        }
+        // 0-conf outputs are eligible only if the wallet produced them and
+        // m_spend_zero_conf_change is set — enforced via IsOutputTrusted +
+        // the only_safe gate below. External mempool receives stay filtered
+        // out unless the caller explicitly passes m_include_unsafe_inputs.
 
         bool safeTx = IsOutputTrusted(wallet, wout);
 
@@ -535,10 +535,10 @@ CoinsResult AvailableBlsctCoins(const CWallet& wallet,
         if (mine == ISMINE_NO) {
             continue;
         }
-        if (params.include_staked_commitment && !output.IsStakedCommitment()) {
+        if (params.include_staked_commitment && !wout.fStakedCommitment) {
             continue;
         }
-        if (!params.include_staked_commitment && output.IsStakedCommitment()) {
+        if (!params.include_staked_commitment && wout.fStakedCommitment) {
             continue;
         }
         if (params.token_id != output.tokenId) {
@@ -552,7 +552,7 @@ CoinsResult AvailableBlsctCoins(const CWallet& wallet,
 
         mutableOutput.nValue = nValue;
 
-        result.Add(output.IsStakedCommitment() ? OutputType::BLSCT_STAKE : OutputType::BLSCT,
+        result.Add(wout.fStakedCommitment ? OutputType::BLSCT_STAKE : OutputType::BLSCT,
                    COutput(outpoint, mutableOutput, nDepth, -1, spendable, true, safeTx, wout.GetTxTime(), true, 0));
 
         outpoints.push_back(outpoint);

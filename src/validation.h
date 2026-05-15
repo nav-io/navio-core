@@ -98,6 +98,14 @@ extern const std::vector<std::string> CHECKLEVEL_DOC;
 
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams);
 
+/**
+ * Returns the BLSCT coinbase reward for a block at the given height.
+ *  - height 1: nBLSCTFirstBlockReward (initial supply mint)
+ *  - heights (1, nLastPOWHeight] when fOnlyFirstPoWBlockHasReward: 0
+ *  - all other heights: nBLSCTBlockReward
+ */
+CAmount GetBLSCTBlockReward(int nHeight, const Consensus::Params& consensusParams, const bool& isPos);
+
 bool FatalError(kernel::Notifications& notifications, BlockValidationState& state, const std::string& strMessage, const bilingual_str& userMessage = {});
 
 /** Guess verification progress (as a fraction between 0.0=genesis and 1.0=current tip). */

@@ -29,17 +29,102 @@ ignore_list = [
 
 lib_sources = {}
 
+# Automake Makefile.am list variables referenced from *_SOURCES entries, e.g.
+# libbitcoin_node_a_SOURCES += $(BLSCT_CPP). The naive parser previously skipped
+# any line that did not start with "*.cpp", so MSVC projects missed every file
+# only carried by such macros; link failures on Win64 once validation.cpp began
+# calling into blsct/pos/pos_async_verifier.cpp.
+LIST_VAR_ASSIGN_RE = re.compile(r'^([A-Z][A-Z0-9_]*) *= *\\$')
+REF_VAR_RE = re.compile(r'^\$\(([A-Z][A-Z0-9_]*)\)$')
 
-def parse_makefile(makefile):
+
+def parse_list_variables(lines):
+    """Parse top-level makefile variables assigned as backslash-terminated lists."""
+    variables = {}
+    n = len(lines)
+    i = 0
+    while i < n:
+        stripped = lines[i].strip()
+        m = LIST_VAR_ASSIGN_RE.match(stripped)
+        if m:
+            name = m.group(1)
+            entries = []
+            i += 1
+            while i < n:
+                cont = lines[i].strip()
+                if cont.endswith('\\'):
+                    tok = cont[:-1].strip().split()
+                    if tok:
+                        entries.append(tok[0])
+                    i += 1
+                else:
+                    if cont:
+                        entries.append(cont.split()[0])
+                    i += 1
+                    break
+            variables[name] = entries
+            continue
+        i += 1
+    return variables
+
+
+def expand_list_var(name, variables, stack=None):
+    """Expand one list variable recursively; tokens are $(FOO) refs or literals."""
+    if stack is None:
+        stack = set()
+    if name in stack:
+        raise ValueError(f'circular list variable reference: {name}')
+    stack = stack | {name}
+    out = []
+    for token in variables.get(name, []):
+        rm = REF_VAR_RE.match(token)
+        if rm:
+            out.extend(expand_list_var(rm.group(1), variables, stack))
+        else:
+            out.append(token)
+    return out
+
+
+def append_cpp_source(lib, cpp_path):
+    """Add a single .cpp to lib_sources if not ignored; avoids duplicate paths."""
+    if cpp_path.startswith('$'):
+        return False
+    if not cpp_path.endswith('.cpp'):
+        return False
+    if cpp_path in ignore_list:
+        return False
+    pair = (
+        cpp_path.replace('/', '\\'),
+        cpp_path.replace('/', '_')[:-4] + '.obj',
+    )
+    existing_paths = [p for p, _ in lib_sources[lib]]
+    if pair[0] in existing_paths:
+        return True
+    lib_sources[lib].append(pair)
+    return True
+
+
+def parse_makefile(makefile, list_variables):
     with open(makefile, 'r', encoding='utf-8') as file:
         current_lib = ''
         for line in file.read().splitlines():
             if current_lib:
-                source = line.split()[0]
-                if source.endswith('.cpp') and not source.startswith('$') and source not in ignore_list:
-                    source_filename = source.replace('/', '\\')
-                    object_filename = source.replace('/', '_')[:-4] + ".obj"
-                    lib_sources[current_lib].append((source_filename, object_filename))
+                line_stripped = line.strip()
+                if not line_stripped:
+                    if not line.endswith('\\'):
+                        current_lib = ''
+                    continue
+
+                token = line_stripped.split()[0]
+
+                ref_m = REF_VAR_RE.match(token)
+                if ref_m:
+                    expanded = expand_list_var(ref_m.group(1), list_variables)
+                    for cpp in expanded:
+                        append_cpp_source(current_lib, cpp)
+                elif token.endswith('.cpp') and token not in ignore_list:
+                    append_cpp_source(current_lib, token)
+
                 if not line.endswith('\\'):
                     current_lib = ''
                 continue
@@ -98,9 +183,15 @@ def main():
     args = parser.parse_args()
     set_properties(os.path.join(SOURCE_DIR, '../build_msvc/common.init.vcxproj'), '@TOOLSET@', args.toolset)
 
+    list_variables = {}
+    makefile_am_path = os.path.join(SOURCE_DIR, 'Makefile.am')
+    if os.path.isfile(makefile_am_path):
+        with open(makefile_am_path, 'r', encoding='utf-8') as makefile_am_file:
+            list_variables = parse_list_variables(makefile_am_file.read().splitlines())
+
     for makefile_name in os.listdir(SOURCE_DIR):
         if 'Makefile' in makefile_name:
-            parse_makefile(os.path.join(SOURCE_DIR, makefile_name))
+            parse_makefile(os.path.join(SOURCE_DIR, makefile_name), list_variables)
     for key, value in lib_sources.items():
         vcxproj_filename = os.path.abspath(os.path.join(os.path.dirname(__file__), key, key + '.vcxproj'))
         content = ''

@@ -81,4 +81,4 @@ class DandelionLoopTest(BitcoinTestFramework):
 
 
 if __name__ == "__main__":
-    DandelionLoopTest().main()
+    DandelionLoopTest(__file__).main()

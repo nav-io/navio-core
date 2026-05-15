@@ -16,7 +16,7 @@ export CONTAINER_NAME="ci_native_msan"
 export PACKAGES="ninja-build"
 export DEP_OPTS="CC=clang CXX=clang++ CFLAGS='${MSAN_FLAGS}' CXXFLAGS='${MSAN_AND_LIBCXX_FLAGS}'"
 export GOAL="install"
-export BITCOIN_CONFIG="--with-sanitizers=memory --disable-hardening --with-asm=no CFLAGS='${MSAN_FLAGS}' CXXFLAGS='${MSAN_AND_LIBCXX_FLAGS}'"
+export BITCOIN_CONFIG="--with-sanitizers=memory --disable-hardening --disable-openmp --with-asm=no CFLAGS='${MSAN_FLAGS}' CXXFLAGS='${MSAN_AND_LIBCXX_FLAGS}'"
 export USE_MEMORY_SANITIZER="true"
 export RUN_FUNCTIONAL_TESTS="false"
 export CCACHE_MAXSIZE=250M

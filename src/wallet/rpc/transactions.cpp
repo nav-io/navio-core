@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/wallet/keyman.h>
 #include <core_io.h>
 #include <key_io.h>
 #include <policy/rbf.h>
@@ -10,6 +11,9 @@
 #include <wallet/receive.h>
 #include <wallet/rpc/util.h>
 #include <wallet/wallet.h>
+
+#include <algorithm>
+#include <utility>
 
 using interfaces::FoundBlock;
 
@@ -146,6 +150,48 @@ static UniValue ListReceived(const CWallet& wallet, const UniValue& params, cons
                 item.fIsWatchonly = true;
             if (mine & ISMINE_STAKED_COMMITMENT_BLSCT)
                 item.fIsStakedCommitment = true;
+        }
+    }
+
+    // Under WALLET_FLAG_BLSCT_OUTPUT_STORAGE receive-side BLSCT outputs live
+    // in mapOutputs without a matching CWalletTx (range proofs stripped,
+    // recovery data attached per-output). The mapWallet walk above misses
+    // them, so self-generated receive addresses show amount=0 despite the
+    // coins being credited. Merge mapOutputs into the same tally here,
+    // skipping outputs already represented by a CWalletTx (local sends whose
+    // change returns to us are covered by the wtx path).
+    if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        for (const auto& [outpoint, wout] : wallet.mapOutputs) {
+            if (wallet.GetWalletTxFromOutpoint(outpoint) != nullptr) continue;
+
+            const int nDepth = wallet.GetOutputDepthInMainChain(wout);
+            if (nDepth < nMinDepth) continue;
+
+            if (wout.IsCoinBase() && (nDepth < 1 || (wallet.IsOutputImmatureCoinBase(wout) && !include_immature_coinbase))) {
+                continue;
+            }
+
+            const CTxOut& txout = *wout.out;
+            CTxDestination address;
+            if (txout.HasBLSCTKeys()) {
+                if (!blsct_km) continue;
+                address = blsct_km->GetDestination(txout);
+                if (address.index() == 0) continue;
+            } else if (!ExtractDestination(txout.scriptPubKey, address)) {
+                continue;
+            }
+
+            if (filtered_address && !(filtered_address == address)) continue;
+
+            const isminefilter mine = txout.HasBLSCTKeys() ? wallet.IsMine(txout) : wallet.IsMine(address);
+            if (!(mine & filter)) continue;
+
+            tallyitem& item = mapTally[address];
+            item.nAmount += wout.blsctRecoveryData.amount;
+            item.nConf = std::min(item.nConf, nDepth);
+            item.txids.push_back(outpoint.hash);
+            if (mine & ISMINE_WATCH_ONLY) item.fIsWatchonly = true;
+            if (mine & ISMINE_STAKED_COMMITMENT_BLSCT) item.fIsStakedCommitment = true;
         }
     }
 
@@ -398,6 +444,7 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
             }
             MaybePushAddress(entry, r.destination);
             PushParentDescriptors(wallet, wtx.tx->vout.at(r.vout).scriptPubKey, entry);
+            const CTxOut& rcv_out = wtx.tx->vout.at(r.vout);
             if (wtx.IsCoinBase())
             {
                 if (wallet.GetTxDepthInMainChain(wtx) < 1)
@@ -407,6 +454,13 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
                 else
                     entry.pushKV("category", "generate");
             }
+            else if (rcv_out.IsStakedCommitment())
+            {
+                // BLSCT staked commitment: coins locked into a stake, still
+                // ours but earmarked. Distinct category so clients can
+                // reconcile against getbalances.mine.staked_commitment_balance.
+                entry.pushKV("category", "stake");
+            }
             else
             {
                 entry.pushKV("category", "receive");
@@ -414,6 +468,9 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
             entry.pushKV("amount", ValueFromAmount(r.amount));
             if (address_book_entry) {
                 entry.pushKV("label", label);
+            }
+            if (!r.memo.empty()) {
+                entry.pushKV("memo", r.memo);
             }
             entry.pushKV("vout", r.vout);
             if (wtx.tx->IsBLSCT() && wtx.isAbandoned())
@@ -423,6 +480,201 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
                 WalletTxToJSON(wallet, wtx, entry);
             ret.push_back(entry);
         }
+    }
+}
+
+//! Fill confirmations/block/time fields for an entry derived from a CWalletOutput.
+//! Mirrors WalletTxToJSON but sources everything from the output-only record.
+static void WalletOutputToJSON(const CWallet& wallet, const COutPoint& outpoint, const CWalletOutput& wout, UniValue& entry)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    interfaces::Chain& chain = wallet.chain();
+    int confirms = wallet.GetOutputDepthInMainChain(wout);
+    entry.pushKV("confirmations", confirms);
+    if (wout.IsCoinBase())
+        entry.pushKV("generated", true);
+    if (auto* conf = wout.state<TxStateConfirmed>()) {
+        entry.pushKV("blockhash", conf->confirmed_block_hash.GetHex());
+        entry.pushKV("blockheight", conf->confirmed_block_height);
+        entry.pushKV("blockindex", conf->position_in_block);
+        int64_t block_time;
+        if (chain.findBlock(conf->confirmed_block_hash, FoundBlock().time(block_time))) {
+            entry.pushKV("blocktime", block_time);
+        }
+    } else {
+        entry.pushKV("trusted", IsOutputTrusted(wallet, wout));
+    }
+    entry.pushKV("txid", outpoint.hash.GetHex());
+    // outid is the BLSCT-specific per-output identifier, preserved even after
+    // range-proof stripping (see CWalletOutput::GetOutputHash / outputHash).
+    entry.pushKV("outid", wout.GetOutputHash().GetHex());
+    // No wallet-level tx conflict tracking for output-only records.
+    entry.pushKV("walletconflicts", UniValue(UniValue::VARR));
+    entry.pushKV("time", int64_t{wout.nTimeReceived});
+    entry.pushKV("timereceived", int64_t{wout.nTimeReceived});
+    // We have no containing CWalletTx to inspect for RBF signalling.
+    entry.pushKV("bip125-replaceable", "unknown");
+}
+
+//! Resolve the on-chain destination of a CWalletOutput. BLSCT outputs use the
+//! KeyMan subaddress derivation (recovers the user-facing address even after
+//! the range proof has been stripped); non-BLSCT outputs fall back to the
+//! standard scriptPubKey extraction.
+static CTxDestination ResolveOutputDestination(const CWallet& wallet, const CWalletOutput& wout)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    if (wout.fBLSCTOutput) {
+        if (auto* km = wallet.GetBLSCTKeyMan()) {
+            return km->GetDestination(*wout.out);
+        }
+        return CNoDestination();
+    }
+    CTxDestination dest;
+    if (!ExtractDestination(wout.out->scriptPubKey, dest)) {
+        return CNoDestination();
+    }
+    return dest;
+}
+
+//! Emit one JSON entry for a CWalletOutput that is NOT mirrored by a CWalletTx.
+//! These are receive-side balance deltas (staking rewards, external BLSCT
+//! payments) stored exclusively in mapOutputs under the output-storage design.
+//! Categories mirror ListTransactions: orphan/immature/generate for coinbase,
+//! receive otherwise.
+//! Compute a sort key that is stable across DB reloads. Prefer nOrderPos when
+//! it was persisted; fall back to nTimeReceived for entries loaded from older
+//! wallets that did not serialize nOrderPos. Time is good enough for
+//! chronological display and tie-breaking is handled by stable_sort.
+static int64_t OrderingKey(int64_t order_pos, int64_t time_received)
+{
+    // Scale time_received into the high range so it never collides with small
+    // real nOrderPos values. Multiplying by 1e9 keeps the key comparable
+    // across the two domains without overflow (time_received fits in ~31 bits).
+    if (order_pos < 0) {
+        return time_received * 1'000'000'000LL;
+    }
+    return order_pos;
+}
+
+static void ListOutputTransaction(const CWallet& wallet,
+                                  const COutPoint& outpoint,
+                                  const CWalletOutput& wout,
+                                  int nMinDepth, int nMaxDepth,
+                                  std::vector<std::pair<int64_t, UniValue>>& ret,
+                                  const isminefilter& filter_ismine,
+                                  const std::optional<std::string>& filter_label,
+                                  bool include_staking = true,
+                                  bool fLong = true)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    const int depth = wallet.GetOutputDepthInMainChain(wout);
+    if (depth > nMaxDepth) return;
+    if (depth < nMinDepth) return;
+
+    const isminefilter mine = wallet.IsMine(*wout.out);
+    if (!(mine & filter_ismine)) return;
+
+    // Change outputs are accounted for on the send side (nChange subtracted
+    // from the synthetic send amount in CachedTxGetAmounts). Emitting them as
+    // receive entries would double-count them against the balance invariant.
+    if (OutputIsChange(wallet, *wout.out)) return;
+
+    // Do NOT filter immature coinbase here — the RPC contract requires
+    // emitting category="immature" entries with their amount visible. The
+    // maturity state is signalled via `category`, not by dropping the entry.
+    const CAmount amount = OutputGetCredit(wallet, wout, filter_ismine, TokenId(), /*fIgnoreImmature=*/false);
+    if (amount == 0) return;
+
+    const CTxDestination dest = ResolveOutputDestination(wallet, wout);
+
+    std::string label;
+    const auto* address_book_entry = IsValidDestination(dest) ? wallet.FindAddressBookEntry(dest) : nullptr;
+    if (address_book_entry) {
+        label = address_book_entry->GetLabel();
+    }
+    if (label == "Staking" && !include_staking) return;
+    if (filter_label.has_value() && label != filter_label.value()) return;
+
+    UniValue entry(UniValue::VOBJ);
+    if (mine & ISMINE_WATCH_ONLY) {
+        entry.pushKV("involvesWatchonly", true);
+    }
+    MaybePushAddress(entry, dest);
+    PushParentDescriptors(wallet, wout.out->scriptPubKey, entry);
+
+    // Category follows the same rules as the CWalletTx path in ListTransactions.
+    if (wout.IsCoinBase()) {
+        if (depth < 1) {
+            entry.pushKV("category", "orphan");
+        } else if (wallet.IsOutputImmatureCoinBase(wout)) {
+            entry.pushKV("category", "immature");
+        } else {
+            entry.pushKV("category", "generate");
+        }
+    } else if (wout.fStakedCommitment) {
+        entry.pushKV("category", "stake");
+    } else {
+        entry.pushKV("category", "receive");
+    }
+    entry.pushKV("amount", ValueFromAmount(amount));
+    if (address_book_entry) {
+        entry.pushKV("label", label);
+    }
+    if (!wout.blsctRecoveryData.message.empty()) {
+        entry.pushKV("memo", wout.blsctRecoveryData.message);
+    }
+    // No vout index: BLSCT COutPoint is keyed by per-output hash (outid) only.
+    // These entries arrive by block sync; there is no user-abandon semantic.
+    entry.pushKV("abandoned", false);
+    if (fLong) {
+        WalletOutputToJSON(wallet, outpoint, wout, entry);
+    }
+    // Flag the shape so clients can detect output-storage-only entries.
+    entry.pushKV("output_storage", true);
+
+    ret.emplace_back(OrderingKey(wout.nOrderPos, wout.nTimeReceived), std::move(entry));
+}
+
+//! Walk wallet.mapOutputs, emitting one JSON entry per output that is not
+//! already reachable via the wtxOrdered / mapWallet walk. Local spends and
+//! their change outputs are deduped here via GetWalletTxFromOutpoint, matching
+//! the accounting path in GetBlsctBalance (src/wallet/receive.cpp).
+//! No-op on wallets without WALLET_FLAG_BLSCT_OUTPUT_STORAGE.
+static void ListMapOutputTransactions(const CWallet& wallet,
+                                      int nMinDepth, int nMaxDepth,
+                                      std::vector<std::pair<int64_t, UniValue>>& ret,
+                                      const isminefilter& filter_ismine,
+                                      const std::optional<std::string>& filter_label,
+                                      bool include_staking = true)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    if (!wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) return;
+    for (const auto& entry : wallet.mapOutputs) {
+        if (wallet.GetWalletTxFromOutpoint(entry.first) != nullptr) continue;
+        ListOutputTransaction(wallet, entry.first, entry.second,
+                              nMinDepth, nMaxDepth, ret,
+                              filter_ismine, filter_label, include_staking);
+    }
+}
+
+//! Adapter that wraps ListTransactions, attaching the parent CWalletTx's
+//! nOrderPos to every emitted entry so the combined stream can be sorted
+//! chronologically alongside ListMapOutputTransactions output.
+static void ListTransactionsOrdered(const CWallet& wallet, const CWalletTx& wtx,
+                                    int nMinDepth, int nMaxDepth, bool fLong,
+                                    std::vector<std::pair<int64_t, UniValue>>& ret,
+                                    const isminefilter& filter_ismine,
+                                    const std::optional<std::string>& filter_label,
+                                    bool include_change = false,
+                                    bool include_staking = true)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    std::vector<UniValue> tmp;
+    ListTransactions(wallet, wtx, nMinDepth, nMaxDepth, fLong, tmp,
+                     filter_ismine, filter_label, include_change, include_staking);
+    const int64_t key = OrderingKey(wtx.nOrderPos, wtx.nTimeReceived);
+    for (auto& e : tmp) {
+        ret.emplace_back(key, std::move(e));
     }
 }
 
@@ -439,7 +691,7 @@ static std::vector<RPCResult> TransactionDescriptionString()
            {RPCResult::Type::NUM, "blockindex", /*optional=*/true, "The index of the transaction in the block that includes it."},
            {RPCResult::Type::NUM_TIME, "blocktime", /*optional=*/true, "The block time expressed in " + UNIX_EPOCH_TIME + "."},
            {RPCResult::Type::STR_HEX, "txid", "The transaction id."},
-           {RPCResult::Type::STR_HEX, "wtxid", "The hash of serialized transaction, including witness data."},
+           {RPCResult::Type::STR_HEX, "wtxid", /*optional=*/true, "The hash of serialized transaction, including witness data. Omitted for output-storage-only entries (range proof stripped, no full tx retained)."},
            {RPCResult::Type::ARR, "walletconflicts", "Conflicting transaction ids.",
            {
                {RPCResult::Type::STR_HEX, "txid", "The transaction id."},
@@ -481,13 +733,17 @@ RPCHelpMan listtransactions()
                                                                                                                                                     "\"receive\"               Non-coinbase transactions received.\n"
                                                                                                                                                     "\"generate\"              Coinbase transactions received with more than 100 confirmations.\n"
                                                                                                                                                     "\"immature\"              Coinbase transactions received with 100 or fewer confirmations.\n"
-                                                                                                                                                    "\"orphan\"                Orphaned coinbase transactions received."},
+                                                                                                                                                    "\"orphan\"                Orphaned coinbase transactions received.\n"
+                                                                                                                                                    "\"stake\"                 BLSCT output locked into a staked commitment (still ours, earmarked for staking)."},
                                                                                                                  {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT + ". This is negative for the 'send' category, and is positive\n"
                                                                                                                                                                                             "for all other categories"},
                                                                                                                  {RPCResult::Type::STR, "label", /*optional=*/true, "A comment for the address/transaction, if any"},
                                                                                                                  {RPCResult::Type::NUM, "vout", /*optional=*/true, "the vout value"},
                                                                                                                  {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the\n"
                                                                                                                                                                                                                        "'send' category of transactions."},
+                                                                                                                 {RPCResult::Type::STR, "memo", /*optional=*/true, "BLSCT output memo recovered from the range proof, if any."},
+                                                                                                                 {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT per-output identifier (distinct from txid, preserved across range-proof stripping). Only present for output-storage entries."},
+                                                                                                                 {RPCResult::Type::BOOL, "output_storage", /*optional=*/true, "True if the entry was synthesised from mapOutputs alone (no CWalletTx), i.e. surfaced by the BLSCT output-storage path."},
                                                                                                              },
                                                                                                              TransactionDescriptionString()),
                                                                                  {
@@ -516,7 +772,7 @@ RPCHelpMan listtransactions()
             int nFrom = 0;
             if (!request.params[2].isNull())
                 nFrom = request.params[2].getInt<int>();
-            isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+            isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
 
             if (ParseIncludeWatchonly(request.params[3], *pwallet)) {
                 filter |= ISMINE_WATCH_ONLY;
@@ -527,30 +783,40 @@ RPCHelpMan listtransactions()
             if (nFrom < 0)
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative from");
 
-            std::vector<UniValue> ret;
+            // Under WALLET_FLAG_BLSCT_OUTPUT_STORAGE the received BLSCT outputs
+            // (including staking rewards) live only in mapOutputs; we merge them
+            // with the CWalletTx stream and sort by shared nOrderPos counter.
+            std::vector<std::pair<int64_t, UniValue>> entries;
             {
                 LOCK(pwallet->cs_wallet);
 
-                const CWallet::TxItems& txOrdered = pwallet->wtxOrdered;
-
-                // iterate backwards until we have nCount items to return:
-                for (CWallet::TxItems::const_reverse_iterator it = txOrdered.rbegin(); it != txOrdered.rend(); ++it) {
-                    CWalletTx* const pwtx = (*it).second;
-                    ListTransactions(*pwallet, *pwtx, 1, 100000000, true, ret, filter, filter_label);
-                    if ((int)ret.size() >= (nCount + nFrom)) break;
+                // nMinDepth=0 so mempool receives appear alongside mempool
+                // sends. The send side of ListTransactions is ungated, so
+                // keeping this at 1 emitted the "-amount" row immediately but
+                // hid the matching "receive"/"stake" rows until confirmation,
+                // giving the appearance that a just-broadcast stake-lock tx
+                // had lost coins. Matches Bitcoin Core's classic behaviour
+                // where listtransactions shows mempool txs in full.
+                for (const auto& [order_pos, pwtx] : pwallet->wtxOrdered) {
+                    ListTransactionsOrdered(*pwallet, *pwtx, 0, 100000000, true, entries, filter, filter_label);
                 }
+                ListMapOutputTransactions(*pwallet, 0, 100000000, entries, filter, filter_label);
             }
 
-            // ret is newest to oldest
+            // Sort newest first, stably so intra-tx send-then-receive order is preserved.
+            std::stable_sort(entries.begin(), entries.end(),
+                             [](const auto& a, const auto& b) { return a.first > b.first; });
 
-            if (nFrom > (int)ret.size())
-                nFrom = ret.size();
-            if ((nFrom + nCount) > (int)ret.size())
-                nCount = ret.size() - nFrom;
+            if (nFrom > (int)entries.size())
+                nFrom = entries.size();
+            if ((nFrom + nCount) > (int)entries.size())
+                nCount = entries.size() - nFrom;
 
-            auto txs_rev_it{std::make_move_iterator(ret.rend())};
             UniValue result{UniValue::VARR};
-            result.push_backV(txs_rev_it - nFrom - nCount, txs_rev_it - nFrom); // Return oldest to newest
+            // Slice [nFrom, nFrom+nCount) from the newest-first sequence, emit oldest-to-newest.
+            for (int i = nFrom + nCount - 1; i >= nFrom; --i) {
+                result.push_back(std::move(entries[i].second));
+            }
             return result;
         },
     };
@@ -579,13 +845,17 @@ RPCHelpMan listpendingtransactions()
                                                                                                                                                     "\"receive\"               Non-coinbase transactions received.\n"
                                                                                                                                                     "\"generate\"              Coinbase transactions received with more than 100 confirmations.\n"
                                                                                                                                                     "\"immature\"              Coinbase transactions received with 100 or fewer confirmations.\n"
-                                                                                                                                                    "\"orphan\"                Orphaned coinbase transactions received."},
+                                                                                                                                                    "\"orphan\"                Orphaned coinbase transactions received.\n"
+                                                                                                                                                    "\"stake\"                 BLSCT output locked into a staked commitment (still ours, earmarked for staking)."},
                                                                                                                  {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT + ". This is negative for the 'send' category, and is positive\n"
                                                                                                                                                                                             "for all other categories"},
                                                                                                                  {RPCResult::Type::STR, "label", /*optional=*/true, "A comment for the address/transaction, if any"},
                                                                                                                  {RPCResult::Type::NUM, "vout", /*optional=*/true, "the vout value"},
                                                                                                                  {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the\n"
                                                                                                                                                                                                                        "'send' category of transactions."},
+                                                                                                                 {RPCResult::Type::STR, "memo", /*optional=*/true, "BLSCT output memo recovered from the range proof, if any."},
+                                                                                                                 {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT per-output identifier (distinct from txid, preserved across range-proof stripping). Only present for output-storage entries."},
+                                                                                                                 {RPCResult::Type::BOOL, "output_storage", /*optional=*/true, "True if the entry was synthesised from mapOutputs alone (no CWalletTx)."},
                                                                                                              },
                                                                                                              TransactionDescriptionString()),
                                                                                  {
@@ -614,7 +884,7 @@ RPCHelpMan listpendingtransactions()
             int nFrom = 0;
             if (!request.params[2].isNull())
                 nFrom = request.params[2].getInt<int>();
-            isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+            isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
 
             if (ParseIncludeWatchonly(request.params[3], *pwallet)) {
                 filter |= ISMINE_WATCH_ONLY;
@@ -625,30 +895,31 @@ RPCHelpMan listpendingtransactions()
             if (nFrom < 0)
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative from");
 
-            std::vector<UniValue> ret;
+            // Pending view: confirmed txs are filtered out via depth<=0. Merge the
+            // wtxOrdered stream with mapOutputs (output-storage wallets) by the
+            // shared nOrderPos counter.
+            std::vector<std::pair<int64_t, UniValue>> entries;
             {
                 LOCK(pwallet->cs_wallet);
 
-                const CWallet::TxItems& txOrdered = pwallet->wtxOrdered;
-
-                // iterate backwards until we have nCount items to return:
-                for (CWallet::TxItems::const_reverse_iterator it = txOrdered.rbegin(); it != txOrdered.rend(); ++it) {
-                    CWalletTx* const pwtx = (*it).second;
-                    ListTransactions(*pwallet, *pwtx, -100000000, 0, true, ret, filter, filter_label);
-                    if ((int)ret.size() >= (nCount + nFrom)) break;
+                for (const auto& [order_pos, pwtx] : pwallet->wtxOrdered) {
+                    ListTransactionsOrdered(*pwallet, *pwtx, -100000000, 0, true, entries, filter, filter_label);
                 }
+                ListMapOutputTransactions(*pwallet, -100000000, 0, entries, filter, filter_label);
             }
 
-            // ret is newest to oldest
+            std::stable_sort(entries.begin(), entries.end(),
+                             [](const auto& a, const auto& b) { return a.first > b.first; });
 
-            if (nFrom > (int)ret.size())
-                nFrom = ret.size();
-            if ((nFrom + nCount) > (int)ret.size())
-                nCount = ret.size() - nFrom;
+            if (nFrom > (int)entries.size())
+                nFrom = entries.size();
+            if ((nFrom + nCount) > (int)entries.size())
+                nCount = entries.size() - nFrom;
 
-            auto txs_rev_it{std::make_move_iterator(ret.rend())};
             UniValue result{UniValue::VARR};
-            result.push_backV(txs_rev_it - nFrom - nCount, txs_rev_it - nFrom); // Return oldest to newest
+            for (int i = nFrom + nCount - 1; i >= nFrom; --i) {
+                result.push_back(std::move(entries[i].second));
+            }
             return result;
         },
     };
@@ -683,12 +954,16 @@ RPCHelpMan listsinceblock()
                                     "\"receive\"               Non-coinbase transactions received.\n"
                                     "\"generate\"              Coinbase transactions received with more than 100 confirmations.\n"
                                     "\"immature\"              Coinbase transactions received with 100 or fewer confirmations.\n"
-                                    "\"orphan\"                Orphaned coinbase transactions received."},
+                                    "\"orphan\"                Orphaned coinbase transactions received.\n"
+                                                                                                                                                    "\"stake\"                 BLSCT output locked into a staked commitment (still ours, earmarked for staking)."},
                                 {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT + ". This is negative for the 'send' category, and is positive\n"
                                     "for all other categories"},
-                                {RPCResult::Type::NUM, "vout", "the vout value"},
+                                {RPCResult::Type::NUM, "vout", /*optional=*/true, "the vout value (omitted for BLSCT output-storage entries)"},
                                 {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the\n"
                                      "'send' category of transactions."},
+                                {RPCResult::Type::STR, "memo", /*optional=*/true, "BLSCT output memo recovered from the range proof, if any."},
+                                {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT per-output identifier. Only present for output-storage entries."},
+                                {RPCResult::Type::BOOL, "output_storage", /*optional=*/true, "True if surfaced from mapOutputs without an underlying CWalletTx."},
                             },
                             TransactionDescriptionString()),
                             {
@@ -722,7 +997,7 @@ RPCHelpMan listsinceblock()
     std::optional<int> height;    // Height of the specified block or the common ancestor, if the block provided was in a deactivated chain.
     std::optional<int> altheight; // Height of the specified block, even if it's in a deactivated chain.
     int target_confirms = 1;
-    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
 
     uint256 blockId;
     if (!request.params[0].isNull() && !request.params[0].get_str().empty()) {
@@ -765,6 +1040,20 @@ RPCHelpMan listsinceblock()
         }
     }
 
+    // Output-storage wallets: receive-side entries (staking, external receives)
+    // live in mapOutputs without a CWalletTx. Include them alongside mapWallet.
+    if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        std::vector<std::pair<int64_t, UniValue>> out_entries;
+        for (const auto& entry : wallet.mapOutputs) {
+            const COutPoint& outpoint = entry.first;
+            const CWalletOutput& wout = entry.second;
+            if (wallet.GetWalletTxFromOutpoint(outpoint) != nullptr) continue;
+            if (depth != -1 && abs(wallet.GetOutputDepthInMainChain(wout)) >= depth) continue;
+            ListOutputTransaction(wallet, outpoint, wout, -100000000, 100000000, out_entries, filter, filter_label);
+        }
+        for (auto& [_, e] : out_entries) transactions.push_back(std::move(e));
+    }
+
     // when a reorg'd block is requested, we also list any relevant transactions
     // in the blocks of the chain that was detached
     UniValue removed(UniValue::VARR);
@@ -779,6 +1068,18 @@ RPCHelpMan listsinceblock()
                 // We want all transactions regardless of confirmation count to appear here,
                 // even negative confirmation ones, hence the big negative.
                 ListTransactions(wallet, it->second, -100000000, 100000000, true, removed, filter, filter_label, include_change);
+            }
+            if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+                // Also emit mapOutputs-only entries whose outpoint belongs to this detached tx.
+                std::vector<std::pair<int64_t, UniValue>> out_entries;
+                for (uint32_t n = 0; n < tx->vout.size(); ++n) {
+                    COutPoint op{tx->vout[n].GetHash()};
+                    auto mit = wallet.mapOutputs.find(op);
+                    if (mit == wallet.mapOutputs.end()) continue;
+                    if (wallet.GetWalletTxFromOutpoint(op) != nullptr) continue;
+                    ListOutputTransaction(wallet, op, mit->second, -100000000, 100000000, out_entries, filter, filter_label);
+                }
+                for (auto& [_, e] : out_entries) removed.push_back(std::move(e));
             }
         }
         blockId = block.hashPrevBlock;
@@ -816,6 +1117,7 @@ RPCHelpMan gettransaction()
                         {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT},
                         {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the\n"
                                      "'send' category of transactions."},
+                        {RPCResult::Type::BOOL, "output_storage", /*optional=*/true, "True if the tx is known only via mapOutputs (no CWalletTx). In this case hex/decoded are omitted."},
                     },
                     TransactionDescriptionString()),
                     {
@@ -830,19 +1132,23 @@ RPCHelpMan gettransaction()
                                     "\"receive\"               Non-coinbase transactions received.\n"
                                     "\"generate\"              Coinbase transactions received with more than 100 confirmations.\n"
                                     "\"immature\"              Coinbase transactions received with 100 or fewer confirmations.\n"
-                                    "\"orphan\"                Orphaned coinbase transactions received."},
+                                    "\"orphan\"                Orphaned coinbase transactions received.\n"
+                                                                                                                                                    "\"stake\"                 BLSCT output locked into a staked commitment (still ours, earmarked for staking)."},
                                 {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT},
                                 {RPCResult::Type::STR, "label", /*optional=*/true, "A comment for the address/transaction, if any"},
-                                {RPCResult::Type::NUM, "vout", "the vout value"},
+                                {RPCResult::Type::NUM, "vout", /*optional=*/true, "the vout value (omitted for BLSCT output-storage entries, which are keyed by outid)"},
                                 {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the \n"
                                     "'send' category of transactions."},
+                                {RPCResult::Type::STR, "memo", /*optional=*/true, "BLSCT output memo recovered from the range proof, if any."},
+                                {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT per-output identifier. Only present for output-storage entries."},
+                                {RPCResult::Type::BOOL, "output_storage", /*optional=*/true, "True if surfaced from mapOutputs without an underlying CWalletTx."},
                                 {RPCResult::Type::BOOL, "abandoned", "'true' if the transaction has been abandoned (inputs are respendable)."},
                                 {RPCResult::Type::ARR, "parent_descs", /*optional=*/true, "Only if 'category' is 'received'. List of parent descriptors for the scriptPubKey of this coin.", {
                                     {RPCResult::Type::STR, "desc", "The descriptor string."},
                                 }},
                             }},
                         }},
-                        {RPCResult::Type::STR_HEX, "hex", "Raw data for transaction"},
+                        {RPCResult::Type::STR_HEX, "hex", /*optional=*/true, "Raw data for transaction. Omitted for output-storage entries (range proof stripped; full tx not retained)."},
                         {RPCResult::Type::OBJ, "decoded", /*optional=*/true, "The decoded transaction (only present when `verbose` is passed)",
                         {
                             {RPCResult::Type::ELISION, "", "Equivalent to the RPC decoderawtransaction method, or the RPC getrawtransaction method when `verbose` is passed."},
@@ -869,7 +1175,7 @@ RPCHelpMan gettransaction()
 
     uint256 hash(ParseHashV(request.params[0], "txid"));
 
-    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
 
     if (ParseIncludeWatchonly(request.params[1], *pwallet)) {
         filter |= ISMINE_WATCH_ONLY;
@@ -879,32 +1185,92 @@ RPCHelpMan gettransaction()
 
     UniValue entry(UniValue::VOBJ);
     auto it = pwallet->mapWallet.find(hash);
-    if (it == pwallet->mapWallet.end()) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid or non-wallet transaction id");
-    }
-    const CWalletTx& wtx = it->second;
+    if (it != pwallet->mapWallet.end()) {
+        const CWalletTx& wtx = it->second;
 
-    CAmount nCredit = CachedTxGetCredit(*pwallet, wtx, filter);
-    CAmount nDebit = CachedTxGetDebit(*pwallet, wtx, filter);
-    CAmount nNet = nCredit - nDebit;
-    CAmount nFee = (CachedTxIsFromMe(*pwallet, wtx, filter) ? wtx.tx->GetValueOut() - nDebit : 0);
+        CAmount nCredit = CachedTxGetCredit(*pwallet, wtx, filter);
+        CAmount nDebit = CachedTxGetDebit(*pwallet, wtx, filter);
+        CAmount nNet = nCredit - nDebit;
+        CAmount nFee = (CachedTxIsFromMe(*pwallet, wtx, filter) ? wtx.tx->GetValueOut() - nDebit : 0);
 
-    entry.pushKV("amount", ValueFromAmount(nNet - nFee));
-    if (CachedTxIsFromMe(*pwallet, wtx, filter))
-        entry.pushKV("fee", ValueFromAmount(nFee));
+        entry.pushKV("amount", ValueFromAmount(nNet - nFee));
+        if (CachedTxIsFromMe(*pwallet, wtx, filter))
+            entry.pushKV("fee", ValueFromAmount(nFee));
 
-    WalletTxToJSON(*pwallet, wtx, entry);
+        WalletTxToJSON(*pwallet, wtx, entry);
 
-    UniValue details(UniValue::VARR);
-    ListTransactions(*pwallet, wtx, 0, 100000000, false, details, filter, /*filter_label=*/std::nullopt);
-    entry.pushKV("details", details);
+        UniValue details(UniValue::VARR);
+        ListTransactions(*pwallet, wtx, 0, 100000000, false, details, filter, /*filter_label=*/std::nullopt);
+        entry.pushKV("details", details);
 
-    entry.pushKV("hex", EncodeHexTx(*wtx.tx));
+        entry.pushKV("hex", EncodeHexTx(*wtx.tx));
 
-    if (verbose) {
-        UniValue decoded(UniValue::VOBJ);
-        TxToUniv(*wtx.tx, /*block_hash=*/uint256(), /*entry=*/decoded, /*include_hex=*/false);
-        entry.pushKV("decoded", decoded);
+        if (verbose) {
+            UniValue decoded(UniValue::VOBJ);
+            TxToUniv(*wtx.tx, /*block_hash=*/uint256(), /*entry=*/decoded, /*include_hex=*/false);
+            entry.pushKV("decoded", decoded);
+        }
+    } else {
+        // Output-storage fallback: the tx may exist only as mapOutputs entries
+        // (BLSCT receive / staking reward that never became a CWalletTx).
+        std::vector<std::pair<COutPoint, const CWalletOutput*>> matched;
+        if (pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+            for (const auto& m : pwallet->mapOutputs) {
+                if (m.first.hash == hash) matched.emplace_back(m.first, &m.second);
+            }
+        }
+        if (matched.empty()) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid or non-wallet transaction id");
+        }
+
+        CAmount total = 0;
+        std::optional<TxStateConfirmed> any_conf;
+        int64_t min_time = std::numeric_limits<int64_t>::max();
+        for (const auto& [op, pw] : matched) {
+            total += OutputGetCredit(*pwallet, *pw, filter, TokenId());
+            if (auto* conf = pw->state<TxStateConfirmed>()) {
+                if (!any_conf) any_conf = *conf;
+            }
+            if (pw->nTimeReceived != 0 && (int64_t)pw->nTimeReceived < min_time) {
+                min_time = pw->nTimeReceived;
+            }
+        }
+        if (min_time == std::numeric_limits<int64_t>::max()) min_time = 0;
+
+        entry.pushKV("amount", ValueFromAmount(total));
+        // No raw tx retained under output-storage; omit fee/hex/decoded.
+        entry.pushKV("output_storage", true);
+
+        // Confirmation info from any confirmed output (all matched outputs
+        // share a block under normal operation).
+        int confirms = matched.front().second->state<TxStateConfirmed>()
+            ? pwallet->GetOutputDepthInMainChain(*matched.front().second)
+            : 0;
+        entry.pushKV("confirmations", confirms);
+        if (any_conf) {
+            entry.pushKV("blockhash", any_conf->confirmed_block_hash.GetHex());
+            entry.pushKV("blockheight", any_conf->confirmed_block_height);
+            entry.pushKV("blockindex", any_conf->position_in_block);
+            int64_t block_time;
+            if (pwallet->chain().findBlock(any_conf->confirmed_block_hash, FoundBlock().time(block_time))) {
+                entry.pushKV("blocktime", block_time);
+            }
+        }
+        entry.pushKV("txid", hash.GetHex());
+        entry.pushKV("walletconflicts", UniValue(UniValue::VARR));
+        entry.pushKV("time", min_time);
+        entry.pushKV("timereceived", min_time);
+        entry.pushKV("bip125-replaceable", "unknown");
+
+        UniValue details(UniValue::VARR);
+        std::vector<std::pair<int64_t, UniValue>> det_entries;
+        for (const auto& [op, pw] : matched) {
+            ListOutputTransaction(*pwallet, op, *pw, -100000000, 100000000,
+                                  det_entries, filter, /*filter_label=*/std::nullopt,
+                                  /*include_staking=*/true, /*fLong=*/false);
+        }
+        for (auto& [_, e] : det_entries) details.push_back(std::move(e));
+        entry.pushKV("details", details);
     }
 
     AppendLastProcessedBlock(entry, *pwallet);

@@ -40,6 +40,7 @@ NO_ZMQ ?=
 NO_UPNP ?=
 NO_USDT ?=
 NO_NATPMP ?=
+NO_OPENMP ?=
 MULTIPROCESS ?=
 LTO ?=
 NO_HARDEN ?=
@@ -54,7 +55,7 @@ PATCHES_PATH = $(BASEDIR)/patches
 BASEDIR = $(CURDIR)
 HASH_LENGTH:=11
 DOWNLOAD_CONNECT_TIMEOUT:=30
-DOWNLOAD_RETRIES:=3
+DOWNLOAD_RETRIES:=8
 HOST_ID_SALT ?= salt
 BUILD_ID_SALT ?= salt
 
@@ -161,7 +162,15 @@ zmq_packages_$(NO_ZMQ) = $(zmq_packages)
 multiprocess_packages_$(MULTIPROCESS) = $(multiprocess_packages)
 usdt_packages_$(NO_USDT) = $(usdt_$(host_os)_packages)
 
-packages += $($(host_arch)_$(host_os)_packages) $($(host_os)_packages) $(boost_packages_) $(libevent_packages_) $(wallet_packages_) $(upnp_packages_) $(natpmp_packages_) $(usdt_packages_)
+# OpenMP runtime for the multi-threaded MCL MSM in the BLSCT verifier.
+# Skip on mingw32 because LLVM's libomp standalone build does not
+# support the MinGW toolchain out of the box.
+ifeq ($(host_os),mingw32)
+NO_OPENMP=1
+endif
+libomp_packages_$(NO_OPENMP) = $(libomp_packages)
+
+packages += $($(host_arch)_$(host_os)_packages) $($(host_os)_packages) $(boost_packages_) $(libevent_packages_) $(wallet_packages_) $(upnp_packages_) $(natpmp_packages_) $(usdt_packages_) $(libomp_packages_)
 native_packages += $($(host_arch)_$(host_os)_native_packages) $($(host_os)_native_packages)
 
 ifneq ($(zmq_packages_),)
@@ -183,6 +192,7 @@ $(host_arch)_$(host_os)_native_toolchain?=$($(host_os)_native_toolchain)
 include funcs.mk
 
 final_build_id_long+=$(shell $(build_SHA256SUM) config.site.in)
+final_build_id_long+=$(shell $(build_SHA256SUM) toolchain.cmake.in)
 final_build_id+=$(shell echo -n "$(final_build_id_long)" | $(build_SHA256SUM) | cut -c-$(HASH_LENGTH))
 $(host_prefix)/.stamp_$(final_build_id): $(native_packages) $(packages)
 	rm -rf $(@D)
@@ -190,6 +200,45 @@ $(host_prefix)/.stamp_$(final_build_id): $(native_packages) $(packages)
 	echo copying packages: $^
 	echo to: $(@D)
 	cd $(@D); $(foreach package,$^, $(build_TAR) xf $($(package)_cached); )
+	touch $@
+
+ifeq ($(host),$(build))
+  crosscompiling=FALSE
+else
+  crosscompiling=TRUE
+endif
+
+$(host_prefix)/toolchain.cmake : toolchain.cmake.in $(host_prefix)/.stamp_$(final_build_id)
+	@mkdir -p $(@D)
+	sed -e 's|@depends_crosscompiling@|$(crosscompiling)|' \
+	    -e 's|@host@|$(host)|' \
+	    -e 's|@host_system_name@|$($(host_os)_cmake_system_name)|' \
+	    -e 's|@host_system_version@|$($(host_os)_cmake_system_version)|' \
+	    -e 's|@host_arch@|$(host_arch)|' \
+	    -e 's|@CC@|$(host_CC)|' \
+	    -e 's|@CXX@|$(host_CXX)|' \
+	    -e 's|@OSX_SDK@|$(OSX_SDK)|' \
+	    -e 's|@AR@|$(host_AR)|' \
+	    -e 's|@RANLIB@|$(host_RANLIB)|' \
+	    -e 's|@STRIP@|$(host_STRIP)|' \
+	    -e 's|@OBJCOPY@|$(host_OBJCOPY)|' \
+	    -e 's|@OBJDUMP@|$(host_OBJDUMP)|' \
+	    -e 's|@CFLAGS@|$(strip $(host_CFLAGS))|' \
+	    -e 's|@CFLAGS_RELEASE@|$(strip $(host_release_CFLAGS))|' \
+	    -e 's|@CFLAGS_DEBUG@|$(strip $(host_debug_CFLAGS))|' \
+	    -e 's|@CXXFLAGS@|$(strip $(host_CXXFLAGS))|' \
+	    -e 's|@CXXFLAGS_RELEASE@|$(strip $(host_release_CXXFLAGS))|' \
+	    -e 's|@CXXFLAGS_DEBUG@|$(strip $(host_debug_CXXFLAGS))|' \
+	    -e 's|@CPPFLAGS@|$(strip $(host_CPPFLAGS))|' \
+	    -e 's|@CPPFLAGS_RELEASE@|$(strip $(host_release_CPPFLAGS))|' \
+	    -e 's|@CPPFLAGS_DEBUG@|$(strip $(host_debug_CPPFLAGS))|' \
+	    -e 's|@LDFLAGS@|$(strip $(host_LDFLAGS))|' \
+	    -e 's|@LDFLAGS_RELEASE@|$(strip $(host_release_LDFLAGS))|' \
+	    -e 's|@LDFLAGS_DEBUG@|$(strip $(host_debug_LDFLAGS))|' \
+	    -e 's|@zmq_packages@|$(zmq_packages_)|' \
+	    -e 's|@wallet_packages@|$(wallet_packages_)|' \
+	    -e 's|@usdt_packages@|$(usdt_packages_)|' \
+	    $< > $@
 	touch $@
 
 # $PATH is not preserved between ./configure and make by convention. Its
@@ -240,6 +289,7 @@ $(host_prefix)/share/config.site : config.site.in $(host_prefix)/.stamp_$(final_
             -e 's|@no_upnp@|$(NO_UPNP)|' \
             -e 's|@no_usdt@|$(NO_USDT)|' \
             -e 's|@no_natpmp@|$(NO_NATPMP)|' \
+            -e 's|@no_openmp@|$(NO_OPENMP)|' \
             -e 's|@multiprocess@|$(MULTIPROCESS)|' \
             -e 's|@lto@|$(LTO)|' \
             -e 's|@no_harden@|$(NO_HARDEN)|' \
@@ -277,7 +327,7 @@ clean-all: clean
 clean:
 	@rm -rf $(WORK_PATH) $(BASE_CACHE) $(BUILD) *.log
 
-install: check-packages $(host_prefix)/share/config.site
+install: check-packages $(host_prefix)/share/config.site $(host_prefix)/toolchain.cmake
 
 
 download-one: check-sources $(all_sources)

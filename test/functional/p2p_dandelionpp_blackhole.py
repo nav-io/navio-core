@@ -74,4 +74,4 @@ class DandelionBlackholeTest(BitcoinTestFramework):
 
 
 if __name__ == "__main__":
-    DandelionBlackholeTest().main()
+    DandelionBlackholeTest(__file__).main()

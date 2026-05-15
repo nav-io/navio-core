@@ -92,4 +92,4 @@ class KeypoolRestoreTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    KeypoolRestoreTest().main()
+    KeypoolRestoreTest(__file__).main()

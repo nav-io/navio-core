@@ -21,7 +21,7 @@ int64_t GetStakeModifierSelectionIntervalSection(int nSection, const Consensus::
 int64_t GetStakeModifierSelectionInterval(const Consensus::Params& params);
 std::vector<unsigned char> CalculateSetMemProofRandomness(const CBlockIndex* pindexPrev);
 blsct::Message CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& block);
-uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block);
+uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params);
 } // namespace blsct
 
 #endif // BLSCT_POS_H

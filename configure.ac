@@ -2,11 +2,11 @@ AC_PREREQ([2.69])
 define(_CLIENT_VERSION_MAJOR, 0)
 define(_CLIENT_VERSION_MINOR, 1)
 define(_CLIENT_VERSION_BUILD, 0)
-define(_CLIENT_VERSION_RC, 0)
+define(_CLIENT_VERSION_RC, 23)
 define(_CLIENT_VERSION_IS_RELEASE, false)
-define(_COPYRIGHT_YEAR, 2024)
+define(_COPYRIGHT_YEAR, 2026)
 define(_COPYRIGHT_HOLDERS,[The %s developers])
-define(_COPYRIGHT_HOLDERS_SUBSTITUTION,[[Bitcoin Core]])
+define(_COPYRIGHT_HOLDERS_SUBSTITUTION,[[Navio Core]])
 AC_INIT([Navio Core],m4_join([.], _CLIENT_VERSION_MAJOR, _CLIENT_VERSION_MINOR, _CLIENT_VERSION_BUILD)m4_if(_CLIENT_VERSION_RC, [0], [], [rc]_CLIENT_VERSION_RC),[https://github.com/nav-io/navio-core/issues],[navio],[https://nav.io/])
 AC_CONFIG_SRCDIR([src/validation.cpp])
 AC_CONFIG_HEADERS([src/config/bitcoin-config.h])
@@ -159,6 +159,12 @@ AC_ARG_WITH([natpmp],
             [use_natpmp=$withval],
             [use_natpmp=auto])
 
+AC_ARG_WITH([gmp],
+  [AS_HELP_STRING([--with-gmp],
+  [build mcl with GMP instead of the bundled VINT bignum (default is no; opt in if you have a workload that benefits — see contrib/perf/bench-mcl-backends.sh)])],
+  [use_gmp=$withval],
+  [use_gmp=no])
+
 AC_ARG_ENABLE(tests,
     AS_HELP_STRING([--disable-tests],[do not compile tests (default is to compile)]),
     [use_tests=$enableval],
@@ -247,6 +253,18 @@ AC_ARG_ENABLE([zmq],
   [disable ZMQ notifications])],
   [use_zmq=$enableval],
   [use_zmq=yes])
+
+AC_ARG_ENABLE([openmp],
+  [AS_HELP_STRING([--disable-openmp],
+  [disable OpenMP for the parallel verifier MSM in MCL (default: enabled if a working flag combination is found, e.g. via depends-built libomp or Homebrew libomp)])],
+  [use_openmp=$enableval],
+  [use_openmp=auto])
+
+AC_ARG_WITH([libomp-prefix],
+  [AS_HELP_STRING([--with-libomp-prefix=PATH],
+  [prefix where libomp is installed (default: auto-detect via depends, brew --prefix libomp, /opt/homebrew/opt/libomp, /usr/local/opt/libomp)])],
+  [libomp_prefix=$withval],
+  [libomp_prefix=auto])
 
 AC_ARG_WITH([libmultiprocess],
   [AS_HELP_STRING([--with-libmultiprocess=yes|no|auto],
@@ -783,7 +801,7 @@ case $host in
      fi
 
      AX_CHECK_LINK_FLAG([-Wl,-headerpad_max_install_names], [CORE_LDFLAGS="$CORE_LDFLAGS -Wl,-headerpad_max_install_names"], [], [$LDFLAG_WERROR])
-     CORE_CPPFLAGS="$CORE_CPPFLAGS -DMAC_OSX -DOBJC_OLD_DISPATCH_PROTOTYPES=0"
+     CORE_CPPFLAGS="$CORE_CPPFLAGS -DOBJC_OLD_DISPATCH_PROTOTYPES=0"
      OBJCXXFLAGS="$CXXFLAGS"
      ;;
    *android*)
@@ -1372,6 +1390,109 @@ if test "$use_usdt" != "no"; then
 fi
 AM_CONDITIONAL([ENABLE_USDT_TRACEPOINTS], [test "$use_usdt" = "yes"])
 
+dnl OpenMP detection. We probe several flag combinations because no single
+dnl spelling works across all toolchains we support:
+dnl   * Apple Clang only accepts `-Xpreprocessor -fopenmp` and needs `-lomp`
+dnl     to be linked explicitly. Homebrew installs libomp keg-only, so
+dnl     omp.h and libomp are only on the search path if we add the brew
+dnl     prefix ourselves.
+dnl   * LLVM clang accepts `-fopenmp` (links libomp) and `-fopenmp=libomp`.
+dnl   * GCC accepts `-fopenmp` (links libgomp).
+dnl When building against the depends tree, a static libomp.a (with
+dnl libgomp.a/libiomp5.a aliases) is provided in $depends/lib so any of
+dnl the above flag combinations can resolve the runtime symbols out of
+dnl the box.
+OPENMP_CXXFLAGS=
+OPENMP_LIBS=
+OPENMP_CPPFLAGS=
+have_openmp=no
+if test "$use_openmp" != "no"; then
+  dnl Build a list of -I/-L extras to try in addition to whatever is
+  dnl already on the search path. The first hit wins.
+  ac_openmp_extra_dirs=":"
+  if test "$libomp_prefix" != "auto" -a "$libomp_prefix" != "no"; then
+    ac_openmp_extra_dirs="$ac_openmp_extra_dirs $libomp_prefix"
+  fi
+  if test "$libomp_prefix" = "auto"; then
+    AC_PATH_PROG([BREW], [brew], [])
+    if test -n "$BREW"; then
+      ac_openmp_brew_prefix=`$BREW --prefix libomp 2>/dev/null`
+      if test -n "$ac_openmp_brew_prefix" -a -d "$ac_openmp_brew_prefix"; then
+        ac_openmp_extra_dirs="$ac_openmp_extra_dirs $ac_openmp_brew_prefix"
+      fi
+    fi
+    for ac_openmp_dir in /opt/homebrew/opt/libomp /usr/local/opt/libomp; do
+      if test -d "$ac_openmp_dir"; then
+        ac_openmp_extra_dirs="$ac_openmp_extra_dirs $ac_openmp_dir"
+      fi
+    done
+  fi
+
+  AC_LANG_PUSH([C++])
+  ac_openmp_save_CXXFLAGS="$CXXFLAGS"
+  ac_openmp_save_CPPFLAGS="$CPPFLAGS"
+  ac_openmp_save_LIBS="$LIBS"
+  for ac_openmp_dir in $ac_openmp_extra_dirs; do
+    if test "x$ac_openmp_dir" = "x:"; then
+      ac_openmp_extra_cppflags=
+      ac_openmp_extra_ldflags=
+      ac_openmp_where="default search path"
+    else
+      ac_openmp_extra_cppflags="-I$ac_openmp_dir/include"
+      ac_openmp_extra_ldflags="-L$ac_openmp_dir/lib"
+      ac_openmp_where="$ac_openmp_dir"
+    fi
+    for ac_openmp_try in "-fopenmp|-fopenmp" "-fopenmp=libomp|-fopenmp=libomp" "-Xpreprocessor -fopenmp|-lomp"; do
+      ac_openmp_cxx=`echo "$ac_openmp_try" | sed 's/|.*//'`
+      ac_openmp_lib=`echo "$ac_openmp_try" | sed 's/.*|//'`
+      AC_MSG_CHECKING([whether C++ compiler supports OpenMP via "$ac_openmp_cxx $ac_openmp_lib" (using $ac_openmp_where)])
+      CXXFLAGS="$ac_openmp_save_CXXFLAGS $ac_openmp_cxx"
+      CPPFLAGS="$ac_openmp_save_CPPFLAGS $ac_openmp_extra_cppflags"
+      LIBS="$ac_openmp_save_LIBS $ac_openmp_extra_ldflags $ac_openmp_lib"
+      AC_LINK_IFELSE(
+        [AC_LANG_PROGRAM(
+          [[#include <omp.h>]],
+          [[int n = 0;
+            _Pragma("omp parallel reduction(+:n)")
+            n += 1;
+            return omp_get_num_procs() > 0 ? 0 : n;]])],
+        [ac_openmp_works=yes],
+        [ac_openmp_works=no])
+      AC_MSG_RESULT([$ac_openmp_works])
+      if test "$ac_openmp_works" = "yes"; then
+        OPENMP_CXXFLAGS="$ac_openmp_cxx"
+        OPENMP_LIBS="$ac_openmp_extra_ldflags $ac_openmp_lib"
+        OPENMP_CPPFLAGS="$ac_openmp_extra_cppflags"
+        have_openmp=yes
+        break
+      fi
+    done
+    if test "$have_openmp" = "yes"; then
+      break
+    fi
+  done
+  CXXFLAGS="$ac_openmp_save_CXXFLAGS"
+  CPPFLAGS="$ac_openmp_save_CPPFLAGS"
+  LIBS="$ac_openmp_save_LIBS"
+  AC_LANG_POP([C++])
+fi
+if test "$have_openmp" = "yes"; then
+  AC_DEFINE([HAVE_OPENMP], [1], [Define to 1 if OpenMP is enabled (multi-threaded MCL MSM in the BLSCT verifier)])
+  dnl OPENMP_CPPFLAGS only carries -I when we needed an out-of-tree libomp
+  dnl (Homebrew or --with-libomp-prefix). When that is set, propagate it
+  dnl to AM_CPPFLAGS so omp.h is reachable in any TU that ends up needing
+  dnl it (mcl_util.h includes it transitively when MCL_USE_OMP=1).
+  if test -n "$OPENMP_CPPFLAGS"; then
+    CORE_CPPFLAGS="$CORE_CPPFLAGS $OPENMP_CPPFLAGS"
+  fi
+elif test "$use_openmp" = "yes"; then
+  AC_MSG_ERROR([--enable-openmp was requested, but no working OpenMP flag combination was found. Try --with-libomp-prefix=PATH, install libomp (e.g. `brew install libomp`), or build the libomp depends package.])
+fi
+AC_SUBST([OPENMP_CXXFLAGS])
+AC_SUBST([OPENMP_LIBS])
+AC_SUBST([OPENMP_CPPFLAGS])
+AM_CONDITIONAL([USE_OPENMP], [test "$have_openmp" = "yes"])
+
 if test "$build_naviod$use_bench$use_tests" = "nonono"; then
   use_upnp=no
   use_natpmp=no
@@ -1421,6 +1542,46 @@ if test "$use_natpmp" != "no"; then
 
   CPPFLAGS="$TEMP_CPPFLAGS"
 fi
+
+dnl Check for libgmp/libgmpxx (used by herumi/mcl). With GMP, mcl is faster
+dnl on bls12-381 arithmetic; without it, mcl falls back to its internal VINT.
+if test "$use_gmp" != "no"; then
+  AC_CHECK_HEADERS([gmp.h gmpxx.h], [], [have_gmp=no])
+  if test "$have_gmp" != "no"; then
+    TEMP_LIBS="$LIBS"
+    AC_CHECK_LIB([gmp], [__gmpz_init], [GMP_LIBS="-lgmp"], [have_gmp=no])
+    if test "$have_gmp" != "no"; then
+      AC_LANG_PUSH([C++])
+      AC_CHECK_LIB([gmpxx], [main], [GMP_LIBS="-lgmpxx $GMP_LIBS"], [have_gmp=no], [-lgmp])
+      AC_LANG_POP([C++])
+    fi
+    LIBS="$TEMP_LIBS"
+  fi
+fi
+
+AC_MSG_CHECKING([whether to build mcl with GMP])
+if test "$have_gmp" = "no"; then
+  if test "$use_gmp" = "yes"; then
+    AC_MSG_ERROR([GMP requested but libgmp/libgmpxx not found. Use --without-gmp to disable.])
+  fi
+  AC_MSG_RESULT([no])
+  use_gmp=no
+  MCL_USE_GMP=0
+  GMP_LIBS=
+else
+  if test "$use_gmp" != "no"; then
+    AC_MSG_RESULT([yes])
+    use_gmp=yes
+    MCL_USE_GMP=1
+    LIBS="$LIBS $GMP_LIBS"
+  else
+    AC_MSG_RESULT([no])
+    MCL_USE_GMP=0
+    GMP_LIBS=
+  fi
+fi
+AC_SUBST(GMP_LIBS)
+AC_SUBST(MCL_USE_GMP)
 
 if test "$build_bitcoin_wallet$build_bitcoin_cli$build_bitcoin_tx$build_bitcoin_util$build_naviod$use_tests$use_bench$enable_fuzz_binary" = "nononononononono"; then
   use_boost=no
@@ -1793,6 +1954,8 @@ AC_DEFINE([COPYRIGHT_HOLDERS], ["_COPYRIGHT_HOLDERS"], [Copyright holder(s) befo
 AC_DEFINE([COPYRIGHT_HOLDERS_SUBSTITUTION], ["_COPYRIGHT_HOLDERS_SUBSTITUTION"], [Replacement for %s in copyright holders string])
 define(_COPYRIGHT_HOLDERS_FINAL, [patsubst(_COPYRIGHT_HOLDERS, [%s], [_COPYRIGHT_HOLDERS_SUBSTITUTION])])
 AC_DEFINE([COPYRIGHT_HOLDERS_FINAL], ["_COPYRIGHT_HOLDERS_FINAL"], [Copyright holder(s)])
+AC_SUBST(CLIENT_NAME, "$PACKAGE_NAME")
+AC_SUBST(CLIENT_BUGREPORT, "$PACKAGE_BUGREPORT")
 AC_SUBST(CLIENT_VERSION_MAJOR, _CLIENT_VERSION_MAJOR)
 AC_SUBST(CLIENT_VERSION_MINOR, _CLIENT_VERSION_MINOR)
 AC_SUBST(CLIENT_VERSION_BUILD, _CLIENT_VERSION_BUILD)
@@ -1854,6 +2017,14 @@ AC_SUBST(HAVE_MM_PREFETCH)
 AC_SUBST(HAVE_STRONG_GETAUXVAL)
 AC_SUBST(ANDROID_ARCH)
 AC_SUBST(HAVE_EVHTTP_CONNECTION_GET_PEER_CONST_CHAR)
+dnl Autotools builds emit binaries into $(top_builddir)/src.  The CMake build
+dnl emits them into $(top_builddir)/bin.  Functional/util/fuzz test runners
+dnl consult @EXEDIR_REL@ via test/config.ini to locate them under either layout.
+AC_SUBST([EXEDIR_REL], [src])
+dnl Fuzz binary is nested under src/test/fuzz/ in autotools; CMake puts it
+dnl flat alongside the other executables.  Exposed separately so the fuzz
+dnl runner doesn't have to special-case the layouts.
+AC_SUBST([FUZZ_BIN_REL], [src/test/fuzz/fuzz])
 AC_CONFIG_FILES([Makefile src/Makefile doc/man/Makefile test/config.ini])
 AC_CONFIG_FILES([contrib/devtools/split-debug.sh],[chmod +x contrib/devtools/split-debug.sh])
 AM_COND_IF([HAVE_DOXYGEN], [AC_CONFIG_FILES([doc/Doxyfile])])
@@ -1919,6 +2090,11 @@ echo "  with upnp       = $use_upnp"
 echo "  with natpmp     = $use_natpmp"
 echo "  use asm         = $use_asm"
 echo "  USDT tracing    = $use_usdt"
+echo "  OpenMP (MCL MT) = $have_openmp"
+if test "$have_openmp" = "yes"; then
+    echo "    OPENMP_CXXFLAGS = $OPENMP_CXXFLAGS"
+    echo "    OPENMP_LIBS     = $OPENMP_LIBS"
+fi
 echo "  sanitizers      = $use_sanitizers"
 echo "  debug enabled   = $enable_debug"
 echo "  gprof enabled   = $enable_gprof"

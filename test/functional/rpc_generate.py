@@ -128,4 +128,4 @@ class RPCGenerateTest(BitcoinTestFramework):
 
 
 if __name__ == "__main__":
-    RPCGenerateTest().main()
+    RPCGenerateTest(__file__).main()

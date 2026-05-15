@@ -200,4 +200,4 @@ class GetblockstatsTest(BitcoinTestFramework):
         assert_equal(tip_stats["utxo_size_inc_actual"], 469)
 
 if __name__ == '__main__':
-    GetblockstatsTest().main()
+    GetblockstatsTest(__file__).main()
