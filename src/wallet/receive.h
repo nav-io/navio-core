@@ -54,7 +54,8 @@ bool IsOutputTrusted(const CWallet& wallet, const CWalletOutput& wout) EXCLUSIVE
 
 struct Balance {
     CAmount m_mine_trusted{0};           //!< Trusted, at depth=GetBalance.min_depth or more
-    CAmount m_mine_staked_commitment{0}; //!< Staked Commitment value
+    CAmount m_mine_staked_commitment{0}; //!< Staked commitment with >=1 confirmation
+    CAmount m_mine_pending_staked_commitment{0}; //!< Trusted staked commitment in mempool only
     CAmount m_mine_untrusted_pending{0}; //!< Untrusted, but in mempool (pending)
     CAmount m_mine_immature{0};          //!< Immature coinbases in the main chain
     CAmount m_watchonly_trusted{0};

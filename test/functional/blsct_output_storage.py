@@ -97,6 +97,7 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
             + Decimal(str(balances["untrusted_pending"]))
             + Decimal(str(balances["immature"]))
             + Decimal(str(balances.get("staked_commitment_balance", 0)))
+            + Decimal(str(balances.get("pending_staked_commitment_balance", 0)))
         )
         delta_sum = self.sum_listtx_deltas(wallet)
         self.log.info(
@@ -364,6 +365,7 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         before_stake = wallet_c.getbalances()["mine"]
         assert_equal(before_stake["trusted"], received_amount)
         assert_equal(before_stake["staked_commitment_balance"], Decimal("0"))
+        assert_equal(before_stake["pending_staked_commitment_balance"], Decimal("0"))
         assert_equal(before_stake["untrusted_pending"], Decimal("0"))
 
         wallet_c.stakelock(stake_amount)
@@ -372,11 +374,13 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         total_after_stake = (
             after_stake["trusted"]
             + after_stake["staked_commitment_balance"]
+            + after_stake["pending_staked_commitment_balance"]
             + after_stake["untrusted_pending"]
             + after_stake["immature"]
         )
 
         assert_equal(after_stake["staked_commitment_balance"], Decimal("0"))
+        assert_equal(after_stake["pending_staked_commitment_balance"], stake_amount)
         assert_greater_than(total_after_stake, received_amount - Decimal("1"))
         assert total_after_stake < received_amount
 

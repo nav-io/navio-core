@@ -1144,11 +1144,17 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
     }
 
     if (args.m_chainparams.GetConsensus().fBLSCT) {
-        CCoinsViewCache viewNew(&m_active_chainstate.CoinsTip());
-        int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
-        int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
+        // blsct::VerifyTx must resolve inputs the same way PreChecks does: against
+        // chain UTXOs plus the mempool (and package-temporary outputs on
+        // m_viewmempool). A cache on CoinsTip() alone rejected valid BLSCT txs
+        // spending outputs that only exist from an unconfirmed parent with
+        // "bad-inputs-unknown". Use a short-lived cache on m_viewmempool so
+        // predicate execution cannot dirt the shared MemPoolAccept::m_view.
+        CCoinsViewCache verify_view(&m_viewmempool);
+        const int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
+        const int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
 
-        if (!blsct::VerifyTx(tx, viewNew, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee)) {
+        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee)) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }
