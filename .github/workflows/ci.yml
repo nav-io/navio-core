@@ -353,11 +353,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: mac-cross
-            label: 'macOS cross-compile, Ubuntu 24.04, no tests'
-            file_env: ./ci/test/00_setup_env_mac_cross.sh
-            runner: ubuntu-24.04
-
           - name: arm
             label: 'Ubuntu 24.04, ARM64, unit tests only'
             file_env: ./ci/test/00_setup_env_arm.sh
@@ -572,6 +567,27 @@ jobs:
             # still covers it.
             ctest_exclude: '^system_tests$'
 
+          # Replaces the autotools `mac-cross` matrix entry.
+          # Cross-compile to x86_64-apple-darwin via depends. Build only —
+          # no unit/functional tests (matches autotools RUN_UNIT_TESTS=false
+          # RUN_FUNCTIONAL_TESTS=false). The autotools job's GOAL=deploy is
+          # a no-op in navio (no Qt/macOS bundle target); the CMake job
+          # mirrors that by stopping at build.
+          # The Xcode SDK is fetched from bitcoincore.org's mirror, matching
+          # ci/test/01_base_install.sh's OSX_SDK_BASENAME logic.
+          - name: mac-cross
+            label: 'macOS cross-compile, Ubuntu 24.04, no tests (CMake)'
+            runner: ubuntu-24.04
+            packages: zip
+            cc: gcc
+            cxx: g++
+            depends_host: x86_64-apple-darwin
+            xcode_version: '15.0'
+            xcode_build_id: '15A240d'
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=Release
+              -DREDUCE_EXPORTS=ON
+
           # Replaces the `no-wallet-libnaviokernel` autotools matrix entry.
           # -stdlib=libc++ is passed via CMAKE_{CXX,EXE_LINKER}_FLAGS rather
           # than the CXX env var because cmake strips compiler flags out of
@@ -671,6 +687,21 @@ jobs:
           # resolves to the posix variant.
           sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
           sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+
+      - name: Fetch macOS SDK
+        if: ${{ matrix.xcode_version }}
+        run: |
+          # Matches ci/test/01_base_install.sh: OSX_SDK_BASENAME =
+          # Xcode-${XCODE_VERSION}-${XCODE_BUILD_ID}-extracted-SDK-with-libcxx-headers
+          sdk_basename="Xcode-${{ matrix.xcode_version }}-${{ matrix.xcode_build_id }}-extracted-SDK-with-libcxx-headers"
+          sdk_dir="$PWD/depends/SDKs"
+          mkdir -p "$sdk_dir"
+          if [ ! -d "$sdk_dir/$sdk_basename" ]; then
+            curl --location --fail \
+              "https://bitcoincore.org/depends-sources/sdks/${sdk_basename}.tar.gz" \
+              -o /tmp/osx-sdk.tar.gz
+            tar -C "$sdk_dir" -xf /tmp/osx-sdk.tar.gz
+          fi
 
       - name: Restore depends cache
         if: ${{ matrix.depends_host }}
