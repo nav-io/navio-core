@@ -549,6 +549,9 @@ jobs:
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
+      # Match upstream bitcoin/master which sets CCACHE_MAXSIZE=2G as the
+      # default across every ci/test/00_setup_env_*.sh env file.
+      CCACHE_MAXSIZE: '2G'
 
     steps:
       - name: Checkout
