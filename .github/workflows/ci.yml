@@ -652,6 +652,16 @@ jobs:
           key: ${{ github.job }}-${{ matrix.name }}-ccache-${{ github.run_id }}
           restore-keys: ${{ github.job }}-${{ matrix.name }}-ccache-
 
+      - name: Switch mingw to posix threads
+        if: ${{ matrix.depends_host == 'x86_64-w64-mingw32' }}
+        run: |
+          # ZeroMQ (and several other depends packages) require POSIX-thread
+          # mingw-w64 runtime. Ubuntu installs both win32 and posix variants
+          # but defaults to win32; flip the alternatives so x86_64-w64-mingw32-gcc
+          # resolves to the posix variant.
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+
       - name: Restore depends cache
         if: ${{ matrix.depends_host }}
         uses: actions/cache/restore@v5
