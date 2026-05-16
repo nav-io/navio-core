@@ -76,15 +76,6 @@ install anything.
 
 #### Port Mapping Dependencies
 
-###### miniupnpc
-
-miniupnpc may be used for UPnP port mapping.
-Skip if you do not need this functionality.
-
-``` bash
-brew install miniupnpc
-```
-
 ###### libnatpmp
 
 libnatpmp may be used for NAT-PMP port mapping.
@@ -94,7 +85,7 @@ Skip if you do not need this functionality.
 brew install libnatpmp
 ```
 
-Note: UPnP and NAT-PMP support will be compiled in and disabled by default.
+Note: NAT-PMP support will be compiled in and disabled by default.
 Check out the [further configuration](#further-configuration) section for more information.
 
 ---

@@ -82,7 +82,6 @@ bench_bench_navio_LDADD = \
   $(LIBUNIVALUE) \
   $(EVENT_PTHREADS_LIBS) \
   $(EVENT_LIBS) \
-  $(MINIUPNPC_LIBS) \
   $(NATPMP_LIBS)
 
 if ENABLE_ZMQ
