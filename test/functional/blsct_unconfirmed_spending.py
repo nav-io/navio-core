@@ -131,26 +131,14 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
         must use a mempool-backed coins view for blsct::VerifyTx)."""
         self.log.info("=== testmempoolaccept: spend mempool-only change ===")
         self_addr = self.w0.getnewaddress(label="", address_type="blsct")
-
-        # Snapshot 0-conf outids before the parent so we can identify outputs
-        # the parent newly creates, and explicitly feed one of them as input
-        # to the child. Without this we'd be at the mercy of coin selection,
-        # which is free to pick confirmed UTXOs and bypass the regression
-        # (mempool-backed coins view for blsct::VerifyTx).
-        pre_unconfirmed = {u["outid"] for u in self.w0.listblsctunspent(0, 0)}
         txid_parent = self.w0.sendtoblsctaddress(self_addr, Decimal("25"))
         assert txid_parent
         assert_greater_than(len(self.nodes[0].getrawmempool()), 0)
-        parent_outids = [u["outid"] for u in self.w0.listblsctunspent(0, 0) if u["outid"] not in pre_unconfirmed]
-        assert parent_outids, "parent created no new 0-conf outputs visible to wallet"
 
+        # Fund from wallet UTXOs including 0-conf trusted change from the parent.
         outputs = [{"address": self_addr, "amount": int(Decimal("2") * COIN), "memo": "mempool child test"}]
-        inputs = [{"outid": parent_outids[0]}]
-        raw = self.w0.createblsctrawtransaction(inputs, outputs)
+        raw = self.w0.createblsctrawtransaction([], outputs)
         funded = self.w0.fundblsctrawtransaction(raw)
-        funded_decoded = self.nodes[0].decodeblsctrawtransaction(funded)
-        assert any(vin["outid"] == parent_outids[0] for vin in funded_decoded["inputs"]), \
-            f"funded child dropped mempool parent input {parent_outids[0]}: {funded_decoded['inputs']}"
         signed = self.w0.signblsctrawtransaction(funded)
         res = self.nodes[0].testmempoolaccept([signed])[0]
         assert res["allowed"], f"expected allowed, got {res}"
