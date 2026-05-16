@@ -99,16 +99,30 @@ jobs:
           echo "TEST_BASE=$(git rev-list -n$((${{ env.MAX_COUNT }} + 1)) --reverse HEAD ^$(git rev-list -n1 --merges HEAD)^@ | head -1)" >> "$GITHUB_ENV"
       - run: |
           sudo apt-get update
-          sudo apt-get install clang ccache build-essential libtool autotools-dev automake pkg-config bsdmainutils python3-zmq libevent-dev libboost-dev libsqlite3-dev systemtap-sdt-dev -y
+          sudo apt-get install -y --no-install-recommends \
+            clang ccache cmake ninja-build pkgconf python3-zmq libevent-dev \
+            libboost-dev libsqlite3-dev systemtap-sdt-dev
       - name: Compile and run tests
+        env:
+          CC: clang
+          CXX: clang++
+          CCACHE_MAXSIZE: '2G'
         run: |
-          # Run tests on commits after the last merge commit and before the PR head commit
-          # Use clang++, because it is a bit faster and uses less memory than g++
-          #git rebase --exec "echo Running test-one-commit on \$( git log -1 ) &&
+          # Run tests on the commit checked out above (HEAD~). The
+          # git-rebase-per-commit iteration was previously commented out
+          # in this job; preserved as-is — migrate the build chain only.
           # mempool_limit excluded because eviction timing fails under 2x
           # parallelism here, same reason Win64 native excludes it.
-          ./autogen.sh && CC=clang CXX=clang++ ./configure && make clean && make -j $(nproc) check && ./test/functional/test_runner.py -j $(( $(nproc) * 2 )) --exclude mempool_limit
-          #" ${{ env.TEST_BASE }}
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWITH_ZMQ=ON \
+            -DWITH_USDT=ON
+          cmake --build build -j"$(nproc)"
+          ctest --test-dir build -j"$(nproc)" --output-on-failure
+          build/test/functional/test_runner.py -j "$(( $(nproc) * 2 ))" \
+            --ci --quiet --tmpdirprefix="${RUNNER_TEMP}" \
+            --combinedlogslen=99999999 \
+            --exclude mempool_limit
 
   macos-native-arm64:
     name: 'macOS 15 native, arm64, no depends, sqlite only'
