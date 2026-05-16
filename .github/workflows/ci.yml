@@ -370,11 +370,6 @@ jobs:
             file_env: ./ci/test/00_setup_env_i686_multiprocess.sh
             runner: ubuntu-24.04
 
-          - name: fuzz
-            label: 'Ubuntu 24.04, fuzzer, ASan + UBSan + integer, no depends'
-            file_env: ./ci/test/00_setup_env_native_fuzz.sh
-            runner: ubuntu-24.04
-
           - name: tsan
             label: 'Ubuntu 24.04, ThreadSanitizer, depends'
             file_env: ./ci/test/00_setup_env_native_tsan.sh
@@ -500,6 +495,27 @@ jobs:
           # than the CXX env var because cmake strips compiler flags out of
           # CXX when detecting the compiler, which would mean libstdc++/libc++
           # mixing in the bls/mcl subprojects.
+          # Replaces the autotools `fuzz` matrix entry.
+          # BUILD_FOR_FUZZING=ON enables fuzz binary and disables non-fuzz targets,
+          # matching --enable-fuzz. SANITIZERS mirrors the autotools value.
+          # -ftrivial-auto-var-init=pattern is added via APPEND_CXXFLAGS/CFLAGS.
+          # Fuzz harness runs against the nav-io/qa-assets corpus with
+          # --empty_min_time=60, matching ci/test/03_test_script.sh.
+          - name: fuzz
+            label: 'Ubuntu 24.04, fuzzer, ASan + UBSan + integer, no depends (CMake)'
+            runner: ubuntu-24.04
+            packages: >-
+              clang-17 llvm-17 libclang-rt-17-dev libevent-dev libboost-dev
+              libsqlite3-dev python3
+            cc: clang-17
+            cxx: clang++-17
+            cmake_flags: >-
+              -DBUILD_FOR_FUZZING=ON
+              -DSANITIZERS=fuzzer,address,undefined,float-divide-by-zero,integer
+              "-DAPPEND_CFLAGS=-ftrivial-auto-var-init=pattern"
+              "-DAPPEND_CXXFLAGS=-ftrivial-auto-var-init=pattern"
+            fuzz: true
+
           - name: nowallet-libnaviokernel
             label: 'Ubuntu 22.04, no wallet, libnaviokernel (CMake)'
             runner: ubuntu-22.04
@@ -659,6 +675,20 @@ jobs:
           # surface the IWYU-suggested diff for visibility but do not fail
           # the job — the codebase has not been cleaned for strict IWYU.
           git --no-pager diff || true
+
+      - name: Fetch qa-assets fuzz corpus
+        if: ${{ matrix.fuzz }}
+        run: |
+          git clone --depth=1 https://github.com/nav-io/qa-assets "${RUNNER_TEMP}/qa-assets"
+          echo "DIR_FUZZ_IN=${RUNNER_TEMP}/qa-assets/fuzz_seed_corpus/" >> "$GITHUB_ENV"
+
+      - name: Run fuzz harness
+        if: ${{ matrix.fuzz }}
+        env:
+          LLVM_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer-17
+        run: |
+          build/test/fuzz/test_runner.py -j"$(nproc)" -l DEBUG \
+            "${DIR_FUZZ_IN}" --empty_min_time=60
 
       - name: Save Ccache cache
         if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'
