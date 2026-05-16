@@ -206,6 +206,8 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     common/config.cpp
     common/init.cpp
     common/interfaces.cpp
+    common/netif.cpp
+    common/pcp.cpp
     common/run_command.cpp
     common/settings.cpp
     common/system.cpp

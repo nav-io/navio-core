@@ -56,10 +56,6 @@ SQLite is required for the descriptor wallet:
 
 To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
 
-Optional port mapping libraries (see: `--with-natpmp`):
-
-    sudo apt install libnatpmp-dev
-
 ZMQ dependencies (provides ZMQ API):
 
     sudo apt-get install libzmq3-dev
@@ -85,10 +81,6 @@ SQLite is required for the descriptor wallet:
     sudo dnf install sqlite-devel
 
 To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
-
-Optional port mapping libraries (see: `--with-natpmp`):
-
-    sudo dnf install libnatpmp-devel
 
 ZMQ dependencies (provides ZMQ API):
 
