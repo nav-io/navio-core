@@ -72,6 +72,7 @@ SYSTEM_SYMBOL_PATTERNS = [
                r'mlock|munlock|mmap|munmap|madvise|'
                r'getrlimit|sysconf|nanosleep|gmtime_r|'
                r'log2|log2f|log|exp|sqrt|'
+               r'ceil|ceilf|floor|floorf|fmod|fmodf|pow|powf|'
                r'strcmp|strlen)$'),
     # C++ operator new/delete
     re.compile(r'^_Znw|^_Zna|^_Zdl|^_Zda'),
@@ -158,9 +159,16 @@ def check_reachability(archive: str) -> list[str]:
         for s in syms:
             sym_to_members.setdefault(s, []).append(key)
 
-    root_keys = [k for k in member_order if k[0] == "libblsct_a-blsct.o"]
-    if not root_keys:
-        raise SystemExit("ERROR: 'libblsct_a-blsct.o' not found in archive")
+    # Accept both autotools (libtool-prefixed) and CMake (basename-only) naming.
+    #   autotools: libblsct_a-blsct.o
+    #   CMake:     blsct.cpp.o
+    ROOT_CANDIDATES = ("libblsct_a-blsct.o", "blsct.cpp.o")
+    root_name = next((c for c in ROOT_CANDIDATES if any(k[0] == c for k in member_order)), None)
+    if root_name is None:
+        raise SystemExit(
+            "ERROR: neither '{}' nor '{}' found in archive".format(*ROOT_CANDIDATES)
+        )
+    root_keys = [k for k in member_order if k[0] == root_name]
 
     visited: set = set()
     queue = list(root_keys)
@@ -177,8 +185,8 @@ def check_reachability(archive: str) -> list[str]:
     return sorted(name for name, _ in set(member_order) - visited)
 
 
-def check_undefined(archive: str, dep_archives: list[str]) -> list[str]:
-    """Return list of unsatisfied undefined symbols (empty = pass)."""
+def check_undefined(archive: str, dep_archives: list[str]) -> list[tuple[str, list[str]]]:
+    """Return list of (demangled_symbol, [member_names]) for unsatisfied refs."""
     # Collect all defined symbols: main archive + all dep archives
     all_defined: set = set()
     archive_defined, archive_undefined = get_archive_symbols(archive)
@@ -194,13 +202,23 @@ def check_undefined(archive: str, dep_archives: list[str]) -> list[str]:
         if sym not in all_defined and not is_system_symbol(sym)
     ]
 
-    # Demangle for readable output
-    if unsatisfied:
-        demangled = subprocess.check_output(
-            ["c++filt"] + unsatisfied, text=True
-        ).splitlines()
-        return sorted(demangled)
-    return []
+    if not unsatisfied:
+        return []
+
+    # Map each unsatisfied symbol to the archive members that reference it.
+    _, member_refs, member_order = get_member_symbols(archive)
+    sym_to_members: dict = {}
+    for key in member_order:
+        for s in member_refs.get(key, set()):
+            sym_to_members.setdefault(s, []).append(key[0])
+
+    demangled = subprocess.check_output(
+        ["c++filt"] + unsatisfied, text=True
+    ).splitlines()
+    return sorted(
+        (dm, sorted(set(sym_to_members.get(raw, []))))
+        for raw, dm in zip(unsatisfied, demangled)
+    )
 
 
 def main() -> int:
@@ -228,8 +246,10 @@ def main() -> int:
     unsatisfied = check_undefined(archive, dep_archives)
     if unsatisfied:
         print(f"FAIL [undefined]: {len(unsatisfied)} symbol(s) not satisfied by archive or known deps:")
-        for sym in unsatisfied:
+        for sym, members in unsatisfied:
             print(f"  {sym}")
+            for m in members:
+                print(f"    referenced by: {m}")
         print("  → Either include the source in libblsct_a_SOURCES or move it out of BLSCT_EXTERNAL_CPP.")
         failed = True
     else:

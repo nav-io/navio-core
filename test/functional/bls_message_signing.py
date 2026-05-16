@@ -178,4 +178,4 @@ class BLSMessageSigningTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    BLSMessageSigningTest().main()
+    BLSMessageSigningTest(__file__).main()

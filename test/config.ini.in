@@ -12,6 +12,8 @@ CLIENT_BUGREPORT=@CLIENT_BUGREPORT@
 SRCDIR=@abs_top_srcdir@
 BUILDDIR=@abs_top_builddir@
 EXEEXT=@EXEEXT@
+EXEDIR_REL=@EXEDIR_REL@
+FUZZ_BIN_REL=@FUZZ_BIN_REL@
 RPCAUTH=@abs_top_srcdir@/share/rpcauth/rpcauth.py
 
 [components]

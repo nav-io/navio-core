@@ -83,4 +83,4 @@ class ReindexTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    ReindexTest().main()
+    ReindexTest(__file__).main()

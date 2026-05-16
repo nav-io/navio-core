@@ -120,4 +120,4 @@ class NavioBlsctNftTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    NavioBlsctNftTest().main()
+    NavioBlsctNftTest(__file__).main()

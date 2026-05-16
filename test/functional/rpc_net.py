@@ -510,4 +510,4 @@ class NetTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    NetTest().main()
+    NetTest(__file__).main()

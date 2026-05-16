@@ -580,4 +580,4 @@ class WalletSendTest(BitcoinTestFramework):
         assert_fee_amount(testres["fees"]["base"], testres["vsize"], Decimal(0.0001))
 
 if __name__ == '__main__':
-    WalletSendTest().main()
+    WalletSendTest(__file__).main()

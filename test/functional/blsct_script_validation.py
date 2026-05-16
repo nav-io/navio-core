@@ -339,4 +339,4 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
 
 
 if __name__ == '__main__':
-    BLSCTScriptValidationTest().main()
+    BLSCTScriptValidationTest(__file__).main()

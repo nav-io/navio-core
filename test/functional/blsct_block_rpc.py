@@ -70,4 +70,4 @@ class BLSCTBlockRPCTest(BitcoinTestFramework):
 
 
 if __name__ == "__main__":
-    BLSCTBlockRPCTest().main()
+    BLSCTBlockRPCTest(__file__).main()

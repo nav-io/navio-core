@@ -414,4 +414,4 @@ class BIP68Test(BitcoinTestFramework):
         mini_wallet.sendrawtransaction(from_node=self.nodes[1], tx_hex=tx.serialize().hex())
 
 if __name__ == '__main__':
-    BIP68Test().main()
+    BIP68Test(__file__).main()

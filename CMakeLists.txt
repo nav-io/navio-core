@@ -89,12 +89,6 @@ option(BUILD_KERNEL_LIB "Build experimental naviokernel library." ${BUILD_UTIL_C
 option(BUILD_LIBBLSCT_ONLY "Build libblsct.a only, disabling all other targets." OFF)
 
 option(ENABLE_WALLET "Enable wallet." ON)
-if(ENABLE_WALLET)
-  find_package(SQLite3 3.7.17 REQUIRED)
-  if(NOT TARGET SQLite3::SQLite3) # CMake < 4.3
-    add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
-  endif()
-endif()
 cmake_dependent_option(BUILD_WALLET_TOOL "Build navio-wallet tool." ${BUILD_TESTS} "ENABLE_WALLET" OFF)
 
 option(REDUCE_EXPORTS "Attempt to reduce exported symbols in the resulting executables." OFF)
@@ -118,6 +112,8 @@ option(BUILD_FUZZ_BINARY "Build fuzz binary." OFF)
 option(BUILD_FOR_FUZZING "Build for fuzzing. Enabling this will disable all other targets and override BUILD_FUZZ_BINARY." OFF)
 
 option(INSTALL_MAN "Install man pages." ON)
+
+option(USE_ASM "Build with assembly routines (CPU SIMD dispatch in SHA-256, etc)." ON)
 
 set(APPEND_CPPFLAGS "" CACHE STRING "Preprocessor flags appended to the command line after all other flags.")
 set(APPEND_CFLAGS "" CACHE STRING "C compiler flags appended to the command line after all other flags.")
@@ -178,6 +174,14 @@ if(BUILD_LIBBLSCT_ONLY)
   set(BUILD_TESTS OFF)
   set(BUILD_BENCH OFF)
   set(BUILD_FUZZ_BINARY OFF)
+  set(ENABLE_EXTERNAL_SIGNER OFF)
+endif()
+
+if(ENABLE_WALLET)
+  find_package(SQLite3 3.7.17 REQUIRED)
+  if(NOT TARGET SQLite3::SQLite3) # CMake < 4.3
+    add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
+  endif()
 endif()
 
 include(TryAppendCXXFlags)
@@ -311,8 +315,14 @@ if(BUILD_FUZZ_BINARY)
   target_link_libraries(fuzzer_interface INTERFACE ${FUZZ_LIBS})
 endif()
 
-include(AddBoostIfNeeded)
-add_boost_if_needed()
+# Mirror autotools (configure.ac: use_boost gating): skip Boost detection
+# when only libblsct is being built. The libblsct-only build does not link
+# any consumer of Boost; gating here avoids requiring boost on those
+# minimal builds.
+if(NOT BUILD_LIBBLSCT_ONLY)
+  include(AddBoostIfNeeded)
+  add_boost_if_needed()
+endif()
 
 # Boost.Process v1 API (opstream/ipstream) was removed from the default
 # boost::process namespace in Boost 1.88. Disable external signer if the

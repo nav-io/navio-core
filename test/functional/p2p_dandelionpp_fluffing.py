@@ -97,4 +97,4 @@ class DandelionFluffingTest(BitcoinTestFramework):
 
 
 if __name__ == "__main__":
-    DandelionFluffingTest().main()
+    DandelionFluffingTest(__file__).main()

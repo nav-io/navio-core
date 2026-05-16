@@ -180,4 +180,4 @@ class TransactionTimeRescanTest(BitcoinTestFramework):
             return
 
 if __name__ == '__main__':
-    TransactionTimeRescanTest().main()
+    TransactionTimeRescanTest(__file__).main()

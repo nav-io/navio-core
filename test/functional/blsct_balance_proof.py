@@ -96,4 +96,4 @@ class NavioBlsctBalanceProofTest(BitcoinTestFramework):
         assert_equal(verify_result["min_amount"], balance / 2)
 
 if __name__ == '__main__':
-    NavioBlsctBalanceProofTest().main()
+    NavioBlsctBalanceProofTest(__file__).main()

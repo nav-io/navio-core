@@ -73,7 +73,7 @@ def bctest(testDir, testObj, buildenv):
     are not as expected. Error is caught by bctester() and reported.
     """
     # Get the exec names and arguments
-    execprog = os.path.join(buildenv["BUILDDIR"], "src", testObj["exec"] + buildenv["EXEEXT"])
+    execprog = os.path.join(buildenv["BUILDDIR"], buildenv["EXEDIR_REL"], testObj["exec"] + buildenv["EXEEXT"])
     if testObj["exec"] == "./navio-util":
         execprog = os.getenv("BITCOINUTIL", default=execprog)
     elif testObj["exec"] == "./navio-tx":
