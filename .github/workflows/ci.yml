@@ -544,9 +544,13 @@ jobs:
           # MinGW cross via depends. Gap 1 (ZeroMQ pkg-config path) was
           # cleared in #227. Unit tests run under wine; functional tests
           # are skipped (matches the autotools job).
-          # CMAKE_CROSSCOMPILING_EMULATOR=wine64 routes ctest's execution
-          # of .exe binaries through wine without depending on binfmt_misc
-          # (the noble GitHub runner doesn't auto-activate wine-binfmt).
+          # CMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine routes ctest's
+          # execution of .exe binaries through wine without depending on
+          # binfmt_misc (the noble GitHub runner doesn't auto-activate
+          # wine-binfmt). Use /usr/bin/wine rather than /usr/bin/wine64:
+          # on Ubuntu 24.04 the wine9 packages no longer ship a top-level
+          # /usr/bin/wine64 wrapper; wine itself auto-detects the bitness
+          # of the .exe being launched.
           # i386 architecture is enabled to bring in wine32 alongside
           # wine64 so launching 64-bit Windows binaries pulls all the
           # transitive 32-bit runtime libs wine9 needs.
@@ -563,7 +567,7 @@ jobs:
             cmake_flags: >-
               -DCMAKE_BUILD_TYPE=Release
               -DREDUCE_EXPORTS=ON
-              -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine64
+              -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine
               "-DAPPEND_CXXFLAGS=-Wno-return-type"
             run_unit_tests: true
 
