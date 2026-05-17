@@ -69,6 +69,15 @@ else()
       libevent_${component}>=${Libevent_FIND_VERSION}
     )
     if(TARGET PkgConfig::libevent_${component} AND NOT TARGET libevent::${component})
+      # navio's depends still builds libevent with autotools, so its .pc
+      # files don't list the Win32 system libs that libevent_core needs
+      # (if_nametoindex from iphlpapi, WSAStartup from ws2_32). Inject
+      # them here so cross-compiled executables link.
+      if(WIN32)
+        set_property(TARGET PkgConfig::libevent_${component} APPEND
+          PROPERTY INTERFACE_LINK_LIBRARIES iphlpapi ws2_32
+        )
+      endif()
       add_library(libevent::${component} ALIAS PkgConfig::libevent_${component})
     endif()
   endforeach()
