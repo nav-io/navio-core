@@ -1,0 +1,250 @@
+# Copyright (c) 2024-present The Navio Core developers
+# Distributed under the MIT software license, see the accompanying
+# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+# Release artifact CI.
+#
+# - On push to master: builds Release archives for each matrix target and
+#   publishes them to the rolling "latest-master" GitHub prerelease (deleted
+#   and recreated on each push so the URL is stable).
+# - On push to a v* tag: builds the same archives and publishes them to a
+#   new GitHub Release at the tag, with release notes auto-generated from
+#   the commit/PR log between tags.
+#
+# Targets are added incrementally as their CMake CI matrix entries land.
+# See issue #242 for full target list and follow-up scope.
+
+name: Release
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+
+# Only one release run at a time per ref to avoid races with the
+# latest-master delete/recreate dance.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-gnu
+            runner: ubuntu-24.04
+            packages: >-
+              libevent-dev libboost-dev libsqlite3-dev libzmq3-dev
+              systemtap-sdt-dev
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=Release
+              -DREDUCE_EXPORTS=ON
+            archive_format: tar.gz
+
+          - target: arm64-apple-darwin
+            runner: macos-15
+            brew_packages: boost libevent zeromq
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=Release
+              -DREDUCE_EXPORTS=ON
+            archive_format: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          # On tag pushes, use the tag (strip leading 'v'); on master,
+          # use a master-<shortsha> tag so each commit's artifacts are
+          # uniquely named even though CLIENT_VERSION_* may not move.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            channel="release"
+          else
+            version="master-$(git rev-parse --short HEAD)"
+            channel="master"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+          echo "archive_base=navio-${version}-${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkgconf ccache \
+            ${{ matrix.packages }}
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        run: |
+          brew install cmake ninja pkg-config ccache ${{ matrix.brew_packages }}
+
+      - name: Set Ccache directory
+        shell: bash
+        run: echo "CCACHE_DIR=${RUNNER_TEMP}/ccache_dir" >> "$GITHUB_ENV"
+
+      - name: Restore Ccache cache
+        id: ccache-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ github.job }}-${{ matrix.target }}-ccache-${{ github.run_id }}
+          restore-keys: ${{ github.job }}-${{ matrix.target }}-ccache-
+
+      - name: Configure
+        run: cmake -B build -G Ninja ${{ matrix.cmake_flags }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Stage install tree
+        shell: bash
+        env:
+          ARCHIVE_BASE: ${{ steps.version.outputs.archive_base }}
+        run: |
+          stage="${RUNNER_TEMP}/stage/${ARCHIVE_BASE}"
+          mkdir -p "${stage}"
+          DESTDIR="${stage}.install" cmake --install build --strip
+          # cmake --install drops everything under the configured install
+          # prefix (usually /usr/local). Flatten that into the archive root
+          # so users can untar and just run bin/naviod.
+          if [ -d "${stage}.install/usr/local" ]; then
+            cp -a "${stage}.install/usr/local/." "${stage}/"
+          else
+            cp -a "${stage}.install/." "${stage}/"
+          fi
+          # Sanity check: at least naviod and navio-cli must be present.
+          test -x "${stage}/bin/naviod" || (echo "naviod missing"; exit 1)
+          test -x "${stage}/bin/navio-cli" || (echo "navio-cli missing"; exit 1)
+          ls -lR "${stage}" | head -50
+
+      - name: Package archive
+        id: archive
+        shell: bash
+        env:
+          ARCHIVE_BASE: ${{ steps.version.outputs.archive_base }}
+        run: |
+          stage_root="${RUNNER_TEMP}/stage"
+          out_dir="${RUNNER_TEMP}/artifacts"
+          mkdir -p "${out_dir}"
+          case "${{ matrix.archive_format }}" in
+            tar.gz)
+              tar -C "${stage_root}" -czf \
+                "${out_dir}/${ARCHIVE_BASE}.tar.gz" "${ARCHIVE_BASE}"
+              ;;
+            zip)
+              (cd "${stage_root}" && zip -qr \
+                "${out_dir}/${ARCHIVE_BASE}.zip" "${ARCHIVE_BASE}")
+              ;;
+            *)
+              echo "Unknown archive_format: ${{ matrix.archive_format }}"
+              exit 1
+              ;;
+          esac
+          # Per-archive sha256, aggregated into a single SHA256SUMS later.
+          (cd "${out_dir}" && sha256sum "${ARCHIVE_BASE}.${{ matrix.archive_format }}" > "${ARCHIVE_BASE}.sha256")
+          echo "out_dir=${out_dir}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.archive_base }}
+          path: ${{ steps.archive.outputs.out_dir }}/*
+          if-no-files-found: error
+
+      - name: Save Ccache cache
+        uses: actions/cache/save@v5
+        if: steps.ccache-cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ github.job }}-${{ matrix.target }}-ccache-${{ github.run_id }}
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/artifacts
+          merge-multiple: true
+
+      - name: Aggregate SHA256SUMS
+        shell: bash
+        run: |
+          cd "${RUNNER_TEMP}/artifacts"
+          # Re-emit SHA256SUMS from the archives themselves so the file is
+          # authoritative regardless of how individual jobs computed it.
+          rm -f SHA256SUMS *.sha256
+          # Find archives (anything not a sums-y file) and hash them.
+          shopt -s nullglob
+          archives=( *.tar.gz *.zip )
+          if [ ${#archives[@]} -eq 0 ]; then
+            echo "No archives downloaded"; ls -la; exit 1
+          fi
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+          ls -la
+
+      - name: Publish rolling latest-master prerelease
+        if: github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag=latest-master
+          title="Latest master ($(git rev-parse --short HEAD))"
+          notes="Rolling prerelease of the latest commit on master ($(git rev-parse HEAD)).\n\nUnsigned builder-built artifacts; not for production. See issue #242 / #243 for the trust-model roadmap."
+
+          # Delete prior rolling release + tag (best-effort: ignore missing).
+          gh release delete "${tag}" --repo "${{ github.repository }}" --cleanup-tag --yes 2>/dev/null || true
+
+          gh release create "${tag}" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "${title}" \
+            --notes "${notes}" \
+            --prerelease \
+            "${RUNNER_TEMP}"/artifacts/*
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # --generate-notes auto-fills from commits + PR titles between
+          # this tag and the previous one. Swap for --notes-file with a
+          # CHANGELOG.md section extractor once the project adopts a
+          # Keep-a-Changelog convention (see #242).
+          gh release create "${tag}" \
+            --repo "${{ github.repository }}" \
+            --title "${tag}" \
+            --generate-notes \
+            --verify-tag \
+            "${RUNNER_TEMP}"/artifacts/*
