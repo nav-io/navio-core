@@ -408,8 +408,13 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       minisketch
       univalue
       Boost::headers
-      $<TARGET_NAME_IF_EXISTS:libevent::core>
+      # libevent_extra must precede libevent_core on the static link
+      # line — extra references evconnlistener_* / bufferevent_socket_*
+      # which only live in core. CMake preserves user-listed order, so
+      # this matters even though FindLibevent declares extra->core via
+      # INTERFACE_LINK_LIBRARIES.
       $<TARGET_NAME_IF_EXISTS:libevent::extra>
+      $<TARGET_NAME_IF_EXISTS:libevent::core>
       $<TARGET_NAME_IF_EXISTS:libevent::pthreads>
       $<TARGET_NAME_IF_EXISTS:USDT::headers>
     PUBLIC
@@ -450,8 +455,8 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       navio_cli
       navio_common
       navio_util
-      libevent::core
       libevent::extra
+      libevent::core
     )
     install_binary_component(navio-cli HAS_MANPAGE)
   endif()
@@ -468,8 +473,8 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       navio_util
       navio_crypto
       bls_interface
-      libevent::core
       libevent::extra
+      libevent::core
     )
     install_binary_component(navio-staker)
   endif()
