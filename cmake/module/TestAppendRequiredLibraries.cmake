@@ -79,25 +79,24 @@ function(test_append_atomic_library target)
     }
   ")
 
-  # In single-config Debug builds, libstdc++'s _GLIBCXX_DEBUG mode routes
-  # std::atomic<int64_t>/<chrono::seconds>/<double> through the generic
-  # __atomic_load/__atomic_store/__atomic_compare_exchange entry points
-  # (rather than the size-specific _N intrinsics), which the compiler
-  # cannot inline and so require libatomic at link time — even on i386
-  # where the SSE2/cmpxchg8b paths would otherwise resolve the _8
-  # intrinsics inline. Surface that path in the configure-time probe by
-  # propagating the same _GLIBCXX_DEBUG family of defs that
-  # core_interface_debug attaches in CMakeLists.txt (set from
-  # DEPENDS_COMPILE_DEFINITIONS_DEBUG via depends/toolchain.cmake.in).
-  set(_saved_required_defs "${CMAKE_REQUIRED_DEFINITIONS}")
-  if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND DEFINED DEPENDS_COMPILE_DEFINITIONS_DEBUG)
-    foreach(_def IN LISTS DEPENDS_COMPILE_DEFINITIONS_DEBUG)
-      if(_def MATCHES "^-D")
-        list(APPEND CMAKE_REQUIRED_DEFINITIONS "${_def}")
-      else()
-        list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D${_def}")
-      endif()
-    endforeach()
+  # On 32-bit targets, std::atomic<int64_t>/<chrono::seconds>/<double>
+  # codegen is sensitive to optimization level and the
+  # _GLIBCXX_DEBUG family of defs that the project attaches to
+  # core_interface_debug. With -O2 (and without _GLIBCXX_DEBUG) the
+  # compiler resolves the 8-byte ops inline via cmpxchg8b; with -O0 +
+  # _GLIBCXX_DEBUG (the real i686 Debug build) the same ops route
+  # through the generic __atomic_load/__atomic_store/
+  # __atomic_compare_exchange entry points which require libatomic at
+  # link time. The configure-time probe below compiles at release-style
+  # defaults and so reports STD_ATOMIC_LINKS_WITHOUT_LIBATOMIC=Success
+  # for both the eventually-linkable and eventually-broken cases. Skip
+  # the probe and unconditionally attach libatomic when the host
+  # pointer is 32-bit — libatomic is part of every modern GCC/Clang
+  # libstdc++ install on i386/armv7/etc, and the linker will silently
+  # drop it if no __atomic_* references survive.
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    target_link_libraries(${target} INTERFACE atomic)
+    return()
   endif()
 
   include(CheckCXXSourceCompiles)
@@ -113,5 +112,4 @@ function(test_append_atomic_library target)
       message(FATAL_ERROR "Cannot figure out how to use std::atomic.")
     endif()
   endif()
-  set(CMAKE_REQUIRED_DEFINITIONS "${_saved_required_defs}")
 endfunction()
