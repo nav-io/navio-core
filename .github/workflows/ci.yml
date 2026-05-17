@@ -544,14 +544,18 @@ jobs:
           # MinGW cross via depends. Gap 1 (ZeroMQ pkg-config path) was
           # cleared in #227. Unit tests run under wine; functional tests
           # are skipped (matches the autotools job).
-          # i386 architecture is enabled for wine32 (needed alongside
-          # wine64 to launch 64-bit Windows binaries via binfmt on Ubuntu).
+          # CMAKE_CROSSCOMPILING_EMULATOR=wine64 routes ctest's execution
+          # of .exe binaries through wine without depending on binfmt_misc
+          # (the noble GitHub runner doesn't auto-activate wine-binfmt).
+          # i386 architecture is enabled to bring in wine32 alongside
+          # wine64 so launching 64-bit Windows binaries pulls all the
+          # transitive 32-bit runtime libs wine9 needs.
           - name: win64
             label: 'Win64 cross-compile, Ubuntu 24.04, unit tests only (CMake)'
             runner: ubuntu-24.04
             extra_arch: i386
             packages: >-
-              g++-mingw-w64-x86-64-posix nsis wine-binfmt wine64 wine32 file
+              g++-mingw-w64-x86-64-posix nsis wine64 wine32 file
               python3-zmq
             cc: gcc
             cxx: g++
@@ -559,6 +563,7 @@ jobs:
             cmake_flags: >-
               -DCMAKE_BUILD_TYPE=Release
               -DREDUCE_EXPORTS=ON
+              -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine64
               "-DAPPEND_CXXFLAGS=-Wno-return-type"
             run_unit_tests: true
 
@@ -640,17 +645,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkgconf ccache \
             ${{ matrix.packages }}
-          # wine-binfmt installs /usr/lib/binfmt.d/wine.conf so the kernel
-          # routes Windows .exe files through wine. On GitHub Ubuntu noble
-          # the package's postinst doesn't re-trigger systemd-binfmt, leaving
-          # the handler unregistered — ctest then runs e.g. noverify_tests.exe
-          # as a shell command and the shell mangles the PE header. Restart
-          # systemd-binfmt so it re-reads /usr/lib/binfmt.d/ and registers the
-          # wine handler. (update-binfmts is in binfmt-support, which is not
-          # installed on noble runners; systemd-binfmt is.)
-          if dpkg -s wine-binfmt >/dev/null 2>&1; then
-            sudo systemctl restart systemd-binfmt.service
-          fi
 
       - name: Set Ccache directory
         run: echo "CCACHE_DIR=${RUNNER_TEMP}/ccache_dir" >> "$GITHUB_ENV"
