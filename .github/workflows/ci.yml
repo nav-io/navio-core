@@ -459,7 +459,12 @@ jobs:
   linux-cmake:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    # 180 min matches the autotools `linux:` job above. The fuzz matrix
+    # entry (#233) regularly takes 45-70 min wall-clock between build and
+    # harness run, which overruns a 60 min budget; every other matrix
+    # entry finishes well under 60 min, so the higher ceiling only costs
+    # us in pathological hangs.
+    timeout-minutes: 180
 
     strategy:
       fail-fast: false
