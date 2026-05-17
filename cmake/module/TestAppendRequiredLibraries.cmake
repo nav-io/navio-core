@@ -79,6 +79,27 @@ function(test_append_atomic_library target)
     }
   ")
 
+  # In single-config Debug builds, libstdc++'s _GLIBCXX_DEBUG mode routes
+  # std::atomic<int64_t>/<chrono::seconds>/<double> through the generic
+  # __atomic_load/__atomic_store/__atomic_compare_exchange entry points
+  # (rather than the size-specific _N intrinsics), which the compiler
+  # cannot inline and so require libatomic at link time — even on i386
+  # where the SSE2/cmpxchg8b paths would otherwise resolve the _8
+  # intrinsics inline. Surface that path in the configure-time probe by
+  # propagating the same _GLIBCXX_DEBUG family of defs that
+  # core_interface_debug attaches in CMakeLists.txt (set from
+  # DEPENDS_COMPILE_DEFINITIONS_DEBUG via depends/toolchain.cmake.in).
+  set(_saved_required_defs "${CMAKE_REQUIRED_DEFINITIONS}")
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND DEFINED DEPENDS_COMPILE_DEFINITIONS_DEBUG)
+    foreach(_def IN LISTS DEPENDS_COMPILE_DEFINITIONS_DEBUG)
+      if(_def MATCHES "^-D")
+        list(APPEND CMAKE_REQUIRED_DEFINITIONS "${_def}")
+      else()
+        list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D${_def}")
+      endif()
+    endforeach()
+  endif()
+
   include(CheckCXXSourceCompiles)
   check_cxx_source_compiles("${check_atomic_source}" STD_ATOMIC_LINKS_WITHOUT_LIBATOMIC)
   if(NOT STD_ATOMIC_LINKS_WITHOUT_LIBATOMIC)
@@ -92,4 +113,5 @@ function(test_append_atomic_library target)
       message(FATAL_ERROR "Cannot figure out how to use std::atomic.")
     endif()
   endif()
+  set(CMAKE_REQUIRED_DEFINITIONS "${_saved_required_defs}")
 endfunction()
