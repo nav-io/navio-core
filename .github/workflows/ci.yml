@@ -406,11 +406,9 @@ jobs:
             file_env: ./ci/test/00_setup_env_i686_centos.sh
             runner: ubuntu-24.04
 
-          - name: i686-multiprocess
-            label:
-              'Ubuntu 22.04, 32-bit, multiprocess, DEBUG, unit + functional
-              tests'
-            file_env: ./ci/test/00_setup_env_i686_multiprocess.sh
+          - name: fuzz
+            label: 'Ubuntu 24.04, fuzzer, ASan + UBSan + integer, no depends'
+            file_env: ./ci/test/00_setup_env_native_fuzz.sh
             runner: ubuntu-24.04
 
           - name: tsan
@@ -551,6 +549,34 @@ jobs:
               -DWITH_MCL_OPENMP=OFF
             check_libblsct_symbols: true
 
+          # Replaces the autotools `i686-multiprocess` matrix entry.
+          # 32-bit Linux cross via depends, MULTIPROCESS=1 DEBUG=1.
+          # Gap 3 (OBJCXX detection on Linux) was cleared in #228, so the
+          # depends toolchain.cmake no longer trips on missing cc1obj.
+          # Host packages: clang/llvm for the compiler driver, g++-multilib
+          # for the 32-bit ABI bring-up (matches 00_setup_env_i686_multiprocess.sh).
+          # gobjc++ is needed because GMP's autoconf in depends probes for
+          # ObjC/ObjC++ support; without it gcc reports "cannot execute 'cc1obj'"
+          # and GMP's configure aborts with "could not find a working compiler".
+          # BITCOIND=navio-node is exported for functional tests because
+          # WITH_MULTIPROCESS=ON produces the navio-node binary.
+          - name: i686-multiprocess
+            label: 'Ubuntu 24.04, 32-bit, multiprocess, DEBUG, unit + functional tests (CMake)'
+            runner: ubuntu-24.04
+            packages: >-
+              llvm clang g++-multilib gobjc++ python3-zmq
+            cc: clang
+            cxx: clang++
+            depends_host: i686-pc-linux-gnu
+            depends_opts: MULTIPROCESS=1 DEBUG=1 CC='clang -m32' CXX='clang++ -m32'
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=Debug
+              -DWITH_MULTIPROCESS=ON
+              "-DAPPEND_CPPFLAGS=-DBOOST_MULTI_INDEX_ENABLE_SAFE_MODE"
+            run_unit_tests: true
+            run_functional_tests: true
+            functional_tests_env: BITCOIND=navio-node
+
           # Replaces the `no-wallet-libnaviokernel` autotools matrix entry.
           # -stdlib=libc++ is passed via CMAKE_{CXX,EXE_LINKER}_FLAGS rather
           # than the CXX env var because cmake strips compiler flags out of
@@ -638,11 +664,54 @@ jobs:
           key: ${{ github.job }}-${{ matrix.name }}-ccache-${{ github.run_id }}
           restore-keys: ${{ github.job }}-${{ matrix.name }}-ccache-
 
+      - name: Restore depends cache
+        if: ${{ matrix.depends_host }}
+        uses: actions/cache/restore@v5
+        with:
+          path: depends/${{ matrix.depends_host }}
+          key: depends-${{ matrix.depends_host }}-${{ hashFiles('depends/**') }}
+          restore-keys: depends-${{ matrix.depends_host }}-
+
+      - name: Build depends
+        if: ${{ matrix.depends_host }}
+        run: |
+          # Strip host CC/CXX so depends derives the target cross-compilers
+          # from HOST instead of inheriting the linux-cmake matrix CC/CXX
+          # (which would otherwise leak into per-package configure scripts —
+          # e.g. zeromq would probe windows.h with the host gcc and fail).
+          env -u CC -u CXX make -C depends HOST=${{ matrix.depends_host }} ${{ matrix.depends_opts }}
+
+      - name: Save depends cache
+        if: ${{ matrix.depends_host }}
+        uses: actions/cache/save@v5
+        with:
+          path: depends/${{ matrix.depends_host }}
+          key: depends-${{ matrix.depends_host }}-${{ hashFiles('depends/**') }}
+
       - name: Configure
-        run: cmake -B build -G Ninja ${{ matrix.cmake_flags }}
+        run: |
+          toolchain_arg=""
+          if [ -n "${{ matrix.depends_host }}" ]; then
+            toolchain_arg="-DCMAKE_TOOLCHAIN_FILE=$PWD/depends/${{ matrix.depends_host }}/toolchain.cmake"
+          fi
+          cmake -B build -G Ninja $toolchain_arg ${{ matrix.cmake_flags }}
 
       - name: Build
         run: cmake --build build
+
+      - name: Run unit tests
+        if: ${{ matrix.run_unit_tests }}
+        working-directory: build
+        run: ctest --output-on-failure -j"$(nproc)"
+
+      - name: Run functional tests
+        if: ${{ matrix.run_functional_tests }}
+        run: |
+          ${{ matrix.functional_tests_env }} \
+            build/test/functional/test_runner.py -j"$(nproc)" \
+            --ci --quiet --tmpdirprefix="${RUNNER_TEMP}" \
+            --combinedlogslen=99999999 \
+            --exclude mempool_limit
 
       - name: Install
         if: ${{ matrix.smoke_test }}
