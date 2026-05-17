@@ -101,7 +101,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang ccache cmake ninja-build pkgconf python3-zmq libevent-dev \
-            libboost-dev libsqlite3-dev systemtap-sdt-dev
+            libboost-dev libsqlite3-dev libzmq3-dev systemtap-sdt-dev
       - name: Compile and run tests
         env:
           CC: clang
