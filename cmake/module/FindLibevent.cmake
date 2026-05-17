@@ -81,6 +81,14 @@ else()
       add_library(libevent::${component} ALIAS PkgConfig::libevent_${component})
     endif()
   endforeach()
+  # libevent_extra depends on libevent_core (e.g. evhttp uses
+  # evconnlistener), but libevent's pkg-config files don't declare it.
+  # Make the dependency explicit so static-link order is correct.
+  if(TARGET PkgConfig::libevent_extra AND TARGET PkgConfig::libevent_core)
+    set_property(TARGET PkgConfig::libevent_extra APPEND
+      PROPERTY INTERFACE_LINK_LIBRARIES PkgConfig::libevent_core
+    )
+  endif()
   find_package_handle_standard_args(Libevent
     REQUIRED_VARS libevent_core_LIBRARY_DIRS
     VERSION_VAR libevent_core_VERSION

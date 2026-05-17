@@ -37,5 +37,18 @@ else()
     REQUIRED_VARS libzmq_LIBRARY_DIRS
     VERSION_VAR libzmq_VERSION
   )
+  # navio's depends builds libzmq with autotools (--disable-shared), but
+  # libzmq.pc keeps -DZMQ_STATIC and the Win32 system libs on Libs.private,
+  # which pkg_check_modules ignores outside --static mode. Inject them so
+  # consumers don't dllimport (__imp_zmq_*) and the linker resolves the
+  # Win32 syscalls libzmq pulls in.
+  if(TARGET PkgConfig::libzmq AND WIN32)
+    set_property(TARGET PkgConfig::libzmq APPEND
+      PROPERTY INTERFACE_COMPILE_DEFINITIONS ZMQ_STATIC
+    )
+    set_property(TARGET PkgConfig::libzmq APPEND
+      PROPERTY INTERFACE_LINK_LIBRARIES ws2_32 iphlpapi advapi32 rpcrt4
+    )
+  endif()
   add_library(zeromq ALIAS PkgConfig::libzmq)
 endif()
