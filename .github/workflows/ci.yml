@@ -640,13 +640,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkgconf ccache \
             ${{ matrix.packages }}
-          # wine-binfmt's postinst registers a binfmt_misc handler for .exe,
-          # but on GitHub runners the registration silently no-ops if the
-          # systemd-binfmt path isn't refreshed; ctest then invokes the .exe
-          # directly and the shell mangles the PE header. Force-enable the
-          # wine handler after install so the kernel routes .exe through wine.
+          # wine-binfmt installs /usr/lib/binfmt.d/wine.conf so the kernel
+          # routes Windows .exe files through wine. On GitHub Ubuntu noble
+          # the package's postinst doesn't re-trigger systemd-binfmt, leaving
+          # the handler unregistered — ctest then runs e.g. noverify_tests.exe
+          # as a shell command and the shell mangles the PE header. Restart
+          # systemd-binfmt so it re-reads /usr/lib/binfmt.d/ and registers the
+          # wine handler. (update-binfmts is in binfmt-support, which is not
+          # installed on noble runners; systemd-binfmt is.)
           if dpkg -s wine-binfmt >/dev/null 2>&1; then
-            sudo update-binfmts --enable wine
+            sudo systemctl restart systemd-binfmt.service
           fi
 
       - name: Set Ccache directory
