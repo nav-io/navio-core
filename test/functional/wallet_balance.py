@@ -175,6 +175,7 @@ class WalletTest(BitcoinTestFramework):
             # getbalances
             expected_balances_0 = {'mine':      {'immature':          Decimal('0E-8'),
                                                  'staked_commitment_balance': Decimal('0E-8'),
+                                                 'pending_staked_commitment_balance': Decimal('0E-8'),
                                                  'trusted':           Decimal('9.99'),  # change from node 0's send
                                                  'untrusted_pending': Decimal('60.0')},
                                    'watchonly': {'immature':          Decimal('5000'),
@@ -182,6 +183,7 @@ class WalletTest(BitcoinTestFramework):
                                                  'untrusted_pending': Decimal('0E-8')}}
             expected_balances_1 = {'mine':      {'immature':          Decimal('0E-8'),
                                                  'staked_commitment_balance': Decimal('0E-8'),
+                                                 'pending_staked_commitment_balance': Decimal('0E-8'),
                                                  'trusted':           Decimal('0E-8'),  # node 1's send had an unsafe input
                                                  'untrusted_pending': Decimal('30.0') - fee_node_1}}  # Doesn't include output of node 0's send since it was spent
             if self.options.descriptors:

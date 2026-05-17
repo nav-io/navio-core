@@ -458,7 +458,8 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
             {
                 // BLSCT staked commitment: coins locked into a stake, still
                 // ours but earmarked. Distinct category so clients can
-                // reconcile against getbalances.mine.staked_commitment_balance.
+                // reconcile against getbalances.mine.staked_commitment_balance
+                // and pending_staked_commitment_balance for unconfirmed stakes.
                 entry.pushKV("category", "stake");
             }
             else

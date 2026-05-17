@@ -474,7 +474,8 @@ RPCHelpMan getbalances()
             RPCResult::Type::OBJ, "", "", {
                                               {RPCResult::Type::OBJ, "mine", "balances from outputs that the wallet can sign", {
                                                                                                                                    {RPCResult::Type::STR_AMOUNT, "trusted", "trusted balance (outputs created by the wallet or confirmed outputs)"},
-                                                                                                                                   {RPCResult::Type::STR_AMOUNT, "staked_commitment_balance", "staked balance"},
+                                                                                                                                   {RPCResult::Type::STR_AMOUNT, "staked_commitment_balance", "staked commitment balance with at least one confirmation"},
+                                                                                                                                   {RPCResult::Type::STR_AMOUNT, "pending_staked_commitment_balance", "trusted staked commitment from transactions that are in the mempool only"},
                                                                                                                                    {RPCResult::Type::STR_AMOUNT, "untrusted_pending", "untrusted pending balance (outputs created by others that are in the mempool)"},
                                                                                                                                    {RPCResult::Type::STR_AMOUNT, "immature", "balance from immature coinbase outputs"},
                                                                                                                                    {RPCResult::Type::STR_AMOUNT, "used", /*optional=*/true, "(only present if avoid_reuse is set) balance from coins sent to addresses that were previously spent from (potentially privacy violating)"},
@@ -505,6 +506,7 @@ RPCHelpMan getbalances()
                 UniValue balances_mine{UniValue::VOBJ};
                 balances_mine.pushKV("trusted", ValueFromAmount(bal.m_mine_trusted + blsct_bal.m_mine_trusted));
                 balances_mine.pushKV("staked_commitment_balance", ValueFromAmount(bal.m_mine_staked_commitment + blsct_bal.m_mine_staked_commitment));
+                balances_mine.pushKV("pending_staked_commitment_balance", ValueFromAmount(bal.m_mine_pending_staked_commitment + blsct_bal.m_mine_pending_staked_commitment));
                 balances_mine.pushKV("untrusted_pending", ValueFromAmount(bal.m_mine_untrusted_pending + blsct_bal.m_mine_untrusted_pending));
                 balances_mine.pushKV("immature", ValueFromAmount(bal.m_mine_immature + blsct_bal.m_mine_immature));
                 if (wallet.IsWalletFlagSet(WALLET_FLAG_AVOID_REUSE)) {

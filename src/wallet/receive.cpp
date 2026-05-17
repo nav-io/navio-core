@@ -484,7 +484,11 @@ Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse,
             if (is_trusted && tx_depth >= min_depth) {
                 ret.m_mine_trusted += tx_credit_mine;
                 ret.m_watchonly_trusted += tx_credit_watchonly;
-                ret.m_mine_staked_commitment += tx_credit_staked_commitment;
+                if (tx_depth >= 1) {
+                    ret.m_mine_staked_commitment += tx_credit_staked_commitment;
+                } else {
+                    ret.m_mine_pending_staked_commitment += tx_credit_staked_commitment;
+                }
             }
             if (!is_trusted && tx_depth == 0 && wtx.InMempool()) {
                 ret.m_mine_untrusted_pending += tx_credit_mine + tx_credit_staked_commitment;
@@ -521,7 +525,11 @@ Balance GetBlsctBalance(const CWallet& wallet, const int min_depth, const TokenI
             if (is_trusted && out_depth >= min_depth) {
                 ret.m_mine_trusted += tx_credit_mine;
                 ret.m_watchonly_trusted += tx_credit_watchonly;
-                ret.m_mine_staked_commitment += tx_credit_staked_commitment;
+                if (out_depth >= 1) {
+                    ret.m_mine_staked_commitment += tx_credit_staked_commitment;
+                } else {
+                    ret.m_mine_pending_staked_commitment += tx_credit_staked_commitment;
+                }
             }
             if (!is_trusted && out_depth == 0 && wout.InMempool()) {
                 ret.m_mine_untrusted_pending += tx_credit_mine + tx_credit_staked_commitment;

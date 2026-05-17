@@ -17,6 +17,7 @@ when testing rapid send sequences and when confirming staking unlock flows.
 from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
+from test_framework.messages import COIN
 from test_framework.util import (
     assert_equal,
     assert_greater_than,
@@ -64,7 +65,8 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
         return (Decimal(str(bal["trusted"]))
                 + Decimal(str(bal["untrusted_pending"]))
                 + Decimal(str(bal["immature"]))
-                + Decimal(str(bal.get("staked_commitment_balance", 0))))
+                + Decimal(str(bal.get("staked_commitment_balance", 0)))
+                + Decimal(str(bal.get("pending_staked_commitment_balance", 0))))
 
     def assert_listtx_matches_balance(self, wallet, scenario):
         total = self.wallet_total(wallet)
@@ -91,6 +93,7 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
         self.sync_all()
 
         self.test_chain_unconfirmed_self_sends()
+        self.test_mempoolaccept_child_spends_mempool_change()
         self.test_chain_unconfirmed_then_confirm()
         self.test_external_mempool_receive_is_unsafe()
         self.test_reorg_restores_consistency()
@@ -121,6 +124,24 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
         assert txid3
 
         self.assert_listtx_matches_balance(self.w0, "after 3-hop mempool chain")
+
+    def test_mempoolaccept_child_spends_mempool_change(self):
+        """A child BLSCT tx must pass testmempoolaccept when its inputs only
+        exist via an unconfirmed parent already in the mempool (ConsensusScriptChecks
+        must use a mempool-backed coins view for blsct::VerifyTx)."""
+        self.log.info("=== testmempoolaccept: spend mempool-only change ===")
+        self_addr = self.w0.getnewaddress(label="", address_type="blsct")
+        txid_parent = self.w0.sendtoblsctaddress(self_addr, Decimal("25"))
+        assert txid_parent
+        assert_greater_than(len(self.nodes[0].getrawmempool()), 0)
+
+        # Fund from wallet UTXOs including 0-conf trusted change from the parent.
+        outputs = [{"address": self_addr, "amount": int(Decimal("2") * COIN), "memo": "mempool child test"}]
+        raw = self.w0.createblsctrawtransaction([], outputs)
+        funded = self.w0.fundblsctrawtransaction(raw)
+        signed = self.w0.signblsctrawtransaction(funded)
+        res = self.nodes[0].testmempoolaccept([signed])[0]
+        assert res["allowed"], f"expected allowed, got {res}"
 
     def test_chain_unconfirmed_then_confirm(self):
         """Confirming the mempool chain must not crash the wallet or produce

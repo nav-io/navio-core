@@ -56,6 +56,7 @@ static RPCHelpMan getwalletinfo()
                 {RPCResult::Type::STR, "format", "the database format (sqlite)"},
                 {RPCResult::Type::STR_AMOUNT, "balance", "DEPRECATED. Identical to getbalances().mine.trusted"},
                 {RPCResult::Type::STR_AMOUNT, "staked_commitment_balance", "DEPRECATED. Identical to getbalances().mine.staked_commitment_balance"},
+                {RPCResult::Type::STR_AMOUNT, "pending_staked_commitment_balance", "DEPRECATED. Identical to getbalances().mine.pending_staked_commitment_balance"},
                 {RPCResult::Type::STR_AMOUNT, "unconfirmed_balance", "DEPRECATED. Identical to getbalances().mine.untrusted_pending"},
                 {RPCResult::Type::STR_AMOUNT, "immature_balance", "DEPRECATED. Identical to getbalances().mine.immature"},
                 {RPCResult::Type::NUM, "txcount", "the total number of transactions in the wallet"},
@@ -101,6 +102,7 @@ static RPCHelpMan getwalletinfo()
             obj.pushKV("format", pwallet->GetDatabase().Format());
             obj.pushKV("balance", ValueFromAmount(bal.m_mine_trusted + blsct_bal.m_mine_trusted));
             obj.pushKV("staked_commitment_balance", ValueFromAmount(bal.m_mine_staked_commitment + blsct_bal.m_mine_staked_commitment));
+            obj.pushKV("pending_staked_commitment_balance", ValueFromAmount(bal.m_mine_pending_staked_commitment + blsct_bal.m_mine_pending_staked_commitment));
             obj.pushKV("unconfirmed_balance", ValueFromAmount(bal.m_mine_untrusted_pending + blsct_bal.m_mine_untrusted_pending));
             obj.pushKV("immature_balance", ValueFromAmount(bal.m_mine_immature + blsct_bal.m_mine_immature));
             obj.pushKV("txcount", (int)pwallet->mapWallet.size());
