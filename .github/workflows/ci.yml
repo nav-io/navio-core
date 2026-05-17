@@ -428,11 +428,21 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: /tmp/ci-cache/${{ matrix.name }}
+          # Narrow the depends hash to the files that actually drive a
+          # rebuild: package recipes, the framework Makefile/funcs.mk,
+          # builders/hosts/patches. Editing depends/README.md or any
+          # uninstalled/staging .stamp would otherwise invalidate every
+          # triplet cache for every job. See issue #217.
           key:
-            ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-${{ github.sha
-            }}
+            ci-${{ matrix.name }}-${{ hashFiles('depends/Makefile',
+            'depends/funcs.mk', 'depends/packages/**',
+            'depends/builders/**', 'depends/hosts/**',
+            'depends/patches/**') }}-${{ github.sha }}
           restore-keys: |
-            ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-
+            ci-${{ matrix.name }}-${{ hashFiles('depends/Makefile',
+            'depends/funcs.mk', 'depends/packages/**',
+            'depends/builders/**', 'depends/hosts/**',
+            'depends/patches/**') }}-
             ci-${{ matrix.name }}-
 
       - name: Run CI
@@ -446,9 +456,12 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: /tmp/ci-cache/${{ matrix.name }}
+          # Same narrowed key as Restore cache above; see comment there.
           key:
-            ci-${{ matrix.name }}-${{ hashFiles('depends/**') }}-${{ github.sha
-            }}
+            ci-${{ matrix.name }}-${{ hashFiles('depends/Makefile',
+            'depends/funcs.mk', 'depends/packages/**',
+            'depends/builders/**', 'depends/hosts/**',
+            'depends/patches/**') }}-${{ github.sha }}
 
   # CMake-driven matrix. Mirrors the structure of the autotools `linux:` matrix
   # so scenarios can be added by appending one entry. Each entry supplies its
