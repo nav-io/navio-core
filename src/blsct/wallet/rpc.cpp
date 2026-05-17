@@ -489,6 +489,7 @@ struct AddressBalanceBuckets {
     CAmount watchonly_trusted{0};
     CAmount watchonly_untrusted_pending{0};
     CAmount watchonly_immature{0};
+    CAmount watchonly_staked_commitment{0};
 };
 
 // Returns the destination paid by `txout`, choosing the BLSCT recovery path
@@ -552,7 +553,8 @@ RPCHelpMan getbalanceforaddress()
                         {RPCResult::Type::STR_AMOUNT, "trusted", "Confirmed/trusted watch-only balance."},
                         {RPCResult::Type::STR_AMOUNT, "untrusted_pending", "Unconfirmed watch-only balance."},
                         {RPCResult::Type::STR_AMOUNT, "immature", "Immature coinbase watch-only balance."},
-                        {RPCResult::Type::STR_AMOUNT, "total", "Sum of the three buckets above."},
+                        {RPCResult::Type::STR_AMOUNT, "staked_commitment_balance", "Watch-only balance locked in BLSCT staked commitments."},
+                        {RPCResult::Type::STR_AMOUNT, "total", "Sum of the four buckets above."},
                     }},
             }},
         RPCExamples{
@@ -622,10 +624,11 @@ RPCHelpMan getbalanceforaddress()
                 if (is_trusted && depth >= min_depth) {
                     if (is_staked_commitment) {
                         buckets.mine_staked_commitment += mine_credit;
+                        buckets.watchonly_staked_commitment += watch_credit;
                     } else {
                         buckets.mine_trusted += mine_credit;
+                        buckets.watchonly_trusted += watch_credit;
                     }
-                    buckets.watchonly_trusted += watch_credit;
                 } else if (!is_trusted && depth == 0 && in_mempool) {
                     // Mirror GetBalance: staked-commitment value, when it's
                     // floating in the mempool, is still classified as
@@ -715,7 +718,8 @@ RPCHelpMan getbalanceforaddress()
                 wo.pushKV("trusted", ValueFromAmount(buckets.watchonly_trusted));
                 wo.pushKV("untrusted_pending", ValueFromAmount(buckets.watchonly_untrusted_pending));
                 wo.pushKV("immature", ValueFromAmount(buckets.watchonly_immature));
-                wo.pushKV("total", ValueFromAmount(buckets.watchonly_trusted + buckets.watchonly_untrusted_pending + buckets.watchonly_immature));
+                wo.pushKV("staked_commitment_balance", ValueFromAmount(buckets.watchonly_staked_commitment));
+                wo.pushKV("total", ValueFromAmount(buckets.watchonly_trusted + buckets.watchonly_untrusted_pending + buckets.watchonly_immature + buckets.watchonly_staked_commitment));
                 ret.pushKV("watchonly", wo);
             }
 

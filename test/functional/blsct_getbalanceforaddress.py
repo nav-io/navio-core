@@ -103,6 +103,13 @@ class BlsctGetBalanceForAddressTest(BitcoinTestFramework):
         assert_equal(mine["staked_commitment_balance"], _to_dec(0))
         assert_equal(mine["total"], _to_dec(0))
 
+        watch = self.w0.getbalanceforaddress(fresh, include_watchonly=True)["watchonly"]
+        assert_equal(_to_dec(watch["trusted"]), _to_dec(0))
+        assert_equal(_to_dec(watch["untrusted_pending"]), _to_dec(0))
+        assert_equal(_to_dec(watch["immature"]), _to_dec(0))
+        assert_equal(_to_dec(watch["staked_commitment_balance"]), _to_dec(0))
+        assert_equal(_to_dec(watch["total"]), _to_dec(0))
+
     def test_immature_then_trusted_for_miner_address(self):
         self.log.info("=== Coinbase outputs report immature then mature into trusted ===")
         # Mine a single block to a brand-new address: the coinbase reward
