@@ -124,6 +124,15 @@ else()
       # CC= value.
       "CC=${CMAKE_C_COMPILER} ${CMAKE_C_COMPILER_ARG1}"
       "CXX=${CMAKE_CXX_COMPILER} ${CMAKE_CXX_COMPILER_ARG1}"
+      # mcl's Makefile detects host OS via `uname -s` and so always reports
+      # Linux on the cross-compile host, even when the target is Darwin.
+      # That keeps the default `AR=ar r` (system GNU ar) in effect, which
+      # produces a SysV-style archive without the per-architecture symbol
+      # table Apple's ld64 expects ("archive has no table of contents file
+      # ... for architecture x86_64"). Forward the depends toolchain's
+      # archiver instead. mcl's Makefile expects AR to include the operation
+      # letter, so append " r".
+      "AR=${CMAKE_AR} r"
       # mcl/bls Makefiles only consult CFLAGS for both C and C++ compilation,
       # so CMAKE_CXX_FLAGS gets merged in here to propagate things like
       # -stdlib=libc++ that would otherwise be lost between cmake and make.
@@ -154,6 +163,8 @@ else()
       # CC= value.
       "CC=${CMAKE_C_COMPILER} ${CMAKE_C_COMPILER_ARG1}"
       "CXX=${CMAKE_CXX_COMPILER} ${CMAKE_CXX_COMPILER_ARG1}"
+      # See mcl_build above for why AR must be forwarded explicitly.
+      "AR=${CMAKE_AR} r"
       # mcl/bls Makefiles only consult CFLAGS for both C and C++ compilation,
       # so CMAKE_CXX_FLAGS gets merged in here to propagate things like
       # -stdlib=libc++ that would otherwise be lost between cmake and make.
