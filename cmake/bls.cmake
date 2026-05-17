@@ -106,6 +106,13 @@ else()
     BUILD_COMMAND
       ${GNU_MAKE_EXECUTABLE}
       MCL_USE_LLVM=0
+      # mcl/Makefile runs `expr $(LLVM_OPT_VERSION) \>= 9` at parse
+      # time, where LLVM_OPT_VERSION comes from `opt --version`. On
+      # some hosts the awk extractor leaves a dotted version string
+      # like '4.6.0' that expr can't parse, killing the make run even
+      # though MCL_USE_LLVM=0. Forcing it empty short-circuits the
+      # `ifneq ($(LLVM_OPT_VERSION),)` guard above the expr call.
+      LLVM_OPT_VERSION=
       ${MCL_USE_GMP_FLAG}
       ${MCL_USE_OMP_FLAG}
       ARCH=${CMAKE_SYSTEM_PROCESSOR}
@@ -129,6 +136,7 @@ else()
     BUILD_COMMAND
       ${GNU_MAKE_EXECUTABLE}
       BLS_ETH=1
+      LLVM_OPT_VERSION= # see mcl_build above for why
       ${MCL_USE_GMP_FLAG}
       ${MCL_USE_OMP_FLAG}
       ARCH=${CMAKE_SYSTEM_PROCESSOR}
