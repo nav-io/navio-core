@@ -136,6 +136,20 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     ${BLSCT_SOURCES}
   )
   set_target_properties(navio_blsct_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  # Several blsct headers (bls12_381_keygen.h, set_mem_proof_prover.h,
+  # bulletproofs_plus/range_proof_logic.h, ...) gate `private:` on
+  # `#ifndef BOOST_UNIT_TEST`. Tests `#define BOOST_UNIT_TEST` before the
+  # include so they can call the otherwise-private static helpers. On
+  # MSVC the access modifier is encoded in the mangled name of static
+  # methods (`?Foo@@SA...` public vs `?Foo@@CA...` private), so the
+  # library .obj (built without the define) ends up shipping `C`
+  # mangled symbols while test object files reference `S` mangled
+  # symbols → LNK2019 on Win64-native. GCC/clang ignore access in
+  # mangling, so this is MSVC-specific. Define it for the library
+  # builds when BUILD_TESTS is on so the manglings agree.
+  if(BUILD_TESTS)
+    target_compile_definitions(navio_blsct_core PRIVATE BOOST_UNIT_TEST)
+  endif()
   target_link_libraries(navio_blsct_core
     PRIVATE
       core_interface
@@ -152,6 +166,10 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     ${BLSCT_WALLET_SOURCES}
   )
   set_target_properties(navio_blsct_wallet PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  # See navio_blsct_core above for why BOOST_UNIT_TEST is forwarded.
+  if(BUILD_TESTS)
+    target_compile_definitions(navio_blsct_wallet PRIVATE BOOST_UNIT_TEST)
+  endif()
   target_link_libraries(navio_blsct_wallet
     PRIVATE
       core_interface
