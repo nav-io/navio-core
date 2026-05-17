@@ -149,9 +149,28 @@ jobs:
           sudo xcode-select --switch /Applications/Xcode_16.4.app
           clang --version
 
+      # Cache Homebrew's download / metadata directory so 'brew install'
+      # skips the curl step on cache hit. The bottles themselves still get
+      # linked into /opt/homebrew/Cellar each run, but that's seconds, not
+      # the ~3-5min of cold network downloads from cold.
+      - name: Cache Homebrew downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/Library/Caches/Homebrew/downloads
+            ~/Library/Caches/Homebrew/api
+          # Key on the brew install line so a package list change busts
+          # the cache. github.job pins to this job so other macOS jobs
+          # don't collide if they're added later.
+          key: ${{ github.job }}-brew-cmake-ninja-pkg-config-gnu-getopt-ccache-boost-libevent-zeromq-v1
+          restore-keys: ${{ github.job }}-brew-
+
       - name: Install Homebrew packages
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+          # Skip the auto-update on every invocation; we trust the bottle
+          # versions the runner image ships with.
+          HOMEBREW_NO_AUTO_UPDATE: 1
         # Drop autotools toolchain (automake/libtool). Add cmake + ninja.
         run: |
           brew install cmake ninja pkg-config gnu-getopt ccache boost \
