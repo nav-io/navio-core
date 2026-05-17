@@ -604,8 +604,9 @@ RPCHelpMan getbalanceforaddress()
                 const wallet::isminetype mine = pwallet->IsMine(txout);
                 const bool is_staked_commitment = (mine & wallet::ISMINE_STAKED_COMMITMENT_BLSCT) != 0;
                 const wallet::isminefilter signable_filter = wallet::ISMINE_SPENDABLE | wallet::ISMINE_SPENDABLE_BLSCT | wallet::ISMINE_STAKED_COMMITMENT_BLSCT;
-                const CAmount mine_credit = CreditForFilter(*pwallet, txout, blsct_recovered_amount, is_blsct, signable_filter);
-                const CAmount watch_credit = CreditForFilter(*pwallet, txout, blsct_recovered_amount, is_blsct, wallet::ISMINE_WATCH_ONLY);
+                const CAmount output_credit = is_blsct ? blsct_recovered_amount : txout.nValue;
+                const CAmount mine_credit = (mine & signable_filter) != 0 ? output_credit : 0;
+                const CAmount watch_credit = (mine & wallet::ISMINE_WATCH_ONLY) != 0 ? output_credit : 0;
 
                 // Immature coinbases never count toward trusted/pending, but
                 // they DO show up in the immature bucket if they're in the
