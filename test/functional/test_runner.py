@@ -351,6 +351,7 @@ BASE_SCRIPTS = [
     'blsct_staking.py',
     'blsct_listtransactions_stake.py',
     'blsct_unconfirmed_spending.py',
+    'blsct_getbalanceforaddress.py',
     'blsct_token.py',
     'blsct_nft.py',
     'blsct_htlc.py',
