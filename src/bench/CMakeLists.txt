@@ -2,7 +2,25 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+# Generate block413567.raw.h from its .raw companion. Mirrors the autotools
+# rule in src/Makefile.am (%.raw.h: %.raw). The generated header lands under
+# the bench binary dir so #include <bench/data/block413567.raw.h> resolves
+# via the src binary include directory added at top-level src/CMakeLists.txt.
+set(_bench_raw_header ${CMAKE_CURRENT_BINARY_DIR}/data/block413567.raw.h)
+add_custom_command(
+  OUTPUT ${_bench_raw_header}
+  COMMAND ${CMAKE_COMMAND}
+    -DRAW_SOURCE_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/block413567.raw
+    -DHEADER_PATH=${_bench_raw_header}
+    -P ${PROJECT_SOURCE_DIR}/cmake/script/GenerateHeaderFromRaw.cmake
+  DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/block413567.raw
+    ${PROJECT_SOURCE_DIR}/cmake/script/GenerateHeaderFromRaw.cmake
+  VERBATIM
+)
+
 add_executable(bench_navio
+  ${_bench_raw_header}
   bench_bitcoin.cpp
   bench.cpp
   nanobench.cpp
