@@ -57,7 +57,7 @@ class BlsctGetBalanceForAddressTest(BitcoinTestFramework):
     def get_mine(self, wallet, address, **kwargs):
         """Convenience wrapper returning the ['mine'] sub-object as Decimals."""
         result = wallet.getbalanceforaddress(address, **kwargs)
-        return {k: _to_dec(v) if k != "total" else _to_dec(v) for k, v in result["mine"].items()}
+        return {k: _to_dec(v) for k, v in result["mine"].items()}
 
     def wallet_total(self, wallet):
         bal = wallet.getbalances()["mine"]
