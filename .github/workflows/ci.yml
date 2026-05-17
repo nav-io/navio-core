@@ -640,6 +640,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkgconf ccache \
             ${{ matrix.packages }}
+          # wine-binfmt's postinst registers a binfmt_misc handler for .exe,
+          # but on GitHub runners the registration silently no-ops if the
+          # systemd-binfmt path isn't refreshed; ctest then invokes the .exe
+          # directly and the shell mangles the PE header. Force-enable the
+          # wine handler after install so the kernel routes .exe through wine.
+          if dpkg -s wine-binfmt >/dev/null 2>&1; then
+            sudo update-binfmts --enable wine
+          fi
 
       - name: Set Ccache directory
         run: echo "CCACHE_DIR=${RUNNER_TEMP}/ccache_dir" >> "$GITHUB_ENV"
