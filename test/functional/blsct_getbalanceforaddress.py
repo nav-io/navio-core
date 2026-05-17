@@ -338,18 +338,36 @@ class BlsctGetBalanceForAddressTest(BitcoinTestFramework):
         stake_amount = Decimal("100")
         before = self.w0.getbalances()["mine"]
         assert_greater_than(_to_dec(before["trusted"]), stake_amount + Decimal("1"))
+        before_staked = _to_dec(before["staked_commitment_balance"])
 
         stake_txid = self.w0.stakelock(stake_amount)
         assert stake_txid
         self.generate_blsct_blocks(self.nodes[0], self.addr0, 2)
         self.sync_all()
 
+        # First verify the wallet-wide balance moved into the staked bucket
+        # by the expected amount.
+        wallet_after = self.w0.getbalances()["mine"]
+        wallet_staked_delta = _to_dec(wallet_after["staked_commitment_balance"]) - before_staked
+        assert_equal(wallet_staked_delta, stake_amount)
+
         # Find which address ended up owning the staked commitment by
-        # cross-referencing the wallet's stake list with the per-address
+        # cross-referencing wallet BLSCT outputs with the per-address
         # breakdown. There should be exactly one address whose RPC reports
         # a non-zero staked_commitment_balance.
-        wallet_after = self.w0.getbalances()["mine"]
-        assert_greater_than(_to_dec(wallet_after["staked_commitment_balance"]), _to_dec(0))
+        candidate_addresses = {
+            u["address"] for u in self.w0.listblsctunspent() if "address" in u
+        }
+        staked_addresses = []
+        for address in candidate_addresses:
+            mine = self.get_mine(self.w0, address)
+            if _to_dec(mine["staked_commitment_balance"]) > _to_dec(0):
+                staked_addresses.append((address, mine))
+
+        assert_equal(len(staked_addresses), 1)
+        _, mine = staked_addresses[0]
+        assert_equal(_to_dec(mine["staked_commitment_balance"]), stake_amount)
+        assert_equal(_to_dec(mine["trusted"]), _to_dec(0))
 
     def test_address_not_in_wallet(self):
         self.log.info("=== Querying a foreign address returns zero ===")
