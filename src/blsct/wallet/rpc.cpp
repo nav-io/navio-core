@@ -512,8 +512,12 @@ std::optional<CTxDestination> DestinationForOutput(const wallet::CWallet& wallet
 
 // Returns the credited amount for `txout` when its IsMine flags intersect
 // `filter`. The BLSCT recovered amount must be passed in explicitly since
-// stripped outputs no longer carry the encrypted amount.
-CAmount CreditForFilter(const wallet::CWallet& wallet, const CTxOut& txout, CAmount blsct_recovered_amount, bool is_blsct, wallet::isminefilter filter)
+// stripped outputs no longer carry the encrypted amount. The caller must
+// hold `wallet.cs_wallet` because CWallet::IsMine is annotated
+// EXCLUSIVE_LOCKS_REQUIRED(cs_wallet); without this annotation the
+// thread-safety analyzer cannot see the lock across the helper boundary
+// (and -Wthread-safety-analysis is fatal in CI).
+CAmount CreditForFilter(const wallet::CWallet& wallet, const CTxOut& txout, CAmount blsct_recovered_amount, bool is_blsct, wallet::isminefilter filter) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
     if ((wallet.IsMine(txout) & filter) == 0) return 0;
     return is_blsct ? blsct_recovered_amount : txout.nValue;
@@ -591,7 +595,12 @@ RPCHelpMan getbalanceforaddress()
             auto add_output = [&](const CTxOut& txout, CAmount blsct_recovered_amount,
                                   bool is_blsct,
                                   bool is_trusted, int depth, bool in_mempool,
-                                  bool is_immature_coinbase, bool is_in_main_chain) {
+                                  bool is_immature_coinbase, bool is_in_main_chain) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+                // The thread-safety analyzer can't trace LOCK() through lambda
+                // captures, so we restate the invariant here. Callers run with
+                // pwallet->cs_wallet held (see the outer LOCK), but the helper
+                // exposes that requirement to -Wthread-safety-analysis.
+                AssertLockHeld(pwallet->cs_wallet);
                 const wallet::isminetype mine = pwallet->IsMine(txout);
                 const bool is_staked_commitment = (mine & wallet::ISMINE_STAKED_COMMITMENT_BLSCT) != 0;
                 const wallet::isminefilter signable_filter = wallet::ISMINE_SPENDABLE | wallet::ISMINE_SPENDABLE_BLSCT | wallet::ISMINE_STAKED_COMMITMENT_BLSCT;
