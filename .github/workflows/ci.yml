@@ -547,10 +547,10 @@ jobs:
           # CMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine routes ctest's
           # execution of .exe binaries through wine without depending on
           # binfmt_misc (the noble GitHub runner doesn't auto-activate
-          # wine-binfmt). Use /usr/bin/wine rather than /usr/bin/wine64:
-          # on Ubuntu 24.04 the wine9 packages no longer ship a top-level
-          # /usr/bin/wine64 wrapper; wine itself auto-detects the bitness
-          # of the .exe being launched.
+          # wine-binfmt). The wine wrapper at /usr/bin/wine is provided
+          # by the `wine` metapackage (wine-stable on noble) — the
+          # wine64/wine32 packages on their own only install the per-bit
+          # binaries under /usr/lib/wine/, with no /usr/bin/ wrapper.
           # i386 architecture is enabled to bring in wine32 alongside
           # wine64 so launching 64-bit Windows binaries pulls all the
           # transitive 32-bit runtime libs wine9 needs.
@@ -559,7 +559,7 @@ jobs:
             runner: ubuntu-24.04
             extra_arch: i386
             packages: >-
-              g++-mingw-w64-x86-64-posix nsis wine64 wine32 file
+              g++-mingw-w64-x86-64-posix nsis wine wine64 wine32 file
               python3-zmq
             cc: gcc
             cxx: g++
