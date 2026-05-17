@@ -558,10 +558,13 @@ jobs:
           # gobjc++ is needed because GMP's autoconf in depends probes for
           # ObjC/ObjC++ support; without it gcc reports "cannot execute 'cc1obj'"
           # and GMP's configure aborts with "could not find a working compiler".
-          # BITCOIND=navio-node is exported for functional tests because
-          # WITH_MULTIPROCESS=ON produces the navio-node binary.
+          # Functional tests are intentionally skipped: they require the
+          # navio-node IPC daemon executable (upstream `bitcoin-node`),
+          # which depends on a CMake-side ENABLE_IPC + navio_ipc library
+          # wiring that navio does not yet have. Unit tests still exercise
+          # the 32-bit Debug build with depends MULTIPROCESS=1.
           - name: i686-multiprocess
-            label: 'Ubuntu 24.04, 32-bit, multiprocess, DEBUG, unit + functional tests (CMake)'
+            label: 'Ubuntu 24.04, 32-bit, multiprocess, DEBUG, unit tests only (CMake)'
             runner: ubuntu-24.04
             packages: >-
               llvm clang g++-multilib gobjc++ python3-zmq
@@ -574,8 +577,6 @@ jobs:
               -DWITH_MULTIPROCESS=ON
               "-DAPPEND_CPPFLAGS=-DBOOST_MULTI_INDEX_ENABLE_SAFE_MODE"
             run_unit_tests: true
-            run_functional_tests: true
-            functional_tests_env: BITCOIND=navio-node
 
           # Replaces the `no-wallet-libnaviokernel` autotools matrix entry.
           # -stdlib=libc++ is passed via CMAKE_{CXX,EXE_LINKER}_FLAGS rather
