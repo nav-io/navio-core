@@ -691,10 +691,11 @@ jobs:
       - name: Fetch macOS SDK
         if: ${{ matrix.xcode_version }}
         run: |
-          # Matches ci/test/01_base_install.sh: OSX_SDK_BASENAME =
-          # Xcode-${XCODE_VERSION}-${XCODE_BUILD_ID}-extracted-SDK-with-libcxx-headers
+          # Extract outside depends/ so hashFiles('depends/**') doesn't
+          # choke on the SDK's broken-on-Linux symlinks. depends/Makefile
+          # honours SDK_PATH, so the build still finds it.
           sdk_basename="Xcode-${{ matrix.xcode_version }}-${{ matrix.xcode_build_id }}-extracted-SDK-with-libcxx-headers"
-          sdk_dir="$PWD/depends/SDKs"
+          sdk_dir="${RUNNER_TEMP}/osx-sdks"
           mkdir -p "$sdk_dir"
           if [ ! -d "$sdk_dir/$sdk_basename" ]; then
             curl --location --fail \
@@ -702,6 +703,7 @@ jobs:
               -o /tmp/osx-sdk.tar.gz
             tar -C "$sdk_dir" -xf /tmp/osx-sdk.tar.gz
           fi
+          echo "SDK_PATH=$sdk_dir" >> "$GITHUB_ENV"
 
       - name: Restore depends cache
         if: ${{ matrix.depends_host }}
