@@ -116,8 +116,14 @@ else()
       ${MCL_USE_GMP_FLAG}
       ${MCL_USE_OMP_FLAG}
       ARCH=${CMAKE_SYSTEM_PROCESSOR}
-      CC=${CMAKE_C_COMPILER}
-      CXX=${CMAKE_CXX_COMPILER}
+      # depends toolchains for mac-cross use a multi-token CC line
+      # ("env -u C_INCLUDE_PATH ... clang --target=... -isysroot..."),
+      # which CMake splits into CMAKE_C_COMPILER (first token = /bin/env)
+      # plus CMAKE_C_COMPILER_ARG1 (everything else). Re-join here so
+      # mcl's Makefile receives the full launcher invocation as a single
+      # CC= value.
+      "CC=${CMAKE_C_COMPILER} ${CMAKE_C_COMPILER_ARG1}"
+      "CXX=${CMAKE_CXX_COMPILER} ${CMAKE_CXX_COMPILER_ARG1}"
       # mcl/bls Makefiles only consult CFLAGS for both C and C++ compilation,
       # so CMAKE_CXX_FLAGS gets merged in here to propagate things like
       # -stdlib=libc++ that would otherwise be lost between cmake and make.
@@ -140,8 +146,14 @@ else()
       ${MCL_USE_GMP_FLAG}
       ${MCL_USE_OMP_FLAG}
       ARCH=${CMAKE_SYSTEM_PROCESSOR}
-      CC=${CMAKE_C_COMPILER}
-      CXX=${CMAKE_CXX_COMPILER}
+      # depends toolchains for mac-cross use a multi-token CC line
+      # ("env -u C_INCLUDE_PATH ... clang --target=... -isysroot..."),
+      # which CMake splits into CMAKE_C_COMPILER (first token = /bin/env)
+      # plus CMAKE_C_COMPILER_ARG1 (everything else). Re-join here so
+      # mcl's Makefile receives the full launcher invocation as a single
+      # CC= value.
+      "CC=${CMAKE_C_COMPILER} ${CMAKE_C_COMPILER_ARG1}"
+      "CXX=${CMAKE_CXX_COMPILER} ${CMAKE_CXX_COMPILER_ARG1}"
       # mcl/bls Makefiles only consult CFLAGS for both C and C++ compilation,
       # so CMAKE_CXX_FLAGS gets merged in here to propagate things like
       # -stdlib=libc++ that would otherwise be lost between cmake and make.
