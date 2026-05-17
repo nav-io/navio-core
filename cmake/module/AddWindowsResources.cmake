@@ -7,6 +7,9 @@ include_guard(GLOBAL)
 function(add_windows_resources target rc_file)
   if(WIN32)
     target_sources(${target} PRIVATE ${rc_file})
+    # clientversion.h guards its C++ includes on WINDRES_PREPROC; mirror
+    # what src/Makefile.am does for windres invocations.
+    set_property(SOURCE ${rc_file} APPEND PROPERTY COMPILE_DEFINITIONS WINDRES_PREPROC)
   endif()
 endfunction()
 
