@@ -111,7 +111,7 @@ jobs:
           #" ${{ env.TEST_BASE }}
 
   macos-native-arm64:
-    name: 'macOS 15 native, arm64, no depends, sqlite only'
+    name: 'macOS 15 native, arm64, no depends, sqlite only (CMake)'
     # Use latest image, but hardcode version to avoid silent upgrades (and breaks).
     # See: https://github.com/actions/runner-images#available-images.
     runs-on: macos-15
@@ -124,15 +124,13 @@ jobs:
     timeout-minutes: 120
 
     env:
-      DANGER_RUN_CI_ON_HOST: 1
-      FILE_ENV: './ci/test/00_setup_env_mac_native.sh'
-      BASE_ROOT_DIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: '2G'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Clang version
+      - name: Select Xcode
         run: |
           sudo xcode-select --switch /Applications/Xcode_16.4.app
           clang --version
@@ -140,9 +138,10 @@ jobs:
       - name: Install Homebrew packages
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
-        run:
-          brew install automake libtool pkg-config gnu-getopt ccache boost
-          libevent zeromq
+        # Drop autotools toolchain (automake/libtool). Add cmake + ninja.
+        run: |
+          brew install cmake ninja pkg-config gnu-getopt ccache boost \
+            libevent zeromq
 
       - name: Set Ccache directory
         run: echo "CCACHE_DIR=${RUNNER_TEMP}/ccache_dir" >> "$GITHUB_ENV"
@@ -155,8 +154,19 @@ jobs:
           key: ${{ github.job }}-ccache-${{ github.run_id }}
           restore-keys: ${{ github.job }}-ccache-
 
-      - name: CI script
-        run: ./ci/test_run_all.sh
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DREDUCE_EXPORTS=ON \
+            -DWITH_ZMQ=ON
+
+      - name: Build
+        run: cmake --build build -j"$(sysctl -n hw.ncpu)"
+
+      - name: Run unit tests
+        working-directory: build
+        run: ctest -j"$(sysctl -n hw.ncpu)" --output-on-failure
 
       - name: Save Ccache cache
         uses: actions/cache/save@v5
