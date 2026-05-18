@@ -358,21 +358,13 @@ class BlsctGetBalanceForAddressTest(BitcoinTestFramework):
         wallet_staked_delta = _to_dec(wallet_after["staked_commitment_balance"]) - before_staked
         assert_equal(wallet_staked_delta, stake_amount)
 
-        # Find which address ended up owning the staked commitment by
-        # cross-referencing wallet BLSCT outputs with the per-address
-        # breakdown. There should be exactly one address whose RPC reports
-        # a non-zero staked_commitment_balance.
-        candidate_addresses = {
-            u["address"] for u in self.w0.listblsctunspent() if "address" in u
-        }
-        staked_addresses = []
-        for address in candidate_addresses:
-            mine = self.get_mine(self.w0, address)
-            if _to_dec(mine["staked_commitment_balance"]) > _to_dec(0):
-                staked_addresses.append((address, mine))
-
-        assert_equal(len(staked_addresses), 1)
-        _, mine = staked_addresses[0]
+        # Staked commitments are written to the dedicated BLSCT_STAKE
+        # destination, which the wallet labels "Locked Stake". listblsctunspent
+        # excludes staked commitments by default, so use the address-book view
+        # to discover the stake address before querying the per-address RPC.
+        stake_rows = [r for r in self.w0.listreceivedbyaddress(0, True) if r.get("label") == "Locked Stake"]
+        assert_equal(len(stake_rows), 1)
+        mine = self.get_mine(self.w0, stake_rows[0]["address"])
         assert_equal(_to_dec(mine["staked_commitment_balance"]), stake_amount)
         assert_equal(_to_dec(mine["trusted"]), _to_dec(0))
 
