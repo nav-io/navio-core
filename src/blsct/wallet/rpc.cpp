@@ -2,8 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <addresstype.h>
 #include <blsct/wallet/balance_proof.h>
 #include <blsct/wallet/helpers.h>
+#include <blsct/wallet/keyman.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/unsigned_transaction.h>
 #include <blsct/common.h>
@@ -12,18 +14,23 @@
 #include <blsct/tokens/predicate_parser.h>
 #include <coins.h>
 #include <core_io.h>
+#include <key_io.h>
 #include <logging.h>
 #include <primitives/transaction.h>
 #include <rpc/server.h>
 #include <rpc/server_util.h>
 #include <rpc/util.h>
+#include <script/script.h>
+#include <script/solver.h>
 #include <univalue.h>
 #include <util/strencodings.h>
 #include <util/transaction_identifier.h>
 #include <validation.h>
 #include <wallet/receive.h>
 #include <wallet/rpc/util.h>
+#include <wallet/wallet.h>
 #include <limits>
+#include <optional>
 
 namespace blsct {
 
@@ -465,6 +472,258 @@ RPCHelpMan getblsctbalance()
             }
 
             return ValueFromAmount(mine_trusted + (include_watchonly ? watchonly_trusted : 0));
+        },
+    };
+}
+
+namespace {
+// Per-address balance buckets, mirroring the layout returned by
+// getbalances().mine: confirmed (trusted) credit, untrusted mempool credit,
+// immature coinbase credit, and staked-commitment credit. Watch-only versions
+// are tracked separately so the RPC can expose them when requested.
+struct AddressBalanceBuckets {
+    CAmount mine_trusted{0};
+    CAmount mine_untrusted_pending{0};
+    CAmount mine_immature{0};
+    CAmount mine_staked_commitment{0};
+    CAmount watchonly_trusted{0};
+    CAmount watchonly_untrusted_pending{0};
+    CAmount watchonly_immature{0};
+    CAmount watchonly_staked_commitment{0};
+};
+
+// Returns the destination paid by `txout`, choosing the BLSCT recovery path
+// when the output was originally a BLSCT output. The `is_blsct` flag is
+// required because BLSCT outputs stored in mapOutputs have their range proof
+// stripped (see CWallet::AddToWallet) and therefore txout.HasBLSCTRangeProof()
+// returns false even though the output is BLSCT-owned.
+std::optional<CTxDestination> DestinationForOutput(const wallet::CWallet& wallet, const CTxOut& txout, bool is_blsct)
+{
+    if (is_blsct) {
+        auto* blsct_km = wallet.GetBLSCTKeyMan();
+        if (!blsct_km) return std::nullopt;
+        CTxDestination d = blsct_km->GetDestination(txout);
+        if (!IsValidDestination(d)) return std::nullopt;
+        return d;
+    }
+    CTxDestination d;
+    if (!ExtractDestination(txout.scriptPubKey, d)) return std::nullopt;
+    return d;
+}
+
+// Returns the credited amount for `txout` when its IsMine flags intersect
+// `filter`. The BLSCT recovered amount must be passed in explicitly since
+// stripped outputs no longer carry the encrypted amount. The caller must
+// hold `wallet.cs_wallet` because CWallet::IsMine is annotated
+// EXCLUSIVE_LOCKS_REQUIRED(cs_wallet); without this annotation the
+// thread-safety analyzer cannot see the lock across the helper boundary
+// (and -Wthread-safety-analysis is fatal in CI).
+CAmount CreditForFilter(const wallet::CWallet& wallet, const CTxOut& txout, CAmount blsct_recovered_amount, bool is_blsct, wallet::isminefilter filter) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    if ((wallet.IsMine(txout) & filter) == 0) return 0;
+    return is_blsct ? blsct_recovered_amount : txout.nValue;
+}
+} // namespace
+
+RPCHelpMan getbalanceforaddress()
+{
+    return RPCHelpMan{
+        "getbalanceforaddress",
+        "\nReturns a breakdown of the balance held by a single address.\n"
+        "Spent outputs are excluded.\n",
+        {
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The address to query (transparent or BLSCT)."},
+            {"minconf", RPCArg::Type::NUM, RPCArg::Default{0}, "Minimum confirmations for an output to count towards 'trusted'."},
+            {"include_watchonly", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for watch-only wallets, otherwise false"}, "Include balance from watch-only scripts (see 'importaddress' / 'importblsctscript')."},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "",
+            {
+                {RPCResult::Type::STR, "address", "The queried address."},
+                {RPCResult::Type::OBJ, "mine", "Balances from outputs the wallet can sign.",
+                    {
+                        {RPCResult::Type::STR_AMOUNT, "trusted", "Confirmed/trusted balance at this address."},
+                        {RPCResult::Type::STR_AMOUNT, "untrusted_pending", "Unconfirmed (mempool) balance at this address."},
+                        {RPCResult::Type::STR_AMOUNT, "immature", "Immature coinbase balance at this address."},
+                        {RPCResult::Type::STR_AMOUNT, "staked_commitment_balance", "Balance locked in BLSCT staked commitments at this address."},
+                        {RPCResult::Type::STR_AMOUNT, "total", "Sum of the four buckets above."},
+                    }},
+                {RPCResult::Type::OBJ, "watchonly", /*optional=*/true, "Watch-only balances at this address (only present when include_watchonly is true).",
+                    {
+                        {RPCResult::Type::STR_AMOUNT, "trusted", "Confirmed/trusted watch-only balance."},
+                        {RPCResult::Type::STR_AMOUNT, "untrusted_pending", "Unconfirmed watch-only balance."},
+                        {RPCResult::Type::STR_AMOUNT, "immature", "Immature coinbase watch-only balance."},
+                        {RPCResult::Type::STR_AMOUNT, "staked_commitment_balance", "Watch-only balance locked in BLSCT staked commitments."},
+                        {RPCResult::Type::STR_AMOUNT, "total", "Sum of the four buckets above."},
+                    }},
+            }},
+        RPCExamples{
+            "\nBalance of a BLSCT address with 0 or more confirmations\n" + HelpExampleCli("getbalanceforaddress", "\"nv1...\"") +
+            "\nBalance of a transparent address requiring 6 confirmations\n" + HelpExampleCli("getbalanceforaddress", "\"nv1q...\" 6") +
+            "\nAs a JSON-RPC call\n" + HelpExampleRpc("getbalanceforaddress", "\"nv1...\", 0, true")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            const std::shared_ptr<const wallet::CWallet> pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            const std::string address_str = request.params[0].get_str();
+            const CTxDestination target = DecodeDestination(address_str);
+            if (!IsValidDestination(target)) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid address: ") + address_str);
+            }
+
+            const int min_depth = request.params[1].isNull() ? 0 : request.params[1].getInt<int>();
+            const bool include_watchonly = ParseIncludeWatchonly(request.params[2], *pwallet);
+
+            // Build the set of scriptPubKeys equivalent to the target address.
+            // For BLSCT addresses we'll match via the recovered destination
+            // since the on-chain script is masked.
+            const bool target_is_blsct = (target.index() == 8);
+            std::set<CScript> target_scripts;
+            if (!target_is_blsct) {
+                target_scripts.insert(GetScriptForDestination(target));
+            }
+
+            AddressBalanceBuckets buckets;
+
+            // Helper to classify a single output that we've already confirmed
+            // pays to the target address. `is_blsct` says whether the source
+            // output originally carried a BLSCT range proof; it matters because
+            // outputs stored in mapOutputs have the proof stripped (the flag
+            // survives via CWalletOutput::fBLSCTOutput).
+            auto add_output = [&](const CTxOut& txout, CAmount blsct_recovered_amount,
+                                  bool is_blsct,
+                                  bool is_trusted, int depth, bool in_mempool,
+                                  bool is_immature_coinbase, bool is_in_main_chain) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+                // The thread-safety analyzer can't trace LOCK() through lambda
+                // captures, so we restate the invariant here. Callers run with
+                // pwallet->cs_wallet held (see the outer LOCK), but the helper
+                // exposes that requirement to -Wthread-safety-analysis.
+                AssertLockHeld(pwallet->cs_wallet);
+                const wallet::isminetype mine = pwallet->IsMine(txout);
+                const bool is_staked_commitment = (mine & wallet::ISMINE_STAKED_COMMITMENT_BLSCT) != 0;
+                const wallet::isminefilter signable_filter = wallet::ISMINE_SPENDABLE | wallet::ISMINE_SPENDABLE_BLSCT | wallet::ISMINE_STAKED_COMMITMENT_BLSCT;
+                const CAmount output_credit = is_blsct ? blsct_recovered_amount : txout.nValue;
+                const CAmount mine_credit = (mine & signable_filter) != 0 ? output_credit : 0;
+                const CAmount watch_credit = (mine & wallet::ISMINE_WATCH_ONLY) != 0 ? output_credit : 0;
+
+                // Immature coinbases never count toward trusted/pending, but
+                // they DO show up in the immature bucket if they're in the
+                // main chain (matches the GetBalance accounting).
+                if (is_immature_coinbase) {
+                    if (is_in_main_chain) {
+                        buckets.mine_immature += mine_credit;
+                        buckets.watchonly_immature += watch_credit;
+                    }
+                    return;
+                }
+
+                if (is_trusted && depth >= min_depth) {
+                    if (is_staked_commitment) {
+                        buckets.mine_staked_commitment += mine_credit;
+                        buckets.watchonly_staked_commitment += watch_credit;
+                    } else {
+                        buckets.mine_trusted += mine_credit;
+                        buckets.watchonly_trusted += watch_credit;
+                    }
+                } else if (!is_trusted && depth == 0 && in_mempool) {
+                    // Mirror GetBalance: staked-commitment value, when it's
+                    // floating in the mempool, is still classified as
+                    // untrusted_pending rather than as confirmed staked.
+                    buckets.mine_untrusted_pending += mine_credit;
+                    buckets.watchonly_untrusted_pending += watch_credit;
+                }
+            };
+
+            // Pass 1: classic mapWallet path. Covers transparent outputs and
+            // BLSCT outputs on wallets without WALLET_FLAG_BLSCT_OUTPUT_STORAGE.
+            {
+                std::set<uint256> trusted_parents;
+                for (const auto& entry : pwallet->mapWallet) {
+                    const wallet::CWalletTx& wtx = entry.second;
+                    const bool is_trusted = wallet::CachedTxIsTrusted(*pwallet, wtx, trusted_parents);
+                    const int depth = pwallet->GetTxDepthInMainChain(wtx);
+                    const bool in_mempool = wtx.InMempool();
+                    const bool is_immature_coinbase = pwallet->IsTxImmatureCoinBase(wtx);
+                    const bool is_in_main_chain = pwallet->IsTxInMainChain(wtx);
+
+                    for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+                        const CTxOut& txout = wtx.tx->vout[i];
+                        // Only count native-coin outputs; token/NFT balances
+                        // have dedicated RPCs.
+                        if (!txout.tokenId.IsNull()) continue;
+                        if (pwallet->IsSpent(COutPoint(txout.GetHash()))) continue;
+
+                        const bool is_blsct = txout.HasBLSCTRangeProof();
+                        if (target_is_blsct) {
+                            if (!is_blsct) continue;
+                            auto out_dest = DestinationForOutput(*pwallet, txout, /*is_blsct=*/true);
+                            if (!out_dest || *out_dest != target) continue;
+                        } else {
+                            if (is_blsct) continue;
+                            if (!target_scripts.contains(txout.scriptPubKey)) continue;
+                        }
+
+                        const CAmount blsct_amount = is_blsct ? wtx.GetBLSCTRecoveryData(i).amount : 0;
+                        add_output(txout, blsct_amount, is_blsct, is_trusted, depth, in_mempool, is_immature_coinbase, is_in_main_chain);
+                    }
+                }
+            }
+
+            // Pass 2: mapOutputs path, only when the wallet uses BLSCT output
+            // storage. Skip outputs that have already been counted via
+            // mapWallet (locally-created BLSCT txs are mirrored into both).
+            // Outputs in mapOutputs have their range proof stripped once the
+            // recovery data is cached, so we rely on the persisted
+            // CWalletOutput::fBLSCTOutput flag rather than inspecting the
+            // serialized scriptPubKey.
+            if (target_is_blsct && pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+                for (const auto& entry : pwallet->mapOutputs) {
+                    if (pwallet->GetWalletTxFromOutpoint(entry.first) != nullptr) continue;
+                    const wallet::CWalletOutput& wout = entry.second;
+                    if (wout.IsSpent()) continue;
+                    if (!wout.fBLSCTOutput) continue;
+                    const CTxOut& txout = *wout.out;
+                    if (!txout.tokenId.IsNull()) continue;
+                    if (pwallet->IsSpent(COutPoint(wout.GetOutputHash()))) continue;
+
+                    auto out_dest = DestinationForOutput(*pwallet, txout, /*is_blsct=*/true);
+                    if (!out_dest || *out_dest != target) continue;
+
+                    const bool is_trusted = wallet::IsOutputTrusted(*pwallet, wout);
+                    const int depth = pwallet->GetOutputDepthInMainChain(wout);
+                    const bool in_mempool = wout.InMempool();
+                    const bool is_immature_coinbase = pwallet->IsOutputImmatureCoinBase(wout);
+                    const bool is_in_main_chain = pwallet->IsOutputInMainChain(wout);
+                    add_output(txout, wout.blsctRecoveryData.amount, /*is_blsct=*/true, is_trusted, depth, in_mempool, is_immature_coinbase, is_in_main_chain);
+                }
+            }
+
+            UniValue ret{UniValue::VOBJ};
+            ret.pushKV("address", EncodeDestination(target));
+
+            UniValue mine{UniValue::VOBJ};
+            mine.pushKV("trusted", ValueFromAmount(buckets.mine_trusted));
+            mine.pushKV("untrusted_pending", ValueFromAmount(buckets.mine_untrusted_pending));
+            mine.pushKV("immature", ValueFromAmount(buckets.mine_immature));
+            mine.pushKV("staked_commitment_balance", ValueFromAmount(buckets.mine_staked_commitment));
+            mine.pushKV("total", ValueFromAmount(buckets.mine_trusted + buckets.mine_untrusted_pending + buckets.mine_immature + buckets.mine_staked_commitment));
+            ret.pushKV("mine", mine);
+
+            if (include_watchonly) {
+                UniValue wo{UniValue::VOBJ};
+                wo.pushKV("trusted", ValueFromAmount(buckets.watchonly_trusted));
+                wo.pushKV("untrusted_pending", ValueFromAmount(buckets.watchonly_untrusted_pending));
+                wo.pushKV("immature", ValueFromAmount(buckets.watchonly_immature));
+                wo.pushKV("staked_commitment_balance", ValueFromAmount(buckets.watchonly_staked_commitment));
+                wo.pushKV("total", ValueFromAmount(buckets.watchonly_trusted + buckets.watchonly_untrusted_pending + buckets.watchonly_immature + buckets.watchonly_staked_commitment));
+                ret.pushKV("watchonly", wo);
+            }
+
+            return ret;
         },
     };
 }
@@ -2889,6 +3148,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &minttoken},
         {"blsct", &mintnft},
         {"blsct", &getblsctbalance},
+        {"blsct", &getbalanceforaddress},
         {"blsct", &getnftbalance},
         {"blsct", &gettokenbalance},
         {"blsct", &listblscttransactions},

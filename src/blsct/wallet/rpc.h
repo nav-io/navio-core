@@ -28,5 +28,6 @@ class RPCHelpMan;
 Span<const CRPCCommand> GetBLSCTWalletRPCCommands();
 RPCHelpMan sendtoblsctaddress();
 RPCHelpMan getblsctoutput();
+RPCHelpMan getbalanceforaddress();
 
 #endif // BITCOIN_BLSCT_WALLET_RPC_H

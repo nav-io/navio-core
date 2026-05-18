@@ -82,6 +82,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "getbalance", 1, "minconf" },
     { "getbalance", 2, "include_watchonly" },
     { "getbalance", 3, "avoid_reuse" },
+    { "getbalanceforaddress", 1, "minconf" },
+    { "getbalanceforaddress", 2, "include_watchonly" },
     { "getblsctbalance", 0, "minconf" },
     { "getblsctbalance", 1, "include_watchonly" },
     { "getblsctbalance", 2, "avoid_reuse" },
