@@ -175,6 +175,15 @@ target_link_libraries(test_navio
   navio_cli
   navio_node
   navio_consensus
+  # navio_blsct_core/wallet are pulled in transitively via navio_node ->
+  # navio_common -> navio_blsct_core (all PRIVATE), but MSVC's static
+  # link order doesn't pull in symbols from libs sandwiched in
+  # PRIVATE-chain dependencies. List them explicitly so test_navio's
+  # bls12_381_keygen_tests / bulletproofs_plus / set_mem_proof_prover
+  # tests can resolve BLS12_381_KeyGen::HKDF_Extract, RangeProofLogic
+  # template instantiations, etc. on Win64-native (LNK2019).
+  navio_blsct_core
+  $<$<BOOL:${ENABLE_WALLET}>:navio_blsct_wallet>
   minisketch
   secp256k1
   bls_interface

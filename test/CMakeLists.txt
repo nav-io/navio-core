@@ -72,11 +72,28 @@ function(create_test_directory_links)
   )
 
   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fuzz)
+  file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/util)
+  file(GLOB util_scripts
+    LIST_DIRECTORIES FALSE
+    RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    util/*.py
+  )
+
+  file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/util/data)
+  file(GLOB util_data
+    LIST_DIRECTORIES FALSE
+    RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    util/data/*.json
+    util/data/*.hex
+  )
+
   set(files_to_link
     ${functional}
     ${functional_data}
     ${functional_test_framework}
     ${functional_test_framework_crypto}
+    ${util_scripts}
+    ${util_data}
     fuzz/test_runner.py
   )
 

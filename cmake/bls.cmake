@@ -20,6 +20,12 @@ if(MSVC)
   # No GMP (uses MCL_USE_VINT instead), no OpenSSL, no LLVM/Xbyak.
   # -----------------------------------------------------------------
 
+  # mcl gates its LLVM-asm code paths on `#ifdef MCL_USE_LLVM` (defined,
+  # not value), so a `-DMCL_USE_LLVM=0` would still pull in references
+  # to mcl_fp_addPre6L / mcl_fpDbl_mod_NIST_P192L / ... that we never
+  # build on MSVC. Leave the macro undefined — matches the mcl GNU
+  # Makefile's mingw/cygwin path, which sets MCL_USE_LLVM=0 in make
+  # but doesn't pass -DMCL_USE_LLVM=1 to the compiler.
   set(_MCL_DEFS
     MCL_USE_VINT
     MCL_VINT_FIXED_BUFFER
@@ -27,7 +33,8 @@ if(MSVC)
     MCL_DONT_USE_XBYAK
     MCL_NO_AUTOLINK
     MCLBN_NO_AUTOLINK
-    MCL_USE_LLVM=0
+    MCLBN_DONT_EXPORT
+    BLS_DONT_EXPORT
     NOMINMAX
   )
 
