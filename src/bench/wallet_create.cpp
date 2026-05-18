@@ -38,9 +38,15 @@ static void WalletCreate(benchmark::Bench& bench, bool encrypted)
         assert(status == DatabaseStatus::SUCCESS);
         assert(wallet != nullptr);
 
-        // Cleanup
+        // Cleanup. Use the non-throwing fs::remove_all overload because
+        // on Windows static-CRT builds, SQLite's WAL/journal file can
+        // still hold an exclusive handle for a brief window after
+        // wallet.reset(), and the throwing overload would propagate an
+        // uncaught filesystem error out of the bench lambda and
+        // terminate the process.
         wallet.reset();
-        fs::remove_all(wallet_path);
+        std::error_code ec;
+        fs::remove_all(wallet_path, ec);
     });
 }
 
