@@ -79,6 +79,26 @@ function(test_append_atomic_library target)
     }
   ")
 
+  # On 32-bit targets, std::atomic<int64_t>/<chrono::seconds>/<double>
+  # codegen is sensitive to optimization level and the
+  # _GLIBCXX_DEBUG family of defs that the project attaches to
+  # core_interface_debug. With -O2 (and without _GLIBCXX_DEBUG) the
+  # compiler resolves the 8-byte ops inline via cmpxchg8b; with -O0 +
+  # _GLIBCXX_DEBUG (the real i686 Debug build) the same ops route
+  # through the generic __atomic_load/__atomic_store/
+  # __atomic_compare_exchange entry points which require libatomic at
+  # link time. The configure-time probe below compiles at release-style
+  # defaults and so reports STD_ATOMIC_LINKS_WITHOUT_LIBATOMIC=Success
+  # for both the eventually-linkable and eventually-broken cases. Skip
+  # the probe and unconditionally attach libatomic when the host
+  # pointer is 32-bit — libatomic is part of every modern GCC/Clang
+  # libstdc++ install on i386/armv7/etc, and the linker will silently
+  # drop it if no __atomic_* references survive.
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    target_link_libraries(${target} INTERFACE atomic)
+    return()
+  endif()
+
   include(CheckCXXSourceCompiles)
   check_cxx_source_compiles("${check_atomic_source}" STD_ATOMIC_LINKS_WITHOUT_LIBATOMIC)
   if(NOT STD_ATOMIC_LINKS_WITHOUT_LIBATOMIC)
