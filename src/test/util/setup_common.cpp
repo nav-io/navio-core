@@ -161,7 +161,19 @@ BasicTestingSetup::~BasicTestingSetup()
     m_node.kernel.reset();
     SetMockTime(0s); // Reset mocktime for following tests
     LogInstance().DisconnectTestLogger();
-    fs::remove_all(m_path_root);
+    // fs::remove_all must not throw from a destructor: on Windows
+    // x64-windows-static builds, a transient ERROR_SHARING_VIOLATION
+    // from a not-yet-released SQLite/WAL handle is enough to throw
+    // a filesystem error, which then escapes and triggers terminate()
+    // (manifests on the bench_navio.exe sanity-check for
+    // WalletCreate{Plain,Encrypted}). Use the non-throwing overload
+    // and log on failure instead.
+    std::error_code ec;
+    fs::remove_all(m_path_root, ec);
+    if (ec) {
+        LogPrintf("Warning: failed to clean up test path %s: %s\n",
+                  fs::PathToString(m_path_root), ec.message());
+    }
     gArgs.ClearArgs();
 }
 
