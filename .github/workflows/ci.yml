@@ -872,6 +872,7 @@ jobs:
             # (needed by the functional-test runner) via pip after dnf.
             dnf install -y \
               cmake ninja-build pkgconf-pkg-config ccache \
+              python3-pip \
               ${{ matrix.packages }}
             pip3 install --break-system-packages pyzmq 2>/dev/null \
               || pip3 install pyzmq
