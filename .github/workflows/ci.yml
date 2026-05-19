@@ -863,6 +863,11 @@ jobs:
         run: |
           if [ -n "${{ matrix.container }}" ]; then
             # Running inside a CentOS/RHEL container: use dnf, no sudo.
+            # ninja-build, ccache, and lbzip2 live in EPEL (not in the
+            # CentOS Stream 9 base repos), so enable EPEL + CRB first.
+            # CRB (CodeReady Builder) provides some EPEL build deps.
+            dnf install -y epel-release dnf-plugins-core
+            dnf config-manager --set-enabled crb
             # The container image ships Python 3 and pip; install pyzmq
             # (needed by the functional-test runner) via pip after dnf.
             dnf install -y \
