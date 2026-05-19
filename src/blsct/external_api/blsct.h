@@ -730,7 +730,7 @@ int are_vector_predicate_equal(
     const BlsctVectorPredicate* a,
     size_t a_size,
     const BlsctVectorPredicate* b,
-    const size_t b_size);
+    size_t b_size);
 BlsctSizeTResult serialize_vector_predicate(
     const BlsctVectorPredicate* blsct_vector_predicate,
     size_t obj_size,

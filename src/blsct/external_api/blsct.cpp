@@ -2299,9 +2299,9 @@ BLSCT_RESULT sign_unsigned_transaction(
 // vector predicate
 int are_vector_predicate_equal(
     const BlsctVectorPredicate* a,
-    const size_t a_size,
+    size_t a_size,
     const BlsctVectorPredicate* b,
-    const size_t b_size)
+    size_t b_size)
 {
     if (a_size != b_size) {
         return 0;
