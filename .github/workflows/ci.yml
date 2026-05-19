@@ -868,17 +868,21 @@ jobs:
             # CRB (CodeReady Builder) provides some EPEL build deps.
             dnf install -y epel-release dnf-plugins-core
             dnf config-manager --set-enabled crb
-            # The container image ships Python 3 and pip; install pyzmq
-            # (needed by the functional-test runner) via pip after dnf.
+            # CentOS Stream 9 ships Python 3.9 by default but navio's
+            # CMakeLists requires Python 3.10+ for the functional-test
+            # runner. Install python3.11 from AppStream and shadow the
+            # default /usr/bin/python3 via /usr/local/bin so both cmake
+            # find_package(Python3) and the test runner pick it up.
             dnf install -y \
               cmake ninja-build pkgconf-pkg-config ccache \
-              python3-pip \
+              python3.11 python3.11-pip python3.11-devel \
               libtool automake autoconf \
               libatomic.i686 libatomic.x86_64 \
-              python3-devel \
               ${{ matrix.packages }}
-            pip3 install --break-system-packages pyzmq 2>/dev/null \
-              || pip3 install pyzmq
+            ln -sf /usr/bin/python3.11 /usr/local/bin/python3
+            ln -sf /usr/bin/pip3.11 /usr/local/bin/pip3
+            python3.11 -m pip install --break-system-packages pyzmq 2>/dev/null \
+              || python3.11 -m pip install pyzmq
           else
             if [ -n "${{ matrix.extra_arch }}" ]; then
               sudo dpkg --add-architecture ${{ matrix.extra_arch }}
