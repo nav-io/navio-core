@@ -689,13 +689,33 @@ jobs:
           # — see session memory "MSan suppression for inlined chains". Do not widen
           # suppressions pre-emptively; flag as known issue first.
           - name: msan
-            label: 'Ubuntu 22.04, MemorySanitizer, depends (CMake)'
-            runner: ubuntu-22.04
+            label: 'Ubuntu 24.04, MemorySanitizer, depends (CMake)'
+            runner: ubuntu-24.04
             packages: >-
-              clang llvm libc++abi-dev libc++-dev ninja-build python3
-              libevent-dev libboost-dev libsqlite3-dev
-            cc: clang
-            cxx: clang++
+              clang-17 llvm-17 libclang-rt-17-dev libc++abi-dev libc++-dev
+              ninja-build python3
+            cc: clang-17
+            cxx: clang++-17
+            # depends builds boost/libevent/gmp/sqlite3 against the instrumented
+            # libc++ so every memory operation through them is tracked by MSan.
+            # DEP_OPTS mirrors the autotools DEP_OPTS / MSAN_AND_LIBCXX_FLAGS set
+            # in ci/test/00_setup_env_native_msan.sh. NO_OPENMP=1 matches
+            # --disable-openmp. The -stdlib=libc++ on CXX routes depends'
+            # C++ sources to the instrumented libc++ at /msan/cxx_build/.
+            depends_host: x86_64-pc-linux-gnu
+            depends_opts: >-
+              CC=clang-17
+              "CXX=clang++-17 -stdlib=libc++"
+              "CFLAGS=-fsanitize=memory -fsanitize-memory-track-origins=2
+              -fno-omit-frame-pointer -g -O1 -fno-optimize-sibling-calls"
+              "CXXFLAGS=-fsanitize=memory -fsanitize-memory-track-origins=2
+              -fno-omit-frame-pointer -g -O1 -fno-optimize-sibling-calls
+              -nostdinc++ -nostdlib++
+              -isystem /msan/cxx_build/include/c++/v1
+              -L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib
+              -lc++ -lc++abi -lpthread
+              -Wno-unused-command-line-argument"
+              NO_OPENMP=1
             # MSAN_AND_LIBCXX_FLAGS C++ side: full set passed to cmake so the
             # instrumented libc++ headers + rpath reach both compile and link lines.
             # APPEND_CFLAGS carries the non-sanitize extra MSan bits for C sources;
@@ -794,38 +814,22 @@ jobs:
       - name: Build instrumented libc++
         if: ${{ matrix.msan && steps.msan-libcxx-cache.outputs.cache-hit != 'true' }}
         run: |
-          # Step 1: clone LLVM 17.0.2 (shallow clone of the tag).
-          sudo mkdir -p /msan
-          sudo chown "$USER:$USER" /msan
+          sudo mkdir -p /msan && sudo chown "$USER:$USER" /msan
           git clone --depth=1 -b llvmorg-17.0.2 \
             https://github.com/llvm/llvm-project /msan/llvm-project
-
-          # Step 2: build clang + compiler-rt + libcxx from source.
-          # This provides a clang that knows about -fsanitize=memory and
-          # includes compiler-rt's MSan runtime library.
-          cmake -G Ninja -B /msan/clang_build \
-            -DLLVM_ENABLE_PROJECTS="clang" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DLLVM_TARGETS_TO_BUILD=Native \
-            -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" \
-            -S /msan/llvm-project/llvm
-          ninja -C /msan/clang_build -j"$(nproc)"
-          ninja -C /msan/clang_build install-runtimes
-
-          # Step 3: build libc++ + libc++abi with MemoryWithOrigins instrumentation.
-          # The result lives in /msan/cxx_build/ and navio is linked against it via
-          # CMAKE_CXX_FLAGS / CMAKE_EXE_LINKER_FLAGS set in cmake_flags above.
           cmake -G Ninja -B /msan/cxx_build \
             -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi" \
             -DCMAKE_BUILD_TYPE=Release \
             -DLLVM_USE_SANITIZER=MemoryWithOrigins \
-            -DCMAKE_C_COMPILER=/msan/clang_build/bin/clang \
-            -DCMAKE_CXX_COMPILER=/msan/clang_build/bin/clang++ \
+            -DCMAKE_C_COMPILER=clang-17 \
+            -DCMAKE_CXX_COMPILER=clang++-17 \
             -DLLVM_TARGETS_TO_BUILD=Native \
             -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF \
             -DLIBCXX_HARDENING_MODE=debug \
             -S /msan/llvm-project/runtimes
           ninja -C /msan/cxx_build -j"$(nproc)"
+          # Remove the source tree post-build so the cache only carries the install.
+          rm -rf /msan/llvm-project
 
       - name: Save MSan libc++ cache
         if: ${{ matrix.msan && steps.msan-libcxx-cache.outputs.cache-hit != 'true' }}
@@ -833,19 +837,6 @@ jobs:
         with:
           path: /msan
           key: msan-libcxx-llvmorg-17.0.2-${{ runner.os }}-${{ runner.arch }}
-
-      # Register the LLVM 17.0.2 clang as the system clang/clang++ so that the
-      # matrix CC/CXX env vars resolve to it. Runs on both cache-hit and cold paths
-      # since update-alternatives state is not cached with /msan.
-      - name: Register MSan clang alternatives
-        if: ${{ matrix.msan }}
-        run: |
-          sudo update-alternatives --install /usr/bin/clang++ clang++ \
-            /msan/clang_build/bin/clang++ 100
-          sudo update-alternatives --install /usr/bin/clang clang \
-            /msan/clang_build/bin/clang 100
-          sudo update-alternatives --install /usr/bin/llvm-symbolizer llvm-symbolizer \
-            /msan/clang_build/bin/llvm-symbolizer 100
 
       # Write an absolute-path APPEND_CFLAGS override into a cmake initial-cache
       # file. The static cmake_flags field cannot embed ${{ github.workspace }}
