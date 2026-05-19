@@ -1,6 +1,14 @@
 [memory]
-# false-positive in mcl
+# false-positive in mcl. fun:*mcl* alone doesn't catch the inlined
+# template instantiations (mcl::fp::Add<...>::func, mcl::fp::initInvTbl,
+# etc.) where the uninit-use propagates through inlined chains; add the
+# source-path patterns for the same reason as the gmp block below.
+src:*/src/bls/mcl/*
 fun:*mcl*
+# false-positive in secp256k1 crypto operations (scalar_reduce_512,
+# scalar_mul, ecdsa_sig_sign): the library manually manages
+# initialization of internal scratch buffers in ways MSan does not track.
+src:*/src/secp256k1/*
 # false-positive in gmp fat-build CPU dispatch (__gmpn_cpuvec_init reads
 # uninitialized scratch on x86_64 --enable-fat). Suppress by source path
 # because the use propagates through inlined gmp.h / gmpxx.h call chains
