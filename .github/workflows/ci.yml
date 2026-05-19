@@ -653,7 +653,7 @@ jobs:
             cc: clang-17
             cxx: clang++-17
             depends_host: x86_64-pc-linux-gnu
-            depends_opts: CC=clang-17 NO_OPENMP=1
+            depends_opts: CC=clang-17 CXX='clang++-17 -stdlib=libc++' NO_OPENMP=1
             cmake_flags: >-
               -DSANITIZERS=thread
               -DWITH_MCL_OPENMP=OFF
