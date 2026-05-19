@@ -358,11 +358,6 @@ jobs:
             file_env: ./ci/test/00_setup_env_mac_cross.sh
             runner: ubuntu-24.04
 
-          - name: win64
-            label: 'Win64 cross-compile, Ubuntu 24.04, unit tests only'
-            file_env: ./ci/test/00_setup_env_win64.sh
-            runner: ubuntu-24.04
-
           - name: arm
             label: 'Ubuntu 24.04, ARM64, unit tests only'
             file_env: ./ci/test/00_setup_env_arm.sh
@@ -545,6 +540,43 @@ jobs:
               "-DAPPEND_CPPFLAGS=-DBOOST_MULTI_INDEX_ENABLE_SAFE_MODE"
             run_unit_tests: true
 
+          # Replaces the autotools `win64` matrix entry.
+          # MinGW cross via depends. Gap 1 (ZeroMQ pkg-config path) was
+          # cleared in #227. Unit tests run under wine; functional tests
+          # are skipped (matches the autotools job).
+          # CMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine routes ctest's
+          # execution of .exe binaries through wine without depending on
+          # binfmt_misc (the noble GitHub runner doesn't auto-activate
+          # wine-binfmt). The wine wrapper at /usr/bin/wine is provided
+          # by the `wine` metapackage (wine-stable on noble) — the
+          # wine64/wine32 packages on their own only install the per-bit
+          # binaries under /usr/lib/wine/, with no /usr/bin/ wrapper.
+          # i386 architecture is enabled to bring in wine32 alongside
+          # wine64 so launching 64-bit Windows binaries pulls all the
+          # transitive 32-bit runtime libs wine9 needs.
+          - name: win64
+            label: 'Win64 cross-compile, Ubuntu 24.04, unit tests only (CMake)'
+            runner: ubuntu-24.04
+            extra_arch: i386
+            packages: >-
+              g++-mingw-w64-x86-64-posix nsis wine wine64 wine32 file
+              python3-zmq
+            cc: gcc
+            cxx: g++
+            depends_host: x86_64-w64-mingw32
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=Release
+              -DREDUCE_EXPORTS=ON
+              -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine
+              "-DAPPEND_CXXFLAGS=-Wno-return-type"
+            run_unit_tests: true
+            # system_tests/run_command expects a specific Win32 error code
+            # for a non-existent command (6), but wine returns 2 instead —
+            # this is a known wine-version-sensitive expectation. Skip the
+            # whole system_tests target under wine; native Win64 (VS 2022)
+            # still covers it.
+            ctest_exclude: '^system_tests$'
+
           # Replaces the `no-wallet-libnaviokernel` autotools matrix entry.
           # -stdlib=libc++ is passed via CMAKE_{CXX,EXE_LINKER}_FLAGS rather
           # than the CXX env var because cmake strips compiler flags out of
@@ -616,6 +648,9 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          if [ -n "${{ matrix.extra_arch }}" ]; then
+            sudo dpkg --add-architecture ${{ matrix.extra_arch }}
+          fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkgconf ccache \
@@ -631,6 +666,16 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ github.job }}-${{ matrix.name }}-ccache-${{ github.run_id }}
           restore-keys: ${{ github.job }}-${{ matrix.name }}-ccache-
+
+      - name: Switch mingw to posix threads
+        if: ${{ matrix.depends_host == 'x86_64-w64-mingw32' }}
+        run: |
+          # ZeroMQ (and several other depends packages) require POSIX-thread
+          # mingw-w64 runtime. Ubuntu installs both win32 and posix variants
+          # but defaults to win32; flip the alternatives so x86_64-w64-mingw32-gcc
+          # resolves to the posix variant.
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
 
       - name: Restore depends cache
         if: ${{ matrix.depends_host }}
@@ -670,7 +715,9 @@ jobs:
       - name: Run unit tests
         if: ${{ matrix.run_unit_tests }}
         working-directory: build
-        run: ctest --output-on-failure -j"$(nproc)"
+        run: |
+          ctest --output-on-failure -j"$(nproc)" \
+            ${{ matrix.ctest_exclude && format('-E ''{0}''', matrix.ctest_exclude) || '' }}
 
       - name: Run functional tests
         if: ${{ matrix.run_functional_tests }}

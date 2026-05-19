@@ -408,7 +408,12 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       minisketch
       univalue
       Boost::headers
-      $<TARGET_NAME_IF_EXISTS:libevent::core>
+      # libevent::core comes via INTERFACE chain on libevent::extra
+      # (see FindLibevent.cmake). Listing both directly lets CMake's
+      # static-archive ordering land libevent_core.a *before*
+      # libevent_extra.a on the mingw-cross link line, which breaks the
+      # GNU linker's single-pass scan (extra references symbols from
+      # core).
       $<TARGET_NAME_IF_EXISTS:libevent::extra>
       $<TARGET_NAME_IF_EXISTS:libevent::pthreads>
       $<TARGET_NAME_IF_EXISTS:USDT::headers>
@@ -450,7 +455,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       navio_cli
       navio_common
       navio_util
-      libevent::core
+      # libevent::core via INTERFACE chain on libevent::extra
       libevent::extra
     )
     install_binary_component(navio-cli HAS_MANPAGE)
@@ -468,7 +473,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       navio_util
       navio_crypto
       bls_interface
-      libevent::core
+      # libevent::core via INTERFACE chain on libevent::extra
       libevent::extra
     )
     install_binary_component(navio-staker)
