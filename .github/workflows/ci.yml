@@ -425,17 +425,12 @@ jobs:
     # i686-centos). When the field is absent the expression evaluates to an
     # empty string which GitHub Actions treats as "no container", so all
     # other entries keep running on the bare ubuntu runner unchanged.
-    # When matrix.container_opts or matrix.container_network is set we
-    # resolve to an object form so the extra docker run flags
-    # (--cap-add=LINUX_IMMUTABLE) and network mode (host) reach the
-    # container. fromJSON is used because GHA doesn't allow conditionally
-    # adding object keys via expression interpolation; we build the JSON
-    # by concatenating optional ",key":"value" fragments and parsing.
-    # `network` is undocumented on jobs.<id>.container but the Actions
-    # Runner accepts it and substitutes the value for the otherwise
-    # auto-created github_network_<id> bridge. Required for i686-centos
-    # so the container can use the runner's working IPv6 stack (::1).
-    container: ${{ (matrix.container_opts || matrix.container_network) && fromJSON(format('{{"image":"{0}"{1}{2}}}', matrix.container, matrix.container_opts && format(',"options":"{0}"', matrix.container_opts) || '', matrix.container_network && format(',"network":"{0}"', matrix.container_network) || '')) || matrix.container || '' }}
+    # With i686-centos extracted to its own job (see linux-cmake-centos
+    # below), no remaining linux-cmake matrix entry uses matrix.container,
+    # so the container: directive is back to its original "no container
+    # for any of these jobs" form. Left present (always-empty string) in
+    # case a future matrix entry needs containerised setup again.
+    container: ''
     # 180 min matches the autotools `linux:` job above. The fuzz matrix
     # entry (#233) regularly takes 45-70 min wall-clock between build and
     # harness run, which overruns a 60 min budget; every other matrix
@@ -835,56 +830,19 @@ jobs:
           # host gcc/g++ (no multilib cross-compiler package needed on RHEL —
           # the native gcc accepts -m32 when glibc-devel.i686 is present).
           #
-          # Both unit tests and functional tests run, matching the autotools job.
-          - name: i686-centos
-            label: 'CentOS Stream 9, 32-bit, unit + functional tests (CMake)'
-            runner: ubuntu-24.04
-            container: quay.io/centos/amd64:stream9
-            # Mirrors autotools ci/test/02_run_container.sh:
-            #   --cap-add LINUX_IMMUTABLE: feature_reindex_readonly.py uses
-            #     chattr +i on the block file to simulate a read-only FS.
-            #   net.ipv6.conf.{all,default,lo}.disable_ipv6=0: rpc_bind.py
-            #     --ipv6 and feature_proxy.py (which configures [::1] proxies)
-            #     need IPv6 enabled inside the container. GHA's container:
-            #     directive attaches to a user-defined bridge where Docker
-            #     disables IPv6 on lo (so ::1 vanishes). The `lo` sysctl is
-            #     what restores ::1; the all/default sysctls are belt-and-
-            #     suspenders for any other ifaces.
-            # LINUX_IMMUTABLE is needed for feature_reindex_readonly.py's
-            # chattr +i. Other options were tried (IPv6 sysctls) but only
-            # --network=host (set via container_network below, not via
-            # options) actually fixes rpc_bind --ipv6 / feature_proxy [::1]:
-            # GHA's default github_network_<id> bridge has no IPv6 wired,
-            # so even with disable_ipv6=0 the namespace has no working ::1.
-            container_opts: "--cap-add=LINUX_IMMUTABLE"
-            # `network: host` on jobs.<id>.container replaces the otherwise
-            # auto-created bridge with the host's network namespace, so the
-            # container reuses the runner's IPv6 stack. Cannot be passed via
-            # container_opts because GHA appends its own --network flag and
-            # docker rejects two network modes on one container.
-            container_network: "host"
-            packages: >-
-              gcc-c++ glibc-devel.x86_64 libstdc++-devel.x86_64
-              glibc-devel.i686 libstdc++-devel.i686
-              git which patch bison perl rsync
-              xz lbzip2 procps-ng make
-            cc: gcc
-            cxx: g++
-            depends_host: i686-pc-linux-gnu
-            depends_opts: CC='gcc -m32' CXX='g++ -m32'
-            cmake_flags: >-
-              -DCMAKE_BUILD_TYPE=Release
-              -DWITH_ZMQ=ON
-              -DREDUCE_EXPORTS=ON
-            run_unit_tests: true
-            run_functional_tests: true
-            # ${RUNNER_TEMP} (/__w/_temp) is a bind mount from the host
-            # runner's ext4. chattr +i set on bind-mounted files is not
-            # honored as the test framework expects (naviod still writes to
-            # the "immutable" block file), so feature_reindex_readonly.py
-            # times out. Put the test scratch dir on the container's native
-            # rootfs instead.
-            tmpdirprefix: /tmp/navio_test_runner
+          # NB: i686-centos was historically a linux-cmake matrix entry that
+          # used GHA's container: directive. It is now its own top-level
+          # job (linux-cmake-centos) below because the centos functional
+          # tests need:
+          #   - --network=host (for working ::1 — GHA's auto-created
+          #     github_network_<id> bridge has no IPv6 wired, so [::1]
+          #     binds fail; `network: host` is not accepted on
+          #     jobs.<id>.container by GHA's workflow schema).
+          #   - --cap-add LINUX_IMMUTABLE (for chattr +i in
+          #     feature_reindex_readonly.py).
+          # Both require manual `docker run` so the centos job runs on a
+          # bare ubuntu-24.04 runner and spawns its own container in steps,
+          # mirroring autotools' ci/test/02_run_container.sh.
 
     env:
       CC: ${{ matrix.cc }}
@@ -1231,4 +1189,157 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.ccache-cache.outputs.cache-primary-key }}
+
+  # i686-centos lives in its own job because the centos container needs:
+  #   1) --network=host  (for working ::1; GHA's auto github_network_<id>
+  #      bridge has no IPv6 wired, and `network` is not accepted on
+  #      jobs.<id>.container by GHA's workflow schema);
+  #   2) --cap-add=LINUX_IMMUTABLE  (for chattr +i in
+  #      feature_reindex_readonly.py).
+  # Both are only achievable with a manual `docker run` inside an ubuntu
+  # runner, mirroring autotools' ci/test/02_run_container.sh.
+  linux-cmake-centos:
+    name: 'CentOS Stream 9, 32-bit, unit + functional tests (CMake)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    env:
+      CC: gcc
+      CXX: g++
+      CCACHE_MAXSIZE: '2G'
+      CONTAINER_IMAGE: quay.io/centos/amd64:stream9
+      CONTAINER_NAME: navio-ci-centos
+      DEPENDS_HOST: i686-pc-linux-gnu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Pull container image
+        run: docker pull "${CONTAINER_IMAGE}"
+
+      - name: Start container
+        # --network=host: container reuses runner's working IPv6 stack so
+        #                 rpc_bind --ipv6 / feature_proxy [::1] tests can
+        #                 bind ::1.
+        # --cap-add=LINUX_IMMUTABLE: feature_reindex_readonly.py runs
+        #                 `chattr +i` on a block file.
+        # Mount the workspace and ccache dir bidirectionally so depends/
+        # build/ artifacts and the ccache survive across steps as if we
+        # were running natively.
+        run: |
+          mkdir -p "${RUNNER_TEMP}/ccache_dir"
+          docker run -d --name "${CONTAINER_NAME}" \
+            --network=host \
+            --cap-add=LINUX_IMMUTABLE \
+            -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
+            -v "${RUNNER_TEMP}/ccache_dir:${RUNNER_TEMP}/ccache_dir" \
+            -w "${GITHUB_WORKSPACE}" \
+            -e CCACHE_DIR="${RUNNER_TEMP}/ccache_dir" \
+            -e CCACHE_MAXSIZE="${CCACHE_MAXSIZE}" \
+            -e CC="${CC}" \
+            -e CXX="${CXX}" \
+            "${CONTAINER_IMAGE}" \
+            tail -f /dev/null
+
+      - name: Install build dependencies (in container)
+        run: |
+          docker exec "${CONTAINER_NAME}" bash -eu -c '
+            # EPEL + CRB needed for ninja-build, ccache, lbzip2 (not in base).
+            dnf install -y epel-release dnf-plugins-core
+            dnf config-manager --set-enabled crb
+            # CentOS Stream 9 ships Python 3.9; navio CMakeLists requires >=3.10.
+            # Install python3.11 from AppStream and shadow /usr/bin/python3.
+            dnf install -y \
+              cmake ninja-build pkgconf-pkg-config ccache \
+              python3.11 python3.11-pip python3.11-devel \
+              libtool automake autoconf \
+              libatomic.i686 libatomic.x86_64 \
+              gcc-c++ glibc-devel.x86_64 libstdc++-devel.x86_64 \
+              glibc-devel.i686 libstdc++-devel.i686 \
+              git which patch bison perl rsync \
+              xz lbzip2 procps-ng make
+            ln -sf /usr/bin/python3.11 /usr/local/bin/python3
+            ln -sf /usr/bin/pip3.11 /usr/local/bin/pip3
+            python3.11 -m pip install --break-system-packages pyzmq 2>/dev/null \
+              || python3.11 -m pip install pyzmq
+          '
+
+      - name: Restore Ccache cache
+        id: ccache-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.RUNNER_TEMP }}/ccache_dir
+          key: ${{ github.job }}-ccache-${{ github.run_id }}
+          restore-keys: ${{ github.job }}-ccache-
+
+      - name: Restore depends cache
+        uses: actions/cache/restore@v5
+        with:
+          path: depends/${{ env.DEPENDS_HOST }}
+          key: depends-${{ env.DEPENDS_HOST }}-${{ hashFiles('depends/**') }}
+          restore-keys: depends-${{ env.DEPENDS_HOST }}-
+
+      - name: Build depends (in container)
+        run: |
+          docker exec "${CONTAINER_NAME}" bash -eu -c '
+            env -u CC -u CXX make -C depends \
+              HOST='"${DEPENDS_HOST}"' \
+              CC="gcc -m32" CXX="g++ -m32"
+          '
+
+      - name: Save depends cache
+        uses: actions/cache/save@v5
+        with:
+          path: depends/${{ env.DEPENDS_HOST }}
+          key: depends-${{ env.DEPENDS_HOST }}-${{ hashFiles('depends/**') }}
+
+      - name: Configure (in container)
+        run: |
+          docker exec "${CONTAINER_NAME}" bash -eu -c '
+            cmake -B build -G Ninja \
+              -DCMAKE_TOOLCHAIN_FILE="${GITHUB_WORKSPACE}/depends/'"${DEPENDS_HOST}"'/toolchain.cmake" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DWITH_ZMQ=ON \
+              -DREDUCE_EXPORTS=ON
+          '
+
+      - name: Build (in container)
+        run: docker exec "${CONTAINER_NAME}" cmake --build build
+
+      - name: Run unit tests (in container)
+        run: |
+          docker exec --workdir "${GITHUB_WORKSPACE}/build" "${CONTAINER_NAME}" \
+            ctest --output-on-failure -j"$(nproc)"
+
+      - name: Run functional tests (in container)
+        # --timeout-factor=40 mirrors TEST_RUNNER_TIMEOUT_FACTOR in autotools
+        # ci/test/00_setup_env.sh; slow 32-bit jobs (blsct_htlc, etc.) need it.
+        # tmpdirprefix points at /tmp inside the container (overlayfs) rather
+        # than the bind-mounted workspace, so feature_reindex_readonly's
+        # chattr +i lands on a filesystem that honours immutability.
+        run: |
+          docker exec "${CONTAINER_NAME}" bash -eu -c '
+            mkdir -p /tmp/navio_test_runner
+            build/test/functional/test_runner.py -j"$(nproc)" \
+              --ci --quiet --tmpdirprefix=/tmp/navio_test_runner \
+              --combinedlogslen=99999999 \
+              --timeout-factor=40 \
+              --exclude mempool_limit
+          '
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop "${CONTAINER_NAME}" || true
+          docker rm "${CONTAINER_NAME}" || true
+
+      - name: Save Ccache cache
+        if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.RUNNER_TEMP }}/ccache_dir
           key: ${{ steps.ccache-cache.outputs.cache-primary-key }}
