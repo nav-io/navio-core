@@ -134,9 +134,12 @@ else()
       # letter, so append " r".
       "AR=${CMAKE_AR} r"
       # mcl/bls Makefiles only consult CFLAGS for both C and C++ compilation,
-      # so CMAKE_CXX_FLAGS gets merged in here to propagate things like
+      # so CMAKE_CXX_FLAGS is passed here to propagate things like
       # -stdlib=libc++ that would otherwise be lost between cmake and make.
-      "CFLAGS_USER=${CMAKE_C_FLAGS} ${CMAKE_CXX_FLAGS}"
+      # CMAKE_C_FLAGS is intentionally NOT merged: depends toolchains can
+      # set -std=c11 in CMAKE_C_FLAGS, which clang++ rejects when the same
+      # string is reused for .cpp compilation.
+      "CFLAGS_USER=${CMAKE_CXX_FLAGS}"
       "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}"
       -C ${MCL_SRC_DIR}
       lib/libmcl.a
@@ -166,9 +169,12 @@ else()
       # See mcl_build above for why AR must be forwarded explicitly.
       "AR=${CMAKE_AR} r"
       # mcl/bls Makefiles only consult CFLAGS for both C and C++ compilation,
-      # so CMAKE_CXX_FLAGS gets merged in here to propagate things like
+      # so CMAKE_CXX_FLAGS is passed here to propagate things like
       # -stdlib=libc++ that would otherwise be lost between cmake and make.
-      "CFLAGS_USER=${CMAKE_C_FLAGS} ${CMAKE_CXX_FLAGS}"
+      # CMAKE_C_FLAGS is intentionally NOT merged: depends toolchains can
+      # set -std=c11 in CMAKE_C_FLAGS, which clang++ rejects when the same
+      # string is reused for .cpp compilation.
+      "CFLAGS_USER=${CMAKE_CXX_FLAGS}"
       "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}"
       -C ${BLS_SRC_DIR}
       lib/libbls384_256.a
