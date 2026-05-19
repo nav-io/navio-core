@@ -106,11 +106,33 @@ else()
     BUILD_COMMAND
       ${GNU_MAKE_EXECUTABLE}
       MCL_USE_LLVM=0
+      # mcl/Makefile runs `expr $(LLVM_OPT_VERSION) \>= 9` at parse
+      # time, where LLVM_OPT_VERSION comes from `opt --version`. On
+      # some hosts the awk extractor leaves a dotted version string
+      # like '4.6.0' that expr can't parse, killing the make run even
+      # though MCL_USE_LLVM=0. Forcing it empty short-circuits the
+      # `ifneq ($(LLVM_OPT_VERSION),)` guard above the expr call.
+      LLVM_OPT_VERSION=
       ${MCL_USE_GMP_FLAG}
       ${MCL_USE_OMP_FLAG}
       ARCH=${CMAKE_SYSTEM_PROCESSOR}
-      CC=${CMAKE_C_COMPILER}
-      CXX=${CMAKE_CXX_COMPILER}
+      # depends toolchains for mac-cross use a multi-token CC line
+      # ("env -u C_INCLUDE_PATH ... clang --target=... -isysroot..."),
+      # which CMake splits into CMAKE_C_COMPILER (first token = /bin/env)
+      # plus CMAKE_C_COMPILER_ARG1 (everything else). Re-join here so
+      # mcl's Makefile receives the full launcher invocation as a single
+      # CC= value.
+      "CC=${CMAKE_C_COMPILER} ${CMAKE_C_COMPILER_ARG1}"
+      "CXX=${CMAKE_CXX_COMPILER} ${CMAKE_CXX_COMPILER_ARG1}"
+      # mcl's Makefile detects host OS via `uname -s` and so always reports
+      # Linux on the cross-compile host, even when the target is Darwin.
+      # That keeps the default `AR=ar r` (system GNU ar) in effect, which
+      # produces a SysV-style archive without the per-architecture symbol
+      # table Apple's ld64 expects ("archive has no table of contents file
+      # ... for architecture x86_64"). Forward the depends toolchain's
+      # archiver instead. mcl's Makefile expects AR to include the operation
+      # letter, so append " r".
+      "AR=${CMAKE_AR} r"
       # mcl/bls Makefiles only consult CFLAGS for both C and C++ compilation,
       # so CMAKE_CXX_FLAGS gets merged in here to propagate things like
       # -stdlib=libc++ that would otherwise be lost between cmake and make.
@@ -129,11 +151,20 @@ else()
     BUILD_COMMAND
       ${GNU_MAKE_EXECUTABLE}
       BLS_ETH=1
+      LLVM_OPT_VERSION= # see mcl_build above for why
       ${MCL_USE_GMP_FLAG}
       ${MCL_USE_OMP_FLAG}
       ARCH=${CMAKE_SYSTEM_PROCESSOR}
-      CC=${CMAKE_C_COMPILER}
-      CXX=${CMAKE_CXX_COMPILER}
+      # depends toolchains for mac-cross use a multi-token CC line
+      # ("env -u C_INCLUDE_PATH ... clang --target=... -isysroot..."),
+      # which CMake splits into CMAKE_C_COMPILER (first token = /bin/env)
+      # plus CMAKE_C_COMPILER_ARG1 (everything else). Re-join here so
+      # mcl's Makefile receives the full launcher invocation as a single
+      # CC= value.
+      "CC=${CMAKE_C_COMPILER} ${CMAKE_C_COMPILER_ARG1}"
+      "CXX=${CMAKE_CXX_COMPILER} ${CMAKE_CXX_COMPILER_ARG1}"
+      # See mcl_build above for why AR must be forwarded explicitly.
+      "AR=${CMAKE_AR} r"
       # mcl/bls Makefiles only consult CFLAGS for both C and C++ compilation,
       # so CMAKE_CXX_FLAGS gets merged in here to propagate things like
       # -stdlib=libc++ that would otherwise be lost between cmake and make.
