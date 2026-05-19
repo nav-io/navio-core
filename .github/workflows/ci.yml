@@ -844,7 +844,15 @@ jobs:
             #     disables IPv6 on lo (so ::1 vanishes). The `lo` sysctl is
             #     what restores ::1; the all/default sysctls are belt-and-
             #     suspenders for any other ifaces.
-            container_opts: "--cap-add=LINUX_IMMUTABLE --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv6.conf.default.disable_ipv6=0 --sysctl net.ipv6.conf.lo.disable_ipv6=0"
+            # --network host: the IPv6 sysctls alone do not bring ::1 up on
+            # GHA's user-defined `github_network_<id>` bridge (the network
+            # itself has no IPv6 configured, so the container netns starts
+            # without working ::1 even with disable_ipv6=0). Sharing the
+            # host's network namespace inherits the runner's working IPv6
+            # stack, mirroring what autotools' `docker run` (default bridge
+            # + host inheritance) gets. Resolves rpc_bind --ipv6 and
+            # feature_proxy [::1] tests.
+            container_opts: "--cap-add=LINUX_IMMUTABLE --network=host"
             packages: >-
               gcc-c++ glibc-devel.x86_64 libstdc++-devel.x86_64
               glibc-devel.i686 libstdc++-devel.i686
