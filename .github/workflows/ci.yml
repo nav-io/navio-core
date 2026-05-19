@@ -837,11 +837,14 @@ jobs:
             # Mirrors autotools ci/test/02_run_container.sh:
             #   --cap-add LINUX_IMMUTABLE: feature_reindex_readonly.py uses
             #     chattr +i on the block file to simulate a read-only FS.
-            #   net.ipv6.conf.all.disable_ipv6=0: rpc_bind.py --ipv6 and
-            #     feature_proxy.py (which configures [::1] proxies) need
-            #     IPv6 enabled inside the container. GHA disables IPv6 by
-            #     default on its container runs.
-            container_opts: "--cap-add=LINUX_IMMUTABLE --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv6.conf.default.disable_ipv6=0"
+            #   net.ipv6.conf.{all,default,lo}.disable_ipv6=0: rpc_bind.py
+            #     --ipv6 and feature_proxy.py (which configures [::1] proxies)
+            #     need IPv6 enabled inside the container. GHA's container:
+            #     directive attaches to a user-defined bridge where Docker
+            #     disables IPv6 on lo (so ::1 vanishes). The `lo` sysctl is
+            #     what restores ::1; the all/default sysctls are belt-and-
+            #     suspenders for any other ifaces.
+            container_opts: "--cap-add=LINUX_IMMUTABLE --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv6.conf.default.disable_ipv6=0 --sysctl net.ipv6.conf.lo.disable_ipv6=0"
             packages: >-
               gcc-c++ glibc-devel.x86_64 libstdc++-devel.x86_64
               glibc-devel.i686 libstdc++-devel.i686
@@ -857,6 +860,13 @@ jobs:
               -DREDUCE_EXPORTS=ON
             run_unit_tests: true
             run_functional_tests: true
+            # ${RUNNER_TEMP} (/__w/_temp) is a bind mount from the host
+            # runner's ext4. chattr +i set on bind-mounted files is not
+            # honored as the test framework expects (naviod still writes to
+            # the "immutable" block file), so feature_reindex_readonly.py
+            # times out. Put the test scratch dir on the container's native
+            # rootfs instead.
+            tmpdirprefix: /tmp/navio_test_runner
 
     env:
       CC: ${{ matrix.cc }}
@@ -1067,11 +1077,25 @@ jobs:
 
       - name: Run functional tests
         if: ${{ matrix.run_functional_tests }}
+        # matrix.tmpdirprefix overrides ${RUNNER_TEMP} for entries that need
+        # an in-container tmpdir. The i686-centos job runs in a container
+        # whose ${RUNNER_TEMP} is a bind mount from the host runner's ext4;
+        # chattr +i on bind-mounted files is not honored as expected by
+        # feature_reindex_readonly.py, so that job points tmpdirprefix at a
+        # native container path (/tmp) where the inode immutability bit
+        # behaves consistently.
+        # --timeout-factor=40 mirrors TEST_RUNNER_TIMEOUT_FACTOR in the
+        # autotools `ci/test/00_setup_env.sh` baseline; slow 32-bit jobs
+        # (e.g. blsct_htlc on i686-centos) need it.
         run: |
+          TMPDIRPREFIX="${{ matrix.tmpdirprefix }}"
+          TMPDIRPREFIX="${TMPDIRPREFIX:-${RUNNER_TEMP}}"
+          mkdir -p "${TMPDIRPREFIX}"
           ${{ matrix.functional_tests_env }} \
             build/test/functional/test_runner.py -j"$(nproc)" \
-            --ci --quiet --tmpdirprefix="${RUNNER_TEMP}" \
+            --ci --quiet --tmpdirprefix="${TMPDIRPREFIX}" \
             --combinedlogslen=99999999 \
+            --timeout-factor=40 \
             --exclude mempool_limit
 
       - name: Install
