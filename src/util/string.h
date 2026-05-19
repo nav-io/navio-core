@@ -17,6 +17,8 @@
 #include <string_view> // IWYU pragma: export
 #include <vector>
 
+#include <attributes.h>
+
 void ReplaceAll(std::string& in_out, const std::string& search, const std::string& substitute);
 
 [[nodiscard]] inline std::vector<std::string> SplitString(std::string_view str, char sep)
@@ -145,7 +147,7 @@ struct LineReader {
      *          std::nullopt if end of buffer is reached without finding a \n.
      * @throws a std::runtime_error if max_line_length + 1 bytes are read without finding \n.
      */
-    std::optional<std::string> ReadLine();
+    std::optional<std::string_view> ReadLine() LIFETIMEBOUND;
 
     /**
      * Returns string from current iterator position of specified length
@@ -155,7 +157,7 @@ struct LineReader {
      * @returns a string of the expected length.
      * @throws a std::runtime_error if there is not enough data in the buffer.
      */
-    std::string ReadLength(size_t len);
+    std::string_view ReadLength(size_t len) LIFETIMEBOUND;
 
     /**
      * Returns remaining size of bytes in buffer
