@@ -725,6 +725,7 @@ jobs:
             # cmake initial-cache file so the blacklist path can be an absolute
             # workspace path (not embeddable in a static matrix scalar field).
             cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=None
               -DSANITIZERS=memory
               -DUSE_ASM=OFF
               -DWITH_MCL_OPENMP=OFF
@@ -853,11 +854,22 @@ jobs:
           # Without it on C++ compile, those calls remain instrumented and
           # the uninit shadow leaks out of mcl, surfacing as a false-positive
           # uint256 compare in SigNetParams::SigNetParams (chainparams.cpp).
+          #
+          # The hardening overrides at the tail (-U_FORTIFY_SOURCE,
+          # -fno-stack-protector, -fcf-protection=none, -fno-stack-clash-
+          # protection) cancel the unconditional hardening block in navio's
+          # root CMakeLists.txt (around line 424). Autotools msan uses
+          # --disable-hardening for the same reason: _FORTIFY_SOURCE wraps
+          # libc calls in fortified inlines that don't always preserve
+          # MSan's shadow propagation, and stack-protector canaries plus
+          # cf-protection add code that surfaces MSan false-positives in
+          # the prevector allocation path under -O1.
           BLACKLIST="${GITHUB_WORKSPACE}/test/sanitizer_suppressions/msan"
           MSAN_EXTRA="-fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -g -O1 -fno-optimize-sibling-calls -fsanitize-blacklist=${BLACKLIST}"
+          HARDEN_OFF="-U_FORTIFY_SOURCE -fno-stack-protector -fcf-protection=none -fno-stack-clash-protection"
           cat > /tmp/msan-cmake-init.cmake <<EOF
-          set(APPEND_CFLAGS "${MSAN_EXTRA}" CACHE STRING "" FORCE)
-          set(APPEND_CXXFLAGS "${MSAN_EXTRA}" CACHE STRING "" FORCE)
+          set(APPEND_CFLAGS "${MSAN_EXTRA} ${HARDEN_OFF}" CACHE STRING "" FORCE)
+          set(APPEND_CXXFLAGS "${MSAN_EXTRA} ${HARDEN_OFF}" CACHE STRING "" FORCE)
           EOF
 
       - name: Switch mingw to posix threads
