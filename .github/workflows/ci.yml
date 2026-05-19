@@ -425,7 +425,11 @@ jobs:
     # i686-centos). When the field is absent the expression evaluates to an
     # empty string which GitHub Actions treats as "no container", so all
     # other entries keep running on the bare ubuntu runner unchanged.
-    container: ${{ matrix.container || '' }}
+    # When matrix.container_opts is set we resolve to an object form so the
+    # extra docker run flags (e.g. --cap-add=LINUX_IMMUTABLE, IPv6 sysctl)
+    # reach the container. fromJSON is used because GHA doesn't allow
+    # conditionally adding object keys via expression interpolation.
+    container: ${{ matrix.container_opts && fromJSON(format('{{"image":"{0}","options":"{1}"}}', matrix.container, matrix.container_opts)) || matrix.container || '' }}
     # 180 min matches the autotools `linux:` job above. The fuzz matrix
     # entry (#233) regularly takes 45-70 min wall-clock between build and
     # harness run, which overruns a 60 min budget; every other matrix
@@ -830,6 +834,14 @@ jobs:
             label: 'CentOS Stream 9, 32-bit, unit + functional tests (CMake)'
             runner: ubuntu-24.04
             container: quay.io/centos/amd64:stream9
+            # Mirrors autotools ci/test/02_run_container.sh:
+            #   --cap-add LINUX_IMMUTABLE: feature_reindex_readonly.py uses
+            #     chattr +i on the block file to simulate a read-only FS.
+            #   net.ipv6.conf.all.disable_ipv6=0: rpc_bind.py --ipv6 and
+            #     feature_proxy.py (which configures [::1] proxies) need
+            #     IPv6 enabled inside the container. GHA disables IPv6 by
+            #     default on its container runs.
+            container_opts: "--cap-add=LINUX_IMMUTABLE --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv6.conf.default.disable_ipv6=0"
             packages: >-
               gcc-c++ glibc-devel.x86_64 libstdc++-devel.x86_64
               glibc-devel.i686 libstdc++-devel.i686
