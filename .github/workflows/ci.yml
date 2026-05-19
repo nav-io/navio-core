@@ -873,6 +873,7 @@ jobs:
             dnf install -y \
               cmake ninja-build pkgconf-pkg-config ccache \
               python3-pip \
+              libtool automake autoconf \
               ${{ matrix.packages }}
             pip3 install --break-system-packages pyzmq 2>/dev/null \
               || pip3 install pyzmq
