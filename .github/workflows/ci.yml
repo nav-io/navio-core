@@ -425,11 +425,17 @@ jobs:
     # i686-centos). When the field is absent the expression evaluates to an
     # empty string which GitHub Actions treats as "no container", so all
     # other entries keep running on the bare ubuntu runner unchanged.
-    # When matrix.container_opts is set we resolve to an object form so the
-    # extra docker run flags (e.g. --cap-add=LINUX_IMMUTABLE, IPv6 sysctl)
-    # reach the container. fromJSON is used because GHA doesn't allow
-    # conditionally adding object keys via expression interpolation.
-    container: ${{ matrix.container_opts && fromJSON(format('{{"image":"{0}","options":"{1}"}}', matrix.container, matrix.container_opts)) || matrix.container || '' }}
+    # When matrix.container_opts or matrix.container_network is set we
+    # resolve to an object form so the extra docker run flags
+    # (--cap-add=LINUX_IMMUTABLE) and network mode (host) reach the
+    # container. fromJSON is used because GHA doesn't allow conditionally
+    # adding object keys via expression interpolation; we build the JSON
+    # by concatenating optional ",key":"value" fragments and parsing.
+    # `network` is undocumented on jobs.<id>.container but the Actions
+    # Runner accepts it and substitutes the value for the otherwise
+    # auto-created github_network_<id> bridge. Required for i686-centos
+    # so the container can use the runner's working IPv6 stack (::1).
+    container: ${{ (matrix.container_opts || matrix.container_network) && fromJSON(format('{{"image":"{0}"{1}{2}}}', matrix.container, matrix.container_opts && format(',"options":"{0}"', matrix.container_opts) || '', matrix.container_network && format(',"network":"{0}"', matrix.container_network) || '')) || matrix.container || '' }}
     # 180 min matches the autotools `linux:` job above. The fuzz matrix
     # entry (#233) regularly takes 45-70 min wall-clock between build and
     # harness run, which overruns a 60 min budget; every other matrix
@@ -844,15 +850,19 @@ jobs:
             #     disables IPv6 on lo (so ::1 vanishes). The `lo` sysctl is
             #     what restores ::1; the all/default sysctls are belt-and-
             #     suspenders for any other ifaces.
-            # --network host: the IPv6 sysctls alone do not bring ::1 up on
-            # GHA's user-defined `github_network_<id>` bridge (the network
-            # itself has no IPv6 configured, so the container netns starts
-            # without working ::1 even with disable_ipv6=0). Sharing the
-            # host's network namespace inherits the runner's working IPv6
-            # stack, mirroring what autotools' `docker run` (default bridge
-            # + host inheritance) gets. Resolves rpc_bind --ipv6 and
-            # feature_proxy [::1] tests.
-            container_opts: "--cap-add=LINUX_IMMUTABLE --network=host"
+            # LINUX_IMMUTABLE is needed for feature_reindex_readonly.py's
+            # chattr +i. Other options were tried (IPv6 sysctls) but only
+            # --network=host (set via container_network below, not via
+            # options) actually fixes rpc_bind --ipv6 / feature_proxy [::1]:
+            # GHA's default github_network_<id> bridge has no IPv6 wired,
+            # so even with disable_ipv6=0 the namespace has no working ::1.
+            container_opts: "--cap-add=LINUX_IMMUTABLE"
+            # `network: host` on jobs.<id>.container replaces the otherwise
+            # auto-created bridge with the host's network namespace, so the
+            # container reuses the runner's IPv6 stack. Cannot be passed via
+            # container_opts because GHA appends its own --network flag and
+            # docker rejects two network modes on one container.
+            container_network: "host"
             packages: >-
               gcc-c++ glibc-devel.x86_64 libstdc++-devel.x86_64
               glibc-devel.i686 libstdc++-devel.i686
