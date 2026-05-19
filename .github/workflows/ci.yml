@@ -353,11 +353,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: i686-centos
-            label: 'CentOS Stream 9, 32-bit, dash, unit + functional tests'
-            file_env: ./ci/test/00_setup_env_i686_centos.sh
-            runner: ubuntu-24.04
-
           # Disabled: previous-releases job needs further setup before enabling.
           # - name: previous-releases
           #   label: 'Ubuntu 24.04, previous releases, depends, DEBUG'
@@ -426,6 +421,11 @@ jobs:
   linux-cmake:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
+    # container is only set for entries that supply matrix.container (e.g.
+    # i686-centos). When the field is absent the expression evaluates to an
+    # empty string which GitHub Actions treats as "no container", so all
+    # other entries keep running on the bare ubuntu runner unchanged.
+    container: ${{ matrix.container || '' }}
     # 180 min matches the autotools `linux:` job above. The fuzz matrix
     # entry (#233) regularly takes 45-70 min wall-clock between build and
     # harness run, which overruns a 60 min budget; every other matrix
@@ -788,6 +788,64 @@ jobs:
               file ./build/lib/libnaviokernel.so
               test -x ./build/bin/navio-chainstate
 
+          # Replaces the autotools `i686-centos` matrix entry.
+          # Runs inside a CentOS Stream 9 container (quay.io/centos/amd64:stream9)
+          # to preserve the distinct coverage the autotools job provided:
+          #   - older glibc than Ubuntu 24.04 noble (CentOS Stream 9 ≈ glibc 2.34)
+          #   - gcc/g++ from CentOS Stream 9 toolset instead of Ubuntu clang
+          #   - rpm/dnf package universe (different from Debian/apt)
+          # This faithfully ports the autotools job's container rather than
+          # collapsing it into an Ubuntu runner like #234 (i686-multiprocess)
+          # did, because the CentOS-glibc/gcc surface is the unique coverage
+          # value this job was set up to provide.
+          #
+          # apt → dnf package mapping:
+          #   build-essential cmake ninja-build pkgconf ccache →
+          #     gcc-c++ make cmake ninja-build pkgconf-pkg-config ccache
+          #   g++-multilib (32-bit ABI) →
+          #     glibc-devel.i686 libstdc++-devel.i686  (multilib via gcc native)
+          #   python3-zmq → pip3 install pyzmq  (no dnf package)
+          #   other tools: git which patch bison perl rsync xz
+          #                lbzip2 procps-ng (provides nproc)
+          #
+          # Autotools CONFIG_SHELL=/bin/dash forced ./configure to run under
+          # dash. CMake has no configure script, so there is no shell to
+          # override; dash is installed but plays no role in the build.
+          #
+          # Autotools NO_WERROR=1 suppressed "#warning _FORTIFY_SOURCE > 2 is
+          # treated like 2 on this platform [-Werror=cpp]" emitted by CentOS
+          # GCC during ./configure. In CMake, the FORTIFY_SOURCE probe inside
+          # TryAppendCXXFlags.cmake compiles a small test with -Werror; on
+          # CentOS GCC the #warning turns the probe into a compile error, so
+          # cxx_supports_fortify_source is set to false and _FORTIFY_SOURCE=3
+          # is silently not applied to the actual build. No explicit
+          # -Wno-error=cpp flag is needed.
+          #
+          # depends_opts: CC/CXX use -m32 to produce 32-bit objects from the
+          # host gcc/g++ (no multilib cross-compiler package needed on RHEL —
+          # the native gcc accepts -m32 when glibc-devel.i686 is present).
+          #
+          # Both unit tests and functional tests run, matching the autotools job.
+          - name: i686-centos
+            label: 'CentOS Stream 9, 32-bit, unit + functional tests (CMake)'
+            runner: ubuntu-24.04
+            container: quay.io/centos/amd64:stream9
+            packages: >-
+              gcc-c++ glibc-devel.x86_64 libstdc++-devel.x86_64
+              glibc-devel.i686 libstdc++-devel.i686
+              git which patch bison perl rsync
+              xz lbzip2 procps-ng make
+            cc: gcc
+            cxx: g++
+            depends_host: i686-pc-linux-gnu
+            depends_opts: CC='gcc -m32' CXX='g++ -m32'
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=Release
+              -DWITH_ZMQ=ON
+              -DREDUCE_EXPORTS=ON
+            run_unit_tests: true
+            run_functional_tests: true
+
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
@@ -803,13 +861,24 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          if [ -n "${{ matrix.extra_arch }}" ]; then
-            sudo dpkg --add-architecture ${{ matrix.extra_arch }}
+          if [ -n "${{ matrix.container }}" ]; then
+            # Running inside a CentOS/RHEL container: use dnf, no sudo.
+            # The container image ships Python 3 and pip; install pyzmq
+            # (needed by the functional-test runner) via pip after dnf.
+            dnf install -y \
+              cmake ninja-build pkgconf-pkg-config ccache \
+              ${{ matrix.packages }}
+            pip3 install --break-system-packages pyzmq 2>/dev/null \
+              || pip3 install pyzmq
+          else
+            if [ -n "${{ matrix.extra_arch }}" ]; then
+              sudo dpkg --add-architecture ${{ matrix.extra_arch }}
+            fi
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              build-essential cmake ninja-build pkgconf ccache \
+              ${{ matrix.packages }}
           fi
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkgconf ccache \
-            ${{ matrix.packages }}
 
       - name: Set Ccache directory
         run: echo "CCACHE_DIR=${RUNNER_TEMP}/ccache_dir" >> "$GITHUB_ENV"
