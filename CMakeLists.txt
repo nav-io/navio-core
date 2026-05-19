@@ -121,8 +121,11 @@ set(APPEND_CPPFLAGS "" CACHE STRING "Preprocessor flags appended to the command 
 set(APPEND_CFLAGS "" CACHE STRING "C compiler flags appended to the command line after all other flags.")
 set(APPEND_CXXFLAGS "" CACHE STRING "(Objective) C++ compiler flags appended to the command line after all other flags.")
 set(APPEND_LDFLAGS "" CACHE STRING "Linker flags appended to the command line after all other flags.")
+string(APPEND CMAKE_C_COMPILE_OBJECT " ${APPEND_CPPFLAGS} ${APPEND_CFLAGS}")
 string(APPEND CMAKE_CXX_COMPILE_OBJECT " ${APPEND_CPPFLAGS} ${APPEND_CXXFLAGS}")
+string(APPEND CMAKE_C_CREATE_SHARED_LIBRARY " ${APPEND_LDFLAGS}")
 string(APPEND CMAKE_CXX_CREATE_SHARED_LIBRARY " ${APPEND_LDFLAGS}")
+string(APPEND CMAKE_C_LINK_EXECUTABLE " ${APPEND_LDFLAGS}")
 string(APPEND CMAKE_CXX_LINK_EXECUTABLE " ${APPEND_LDFLAGS}")
 
 set(configure_warnings)
