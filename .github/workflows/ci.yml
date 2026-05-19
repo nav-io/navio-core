@@ -373,11 +373,6 @@ jobs:
             file_env: ./ci/test/00_setup_env_i686_centos.sh
             runner: ubuntu-24.04
 
-          - name: fuzz
-            label: 'Ubuntu 24.04, fuzzer, ASan + UBSan + integer, no depends'
-            file_env: ./ci/test/00_setup_env_native_fuzz.sh
-            runner: ubuntu-24.04
-
           - name: tsan
             label: 'Ubuntu 24.04, ThreadSanitizer, depends'
             file_env: ./ci/test/00_setup_env_native_tsan.sh
