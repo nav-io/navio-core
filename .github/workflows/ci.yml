@@ -874,6 +874,7 @@ jobs:
               cmake ninja-build pkgconf-pkg-config ccache \
               python3-pip \
               libtool automake autoconf \
+              libatomic.i686 libatomic.x86_64 \
               ${{ matrix.packages }}
             pip3 install --break-system-packages pyzmq 2>/dev/null \
               || pip3 install pyzmq
