@@ -353,11 +353,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: arm
-            label: 'Ubuntu 24.04, ARM64, unit tests only'
-            file_env: ./ci/test/00_setup_env_arm.sh
-            runner: ubuntu-24.04-arm
-
           - name: i686-centos
             label: 'CentOS Stream 9, 32-bit, dash, unit + functional tests'
             file_env: ./ci/test/00_setup_env_i686_centos.sh
@@ -587,6 +582,34 @@ jobs:
             cmake_flags: >-
               -DCMAKE_BUILD_TYPE=Release
               -DREDUCE_EXPORTS=ON
+
+          # Replaces the autotools `arm` matrix entry (00_setup_env_arm.sh).
+          # 32-bit ARM hard-float cross via depends (arm-linux-gnueabihf).
+          # Runner: ubuntu-24.04-arm (aarch64 host). No CMAKE_CROSSCOMPILING_EMULATOR
+          # needed — the Linux aarch64 kernel exposes the 32-bit ARM
+          # personality so armhf binaries run natively on the aarch64 host.
+          # -DREDUCE_EXPORTS=ON mirrors --enable-reduce-exports from BITCOIN_CONFIG.
+          # -DAPPEND_CXXFLAGS=-Wno-psabi mirrors CXXFLAGS=-Wno-psabi, silencing
+          # ABI-change notes for parameter passing that changed in GCC 7.1.
+          # busybox (USE_BUSY_BOX=true in the autotools job) was only used by
+          # ci/test/03_test_script.sh to populate PATH with busybox symlinks for
+          # functional-test helpers. Since RUN_FUNCTIONAL_TESTS=false the busybox
+          # step was never exercised, and depends/funcs.mk + depends/Makefile have
+          # zero busybox references, so no busybox install is needed here.
+          - name: arm
+            label: 'Ubuntu 24.04, ARM64 runner, 32-bit ARM cross-compile, unit tests only (CMake)'
+            runner: ubuntu-24.04-arm
+            extra_arch: armhf
+            packages: >-
+              g++-arm-linux-gnueabihf python3-zmq libc6:armhf libstdc++6:armhf
+            cc: gcc
+            cxx: g++
+            depends_host: arm-linux-gnueabihf
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=Release
+              -DREDUCE_EXPORTS=ON
+              "-DAPPEND_CXXFLAGS=-Wno-psabi"
+            run_unit_tests: true
 
           # Replaces the `no-wallet-libnaviokernel` autotools matrix entry.
           # -stdlib=libc++ is passed via CMAKE_{CXX,EXE_LINKER}_FLAGS rather
