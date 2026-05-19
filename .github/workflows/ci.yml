@@ -363,11 +363,6 @@ jobs:
             file_env: ./ci/test/00_setup_env_i686_centos.sh
             runner: ubuntu-24.04
 
-          - name: tsan
-            label: 'Ubuntu 24.04, ThreadSanitizer, depends'
-            file_env: ./ci/test/00_setup_env_native_tsan.sh
-            runner: ubuntu-24.04
-
           - name: msan
             label: 'Ubuntu 22.04, MemorySanitizer, depends'
             file_env: ./ci/test/00_setup_env_native_msan.sh
@@ -613,6 +608,62 @@ jobs:
               "-DAPPEND_CFLAGS=-ftrivial-auto-var-init=pattern"
               "-DAPPEND_CXXFLAGS=-ftrivial-auto-var-init=pattern"
             fuzz: true
+
+          # Replaces the autotools `tsan` matrix entry
+          # (ci/test/00_setup_env_native_tsan.sh).
+          #
+          # Uses depends with HOST=x86_64-pc-linux-gnu (native). Because host ==
+          # build, toolchain.cmake sets crosscompiling=FALSE and does NOT set
+          # CMAKE_SYSTEM_NAME, so CMake does not enter cross-compile mode. The
+          # toolchain still wires up the depends-installed libraries and headers.
+          #
+          # depends_opts passes CC=clang-17 (mirrors DEP_OPTS CC=clang-17) and
+          # NO_OPENMP=1 to skip building depends/libomp — OpenMP inside MCL
+          # (parallel MSM) races with libomp in ways ThreadSanitizer flags as
+          # false-positive data races; the TSan job intentionally runs
+          # single-threaded through the BLSCT crypto path.
+          #
+          # -stdlib=libc++ is passed via CMAKE_CXX_FLAGS / CMAKE_EXE_LINKER_FLAGS
+          # / CMAKE_SHARED_LINKER_FLAGS rather than through the CXX env var or
+          # depends_opts CXX because CMake strips compiler flags out of CXX
+          # during compiler detection (the same reason no-wallet-libblsct and
+          # nowallet-libnaviokernel use this pattern). Passing it through DEP_OPTS
+          # CXX would propagate it into depends package configure scripts, causing
+          # libstdc++/libc++ mixing in the bls/mcl subprojects.
+          #
+          # autotools → CMake flag mapping:
+          #   --with-sanitizers=thread → -DSANITIZERS=thread
+          #   --disable-openmp         → -DWITH_MCL_OPENMP=OFF (also NO_OPENMP=1 in
+          #                              depends_opts to skip the libomp port build)
+          #   --enable-zmq             → -DWITH_ZMQ=ON
+          #   CPPFLAGS=-DARENA_DEBUG -DDEBUG_LOCKORDER -DDEBUG_LOCKCONTENTION
+          #                            → "-DAPPEND_CPPFLAGS=-DARENA_DEBUG
+          #                               -DDEBUG_LOCKORDER -DDEBUG_LOCKCONTENTION"
+          #   CXXFLAGS=-g              → "-DAPPEND_CXXFLAGS=-g"
+          #   CXX='clang++-17 -stdlib=libc++' (DEP_OPTS)
+          #                            → -DCMAKE_CXX_FLAGS=-stdlib=libc++
+          #                               -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
+          #                               -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++
+          - name: tsan
+            label: 'Ubuntu 24.04, ThreadSanitizer, depends (CMake)'
+            runner: ubuntu-24.04
+            packages: >-
+              clang-17 llvm-17 libclang-rt-17-dev libc++abi-17-dev libc++-17-dev
+              python3-zmq
+            cc: clang-17
+            cxx: clang++-17
+            depends_host: x86_64-pc-linux-gnu
+            depends_opts: CC=clang-17 NO_OPENMP=1
+            cmake_flags: >-
+              -DSANITIZERS=thread
+              -DWITH_MCL_OPENMP=OFF
+              -DWITH_ZMQ=ON
+              "-DAPPEND_CPPFLAGS=-DARENA_DEBUG -DDEBUG_LOCKORDER -DDEBUG_LOCKCONTENTION"
+              "-DAPPEND_CXXFLAGS=-g"
+              -DCMAKE_CXX_FLAGS=-stdlib=libc++
+              -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
+              -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++
+            run_unit_tests: true
 
           - name: nowallet-libnaviokernel
             label: 'Ubuntu 22.04, no wallet, libnaviokernel (CMake)'
