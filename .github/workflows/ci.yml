@@ -1298,10 +1298,14 @@ jobs:
           key: depends-${{ env.DEPENDS_HOST }}-${{ hashFiles('depends/**') }}
 
       - name: Configure (in container)
+        # ${GITHUB_WORKSPACE} is a runner-side env var that is not set
+        # inside the container; $PWD inside the container resolves to the
+        # workspace because docker run was invoked with -w
+        # "${GITHUB_WORKSPACE}".
         run: |
           docker exec "${CONTAINER_NAME}" bash -eu -c '
             cmake -B build -G Ninja \
-              -DCMAKE_TOOLCHAIN_FILE="${GITHUB_WORKSPACE}/depends/'"${DEPENDS_HOST}"'/toolchain.cmake" \
+              -DCMAKE_TOOLCHAIN_FILE="$PWD/depends/'"${DEPENDS_HOST}"'/toolchain.cmake" \
               -DCMAKE_BUILD_TYPE=Release \
               -DWITH_ZMQ=ON \
               -DREDUCE_EXPORTS=ON
