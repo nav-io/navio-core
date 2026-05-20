@@ -1227,6 +1227,16 @@ jobs:
         #                 bind ::1.
         # --cap-add=LINUX_IMMUTABLE: feature_reindex_readonly.py runs
         #                 `chattr +i` on a block file.
+        # --tmpfs /tmp/navio_test_runner:exec: the functional test runner
+        #                 places per-test scratch dirs here. On docker's
+        #                 default overlay2 storage the immutable inode
+        #                 attribute from chattr +i is not honored across
+        #                 copy-up boundaries, so feature_reindex_readonly
+        #                 expects naviod to fail-on-write but naviod runs
+        #                 normally and the test times out. tmpfs supports
+        #                 the immutable attribute natively; size left at
+        #                 docker's default (half of total RAM) which is
+        #                 plenty for the test_runner scratch dirs.
         # Mount the workspace and ccache dir bidirectionally so depends/
         # build/ artifacts and the ccache survive across steps as if we
         # were running natively.
@@ -1235,6 +1245,7 @@ jobs:
           docker run -d --name "${CONTAINER_NAME}" \
             --network=host \
             --cap-add=LINUX_IMMUTABLE \
+            --tmpfs /tmp/navio_test_runner:exec \
             -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
             -v "${RUNNER_TEMP}/ccache_dir:${RUNNER_TEMP}/ccache_dir" \
             -w "${GITHUB_WORKSPACE}" \
