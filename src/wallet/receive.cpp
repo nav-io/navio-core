@@ -418,7 +418,24 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
     for (const CTxIn& txin : wtx.tx->vin) {
         // Transactions not sent by us: not trusted
         const CWalletTx* parent = wallet.GetWalletTxFromOutpoint(txin.prevout);
-        if (parent == nullptr) return false;
+        if (parent == nullptr) {
+            // BLSCT output-storage wallets only mirror locally-created sends
+            // into mapWallet; external receives (e.g. the funding tx that
+            // gave us this input) live solely in mapOutputs. If the spent
+            // output is one of ours and has already confirmed, there is no
+            // further ancestry to vet — treat it as a trusted input so a
+            // chain built on a confirmed receive can still be vouched for.
+            if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+                const CWalletOutput* wout = wallet.GetWalletOutput(txin.prevout);
+                if (wout && wallet.GetOutputDepthInMainChain(*wout) >= 1) {
+                    const isminetype mine = wallet.IsMine(*wout->out);
+                    if (mine == ISMINE_SPENDABLE || mine == ISMINE_SPENDABLE_BLSCT) {
+                        continue;
+                    }
+                }
+            }
+            return false;
+        }
         CTxOut parentOut;
         for (auto& it : parent->tx->vout) {
             if (it.GetHash() == txin.prevout.hash) {

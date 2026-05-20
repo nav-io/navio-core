@@ -1119,31 +1119,39 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
     }
 
     if (!fInsertedNew) {
-        if (TxStateString(wout.m_state) != TxStateString(state)) {
+        // out==nullptr means the caller is only updating spend state for
+        // an existing output (the vin path of AddToWalletIfInvolvingMe).
+        // The receive-state of the underlying output must be left alone —
+        // overwriting it with the spending tx's state would, e.g., demote
+        // a confirmed UTXO to "InMempool" when its child enters the
+        // mempool, breaking depth-based trust checks downstream.
+        if (out != nullptr && TxStateString(wout.m_state) != TxStateString(state)) {
             wout.m_state = state;
             fUpdated = true;
-        } else {
-            assert(TxStateSerializedIndex<TxState>(wout.m_state) == TxStateSerializedIndex<TxState>(state));
-            assert(TxStateSerializedBlockHash<TxState>(wout.m_state) == TxStateSerializedBlockHash<TxState>(state));
         }
 
         if (TxStateString(state_spent) != TxStateString(wout.m_state_spent)) {
             wout.m_state_spent = state_spent;
             fUpdated = true;
-        } else {
-            assert(TxStateSerializedIndex<SyncTxState>(state_spent) == TxStateSerializedIndex<SyncTxState>(wout.m_state_spent));
-            assert(TxStateSerializedBlockHash<SyncTxState>(state_spent) == TxStateSerializedBlockHash<SyncTxState>(wout.m_state_spent));
         }
 
         if (fCoinbase != wout.fCoinbase) {
             wout.fCoinbase = fCoinbase;
             fUpdated = true;
-        } else {
-            assert(fCoinbase == wout.fCoinbase);
         }
     }
 
-    if (rescanning_old_block || fInsertedNew) {
+    // Skip recovery/strip when re-encountering a BLSCT output we already
+    // processed: wout.out has been stripped of its range proof, so the
+    // HasBLSCTRangeProof() check below fails and the else branch would set
+    // wout.blsctRecoveryData.amount = wout.out->nValue (0 for a stripped
+    // BLSCT output), clobbering the cached amount loaded from disk during
+    // rescans. The amount, gamma and outputHash were persisted on the
+    // initial insertion path and reloaded from disk; nothing here needs to
+    // refresh them.
+    const bool skip_recovery_for_stripped_blsct =
+        !fInsertedNew && wout.fBLSCTOutput && !wout.out->HasBLSCTRangeProof();
+    if ((rescanning_old_block || fInsertedNew) && !skip_recovery_for_stripped_blsct) {
         if (wout.out->HasBLSCTRangeProof()) {
             wout.fBLSCTOutput = true;
             wout.fStakedCommitment = wout.out->IsStakedCommitment();
@@ -1463,6 +1471,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
 
         if (tx.IsBLSCT() && IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
             TxState tx_state = std::visit([](auto&& s) -> TxState { return s; }, state);
+            auto blsct_man = GetBLSCTKeyMan();
 
             // If we happen to have a CWalletTx for this tx (locally-created
             // sends live in both mapWallet and mapOutputs), keep its state in
@@ -1482,6 +1491,13 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
 
                 bool fExisted = mapOutputs.contains(outpoint);
                 if (fExisted && !fUpdate) return false;
+                if (blsct_man) {
+                    const auto learned_dest = blsct_man->MarkUnusedSubAddress(txout);
+                    if (learned_dest && learned_dest->internal.has_value() && !learned_dest->internal.value() &&
+                        !FindAddressBookEntry(learned_dest->dest, /* allow_change= */ false)) {
+                        SetAddressBook(learned_dest->dest, "", AddressPurpose::RECEIVE);
+                    }
+                }
                 if (fExisted || IsMine(txout)) {
                     CWalletOutput* wout = AddToWallet(
                         outpoint,
@@ -1533,7 +1549,18 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
         bool fExisted = mapWallet.contains(tx.GetHash());
         if (fExisted && !fUpdate) return false;
 
-        if (fExisted || IsMine(tx) || IsFromMe(tx)) {
+        std::vector<wallet::WalletDestination> blsct_destinations;
+        if (tx.IsBLSCT()) {
+            if (auto blsct_man = GetBLSCTKeyMan()) {
+                for (const CTxOut& txout : tx.vout) {
+                    if (const auto learned_dest = blsct_man->MarkUnusedSubAddress(txout)) {
+                        blsct_destinations.push_back(*learned_dest);
+                    }
+                }
+            }
+        }
+
+        if (fExisted || IsMine(tx) || IsFromMe(tx) || !blsct_destinations.empty()) {
             /* Check if any keys in the wallet keypool that were supposed to be unused
              * have appeared in a new transaction. If so, remove those keys from the keypool.
              * This can happen when restoring an old wallet backup that does not contain
@@ -1559,6 +1586,12 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                             SetAddressBook(dest.dest, "", AddressPurpose::RECEIVE);
                         }
                     }
+                }
+            }
+            for (const auto& dest : blsct_destinations) {
+                if (!dest.internal.has_value() || dest.internal.value()) continue;
+                if (!FindAddressBookEntry(dest.dest, /* allow_change= */ false)) {
+                    SetAddressBook(dest.dest, "", AddressPurpose::RECEIVE);
                 }
             }
 
@@ -2682,6 +2715,31 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
             spent_output.m_state_spent = TxStateInMempool{};
             if (!batch.WriteOutput(txin.prevout, spent_output)) {
                 throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to update spent BLSCT output state");
+            }
+        }
+
+        // Synchronously mirror our own outputs into mapOutputs. The
+        // transactionAddedToMempool callback will eventually do this via
+        // AddToWalletIfInvolvingMe, but it runs on the scheduler thread —
+        // a follow-up sendtoblsctaddress that fires before the scheduler
+        // catches up would otherwise see no spendable change and fail with
+        // "Not enough funds available", breaking chains of unconfirmed sends.
+        for (size_t i = 0; i < tx->vout.size(); ++i) {
+            const CTxOut& txout = tx->vout[i];
+            COutPoint outpoint(txout.GetHash());
+            if (mapOutputs.contains(outpoint)) continue;
+            if (IsMine(txout) == ISMINE_NO) continue;
+            CWalletOutput* wout = AddToWallet(
+                outpoint,
+                MakeOutputRef<CTxOut>(CTxOut(txout)),
+                TxStateInMempool{},
+                /*update_wout=*/nullptr,
+                /*fFlushOnClose=*/true,
+                /*rescanning_old_block=*/false,
+                /*state_spent=*/TxStateInactive{},
+                /*fCoinbase=*/tx->IsCoinBase());
+            if (!wout) {
+                throw std::runtime_error(std::string(__func__) + ": failed to mirror locally-created BLSCT output");
             }
         }
     }

@@ -1203,6 +1203,107 @@ util::Result<CTxDestination> KeyMan::GetNewDestination(const int64_t& account)
     return CTxDestination(GetSubAddress(id).GetKeys());
 }
 
+std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout)
+{
+    try {
+        // Cheap prefilter: viewTag must match before we do any expensive work.
+        // Without this, every non-wallet BLSCT output forces the
+        // 3 × keypool × full subaddress derivation scan below, which dominates
+        // rescan cost (millions of BLS scalar multiplications per chain).
+        if (!fViewKeyDefined || !viewKey.IsValid()) return std::nullopt;
+        if (!txout.HasBLSCTKeys()) return std::nullopt;
+        if (txout.blsctData.blindingKey.IsZero()) return std::nullopt;
+        if (txout.blsctData.viewTag != CalculateViewTag(
+                txout.blsctData.blindingKey, viewKey.GetScalar())) {
+            return std::nullopt;
+        }
+
+        const CKeyID hash_id = GetHashId(txout);
+        if (hash_id.IsNull()) return std::nullopt;
+
+        std::optional<SubAddressIdentifier> matched_id;
+        bool was_unused_pool_key = false;
+        bool learned_beyond_lookahead = false;
+
+        {
+            LOCK(cs_KeyStore);
+
+            const auto known_it = mapSubAddresses.find(hash_id);
+            if (known_it != mapSubAddresses.end()) {
+                matched_id = known_it->second;
+                if (const auto pool_it = setSubAddressPool.find(matched_id->account);
+                    pool_it != setSubAddressPool.end()) {
+                    was_unused_pool_key = pool_it->second.contains(matched_id->address);
+                }
+            } else {
+                const uint64_t lookahead = std::max<int64_t>(m_keypool_size, int64_t{1});
+                for (const int64_t account : {int64_t{0}, CHANGE_ACCOUNT, STAKING_ACCOUNT}) {
+                    const uint64_t start = m_hd_chain.nSubAddressCounter.contains(account)
+                        ? m_hd_chain.nSubAddressCounter.at(account)
+                        : 0;
+                    for (uint64_t index = start; index < start + lookahead; ++index) {
+                        if (GetSubAddress({account, index}).GetKeys().GetID() != hash_id) continue;
+                        matched_id = SubAddressIdentifier{account, index};
+                        learned_beyond_lookahead = true;
+                        break;
+                    }
+                    if (matched_id) break;
+                }
+            }
+        }
+
+        if (!matched_id) return std::nullopt;
+
+        if (learned_beyond_lookahead) {
+            WalletLogPrintf("%s: learned BLSCT subaddress %d/%d beyond current lookahead\n",
+                            __func__,
+                            matched_id->account,
+                            matched_id->address);
+            for (;;) {
+                SubAddressIdentifier generated_id;
+                GenerateNewSubAddress(matched_id->account, generated_id);
+                if (generated_id.account == matched_id->account && generated_id.address >= matched_id->address) {
+                    break;
+                }
+            }
+        }
+
+        if (was_unused_pool_key) {
+            {
+                LOCK(cs_KeyStore);
+                wallet::WalletBatch batch(m_storage.GetDatabase());
+                auto& pool = setSubAddressPool[matched_id->account];
+                for (auto it = pool.begin(); it != pool.end() && *it <= matched_id->address;) {
+                    batch.EraseSubAddressPool({matched_id->account, *it});
+                    if (auto reserve_it = setSubAddressReservePool.find(matched_id->account);
+                        reserve_it != setSubAddressReservePool.end()) {
+                        reserve_it->second.erase(*it);
+                    }
+                    it = pool.erase(it);
+                }
+            }
+            WalletLogPrintf("%s: detected used BLSCT keypool entry %d/%d, topping up lookahead\n",
+                            __func__,
+                            matched_id->account,
+                            matched_id->address);
+        }
+
+        if ((learned_beyond_lookahead || was_unused_pool_key) && !TopUpAccount(matched_id->account)) {
+            WalletLogPrintf("%s: topping up BLSCT account %d failed (wallet likely locked)\n",
+                            __func__,
+                            matched_id->account);
+        }
+
+        return wallet::WalletDestination{
+            CTxDestination(GetSubAddress(*matched_id).GetKeys()),
+            matched_id->account != 0,
+        };
+    } catch (const std::exception& e) {
+        WalletLogPrintf("%s: failed to mark BLSCT subaddress as used: %s\n", __func__, e.what());
+        return std::nullopt;
+    }
+}
+
 bool KeyMan::OutputIsChange(const CTxOut& out) const
 {
     auto id = GetHashId(out);

@@ -68,6 +68,20 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
                 + Decimal(str(bal.get("staked_commitment_balance", 0)))
                 + Decimal(str(bal.get("pending_staked_commitment_balance", 0))))
 
+    def assert_address_has_confirmed_amount(self, wallet, address, amount):
+        unspent = wallet.listblsctunspent(1, 9999999, [address])
+        assert_equal(len(unspent), 1)
+        assert_equal(Decimal(str(unspent[0]["amount"])), amount)
+
+        mine = wallet.getbalanceforaddress(address)["mine"]
+        assert_equal(Decimal(str(mine["trusted"])), amount)
+        assert_equal(Decimal(str(mine["untrusted_pending"])), Decimal("0"))
+        assert_equal(Decimal(str(mine["immature"])), Decimal("0"))
+
+        # Keep the just-verified self-receive output out of later coin
+        # selection so the test can verify each address independently.
+        wallet.lockunspent(False, [{"outid": unspent[0]["outid"]}])
+
     def assert_listtx_matches_balance(self, wallet, scenario):
         total = self.wallet_total(wallet)
         delta = self.sum_listtx_deltas(wallet)
@@ -97,6 +111,7 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
         self.test_chain_unconfirmed_then_confirm()
         self.test_external_mempool_receive_is_unsafe()
         self.test_reorg_restores_consistency()
+        self.test_self_sends_survive_reload_after_stakelock()
 
     def test_chain_unconfirmed_self_sends(self):
         """Send, then send again from the unconfirmed change, without mining."""
@@ -150,10 +165,14 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
         skew in BLSCT accounting that is outside the scope of this change,
         so we only assert the liveness invariant here."""
         self.log.info("=== Confirm the mempool chain ===")
-        self.generate_blsct_blocks(self.nodes[0], self.addr0, 1)
-        self.sync_all()
+        # BLSCT block assembly only includes one tx per chain (children with
+        # mempool parents are skipped), so a chain of N requires N blocks.
+        for _ in range(self.pending_tx_count(self.w0) + 2):
+            self.generate_blsct_blocks(self.nodes[0], self.addr0, 1)
+            self.sync_all()
+            if len(self.nodes[0].getrawmempool()) == 0:
+                break
         assert_greater_than(self.wallet_total(self.w0), Decimal("0"))
-        # Node mempool must be drained (the chain of txs landed in the block).
         assert_equal(len(self.nodes[0].getrawmempool()), 0)
 
     def test_external_mempool_receive_is_unsafe(self):
@@ -217,6 +236,69 @@ class BlsctUnconfirmedSpendingTest(BitcoinTestFramework):
         new_tip = self.generate_blsct_blocks(self.nodes[0], self.addr0, 2)[-1]
         assert_equal(self.nodes[0].getbestblockhash(), new_tip)
         assert_greater_than(self.wallet_total(self.w0), Decimal("0"))
+
+    def test_self_sends_survive_reload_after_stakelock(self):
+        """A loaded output-storage wallet must still recognize fresh BLSCT
+        self-send destinations after a stakelock-heavy balance transition."""
+        self.log.info("=== Self-sends survive wallet reload after stakelock ===")
+
+        wallet_name = "reload_w"
+        self.nodes[0].createwallet(
+            wallet_name=wallet_name,
+            blsct=True,
+            storage_output=True,
+            load_on_startup=True,
+        )
+        reload_w = self.nodes[0].get_wallet_rpc(wallet_name)
+        reload_addr = reload_w.getnewaddress(label="", address_type="blsct")
+
+        # Fund reload_w with a single big UTXO from w0 (which holds the
+        # blsctregtest genesis premine). Coinbase-only mining on this chain
+        # only mints 4 NAV per block, so funding via direct mining would
+        # need >1000 blocks to cover a meaningful stake.
+        stake_amount = Decimal("4000")
+        funding_amount = stake_amount + Decimal("500")
+        self.log.info(f"Funding reload_w with {funding_amount} NAV from w0")
+        self.w0.sendtoblsctaddress(reload_addr, funding_amount)
+        # Confirm the funding and mature it: stakelock pulls from coinbase-
+        # safe UTXOs, but the immediate child of a fresh coinbase suffices
+        # once it has any depth, so one extra block is enough.
+        self.generate_blsct_blocks(self.nodes[0], reload_addr, 1)
+        self.sync_all()
+
+        trusted_before_stake = Decimal(str(reload_w.getbalances()["mine"]["trusted"]))
+        assert_greater_than(trusted_before_stake, stake_amount + Decimal("200"))
+
+        reload_w.stakelock(stake_amount)
+        self.generate_blsct_blocks(self.nodes[0], reload_addr, 1)
+
+        self.log.info("Reloading wallet before issuing self-sends")
+        self.nodes[0].unloadwallet(wallet_name)
+        self.nodes[0].loadwallet(wallet_name)
+        reload_w = self.nodes[0].get_wallet_rpc(wallet_name)
+
+        send_plan = [
+            Decimal("10"),
+            Decimal("10"),
+            Decimal("50"),
+            Decimal("75"),
+            Decimal("5"),
+        ]
+        self_addrs = []
+
+        for amount in send_plan:
+            dest = reload_w.getnewaddress(label="", address_type="blsct")
+            self_addrs.append((dest, amount))
+            reload_w.sendtoblsctaddress(dest, amount)
+            self.generate_blsct_blocks(self.nodes[0], reload_addr, 1)
+            self.assert_address_has_confirmed_amount(reload_w, dest, amount)
+
+        self.log.info("Restarting node and verifying every self-send output persists")
+        self.restart_node(0)
+        reload_w = self.nodes[0].get_wallet_rpc(wallet_name)
+
+        for dest, amount in self_addrs:
+            self.assert_address_has_confirmed_amount(reload_w, dest, amount)
 
 
 if __name__ == '__main__':

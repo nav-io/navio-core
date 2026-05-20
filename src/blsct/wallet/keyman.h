@@ -254,6 +254,7 @@ public:
     bool NewSubAddressPool(const int64_t& account = 0);
     bool TopUp(const unsigned int& size = 0);
     bool TopUpAccount(const int64_t& account, const unsigned int& size = 0);
+    std::optional<wallet::WalletDestination> MarkUnusedSubAddress(const CTxOut& txout);
     void ReserveSubAddressFromPool(const int64_t& account, int64_t& nIndex, SubAddressPool& keypool);
     void KeepSubAddress(const SubAddressIdentifier& id);
     void ReturnSubAddress(const SubAddressIdentifier& id);
