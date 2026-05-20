@@ -139,7 +139,9 @@ else()
       # CMAKE_C_FLAGS is intentionally NOT merged: depends toolchains can
       # set -std=c11 in CMAKE_C_FLAGS, which clang++ rejects when the same
       # string is reused for .cpp compilation.
-      "CFLAGS_USER=${CMAKE_CXX_FLAGS}"
+      # APPEND_CFLAGS is included so sanitizer flags like
+      # -fsanitize-blacklist= reach the mcl/bls sub-builds, not just navio.
+      "CFLAGS_USER=${CMAKE_CXX_FLAGS} ${APPEND_CFLAGS}"
       "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}"
       -C ${MCL_SRC_DIR}
       lib/libmcl.a
@@ -174,7 +176,9 @@ else()
       # CMAKE_C_FLAGS is intentionally NOT merged: depends toolchains can
       # set -std=c11 in CMAKE_C_FLAGS, which clang++ rejects when the same
       # string is reused for .cpp compilation.
-      "CFLAGS_USER=${CMAKE_CXX_FLAGS}"
+      # APPEND_CFLAGS is included so sanitizer flags like
+      # -fsanitize-blacklist= reach the mcl/bls sub-builds, not just navio.
+      "CFLAGS_USER=${CMAKE_CXX_FLAGS} ${APPEND_CFLAGS}"
       "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}"
       -C ${BLS_SRC_DIR}
       lib/libbls384_256.a

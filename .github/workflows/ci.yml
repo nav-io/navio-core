@@ -358,11 +358,6 @@ jobs:
             file_env: ./ci/test/00_setup_env_i686_centos.sh
             runner: ubuntu-24.04
 
-          - name: msan
-            label: 'Ubuntu 22.04, MemorySanitizer, depends'
-            file_env: ./ci/test/00_setup_env_native_msan.sh
-            runner: ubuntu-24.04
-
           # Disabled: previous-releases job needs further setup before enabling.
           # - name: previous-releases
           #   label: 'Ubuntu 24.04, previous releases, depends, DEBUG'
@@ -686,6 +681,81 @@ jobs:
               -DCMAKE_CXX_FLAGS=-stdlib=libc++
               -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
               -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++
+
+          # Replaces the autotools `msan` matrix entry (removed from linux: above).
+          # MSan requires that *every* memory operation — including the C++ standard
+          # library — is instrumented. System libc++ is not instrumented, so we build
+          # libc++/libc++abi from LLVM 17.0.2 source with -fsanitize=memory,origins
+          # first, install to /msan/cxx_build/, then compile navio against it.
+          # This mirrors ci/test/01_base_install.sh USE_MEMORY_SANITIZER block.
+          #
+          # Flag mapping from BITCOIN_CONFIG / MSAN_FLAGS:
+          #   --with-sanitizers=memory  → -DSANITIZERS=memory (adds -fsanitize=memory
+          #                               to compile and link via sanitize_interface)
+          #   --disable-hardening       → no flag (CMake build has no hardening by
+          #                               default; ENABLE_HARDENING option does not
+          #                               exist — confirmed in CMakeLists.txt)
+          #   --disable-openmp          → -DWITH_MCL_OPENMP=OFF (cmake/bls.cmake)
+          #   --with-asm=no             → -DUSE_ASM=OFF (CMakeLists.txt line 118)
+          #   MSAN_FLAGS extra bits      → APPEND_CFLAGS + EXTRA_CMAKE_FLAGS (blacklist)
+          #   MSAN_AND_LIBCXX_FLAGS     → CMAKE_CXX_FLAGS + linker flags
+          #
+          # The -fsanitize-blacklist= flag needs an absolute source-tree path.
+          # It cannot be embedded in the static cmake_flags matrix field because
+          # GHA does not re-evaluate context expressions inside matrix values.
+          # Instead a gated "Set MSan blacklist flag" step writes the flag into
+          # EXTRA_CMAKE_FLAGS (read by the Configure step below).
+          #
+          # Inlined-chain suppression note: if CI reports use-of-uninitialized-value
+          # in an inlined function where the fun: glob does not match (e.g. inlined
+          # gmp/blsct helpers), add src: patterns to test/sanitizer_suppressions/msan
+          # — see session memory "MSan suppression for inlined chains". Do not widen
+          # suppressions pre-emptively; flag as known issue first.
+          - name: msan
+            label: 'Ubuntu 24.04, MemorySanitizer, depends (CMake)'
+            runner: ubuntu-24.04
+            packages: >-
+              clang-17 llvm-17 libclang-rt-17-dev libc++abi-dev libc++-dev
+              ninja-build python3
+            cc: clang-17
+            cxx: clang++-17
+            # depends builds boost/libevent/gmp/sqlite3 against the instrumented
+            # libc++ so every memory operation through them is tracked by MSan.
+            # DEP_OPTS mirrors the autotools DEP_OPTS / MSAN_AND_LIBCXX_FLAGS set
+            # in ci/test/00_setup_env_native_msan.sh. NO_OPENMP=1 matches
+            # --disable-openmp. The -stdlib=libc++ on CXX routes depends'
+            # C++ sources to the instrumented libc++ at /msan/cxx_build/.
+            depends_host: x86_64-pc-linux-gnu
+            depends_opts: >-
+              CC=clang-17
+              "CXX=clang++-17 -stdlib=libc++"
+              "CFLAGS=-fsanitize=memory -fsanitize-memory-track-origins=2
+              -fno-omit-frame-pointer -g -O1 -fno-optimize-sibling-calls"
+              "CXXFLAGS=-fsanitize=memory -fsanitize-memory-track-origins=2
+              -fno-omit-frame-pointer -g -O1 -fno-optimize-sibling-calls
+              -nostdinc++ -nostdlib++
+              -isystem /msan/cxx_build/include/c++/v1
+              -L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib
+              -lc++ -lc++abi -lpthread
+              -Wno-unused-command-line-argument"
+              NO_OPENMP=1
+            # MSAN_AND_LIBCXX_FLAGS C++ side: full set passed to cmake so the
+            # instrumented libc++ headers + rpath reach both compile and link lines.
+            # APPEND_CFLAGS carries the non-sanitize extra MSan bits for C sources;
+            # -fsanitize=memory itself comes via -DSANITIZERS=memory. The blacklist
+            # path is appended by EXTRA_CMAKE_FLAGS (set in the gated step below).
+            # APPEND_CFLAGS is supplied by the "Set MSan blacklist flag" step via a
+            # cmake initial-cache file so the blacklist path can be an absolute
+            # workspace path (not embeddable in a static matrix scalar field).
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=None
+              -DSANITIZERS=memory
+              -DUSE_ASM=OFF
+              -DWITH_MCL_OPENMP=OFF
+              "-DCMAKE_CXX_FLAGS=-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -g -O1 -fno-optimize-sibling-calls -nostdinc++ -nostdlib++ -isystem /msan/cxx_build/include/c++/v1 -L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib -lc++ -lc++abi -lpthread -Wno-unused-command-line-argument"
+              "-DCMAKE_EXE_LINKER_FLAGS=-L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib -lc++ -lc++abi -fsanitize=memory"
+              "-DCMAKE_SHARED_LINKER_FLAGS=-L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib -lc++ -lc++abi -fsanitize=memory"
+            msan: true
             run_unit_tests: true
 
           - name: nowallet-libnaviokernel
@@ -752,6 +822,79 @@ jobs:
           key: ${{ github.job }}-${{ matrix.name }}-ccache-${{ github.run_id }}
           restore-keys: ${{ github.job }}-${{ matrix.name }}-ccache-
 
+      # MSan requires libc++/libc++abi instrumented with -fsanitize=memory so that
+      # every memory operation in the C++ standard library is tracked. System libc++
+      # is not instrumented. We build from LLVM 17.0.2 source (matching the autotools
+      # ci/test/01_base_install.sh USE_MEMORY_SANITIZER block) and cache the result
+      # keyed on the LLVM tag so the multi-minute build only happens on cache miss.
+      - name: Restore MSan libc++ cache
+        if: ${{ matrix.msan }}
+        id: msan-libcxx-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: /msan
+          key: msan-libcxx-llvmorg-17.0.2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Build instrumented libc++
+        if: ${{ matrix.msan && steps.msan-libcxx-cache.outputs.cache-hit != 'true' }}
+        run: |
+          sudo mkdir -p /msan && sudo chown "$USER:$USER" /msan
+          git clone --depth=1 -b llvmorg-17.0.2 \
+            https://github.com/llvm/llvm-project /msan/llvm-project
+          cmake -G Ninja -B /msan/cxx_build \
+            -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_USE_SANITIZER=MemoryWithOrigins \
+            -DCMAKE_C_COMPILER=clang-17 \
+            -DCMAKE_CXX_COMPILER=clang++-17 \
+            -DLLVM_TARGETS_TO_BUILD=Native \
+            -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF \
+            -DLIBCXX_HARDENING_MODE=debug \
+            -S /msan/llvm-project/runtimes
+          ninja -C /msan/cxx_build -j"$(nproc)"
+          # Remove the source tree post-build so the cache only carries the install.
+          rm -rf /msan/llvm-project
+
+      - name: Save MSan libc++ cache
+        if: ${{ matrix.msan && steps.msan-libcxx-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: /msan
+          key: msan-libcxx-llvmorg-17.0.2-${{ runner.os }}-${{ runner.arch }}
+
+      # Write an absolute-path APPEND_CFLAGS override into a cmake initial-cache
+      # file. The static cmake_flags field cannot embed ${{ github.workspace }}
+      # because GHA does not re-evaluate context expressions inside matrix scalars.
+      # The Configure step passes -C /tmp/msan-cmake-init.cmake when the file exists.
+      - name: Set MSan blacklist flag
+        if: ${{ matrix.msan }}
+        run: |
+          # CMake initial-cache syntax: set(VAR "value" CACHE TYPE "" FORCE)
+          # APPEND_C/CXXFLAGS must be STRING so cmake --build inherits them.
+          # The blacklist flag MUST reach C++ compiles too: src/blsct/ code
+          # instantiates MclG1Point/MclScalar etc, which the fun:*mcl*
+          # pattern in test/sanitizer_suppressions/msan keeps uninstrumented.
+          # Without it on C++ compile, those calls remain instrumented and
+          # the uninit shadow leaks out of mcl, surfacing as a false-positive
+          # uint256 compare in SigNetParams::SigNetParams (chainparams.cpp).
+          #
+          # The hardening overrides at the tail (-U_FORTIFY_SOURCE,
+          # -fno-stack-protector, -fcf-protection=none, -fno-stack-clash-
+          # protection) cancel the unconditional hardening block in navio's
+          # root CMakeLists.txt (around line 424). Autotools msan uses
+          # --disable-hardening for the same reason: _FORTIFY_SOURCE wraps
+          # libc calls in fortified inlines that don't always preserve
+          # MSan's shadow propagation, and stack-protector canaries plus
+          # cf-protection add code that surfaces MSan false-positives in
+          # the prevector allocation path under -O1.
+          BLACKLIST="${GITHUB_WORKSPACE}/test/sanitizer_suppressions/msan"
+          MSAN_EXTRA="-fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -g -O1 -fno-optimize-sibling-calls -fsanitize-blacklist=${BLACKLIST}"
+          HARDEN_OFF="-U_FORTIFY_SOURCE -fno-stack-protector -fcf-protection=none -fno-stack-clash-protection"
+          cat > /tmp/msan-cmake-init.cmake <<EOF
+          set(APPEND_CFLAGS "${MSAN_EXTRA} ${HARDEN_OFF}" CACHE STRING "" FORCE)
+          set(APPEND_CXXFLAGS "${MSAN_EXTRA} ${HARDEN_OFF}" CACHE STRING "" FORCE)
+          EOF
+
       - name: Switch mingw to posix threads
         if: ${{ matrix.depends_host == 'x86_64-w64-mingw32' }}
         run: |
@@ -809,7 +952,14 @@ jobs:
           if [ -n "${{ matrix.depends_host }}" ]; then
             toolchain_arg="-DCMAKE_TOOLCHAIN_FILE=$PWD/depends/${{ matrix.depends_host }}/toolchain.cmake"
           fi
-          cmake -B build -G Ninja $toolchain_arg ${{ matrix.cmake_flags }}
+          # -C passes a cmake initial-cache file; used by msan to inject the
+          # absolute-path -fsanitize-blacklist= flag (see "Set MSan blacklist flag").
+          init_cache_arg=""
+          if [ -f /tmp/msan-cmake-init.cmake ]; then
+            init_cache_arg="-C /tmp/msan-cmake-init.cmake"
+          fi
+          # shellcheck disable=SC2086
+          cmake -B build -G Ninja $toolchain_arg $init_cache_arg ${{ matrix.cmake_flags }}
 
       - name: Build
         run: cmake --build build
