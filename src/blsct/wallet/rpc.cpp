@@ -38,7 +38,8 @@ CScript BuildHTLCScript(
     const std::vector<unsigned char>& hash_bytes,
     const std::vector<unsigned char>& spendingKeyA,
     const std::vector<unsigned char>& spendingKeyB,
-    int64_t locktime)
+    int64_t locktime,
+    opcodetype timelock_opcode)
 {
     CScript script;
     script << OP_IF
@@ -47,7 +48,7 @@ CScript BuildHTLCScript(
            << spendingKeyA
            << OP_ELSE
            << locktime
-           << OP_CHECKLOCKTIMEVERIFY << OP_DROP
+           << timelock_opcode << OP_DROP
            << spendingKeyB
            << OP_ENDIF
            << OP_BLSCHECKSIG;
@@ -1689,6 +1690,7 @@ RPCHelpMan createblsctrawtransaction()
                             {"nonce", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The nonce for this output (hex string)"},
                             {"hash", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "32-byte hash (hex) for atomic_swap outputs"},
                             {"locktime", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Locktime (block height or timestamp) for atomic_swap refund branch"},
+                            {"timelock_opcode", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Timelock opcode for atomic_swap refund branch: \"cltv\" (default) or \"csv\""},
                             {"blinding_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Optional 32-byte blinding key to deterministically derive atomic_swap spending keys"},
                         },
                     },
@@ -1959,6 +1961,18 @@ RPCHelpMan createblsctrawtransaction()
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Locktime must be between 0 and 4294967295");
                     }
 
+                    opcodetype timelock_opcode = OP_CHECKLOCKTIMEVERIFY;
+                    if (o.exists("timelock_opcode")) {
+                        const std::string timelock_opcode_str = o["timelock_opcode"].get_str();
+                        if (timelock_opcode_str == "cltv") {
+                            timelock_opcode = OP_CHECKLOCKTIMEVERIFY;
+                        } else if (timelock_opcode_str == "csv") {
+                            timelock_opcode = OP_CHECKSEQUENCEVERIFY;
+                        } else {
+                            throw JSONRPCError(RPC_INVALID_PARAMETER, "timelock_opcode must be \"cltv\" or \"csv\"");
+                        }
+                    }
+
                     if (o.exists("script") && !o["script"].get_str().empty()) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Custom script is not allowed when type is atomic_swap");
                     }
@@ -1973,7 +1987,7 @@ RPCHelpMan createblsctrawtransaction()
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to derive valid spending keys for atomic_swap output");
                     }
 
-                    CScript script = blsct::BuildHTLCScript(hash_bytes, spendingKeyABytes, spendingKeyBBytes, locktime);
+                    CScript script = blsct::BuildHTLCScript(hash_bytes, spendingKeyABytes, spendingKeyBBytes, locktime, timelock_opcode);
 
                     unsigned_output = CreateOutput(std::make_pair(address_a, script), nAmount, memo, token_id, blindingKey, type, 0);
 
