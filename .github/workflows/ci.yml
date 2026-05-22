@@ -344,73 +344,11 @@ jobs:
           --combinedlogslen=99999999
           --timeout-factor=$env:TEST_RUNNER_TIMEOUT_FACTOR
           $env:TEST_RUNNER_EXTRA --exclude mempool_limit
-  linux:
-    name: ${{ matrix.label }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Disabled: previous-releases job needs further setup before enabling.
-          # - name: previous-releases
-          #   label: 'Ubuntu 24.04, previous releases, depends, DEBUG'
-          #   file_env: ./ci/test/00_setup_env_native_previous_releases.sh
-          #   runner: ubuntu-24.04
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-
-      - name: Enable IPv6 in Docker daemon
-        run: |
-          echo '{"ipv6":true,"fixed-cidr-v6":"fd00::/80"}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
-
-      - name: Set MAKEJOBS
-        run: echo "MAKEJOBS=-j$(nproc)" >> "$GITHUB_ENV"
-
-      - name: Restore cache
-        uses: actions/cache/restore@v5
-        with:
-          path: /tmp/ci-cache/${{ matrix.name }}
-          # Narrow the depends hash to the files that actually drive a
-          # rebuild: package recipes, the framework Makefile/funcs.mk,
-          # builders/hosts/patches. Editing depends/README.md or any
-          # uninstalled/staging .stamp would otherwise invalidate every
-          # triplet cache for every job. See issue #217.
-          key:
-            ci-${{ matrix.name }}-${{ hashFiles('depends/Makefile',
-            'depends/funcs.mk', 'depends/packages/**',
-            'depends/builders/**', 'depends/hosts/**',
-            'depends/patches/**') }}-${{ github.sha }}
-          restore-keys: |
-            ci-${{ matrix.name }}-${{ hashFiles('depends/Makefile',
-            'depends/funcs.mk', 'depends/packages/**',
-            'depends/builders/**', 'depends/hosts/**',
-            'depends/patches/**') }}-
-            ci-${{ matrix.name }}-
-
-      - name: Run CI
-        env:
-          FILE_ENV: ${{ matrix.file_env }}
-          CI_HOST_CACHE_DIR: /tmp/ci-cache/${{ matrix.name }}
-        run: ./ci/test_run_all.sh
-
-      - name: Save cache
-        if: always()
-        uses: actions/cache/save@v5
-        with:
-          path: /tmp/ci-cache/${{ matrix.name }}
-          # Same narrowed key as Restore cache above; see comment there.
-          key:
-            ci-${{ matrix.name }}-${{ hashFiles('depends/Makefile',
-            'depends/funcs.mk', 'depends/packages/**',
-            'depends/builders/**', 'depends/hosts/**',
-            'depends/patches/**') }}-${{ github.sha }}
+  # Autotools `linux:` matrix job removed: with arm/tsan/msan/i686-centos
+  # all migrated to CMake (#250, #251, #252, #253), no autotools matrix
+  # entries remain. The `previous-releases` stub was commented out and
+  # never enabled. Restore from git history if a non-CMake linux scenario
+  # ever needs to come back.
 
   # CMake-driven matrix. Mirrors the structure of the autotools `linux:` matrix
   # so scenarios can be added by appending one entry. Each entry supplies its
