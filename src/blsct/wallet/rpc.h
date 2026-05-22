@@ -20,7 +20,8 @@ CScript BuildHTLCScript(
     const std::vector<unsigned char>& hash_bytes,
     const std::vector<unsigned char>& spendingKeyA,
     const std::vector<unsigned char>& spendingKeyB,
-    int64_t locktime);
+    int64_t locktime,
+    opcodetype timelock_opcode = OP_CHECKLOCKTIMEVERIFY);
 }
 
 class CRPCCommand;

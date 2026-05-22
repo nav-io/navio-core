@@ -294,10 +294,12 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         self.test_sequence_final_cltv_fails(wallet1, wallet2, address1, address2)
         self.test_reserved_sequence_bits(wallet1, wallet2, address1, address2)
         self.test_height_time_mode_mismatch(wallet1, wallet2, address1, address2)
+        self.test_atomic_swap_timelock_opcode_selection(wallet1, address1, address2)
         self.test_importblsctscript(wallet1, wallet2, address1, address2)
 
     def _create_and_broadcast_htlc(self, wallet, address_a, address_b,
-                                    amount_sats, secret_hash_hex, locktime, blinding_key_hex):
+                                    amount_sats, secret_hash_hex, locktime, blinding_key_hex,
+                                    timelock_opcode=None):
         """Create, fund, sign and broadcast an HTLC output.
         Returns the signed transaction hex."""
         outputs = [{
@@ -309,6 +311,8 @@ class BLSCTHTLCTest(BitcoinTestFramework):
             "locktime": locktime,
             "blinding_key": blinding_key_hex,
         }]
+        if timelock_opcode is not None:
+            outputs[0]["timelock_opcode"] = timelock_opcode
 
         raw_tx = wallet.createblsctrawtransaction([], outputs)
         funded_tx = wallet.fundblsctrawtransaction(raw_tx)
@@ -327,6 +331,15 @@ class BLSCTHTLCTest(BitcoinTestFramework):
                 return out["out_hash"], recovered_sats, out["gamma"]
         raise AssertionError(
             f"HTLC output with amount {expected_amount_sats} sats not found in "
+            f"recovery data: {recovery['outputs']}")
+
+    def _recover_htlc_script_asm(self, wallet, signed_tx_hex, expected_amount_sats):
+        recovery = wallet.getblsctrecoverydata(signed_tx_hex)
+        for out in recovery["outputs"]:
+            if out["amount_navoshi"] == expected_amount_sats and out.get("gamma"):
+                return self.nodes[0].decodescript(out["script"])["asm"]
+        raise AssertionError(
+            f"HTLC output script with amount {expected_amount_sats} sats not found in "
             f"recovery data: {recovery['outputs']}")
 
     def test_htlc_hashlock(self, wallet1, wallet2, address1, address2):
@@ -695,6 +708,44 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         assert_raises_rpc_error(-26, "failed-script-check",
                                 self.nodes[0].sendrawtransaction, spend_signed)
         self.log.info("=== Height/time mode mismatch test PASSED ===")
+
+    def test_atomic_swap_timelock_opcode_selection(self, wallet1, address1, address2):
+        """HTLC outputs should support CLTV (default) and CSV timelock opcodes."""
+        self.log.info("=== Testing atomic_swap timelock opcode selection ===")
+
+        secret_hash_hex = hashlib.sha256(bytes([0x33] * 32)).hexdigest()
+        locktime = self.nodes[0].getblockcount() + 10
+        amount_sats = 1 * COIN
+
+        default_signed = self._create_and_broadcast_htlc(
+            wallet1, address1, address2, amount_sats, secret_hash_hex, locktime, "0b" * 32)
+        default_asm = self._recover_htlc_script_asm(wallet1, default_signed, amount_sats)
+        assert "OP_CHECKLOCKTIMEVERIFY" in default_asm
+        assert "OP_CHECKSEQUENCEVERIFY" not in default_asm
+
+        csv_signed = self._create_and_broadcast_htlc(
+            wallet1, address1, address2, amount_sats, secret_hash_hex, locktime, "0c" * 32, "csv")
+        csv_asm = self._recover_htlc_script_asm(wallet1, csv_signed, amount_sats)
+        assert "OP_CHECKSEQUENCEVERIFY" in csv_asm
+        assert "OP_CHECKLOCKTIMEVERIFY" not in csv_asm
+
+        assert_raises_rpc_error(
+            -8,
+            'timelock_opcode must be "cltv" or "csv"',
+            wallet1.createblsctrawtransaction,
+            [],
+            [{
+                "type": "atomic_swap",
+                "address_a": address1,
+                "address_b": address2,
+                "amount": amount_sats,
+                "hash": secret_hash_hex,
+                "locktime": locktime,
+                "blinding_key": "0d" * 32,
+                "timelock_opcode": "invalid",
+            }],
+        )
+        self.log.info("=== Atomic-swap timelock opcode test PASSED ===")
 
     def test_importblsctscript(self, wallet1, wallet2, address1, address2):
         """Test that importblsctscript lets the receiver detect an HTLC
