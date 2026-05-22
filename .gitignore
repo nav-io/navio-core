@@ -2,6 +2,10 @@
 
 *.exe
 *.pdb
+
+# Local CMake build directories
+build-baseline/
+build-after/
 src/bench/bench_navio
 src/navio
 src/naviod
