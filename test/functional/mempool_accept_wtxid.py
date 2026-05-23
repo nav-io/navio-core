@@ -108,7 +108,12 @@ class MempoolWtxidTest(BitcoinTestFramework):
         assert_equal(node.getmempoolentry(txid_submitted)['wtxid'], child_one_wtxid)
 
         peer_wtxid_relay.wait_for_broadcast([child_one_wtxid])
-        assert_equal(node.getmempoolinfo()["unbroadcastcount"], 0)
+        # Navio keeps locally-broadcast txs in the unbroadcast set until they
+        # are mined or evicted, so a single peer fetch does not zero the
+        # counter (see net_processing.cpp ProcessGetData TX path). The
+        # counter is bounded above by the number of locally-submitted
+        # in-mempool txs we have, which is 1 here.
+        assert_equal(node.getmempoolinfo()["unbroadcastcount"], 1)
 
         # testmempoolaccept reports the "already in mempool" error
         assert_equal(node.testmempoolaccept([child_one.serialize().hex()]), [{
@@ -137,7 +142,8 @@ class MempoolWtxidTest(BitcoinTestFramework):
         # The node should rebroadcast the transaction using the wtxid of the correct transaction
         # (child_one, which is in its mempool).
         peer_wtxid_relay_2.wait_for_broadcast([child_one_wtxid])
-        assert_equal(node.getmempoolinfo()["unbroadcastcount"], 0)
+        # Navio keeps the tx in the unbroadcast set until mined/evicted.
+        assert_equal(node.getmempoolinfo()["unbroadcastcount"], 1)
 
 if __name__ == '__main__':
     MempoolWtxidTest(__file__).main()

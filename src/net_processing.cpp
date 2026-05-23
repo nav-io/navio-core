@@ -2496,7 +2496,11 @@ void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic
             // WTX and WITNESS_TX imply we serialize with witness
             const auto maybe_with_witness = (inv.IsMsgTx() ? TX_NO_WITNESS : TX_WITH_WITNESS);
             MakeAndPushMessage(pfrom, replyMsgType, maybe_with_witness(*tx));
-            m_mempool.RemoveUnbroadcastTx(tx->GetHash());
+            // Keep tx in the unbroadcast set so ReattemptInitialBroadcast keeps re-INVing
+            // to newly connected peers until the tx is mined or evicted. A single peer
+            // fetching the tx is not sufficient evidence that the network has it: that
+            // peer may be stem-only, hostile, or churned out. Removal happens via
+            // CTxMemPool::removeUnchecked when the entry leaves the mempool.
         } else {
             vNotFound.push_back(inv);
         }
@@ -2583,7 +2587,10 @@ void PeerManagerImpl::ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::
 
             // Send the transaction with witness data
             MakeAndPushMessage(pfrom, replyMsgType, TX_WITH_WITNESS(*tx));
-            m_mempool.RemoveUnbroadcastTx(tx->GetHash());
+            // Keep tx in the unbroadcast set; see matching note in ProcessGetData.
+            // ReattemptInitialBroadcast must keep re-INVing to new peers until the
+            // tx is mined or evicted — a single fetch by output hash is not proof
+            // that the network has it.
         } else {
             // Create a notfound entry for this output hash
             // We'll use MSG_OUTPUT_HASH type for notfound responses

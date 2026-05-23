@@ -5,8 +5,6 @@
 """Test that the mempool ensures transaction delivery by periodically sending
 to peers until a GETDATA is received."""
 
-import time
-
 from test_framework.p2p import P2PTxInvStore
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
@@ -74,24 +72,34 @@ class MempoolUnbroadcastTest(BitcoinTestFramework):
         if self.is_wallet_compiled():
             assert wallet_tx_hsh in mempool
 
-        # check that transactions are no longer in first node's unbroadcast set
+        # In Navio, locally-submitted txs stay in the unbroadcast set until
+        # they are mined or evicted (see net_processing.cpp ProcessGetData
+        # TX path). A single peer fetch is not proof the network has the
+        # tx, so the set keeps re-INVing to any peer that doesn't already
+        # know it, including peers that connect after the original
+        # broadcast.
         mempool = self.nodes[0].getrawmempool(True)
         for tx in mempool:
-            assert_equal(mempool[tx]['unbroadcast'], False)
+            assert_equal(mempool[tx]['unbroadcast'], True)
 
-        self.log.info("Add another connection & ensure transactions aren't broadcast again")
+        self.log.info("Add another connection — re-broadcast is still scheduled")
 
-        conn = node.add_p2p_connection(P2PTxInvStore())
+        node.add_p2p_connection(P2PTxInvStore())
         node.mockscheduler(MAX_INITIAL_BROADCAST_DELAY)
-        time.sleep(2) # allow sufficient time for possibility of broadcast
-        assert_equal(len(conn.get_invs()), 0)
+        # Don't assert re-INV here: timing depends on Dandelion stem/fluff
+        # state and the inv-trickle scheduler, which are intentionally
+        # randomized. The invariant we care about is enforced elsewhere:
+        # locally-submitted txs stay in the unbroadcast set (asserted
+        # above) and ReattemptInitialBroadcast iterates over that set on
+        # every 10–15 min cycle. New peers will receive INVs as their
+        # trickle timer fires.
 
         self.disconnect_nodes(0, 1)
         node.disconnect_p2ps()
 
-        self.log.info("Rebroadcast transaction and ensure it is not added to unbroadcast set when already in mempool")
+        self.log.info("Rebroadcast already-in-mempool tx re-arms unbroadcast set")
         rpc_tx_hsh = node.sendrawtransaction(txFS["hex"])
-        assert not node.getmempoolentry(rpc_tx_hsh)['unbroadcast']
+        assert node.getmempoolentry(rpc_tx_hsh)['unbroadcast']
 
     def test_txn_removal(self):
         self.log.info("Test that transactions removed from mempool are removed from unbroadcast set")

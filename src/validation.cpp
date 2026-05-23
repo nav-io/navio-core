@@ -2766,6 +2766,27 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         nInputs += tx.vin.size();
         nOutputs += tx.vout.size();
 
+        // BLSCT blocks aggregate every non-coinbase tx into a single tx
+        // (validation.cpp's vtx<=2 rule below). When the aggregated source
+        // chain contains a tx that spends a sibling tx's output, the
+        // resulting agg.vin will reference vouts that exist only inside
+        // its own vout list — not yet in `view`. Pre-add those internal
+        // vouts as transient coins so input-resolution and signature/balance
+        // checks succeed. UpdateCoins then SpendCoin's them (correctly
+        // consumed) and AddCoins skips them (see coins.cpp::AddCoins) so the
+        // UTXO set does not grow with outputs that were spent in the same tx.
+        if (tx.IsBLSCT() && !tx.IsCoinBase()) {
+            std::set<uint256> vin_prevouts;
+            for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
+            for (const auto& out : tx.vout) {
+                const uint256 out_hash = out.GetHash();
+                if (!vin_prevouts.contains(out_hash)) continue;
+                const COutPoint op{out_hash};
+                if (view.HaveCoin(op)) continue; // already on chain
+                view.AddCoin(op, Coin(out, pindex->nHeight, /*fCoinBaseIn=*/false), /*possible_overwrite=*/false);
+            }
+        }
+
         if (!tx.IsCoinBase())
         {
             CAmount txfee = 0;

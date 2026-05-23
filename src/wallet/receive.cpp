@@ -527,10 +527,22 @@ Balance GetBlsctBalance(const CWallet& wallet, const int min_depth, const TokenI
             // In BLSCT output-storage mode, locally-created BLSCT transactions
             // are still recorded in mapWallet for broadcast/history purposes and
             // their outputs are mirrored into mapOutputs by sync callbacks.
-            // Those child outputs must only be counted once.
-            if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) &&
-                wallet.GetWalletTxFromOutpoint(entry.first) != nullptr) {
-                continue;
+            // Skip the mapOutputs entry only when the matching CWalletTx is
+            // alive on chain or in the mempool — in those cases the
+            // CWalletTx-driven path counts the output and we'd double-count.
+            //
+            // When a chain of BLSCT sends is mined together, the staker
+            // aggregates them into a single block tx with a different txid;
+            // the originating CWalletTx ends up in TxStateInactive because
+            // its hash is not in the chain. Its outputs still belong to us
+            // (mapOutputs proves it), so the CWalletTx path will not count
+            // them and we must count them here, lest the wallet's reported
+            // balance lose the change a chain-spend produced.
+            if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+                const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(entry.first);
+                if (wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool())) {
+                    continue;
+                }
             }
             const CWalletOutput& wout = entry.second;
             if (wout.IsSpent()) continue;
