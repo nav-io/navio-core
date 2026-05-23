@@ -8,16 +8,16 @@ thread queue, wallet balance.
 Running
 ---------------------
 
-For benchmarking, you only need to compile `bitcoin_bench`.  The bench runner
-warns if you configure with `--enable-debug`, but consider if building without
-it will impact the benchmark(s) you are interested in by unlatching log printers
-and lock analysis.
+For benchmarking, you only need to compile `bench_navio`. The bench runner
+warns if you configure with `-DCMAKE_BUILD_TYPE=Debug`, but consider if
+building without it will impact the benchmark(s) you are interested in by
+unlatching log printers and lock analysis.
 
-    make -C src bitcoin_bench
+    cmake --build build --target bench_navio
 
 After compiling bitcoin-core, the benchmarks can be run with:
 
-    src/bench/bench_navio
+    build/bin/bench_navio
 
 The output will look similar to:
 ```
@@ -39,7 +39,7 @@ The output will look similar to:
 Help
 ---------------------
 
-    src/bench/bench_navio -?
+    build/bin/bench_navio -?
 
 To print the various options, like listing the benchmarks without running them
 or using a regex filter to only run certain benchmarks.

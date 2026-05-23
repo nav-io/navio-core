@@ -1,31 +1,30 @@
-# Fuzzing Bitcoin Core using libFuzzer
+# Fuzzing Navio Core using libFuzzer
 
 ## Quickstart guide
 
-To quickly get started fuzzing Bitcoin Core using [libFuzzer](https://llvm.org/docs/LibFuzzer.html):
+To quickly get started fuzzing Navio Core using [libFuzzer](https://llvm.org/docs/LibFuzzer.html):
 
 ```sh
-$ git clone https://github.com/bitcoin/bitcoin
-$ cd bitcoin/
-$ ./autogen.sh
-$ CC=clang CXX=clang++ ./configure --enable-fuzz --with-sanitizers=address,fuzzer,undefined
+$ git clone https://github.com/nav-io/navio-core.git
+$ cd navio-core/
+$ CC=clang CXX=clang++ cmake -B build -G Ninja -DBUILD_FOR_FUZZING=ON -DSANITIZERS=address,fuzzer,undefined
 # macOS users: If you have problem with this step then make sure to read "macOS hints for
-# libFuzzer" on https://github.com/bitcoin/bitcoin/blob/master/doc/fuzzing.md#macos-hints-for-libfuzzer
-$ make
-$ FUZZ=process_message src/test/fuzz/fuzz
+# libFuzzer" on https://github.com/nav-io/navio-core/blob/master/doc/fuzzing.md#macos-hints-for-libfuzzer
+$ cmake --build build
+$ FUZZ=process_message build/bin/fuzz
 # abort fuzzing using ctrl-c
 ```
 
 There is also a runner script to execute all fuzz targets. Refer to
 `./test/fuzz/test_runner.py --help` for more details.
 
-## Overview of Bitcoin Core fuzzing
+## Overview of Navio Core fuzzing
 
-[Google](https://github.com/google/fuzzing/) has a good overview of fuzzing in general, with contributions from key architects of some of the most-used fuzzers. [This paper](https://agroce.github.io/bitcoin_report.pdf) includes an external overview of the status of Bitcoin Core fuzzing, as of summer 2021.  [John Regehr](https://blog.regehr.org/archives/1687) provides good advice on writing code that assists fuzzers in finding bugs, which is useful for developers to keep in mind.
+[Google](https://github.com/google/fuzzing/) has a good overview of fuzzing in general, with contributions from key architects of some of the most-used fuzzers. [This paper](https://agroce.github.io/bitcoin_report.pdf) includes an external overview of the status of Bitcoin Core fuzzing, as of summer 2021. [John Regehr](https://blog.regehr.org/archives/1687) provides good advice on writing code that assists fuzzers in finding bugs, which is useful for developers to keep in mind.
 
 ## Fuzzing harnesses and output
 
-[`process_message`](https://github.com/bitcoin/bitcoin/blob/master/src/test/fuzz/process_message.cpp) is a fuzzing harness for the [`ProcessMessage(...)` function (`net_processing`)](https://github.com/bitcoin/bitcoin/blob/master/src/net_processing.cpp). The available fuzzing harnesses are found in [`src/test/fuzz/`](https://github.com/bitcoin/bitcoin/tree/master/src/test/fuzz).
+[`process_message`](https://github.com/nav-io/navio-core/blob/master/src/test/fuzz/process_message.cpp) is a fuzzing harness for the [`ProcessMessage(...)` function (`net_processing`)](https://github.com/nav-io/navio-core/blob/master/src/net_processing.cpp). The available fuzzing harnesses are found in [`src/test/fuzz/`](https://github.com/nav-io/navio-core/tree/master/src/test/fuzz).
 
 The fuzzer will output `NEW` every time it has created a test input that covers new areas of the code under test. For more information on how to interpret the fuzzer output, see the [libFuzzer documentation](https://llvm.org/docs/LibFuzzer.html).
 
@@ -33,7 +32,7 @@ If you specify a corpus directory then any new coverage increasing inputs will b
 
 ```sh
 $ mkdir -p process_message-seeded-from-thin-air/
-$ FUZZ=process_message src/test/fuzz/fuzz process_message-seeded-from-thin-air/
+$ FUZZ=process_message build/bin/fuzz process_message-seeded-from-thin-air/
 INFO: Seed: 840522292
 INFO: Loaded 1 modules   (424174 inline 8-bit counters): 424174 [0x55e121ef9ab8, 0x55e121f613a6),
 INFO: Loaded 1 PC tables (424174 PCs): 424174 [0x55e121f613a8,0x55e1225da288),
@@ -77,7 +76,7 @@ of the test. Just make sure to use double-dash to distinguish them from the
 fuzzer's own arguments:
 
 ```sh
-$ FUZZ=address_deserialize_v2 src/test/fuzz/fuzz -runs=1 fuzz_seed_corpus/address_deserialize_v2 --checkaddrman=5 --printtoconsole=1
+$ FUZZ=address_deserialize_v2 build/bin/fuzz -runs=1 fuzz_seed_corpus/address_deserialize_v2 --checkaddrman=5 --printtoconsole=1
 ```
 
 ## Fuzzing corpora
@@ -88,7 +87,7 @@ To fuzz `process_message` using the [`nav-io/qa-assets`](https://github.com/nav-
 
 ```sh
 $ git clone https://github.com/nav-io/qa-assets
-$ FUZZ=process_message src/test/fuzz/fuzz qa-assets/fuzz_seed_corpus/process_message/
+$ FUZZ=process_message build/bin/fuzz qa-assets/fuzz_seed_corpus/process_message/
 INFO: Seed: 1346407872
 INFO: Loaded 1 modules   (424174 inline 8-bit counters): 424174 [0x55d8a9004ab8, 0x55d8a906c3a6),
 INFO: Loaded 1 PC tables (424174 PCs): 424174 [0x55d8a906c3a8,0x55d8a96e5288),
@@ -101,25 +100,25 @@ INFO: seed corpus: files: 991 min: 1b max: 1858b total: 288291b rss: 150Mb
 
 ## Run without sanitizers for increased throughput
 
-Fuzzing on a harness compiled with `--with-sanitizers=address,fuzzer,undefined` is good for finding bugs. However, the very slow execution even under libFuzzer will limit the ability to find new coverage. A good approach is to perform occasional long runs without the additional bug-detectors (configure `--with-sanitizers=fuzzer`) and then merge new inputs into a corpus as described in the qa-assets repo (https://github.com/nav-io/qa-assets/blob/main/.github/PULL_REQUEST_TEMPLATE.md).  Patience is useful; even with improved throughput, libFuzzer may need days and 10s of millions of executions to reach deep/hard targets.
+Fuzzing on a harness compiled with `-DSANITIZERS=address,fuzzer,undefined` is good for finding bugs. However, the very slow execution even under libFuzzer will limit the ability to find new coverage. A good approach is to perform occasional long runs without the additional bug-detectors (configure `-DSANITIZERS=fuzzer`) and then merge new inputs into a corpus as described in the qa-assets repo (https://github.com/nav-io/qa-assets/blob/main/.github/PULL_REQUEST_TEMPLATE.md). Patience is useful; even with improved throughput, libFuzzer may need days and 10s of millions of executions to reach deep/hard targets.
 
 ## Reproduce a fuzzer crash reported by the CI
 
 - `cd` into the `qa-assets` directory and update it with `git pull qa-assets`
 - locate the crash case described in the CI output, e.g. `Test unit written to
-  ./crash-1bc91feec9fc00b107d97dc225a9f2cdaa078eb6`
+./crash-1bc91feec9fc00b107d97dc225a9f2cdaa078eb6`
 - make sure to compile with all sanitizers, if they are needed (fuzzing runs
   more slowly with sanitizers enabled, but a crash should be reproducible very
   quickly from a crash case)
 - run the fuzzer with the case number appended to the seed corpus path:
-  `FUZZ=process_message src/test/fuzz/fuzz
-  qa-assets/fuzz_seed_corpus/process_message/1bc91feec9fc00b107d97dc225a9f2cdaa078eb6`
+  `FUZZ=process_message build/bin/fuzz
+qa-assets/fuzz_seed_corpus/process_message/1bc91feec9fc00b107d97dc225a9f2cdaa078eb6`
 
 ## Submit improved coverage
 
 If you find coverage increasing inputs when fuzzing you are highly encouraged to submit them for inclusion in the [`nav-io/qa-assets`](https://github.com/nav-io/qa-assets) repo.
 
-Every single pull request submitted against the Bitcoin Core repo is automatically tested against all inputs in the [`nav-io/qa-assets`](https://github.com/nav-io/qa-assets) repo. Contributing new coverage increasing inputs is an easy way to help make Bitcoin Core more robust.
+Every single pull request submitted against the Navio Core repo is automatically tested against all inputs in the [`nav-io/qa-assets`](https://github.com/nav-io/qa-assets) repo. Contributing new coverage increasing inputs is an easy way to help make Navio Core more robust.
 
 ## macOS hints for libFuzzer
 
@@ -127,9 +126,7 @@ The default Clang/LLVM version supplied by Apple on macOS does not include
 fuzzing libraries, so macOS users will need to install a full version, for
 example using `brew install llvm`.
 
-Should you run into problems with the address sanitizer, it is possible you
-may need to run `./configure` with `--disable-asm` to avoid errors
-with certain assembly code from Bitcoin Core's code. See [developer notes on sanitizers](https://github.com/bitcoin/bitcoin/blob/master/doc/developer-notes.md#sanitizers)
+Should you run into problems with the address sanitizer, see [developer notes on sanitizers](https://github.com/nav-io/navio-core/blob/master/doc/developer-notes.md#sanitizers)
 for more information.
 
 You may also need to take care of giving the correct path for `clang` and
@@ -139,63 +136,61 @@ You may also need to take care of giving the correct path for `clang` and
 Full configure that was tested on macOS with `brew` installed `llvm`:
 
 ```sh
-./configure --enable-fuzz --with-sanitizers=fuzzer,address,undefined --disable-asm CC=$(brew --prefix llvm)/bin/clang CXX=$(brew --prefix llvm)/bin/clang++
+CC=$(brew --prefix llvm)/bin/clang CXX=$(brew --prefix llvm)/bin/clang++ cmake -B build -G Ninja -DBUILD_FOR_FUZZING=ON -DSANITIZERS=fuzzer,address,undefined
 ```
 
 Read the [libFuzzer documentation](https://llvm.org/docs/LibFuzzer.html) for more information. This [libFuzzer tutorial](https://github.com/google/fuzzing/blob/master/tutorial/libFuzzerTutorial.md) might also be of interest.
 
-# Fuzzing Bitcoin Core using afl++
+# Fuzzing Navio Core using afl++
 
 ## Quickstart guide
 
-To quickly get started fuzzing Bitcoin Core using [afl++](https://github.com/AFLplusplus/AFLplusplus):
+To quickly get started fuzzing Navio Core using [afl++](https://github.com/AFLplusplus/AFLplusplus):
 
 ```sh
-$ git clone https://github.com/bitcoin/bitcoin
-$ cd bitcoin/
+$ git clone https://github.com/nav-io/navio-core.git
+$ cd navio-core/
 $ git clone https://github.com/AFLplusplus/AFLplusplus
 $ make -C AFLplusplus/ source-only
-$ ./autogen.sh
 # If afl-clang-lto is not available, see
 # https://github.com/AFLplusplus/AFLplusplus#a-selecting-the-best-afl-compiler-for-instrumenting-the-target
-$ CC=$(pwd)/AFLplusplus/afl-clang-lto CXX=$(pwd)/AFLplusplus/afl-clang-lto++ ./configure --enable-fuzz
-$ make
-# For macOS you may need to ignore x86 compilation checks when running "make". If so,
-# try compiling using: AFL_NO_X86=1 make
+$ CC=$(pwd)/AFLplusplus/afl-clang-lto CXX=$(pwd)/AFLplusplus/afl-clang-lto++ cmake -B build -G Ninja -DBUILD_FOR_FUZZING=ON
+$ cmake --build build
+# For macOS you may need to ignore x86 compilation checks when building. If so,
+# try compiling using: AFL_NO_X86=1 cmake --build build
 $ mkdir -p inputs/ outputs/
 $ echo A > inputs/thin-air-input
-$ FUZZ=bech32 AFLplusplus/afl-fuzz -i inputs/ -o outputs/ -- src/test/fuzz/fuzz
+$ FUZZ=bech32 AFLplusplus/afl-fuzz -i inputs/ -o outputs/ -- build/bin/fuzz
 # You may have to change a few kernel parameters to test optimally - afl-fuzz
 # will print an error and suggestion if so.
 ```
 
 Read the [afl++ documentation](https://github.com/AFLplusplus/AFLplusplus) for more information.
 
-# Fuzzing Bitcoin Core using Honggfuzz
+# Fuzzing Navio Core using Honggfuzz
 
 ## Quickstart guide
 
-To quickly get started fuzzing Bitcoin Core using [Honggfuzz](https://github.com/google/honggfuzz):
+To quickly get started fuzzing Navio Core using [Honggfuzz](https://github.com/google/honggfuzz):
 
 ```sh
-$ git clone https://github.com/bitcoin/bitcoin
-$ cd bitcoin/
-$ ./autogen.sh
+$ git clone https://github.com/nav-io/navio-core.git
+$ cd navio-core/
 $ git clone https://github.com/google/honggfuzz
 $ cd honggfuzz/
 $ make
 $ cd ..
-$ CC=$(pwd)/honggfuzz/hfuzz_cc/hfuzz-clang CXX=$(pwd)/honggfuzz/hfuzz_cc/hfuzz-clang++ ./configure --enable-fuzz --with-sanitizers=address,undefined
-$ make
+$ CC=$(pwd)/honggfuzz/hfuzz_cc/hfuzz-clang CXX=$(pwd)/honggfuzz/hfuzz_cc/hfuzz-clang++ cmake -B build -G Ninja -DBUILD_FOR_FUZZING=ON -DSANITIZERS=address,undefined
+$ cmake --build build
 $ mkdir -p inputs/
-$ FUZZ=process_message honggfuzz/honggfuzz -i inputs/ -- src/test/fuzz/fuzz
+$ FUZZ=process_message honggfuzz/honggfuzz -i inputs/ -- build/bin/fuzz
 ```
 
 Read the [Honggfuzz documentation](https://github.com/google/honggfuzz/blob/master/docs/USAGE.md) for more information.
 
-## Fuzzing the Bitcoin Core P2P layer using Honggfuzz NetDriver
+## Fuzzing the Navio Core P2P layer using Honggfuzz NetDriver
 
-Honggfuzz NetDriver allows for very easy fuzzing of TCP servers such as Bitcoin
+Honggfuzz NetDriver allows for very easy fuzzing of TCP servers such as Navio
 Core without having to write any custom fuzzing harness. The `naviod` server
 process is largely fuzzed without modification.
 
@@ -205,19 +200,18 @@ also remotely triggerable by an untrusted peer.
 To quickly get started fuzzing the P2P layer using Honggfuzz NetDriver:
 
 ```sh
-$ mkdir bitcoin-honggfuzz-p2p/
-$ cd bitcoin-honggfuzz-p2p/
-$ git clone https://github.com/bitcoin/bitcoin
-$ cd bitcoin/
-$ ./autogen.sh
+$ mkdir navio-honggfuzz-p2p/
+$ cd navio-honggfuzz-p2p/
+$ git clone https://github.com/nav-io/navio-core.git
+$ cd navio-core/
 $ git clone https://github.com/google/honggfuzz
 $ cd honggfuzz/
 $ make
 $ cd ..
 $ CC=$(pwd)/honggfuzz/hfuzz_cc/hfuzz-clang \
       CXX=$(pwd)/honggfuzz/hfuzz_cc/hfuzz-clang++ \
-      ./configure --disable-wallet --with-gui=no \
-                  --with-sanitizers=address,undefined
+      cmake -B build -G Ninja -DENABLE_WALLET=OFF \
+            -DSANITIZERS=address,undefined
 $ git apply << "EOF"
 diff --git a/src/compat/compat.h b/src/compat/compat.h
 index 8195bceaec..cce2b31ff0 100644
@@ -259,31 +253,31 @@ index 7601a6ea84..702d0f56ce 100644
                   SanitizeString(msg.m_type), msg.m_message_size,
                   HexStr(Span{hash}.first(CMessageHeader::CHECKSUM_SIZE)),
 EOF
-$ make -C src/ naviod
+$ cmake --build build --target naviod
 $ mkdir -p inputs/
 $ honggfuzz/honggfuzz --exit_upon_crash --quiet --timeout 4 -n 1 -Q \
       -E HFND_TCP_PORT=18444 -f inputs/ -- \
-          src/naviod -regtest -discover=0 -dns=0 -dnsseed=0 -listenonion=0 \
+          build/bin/naviod -regtest -discover=0 -dns=0 -dnsseed=0 -listenonion=0 \
                        -nodebuglogfile -bind=127.0.0.1:18444 -logthreadnames \
                        -debug
 ```
 
-# Fuzzing Bitcoin Core using Eclipser (v1.x)
+# Fuzzing Navio Core using Eclipser (v1.x)
 
 ## Quickstart guide
 
-To quickly get started fuzzing Bitcoin Core using [Eclipser v1.x](https://github.com/SoftSec-KAIST/Eclipser/tree/v1.x):
+To quickly get started fuzzing Navio Core using [Eclipser v1.x](https://github.com/SoftSec-KAIST/Eclipser/tree/v1.x):
 
 ```sh
-$ git clone https://github.com/bitcoin/bitcoin
-$ cd bitcoin/
+$ git clone https://github.com/nav-io/navio-core.git
+$ cd navio-core/
 $ sudo vim /etc/apt/sources.list # Uncomment the lines starting with 'deb-src'.
 $ sudo apt-get update
 $ sudo apt-get build-dep qemu
-$ sudo apt-get install libtool libtool-bin wget automake autoconf bison gdb
+$ sudo apt-get install wget bison gdb
 ```
 
-At this point, you must install the .NET core.  The process differs, depending on your Linux distribution.
+At this point, you must install the .NET core. The process differs, depending on your Linux distribution.
 See [this link](https://learn.microsoft.com/en-us/dotnet/core/install/linux) for details.
 On Ubuntu 20.04, the following should work:
 
@@ -303,11 +297,10 @@ $ cd Eclipser
 $ git checkout v1.x
 $ make
 $ cd ..
-$ ./autogen.sh
-$ ./configure --enable-fuzz
-$ make
+$ cmake -B build -G Ninja -DBUILD_FOR_FUZZING=ON
+$ cmake --build build
 $ mkdir -p outputs/
-$ FUZZ=bech32 dotnet Eclipser/build/Eclipser.dll fuzz -p src/test/fuzz/fuzz -t 36000 -o outputs --src stdin
+$ FUZZ=bech32 dotnet Eclipser/build/Eclipser.dll fuzz -p build/bin/fuzz -t 36000 -o outputs --src stdin
 ```
 
 This will perform 10 hours of fuzzing.
@@ -318,22 +311,22 @@ must first decode them:
 ```sh
 $ dotnet Eclipser/build/Eclipser.dll decode -i outputs/testcase -o decoded_outputs
 ```
-This will place raw inputs in the directory `decoded_outputs/decoded_stdins`.  Crashes are in the `outputs/crashes` directory, and must
+
+This will place raw inputs in the directory `decoded_outputs/decoded_stdins`. Crashes are in the `outputs/crashes` directory, and must
 be decoded in the same way.
 
 Fuzzing with Eclipser will likely be much more effective if using an existing corpus:
 
 ```sh
 $ git clone https://github.com/nav-io/qa-assets
-$ FUZZ=bech32 dotnet Eclipser/build/Eclipser.dll fuzz -p src/test/fuzz/fuzz -t 36000 -i qa-assets/fuzz_seed_corpus/bech32 outputs --src stdin
+$ FUZZ=bech32 dotnet Eclipser/build/Eclipser.dll fuzz -p build/bin/fuzz -t 36000 -i qa-assets/fuzz_seed_corpus/bech32 outputs --src stdin
 ```
 
 Note that fuzzing with Eclipser on certain targets (those that create 'full nodes', e.g. `process_message*`) will,
 for now, slowly fill `/tmp/` with improperly cleaned-up files, which will cause spurious crashes.
-See [this proposed patch](https://github.com/bitcoin/bitcoin/pull/22472) for more information.
+See [this proposed patch](https://github.com/bitcoin/bitcoin/pull/22472) for more information (upstream Bitcoin Core reference).
 
 Read the [Eclipser documentation for v1.x](https://github.com/SoftSec-KAIST/Eclipser/tree/v1.x) for more details on using Eclipser.
-
 
 # OSS-Fuzz
 

@@ -12,11 +12,11 @@ Install the required dependencies the usual way you [install software on NetBSD]
 The example commands below use `pkgin`.
 
 ```bash
-pkgin install autoconf automake libtool pkg-config git gmake boost libevent
+pkgin install boost cmake git libevent ninja-build pkgconf
 
 ```
 
-NetBSD currently ships with an older version of `gcc` than is needed to build. You should upgrade your `gcc` and then pass this new version to the configure script.
+NetBSD currently ships with an older version of `gcc` than is needed to build. You should upgrade your `gcc` and then pass this new version to CMake.
 
 For example, grab `gcc9`:
 ```
@@ -25,21 +25,19 @@ pkgin install gcc9
 
 Then, when configuring, pass the following:
 ```bash
-./configure
-    ...
-    CC="/usr/pkg/gcc9/bin/gcc" \
-    CXX="/usr/pkg/gcc9/bin/g++" \
-    ...
+cmake -B build -G Ninja \
+    -DCMAKE_C_COMPILER=/usr/pkg/gcc9/bin/gcc \
+    -DCMAKE_CXX_COMPILER=/usr/pkg/gcc9/bin/g++
 ```
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
-### 2. Clone Bitcoin Repo
+### 2. Clone Navio Repo
 
-Clone the Bitcoin Core repository to a directory. All build scripts and commands will run from this directory.
+Clone the Navio Core repository to a directory. All build scripts and commands will run from this directory.
 
 ```bash
-git clone https://github.com/bitcoin/bitcoin.git
+git clone https://github.com/nav-io/navio-core.git
 ```
 
 ### 3. Install Optional Dependencies
@@ -66,7 +64,7 @@ pkgin install db4
 
 #### GUI Dependencies
 
-Bitcoin Core includes a GUI built with the cross-platform Qt Framework. To compile the GUI, we need to install `qt5`.
+Navio Core includes a GUI built with the cross-platform Qt Framework. To compile the GUI, we need to install `qt5`.
 
 ```bash
 pkgin install qt5
@@ -87,30 +85,26 @@ To run the test suite (recommended), you will need to have Python 3 installed:
 pkgin install python37
 ```
 
-### Building Bitcoin Core
-
-**Note**: Use `gmake` (the non-GNU `make` will exit with an error).
+### Building Navio Core
 
 
 ### 1. Configuration
 
-There are many ways to configure Bitcoin Core. Here is an example that
+There are many ways to configure Navio Core. Here is an example that
 explicitly disables the wallet and GUI:
 
 ```bash
-./autogen.sh
-./configure --without-wallet --with-gui=no \
-    CPPFLAGS="-I/usr/pkg/include" \
-    MAKE=gmake
+cmake -B build -G Ninja -DENABLE_WALLET=OFF \
+    -DCMAKE_CXX_FLAGS="-I/usr/pkg/include"
 ```
 
-For a full list of configuration options, see the output of `./configure --help`
+For a full list of configuration options, see the output of `cmake -B build -LH`
 
 ### 2. Compile
 
 Build and run the tests:
 
 ```bash
-gmake # use "-j N" here for N parallel jobs
-gmake check # Run tests if Python 3 is available
+cmake --build build         # use "-j N" here for N parallel jobs
+ctest --test-dir build      # Run tests if Python 3 is available
 ```

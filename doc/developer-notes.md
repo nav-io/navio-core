@@ -214,11 +214,15 @@ To run clang-tidy on Ubuntu/Debian, install the dependencies:
 apt install clang-tidy bear clang
 ```
 
-Then, pass clang as compiler to configure, and use bear to produce the `compile_commands.json`:
+CMake generates `compile_commands.json` automatically; just configure with
+clang and build:
 
 ```sh
-./autogen.sh && ./configure CC=clang CXX=clang++
-make clean && bear --config src/.bear-tidy-config -- make -j $(nproc)
+cmake -B build -G Ninja \
+  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build build -j $(nproc)
+ln -sf build/compile_commands.json .
 ```
 
 The output is denoised of errors from external dependencies.
@@ -477,20 +481,23 @@ $ ./test/functional/test_runner.py --valgrind
 
 ### Compiling for test coverage
 
-LCOV can be used to generate a test coverage report based upon `make check`
-execution. LCOV must be installed on your system (e.g. the `lcov` package
-on Debian/Ubuntu).
+LCOV can be used to generate a test coverage report. LCOV must be installed on
+your system (e.g. the `lcov` package on Debian/Ubuntu).
 
-To enable LCOV report generation during test runs:
+The CMake build emits `Coverage.cmake` / `CoverageFuzz.cmake` / `CoverageInclude.cmake`
+helper scripts into the build dir. Run them from `cmake -P` after building
+the project with coverage flags:
 
 ```shell
-./configure --enable-lcov
-make
-make cov
+cmake -B build -G Ninja \
+  -DCMAKE_C_FLAGS="-O0 --coverage" \
+  -DCMAKE_CXX_FLAGS="-O0 --coverage"
+cmake --build build
+cmake -P build/Coverage.cmake
 
-# A coverage report will now be accessible at `./test_bitcoin.coverage/index.html`,
-# which covers unit tests, and `./total.coverage/index.html`, which covers
-# unit and functional tests.
+# Reports appear under build/test_bitcoin.coverage/index.html (unit tests) and
+# build/total.coverage/index.html (unit + functional tests). For fuzz coverage,
+# `cmake -P build/CoverageFuzz.cmake` produces build/fuzz.coverage/.
 ```
 
 ### Performance profiling with perf

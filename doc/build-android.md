@@ -22,4 +22,8 @@ This is an example command for a default build with no disabled dependencies:
 
 ## Building and packaging
 
-After the depends are built configure with one of the resulting prefixes and run `make && make apk` in `src/qt`.
+After the depends are built, configure with the resulting toolchain file and
+build with CMake:
+
+    cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=depends/aarch64-linux-android/toolchain.cmake
+    cmake --build build

@@ -10,17 +10,17 @@ This guide describes how to build naviod, command-line utilities, and GUI on Ope
 Run the following as root to install the base dependencies for building.
 
 ```bash
-pkg_add bash git gmake libevent libtool boost
+pkg_add bash cmake git libevent ninja boost pkgconf
 # Select the newest version of the following packages:
-pkg_add autoconf automake python
+pkg_add python
 ```
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
-### 2. Clone Bitcoin Repo
-Clone the Bitcoin Core repository to a directory. All build scripts and commands will run from this directory.
+### 2. Clone Navio Repo
+Clone the Navio Core repository to a directory. All build scripts and commands will run from this directory.
 ``` bash
-git clone https://github.com/bitcoin/bitcoin.git
+git clone https://github.com/nav-io/navio-core.git
 ```
 
 ### 3. Install Optional Dependencies
@@ -37,43 +37,30 @@ It is not necessary to build wallet functionality to run `naviod`.
 pkg_add sqlite3
 ```
 
-## Building Bitcoin Core
-
-**Important**: Use `gmake` (the non-GNU `make` will exit with an error).
-
-Preparation:
-```bash
-
-# Adapt the following for the version you installed (major.minor only):
-export AUTOCONF_VERSION=2.71
-export AUTOMAKE_VERSION=1.16
-
-./autogen.sh
-```
+## Building Navio Core
 
 ### 1. Configuration
 
-There are many ways to configure Bitcoin Core, here are a few common examples:
+There are many ways to configure Navio Core, here are a few common examples:
 
 ##### Descriptor Wallet and GUI:
 This enables the GUI and descriptor wallet support, assuming `sqlite` and `qt5` are installed.
 
 ```bash
-./configure MAKE=gmake
+cmake -B build -G Ninja
 ```
 
 ##### Wallet:
 
 ```bash
-./configure MAKE=gmake
+cmake -B build -G Ninja
 ```
 
 ### 2. Compile
-**Important**: Use `gmake` (the non-GNU `make` will exit with an error).
 
 ```bash
-gmake # use "-j N" for N parallel jobs
-gmake check # Run tests if Python 3 is available
+cmake --build build         # use "-j N" for N parallel jobs
+ctest --test-dir build      # Run tests if Python 3 is available
 ```
 
 ## Resource limits

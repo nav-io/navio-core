@@ -10,16 +10,16 @@ This guide describes how to build naviod, command-line utilities, and GUI on Fre
 Run the following as root to install the base dependencies for building.
 
 ```bash
-pkg install autoconf automake boost-libs git gmake libevent libtool pkgconf
+pkg install boost-libs cmake git libevent ninja pkgconf
 
 ```
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
-### 2. Clone Bitcoin Repo
-Now that `git` and all the required dependencies are installed, let's clone the Bitcoin Core repository to a directory. All build scripts and commands will run from this directory.
+### 2. Clone Navio Repo
+Now that `git` and all the required dependencies are installed, let's clone the Navio Core repository to a directory. All build scripts and commands will run from this directory.
 ``` bash
-git clone https://github.com/bitcoin/bitcoin.git
+git clone https://github.com/nav-io/navio-core.git
 ```
 
 ### 3. Install Optional Dependencies
@@ -38,7 +38,7 @@ pkg install sqlite3
 #### Notifications
 ###### ZeroMQ
 
-Bitcoin Core can provide notifications via ZeroMQ. If the package is installed, support will be compiled in.
+Navio Core can provide notifications via ZeroMQ. If the package is installed, support will be compiled in.
 ```bash
 pkg install libzmq4
 ```
@@ -52,28 +52,25 @@ pkg install python3 databases/py-sqlite3
 ```
 ---
 
-## Building Bitcoin Core
+## Building Navio Core
 
 ### 1. Configuration
 
-There are many ways to configure Bitcoin Core, here are a few common examples:
+There are many ways to configure Navio Core, here are a few common examples:
 
 ##### Wallet:
 ```bash
-./autogen.sh
-./configure MAKE=gmake
+cmake -B build -G Ninja
 ```
 
 ##### No Wallet or GUI
 ``` bash
-./autogen.sh
-./configure --without-wallet --with-gui=no MAKE=gmake
+cmake -B build -G Ninja -DENABLE_WALLET=OFF
 ```
 
 ### 2. Compile
-**Important**: Use `gmake` (the non-GNU `make` will exit with an error).
 
 ```bash
-gmake # use "-j N" for N parallel jobs
-gmake check # Run tests if Python 3 is available
+cmake --build build         # use "-j N" for N parallel jobs
+ctest --test-dir build      # Run tests if Python 3 is available
 ```
