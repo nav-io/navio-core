@@ -5,8 +5,6 @@
 """Test that the mempool ensures transaction delivery by periodically sending
 to peers until a GETDATA is received."""
 
-import time
-
 from test_framework.p2p import P2PTxInvStore
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
@@ -86,7 +84,7 @@ class MempoolUnbroadcastTest(BitcoinTestFramework):
 
         self.log.info("Add another connection — re-broadcast is still scheduled")
 
-        conn = node.add_p2p_connection(P2PTxInvStore())
+        node.add_p2p_connection(P2PTxInvStore())
         node.mockscheduler(MAX_INITIAL_BROADCAST_DELAY)
         # Don't assert re-INV here: timing depends on Dandelion stem/fluff
         # state and the inv-trickle scheduler, which are intentionally
