@@ -1484,6 +1484,36 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 batch.WriteTx(it->second);
             }
 
+            // BLSCT staker may aggregate a chain of locally-created sends
+            // into a single block tx whose hash differs from any of ours.
+            // The originating CWalletTx records would otherwise stay stuck
+            // in TxStateInMempool / TxStateInactive forever (its hash is not
+            // on chain). Reconcile by matching every vout of the incoming
+            // block tx back to the CWalletTx that produced it: any send
+            // whose outputs all appear in this block was rolled into the
+            // aggregate and is, for accounting purposes, confirmed here.
+            if (std::get_if<TxStateConfirmed>(&tx_state)) {
+                std::set<uint256> matched_wtx;
+                for (const auto& vout : tx.vout) {
+                    auto it_idx = mapOutpointHashToWalletTx.find(vout.GetHash());
+                    if (it_idx == mapOutpointHashToWalletTx.end()) continue;
+                    const CWalletTx* src = it_idx->second;
+                    if (src->GetHash() == tx.GetHash()) continue; // direct match handled above
+                    if (src->isConfirmed()) continue;
+                    matched_wtx.insert(src->GetHash());
+                }
+                if (!matched_wtx.empty()) {
+                    WalletBatch batch(GetDatabase(), /*_fFlushOnClose=*/false);
+                    for (const auto& h : matched_wtx) {
+                        auto wit = mapWallet.find(h);
+                        if (wit == mapWallet.end()) continue;
+                        wit->second.m_state = tx_state;
+                        wit->second.MarkDirty();
+                        batch.WriteTx(wit->second);
+                    }
+                }
+            }
+
             // loop though all outputs
             for (size_t i = 0; i < tx.vout.size(); i++) {
                 CTxOut txout = tx.vout[i];
@@ -3768,9 +3798,13 @@ bool CWallet::UpgradeWallet(int version, bilingual_str& error)
 
 void CWallet::postInitProcess()
 {
-    // Add wallet transactions that aren't already in a block to mempool
-    // Do this here as mempool requires genesis block to be loaded
-    ResubmitWalletTransactions(/*relay=*/false, /*force=*/true);
+    // Add wallet transactions that aren't already in a block to mempool and
+    // re-arm initial broadcast for them. Re-arming on startup is what lets
+    // stuck unconfirmed txs recover: after the original broadcast, the
+    // unbroadcast set may have drained (peer churn, single-peer fluff), and
+    // without this re-arm the wallet would not try again for 12-24 h.
+    // Embargo has long expired for these txs, so relay is a normal fluff INV.
+    ResubmitWalletTransactions(/*relay=*/true, /*force=*/true);
 
     // Update wallet transactions with current mempool transactions.
     WITH_LOCK(cs_wallet, chain().requestMempoolTransactions(*this));

@@ -200,8 +200,25 @@ void CCoinsViewCache::EmplaceCoinInternalDANGER(COutPoint&& outpoint, Coin&& coi
 void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check_for_overwrite)
 {
     bool fCoinbase = tx.IsCoinBase();
+    // BLSCT block aggregation collapses a chain of dependent txs into one
+    // tx. Vouts that are spent by sibling vins inside the same tx must not
+    // re-enter the UTXO set: they were consumed within this tx. The
+    // pre-validation step in ConnectBlock added them to the view so balance
+    // and signature checks resolved correctly; SpendCoin (called from
+    // UpdateCoins) then removed them. Re-adding them here would resurrect
+    // already-spent outputs.
+    std::set<uint256> self_spent;
+    if (tx.IsBLSCT() && !fCoinbase) {
+        std::set<uint256> vin_prevouts;
+        for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
+        for (const auto& out : tx.vout) {
+            const uint256 out_hash = out.GetHash();
+            if (vin_prevouts.contains(out_hash)) self_spent.insert(out_hash);
+        }
+    }
     for (size_t i = 0; i < tx.vout.size(); ++i) {
         const uint256& outid = tx.vout[i].GetHash();
+        if (self_spent.contains(outid)) continue;
         bool overwrite = check_for_overwrite ? cache.HaveCoin(COutPoint(outid)) : fCoinbase;
         // Coinbase transactions can always be overwritten, in order to correctly
         // deal with the pre-BIP30 occurrences of duplicate coinbase transactions.

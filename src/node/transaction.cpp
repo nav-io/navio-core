@@ -66,6 +66,13 @@ TransactionError BroadcastTransaction(NodeContext& node, const CTransactionRef t
             // The mempool transaction may have the same or different witness (and
             // wtxid) as this transaction. Use the mempool's wtxid for reannouncement.
             wtxid = mempool_tx->GetWitnessHash();
+            // Re-arm initial-broadcast tracking on every explicit broadcast (wallet
+            // rebroadcast, sendrawtransaction, etc.). Without this, the unbroadcast
+            // set drains over time and ReattemptInitialBroadcast stops re-INVing to
+            // peers that connect after the original broadcast.
+            if (relay) {
+                node.mempool->AddUnbroadcastTx(txid);
+            }
         } else {
             // Transaction is not already in the mempool.
             if (max_tx_fee > 0) {
