@@ -1,6 +1,6 @@
 UNIX BUILD NOTES
 ====================
-Some notes on how to build Bitcoin Core in Unix.
+Some notes on how to build Navio Core in Unix.
 
 (For BSD specific instructions, see `build-*bsd.md` in this directory.)
 
@@ -8,33 +8,31 @@ To Build
 ---------------------
 
 ```bash
-./autogen.sh
-./configure
-make # use "-j N" for N parallel jobs
-make install # optional
+cmake -B build -G Ninja
+cmake --build build           # use `-j N` for N parallel jobs
+ctest --test-dir build        # optional: run unit tests
+cmake --install build         # optional: install to system prefix
 ```
 
-See below for instructions on how to [install the dependencies on popular Linux
-distributions](#linux-distribution-specific-instructions), or the
-[dependencies](#dependencies) section for a complete overview.
+See below for [Linux distribution-specific instructions](#linux-distribution-specific-instructions),
+or the [dependencies](#dependencies) section for a complete overview.
 
 ## Memory Requirements
 
 C++ compilers are memory-hungry. It is recommended to have at least 1.5 GB of
-memory available when compiling Bitcoin Core. On systems with less, gcc can be
-tuned to conserve memory with additional CXXFLAGS:
+memory available when compiling Navio Core. On systems with less, gcc can be
+tuned to conserve memory with additional CXXFLAGS, passed via the cmake cache:
 
+    cmake -B build -G Ninja \
+      -DCMAKE_CXX_FLAGS="--param ggc-min-expand=1 --param ggc-min-heapsize=32768"
 
-    ./configure CXXFLAGS="--param ggc-min-expand=1 --param ggc-min-heapsize=32768"
+Alternatively, or in addition, debugging information can be skipped:
 
-Alternatively, or in addition, debugging information can be skipped for compilation. The default compile flags are
-`-g -O2`, and can be changed with:
+    cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-    ./configure CXXFLAGS="-O2"
+clang (often less resource hungry) can be used instead of gcc:
 
-Finally, clang (often less resource hungry) can be used instead of gcc, which is used by default:
-
-    ./configure CXX=clang++ CC=clang
+    cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
 ## Linux Distribution Specific Instructions
 
@@ -44,9 +42,10 @@ Finally, clang (often less resource hungry) can be used instead of gcc, which is
 
 Build requirements:
 
-    sudo apt-get install build-essential libtool autotools-dev automake pkg-config bsdmainutils python3
+    sudo apt-get install build-essential cmake ninja-build pkgconf python3
 
-Now, you can either build from self-compiled [depends](#dependencies) or install the required dependencies:
+Now, you can either build from self-compiled [depends](#dependencies) or
+install the required dependencies:
 
     sudo apt-get install libevent-dev libboost-dev
 
@@ -54,7 +53,7 @@ SQLite is required for the descriptor wallet:
 
     sudo apt install libsqlite3-dev
 
-To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
+To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode).
 
 ZMQ dependencies (provides ZMQ API):
 
@@ -70,9 +69,10 @@ User-Space, Statically Defined Tracing (USDT) dependencies:
 
 Build requirements:
 
-    sudo dnf install gcc-c++ libtool make autoconf automake python3
+    sudo dnf install gcc-c++ cmake ninja-build pkgconf python3
 
-Now, you can either build from self-compiled [depends](#dependencies) or install the required dependencies:
+Now, you can either build from self-compiled [depends](#dependencies) or
+install the required dependencies:
 
     sudo dnf install libevent-devel boost-devel
 
@@ -80,7 +80,7 @@ SQLite is required for the descriptor wallet:
 
     sudo dnf install sqlite-devel
 
-To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
+To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode).
 
 ZMQ dependencies (provides ZMQ API):
 
@@ -98,31 +98,31 @@ not use the packages of your Linux distribution.
 
 Disable-wallet mode
 --------------------
-When the intention is to only run a P2P node, without a wallet, Bitcoin Core can
-be compiled in disable-wallet mode with:
+When the intention is to only run a P2P node, without a wallet, Navio Core can
+be compiled in disable-wallet mode:
 
-    ./configure --disable-wallet
+    cmake -B build -G Ninja -DENABLE_WALLET=OFF
 
 In this case there is no dependency on SQLite.
 
-Mining is also possible in disable-wallet mode using the `getblocktemplate` RPC call.
+Mining is also possible in disable-wallet mode using the `getblocktemplate` RPC
+call.
 
-Additional Configure Flags
+Additional CMake Options
 --------------------------
-A list of additional configure flags can be displayed with:
+A list of available CMake options can be displayed with:
 
-    ./configure --help
-
+    cmake -B build -LH
 
 Setup and Build Example: Arch Linux
 -----------------------------------
-This example lists the steps necessary to setup and build a command line only distribution of the latest changes on Arch Linux:
+This example lists the steps necessary to setup and build a command line only
+distribution of the latest changes on Arch Linux:
 
-    pacman --sync --needed autoconf automake boost gcc git libevent libtool make pkgconf python sqlite
-    git clone https://github.com/bitcoin/bitcoin.git
-    cd bitcoin/
-    ./autogen.sh
-    ./configure
-    make check
-    ./src/naviod
-
+    pacman --sync --needed cmake ninja boost gcc git libevent pkgconf python sqlite
+    git clone https://github.com/nav-io/navio-core.git
+    cd navio-core/
+    cmake -B build -G Ninja
+    cmake --build build
+    ctest --test-dir build
+    ./build/bin/naviod

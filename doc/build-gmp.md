@@ -27,12 +27,12 @@ it is missing.
 | Flag | Behaviour |
 | --- | --- |
 | _(default)_ | Auto-detect; use GMP if found, otherwise fall back to `VINT`. |
-| `--with-gmp` | Hard-require GMP. Configure fails if not found. |
-| `--without-gmp` | Force the `VINT` fallback even if GMP is installed. |
+| `-DWITH_MCL_USE_GMP=ON` | Hard-require GMP. Configure fails if not found. |
+| `-DWITH_MCL_USE_GMP=OFF` | Force the `VINT` fallback even if GMP is installed. |
 
-You can confirm the active backend by inspecting the configure output line
-`checking whether to build mcl with GMP`, or by running `ldd` against `naviod`
-and looking for `libgmp.so` and `libgmpxx.so`.
+You can confirm the active backend by inspecting the CMake configure output for
+the mcl GMP detection line, or by running `ldd` against `naviod` and looking
+for `libgmp.so` and `libgmpxx.so`.
 
 ## Benchmark: VINT vs GMP
 
@@ -79,8 +79,8 @@ big-integer backend does not affect them.
 The mcl micro-benchmark above measures isolated field operations. The
 practical question is how much GMP shifts real BLSCT workloads in
 `bench_navio`. Numbers below are median ns/op from `bench_navio
--filter=BLSCT.* -min-time=3000`, same hardware, only `--with-gmp` /
-`--without-gmp` differs.
+-filter=BLSCT.* -min-time=3000`, same hardware, only `-DWITH_MCL_USE_GMP=ON` /
+`-DWITH_MCL_USE_GMP=OFF` differs.
 
 | Bench | VINT (ns/op) | GMP (ns/op) | Speedup |
 | --- | ---: | ---: | ---: |
@@ -131,9 +131,9 @@ make clean && make MCL_USE_GMP=0 bin/bls12_test.exe && ./bin/bls12_test.exe
 navio end-to-end benchmark:
 
 ```sh
-./configure --with-gmp && make && \
-  src/bench/bench_navio -filter='BLSCT.*' -min-time=3000 -output-csv=gmp.csv
+cmake -B build -G Ninja -DWITH_MCL_USE_GMP=ON && cmake --build build && \
+  ./build/bin/bench_navio -filter='BLSCT.*' -min-time=3000 -output-csv=gmp.csv
 
-./configure --without-gmp && make && \
-  src/bench/bench_navio -filter='BLSCT.*' -min-time=3000 -output-csv=vint.csv
+cmake -B build -G Ninja -DWITH_MCL_USE_GMP=OFF && cmake --build build && \
+  ./build/bin/bench_navio -filter='BLSCT.*' -min-time=3000 -output-csv=vint.csv
 ```

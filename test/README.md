@@ -13,8 +13,9 @@ interfaces.
 - [util](/test/util) which tests the utilities (navio-util, navio-tx, ...).
 - [lint](/test/lint/) which perform various static analysis checks.
 
-The util tests are run as part of `make check` target. The fuzz tests, functional
-tests and lint scripts can be run as explained in the sections below.
+The util tests are run as part of `ctest --test-dir build`. The fuzz tests,
+functional tests and lint scripts can be run as explained in the sections
+below.
 
 # Running tests locally
 

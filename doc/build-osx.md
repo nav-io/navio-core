@@ -16,7 +16,7 @@ macOS comes with a built-in Terminal located in:
 ### 1. Xcode Command Line Tools
 
 The Xcode Command Line Tools are a collection of build tools for macOS.
-These tools must be installed in order to build Bitcoin Core from source.
+These tools must be installed in order to build Navio Core from source.
 
 To install, run the following command from your terminal:
 
@@ -48,17 +48,17 @@ See [dependencies.md](dependencies.md) for a complete overview.
 To install, run the following from your terminal:
 
 ``` bash
-brew install automake libtool boost pkg-config libevent
+brew install cmake ninja boost pkgconf libevent
 ```
 
-### 4. Clone Bitcoin repository
+### 4. Clone Navio repository
 
 `git` should already be installed by default on your system.
-Now that all the required dependencies are installed, let's clone the Bitcoin Core repository to a directory.
+Now that all the required dependencies are installed, let's clone the Navio Core repository to a directory.
 All build scripts and commands will run from this directory.
 
 ``` bash
-git clone https://github.com/bitcoin/bitcoin.git
+git clone https://github.com/nav-io/navio-core.git
 ```
 
 ### 5. Install Optional Dependencies
@@ -110,27 +110,25 @@ brew install python
 
 #### Deploy Dependencies
 
-You can deploy a `.zip` containing the Bitcoin Core application using `make deploy`.
+You can deploy a `.zip` containing the Navio Core application using the deploy target.
 It is required that you have `python` installed.
 
-## Building Bitcoin Core
+## Building Navio Core
 
 ### 1. Configuration
 
-There are many ways to configure Bitcoin Core, here are a few common examples:
+There are many ways to configure Navio Core, here are a few common examples:
 
 ##### Wallet (SQLite) Support:
 
 ``` bash
-./autogen.sh
-./configure
+cmake -B build -G Ninja
 ```
 
 ##### No Wallet
 
 ``` bash
-./autogen.sh
-./configure --without-wallet
+cmake -B build -G Ninja -DENABLE_WALLET=OFF
 ```
 
 ##### Further Configuration
@@ -139,30 +137,22 @@ You may want to dig deeper into the configuration options to achieve your desire
 Examine the output of the following command for a full list of configuration options:
 
 ``` bash
-./configure -help
+cmake -B build -LH
 ```
 
 ### 2. Compile
 
 After configuration, you are ready to compile.
-Run the following in your terminal to compile Bitcoin Core:
+Run the following in your terminal to compile Navio Core:
 
 ``` bash
-make        # use "-j N" here for N parallel jobs
-make check  # Run tests if Python 3 is available
+cmake --build build         # use "-j N" here for N parallel jobs
+ctest --test-dir build      # Run tests if Python 3 is available
 ```
 
-### 3. Deploy (optional)
+## Running Navio Core
 
-You can also create a  `.zip` containing the `.app` bundle by running the following command:
-
-``` bash
-make deploy
-```
-
-## Running Bitcoin Core
-
-Bitcoin Core should now be available at `./src/naviod`.
+Navio Core should now be available at `./build/bin/naviod`.
 
 The first time you run `naviod`, it will start downloading the blockchain.
 This process could take many hours, or even days on slower than average systems.
@@ -170,29 +160,29 @@ This process could take many hours, or even days on slower than average systems.
 By default, blockchain and wallet data files will be stored in:
 
 ``` bash
-/Users/${USER}/Library/Application Support/Bitcoin/
+/Users/${USER}/Library/Application Support/Navio/
 ```
 
 Before running, you may create an empty configuration file:
 
 ```shell
-mkdir -p "/Users/${USER}/Library/Application Support/Bitcoin"
+mkdir -p "/Users/${USER}/Library/Application Support/Navio"
 
-touch "/Users/${USER}/Library/Application Support/Bitcoin/navio.conf"
+touch "/Users/${USER}/Library/Application Support/Navio/navio.conf"
 
-chmod 600 "/Users/${USER}/Library/Application Support/Bitcoin/navio.conf"
+chmod 600 "/Users/${USER}/Library/Application Support/Navio/navio.conf"
 ```
 
 You can monitor the download process by looking at the debug.log file:
 
 ```shell
-tail -f $HOME/Library/Application\ Support/Bitcoin/debug.log
+tail -f $HOME/Library/Application\ Support/Navio/debug.log
 ```
 
 ## Other commands:
 
 ```shell
-./src/naviod -daemon      # Starts the bitcoin daemon.
-./src/navio-cli --help    # Outputs a list of command-line options.
-./src/navio-cli help      # Outputs a list of RPC commands when the daemon is running.
+./build/bin/naviod -daemon      # Starts the navio daemon.
+./build/bin/navio-cli --help    # Outputs a list of command-line options.
+./build/bin/navio-cli help      # Outputs a list of RPC commands when the daemon is running.
 ```
