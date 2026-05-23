@@ -1203,10 +1203,10 @@ jobs:
             # CentOS Stream 9 ships Python 3.9; navio CMakeLists requires >=3.10.
             # Install python3.11 from AppStream and shadow /usr/bin/python3.
             # e2fsprogs (chattr/lsattr) needed by feature_reindex_readonly.py.
-            # centos9 default image ships without it; test framework's
-            # `subprocess.run(['chattr'])` probe raises FileNotFoundError,
-            # falls through without setting the immutable bit, naviod runs
-            # unconstrained and the test times out at --timeout-factor x 60.
+            # centos9 default image ships without it; test framework probes
+            # for the chattr binary, falls through silently when missing,
+            # leaves undo_immutable as a no-op, and naviod runs unconstrained
+            # until --timeout-factor x 60 s elapses.
             dnf install -y \
               cmake ninja-build pkgconf-pkg-config ccache \
               python3.11 python3.11-pip python3.11-devel \
