@@ -1202,6 +1202,11 @@ jobs:
             dnf config-manager --set-enabled crb
             # CentOS Stream 9 ships Python 3.9; navio CMakeLists requires >=3.10.
             # Install python3.11 from AppStream and shadow /usr/bin/python3.
+            # e2fsprogs (chattr/lsattr) needed by feature_reindex_readonly.py.
+            # centos9 default image ships without it; test framework's
+            # `subprocess.run(['chattr'])` probe raises FileNotFoundError,
+            # falls through without setting the immutable bit, naviod runs
+            # unconstrained and the test times out at --timeout-factor x 60.
             dnf install -y \
               cmake ninja-build pkgconf-pkg-config ccache \
               python3.11 python3.11-pip python3.11-devel \
@@ -1210,41 +1215,12 @@ jobs:
               gcc-c++ glibc-devel.x86_64 libstdc++-devel.x86_64 \
               glibc-devel.i686 libstdc++-devel.i686 \
               git which patch bison perl rsync \
-              xz lbzip2 procps-ng make
+              xz lbzip2 procps-ng make \
+              e2fsprogs
             ln -sf /usr/bin/python3.11 /usr/local/bin/python3
             ln -sf /usr/bin/pip3.11 /usr/local/bin/pip3
             python3.11 -m pip install --break-system-packages pyzmq 2>/dev/null \
               || python3.11 -m pip install pyzmq
-          '
-
-      - name: Probe chattr +i on /tmp/navio_test_runner (debug)
-        # feature_reindex_readonly.py relies on chattr +i being honored by
-        # the filesystem hosting the test_runner scratch dir. Even with
-        # --tmpfs /tmp/navio_test_runner:exec, naviod runs as if the block
-        # file were writable. Verify here whether the kernel actually sets
-        # and enforces EXT4_IMMUTABLE_FL on tmpfs inside this container.
-        run: |
-          docker exec "${CONTAINER_NAME}" bash -c '
-            set +e
-            dnf install -y e2fsprogs >/dev/null
-            cd /tmp/navio_test_runner
-            mountpoint /tmp/navio_test_runner || true
-            findmnt /tmp/navio_test_runner || true
-            touch probe
-            echo "--- lsattr (pre): ---"
-            lsattr probe
-            chattr +i probe
-            echo "chattr +i exit: $?"
-            echo "--- lsattr (post): ---"
-            lsattr probe
-            echo "--- try rm (should fail with EPERM if immutable): ---"
-            rm -f probe
-            echo "rm exit: $?  | still present: $(test -e probe && echo yes || echo no)"
-            echo "--- try write (should fail if immutable): ---"
-            echo hello > probe
-            echo "write exit: $?  | content: $(cat probe 2>/dev/null || true)"
-            chattr -i probe 2>/dev/null
-            rm -f probe
           '
 
       - name: Restore Ccache cache
