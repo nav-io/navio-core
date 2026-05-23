@@ -8,7 +8,7 @@
 from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, assert_raises_rpc_error
+from test_framework.util import assert_equal
 
 
 class BlsctKeypoolRestoreTest(BitcoinTestFramework):
@@ -53,11 +53,11 @@ class BlsctKeypoolRestoreTest(BitcoinTestFramework):
         first_out_of_pool = addrs[3]
 
         self.log.info("Send to an address just beyond the restored wallet's initial lookahead")
-        outid_out = funder.sendtoblsctaddress(first_out_of_pool, Decimal("1"))
+        funder.sendtoblsctaddress(first_out_of_pool, Decimal("1"))
         self.generate_blsct_blocks(node, mining_addr, 1)
 
         self.log.info("Also send to the last address that still fits in the initial lookahead")
-        outid_in = funder.sendtoblsctaddress(last_in_pool, Decimal("2"))
+        funder.sendtoblsctaddress(last_in_pool, Decimal("2"))
         self.generate_blsct_blocks(node, mining_addr, 1)
 
         self.log.info("Restore a second wallet from the same mnemonic and rescan the chain")
