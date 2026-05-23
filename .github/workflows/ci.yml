@@ -1269,18 +1269,22 @@ jobs:
             ctest --output-on-failure -j"$(nproc)"
 
       - name: Run functional tests (in container)
-        # --timeout-factor=40 mirrors TEST_RUNNER_TIMEOUT_FACTOR in autotools
-        # ci/test/00_setup_env.sh; slow 32-bit jobs (blsct_htlc, etc.) need it.
-        # tmpdirprefix points at /tmp inside the container (overlayfs) rather
-        # than the bind-mounted workspace, so feature_reindex_readonly's
-        # chattr +i lands on a filesystem that honours immutability.
+        # --timeout-factor=80 (doubled from autotools' 40 in
+        # ci/test/00_setup_env.sh) — 32-bit naviod block-generation for
+        # blsct_unconfirmed_spending overruns the 2400 s budget that
+        # factor=40 produces; bump to 4800 s (=80 x 60 s). Other slow
+        # blsct_* tests already pass under factor=40.
+        # tmpdirprefix points at /tmp inside the container (overlayfs)
+        # rather than the bind-mounted workspace, so
+        # feature_reindex_readonly's chattr +i lands on a filesystem that
+        # honours immutability.
         run: |
           docker exec "${CONTAINER_NAME}" bash -eu -c '
             mkdir -p /tmp/navio_test_runner
             build/test/functional/test_runner.py -j"$(nproc)" \
               --ci --quiet --tmpdirprefix=/tmp/navio_test_runner \
               --combinedlogslen=99999999 \
-              --timeout-factor=40 \
+              --timeout-factor=80 \
               --exclude mempool_limit
           '
 
