@@ -2136,6 +2136,21 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
         bool is_coinbase = tx.IsCoinBase();
         bool is_bip30_exception = (is_coinbase && !fEnforceBIP30);
 
+        // Mirror AddCoins(): BLSCT block aggregation may produce vouts whose
+        // hash matches a vin prevout in the same tx. Those "self-spent" outputs
+        // were never added to the UTXO set on connect, so SpendCoin must not
+        // be called for them on disconnect — otherwise it returns false and
+        // marks the disconnect UNCLEAN, which DisconnectTip treats as fatal.
+        std::set<uint256> self_spent;
+        if (tx.IsBLSCT() && !is_coinbase) {
+            std::set<uint256> vin_prevouts;
+            for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
+            for (const auto& out : tx.vout) {
+                const uint256 out_hash = out.GetHash();
+                if (vin_prevouts.contains(out_hash)) self_spent.insert(out_hash);
+            }
+        }
+
         // Check that all outputs are available and match the outputs in the block itself
         // exactly.
         for (size_t o = 0; o < tx.vout.size(); o++) {
@@ -2150,6 +2165,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
             }
             if (!tx.vout[o].scriptPubKey.IsUnspendable()) {
                 COutPoint out(tx.vout[o].GetHash());
+                if (self_spent.contains(out.hash)) continue;
                 Coin coin;
                 bool is_spent = view.SpendCoin(out, &coin);
                 if (!is_spent || tx.vout[o] != coin.out || pindex->nHeight != coin.nHeight || is_coinbase != coin.fCoinBase) {
@@ -2170,6 +2186,15 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
             for (unsigned int j = tx.vin.size(); j > 0;) {
                 --j;
                 const COutPoint& out = tx.vin[j].prevout;
+                // BLSCT aggregation: vins that reference intermediate vouts of
+                // the same tx (self_spent) and were transient coins added in
+                // ConnectBlock at this block's height never lived in the
+                // persistent UTXO set. Don't restore them on disconnect —
+                // otherwise BIP30 on reconnect sees the intermediate output
+                // as already-present and rejects the block. A self_spent
+                // input whose undo coin was created at an earlier height is
+                // a real prior UTXO and must be restored normally.
+                if (self_spent.contains(out.hash) && txundo.vprevout[j].nHeight == pindex->nHeight) continue;
                 int res = ApplyTxInUndo(std::move(txundo.vprevout[j]), view, out);
                 if (res == DISCONNECT_FAILED) return DISCONNECT_FAILED;
                 fClean = fClean && res != DISCONNECT_UNCLEAN;
