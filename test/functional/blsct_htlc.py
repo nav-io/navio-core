@@ -322,6 +322,24 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
         return signed_tx
 
+    def _create_and_broadcast_script_output(self, wallet, address, script_hex,
+                                            amount_sats, blinding_key_hex):
+        """Create, fund, sign and broadcast a custom-script BLSCT output."""
+        outputs = [{
+            "address": address,
+            "script": script_hex,
+            "amount": amount_sats,
+            "blinding_key": blinding_key_hex,
+        }]
+
+        raw_tx = wallet.createblsctrawtransaction([], outputs)
+        funded_tx = wallet.fundblsctrawtransaction(raw_tx)
+        signed_tx = wallet.signblsctrawtransaction(funded_tx)
+        txid = self.nodes[0].sendrawtransaction(signed_tx)
+        self.log.info(f"Custom script tx broadcast: {txid}")
+        self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
+        return signed_tx
+
     def _recover_htlc_output(self, wallet, signed_tx_hex, expected_amount_sats):
         """Recover the HTLC output from raw tx hex via the owning wallet."""
         recovery = wallet.getblsctrecoverydata(signed_tx_hex)
@@ -747,125 +765,153 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         )
         self.log.info("=== Atomic-swap timelock opcode test PASSED ===")
 
-    def test_importblsctscript(self, wallet1, wallet2, address1, address2):
-        """Test that importblsctscript lets the receiver detect an HTLC
-        output on-chain without receiving any out-of-band data beyond the
-        initial negotiation parameters."""
-        self.log.info("=== Testing importblsctscript ===")
-
-        secret = bytes([0x42] * 32)
-        secret_hash = hashlib.sha256(secret).digest()
-        blinding_key_hex = "bb" * 32
-        current_height = self.nodes[0].getblockcount()
-        htlc_locktime = current_height + 50
-        htlc_amount_sats = 1 * COIN
-        script_descriptor = {
-            "type": "atomic_swap",
-            "address_a": address1,
-            "address_b": address2,
-            "hash": secret_hash.hex(),
-            "locktime": htlc_locktime,
-            "blinding_key": blinding_key_hex,
-        }
-
-        # Counterparty (wallet2) imports the expected HTLC script BEFORE it exists
-        result = wallet2.importblsctscript(script_descriptor, False)  # rescan=False, nothing to find yet
+    def _assert_imported_script_detected(self, case_name, expected_opcode,
+                                         wallet_funder, wallet_watcher,
+                                         address_a, script_descriptor,
+                                         output_amount_sats):
+        result = wallet_watcher.importblsctscript(script_descriptor, False)
         assert result["success"]
         imported_script = result["script"]
-        self.log.info(f"Imported HTLC script: {imported_script[:40]}...")
-        signable_balance_before = wallet2.getblsctbalance()
-        watchonly_balance_before = wallet2.getblsctbalance(0, True)
-        wallet_info_before = wallet2.getwalletinfo()
+        asm = self.nodes[0].decodescript(imported_script)["asm"]
+        assert expected_opcode in asm, (
+            f"{case_name} import built the wrong timelock opcode. "
+            f"ASM: {asm}")
+        self.log.info(f"{case_name} imported script: {imported_script[:40]}...")
+
+        signable_balance_before = wallet_watcher.getblsctbalance()
+        watchonly_balance_before = wallet_watcher.getblsctbalance(0, True)
+        wallet_info_before = wallet_watcher.getwalletinfo()
         assert Decimal(wallet_info_before["balance"]) == signable_balance_before, (
             "getwalletinfo.balance must track the default signable-only "
             "getblsctbalance view before the watch-only HTLC is created")
 
-        # Funder (wallet1) creates and broadcasts the HTLC
-        self._create_and_broadcast_htlc(
-            wallet1, address1, address2,
-            htlc_amount_sats, secret_hash.hex(), htlc_locktime, blinding_key_hex)
+        # Fund directly to the imported script so the test covers the exact
+        # script bytes reconstructed by importblsctscript for each opcode.
+        self._create_and_broadcast_script_output(
+            wallet_funder, address_a, imported_script,
+            output_amount_sats, script_descriptor["blinding_key"])
 
-        # Sync node1 so wallet2 sees the new block
         self.sync_blocks()
 
-        # Wallet2 should now detect the HTLC output via the watch-only match.
-        # listblsctunspent includes watch-only entries with watchonly=true.
-        unspent = wallet2.listblsctunspent()
+        unspent = wallet_watcher.listblsctunspent()
         htlc_matches = [u for u in unspent
                         if u.get("scriptPubKey") == imported_script]
         assert len(htlc_matches) > 0, (
-            f"Counterparty did not detect HTLC output via listblsctunspent. "
+            f"{case_name} counterparty did not detect HTLC output via listblsctunspent. "
             f"Got {len(unspent)} outputs, none matched script {imported_script[:40]}...")
         htlc_utxo = htlc_matches[0]
         assert htlc_utxo.get("watchonly"), "HTLC output should be marked watchonly"
-        # `signable` reflects whether the wallet can derive a spending key for
-        # the output. Watch-only HTLCs cannot be signed for, even though the
-        # amount is recoverable, so this must be false.
         assert htlc_utxo.get("signable") is False, "Imported HTLC output must be reported as signable=false"
-        assert htlc_utxo["amount"] == Decimal("1"), "Imported HTLC output should have recovered amount in output storage"
-        self.log.info(f"Counterparty detected HTLC output: {htlc_utxo['outid']}")
+        assert htlc_utxo["amount"] == Decimal(output_amount_sats) / Decimal(COIN), (
+            "Imported HTLC output should have recovered amount in output storage")
+        self.log.info(f"{case_name} counterparty detected HTLC output: {htlc_utxo['outid']}")
 
-        # The HTLC value must not show up in the default (signable-only)
-        # balance: getblsctbalance should ignore watch-only imports unless
-        # explicitly asked, and getwalletinfo.balance must agree.
-        signable_balance = wallet2.getblsctbalance()
-        watchonly_balance = wallet2.getblsctbalance(0, True)
+        signable_balance = wallet_watcher.getblsctbalance()
+        watchonly_balance = wallet_watcher.getblsctbalance(0, True)
         assert signable_balance == signable_balance_before, (
             "getblsctbalance must exclude watch-only HTLCs by default; "
             f"expected unchanged signable balance {signable_balance_before}, got {signable_balance}")
-        assert watchonly_balance >= watchonly_balance_before + Decimal("1"), (
+        expected_watchonly_delta = Decimal(output_amount_sats) / Decimal(COIN)
+        assert watchonly_balance >= watchonly_balance_before + expected_watchonly_delta, (
             "getblsctbalance with include_watchonly=true must include the "
-            f"HTLC amount; expected at least {watchonly_balance_before + Decimal('1')}, got {watchonly_balance}")
-        wallet_info = wallet2.getwalletinfo()
+            f"HTLC amount; expected at least {watchonly_balance_before + expected_watchonly_delta}, got {watchonly_balance}")
+        wallet_info = wallet_watcher.getwalletinfo()
         assert Decimal(wallet_info["balance"]) == signable_balance_before, (
             "getwalletinfo.balance must exclude watch-only HTLCs and stay "
             f"aligned with the signable balance view; got {wallet_info['balance']}")
 
-        stored_recovery = wallet2.getblsctrecoverydata(htlc_utxo["outid"])
+        stored_recovery = wallet_watcher.getblsctrecoverydata(htlc_utxo["outid"])
         stored_outputs = [out for out in stored_recovery["outputs"] if out["out_hash"] == htlc_utxo["outid"]]
         assert len(stored_outputs) == 1, (
-            f"Counterparty did not recover HTLC output into output storage. "
+            f"{case_name} counterparty did not recover HTLC output into output storage. "
             f"Recovery data: {stored_recovery['outputs']}")
-        assert stored_outputs[0]["amount_navoshi"] == htlc_amount_sats
+        assert stored_outputs[0]["amount_navoshi"] == output_amount_sats
         assert stored_outputs[0]["gamma"] != ""
-        self.log.info("Counterparty recovered HTLC output into watch-only output storage")
+        self.log.info(f"{case_name} counterparty recovered HTLC output into watch-only output storage")
 
-        nonce_hex = wallet2.deriveblsctnonce(blinding_key_hex, address1)
-        recovery = wallet2.getblsctrecoverydatawithnonce(htlc_utxo["outid"], nonce_hex)
+        nonce_hex = wallet_watcher.deriveblsctnonce(script_descriptor["blinding_key"], address_a)
+        recovery = wallet_watcher.getblsctrecoverydatawithnonce(htlc_utxo["outid"], nonce_hex)
         recovered = [out for out in recovery["outputs"] if out["out_hash"] == htlc_utxo["outid"]]
         assert len(recovered) == 1, (
-            f"Counterparty did not recover HTLC output via derived nonce. "
+            f"{case_name} counterparty did not recover HTLC output via derived nonce. "
             f"Recovery data: {recovery['outputs']}")
-        assert recovered[0]["amount_navoshi"] == htlc_amount_sats
+        assert recovered[0]["amount_navoshi"] == output_amount_sats
         assert recovered[0]["gamma"] != ""
-        self.log.info("Counterparty recovered HTLC output via derived shared public nonce")
+        self.log.info(f"{case_name} counterparty recovered HTLC output via derived shared public nonce")
 
-        # Fresh wallets importing after the HTLC exists should respect start_height.
-        # _create_and_broadcast_htlc mines the funding tx into the current tip.
         htlc_block_height = self.nodes[0].getblockcount()
         self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
+        self.sync_blocks()
 
-        self.nodes[1].createwallet(wallet_name="wallet2_rescan_hit", blsct=True, blank=True)
-        self.nodes[1].createwallet(wallet_name="wallet2_rescan_miss", blsct=True, blank=True)
-        wallet2_rescan_hit = self.nodes[1].get_wallet_rpc("wallet2_rescan_hit")
-        wallet2_rescan_miss = self.nodes[1].get_wallet_rpc("wallet2_rescan_miss")
+        hit_wallet_name = f"{case_name}_rescan_hit"
+        miss_wallet_name = f"{case_name}_rescan_miss"
+        self.nodes[1].createwallet(wallet_name=hit_wallet_name, blsct=True, blank=True)
+        self.nodes[1].createwallet(wallet_name=miss_wallet_name, blsct=True, blank=True)
+        wallet_rescan_hit = self.nodes[1].get_wallet_rpc(hit_wallet_name)
+        wallet_rescan_miss = self.nodes[1].get_wallet_rpc(miss_wallet_name)
 
-        hit_result = wallet2_rescan_hit.importblsctscript(script_descriptor, True, htlc_block_height)
+        hit_result = wallet_rescan_hit.importblsctscript(script_descriptor, True, htlc_block_height)
         assert hit_result["success"]
         hit_matches = [
-            u for u in wallet2_rescan_hit.listblsctunspent()
+            u for u in wallet_rescan_hit.listblsctunspent()
             if u.get("scriptPubKey") == hit_result["script"]
         ]
         assert len(hit_matches) > 0, "Rescan from the HTLC block height should find the imported output"
 
-        miss_result = wallet2_rescan_miss.importblsctscript(script_descriptor, True, htlc_block_height + 1)
+        miss_result = wallet_rescan_miss.importblsctscript(script_descriptor, True, htlc_block_height + 1)
         assert miss_result["success"]
         miss_matches = [
-            u for u in wallet2_rescan_miss.listblsctunspent()
+            u for u in wallet_rescan_miss.listblsctunspent()
             if u.get("scriptPubKey") == miss_result["script"]
         ]
         assert len(miss_matches) == 0, "Rescan from a later height should not find the historical HTLC output"
-        self.log.info("Height-based importblsctscript rescan start works as expected")
+        self.log.info(f"{case_name} height-based importblsctscript rescan start works as expected")
+
+    def test_importblsctscript(self, wallet1, wallet2, address1, address2):
+        """Test that importblsctscript supports both CLTV and CSV HTLC
+        variants and lets the receiver detect them on-chain."""
+        self.log.info("=== Testing importblsctscript ===")
+
+        current_height = self.nodes[0].getblockcount()
+        test_cases = [
+            {
+                "name": "cltv",
+                "expected_opcode": "OP_CHECKLOCKTIMEVERIFY",
+                "descriptor": {
+                    "type": "atomic_swap",
+                    "address_a": address1,
+                    "address_b": address2,
+                    "hash": hashlib.sha256(bytes([0x42] * 32)).hexdigest(),
+                    "locktime": current_height + 50,
+                    "timelock_opcode": "cltv",
+                    "blinding_key": "bb" * 32,
+                },
+            },
+            {
+                "name": "csv",
+                "expected_opcode": "OP_CHECKSEQUENCEVERIFY",
+                "descriptor": {
+                    "type": "atomic_swap",
+                    "address_a": address1,
+                    "address_b": address2,
+                    "hash": hashlib.sha256(bytes([0x24] * 32)).hexdigest(),
+                    "locktime": 42,
+                    "timelock_opcode": "csv",
+                    "blinding_key": "cc" * 32,
+                },
+            },
+        ]
+
+        for case in test_cases:
+            self._assert_imported_script_detected(
+                case["name"],
+                case["expected_opcode"],
+                wallet1,
+                wallet2,
+                address1,
+                case["descriptor"],
+                1 * COIN,
+            )
 
         # Also test raw script import
         raw_result = wallet2.importblsctscript({
