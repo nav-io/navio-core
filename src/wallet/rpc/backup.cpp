@@ -22,6 +22,7 @@
 #include <uint256.h>
 #include <util/bip32.h>
 #include <util/fs.h>
+#include <util/strencodings.h>
 #include <util/time.h>
 #include <util/translation.h>
 #include <wallet/rpc/util.h>
@@ -124,6 +125,23 @@ static void RescanWalletFromHeight(CWallet& wallet, const WalletRescanReserver& 
     case CWallet::ScanResult::USER_ABORT:
         throw JSONRPCError(RPC_MISC_ERROR, "Rescan aborted.");
     }
+}
+
+static opcodetype ParseAtomicSwapTimelockOpcode(const UniValue& desc)
+{
+    if (!desc.exists("timelock_opcode")) {
+        return OP_CHECKLOCKTIMEVERIFY;
+    }
+
+    const std::string opcode = ToLower(desc["timelock_opcode"].get_str());
+    if (opcode == "cltv" || opcode == "checklocktimeverify" || opcode == "op_checklocktimeverify") {
+        return OP_CHECKLOCKTIMEVERIFY;
+    }
+    if (opcode == "csv" || opcode == "checksequenceverify" || opcode == "op_checksequenceverify") {
+        return OP_CHECKSEQUENCEVERIFY;
+    }
+
+    throw JSONRPCError(RPC_INVALID_PARAMETER, "timelock_opcode must be \"cltv\" or \"csv\"");
 }
 
 static void EnsureBlockDataFromTime(const CWallet& wallet, int64_t timestamp)
@@ -2113,7 +2131,8 @@ RPCHelpMan importblsctscript()
                                {"address_a", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "(atomic_swap) BLSCT address for the hashlock branch"},
                                {"address_b", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "(atomic_swap) BLSCT address for the timelock branch"},
                                {"hash", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(atomic_swap) 32-byte secret hash (64 hex chars)"},
-                               {"locktime", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "(atomic_swap) absolute locktime (height or timestamp)"},
+                               {"locktime", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "(atomic_swap) timelock value. Interpreted as an absolute locktime for \"cltv\" and as an nSequence value for \"csv\""},
+                               {"timelock_opcode", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "(atomic_swap) timelock opcode: \"cltv\" (default) or \"csv\""},
                                {"blinding_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(atomic_swap) 32-byte blinding key (64 hex chars)"},
                                {"script", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "(raw) the script hex to import"},
                            }},
@@ -2129,6 +2148,10 @@ RPCHelpMan importblsctscript()
                           HelpExampleCli("importblsctscript",
                                         "'{\"type\":\"atomic_swap\",\"address_a\":\"...\",\"address_b\":\"...\","
                                         "\"hash\":\"abcd...\",\"locktime\":200,\"blinding_key\":\"1234...\"}'") +
+                          HelpExampleCli("importblsctscript",
+                                        "'{\"type\":\"atomic_swap\",\"address_a\":\"...\",\"address_b\":\"...\","
+                                        "\"hash\":\"abcd...\",\"locktime\":42,\"timelock_opcode\":\"csv\","
+                                        "\"blinding_key\":\"1234...\"}'") +
                           HelpExampleCli("importblsctscript",
                                         "'{\"type\":\"raw\",\"script\":\"51\"}'") +
                           HelpExampleCli("importblsctscript",
@@ -2202,6 +2225,8 @@ RPCHelpMan importblsctscript()
                               if (locktime < 0 || locktime > std::numeric_limits<uint32_t>::max())
                                   throw JSONRPCError(RPC_INVALID_PARAMETER, "locktime must be between 0 and 4294967295");
 
+                              const opcodetype timelock_opcode = ParseAtomicSwapTimelockOpcode(desc);
+
                               std::vector<unsigned char> bk_bytes = ParseHex(desc["blinding_key"].get_str());
                               if (bk_bytes.size() != 32)
                                   throw JSONRPCError(RPC_INVALID_PARAMETER, "blinding_key must be 32 bytes (64 hex chars)");
@@ -2228,7 +2253,7 @@ RPCHelpMan importblsctscript()
                               if (keyA.size() != blsct::PublicKey::SIZE || keyB.size() != blsct::PublicKey::SIZE)
                                   throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to derive spending keys");
 
-                              script = blsct::BuildHTLCScript(hash_bytes, keyA, keyB, locktime);
+                              script = blsct::BuildHTLCScript(hash_bytes, keyA, keyB, locktime, timelock_opcode);
 
                           } else if (type_str == "raw") {
                               if (!desc.exists("script"))
