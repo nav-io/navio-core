@@ -13,12 +13,21 @@
 # carried the warning "unsigned builder-built artifacts; not for production".
 #
 # Triggers:
-#   - push to master       -> rolling "latest-master" prerelease (tag deleted
-#     and recreated each push so the URL is stable)
-#   - push to a v* tag     -> tagged GitHub release with auto-generated notes
-#   - workflow_dispatch    -> build + upload workflow-run artifacts only; the
-#     publish job is gated to master / v* refs so dispatches on feature
-#     branches never touch GitHub Releases
+#   - push to master       -> build + upload workflow-run artifacts;
+#     navio-signer (external Rust daemon, separate repo) signs + publishes
+#     the rolling "nightly" prerelease.
+#   - push to a v* tag     -> build + upload workflow-run artifacts;
+#     navio-signer signs + publishes the tagged GH release.
+#   - workflow_dispatch    -> same as above; this workflow itself never
+#     publishes to GitHub Releases (publication is gated by signer).
+#
+# Releases are signed out-of-band by navio-signer running on a maintainer-
+# controlled mac with the codesigning keys:
+#   - linux:   GPG detach-sign per-HOST tarballs + top-level SHA256SUMS
+#   - mingw:   osslsigncode (Authenticode) each .exe / .dll
+#   - darwin:  codesign (Developer ID) + xcrun notarytool
+# See https://github.com/nav-io/navio-signer (TBD: transferring from
+# mxaddict/navio-signer once stable).
 #
 # Scope:
 #   The matrix below mirrors the full upstream-supported triple set
@@ -59,20 +68,16 @@ on:
     branches: [master]
     tags: ['v*']
   # Manual trigger so the workflow can be validated from a feature branch
-  # (e.g. feat/guix-cmake-port) before being relied on for master/tag
-  # publishes. Manual runs upload artifacts as workflow-run artifacts only
-  # — the publish job is gated to refs/heads/master and refs/tags/v* so a
-  # workflow_dispatch never creates a GH release.
+  # before being relied on for master/tag builds. All triggers produce the
+  # same workflow-run artifacts; navio-signer decides whether to publish a
+  # release based on the ref (master -> nightly, v* -> tagged).
   workflow_dispatch:
 
-# Only one release run at a time per ref to avoid races with the
-# latest-master delete/recreate dance.
+# Only one build run at a time per ref so concurrent pushes don't compete
+# for the depends cache or hosted-runner minutes.
 concurrency:
-  group: release-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: false
-
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -345,79 +350,3 @@ jobs:
           name: guix-${{ steps.version.outputs.version }}-${{ matrix.host }}
           path: ${{ runner.temp }}/artifacts/*
           if-no-files-found: error
-
-  publish:
-    name: Publish release
-    needs: build
-    # Both publish steps below are individually gated to master / v* tag
-    # refs. Gate the whole job too so workflow_dispatch on feature
-    # branches doesn't spin up a runner just to download artifacts,
-    # aggregate SHA256SUMS, and then skip both publish steps.
-    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: ${{ runner.temp }}/artifacts
-          merge-multiple: true
-
-      - name: Aggregate SHA256SUMS
-        shell: bash
-        run: |
-          cd "${RUNNER_TEMP}/artifacts"
-          # Re-emit SHA256SUMS so it's authoritative across all HOSTS, not
-          # one per build job. Discard any per-job SHA256SUMS fragments.
-          rm -f SHA256SUMS
-          shopt -s nullglob
-          # tar.gz for linux HOSTS, zip for mingw HOSTS — aggregate both.
-          archives=( *.tar.gz *.zip )
-          if [ ${#archives[@]} -eq 0 ]; then
-            echo "No archives downloaded"; ls -la; exit 1
-          fi
-          sha256sum "${archives[@]}" > SHA256SUMS
-          cat SHA256SUMS
-          ls -la
-
-      - name: Publish rolling latest-master prerelease
-        if: github.ref == 'refs/heads/master'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          tag=latest-master
-          short=$(git rev-parse --short HEAD)
-          title="Latest master (${short})"
-          notes="Rolling reproducible Guix build of master (${short}). Not for production releases; tagged releases at refs/tags/v* are the supported channel."
-
-          # Delete prior rolling release + tag (best-effort: ignore missing).
-          gh release delete "${tag}" --repo "${{ github.repository }}" --cleanup-tag --yes 2>/dev/null || true
-
-          gh release create "${tag}" \
-            --repo "${{ github.repository }}" \
-            --target "${{ github.sha }}" \
-            --title "${title}" \
-            --notes "${notes}" \
-            --prerelease \
-            "${RUNNER_TEMP}"/artifacts/*
-
-      - name: Publish tagged release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          gh release create "${tag}" \
-            --repo "${{ github.repository }}" \
-            --title "${tag}" \
-            --generate-notes \
-            --verify-tag \
-            "${RUNNER_TEMP}"/artifacts/*
