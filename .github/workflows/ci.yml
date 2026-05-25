@@ -359,16 +359,16 @@ jobs:
   linux-cmake:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
-    # container is only set for entries that supply matrix.container (e.g.
-    # i686-centos). When the field is absent the expression evaluates to an
-    # empty string which GitHub Actions treats as "no container", so all
-    # other entries keep running on the bare ubuntu runner unchanged.
-    # With i686-centos extracted to its own job (see linux-cmake-centos
-    # below), no remaining linux-cmake matrix entry uses matrix.container,
-    # so the container: directive is back to its original "no container
-    # for any of these jobs" form. Left present (always-empty string) in
-    # case a future matrix entry needs containerised setup again.
-    container: ''
+    # container is only set for entries that supply matrix.container.
+    # When the field is absent the expression evaluates to empty string,
+    # which GitHub Actions treats as "no container", so entries without
+    # a matrix.container value keep running on the bare ubuntu runner.
+    # mac-cross uses mirror.gcr.io/debian:trixie to pick up clang 19 (the
+    # darwin.mk toolchain refresh needs newer clang than Ubuntu 24.04's
+    # default clang 18 — same image upstream bitcoin uses for its
+    # mac-cross job; see contrib/ci/test/00_setup_env_mac_cross.sh
+    # upstream).
+    container: ${{ matrix.container }}
     # 180 min matches the autotools `linux:` job above. The fuzz matrix
     # entry (#233) regularly takes 45-70 min wall-clock between build and
     # harness run, which overruns a 60 min budget; every other matrix
@@ -504,9 +504,25 @@ jobs:
           # The Xcode SDK is fetched from bitcoincore.org's mirror, matching
           # ci/test/01_base_install.sh's OSX_SDK_BASENAME logic.
           - name: mac-cross
-            label: 'macOS cross-compile, Ubuntu 24.04, no tests (CMake)'
+            label: 'macOS cross-compile, debian:trixie, no tests (CMake)'
             runner: ubuntu-24.04
-            packages: zip
+            # Debian trixie ships clang 19, matching the version guix
+            # produces and the version upstream bitcoin tests with for
+            # mac-cross. Ubuntu 24.04's default clang is 18, which is
+            # too old: gmp's compile probe fails when configuring
+            # darwin cross because clang 18 + lld 18 don't handle the
+            # depends/hosts/darwin.mk driver chain
+            # (--target=x86_64-apple-darwin + -mlinker-version=711 +
+            # -isysroot SDK + -fuse-ld=lld) cleanly enough for
+            # configure to find a working compiler.
+            container: 'mirror.gcr.io/debian:trixie'
+            # clang + lld + llvm-* tools are required by depends/hosts/
+            # darwin.mk (clang for $(clang_prog), lld for -fuse-ld=lld,
+            # llvm-ar / llvm-nm / llvm-ranlib / llvm-strip / llvm-objcopy
+            # / llvm-objdump for the darwin_* binutils). The toolchain
+            # moved off the depends-managed native_llvm/cctools chain
+            # when navio adopted upstream's modernized darwin guix path.
+            packages: zip clang lld llvm
             cc: gcc
             cxx: g++
             depends_host: x86_64-apple-darwin
@@ -797,37 +813,62 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          if [ -n "${{ matrix.container }}" ]; then
-            # Running inside a CentOS/RHEL container: use dnf, no sudo.
-            # ninja-build, ccache, and lbzip2 live in EPEL (not in the
-            # CentOS Stream 9 base repos), so enable EPEL + CRB first.
-            # CRB (CodeReady Builder) provides some EPEL build deps.
-            dnf install -y epel-release dnf-plugins-core
-            dnf config-manager --set-enabled crb
-            # CentOS Stream 9 ships Python 3.9 by default but navio's
-            # CMakeLists requires Python 3.10+ for the functional-test
-            # runner. Install python3.11 from AppStream and shadow the
-            # default /usr/bin/python3 via /usr/local/bin so both cmake
-            # find_package(Python3) and the test runner pick it up.
-            dnf install -y \
-              cmake ninja-build pkgconf-pkg-config ccache \
-              python3.11 python3.11-pip python3.11-devel \
-              libtool automake autoconf \
-              libatomic.i686 libatomic.x86_64 \
-              ${{ matrix.packages }}
-            ln -sf /usr/bin/python3.11 /usr/local/bin/python3
-            ln -sf /usr/bin/pip3.11 /usr/local/bin/pip3
-            python3.11 -m pip install --break-system-packages pyzmq 2>/dev/null \
-              || python3.11 -m pip install pyzmq
-          else
-            if [ -n "${{ matrix.extra_arch }}" ]; then
-              sudo dpkg --add-architecture ${{ matrix.extra_arch }}
-            fi
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends \
-              build-essential cmake ninja-build pkgconf ccache \
-              ${{ matrix.packages }}
-          fi
+          case "${{ matrix.container }}" in
+            debian:*|mirror.gcr.io/debian:*)
+              # Debian container (mac-cross uses debian:trixie for
+              # clang 19). apt-get is the same as Ubuntu, just no sudo
+              # — root inside the container. m4 / libtool / autoconf /
+              # automake / bison / bzip2 / xz-utils / patch are pulled
+              # in because the depends tree's tarballs need them at
+              # extract / autoreconf time. The bare ubuntu runner gets
+              # them via build-essential's broader transitive set;
+              # Debian's build-essential is leaner.
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                ca-certificates git \
+                build-essential cmake ninja-build pkgconf ccache curl \
+                m4 libtool autoconf automake bison bzip2 xz-utils patch \
+                python3 \
+                ${{ matrix.packages }}
+              ;;
+            ?*)
+              # Non-empty + non-debian container: assume CentOS/RHEL
+              # (the linux-cmake-centos top-level job migrated off the
+              # matrix entry pattern in #245, but the historical
+              # mac-cross-like path is preserved here in case another
+              # entry needs it). Use dnf, no sudo. ninja-build,
+              # ccache, and lbzip2 live in EPEL (not in the CentOS
+              # Stream 9 base repos), so enable EPEL + CRB first. CRB
+              # (CodeReady Builder) provides some EPEL build deps.
+              dnf install -y epel-release dnf-plugins-core
+              dnf config-manager --set-enabled crb
+              # CentOS Stream 9 ships Python 3.9 by default but navio's
+              # CMakeLists requires Python 3.10+ for the functional-test
+              # runner. Install python3.11 from AppStream and shadow the
+              # default /usr/bin/python3 via /usr/local/bin so both
+              # cmake find_package(Python3) and the test runner pick
+              # it up.
+              dnf install -y \
+                cmake ninja-build pkgconf-pkg-config ccache \
+                python3.11 python3.11-pip python3.11-devel \
+                libtool automake autoconf \
+                libatomic.i686 libatomic.x86_64 \
+                ${{ matrix.packages }}
+              ln -sf /usr/bin/python3.11 /usr/local/bin/python3
+              ln -sf /usr/bin/pip3.11 /usr/local/bin/pip3
+              python3.11 -m pip install --break-system-packages pyzmq 2>/dev/null \
+                || python3.11 -m pip install pyzmq
+              ;;
+            *)
+              if [ -n "${{ matrix.extra_arch }}" ]; then
+                sudo dpkg --add-architecture ${{ matrix.extra_arch }}
+              fi
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends \
+                build-essential cmake ninja-build pkgconf ccache \
+                ${{ matrix.packages }}
+              ;;
+          esac
 
       - name: Set Ccache directory
         run: echo "CCACHE_DIR=${RUNNER_TEMP}/ccache_dir" >> "$GITHUB_ENV"
@@ -956,6 +997,17 @@ jobs:
           # (which would otherwise leak into per-package configure scripts —
           # e.g. zeromq would probe windows.h with the host gcc and fail).
           env -u CC -u CXX make -C depends HOST=${{ matrix.depends_host }} ${{ matrix.depends_opts }}
+
+      - name: Dump depends config.log on failure
+        if: failure() && matrix.depends_host
+        run: |
+          set +e
+          for log in depends/work/build/${{ matrix.depends_host }}/*/*/config.log; do
+            [ -f "$log" ] || continue
+            echo "::group::$log"
+            cat "$log"
+            echo "::endgroup::"
+          done
 
       - name: Save depends cache
         if: ${{ matrix.depends_host }}
