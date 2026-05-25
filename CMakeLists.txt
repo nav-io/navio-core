@@ -73,6 +73,27 @@ if(NOT DEFINED CMAKE_OPTIMIZE_DEPENDENCIES)
 endif()
 
 #=============================
+# RPATH handling
+#=============================
+# Homebrew dylibs (libevent, zeromq, ...) on macOS ship with
+# LC_ID_DYLIB=@rpath/<soname>, so the consuming binary must carry an
+# LC_RPATH that resolves to the directory containing the dylib.
+# CMake's default build-tree RPATH logic only fires when an imported
+# target's location is a concrete path; some Config-package exports use
+# bare -l<name> link flags or generator expressions that miss the
+# default, and binaries are then shipped with no LC_RPATH at all
+# (dyld: "Reason: no LC_RPATH's found"). Force CMake to embed each
+# link-time library directory in the install rpath, and on macOS embed
+# @loader_path/../lib too so binaries stay relocatable next to bundled
+# dylibs. Harmless on Linux/Windows (no LC_RPATH section, ld ignores
+# the @loader_path entry as just another DT_RUNPATH string).
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
+if(APPLE)
+  list(APPEND CMAKE_BUILD_RPATH "@loader_path/../lib")
+  list(APPEND CMAKE_INSTALL_RPATH "@loader_path/../lib")
+endif()
+
+#=============================
 # Configurable options
 #=============================
 include(CMakeDependentOption)

@@ -118,6 +118,7 @@ jobs:
             -DWITH_ZMQ=ON \
             -DWITH_USDT=ON
           cmake --build build -j"$(nproc)"
+          ci/smoke_test_binaries.sh build
           ctest --test-dir build -j"$(nproc)" --output-on-failure
           build/test/functional/test_runner.py -j "$(( $(nproc) * 2 ))" \
             --ci --quiet --tmpdirprefix="${RUNNER_TEMP}" \
@@ -196,6 +197,13 @@ jobs:
 
       - name: Build
         run: cmake --build build -j"$(sysctl -n hw.ncpu)"
+
+      - name: Smoke test binaries
+        # Reproduces aguycalled's macOS rpath regression class: catches
+        # dyld load failures (`@rpath/libevent_pthreads-*.dylib not loaded`,
+        # missing LC_RPATH) that ctest masks because it only execs
+        # test_navio, not the production binaries.
+        run: ci/smoke_test_binaries.sh build
 
       - name: Run unit tests
         working-directory: build
@@ -294,6 +302,10 @@ jobs:
       - name: Build
         shell: cmd
         run: cmake --build build --config Release
+
+      - name: Smoke test binaries
+        shell: bash
+        run: ci/smoke_test_binaries.sh build
 
       - name: Save vcpkg binary cache
         uses: actions/cache/save@v5
@@ -404,6 +416,7 @@ jobs:
               -DAPPEND_CPPFLAGS=-I/usr/lib/llvm-17/lib/clang/17/include
               "-DAPPEND_CXXFLAGS=-O0 -g0"
             tidy: true
+            smoke_test_binaries: true
 
           # Replaces the autotools `no-wallet-libblsct` matrix entry.
           # clang-13 (Bullseye default) is not packaged for Ubuntu 24.04 apt;
@@ -457,6 +470,7 @@ jobs:
               -DWITH_MULTIPROCESS=ON
               "-DAPPEND_CPPFLAGS=-DBOOST_MULTI_INDEX_ENABLE_SAFE_MODE"
             run_unit_tests: true
+            smoke_test_binaries: true
 
           # Replaces the autotools `win64` matrix entry.
           # MinGW cross via depends. Gap 1 (ZeroMQ pkg-config path) was
@@ -488,6 +502,7 @@ jobs:
               -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine
               "-DAPPEND_CXXFLAGS=-Wno-return-type"
             run_unit_tests: true
+            smoke_test_binaries: true
             # system_tests/run_command expects a specific Win32 error code
             # for a non-existent command (6), but wine returns 2 instead —
             # this is a known wine-version-sensitive expectation. Skip the
@@ -515,6 +530,10 @@ jobs:
             cmake_flags: >-
               -DCMAKE_BUILD_TYPE=Release
               -DREDUCE_EXPORTS=ON
+            # mac-cross produces Mach-O binaries on a Linux runner; no
+            # emulator is wired so the smoke step falls back to `file`
+            # shape probes (see ci/smoke_test_binaries.sh).
+            smoke_test_binaries: true
 
           # Replaces the autotools `arm` matrix entry (00_setup_env_arm.sh).
           # 32-bit ARM hard-float cross via depends (arm-linux-gnueabihf).
@@ -543,6 +562,7 @@ jobs:
               -DREDUCE_EXPORTS=ON
               "-DAPPEND_CXXFLAGS=-Wno-psabi"
             run_unit_tests: true
+            smoke_test_binaries: true
 
           # Replaces the `no-wallet-libnaviokernel` autotools matrix entry.
           # -stdlib=libc++ is passed via CMAKE_{CXX,EXE_LINKER}_FLAGS rather
@@ -624,6 +644,7 @@ jobs:
               -DCMAKE_CXX_FLAGS=-stdlib=libc++
               -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
               -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++
+            smoke_test_binaries: true
 
           # Replaces the autotools `msan` matrix entry (removed from linux: above).
           # MSan requires that *every* memory operation — including the C++ standard
@@ -700,6 +721,7 @@ jobs:
               "-DCMAKE_SHARED_LINKER_FLAGS=-L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib -lc++ -lc++abi -fsanitize=memory"
             msan: true
             run_unit_tests: true
+            smoke_test_binaries: true
 
           - name: nowallet-libnaviokernel
             label: 'Ubuntu 22.04, no wallet, libnaviokernel (CMake)'
@@ -722,11 +744,11 @@ jobs:
               -DBUILD_TX=ON
               -DBUILD_UTIL=ON
               -DENABLE_EXTERNAL_SIGNER=OFF
+            smoke_test_binaries: true
+            # Binary -version smoke is covered by smoke_test_binaries above;
+            # the per-job smoke_test command stays focused on the
+            # libnaviokernel-specific artifacts unique to this matrix entry.
             smoke_test: |
-              ./build/bin/naviod -version
-              ./build/bin/navio-cli --help | head -5
-              ./build/bin/navio-tx -help | head -5
-              ./build/bin/navio-util -help | head -5
               test -f ./build/lib/libnaviokernel.so
               file ./build/lib/libnaviokernel.so
               test -x ./build/bin/navio-chainstate
@@ -981,6 +1003,21 @@ jobs:
 
       - name: Build
         run: cmake --build build
+
+      - name: Smoke test binaries
+        # Runs `-version` on each built navio binary (or `file` for cross
+        # builds with no emulator) to catch load-time failures (rpath,
+        # ABI, runtime dep) that ctest can miss since it only execs
+        # test_navio. The matrix.win64 entry sets CMAKE_CROSSCOMPILING_EMULATOR
+        # so wine is used automatically; mac-cross sets NAVIO_SMOKE_NO_EXEC
+        # so the script does a `file` shape probe instead of trying to
+        # exec a Mach-O on Linux (where +x is set but the kernel returns
+        # ENOEXEC).
+        if: ${{ matrix.smoke_test_binaries }}
+        env:
+          CMAKE_CROSSCOMPILING_EMULATOR: ${{ matrix.depends_host == 'x86_64-w64-mingw32' && '/usr/bin/wine' || '' }}
+          NAVIO_SMOKE_NO_EXEC: ${{ contains(matrix.depends_host, 'darwin') && '1' || '' }}
+        run: ci/smoke_test_binaries.sh build
 
       - name: Run unit tests
         if: ${{ matrix.run_unit_tests }}
@@ -1268,6 +1305,9 @@ jobs:
 
       - name: Build (in container)
         run: docker exec "${CONTAINER_NAME}" cmake --build build
+
+      - name: Smoke test binaries (in container)
+        run: docker exec "${CONTAINER_NAME}" ci/smoke_test_binaries.sh build
 
       - name: Run unit tests (in container)
         run: |
