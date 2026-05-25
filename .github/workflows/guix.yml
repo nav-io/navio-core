@@ -1,0 +1,423 @@
+# Copyright (c) 2024-present The Navio Core developers
+# Distributed under the MIT software license, see the accompanying
+# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+# Reproducible build CI via Guix.
+#
+# Replaces the prior:
+#   - .github/workflows/release.yml  (hosted-runner CMake build, unsigned, not
+#     reproducible; only x86_64-linux-gnu + arm64-apple-darwin).
+#   - .github/workflows/nightly-build.yml  (external navio-builder repo, daily
+#     cron, separate from navio-core source).
+# Both produced "an artifact" but neither was a reproducible build; both
+# carried the warning "unsigned builder-built artifacts; not for production".
+#
+# Triggers:
+#   - push to master       -> rolling "latest-master" prerelease (tag deleted
+#     and recreated each push so the URL is stable)
+#   - push to a v* tag     -> tagged GitHub release with auto-generated notes
+#   - workflow_dispatch    -> build + upload workflow-run artifacts only; the
+#     publish job is gated to master / v* refs so dispatches on feature
+#     branches never touch GitHub Releases
+#
+# Scope:
+#   The matrix below mirrors the full upstream-supported triple set
+#   from contrib/guix/guix-build, plus aarch64-w64-mingw32. Long-tail
+#   arches are listed commented-out so the diff to "build everything
+#   upstream builds" is one-line-uncomment per arch when navio is ready
+#   to ship them — instead of having to remember which triple was
+#   already wired and which still needs depends / build.sh work.
+#
+#   Active:
+#     - Linux:   x86_64, aarch64, arm (32-bit), riscv64,
+#                powerpc64 (BE), powerpc64le (LE)
+#     - Windows: x86_64-w64-mingw32
+#     - macOS:   x86_64-apple-darwin, arm64-apple-darwin
+#
+#   Commented-out:
+#     - Windows: aarch64-w64-mingw32 needs an llvm-mingw toolchain
+#       (the depends + guix path is GCC-only and upstream GCC has no
+#       mingw-w64 build for aarch64). Wiring it requires a separate
+#       depends/hosts/mingw32.mk variant + a clang-based guix profile;
+#       not a one-line uncomment.
+#
+#   Output shape: one ${DISTNAME}-${HOST}.tar.gz per HOST (or .zip on
+#   mingw HOSTS). No .dmg / Bitcoin-Qt.app on macOS — navio is
+#   CLI-only — and no codesigning tarball anywhere yet. The macOS SDK
+#   is fetched from the bitcoincore.org depends-sources mirror at the
+#   pinned XCODE_VERSION / XCODE_BUILD_ID in depends/hosts/darwin.mk
+#   and cached on the runner; SDK files themselves never end up in our
+#   outputs per contrib/macdeploy/README.md. Codesigning can be wired
+#   back via contrib/guix/guix-codesign + detached-sig-create.sh once
+#   a navio signing key is in place. -debug.tar.gz output is pending
+#   setup_split_debug_script.
+
+name: Release (guix)
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  # Manual trigger so the workflow can be validated from a feature branch
+  # (e.g. feat/guix-cmake-port) before being relied on for master/tag
+  # publishes. Manual runs upload artifacts as workflow-run artifacts only
+  # — the publish job is gated to refs/heads/master and refs/tags/v* so a
+  # workflow_dispatch never creates a GH release.
+  workflow_dispatch:
+
+# Only one release run at a time per ref to avoid races with the
+# latest-master delete/recreate dance.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Guix build ${{ matrix.host }}
+    runs-on: ubuntu-24.04
+    # Cold cache: guix install + bootstrap + depends + build can take 2-3 h
+    # per HOST. Warm cache: ~30 min. 360 min (6 h) is the hosted-runner cap.
+    timeout-minutes: 360
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Production OS/arch combos active; long-tail upstream triples
+        # are listed commented-out so adding them back is a one-line
+        # uncomment. See header "Scope" for what each commented entry
+        # needs before flipping on.
+        host:
+          - x86_64-linux-gnu
+          - arm-linux-gnueabihf
+          - aarch64-linux-gnu
+          - riscv64-linux-gnu
+          - powerpc64-linux-gnu
+          - powerpc64le-linux-gnu
+          - x86_64-w64-mingw32
+          # - aarch64-w64-mingw32  # blocked: needs llvm-mingw (no GCC mingw for aarch64)
+          - x86_64-apple-darwin
+          - arm64-apple-darwin
+
+    steps:
+      - name: Free disk space
+        # The guix store grows to 20-40 GB on cold runs. Reclaim ~25 GB by
+        # purging GHA's preinstalled SDKs (dotnet, android, ghc, codeql,
+        # boost) which guix does not need.
+        run: |
+          set -x
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost 2>/dev/null || true
+          df -h /
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # git_head_version() in contrib/shell/git-utils.bash needs the
+          # tag history to compute DISTNAME deterministically on tag pushes.
+          fetch-depth: 0
+
+      - name: Determine version (for output paths)
+        id: version
+        shell: bash
+        run: |
+          # Mirrors prelude.bash's git_head_version: exact tag (sans 'v') or
+          # 12-char short sha. Used here only for naming the upload artifact.
+          if recent_tag="$(git describe --exact-match HEAD 2>/dev/null)"; then
+            version="${recent_tag#v}"
+          else
+            version="$(git rev-parse --short=12 HEAD)"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Enable unprivileged user namespaces
+        # ubuntu-24.04 ships an AppArmor profile that restricts unprivileged
+        # user namespaces by default, so `guix shell --container` (used
+        # internally by guix-build for build isolation) fails with
+        # `mount: mount "none" on "/tmp/guix-directory.*": Permission denied`.
+        # Disable the restriction sysctl-wide for the duration of the run.
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
+
+      - name: Install guix
+        # ubuntu-24.04 ships guix 1.4.x. The bundled guile-gnutls in that
+        # version trips `TLS error in procedure 'write_to_session_record_port'`
+        # against ci.guix.gnu.org / bordeaux.guix.gnu.org from azure GHA
+        # runners (verified: curl + openssl s_client against the same
+        # endpoints handshake fine, only guile-gnutls fails). The next step
+        # runs `guix pull` to fetch a current guix into the user profile
+        # with a working guile-gnutls.
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends guix
+          guix --version
+          # Wait for guix-daemon (installed as a systemd service) to be up.
+          sudo systemctl enable --now guix-daemon
+          sudo systemctl status guix-daemon --no-pager --lines 0 || true
+
+      - name: Cache pulled guix profile
+        # Caches ~/.config/guix/current so the (expensive) `guix pull` only
+        # runs cold on a manifest bump or fresh runner. Keyed on the time-
+        # machine commit pinned by contrib/guix/manifest.scm so a deliberate
+        # guix bump busts the cache.
+        uses: actions/cache@v5
+        with:
+          path: ~/.config/guix
+          key: guix-profile-v2-${{ hashFiles('contrib/guix/manifest.scm') }}
+          restore-keys: |
+            guix-profile-v2-
+
+      - name: Pull current guix
+        # Refresh guix (and its guile-gnutls) into the user profile. apt's
+        # guix-daemon stays in place; only the user-facing `guix` CLI and
+        # its libraries are updated, which is what does the substitute fetch.
+        run: |
+          if [ ! -x "${HOME}/.config/guix/current/bin/guix" ]; then
+            guix pull
+          else
+            echo "Pulled guix already present from cache; skipping pull."
+          fi
+          # Put the pulled guix ahead of /usr/bin/guix on PATH for later steps.
+          echo "${HOME}/.config/guix/current/bin" >> "$GITHUB_PATH"
+          "${HOME}/.config/guix/current/bin/guix" --version
+
+      - name: Swap guix-daemon to pulled version
+        # apt's guix 1.4 guix-daemon evaluates derivations using its own (old)
+        # bag of fixes. Pinning the CLI to a new guix via `guix pull` isn't
+        # enough — the daemon also needs to match, otherwise depends-build
+        # cross-tools hit toolchain bugs like
+        # `bits/local_lim.h: linux/limits.h: No such file or directory`
+        # (missing kernel-headers handling in the old daemon's environment
+        # setup). Replace the systemd unit with one that runs the pulled
+        # guix-daemon while reusing apt's /var/guix store and guixbuilder
+        # build users.
+        run: |
+          # Discover apt's build-users group (varies: guix-builder, _guixbuild,
+          # guixbuild, ...) so we can pass it through to the pulled daemon.
+          group=$(getent group | awk -F: '/[Gg]uix/ {print $1; exit}')
+          echo "Detected guix build-users group: ${group}"
+          test -n "${group}" || { echo "No guix build-users group found"; exit 1; }
+          sudo systemctl stop guix-daemon
+          sudo mkdir -p /etc/systemd/system/guix-daemon.service.d
+          sudo tee /etc/systemd/system/guix-daemon.service.d/override.conf > /dev/null <<EOF
+          [Service]
+          ExecStart=
+          ExecStart=${HOME}/.config/guix/current/bin/guix-daemon --build-users-group=${group}
+          EOF
+          sudo systemctl daemon-reload
+          sudo systemctl start guix-daemon
+          sudo systemctl status guix-daemon --no-pager --lines 5 || true
+          # Smoke: pulled daemon should answer.
+          guix gc --list-roots > /dev/null
+
+      - name: Cache depends SOURCES_PATH
+        # Cache the raw source downloads (the bandwidth-heavy bit). Keyed on
+        # depends/packages so adding a package busts the cache; lighter
+        # depends/ edits still restore.
+        uses: actions/cache@v5
+        with:
+          path: ~/depends-sources
+          key: guix-sources-v2-${{ hashFiles('depends/packages/*.mk', 'depends/Makefile') }}
+          restore-keys: |
+            guix-sources-v2-
+
+      - name: Cache depends BASE_CACHE
+        # Cache the built depends prefixes per HOST (the CPU-heavy bit).
+        # Keyed on depends/ and the manifest so a manifest bump or depends
+        # change rebuilds.
+        uses: actions/cache@v5
+        with:
+          path: ~/depends-cache
+          key: guix-base-v2-${{ matrix.host }}-${{ hashFiles('depends/**', 'contrib/guix/manifest.scm') }}
+          restore-keys: |
+            guix-base-v2-${{ matrix.host }}-
+
+      - name: Pin macOS SDK version (darwin HOSTS only)
+        # Pulls XCODE_VERSION / XCODE_BUILD_ID out of depends/hosts/darwin.mk
+        # so the cache key + fetch URL track the pinned SDK without
+        # duplicating the version in this workflow.
+        if: contains(matrix.host, 'darwin')
+        id: sdk
+        shell: bash
+        run: |
+          xcode_version=$(awk -F= '/^XCODE_VERSION=/{print $2; exit}' depends/hosts/darwin.mk)
+          xcode_build_id=$(awk -F= '/^XCODE_BUILD_ID=/{print $2; exit}' depends/hosts/darwin.mk)
+          sdk_name="Xcode-${xcode_version}-${xcode_build_id}-extracted-SDK-with-libcxx-headers"
+          echo "name=${sdk_name}"      >> "$GITHUB_OUTPUT"
+          echo "tarball=${sdk_name}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Cache macOS SDK (darwin HOSTS only)
+        if: contains(matrix.host, 'darwin')
+        id: sdk-cache
+        uses: actions/cache@v5
+        with:
+          # Sibling of $GITHUB_WORKSPACE so the path matches the SDK_PATH
+          # env passed to guix-build below. Matches the depends-sources /
+          # depends-cache pattern above.
+          path: ${{ github.workspace }}/../sdk-path/${{ steps.sdk.outputs.name }}
+          key: macos-sdk-${{ steps.sdk.outputs.name }}
+
+      - name: Fetch macOS SDK from bitcoincore.org mirror (darwin HOSTS only)
+        # Apple's Xcode XIP is not redistributable, but the extracted-SDK
+        # tarball (~120 MB) is mirrored by bitcoincore.org with a known
+        # SHA. The SDK contents do not end up in our final outputs (see
+        # contrib/macdeploy/README.md — "the build process has been
+        # designed to avoid including the SDK's files in Guix's outputs"),
+        # so we fetch + extract into SDK_PATH purely as a build input.
+        if: contains(matrix.host, 'darwin') && steps.sdk-cache.outputs.cache-hit != 'true'
+        env:
+          SDK_TARBALL: ${{ steps.sdk.outputs.tarball }}
+          SDK_NAME: ${{ steps.sdk.outputs.name }}
+        run: |
+          sdk_dir="${GITHUB_WORKSPACE}/../sdk-path"
+          mkdir -p "${sdk_dir}"
+          cd "${sdk_dir}"
+          curl --fail --location --retry 5 --retry-delay 30 \
+            --output "${SDK_TARBALL}" \
+            "https://bitcoincore.org/depends-sources/sdks/${SDK_TARBALL}"
+          tar -xf "${SDK_TARBALL}"
+          rm "${SDK_TARBALL}"
+          test -d "${SDK_NAME}" || { echo "SDK extract produced no ${SDK_NAME} dir"; ls -la; exit 1; }
+
+      - name: Run guix build
+        env:
+          HOSTS: ${{ matrix.host }}
+          SOURCES_PATH: ${{ github.workspace }}/../depends-sources
+          BASE_CACHE: ${{ github.workspace }}/../depends-cache
+          # darwin HOSTS need SDK_PATH pointing at the parent dir of the
+          # extracted SDK; linux + mingw HOSTS ignore it. depends/hosts/
+          # darwin.mk reads $(SDK_PATH)/Xcode-…-extracted-SDK-…/.
+          SDK_PATH: ${{ contains(matrix.host, 'darwin') && format('{0}/../sdk-path', github.workspace) || '' }}
+          # MAX_JOBS=2 keeps memory in budget on the 16 GB runner during the
+          # parallel depends build.
+          MAX_JOBS: '2'
+          # Suppress the interactive "do you want to download GCC bootstrap"
+          # prompt that prelude.bash emits.
+          ADDITIONAL_GUIX_TIMEMACHINE_FLAGS: ''
+        run: |
+          # guix-build sources contrib/shell/realpath.bash + git-utils.bash,
+          # so the working directory must be the repo root.
+          #
+          # Retry on transient `guix substitute` TLS / network failures
+          # against bordeaux.guix.gnu.org / ci.guix.gnu.org. Guix is
+          # incremental: previously-built derivations stay in /gnu/store,
+          # depends sources cache survives via SOURCES_PATH, so a retry
+          # picks up where the failed attempt left off.
+          for attempt in 1 2 3; do
+            if ./contrib/guix/guix-build; then
+              exit 0
+            fi
+            echo "guix-build attempt ${attempt} failed; sleeping 30s then retrying..."
+            sleep 30
+            # Clean stale per-commit build directories (distsrc-*) so the
+            # next attempt does not abort with "Build directories for this
+            # commit already exist". guix-clean preserves SDK, depends
+            # SOURCES_PATH, depends BASE_CACHE, and gc-root profiles, so the
+            # incremental nature of the retry is unaffected.
+            ./contrib/guix/guix-clean || true
+          done
+          echo "guix-build failed after 3 attempts"
+          exit 1
+
+      - name: Collect output artifacts
+        id: collect
+        shell: bash
+        run: |
+          set -x
+          # guix-build places per-HOST outputs under
+          # ${PWD}/guix-build-${VERSION}/output/${HOST}/
+          out_dir=$(echo guix-build-*/output/${{ matrix.host }})
+          test -d "${out_dir}" || { echo "Missing output dir: ${out_dir}"; ls -la guix-build-*/output/ 2>/dev/null; exit 1; }
+          mkdir -p "${RUNNER_TEMP}/artifacts"
+          cp -av "${out_dir}/." "${RUNNER_TEMP}/artifacts/"
+          ls -la "${RUNNER_TEMP}/artifacts/"
+
+      - name: Upload built artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: guix-${{ steps.version.outputs.version }}-${{ matrix.host }}
+          path: ${{ runner.temp }}/artifacts/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    # Both publish steps below are individually gated to master / v* tag
+    # refs. Gate the whole job too so workflow_dispatch on feature
+    # branches doesn't spin up a runner just to download artifacts,
+    # aggregate SHA256SUMS, and then skip both publish steps.
+    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/artifacts
+          merge-multiple: true
+
+      - name: Aggregate SHA256SUMS
+        shell: bash
+        run: |
+          cd "${RUNNER_TEMP}/artifacts"
+          # Re-emit SHA256SUMS so it's authoritative across all HOSTS, not
+          # one per build job. Discard any per-job SHA256SUMS fragments.
+          rm -f SHA256SUMS
+          shopt -s nullglob
+          # tar.gz for linux HOSTS, zip for mingw HOSTS — aggregate both.
+          archives=( *.tar.gz *.zip )
+          if [ ${#archives[@]} -eq 0 ]; then
+            echo "No archives downloaded"; ls -la; exit 1
+          fi
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+          ls -la
+
+      - name: Publish rolling latest-master prerelease
+        if: github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag=latest-master
+          short=$(git rev-parse --short HEAD)
+          title="Latest master (${short})"
+          notes="Rolling reproducible Guix build of master (${short}). Not for production releases; tagged releases at refs/tags/v* are the supported channel."
+
+          # Delete prior rolling release + tag (best-effort: ignore missing).
+          gh release delete "${tag}" --repo "${{ github.repository }}" --cleanup-tag --yes 2>/dev/null || true
+
+          gh release create "${tag}" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "${title}" \
+            --notes "${notes}" \
+            --prerelease \
+            "${RUNNER_TEMP}"/artifacts/*
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release create "${tag}" \
+            --repo "${{ github.repository }}" \
+            --title "${tag}" \
+            --generate-notes \
+            --verify-tag \
+            "${RUNNER_TEMP}"/artifacts/*

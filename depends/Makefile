@@ -261,10 +261,9 @@ $(host_prefix)/toolchain.cmake : toolchain.cmake.in $(host_prefix)/.stamp_$(fina
 #   1. If we refer to the program by name (e.g. AR=riscv64-gnu-linux-ar), the
 #      tool needs to be available in $PATH at all times.
 #
-#   2. If the tool is _**not**_ expected to be available in $PATH at all times
-#      (such as is the case for our native_cctools binutils tools), it needs to
-#      be referred to by its absolute path, such as would be output by the
-#      AC_PATH_{PROG,TOOL} macros.
+#   2. If the tool is _**not**_ expected to be available in $PATH at all times,
+#      it needs to be referred to by its absolute path, such as would be output
+#      by the AC_PATH_{PROG,TOOL} macros.
 #
 # Minor note: it is also okay to refer to tools by their absolute path even if
 # we expect them to be available in $PATH at all times, more specificity does

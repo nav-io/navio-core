@@ -502,6 +502,7 @@ inspecting signatures in Mach-O binaries.")
         xz
         ;; Build tools
         gnu-make
+        cmake-minimal ;; libevent / depends use cmake on every HOST
         libtool
         autoconf-2.71
         automake
@@ -510,6 +511,17 @@ inspecting signatures in Mach-O binaries.")
         ;; Native GCC 10 toolchain
         gcc-toolchain-10
         (list gcc-toolchain-10 "static")
+        ;; Kernel headers for native depends helpers. Upstream Bitcoin Core
+        ;; does not need this because none of its native helper compiles
+        ;; pull in glibc's bits/local_lim.h (which references
+        ;; <linux/limits.h>). Navio's depends/gmp builds gen-bases/gen-fac
+        ;; etc. as host binaries that DO hit that include chain, and
+        ;; libexec/build.sh `unset C_INCLUDE_PATH` strips the guix-shell
+        ;; default include path. Adding linux-libre-headers to the manifest
+        ;; gives build.sh a stable store path it can re-export via
+        ;; C_INCLUDE_PATH/CPLUS_INCLUDE_PATH (CPPFLAGS is not honored by
+        ;; gmp's hand-rolled gen-* Makefile rules).
+        linux-libre-headers-6.1
         ;; Scripting
         python-minimal ;; (3.10)
         perl ;; for LLVM standalone OpenMP (depends libomp), CMake FindPerl
@@ -526,7 +538,15 @@ inspecting signatures in Mach-O binaries.")
                  nss-certs
                  osslsigncode))
           ((string-contains target "-linux-")
-           (list (make-bitcoin-cross-toolchain target) cmake-minimal))
+           (list (make-bitcoin-cross-toolchain target)))
           ((string-contains target "darwin")
-           (list clang-toolchain-17 binutils cmake-minimal python-signapple zip))
+           ;; clang-toolchain ships clang + clang++ + llvm-* binutils
+           ;; (llvm-ar / llvm-nm / llvm-ranlib / llvm-strip / llvm-objcopy
+           ;; / llvm-objdump). lld + the lld-wrapper provide ld / ld.lld
+           ;; for -fuse-ld=lld (depends/hosts/darwin.mk).
+           (list clang-toolchain-17
+                 lld-17
+                 (make-lld-wrapper lld-17 #:lld-as-ld? #t)
+                 python-signapple
+                 zip))
           (else '())))))
