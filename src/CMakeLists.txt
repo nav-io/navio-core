@@ -365,6 +365,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     policy/packages.cpp
     policy/rbf.cpp
     policy/settings.cpp
+    aggregation/combine.cpp
     p2pmsg/crypto.cpp
     p2pmsg/pow.cpp
     p2pmsg/transport.cpp

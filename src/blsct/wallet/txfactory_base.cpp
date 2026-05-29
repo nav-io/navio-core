@@ -85,7 +85,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
 }
 
 std::optional<CMutableTransaction>
-TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake, const CreateTransactionType& type, const bool& fSubtractedFee, const CAmount& nBLSCTDefaultFee)
+TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake, const CreateTransactionType& type, const bool& fSubtractedFee, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee)
 {
     this->tx = CMutableTransaction();
 
@@ -186,7 +186,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
         tx.txSig = Signature::Aggregate(txSigs);
 
-        const CAmount required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee;
+        const CAmount required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee + additionalFee;
         if (nAmounts[TokenId()].nFromFee == required_fee) {
             return tx;
         }
