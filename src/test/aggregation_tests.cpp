@@ -3,6 +3,8 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <aggregation/combine.h>
+#include <aggregation/pool.h>
+#include <aggregation/session.h>
 
 #include <blsct/wallet/keyman.h>
 #include <blsct/wallet/txfactory.h>
@@ -115,6 +117,117 @@ BOOST_FIXTURE_TEST_CASE(combine_rejects_duplicate_input, TestingSetup)
     // Feeding the same half twice = the same input twice = rejected.
     std::vector<CTransactionRef> halves{a, a};
     BOOST_CHECK(!aggregation::CombineHalves(halves).has_value());
+}
+
+// ---- CandidatePool ----
+
+namespace {
+//! A 1-in candidate with a deterministic input outpoint (no real crypto needed
+//! for pool bookkeeping tests).
+CTransactionRef FakeCandidate(const uint256& input_hash, uint32_t n = 0)
+{
+    CMutableTransaction mtx;
+    mtx.nVersion = CTransaction::BLSCT_MARKER;
+    mtx.vin.emplace_back(COutPoint(input_hash));
+    mtx.vout.emplace_back(CTxOut());
+    return MakeTransactionRef(mtx);
+}
+} // namespace
+
+BOOST_FIXTURE_TEST_CASE(pool_add_dedupe_evict, BasicTestingSetup)
+{
+    aggregation::CandidatePool pool;
+    const uint256 h1 = InsecureRand256();
+    const uint256 h2 = InsecureRand256();
+
+    BOOST_CHECK_EQUAL(pool.Size(), 0u);
+    BOOST_CHECK(pool.AddCandidate(FakeCandidate(h1), /*peer=*/1));
+    BOOST_CHECK_EQUAL(pool.Size(), 1u);
+    BOOST_CHECK(pool.Contains(COutPoint(h1)));
+
+    // Same input again -> dedupe rejected, even from a different peer.
+    BOOST_CHECK(!pool.AddCandidate(FakeCandidate(h1), /*peer=*/2));
+    BOOST_CHECK_EQUAL(pool.Size(), 1u);
+
+    // Distinct input accepted.
+    BOOST_CHECK(pool.AddCandidate(FakeCandidate(h2), /*peer=*/1));
+    BOOST_CHECK_EQUAL(pool.Size(), 2u);
+
+    // Eviction by input.
+    BOOST_CHECK(pool.EvictByInput(COutPoint(h1)));
+    BOOST_CHECK_EQUAL(pool.Size(), 1u);
+    BOOST_CHECK(!pool.Contains(COutPoint(h1)));
+    // Evicting a missing input is a no-op false.
+    BOOST_CHECK(!pool.EvictByInput(COutPoint(h1)));
+}
+
+BOOST_FIXTURE_TEST_CASE(pool_rejects_multi_input, BasicTestingSetup)
+{
+    aggregation::CandidatePool pool;
+    CMutableTransaction mtx;
+    mtx.vin.emplace_back(COutPoint(InsecureRand256()));
+    mtx.vin.emplace_back(COutPoint(InsecureRand256()));
+    BOOST_CHECK(!pool.AddCandidate(MakeTransactionRef(mtx), 1));
+    BOOST_CHECK_EQUAL(pool.Size(), 0u);
+}
+
+BOOST_FIXTURE_TEST_CASE(pool_per_peer_cap, BasicTestingSetup)
+{
+    aggregation::CandidatePool pool;
+    size_t accepted = 0;
+    for (size_t i = 0; i < aggregation::POOL_MAX_PER_PEER + 5; ++i) {
+        if (pool.AddCandidate(FakeCandidate(InsecureRand256()), /*peer=*/42)) ++accepted;
+    }
+    BOOST_CHECK_EQUAL(accepted, aggregation::POOL_MAX_PER_PEER);
+    BOOST_CHECK_EQUAL(pool.Size(), aggregation::POOL_MAX_PER_PEER);
+
+    // A different peer can still contribute.
+    BOOST_CHECK(pool.AddCandidate(FakeCandidate(InsecureRand256()), /*peer=*/43));
+}
+
+BOOST_FIXTURE_TEST_CASE(pool_block_connected_evicts, BasicTestingSetup)
+{
+    aggregation::CandidatePool pool;
+    const uint256 h = InsecureRand256();
+    BOOST_CHECK(pool.AddCandidate(FakeCandidate(h), 1));
+
+    // A block whose tx spends the candidate's input evicts it.
+    auto block = std::make_shared<CBlock>();
+    CMutableTransaction spender;
+    spender.vin.emplace_back(COutPoint(h));
+    block->vtx.push_back(MakeTransactionRef(spender));
+
+    pool.BlockConnected(ChainstateRole::NORMAL, block, nullptr);
+    BOOST_CHECK_EQUAL(pool.Size(), 0u);
+}
+
+// ---- Session fee math ----
+
+BOOST_FIXTURE_TEST_CASE(session_required_fee, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CCoinsViewCache cache{&base, /*deterministic=*/true};
+    cache.SetBestBlock(InsecureRand256());
+    blsct::SubAddress dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+
+    CTransactionRef c1 = BuildCandidate(km, cache, 300 * COIN, dest);
+    CTransactionRef c2 = BuildCandidate(km, cache, 200 * COIN, dest);
+    std::vector<CTransactionRef> cands{c1, c2};
+
+    const int64_t expected_w = blsct::GetTransactionWeight(*c1) + blsct::GetTransactionWeight(*c2);
+    BOOST_CHECK_EQUAL(aggregation::SumCandidateWeight(cands), expected_w);
+    BOOST_CHECK_EQUAL(aggregation::RequiredCandidateFee(cands, BLSCT_DEFAULT_FEE),
+                      static_cast<CAmount>(expected_w) * BLSCT_DEFAULT_FEE);
+
+    // An empty candidate set requires no extra fee.
+    std::vector<CTransactionRef> empty;
+    BOOST_CHECK_EQUAL(aggregation::RequiredCandidateFee(empty, BLSCT_DEFAULT_FEE), 0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
