@@ -109,6 +109,7 @@ add_executable(test_navio
   p2pmsg_tests.cpp
   pmt_tests.cpp
   policyestimator_tests.cpp
+  rfq_tests.cpp
   random_tests.cpp
   rbf_tests.cpp
   rest_tests.cpp

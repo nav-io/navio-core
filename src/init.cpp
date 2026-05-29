@@ -51,6 +51,7 @@
 #include <netmessagemaker.h>
 #include <p2pmsg/transport.h>
 #include <p2pmsg/worker_pool.h>
+#include <rfq/intent_store.h>
 #include <node/interface_ui.h>
 #include <node/kernel_notifications.h>
 #include <node/mempool_args.h>
@@ -311,6 +312,7 @@ void Shutdown(NodeContext& node)
     // capture the connman pointer. Clear the global hook first so no net path
     // can reach it, then stop workers, then drop the objects.
     p2pmsg::SetActiveTransport(nullptr);
+    node.rfq_intents.reset();
     if (node.agg_pool) {
         UnregisterValidationInterface(node.agg_pool.get());
         node.agg_pool.reset();
@@ -1638,6 +1640,9 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // Cover-traffic candidate pool: evicts candidates whose inputs get spent.
         node.agg_pool = std::make_unique<aggregation::CandidatePool>();
         RegisterValidationInterface(node.agg_pool.get());
+
+        // Maker-local RFQ swap intents.
+        node.rfq_intents = std::make_unique<rfq::IntentStore>();
 
         LogPrintf("p2pmsg: enabled (workers=%u, powbits=%u)\n",
                   node.p2pmsg_pool->NumWorkers(), tr_opts.pow_bits);
