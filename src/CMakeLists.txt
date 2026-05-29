@@ -365,6 +365,10 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     policy/packages.cpp
     policy/rbf.cpp
     policy/settings.cpp
+    p2pmsg/crypto.cpp
+    p2pmsg/pow.cpp
+    p2pmsg/transport.cpp
+    p2pmsg/worker_pool.cpp
     pow.cpp
     rest.cpp
     rpc/blockchain.cpp
