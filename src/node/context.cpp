@@ -12,6 +12,7 @@
 #include <net_processing.h>
 #include <netgroup.h>
 #include <aggregation/pool.h>
+#include <rfq/intent_store.h>
 #include <node/kernel_notifications.h>
 #include <p2pmsg/transport.h>
 #include <p2pmsg/worker_pool.h>

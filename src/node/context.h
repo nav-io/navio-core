@@ -33,6 +33,9 @@ class Transport;
 namespace aggregation {
 class CandidatePool;
 } // namespace aggregation
+namespace rfq {
+class IntentStore;
+} // namespace rfq
 namespace interfaces {
 class Chain;
 class ChainClient;
@@ -72,6 +75,8 @@ struct NodeContext {
     //! Cover-traffic candidate pool; registered as a validation interface so it
     //! evicts candidates whose inputs are spent.
     std::unique_ptr<aggregation::CandidatePool> agg_pool;
+    //! Maker-local swap intents for RFQ matching (never gossiped).
+    std::unique_ptr<rfq::IntentStore> rfq_intents;
     std::unique_ptr<ChainstateManager> chainman;
     std::unique_ptr<BanMan> banman;
     ArgsManager* args{nullptr}; // Currently a raw pointer because the memory is not managed by this struct
