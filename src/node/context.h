@@ -30,6 +30,9 @@ namespace p2pmsg {
 class WorkerPool;
 class Transport;
 } // namespace p2pmsg
+namespace aggregation {
+class CandidatePool;
+} // namespace aggregation
 namespace interfaces {
 class Chain;
 class ChainClient;
@@ -66,6 +69,9 @@ struct NodeContext {
     //! p2p encrypted-messaging subsystem (only set when -p2pmsg is enabled).
     std::unique_ptr<p2pmsg::WorkerPool> p2pmsg_pool;
     std::unique_ptr<p2pmsg::Transport> p2pmsg_transport;
+    //! Cover-traffic candidate pool; registered as a validation interface so it
+    //! evicts candidates whose inputs are spent.
+    std::unique_ptr<aggregation::CandidatePool> agg_pool;
     std::unique_ptr<ChainstateManager> chainman;
     std::unique_ptr<BanMan> banman;
     ArgsManager* args{nullptr}; // Currently a raw pointer because the memory is not managed by this struct
