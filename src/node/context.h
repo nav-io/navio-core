@@ -26,6 +26,10 @@ class CTxMemPool;
 class ChainstateManager;
 class NetGroupManager;
 class PeerManager;
+namespace p2pmsg {
+class WorkerPool;
+class Transport;
+} // namespace p2pmsg
 namespace interfaces {
 class Chain;
 class ChainClient;
@@ -59,6 +63,9 @@ struct NodeContext {
     std::unique_ptr<const NetGroupManager> netgroupman;
     std::unique_ptr<CBlockPolicyEstimator> fee_estimator;
     std::unique_ptr<PeerManager> peerman;
+    //! p2p encrypted-messaging subsystem (only set when -p2pmsg is enabled).
+    std::unique_ptr<p2pmsg::WorkerPool> p2pmsg_pool;
+    std::unique_ptr<p2pmsg::Transport> p2pmsg_transport;
     std::unique_ptr<ChainstateManager> chainman;
     std::unique_ptr<BanMan> banman;
     ArgsManager* args{nullptr}; // Currently a raw pointer because the memory is not managed by this struct

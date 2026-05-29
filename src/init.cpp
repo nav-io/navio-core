@@ -47,6 +47,9 @@
 #include <node/chainstate.h>
 #include <node/chainstatemanager_args.h>
 #include <node/context.h>
+#include <netmessagemaker.h>
+#include <p2pmsg/transport.h>
+#include <p2pmsg/worker_pool.h>
 #include <node/interface_ui.h>
 #include <node/kernel_notifications.h>
 #include <node/mempool_args.h>
@@ -303,6 +306,13 @@ void Shutdown(NodeContext& node)
 
     // After the threads that potentially access these pointers have been stopped,
     // destruct and reset all to nullptr.
+    // Tear down p2pmsg before connman: the transport's broadcast callbacks
+    // capture the connman pointer. Clear the global hook first so no net path
+    // can reach it, then stop workers, then drop the objects.
+    p2pmsg::SetActiveTransport(nullptr);
+    if (node.p2pmsg_pool) node.p2pmsg_pool->Stop();
+    node.p2pmsg_transport.reset();
+    node.p2pmsg_pool.reset();
     node.peerman.reset();
     node.connman.reset();
     node.banman.reset();
@@ -515,6 +525,9 @@ void SetupServerArgs(ArgsManager& argsman)
 
     argsman.AddArg("-addnode=<ip>", strprintf("Add a node to connect to and attempt to keep the connection open (see the addnode RPC help for more info). This option can be specified multiple times to add multiple nodes; connections are limited to %u at a time and are counted separately from the -maxconnections limit.", MAX_ADDNODE_CONNECTIONS), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-asmap=<file>", strprintf("Specify asn mapping used for bucketing of the peers (default: %s). Relative paths will be prefixed by the net-specific datadir location.", DEFAULT_ASMAP_FILENAME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsg", strprintf("Enable the encrypted p2p messaging subsystem (default: %u)", p2pmsg::DEFAULT_P2PMSG_ENABLE), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-onionworkers=<n>", "Number of worker threads for p2p-messaging heavy crypto (0 = auto, default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bantime=<n>", strprintf("Default duration (in seconds) of manually configured bans (default: %u)", DEFAULT_MISBEHAVING_BANTIME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bind=<addr>[:<port>][=onion]", strprintf("Bind to given address and always listen on it (default: 0.0.0.0). Use [host]:port notation for IPv6. Append =onion to tag any incoming connections to that address and port as incoming Tor connections (default: 127.0.0.1:%u=onion, testnet: 127.0.0.1:%u=onion, signet: 127.0.0.1:%u=onion, regtest: 127.0.0.1:%u=onion, blsctregtest: 127.0.0.1:%u=onion)", defaultBaseParams->OnionServiceTargetPort(), testnetBaseParams->OnionServiceTargetPort(), signetBaseParams->OnionServiceTargetPort(), regtestBaseParams->OnionServiceTargetPort(), blsctRegtestBaseParams->OnionServiceTargetPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-cjdnsreachable", "If set, then this host is configured for CJDNS (connecting to fc00::/8 addresses would lead us to the CJDNS network, see doc/cjdns.md) (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -1584,6 +1597,41 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                                      node.banman.get(), chainman,
                                      *node.mempool, peerman_opts);
     RegisterValidationInterface(node.peerman.get());
+
+    // p2p encrypted-messaging subsystem (dark until features land; gated).
+    if (args.GetBoolArg("-p2pmsg", p2pmsg::DEFAULT_P2PMSG_ENABLE)) {
+        p2pmsg::WorkerPool::Options pool_opts;
+        const int64_t workers = args.GetIntArg("-onionworkers", 0);
+        if (workers > 0) pool_opts.num_workers = static_cast<size_t>(workers);
+        node.p2pmsg_pool = std::make_unique<p2pmsg::WorkerPool>(pool_opts);
+
+        p2pmsg::Transport::Options tr_opts;
+        tr_opts.pow_bits = static_cast<uint32_t>(
+            args.GetIntArg("-p2pmsgpowbits", p2pmsg::DEFAULT_POW_BITS));
+
+        CConnman* connman = node.connman.get();
+        // Serialize an envelope and push it to one peer.
+        auto push_to = [connman](int64_t peer_id, bool stem, const p2pmsg::Envelope& env) {
+            const char* type = stem ? NetMsgType::DP2PMSG : NetMsgType::P2PMSG;
+            connman->ForEachNode([&](CNode* pnode) {
+                if (pnode->GetId() != peer_id) return;
+                connman->PushMessage(pnode, NetMsg::Make(type, env));
+            });
+        };
+        auto broadcast = [connman](bool stem, const p2pmsg::Envelope& env) {
+            const char* type = stem ? NetMsgType::DP2PMSG : NetMsgType::P2PMSG;
+            connman->ForEachNode([&](CNode* pnode) {
+                connman->PushMessage(pnode, NetMsg::Make(type, env));
+            });
+        };
+
+        node.p2pmsg_transport = std::make_unique<p2pmsg::Transport>(
+            *node.p2pmsg_pool, std::move(push_to), std::move(broadcast), tr_opts);
+        node.p2pmsg_pool->Start();
+        p2pmsg::SetActiveTransport(node.p2pmsg_transport.get());
+        LogPrintf("p2pmsg: enabled (workers=%u, powbits=%u)\n",
+                  node.p2pmsg_pool->NumWorkers(), tr_opts.pow_bits);
+    }
 
     // ********************************************************* Step 8: start indexers
 

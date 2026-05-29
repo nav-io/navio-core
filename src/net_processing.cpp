@@ -24,6 +24,7 @@
 #include <netmessagemaker.h>
 #include <node/blockstorage.h>
 #include <node/txreconciliation.h>
+#include <p2pmsg/transport.h>
 #include <policy/fees.h>
 #include <policy/policy.h>
 #include <policy/settings.h>
@@ -5155,6 +5156,39 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                     m_txrequest.ReceivedResponse(pfrom.GetId(), inv.hash);
                 }
             }
+        }
+        return;
+    }
+
+    if (msg_type == NetMsgType::P2PMSG || msg_type == NetMsgType::DP2PMSG) {
+        p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+        if (transport == nullptr) {
+            // Feature disabled: ignore without penalty (peer may run it, we don't).
+            return;
+        }
+
+        // Mirror DTX fluff: a stem-phase packet becomes fluff with some chance.
+        bool is_stem = msg_type == NetMsgType::DP2PMSG;
+        if (is_stem) {
+            is_stem = GetRandInternal(100) >= DANDELION_FLUFF_CHANCE;
+        }
+
+        std::vector<uint8_t> body(vRecv.size());
+        vRecv.read(MakeWritableByteSpan(body));
+
+        const auto res = transport->OnWire(pfrom.GetId(), is_stem, body);
+        switch (res) {
+        case p2pmsg::Transport::WireResult::RejectInvalid:
+        case p2pmsg::Transport::WireResult::RejectPoW:
+            // Malformed or missing/insufficient PoW: cheap to detect, costly to
+            // emit. Penalize so a flood eventually discourages the peer.
+            Misbehaving(*peer, 10, "invalid p2pmsg");
+            break;
+        case p2pmsg::Transport::WireResult::RejectReplay:
+        case p2pmsg::Transport::WireResult::Dropped:
+        case p2pmsg::Transport::WireResult::Enqueued:
+            // Replay/overflow are not necessarily the peer's fault; no penalty.
+            break;
         }
         return;
     }
