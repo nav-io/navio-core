@@ -9,6 +9,8 @@
 #include <streams.h>
 #include <util/time.h>
 
+#include <atomic>
+
 namespace p2pmsg {
 
 bool KindRequiresPoW(PayloadKind kind)
@@ -60,6 +62,12 @@ Transport::Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, Optio
     // not touch the replay cache, so it holds no lock here.
     m_pool.RegisterHandler(JOB_KIND_DECRYPT, [this](const Job& job) {
         HandleJob(job);
+    });
+
+    // Built-in PING accounting so the echo path is observable without a feature
+    // module registered. A feature may still override PING later if desired.
+    RegisterHandler(PayloadKind::PING, [this](const InboundMessage&) {
+        m_pings_received.fetch_add(1, std::memory_order_relaxed);
     });
 }
 
@@ -155,6 +163,21 @@ void Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
 
     m_broadcast(stem, env);
     (void)SerializeEnvelope; // reserved for direct-send paths in later phases
+}
+
+namespace {
+//! Plain atomic pointer; lifetime owned by NodeContext. Net thread only reads.
+std::atomic<Transport*> g_active_transport{nullptr};
+} // namespace
+
+void SetActiveTransport(Transport* transport)
+{
+    g_active_transport.store(transport, std::memory_order_release);
+}
+
+Transport* GetActiveTransport()
+{
+    return g_active_transport.load(std::memory_order_acquire);
 }
 
 } // namespace p2pmsg

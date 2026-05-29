@@ -379,6 +379,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     rpc/net.cpp
     rpc/node.cpp
     rpc/output_script.cpp
+    rpc/p2pmsg.cpp
     rpc/rawtransaction.cpp
     rpc/server.cpp
     rpc/server_util.cpp

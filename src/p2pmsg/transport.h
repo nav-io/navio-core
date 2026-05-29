@@ -15,12 +15,17 @@
 #include <uint256.h>
 #include <util/hasher.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <optional>
 #include <vector>
 
 namespace p2pmsg {
+
+//! Whether the p2p messaging subsystem is enabled by default. Off until the
+//! feature set (aggregation, RFQ, standing orders) lands and is integration-tested.
+static constexpr bool DEFAULT_P2PMSG_ENABLE{false};
 
 //! Application payload tag carried inside the encrypted terminal layer.
 enum class PayloadKind : uint8_t {
@@ -106,6 +111,9 @@ public:
     void Send(const blsct::PublicKey& recipient, PayloadKind kind,
               std::vector<uint8_t> body, bool stem);
 
+    //! Total PING payloads decrypted+dispatched to us. Debug/observability.
+    uint64_t PingsReceived() const { return m_pings_received.load(std::memory_order_relaxed); }
+
     int64_t now_override{0}; //!< test hook: if non-zero, used as "now"
 
 private:
@@ -124,9 +132,17 @@ private:
 
     std::array<MessageHandler, 256> m_handlers{};
 
+    std::atomic<uint64_t> m_pings_received{0};
+
     Mutex m_replay_mutex;
     CuckooCache::cache<uint256, SignatureCacheHasher> m_replay GUARDED_BY(m_replay_mutex);
 };
+
+//! Process-wide active transport, set by init when -p2pmsg is enabled and
+//! cleared on shutdown. The net thread reads it to dispatch inbound p2pmsg
+//! packets. nullptr means the feature is disabled — net code must null-check.
+void SetActiveTransport(Transport* transport);
+Transport* GetActiveTransport();
 
 } // namespace p2pmsg
 
