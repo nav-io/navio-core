@@ -29,6 +29,31 @@
 # See https://github.com/nav-io/navio-signer (TBD: transferring from
 # mxaddict/navio-signer once stable).
 #
+# Why a Debian sid container (not the ubuntu-24.04 host directly):
+#   ubuntu-24.04 ships guix 1.4 whose bundled guile-gnutls trips
+#   `TLS error in procedure 'write_to_session_record_port'` against
+#   ci.guix.gnu.org / bordeaux.guix.gnu.org from azure GHA runners. The
+#   previous workaround was a `guix pull` to fetch a guix with a working
+#   guile-gnutls into the user profile, plus a guix-daemon swap to match.
+#   That `guix pull` is slow and the single most frequent cause of job
+#   failures. Debian's guix package links a guile-gnutls (4.x) new enough
+#   that the substitute TLS handshake works with the distro guix as-is —
+#   so we run the build inside a Debian container and drop `guix pull` +
+#   the daemon swap entirely.
+#
+#   sid, not trixie: guix was removed from trixie (testing) on 2025-08-26
+#   over unrelated RC bugs and only ships in sid (unstable, guix 1.4.0-9)
+#   today. Using sid as the *launcher* host does not affect build
+#   reproducibility — the actual toolchain is pinned by the guix
+#   time-machine commit in contrib/guix/manifest.scm, independent of the
+#   host guix version.
+#
+#   `guix-build` uses `guix shell --container` for build isolation, which
+#   needs nested unprivileged user namespaces. GHA's `container:` directive
+#   can't pass `--privileged` / `--cap-add`, so the container is launched
+#   with a manual `docker run --privileged` in a step, mirroring how the
+#   CentOS i686 job in ci.yml runs (see linux-cmake-centos there).
+#
 # Scope:
 #   The matrix below mirrors the full upstream-supported triple set
 #   from contrib/guix/guix-build, plus aarch64-w64-mingw32. Long-tail
@@ -79,12 +104,19 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  # Debian's guix (1.4.0-9 in sid) links guile-gnutls 4.x — new enough
+  # that guix substitute downloads work without a `guix pull`. sid because
+  # guix was removed from trixie/testing on 2025-08-26 (see header).
+  GUIX_CONTAINER_IMAGE: debian:sid
+
 jobs:
   build:
     name: Guix build ${{ matrix.host }}
     runs-on: ubuntu-24.04
-    # Cold cache: guix install + bootstrap + depends + build can take 2-3 h
-    # per HOST. Warm cache: ~30 min. 360 min (6 h) is the hosted-runner cap.
+    # Cold cache: guix store fetch + depends + build can take 2-3 h per
+    # HOST. Warm cache (depends): ~30-60 min. 360 min (6 h) is the
+    # hosted-runner cap.
     timeout-minutes: 360
 
     strategy:
@@ -143,84 +175,15 @@ jobs:
 
       - name: Enable unprivileged user namespaces
         # ubuntu-24.04 ships an AppArmor profile that restricts unprivileged
-        # user namespaces by default, so `guix shell --container` (used
-        # internally by guix-build for build isolation) fails with
+        # user namespaces host-wide. `guix shell --container` (used by
+        # guix-build inside the Debian container) needs nested unprivileged
+        # userns; the restriction makes it fail with
         # `mount: mount "none" on "/tmp/guix-directory.*": Permission denied`.
-        # Disable the restriction sysctl-wide for the duration of the run.
+        # Disable the restriction on the host so the privileged container's
+        # nested userns works.
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
-
-      - name: Install guix
-        # ubuntu-24.04 ships guix 1.4.x. The bundled guile-gnutls in that
-        # version trips `TLS error in procedure 'write_to_session_record_port'`
-        # against ci.guix.gnu.org / bordeaux.guix.gnu.org from azure GHA
-        # runners (verified: curl + openssl s_client against the same
-        # endpoints handshake fine, only guile-gnutls fails). The next step
-        # runs `guix pull` to fetch a current guix into the user profile
-        # with a working guile-gnutls.
-        run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends guix
-          guix --version
-          # Wait for guix-daemon (installed as a systemd service) to be up.
-          sudo systemctl enable --now guix-daemon
-          sudo systemctl status guix-daemon --no-pager --lines 0 || true
-
-      - name: Cache pulled guix profile
-        # Caches ~/.config/guix/current so the (expensive) `guix pull` only
-        # runs cold on a manifest bump or fresh runner. Keyed on the time-
-        # machine commit pinned by contrib/guix/manifest.scm so a deliberate
-        # guix bump busts the cache.
-        uses: actions/cache@v5
-        with:
-          path: ~/.config/guix
-          key: guix-profile-v2-${{ hashFiles('contrib/guix/manifest.scm') }}
-          restore-keys: |
-            guix-profile-v2-
-
-      - name: Pull current guix
-        # Refresh guix (and its guile-gnutls) into the user profile. apt's
-        # guix-daemon stays in place; only the user-facing `guix` CLI and
-        # its libraries are updated, which is what does the substitute fetch.
-        run: |
-          if [ ! -x "${HOME}/.config/guix/current/bin/guix" ]; then
-            guix pull
-          else
-            echo "Pulled guix already present from cache; skipping pull."
-          fi
-          # Put the pulled guix ahead of /usr/bin/guix on PATH for later steps.
-          echo "${HOME}/.config/guix/current/bin" >> "$GITHUB_PATH"
-          "${HOME}/.config/guix/current/bin/guix" --version
-
-      - name: Swap guix-daemon to pulled version
-        # apt's guix 1.4 guix-daemon evaluates derivations using its own (old)
-        # bag of fixes. Pinning the CLI to a new guix via `guix pull` isn't
-        # enough — the daemon also needs to match, otherwise depends-build
-        # cross-tools hit toolchain bugs like
-        # `bits/local_lim.h: linux/limits.h: No such file or directory`
-        # (missing kernel-headers handling in the old daemon's environment
-        # setup). Replace the systemd unit with one that runs the pulled
-        # guix-daemon while reusing apt's /var/guix store and guixbuilder
-        # build users.
-        run: |
-          # Discover apt's build-users group (varies: guix-builder, _guixbuild,
-          # guixbuild, ...) so we can pass it through to the pulled daemon.
-          group=$(getent group | awk -F: '/[Gg]uix/ {print $1; exit}')
-          echo "Detected guix build-users group: ${group}"
-          test -n "${group}" || { echo "No guix build-users group found"; exit 1; }
-          sudo systemctl stop guix-daemon
-          sudo mkdir -p /etc/systemd/system/guix-daemon.service.d
-          sudo tee /etc/systemd/system/guix-daemon.service.d/override.conf > /dev/null <<EOF
-          [Service]
-          ExecStart=
-          ExecStart=${HOME}/.config/guix/current/bin/guix-daemon --build-users-group=${group}
-          EOF
-          sudo systemctl daemon-reload
-          sudo systemctl start guix-daemon
-          sudo systemctl status guix-daemon --no-pager --lines 5 || true
-          # Smoke: pulled daemon should answer.
-          guix gc --list-roots > /dev/null
 
       - name: Cache depends SOURCES_PATH
         # Cache the raw source downloads (the bandwidth-heavy bit). Keyed on
@@ -291,45 +254,70 @@ jobs:
           rm "${SDK_TARBALL}"
           test -d "${SDK_NAME}" || { echo "SDK extract produced no ${SDK_NAME} dir"; ls -la; exit 1; }
 
-      - name: Run guix build
+      - name: Pull guix container image
+        run: docker pull "${GUIX_CONTAINER_IMAGE}"
+
+      - name: Run guix build (Debian container)
         env:
           HOSTS: ${{ matrix.host }}
-          SOURCES_PATH: ${{ github.workspace }}/../depends-sources
-          BASE_CACHE: ${{ github.workspace }}/../depends-cache
           # darwin HOSTS need SDK_PATH pointing at the parent dir of the
           # extracted SDK; linux + mingw HOSTS ignore it. depends/hosts/
-          # darwin.mk reads $(SDK_PATH)/Xcode-…-extracted-SDK-…/.
+          # darwin.mk reads $(SDK_PATH)/Xcode-…-extracted-SDK-…/. This sits
+          # under $HOME (mounted below) and matches the SDK cache path above.
           SDK_PATH: ${{ contains(matrix.host, 'darwin') && format('{0}/../sdk-path', github.workspace) || '' }}
           # MAX_JOBS=2 keeps memory in budget on the 16 GB runner during the
           # parallel depends build.
           MAX_JOBS: '2'
-          # Suppress the interactive "do you want to download GCC bootstrap"
-          # prompt that prelude.bash emits.
-          ADDITIONAL_GUIX_TIMEMACHINE_FLAGS: ''
+          # Override the guix time-machine channel URL to the Codeberg mirror.
+          # prelude.bash hardcodes --url=https://git.savannah.gnu.org/git/guix.git,
+          # which serves HTTP 504 under load and is the dominant time-machine
+          # failure (the SWH fallback 504s too). guix's --url is last-wins and
+          # ADDITIONAL_GUIX_TIMEMACHINE_FLAGS is appended after prelude's flag,
+          # so this overrides it. Codeberg (not github.com/guix-mirror, whose
+          # branch tip is frozen before the pinned commit and so can't resolve
+          # it) is the actively-synced official mirror. Same --commit ->
+          # identical signed content, so reproducibility is intact.
+          ADDITIONAL_GUIX_TIMEMACHINE_FLAGS: '--url=https://codeberg.org/guix/guix.git'
         run: |
-          # guix-build sources contrib/shell/realpath.bash + git-utils.bash,
-          # so the working directory must be the repo root.
+          set -euo pipefail
+          # Cache the depends source downloads + built prefixes under $HOME,
+          # matching the `~/depends-*` paths of the actions/cache steps above
+          # so the cache actually round-trips. $HOME is bind-mounted into the
+          # container at its identical absolute path, so these resolve the
+          # same inside (and the repo checkout under $HOME/work is visible
+          # too).
+          SOURCES_PATH="${HOME}/depends-sources"
+          BASE_CACHE="${HOME}/depends-cache"
+          # Ensure cache dirs exist before the bind mount (the cache action
+          # may not create an empty dir on a cold miss).
+          mkdir -p "${SOURCES_PATH}" "${BASE_CACHE}"
+
+          # The in-container build driver lives in the repo (already visible
+          # inside the bind-mounted checkout). It installs guix, starts the
+          # daemon, authorizes substitutes, and runs guix-build with retries.
           #
-          # Retry on transient `guix substitute` TLS / network failures
-          # against bordeaux.guix.gnu.org / ci.guix.gnu.org. Guix is
-          # incremental: previously-built derivations stay in /gnu/store,
-          # depends sources cache survives via SOURCES_PATH, so a retry
-          # picks up where the failed attempt left off.
-          for attempt in 1 2 3; do
-            if ./contrib/guix/guix-build; then
-              exit 0
-            fi
-            echo "guix-build attempt ${attempt} failed; sleeping 30s then retrying..."
-            sleep 30
-            # Clean stale per-commit build directories (distsrc-*) so the
-            # next attempt does not abort with "Build directories for this
-            # commit already exist". guix-clean preserves SDK, depends
-            # SOURCES_PATH, depends BASE_CACHE, and gc-root profiles, so the
-            # incremental nature of the retry is unaffected.
-            ./contrib/guix/guix-clean || true
-          done
-          echo "guix-build failed after 3 attempts"
-          exit 1
+          # --privileged: nested unprivileged userns for `guix shell
+          #   --container` build isolation (GHA's container: directive can't
+          #   grant this; see header).
+          # --network=host: reuse the runner's working IPv4/IPv6 stack for
+          #   substitute downloads.
+          # Bind-mount $HOME so the repo checkout ($HOME/work/...) AND the
+          #   sibling cache / SDK dirs are visible at identical absolute
+          #   paths inside the container.
+          docker run --rm \
+            --privileged \
+            --network=host \
+            -v "${HOME}":"${HOME}" \
+            -w "${GITHUB_WORKSPACE}" \
+            -e GITHUB_WORKSPACE="${GITHUB_WORKSPACE}" \
+            -e HOSTS="${HOSTS}" \
+            -e SOURCES_PATH="${SOURCES_PATH}" \
+            -e BASE_CACHE="${BASE_CACHE}" \
+            -e SDK_PATH="${SDK_PATH}" \
+            -e MAX_JOBS="${MAX_JOBS}" \
+            -e ADDITIONAL_GUIX_TIMEMACHINE_FLAGS="${ADDITIONAL_GUIX_TIMEMACHINE_FLAGS}" \
+            "${GUIX_CONTAINER_IMAGE}" \
+            bash "${GITHUB_WORKSPACE}/contrib/guix/ci-container-build.sh"
 
       - name: Collect output artifacts
         id: collect
