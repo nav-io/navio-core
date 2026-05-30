@@ -8,14 +8,12 @@
 #include <rpc/util.h>
 #include <util/any.h>
 #include <util/strencodings.h>
-#include <util/time.h>
 #include <util/translation.h>
 #include <wallet/context.h>
 #include <wallet/wallet.h>
 
 #include <univalue.h>
 
-#include <chrono>
 #include <string_view>
 
 namespace wallet {
@@ -25,6 +23,9 @@ const std::string HELP_REQUIRING_PASSPHRASE{"\nRequires wallet passphrase to be 
 int64_t ParseISO8601DateTime(const std::string& str)
 {
     // Parse a strict "YYYY-MM-DDTHH:MM:SSZ" timestamp without Boost.DateTime.
+    // Plain integer date math is used rather than the C++20 <chrono> calendar
+    // types (std::chrono::year_month_day / sys_days), which are unavailable on
+    // the older (gcc 10) toolchains used by the guix release builds.
     // Preserves the historical behaviour of returning 0 for unparseable input
     // and for timestamps at or before the Unix epoch.
     constexpr auto FMT_SIZE{std::string_view{"2000-01-01T01:01:01Z"}.size()};
@@ -32,22 +33,35 @@ int64_t ParseISO8601DateTime(const std::string& str)
     if (sv.size() != FMT_SIZE || sv[4] != '-' || sv[7] != '-' || sv[10] != 'T' || sv[13] != ':' || sv[16] != ':' || sv[19] != 'Z') {
         return 0;
     }
-    const auto year{ToIntegral<uint16_t>(sv.substr(0, 4))};
-    const auto month{ToIntegral<uint8_t>(sv.substr(5, 2))};
-    const auto day{ToIntegral<uint8_t>(sv.substr(8, 2))};
-    const auto hour{ToIntegral<uint8_t>(sv.substr(11, 2))};
-    const auto min{ToIntegral<uint8_t>(sv.substr(14, 2))};
-    const auto sec{ToIntegral<uint8_t>(sv.substr(17, 2))};
+    const auto year{ToIntegral<int>(sv.substr(0, 4))};
+    const auto month{ToIntegral<unsigned>(sv.substr(5, 2))};
+    const auto day{ToIntegral<unsigned>(sv.substr(8, 2))};
+    const auto hour{ToIntegral<unsigned>(sv.substr(11, 2))};
+    const auto min{ToIntegral<unsigned>(sv.substr(14, 2))};
+    const auto sec{ToIntegral<unsigned>(sv.substr(17, 2))};
     if (!year || !month || !day || !hour || !min || !sec) {
         return 0;
     }
-    const std::chrono::year_month_day ymd{std::chrono::year{*year}, std::chrono::month{*month}, std::chrono::day{*day}};
-    if (!ymd.ok()) {
+    if (*month < 1 || *month > 12 || *hour > 23 || *min > 59 || *sec > 59) {
         return 0;
     }
-    const auto time{std::chrono::hours{*hour} + std::chrono::minutes{*min} + std::chrono::seconds{*sec}};
-    const auto tp{std::chrono::sys_days{ymd} + time};
-    const int64_t secs{TicksSinceEpoch<std::chrono::seconds>(tp)};
+    // Validate the day against the (leap-aware) length of the month.
+    static constexpr int kDaysInMonth[]{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    const bool leap{(*year % 4 == 0 && *year % 100 != 0) || *year % 400 == 0};
+    unsigned max_day{static_cast<unsigned>(kDaysInMonth[*month - 1])};
+    if (*month == 2 && leap) max_day = 29;
+    if (*day < 1 || *day > max_day) {
+        return 0;
+    }
+    // Days since the Unix epoch (Howard Hinnant's days_from_civil algorithm).
+    int y{*year};
+    y -= *month <= 2;
+    const int64_t era{(y >= 0 ? y : y - 399) / 400};
+    const unsigned yoe{static_cast<unsigned>(y - era * 400)};
+    const unsigned doy{(153u * (*month > 2 ? *month - 3 : *month + 9) + 2) / 5 + *day - 1};
+    const unsigned doe{yoe * 365 + yoe / 4 - yoe / 100 + doy};
+    const int64_t days{era * 146097 + static_cast<int64_t>(doe) - 719468};
+    const int64_t secs{days * 86400 + static_cast<int64_t>(*hour) * 3600 + static_cast<int64_t>(*min) * 60 + *sec};
     return secs > 0 ? secs : 0;
 }
 
