@@ -2,9 +2,19 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <aggregation/combine.h>
+#include <aggregation/pool.h>
+#include <aggregation/session.h>
 #include <blsct/public_key.h>
+#include <blsct/wallet/txfactory_global.h>
+#include <consensus/amount.h>
+#include <core_io.h>
 #include <ctokens/tokenid.h>
 #include <node/context.h>
+#include <node/transaction.h>
+#include <policy/policy.h>
+#include <primitives/transaction.h>
+#include <util/transaction_identifier.h>
 #include <p2pmsg/transport.h>
 #include <rfq/intent_store.h>
 #include <rfq/order_cache.h>
@@ -190,6 +200,117 @@ static RPCHelpMan listorders()
     };
 }
 
+static RPCHelpMan addaggregationcandidate()
+{
+    return RPCHelpMan{
+        "addaggregationcandidate",
+        "\nInject a fee-0 cover candidate half-transaction into the local pool (debug).\n"
+        "Normally candidates arrive encrypted over the network; this is for testing.\n",
+        {
+            {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The candidate half-transaction"},
+            {"peer", RPCArg::Type::NUM, RPCArg::Default{0}, "Source peer id for per-peer accounting"},
+        },
+        RPCResult{RPCResult::Type::BOOL, "", "Whether the candidate was accepted"},
+        RPCExamples{HelpExampleCli("addaggregationcandidate", "\"<hex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            if (!node.agg_pool) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            CMutableTransaction mtx;
+            if (!DecodeHexTx(mtx, request.params[0].get_str())) {
+                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
+            }
+            const int64_t peer = request.params[1].isNull() ? 0 : request.params[1].getInt<int64_t>();
+            return node.agg_pool->AddCandidate(MakeTransactionRef(std::move(mtx)), peer);
+        },
+    };
+}
+
+static RPCHelpMan getaggregationhint()
+{
+    return RPCHelpMan{
+        "getaggregationhint",
+        "\nReturn the parameters a wallet needs to size an aggregated send: how\n"
+        "many cover candidates are available and the per-candidate fee to add.\n",
+        {},
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::BOOL, "enabled", "Whether the candidate pool exists"},
+            {RPCResult::Type::NUM, "available", /*optional=*/true, "Candidates currently in the pool"},
+            {RPCResult::Type::NUM, "candidate_weight", /*optional=*/true, "Assumed per-candidate weight for fee sizing"},
+            {RPCResult::Type::NUM, "blsct_default_fee", /*optional=*/true, "Per-weight fee rate"},
+            {RPCResult::Type::NUM, "extra_fee_per_candidate", /*optional=*/true, "candidate_weight * blsct_default_fee"},
+        }},
+        RPCExamples{HelpExampleCli("getaggregationhint", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            UniValue o(UniValue::VOBJ);
+            if (!node.agg_pool) { o.pushKV("enabled", false); return o; }
+            const CAmount rate = BLSCT_DEFAULT_FEE;
+            o.pushKV("enabled", true);
+            o.pushKV("available", (uint64_t)node.agg_pool->Size());
+            o.pushKV("candidate_weight", (int64_t)aggregation::CANDIDATE_WEIGHT_ESTIMATE);
+            o.pushKV("blsct_default_fee", rate);
+            o.pushKV("extra_fee_per_candidate", (CAmount)(aggregation::CANDIDATE_WEIGHT_ESTIMATE * rate));
+            return o;
+        },
+    };
+}
+
+static RPCHelpMan getp2pmsgaggregate()
+{
+    return RPCHelpMan{
+        "getp2pmsgaggregate",
+        "\nAggregate a wallet-built BLSCT half-transaction with up to `max_candidates`\n"
+        "fee-0 cover candidates from the node's pool, then broadcast it.\n"
+        "The submitted half must already over-fund the fee to cover the combined\n"
+        "weight (see getaggregationhint). Used candidates are evicted from the pool.\n",
+        {
+            {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The wallet's signed own half-transaction"},
+            {"max_candidates", RPCArg::Type::NUM, RPCArg::Default{16}, "Maximum cover candidates to merge"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "txid", "The broadcast aggregate transaction id"},
+            {RPCResult::Type::NUM, "candidates_merged", "How many cover candidates were merged"},
+        }},
+        RPCExamples{HelpExampleCli("getp2pmsgaggregate", "\"<signedhalfhex>\" 16")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            if (!node.agg_pool) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            CMutableTransaction own;
+            if (!DecodeHexTx(own, request.params[0].get_str())) {
+                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
+            }
+            size_t max_k = request.params[1].isNull() ? aggregation::POOL_MAX_COMBINED
+                                                      : request.params[1].getInt<int64_t>();
+            if (max_k > aggregation::POOL_MAX_COMBINED) max_k = aggregation::POOL_MAX_COMBINED;
+
+            std::vector<CTransactionRef> halves;
+            halves.push_back(MakeTransactionRef(own));
+            for (const auto& c : node.agg_pool->PickForAggregate(max_k)) halves.push_back(c);
+
+            auto combined = aggregation::CombineHalves(halves);
+            if (!combined) throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed (duplicate input?)");
+
+            CTransactionRef tx = MakeTransactionRef(std::move(*combined));
+            std::string err_string;
+            const TransactionError err = node::BroadcastTransaction(
+                node, tx, err_string, /*max_tx_fee=*/0, /*relay=*/true, /*wait_callback=*/true);
+            if (TransactionError::OK != err) throw JSONRPCTransactionError(err, err_string);
+
+            // Evict the candidates we just spent so they are not reused.
+            size_t merged = halves.size() - 1;
+            for (size_t i = 1; i < halves.size(); ++i) {
+                for (const CTxIn& in : halves[i]->vin) node.agg_pool->EvictByInput(in.prevout);
+            }
+
+            UniValue o(UniValue::VOBJ);
+            o.pushKV("txid", tx->GetHash().GetHex());
+            o.pushKV("candidates_merged", (uint64_t)merged);
+            return o;
+        },
+    };
+}
+
 void RegisterP2PMsgRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -199,6 +320,9 @@ void RegisterP2PMsgRPCCommands(CRPCTable& t)
         {"p2pmsg", &clearswapintent},
         {"p2pmsg", &listswapintents},
         {"p2pmsg", &listorders},
+        {"p2pmsg", &getaggregationhint},
+        {"p2pmsg", &getp2pmsgaggregate},
+        {"hidden", &addaggregationcandidate},
     };
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);
