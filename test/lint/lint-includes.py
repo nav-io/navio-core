@@ -23,8 +23,7 @@ EXCLUDED_DIRS = ["contrib/devtools/bitcoin-tidy/",
                  "src/minisketch/",
                 ]
 
-EXPECTED_BOOST_INCLUDES = ["boost/date_time/posix_time/posix_time.hpp",
-                           "boost/multi_index/detail/hash_index_iterator.hpp",
+EXPECTED_BOOST_INCLUDES = ["boost/multi_index/detail/hash_index_iterator.hpp",
                            "boost/multi_index/hashed_index.hpp",
                            "boost/multi_index/identity.hpp",
                            "boost/multi_index/indexed_by.hpp",
