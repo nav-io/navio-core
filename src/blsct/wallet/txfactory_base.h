@@ -23,6 +23,10 @@ struct CreateTransactionData {
     // so wallet-built transactions match the consensus minimum-fee rule
     // enforced by `blsct::VerifyTx`.
     CAmount nBLSCTDefaultFee{::BLSCT_DEFAULT_FEE};
+    // Extra fee added on top of this tx's own required fee, used by an
+    // aggregation initiator to cover the weight of the fee-0 cover candidates
+    // it will combine with. 0 for ordinary sends.
+    CAmount additionalFee{0};
 
     Scalar tokenKey;
     std::map<std::string, std::string> nftMetadata;

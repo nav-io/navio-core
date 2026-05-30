@@ -272,7 +272,7 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
             tx.AddOutput(transactionData.destination, transactionData.nAmount, transactionData.sMemo, transactionData.token_id, transactionData.type);
         }
     }
-    return tx.BuildTx(transactionData.changeDestination, transactionData.minStake, transactionData.type, /*fSubtractedFee=*/false, transactionData.nBLSCTDefaultFee);
+    return tx.BuildTx(transactionData.changeDestination, transactionData.minStake, transactionData.type, /*fSubtractedFee=*/false, transactionData.nBLSCTDefaultFee, transactionData.additionalFee);
 }
 
 } // namespace blsct

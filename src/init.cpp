@@ -52,6 +52,7 @@
 #include <p2pmsg/transport.h>
 #include <p2pmsg/worker_pool.h>
 #include <rfq/intent_store.h>
+#include <rfq/matcher.h>
 #include <rfq/order_cache.h>
 #include <node/interface_ui.h>
 #include <node/kernel_notifications.h>
@@ -313,6 +314,7 @@ void Shutdown(NodeContext& node)
     // capture the connman pointer. Clear the global hook first so no net path
     // can reach it, then stop workers, then drop the objects.
     p2pmsg::SetActiveTransport(nullptr);
+    node.rfq_matcher.reset();
     node.rfq_intents.reset();
     if (node.rfq_orders) {
         UnregisterValidationInterface(node.rfq_orders.get());
@@ -1652,6 +1654,9 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // Standing-order cache; evicts on spent inputs like the candidate pool.
         node.rfq_orders = std::make_unique<rfq::OrderCache>(GetTime<std::chrono::seconds>().count());
         RegisterValidationInterface(node.rfq_orders.get());
+
+        // Taker-side RFQ request/quote registry.
+        node.rfq_matcher = std::make_unique<rfq::MatcherRegistry>();
 
         LogPrintf("p2pmsg: enabled (workers=%u, powbits=%u)\n",
                   node.p2pmsg_pool->NumWorkers(), tr_opts.pow_bits);

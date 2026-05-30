@@ -28,6 +28,11 @@
 #include <validation.h>
 #include <wallet/receive.h>
 #include <wallet/rpc/util.h>
+#include <aggregation/combine.h>
+#include <aggregation/pool.h>
+#include <aggregation/session.h>
+#include <node/context.h>
+#include <node/transaction.h>
 #include <wallet/wallet.h>
 #include <limits>
 #include <optional>
@@ -126,6 +131,77 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
     return outputHash;
 }
 } // namespace blsct
+
+static RPCHelpMan aggregatesend()
+{
+    return RPCHelpMan{
+        "aggregatesend",
+        "\nSend `amount` to a BLSCT `address`, aggregating the spend with up to\n"
+        "`max_candidates` fee-0 cover candidates from the node's pool so the\n"
+        "broadcast transaction hides which outputs are yours. The wallet builds\n"
+        "and signs its own half (over-funding the fee to cover the combined\n"
+        "weight), combines with the pool candidates, and broadcasts.\n",
+        {
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The destination BLSCT address"},
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount to send"},
+            {"max_candidates", RPCArg::Type::NUM, RPCArg::Default{16}, "Maximum cover candidates to merge"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "txid", "The broadcast aggregate transaction id"},
+            {RPCResult::Type::NUM, "candidates_merged", "How many cover candidates were merged"},
+        }},
+        RPCExamples{HelpExampleCli("aggregatesend", "\"<blsctaddress>\" 1.0 16")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            if (!node.agg_pool) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            CTxDestination dest = DecodeDestination(request.params[0].get_str());
+            if (!std::holds_alternative<blsct::DoublePublicKey>(dest)) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Not a BLSCT address");
+            }
+            const CAmount amount = AmountFromValue(request.params[1]);
+            size_t max_k = request.params[2].isNull() ? aggregation::POOL_MAX_COMBINED
+                                                      : request.params[2].getInt<int64_t>();
+            if (max_k > aggregation::POOL_MAX_COMBINED) max_k = aggregation::POOL_MAX_COMBINED;
+
+            // Pull cover candidates first so we know how much extra fee to fund.
+            std::vector<CTransactionRef> candidates = node.agg_pool->PickForAggregate(max_k);
+            const CAmount rate = Params().GetConsensus().nBLSCTDefaultFee;
+            const CAmount extra = aggregation::RequiredCandidateFee(candidates, rate);
+
+            // Build (do not commit) the wallet's own half, over-funding the fee.
+            blsct::SubAddress sub_dest(std::get<blsct::DoublePublicKey>(dest));
+            blsct::CreateTransactionData txData{sub_dest, amount, "aggregatesend"};
+            txData.nBLSCTDefaultFee = rate;
+            txData.additionalFee = extra;
+            auto own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
+            if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+
+            std::vector<CTransactionRef> halves;
+            halves.push_back(MakeTransactionRef(own.value()));
+            for (const auto& c : candidates) halves.push_back(c);
+
+            auto combined = aggregation::CombineHalves(halves);
+            if (!combined) throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed (duplicate input?)");
+
+            CTransactionRef tx = MakeTransactionRef(std::move(*combined));
+            std::string err_string;
+            const TransactionError err = node::BroadcastTransaction(
+                node, tx, err_string, /*max_tx_fee=*/0, /*relay=*/true, /*wait_callback=*/true);
+            if (TransactionError::OK != err) throw JSONRPCTransactionError(err, err_string);
+
+            for (size_t i = 1; i < halves.size(); ++i)
+                for (const CTxIn& in : halves[i]->vin) node.agg_pool->EvictByInput(in.prevout);
+
+            UniValue o(UniValue::VOBJ);
+            o.pushKV("txid", tx->GetHash().GetHex());
+            o.pushKV("candidates_merged", (uint64_t)(halves.size() - 1));
+            return o;
+        },
+    };
+}
 
 UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request, const blsct::TokenType& type)
 {
@@ -3168,6 +3244,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &listblscttransactions},
         {"blsct", &listblsctunspent},
         {"blsct", &sendtoblsctaddress},
+        {"blsct", &aggregatesend},
         {"blsct", &sendnfttoblsctaddress},
         {"blsct", &sendtokentoblsctaddress},
         {"blsct", &stakelock},
