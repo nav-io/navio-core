@@ -293,10 +293,16 @@ class BlsctGetBalanceForAddressTest(BitcoinTestFramework):
 
     def test_listblsctunspent_matches_getbalanceforaddress(self):
         self.log.info("=== Sum of listblsctunspent outputs at an address equals getbalanceforaddress.trusted ===")
-        # Pick a fresh address, fund it twice with different amounts, then
-        # verify that listblsctunspent's per-address UTXO sum equals the
-        # trusted balance reported by getbalanceforaddress.
-        addr = self.w1.getnewaddress(label="", address_type="blsct")
+        # Use a dedicated wallet whose only spendable coins live at `addr`.
+        # The spend below must therefore consume one of `addr`'s outputs. If
+        # we reused a wallet that also held unrelated UTXOs (e.g. w1, funded
+        # by earlier sub-tests), coin selection could fund the spend from a
+        # different address and leave `addr` untouched — making the
+        # "balance decreased" assertion racy on coin selection (it passed on
+        # Linux but failed intermittently on Windows).
+        self.nodes[1].createwallet(wallet_name="w_addr", blsct=True, storage_output=True)
+        w = self.nodes[1].get_wallet_rpc("w_addr")
+        addr = w.getnewaddress(label="", address_type="blsct")
         sends = [Decimal("0.5"), Decimal("1.25"), Decimal("2.0")]
         for amt in sends:
             self.w0.sendtoblsctaddress(addr, amt)
@@ -304,7 +310,7 @@ class BlsctGetBalanceForAddressTest(BitcoinTestFramework):
             self.generate_blsct_blocks(self.nodes[0], self.addr0, 1)
             self.sync_all()
 
-        unspent = self.w1.listblsctunspent(1, 9999999, [addr])
+        unspent = w.listblsctunspent(1, 9999999, [addr])
         # We sent three separate transactions to this address; the wallet
         # therefore must have three independent UTXOs at this address.
         assert_equal(len(unspent), len(sends))
@@ -313,27 +319,33 @@ class BlsctGetBalanceForAddressTest(BitcoinTestFramework):
 
         # getbalanceforaddress.mine.trusted must agree with the UTXO sum
         # exactly, since all outputs are confirmed and unspent.
-        mine = self.get_mine(self.w1, addr)
+        mine = self.get_mine(w, addr)
         assert_equal(mine["trusted"], utxo_sum)
         assert_equal(mine["untrusted_pending"], _to_dec(0))
         assert_equal(mine["immature"], _to_dec(0))
 
-        # Now spend one of those outputs back to w0 and verify both views
-        # update consistently: listblsctunspent loses an entry and
-        # getbalanceforaddress.trusted decreases accordingly.
-        spend_amount = Decimal("0.5")  # matches the first send exactly
-        self.w1.sendtoblsctaddress(self.addr0, spend_amount)
+        # Spend back to w0 and verify both views update consistently:
+        # listblsctunspent loses an entry and getbalanceforaddress.trusted
+        # decreases accordingly. Because this wallet only holds coins at
+        # `addr`, the spend is guaranteed to consume one of them; any change
+        # returns to a fresh internal address, not `addr`.
+        spend_amount = Decimal("0.5")
+        w.sendtoblsctaddress(self.addr0, spend_amount)
         self.sync_mempools()
         self.generate_blsct_blocks(self.nodes[0], self.addr0, 1)
         self.sync_all()
 
-        unspent_after = self.w1.listblsctunspent(1, 9999999, [addr])
+        unspent_after = w.listblsctunspent(1, 9999999, [addr])
         sum_after = sum(_to_dec(u["amount"]) for u in unspent_after)
-        mine_after = self.get_mine(self.w1, addr)
+        mine_after = self.get_mine(w, addr)
         # The two views must still agree after the spend.
         assert_equal(mine_after["trusted"], sum_after)
-        # And the new total must be strictly less than before the spend.
+        # An output at `addr` was consumed, so the address loses an entry...
+        assert_greater_than(len(unspent), len(unspent_after))
+        # ...and its total strictly decreases.
         assert_greater_than(utxo_sum, sum_after)
+
+        self.nodes[1].unloadwallet("w_addr")
 
     def test_staked_commitment_balance(self):
         self.log.info("=== Staked commitments are reported under staked_commitment_balance ===")
