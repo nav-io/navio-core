@@ -201,6 +201,56 @@ BOOST_FIXTURE_TEST_CASE(pool_block_connected_evicts, BasicTestingSetup)
     BOOST_CHECK_EQUAL(pool.Size(), 0u);
 }
 
+// ---- Pool -> combine bridge (the getp2pmsgaggregate path) ----
+
+BOOST_FIXTURE_TEST_CASE(pool_pick_combine_evict, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CCoinsViewCache cache{&base, /*deterministic=*/true};
+    cache.SetBestBlock(InsecureRand256());
+    blsct::SubAddress dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+
+    // Two fee-0 cover candidates land in the pool (as if received over the wire).
+    aggregation::CandidatePool pool;
+    CTransactionRef c1 = BuildCandidate(km, cache, 300 * COIN, dest);
+    CTransactionRef c2 = BuildCandidate(km, cache, 200 * COIN, dest);
+    BOOST_REQUIRE(pool.AddCandidate(c1, /*peer=*/1));
+    BOOST_REQUIRE(pool.AddCandidate(c2, /*peer=*/2));
+    BOOST_CHECK_EQUAL(pool.Size(), 2u);
+
+    // The "getp2pmsgaggregate" path: pick candidates, build own over-funding half,
+    // combine, then evict the consumed candidates.
+    auto picked = pool.PickForAggregate(16);
+    BOOST_CHECK_EQUAL(picked.size(), 2u);
+
+    const CAmount extra = aggregation::RequiredCandidateFee(picked, BLSCT_DEFAULT_FEE);
+    auto own_outpoint = FundCoin(km, cache, 1000 * COIN);
+    auto factory = blsct::TxFactory(km);
+    BOOST_REQUIRE(factory.AddInput(cache, own_outpoint));
+    factory.AddOutput(dest, 900 * COIN, "spend");
+    auto own = factory.BuildTx(BLSCT_DEFAULT_FEE, /*additionalFee=*/extra);
+    BOOST_REQUIRE(own.has_value());
+
+    std::vector<CTransactionRef> halves{MakeTransactionRef(own.value())};
+    for (const auto& c : picked) halves.push_back(c);
+    auto combined = aggregation::CombineHalves(halves);
+    BOOST_REQUIRE(combined.has_value());
+
+    TxValidationState st;
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(*combined), cache, st));
+
+    // Evict the consumed candidates, as the RPC does after a successful broadcast.
+    for (size_t i = 1; i < halves.size(); ++i)
+        for (const CTxIn& in : halves[i]->vin) pool.EvictByInput(in.prevout);
+    BOOST_CHECK_EQUAL(pool.Size(), 0u);
+}
+
 // ---- Session fee math ----
 
 BOOST_FIXTURE_TEST_CASE(session_required_fee, TestingSetup)
