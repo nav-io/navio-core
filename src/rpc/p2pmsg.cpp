@@ -7,6 +7,8 @@
 #include <node/context.h>
 #include <p2pmsg/transport.h>
 #include <rfq/intent_store.h>
+#include <rfq/order_cache.h>
+#include <util/time.h>
 #include <rpc/protocol.h>
 #include <rpc/request.h>
 #include <rpc/server.h>
@@ -164,6 +166,30 @@ static RPCHelpMan listswapintents()
     };
 }
 
+static RPCHelpMan listorders()
+{
+    return RPCHelpMan{
+        "listorders",
+        "\nReport the standing-order cache state (debug).\n",
+        {},
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::BOOL, "enabled", "Whether the cache exists"},
+            {RPCResult::Type::NUM, "count", /*optional=*/true, "Cached standing orders"},
+            {RPCResult::Type::NUM, "bytes", /*optional=*/true, "Approximate cache footprint"},
+        }},
+        RPCExamples{HelpExampleCli("listorders", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            UniValue o(UniValue::VOBJ);
+            if (!node.rfq_orders) { o.pushKV("enabled", false); return o; }
+            o.pushKV("enabled", true);
+            o.pushKV("count", (uint64_t)node.rfq_orders->Size());
+            o.pushKV("bytes", (uint64_t)node.rfq_orders->Bytes());
+            return o;
+        },
+    };
+}
+
 void RegisterP2PMsgRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -172,6 +198,7 @@ void RegisterP2PMsgRPCCommands(CRPCTable& t)
         {"p2pmsg", &setswapintent},
         {"p2pmsg", &clearswapintent},
         {"p2pmsg", &listswapintents},
+        {"p2pmsg", &listorders},
     };
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);

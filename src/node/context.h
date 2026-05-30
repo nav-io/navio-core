@@ -35,6 +35,7 @@ class CandidatePool;
 } // namespace aggregation
 namespace rfq {
 class IntentStore;
+class OrderCache;
 } // namespace rfq
 namespace interfaces {
 class Chain;
@@ -77,6 +78,9 @@ struct NodeContext {
     std::unique_ptr<aggregation::CandidatePool> agg_pool;
     //! Maker-local swap intents for RFQ matching (never gossiped).
     std::unique_ptr<rfq::IntentStore> rfq_intents;
+    //! Cache of broadcast standing orders; registered as a validation interface
+    //! for spent-input eviction.
+    std::unique_ptr<rfq::OrderCache> rfq_orders;
     std::unique_ptr<ChainstateManager> chainman;
     std::unique_ptr<BanMan> banman;
     ArgsManager* args{nullptr}; // Currently a raw pointer because the memory is not managed by this struct

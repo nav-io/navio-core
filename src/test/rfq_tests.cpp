@@ -4,10 +4,15 @@
 
 #include <rfq/intent_store.h>
 #include <rfq/matcher.h>
+#include <rfq/order_cache.h>
 #include <rfq/quote.h>
 #include <rfq/request.h>
 
+#include <primitives/block.h>
+#include <primitives/transaction.h>
+#include <test/util/random.h>
 #include <test/util/setup_common.h>
+#include <validationinterface.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -132,6 +137,82 @@ BOOST_AUTO_TEST_CASE(no_quote_passes_filter)
     std::vector<RfqQuote> qs{MakeQuote(100, 10)};
     BOOST_CHECK(!PickBest(qs, 1000, 1.0, RankBy::Price).has_value());
     BOOST_CHECK(!PickBest({}, 1000, 0.0, RankBy::Price).has_value());
+}
+
+// ---- OrderCache ----
+
+namespace {
+//! A standing order whose half-tx spends `input_hash` and offers `fill`.
+RfqQuote MakeOrder(const uint256& quote_id, const uint256& input_hash,
+                   CAmount fill, CAmount sell_cost, int64_t order_expiry)
+{
+    RfqQuote q;
+    q.quote_id = quote_id;
+    q.fill = fill;
+    q.sell_cost = sell_cost;
+    q.order_expiry = order_expiry;
+    CMutableTransaction mtx;
+    mtx.nVersion = CTransaction::BLSCT_MARKER;
+    mtx.vin.emplace_back(COutPoint(input_hash));
+    mtx.vout.emplace_back(CTxOut());
+    q.half_tx = MakeTransactionRef(mtx);
+    return q;
+}
+} // namespace
+
+BOOST_AUTO_TEST_CASE(order_store_find_expiry)
+{
+    OrderCache cache(/*now=*/1000);
+    const uint256 qid = uint256::ONE;
+    const uint256 input = InsecureRand256();
+
+    // Store an order valid until t=5000.
+    BOOST_CHECK(cache.StoreOrder(MakeOrder(qid, input, /*fill=*/1000, /*cost=*/100, /*expiry=*/5000), /*now=*/1000));
+    BOOST_CHECK_EQUAL(cache.Size(), 1u);
+    BOOST_CHECK(cache.Contains(qid));
+
+    // Duplicate quote_id rejected.
+    BOOST_CHECK(!cache.StoreOrder(MakeOrder(qid, InsecureRand256(), 1000, 100, 5000), 1000));
+
+    // Already-expired store rejected.
+    BOOST_CHECK(!cache.StoreOrder(MakeOrder(InsecureRand256(), InsecureRand256(), 1000, 100, /*expiry=*/900), 1000));
+
+    // FindMatching: request size <= fill matches; larger does not.
+    RfqRequest req = MakeReq(TokA(), TokB(), 800, 0);
+    BOOST_CHECK_EQUAL(cache.FindMatching(req, /*now=*/2000).size(), 1u);
+    RfqRequest big = MakeReq(TokA(), TokB(), 2000, 0);
+    BOOST_CHECK_EQUAL(cache.FindMatching(big, 2000).size(), 0u);
+
+    // After expiry, find returns nothing and prunes.
+    BOOST_CHECK_EQUAL(cache.FindMatching(req, /*now=*/6000).size(), 0u);
+    BOOST_CHECK_EQUAL(cache.Size(), 0u);
+}
+
+BOOST_AUTO_TEST_CASE(order_max_ttl_caps_expiry)
+{
+    OrderCache cache(0);
+    const uint256 qid = uint256::ONE;
+    // Declared expiry far beyond 14 days; effective expiry is capped.
+    BOOST_CHECK(cache.StoreOrder(MakeOrder(qid, InsecureRand256(), 1000, 100, /*expiry=*/100 * MAX_ORDER_TTL_SECONDS), /*now=*/0));
+    // Just past 14 days -> pruned.
+    BOOST_CHECK_EQUAL(cache.PruneExpired(MAX_ORDER_TTL_SECONDS + 1), 1u);
+    BOOST_CHECK_EQUAL(cache.Size(), 0u);
+}
+
+BOOST_AUTO_TEST_CASE(order_spent_input_evicts)
+{
+    OrderCache cache(0);
+    const uint256 qid = uint256::ONE;
+    const uint256 input = InsecureRand256();
+    BOOST_CHECK(cache.StoreOrder(MakeOrder(qid, input, 1000, 100, 5000), 0));
+
+    auto block = std::make_shared<CBlock>();
+    CMutableTransaction spender;
+    spender.vin.emplace_back(COutPoint(input));
+    block->vtx.push_back(MakeTransactionRef(spender));
+
+    cache.BlockConnected(ChainstateRole::NORMAL, block, nullptr);
+    BOOST_CHECK_EQUAL(cache.Size(), 0u);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

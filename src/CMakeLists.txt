@@ -374,6 +374,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     p2pmsg/worker_pool.cpp
     rfq/intent_store.cpp
     rfq/matcher.cpp
+    rfq/order_cache.cpp
     pow.cpp
     rest.cpp
     rpc/blockchain.cpp

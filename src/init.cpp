@@ -52,6 +52,7 @@
 #include <p2pmsg/transport.h>
 #include <p2pmsg/worker_pool.h>
 #include <rfq/intent_store.h>
+#include <rfq/order_cache.h>
 #include <node/interface_ui.h>
 #include <node/kernel_notifications.h>
 #include <node/mempool_args.h>
@@ -313,6 +314,10 @@ void Shutdown(NodeContext& node)
     // can reach it, then stop workers, then drop the objects.
     p2pmsg::SetActiveTransport(nullptr);
     node.rfq_intents.reset();
+    if (node.rfq_orders) {
+        UnregisterValidationInterface(node.rfq_orders.get());
+        node.rfq_orders.reset();
+    }
     if (node.agg_pool) {
         UnregisterValidationInterface(node.agg_pool.get());
         node.agg_pool.reset();
@@ -1643,6 +1648,10 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
         // Maker-local RFQ swap intents.
         node.rfq_intents = std::make_unique<rfq::IntentStore>();
+
+        // Standing-order cache; evicts on spent inputs like the candidate pool.
+        node.rfq_orders = std::make_unique<rfq::OrderCache>(GetTime<std::chrono::seconds>().count());
+        RegisterValidationInterface(node.rfq_orders.get());
 
         LogPrintf("p2pmsg: enabled (workers=%u, powbits=%u)\n",
                   node.p2pmsg_pool->NumWorkers(), tr_opts.pow_bits);
