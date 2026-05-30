@@ -16,6 +16,7 @@
 #include <blsct/wallet/helpers.h>
 #include <blsct/wallet/import_wallet_type.h>
 #include <blsct/wallet/keyring.h>
+#include <btcsignals.h>
 #include <logging.h>
 #include <support/allocators/secure.h>
 #include <util/strencodings.h>
@@ -267,7 +268,7 @@ public:
     int64_t GetTimeFirstKey() const;
 
     /** Keypool has new keys */
-    boost::signals2::signal<void()>
+    btcsignals::signal<void()>
         NotifyCanGetAddressesChanged;
 
     // Map from Key ID to key metadata.

@@ -17,7 +17,7 @@
 #include <util/string.h>
 #include <util/time.h>
 
-#include <boost/signals2/signal.hpp>
+#include <btcsignals.h>
 
 #include <cassert>
 #include <chrono>
@@ -67,8 +67,8 @@ struct RPCCommandExecution
 
 static struct CRPCSignals
 {
-    boost::signals2::signal<void ()> Started;
-    boost::signals2::signal<void ()> Stopped;
+    btcsignals::signal<void ()> Started;
+    btcsignals::signal<void ()> Stopped;
 } g_rpcSignals;
 
 void RPCServer::OnStarted(std::function<void ()> slot)
