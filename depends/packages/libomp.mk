@@ -11,9 +11,12 @@ $(package)_sha256_hash=74334cbb4dc8b73a768448a7561d5a3540404940b2267b1fb9813a646
 $(package)_cmake_utils_file_name=cmake-$($(package)_version).src.tar.xz
 $(package)_cmake_utils_sha256_hash=807f069c54dc20cb47b21c1f6acafdd9c649f3ae015609040d6182cab01140f4
 $(package)_extra_sources=$($(package)_cmake_utils_file_name)
-# Fallback when GitHub is unavailable (502) and bitcoincore.org does not mirror the cmake subtree tarball (404).
-# Same bytes as upstream; checksum above must remain valid.
-$(package)_cmake_utils_gh_mirror_base=https://ghfast.top/https://github.com/llvm/llvm-project/releases/download/llvmorg-$($(package)_version)
+# Fallback when GitHub is unavailable (502) and bitcoincore.org does not
+# mirror the LLVM source tarballs (404). Used for both the main openmp
+# tarball and the cmake subtree tarball. Same bytes as upstream;
+# checksums above must remain valid.
+$(package)_gh_mirror_base=https://ghfast.top/https://github.com/llvm/llvm-project/releases/download/llvmorg-$($(package)_version)
+$(package)_cmake_utils_gh_mirror_base=$($(package)_gh_mirror_base)
 
 # Build cmake out of the openmp/ subtree so that ${CMAKE_CURRENT_SOURCE_DIR}/../cmake
 # inside openmp's CMakeLists.txt resolves to the LLVM cmake helpers we drop
@@ -40,11 +43,11 @@ endef
 # Emit a toolchain snippet that selects clang directly and mirrors darwin_CC's
 # driver flags — Makefile cannot reliably pass spaced CMAKE_ASM_FLAGS in one -D.
 #
-# Use $(clang_prog) — the same path darwin_CC uses — so this works both with
-# the depends-managed clang ($(build_prefix)/bin/clang) and with
-# FORCE_USE_SYSTEM_CLANG=1 (e.g. Guix builds), where clang lives in the
-# build environment's PATH (e.g. /root/.guix-profile/bin/clang) and nothing
-# is staged into $(build_prefix)/bin.
+# Use $(clang_prog) — the same path darwin_CC uses — so this works with
+# clang from the build environment's PATH (e.g. /root/.guix-profile/bin/
+# clang shipped by clang-toolchain in contrib/guix/manifest.scm). The
+# legacy depends-managed clang at $(build_prefix)/bin/clang was retired
+# when navio moved to upstream's modernized darwin path.
 ifneq ($(host),$(build))
 ifeq ($(host_os),darwin)
 
@@ -52,7 +55,7 @@ define libomp_preprocess_cmds
 	printf '%s\n' \
 	  'set(CMAKE_ASM_COMPILER "$(clang_prog)")' \
 	  'set(CMAKE_ASM_COMPILER_TARGET "$(host)")' \
-	  'set(CMAKE_ASM_FLAGS "-B$(build_prefix)/bin -isysroot$(OSX_SDK) -nostdlibinc -iwithsysroot/usr/include -iframeworkwithsysroot/System/Library/Frameworks")' \
+	  'set(CMAKE_ASM_FLAGS "-isysroot$(OSX_SDK) -nostdlibinc -iwithsysroot/usr/include -iframeworkwithsysroot/System/Library/Frameworks")' \
 	  > $$(@D)/libomp_cross_asm.cmake || exit 1
 endef
 
@@ -62,7 +65,9 @@ endif
 endif
 
 define $(package)_fetch_cmds
-  $(call fetch_file,$(package),$($(package)_download_path),$($(package)_file_name),$($(package)_file_name),$($(package)_sha256_hash)) && \
+  ( $(call fetch_file_inner,$(package),$($(package)_download_path),$($(package)_file_name),$($(package)_file_name),$($(package)_sha256_hash)) || \
+    $(call fetch_file_inner,$(package),$(FALLBACK_DOWNLOAD_PATH),$($(package)_file_name),$($(package)_file_name),$($(package)_sha256_hash)) || \
+    $(call fetch_file_inner,$(package),$($(package)_gh_mirror_base),$($(package)_file_name),$($(package)_file_name),$($(package)_sha256_hash)) ) && \
   ( $(call fetch_file_inner,$(package),$($(package)_download_path),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_sha256_hash)) || \
     $(call fetch_file_inner,$(package),$(FALLBACK_DOWNLOAD_PATH),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_sha256_hash)) || \
     $(call fetch_file_inner,$(package),$($(package)_cmake_utils_gh_mirror_base),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_file_name),$($(package)_cmake_utils_sha256_hash)) )

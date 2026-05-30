@@ -15,13 +15,9 @@ multiprocess_native_packages = native_libmultiprocess native_capnp
 
 usdt_linux_packages=systemtap
 
+# Darwin no longer needs a depends-managed toolchain: the guix profile
+# defined by contrib/guix/manifest.scm's darwin branch ships clang +
+# llvm-* + lld, and depends/hosts/darwin.mk wires them via PATH. The
+# old native_llvm / native_libtapi / native_cctools chain was retired
+# when navio moved to upstream's modernized darwin guix path.
 darwin_native_packages =
-
-ifneq ($(build_os),darwin)
-darwin_native_packages += native_cctools native_libtapi
-
-ifeq ($(strip $(FORCE_USE_SYSTEM_CLANG)),)
-darwin_native_packages+= native_llvm
-endif
-
-endif
