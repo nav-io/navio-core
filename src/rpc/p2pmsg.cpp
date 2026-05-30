@@ -17,8 +17,14 @@
 #include <util/transaction_identifier.h>
 #include <p2pmsg/transport.h>
 #include <rfq/intent_store.h>
+#include <rfq/matcher.h>
 #include <rfq/order_cache.h>
+#include <rfq/quote.h>
+#include <rfq/request.h>
+#include <random.h>
 #include <util/time.h>
+
+#include <algorithm>
 #include <rpc/protocol.h>
 #include <rpc/request.h>
 #include <rpc/server.h>
@@ -311,6 +317,226 @@ static RPCHelpMan getp2pmsgaggregate()
     };
 }
 
+static rfq::MatcherRegistry& EnsureMatcher(const JSONRPCRequest& request)
+{
+    node::NodeContext& node = EnsureAnyNodeContext(request.context);
+    if (!node.rfq_matcher) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+    return *node.rfq_matcher;
+}
+
+static rfq::RfqRequest ParseRequestArgs(const JSONRPCRequest& request, const uint256& uuid,
+                                        const blsct::PublicKey& reply_key)
+{
+    auto parse_token = [](const UniValue& v) -> TokenId {
+        const std::string s = v.get_str();
+        if (s.empty()) return TokenId();
+        return TokenId(uint256(ParseHashV(v, "token")));
+    };
+    rfq::RfqRequest r;
+    r.uuid = uuid;
+    r.buy = parse_token(request.params[0]);
+    r.sell = parse_token(request.params[1]);
+    r.size = request.params[2].getInt<int64_t>();
+    r.expiry = request.params[3].getInt<int64_t>();
+    r.reply_key = reply_key;
+    return r;
+}
+
+static RPCHelpMan requestquote()
+{
+    return RPCHelpMan{
+        "requestquote",
+        "\nOpen a request-for-quote: collect maker quotes to buy `size` of `buy_token`\n"
+        "paying with `sell_token`. Returns a uuid + the session pubkey makers encrypt\n"
+        "their quotes to. (Broadcast over the wire is handled by the orchestrator.)\n",
+        {
+            {"buy_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token to receive (hex, empty for NAV)"},
+            {"sell_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token to pay with (hex, empty for NAV)"},
+            {"size", RPCArg::Type::NUM, RPCArg::Optional::NO, "Amount of buy_token wanted"},
+            {"expiry", RPCArg::Type::NUM, RPCArg::Optional::NO, "Unix time the collection window closes"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "uuid", "Identifier for this request"},
+            {RPCResult::Type::STR_HEX, "reply_key", "Session pubkey makers encrypt quotes to"},
+        }},
+        RPCExamples{HelpExampleCli("requestquote", "\"\" \"01...\" 100 1893456000")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            if (!node.rfq_matcher || !node.p2pmsg_transport) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            const uint256 uuid = GetRandHash();
+            // Use the node's inbox key as the reply key for this debug surface;
+            // a full taker would mint a fresh per-request session key.
+            const blsct::PublicKey reply_key = node.p2pmsg_transport->InboxPubKey();
+            rfq::RfqRequest r = ParseRequestArgs(request, uuid, reply_key);
+            if (!node.rfq_matcher->OpenRequest(r)) throw JSONRPCError(RPC_MISC_ERROR, "uuid collision");
+
+            UniValue o(UniValue::VOBJ);
+            o.pushKV("uuid", uuid.GetHex());
+            o.pushKV("reply_key", HexStr(reply_key.GetVch()));
+            return o;
+        },
+    };
+}
+
+static UniValue QuoteToUni(const rfq::RfqQuote& q)
+{
+    UniValue o(UniValue::VOBJ);
+    o.pushKV("quote_id", q.quote_id.GetHex());
+    o.pushKV("fill", q.fill);
+    o.pushKV("sell_cost", q.sell_cost);
+    o.pushKV("price", q.Price());
+    o.pushKV("order_expiry", q.order_expiry);
+    return o;
+}
+
+static RPCHelpMan listquotes()
+{
+    return RPCHelpMan{
+        "listquotes",
+        "\nList quotes collected for an open RFQ, ranked cheapest-price first.\n",
+        {
+            {"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The request uuid"},
+            {"min_fill_ratio", RPCArg::Type::NUM, RPCArg::Default{1}, "Drop quotes filling less than this fraction of size"},
+        },
+        RPCResult{RPCResult::Type::ARR, "", "", {{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "quote_id", "Quote id"},
+            {RPCResult::Type::NUM, "fill", "Units of buy token offered"},
+            {RPCResult::Type::NUM, "sell_cost", "Units of sell token charged"},
+            {RPCResult::Type::NUM, "price", "sell_cost / fill"},
+            {RPCResult::Type::NUM, "order_expiry", "Quote expiry"},
+        }}}},
+        RPCExamples{HelpExampleCli("listquotes", "\"<uuid>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            rfq::MatcherRegistry& reg = EnsureMatcher(request);
+            const uint256 uuid(ParseHashV(request.params[0], "uuid"));
+            auto req = reg.GetRequest(uuid);
+            if (!req) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown uuid");
+            const double min_fill_ratio = request.params[1].isNull() ? 1.0 : request.params[1].get_real();
+
+            auto quotes = reg.GetQuotes(uuid);
+            // Rank: best (cheapest) first by repeatedly picking and removing.
+            UniValue arr(UniValue::VARR);
+            std::vector<rfq::RfqQuote> remaining = quotes;
+            while (true) {
+                auto best = rfq::PickBest(remaining, req->size, min_fill_ratio, rfq::RankBy::Price);
+                if (!best) break;
+                arr.push_back(QuoteToUni(*best));
+                remaining.erase(std::remove_if(remaining.begin(), remaining.end(),
+                    [&](const rfq::RfqQuote& q) { return q.quote_id == best->quote_id; }), remaining.end());
+            }
+            return arr;
+        },
+    };
+}
+
+static RPCHelpMan acceptquote()
+{
+    return RPCHelpMan{
+        "acceptquote",
+        "\nCombine the taker's signed half-transaction with a collected maker quote's\n"
+        "half and broadcast the resulting swap. The taker half must already balance\n"
+        "the multi-TokenId sums and fund the fee for the combined weight.\n",
+        {
+            {"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The request uuid"},
+            {"quote_id", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The chosen quote id"},
+            {"taker_half_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The taker's signed half"},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "txid", "The broadcast swap transaction id"},
+        RPCExamples{HelpExampleCli("acceptquote", "\"<uuid>\" \"<quote_id>\" \"<takerhalfhex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            if (!node.rfq_matcher) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            const uint256 uuid(ParseHashV(request.params[0], "uuid"));
+            const uint256 quote_id(ParseHashV(request.params[1], "quote_id"));
+
+            auto quote = node.rfq_matcher->GetQuote(uuid, quote_id);
+            if (!quote || !quote->half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
+
+            CMutableTransaction taker;
+            if (!DecodeHexTx(taker, request.params[2].get_str())) {
+                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "taker half decode failed");
+            }
+
+            std::vector<CTransactionRef> halves{MakeTransactionRef(taker), quote->half_tx};
+            auto combined = aggregation::CombineHalves(halves);
+            if (!combined) throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed");
+
+            CTransactionRef tx = MakeTransactionRef(std::move(*combined));
+            std::string err_string;
+            const TransactionError err = node::BroadcastTransaction(
+                node, tx, err_string, /*max_tx_fee=*/0, /*relay=*/true, /*wait_callback=*/true);
+            if (TransactionError::OK != err) throw JSONRPCTransactionError(err, err_string);
+
+            node.rfq_matcher->Cancel(uuid); // one-shot per request
+            return tx->GetHash().GetHex();
+        },
+    };
+}
+
+static RPCHelpMan listrfqs()
+{
+    return RPCHelpMan{
+        "listrfqs", "\nList open RFQ request uuids.\n", {},
+        RPCResult{RPCResult::Type::ARR, "", "", {{RPCResult::Type::STR_HEX, "uuid", "Open request uuid"}}},
+        RPCExamples{HelpExampleCli("listrfqs", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            rfq::MatcherRegistry& reg = EnsureMatcher(request);
+            UniValue arr(UniValue::VARR);
+            for (const auto& uuid : reg.ListRequests()) arr.push_back(uuid.GetHex());
+            return arr;
+        },
+    };
+}
+
+static RPCHelpMan cancelrfq()
+{
+    return RPCHelpMan{
+        "cancelrfq", "\nCancel an open RFQ, discarding its collected quotes.\n",
+        {{"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The request uuid"}},
+        RPCResult{RPCResult::Type::BOOL, "", "Whether a request was cancelled"},
+        RPCExamples{HelpExampleCli("cancelrfq", "\"<uuid>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            rfq::MatcherRegistry& reg = EnsureMatcher(request);
+            return reg.Cancel(uint256(ParseHashV(request.params[0], "uuid")));
+        },
+    };
+}
+
+static RPCHelpMan addrfqquote()
+{
+    return RPCHelpMan{
+        "addrfqquote",
+        "\nInject a maker quote for an open RFQ (debug). Normally quotes arrive\n"
+        "encrypted over the network.\n",
+        {
+            {"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The request uuid"},
+            {"quote_id", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Unique quote id"},
+            {"fill", RPCArg::Type::NUM, RPCArg::Optional::NO, "Units of buy token offered"},
+            {"sell_cost", RPCArg::Type::NUM, RPCArg::Optional::NO, "Units of sell token charged"},
+            {"half_tx_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Maker's half-transaction"},
+            {"order_expiry", RPCArg::Type::NUM, RPCArg::Default{0}, "Quote expiry"},
+        },
+        RPCResult{RPCResult::Type::BOOL, "", "Whether the quote was accepted"},
+        RPCExamples{HelpExampleCli("addrfqquote", "\"<uuid>\" \"<qid>\" 1000 100 \"<halfhex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            rfq::MatcherRegistry& reg = EnsureMatcher(request);
+            rfq::RfqQuote q;
+            q.uuid = uint256(ParseHashV(request.params[0], "uuid"));
+            q.quote_id = uint256(ParseHashV(request.params[1], "quote_id"));
+            q.fill = request.params[2].getInt<int64_t>();
+            q.sell_cost = request.params[3].getInt<int64_t>();
+            CMutableTransaction mtx;
+            if (!DecodeHexTx(mtx, request.params[4].get_str())) {
+                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "half decode failed");
+            }
+            q.half_tx = MakeTransactionRef(std::move(mtx));
+            q.order_expiry = request.params[5].isNull() ? 0 : request.params[5].getInt<int64_t>();
+            return reg.AddQuote(q);
+        },
+    };
+}
+
 void RegisterP2PMsgRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -323,6 +549,12 @@ void RegisterP2PMsgRPCCommands(CRPCTable& t)
         {"p2pmsg", &getaggregationhint},
         {"p2pmsg", &getp2pmsgaggregate},
         {"hidden", &addaggregationcandidate},
+        {"p2pmsg", &requestquote},
+        {"p2pmsg", &listquotes},
+        {"p2pmsg", &acceptquote},
+        {"p2pmsg", &listrfqs},
+        {"p2pmsg", &cancelrfq},
+        {"hidden", &addrfqquote},
     };
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);

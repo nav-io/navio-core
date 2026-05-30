@@ -41,6 +41,10 @@ struct CreateTransactionData {
     // so wallet-built transactions match the consensus minimum-fee rule
     // enforced by `blsct::VerifyTx`.
     CAmount nBLSCTDefaultFee{::BLSCT_DEFAULT_FEE};
+    // Extra fee added on top of this tx's own required fee, used by an
+    // aggregation initiator to cover the weight of the fee-0 cover candidates
+    // it will combine with. 0 for ordinary sends.
+    CAmount additionalFee{0};
 
     // When true, the recipient bears the transaction fee: the output value is
     // reduced by the total fee instead of the fee being added on top and taken

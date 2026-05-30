@@ -36,6 +36,7 @@ class CandidatePool;
 namespace rfq {
 class IntentStore;
 class OrderCache;
+class MatcherRegistry;
 } // namespace rfq
 namespace interfaces {
 class Chain;
@@ -81,6 +82,8 @@ struct NodeContext {
     //! Cache of broadcast standing orders; registered as a validation interface
     //! for spent-input eviction.
     std::unique_ptr<rfq::OrderCache> rfq_orders;
+    //! Taker-side registry of outstanding RFQ requests and collected quotes.
+    std::unique_ptr<rfq::MatcherRegistry> rfq_matcher;
     std::unique_ptr<ChainstateManager> chainman;
     std::unique_ptr<BanMan> banman;
     ArgsManager* args{nullptr}; // Currently a raw pointer because the memory is not managed by this struct

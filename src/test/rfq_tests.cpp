@@ -215,4 +215,44 @@ BOOST_AUTO_TEST_CASE(order_spent_input_evicts)
     BOOST_CHECK_EQUAL(cache.Size(), 0u);
 }
 
+// ---- MatcherRegistry ----
+
+BOOST_AUTO_TEST_CASE(matcher_registry_lifecycle)
+{
+    MatcherRegistry reg;
+    RfqRequest r = MakeReq(TokA(), TokB(), 1000, 5000);
+    r.uuid = uint256::ONE;
+
+    BOOST_CHECK(reg.OpenRequest(r));
+    BOOST_CHECK(!reg.OpenRequest(r));            // uuid collision
+    BOOST_CHECK_EQUAL(reg.Size(), 1u);
+    BOOST_CHECK(reg.GetRequest(uint256::ONE).has_value());
+
+    // Quotes for an unknown uuid are rejected.
+    RfqQuote q = MakeQuote(1000, 95);
+    q.uuid = uint256(uint64_t{99});
+    q.quote_id = uint256(uint64_t{1});
+    BOOST_CHECK(!reg.AddQuote(q));
+
+    // Quotes for the open uuid are accepted; dup quote_id is one-shot rejected.
+    q.uuid = uint256::ONE;
+    BOOST_CHECK(reg.AddQuote(q));
+    BOOST_CHECK(!reg.AddQuote(q));
+    BOOST_CHECK_EQUAL(reg.GetQuotes(uint256::ONE).size(), 1u);
+
+    // A second distinct quote.
+    RfqQuote q2 = MakeQuote(1000, 90);
+    q2.uuid = uint256::ONE;
+    q2.quote_id = uint256(uint64_t{2});
+    BOOST_CHECK(reg.AddQuote(q2));
+    BOOST_CHECK_EQUAL(reg.GetQuotes(uint256::ONE).size(), 2u);
+
+    // Lookup by id, then cancel.
+    BOOST_CHECK(reg.GetQuote(uint256::ONE, uint256(uint64_t{2})).has_value());
+    BOOST_CHECK(!reg.GetQuote(uint256::ONE, uint256(uint64_t{7})).has_value());
+    BOOST_CHECK(reg.Cancel(uint256::ONE));
+    BOOST_CHECK(!reg.Cancel(uint256::ONE));
+    BOOST_CHECK_EQUAL(reg.Size(), 0u);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
