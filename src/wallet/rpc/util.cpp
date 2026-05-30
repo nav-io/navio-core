@@ -7,13 +7,16 @@
 #include <common/url.h>
 #include <rpc/util.h>
 #include <util/any.h>
+#include <util/strencodings.h>
+#include <util/time.h>
 #include <util/translation.h>
 #include <wallet/context.h>
 #include <wallet/wallet.h>
 
 #include <univalue.h>
 
-#include <boost/date_time/posix_time/posix_time.hpp>
+#include <chrono>
+#include <string_view>
 
 namespace wallet {
 static const std::string WALLET_ENDPOINT_BASE = "/wallet/";
@@ -21,16 +24,31 @@ const std::string HELP_REQUIRING_PASSPHRASE{"\nRequires wallet passphrase to be 
 
 int64_t ParseISO8601DateTime(const std::string& str)
 {
-    static const boost::posix_time::ptime epoch = boost::posix_time::from_time_t(0);
-    static const std::locale loc(std::locale::classic(),
-        new boost::posix_time::time_input_facet("%Y-%m-%dT%H:%M:%SZ"));
-    std::istringstream iss(str);
-    iss.imbue(loc);
-    boost::posix_time::ptime ptime(boost::date_time::not_a_date_time);
-    iss >> ptime;
-    if (ptime.is_not_a_date_time() || epoch > ptime)
+    // Parse a strict "YYYY-MM-DDTHH:MM:SSZ" timestamp without Boost.DateTime.
+    // Preserves the historical behaviour of returning 0 for unparseable input
+    // and for timestamps at or before the Unix epoch.
+    constexpr auto FMT_SIZE{std::string_view{"2000-01-01T01:01:01Z"}.size()};
+    const std::string_view sv{str};
+    if (sv.size() != FMT_SIZE || sv[4] != '-' || sv[7] != '-' || sv[10] != 'T' || sv[13] != ':' || sv[16] != ':' || sv[19] != 'Z') {
         return 0;
-    return (ptime - epoch).total_seconds();
+    }
+    const auto year{ToIntegral<uint16_t>(sv.substr(0, 4))};
+    const auto month{ToIntegral<uint8_t>(sv.substr(5, 2))};
+    const auto day{ToIntegral<uint8_t>(sv.substr(8, 2))};
+    const auto hour{ToIntegral<uint8_t>(sv.substr(11, 2))};
+    const auto min{ToIntegral<uint8_t>(sv.substr(14, 2))};
+    const auto sec{ToIntegral<uint8_t>(sv.substr(17, 2))};
+    if (!year || !month || !day || !hour || !min || !sec) {
+        return 0;
+    }
+    const std::chrono::year_month_day ymd{std::chrono::year{*year}, std::chrono::month{*month}, std::chrono::day{*day}};
+    if (!ymd.ok()) {
+        return 0;
+    }
+    const auto time{std::chrono::hours{*hour} + std::chrono::minutes{*min} + std::chrono::seconds{*sec}};
+    const auto tp{std::chrono::sys_days{ymd} + time};
+    const int64_t secs{TicksSinceEpoch<std::chrono::seconds>(tp)};
+    return secs > 0 ? secs : 0;
 }
 
 bool GetAvoidReuseFlag(const CWallet& wallet, const UniValue& param) {
