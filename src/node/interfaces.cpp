@@ -61,7 +61,7 @@
 #include <optional>
 #include <utility>
 
-#include <boost/signals2/signal.hpp>
+#include <btcsignals.h>
 
 using interfaces::BlockTip;
 using interfaces::Chain;

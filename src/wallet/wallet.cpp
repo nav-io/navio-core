@@ -4113,8 +4113,8 @@ bool CWallet::HasEncryptionKeys() const
 void CWallet::ConnectScriptPubKeyManNotifiers()
 {
     for (const auto& spk_man : GetActiveScriptPubKeyMans()) {
-        spk_man->NotifyWatchonlyChanged.connect(NotifyWatchonlyChanged);
-        spk_man->NotifyCanGetAddressesChanged.connect(NotifyCanGetAddressesChanged);
+        spk_man->NotifyWatchonlyChanged.connect([this](bool fHaveWatchOnly) { NotifyWatchonlyChanged(fHaveWatchOnly); });
+        spk_man->NotifyCanGetAddressesChanged.connect([this] { NotifyCanGetAddressesChanged(); });
         spk_man->NotifyFirstKeyTimeChanged.connect([this](const ScriptPubKeyMan*, int64_t new_birth_time) { MaybeUpdateBirthTime(new_birth_time); });
     }
 }
