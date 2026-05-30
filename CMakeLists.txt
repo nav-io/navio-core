@@ -350,35 +350,6 @@ if(NOT BUILD_LIBBLSCT_ONLY)
   add_boost_if_needed()
 endif()
 
-# Boost.Process v1 API (opstream/ipstream) was removed from the default
-# boost::process namespace in Boost 1.88. Disable external signer if the
-# old API is not available so compilation does not break on newer Boost.
-if(ENABLE_EXTERNAL_SIGNER)
-  get_target_property(_boost_inc Boost::headers INTERFACE_INCLUDE_DIRECTORIES)
-  include(CheckCXXSourceCompiles)
-  set(CMAKE_REQUIRED_INCLUDES ${_boost_inc})
-  set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-  check_cxx_source_compiles("
-    #include <boost/process.hpp>
-    void test() { boost::process::opstream s; (void)s; }
-  " HAVE_BOOST_PROCESS_V1)
-  unset(_boost_inc)
-  if(NOT HAVE_BOOST_PROCESS_V1)
-    message(WARNING "Boost.Process v1 API not available (Boost >= 1.88); disabling ENABLE_EXTERNAL_SIGNER.")
-    set(ENABLE_EXTERNAL_SIGNER OFF)
-  endif()
-endif()
-
-# Boost.Process pulls in boost::filesystem unless BOOST_PROCESS_USE_STD_FS
-# is defined. Without it, mingw cross-link of navio_common(run_command.cpp)
-# fails on boost::filesystem::detail::path_traits::convert symbols because
-# we only ship header-only Boost (Boost::headers). Mirror autotools, which
-# unconditionally adds -DBOOST_PROCESS_USE_STD_FS when boost::process is
-# probed (configure.ac).
-if(ENABLE_EXTERNAL_SIGNER)
-  target_compile_definitions(core_interface INTERFACE BOOST_PROCESS_USE_STD_FS)
-endif()
-
 if(BUILD_DAEMON OR BUILD_CLI OR BUILD_STAKER OR BUILD_TESTS OR BUILD_BENCH OR BUILD_FUZZ_BINARY)
   find_package(Libevent 2.1.8 MODULE REQUIRED)
 endif()

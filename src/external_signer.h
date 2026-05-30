@@ -19,19 +19,19 @@ class ExternalSigner
 {
 private:
     //! The command which handles interaction with the external signer.
-    std::string m_command;
+    std::vector<std::string> m_command;
 
     //! Bitcoin mainnet, testnet, etc
     std::string m_chain;
 
-    std::string NetworkArg() const;
+    std::vector<std::string> NetworkArg() const;
 
 public:
     //! @param[in] command      the command which handles interaction with the external signer
     //! @param[in] fingerprint  master key fingerprint of the signer
     //! @param[in] chain        "main", "test", "regtest" or "signet"
     //! @param[in] name         device name
-    ExternalSigner(const std::string& command, std::string chain, const std::string& fingerprint, std::string name);
+    ExternalSigner(std::vector<std::string> command, std::string chain, std::string fingerprint, std::string name);
 
     //! Master key fingerprint of the signer
     std::string m_fingerprint;

@@ -102,6 +102,7 @@ add_executable(test_navio
   miner_tests.cpp
   miniscript_tests.cpp
   minisketch_tests.cpp
+  mock_process.cpp
   multisig_tests.cpp
   net_tests.cpp
   netbase_tests.cpp
@@ -210,6 +211,9 @@ function(add_boost_test source_file)
   list(TRANSFORM test_suite_macro
     REPLACE "(BOOST_FIXTURE_TEST_SUITE|BOOST_AUTO_TEST_SUITE)\\(" ""
   )
+  # The mock_process test suite does not contain unit tests. It is a helper
+  # process invoked by system_tests via --run_test=mock_process/<case>.
+  list(REMOVE_ITEM test_suite_macro "mock_process")
   foreach(test_suite_name IN LISTS test_suite_macro)
     add_test(NAME ${test_suite_name}
       COMMAND test_navio --run_test=${test_suite_name} --catch_system_error=no --log_level=test_suite -- -printtoconsole=1
