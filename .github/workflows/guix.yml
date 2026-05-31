@@ -171,6 +171,24 @@ jobs:
           if [ "${vrc:-0}" -gt 0 ]; then cmake_version="${cmake_version}rc${vrc}"; fi
           echo "cmake_version=${cmake_version}" >> "$GITHUB_OUTPUT"
 
+          # Pinned guix time-machine commit from prelude.bash. Used as the
+          # cache key for the time-machine checkout so subsequent runs reuse
+          # the fetched guix repo instead of re-cloning it from a mirror.
+          guix_commit=$(grep -oE -- '--commit=[0-9a-f]{7,40}' contrib/guix/libexec/prelude.bash | head -1 | sed 's/--commit=//')
+          echo "guix_commit=${guix_commit}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache guix time-machine checkout
+        # GitHub runners are ephemeral, so without this every run re-clones the
+        # guix repo via `guix time-machine`; under the concurrent load of all
+        # matrix jobs that fetch flakes (mirror SSL errors / 504s). Caching the
+        # checkout keyed on the pinned commit means only the first run after a
+        # commit bump (or a cache eviction) actually hits the network; the
+        # mirror-rotation retry loop in "Run guix build" covers that case.
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/guix
+          key: guix-timemachine-${{ steps.version.outputs.guix_commit }}
+
       - name: Enable unprivileged user namespaces
         # ubuntu-24.04 ships an AppArmor profile that restricts unprivileged
         # user namespaces host-wide. `guix shell --container` (used by
@@ -341,12 +359,6 @@ jobs:
           # MAX_JOBS=2 keeps memory in budget on the 16 GB runner during the
           # parallel depends build.
           MAX_JOBS: '2'
-          # Override the guix time-machine channel URL to the Codeberg mirror.
-          # prelude.bash's git.savannah.gnu.org serves HTTP 504 under load (the
-          # SWH fallback 504s too); guix's --url is last-wins and this flag is
-          # appended after prelude's, so it overrides. Codeberg is the
-          # actively-synced official mirror with the pinned commit reachable.
-          ADDITIONAL_GUIX_TIMEMACHINE_FLAGS: '--url=https://codeberg.org/guix/guix.git'
         run: |
           set -euo pipefail
           # Cache the depends source downloads + built prefixes under $HOME,
@@ -357,20 +369,45 @@ jobs:
           mkdir -p "${SOURCES_PATH}" "${BASE_CACHE}"
 
           cd "${GITHUB_WORKSPACE}"
-          # Retry on transient `guix substitute` failures (TLS pushes /
-          # substitute-server hiccups). Guix is incremental: built derivations
-          # stay in /gnu/store and the depends caches survive, so a retry picks
-          # up where the failed attempt left off. guix-clean removes stale
-          # distsrc-* dirs between attempts.
-          for attempt in 1 2 3; do
+
+          # guix time-machine clones the guix repo from a single git mirror
+          # (prelude.bash pins codeberg). On a `push` all matrix jobs start at
+          # once and hammer that mirror concurrently, which intermittently
+          # SSL-fails / 504s. On a time-machine cache hit (see the cache step
+          # above) no fetch happens; on a miss, rotate mirrors across retries
+          # and back off so a single flaky mirror doesn't fail the build.
+          # guix's --url is last-wins and ADDITIONAL_GUIX_TIMEMACHINE_FLAGS is
+          # appended after prelude's --url, so this overrides it per attempt.
+          # Retries also recover transient `guix substitute` hiccups; guix is
+          # incremental (built derivations stay in /gnu/store, depends caches
+          # survive), so each retry resumes where the last left off.
+          MIRRORS=(
+            "https://codeberg.org/guix/guix.git"
+            "https://git.savannah.gnu.org/git/guix.git"
+            "https://github.com/guix-mirror/guix.git"
+          )
+          # Per-job startup jitter so the 9 matrix jobs don't all fetch at the
+          # same instant on the first attempt.
+          sleep "$(( RANDOM % 45 ))"
+
+          attempts=6
+          for attempt in $(seq 1 "${attempts}"); do
+            url="${MIRRORS[$(( (attempt - 1) % ${#MIRRORS[@]} ))]}"
+            export ADDITIONAL_GUIX_TIMEMACHINE_FLAGS="--url=${url}"
+            echo "::group::guix-build attempt ${attempt}/${attempts} (time-machine mirror: ${url})"
             if ./contrib/guix/guix-build; then
+              echo "::endgroup::"
               exit 0
             fi
-            echo "guix-build attempt ${attempt} failed; sleeping 30s then retrying..."
-            sleep 30
+            echo "::endgroup::"
             ./contrib/guix/guix-clean || true
+            # Exponential-ish backoff with jitter; lets an overloaded mirror
+            # recover and further de-syncs concurrent jobs.
+            backoff=$(( 20 * attempt + RANDOM % 30 ))
+            echo "guix-build attempt ${attempt} failed; sleeping ${backoff}s then retrying..."
+            sleep "${backoff}"
           done
-          echo "guix-build failed after 3 attempts"
+          echo "guix-build failed after ${attempts} attempts across mirrors"
           exit 1
 
       - name: Dump guix build logs on failure
