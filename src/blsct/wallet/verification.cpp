@@ -84,7 +84,7 @@ bulletproofs_plus::RangeProofLogic<Mcl>& GetSharedRPLogic()
 // batch verification. If `verify_rp_inline` is true, the call also verifies
 // the collected proofs before returning — this matches the legacy VerifyTx
 // contract.
-bool VerifyTxCore(const CTransaction& tx,
+bool VerifyTxCoreImpl(const CTransaction& tx,
                   CCoinsViewCache& view,
                   TxValidationState& state,
                   std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
@@ -94,7 +94,7 @@ bool VerifyTxCore(const CTransaction& tx,
                   int64_t nMedianTimePast,
                   bool verify_rp_inline,
                   const CAmount& nBLSCTDefaultFee,
-                  PreparedTxSignatureCheck* out_sig_check = nullptr)
+                  PreparedTxSignatureCheck* out_sig_check)
 {
     using Clock = std::chrono::steady_clock;
     const bool bench_on = LogAcceptCategory(BCLog::BENCH, BCLog::Level::Debug);
@@ -346,6 +346,35 @@ bool VerifyTxCore(const CTransaction& tx,
 
     return true;
 }
+
+// Exception firewall around the core verifier. Malformed BLSCT data on an
+// attacker-supplied tx/block (bad mcl point deserialisation, inconsistent
+// range-proof dimensions, degenerate inputs) can make the verification path
+// throw std::runtime_error deep inside mcl / the bulletproofs+ logic. Uncaught
+// on the validation or mempool thread that would abort() the node. Convert any
+// such throw into a clean consensus rejection.
+bool VerifyTxCore(const CTransaction& tx,
+                  CCoinsViewCache& view,
+                  TxValidationState& state,
+                  std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
+                  const CAmount& blockReward,
+                  const CAmount& minStake,
+                  int nSpendHeight,
+                  int64_t nMedianTimePast,
+                  bool verify_rp_inline,
+                  const CAmount& nBLSCTDefaultFee,
+                  PreparedTxSignatureCheck* out_sig_check = nullptr)
+{
+    try {
+        return VerifyTxCoreImpl(tx, view, state, out_proofs, blockReward, minStake,
+                                nSpendHeight, nMedianTimePast, verify_rp_inline,
+                                nBLSCTDefaultFee, out_sig_check);
+    } catch (const std::exception& e) {
+        LogPrint(BCLog::VALIDATION, "BLSCT tx verify threw for %s: %s\n",
+                 tx.GetHash().ToString(), e.what());
+        return state.Invalid(TxValidationResult::TX_CONSENSUS, "blsct-verify-exception", e.what());
+    }
+}
 } // namespace
 
 bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee)
@@ -439,6 +468,17 @@ bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofW
 {
     if (proofs.empty()) return true;
     auto& rp = GetSharedRPLogic();
-    return rp.Verify(proofs);
+    // A malformed proof reaching the verifier (e.g. inconsistent Ls/Rs/Vs
+    // dimensions, or a degenerate point) makes RangeProofLogic::Verify throw
+    // std::runtime_error from ValidateProofsBySizes / Build /
+    // Elements::ConfirmIndexInsideRange. Uncaught on the validation thread that
+    // would abort() the whole node on an attacker-supplied block. Treat any
+    // such throw as a failed verification (the block/tx is simply invalid).
+    try {
+        return rp.Verify(proofs);
+    } catch (const std::exception& e) {
+        LogPrint(BCLog::VALIDATION, "BLSCT range-proof verify threw: %s\n", e.what());
+        return false;
+    }
 }
 } // namespace blsct

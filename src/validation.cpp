@@ -5772,6 +5772,24 @@ double GuessVerificationProgress(const ChainTxData& data, const CBlockIndex *pin
 
     int64_t nNow = time(nullptr);
 
+    // When no transaction-rate statistics are available (e.g. a freshly reset
+    // network whose chainTxData is still empty), the tx-count based estimate
+    // below degenerates: fTxTotal becomes equal to nChainTx and the result is
+    // always 1.0, regardless of how far behind the tip actually is. Fall back
+    // to a timestamp-based estimate so that verificationprogress reflects the
+    // real sync state instead of reporting fully synced.
+    if (data.dTxRate <= 0) {
+        const CBlockIndex* genesis = pindex->GetAncestor(0);
+        if (genesis == nullptr)
+            return 0.0;
+        const int64_t genesis_time = genesis->GetBlockTime();
+        const int64_t span = nNow - genesis_time;
+        if (span <= 0)
+            return 1.0;
+        const double elapsed = static_cast<double>(pindex->GetBlockTime() - genesis_time);
+        return std::clamp(elapsed / static_cast<double>(span), 0.0, 1.0);
+    }
+
     double fTxTotal;
 
     if (pindex->nChainTx <= data.nTxCount) {

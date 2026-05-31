@@ -351,10 +351,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         m_assumeutxo_data = {};
 
         chainTxData = ChainTxData{
-            // testnet7 reset: no chain history yet.
-            .nTime = 0,
-            .nTxCount = 0,
-            .dTxRate = 0,
+            // Data from blocks.nav.io at testnet7 height 16773
+            // (block 4b6a9ec4a2eab464904a40bb6dfa426e67754f740871a2540c75a68e1dfd52d6).
+            .nTime = 1780220481,
+            .nTxCount = 17056,
+            .dTxRate = 0.006227182060457886,
         };
         }
     };

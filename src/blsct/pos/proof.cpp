@@ -180,7 +180,14 @@ bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint64_
 uint256 ProofOfStake::CalculateMinValue(const uint256& kernel_hash, const unsigned int& next_target)
 {
     if (next_target == 0) return uint256();
-    return ArithToUint256(UintToArith256(kernel_hash) / arith_uint256().SetCompact(next_target));
+    // SetCompact() can yield zero for a non-zero compact encoding (e.g. a
+    // zero mantissa like 0x03000000, or the negative-flag case). Dividing by
+    // it would throw uint_error("Division by zero") in base_uint::operator/=,
+    // which — uncaught on the validation thread — terminates the node. Treat a
+    // degenerate target the same as next_target == 0 (min_value 0).
+    arith_uint256 target = arith_uint256().SetCompact(next_target);
+    if (target == 0) return uint256();
+    return ArithToUint256(UintToArith256(kernel_hash) / target);
 }
 
 // Saturate a uint256 into uint64: if any byte above the low 8 bytes is set,
