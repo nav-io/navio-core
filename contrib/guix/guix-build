@@ -372,6 +372,12 @@ EOF
         #     Running in an isolated container minimizes build-time differences
         #     between machines and improves reproducibility
         #
+        #   --writable-root    make the root filesystem writable
+        #
+        #     Recent Guix makes the container root read-only by default; the
+        #     build needs to create /usr/bin (for the env shebang) so the root
+        #     must be writable.
+        #
         #   --pure             unset existing environment variables
         #
         #     Same rationale as --container
@@ -430,6 +436,7 @@ EOF
         # shellcheck disable=SC2086,SC2031
         time-machine shell --manifest="${PWD}/contrib/guix/manifest.scm" \
                                  --container \
+                                 --writable-root \
                                  --pure \
                                  --no-cwd \
                                  --share="$PWD"=/navio \
