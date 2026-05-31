@@ -111,6 +111,31 @@ public:
     //! consensus min-fee for the COMBINED weight. Defaults to 0 (normal txs).
     std::optional<CMutableTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const CAmount& additionalFee = 0);
     static std::optional<CMutableTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData);
+
+    //! Build a deliberately UNBALANCED half-transaction for an atomic swap.
+    //!
+    //! Unlike BuildTx, a swap half may output a token it does not input: the
+    //! taker pays `pay_token` (covered by its own inputs) and receives
+    //! `recv_amount` of `recv_token` from the counterparty. The `recv_token`
+    //! output has no matching input here — the maker's half supplies it, so the
+    //! combined transaction balances per TokenId. This builder therefore:
+    //!   - emits the recv_token output (its gamma IS folded into the balance
+    //!     signature, so the half's own sig stays valid after Signature::Aggregate),
+    //!   - does NOT require recv_token inputs (skips the per-token sufficiency
+    //!     check for it),
+    //!   - funds the fee from the pay_token (NAV) side and over-funds by
+    //!     `additionalFee` so the COMBINED tx clears the consensus minimum.
+    //!
+    //! Inputs must already be added via AddInput (pay_token coins covering
+    //! pay_amount + fee). `changeDestination` receives pay_token change.
+    //! Returns std::nullopt if the pay_token inputs are insufficient.
+    std::optional<CMutableTransaction> BuildUnbalancedHalf(
+        const blsct::DoublePublicKey& changeDestination,
+        const SubAddress& recvDestination,
+        const TokenId& recv_token,
+        const CAmount& recv_amount,
+        const CAmount& nBLSCTDefaultFee,
+        const CAmount& additionalFee = 0);
 };
 
 } // namespace blsct
