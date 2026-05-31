@@ -29,30 +29,20 @@
 # See https://github.com/nav-io/navio-signer (TBD: transferring from
 # mxaddict/navio-signer once stable).
 #
-# Why a Debian sid container (not the ubuntu-24.04 host directly):
-#   ubuntu-24.04 ships guix 1.4 whose bundled guile-gnutls trips
-#   `TLS error in procedure 'write_to_session_record_port'` against
-#   ci.guix.gnu.org / bordeaux.guix.gnu.org from azure GHA runners. The
-#   previous workaround was a `guix pull` to fetch a guix with a working
-#   guile-gnutls into the user profile, plus a guix-daemon swap to match.
-#   That `guix pull` is slow and the single most frequent cause of job
-#   failures. Debian's guix package links a guile-gnutls (4.x) new enough
-#   that the substitute TLS handshake works with the distro guix as-is —
-#   so we run the build inside a Debian container and drop `guix pull` +
-#   the daemon swap entirely.
+# Guix is installed directly on the ubuntu-24.04 runner via the official
+# binary install script (etc/guix-install.sh), as upstream Bitcoin Core's
+# guix CI does — not inside a container. The actual build toolchain is
+# pinned by the guix time-machine commit in contrib/guix/libexec/prelude.bash
+# (independent of the runner's guix version), so the only requirement on the
+# installed guix is a guile-gnutls that completes the substitute-server TLS
+# handshake; the binary install provides one.
 #
-#   sid, not trixie: guix was removed from trixie (testing) on 2025-08-26
-#   over unrelated RC bugs and only ships in sid (unstable, guix 1.4.0-9)
-#   today. Using sid as the *launcher* host does not affect build
-#   reproducibility — the actual toolchain is pinned by the guix
-#   time-machine commit in contrib/guix/manifest.scm, independent of the
-#   host guix version.
-#
-#   `guix-build` uses `guix shell --container` for build isolation, which
-#   needs nested unprivileged user namespaces. GHA's `container:` directive
-#   can't pass `--privileged` / `--cap-add`, so the container is launched
-#   with a manual `docker run --privileged` in a step, mirroring how the
-#   CentOS i686 job in ci.yml runs (see linux-cmake-centos there).
+# `guix-build` uses `guix shell --container` for build isolation. Running guix
+# on the host (rather than nested inside a docker container) gives that inner
+# container a writable root, which build.sh requires (it creates /usr/bin).
+# A nested docker-in-guix container left the inner root read-only under newer
+# guix revisions, which is why an earlier debian-container approach was
+# dropped.
 #
 # Scope:
 #   The matrix below mirrors the full upstream-supported triple set
@@ -103,12 +93,6 @@ on:
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: false
-
-env:
-  # Debian's guix (1.4.0-9 in sid) links guile-gnutls 4.x — new enough
-  # that guix substitute downloads work without a `guix pull`. sid because
-  # guix was removed from trixie/testing on 2025-08-26 (see header).
-  GUIX_CONTAINER_IMAGE: debian:sid
 
 jobs:
   build:
@@ -165,7 +149,9 @@ jobs:
         shell: bash
         run: |
           # Mirrors prelude.bash's git_head_version: exact tag (sans 'v') or
-          # 12-char short sha. Used here only for naming the upload artifact.
+          # 12-char short sha. This is the token guix bakes into DISTNAME
+          # (navio-${version}), i.e. the source name of the build outputs that
+          # the "Collect output artifacts" step repacks below.
           if recent_tag="$(git describe --exact-match HEAD 2>/dev/null)"; then
             version="${recent_tag#v}"
           else
@@ -173,14 +159,25 @@ jobs:
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+          # CMake-derived release version, matching the external navio-builder
+          # artifact naming: MAJOR.MINOR.BUILD with an rcN suffix when
+          # CLIENT_VERSION_RC > 0 (e.g. 0.1.0rc28). The guix per-HOST outputs
+          # are repacked under navio-${cmake_version} so the published file
+          # names match what navio-builder produced.
+          cv() { sed -nE "s/^[[:space:]]*set\([[:space:]]*$1[[:space:]]+\"?([^\" )]+)\"?.*/\1/p" CMakeLists.txt | head -n1; }
+          vmaj=$(cv CLIENT_VERSION_MAJOR); vmin=$(cv CLIENT_VERSION_MINOR)
+          vbld=$(cv CLIENT_VERSION_BUILD); vrc=$(cv CLIENT_VERSION_RC)
+          cmake_version="${vmaj}.${vmin}.${vbld}"
+          if [ "${vrc:-0}" -gt 0 ]; then cmake_version="${cmake_version}rc${vrc}"; fi
+          echo "cmake_version=${cmake_version}" >> "$GITHUB_OUTPUT"
+
       - name: Enable unprivileged user namespaces
         # ubuntu-24.04 ships an AppArmor profile that restricts unprivileged
         # user namespaces host-wide. `guix shell --container` (used by
-        # guix-build inside the Debian container) needs nested unprivileged
-        # userns; the restriction makes it fail with
+        # guix-build for build isolation) needs unprivileged userns; the
+        # restriction makes it fail with
         # `mount: mount "none" on "/tmp/guix-directory.*": Permission denied`.
-        # Disable the restriction on the host so the privileged container's
-        # nested userns works.
+        # Disable the restriction so guix's container can be created.
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
@@ -254,87 +251,201 @@ jobs:
           rm "${SDK_TARBALL}"
           test -d "${SDK_NAME}" || { echo "SDK extract produced no ${SDK_NAME} dir"; ls -la; exit 1; }
 
-      - name: Pull guix container image
-        run: docker pull "${GUIX_CONTAINER_IMAGE}"
+      - name: Install guix
+        # Install guix directly on the runner (not inside a container) via the
+        # official binary install script. Running guix on the host — like
+        # upstream Bitcoin Core's guix CI — means `guix shell --container`
+        # (used by guix-build for isolation) gets a writable container root, so
+        # build.sh's `mkdir -p /usr/bin` works. The newer guix time-machined
+        # below makes that container root read-only when nested inside a docker
+        # container, which is why the previous debian:sid container approach
+        # broke. The script installs a guix whose guile-gnutls handles the
+        # substitute-server TLS handshake (the issue that motivated the sid
+        # container in the first place).
+        run: |
+          set -euo pipefail
+          cd /tmp
+          wget -nv https://git.savannah.gnu.org/cgit/guix.git/plain/etc/guix-install.sh
+          chmod +x guix-install.sh
+          # Non-interactive: feed newlines to auto-accept the substitute-key
+          # import and the "download pre-built binaries" prompts. The installer
+          # stops reading stdin once it finishes, which SIGPIPEs `yes`; run the
+          # pipe with pipefail off so the pipeline reflects the installer's exit
+          # status, not yes's broken pipe.
+          set +o pipefail
+          yes '' | sudo bash ./guix-install.sh
+          install_rc=$?
+          set -o pipefail
+          [ "$install_rc" -eq 0 ] || { echo "guix-install.sh failed"; exit 1; }
+          sudo systemctl enable --now guix-daemon
 
-      - name: Run guix build (Debian container)
+          # Newer guix-install.sh installs an *unprivileged* guix-daemon: it
+          # runs as the 'guix-daemon' user, is confined by an AppArmor profile,
+          # and builds via user namespaces (no 'guixbuild' build-user pool).
+          # That model fails our glibc-2.31 source-checkout on this runner —
+          # the build process hits EACCES on /tmp and /etc inside its build
+          # container (mkdtemp/git-init both "Permission denied") even though
+          # the host paths are world-readable/writable. glibc-2.31 is a custom
+          # package with no substitute, so it is the first derivation actually
+          # built locally and the first to expose this. Reconfigure to the
+          # traditional *privileged* daemon (root + dedicated build users +
+          # chroot), the model upstream Bitcoin Core's guix CI relies on.
+          sudo systemctl stop guix-daemon || true
+          if ! getent group guixbuild >/dev/null; then
+            sudo groupadd --system guixbuild
+          fi
+          for i in $(seq -w 1 10); do
+            if ! id "guixbuilder${i}" >/dev/null 2>&1; then
+              sudo useradd -g guixbuild -G guixbuild -d /var/empty \
+                -s /usr/sbin/nologin -c "Guix build user ${i}" --system "guixbuilder${i}"
+            fi
+          done
+          # The unprivileged install chowned state to guix-daemon. Reclaim
+          # /var/guix (the daemon's mutable state) for root. Skip /gnu/store:
+          # it is a read-only bind mount (gnu-store.mount), and a root daemon
+          # reads/writes the store regardless of file ownership while build
+          # users only need to read it (store paths are world-readable).
+          sudo chown -R root:root /var/guix 2>/dev/null || true
+          # Drop the AppArmor confinement meant for the unprivileged daemon.
+          if [ -f /etc/apparmor.d/guix-daemon ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/guix-daemon 2>/dev/null || true
+            sudo rm -f /etc/apparmor.d/guix-daemon
+          fi
+          # Override the systemd unit: clear User=/Group= (so it runs as root),
+          # drop AppArmor, and run with --build-users-group=guixbuild. Keep
+          # substitutes pointed at the build farms so most derivations download.
+          sudo mkdir -p /etc/systemd/system/guix-daemon.service.d
+          sudo tee /etc/systemd/system/guix-daemon.service.d/privileged.conf >/dev/null <<'EOF'
+          [Service]
+          User=
+          Group=
+          AppArmorProfile=
+          ExecStart=
+          ExecStart=/var/guix/profiles/per-user/root/current-guix/bin/guix-daemon --build-users-group=guixbuild --substitute-urls='https://bordeaux.guix.gnu.org https://ci.guix.gnu.org'
+          EOF
+          sudo systemctl daemon-reload
+          sudo systemctl restart guix-daemon
+          # Confirm it is now root + build-users (not User=guix-daemon).
+          pgrep -af guix-daemon || true
+
+          echo "/var/guix/profiles/per-user/root/current-guix/bin" >> "$GITHUB_PATH"
+          /var/guix/profiles/per-user/root/current-guix/bin/guix --version
+
+      - name: Run guix build
         env:
           HOSTS: ${{ matrix.host }}
           # darwin HOSTS need SDK_PATH pointing at the parent dir of the
           # extracted SDK; linux + mingw HOSTS ignore it. depends/hosts/
-          # darwin.mk reads $(SDK_PATH)/Xcode-…-extracted-SDK-…/. This sits
-          # under $HOME (mounted below) and matches the SDK cache path above.
+          # darwin.mk reads $(SDK_PATH)/Xcode-…-extracted-SDK-…/.
           SDK_PATH: ${{ contains(matrix.host, 'darwin') && format('{0}/../sdk-path', github.workspace) || '' }}
           # MAX_JOBS=2 keeps memory in budget on the 16 GB runner during the
           # parallel depends build.
           MAX_JOBS: '2'
           # Override the guix time-machine channel URL to the Codeberg mirror.
-          # prelude.bash hardcodes --url=https://git.savannah.gnu.org/git/guix.git,
-          # which serves HTTP 504 under load and is the dominant time-machine
-          # failure (the SWH fallback 504s too). guix's --url is last-wins and
-          # ADDITIONAL_GUIX_TIMEMACHINE_FLAGS is appended after prelude's flag,
-          # so this overrides it. Codeberg (not github.com/guix-mirror, whose
-          # branch tip is frozen before the pinned commit and so can't resolve
-          # it) is the actively-synced official mirror. Same --commit ->
-          # identical signed content, so reproducibility is intact.
+          # prelude.bash's git.savannah.gnu.org serves HTTP 504 under load (the
+          # SWH fallback 504s too); guix's --url is last-wins and this flag is
+          # appended after prelude's, so it overrides. Codeberg is the
+          # actively-synced official mirror with the pinned commit reachable.
           ADDITIONAL_GUIX_TIMEMACHINE_FLAGS: '--url=https://codeberg.org/guix/guix.git'
         run: |
           set -euo pipefail
           # Cache the depends source downloads + built prefixes under $HOME,
           # matching the `~/depends-*` paths of the actions/cache steps above
-          # so the cache actually round-trips. $HOME is bind-mounted into the
-          # container at its identical absolute path, so these resolve the
-          # same inside (and the repo checkout under $HOME/work is visible
-          # too).
-          SOURCES_PATH="${HOME}/depends-sources"
-          BASE_CACHE="${HOME}/depends-cache"
-          # Ensure cache dirs exist before the bind mount (the cache action
-          # may not create an empty dir on a cold miss).
+          # so the cache round-trips.
+          export SOURCES_PATH="${HOME}/depends-sources"
+          export BASE_CACHE="${HOME}/depends-cache"
           mkdir -p "${SOURCES_PATH}" "${BASE_CACHE}"
 
-          # The in-container build driver lives in the repo (already visible
-          # inside the bind-mounted checkout). It installs guix, starts the
-          # daemon, authorizes substitutes, and runs guix-build with retries.
-          #
-          # --privileged: nested unprivileged userns for `guix shell
-          #   --container` build isolation (GHA's container: directive can't
-          #   grant this; see header).
-          # --network=host: reuse the runner's working IPv4/IPv6 stack for
-          #   substitute downloads.
-          # Bind-mount $HOME so the repo checkout ($HOME/work/...) AND the
-          #   sibling cache / SDK dirs are visible at identical absolute
-          #   paths inside the container.
-          docker run --rm \
-            --privileged \
-            --network=host \
-            -v "${HOME}":"${HOME}" \
-            -w "${GITHUB_WORKSPACE}" \
-            -e GITHUB_WORKSPACE="${GITHUB_WORKSPACE}" \
-            -e HOSTS="${HOSTS}" \
-            -e SOURCES_PATH="${SOURCES_PATH}" \
-            -e BASE_CACHE="${BASE_CACHE}" \
-            -e SDK_PATH="${SDK_PATH}" \
-            -e MAX_JOBS="${MAX_JOBS}" \
-            -e ADDITIONAL_GUIX_TIMEMACHINE_FLAGS="${ADDITIONAL_GUIX_TIMEMACHINE_FLAGS}" \
-            "${GUIX_CONTAINER_IMAGE}" \
-            bash "${GITHUB_WORKSPACE}/contrib/guix/ci-container-build.sh"
+          cd "${GITHUB_WORKSPACE}"
+          # Retry on transient `guix substitute` failures (TLS pushes /
+          # substitute-server hiccups). Guix is incremental: built derivations
+          # stay in /gnu/store and the depends caches survive, so a retry picks
+          # up where the failed attempt left off. guix-clean removes stale
+          # distsrc-* dirs between attempts.
+          for attempt in 1 2 3; do
+            if ./contrib/guix/guix-build; then
+              exit 0
+            fi
+            echo "guix-build attempt ${attempt} failed; sleeping 30s then retrying..."
+            sleep 30
+            ./contrib/guix/guix-clean || true
+          done
+          echo "guix-build failed after 3 attempts"
+          exit 1
+
+      - name: Dump guix build logs on failure
+        if: failure()
+        run: |
+          # The guix-daemon writes each derivation's build output to
+          # /var/log/guix/drvs/<2 chars>/<hash>.drv.gz, which is not echoed to
+          # the job log. Surface the recent ones (and any glibc/gcc/checkout
+          # logs) so failures like a glibc-2.31 source-checkout are diagnosable.
+          set +e
+          echo "===== guix-daemon environment ====="
+          echo "--- daemon ExecStart (chroot enabled?) ---"
+          systemctl cat guix-daemon 2>/dev/null | grep -i execstart
+          echo "--- daemon running cmdline ---"
+          pgrep -af guix-daemon
+          echo "--- /tmp perms ---"
+          ls -ld /tmp
+          echo "--- /etc/gitconfig perms ---"
+          ls -l /etc/gitconfig 2>&1
+          echo "--- build users group ---"
+          getent group guixbuild
+          echo "===== glibc / gcc / checkout derivation logs ====="
+          sudo find /var/log/guix/drvs -name '*.gz' \( -name '*glibc*' -o -name '*gcc*' -o -name '*checkout*' \) -newermt '-2 hours' 2>/dev/null \
+            | while read -r f; do echo "----- ${f} -----"; sudo zcat "$f" 2>/dev/null | tail -60; done
+          echo "===== most recent derivation logs ====="
+          sudo find /var/log/guix/drvs -name '*.gz' -newermt '-2 hours' -printf '%T@ %p\n' 2>/dev/null \
+            | sort -rn | head -8 | cut -d' ' -f2- \
+            | while read -r f; do echo "----- ${f} -----"; sudo zcat "$f" 2>/dev/null | tail -60; done
 
       - name: Collect output artifacts
         id: collect
         shell: bash
         run: |
-          set -x
+          set -euxo pipefail
           # guix-build places per-HOST outputs under
-          # ${PWD}/guix-build-${VERSION}/output/${HOST}/
+          # ${PWD}/guix-build-${VERSION}/output/${HOST}/, named with the guix
+          # DISTNAME token (navio-${SRC_TOKEN}-${HOST}.tar.gz, .zip on mingw),
+          # with an inner navio-${SRC_TOKEN}/ directory.
           out_dir=$(echo guix-build-*/output/${{ matrix.host }})
           test -d "${out_dir}" || { echo "Missing output dir: ${out_dir}"; ls -la guix-build-*/output/ 2>/dev/null; exit 1; }
           mkdir -p "${RUNNER_TEMP}/artifacts"
-          cp -av "${out_dir}/." "${RUNNER_TEMP}/artifacts/"
+
+          # Repack each output under the navio-builder name: replace the guix
+          # DISTNAME token with the CMake release version in both the file name
+          # and the inner directory (navio-${SRC_TOKEN} -> navio-${DST_VER}),
+          # so the published files match what navio-builder produced.
+          SRC_TOKEN='${{ steps.version.outputs.version }}'
+          DST_VER='${{ steps.version.outputs.cmake_version }}'
+          shopt -s nullglob
+          found=0
+          for f in "${out_dir}"/*.tar.gz "${out_dir}"/*.zip; do
+            found=1
+            orig="$(basename "$f")"
+            newname="${orig/navio-${SRC_TOKEN}/navio-${DST_VER}}"
+            dest="${RUNNER_TEMP}/artifacts/${newname}"
+            tmp="$(mktemp -d)"
+            if [[ "$f" == *.tar.gz ]]; then
+              echo "Repacking (tar.gz) ${orig} -> ${newname}"
+              tar -xzf "$f" -C "$tmp"
+              [ -d "$tmp/navio-${SRC_TOKEN}" ] && mv "$tmp/navio-${SRC_TOKEN}" "$tmp/navio-${DST_VER}"
+              tar -czf "$dest" -C "$tmp" "navio-${DST_VER}"
+            else
+              echo "Repacking (zip) ${orig} -> ${newname}"
+              unzip -q "$f" -d "$tmp"
+              [ -d "$tmp/navio-${SRC_TOKEN}" ] && mv "$tmp/navio-${SRC_TOKEN}" "$tmp/navio-${DST_VER}"
+              ( cd "$tmp" && zip -9qr "$dest" "navio-${DST_VER}" )
+            fi
+            rm -rf "$tmp"
+          done
+          [ "$found" -eq 1 ] || { echo "No .tar.gz/.zip outputs in ${out_dir}"; ls -la "${out_dir}"; exit 1; }
           ls -la "${RUNNER_TEMP}/artifacts/"
 
       - name: Upload built artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: guix-${{ steps.version.outputs.version }}-${{ matrix.host }}
+          name: guix-${{ steps.version.outputs.cmake_version }}-${{ matrix.host }}
           path: ${{ runner.temp }}/artifacts/*
           if-no-files-found: error

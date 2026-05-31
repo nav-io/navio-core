@@ -2,7 +2,7 @@
              (gnu packages autotools)
              ((gnu packages bash) #:select (bash-minimal))
              (gnu packages bison)
-             ((gnu packages certs) #:select (nss-certs))
+             ((gnu packages nss) #:select (nss-certs))
              ((gnu packages cmake) #:select (cmake-minimal))
              (gnu packages commencement)
              (gnu packages compression)
@@ -92,14 +92,17 @@ chain for " target " development."))
       (home-page (package-home-page xgcc))
       (license (package-license xgcc)))))
 
-(define base-gcc gcc-10)
+(define base-gcc
+  (package-with-extra-patches gcc-14
+    (search-our-patches "gcc-remap-guix-store.patch" "gcc-ssa-generation.patch")))
+
 (define base-linux-kernel-headers linux-libre-headers-6.1)
 
 (define* (make-bitcoin-cross-toolchain target
                                        #:key
                                        (base-gcc-for-libc linux-base-gcc)
                                        (base-kernel-headers base-linux-kernel-headers)
-                                       (base-libc glibc-2.27)
+                                       (base-libc glibc-2.31)
                                        (base-gcc linux-base-gcc))
   "Convenience wrapper around MAKE-CROSS-TOOLCHAIN with default values
 desirable for building Bitcoin Core release binaries."
@@ -109,17 +112,23 @@ desirable for building Bitcoin Core release binaries."
                         base-libc
                         base-gcc))
 
-(define (gcc-mingw-patches gcc)
-  (package-with-extra-patches gcc
-    (search-our-patches "gcc-remap-guix-store.patch"
-                        "vmov-alignment.patch")))
+(define (binutils-mingw-patches binutils)
+  (package-with-extra-patches binutils
+    (search-our-patches "binutils-unaligned-default.patch")))
+
+(define (winpthreads-patches mingw-w64-x86_64-winpthreads)
+  (package-with-extra-patches mingw-w64-x86_64-winpthreads
+    (search-our-patches "winpthreads-remap-guix-store.patch")))
 
 (define (make-mingw-pthreads-cross-toolchain target)
   "Create a cross-compilation toolchain package for TARGET"
-  (let* ((xbinutils (cross-binutils target))
-         (pthreads-xlibc mingw-w64-x86_64-winpthreads)
+  (let* ((xbinutils (binutils-mingw-patches (cross-binutils target)))
+         (machine (substring target 0 (string-index target #\-)))
+         (pthreads-xlibc (winpthreads-patches (make-mingw-w64 machine
+                                         #:xgcc (cross-gcc target #:xgcc base-gcc)
+                                         #:with-winpthreads? #t)))
          (pthreads-xgcc (cross-gcc target
-                                    #:xgcc (gcc-mingw-patches mingw-w64-base-gcc)
+                                    #:xgcc mingw-w64-base-gcc
                                     #:xbinutils xbinutils
                                     #:libc pthreads-xlibc)))
     ;; Define a meta-package that propagates the resulting XBINUTILS, XLIBC, and
@@ -438,32 +447,33 @@ inspecting signatures in Mach-O binaries.")
                  (("-rpath=") "-rpath-link="))
                #t))))))))
 
-(define-public glibc-2.27
+(define-public glibc-2.31
+  (let ((commit "28eb5caf895ced5d895cb02757e109004a2d33e5"))
   (package
-    (inherit glibc-2.31)
-    (version "2.27")
+    (inherit glibc) ;; 2.39
+    (version "2.31")
     (source (origin
               (method git-fetch)
               (uri (git-reference
                     (url "https://sourceware.org/git/glibc.git")
-                    (commit "73886db6218e613bd6d4edf529f11e008a6c2fa6")))
-              (file-name (git-file-name "glibc" "73886db6218e613bd6d4edf529f11e008a6c2fa6"))
+                    (commit commit)))
+              (file-name (git-file-name "glibc" commit))
               (sha256
                (base32
-                "0azpb9cvnbv25zg8019rqz48h8i2257ngyjg566dlnp74ivrs9vq"))
-              (patches (search-our-patches "glibc-2.27-riscv64-Use-__has_include-to-include-asm-syscalls.h.patch"
-                                           "glibc-2.27-fcommon.patch"
-                                           "glibc-2.27-guix-prefix.patch"
-                                           "glibc-2.27-no-librt.patch"
-                                           "glibc-2.27-powerpc-ldbrx.patch"))))
+                "07arjrc1smqy8wrhg38apr1s9ji7xv1rpzdapk4k2ps2n07irp58"))
+              (patches (search-our-patches "glibc-guix-prefix.patch"
+                                           "glibc-riscv-jumptarget.patch"))))
     (arguments
       (substitute-keyword-arguments (package-arguments glibc)
         ((#:configure-flags flags)
           `(append ,flags
             ;; https://www.gnu.org/software/libc/manual/html_node/Configuring-and-compiling.html
             (list "--enable-stack-protector=all",
+                  "--enable-cet",
                   "--enable-bind-now",
                   "--disable-werror",
+                  "--disable-timezone-tools",
+                  "--disable-profile",
                   building-on)))
     ((#:phases phases)
         `(modify-phases ,phases
@@ -471,12 +481,13 @@ inspecting signatures in Mach-O binaries.")
              (lambda* (#:key outputs #:allow-other-keys)
                ;; Install the rpc data base file under `$out/etc/rpc'.
                ;; Otherwise build will fail with "Permission denied."
+               ;; Can be removed when we are building 2.32 or later.
                (let ((out (assoc-ref outputs "out")))
                  (substitute* "sunrpc/Makefile"
                    (("^\\$\\(inst_sysconfdir\\)/rpc(.*)$" _ suffix)
                     (string-append out "/etc/rpc" suffix "\n"))
                    (("^install-others =.*$")
-                    (string-append "install-others = " out "/etc/rpc\n"))))))))))))
+                    (string-append "install-others = " out "/etc/rpc\n")))))))))))))
 
 (packages->manifest
  (append
