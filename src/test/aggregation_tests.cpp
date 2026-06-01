@@ -10,6 +10,9 @@
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <coins.h>
+#include <primitives/transaction.h>
+#include <serialize.h>
+#include <streams.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <txdb.h>
@@ -255,6 +258,46 @@ BOOST_FIXTURE_TEST_CASE(pool_pick_combine_evict, TestingSetup)
     for (size_t i = 1; i < halves.size(); ++i)
         for (const CTxIn& in : halves[i]->vin) pool.EvictByInput(in.prevout);
     BOOST_CHECK_EQUAL(pool.Size(), 0u);
+}
+
+// ---- CANDIDATE_TX wire round-trip ----
+// Exercises the exact serialize/deserialize the inbound transport handler uses:
+// a candidate is sent as TX_WITH_WITNESS bytes and recovered the same way, then
+// added to the pool. Guards against the params-stream pitfall on BLSCT txs.
+
+BOOST_FIXTURE_TEST_CASE(candidate_wire_roundtrip, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CCoinsViewCache cache{&base, /*deterministic=*/true};
+    cache.SetBestBlock(InsecureRand256());
+    blsct::SubAddress dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+
+    CTransactionRef candidate = BuildCandidate(km, cache, 300 * COIN, dest);
+
+    // Sender side (sendcandidate RPC): serialize with witness params.
+    DataStream ss;
+    ParamsStream sps{TX_WITH_WITNESS, ss};
+    sps << candidate;
+    auto bytes = MakeUCharSpan(ss);
+    std::vector<uint8_t> body(bytes.begin(), bytes.end());
+
+    // Receiver side (inbound handler): deserialize the same way and add to pool.
+    DataStream rs{MakeByteSpan(body)};
+    ParamsStream rps{TX_WITH_WITNESS, rs};
+    CTransactionRef recovered;
+    rps >> recovered;
+    BOOST_REQUIRE(recovered != nullptr);
+    BOOST_CHECK(recovered->GetHash() == candidate->GetHash());
+
+    aggregation::CandidatePool pool;
+    BOOST_CHECK(pool.AddCandidate(recovered, /*peer=*/1));
+    BOOST_CHECK_EQUAL(pool.Size(), 1u);
 }
 
 // ---- Cross-token swap via unbalanced halves ----
