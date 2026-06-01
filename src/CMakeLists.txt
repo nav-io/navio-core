@@ -490,6 +490,19 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     install_binary_component(navio-staker)
   endif()
 
+  # navio-p2pmsg (p2p-messaging operator daemon; RPC client like navio-staker)
+  if(BUILD_STAKER)
+    add_executable(navio-p2pmsg navio-p2pmsg.cpp)
+    target_link_libraries(navio-p2pmsg
+      core_interface
+      navio_cli
+      navio_common
+      navio_util
+      libevent::extra
+    )
+    install_binary_component(navio-p2pmsg)
+  endif()
+
   # navio-tx
   if(BUILD_TX)
     add_executable(navio-tx bitcoin-tx.cpp)
