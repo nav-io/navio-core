@@ -54,6 +54,7 @@
 #include <rfq/intent_store.h>
 #include <rfq/matcher.h>
 #include <rfq/order_cache.h>
+#include <rfq/quote.h>
 #include <node/interface_ui.h>
 #include <node/kernel_notifications.h>
 #include <node/mempool_args.h>
@@ -1657,6 +1658,54 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
         // Taker-side RFQ request/quote registry.
         node.rfq_matcher = std::make_unique<rfq::MatcherRegistry>();
+
+        // Route decrypted inbound payloads to the right subsystem. These run on
+        // a worker thread (after the net thread's PoW/replay gate + decrypt), so
+        // they only do cheap deserialize + in-memory bookkeeping.
+        {
+            aggregation::CandidatePool* pool = node.agg_pool.get();
+            rfq::MatcherRegistry* matcher = node.rfq_matcher.get();
+            rfq::OrderCache* orders = node.rfq_orders.get();
+
+            // A cover candidate addressed to us: add to the pool.
+            node.p2pmsg_transport->RegisterHandler(
+                p2pmsg::PayloadKind::CANDIDATE_TX,
+                [pool](const p2pmsg::InboundMessage& m) {
+                    try {
+                        DataStream ss{MakeByteSpan(m.body)};
+                        ParamsStream ps{TX_WITH_WITNESS, ss};
+                        CTransactionRef tx;
+                        ps >> tx;
+                        pool->AddCandidate(tx, m.from_peer);
+                    } catch (const std::exception&) { /* drop malformed */ }
+                });
+
+            // A maker quote for one of our open RFQs: record it.
+            node.p2pmsg_transport->RegisterHandler(
+                p2pmsg::PayloadKind::RFQ_QUOTE,
+                [matcher](const p2pmsg::InboundMessage& m) {
+                    try {
+                        DataStream ss{MakeByteSpan(m.body)};
+                        ParamsStream ps{TX_WITH_WITNESS, ss};
+                        rfq::RfqQuote q;
+                        ps >> q;
+                        matcher->AddQuote(q);
+                    } catch (const std::exception&) { /* drop malformed */ }
+                });
+
+            // A broadcast standing order: cache it.
+            node.p2pmsg_transport->RegisterHandler(
+                p2pmsg::PayloadKind::ORDER_ANN,
+                [orders](const p2pmsg::InboundMessage& m) {
+                    try {
+                        DataStream ss{MakeByteSpan(m.body)};
+                        ParamsStream ps{TX_WITH_WITNESS, ss};
+                        rfq::RfqQuote q;
+                        ps >> q;
+                        orders->StoreOrder(q, GetTime<std::chrono::seconds>().count());
+                    } catch (const std::exception&) { /* drop malformed */ }
+                });
+        }
 
         LogPrintf("p2pmsg: enabled (workers=%u, powbits=%u)\n",
                   node.p2pmsg_pool->NumWorkers(), tr_opts.pow_bits);

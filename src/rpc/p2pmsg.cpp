@@ -22,6 +22,7 @@
 #include <rfq/quote.h>
 #include <rfq/request.h>
 #include <random.h>
+#include <streams.h>
 #include <util/time.h>
 
 #include <algorithm>
@@ -227,6 +228,48 @@ static RPCHelpMan addaggregationcandidate()
             }
             const int64_t peer = request.params[1].isNull() ? 0 : request.params[1].getInt<int64_t>();
             return node.agg_pool->AddCandidate(MakeTransactionRef(std::move(mtx)), peer);
+        },
+    };
+}
+
+static RPCHelpMan sendcandidate()
+{
+    return RPCHelpMan{
+        "sendcandidate",
+        "\nEncrypt a cover candidate half-transaction to `inbox_pubkey` and broadcast\n"
+        "it as a CANDIDATE_TX over p2pmsg (debug). The recipient decrypts it on a\n"
+        "worker thread and adds it to its candidate pool.\n",
+        {
+            {"inbox_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Recipient inbox pubkey (from getp2pmsginfo)"},
+            {"tx_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The candidate half-transaction"},
+            {"stem", RPCArg::Type::BOOL, RPCArg::Default{true}, "Send via the Dandelion stem variant"},
+        },
+        RPCResult{RPCResult::Type::BOOL, "", "Whether the message was queued for broadcast"},
+        RPCExamples{HelpExampleCli("sendcandidate", "\"<inboxhex>\" \"<txhex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::Transport* t = p2pmsg::GetActiveTransport();
+            if (t == nullptr) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            blsct::PublicKey recipient;
+            if (!recipient.SetVch(ParseHex(request.params[0].get_str()))) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "invalid inbox_pubkey");
+            }
+            CMutableTransaction mtx;
+            if (!DecodeHexTx(mtx, request.params[1].get_str())) {
+                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
+            }
+            const bool stem = request.params[2].isNull() ? true : request.params[2].get_bool();
+
+            // Serialize the tx with witness params into the encrypted body.
+            DataStream ss;
+            ParamsStream ps{TX_WITH_WITNESS, ss};
+            CTransactionRef tx = MakeTransactionRef(std::move(mtx));
+            ps << tx;
+            auto bytes = MakeUCharSpan(ss);
+            std::vector<uint8_t> body(bytes.begin(), bytes.end());
+
+            t->Send(recipient, p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
+            return true;
         },
     };
 }
@@ -549,6 +592,7 @@ void RegisterP2PMsgRPCCommands(CRPCTable& t)
         {"p2pmsg", &getaggregationhint},
         {"p2pmsg", &getp2pmsgaggregate},
         {"hidden", &addaggregationcandidate},
+        {"hidden", &sendcandidate},
         {"p2pmsg", &requestquote},
         {"p2pmsg", &listquotes},
         {"p2pmsg", &acceptquote},
