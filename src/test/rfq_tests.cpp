@@ -10,6 +10,8 @@
 
 #include <primitives/block.h>
 #include <primitives/transaction.h>
+#include <serialize.h>
+#include <streams.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <validationinterface.h>
@@ -197,6 +199,33 @@ BOOST_AUTO_TEST_CASE(order_max_ttl_caps_expiry)
     // Just past 14 days -> pruned.
     BOOST_CHECK_EQUAL(cache.PruneExpired(MAX_ORDER_TTL_SECONDS + 1), 1u);
     BOOST_CHECK_EQUAL(cache.Size(), 0u);
+}
+
+BOOST_AUTO_TEST_CASE(order_ann_wire_roundtrip)
+{
+    // Exercises the exact serialize/deserialize the ORDER_ANN inbound handler
+    // and broadcastorder RPC use: a standing-order quote (carrying a half-tx) is
+    // sent as TX_WITH_WITNESS bytes and recovered the same way, then cached.
+    RfqQuote q = MakeOrder(uint256::ONE, InsecureRand256(), /*fill=*/1000, /*cost=*/100, /*expiry=*/5000);
+
+    DataStream ss;
+    ParamsStream sps{TX_WITH_WITNESS, ss};
+    sps << q;
+    auto bytes = MakeUCharSpan(ss);
+    std::vector<uint8_t> body(bytes.begin(), bytes.end());
+
+    DataStream rs{MakeByteSpan(body)};
+    ParamsStream rps{TX_WITH_WITNESS, rs};
+    RfqQuote recovered;
+    rps >> recovered;
+    BOOST_CHECK(recovered.quote_id == q.quote_id);
+    BOOST_CHECK_EQUAL(recovered.fill, q.fill);
+    BOOST_CHECK_EQUAL(recovered.sell_cost, q.sell_cost);
+    BOOST_REQUIRE(recovered.half_tx != nullptr);
+
+    OrderCache cache(/*now=*/1000);
+    BOOST_CHECK(cache.StoreOrder(recovered, /*now=*/1000));
+    BOOST_CHECK_EQUAL(cache.Size(), 1u);
 }
 
 BOOST_AUTO_TEST_CASE(order_spent_input_evicts)
