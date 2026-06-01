@@ -1639,9 +1639,19 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 connman->PushMessage(pnode, NetMsg::Make(type, env));
             });
         };
+        // App-agnostic flood: re-broadcast a received message to every peer
+        // except the one it came from. Kind-blind — carries apps this node may
+        // not implement, so future uses propagate with no network upgrade.
+        auto relay = [connman](int64_t origin_peer, bool stem, const p2pmsg::Envelope& env) {
+            const char* type = stem ? NetMsgType::DP2PMSG : NetMsgType::P2PMSG;
+            connman->ForEachNode([&](CNode* pnode) {
+                if (pnode->GetId() == origin_peer) return;
+                connman->PushMessage(pnode, NetMsg::Make(type, env));
+            });
+        };
 
         node.p2pmsg_transport = std::make_unique<p2pmsg::Transport>(
-            *node.p2pmsg_pool, std::move(push_to), std::move(broadcast), tr_opts);
+            *node.p2pmsg_pool, std::move(push_to), std::move(broadcast), std::move(relay), tr_opts);
         node.p2pmsg_pool->Start();
         p2pmsg::SetActiveTransport(node.p2pmsg_transport.get());
 

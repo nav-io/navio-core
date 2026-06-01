@@ -27,7 +27,13 @@ namespace p2pmsg {
 //! feature set (aggregation, RFQ, standing orders) lands and is integration-tested.
 static constexpr bool DEFAULT_P2PMSG_ENABLE{false};
 
-//! Application payload tag carried inside the encrypted terminal layer.
+//! Application identifier carried (opaque) by every message. p2pmsg is an
+//! APP-AGNOSTIC encrypted broadcast bus: nodes relay any well-formed message to
+//! their peers regardless of whether they understand or can decrypt this `kind`.
+//! A new application simply claims a new byte and ships a handler in a wallet or
+//! daemon; existing nodes propagate it network-wide with no upgrade. The values
+//! below are the kinds this build's own apps handle locally; the wire field is a
+//! plain u8 and unknown kinds are still relayed.
 enum class PayloadKind : uint8_t {
     PING = 0,
     PONG = 1,
@@ -36,26 +42,24 @@ enum class PayloadKind : uint8_t {
     RFQ_REQ = 4,
     RFQ_QUOTE = 5,
     ORDER_ANN = 6,
+    // 7..255 reserved for future applications. The relay layer never inspects
+    // this value beyond keying handler dispatch on the receiving node.
 };
 
-//! True for request kinds that must carry a PoW stamp.
-bool KindRequiresPoW(PayloadKind kind);
-
 //! The wire envelope for a `p2pmsg`/`dp2pmsg` net message:
-//!   u8 kind || optional PoWHeader (for stamped kinds) || EciesPacket
-//! The PoW header's payload_hash binds the ciphertext, so the cheap net-thread
-//! PoW check also gates the (expensive) decrypt that follows on a worker.
+//!   u8 kind || PoWHeader || EciesPacket
+//! PoW is MANDATORY on every message: it is the universal admission gate that
+//! makes kind-blind relay safe (no free amplification). The header's
+//! payload_hash binds the ciphertext, so the cheap net-thread PoW check vouches
+//! for the body before any worker decrypts or any peer relays it.
 struct Envelope {
     uint8_t kind{0};
-    bool has_pow{false};
     PoWHeader pow;
     EciesPacket enc;
 
     SERIALIZE_METHODS(Envelope, obj)
     {
-        READWRITE(obj.kind, obj.has_pow);
-        if (obj.has_pow) READWRITE(obj.pow);
-        READWRITE(obj.enc);
+        READWRITE(obj.kind, obj.pow, obj.enc);
     }
 };
 
@@ -65,6 +69,10 @@ using SendFn = std::function<void(int64_t to_peer, bool stem, const Envelope&)>;
 //! Broadcasts a fresh envelope to the stem successor (Dandelion) or, if no stem
 //! route exists, to all relay peers.
 using BroadcastFn = std::function<void(bool stem, const Envelope&)>;
+//! Relay an already-received envelope to all peers EXCEPT its origin, so it
+//! floods the network. Kind-blind: called for every new valid message whether
+//! or not this node understands or can decrypt it.
+using RelayFn = std::function<void(int64_t origin_peer, bool stem, const Envelope&)>;
 
 //! Decrypted, authenticated inbound message handed to a feature module.
 struct InboundMessage {
@@ -89,9 +97,9 @@ public:
         size_t replay_cache_bytes{1 << 20}; // 1 MiB
     };
 
-    Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, Options opts);
-    Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast)
-        : Transport(pool, std::move(send), std::move(broadcast), Options{}) {}
+    Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, RelayFn relay, Options opts);
+    Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, RelayFn relay)
+        : Transport(pool, std::move(send), std::move(broadcast), std::move(relay), Options{}) {}
 
     //! Our inbox key: peers encrypt to this; we decrypt inbound with it.
     const blsct::PublicKey& InboxPubKey() const { return m_inbox_pub; }
@@ -100,14 +108,17 @@ public:
     void RegisterHandler(PayloadKind kind, MessageHandler handler);
 
     //! Net-thread entrypoint. `stem` = arrived as dp2pmsg. Parses the envelope,
-    //! verifies PoW (stamped kinds) + replay, then enqueues a decrypt job.
-    //! Returns false (with a misbehavior hint) on clearly invalid input.
+    //! verifies the mandatory PoW + timestamp, checks the replay cache. If the
+    //! message is new and valid it is RELAYED to all other peers (kind-blind, so
+    //! the bus carries apps this node does not implement) and a decrypt job is
+    //! enqueued for our own handlers. Returns the disposition.
     enum class WireResult { Enqueued, RejectInvalid, RejectPoW, RejectReplay, Dropped };
     WireResult OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
         EXCLUSIVE_LOCKS_REQUIRED(!m_replay_mutex);
 
-    //! Build + encrypt + (PoW-stamp if required) + broadcast an outbound message
-    //! to `recipient`'s session key. Heavy; call off the net thread.
+    //! Build + encrypt + PoW-stamp + broadcast an outbound message to
+    //! `recipient`'s session key. PoW is always applied. Heavy; call off the net
+    //! thread.
     void Send(const blsct::PublicKey& recipient, PayloadKind kind,
               std::vector<uint8_t> body, bool stem);
 
@@ -125,6 +136,7 @@ private:
     WorkerPool& m_pool;
     SendFn m_send;
     BroadcastFn m_broadcast;
+    RelayFn m_relay;
     Options m_opts;
 
     blsct::PrivateKey m_inbox_priv;

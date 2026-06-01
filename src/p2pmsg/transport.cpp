@@ -13,18 +13,6 @@
 
 namespace p2pmsg {
 
-bool KindRequiresPoW(PayloadKind kind)
-{
-    switch (kind) {
-    case PayloadKind::AGG_ANN:
-    case PayloadKind::RFQ_REQ:
-    case PayloadKind::ORDER_ANN:
-        return true;
-    default:
-        return false;
-    }
-}
-
 namespace {
 //! Reserved Job::kind used to route every p2pmsg decrypt through one handler.
 constexpr uint8_t JOB_KIND_DECRYPT = 200;
@@ -51,8 +39,9 @@ bool ParseEnvelope(std::span<const uint8_t> body, Envelope& out)
 }
 } // namespace
 
-Transport::Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, Options opts)
-    : m_pool(pool), m_send(std::move(send)), m_broadcast(std::move(broadcast)), m_opts(opts),
+Transport::Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, RelayFn relay, Options opts)
+    : m_pool(pool), m_send(std::move(send)), m_broadcast(std::move(broadcast)), m_relay(std::move(relay)),
+      m_opts(opts),
       m_inbox_priv(MclScalar::Rand(/*exclude_zero=*/true)),
       m_inbox_pub(m_inbox_priv.GetPublicKey())
 {
@@ -89,19 +78,15 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
     Envelope env;
     if (!ParseEnvelope(body, env)) return WireResult::RejectInvalid;
 
-    const auto kind = static_cast<PayloadKind>(env.kind);
+    // Mandatory PoW gate — the universal admission check that makes kind-blind
+    // relay safe. The header binds the ciphertext via payload_hash, so a valid
+    // PoW vouches for the body before we relay it or spend a worker decrypting.
+    if (env.pow.kind != env.kind) return WireResult::RejectPoW;
+    if (env.pow.payload_hash != env.enc.MsgHash()) return WireResult::RejectPoW;
+    if (!CheckStamp(env.pow, m_opts.pow_bits, Now())) return WireResult::RejectPoW;
 
-    // Cheap net-thread PoW gate for stamped request kinds. The header binds the
-    // ciphertext via payload_hash, so a valid PoW also vouches for the body we
-    // are about to spend a worker slot decrypting.
-    if (KindRequiresPoW(kind)) {
-        if (!env.has_pow) return WireResult::RejectPoW;
-        if (env.pow.kind != env.kind) return WireResult::RejectPoW;
-        if (env.pow.payload_hash != env.enc.MsgHash()) return WireResult::RejectPoW;
-        if (!CheckStamp(env.pow, m_opts.pow_bits, Now())) return WireResult::RejectPoW;
-    }
-
-    // Single replay cache, keyed by the encrypted-packet hash.
+    // Single replay cache, keyed by the encrypted-packet hash. Also the relay
+    // loop-breaker: a message is relayed at most once per node.
     const uint256 msg_hash = env.enc.MsgHash();
     {
         LOCK(m_replay_mutex);
@@ -109,7 +94,12 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
         m_replay.insert(msg_hash);
     }
 
-    // Enqueue the raw bytes for decryption on a worker; net thread is done.
+    // App-agnostic flood: relay this new, valid message to every other peer,
+    // whether or not we understand `kind` or can decrypt it. This is what lets
+    // a future application propagate network-wide with no node upgrade.
+    if (m_relay) m_relay(from_peer, stem, env);
+
+    // Enqueue the raw bytes for our own decryption on a worker; net thread done.
     Job job;
     job.kind = JOB_KIND_DECRYPT;
     job.peer = from_peer;
@@ -150,16 +140,15 @@ void Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
     env.kind = static_cast<uint8_t>(kind);
     env.enc = Encrypt(recipient, body);
 
-    if (KindRequiresPoW(kind)) {
-        env.has_pow = true;
-        env.pow.version = 1;
-        env.pow.timestamp = Now();
-        env.pow.kind = env.kind;
-        env.pow.session_eph = env.enc.eph;
-        env.pow.payload_hash = env.enc.MsgHash();
-        env.pow.nonce = 0;
-        Grind(env.pow, m_opts.pow_bits);
-    }
+    // PoW is mandatory on every message — it is the bus's universal admission
+    // gate, applied regardless of `kind`.
+    env.pow.version = 1;
+    env.pow.timestamp = Now();
+    env.pow.kind = env.kind;
+    env.pow.session_eph = env.enc.eph;
+    env.pow.payload_hash = env.enc.MsgHash();
+    env.pow.nonce = 0;
+    Grind(env.pow, m_opts.pow_bits);
 
     m_broadcast(stem, env);
     (void)SerializeEnvelope; // reserved for direct-send paths in later phases

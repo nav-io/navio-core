@@ -296,6 +296,7 @@ struct LoopbackTransport {
                 std::vector<uint8_t> v(bytes.begin(), bytes.end());
                 t->OnWire(/*from_peer=*/1, stem, v);
             },
+            /*relay=*/[](int64_t, bool, const Envelope&) {},
             opts);
         pool.Start();
     }
@@ -351,20 +352,40 @@ BOOST_AUTO_TEST_CASE(transport_pow_kind_loopback)
     BOOST_CHECK_EQUAL(reqs.load(), 1);
 }
 
-BOOST_AUTO_TEST_CASE(transport_replay_rejected)
+namespace {
+//! Build a properly PoW-stamped envelope (every message carries one now).
+Envelope StampedEnvelope(const blsct::PublicKey& inbox, PayloadKind kind,
+                         std::vector<uint8_t> payload, uint32_t bits, int64_t now)
 {
-    LoopbackTransport h(/*bits=*/4);
-    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage&) {});
-
-    // Build one envelope and feed it twice directly through OnWire.
     Envelope env;
-    env.kind = static_cast<uint8_t>(PayloadKind::PING);
-    env.enc = Encrypt(h.t->InboxPubKey(), std::vector<uint8_t>{7, 7});
+    env.kind = static_cast<uint8_t>(kind);
+    env.enc = Encrypt(inbox, payload);
+    env.pow.version = 1;
+    env.pow.timestamp = now;
+    env.pow.kind = env.kind;
+    env.pow.session_eph = env.enc.eph;
+    env.pow.payload_hash = env.enc.MsgHash();
+    Grind(env.pow, bits);
+    return env;
+}
 
+std::vector<uint8_t> SerEnv(const Envelope& env)
+{
     DataStream ss;
     ss << env;
     auto bytes = MakeUCharSpan(ss);
-    std::vector<uint8_t> v(bytes.begin(), bytes.end());
+    return std::vector<uint8_t>(bytes.begin(), bytes.end());
+}
+} // namespace
+
+BOOST_AUTO_TEST_CASE(transport_replay_rejected)
+{
+    LoopbackTransport h(/*bits=*/4);
+    h.t->now_override = 1000;
+    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage&) {});
+
+    auto env = StampedEnvelope(h.t->InboxPubKey(), PayloadKind::PING, {7, 7}, /*bits=*/4, /*now=*/1000);
+    auto v = SerEnv(env);
 
     auto r1 = h.t->OnWire(1, false, v);
     auto r2 = h.t->OnWire(1, false, v);
@@ -372,22 +393,52 @@ BOOST_AUTO_TEST_CASE(transport_replay_rejected)
     BOOST_CHECK(r2 == Transport::WireResult::RejectReplay);
 }
 
-BOOST_AUTO_TEST_CASE(transport_missing_pow_rejected)
+BOOST_AUTO_TEST_CASE(transport_bad_pow_rejected)
 {
     LoopbackTransport h(/*bits=*/16);
 
-    // Hand-craft an RFQ_REQ envelope with no PoW stamp.
+    // An envelope with an unsolved PoW (nonce 0, far below 16-bit difficulty)
+    // is rejected at the mandatory gate.
     Envelope env;
     env.kind = static_cast<uint8_t>(PayloadKind::RFQ_REQ);
-    env.has_pow = false;
     env.enc = Encrypt(h.t->InboxPubKey(), std::vector<uint8_t>{1});
+    env.pow.kind = env.kind;
+    env.pow.timestamp = h.t->now_override ? h.t->now_override : 1;
+    env.pow.session_eph = env.enc.eph;
+    env.pow.payload_hash = env.enc.MsgHash();
+    env.pow.nonce = 0; // not ground
 
-    DataStream ss;
-    ss << env;
-    auto bytes = MakeUCharSpan(ss);
-    std::vector<uint8_t> v(bytes.begin(), bytes.end());
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env)) == Transport::WireResult::RejectPoW);
+}
 
-    BOOST_CHECK(h.t->OnWire(1, false, v) == Transport::WireResult::RejectPoW);
+BOOST_AUTO_TEST_CASE(transport_relays_to_other_peers)
+{
+    // A node relays a new valid message to peers other than its origin, even for
+    // a kind it has no handler for (app-agnostic bus).
+    WorkerPool pool{WorkerPool::Options{/*num_workers=*/1, /*ring_capacity=*/16}};
+    std::atomic<int> relayed{0};
+    std::atomic<int64_t> relay_origin{-1};
+    Transport::Options opts; opts.pow_bits = 4;
+    Transport t(
+        pool,
+        [](int64_t, bool, const Envelope&) {},
+        [](bool, const Envelope&) {},
+        [&](int64_t origin, bool, const Envelope&) { relay_origin = origin; relayed.fetch_add(1); },
+        opts);
+    t.now_override = 1000;
+    pool.Start();
+
+    // An unknown kind (99) addressed to nobody we can decrypt — still relayed.
+    auto env = StampedEnvelope(t.InboxPubKey(), static_cast<PayloadKind>(99), {1, 2, 3}, 4, t.now_override);
+    auto res = t.OnWire(/*from_peer=*/42, false, SerEnv(env));
+    BOOST_CHECK(res == Transport::WireResult::Enqueued);
+    BOOST_CHECK_EQUAL(relayed.load(), 1);
+    BOOST_CHECK_EQUAL(relay_origin.load(), 42);
+
+    // Replay of the same message is not relayed again (loop breaker).
+    t.OnWire(/*from_peer=*/7, false, SerEnv(env));
+    BOOST_CHECK_EQUAL(relayed.load(), 1);
+    pool.Stop();
 }
 
 BOOST_AUTO_TEST_SUITE_END()
