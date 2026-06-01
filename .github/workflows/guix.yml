@@ -103,6 +103,13 @@ jobs:
     # hosted-runner cap.
     timeout-minutes: 360
 
+    env:
+      # Pinned guix bootstrap binary (what guix-install.sh installs). The
+      # bootstrap guix only runs `guix time-machine`, which pins the real build
+      # guix, so its version is immaterial — pinning makes the tarball
+      # cacheable and lets the install bypass the flaky ftpmirror redirector.
+      GUIX_BOOTSTRAP_VERSION: '1.5.0'
+
     strategy:
       fail-fast: false
       matrix:
@@ -148,22 +155,13 @@ jobs:
         id: version
         shell: bash
         run: |
-          # Mirrors prelude.bash's git_head_version: exact tag (sans 'v') or
-          # 12-char short sha. This is the token guix bakes into DISTNAME
-          # (navio-${version}), i.e. the source name of the build outputs that
-          # the "Collect output artifacts" step repacks below.
-          if recent_tag="$(git describe --exact-match HEAD 2>/dev/null)"; then
-            version="${recent_tag#v}"
-          else
-            version="$(git rev-parse --short=12 HEAD)"
-          fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-
-          # CMake-derived release version, matching the external navio-builder
-          # artifact naming: MAJOR.MINOR.BUILD with an rcN suffix when
-          # CLIENT_VERSION_RC > 0 (e.g. 0.1.0rc28). The guix per-HOST outputs
-          # are repacked under navio-${cmake_version} so the published file
-          # names match what navio-builder produced.
+          # CMake-derived release version. Passed to guix-build as FORCE_VERSION
+          # below so guix bakes it straight into DISTNAME — the per-HOST outputs
+          # come out named navio-${cmake_version}-${HOST}.{tar.gz,zip} (inner dir
+          # navio-${cmake_version}/) with a matching, reproducible SHA256SUMS.part,
+          # so no post-build repack is needed. Matches the external navio-builder
+          # naming: MAJOR.MINOR.BUILD with an rcN suffix when CLIENT_VERSION_RC>0
+          # (e.g. 0.1.0rc30).
           cv() { sed -nE "s/^[[:space:]]*set\([[:space:]]*$1[[:space:]]+\"?([^\" )]+)\"?.*/\1/p" CMakeLists.txt | head -n1; }
           vmaj=$(cv CLIENT_VERSION_MAJOR); vmin=$(cv CLIENT_VERSION_MINOR)
           vbld=$(cv CLIENT_VERSION_BUILD); vrc=$(cv CLIENT_VERSION_RC)
@@ -269,6 +267,14 @@ jobs:
           rm "${SDK_TARBALL}"
           test -d "${SDK_NAME}" || { echo "SDK extract produced no ${SDK_NAME} dir"; ls -la; exit 1; }
 
+      - name: Cache guix bootstrap binary
+        # Cache the guix bootstrap tarball (keyed on the pinned version) so the
+        # install never re-downloads it from the flaky ftpmirror redirector.
+        uses: actions/cache@v5
+        with:
+          path: ~/guix-bootstrap
+          key: guix-binary-${{ env.GUIX_BOOTSTRAP_VERSION }}-x86_64-linux
+
       - name: Install guix
         # Install guix directly on the runner (not inside a container) via the
         # official binary install script. Running guix on the host — like
@@ -283,15 +289,70 @@ jobs:
         run: |
           set -euo pipefail
           cd /tmp
-          wget -nv https://git.savannah.gnu.org/cgit/guix.git/plain/etc/guix-install.sh
+          # Fetch guix-install.sh with per-mirror retries + fallback. A `push`/
+          # tag fires all matrix jobs at once; a single source (savannah cgit)
+          # intermittently returns 502/503 under that concurrent load, which
+          # would fail every job. Try savannah, then the codeberg mirror of the
+          # same repo. (The github guix-mirror is stale and its raw endpoint
+          # 404s, so it is not used here.)
+          INSTALLER_URLS=(
+            "https://git.savannah.gnu.org/cgit/guix.git/plain/etc/guix-install.sh"
+            "https://codeberg.org/guix/guix/raw/branch/master/etc/guix-install.sh"
+          )
+          fetched=0
+          for url in "${INSTALLER_URLS[@]}"; do
+            echo "Fetching guix-install.sh from ${url}"
+            if wget -nv --tries=3 --waitretry=10 \
+                 --retry-on-http-error=429,500,502,503,504 \
+                 -O guix-install.sh "${url}"; then
+              fetched=1
+              break
+            fi
+            echo "Fetch from ${url} failed; trying next mirror..."
+          done
+          [ "${fetched}" -eq 1 ] || { echo "Could not fetch guix-install.sh from any mirror"; exit 1; }
           chmod +x guix-install.sh
-          # Non-interactive: feed newlines to auto-accept the substitute-key
-          # import and the "download pre-built binaries" prompts. The installer
-          # stops reading stdin once it finishes, which SIGPIPEs `yes`; run the
-          # pipe with pipefail off so the pipeline reflects the installer's exit
-          # status, not yes's broken pipe.
+
+          # guix-install.sh would otherwise download the guix binary release
+          # from a hard-coded GNU_URL=ftpmirror.gnu.org with no retries, dying
+          # on the first failure; that redirector intermittently 502s under the
+          # concurrent load of all matrix jobs. Instead pre-fetch a pinned
+          # bootstrap tarball ourselves (restored from cache on hits) and hand
+          # it to the installer via GUIX_BINARY_FILE_NAME, which makes it skip
+          # the download (and the gpg-key fetches) entirely.
+          boot_dir="${HOME}/guix-bootstrap"
+          tarball="guix-binary-${GUIX_BOOTSTRAP_VERSION}.x86_64-linux.tar.xz"
+          mkdir -p "${boot_dir}"
+          if [ -f "${boot_dir}/${tarball}" ] && xz -t "${boot_dir}/${tarball}" 2>/dev/null; then
+            echo "Using cached ${tarball}"
+          else
+            rm -f "${boot_dir}/${tarball}"
+            BIN_URLS=(
+              "https://ftpmirror.gnu.org/gnu/guix/${tarball}"
+              "https://ftp.gnu.org/gnu/guix/${tarball}"
+            )
+            got=0
+            for url in "${BIN_URLS[@]}"; do
+              echo "Fetching ${url}"
+              if wget -nv --tries=5 --waitretry=15 \
+                   --retry-on-http-error=429,500,502,503,504 \
+                   -O "${boot_dir}/${tarball}" "${url}"; then
+                got=1
+                break
+              fi
+              echo "Fetch from ${url} failed; trying next mirror..."
+            done
+            [ "${got}" -eq 1 ] || { rm -f "${boot_dir}/${tarball}"; echo "Could not fetch ${tarball}"; exit 1; }
+            xz -t "${boot_dir}/${tarball}" || { rm -f "${boot_dir}/${tarball}"; echo "Fetched ${tarball} is corrupt"; exit 1; }
+          fi
+
+          # Non-interactive: feed newlines to auto-accept the prompts. The
+          # installer stops reading stdin once it finishes, which SIGPIPEs
+          # `yes`; run the pipe with pipefail off so the pipeline reflects the
+          # installer's exit status, not yes's broken pipe. GUIX_BINARY_FILE_NAME
+          # (passed through sudo) points the root-run installer at our tarball.
           set +o pipefail
-          yes '' | sudo bash ./guix-install.sh
+          yes '' | sudo GUIX_BINARY_FILE_NAME="${boot_dir}/${tarball}" bash ./guix-install.sh
           install_rc=$?
           set -o pipefail
           [ "$install_rc" -eq 0 ] || { echo "guix-install.sh failed"; exit 1; }
@@ -359,6 +420,12 @@ jobs:
           # MAX_JOBS=2 keeps memory in budget on the 16 GB runner during the
           # parallel depends build.
           MAX_JOBS: '2'
+          # prelude.bash reads FORCE_VERSION as VERSION (overriding
+          # git_head_version), which sets DISTNAME=navio-${VERSION}. Pin it to
+          # the CMake release version so guix emits navio-<version>-<HOST>
+          # outputs natively — no post-build rename, SHA256SUMS.part stays valid
+          # and reproducible, and navio-signer consumes the files as-is.
+          FORCE_VERSION: ${{ steps.version.outputs.cmake_version }}
         run: |
           set -euo pipefail
           # Cache the depends source downloads + built prefixes under $HOME,
@@ -443,41 +510,16 @@ jobs:
         run: |
           set -euxo pipefail
           # guix-build places per-HOST outputs under
-          # ${PWD}/guix-build-${VERSION}/output/${HOST}/, named with the guix
-          # DISTNAME token (navio-${SRC_TOKEN}-${HOST}.tar.gz, .zip on mingw),
-          # with an inner navio-${SRC_TOKEN}/ directory.
+          # ${PWD}/guix-build-${VERSION}/output/${HOST}/. With FORCE_VERSION set
+          # above, VERSION is the CMake release version, so the files are already
+          # named navio-${VERSION}-${HOST}.{tar.gz,zip} with a matching
+          # SHA256SUMS.part. Upload them verbatim — no repack — so the reproducible
+          # hashes and the SHA256SUMS.part manifest stay valid for navio-signer's
+          # verify step, which downloads them directly under the correct names.
           out_dir=$(echo guix-build-*/output/${{ matrix.host }})
           test -d "${out_dir}" || { echo "Missing output dir: ${out_dir}"; ls -la guix-build-*/output/ 2>/dev/null; exit 1; }
           mkdir -p "${RUNNER_TEMP}/artifacts"
-
-          # Repack each output under the navio-builder name: replace the guix
-          # DISTNAME token with the CMake release version in both the file name
-          # and the inner directory (navio-${SRC_TOKEN} -> navio-${DST_VER}),
-          # so the published files match what navio-builder produced.
-          SRC_TOKEN='${{ steps.version.outputs.version }}'
-          DST_VER='${{ steps.version.outputs.cmake_version }}'
-          shopt -s nullglob
-          found=0
-          for f in "${out_dir}"/*.tar.gz "${out_dir}"/*.zip; do
-            found=1
-            orig="$(basename "$f")"
-            newname="${orig/navio-${SRC_TOKEN}/navio-${DST_VER}}"
-            dest="${RUNNER_TEMP}/artifacts/${newname}"
-            tmp="$(mktemp -d)"
-            if [[ "$f" == *.tar.gz ]]; then
-              echo "Repacking (tar.gz) ${orig} -> ${newname}"
-              tar -xzf "$f" -C "$tmp"
-              [ -d "$tmp/navio-${SRC_TOKEN}" ] && mv "$tmp/navio-${SRC_TOKEN}" "$tmp/navio-${DST_VER}"
-              tar -czf "$dest" -C "$tmp" "navio-${DST_VER}"
-            else
-              echo "Repacking (zip) ${orig} -> ${newname}"
-              unzip -q "$f" -d "$tmp"
-              [ -d "$tmp/navio-${SRC_TOKEN}" ] && mv "$tmp/navio-${SRC_TOKEN}" "$tmp/navio-${DST_VER}"
-              ( cd "$tmp" && zip -9qr "$dest" "navio-${DST_VER}" )
-            fi
-            rm -rf "$tmp"
-          done
-          [ "$found" -eq 1 ] || { echo "No .tar.gz/.zip outputs in ${out_dir}"; ls -la "${out_dir}"; exit 1; }
+          cp -av "${out_dir}/." "${RUNNER_TEMP}/artifacts/"
           ls -la "${RUNNER_TEMP}/artifacts/"
 
       - name: Upload built artifacts
