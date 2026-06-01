@@ -231,6 +231,20 @@ BOOST_AUTO_TEST_CASE(ecies_ciphertext_flip_rejected)
     BOOST_CHECK(!Decrypt(sk, pkt).has_value());
 }
 
+BOOST_AUTO_TEST_CASE(ecies_broadcast_key_roundtrip)
+{
+    // A public announcement encrypted to the well-known broadcast key is
+    // readable by anyone holding the (constant) broadcast private key.
+    std::vector<uint8_t> pt{0xAA, 0xBB, 0xCC};
+    EciesPacket pkt = Encrypt(BroadcastPubKey(), pt);
+    auto out = Decrypt(BroadcastPrivKey(), pkt);
+    BOOST_REQUIRE(out.has_value());
+    BOOST_CHECK(*out == pt);
+
+    // The broadcast keypair is deterministic across calls.
+    BOOST_CHECK(BroadcastPubKey().GetVch() == BroadcastPubKey().GetVch());
+}
+
 // ---- PoW ----
 
 BOOST_AUTO_TEST_CASE(pow_grind_and_check)

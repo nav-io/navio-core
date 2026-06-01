@@ -1676,6 +1676,25 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             aggregation::CandidatePool* pool = node.agg_pool.get();
             rfq::MatcherRegistry* matcher = node.rfq_matcher.get();
             rfq::OrderCache* orders = node.rfq_orders.get();
+            rfq::IntentStore* intents = node.rfq_intents.get();
+
+            // A public RFQ request: if we are a maker with a matching local
+            // intent, note the match. (Building + sending the encrypted quote
+            // half needs the wallet and is handled by the wallet-side flow.)
+            node.p2pmsg_transport->RegisterHandler(
+                p2pmsg::PayloadKind::RFQ_REQ,
+                [intents](const p2pmsg::InboundMessage& m) {
+                    try {
+                        DataStream ss{MakeByteSpan(m.body)};
+                        rfq::RfqRequest req;
+                        ss >> req;
+                        const int64_t now = GetTime<std::chrono::seconds>().count();
+                        if (auto match = intents->TryMatch(req, now)) {
+                            LogPrint(BCLog::NET, "p2pmsg: RFQ_REQ matches local intent %d (fill=%d cost=%d)\n",
+                                     match->intent_id, match->fill, match->sell_cost);
+                        }
+                    } catch (const std::exception&) { /* drop malformed */ }
+                });
 
             // A cover candidate addressed to us: add to the pool.
             node.p2pmsg_transport->RegisterHandler(

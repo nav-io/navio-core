@@ -58,6 +58,14 @@ std::optional<std::vector<uint8_t>> Decrypt(const blsct::PrivateKey& sk,
                                             const EciesPacket& pkt,
                                             std::span<const uint8_t> aad = {});
 
+//! Well-known keypair for PUBLIC announcements (e.g. RFQ requests, standing
+//! orders). Its private key is a fixed constant known to everyone, so any node
+//! can decrypt these — the encryption is only framing to keep every bus message
+//! uniform (same envelope, same PoW gate), not confidentiality. Confidential
+//! replies still use the recipient's per-session key.
+const blsct::PrivateKey& BroadcastPrivKey();
+const blsct::PublicKey& BroadcastPubKey();
+
 } // namespace p2pmsg
 
 #endif // BITCOIN_P2PMSG_CRYPTO_H

@@ -114,10 +114,13 @@ void Transport::HandleJob(const Job& job)
     Envelope env;
     if (!ParseEnvelope({job.buf.data(), job.len}, env)) return;
 
+    // Try our private inbox key first (confidential, addressed to us), then the
+    // well-known broadcast key (public announcements anyone can read).
     auto plain = Decrypt(m_inbox_priv, env.enc);
+    if (!plain) plain = Decrypt(BroadcastPrivKey(), env.enc);
     if (!plain) {
-        // MAC failure: not addressed to us, or corrupt. Drop silently — this is
-        // the common case for broadcast traffic we are merely relaying.
+        // MAC failure: not addressed to us and not a public announcement, or
+        // corrupt. Drop silently — the common case for traffic we just relayed.
         return;
     }
 

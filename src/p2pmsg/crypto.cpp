@@ -74,6 +74,20 @@ EciesPacket Encrypt(const blsct::PublicKey& recipient,
     return pkt;
 }
 
+const blsct::PrivateKey& BroadcastPrivKey()
+{
+    // Fixed, public constant — NOT a secret. A small non-zero scalar so the
+    // whole network shares one decryption key for public announcements.
+    static const blsct::PrivateKey key{MclScalar(uint64_t{0x1})};
+    return key;
+}
+
+const blsct::PublicKey& BroadcastPubKey()
+{
+    static const blsct::PublicKey pub{BroadcastPrivKey().GetPublicKey()};
+    return pub;
+}
+
 std::optional<std::vector<uint8_t>> Decrypt(const blsct::PrivateKey& sk,
                                             const EciesPacket& pkt,
                                             std::span<const uint8_t> aad)
