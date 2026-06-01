@@ -66,6 +66,25 @@ public:
 
     size_t Size() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
+    // ---- Maker side: pending requests we matched and should answer ----
+
+    //! An inbound RFQ that matched one of our local intents; the wallet polls
+    //! these, builds the quote half, and replies (encrypted to reply_key).
+    struct PendingMatch {
+        RfqRequest req;       //!< the requester's intent + reply_key
+        CAmount fill{0};      //!< buy-token amount we should deliver
+        CAmount sell_cost{0}; //!< sell-token amount we should charge
+    };
+
+    //! Record a matched inbound request to answer later. Deduped by uuid.
+    void AddPendingMatch(const RfqRequest& req, CAmount fill, CAmount sell_cost)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    //! Snapshot of pending matches awaiting a wallet reply.
+    std::vector<PendingMatch> ListPendingMatches() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    //! Fetch + remove a pending match by uuid (one-shot reply).
+    std::optional<PendingMatch> TakePendingMatch(const uint256& uuid)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+
 private:
     struct Active {
         RfqRequest req;
@@ -73,6 +92,7 @@ private:
     };
     mutable Mutex m_mutex;
     std::map<uint256, Active> m_active GUARDED_BY(m_mutex);
+    std::map<uint256, PendingMatch> m_pending GUARDED_BY(m_mutex);
 };
 
 } // namespace rfq

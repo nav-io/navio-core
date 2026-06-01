@@ -590,10 +590,46 @@ static RPCHelpMan addrfqquote()
     };
 }
 
+static RPCHelpMan listpendingquoterequests()
+{
+    return RPCHelpMan{
+        "listpendingquoterequests",
+        "\nList inbound RFQ requests that matched one of this node's local swap\n"
+        "intents and are awaiting a wallet reply (see replyquote).\n",
+        {},
+        RPCResult{RPCResult::Type::ARR, "", "", {{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "uuid", "The request uuid"},
+            {RPCResult::Type::STR_HEX, "buy_token", "Token the taker wants (we deliver)"},
+            {RPCResult::Type::STR_HEX, "sell_token", "Token the taker pays (we receive)"},
+            {RPCResult::Type::NUM, "fill", "Amount of buy_token to deliver"},
+            {RPCResult::Type::NUM, "sell_cost", "Amount of sell_token to charge"},
+            {RPCResult::Type::STR_HEX, "reply_key", "Encrypt the quote to this key"},
+        }}}},
+        RPCExamples{HelpExampleCli("listpendingquoterequests", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            if (!node.rfq_matcher) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            UniValue arr(UniValue::VARR);
+            for (const auto& pm : node.rfq_matcher->ListPendingMatches()) {
+                UniValue o(UniValue::VOBJ);
+                o.pushKV("uuid", pm.req.uuid.GetHex());
+                o.pushKV("buy_token", pm.req.buy.token.GetHex());
+                o.pushKV("sell_token", pm.req.sell.token.GetHex());
+                o.pushKV("fill", pm.fill);
+                o.pushKV("sell_cost", pm.sell_cost);
+                o.pushKV("reply_key", HexStr(pm.req.reply_key.GetVch()));
+                arr.push_back(o);
+            }
+            return arr;
+        },
+    };
+}
+
 void RegisterP2PMsgRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
         {"hidden", &getp2pmsginfo},
+        {"p2pmsg", &listpendingquoterequests},
         {"hidden", &sendp2pping},
         {"p2pmsg", &setswapintent},
         {"p2pmsg", &clearswapintent},

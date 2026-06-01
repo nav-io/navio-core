@@ -105,4 +105,29 @@ size_t MatcherRegistry::Size() const
     return m_active.size();
 }
 
+void MatcherRegistry::AddPendingMatch(const RfqRequest& req, CAmount fill, CAmount sell_cost)
+{
+    LOCK(m_mutex);
+    m_pending[req.uuid] = PendingMatch{req, fill, sell_cost};
+}
+
+std::vector<MatcherRegistry::PendingMatch> MatcherRegistry::ListPendingMatches() const
+{
+    LOCK(m_mutex);
+    std::vector<PendingMatch> out;
+    out.reserve(m_pending.size());
+    for (const auto& [uuid, pm] : m_pending) out.push_back(pm);
+    return out;
+}
+
+std::optional<MatcherRegistry::PendingMatch> MatcherRegistry::TakePendingMatch(const uint256& uuid)
+{
+    LOCK(m_mutex);
+    auto it = m_pending.find(uuid);
+    if (it == m_pending.end()) return std::nullopt;
+    PendingMatch pm = it->second;
+    m_pending.erase(it);
+    return pm;
+}
+
 } // namespace rfq

@@ -399,6 +399,99 @@ static RPCHelpMan broadcastorder()
     };
 }
 
+static RPCHelpMan replyquote()
+{
+    return RPCHelpMan{
+        "replyquote",
+        "\nAnswer a pending matched RFQ request (see listpendingquoterequests): this\n"
+        "wallet builds and signs the unbalanced quote half — delivering `fill` of the\n"
+        "requested buy token, receiving `sell_cost` of the sell token — wraps it in a\n"
+        "quote bound to the request uuid, and sends it encrypted to the requester's\n"
+        "reply key over the p2pmsg bus. The half over-funds the fee so the taker can\n"
+        "accept with a fee-free half.\n",
+        {
+            {"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The pending request uuid to answer"},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "quote_id", "Identifier of the sent quote"},
+        RPCExamples{HelpExampleCli("replyquote", "\"<uuid>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            if (!node.rfq_matcher || !node.p2pmsg_transport) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            const uint256 uuid(ParseHashV(request.params[0], "uuid"));
+            auto pm = node.rfq_matcher->TakePendingMatch(uuid);
+            if (!pm) throw JSONRPCError(RPC_INVALID_PARAMETER, "no pending request with that uuid");
+
+            // We deliver the taker's buy token (pm->fill) and receive their sell
+            // token (pm->sell_cost). buy/sell are from the taker's perspective.
+            const TokenId pay_token = pm->req.buy;   // we pay what the taker buys
+            const TokenId recv_token = pm->req.sell;  // we receive what the taker sells
+
+            LOCK(pwallet->cs_wallet);
+            auto km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            std::vector<blsct::InputCandidates> candidates;
+            wallet::CoinFilterParams params;
+            params.only_blsct = true;
+            params.token_id = pay_token;
+            params.min_amount = 1;
+            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
+
+            auto factory = blsct::TxFactory(km);
+            CAmount gathered = 0;
+            for (const auto& c : candidates) {
+                if (gathered >= pm->fill) break;
+                factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+                gathered += c.amount;
+            }
+            if (gathered < pm->fill) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough of the pay token");
+
+            const CAmount rate = Params().GetConsensus().nBLSCTDefaultFee;
+            if (!(pay_token == TokenId())) {
+                std::vector<blsct::InputCandidates> nav;
+                wallet::CoinFilterParams np; np.only_blsct = true; np.token_id = TokenId(); np.min_amount = 1;
+                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, nav, /*nAmountLimit=*/0);
+                if (nav.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No NAV to fund the quote fee");
+                const auto& c = nav.front();
+                factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+            }
+
+            blsct::SubAddress maker_recv(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+            blsct::DoublePublicKey change = std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value());
+
+            const CAmount extra = static_cast<CAmount>(aggregation::CANDIDATE_WEIGHT_ESTIMATE) * rate;
+            auto half = factory.BuildUnbalancedHalf(
+                change, maker_recv,
+                /*pay_token=*/pay_token, /*pay_amount=*/pm->fill,
+                /*recv_token=*/recv_token, /*recv_amount=*/pm->sell_cost,
+                rate, /*additionalFee=*/extra);
+            if (!half) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build quote half");
+
+            rfq::RfqQuote q;
+            q.uuid = uuid;
+            q.quote_id = GetRandHash();
+            q.half_tx = MakeTransactionRef(half.value());
+            q.fill = pm->fill;
+            q.sell_cost = pm->sell_cost;
+            q.order_expiry = pm->req.expiry;
+            q.session_eph = node.p2pmsg_transport->InboxPubKey();
+
+            DataStream ss;
+            ParamsStream ps{TX_WITH_WITNESS, ss};
+            ps << q;
+            auto bytes = MakeUCharSpan(ss);
+            std::vector<uint8_t> body(bytes.begin(), bytes.end());
+            // Encrypt the quote to the requester's reply key (confidential).
+            node.p2pmsg_transport->Send(pm->req.reply_key, p2pmsg::PayloadKind::RFQ_QUOTE,
+                                        std::move(body), /*stem=*/false);
+
+            return q.quote_id.GetHex();
+        },
+    };
+}
+
 UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request, const blsct::TokenType& type)
 {
     std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
@@ -3443,6 +3536,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &aggregatesend},
         {"blsct", &acceptquotewallet},
         {"blsct", &broadcastorder},
+        {"blsct", &replyquote},
         {"blsct", &sendnfttoblsctaddress},
         {"blsct", &sendtokentoblsctaddress},
         {"blsct", &stakelock},
