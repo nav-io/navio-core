@@ -214,6 +214,8 @@ bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, cons
 std::optional<CMutableTransaction>
 TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestination,
                                    const SubAddress& recvDestination,
+                                   const TokenId& pay_token,
+                                   const CAmount& pay_amount,
                                    const TokenId& recv_token,
                                    const CAmount& recv_amount,
                                    const CAmount& nBLSCTDefaultFee,
@@ -222,7 +224,7 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
     // Output the received token up front; its blinding/gamma are folded into the
     // balance accumulator so the half's signature covers it. There is no matching
     // input for recv_token here — the counterparty's half supplies it.
-    auto recvOutput = CreateOutput(recvDestination, recv_amount, "swap-recv", recv_token);
+    auto recvOutput = CreateOutput(recvDestination.GetKeys(), recv_amount, "swap-recv", recv_token);
 
     std::vector<Signature> baseOutputSignatures;
     Scalar baseOutputGammas;
@@ -268,13 +270,17 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
         // Per-token sufficiency: only tokens we actually pay (have inputs for)
         // must cover their outputs + fee. recv_token is intentionally short and
         // is skipped — the counterparty balances it.
+        // Each input token must cover what this half pays out of it plus, for
+        // NAV, the fee. The recv_token output is funded by the counterparty and
+        // is NOT charged here. pay_amount of pay_token is the gap handed to the
+        // counterparty (it becomes their recv); the rest is change.
         std::map<TokenId, CAmount> mapChange;
         for (auto& kv : mapInputs) {
             const TokenId& tid = kv.first;
-            const CAmount out_for_token = (tid == recv_token) ? recv_amount : 0;
-            const CAmount fee_for_token = nAmounts[tid].nFromFee;
-            if (kv.second < out_for_token + fee_for_token) return std::nullopt;
-            mapChange[tid] = kv.second - out_for_token - fee_for_token;
+            const CAmount pay_for_token = (tid == pay_token) ? pay_amount : 0;
+            const CAmount fee_for_token = (tid == TokenId()) ? nAmounts[TokenId()].nFromFee : 0;
+            if (kv.second < pay_for_token + fee_for_token) return std::nullopt;
+            mapChange[tid] = kv.second - pay_for_token - fee_for_token;
         }
 
         for (auto& change : mapChange) {

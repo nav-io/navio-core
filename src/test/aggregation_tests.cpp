@@ -21,17 +21,23 @@
 BOOST_AUTO_TEST_SUITE(aggregation_tests)
 
 namespace {
-//! Register a fresh coin owned by `km` worth `amount` in `cache`; return its outpoint.
-COutPoint FundCoin(blsct::KeyMan* km, CCoinsViewCache& cache, CAmount amount)
+//! Register a fresh coin of `token` owned by `km` worth `amount`; return its outpoint.
+COutPoint FundTokenCoin(blsct::KeyMan* km, CCoinsViewCache& cache, CAmount amount, const TokenId& token)
 {
     const auto txid = Txid::FromUint256(InsecureRand256());
     COutPoint outpoint{txid};
     Coin coin;
-    auto out = blsct::CreateOutput(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()), amount, "fund");
+    auto out = blsct::CreateOutput(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()), amount, "fund", token);
     coin.nHeight = 1;
     coin.out = out.out;
     cache.AddCoin(outpoint, std::move(coin), true);
     return outpoint;
+}
+
+//! Register a fresh NAV coin owned by `km` worth `amount` in `cache`; return its outpoint.
+COutPoint FundCoin(blsct::KeyMan* km, CCoinsViewCache& cache, CAmount amount)
+{
+    return FundTokenCoin(km, cache, amount, TokenId());
 }
 
 //! Build a fee-0, 1-in-1-out cover "candidate": input == output, no fee.
@@ -249,6 +255,74 @@ BOOST_FIXTURE_TEST_CASE(pool_pick_combine_evict, TestingSetup)
     for (size_t i = 1; i < halves.size(); ++i)
         for (const CTxIn& in : halves[i]->vin) pool.EvictByInput(in.prevout);
     BOOST_CHECK_EQUAL(pool.Size(), 0u);
+}
+
+// ---- Cross-token swap via unbalanced halves ----
+
+BOOST_FIXTURE_TEST_CASE(swap_unbalanced_halves_combine_verifies, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CCoinsViewCache cache{&base, /*deterministic=*/true};
+    cache.SetBestBlock(InsecureRand256());
+
+    const TokenId NAV;                                    // sell token (taker pays)
+    const TokenId TOKA(uint256(uint64_t{0xA}));           // buy token (taker receives)
+    blsct::SubAddress taker_addr(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+    blsct::SubAddress maker_addr(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+    blsct::DoublePublicKey taker_change = std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value());
+    blsct::DoublePublicKey maker_change = std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value());
+
+    const CAmount fill = 1000 * COIN;       // TOKA the taker receives
+    const CAmount sell_cost = 50 * COIN;    // NAV the taker pays
+
+    // Maker half: pays TOKA (input >= fill), receives NAV (sell_cost). Maker funds
+    // the whole combined fee via an extra NAV-less... no: fee must be NAV. Give the
+    // maker a small NAV coin too so it can fund the fee for the whole swap.
+    // Taker half first: pays NAV (>= sell_cost), receives TOKA (fill). It pays no
+    // fee (rate 0 -> 0-value fee output); the maker funds the whole combined fee.
+    auto taker_nav = FundCoin(km, cache, 100 * COIN);
+    auto taker = blsct::TxFactory(km);
+    BOOST_REQUIRE(taker.AddInput(cache, taker_nav));
+    auto taker_half = taker.BuildUnbalancedHalf(taker_change, taker_addr,
+                                                /*pay_token=*/NAV, /*pay_amount=*/sell_cost,
+                                                /*recv_token=*/TOKA, /*recv_amount=*/fill,
+                                                /*nBLSCTDefaultFee=*/0, /*additionalFee=*/0);
+    BOOST_REQUIRE(taker_half.has_value());
+    const CAmount taker_weight_fee =
+        static_cast<CAmount>(blsct::GetTransactionWeight(CTransaction(taker_half.value()))) * BLSCT_DEFAULT_FEE;
+
+    // Maker half: pays TOKA (fill), receives NAV (sell_cost), and over-funds the
+    // fee to cover the taker half's weight too. Exactly one non-zero fee output.
+    auto maker_toka = FundTokenCoin(km, cache, 1200 * COIN, TOKA);
+    auto maker_nav = FundCoin(km, cache, 10 * COIN);
+    auto maker = blsct::TxFactory(km);
+    BOOST_REQUIRE(maker.AddInput(cache, maker_toka));
+    BOOST_REQUIRE(maker.AddInput(cache, maker_nav));
+    auto maker_half = maker.BuildUnbalancedHalf(maker_change, maker_addr,
+                                                /*pay_token=*/TOKA, /*pay_amount=*/fill,
+                                                /*recv_token=*/NAV, /*recv_amount=*/sell_cost,
+                                                BLSCT_DEFAULT_FEE,
+                                                /*additionalFee=*/taker_weight_fee);
+    BOOST_REQUIRE(maker_half.has_value());
+
+    std::vector<CTransactionRef> halves{
+        MakeTransactionRef(taker_half.value()),
+        MakeTransactionRef(maker_half.value())};
+    auto combined = aggregation::CombineHalves(halves);
+    BOOST_REQUIRE(combined.has_value());
+
+    // The combined swap balances per TokenId (NAV: taker pays, maker receives;
+    // TOKA: maker pays, taker receives) and verifies as one BLSCT transaction.
+    TxValidationState st;
+    bool ok = blsct::VerifyTx(CTransaction(*combined), cache, st);
+    if (!ok) BOOST_TEST_MESSAGE("swap VerifyTx reject: " << st.GetRejectReason());
+    BOOST_CHECK(ok);
 }
 
 // ---- Session fee math ----

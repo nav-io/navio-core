@@ -129,9 +129,18 @@ public:
     //! Inputs must already be added via AddInput (pay_token coins covering
     //! pay_amount + fee). `changeDestination` receives pay_token change.
     //! Returns std::nullopt if the pay_token inputs are insufficient.
+    //! `pay_token`/`pay_amount`: the asset+amount this half hands to the
+    //! counterparty (the gap left after change; becomes their recv).
+    //! `recv_token`/`recv_amount`: the asset+amount this half receives (output
+    //! with no matching input; supplied by the counterparty's half).
+    //! Inputs (added via AddInput) must be `pay_token` covering
+    //! `pay_amount` + fee. Fee is always NAV; if `pay_token` is not NAV the
+    //! caller must also AddInput enough NAV to cover the fee.
     std::optional<CMutableTransaction> BuildUnbalancedHalf(
         const blsct::DoublePublicKey& changeDestination,
         const SubAddress& recvDestination,
+        const TokenId& pay_token,
+        const CAmount& pay_amount,
         const TokenId& recv_token,
         const CAmount& recv_amount,
         const CAmount& nBLSCTDefaultFee,
