@@ -1683,13 +1683,16 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // half needs the wallet and is handled by the wallet-side flow.)
             node.p2pmsg_transport->RegisterHandler(
                 p2pmsg::PayloadKind::RFQ_REQ,
-                [intents](const p2pmsg::InboundMessage& m) {
+                [intents, matcher](const p2pmsg::InboundMessage& m) {
                     try {
                         DataStream ss{MakeByteSpan(m.body)};
                         rfq::RfqRequest req;
                         ss >> req;
                         const int64_t now = GetTime<std::chrono::seconds>().count();
                         if (auto match = intents->TryMatch(req, now)) {
+                            // Queue for the wallet to answer (it builds + signs the
+                            // quote half and replies, off the worker thread).
+                            matcher->AddPendingMatch(req, match->fill, match->sell_cost);
                             LogPrint(BCLog::NET, "p2pmsg: RFQ_REQ matches local intent %d (fill=%d cost=%d)\n",
                                      match->intent_id, match->fill, match->sell_cost);
                         }
