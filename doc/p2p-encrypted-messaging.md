@@ -1,7 +1,17 @@
 # P2P Encrypted Messaging
 
-A privacy-preserving peer-to-peer message channel for Navio, used by two
-features:
+An **application-agnostic, PoW-gated, encrypted broadcast bus** for Navio.
+
+Nodes relay any well-formed p2pmsg message to their peers **regardless of
+whether they understand or can decrypt it**. A message carries an opaque `kind`
+byte; the relay layer never inspects it beyond keying handler dispatch on the
+receiving node. This means a new application claims a new `kind` and ships a
+handler in a wallet or daemon, and it propagates network-wide **with no
+node-software upgrade** — existing nodes flood it blindly. Proof-of-work on
+*every* message is the universal admission gate that keeps kind-blind relay safe
+from amplification.
+
+Two applications ship on the bus today:
 
 1. **Aggregation sessions** — cover traffic for BLSCT transactions. A node
    merges single-input-single-output fee-0 "candidate" half-txs from other
@@ -11,6 +21,8 @@ features:
    PoW-stamped intent; passive makers reply (encrypted) with an unbalanced
    half-tx when a locally configured intent matches or a cached standing order
    matches. The taker picks the best quote, aggregates, and broadcasts.
+
+Kinds `7..255` are reserved for future applications.
 
 There are **no persistent node identities**. Every session uses a freshly
 generated BLS keypair; the session pubkey *is* the identity and is discarded
@@ -70,14 +82,28 @@ The `dp2pmsg` variant reuses the existing Dandelion stem routing
 Envelope:
 
 ```
-u8  kind
-bool has_pow
-PoWHeader pow      (only if has_pow)
+u8          kind        // opaque application id; relay never inspects it
+PoWHeader   pow         // mandatory on every message
 EciesPacket enc
 ```
 
-`kind` is a `PayloadKind`: `PING, PONG, AGG_ANN, CANDIDATE_TX, RFQ_REQ,
-RFQ_QUOTE, ORDER_ANN`.
+`kind` is a `PayloadKind` (`PING, PONG, AGG_ANN, CANDIDATE_TX, RFQ_REQ,
+RFQ_QUOTE, ORDER_ANN`, plus `7..255` reserved). The wire field is a plain `u8`;
+a node that does not recognize a kind still relays the message.
+
+### Relay (app-agnostic flood)
+
+`OnWire` (net thread) parses the envelope, verifies the mandatory PoW +
+timestamp, and checks the replay cache. If the message is **new and valid**, the
+node:
+
+1. **relays it to every peer except the origin** (kind-blind), so it floods the
+   network and carries applications this node may not implement; then
+2. enqueues a decrypt job for its own handlers.
+
+The replay cache doubles as the relay loop-breaker: each message is relayed at
+most once per node. A new application therefore propagates network-wide with no
+software upgrade on relaying nodes.
 
 ### ECIES
 
@@ -106,7 +132,8 @@ accept iff h <= target
         && h not in replay cache
 ```
 
-Only request kinds (`AGG_ANN`, `RFQ_REQ`, `ORDER_ANN`) are stamped. The header
+**Every** message is stamped — PoW is the universal admission gate that makes
+kind-blind relay safe (no free amplification), not an app-specific choice. The header
 binds the ciphertext via `payload_hash`, so the cheap net-thread PoW check also
 vouches for the body before a worker slot is spent decrypting it.
 
