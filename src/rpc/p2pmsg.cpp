@@ -414,6 +414,16 @@ static RPCHelpMan requestquote()
             rfq::RfqRequest r = ParseRequestArgs(request, uuid, reply_key);
             if (!node.rfq_matcher->OpenRequest(r)) throw JSONRPCError(RPC_MISC_ERROR, "uuid collision");
 
+            // Broadcast the request publicly over the bus (encrypted to the
+            // well-known broadcast key so every node can read it). Makers that
+            // hold a matching intent reply (encrypted to reply_key).
+            DataStream ss;
+            ss << r;
+            auto bytes = MakeUCharSpan(ss);
+            std::vector<uint8_t> body(bytes.begin(), bytes.end());
+            node.p2pmsg_transport->Send(p2pmsg::BroadcastPubKey(),
+                                        p2pmsg::PayloadKind::RFQ_REQ, std::move(body), /*stem=*/false);
+
             UniValue o(UniValue::VOBJ);
             o.pushKV("uuid", uuid.GetHex());
             o.pushKV("reply_key", HexStr(reply_key.GetVch()));
