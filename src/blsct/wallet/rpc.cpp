@@ -164,8 +164,8 @@ static RPCHelpMan aggregatesend()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
-            node::NodeContext& node = EnsureAnyNodeContext(request.context);
-            if (!node.agg_pool) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            aggregation::CandidatePool* pool = aggregation::GetActivePool();
+            if (!pool) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
 
             CTxDestination dest = DecodeDestination(request.params[0].get_str());
             if (!std::holds_alternative<blsct::DoublePublicKey>(dest)) {
@@ -177,7 +177,7 @@ static RPCHelpMan aggregatesend()
             if (max_k > aggregation::POOL_MAX_COMBINED) max_k = aggregation::POOL_MAX_COMBINED;
 
             // Pull cover candidates first so we know how much extra fee to fund.
-            std::vector<CTransactionRef> candidates = node.agg_pool->PickForAggregate(max_k);
+            std::vector<CTransactionRef> candidates = pool->PickForAggregate(max_k);
             const CAmount rate = Params().GetConsensus().nBLSCTDefaultFee;
             const CAmount extra = aggregation::RequiredCandidateFee(candidates, rate);
 
@@ -198,12 +198,11 @@ static RPCHelpMan aggregatesend()
 
             CTransactionRef tx = MakeTransactionRef(std::move(*combined));
             std::string err_string;
-            const TransactionError err = node::BroadcastTransaction(
-                node, tx, err_string, /*max_tx_fee=*/0, /*relay=*/true, /*wait_callback=*/true);
-            if (TransactionError::OK != err) throw JSONRPCTransactionError(err, err_string);
+            if (!pwallet->chain().broadcastTransaction(tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string))
+                throw JSONRPCError(RPC_TRANSACTION_ERROR, err_string);
 
             for (size_t i = 1; i < halves.size(); ++i)
-                for (const CTxIn& in : halves[i]->vin) node.agg_pool->EvictByInput(in.prevout);
+                for (const CTxIn& in : halves[i]->vin) pool->EvictByInput(in.prevout);
 
             UniValue o(UniValue::VOBJ);
             o.pushKV("txid", tx->GetHash().GetHex());
@@ -231,13 +230,13 @@ static RPCHelpMan acceptquotewallet()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
-            node::NodeContext& node = EnsureAnyNodeContext(request.context);
-            if (!node.rfq_matcher) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            rfq::MatcherRegistry* matcher = rfq::GetActiveMatcher();
+            if (!matcher) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
 
             const uint256 uuid(ParseHashV(request.params[0], "uuid"));
             const uint256 quote_id(ParseHashV(request.params[1], "quote_id"));
-            auto reqOpt = node.rfq_matcher->GetRequest(uuid);
-            auto quoteOpt = node.rfq_matcher->GetQuote(uuid, quote_id);
+            auto reqOpt = matcher->GetRequest(uuid);
+            auto quoteOpt = matcher->GetQuote(uuid, quote_id);
             if (!reqOpt) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown uuid");
             if (!quoteOpt || !quoteOpt->half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
             const rfq::RfqRequest& req = *reqOpt;
@@ -283,11 +282,10 @@ static RPCHelpMan acceptquotewallet()
 
             CTransactionRef tx = MakeTransactionRef(std::move(*combined));
             std::string err_string;
-            const TransactionError err = node::BroadcastTransaction(
-                node, tx, err_string, /*max_tx_fee=*/0, /*relay=*/true, /*wait_callback=*/true);
-            if (TransactionError::OK != err) throw JSONRPCTransactionError(err, err_string);
+            if (!pwallet->chain().broadcastTransaction(tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string))
+                throw JSONRPCError(RPC_TRANSACTION_ERROR, err_string);
 
-            node.rfq_matcher->Cancel(uuid);
+            matcher->Cancel(uuid);
             return tx->GetHash().GetHex();
         },
     };
@@ -315,8 +313,9 @@ static RPCHelpMan broadcastorder()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
-            node::NodeContext& node = EnsureAnyNodeContext(request.context);
-            if (!node.p2pmsg_transport || !node.rfq_orders) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+            rfq::OrderCache* orders = rfq::GetActiveOrderCache();
+            if (!transport || !orders) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
 
             auto parse_token = [](const UniValue& v) -> TokenId {
                 const std::string s = v.get_str();
@@ -381,18 +380,18 @@ static RPCHelpMan broadcastorder()
             q.fill = offer_amount;              // buy-token the taker receives
             q.sell_cost = want_amount;          // sell-token the taker pays
             q.order_expiry = expiry;
-            q.session_eph = node.p2pmsg_transport->InboxPubKey();
+            q.session_eph = transport->InboxPubKey();
 
             const int64_t now = GetTime<std::chrono::seconds>().count();
-            node.rfq_orders->StoreOrder(q, now); // cache locally too
+            orders->StoreOrder(q, now); // cache locally too
 
             DataStream ss;
             ParamsStream ps{TX_WITH_WITNESS, ss};
             ps << q;
             auto bytes = MakeUCharSpan(ss);
             std::vector<uint8_t> body(bytes.begin(), bytes.end());
-            node.p2pmsg_transport->Send(p2pmsg::BroadcastPubKey(),
-                                        p2pmsg::PayloadKind::ORDER_ANN, std::move(body), /*stem=*/false);
+            transport->Send(p2pmsg::BroadcastPubKey(),
+                            p2pmsg::PayloadKind::ORDER_ANN, std::move(body), /*stem=*/false);
 
             return q.quote_id.GetHex();
         },
@@ -417,11 +416,12 @@ static RPCHelpMan replyquote()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
-            node::NodeContext& node = EnsureAnyNodeContext(request.context);
-            if (!node.rfq_matcher || !node.p2pmsg_transport) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            rfq::MatcherRegistry* matcher = rfq::GetActiveMatcher();
+            p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+            if (!matcher || !transport) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
 
             const uint256 uuid(ParseHashV(request.params[0], "uuid"));
-            auto pm = node.rfq_matcher->TakePendingMatch(uuid);
+            auto pm = matcher->TakePendingMatch(uuid);
             if (!pm) throw JSONRPCError(RPC_INVALID_PARAMETER, "no pending request with that uuid");
 
             // We deliver the taker's buy token (pm->fill) and receive their sell
@@ -476,7 +476,7 @@ static RPCHelpMan replyquote()
             q.fill = pm->fill;
             q.sell_cost = pm->sell_cost;
             q.order_expiry = pm->req.expiry;
-            q.session_eph = node.p2pmsg_transport->InboxPubKey();
+            q.session_eph = transport->InboxPubKey();
 
             DataStream ss;
             ParamsStream ps{TX_WITH_WITNESS, ss};
@@ -484,8 +484,8 @@ static RPCHelpMan replyquote()
             auto bytes = MakeUCharSpan(ss);
             std::vector<uint8_t> body(bytes.begin(), bytes.end());
             // Encrypt the quote to the requester's reply key (confidential).
-            node.p2pmsg_transport->Send(pm->req.reply_key, p2pmsg::PayloadKind::RFQ_QUOTE,
-                                        std::move(body), /*stem=*/false);
+            transport->Send(pm->req.reply_key, p2pmsg::PayloadKind::RFQ_QUOTE,
+                            std::move(body), /*stem=*/false);
 
             return q.quote_id.GetHex();
         },

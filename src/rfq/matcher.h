@@ -95,6 +95,11 @@ private:
     std::map<uint256, PendingMatch> m_pending GUARDED_BY(m_mutex);
 };
 
+//! Process-global handle to the active matcher registry, so the wallet module
+//! can reach it (wallet RPC context is a WalletContext, not a NodeContext).
+void SetActiveMatcher(MatcherRegistry* matcher);
+MatcherRegistry* GetActiveMatcher();
+
 } // namespace rfq
 
 #endif // BITCOIN_RFQ_MATCHER_H

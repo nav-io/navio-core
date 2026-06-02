@@ -7,7 +7,15 @@
 #include <kernel/mempool_entry.h>
 #include <primitives/block.h>
 
+#include <atomic>
+
 namespace aggregation {
+
+namespace {
+std::atomic<CandidatePool*> g_active_pool{nullptr};
+}
+void SetActivePool(CandidatePool* pool) { g_active_pool.store(pool, std::memory_order_release); }
+CandidatePool* GetActivePool() { return g_active_pool.load(std::memory_order_acquire); }
 
 size_t CandidatePool::ShardFor(const COutPoint& input)
 {

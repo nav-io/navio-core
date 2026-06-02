@@ -153,6 +153,12 @@ private:
 //! Process-wide active transport, set by init when -p2pmsg is enabled and
 //! cleared on shutdown. The net thread reads it to dispatch inbound p2pmsg
 //! packets. nullptr means the feature is disabled — net code must null-check.
+//!
+//! These process-global accessors also let the wallet module reach the p2pmsg
+//! subsystems: a wallet RPC's request.context is a WalletContext, not a
+//! NodeContext, so it cannot use EnsureAnyNodeContext. The subsystems are
+//! single-instance per process, so a global handle (set at init, cleared at
+//! shutdown) is the clean seam — same pattern the net thread already uses.
 void SetActiveTransport(Transport* transport);
 Transport* GetActiveTransport();
 

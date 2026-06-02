@@ -84,6 +84,12 @@ private:
     std::map<int64_t, size_t> m_per_peer GUARDED_BY(m_peer_mutex);
 };
 
+//! Process-global handle to the active candidate pool (set at init, cleared at
+//! shutdown). Lets the wallet module reach it, since a wallet RPC's context is a
+//! WalletContext rather than a NodeContext. nullptr when -p2pmsg is disabled.
+void SetActivePool(CandidatePool* pool);
+CandidatePool* GetActivePool();
+
 } // namespace aggregation
 
 #endif // BITCOIN_AGGREGATION_POOL_H

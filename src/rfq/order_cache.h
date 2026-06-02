@@ -85,6 +85,10 @@ private:
     size_t m_bytes GUARDED_BY(m_mutex){0};
 };
 
+//! Process-global handle to the active order cache (wallet module reach).
+void SetActiveOrderCache(OrderCache* cache);
+OrderCache* GetActiveOrderCache();
+
 } // namespace rfq
 
 #endif // BITCOIN_RFQ_ORDER_CACHE_H

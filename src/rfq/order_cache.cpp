@@ -9,7 +9,15 @@
 #include <primitives/block.h>
 #include <streams.h>
 
+#include <atomic>
+
 namespace rfq {
+
+namespace {
+std::atomic<OrderCache*> g_active_orders{nullptr};
+}
+void SetActiveOrderCache(OrderCache* cache) { g_active_orders.store(cache, std::memory_order_release); }
+OrderCache* GetActiveOrderCache() { return g_active_orders.load(std::memory_order_acquire); }
 
 namespace {
 //! Approximate in-cache footprint of a quote. The dominant term is the half-tx;

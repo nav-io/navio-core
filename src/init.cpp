@@ -315,6 +315,9 @@ void Shutdown(NodeContext& node)
     // capture the connman pointer. Clear the global hook first so no net path
     // can reach it, then stop workers, then drop the objects.
     p2pmsg::SetActiveTransport(nullptr);
+    rfq::SetActiveMatcher(nullptr);
+    rfq::SetActiveOrderCache(nullptr);
+    aggregation::SetActivePool(nullptr);
     node.rfq_matcher.reset();
     node.rfq_intents.reset();
     if (node.rfq_orders) {
@@ -1658,6 +1661,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // Cover-traffic candidate pool: evicts candidates whose inputs get spent.
         node.agg_pool = std::make_unique<aggregation::CandidatePool>();
         RegisterValidationInterface(node.agg_pool.get());
+        aggregation::SetActivePool(node.agg_pool.get());
 
         // Maker-local RFQ swap intents.
         node.rfq_intents = std::make_unique<rfq::IntentStore>();
@@ -1665,9 +1669,11 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // Standing-order cache; evicts on spent inputs like the candidate pool.
         node.rfq_orders = std::make_unique<rfq::OrderCache>(GetTime<std::chrono::seconds>().count());
         RegisterValidationInterface(node.rfq_orders.get());
+        rfq::SetActiveOrderCache(node.rfq_orders.get());
 
         // Taker-side RFQ request/quote registry.
         node.rfq_matcher = std::make_unique<rfq::MatcherRegistry>();
+        rfq::SetActiveMatcher(node.rfq_matcher.get());
 
         // Route decrypted inbound payloads to the right subsystem. These run on
         // a worker thread (after the net thread's PoW/replay gate + decrypt), so
