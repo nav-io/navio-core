@@ -20,8 +20,12 @@ namespace p2pmsg {
 //! anchor; the target is a flat leading-zero-bits threshold, runtime-tunable
 //! for tests via -p2pmsgpowbits.
 
-//! Default difficulty: ~100 ms on a median 2026 CPU. Lower bits = easier.
-static constexpr uint32_t DEFAULT_POW_BITS = 22;
+//! Default difficulty in leading zero bits. A PoW attempt is one SHA256 over
+//! the ~98-byte header (~15 ns / ~65M attempts/s on a modern core), so a
+//! `bits`-bit target costs ~2^bits/65e6 s honest: 23 bits ≈ 100-200 ms on a
+//! fast core, more on slow ones. Runtime-tunable via -p2pmsgpowbits (tests use
+//! 1). Lower bits = easier.
+static constexpr uint32_t DEFAULT_POW_BITS = 23;
 //! Accept stamps whose timestamp is within this skew of local clock.
 static constexpr int64_t POW_TIMESTAMP_TOLERANCE_SECONDS = 120;
 
