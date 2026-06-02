@@ -4,6 +4,8 @@
 
 #include <rfq/matcher.h>
 
+#include <atomic>
+
 #include <cmath>
 
 namespace rfq {
@@ -129,5 +131,11 @@ std::optional<MatcherRegistry::PendingMatch> MatcherRegistry::TakePendingMatch(c
     m_pending.erase(it);
     return pm;
 }
+
+namespace {
+std::atomic<MatcherRegistry*> g_active_matcher{nullptr};
+}
+void SetActiveMatcher(MatcherRegistry* matcher) { g_active_matcher.store(matcher, std::memory_order_release); }
+MatcherRegistry* GetActiveMatcher() { return g_active_matcher.load(std::memory_order_acquire); }
 
 } // namespace rfq
