@@ -29,8 +29,7 @@ generated BLS keypair; the session pubkey *is* the identity and is discarded
 when the session ends. No identity key is written to disk. This is the
 navcoin-core BLS-ECIES + Dandelion posture.
 
-The whole subsystem is gated behind `-p2pmsg` and changes no runtime behavior
-unless enabled.
+The subsystem is enabled by default and can be turned off with `-p2pmsg=0`.
 
 ## Modules
 

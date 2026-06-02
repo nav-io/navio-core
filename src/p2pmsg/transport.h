@@ -23,9 +23,11 @@
 
 namespace p2pmsg {
 
-//! Whether the p2p messaging subsystem is enabled by default. Off until the
-//! feature set (aggregation, RFQ, standing orders) lands and is integration-tested.
-static constexpr bool DEFAULT_P2PMSG_ENABLE{false};
+//! Whether the p2p messaging subsystem is enabled by default. The feature set
+//! (aggregation cover traffic, RFQ swaps, standing orders) is implemented and
+//! integration-tested end-to-end on a live chain, so it is on by default;
+//! disable with -p2pmsg=0.
+static constexpr bool DEFAULT_P2PMSG_ENABLE{true};
 
 //! Application identifier carried (opaque) by every message. p2pmsg is an
 //! APP-AGNOSTIC encrypted broadcast bus: nodes relay any well-formed message to

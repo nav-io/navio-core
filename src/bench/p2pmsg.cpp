@@ -11,6 +11,13 @@
 
 using namespace p2pmsg;
 
+// Note on PoW tuning (no bench here): a PoW attempt is one SHA256 over the
+// ~98-byte header. At ~15 ns/attempt (~65M attempts/s on a modern core) a
+// `bits`-bit target costs ~2^bits / 65e6 seconds honest. So 22 bits ≈ 65 ms and
+// 23 bits ≈ 130 ms on a fast core, more on slow ones. DEFAULT_POW_BITS = 23
+// targets ~100-200 ms honest. (Can't bench it in this harness: PoWHeader::Hash
+// serializes a BLS G1 pubkey and mcl is not initialised in bench_navio.)
+
 // Throughput of submit + execute for trivial jobs through the bounded ring.
 // Measures the enqueue/dispatch overhead, not the (absent) crypto payload.
 static void WorkerPoolThroughput(benchmark::Bench& bench)
