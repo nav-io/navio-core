@@ -154,7 +154,7 @@ void Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
     Grind(env.pow, m_opts.pow_bits);
 
     m_broadcast(stem, env);
-    (void)SerializeEnvelope; // reserved for direct-send paths in later phases
+    (void)&SerializeEnvelope; // reserved for direct-send paths in later phases
 }
 
 namespace {

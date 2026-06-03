@@ -432,6 +432,11 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       bls_interface
   )
 
+  # blsct wallet RPCs call into aggregation/rfq/p2pmsg globals owned by the node.
+  if(BUILD_WALLET_TOOL AND ENABLE_WALLET)
+    target_link_libraries(navio-wallet PRIVATE navio_node)
+  endif()
+
   # naviod
   if(BUILD_DAEMON)
     add_executable(naviod
