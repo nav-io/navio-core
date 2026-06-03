@@ -4,6 +4,8 @@
 
 #include <rfq/intent_store.h>
 
+#include <limits>
+
 namespace rfq {
 
 //! Fixed-point scale for price_min: price is sell-units per buy-unit, expressed
@@ -45,13 +47,15 @@ std::optional<Match> IntentStore::TryMatch(const RfqRequest& req, int64_t now) c
         if (!(intent.token_out == req.sell)) continue;
         if (req.size < intent.min_size || req.size > intent.max_size) continue;
 
-        // Quote at the intent's floor price. __int128 avoids overflow on the
-        // size * price product before scaling back down.
-        const __int128 cost = (static_cast<__int128>(req.size) * intent.price_min) / PRICE_SCALE;
+        // Quote at the intent's floor price. Skip intents whose scaled cost
+        // does not fit in CAmount (portable: no __int128 on MSVC or 32-bit).
+        if (req.size > 0 && intent.price_min > std::numeric_limits<CAmount>::max() / req.size) {
+            continue;
+        }
         Match m;
         m.intent_id = id;
         m.fill = req.size;
-        m.sell_cost = static_cast<CAmount>(cost);
+        m.sell_cost = (req.size * intent.price_min) / PRICE_SCALE;
         return m;
     }
     return std::nullopt;
