@@ -15,8 +15,9 @@
 
 #include <tinyformat.h>
 
+#include <util/strencodings.h>
+
 #include <atomic>
-#include <cctype>
 #include <cstdio>
 #include <deque>
 #include <iostream>
@@ -79,7 +80,7 @@ public:
         if (!m_active) return 0;
         char c = 0;
         ssize_t n = ::read(STDIN_FILENO, &c, 1);
-        if (n == 1) return std::tolower((unsigned char)c);
+        if (n == 1) return ToLower(c);
 #endif
         return 0;
     }
