@@ -3,3 +3,6 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <aggregation/session.h>
+
+// Keep a translation unit for build systems that still expect this source file
+// even though the helpers now live inline in the header.
