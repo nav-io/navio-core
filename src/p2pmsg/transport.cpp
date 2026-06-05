@@ -141,7 +141,7 @@ void Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
 {
     Envelope env;
     env.kind = static_cast<uint8_t>(kind);
-    env.enc = Encrypt(recipient, body);
+    env.enc = Encrypt(recipient, std::span<const uint8_t>{body.data(), body.size()});
 
     // PoW is mandatory on every message — it is the bus's universal admission
     // gate, applied regardless of `kind`.
