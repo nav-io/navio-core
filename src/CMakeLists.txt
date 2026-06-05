@@ -291,11 +291,12 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       )
       add_windows_resources(navio-wallet bitcoin-wallet-res.rc)
       target_link_libraries(navio-wallet
-        core_interface
-        navio_wallet
-        navio_common
-        navio_util
-        Boost::headers
+        PRIVATE
+          core_interface
+          navio_wallet
+          navio_common
+          navio_util
+          Boost::headers
       )
       install_binary_component(navio-wallet HAS_MANPAGE)
     endif()
