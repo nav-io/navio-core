@@ -5,10 +5,13 @@
 #ifndef BITCOIN_AGGREGATION_COMBINE_H
 #define BITCOIN_AGGREGATION_COMBINE_H
 
+#include <blsct/signature.h>
 #include <primitives/transaction.h>
 
+#include <set>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace aggregation {
 
@@ -32,7 +35,39 @@ namespace aggregation {
 //!
 //! Returns std::nullopt if `halves` is empty or any input is duplicated across
 //! halves (a programming/peer error the caller should treat as invalid).
-std::optional<CMutableTransaction> CombineHalves(std::span<const CTransactionRef> halves);
+inline std::optional<CMutableTransaction> CombineHalves(std::span<const CTransactionRef> halves)
+{
+    if (halves.empty()) return std::nullopt;
+
+    CMutableTransaction out;
+    out.nVersion = CTransaction::BLSCT_MARKER;
+
+    std::set<COutPoint> seen_inputs;
+    std::vector<blsct::Signature> sigs;
+    sigs.reserve(halves.size());
+
+    for (const auto& ref : halves) {
+        if (ref == nullptr) return std::nullopt;
+        const CTransaction& tx = *ref;
+
+        for (const CTxIn& in : tx.vin) {
+            if (!seen_inputs.insert(in.prevout).second) return std::nullopt;
+            out.vin.push_back(in);
+        }
+        for (const CTxOut& o : tx.vout) {
+            out.vout.push_back(o);
+        }
+        sigs.push_back(tx.txSig);
+    }
+
+    out.txSig = blsct::Signature::Aggregate(sigs);
+    return out;
+}
+
+inline std::optional<CMutableTransaction> CombineHalves(const std::vector<CTransactionRef>& halves)
+{
+    return CombineHalves(std::span<const CTransactionRef>{halves.data(), halves.size()});
+}
 
 } // namespace aggregation
 
