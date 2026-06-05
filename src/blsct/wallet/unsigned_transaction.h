@@ -28,6 +28,9 @@ public:
 
     // Getters
     const std::vector<UnsignedInput>& GetInputs() const { return m_inputs; }
+    // Mutable accessor so callers (e.g. signblsctrawtransaction) can fill in
+    // spending keys that were deferred at creation time by a watch-only wallet.
+    std::vector<UnsignedInput>& GetInputs() { return m_inputs; }
     const std::vector<UnsignedOutput>& GetOutputs() const { return m_outputs; }
     CAmount GetFee() const { return m_fee; }
 

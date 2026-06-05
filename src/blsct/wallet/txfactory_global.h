@@ -79,6 +79,11 @@ struct UnsignedInput {
     Scalar gamma;
     PrivateKey sk;
     bool is_staked_commitment{false};
+    // The prevout being spent. Carries the public blsctData (blinding and
+    // spending public keys) so that an offline signer without a copy of the
+    // blockchain can derive the private spending key from its own view+spend
+    // keys. May be null when the spending key (sk) is supplied directly.
+    CTxOut out;
 
     template <typename Stream>
     void Serialize(Stream& s) const
@@ -88,6 +93,7 @@ struct UnsignedInput {
         ::Serialize(s, gamma);
         ::Serialize(s, sk);
         ::Serialize(s, is_staked_commitment);
+        ::Serialize(s, out);
     }
 
     template <typename Stream>
@@ -98,6 +104,7 @@ struct UnsignedInput {
         ::Unserialize(s, gamma);
         ::Unserialize(s, sk);
         ::Unserialize(s, is_staked_commitment);
+        ::Unserialize(s, out);
     }
 };
 
