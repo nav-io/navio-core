@@ -5176,19 +5176,19 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         std::vector<uint8_t> body(vRecv.size());
         vRecv.read(MakeWritableByteSpan(body));
 
-        const auto res = transport->OnWire(pfrom.GetId(), is_stem, body);
-        switch (res) {
-        case p2pmsg::Transport::WireResult::RejectInvalid:
-        case p2pmsg::Transport::WireResult::RejectPoW:
+        const auto res = transport->OnWire(
+            pfrom.GetId(),
+            is_stem,
+            std::span<const uint8_t>{body.data(), body.size()});
+        if (res == p2pmsg::Transport::WireResult::RejectInvalid ||
+            res == p2pmsg::Transport::WireResult::RejectPoW) {
             // Malformed or missing/insufficient PoW: cheap to detect, costly to
             // emit. Penalize so a flood eventually discourages the peer.
             Misbehaving(*peer, 10, "invalid p2pmsg");
-            break;
-        case p2pmsg::Transport::WireResult::RejectReplay:
-        case p2pmsg::Transport::WireResult::Dropped:
-        case p2pmsg::Transport::WireResult::Enqueued:
+        } else if (res == p2pmsg::Transport::WireResult::RejectReplay ||
+                   res == p2pmsg::Transport::WireResult::Dropped ||
+                   res == p2pmsg::Transport::WireResult::Enqueued) {
             // Replay/overflow are not necessarily the peer's fault; no penalty.
-            break;
         }
         return;
     }
