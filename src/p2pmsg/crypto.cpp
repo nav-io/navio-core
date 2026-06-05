@@ -60,7 +60,7 @@ EciesPacket Encrypt(const blsct::PublicKey& recipient,
     std::vector<uint8_t> secret = shared.GetVch();
 
     std::byte key[32];
-    DeriveKey(secret, key);
+    DeriveKey(std::span<const uint8_t>{secret.data(), secret.size()}, key);
 
     AEADChaCha20Poly1305 aead(std::span<const std::byte>{key, 32});
     pkt.ciphertext.resize(plaintext.size() + ECIES_TAG_SIZE);
@@ -97,7 +97,7 @@ std::optional<std::vector<uint8_t>> Decrypt(const blsct::PrivateKey& sk,
     std::vector<uint8_t> secret = shared.GetVch();
 
     std::byte key[32];
-    DeriveKey(secret, key);
+    DeriveKey(std::span<const uint8_t>{secret.data(), secret.size()}, key);
 
     // Reassemble ciphertext||tag for the AEAD.
     std::vector<uint8_t> ct_and_tag;
@@ -107,9 +107,11 @@ std::optional<std::vector<uint8_t>> Decrypt(const blsct::PrivateKey& sk,
 
     std::vector<uint8_t> plain(pkt.ciphertext.size());
     AEADChaCha20Poly1305 aead(std::span<const std::byte>{key, 32});
-    bool ok = aead.Decrypt(AsBytes(ct_and_tag), AsBytes(aad), ZERO_NONCE,
-                           std::span<std::byte>{reinterpret_cast<std::byte*>(plain.data()),
-                                                plain.size()});
+    bool ok = aead.Decrypt(
+        AsBytes(std::span<const uint8_t>{ct_and_tag.data(), ct_and_tag.size()}),
+        AsBytes(aad),
+        ZERO_NONCE,
+        std::span<std::byte>{reinterpret_cast<std::byte*>(plain.data()), plain.size()});
     if (!ok) return std::nullopt;
     return plain;
 }
