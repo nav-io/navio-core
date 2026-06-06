@@ -1018,7 +1018,9 @@ jobs:
           # from HOST instead of inheriting the linux-cmake matrix CC/CXX
           # (which would otherwise leak into per-package configure scripts —
           # e.g. zeromq would probe windows.h with the host gcc and fail).
-          env -u CC -u CXX make -C depends HOST=${{ matrix.depends_host }} ${{ matrix.depends_opts }}
+          # NO_I2P=1: the bundled I2P router (openssl+zlib+boost+i2pd) is heavy
+          # and is only exercised by the dedicated "depends with I2P" job below.
+          env -u CC -u CXX make -C depends HOST=${{ matrix.depends_host }} ${{ matrix.depends_opts }} NO_I2P=1
 
       - name: Dump depends config.log on failure
         if: failure() && matrix.depends_host
@@ -1332,7 +1334,8 @@ jobs:
           docker exec "${CONTAINER_NAME}" bash -eu -c '
             env -u CC -u CXX make -C depends \
               HOST='"${DEPENDS_HOST}"' \
-              CC="gcc -m32" CXX="g++ -m32"
+              CC="gcc -m32" CXX="g++ -m32" \
+              NO_I2P=1
           '
 
       - name: Save depends cache
@@ -1398,3 +1401,52 @@ jobs:
         with:
           path: ${{ env.RUNNER_TEMP }}/ccache_dir
           key: ${{ steps.ccache-cache.outputs.cache-primary-key }}
+
+  depends-i2p:
+    # The only job that builds the bundled I2P stack. Every other job passes
+    # NO_I2P=1 to keep the depends build light. Unrelated heavy packages (boost
+    # header-only set, sqlite, zmq, usdt, libomp) are skipped so this validates
+    # just the I2P toolchain. For now that is openssl + zlib (the reused, proven
+    # recipes); the i2pd package and its compiled Boost components are added next.
+    name: 'depends with I2P (x86_64-linux)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake automake autoconf libtool pkg-config \
+            bison curl ca-certificates python3 perl
+
+      - name: Cache depends sources
+        uses: actions/cache@v5
+        with:
+          path: depends/sources
+          key: depends-i2p-sources-${{ hashFiles('depends/packages/*.mk') }}
+
+      - name: Cache built depends
+        uses: actions/cache@v5
+        with:
+          path: depends/x86_64-pc-linux-gnu
+          key: depends-i2p-x86_64-linux-${{ hashFiles('depends/**') }}
+
+      - name: Build depends with I2P
+        run: |
+          # NO_I2P is intentionally NOT set: this job builds the bundled I2P
+          # stack. The other NO_* flags drop packages I2P does not need so the
+          # job stays focused (gmp is built unconditionally by depends).
+          env -u CC -u CXX make -C depends -j"$(nproc)" HOST=x86_64-pc-linux-gnu \
+            NO_BOOST=1 NO_SQLITE=1 NO_WALLET=1 NO_ZMQ=1 NO_USDT=1 NO_OPENMP=1 NO_LIBEVENT=1
+
+      - name: Verify I2P depends artifacts
+        run: |
+          # depends stages built packages as cache tarballs under built/.
+          for pkg in openssl zlib; do
+            ls depends/built/x86_64-pc-linux-gnu/${pkg}/${pkg}-*.tar.gz \
+              || { echo "missing built ${pkg}"; exit 1; }
+          done
