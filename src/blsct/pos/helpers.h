@@ -31,6 +31,11 @@ uint256 CalculateKernelHash(const uint32_t& prevTime, const uint64_t& stakeModif
 // grinding work does not carry between forks. When `hardened` is false,
 // `prevChainWork` is ignored and time is not bucketed (legacy kernel).
 uint256 CalculateKernelHashWithChainWork(const uint32_t& prevTime, const uint64_t& stakeModifier, const arith_uint256& prevChainWork, const uint32_t& time, bool hardened = true);
+
+// V2 kernel: additionally binds the set-membership proof image point `phi`
+// (`block.posProof.setMemProof.phi`) into the kernel hash. Activated by block
+// height (Consensus::Params::nPoPSKernelV2Height).
+uint256 CalculateKernelHashWithChainWork(const uint32_t& prevTime, const uint64_t& stakeModifier, const arith_uint256& prevChainWork, const uint32_t& time, const MclG1Point& phi, bool hardened = true);
 } // namespace blsct
 
 #endif // BLSCT_POS_H

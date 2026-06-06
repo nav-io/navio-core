@@ -817,12 +817,14 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         // added to `getblocktemplate` for exactly this purpose.
         const UniValue& prev_chainwork_val = result.find_value("prev_chainwork");
         const UniValue& pops_hardened_val = result.find_value("pops_hardened");
-        if (!prev_chainwork_val.isStr() || !pops_hardened_val.isBool()) {
-            LogPrintf("%s: [%s] getblocktemplate is missing prev_chainwork / pops_hardened. Upgrade naviod to a version that exposes them; otherwise produced blocks will be rejected on hardened chains.\n", __func__, walletName);
+        const UniValue& pops_bind_phi_val = result.find_value("pops_bind_phi");
+        if (!prev_chainwork_val.isStr() || !pops_hardened_val.isBool() || !pops_bind_phi_val.isBool()) {
+            LogPrintf("%s: [%s] getblocktemplate is missing prev_chainwork / pops_hardened / pops_bind_phi. Upgrade naviod to a version that exposes them; otherwise produced blocks will be rejected on hardened chains.\n", __func__, walletName);
             return std::nullopt;
         }
         const arith_uint256 prev_chainwork = UintToArith256(uint256S(prev_chainwork_val.get_str()));
         const bool hardened = pops_hardened_val.get_bool();
+        const bool bind_phi = pops_bind_phi_val.get_bool();
 
         proposal.nVersion = result.find_value("version").get_real();
         proposal.nTime = result.find_value("curtime").get_real();
@@ -830,10 +832,24 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         proposal.hashPrevBlock = uint256S(result.find_value("previousblockhash").get_str());
         proposal.vtx = UniValueArrayToTransactions(result.find_value("transactions").get_array());
 
-        proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, prev_chainwork, proposal.nTime, next_target, hardened);
+        if (bind_phi) {
+            // V2: the V2 ctor builds the set-membership proof first, then the
+            // phi-bound kernel hash, then the range proof.
+            proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, prev_chainwork, proposal.nTime, next_target, hardened, /*bind_phi=*/true);
+        } else {
+            proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, prev_chainwork, proposal.nTime, next_target, hardened);
+        }
         proposal.hashMerkleRoot = BlockMerkleRoot(proposal);
 
-        const uint256 kernel_hash = blsct::CalculateKernelHashWithChainWork(prev_time, modifier, prev_chainwork, proposal.nTime, hardened);
+        // Re-verify locally using the SAME kernel consensus will compute. For
+        // V2, bind the just-built proof's phi (NOT a re-derived phi: that would
+        // use a different generator factory and diverge from setMemProof.phi).
+        uint256 kernel_hash;
+        if (bind_phi) {
+            kernel_hash = blsct::CalculateKernelHashWithChainWork(prev_time, modifier, prev_chainwork, proposal.nTime, proposal.posProof.setMemProof.phi, hardened);
+        } else {
+            kernel_hash = blsct::CalculateKernelHashWithChainWork(prev_time, modifier, prev_chainwork, proposal.nTime, hardened);
+        }
         auto valid = blsct::ProofOfStake(proposal.posProof).Verify(staked_elements, eta_fiat_shamir, eta_phi, kernel_hash, next_target);
 
         if (valid == blsct::ProofOfStake::VALID) return proposal;

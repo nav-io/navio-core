@@ -177,6 +177,12 @@ struct Params {
      */
     bool fPoPSHardened{true};
     /**
+     * Block height at which the V2 PoPS kernel activates: the kernel hash
+     * binds the set-membership image point `phi` so every staked coin gets an
+     * independent kernel draw. 
+     */
+    int nPoPSKernelV2Height{0};
+    /**
      * Hard finality checkpoints. (height -> expected block hash).
      * Any fork whose block at a listed height has a different hash is
      * rejected, regardless of accumulated work. Populated per-release from

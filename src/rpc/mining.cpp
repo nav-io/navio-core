@@ -694,6 +694,7 @@ static RPCHelpMan getblocktemplate()
                                                                      {RPCResult::Type::NUM, "prev_time", /*optional=*/true, "Only on Proof of Stake"},
                                                                      {RPCResult::Type::STR_HEX, "prev_chainwork", /*optional=*/true, "Accumulated chain work of the previous block as a 32-byte big-endian hex string. Required by stakers to compute the chain-work-bound kernel hash that consensus uses on hardened chains."},
                                                                      {RPCResult::Type::BOOL, "pops_hardened", /*optional=*/true, "Whether PoPS hardening (time-bucketing + chain-work binding in the kernel hash) is in force for the next block. Stakers MUST construct the kernel hash accordingly; otherwise the resulting block is rejected with bad-blsct-pos-proof."},
+                                                                     {RPCResult::Type::BOOL, "pops_bind_phi", /*optional=*/true, "Whether the V2 PoPS kernel is active at the next height (>= nPoPSKernelV2Height): the kernel hash binds the set-membership image point phi. Stakers MUST bind phi accordingly; otherwise the resulting block is rejected with bad-blsct-pos-proof."},
                                                                      {RPCResult::Type::ARR, "staked_commitments", /*optional=*/true, "Only on Proof of Stake", {
                                                                                                                                                                    {RPCResult::Type::STR_HEX, "", "staked_commitment"},
                                                                                                                                                                }},
@@ -1041,6 +1042,10 @@ static RPCHelpMan getblocktemplate()
                 // src/blsct/pos/helpers.cpp::CalculateKernelHashWithChainWork.
                 result.pushKV("prev_chainwork", ArithToUint256(pindexPrev->nChainWork).GetHex());
                 result.pushKV("pops_hardened", consensusParams.fPoPSHardened);
+                // V2 kernel activation at the next height. When active the
+                // kernel hash binds setMemProof.phi (per-coin independent draw).
+                // Out-of-process stakers must match this exactly.
+                result.pushKV("pops_bind_phi", (pindexPrev->nHeight + 1) >= consensusParams.nPoPSKernelV2Height);
             }
 
             if (consensusParams.signet_blocks) {

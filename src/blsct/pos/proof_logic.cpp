@@ -24,14 +24,26 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
 
     auto next_target = blsct::GetNextTargetRequired(pindexPrev, &block, params);
 
-    // Compute the kernel hash via the EXACT same path consensus
+    LogPrint(BCLog::POPS, "Creating PoPS:\n    Eta fiat shamir: %s\n   Eta phi: %s\n   Next Target: %d\n   Staked Commitments:%s\n", HexStr(eta_fiat_shamir), HexStr(eta_phi), next_target, staked_commitments.GetString());
+
+    const int height = pindexPrev->nHeight + 1;
+    if (height >= params.nPoPSKernelV2Height) {
+        // V2: the kernel hash binds setMemProof.phi, which does not exist until
+        // the set-membership proof is built. The V2 ctor computes phi first,
+        // then the phi-bound kernel hash, then the range proof. We cannot
+        // precompute the kernel hash here as in V1.
+        return ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f,
+                            pindexPrev->nTime, pindexPrev->nStakeModifier,
+                            pindexPrev->nChainWork, block.nTime, next_target,
+                            params.fPoPSHardened, /*bind_phi=*/true);
+    }
+
+    // V1: compute the kernel hash via the EXACT same path consensus
     // (`ConnectBlock` -> `blsct::CalculateKernelHash(pindexPrev, block,
     // params)`) will use to verify this block. Otherwise the bulletproofs+
     // range proof's `Scalar(min_value)` seed disagrees and every block is
     // rejected with `bad-blsct-pos-proof`.
     const uint256 kernel_hash = blsct::CalculateKernelHash(pindexPrev, block, params);
-
-    LogPrint(BCLog::POPS, "Creating PoPS:\n    Eta fiat shamir: %s\n   Eta phi: %s\n   Next Target: %d\n   Staked Commitments:%s\n", HexStr(eta_fiat_shamir), HexStr(eta_phi), next_target, staked_commitments.GetString());
 
     return ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f, kernel_hash, next_target);
 }

@@ -139,6 +139,17 @@ uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block, 
     // rooted at the same ancestor. When not hardened (legacy pre-hardening
     // networks, e.g. testnet with chain state predating the rule change),
     // the chain-work binding is skipped and raw block time is hashed.
+    const int height = pindexPrev->nHeight + 1;
+    if (height >= params.nPoPSKernelV2Height) {
+        return CalculateKernelHashWithChainWork(
+            pindexPrev->nTime,
+            pindexPrev->nStakeModifier,
+            pindexPrev->nChainWork,
+            block.nTime,
+            block.posProof.setMemProof.phi,
+            params.fPoPSHardened);
+    }
+
     return CalculateKernelHashWithChainWork(
         pindexPrev->nTime,
         pindexPrev->nStakeModifier,

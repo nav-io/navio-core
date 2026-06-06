@@ -144,6 +144,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.SegwitHeight = 0;
         consensus.fBLSCT = true;
         consensus.fPoPSHardened = true;
+        consensus.nPoPSKernelV2Height = 0; // active from genesis
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
@@ -274,6 +275,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.SegwitHeight = 0;
         consensus.fBLSCT = true;
         consensus.fPoPSHardened = true;
+        consensus.nPoPSKernelV2Height = 22000; // migrate existing testnet chain to V2 kernel
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
@@ -425,6 +427,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.SegwitHeight = 1;
             consensus.fBLSCT = false;
             consensus.fPoPSHardened = true;
+            consensus.nPoPSKernelV2Height = 0; // active from genesis
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
@@ -507,6 +510,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.SegwitHeight = 0; // Always active unless overridden
             consensus.fBLSCT = false;
             consensus.fPoPSHardened = true;
+            consensus.nPoPSKernelV2Height = 0; // active from genesis
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
@@ -650,6 +654,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.SegwitHeight = 0; // Always active unless overridden
             consensus.fBLSCT = true;
             consensus.fPoPSHardened = true;
+            consensus.nPoPSKernelV2Height = 0; // active from genesis
             consensus.nPePoSMinStakeAmount = 100 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
