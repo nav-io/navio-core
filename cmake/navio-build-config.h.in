@@ -153,6 +153,9 @@
 #define PACKAGE_VERSION CLIENT_VERSION_STRING
 #define PACKAGE_URL "@PROJECT_HOMEPAGE_URL@"
 
+/* Define to 1 to build the bundled-i2pd subprocess manager. */
+#cmakedefine01 ENABLE_I2PD
+
 /* Absolute path to the bundled i2pd router executable, if one was built. */
 #cmakedefine BUNDLED_I2P_EXECUTABLE "@BUNDLED_I2P_EXECUTABLE@"
 

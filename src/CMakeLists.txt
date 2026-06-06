@@ -16,6 +16,13 @@ else()
   set(ENABLE_ZMQ 0)
 endif()
 
+# Wire ENABLE_I2PD from the WITH_I2P option (the bundled-i2pd subprocess manager).
+if(WITH_I2P)
+  set(ENABLE_I2PD 1)
+else()
+  set(ENABLE_I2PD 0)
+endif()
+
 configure_file(${PROJECT_SOURCE_DIR}/cmake/navio-build-config.h.in config/bitcoin-config.h USE_SOURCE_PERMISSIONS @ONLY)
 include_directories(${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -382,7 +389,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     script/sigcache.cpp
     signet.cpp
     timedata.cpp
-    i2pd_process.cpp
+    $<$<BOOL:${WITH_I2P}>:i2pd_process.cpp>
     torcontrol.cpp
     txdb.cpp
     txmempool.cpp
