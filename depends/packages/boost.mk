@@ -22,6 +22,9 @@ define $(package)_set_vars
   $(package)_config_opts += -DCMAKE_DISABLE_FIND_PACKAGE_ICU=ON
   # Install to a unique path to prevent accidental inclusion via other dependencies' -I flags.
   $(package)_config_opts += -DCMAKE_INSTALL_INCLUDEDIR=$(package)/include
+  # Building the compiled components for darwin needs install_name_tool; point
+  # CMake at the depends-provided (llvm) one so its binutils detection succeeds.
+  $(package)_config_opts_darwin += -DCMAKE_INSTALL_NAME_TOOL=$(host_INSTALL_NAME_TOOL)
 endef
 
 define $(package)_config_cmds

@@ -40,7 +40,17 @@ namespace {
 
 //! SAM bridge endpoint the managed i2pd listens on and naviod connects to.
 const std::string I2PD_SAM_HOST{"127.0.0.1"};
-constexpr int I2PD_SAM_PORT{7656};
+const std::string I2PD_SAM_PORT{"7656"};
+
+//! fs::exists() that never throws, for best-effort path probing.
+bool Exists(const fs::path& p) noexcept
+{
+    try {
+        return fs::exists(p);
+    } catch (...) {
+        return false;
+    }
+}
 
 std::mutex g_mutex;
 std::condition_variable g_cv;
@@ -67,7 +77,7 @@ fs::path GetExecutablePath()
     uint32_t size{sizeof(buf)};
     if (_NSGetExecutablePath(buf, &size) != 0) return {};
     std::error_code ec;
-    fs::path canonical{std::filesystem::canonical(fs::path(buf), ec)};
+    fs::path canonical{fs::canonical(fs::path(buf), ec)};
     return ec ? fs::path(buf) : canonical;
 #else
     std::error_code ec;
@@ -94,8 +104,7 @@ fs::path SearchPath(const std::string& name)
         if (!dir.empty()) {
             fs::path candidate{fs::PathFromString(dir)};
             candidate /= fs::PathFromString(name);
-            std::error_code ec;
-            if (std::filesystem::exists(candidate, ec) && !std::filesystem::is_directory(candidate, ec)) return candidate;
+            if (Exists(candidate)) return candidate;
         }
         if (end == std::string::npos) break;
         start = end + 1;
@@ -123,15 +132,13 @@ fs::path FindI2pd(const ArgsManager& args)
 #ifdef BUNDLED_I2P_EXECUTABLE
     {
         const fs::path bundled{fs::PathFromString(BUNDLED_I2P_EXECUTABLE)};
-        std::error_code ec;
-        if (std::filesystem::exists(bundled, ec)) return bundled;
+        if (Exists(bundled)) return bundled;
     }
 #endif
     const fs::path exe{GetExecutablePath()};
     if (!exe.empty()) {
         const fs::path next{exe.parent_path() / name};
-        std::error_code ec;
-        if (std::filesystem::exists(next, ec)) return next;
+        if (Exists(next)) return next;
     }
     return SearchPath(name);
 }
@@ -276,10 +283,10 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
     }
 
     const fs::path datadir{args.GetDataDirNet() / "i2pd"};
-    std::error_code ec;
-    std::filesystem::create_directories(datadir, ec);
-    if (ec) {
-        LogPrintf("i2pd: cannot create data dir %s: %s; I2P disabled\n", fs::PathToString(datadir), ec.message());
+    try {
+        fs::create_directories(datadir);
+    } catch (const std::exception& e) {
+        LogPrintf("i2pd: cannot create data dir %s: %s; I2P disabled\n", fs::PathToString(datadir), e.what());
         return std::nullopt;
     }
 
@@ -289,7 +296,7 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
         "--datadir=" + fs::PathToString(datadir),
         "--sam.enabled=true",
         "--sam.address=" + I2PD_SAM_HOST,
-        "--sam.port=" + std::to_string(I2PD_SAM_PORT),
+        "--sam.port=" + I2PD_SAM_PORT,
         // Bare switch: do not relay other routers' traffic (keeps the node
         // light). No --daemon, so i2pd stays in the foreground for us to manage.
         "--notransit",
@@ -304,7 +311,7 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
     }
     g_thread = std::thread(&Supervise);
 
-    const std::string endpoint{I2PD_SAM_HOST + ":" + std::to_string(I2PD_SAM_PORT)};
+    const std::string endpoint{I2PD_SAM_HOST + ":" + I2PD_SAM_PORT};
     LogPrintf("i2pd: managing bundled router %s, SAM at %s\n", g_exe, endpoint);
     return endpoint;
 }
