@@ -1338,7 +1338,8 @@ jobs:
           docker exec "${CONTAINER_NAME}" bash -eu -c '
             env -u CC -u CXX make -C depends \
               HOST='"${DEPENDS_HOST}"' \
-              CC="gcc -m32" CXX="g++ -m32"
+              CC="gcc -m32" CXX="g++ -m32" \
+              NO_I2P=1
           '
 
       - name: Save depends cache
