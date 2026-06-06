@@ -167,15 +167,22 @@ uint256 CalculateStakeRingSeed(const CBlockIndex* pindexPrev, const uint256& hea
     // stalling. The grind this reintroduces is bounded to the few future
     // buckets allowed by POPS_MAX_FUTURE_BLOCK_TIME (the same bound the kernel
     // already lives under), not the old unbounded header grind.
-    int anchor_height = pindexPrev->nHeight - POPS_RING_SEED_LOOKBACK;
-    if (anchor_height < 0) anchor_height = 0;
-    const CBlockIndex* anchor = pindexPrev->GetAncestor(anchor_height);
+    // Walk back POPS_RING_SEED_LOOKBACK blocks to the deep anchor. Do NOT use
+    // CBlockIndex::GetAncestor here: it assert()s if the pprev chain is shorter
+    // than the requested height (e.g. a standalone index in unit tests, or any
+    // index whose ancestry is not fully linked). Walk pprev manually instead,
+    // stopping at the deepest reachable ancestor (genesis on a real chain).
+    // Deterministic for prover and verifier: both see the same linked chain.
+    const CBlockIndex* anchor = pindexPrev;
+    for (int i = 0; i < POPS_RING_SEED_LOOKBACK && anchor->pprev != nullptr; ++i) {
+        anchor = anchor->pprev;
+    }
 
     const uint32_t bucketed_time = block_time - (block_time % POPS_TIME_GRANULARITY_SECONDS);
 
     HashWriter ss{};
     ss << pindexPrev->nStakeModifier
-       << (anchor ? anchor->GetBlockHash() : uint256())
+       << anchor->GetBlockHash()
        << bucketed_time;
     return ss.GetHash();
 }
