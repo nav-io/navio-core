@@ -230,6 +230,46 @@ BOOST_AUTO_TEST_CASE(v2_eta_phi_unlinkable_across_heights)
     BOOST_CHECK(a == blsct::CalculateSetMemProofGeneratorSeedV2(&prevH1.index));
 }
 
+BOOST_AUTO_TEST_CASE(v2_ring_seed_not_grindable_by_header)
+{
+    // V2 ring seed must NOT depend on the candidate block's own header (so the
+    // producer of the previous block cannot grind the next ring). Legacy seed
+    // IS the header hash.
+    PrevIndex prev(21999, 0x5555ULL, uint256S("33"));
+    auto v2 = ParamsWithV2(0);
+    auto legacy = ParamsWithV2(1000000);
+
+    const uint256 headerA = uint256S("aaaa");
+    const uint256 headerB = uint256S("bbbb");
+    const uint32_t t0 = 1700000000u;            // bucket-aligned-ish base
+    const uint32_t t_same_bucket = t0 + 5;      // same 16s bucket as t0
+    const uint32_t t_next_bucket = t0 + 16;     // next bucket
+
+    // Legacy: seed == header hash (varies with header => grindable).
+    BOOST_CHECK(blsct::CalculateStakeRingSeed(&prev.index, headerA, t0, legacy) == headerA);
+    BOOST_CHECK(blsct::CalculateStakeRingSeed(&prev.index, headerA, t0, legacy) !=
+                blsct::CalculateStakeRingSeed(&prev.index, headerB, t0, legacy));
+
+    // V2: seed independent of the candidate header (only prev modifier + deep
+    // ancestor + bucketed time feed it). Same time + same prev => same seed
+    // regardless of header.
+    BOOST_CHECK(blsct::CalculateStakeRingSeed(&prev.index, headerA, t0, v2) ==
+                blsct::CalculateStakeRingSeed(&prev.index, headerB, t0, v2));
+
+    // V2 seed changes with the stake modifier (the per-interval beacon).
+    PrevIndex prev2(21999, 0x6666ULL, uint256S("33"));
+    BOOST_CHECK(blsct::CalculateStakeRingSeed(&prev.index, headerA, t0, v2) !=
+                blsct::CalculateStakeRingSeed(&prev2.index, headerA, t0, v2));
+
+    // Liveness: the V2 ring rotates with the wall-clock bucket. Same bucket =>
+    // same ring (no per-second grind); next bucket => different ring (so a
+    // stall with all sampled stakers offline self-heals as time advances).
+    BOOST_CHECK(blsct::CalculateStakeRingSeed(&prev.index, headerA, t0, v2) ==
+                blsct::CalculateStakeRingSeed(&prev.index, headerA, t_same_bucket, v2));
+    BOOST_CHECK(blsct::CalculateStakeRingSeed(&prev.index, headerA, t0, v2) !=
+                blsct::CalculateStakeRingSeed(&prev.index, headerA, t_next_bucket, v2));
+}
+
 // ---------------------------------------------------------------------------
 // Proportional-fairness simulation.
 //

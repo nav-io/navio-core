@@ -38,6 +38,12 @@ blsct::Message CalculateSetMemProofGeneratorSeedV2(const CBlockIndex* pindexPrev
 // Height-aware dispatcher: V2 seed at/after nPoPSKernelV2Height, else legacy.
 blsct::Message CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params);
 uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params);
+// Seed for the staked-commitment ring shuffle. V2 derives it from the stake
+// modifier plus a deep ancestor (POPS_RING_SEED_LOOKBACK back) so no single
+// staker can grind which commitments form the ring; pre-V2 uses the legacy
+// header-hash seed supplied by the caller. `header_hash_fallback` is the
+// grindable legacy seed (block header hash) used only before V2 activation.
+uint256 CalculateStakeRingSeed(const CBlockIndex* pindexPrev, const uint256& header_hash_fallback, const uint32_t& block_time, const Consensus::Params& params);
 } // namespace blsct
 
 #endif // BLSCT_POS_H

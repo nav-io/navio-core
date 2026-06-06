@@ -1026,10 +1026,8 @@ static RPCHelpMan getblocktemplate()
 
                 // Ring seed + eta_phi must be computed the SAME way consensus
                 // will (ProofOfStakeLogic / ConnectBlock): V2 derives both from
-                // fixed prior chain state so the staker cannot grind them.
-                const uint256 ring_seed = (pindexPrev->nHeight + 1) >= consensusParams.nPoPSKernelV2Height
-                                              ? pindexPrev->GetBlockHash()
-                                              : pblock->GetBlockHeader().GetHash();
+                // non-grindable prior chain state so the staker cannot grind them.
+                const uint256 ring_seed = blsct::CalculateStakeRingSeed(pindexPrev, pblock->GetBlockHeader().GetHash(), pblock->nTime, consensusParams);
                 auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements(ring_seed, consensusParams.nStakedCommitmentLimit);
 
                 for (size_t i = 0; i < stakedCommitmentsElements.Size(); ++i)

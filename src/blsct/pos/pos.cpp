@@ -144,6 +144,42 @@ std::vector<unsigned char> CalculateSetMemProofRandomness(const CBlockIndex* pin
     return CalculateSetMemProofRandomness(pindexPrev);
 }
 
+uint256 CalculateStakeRingSeed(const CBlockIndex* pindexPrev, const uint256& header_hash_fallback, const uint32_t& block_time, const Consensus::Params& params)
+{
+    const int height = pindexPrev->nHeight + 1;
+    if (height < params.nPoPSKernelV2Height) {
+        // Legacy: grindable header-hash seed (kept for pre-V2 blocks).
+        return header_hash_fallback;
+    }
+
+    // V2 ring seed = H(stakeModifier, deep-ancestor hash, BucketTime(block_time)).
+    //
+    // Anti-grind: the stake modifier changes only once per nModifierInterval
+    // (aggregating 64 historical blocks) and the deep ancestor (POPS_RING_SEED_
+    // LOOKBACK back) is long-buried, so the producer of the previous block
+    // cannot freely choose the next ring — biasing it needs long-range control
+    // of a whole interval AND the deep anchor.
+    //
+    // Liveness: the bucketed block time advances with the wall clock, so the
+    // ring re-samples every POPS_TIME_GRANULARITY_SECONDS. If every currently-
+    // sampled staker is offline, real time rotates the ring until an online
+    // staker's commitment is included, so the chain self-heals instead of
+    // stalling. The grind this reintroduces is bounded to the few future
+    // buckets allowed by POPS_MAX_FUTURE_BLOCK_TIME (the same bound the kernel
+    // already lives under), not the old unbounded header grind.
+    int anchor_height = pindexPrev->nHeight - POPS_RING_SEED_LOOKBACK;
+    if (anchor_height < 0) anchor_height = 0;
+    const CBlockIndex* anchor = pindexPrev->GetAncestor(anchor_height);
+
+    const uint32_t bucketed_time = block_time - (block_time % POPS_TIME_GRANULARITY_SECONDS);
+
+    HashWriter ss{};
+    ss << pindexPrev->nStakeModifier
+       << (anchor ? anchor->GetBlockHash() : uint256())
+       << bucketed_time;
+    return ss.GetHash();
+}
+
 
 blsct::Message
 CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& block)
