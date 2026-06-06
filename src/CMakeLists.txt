@@ -433,7 +433,16 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       bls_interface
   )
 
-  # blsct wallet RPCs call into aggregation/rfq/p2pmsg globals owned by the node.
+  # blsct wallet RPCs (blsct/wallet/rpc.cpp) call into aggregation/rfq/p2pmsg
+  # globals that live in navio_node, while navio_node already pulls in
+  # navio_blsct_wallet transitively (navio_node -> navio_common ->
+  # navio_blsct_wallet). Declaring the back-edge here closes the cycle so CMake
+  # repeats both archives on the link line; without it, single-pass linkers
+  # (GNU ld, lld, mingw) scan navio_node before navio_blsct_wallet and fail to
+  # resolve p2pmsg::/rfq::/aggregation:: symbols (LNK is fine on MSVC, which
+  # rescans). navio_node is fully defined by this point.
+  target_link_libraries(navio_blsct_wallet PRIVATE navio_node)
+
   if(BUILD_WALLET_TOOL AND ENABLE_WALLET)
     target_link_libraries(navio-wallet PRIVATE navio_node)
   endif()
