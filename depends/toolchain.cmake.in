@@ -144,11 +144,11 @@ if("@tor_packages@" MATCHES "^[ ]*$")
   set(WITH_TOR OFF CACHE BOOL "")
 else()
   set(WITH_TOR ON CACHE BOOL "")
-  # Bundled Tor daemon built by depends, installed alongside naviod.
+  # Bundled Tor daemon built by depends, installed alongside naviod as navio-tor.
   if(WIN32)
-    set(BUNDLED_TOR_EXECUTABLE "${CMAKE_CURRENT_LIST_DIR}/bin/tor.exe" CACHE FILEPATH "")
+    set(BUNDLED_TOR_EXECUTABLE "${CMAKE_CURRENT_LIST_DIR}/bin/navio-tor.exe" CACHE FILEPATH "")
   else()
-    set(BUNDLED_TOR_EXECUTABLE "${CMAKE_CURRENT_LIST_DIR}/bin/tor" CACHE FILEPATH "")
+    set(BUNDLED_TOR_EXECUTABLE "${CMAKE_CURRENT_LIST_DIR}/bin/navio-tor" CACHE FILEPATH "")
   endif()
 endif()
 

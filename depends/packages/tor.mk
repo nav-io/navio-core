@@ -39,14 +39,16 @@ define $(package)_build_cmds
   $(MAKE) src/app/tor
 endef
 
+# Installed as navio-tor(.exe): a navio-managed Tor daemon, distinct from the
+# system `tor` and from naviod itself.
 ifeq ($(host_os),mingw32)
 define $(package)_stage_cmds
   mkdir -p $($(package)_staging_dir)$(host_prefix)/bin && \
-  cp src/app/tor.exe $($(package)_staging_dir)$(host_prefix)/bin/
+  cp src/app/tor.exe $($(package)_staging_dir)$(host_prefix)/bin/navio-tor.exe
 endef
 else
 define $(package)_stage_cmds
   mkdir -p $($(package)_staging_dir)$(host_prefix)/bin && \
-  cp src/app/tor $($(package)_staging_dir)$(host_prefix)/bin/
+  cp src/app/tor $($(package)_staging_dir)$(host_prefix)/bin/navio-tor
 endef
 endif
