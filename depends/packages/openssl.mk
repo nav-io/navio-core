@@ -10,10 +10,15 @@ define $(package)_set_vars
 $(package)_config_env=AR="$($(package)_ar)" RANLIB="$($(package)_ranlib)" CC="$($(package)_cc)" CROSS_COMPILE=
 $(package)_config_opts=no-shared no-dso no-engine no-tests no-zlib
 $(package)_config_opts+=--prefix=$(host_prefix) --openssldir=$(host_prefix)/etc/openssl --libdir=lib
-# depends' global CFLAGS pass -std=c11, which both hides POSIX prototypes
-# (usleep) and disables the `asm` keyword OpenSSL's bignum code needs. Append
-# -std=gnu11 last so it overrides the inherited -std=c11.
-$(package)_config_opts+=-D_GNU_SOURCE $($(package)_cflags) $($(package)_cppflags) -std=gnu11
+# depends' global CFLAGS pass -std=c11, which disables the `asm` keyword
+# OpenSSL's bignum code needs and hides POSIX prototypes (usleep). Append
+# -std=gnu11 last so it overrides the inherited -std=c11 (gnu11 also enables
+# _DEFAULT_SOURCE, declaring usleep). clang 19 (darwin cross) promotes
+# implicit-function-declaration / int-conversion to hard errors, which the
+# older OpenSSL 3.0.20 sources trip; keep them as warnings so the build
+# matches gcc's behaviour on the other hosts.
+$(package)_config_opts+=$($(package)_cflags) $($(package)_cppflags) -std=gnu11
+$(package)_config_opts+=-Wno-error=implicit-function-declaration -Wno-error=int-conversion
 $(package)_config_opts_linux=-fPIC -Wa,--noexecstack
 $(package)_config_opts_x86_64_linux=linux-x86_64
 $(package)_config_opts_aarch64_linux=linux-aarch64
