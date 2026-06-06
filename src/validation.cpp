@@ -2564,15 +2564,20 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     bool blsct_sig_verify_dispatched = false;
 
     if (params.GetConsensus().fBLSCT && block.IsProofOfStake() && fCheckPosProof) {
-        auto staked_commitments_snapshot = view.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash(), params.GetConsensus().nStakedCommitmentLimit);
+        // V2: seed the staked-commitment ring from a non-grindable beacon
+        // (stake modifier + deep ancestor) instead of the staker-controlled
+        // block header hash. Must match ProofOfStakeLogic::Create / Verify
+        // exactly.
+        const uint256 ring_seed = blsct::CalculateStakeRingSeed(pindex->pprev, block.GetBlockHeader().GetHash(), block.nTime, params.GetConsensus());
+        auto staked_commitments_snapshot = view.GetStakedCommitments().GetElements(ring_seed, params.GetConsensus().nStakedCommitmentLimit);
 
         if (staked_commitments_snapshot.Size() < 2) {
             LogPrint(BCLog::POPS, "PoPS rejected. Staked commitments size is %d\n", staked_commitments_snapshot.Size());
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
         }
 
-        auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindex->pprev);
-        auto eta_phi = blsct::CalculateSetMemProofGeneratorSeed(pindex->pprev, block);
+        auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindex->pprev, block, params.GetConsensus());
+        auto eta_phi = blsct::CalculateSetMemProofGeneratorSeed(pindex->pprev, block, params.GetConsensus());
         auto next_target = blsct::GetNextTargetRequired(pindex->pprev, &block, params.GetConsensus());
 
         // Consensus-level sanity check: reject blocks whose saturating min-value
@@ -4417,8 +4422,17 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
     if (block.GetBlockTime() <= pindexPrev->GetMedianTimePast())
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "time-too-old", "block's timestamp is too early");
 
-    // Check timestamp
-    if (block.Time() > now + std::chrono::seconds{MAX_FUTURE_BLOCK_TIME}) {
+    // Check timestamp. PoS blocks at/after the V2 height use a much tighter
+    // future window (POPS_MAX_FUTURE_BLOCK_TIME) so a staker cannot pre-grind
+    // hundreds of not-yet-valid kernel time-buckets in one slot; honest blocks
+    // sit at ~now (getblocktemplate `curtime`) and are unaffected. The block's
+    // own nTime still feeds the kernel, preserving liveness as real time
+    // advances.
+    const int64_t future_cap =
+        (block.IsProofOfStake() && (pindexPrev->nHeight + 1) >= consensusParams.nPoPSKernelV2Height)
+            ? POPS_MAX_FUTURE_BLOCK_TIME
+            : MAX_FUTURE_BLOCK_TIME;
+    if (block.Time() > now + std::chrono::seconds{future_cap}) {
         return state.Invalid(BlockValidationResult::BLOCK_TIME_FUTURE, "time-too-new", "block timestamp too far in the future");
     }
 

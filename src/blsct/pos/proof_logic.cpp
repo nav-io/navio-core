@@ -18,9 +18,15 @@ using Prover = SetMemProofProver<Arith>;
 namespace blsct {
 ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scalar& m, const Scalar& f, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
 {
-    auto staked_commitments = cache.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash(), params.nStakedCommitmentLimit);
-    auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindexPrev);
-    auto eta_phi = blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, block);
+    // Ring seed: V2 uses the fixed previous block hash so the staker cannot
+    // grind the block header to reshape/censor the anonymity ring; legacy uses
+    // the (grindable) header hash.
+    const uint256 ring_seed = (pindexPrev->nHeight + 1) >= params.nPoPSKernelV2Height
+                                  ? pindexPrev->GetBlockHash()
+                                  : block.GetBlockHeader().GetHash();
+    auto staked_commitments = cache.GetStakedCommitments().GetElements(ring_seed, params.nStakedCommitmentLimit);
+    auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindexPrev, block, params);
+    auto eta_phi = blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, block, params);
 
     auto next_target = blsct::GetNextTargetRequired(pindexPrev, &block, params);
 
@@ -55,15 +61,18 @@ bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* 
 
 bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params, const uint256& kernel_hash)
 {
-    auto staked_commitments = cache.GetStakedCommitments().GetElements(block.GetBlockHeader().GetHash(), params.nStakedCommitmentLimit);
+    const uint256 ring_seed = (pindexPrev->nHeight + 1) >= params.nPoPSKernelV2Height
+                                  ? pindexPrev->GetBlockHash()
+                                  : block.GetBlockHeader().GetHash();
+    auto staked_commitments = cache.GetStakedCommitments().GetElements(ring_seed, params.nStakedCommitmentLimit);
 
     if (staked_commitments.Size() < 2) {
         LogPrint(BCLog::POPS, "PoPS rejected. Staked commitments size is %d\n", staked_commitments.Size());
         return false;
     }
 
-    auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindexPrev);
-    auto eta_phi = blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, block);
+    auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindexPrev, block, params);
+    auto eta_phi = blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, block, params);
 
     auto next_target = blsct::GetNextTargetRequired(pindexPrev, &block, params);
 

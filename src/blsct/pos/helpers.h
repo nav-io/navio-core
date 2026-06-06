@@ -18,6 +18,24 @@
 // economic cost of waiting until a new bucket dominates.
 #define POPS_TIME_GRANULARITY_SECONDS 16u
 
+// V2 anti-grinding: maximum a PoS block's timestamp may lead the validator's
+// clock. The generic MAX_FUTURE_BLOCK_TIME (2h) lets a staker pre-grind ~450
+// not-yet-valid 16 s kernel buckets at once. Block time must stay in the kernel
+// for liveness (advancing real time reveals fresh buckets so the chain can
+// progress when a slot has no winner), so instead the future window is capped
+// to a few buckets: 96 s = 6 * POPS_TIME_GRANULARITY_SECONDS. Enforced only for
+// PoS blocks at/after Consensus::Params::nPoPSKernelV2Height.
+static constexpr int64_t POPS_MAX_FUTURE_BLOCK_TIME = 6 * POPS_TIME_GRANULARITY_SECONDS; // 96 s
+
+// V2 staked-commitment ring seed depth. The ring shuffle must be seeded from a
+// value no single staker can grind: the previous block's hash is grindable by
+// whoever produced it (they pick the next ring). The V2 seed combines the
+// stake modifier (a beacon that only changes once per nModifierInterval and
+// aggregates 64 historical blocks) with the hash of an ancestor this many
+// blocks back, so biasing the ring requires long-range control of both the
+// modifier interval and the deep anchor. 128 blocks.
+static constexpr int POPS_RING_SEED_LOOKBACK = 128;
+
 namespace blsct {
 // `hardened` controls PoPS anti-grinding: when true, `time` is bucketed into
 // POPS_TIME_GRANULARITY_SECONDS before hashing. When false, raw `time` is

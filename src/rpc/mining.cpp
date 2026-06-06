@@ -1024,14 +1024,20 @@ static RPCHelpMan getblocktemplate()
             if (consensusParams.fBLSCT) {
                 UniValue stakedCommitments(UniValue::VARR);
 
-                auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements(pblock->GetBlockHeader().GetHash(), consensusParams.nStakedCommitmentLimit);
+                // Ring seed + eta_phi must be computed the SAME way consensus
+                // will (ProofOfStakeLogic / ConnectBlock): V2 derives both from
+                // fixed prior chain state so the staker cannot grind them.
+                const uint256 ring_seed = (pindexPrev->nHeight + 1) >= consensusParams.nPoPSKernelV2Height
+                                              ? pindexPrev->GetBlockHash()
+                                              : pblock->GetBlockHeader().GetHash();
+                auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements(ring_seed, consensusParams.nStakedCommitmentLimit);
 
                 for (size_t i = 0; i < stakedCommitmentsElements.Size(); ++i)
                     stakedCommitments.push_back(HexStr(stakedCommitmentsElements[i].GetVch()));
 
                 result.pushKV("staked_commitments", stakedCommitments);
-                result.pushKV("eta_fiat_shamir", HexStr(blsct::CalculateSetMemProofRandomness(pindexPrev)));
-                result.pushKV("eta_phi", HexStr(blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, *pblock)));
+                result.pushKV("eta_fiat_shamir", HexStr(blsct::CalculateSetMemProofRandomness(pindexPrev, *pblock, consensusParams)));
+                result.pushKV("eta_phi", HexStr(blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, *pblock, consensusParams)));
                 result.pushKV("prev_time", pindexPrev->nTime);
                 result.pushKV("modifier", pindexPrev->nStakeModifier);
                 // The previous block's accumulated chain work and the

@@ -117,6 +117,33 @@ std::vector<unsigned char> CalculateSetMemProofRandomness(const CBlockIndex* pin
     return std::vector<unsigned char>(hash.begin(), hash.end());
 }
 
+std::vector<unsigned char> CalculateSetMemProofRandomnessV2(const CBlockIndex* pindexPrev, const CBlock& block)
+{
+    // Bind the block body into the set-membership Fiat-Shamir challenge so the
+    // proof is a signature over block contents: mutating any transaction
+    // changes eta_fiat_shamir, which the FS transcript consumes, so the proof
+    // no longer verifies. This restores the anti-malleability property that the
+    // legacy eta_phi(vtx) generator seed provided — but here it feeds ONLY the
+    // challenge, not phi / the kernel hash, so it grants no grinding leverage
+    // over eligibility. Still binds pindexPrev so cross-height replay is blocked.
+    HashWriter ss{};
+
+    ss << pindexPrev->GetBlockHash() << pindexPrev->nStakeModifier << TX_NO_WITNESS(block.vtx);
+
+    auto hash = ss.GetHash();
+
+    return std::vector<unsigned char>(hash.begin(), hash.end());
+}
+
+std::vector<unsigned char> CalculateSetMemProofRandomness(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
+{
+    const int height = pindexPrev->nHeight + 1;
+    if (height >= params.nPoPSKernelV2Height) {
+        return CalculateSetMemProofRandomnessV2(pindexPrev, block);
+    }
+    return CalculateSetMemProofRandomness(pindexPrev);
+}
+
 
 blsct::Message
 CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& block)
@@ -128,6 +155,35 @@ CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& b
     auto hash = ss.GetHash();
 
     return std::vector<unsigned char>(hash.begin(), hash.end());
+}
+
+blsct::Message
+CalculateSetMemProofGeneratorSeedV2(const CBlockIndex* pindexPrev)
+{
+    // Seed the set-membership generator (which builds phi = h3*f + g2*m, with
+    // g2 = Derive(base_H, 0, eta_phi)) from FIXED prior chain state only. The
+    // legacy seed hashed block.vtx, letting a staker grind the block contents
+    // to vary eta_phi -> g2 -> phi -> kernel_hash and so multiply their staking
+    // draws. Binding to pindexPrev removes that lever entirely while still
+    // tying the proof to the previous block (replay across heights is also
+    // blocked independently by eta_fiat_shamir / CalculateSetMemProofRandomness).
+    HashWriter ss{};
+
+    ss << pindexPrev->nHeight << pindexPrev->nStakeModifier << pindexPrev->GetBlockHash();
+
+    auto hash = ss.GetHash();
+
+    return std::vector<unsigned char>(hash.begin(), hash.end());
+}
+
+blsct::Message
+CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
+{
+    const int height = pindexPrev->nHeight + 1;
+    if (height >= params.nPoPSKernelV2Height) {
+        return CalculateSetMemProofGeneratorSeedV2(pindexPrev);
+    }
+    return CalculateSetMemProofGeneratorSeed(pindexPrev, block);
 }
 
 uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)

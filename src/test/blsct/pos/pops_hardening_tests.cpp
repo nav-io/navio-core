@@ -16,7 +16,12 @@
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/pos/helpers.h>
+#include <blsct/pos/pos.h>
 #include <blsct/pos/proof.h>
+#include <chain.h>
+#include <consensus/params.h>
+#include <primitives/block.h>
+#include <primitives/transaction.h>
 #include <test/util/setup_common.h>
 #include <uint256.h>
 
@@ -126,6 +131,103 @@ BOOST_AUTO_TEST_CASE(kernel_hash_phi_legacy_ignores_phi)
     uint256 legacy = blsct::CalculateKernelHash(prevTime, modifier, time, /*hardened=*/false);
     uint256 phi_unhardened = blsct::CalculateKernelHashWithChainWork(prevTime, modifier, work, time, phi, /*hardened=*/false);
     BOOST_CHECK(legacy == phi_unhardened);
+}
+
+// ---------------------------------------------------------------------------
+// V2 anti-grinding seed fixes (eta_phi de-grind + eta_fiat_shamir vtx binding).
+// ---------------------------------------------------------------------------
+
+namespace {
+// Minimal stand-in prev-block index. `CalculateSetMemProof*` only read
+// nHeight, nStakeModifier, and GetBlockHash() (phashBlock).
+struct PrevIndex {
+    uint256 hash;
+    CBlockIndex index;
+    PrevIndex(int height, uint64_t modifier, const uint256& h) : hash(h)
+    {
+        index.phashBlock = &hash;
+        index.nHeight = height;
+        index.nStakeModifier = modifier;
+    }
+};
+
+// A block whose vtx carries one dummy tx with a chosen lock-time, so two blocks
+// can differ ONLY in their transaction set.
+CBlock BlockWithMarker(uint32_t marker)
+{
+    CBlock b;
+    CMutableTransaction tx;
+    tx.nLockTime = marker;
+    b.vtx.push_back(MakeTransactionRef(std::move(tx)));
+    return b;
+}
+
+Consensus::Params ParamsWithV2(int v2_height)
+{
+    Consensus::Params p{};
+    p.nPoPSKernelV2Height = v2_height;
+    return p;
+}
+} // namespace
+
+BOOST_AUTO_TEST_CASE(v2_eta_phi_seed_ignores_block_vtx)
+{
+    // V2 generator seed must NOT depend on block.vtx (so phi/kernel can't be
+    // ground by mutating transactions); the legacy seed DOES depend on vtx.
+    PrevIndex prev(21999, 0xabcdULL, uint256S("11"));
+    CBlock blockA = BlockWithMarker(1);
+    CBlock blockB = BlockWithMarker(2);
+
+    auto v2 = ParamsWithV2(0);       // V2 active from genesis
+    auto legacy = ParamsWithV2(1000000); // V2 not yet active at height 22000
+
+    // Legacy: seed varies with vtx.
+    auto seed_legacy_A = blsct::CalculateSetMemProofGeneratorSeed(&prev.index, blockA, legacy);
+    auto seed_legacy_B = blsct::CalculateSetMemProofGeneratorSeed(&prev.index, blockB, legacy);
+    BOOST_CHECK(seed_legacy_A != seed_legacy_B);
+
+    // V2: seed invariant to vtx.
+    auto seed_v2_A = blsct::CalculateSetMemProofGeneratorSeed(&prev.index, blockA, v2);
+    auto seed_v2_B = blsct::CalculateSetMemProofGeneratorSeed(&prev.index, blockB, v2);
+    BOOST_CHECK(seed_v2_A == seed_v2_B);
+    BOOST_CHECK(seed_v2_A == blsct::CalculateSetMemProofGeneratorSeedV2(&prev.index));
+}
+
+BOOST_AUTO_TEST_CASE(v2_eta_fiat_shamir_binds_block_vtx)
+{
+    // V2 Fiat-Shamir randomness MUST depend on block.vtx so the set-membership
+    // proof is a signature over the block body (anti-malleability). The legacy
+    // randomness does not bind vtx.
+    PrevIndex prev(21999, 0xabcdULL, uint256S("22"));
+    CBlock blockA = BlockWithMarker(1);
+    CBlock blockB = BlockWithMarker(2);
+
+    auto v2 = ParamsWithV2(0);
+    auto legacy = ParamsWithV2(1000000);
+
+    auto fs_v2_A = blsct::CalculateSetMemProofRandomness(&prev.index, blockA, v2);
+    auto fs_v2_B = blsct::CalculateSetMemProofRandomness(&prev.index, blockB, v2);
+    BOOST_CHECK(fs_v2_A != fs_v2_B); // bound to vtx => signature over block
+
+    auto fs_legacy_A = blsct::CalculateSetMemProofRandomness(&prev.index, blockA, legacy);
+    auto fs_legacy_B = blsct::CalculateSetMemProofRandomness(&prev.index, blockB, legacy);
+    BOOST_CHECK(fs_legacy_A == fs_legacy_B); // legacy ignores vtx
+    BOOST_CHECK(fs_legacy_A == blsct::CalculateSetMemProofRandomness(&prev.index));
+}
+
+BOOST_AUTO_TEST_CASE(v2_eta_phi_unlinkable_across_heights)
+{
+    // Unlinkability: the SAME coin staking at two different heights gets a
+    // different generator seed (different pindexPrev) -> different g2 -> the
+    // coin's phi differs block-to-block, so on-chain phis are not a linkage.
+    PrevIndex prevH1(21999, 0x1111ULL, uint256S("aa"));
+    PrevIndex prevH2(22000, 0x2222ULL, uint256S("bb"));
+
+    auto a = blsct::CalculateSetMemProofGeneratorSeedV2(&prevH1.index);
+    auto b = blsct::CalculateSetMemProofGeneratorSeedV2(&prevH2.index);
+    BOOST_CHECK(a != b);
+    // Deterministic for a fixed prev (sanity).
+    BOOST_CHECK(a == blsct::CalculateSetMemProofGeneratorSeedV2(&prevH1.index));
 }
 
 // ---------------------------------------------------------------------------
