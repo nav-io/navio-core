@@ -5,8 +5,15 @@ $(package)_file_name = boost-$($(package)_version)-cmake.tar.gz
 $(package)_sha256_hash = 913ca43d49e93d1b158c9862009add1518a4c665e7853b349a6492d158b036d4
 $(package)_build_subdir = build
 
+# i2pd needs these Boost components built as (static) libraries. Only add them
+# when the bundled I2P router is enabled (NO_I2P unset), so non-I2P builds keep
+# Boost header-only as before.
+ifeq ($(NO_I2P),)
+boost_i2p_libs = ;filesystem;program_options;atomic
+endif
+
 define $(package)_set_vars
-  $(package)_config_opts = -DBOOST_INCLUDE_LIBRARIES="multi_index;test"
+  $(package)_config_opts = -DBOOST_INCLUDE_LIBRARIES="multi_index;test$(boost_i2p_libs)"
   $(package)_config_opts += -DBOOST_TEST_HEADERS_ONLY=ON
   $(package)_config_opts += -DBOOST_ENABLE_MPI=OFF
   $(package)_config_opts += -DBOOST_ENABLE_PYTHON=OFF

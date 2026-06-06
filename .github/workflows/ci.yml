@@ -1438,15 +1438,17 @@ jobs:
       - name: Build depends with I2P
         run: |
           # NO_I2P is intentionally NOT set: this job builds the bundled I2P
-          # stack. The other NO_* flags drop packages I2P does not need so the
-          # job stays focused (gmp is built unconditionally by depends).
+          # stack (boost + openssl + zlib + i2pd). The other NO_* flags drop
+          # packages I2P does not need so the job stays focused (gmp is built
+          # unconditionally by depends; boost is required by i2pd).
           env -u CC -u CXX make -C depends -j"$(nproc)" HOST=x86_64-pc-linux-gnu \
-            NO_BOOST=1 NO_SQLITE=1 NO_WALLET=1 NO_ZMQ=1 NO_USDT=1 NO_OPENMP=1 NO_LIBEVENT=1
+            NO_SQLITE=1 NO_WALLET=1 NO_ZMQ=1 NO_USDT=1 NO_OPENMP=1 NO_LIBEVENT=1
 
-      - name: Verify I2P depends artifacts
+      - name: Verify bundled i2pd binary
         run: |
-          # depends stages built packages as cache tarballs under built/.
-          for pkg in openssl zlib; do
-            ls depends/built/x86_64-pc-linux-gnu/${pkg}/${pkg}-*.tar.gz \
-              || { echo "missing built ${pkg}"; exit 1; }
-          done
+          tarball=$(ls depends/built/x86_64-pc-linux-gnu/i2pd/i2pd-*.tar.gz)
+          tar tzf "${tarball}" | grep -q './bin/i2pd' || { echo "i2pd binary not in cache"; exit 1; }
+          mkdir -p /tmp/i2pdcheck
+          tar xzf "${tarball}" -C /tmp/i2pdcheck
+          file /tmp/i2pdcheck/bin/i2pd
+          /tmp/i2pdcheck/bin/i2pd --version
