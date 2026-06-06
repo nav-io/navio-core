@@ -8,8 +8,12 @@ $(package)_build_subdir = build
 # i2pd needs these Boost components built as (static) libraries. Only add them
 # when the bundled I2P router is enabled (NO_I2P unset), so non-I2P builds keep
 # Boost header-only as before.
+# Boost libraries i2pd includes (compiled ones: filesystem/program_options/
+# atomic/system; the rest are header-only). The Boost CMake superbuild pulls in
+# their transitive dependencies, installing the headers i2pd needs (asio,
+# lexical_cast, property_tree, algorithm, shared_ptr, static_assert, ...).
 ifeq ($(NO_I2P),)
-boost_i2p_libs = ;filesystem;program_options;atomic
+boost_i2p_libs = ;filesystem;program_options;atomic;system;asio;algorithm;lexical_cast;property_tree
 endif
 
 define $(package)_set_vars
