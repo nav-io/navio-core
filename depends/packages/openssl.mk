@@ -8,9 +8,10 @@ $(package)_sha256_hash=c80a01dfc70ece4dc21168932c37739042d404d46ccc81a5986dd7531
 # link OpenSSL. Kept minimal: no shared libs, no engines/tests/zlib.
 define $(package)_set_vars
 $(package)_config_env=AR="$($(package)_ar)" RANLIB="$($(package)_ranlib)" CC="$($(package)_cc)" CROSS_COMPILE=
-# On mingw the openssl app builds a windres resource; set CROSS_COMPILE so
-# OpenSSL finds the prefixed windres ($(host)-windres) rather than a bare one.
-$(package)_config_env_mingw32=CROSS_COMPILE=$(host)-
+# On mingw the openssl app compiles a windres resource. Point RC at the
+# prefixed windres directly (do NOT use CROSS_COMPILE: OpenSSL would also
+# prepend it to the already-prefixed CC, doubling the prefix).
+$(package)_config_env_mingw32=RC="$(host)-windres"
 $(package)_config_opts=no-shared no-dso no-engine no-tests no-zlib
 $(package)_config_opts+=--prefix=$(host_prefix) --openssldir=$(host_prefix)/etc/openssl --libdir=lib
 # depends' global CFLAGS pass -std=c11, which disables the `asm` keyword
@@ -26,8 +27,7 @@ $(package)_config_opts_linux=-fPIC -Wa,--noexecstack
 $(package)_config_opts_x86_64_linux=linux-x86_64
 $(package)_config_opts_aarch64_linux=linux-aarch64
 $(package)_config_opts_arm_linux=linux-armv4
-# 32-bit needs libatomic for the 8-byte atomics used by the openssl app.
-$(package)_config_opts_i686_linux=linux-x86 -latomic
+$(package)_config_opts_i686_linux=linux-x86
 $(package)_config_opts_riscv64_linux=linux64-riscv64
 $(package)_config_opts_x86_64_mingw32=mingw64
 $(package)_config_opts_i686_mingw32=mingw

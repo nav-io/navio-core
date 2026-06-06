@@ -464,7 +464,9 @@ jobs:
             cc: clang
             cxx: clang++
             depends_host: i686-pc-linux-gnu
-            depends_opts: MULTIPROCESS=1 DEBUG=1 CC='clang -m32' CXX='clang++ -m32'
+            # NO_I2P=1: 32-bit x86 needs libatomic for libcrypto's 8-byte atomics
+            # and isn't a release/guix target; skip the bundled I2P stack here.
+            depends_opts: MULTIPROCESS=1 DEBUG=1 CC='clang -m32' CXX='clang++ -m32' NO_I2P=1
             cmake_flags: >-
               -DCMAKE_BUILD_TYPE=Debug
               -DWITH_MULTIPROCESS=ON
