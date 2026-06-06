@@ -20,8 +20,13 @@ ifeq ($(host_os),mingw32)
 define $(package)_build_cmds
   unset MAKEFLAGS && $(MAKE) -f win32/Makefile.gcc PREFIX="$(host)-" CC="$($(package)_cc)" AR="$($(package)_ar)" RANLIB="$($(package)_ranlib)" CFLAGS="$($(package)_cflags) $($(package)_cppflags)" libz.a
 endef
+# Stage only the static lib + headers by hand; the makefile's `install` target
+# also builds the DLL's resource via an unprefixed `windres`, which we neither
+# have nor need.
 define $(package)_stage_cmds
-  unset MAKEFLAGS && $(MAKE) -f win32/Makefile.gcc install DESTDIR="$($(package)_staging_dir)/" BINARY_PATH="$(host_prefix)/bin" INCLUDE_PATH="$(host_prefix)/include" LIBRARY_PATH="$(host_prefix)/lib"
+  mkdir -p $($(package)_staging_dir)$(host_prefix)/lib $($(package)_staging_dir)$(host_prefix)/include && \
+  cp libz.a $($(package)_staging_dir)$(host_prefix)/lib/ && \
+  cp zlib.h zconf.h $($(package)_staging_dir)$(host_prefix)/include/
 endef
 else
 define $(package)_config_cmds
