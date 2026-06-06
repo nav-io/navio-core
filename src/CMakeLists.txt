@@ -382,6 +382,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     script/sigcache.cpp
     signet.cpp
     timedata.cpp
+    i2pd_process.cpp
     torcontrol.cpp
     txdb.cpp
     txmempool.cpp
