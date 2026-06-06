@@ -1445,7 +1445,7 @@ jobs:
 
       - name: Verify bundled tor binary
         run: |
-          tor_bin="depends/x86_64-pc-linux-gnu/bin/navio-tor"
+          tor_bin="depends/x86_64-pc-linux-gnu/bin/tor"
           test -x "${tor_bin}" || { echo "bundled tor not built at ${tor_bin}"; exit 1; }
           file "${tor_bin}"
           "${tor_bin}" --version
