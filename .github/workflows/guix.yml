@@ -435,6 +435,11 @@ jobs:
           export BASE_CACHE="${HOME}/depends-cache"
           mkdir -p "${SOURCES_PATH}" "${BASE_CACHE}"
 
+          # Skip the bundled Tor daemon (OpenSSL+zlib+tor) in release builds for
+          # now; it is exercised by the dedicated "depends with Tor" CI job.
+          # Drop this once Tor bundling is wired into the release artifacts.
+          export NO_TOR=1
+
           cd "${GITHUB_WORKSPACE}"
 
           # guix time-machine clones the guix repo from a single git mirror

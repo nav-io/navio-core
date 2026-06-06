@@ -1018,7 +1018,9 @@ jobs:
           # from HOST instead of inheriting the linux-cmake matrix CC/CXX
           # (which would otherwise leak into per-package configure scripts —
           # e.g. zeromq would probe windows.h with the host gcc and fail).
-          env -u CC -u CXX make -C depends HOST=${{ matrix.depends_host }} ${{ matrix.depends_opts }}
+          # NO_TOR=1: the bundled Tor daemon (OpenSSL+zlib+tor) is heavy and is
+          # only exercised by the dedicated "depends with Tor" job below.
+          env -u CC -u CXX make -C depends HOST=${{ matrix.depends_host }} ${{ matrix.depends_opts }} NO_TOR=1
 
       - name: Dump depends config.log on failure
         if: failure() && matrix.depends_host
@@ -1332,7 +1334,8 @@ jobs:
           docker exec "${CONTAINER_NAME}" bash -eu -c '
             env -u CC -u CXX make -C depends \
               HOST='"${DEPENDS_HOST}"' \
-              CC="gcc -m32" CXX="g++ -m32"
+              CC="gcc -m32" CXX="g++ -m32" \
+              NO_TOR=1
           '
 
       - name: Save depends cache
@@ -1398,3 +1401,51 @@ jobs:
         with:
           path: ${{ env.RUNNER_TEMP }}/ccache_dir
           key: ${{ steps.ccache-cache.outputs.cache-primary-key }}
+
+  depends-tor:
+    # The only job that builds the bundled Tor daemon (openssl + zlib + tor).
+    # Every other job passes NO_TOR=1 to keep the depends build light. Unrelated
+    # heavy packages (boost, sqlite, zmq, usdt, libomp) are skipped here so this
+    # validates just the Tor toolchain.
+    name: 'depends with Tor (x86_64-linux)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake automake autoconf libtool pkg-config \
+            bison curl ca-certificates python3 perl
+
+      - name: Cache depends sources
+        uses: actions/cache@v5
+        with:
+          path: depends/sources
+          key: depends-tor-sources-${{ hashFiles('depends/packages/*.mk') }}
+
+      - name: Cache built depends
+        uses: actions/cache@v5
+        with:
+          path: depends/x86_64-pc-linux-gnu
+          key: depends-tor-x86_64-linux-${{ hashFiles('depends/**') }}
+
+      - name: Build depends with Tor
+        run: |
+          # NO_TOR is intentionally NOT set: this job builds the bundled Tor.
+          # The other NO_* flags drop packages Tor does not need so the job
+          # stays focused on libevent + openssl + zlib + tor (gmp is built
+          # unconditionally by depends).
+          env -u CC -u CXX make -C depends -j"$(nproc)" HOST=x86_64-pc-linux-gnu \
+            NO_BOOST=1 NO_SQLITE=1 NO_WALLET=1 NO_ZMQ=1 NO_USDT=1 NO_OPENMP=1
+
+      - name: Verify bundled tor binary
+        run: |
+          tor_bin="depends/x86_64-pc-linux-gnu/bin/tor"
+          test -x "${tor_bin}" || { echo "bundled tor not built at ${tor_bin}"; exit 1; }
+          file "${tor_bin}"
+          "${tor_bin}" --version

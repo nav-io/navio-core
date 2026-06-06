@@ -41,6 +41,9 @@ endef
 define $(package)_postprocess_cmds
   rm -rf bin lib/pkgconfig && \
   rm include/ev*.h && \
-  rm include/event2/*_compat.h && \
-  rm lib/libevent.a
+  rm include/event2/*_compat.h
 endef
+# Note: the combined lib/libevent.a (which upstream deletes here) is kept so the
+# bundled Tor daemon's --enable-static-libevent can link it. navio itself links
+# the split components (event_core/event_extra/event_pthreads via
+# FindLibevent.cmake), so the extra archive is inert for the main build.

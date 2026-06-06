@@ -15,6 +15,10 @@ multiprocess_native_packages = native_libmultiprocess native_capnp
 
 usdt_linux_packages=systemtap
 
+# Bundled Tor daemon and its dependencies (libevent is already a package and is
+# pulled in via tor's _dependencies). Built unless NO_TOR=1.
+tor_packages = tor openssl zlib
+
 # Darwin no longer needs a depends-managed toolchain: the guix profile
 # defined by contrib/guix/manifest.scm's darwin branch ships clang +
 # llvm-* + lld, and depends/hosts/darwin.mk wires them via PATH. The

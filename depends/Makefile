@@ -41,6 +41,7 @@ NO_WALLET ?=
 NO_ZMQ ?=
 NO_USDT ?=
 NO_OPENMP ?=
+NO_TOR ?=
 MULTIPROCESS ?=
 LTO ?=
 NO_HARDEN ?=
@@ -173,7 +174,11 @@ NO_OPENMP=1
 endif
 libomp_packages_$(NO_OPENMP) = $(libomp_packages)
 
-packages += $($(host_arch)_$(host_os)_packages) $($(host_os)_packages) $(boost_packages_) $(libevent_packages_) $(wallet_packages_) $(usdt_packages_) $(libomp_packages_)
+# Bundled Tor daemon (and its crypto/compression deps) for built-in onion
+# support. Skipped when NO_TOR=1 is passed.
+tor_packages_$(NO_TOR) = $(tor_packages)
+
+packages += $($(host_arch)_$(host_os)_packages) $($(host_os)_packages) $(boost_packages_) $(libevent_packages_) $(wallet_packages_) $(usdt_packages_) $(libomp_packages_) $(tor_packages_)
 native_packages += $($(host_arch)_$(host_os)_native_packages) $($(host_os)_native_packages)
 
 ifneq ($(zmq_packages_),)
@@ -242,6 +247,7 @@ $(host_prefix)/toolchain.cmake : toolchain.cmake.in $(host_prefix)/.stamp_$(fina
 	    -e 's|@wallet_packages@|$(wallet_packages_)|' \
 	    -e 's|@usdt_packages@|$(usdt_packages_)|' \
 	    -e 's|@multiprocess_packages@|$(multiprocess_packages_)|' \
+	    -e 's|@tor_packages@|$(tor_packages_)|' \
 	    $< > $@
 	touch $@
 
@@ -291,6 +297,7 @@ $(host_prefix)/share/config.site : config.site.in $(host_prefix)/.stamp_$(final_
             -e 's|@no_sqlite@|$(NO_SQLITE)|' \
             -e 's|@no_usdt@|$(NO_USDT)|' \
             -e 's|@no_openmp@|$(NO_OPENMP)|' \
+            -e 's|@no_tor@|$(NO_TOR)|' \
             -e 's|@multiprocess@|$(MULTIPROCESS)|' \
             -e 's|@lto@|$(LTO)|' \
             -e 's|@no_harden@|$(NO_HARDEN)|' \
