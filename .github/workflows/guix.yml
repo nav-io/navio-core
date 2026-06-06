@@ -433,11 +433,6 @@ jobs:
           # so the cache round-trips.
           export SOURCES_PATH="${HOME}/depends-sources"
           export BASE_CACHE="${HOME}/depends-cache"
-
-          # Skip the bundled I2P stack (openssl+zlib+boost+i2pd) in release
-          # builds for now; it is exercised by the dedicated "depends with I2P"
-          # CI job. Drop this once I2P bundling is wired into release artifacts.
-          export NO_I2P=1
           mkdir -p "${SOURCES_PATH}" "${BASE_CACHE}"
 
           cd "${GITHUB_WORKSPACE}"

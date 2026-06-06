@@ -650,7 +650,9 @@ jobs:
             cc: clang-17
             cxx: clang++-17
             depends_host: x86_64-pc-linux-gnu
-            depends_opts: CC=clang-17 CXX='clang++-17 -stdlib=libc++' NO_OPENMP=1
+            # NO_I2P=1: the bundled i2pd/OpenSSL/Boost are not instrumented, so
+            # building them under the sanitizer is wasteful/unsound.
+            depends_opts: CC=clang-17 CXX='clang++-17 -stdlib=libc++' NO_OPENMP=1 NO_I2P=1
             cmake_flags: >-
               -DSANITIZERS=thread
               -DWITH_MCL_OPENMP=OFF
@@ -719,6 +721,7 @@ jobs:
               -lc++ -lc++abi -lpthread
               -Wno-unused-command-line-argument"
               NO_OPENMP=1
+              NO_I2P=1
             # MSAN_AND_LIBCXX_FLAGS C++ side: full set passed to cmake so the
             # instrumented libc++ headers + rpath reach both compile and link lines.
             # APPEND_CFLAGS carries the non-sanitize extra MSan bits for C sources;
@@ -1018,9 +1021,10 @@ jobs:
           # from HOST instead of inheriting the linux-cmake matrix CC/CXX
           # (which would otherwise leak into per-package configure scripts —
           # e.g. zeromq would probe windows.h with the host gcc and fail).
-          # NO_I2P=1: the bundled I2P router (openssl+zlib+boost+i2pd) is heavy
-          # and is only exercised by the dedicated "depends with I2P" job below.
-          env -u CC -u CXX make -C depends HOST=${{ matrix.depends_host }} ${{ matrix.depends_opts }} NO_I2P=1
+          # I2P is left enabled here so the bundled router (openssl+zlib+boost+
+          # i2pd) gets cross-compile coverage across the matrix (mingw, darwin,
+          # arm, i686). Pass NO_I2P=1 locally to skip it.
+          env -u CC -u CXX make -C depends HOST=${{ matrix.depends_host }} ${{ matrix.depends_opts }}
 
       - name: Dump depends config.log on failure
         if: failure() && matrix.depends_host
@@ -1334,8 +1338,7 @@ jobs:
           docker exec "${CONTAINER_NAME}" bash -eu -c '
             env -u CC -u CXX make -C depends \
               HOST='"${DEPENDS_HOST}"' \
-              CC="gcc -m32" CXX="g++ -m32" \
-              NO_I2P=1
+              CC="gcc -m32" CXX="g++ -m32"
           '
 
       - name: Save depends cache
@@ -1401,54 +1404,3 @@ jobs:
         with:
           path: ${{ env.RUNNER_TEMP }}/ccache_dir
           key: ${{ steps.ccache-cache.outputs.cache-primary-key }}
-
-  depends-i2p:
-    # The only job that builds the bundled I2P stack. Every other job passes
-    # NO_I2P=1 to keep the depends build light. Unrelated heavy packages (boost
-    # header-only set, sqlite, zmq, usdt, libomp) are skipped so this validates
-    # just the I2P toolchain. For now that is openssl + zlib (the reused, proven
-    # recipes); the i2pd package and its compiled Boost components are added next.
-    name: 'depends with I2P (x86_64-linux)'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake automake autoconf libtool pkg-config \
-            bison curl ca-certificates python3 perl
-
-      - name: Cache depends sources
-        uses: actions/cache@v5
-        with:
-          path: depends/sources
-          key: depends-i2p-sources-${{ hashFiles('depends/packages/*.mk') }}
-
-      - name: Cache built depends
-        uses: actions/cache@v5
-        with:
-          path: depends/x86_64-pc-linux-gnu
-          key: depends-i2p-x86_64-linux-${{ hashFiles('depends/**') }}
-
-      - name: Build depends with I2P
-        run: |
-          # NO_I2P is intentionally NOT set: this job builds the bundled I2P
-          # stack (boost + openssl + zlib + i2pd). The other NO_* flags drop
-          # packages I2P does not need so the job stays focused (gmp is built
-          # unconditionally by depends; boost is required by i2pd).
-          env -u CC -u CXX make -C depends -j"$(nproc)" HOST=x86_64-pc-linux-gnu \
-            NO_SQLITE=1 NO_WALLET=1 NO_ZMQ=1 NO_USDT=1 NO_OPENMP=1 NO_LIBEVENT=1
-
-      - name: Verify bundled i2pd binary
-        run: |
-          tarball=$(ls depends/built/x86_64-pc-linux-gnu/i2pd/i2pd-*.tar.gz)
-          tar tzf "${tarball}" | grep -q './bin/i2pd' || { echo "i2pd binary not in cache"; exit 1; }
-          mkdir -p /tmp/i2pdcheck
-          tar xzf "${tarball}" -C /tmp/i2pdcheck
-          file /tmp/i2pdcheck/bin/i2pd
-          /tmp/i2pdcheck/bin/i2pd --version

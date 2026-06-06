@@ -435,6 +435,10 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       $<TARGET_NAME_IF_EXISTS:navio_wallet>
     )
     install_binary_component(naviod HAS_MANPAGE)
+    # Ship the bundled i2pd router alongside naviod so -i2pd works out of the box.
+    if(WITH_I2P AND BUNDLED_I2P_EXECUTABLE)
+      install(PROGRAMS "${BUNDLED_I2P_EXECUTABLE}" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT naviod)
+    endif()
   endif()
 
   add_library(navio_cli STATIC EXCLUDE_FROM_ALL
