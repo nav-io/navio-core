@@ -14,10 +14,15 @@ $(package)_build_subdir = build
 # lexical_cast, property_tree, algorithm, shared_ptr, static_assert, ...).
 ifeq ($(NO_I2P),)
 boost_i2p_libs = ;filesystem;program_options;atomic;system;asio;algorithm;lexical_cast;property_tree
+# Asio's dependency closure drags in Boost.Context/Coroutine/Fiber, which have
+# per-arch assembly that mis-detects on cross targets (picks i386 asm for arm).
+# i2pd uses none of them (header-only Asio only), so exclude them.
+boost_i2p_exclude = -DBOOST_EXCLUDE_LIBRARIES="context;coroutine;fiber"
 endif
 
 define $(package)_set_vars
   $(package)_config_opts = -DBOOST_INCLUDE_LIBRARIES="multi_index;test$(boost_i2p_libs)"
+  $(package)_config_opts += $(boost_i2p_exclude)
   $(package)_config_opts += -DBOOST_TEST_HEADERS_ONLY=ON
   $(package)_config_opts += -DBOOST_ENABLE_MPI=OFF
   $(package)_config_opts += -DBOOST_ENABLE_PYTHON=OFF
