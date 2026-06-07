@@ -366,6 +366,7 @@ BASE_SCRIPTS = [
     'blsct_output_storage.py',
     'blsct_block_rpc.py',
     'blsct_rawtransaction.py',
+    'blsct_cold_signing.py',
     'blsct_import_scriptpubkeys.py',
     'p2pmsg_echo.py',
     'p2pmsg_integration.py',

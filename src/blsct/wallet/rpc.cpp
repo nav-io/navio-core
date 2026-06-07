@@ -2188,18 +2188,30 @@ RPCHelpMan createblsctrawtransaction()
                     }
                 }
 
-                // If private key is not provided, try to get it from the wallet
+                // Record the prevout so that an offline signer without a copy
+                // of the blockchain can derive the spending key from the
+                // embedded blsctData (blinding/spending public keys).
+                if (!wallet_prevout.IsNull()) {
+                    unsigned_input.out = wallet_prevout;
+                }
+
+                // If a private key is not provided, try to get it from the
+                // wallet. On a watch-only / view-key (audit key) wallet this
+                // fails because no spend key is available; in that case we leave
+                // the spending key empty and defer derivation to
+                // signblsctrawtransaction, relying on the prevout (blsctData)
+                // captured above. We can only defer when we have that prevout.
                 if (!o.exists("spending_key")) {
-                    if (wallet_prevout.IsNull()) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Output %s not found in wallet", txid.GetHex()));
-                    }
-
                     blsct::PrivateKey spending_key;
-                    if (!blsct_km->GetSpendingKeyForOutputWithCache(wallet_prevout, spending_key) || !spending_key.IsValid()) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Spending key not available for output %s", txid.GetHex()));
+                    const bool can_derive = !pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_DISABLE_PRIVATE_KEYS);
+                    if (!wallet_prevout.IsNull() && can_derive && blsct_km->GetSpendingKeyForOutputWithCache(wallet_prevout, spending_key) && spending_key.IsValid()) {
+                        unsigned_input.sk = spending_key;
+                    } else if (wallet_prevout.IsNull()) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf(
+                            "Output %s not found in wallet; either provide \"spending_key\", or run on a wallet that owns the output so the prevout can be embedded for offline signing",
+                            txid.GetHex()));
                     }
-
-                    unsigned_input.sk = spending_key;
+                    // Otherwise: spending key deferred to the offline signer.
                 }
 
                 // Validate: spending key must produce a public key matching the UTXO's spendingKey
@@ -2616,19 +2628,25 @@ RPCHelpMan fundblsctrawtransaction()
                             input.in.prevout = output.outpoint;
                             input.value = Scalar(input_amount);
                             input.gamma = input_gamma;
+                            // Embed the prevout so an offline (chainless) signer
+                            // can derive the spending key from its blsctData.
+                            input.out = output.txout;
 
+                            // Try to derive the spending key now. On a watch-only
+                            // / view-key wallet this is not possible, so we defer
+                            // it to signblsctrawtransaction. The embedded prevout
+                            // lets the offline signer derive it later.
                             blsct::PrivateKey spending_key;
-                            if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
-                                continue;
-                            }
-                            input.sk = spending_key;
-
-                            if (!output.txout.blsctData.spendingKey.IsZero()) {
-                                auto signing_pubkey = spending_key.GetPublicKey();
-                                auto expected_pubkey = blsct::PublicKey(output.txout.blsctData.spendingKey);
-                                if (signing_pubkey != expected_pubkey) {
-                                    continue;
+                            const bool can_derive = !pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_DISABLE_PRIVATE_KEYS);
+                            if (can_derive && blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) && spending_key.IsValid()) {
+                                if (!output.txout.blsctData.spendingKey.IsZero()) {
+                                    auto signing_pubkey = spending_key.GetPublicKey();
+                                    auto expected_pubkey = blsct::PublicKey(output.txout.blsctData.spendingKey);
+                                    if (signing_pubkey != expected_pubkey) {
+                                        continue;
+                                    }
                                 }
+                                input.sk = spending_key;
                             }
 
                             unsigned_tx.AddInput(input);
@@ -2768,7 +2786,60 @@ RPCHelpMan signblsctrawtransaction()
             }
             auto& unsigned_tx = unsigned_tx_opt.value();
 
-            pwallet->GetOrCreateBLSCTKeyMan();
+            auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            // Fill in any spending keys that were deferred by a watch-only
+            // creator (createblsctrawtransaction / fundblsctrawtransaction on a
+            // view-key wallet). The offline signer derives them from the prevout
+            // blsctData embedded in each input, using its own view+spend keys and
+            // deterministic sub-address pool. No blockchain access is required.
+            bool needs_derivation = false;
+            for (const auto& in : unsigned_tx.GetInputs()) {
+                if (!in.sk.IsValid()) {
+                    needs_derivation = true;
+                    break;
+                }
+            }
+            if (needs_derivation) {
+                if (pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+                    throw JSONRPCError(RPC_WALLET_ERROR,
+                        "Cannot derive the spending key: this is a watch-only / view-key wallet with no private spend key. Sign on the offline wallet that holds the spend keys.");
+                }
+                EnsureWalletIsUnlocked(*pwallet);
+                for (auto& in : unsigned_tx.GetInputs()) {
+                    if (in.sk.IsValid()) continue;
+
+                    // Prefer the prevout data attached to the unsigned tx so an
+                    // offline signer can derive the key without the blockchain.
+                    CTxOut prevout = in.out;
+
+                    // Fall back to the wallet's own knowledge of the output
+                    // (requires a synced chain) only when no prevout was attached.
+                    if (prevout.IsNull()) {
+                        if (const wallet::CWalletOutput* wallet_output = pwallet->GetWalletOutput(in.in.prevout)) {
+                            prevout = *wallet_output->out;
+                        } else if (const wallet::CWalletTx* wallet_tx = pwallet->GetWalletTxFromOutpoint(in.in.prevout)) {
+                            auto txout_iter = std::find_if(wallet_tx->tx->vout.begin(), wallet_tx->tx->vout.end(),
+                                [&](const CTxOut& out) { return out.GetHash() == in.in.prevout.hash; });
+                            if (txout_iter != wallet_tx->tx->vout.end()) {
+                                prevout = *txout_iter;
+                            }
+                        }
+                    }
+
+                    if (prevout.IsNull()) {
+                        throw JSONRPCError(RPC_WALLET_ERROR,
+                            "Input has no spending key, no attached prevout data, and the output is not known to this wallet; cannot derive a spending key");
+                    }
+
+                    blsct::PrivateKey spending_key;
+                    if (!blsct_km->GetSpendingKeyForOutputWithCache(prevout, spending_key) || !spending_key.IsValid()) {
+                        throw JSONRPCError(RPC_WALLET_ERROR,
+                            "Unable to derive the spending key for an input; this wallet may not own it, or its sub-address pool does not cover the address");
+                    }
+                    in.sk = spending_key;
+                }
+            }
 
             // Sign the transaction
             const auto& tx_opt = unsigned_tx.Sign();

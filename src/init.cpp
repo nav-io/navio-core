@@ -114,7 +114,7 @@
 #include <sys/stat.h>
 #endif
 
-#include <boost/signals2/signal.hpp>
+#include <btcsignals.h>
 
 #if ENABLE_ZMQ
 #include <zmq/zmqabstractnotifier.h>
@@ -454,7 +454,7 @@ static void registerSignalHandler(int signal, void(*handler)(int))
 }
 #endif
 
-static boost::signals2::connection rpc_notify_block_change_connection;
+static btcsignals::connection rpc_notify_block_change_connection;
 static void OnRPCStarted()
 {
     rpc_notify_block_change_connection = uiInterface.NotifyBlockTip_connect([](SynchronizationState, const CBlockIndex* index) { RPCNotifyBlockChange(index); });
@@ -1827,7 +1827,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
     // Either install a handler to notify us when genesis activates, or set fHaveGenesis directly.
     // No locking, as this happens before any background thread is started.
-    boost::signals2::connection block_notify_genesis_wait_connection;
+    btcsignals::connection block_notify_genesis_wait_connection;
     if (WITH_LOCK(chainman.GetMutex(), return chainman.ActiveChain().Tip() == nullptr)) {
         block_notify_genesis_wait_connection = uiInterface.NotifyBlockTip_connect([](SynchronizationState, const CBlockIndex* index) { BlockNotifyGenesisWait(index); });
     } else {

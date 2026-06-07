@@ -64,12 +64,34 @@ range_proof::Generators<T> range_proof::GeneratorsFactory<T>::GetInstance(const 
 {
     using Point = typename T::Point;
 
-    // if G for the given seed hasn't been created, create and cache it
-    if (m_G_cache.count(seed) == 0) {
-        const Point G = m_deriver.Derive(m_H, 0, seed);
-        m_G_cache.emplace(seed, G);
+    // Only TokenId-keyed generators are cached. Those form a small, recurring
+    // set (the default token plus whatever token IDs appear on-chain), so the
+    // cache stays bounded. Bytes-keyed seeds are the per-proof PoS `eta_phi`
+    // messages, which are effectively unique on every call: caching them never
+    // yields a hit and would grow m_G_cache without bound (one entry per block
+    // during sync — a slow memory leak), so they are derived on the fly.
+    //
+    // m_G_cache is a process-wide shared (inline static) cache and GetInstance
+    // runs concurrently on multiple verification threads (the main validation
+    // thread's per-tx range-proof checks overlap the async PoS set-membership /
+    // kernel range-proof worker). An unsynchronised read-modify-write on
+    // std::map is undefined behaviour that corrupts the container's nodes and
+    // surfaces as a hard heap-corruption crash on Windows
+    // (STATUS_HEAP_CORRUPTION, 0xC0000374), so cache access is guarded by the
+    // same mutex used to publish the post-init generators. m_deriver.Derive is
+    // a pure function and m_H/m_Gi/m_Hi are immutable after construction, so
+    // both can be touched without holding the lock.
+    Point G;
+    if (std::holds_alternative<TokenId>(seed)) {
+        std::lock_guard<std::mutex> lock(m_init_mutex);
+        auto it = m_G_cache.find(seed);
+        if (it == m_G_cache.end()) {
+            it = m_G_cache.emplace(seed, m_deriver.Derive(m_H, 0, seed)).first;
+        }
+        G = it->second;
+    } else {
+        G = m_deriver.Derive(m_H, 0, seed);
     }
-    Point G = m_G_cache[seed];
 
     Generators<T> gens(G, m_H, m_Gi, m_Hi);
     return gens;

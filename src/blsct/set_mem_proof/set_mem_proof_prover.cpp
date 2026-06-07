@@ -324,6 +324,13 @@ retry:
     GEN_FIAT_SHAMIR_VAR(z, fiat_shamir, retry);
     GEN_FIAT_SHAMIR_VAR(omega, fiat_shamir, retry);
 
+    // omega is a Fiat-Shamir challenge, not a prover-chosen response. It is
+    // carried in the serialized proof for convenience, but the verifier must
+    // reject any proof whose omega disagrees with the value derived from the
+    // transcript -- otherwise an attacker could supply an omega the transcript
+    // never authorized and break the soundness of the membership relation.
+    if (proof.omega != omega) return false;
+
     // Note: y_inv / y_inv_to_n used to be precomputed here but were never
     // referenced; the per-iteration y_inv_pow values come from
     // ImpInnerProdArg::LoopWithYPows below. Removing them saves one scalar

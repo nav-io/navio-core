@@ -694,6 +694,7 @@ static RPCHelpMan getblocktemplate()
                                                                      {RPCResult::Type::NUM, "prev_time", /*optional=*/true, "Only on Proof of Stake"},
                                                                      {RPCResult::Type::STR_HEX, "prev_chainwork", /*optional=*/true, "Accumulated chain work of the previous block as a 32-byte big-endian hex string. Required by stakers to compute the chain-work-bound kernel hash that consensus uses on hardened chains."},
                                                                      {RPCResult::Type::BOOL, "pops_hardened", /*optional=*/true, "Whether PoPS hardening (time-bucketing + chain-work binding in the kernel hash) is in force for the next block. Stakers MUST construct the kernel hash accordingly; otherwise the resulting block is rejected with bad-blsct-pos-proof."},
+                                                                     {RPCResult::Type::BOOL, "pops_bind_phi", /*optional=*/true, "Whether the V2 PoPS kernel is active at the next height (>= nPoPSKernelV2Height): the kernel hash binds the set-membership image point phi. Stakers MUST bind phi accordingly; otherwise the resulting block is rejected with bad-blsct-pos-proof."},
                                                                      {RPCResult::Type::ARR, "staked_commitments", /*optional=*/true, "Only on Proof of Stake", {
                                                                                                                                                                    {RPCResult::Type::STR_HEX, "", "staked_commitment"},
                                                                                                                                                                }},
@@ -1023,14 +1024,18 @@ static RPCHelpMan getblocktemplate()
             if (consensusParams.fBLSCT) {
                 UniValue stakedCommitments(UniValue::VARR);
 
-                auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements(pblock->GetBlockHeader().GetHash(), consensusParams.nStakedCommitmentLimit);
+                // Ring seed + eta_phi must be computed the SAME way consensus
+                // will (ProofOfStakeLogic / ConnectBlock): V2 derives both from
+                // non-grindable prior chain state so the staker cannot grind them.
+                const uint256 ring_seed = blsct::CalculateStakeRingSeed(pindexPrev, pblock->GetBlockHeader().GetHash(), pblock->nTime, consensusParams);
+                auto stakedCommitmentsElements = coins_view->GetStakedCommitments().GetElements(ring_seed, consensusParams.nStakedCommitmentLimit);
 
                 for (size_t i = 0; i < stakedCommitmentsElements.Size(); ++i)
                     stakedCommitments.push_back(HexStr(stakedCommitmentsElements[i].GetVch()));
 
                 result.pushKV("staked_commitments", stakedCommitments);
-                result.pushKV("eta_fiat_shamir", HexStr(blsct::CalculateSetMemProofRandomness(pindexPrev)));
-                result.pushKV("eta_phi", HexStr(blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, *pblock)));
+                result.pushKV("eta_fiat_shamir", HexStr(blsct::CalculateSetMemProofRandomness(pindexPrev, *pblock, consensusParams)));
+                result.pushKV("eta_phi", HexStr(blsct::CalculateSetMemProofGeneratorSeed(pindexPrev, *pblock, consensusParams)));
                 result.pushKV("prev_time", pindexPrev->nTime);
                 result.pushKV("modifier", pindexPrev->nStakeModifier);
                 // The previous block's accumulated chain work and the
@@ -1041,6 +1046,10 @@ static RPCHelpMan getblocktemplate()
                 // src/blsct/pos/helpers.cpp::CalculateKernelHashWithChainWork.
                 result.pushKV("prev_chainwork", ArithToUint256(pindexPrev->nChainWork).GetHex());
                 result.pushKV("pops_hardened", consensusParams.fPoPSHardened);
+                // V2 kernel activation at the next height. When active the
+                // kernel hash binds setMemProof.phi (per-coin independent draw).
+                // Out-of-process stakers must match this exactly.
+                result.pushKV("pops_bind_phi", (pindexPrev->nHeight + 1) >= consensusParams.nPoPSKernelV2Height);
             }
 
             if (consensusParams.signet_blocks) {

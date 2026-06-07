@@ -117,6 +117,76 @@ std::vector<unsigned char> CalculateSetMemProofRandomness(const CBlockIndex* pin
     return std::vector<unsigned char>(hash.begin(), hash.end());
 }
 
+std::vector<unsigned char> CalculateSetMemProofRandomnessV2(const CBlockIndex* pindexPrev, const CBlock& block)
+{
+    // Bind the block body into the set-membership Fiat-Shamir challenge so the
+    // proof is a signature over block contents: mutating any transaction
+    // changes eta_fiat_shamir, which the FS transcript consumes, so the proof
+    // no longer verifies. This restores the anti-malleability property that the
+    // legacy eta_phi(vtx) generator seed provided — but here it feeds ONLY the
+    // challenge, not phi / the kernel hash, so it grants no grinding leverage
+    // over eligibility. Still binds pindexPrev so cross-height replay is blocked.
+    HashWriter ss{};
+
+    ss << pindexPrev->GetBlockHash() << pindexPrev->nStakeModifier << TX_NO_WITNESS(block.vtx);
+
+    auto hash = ss.GetHash();
+
+    return std::vector<unsigned char>(hash.begin(), hash.end());
+}
+
+std::vector<unsigned char> CalculateSetMemProofRandomness(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
+{
+    const int height = pindexPrev->nHeight + 1;
+    if (height >= params.nPoPSKernelV2Height) {
+        return CalculateSetMemProofRandomnessV2(pindexPrev, block);
+    }
+    return CalculateSetMemProofRandomness(pindexPrev);
+}
+
+uint256 CalculateStakeRingSeed(const CBlockIndex* pindexPrev, const uint256& header_hash_fallback, const uint32_t& block_time, const Consensus::Params& params)
+{
+    const int height = pindexPrev->nHeight + 1;
+    if (height < params.nPoPSKernelV2Height) {
+        // Legacy: grindable header-hash seed (kept for pre-V2 blocks).
+        return header_hash_fallback;
+    }
+
+    // V2 ring seed = H(stakeModifier, deep-ancestor hash, BucketTime(block_time)).
+    //
+    // Anti-grind: the stake modifier changes only once per nModifierInterval
+    // (aggregating 64 historical blocks) and the deep ancestor (POPS_RING_SEED_
+    // LOOKBACK back) is long-buried, so the producer of the previous block
+    // cannot freely choose the next ring — biasing it needs long-range control
+    // of a whole interval AND the deep anchor.
+    //
+    // Liveness: the bucketed block time advances with the wall clock, so the
+    // ring re-samples every POPS_TIME_GRANULARITY_SECONDS. If every currently-
+    // sampled staker is offline, real time rotates the ring until an online
+    // staker's commitment is included, so the chain self-heals instead of
+    // stalling. The grind this reintroduces is bounded to the few future
+    // buckets allowed by POPS_MAX_FUTURE_BLOCK_TIME (the same bound the kernel
+    // already lives under), not the old unbounded header grind.
+    // Walk back POPS_RING_SEED_LOOKBACK blocks to the deep anchor. Do NOT use
+    // CBlockIndex::GetAncestor here: it assert()s if the pprev chain is shorter
+    // than the requested height (e.g. a standalone index in unit tests, or any
+    // index whose ancestry is not fully linked). Walk pprev manually instead,
+    // stopping at the deepest reachable ancestor (genesis on a real chain).
+    // Deterministic for prover and verifier: both see the same linked chain.
+    const CBlockIndex* anchor = pindexPrev;
+    for (int i = 0; i < POPS_RING_SEED_LOOKBACK && anchor->pprev != nullptr; ++i) {
+        anchor = anchor->pprev;
+    }
+
+    const uint32_t bucketed_time = block_time - (block_time % POPS_TIME_GRANULARITY_SECONDS);
+
+    HashWriter ss{};
+    ss << pindexPrev->nStakeModifier
+       << anchor->GetBlockHash()
+       << bucketed_time;
+    return ss.GetHash();
+}
+
 
 blsct::Message
 CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& block)
@@ -130,6 +200,35 @@ CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& b
     return std::vector<unsigned char>(hash.begin(), hash.end());
 }
 
+blsct::Message
+CalculateSetMemProofGeneratorSeedV2(const CBlockIndex* pindexPrev)
+{
+    // Seed the set-membership generator (which builds phi = h3*f + g2*m, with
+    // g2 = Derive(base_H, 0, eta_phi)) from FIXED prior chain state only. The
+    // legacy seed hashed block.vtx, letting a staker grind the block contents
+    // to vary eta_phi -> g2 -> phi -> kernel_hash and so multiply their staking
+    // draws. Binding to pindexPrev removes that lever entirely while still
+    // tying the proof to the previous block (replay across heights is also
+    // blocked independently by eta_fiat_shamir / CalculateSetMemProofRandomness).
+    HashWriter ss{};
+
+    ss << pindexPrev->nHeight << pindexPrev->nStakeModifier << pindexPrev->GetBlockHash();
+
+    auto hash = ss.GetHash();
+
+    return std::vector<unsigned char>(hash.begin(), hash.end());
+}
+
+blsct::Message
+CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
+{
+    const int height = pindexPrev->nHeight + 1;
+    if (height >= params.nPoPSKernelV2Height) {
+        return CalculateSetMemProofGeneratorSeedV2(pindexPrev);
+    }
+    return CalculateSetMemProofGeneratorSeed(pindexPrev, block);
+}
+
 uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
 {
     // When hardened, bind accumulated chain work into the kernel hash: two
@@ -139,6 +238,17 @@ uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block, 
     // rooted at the same ancestor. When not hardened (legacy pre-hardening
     // networks, e.g. testnet with chain state predating the rule change),
     // the chain-work binding is skipped and raw block time is hashed.
+    const int height = pindexPrev->nHeight + 1;
+    if (height >= params.nPoPSKernelV2Height) {
+        return CalculateKernelHashWithChainWork(
+            pindexPrev->nTime,
+            pindexPrev->nStakeModifier,
+            pindexPrev->nChainWork,
+            block.nTime,
+            block.posProof.setMemProof.phi,
+            params.fPoPSHardened);
+    }
+
     return CalculateKernelHashWithChainWork(
         pindexPrev->nTime,
         pindexPrev->nStakeModifier,

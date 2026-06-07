@@ -26,7 +26,7 @@ set(CLIENT_NAME "Navio Core")
 set(CLIENT_VERSION_MAJOR 0)
 set(CLIENT_VERSION_MINOR 1)
 set(CLIENT_VERSION_BUILD 0)
-set(CLIENT_VERSION_RC 28)
+set(CLIENT_VERSION_RC 32)
 set(CLIENT_VERSION_IS_RELEASE "false")
 set(COPYRIGHT_YEAR "2024")
 
@@ -70,6 +70,27 @@ include(ProcessConfigurations)
 
 if(NOT DEFINED CMAKE_OPTIMIZE_DEPENDENCIES)
   set(CMAKE_OPTIMIZE_DEPENDENCIES TRUE)
+endif()
+
+#=============================
+# RPATH handling
+#=============================
+# Homebrew dylibs (libevent, zeromq, ...) on macOS ship with
+# LC_ID_DYLIB=@rpath/<soname>, so the consuming binary must carry an
+# LC_RPATH that resolves to the directory containing the dylib.
+# CMake's default build-tree RPATH logic only fires when an imported
+# target's location is a concrete path; some Config-package exports use
+# bare -l<name> link flags or generator expressions that miss the
+# default, and binaries are then shipped with no LC_RPATH at all
+# (dyld: "Reason: no LC_RPATH's found"). Force CMake to embed each
+# link-time library directory in the install rpath, and on macOS embed
+# @loader_path/../lib too so binaries stay relocatable next to bundled
+# dylibs. Harmless on Linux/Windows (no LC_RPATH section, ld ignores
+# the @loader_path entry as just another DT_RUNPATH string).
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
+if(APPLE)
+  list(APPEND CMAKE_BUILD_RPATH "@loader_path/../lib")
+  list(APPEND CMAKE_INSTALL_RPATH "@loader_path/../lib")
 endif()
 
 #=============================
@@ -327,35 +348,6 @@ endif()
 if(NOT BUILD_LIBBLSCT_ONLY)
   include(AddBoostIfNeeded)
   add_boost_if_needed()
-endif()
-
-# Boost.Process v1 API (opstream/ipstream) was removed from the default
-# boost::process namespace in Boost 1.88. Disable external signer if the
-# old API is not available so compilation does not break on newer Boost.
-if(ENABLE_EXTERNAL_SIGNER)
-  get_target_property(_boost_inc Boost::headers INTERFACE_INCLUDE_DIRECTORIES)
-  include(CheckCXXSourceCompiles)
-  set(CMAKE_REQUIRED_INCLUDES ${_boost_inc})
-  set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-  check_cxx_source_compiles("
-    #include <boost/process.hpp>
-    void test() { boost::process::opstream s; (void)s; }
-  " HAVE_BOOST_PROCESS_V1)
-  unset(_boost_inc)
-  if(NOT HAVE_BOOST_PROCESS_V1)
-    message(WARNING "Boost.Process v1 API not available (Boost >= 1.88); disabling ENABLE_EXTERNAL_SIGNER.")
-    set(ENABLE_EXTERNAL_SIGNER OFF)
-  endif()
-endif()
-
-# Boost.Process pulls in boost::filesystem unless BOOST_PROCESS_USE_STD_FS
-# is defined. Without it, mingw cross-link of navio_common(run_command.cpp)
-# fails on boost::filesystem::detail::path_traits::convert symbols because
-# we only ship header-only Boost (Boost::headers). Mirror autotools, which
-# unconditionally adds -DBOOST_PROCESS_USE_STD_FS when boost::process is
-# probed (configure.ac).
-if(ENABLE_EXTERNAL_SIGNER)
-  target_compile_definitions(core_interface INTERFACE BOOST_PROCESS_USE_STD_FS)
 endif()
 
 if(BUILD_DAEMON OR BUILD_CLI OR BUILD_STAKER OR BUILD_TESTS OR BUILD_BENCH OR BUILD_FUZZ_BINARY)

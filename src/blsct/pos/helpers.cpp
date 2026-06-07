@@ -44,4 +44,24 @@ CalculateKernelHashWithChainWork(const uint32_t& prevTime, const uint64_t& stake
 
     return ss.GetHash();
 }
+
+uint256
+CalculateKernelHashWithChainWork(const uint32_t& prevTime, const uint64_t& stakeModifier, const arith_uint256& prevChainWork, const uint32_t& time, const MclG1Point& phi, bool hardened)
+{
+    if (!hardened) {
+        // Legacy pre-hardening kernel: no chain-work binding, no phi binding,
+        // raw time. Identical to the non-phi overload.
+        return CalculateKernelHash(prevTime, stakeModifier, time, /*hardened=*/false);
+    }
+
+    HashWriter ss{};
+
+    ss << prevTime
+       << stakeModifier
+       << ArithToUint256(prevChainWork)
+       << BucketTime(time)
+       << phi; // MclG1Point::Serialize writes the 48-byte compressed point
+
+    return ss.GetHash();
+}
 } // namespace blsct

@@ -486,13 +486,21 @@ class PruneTest(BitcoinTestFramework):
     def test_scanblocks_pruned(self):
         node = self.nodes[5]
         genesis_blockhash = node.getblockhash(0)
-        false_positive_spk = bytes.fromhex("001400000000000000000000000000000000000cadcb")
+        # scanblocks the genesis block by its coinbase output scriptPubKey,
+        # which is present in the genesis block filter. The upstream test used
+        # a hand-picked scriptPubKey crafted to be a false positive against
+        # Bitcoin's genesis filter; that does not match navio's (different)
+        # genesis, so use the genesis coinbase spk directly — a chain
+        # constant. The first call matches via the filter; the second forces a
+        # block fetch to drop false positives, which fails because the genesis
+        # block has been pruned on this node.
+        genesis_spk = "4104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac"
 
         assert genesis_blockhash in node.scanblocks(
-            "start", [{"desc": f"raw({false_positive_spk.hex()})"}], 0, 0)['relevant_blocks']
+            "start", [{"desc": f"raw({genesis_spk})"}], 0, 0)['relevant_blocks']
 
         assert_raises_rpc_error(-1, "Block not available (pruned data)", node.scanblocks,
-            "start", [{"desc": f"raw({false_positive_spk.hex()})"}], 0, 0, "basic", {"filter_false_positives": True})
+            "start", [{"desc": f"raw({genesis_spk})"}], 0, 0, "basic", {"filter_false_positives": True})
 
 if __name__ == '__main__':
     PruneTest(__file__).main()

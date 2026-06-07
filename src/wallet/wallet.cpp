@@ -1327,11 +1327,17 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
 
     auto blsct_man = GetBLSCTKeyMan();
     if (wtx.tx->IsBLSCT()) {
-        for (auto& out : wtx.tx->vout) {
-            if (blsct_man->IsMine(out)) {
-                blsct::PrivateKey spending_key;
-                if (!blsct_man->GetSpendingKeyForOutputWithCache(out, spending_key)) {
-                    continue;
+        // Warm the spending-key cache for owned outputs. Skip this on watch-only
+        // / view-key (audit key) wallets: they have no private spend key, so
+        // GetSpendingKeyForOutputWithCache would throw (uncaught, on the
+        // scheduler thread). The cached value is not used here in any case.
+        if (blsct_man && !IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+            for (auto& out : wtx.tx->vout) {
+                if (blsct_man->IsMine(out)) {
+                    blsct::PrivateKey spending_key;
+                    if (!blsct_man->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+                        continue;
+                    }
                 }
             }
         }
@@ -4113,8 +4119,8 @@ bool CWallet::HasEncryptionKeys() const
 void CWallet::ConnectScriptPubKeyManNotifiers()
 {
     for (const auto& spk_man : GetActiveScriptPubKeyMans()) {
-        spk_man->NotifyWatchonlyChanged.connect(NotifyWatchonlyChanged);
-        spk_man->NotifyCanGetAddressesChanged.connect(NotifyCanGetAddressesChanged);
+        spk_man->NotifyWatchonlyChanged.connect([this](bool fHaveWatchOnly) { NotifyWatchonlyChanged(fHaveWatchOnly); });
+        spk_man->NotifyCanGetAddressesChanged.connect([this] { NotifyCanGetAddressesChanged(); });
         spk_man->NotifyFirstKeyTimeChanged.connect([this](const ScriptPubKeyMan*, int64_t new_birth_time) { MaybeUpdateBirthTime(new_birth_time); });
     }
 }

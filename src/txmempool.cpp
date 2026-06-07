@@ -164,11 +164,16 @@ void CTxMemPool::UpdateTransactionsFromBlock(const std::vector<uint256>& vHashes
         WITH_FRESH_EPOCH(m_epoch);
         for (const auto& out : it->GetTx().vout) {
             const auto outHash = out.GetHash();
-            // Find children by looking up the output hash in mapOutputToTx
-            auto output_iter = mapOutputToTx.find(outHash);
-            if (output_iter != mapOutputToTx.end()) {
+            // Find the child that SPENDS this output via mapNextTx (prevout ->
+            // spending tx), matching addUnchecked()/CalculateDescendants().
+            // mapOutputToTx maps an output hash to the tx that PRODUCED it
+            // (i.e. `it` itself), so it must not be used here -- using it meant
+            // the real child links were never established on reorg, leaving the
+            // child with empty m_parents and stale ancestor state.
+            auto output_iter = mapNextTx.find(COutPoint(outHash));
+            if (output_iter != mapNextTx.end()) {
                 // Found a transaction that spends this output
-                const uint256& childHash = output_iter->second;
+                const uint256 childHash = output_iter->second->GetHash();
                 txiter childIter = mapTx.find(childHash);
                 if (childIter != mapTx.end()) {
                     // We can skip updating entries we've encountered before or that

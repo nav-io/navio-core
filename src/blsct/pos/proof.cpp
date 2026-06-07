@@ -82,6 +82,50 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
 {
 }
 
+ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened, bool bind_phi)
+{
+    if (!bind_phi) {
+        // V1 path: kernel hash carries no phi. Reuse the chain-work kernel and
+        // delegate to the same body as the precomputed-kernel base ctor.
+        *this = ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f,
+                             CalculateKernelHashWithChainWork(prev_time, stake_modifier, prev_chain_work, time, hardened),
+                             next_target);
+        return;
+    }
+
+    // V2 path. The kernel hash binds setMemProof.phi, which does not exist
+    // until SetProver::Prove runs. So build the set-membership proof FIRST,
+    // then derive the kernel hash from its phi, THEN build the range proof
+    // against the resulting min_value. This ordering is mandatory.
+    if (staked_commitments.Size() == 0) {
+        throw std::runtime_error(std::string(__func__) + ": staked_commitments must be non-empty");
+    }
+
+    range_proof::GeneratorsFactory<Mcl> gf;
+    range_proof::Generators<Arith> gen = gf.GetInstance(TokenId());
+
+    Point sigma = gen.G * m + gen.H * f;
+
+    const auto& setup = SetMemProofSetup<Arith>::Get();
+
+    setMemProof = SetProver::Prove(setup, staked_commitments, sigma, m, f, eta_fiat_shamir, eta_phi);
+
+    // Bind the actual proof image point (NOT sigma: sigma uses a different
+    // generator factory, so sigma != setMemProof.phi).
+    const uint256 kernel_hash = CalculateKernelHashWithChainWork(
+        prev_time, stake_modifier, prev_chain_work, time, setMemProof.phi, hardened);
+
+    uint256 min_value = CalculateMinValue(kernel_hash, next_target);
+    uint64_t min_value_u64 = SaturateToU64(min_value);
+
+    range_proof::GammaSeed<Arith> gamma_seed(Scalars({f}));
+    RangeProver rp;
+
+    rangeProof = rp.Prove(Scalars({m}), gamma_seed, {}, eta_phi, min_value_u64);
+
+    rangeProof.Vs.Clear();
+}
+
 ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, VerificationStats* stats) const
 {
     return Verify(staked_commitments, eta_fiat_shamir, eta_phi, CalculateKernelHash(prev_time, stake_modifier, time), next_target, stats);
@@ -180,7 +224,14 @@ bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint64_
 uint256 ProofOfStake::CalculateMinValue(const uint256& kernel_hash, const unsigned int& next_target)
 {
     if (next_target == 0) return uint256();
-    return ArithToUint256(UintToArith256(kernel_hash) / arith_uint256().SetCompact(next_target));
+    // SetCompact() can yield zero for a non-zero compact encoding (e.g. a
+    // zero mantissa like 0x03000000, or the negative-flag case). Dividing by
+    // it would throw uint_error("Division by zero") in base_uint::operator/=,
+    // which — uncaught on the validation thread — terminates the node. Treat a
+    // degenerate target the same as next_target == 0 (min_value 0).
+    arith_uint256 target = arith_uint256().SetCompact(next_target);
+    if (target == 0) return uint256();
+    return ArithToUint256(UintToArith256(kernel_hash) / target);
 }
 
 // Saturate a uint256 into uint64: if any byte above the low 8 bytes is set,

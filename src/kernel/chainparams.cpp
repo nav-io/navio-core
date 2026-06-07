@@ -144,6 +144,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.SegwitHeight = 0;
         consensus.fBLSCT = true;
         consensus.fPoPSHardened = true;
+        consensus.nPoPSKernelV2Height = 0; // active from genesis
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
@@ -274,6 +275,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.SegwitHeight = 0;
         consensus.fBLSCT = true;
         consensus.fPoPSHardened = true;
+        consensus.nPoPSKernelV2Height = 22000; // migrate existing testnet chain to V2 kernel
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
@@ -351,10 +353,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         m_assumeutxo_data = {};
 
         chainTxData = ChainTxData{
-            // testnet7 reset: no chain history yet.
-            .nTime = 0,
-            .nTxCount = 0,
-            .dTxRate = 0,
+            // Data from blocks.nav.io at testnet7 height 16773
+            // (block 4b6a9ec4a2eab464904a40bb6dfa426e67754f740871a2540c75a68e1dfd52d6).
+            .nTime = 1780220481,
+            .nTxCount = 17056,
+            .dTxRate = 0.006227182060457886,
         };
         }
     };
@@ -424,6 +427,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.SegwitHeight = 1;
             consensus.fBLSCT = false;
             consensus.fPoPSHardened = true;
+            consensus.nPoPSKernelV2Height = 0; // active from genesis
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
@@ -506,6 +510,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.SegwitHeight = 0; // Always active unless overridden
             consensus.fBLSCT = false;
             consensus.fPoPSHardened = true;
+            consensus.nPoPSKernelV2Height = 0; // active from genesis
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
@@ -649,6 +654,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.SegwitHeight = 0; // Always active unless overridden
             consensus.fBLSCT = true;
             consensus.fPoPSHardened = true;
+            consensus.nPoPSKernelV2Height = 0; // active from genesis
             consensus.nPePoSMinStakeAmount = 100 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;

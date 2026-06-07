@@ -72,6 +72,18 @@ public:
     // hardened chains.
     ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened = true);
 
+    // V2 constructor. When `bind_phi` is true the kernel hash binds the
+    // set-membership image point `phi`, giving each staked coin an independent
+    // kernel draw (see CalculateKernelHashWithChainWork phi overload). This
+    // requires computing the kernel hash AFTER `phi` exists, so unlike the
+    // delegating ctors above it builds `setMemProof` FIRST and derives the
+    // kernel hash from `setMemProof.phi`. When `bind_phi` is false it produces
+    // the V1 chain-work kernel (no phi). The two trailing non-default bools
+    // make this overload distinct from the chain-work ctor above. Consensus-
+    // tracking callers (ProofOfStakeLogic::Create, the staker) select
+    // `bind_phi = height >= nPoPSKernelV2Height`.
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened, bool bind_phi);
+
     enum VerificationResult : uint32_t {
         NONE = 0,
         VALID = 1,
