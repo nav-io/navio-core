@@ -88,8 +88,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
             return false;
         }
         // NOLINTNEXTLINE(modernize-use-emplace) UnsignedInput is an aggregate; parenthesized emplace_back is not portable across libstdc++/libc++.
-        vInputs[out.tokenId]
-            .push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, spending_key, stakedCommitment});
+        vInputs[out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, spending_key, stakedCommitment});
     } catch (const std::exception& e) {
         LogPrintf("Error adding input: %s\n", e.what());
         return false;
