@@ -140,7 +140,11 @@ void OrderCache::EvictSpentBy(const CTransaction& tx)
     for (const CTxIn& in : tx.vin) {
         auto bi = m_by_input.find(in.prevout);
         if (bi != m_by_input.end()) {
-            EraseLocked(bi->second);
+            // Copy the quote id out before erasing: EraseLocked() walks the
+            // quote's inputs and erases m_by_input entries (including this one),
+            // which would leave bi->second dangling if passed by reference.
+            const uint256 quote_id = bi->second;
+            EraseLocked(quote_id);
         }
     }
 }
