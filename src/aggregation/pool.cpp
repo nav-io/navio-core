@@ -37,7 +37,7 @@ bool CandidatePool::Contains(const COutPoint& input) const
 {
     const size_t s = ShardFor(input);
     LOCK(m_shard_mutex[s]);
-    return m_shards[s].count(input) > 0;
+    return m_shards[s].contains(input);
 }
 
 bool CandidatePool::AddCandidate(const CTransactionRef& candidate, int64_t peer)

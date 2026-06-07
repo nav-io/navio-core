@@ -318,7 +318,7 @@ static RPCHelpMan broadcastorder()
             if (!transport || !orders) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
 
             auto parse_token = [](const UniValue& v) -> TokenId {
-                const std::string s = v.get_str();
+                const std::string& s = v.get_str();
                 if (s.empty()) return TokenId();
                 return TokenId(uint256(ParseHashV(v, "token")));
             };

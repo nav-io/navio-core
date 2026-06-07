@@ -73,7 +73,7 @@ bool OrderCache::StoreOrder(const RfqQuote& q, int64_t now)
     if (q.order_expiry <= now) return false;
 
     LOCK(m_mutex);
-    if (m_orders.count(q.quote_id)) return false;
+    if (m_orders.contains(q.quote_id)) return false;
 
     Entry e;
     e.quote = q;
@@ -87,7 +87,7 @@ bool OrderCache::StoreOrder(const RfqQuote& q, int64_t now)
     m_orders.emplace(q.quote_id, std::move(e));
     TouchLRU(q.quote_id);
     EvictToBound();
-    return m_orders.count(q.quote_id) > 0; // false if immediately evicted (oversized)
+    return m_orders.contains(q.quote_id); // false if immediately evicted (oversized)
 }
 
 std::vector<RfqQuote> OrderCache::FindMatching(const RfqRequest& req, int64_t now)
@@ -132,7 +132,7 @@ size_t OrderCache::PruneExpired(int64_t now)
 
 size_t OrderCache::Size() const { LOCK(m_mutex); return m_orders.size(); }
 size_t OrderCache::Bytes() const { LOCK(m_mutex); return m_bytes; }
-bool OrderCache::Contains(const uint256& quote_id) const { LOCK(m_mutex); return m_orders.count(quote_id) > 0; }
+bool OrderCache::Contains(const uint256& quote_id) const { LOCK(m_mutex); return m_orders.contains(quote_id); }
 
 void OrderCache::EvictSpentBy(const CTransaction& tx)
 {

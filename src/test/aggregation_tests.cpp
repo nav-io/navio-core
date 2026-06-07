@@ -138,7 +138,7 @@ CTransactionRef FakeCandidate(const uint256& input_hash, uint32_t n = 0)
     CMutableTransaction mtx;
     mtx.nVersion = CTransaction::BLSCT_MARKER;
     mtx.vin.emplace_back(COutPoint(input_hash));
-    mtx.vout.emplace_back(CTxOut());
+    mtx.vout.emplace_back();
     return MakeTransactionRef(mtx);
 }
 } // namespace

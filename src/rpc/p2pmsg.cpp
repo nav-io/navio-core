@@ -117,7 +117,7 @@ static RPCHelpMan setswapintent()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             rfq::IntentStore& store = EnsureIntentStore(request);
             auto parse_token = [](const UniValue& v) -> TokenId {
-                const std::string s = v.get_str();
+                const std::string& s = v.get_str();
                 if (s.empty()) return TokenId();
                 return TokenId(uint256(ParseHashV(v, "token")));
             };
@@ -371,7 +371,7 @@ static rfq::RfqRequest ParseRequestArgs(const JSONRPCRequest& request, const uin
                                         const blsct::PublicKey& reply_key)
 {
     auto parse_token = [](const UniValue& v) -> TokenId {
-        const std::string s = v.get_str();
+        const std::string& s = v.get_str();
         if (s.empty()) return TokenId();
         return TokenId(uint256(ParseHashV(v, "token")));
     };
