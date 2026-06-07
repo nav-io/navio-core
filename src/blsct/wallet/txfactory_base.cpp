@@ -85,7 +85,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
 }
 
 std::optional<CMutableTransaction>
-TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake, const CreateTransactionType& type, const bool& fSubtractedFee, const CAmount& nBLSCTDefaultFee)
+TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake, const CreateTransactionType& type, const bool& fSubtractedFee, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee)
 {
     this->tx = CMutableTransaction();
 
@@ -186,7 +186,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
         tx.txSig = Signature::Aggregate(txSigs);
 
-        const CAmount required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee;
+        const CAmount required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee + additionalFee;
         if (nAmounts[TokenId()].nFromFee == required_fee) {
             return tx;
         }
@@ -201,6 +201,7 @@ bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, cons
     if (!vInputs.contains(token_id))
         vInputs[token_id] = std::vector<UnsignedInput>();
 
+    // NOLINTNEXTLINE(modernize-use-emplace) UnsignedInput is an aggregate; parenthesized emplace_back is not portable across libstdc++/libc++.
     vInputs[token_id].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), amount, gamma, spendingKey, stakedCommitment});
 
     if (!nAmounts.contains(token_id))
@@ -209,6 +210,104 @@ bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, cons
     nAmounts[token_id].nFromInputs += amount;
 
     return true;
+}
+
+std::optional<CMutableTransaction>
+TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestination,
+                                   const SubAddress& recvDestination,
+                                   const TokenId& pay_token,
+                                   const CAmount& pay_amount,
+                                   const TokenId& recv_token,
+                                   const CAmount& recv_amount,
+                                   const CAmount& nBLSCTDefaultFee,
+                                   const CAmount& additionalFee)
+{
+    // Output the received token up front; its blinding/gamma are folded into the
+    // balance accumulator so the half's signature covers it. There is no matching
+    // input for recv_token here — the counterparty's half supplies it.
+    auto recvOutput = CreateOutput(recvDestination.GetKeys(), recv_amount, "swap-recv", recv_token);
+
+    std::vector<Signature> baseOutputSignatures;
+    Scalar baseOutputGammas;
+    {
+        baseOutputGammas = baseOutputGammas - recvOutput.gamma;
+        if (recvOutput.out.HasBLSCTKeys()) {
+            baseOutputSignatures.push_back(PrivateKey(recvOutput.blindingKey).Sign(recvOutput.out.GetHash()));
+        }
+        // Any pay-side outputs the caller queued via AddOutput.
+        for (auto& out_ : vOutputs) {
+            for (auto& out : out_.second) {
+                if (out.out.HasBLSCTRangeProof()) baseOutputGammas = baseOutputGammas - out.gamma;
+                if (out.out.HasBLSCTKeys()) baseOutputSignatures.push_back(PrivateKey(out.blindingKey).Sign(out.out.GetHash()));
+            }
+        }
+    }
+
+    nAmounts[TokenId()].nFromFee = 0;
+    while (true) {
+        CMutableTransaction tx;
+        tx.nVersion |= CTransaction::BLSCT_MARKER;
+
+        Scalar gammaAcc = baseOutputGammas;
+        std::vector<Signature> txSigs = baseOutputSignatures;
+        std::map<TokenId, CAmount> mapInputs;
+
+        // The recv_token output must be present in the half.
+        tx.vout.push_back(recvOutput.out);
+        for (auto& out_ : vOutputs)
+            for (auto& out : out_.second)
+                tx.vout.push_back(out.out);
+
+        // Add pay-side inputs.
+        for (auto& in_ : vInputs) {
+            for (auto& in : in_.second) {
+                tx.vin.push_back(in.in);
+                gammaAcc = gammaAcc + in.gamma;
+                txSigs.push_back(in.sk.Sign(in.in.GetHash()));
+                mapInputs[in_.first] += in.value.GetUint64();
+            }
+        }
+
+        // Per-token sufficiency: only tokens we actually pay (have inputs for)
+        // must cover their outputs + fee. recv_token is intentionally short and
+        // is skipped — the counterparty balances it.
+        // Each input token must cover what this half pays out of it plus, for
+        // NAV, the fee. The recv_token output is funded by the counterparty and
+        // is NOT charged here. pay_amount of pay_token is the gap handed to the
+        // counterparty (it becomes their recv); the rest is change.
+        std::map<TokenId, CAmount> mapChange;
+        for (auto& kv : mapInputs) {
+            const TokenId& tid = kv.first;
+            const CAmount pay_for_token = (tid == pay_token) ? pay_amount : 0;
+            const CAmount fee_for_token = (tid == TokenId()) ? nAmounts[TokenId()].nFromFee : 0;
+            if (kv.second < pay_for_token + fee_for_token) return std::nullopt;
+            mapChange[tid] = kv.second - pay_for_token - fee_for_token;
+        }
+
+        for (auto& change : mapChange) {
+            if (change.second == 0) continue;
+            auto changeOutput = CreateOutput(changeDestination, change.second, "Change", change.first);
+            gammaAcc = gammaAcc - changeOutput.gamma;
+            tx.vout.push_back(changeOutput.out);
+            txSigs.push_back(PrivateKey(changeOutput.blindingKey).Sign(changeOutput.out.GetHash()));
+        }
+
+        CTxOut fee_out{nAmounts[TokenId()].nFromFee, CScript(OP_RETURN)};
+        auto feeKey = blsct::PrivateKey(MclScalar::Rand());
+        fee_out.predicate = blsct::PayFeePredicate(feeKey.GetPublicKey()).GetVch();
+        tx.vout.push_back(fee_out);
+
+        txSigs.push_back(PrivateKey(gammaAcc).SignBalance());
+        txSigs.push_back(PrivateKey(feeKey).SignFee());
+        tx.txSig = Signature::Aggregate(txSigs);
+
+        const CAmount required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee + additionalFee;
+        if (nAmounts[TokenId()].nFromFee == required_fee) {
+            return tx;
+        }
+        nAmounts[TokenId()].nFromFee = required_fee;
+    }
+    return std::nullopt;
 }
 
 std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData)
@@ -272,7 +371,7 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
             tx.AddOutput(transactionData.destination, transactionData.nAmount, transactionData.sMemo, transactionData.token_id, transactionData.type);
         }
     }
-    return tx.BuildTx(transactionData.changeDestination, transactionData.minStake, transactionData.type, /*fSubtractedFee=*/false, transactionData.nBLSCTDefaultFee);
+    return tx.BuildTx(transactionData.changeDestination, transactionData.minStake, transactionData.type, /*fSubtractedFee=*/false, transactionData.nBLSCTDefaultFee, transactionData.additionalFee);
 }
 
 } // namespace blsct

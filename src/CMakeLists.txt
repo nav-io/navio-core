@@ -291,11 +291,12 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       )
       add_windows_resources(navio-wallet bitcoin-wallet-res.rc)
       target_link_libraries(navio-wallet
-        core_interface
-        navio_wallet
-        navio_common
-        navio_util
-        Boost::headers
+        PRIVATE
+          core_interface
+          navio_wallet
+          navio_common
+          navio_util
+          Boost::headers
       )
       install_binary_component(navio-wallet HAS_MANPAGE)
     endif()
@@ -365,6 +366,16 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     policy/packages.cpp
     policy/rbf.cpp
     policy/settings.cpp
+    aggregation/combine.cpp
+    aggregation/pool.cpp
+    aggregation/session.cpp
+    p2pmsg/crypto.cpp
+    p2pmsg/pow.cpp
+    p2pmsg/transport.cpp
+    p2pmsg/worker_pool.cpp
+    rfq/intent_store.cpp
+    rfq/matcher.cpp
+    rfq/order_cache.cpp
     pow.cpp
     rest.cpp
     rpc/blockchain.cpp
@@ -374,6 +385,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     rpc/net.cpp
     rpc/node.cpp
     rpc/output_script.cpp
+    rpc/p2pmsg.cpp
     rpc/rawtransaction.cpp
     rpc/server.cpp
     rpc/server_util.cpp
@@ -420,6 +432,20 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     PUBLIC
       bls_interface
   )
+
+  # blsct wallet RPCs (blsct/wallet/rpc.cpp) call into aggregation/rfq/p2pmsg
+  # globals that live in navio_node, while navio_node already pulls in
+  # navio_blsct_wallet transitively (navio_node -> navio_common ->
+  # navio_blsct_wallet). Declaring the back-edge here closes the cycle so CMake
+  # repeats both archives on the link line; without it, single-pass linkers
+  # (GNU ld, lld, mingw) scan navio_node before navio_blsct_wallet and fail to
+  # resolve p2pmsg::/rfq::/aggregation:: symbols (LNK is fine on MSVC, which
+  # rescans). navio_node is fully defined by this point.
+  target_link_libraries(navio_blsct_wallet PRIVATE navio_node)
+
+  if(BUILD_WALLET_TOOL AND ENABLE_WALLET)
+    target_link_libraries(navio-wallet PRIVATE navio_node)
+  endif()
 
   # naviod
   if(BUILD_DAEMON)
@@ -477,6 +503,19 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       libevent::extra
     )
     install_binary_component(navio-staker)
+  endif()
+
+  # navio-p2pmsg (p2p-messaging operator daemon; RPC client like navio-staker)
+  if(BUILD_STAKER)
+    add_executable(navio-p2pmsg navio-p2pmsg.cpp)
+    target_link_libraries(navio-p2pmsg
+      core_interface
+      navio_cli
+      navio_common
+      navio_util
+      libevent::extra
+    )
+    install_binary_component(navio-p2pmsg)
   endif()
 
   # navio-tx

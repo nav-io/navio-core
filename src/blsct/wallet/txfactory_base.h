@@ -23,6 +23,10 @@ struct CreateTransactionData {
     // so wallet-built transactions match the consensus minimum-fee rule
     // enforced by `blsct::VerifyTx`.
     CAmount nBLSCTDefaultFee{::BLSCT_DEFAULT_FEE};
+    // Extra fee added on top of this tx's own required fee, used by an
+    // aggregation initiator to cover the weight of the fee-0 cover candidates
+    // it will combine with. 0 for ordinary sends.
+    CAmount additionalFee{0};
 
     Scalar tokenKey;
     std::map<std::string, std::string> nftMetadata;
@@ -102,8 +106,45 @@ public:
     // Mint NFT
     void AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata);
     bool AddInput(const CAmount& amount, const MclScalar& gamma, const blsct::PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false);
-    std::optional<CMutableTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE);
+    //! `additionalFee` lets an aggregation initiator over-fund the fee output so
+    //! the combined transaction (own half + K fee-0 candidate halves) meets the
+    //! consensus min-fee for the COMBINED weight. Defaults to 0 (normal txs).
+    std::optional<CMutableTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const CAmount& additionalFee = 0);
     static std::optional<CMutableTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData);
+
+    //! Build a deliberately UNBALANCED half-transaction for an atomic swap.
+    //!
+    //! Unlike BuildTx, a swap half may output a token it does not input: the
+    //! taker pays `pay_token` (covered by its own inputs) and receives
+    //! `recv_amount` of `recv_token` from the counterparty. The `recv_token`
+    //! output has no matching input here — the maker's half supplies it, so the
+    //! combined transaction balances per TokenId. This builder therefore:
+    //!   - emits the recv_token output (its gamma IS folded into the balance
+    //!     signature, so the half's own sig stays valid after Signature::Aggregate),
+    //!   - does NOT require recv_token inputs (skips the per-token sufficiency
+    //!     check for it),
+    //!   - funds the fee from the pay_token (NAV) side and over-funds by
+    //!     `additionalFee` so the COMBINED tx clears the consensus minimum.
+    //!
+    //! Inputs must already be added via AddInput (pay_token coins covering
+    //! pay_amount + fee). `changeDestination` receives pay_token change.
+    //! Returns std::nullopt if the pay_token inputs are insufficient.
+    //! `pay_token`/`pay_amount`: the asset+amount this half hands to the
+    //! counterparty (the gap left after change; becomes their recv).
+    //! `recv_token`/`recv_amount`: the asset+amount this half receives (output
+    //! with no matching input; supplied by the counterparty's half).
+    //! Inputs (added via AddInput) must be `pay_token` covering
+    //! `pay_amount` + fee. Fee is always NAV; if `pay_token` is not NAV the
+    //! caller must also AddInput enough NAV to cover the fee.
+    std::optional<CMutableTransaction> BuildUnbalancedHalf(
+        const blsct::DoublePublicKey& changeDestination,
+        const SubAddress& recvDestination,
+        const TokenId& pay_token,
+        const CAmount& pay_amount,
+        const TokenId& recv_token,
+        const CAmount& recv_amount,
+        const CAmount& nBLSCTDefaultFee,
+        const CAmount& additionalFee = 0);
 };
 
 } // namespace blsct

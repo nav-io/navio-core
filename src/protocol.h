@@ -276,6 +276,15 @@ extern const char* SENDTXRCNCL;
  * that contain specific output hashes.
  */
 extern const char* GETOUTPUTDATA;
+/**
+ * The p2pmsg message carries an encrypted p2p-messaging payload (ECIES-wrapped
+ * over a fresh ephemeral BLS key). The fluff-phase carrier.
+ */
+extern const char* P2PMSG;
+/**
+ * The dp2pmsg message is the Dandelion++ stem-phase variant of p2pmsg.
+ */
+extern const char* DP2PMSG;
 }; // namespace NetMsgType
 
 /* Get a vector of all valid message types (see above) */
