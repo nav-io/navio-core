@@ -618,4 +618,53 @@ BOOST_AUTO_TEST_CASE(test_ordered_elements)
     BOOST_CHECK(elements_2 != elements_3);
 }
 
+BOOST_AUTO_TEST_CASE(test_serialize_round_trip)
+{
+    auto g = Point::GetBasePoint();
+    Points gs(std::vector<Point> { g, g + g, g + g + g });
+
+    DataStream ss{};
+    gs.Serialize(ss);
+
+    Points restored;
+    restored.Unserialize(ss);
+    BOOST_CHECK(restored == gs);
+
+    // Scalars too
+    Scalars xs(std::vector<Scalar> { Scalar{1}, Scalar{2}, Scalar{3} });
+    DataStream ss2{};
+    xs.Serialize(ss2);
+    Scalars restored_xs;
+    restored_xs.Unserialize(ss2);
+    BOOST_CHECK(restored_xs == xs);
+}
+
+BOOST_AUTO_TEST_CASE(test_unserialize_rejects_oversized_length)
+{
+    // A length prefix that cannot possibly be satisfied by the remaining
+    // bytes must be rejected before allocating, rather than eagerly sizing
+    // the backing vector to a huge element count (memory-exhaustion DoS on
+    // attacker-supplied tx/block data). Regression test for the
+    // m_vec.resize(ReadCompactSize(s)) over-allocation.
+    {
+        DataStream ss{};
+        // Claim 2^32 points but provide no element bytes.
+        ::WriteCompactSize(ss, static_cast<uint64_t>(1) << 32);
+        Points p;
+        BOOST_CHECK_THROW(p.Unserialize(ss), std::ios_base::failure);
+    }
+    {
+        DataStream ss{};
+        ::WriteCompactSize(ss, static_cast<uint64_t>(1) << 32);
+        Scalars xs;
+        BOOST_CHECK_THROW(xs.Unserialize(ss), std::ios_base::failure);
+    }
+    {
+        DataStream ss{};
+        ::WriteCompactSize(ss, static_cast<uint64_t>(1) << 32);
+        OrderedPoints op;
+        BOOST_CHECK_THROW(op.Unserialize(ss), std::ios_base::failure);
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

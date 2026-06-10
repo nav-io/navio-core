@@ -41,7 +41,7 @@ Point GeneratorDeriver<Point>::Derive(
             HexStr(message)
         ;
     } else {
-        throw new std::runtime_error("Unexpected seed type");
+        throw std::runtime_error("Unexpected seed type");
     }
     HashWriter ss{};
     ss << hash_preimage;
