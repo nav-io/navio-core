@@ -2667,6 +2667,19 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // from the other outputs in the same block.
     {
         std::set<uint256> block_outids;
+        // Staked-commitment set is keyed by the commitment POINT (Vs[0]), not
+        // by the output-content hash that keys the UTXO set, and carries a
+        // single SPENT/UNSPENT flag with no reference count (see
+        // CStakedCommitmentsMap in coins.h). Two distinct staked outputs that
+        // share the same Vs[0] — same value v and blinding gamma, differing in
+        // some other hashed field — therefore collapse to one entry: spending
+        // one flips the shared point to SPENT and silently evicts the other
+        // live stake from the PoPS ring. gamma is normally random but a wallet
+        // author controls it, so this is grindable. Forbid it: a staked output
+        // is invalid if its Vs[0] is already unspent in the pre-block chain
+        // state, or duplicates another staked output earlier in this block.
+        const OrderedElements<MclG1Point> prev_staked = view.GetStakedCommitments();
+        std::set<std::vector<unsigned char>> block_staked_points;
         for (const auto& tx : block.vtx) {
             const bool is_blsct_noncoinbase = tx->IsBLSCT() && !tx->IsCoinBase();
             // BLSCT aggregation can carry vouts that are spent by sibling vins
@@ -2688,6 +2701,13 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                 if (view.HaveCoin(COutPoint(outid)) || !block_outids.insert(outid).second) {
                     LogPrintf("ERROR: ConnectBlock(): tried to overwrite transaction\n");
                     return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, strprintf("bad-txns-BIP30: %s", tx->ToString()));
+                }
+                if (tx->vout[o].IsStakedCommitment()) {
+                    const MclG1Point& point = tx->vout[o].blsctData.rangeProof.Vs[0];
+                    if (prev_staked.Exists(point) || !block_staked_points.insert(point.GetVch()).second) {
+                        LogPrintf("ERROR: ConnectBlock(): duplicate staked commitment point\n");
+                        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-txns-duplicate-staked-commitment");
+                    }
                 }
             }
         }

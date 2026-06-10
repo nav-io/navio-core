@@ -190,6 +190,16 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     CAmount nFee = 0;
     bulletproofs_plus::RangeProofWithSeed<Mcl> stakedCommitmentRangeProof;
 
+    // Reject staked outputs whose commitment point (Vs[0]) is already unspent
+    // in the chain state, or duplicated within this tx. The staked-commitment
+    // set is keyed by the point with no reference count (CStakedCommitmentsMap),
+    // so two live outputs sharing a Vs[0] would collapse to one entry and let a
+    // single spend evict an unrelated live stake from the PoPS ring. Mirrors
+    // the consensus check in ConnectBlock; enforced here so such txs are also
+    // rejected at mempool acceptance. (gamma is wallet-chosen, hence grindable.)
+    const OrderedElements<MclG1Point> existing_staked = view.GetStakedCommitments();
+    std::set<std::vector<unsigned char>> tx_staked_points;
+
     for (auto& out : tx.vout) {
         auto out_hash = out.GetHash();
         blsct::ParsedPredicate parsedPredicate;
@@ -234,6 +244,12 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
             balanceKey = balanceKey - out.blsctData.rangeProof.Vs[0];
 
             if (out.GetStakedCommitmentRangeProof(stakedCommitmentRangeProof)) {
+                const MclG1Point& staked_point = out.blsctData.rangeProof.Vs[0];
+                if (existing_staked.Exists(staked_point) ||
+                    !tx_staked_points.insert(staked_point.GetVch()).second) {
+                    return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-duplicate-staked-commitment");
+                }
+
                 stakedCommitmentRangeProof.Vs.Clear();
                 stakedCommitmentRangeProof.Vs.Add(out.blsctData.rangeProof.Vs[0]);
 

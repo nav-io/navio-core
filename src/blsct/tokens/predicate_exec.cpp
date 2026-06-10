@@ -69,9 +69,13 @@ bool ExecutePredicate(const VectorPredicate& vch, CCoinsViewCache& view, const b
     try {
         return ExecutePredicate(ParsePredicate(vch), view, fDisconnect);
     } catch (const std::ios_base::failure&) {
-        // If predicate parsing fails, treat it as a no-op predicate
-        // This can happen with invalid or random predicate data
-        return true;
+        // A predicate that fails to parse is invalid, not a no-op. Returning
+        // success here would let malformed predicate bytes pass execution
+        // silently; callers that gate consensus on this result would then
+        // accept them. The connect-time verifier (verification.cpp) already
+        // rejects unparseable predicates up front, so this is defense in
+        // depth, but the contract must be "parse failure => failure".
+        return false;
     }
 }
 } // namespace blsct
