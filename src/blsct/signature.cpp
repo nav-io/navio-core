@@ -53,6 +53,20 @@ void Signature::SetVch(const std::vector<uint8_t>& buf)
     }
     if (mclBnG2_deserialize(&m_data.v, &buf[0], ser_size) == 0) {
         mclBnG2_clear(&m_data.v);
+        return;
+    }
+    // Enforce prime-order subgroup membership on the deserialized signature.
+    // BLS12-381 G2 has a large cofactor, so a point can be on the curve yet
+    // outside the order-r subgroup. mcl's bn256 init calls verifyOrderG2(false)
+    // (see mcl/bn.hpp), so mclBnG2_deserialize validates the curve equation
+    // but NOT the subgroup, and the verification path uses
+    // blsAggregateVerifyNoCheck which also skips the order check. Without this
+    // guard an attacker could submit a txSig with a small-order component added
+    // (signature malleability: distinct serialized signatures accepted for the
+    // same message set, and forgeries whenever the off-subgroup pairing factor
+    // is trivial). Mirror the identical guard in MclG1Point::SetVch.
+    if (mclBnG2_isValidOrder(&m_data.v) != 1) {
+        mclBnG2_clear(&m_data.v);
     }
 }
 
