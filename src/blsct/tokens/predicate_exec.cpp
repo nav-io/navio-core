@@ -16,7 +16,27 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
         if (fDisconnect)
             view.EraseToken(hash);
         else {
-            view.AddToken(hash, blsct::TokenInfo{predicate.GetTokenInfo()});
+            // Validate the attacker-supplied TokenInfo before storing it.
+            // Nothing else checks these fields, and CreateToken writes them
+            // verbatim into the consensus token set.
+            const blsct::TokenInfo info = predicate.GetTokenInfo();
+            // Only TOKEN/NFT are known types; TokenEntry::Serialize persists
+            // nSupply or mapMintedNft based on this. An unknown type would
+            // serialize neither (silently dropping all supply state) and can
+            // never be minted, so reject it outright.
+            if (info.type != blsct::TOKEN && info.type != blsct::NFT)
+                return false;
+            // nTotalSupply must be non-negative: it is a signed CAmount used
+            // as the upper bound in Mint()/the NFT-id check, and a negative
+            // value only yields a permanently dead token. For fungible TOKEN
+            // the supply is an amount, so additionally bound it by MoneyRange;
+            // NFT supply is a count of ids (not an amount), so only the
+            // non-negative constraint applies there.
+            if (info.nTotalSupply < 0)
+                return false;
+            if (info.type == blsct::TOKEN && !MoneyRange(info.nTotalSupply))
+                return false;
+            view.AddToken(hash, blsct::TokenInfo{info});
         }
 
         return true;
