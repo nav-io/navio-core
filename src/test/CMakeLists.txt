@@ -69,6 +69,7 @@ add_executable(test_navio
   blsct/set_mem_proof/set_mem_proof_tests.cpp
   blsct/signature_tests.cpp
   blsct/tokens/info_tests.cpp
+  blsct/tokens/predicate_exec_tests.cpp
   blsct/sign_verify_tests.cpp
   blsct/wallet/address_tests.cpp
   blsct/wallet/chain_tests.cpp

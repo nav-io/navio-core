@@ -259,7 +259,17 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
             }
         } else {
             if (out.nValue == 0) continue;
-            if (parsedPredicate.IsPayFeePredicate()) {
+            // The fee is the plaintext value of the dedicated fee output. That
+            // output MUST be the unspendable OP_RETURN burn output
+            // (scriptPubKey.IsFee()) -- the same condition the fee SIGNATURE
+            // binding above (out.scriptPubKey.IsFee() && IsPayFeePredicate())
+            // requires. Counting a PayFee predicate on a *spendable* output as
+            // the fee would let an attacker satisfy the consensus min-fee rule
+            // with value sent to an output they can re-spend: the fee would be
+            // neither burned nor enforced, defeating both the burn and the
+            // anti-spam minimum. Require IsFee() here so only the genuine burn
+            // output counts.
+            if (parsedPredicate.IsPayFeePredicate() && out.scriptPubKey.IsFee()) {
                 if (nFee > 0 || !MoneyRange(out.nValue)) {
                     return state.Invalid(TxValidationResult::TX_CONSENSUS, "more-than-one-fee-output");
                 }
