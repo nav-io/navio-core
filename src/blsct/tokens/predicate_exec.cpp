@@ -89,13 +89,21 @@ bool ExecutePredicate(const VectorPredicate& vch, CCoinsViewCache& view, const b
     try {
         return ExecutePredicate(ParsePredicate(vch), view, fDisconnect);
     } catch (const std::ios_base::failure&) {
-        // A predicate that fails to parse is invalid, not a no-op. Returning
-        // success here would let malformed predicate bytes pass execution
-        // silently; callers that gate consensus on this result would then
-        // accept them. The connect-time verifier (verification.cpp) already
-        // rejects unparseable predicates up front, so this is defense in
-        // depth, but the contract must be "parse failure => failure".
-        return false;
+        // If predicate parsing fails, treat it as a no-op predicate.
+        // This can happen with invalid or random predicate data.
+        //
+        // This MUST stay a no-op (return true), not a failure: the only
+        // consensus caller of this overload is DisconnectBlock (validation.cpp,
+        // fDisconnect=true), which treats a false return as DISCONNECT_FAILED
+        // and aborts with "irrecoverable inconsistency in block data" ->
+        // "Corrupted block database" during reorg / VerifyDB. The connect path
+        // never relies on this result for an unparseable predicate:
+        // VerifyTxCoreImpl parses the predicate itself and rejects the tx with
+        // "failed-to-parse-predicate" before the block can be connected, so
+        // malformed predicate bytes can never reach the chain. Returning true
+        // here only affects the reverse (disconnect) direction, where a clean
+        // no-op is exactly correct.
+        return true;
     }
 }
 } // namespace blsct
