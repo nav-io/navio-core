@@ -201,7 +201,7 @@ bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, cons
     if (!vInputs.contains(token_id))
         vInputs[token_id] = std::vector<UnsignedInput>();
 
-    vInputs[token_id].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), amount, gamma, spendingKey, stakedCommitment});
+    vInputs[token_id].emplace_back(CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), amount, gamma, spendingKey, stakedCommitment);
 
     if (!nAmounts.contains(token_id))
         nAmounts[token_id] = {0, 0, 0};
