@@ -85,6 +85,21 @@ struct UnsignedInput {
     // keys. May be null when the spending key (sk) is supplied directly.
     CTxOut out;
 
+    UnsignedInput() = default;
+    // Explicit field constructor. Without it, the only way to populate an
+    // UnsignedInput in one expression is aggregate (brace) initialization,
+    // which vector::emplace_back cannot perform on libc++ < 16 (clang-14,
+    // used by some CI images) because std::construct_at uses parenthesized
+    // init. Providing this constructor lets callers use emplace_back portably
+    // (and satisfies clang-tidy modernize-use-emplace) while the defaulted
+    // constructor above keeps the default-construct + field-assign callers
+    // working.
+    UnsignedInput(const CTxIn& in_, const Scalar& value_, const Scalar& gamma_,
+                  const PrivateKey& sk_, bool is_staked_commitment_,
+                  const CTxOut& out_ = CTxOut())
+        : in(in_), value(value_), gamma(gamma_), sk(sk_),
+          is_staked_commitment(is_staked_commitment_), out(out_) {}
+
     template <typename Stream>
     void Serialize(Stream& s) const
     {

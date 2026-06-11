@@ -1137,7 +1137,12 @@ jobs:
           cmake --build /tmp/tidy-build --target bitcoin-tidy-tests
           # Filter qt qrc/moc generated files from compile_commands.json in-place
           # so that -p build (directory) works correctly with run-clang-tidy-17.
-          jq 'map(select(.file | test("src/qt/qrc_.*\\.cpp$|/moc_.*\\.cpp$") | not))' \
+          # Also drop vendored subtrees (minisketch/leveldb/secp256k1/crc32c/bls):
+          # they are not our code and emit compiler warnings (e.g. -Wundef in
+          # minisketch's int_utils.h) that the diagnostics gate below would treat
+          # as failures. This mirrors the HeaderFilterRegex in src/.clang-tidy,
+          # which already excludes those same subtrees.
+          jq 'map(select(.file | test("src/qt/qrc_.*\\.cpp$|/moc_.*\\.cpp$|/(minisketch|leveldb|secp256k1|crc32c|bls)/") | not))' \
             build/compile_commands.json > /tmp/compile_commands_filtered.json
           mv /tmp/compile_commands_filtered.json build/compile_commands.json
           # Run clang-tidy, tee output, then explicitly fail if any diagnostic
