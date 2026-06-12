@@ -10,7 +10,7 @@
 
 #include <limits>
 
-BOOST_FIXTURE_TEST_SUITE(token_info_tests, BasicTestingSetup)
+BOOST_FIXTURE_TEST_SUITE(info_tests, BasicTestingSetup)
 
 static blsct::TokenEntry MakeToken(CAmount totalSupply, CAmount supply = 0)
 {
