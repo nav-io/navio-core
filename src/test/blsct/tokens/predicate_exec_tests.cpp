@@ -27,6 +27,8 @@ static blsct::CreateTokenPredicate MakeCreate(uint8_t type, CAmount total_supply
     return blsct::CreateTokenPredicate(info);
 }
 
+// Register a token of the given type and supply directly in the view, and
+// return the owner public key (the consensus token key is its hash).
 static blsct::PublicKey RegisterToken(CCoinsViewCache& view, blsct::TokenType type, CAmount total_supply)
 {
     blsct::PrivateKey owner_sk(7);
@@ -41,6 +43,8 @@ static blsct::PublicKey RegisterToken(CCoinsViewCache& view, blsct::TokenType ty
     view.AddToken(owner_pk.GetHash(), std::move(entry));
     return owner_pk;
 }
+
+// ---- CreateToken validation (#286) ----------------------------------------
 
 BOOST_AUTO_TEST_CASE(create_token_valid_ok)
 {
@@ -96,6 +100,8 @@ BOOST_AUTO_TEST_CASE(create_token_supply_above_money_range_rejected)
     BOOST_CHECK(!blsct::ExecutePredicate(parsed, view));
 }
 
+// ---- Mint type confusion (#285) -------------------------------------------
+
 // Minting a fungible token against a TOKEN-type entry works.
 BOOST_AUTO_TEST_CASE(mint_token_on_token_type_ok)
 {
@@ -115,24 +121,6 @@ BOOST_AUTO_TEST_CASE(mint_token_on_token_type_ok)
 // so the supply cap resets to 0 on reload and the owner could re-mint
 // unbounded amounts of the fungible asset H(pubkey) (inflation).
 BOOST_AUTO_TEST_CASE(mint_token_on_nft_type_rejected)
-// Register an NFT token with a small fixed supply, returning its consensus
-// token key (publicKey hash) and the owner public key.
-static blsct::PublicKey RegisterNftToken(CCoinsViewCache& view, CAmount total_supply)
-{
-    blsct::PrivateKey owner_sk(7);
-    blsct::PublicKey owner_pk = owner_sk.GetPublicKey();
-
-    blsct::TokenInfo info;
-    info.type = blsct::NFT;
-    info.publicKey = owner_pk;
-    info.nTotalSupply = total_supply;
-
-    blsct::TokenEntry entry(info, std::map<uint64_t, std::map<std::string, std::string>>{});
-    view.AddToken(owner_pk.GetHash(), std::move(entry));
-    return owner_pk;
-}
-
-BOOST_AUTO_TEST_CASE(mint_nft_within_supply_ok)
 {
     CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 20, .memory_only = true}, {}};
     CCoinsViewCache view{&base};
@@ -146,14 +134,6 @@ BOOST_AUTO_TEST_CASE(mint_nft_within_supply_ok)
 
 // Minting an NFT against an NFT-type entry works.
 BOOST_AUTO_TEST_CASE(mint_nft_on_nft_type_ok)
-    auto owner_pk = RegisterNftToken(view, /*total_supply=*/10);
-
-    blsct::MintNftPredicate p(owner_pk, /*nftId=*/3, {});
-    blsct::ParsedPredicate parsed(p);
-    BOOST_CHECK(blsct::ExecutePredicate(parsed, view));
-}
-
-BOOST_AUTO_TEST_CASE(mint_nft_at_or_above_supply_rejected)
 {
     CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 20, .memory_only = true}, {}};
     CCoinsViewCache view{&base};
@@ -168,9 +148,27 @@ BOOST_AUTO_TEST_CASE(mint_nft_at_or_above_supply_rejected)
 // Symmetric regression: minting an NFT against a TOKEN-type entry must be
 // rejected (mapMintedNft is only serialized for NFT-type entries).
 BOOST_AUTO_TEST_CASE(mint_nft_on_token_type_rejected)
-    auto owner_pk = RegisterNftToken(view, /*total_supply=*/10);
+{
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 20, .memory_only = true}, {}};
+    CCoinsViewCache view{&base};
 
-    // id == supply is out of [0, supply)
+    auto owner_pk = RegisterToken(view, blsct::TOKEN, /*total_supply=*/10);
+
+    blsct::MintNftPredicate p(owner_pk, /*nftId=*/3, {});
+    blsct::ParsedPredicate parsed(p);
+    BOOST_CHECK(!blsct::ExecutePredicate(parsed, view));
+}
+
+// ---- NFT id supply bound (#284) -------------------------------------------
+
+// id == supply is out of the [0, supply) range and must be rejected.
+BOOST_AUTO_TEST_CASE(mint_nft_at_or_above_supply_rejected)
+{
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 20, .memory_only = true}, {}};
+    CCoinsViewCache view{&base};
+
+    auto owner_pk = RegisterToken(view, blsct::NFT, /*total_supply=*/10);
+
     blsct::MintNftPredicate at(owner_pk, /*nftId=*/10, {});
     blsct::ParsedPredicate parsed_at(at);
     BOOST_CHECK(!blsct::ExecutePredicate(parsed_at, view));
@@ -184,12 +182,7 @@ BOOST_AUTO_TEST_CASE(mint_nft_high_bit_id_rejected)
     CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 20, .memory_only = true}, {}};
     CCoinsViewCache view{&base};
 
-    auto owner_pk = RegisterToken(view, blsct::TOKEN, /*total_supply=*/10);
-
-    blsct::MintNftPredicate p(owner_pk, /*nftId=*/3, {});
-    blsct::ParsedPredicate parsed(p);
-    BOOST_CHECK(!blsct::ExecutePredicate(parsed, view));
-    auto owner_pk = RegisterNftToken(view, /*total_supply=*/10);
+    auto owner_pk = RegisterToken(view, blsct::NFT, /*total_supply=*/10);
 
     const uint64_t high_bit_id = (static_cast<uint64_t>(1) << 63) + 5; // negative if cast to int64
     blsct::MintNftPredicate evil(owner_pk, high_bit_id, {});
