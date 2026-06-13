@@ -47,6 +47,15 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
 
         if (!view.GetToken(hash, token))
             return false;
+        // The fungible-token mint path mutates nSupply, which TokenEntry only
+        // serializes for TOKEN-type entries (NFT-type serializes mapMintedNft
+        // instead). Minting against an NFT-type token would bump an nSupply
+        // that is never persisted -- after a flush it reads back 0, letting
+        // the owner re-mint up to nTotalSupply repeatedly (supply-cap break /
+        // inflation). The token type is attacker-chosen at creation, so it
+        // must be validated here.
+        if (token.info.type != blsct::TOKEN)
+            return false;
         if (!token.Mint(predicate.GetAmount() * (1 - 2 * fDisconnect)))
             return false;
 
@@ -59,6 +68,12 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
         blsct::TokenEntry token;
 
         if (!view.GetToken(hash, token))
+            return false;
+
+        // Symmetric guard: the NFT mint path mutates mapMintedNft, which is
+        // only serialized for NFT-type entries. Reject mints against a
+        // non-NFT token.
+        if (token.info.type != blsct::NFT)
             return false;
 
         // nftId is uint64_t; nTotalSupply is signed CAmount. Casting the id to
