@@ -61,7 +61,15 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
         if (!view.GetToken(hash, token))
             return false;
 
-        if ((CAmount)predicate.GetNftId() >= token.info.nTotalSupply)
+        // nftId is uint64_t; nTotalSupply is signed CAmount. Casting the id to
+        // CAmount makes any id >= 2^63 negative, which would pass a signed
+        // ">= nTotalSupply" test and let an attacker mint NFT ids outside the
+        // issuer's fixed [0, nTotalSupply) range. Compare in the unsigned
+        // domain instead, after rejecting a non-positive supply (no NFT id is
+        // valid then). nTotalSupply is MoneyRange-bounded and >= 0 in practice.
+        if (token.info.nTotalSupply <= 0)
+            return false;
+        if (predicate.GetNftId() >= static_cast<uint64_t>(token.info.nTotalSupply))
             return false;
 
         if ((token.mapMintedNft.contains(predicate.GetNftId())) == !fDisconnect)
