@@ -76,7 +76,15 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
         if (token.info.type != blsct::NFT)
             return false;
 
-        if ((CAmount)predicate.GetNftId() >= token.info.nTotalSupply)
+        // nftId is uint64_t; nTotalSupply is signed CAmount. Casting the id to
+        // CAmount makes any id >= 2^63 negative, which would pass a signed
+        // ">= nTotalSupply" test and let an attacker mint NFT ids outside the
+        // issuer's fixed [0, nTotalSupply) range. Compare in the unsigned
+        // domain instead, after rejecting a non-positive supply (no NFT id is
+        // valid then). nTotalSupply is MoneyRange-bounded and >= 0 in practice.
+        if (token.info.nTotalSupply <= 0)
+            return false;
+        if (predicate.GetNftId() >= static_cast<uint64_t>(token.info.nTotalSupply))
             return false;
 
         if ((token.mapMintedNft.contains(predicate.GetNftId())) == !fDisconnect)
@@ -104,8 +112,20 @@ bool ExecutePredicate(const VectorPredicate& vch, CCoinsViewCache& view, const b
     try {
         return ExecutePredicate(ParsePredicate(vch), view, fDisconnect);
     } catch (const std::ios_base::failure&) {
-        // If predicate parsing fails, treat it as a no-op predicate
-        // This can happen with invalid or random predicate data
+        // If predicate parsing fails, treat it as a no-op predicate.
+        // This can happen with invalid or random predicate data.
+        //
+        // This MUST stay a no-op (return true), not a failure: the only
+        // consensus caller of this overload is DisconnectBlock (validation.cpp,
+        // fDisconnect=true), which treats a false return as DISCONNECT_FAILED
+        // and aborts with "irrecoverable inconsistency in block data" ->
+        // "Corrupted block database" during reorg / VerifyDB. The connect path
+        // never relies on this result for an unparseable predicate:
+        // VerifyTxCoreImpl parses the predicate itself and rejects the tx with
+        // "failed-to-parse-predicate" before the block can be connected, so
+        // malformed predicate bytes can never reach the chain. Returning true
+        // here only affects the reverse (disconnect) direction, where a clean
+        // no-op is exactly correct.
         return true;
     }
 }
