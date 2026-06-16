@@ -2887,7 +2887,7 @@ uint8_t* hex_to_malloced_buf(const char* hex)
 
     for (size_t i = 0; i < buf_len; ++i) {
         uint8_t x = 0;
-        auto _ = std::from_chars(p, p + 2, x, 16);
+        [[maybe_unused]] auto _ = std::from_chars(p, p + 2, x, 16);
         buf[i] = x;
         p += 2;
     }

@@ -5,6 +5,7 @@
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <primitives/transaction.h>
+#include <script/script.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <txdb.h>
@@ -273,6 +274,79 @@ BOOST_FIXTURE_TEST_CASE(validation_min_fee_phantom_output_rejected_test, Testing
     // The attacker doesn't actually need to fix up txSig for the min-fee rule
     // to fire -- the rule runs before the BLS aggregate check, and the phantom
     // output's added bytes alone make `nFee < weight * BLSCT_DEFAULT_FEE`.
+    TxValidationState tx_state;
+    BOOST_CHECK(!blsct::VerifyTx(CTransaction(mtx), coins_view_cache, tx_state));
+    BOOST_CHECK_EQUAL(tx_state.GetRejectReason(), "blsct-fee-below-min");
+}
+
+// The fee is counted only from the dedicated unspendable burn output
+// (scriptPubKey.IsFee(), i.e. a bare OP_RETURN). A PayFee predicate placed on a
+// *spendable* output must NOT be counted as the fee: otherwise an attacker
+// could satisfy the consensus minimum-fee rule with value routed to an output
+// they can re-spend -- the "fee" would be neither burned nor enforced. Here we
+// take a valid tx and move its fee value off the IsFee() output onto a spendable
+// one carrying the PayFee predicate; the tx must then fail the min-fee rule
+// because no IsFee() output funds it.
+BOOST_FIXTURE_TEST_CASE(validation_payfee_on_spendable_output_not_counted_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    const auto txid = Txid::FromUint256(InsecureRand256());
+    COutPoint outpoint(txid);
+
+    Coin coin;
+    auto out = blsct::CreateOutput(recvAddress, 1000 * COIN, "test");
+    coin.nHeight = 1;
+    coin.out = out.out;
+
+    {
+        CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+        coins_view_cache.SetBestBlock(InsecureRand256());
+        coins_view_cache.AddCoin(outpoint, std::move(coin), true);
+        BOOST_CHECK(coins_view_cache.Flush());
+    }
+
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+    auto tx = blsct::TxFactory(blsct_km);
+    BOOST_CHECK(tx.AddInput(coins_view_cache, outpoint));
+    tx.AddOutput(recvAddress, 900 * COIN, "test");
+
+    auto finalTxOpt = tx.BuildTx();
+    BOOST_REQUIRE(finalTxOpt.has_value());
+
+    // Sanity: untampered tx verifies.
+    {
+        TxValidationState tx_state;
+        BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTxOpt.value()), coins_view_cache, tx_state));
+    }
+
+    // Turn the unspendable OP_RETURN fee output into a spendable one while
+    // keeping its PayFee predicate and value. With the fix, this output no
+    // longer counts toward the fee (IsFee() is now required), so nFee drops to
+    // 0 and the min-fee rule rejects the tx.
+    CMutableTransaction mtx(finalTxOpt.value());
+    bool patched = false;
+    for (auto& vout : mtx.vout) {
+        if (vout.scriptPubKey.IsFee()) {
+            BOOST_REQUIRE(vout.nValue > 0);
+            // A non-IsFee() script that is still standard/spendable.
+            vout.scriptPubKey = CScript() << OP_TRUE;
+            patched = true;
+            break;
+        }
+    }
+    BOOST_REQUIRE(patched);
+
     TxValidationState tx_state;
     BOOST_CHECK(!blsct::VerifyTx(CTransaction(mtx), coins_view_cache, tx_state));
     BOOST_CHECK_EQUAL(tx_state.GetRejectReason(), "blsct-fee-below-min");

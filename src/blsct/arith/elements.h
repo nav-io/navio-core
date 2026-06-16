@@ -11,6 +11,7 @@
 
 #include <serialize.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <stdexcept>
@@ -130,11 +131,18 @@ public:
     template <typename Stream>
     void Unserialize(Stream& s)
     {
-        size_t v_size;
-        v_size = ::ReadCompactSize(s);
-        m_vec.resize(v_size);
+        const uint64_t v_size = ::ReadCompactSize(s);
         Clear();
-        for (size_t i = 0; i < v_size; i++) {
+        // Do NOT pre-size the vector to `v_size`: it is attacker-controlled
+        // and only range-checked against MAX_SIZE by ReadCompactSize, so a
+        // 9-byte length prefix could otherwise force a multi-gigabyte
+        // allocation (resize(v_size) * sizeof(T)) and OOM the node on a single
+        // malformed tx/block. Instead grow incrementally, capping the
+        // up-front reserve. If the stream is truncated, the per-element
+        // ::Unserialize below throws before the claimed count is ever reached,
+        // so memory stays bounded by what was actually delivered.
+        m_vec.reserve(std::min<uint64_t>(v_size, MAX_RESERVE_ELEMENTS));
+        for (uint64_t i = 0; i < v_size; i++) {
             T n;
             ::Unserialize(s, n);
             Add(n);
@@ -142,6 +150,10 @@ public:
     }
 
     std::vector<T> m_vec;
+
+private:
+    // Cap the speculative reserve from an untrusted length prefix.
+    static constexpr uint64_t MAX_RESERVE_ELEMENTS = 1024;
 };
 
 template <typename T>
@@ -195,10 +207,13 @@ public:
     template <typename Stream>
     void Unserialize(Stream& s)
     {
-        size_t v_size;
-        v_size = ::ReadCompactSize(s);
+        const uint64_t v_size = ::ReadCompactSize(s);
+        // See Elements<T>::Unserialize. A std::set has no pre-sized buffer to
+        // over-allocate, but still bound the loop by what the stream can
+        // deliver: a truncated stream makes the per-element ::Unserialize
+        // throw, so we never spin up to a bogus `v_size`.
         Clear();
-        for (size_t i = 0; i < v_size; i++) {
+        for (uint64_t i = 0; i < v_size; i++) {
             T n;
             ::Unserialize(s, n);
             Add(n);

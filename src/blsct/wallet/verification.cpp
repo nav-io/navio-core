@@ -190,6 +190,16 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     CAmount nFee = 0;
     bulletproofs_plus::RangeProofWithSeed<Mcl> stakedCommitmentRangeProof;
 
+    // Reject staked outputs whose commitment point (Vs[0]) is already unspent
+    // in the chain state, or duplicated within this tx. The staked-commitment
+    // set is keyed by the point with no reference count (CStakedCommitmentsMap),
+    // so two live outputs sharing a Vs[0] would collapse to one entry and let a
+    // single spend evict an unrelated live stake from the PoPS ring. Mirrors
+    // the consensus check in ConnectBlock; enforced here so such txs are also
+    // rejected at mempool acceptance. (gamma is wallet-chosen, hence grindable.)
+    const OrderedElements<MclG1Point> existing_staked = view.GetStakedCommitments();
+    std::set<std::vector<unsigned char>> tx_staked_points;
+
     for (auto& out : tx.vout) {
         auto out_hash = out.GetHash();
         blsct::ParsedPredicate parsedPredicate;
@@ -234,6 +244,12 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
             balanceKey = balanceKey - out.blsctData.rangeProof.Vs[0];
 
             if (out.GetStakedCommitmentRangeProof(stakedCommitmentRangeProof)) {
+                const MclG1Point& staked_point = out.blsctData.rangeProof.Vs[0];
+                if (existing_staked.Exists(staked_point) ||
+                    !tx_staked_points.insert(staked_point.GetVch()).second) {
+                    return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-duplicate-staked-commitment");
+                }
+
                 stakedCommitmentRangeProof.Vs.Clear();
                 stakedCommitmentRangeProof.Vs.Add(out.blsctData.rangeProof.Vs[0]);
 
@@ -243,7 +259,17 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
             }
         } else {
             if (out.nValue == 0) continue;
-            if (parsedPredicate.IsPayFeePredicate()) {
+            // The fee is the plaintext value of the dedicated fee output. That
+            // output MUST be the unspendable OP_RETURN burn output
+            // (scriptPubKey.IsFee()) -- the same condition the fee SIGNATURE
+            // binding above (out.scriptPubKey.IsFee() && IsPayFeePredicate())
+            // requires. Counting a PayFee predicate on a *spendable* output as
+            // the fee would let an attacker satisfy the consensus min-fee rule
+            // with value sent to an output they can re-spend: the fee would be
+            // neither burned nor enforced, defeating both the burn and the
+            // anti-spam minimum. Require IsFee() here so only the genuine burn
+            // output counts.
+            if (parsedPredicate.IsPayFeePredicate() && out.scriptPubKey.IsFee()) {
                 if (nFee > 0 || !MoneyRange(out.nValue)) {
                     return state.Invalid(TxValidationResult::TX_CONSENSUS, "more-than-one-fee-output");
                 }
