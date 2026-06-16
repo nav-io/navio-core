@@ -213,6 +213,15 @@ class MiningTest(BitcoinTestFramework):
         bad_block = copy.deepcopy(block)
         bad_tx = copy.deepcopy(bad_block.vtx[0])
         bad_tx.vin[0].prevout.hash = 255
+        # Give the copied output a distinct scriptPubKey. Navio keys the UTXO set
+        # by output-content hash, so an exact copy of the coinbase output would
+        # trip the intra-block duplicate-output check (bad-txns-BIP30) before the
+        # missing-input check this test targets. The coinbase already pays to a
+        # bare OP_TRUE (create_coinbase default), so OP_TRUE alone still collides;
+        # use OP_TRUE OP_TRUE -- distinct content hash, still trivially spendable
+        # (leaves a true on the stack) -- so the block reaches the
+        # input-existence check.
+        bad_tx.vout[0].scriptPubKey = b'\x51\x51'
         bad_tx.rehash()
         bad_block.vtx.append(bad_tx)
         assert_template(node, bad_block, 'bad-txns-inputs-missingorspent')

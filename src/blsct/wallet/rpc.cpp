@@ -884,7 +884,7 @@ std::optional<CTxDestination> DestinationForOutput(const wallet::CWallet& wallet
 // EXCLUSIVE_LOCKS_REQUIRED(cs_wallet); without this annotation the
 // thread-safety analyzer cannot see the lock across the helper boundary
 // (and -Wthread-safety-analysis is fatal in CI).
-CAmount CreditForFilter(const wallet::CWallet& wallet, const CTxOut& txout, CAmount blsct_recovered_amount, bool is_blsct, wallet::isminefilter filter) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+[[maybe_unused]] CAmount CreditForFilter(const wallet::CWallet& wallet, const CTxOut& txout, CAmount blsct_recovered_amount, bool is_blsct, wallet::isminefilter filter) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
     if ((wallet.IsMine(txout) & filter) == 0) return 0;
     return is_blsct ? blsct_recovered_amount : txout.nValue;
@@ -2638,7 +2638,17 @@ RPCHelpMan fundblsctrawtransaction()
                             // lets the offline signer derive it later.
                             blsct::PrivateKey spending_key;
                             const bool can_derive = !pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_DISABLE_PRIVATE_KEYS);
-                            if (can_derive && blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) && spending_key.IsValid()) {
+                            if (can_derive) {
+                                // A private-key wallet must be able to derive the
+                                // spending key now; if it cannot, it will not be
+                                // able to sign this input in signblsctrawtransaction
+                                // either. Skip such outputs (e.g. addresses outside
+                                // our sub-address pool, or custom scripts we do not
+                                // own) instead of force-including them and failing
+                                // the later sign with RPC_WALLET_ERROR.
+                                if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
+                                    continue;
+                                }
                                 if (!output.txout.blsctData.spendingKey.IsZero()) {
                                     auto signing_pubkey = spending_key.GetPublicKey();
                                     auto expected_pubkey = blsct::PublicKey(output.txout.blsctData.spendingKey);
@@ -2648,6 +2658,8 @@ RPCHelpMan fundblsctrawtransaction()
                                 }
                                 input.sk = spending_key;
                             }
+                            // else: watch-only / view-key wallet — derivation is
+                            // intentionally deferred to the offline signer.
 
                             unsigned_tx.AddInput(input);
                             additional_input_value += input_amount;

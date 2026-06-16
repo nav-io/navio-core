@@ -34,8 +34,7 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
         if (!km->GetSpendingKeyForOutputWithCache(coin.out, spending_key)) {
             return false;
         }
-        // NOLINTNEXTLINE(modernize-use-emplace) UnsignedInput is an aggregate; parenthesized emplace_back is not portable across libstdc++/libc++.
-        vInputs[coin.out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, spending_key, stakedCommitment});
+        vInputs[coin.out.tokenId].emplace_back(CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, spending_key, stakedCommitment);
     } catch (const std::exception& e) {
         LogPrintf("Error adding input: %s\n", e.what());
         return false;
@@ -87,8 +86,8 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
         if (!km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
             return false;
         }
-        // NOLINTNEXTLINE(modernize-use-emplace) UnsignedInput is an aggregate; parenthesized emplace_back is not portable across libstdc++/libc++.
-        vInputs[out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, spending_key, stakedCommitment});
+        vInputs[out.tokenId]
+            .emplace_back(CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, spending_key, stakedCommitment);
     } catch (const std::exception& e) {
         LogPrintf("Error adding input: %s\n", e.what());
         return false;
