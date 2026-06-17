@@ -5,6 +5,8 @@
 #include <aggregation/combine.h>
 #include <aggregation/pool.h>
 #include <aggregation/session.h>
+#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/private_key.h>
 #include <blsct/public_key.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <consensus/amount.h>
@@ -408,11 +410,16 @@ static RPCHelpMan requestquote()
             if (!node.rfq_matcher || !node.p2pmsg_transport) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
 
             const uint256 uuid = GetRandHash();
-            // Use the node's inbox key as the reply key for this debug surface;
-            // a full taker would mint a fresh per-request session key.
-            const blsct::PublicKey reply_key = node.p2pmsg_transport->InboxPubKey();
+            // Mint a fresh per-request session keypair so makers' quotes are
+            // encrypted to a key unlinkable to this node's inbox. Register the
+            // private half with the transport so inbound RFQ_QUOTE messages
+            // addressed to it are decrypted; it is auto-pruned at the request
+            // expiry.
+            const blsct::PrivateKey reply_priv(MclScalar::Rand(/*exclude_zero=*/true));
+            const blsct::PublicKey reply_key = reply_priv.GetPublicKey();
             rfq::RfqRequest r = ParseRequestArgs(request, uuid, reply_key);
             if (!node.rfq_matcher->OpenRequest(r)) throw JSONRPCError(RPC_MISC_ERROR, "uuid collision");
+            node.p2pmsg_transport->AddSessionKey(reply_key, reply_priv, r.expiry);
 
             // Broadcast the request publicly over the bus (encrypted to the
             // well-known broadcast key so every node can read it). Makers that
@@ -579,6 +586,12 @@ static RPCHelpMan addrfqquote()
             q.quote_id = uint256(ParseHashV(request.params[1], "quote_id"));
             q.fill = request.params[2].getInt<int64_t>();
             q.sell_cost = request.params[3].getInt<int64_t>();
+            // Echo the open request's token pair so OrderCache matching and the
+            // taker's re-validation see a self-describing quote.
+            if (auto req = reg.GetRequest(q.uuid)) {
+                q.buy = req->buy;
+                q.sell = req->sell;
+            }
             CMutableTransaction mtx;
             if (!DecodeHexTx(mtx, request.params[4].get_str())) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "half decode failed");

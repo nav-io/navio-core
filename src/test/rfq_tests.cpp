@@ -150,6 +150,8 @@ RfqQuote MakeOrder(const uint256& quote_id, const uint256& input_hash,
 {
     RfqQuote q;
     q.quote_id = quote_id;
+    q.buy = TokA();
+    q.sell = TokB();
     q.fill = fill;
     q.sell_cost = sell_cost;
     q.order_expiry = order_expiry;
@@ -184,6 +186,10 @@ BOOST_AUTO_TEST_CASE(order_store_find_expiry)
     BOOST_CHECK_EQUAL(cache.FindMatching(req, /*now=*/2000).size(), 1u);
     RfqRequest big = MakeReq(TokA(), TokB(), 2000, 0);
     BOOST_CHECK_EQUAL(cache.FindMatching(big, 2000).size(), 0u);
+
+    // Wrong token pair: same amounts, swapped pair -> no match.
+    RfqRequest wrong_pair = MakeReq(TokB(), TokA(), 800, 0);
+    BOOST_CHECK_EQUAL(cache.FindMatching(wrong_pair, 2000).size(), 0u);
 
     // After expiry, find returns nothing and prunes.
     BOOST_CHECK_EQUAL(cache.FindMatching(req, /*now=*/6000).size(), 0u);

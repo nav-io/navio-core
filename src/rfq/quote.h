@@ -8,6 +8,7 @@
 #include <blsct/public_key.h>
 #include <blsct/signature.h>
 #include <consensus/amount.h>
+#include <ctokens/tokenid.h>
 #include <primitives/transaction.h>
 #include <serialize.h>
 #include <uint256.h>
@@ -23,6 +24,8 @@ struct RfqQuote {
     uint256 uuid;                  //!< matches the RfqRequest
     uint256 quote_id;              //!< unique per quote (dedupe within a request)
     CTransactionRef half_tx;       //!< maker's unbalanced half
+    TokenId buy;                   //!< token delivered to the taker (== request buy)
+    TokenId sell;                  //!< token charged to the taker (== request sell)
     CAmount fill{0};               //!< units of `buy` delivered (>= 0)
     CAmount sell_cost{0};          //!< units of `sell` the taker must pay (> 0)
     int64_t order_expiry{0};       //!< quote valid until this unix time
@@ -31,8 +34,8 @@ struct RfqQuote {
 
     SERIALIZE_METHODS(RfqQuote, obj)
     {
-        READWRITE(obj.uuid, obj.quote_id, obj.half_tx, obj.fill, obj.sell_cost,
-                  obj.order_expiry, obj.session_eph, obj.maker_sig);
+        READWRITE(obj.uuid, obj.quote_id, obj.half_tx, obj.buy, obj.sell, obj.fill,
+                  obj.sell_cost, obj.order_expiry, obj.session_eph, obj.maker_sig);
     }
 
     //! Price in units of `sell` per unit of `buy`. Lower is better for the taker.

@@ -43,7 +43,9 @@ struct PoWHeader {
         READWRITE(obj.version, obj.timestamp, obj.kind, obj.session_eph, obj.payload_hash, obj.nonce);
     }
 
-    //! SHA256 over all fields (including nonce). Also the replay-cache key.
+    //! SHA256 over all fields (including nonce); the value PoW difficulty is
+    //! checked against. (Replay detection is keyed separately by the encrypted
+    //! packet's EciesPacket::MsgHash(), not this hash.)
     uint256 Hash() const;
 };
 

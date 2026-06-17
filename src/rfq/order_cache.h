@@ -45,9 +45,10 @@ public:
     //! effective expiry is min(order_expiry, now + 14 days).
     bool StoreOrder(const RfqQuote& q, int64_t now) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
-    //! Return copies of all non-expired orders whose half-tx matches `req`'s
-    //! token pair and size band. (Match semantics intentionally coarse here;
-    //! the taker re-validates and ranks.) Touches LRU order.
+    //! Return copies of all non-expired orders whose token pair equals `req`'s
+    //! (buy/sell) and whose fill covers `req.size`. (Match semantics
+    //! intentionally coarse here; the taker re-validates the half-tx and ranks.)
+    //! Touches LRU order.
     std::vector<RfqQuote> FindMatching(const RfqRequest& req, int64_t now)
         EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 

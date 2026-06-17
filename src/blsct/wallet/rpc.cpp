@@ -377,6 +377,8 @@ static RPCHelpMan broadcastorder()
             q.uuid = uint256();                 // standing order: bound to an RFQ at match time
             q.quote_id = GetRandHash();
             q.half_tx = MakeTransactionRef(half.value());
+            q.buy = offer_token;                // buy-token the taker receives
+            q.sell = want_token;                // sell-token the taker pays
             q.fill = offer_amount;              // buy-token the taker receives
             q.sell_cost = want_amount;          // sell-token the taker pays
             q.order_expiry = expiry;

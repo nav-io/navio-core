@@ -102,9 +102,11 @@ std::vector<RfqQuote> OrderCache::FindMatching(const RfqRequest& req, int64_t no
             continue;
         }
         const RfqQuote& q = it->second.quote;
-        // Coarse match: the order must at least deliver the requested buy token
-        // in an amount that can cover the request size. The taker re-validates.
-        if (q.fill >= req.size) {
+        // Coarse match: the order must offer the requested token pair and deliver
+        // enough of the buy token to cover the request size. The taker
+        // re-validates the half-tx and ranks. Amount/price bands are left to the
+        // taker; token pair is a hard gate so unrelated markets never match.
+        if (q.buy == req.buy && q.sell == req.sell && q.fill >= req.size) {
             out.push_back(q);
             TouchLRU(it->first);
         }
