@@ -107,7 +107,7 @@ software upgrade on relaying nodes.
 ### ECIES
 
 ```
-EciesPacket = G1 eph_pubkey (48) || u8[12] nonce || ciphertext || u8[16] tag
+EciesPacket = G1 eph_pubkey (48) || ciphertext || u8[16] tag
 ```
 
 - Sender draws a fresh ephemeral BLS keypair per message.
@@ -124,7 +124,7 @@ Navio is proof-of-stake, so chain difficulty is **not** a CPU-cost anchor. The
 PoW target is a flat leading-zero-bits threshold:
 
 ```
-target = (2^256 - 1) >> bits           // default bits = 22 (~100 ms median CPU)
+target = (2^256 - 1) >> bits           // default bits = 23 (~100-200 ms median CPU)
 h = SHA256(version || timestamp || kind || session_eph || payload_hash || nonce)
 accept iff h <= target
         && |now - timestamp| <= 120 s
@@ -142,7 +142,8 @@ target too cheap, a `P2PMSG_POW_TARGET_V2` can be activated at a scheduled
 height via the existing version-bits machinery.
 
 The single replay cache is a `CuckooCache<uint256>` keyed by the encrypted
-packet hash, with a one-hour TTL.
+packet hash. It is memory-bounded (sized by `replay_cache_bytes`); eviction is
+LRU/probabilistic under load rather than a fixed time-based TTL.
 
 ## Aggregation
 
@@ -214,8 +215,8 @@ Built, wired into the node, and tested:
 ### Deferred orchestration
 
 The following background flows are **not yet wired**; their building blocks are
-all complete and tested. They are the remaining work before the `-p2pmsg=0`
-gate can be flipped:
+all complete and tested. They are the remaining work before the full
+broadcast-and-collect orchestration is enabled:
 
 - aggregation session loop: broadcast `AGG_ANN`, responders auto-build
   candidates, initiator collects `CANDIDATE_TX`, combines, broadcasts;
@@ -228,8 +229,9 @@ gate can be flipped:
 
 These require running wallet coin selection and tx building on worker threads
 (off the net/validation path) with a wallet snapshot taken under lock and
-released before the heavy build. Until they land and pass a full end-to-end
-functional suite, `-p2pmsg` stays default-off.
+released before the heavy build. The transport subsystem itself is enabled by
+default (`-p2pmsg=1`); these higher-level orchestration flows remain gated off
+until they land and pass a full end-to-end functional suite.
 
 ## Security posture
 

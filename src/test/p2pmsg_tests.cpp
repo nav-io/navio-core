@@ -407,6 +407,44 @@ BOOST_AUTO_TEST_CASE(transport_replay_rejected)
     BOOST_CHECK(r2 == Transport::WireResult::RejectReplay);
 }
 
+BOOST_AUTO_TEST_CASE(transport_session_key_decrypts)
+{
+    LoopbackTransport h(/*bits=*/4);
+    h.t->now_override = 1000;
+
+    std::atomic<int> pings{0};
+    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage&) {
+        pings.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    // A fresh per-request session keypair, distinct from the node inbox key.
+    blsct::PrivateKey reply_priv(MclScalar::Rand(true));
+    blsct::PublicKey reply_key = reply_priv.GetPublicKey();
+
+    // Registered and live: a message encrypted to it decrypts and dispatches.
+    // (Register before sending — a pre-registration send would race the async
+    // worker, which might run after AddSessionKey and decrypt it after all.)
+    h.t->AddSessionKey(reply_key, reply_priv, /*expiry=*/2000);
+    auto env_ok = StampedEnvelope(reply_key, PayloadKind::PING, {1, 1}, /*bits=*/4, /*now=*/1000);
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env_ok)) == Transport::WireResult::Enqueued);
+
+    using namespace std::chrono_literals;
+    auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (pings.load() < 1 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(1ms);
+    }
+    BOOST_CHECK_EQUAL(pings.load(), 1);
+
+    // Expired session key: filtered out at decrypt time by the expiry check, so
+    // the result is independent of worker timing (no race). Advance past the
+    // 2000 expiry and confirm a message to the same key is never dispatched.
+    h.t->now_override = 3000;
+    auto env_expired = StampedEnvelope(reply_key, PayloadKind::PING, {2, 2}, /*bits=*/4, /*now=*/3000);
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env_expired)) == Transport::WireResult::Enqueued);
+    std::this_thread::sleep_for(200ms); // let the worker (fail to) process it
+    BOOST_CHECK_EQUAL(pings.load(), 1); // still 1 — expired key did not decrypt
+}
+
 BOOST_AUTO_TEST_CASE(transport_bad_pow_rejected)
 {
     LoopbackTransport h(/*bits=*/16);

@@ -106,6 +106,19 @@ public:
     //! Our inbox key: peers encrypt to this; we decrypt inbound with it.
     const blsct::PublicKey& InboxPubKey() const { return m_inbox_pub; }
 
+    //! Register a per-request session keypair so inbound messages encrypted to
+    //! `pub` (e.g. an RFQ taker's fresh `reply_key`) are decrypted alongside the
+    //! node inbox key. `expiry` is a unix-seconds bound past which the key is
+    //! pruned (0 = no expiry; caller must DropSessionKey explicitly). Cheap; safe
+    //! to call from any thread. Trial-decrypt cost is O(open session keys), so
+    //! callers should drop keys once their request window closes.
+    void AddSessionKey(const blsct::PublicKey& pub, const blsct::PrivateKey& priv,
+                       int64_t expiry) EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
+
+    //! Forget a previously registered session key. No-op if absent.
+    void DropSessionKey(const blsct::PublicKey& pub)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
+
     //! Register the handler for an application kind. Call before the net is live.
     void RegisterHandler(PayloadKind kind, MessageHandler handler);
 
@@ -132,7 +145,7 @@ public:
 private:
     //! Decrypt + dispatch one enqueued job. Runs on a worker thread; touches no
     //! shared state guarded by m_replay_mutex.
-    void HandleJob(const Job& job);
+    void HandleJob(const Job& job) EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
     int64_t Now() const;
 
     WorkerPool& m_pool;
@@ -143,6 +156,16 @@ private:
 
     blsct::PrivateKey m_inbox_priv;
     blsct::PublicKey m_inbox_pub;
+
+    //! Per-request session keys (e.g. RFQ taker reply_keys) trial-decrypted in
+    //! addition to the inbox key. Snapshotted under the lock, then used outside
+    //! it so heavy BLS decrypts never run while the mutex is held.
+    struct SessionKey {
+        blsct::PrivateKey priv;
+        int64_t expiry; //!< unix seconds; 0 = no auto-expiry
+    };
+    Mutex m_session_mutex;
+    std::vector<std::pair<blsct::PublicKey, SessionKey>> m_session_keys GUARDED_BY(m_session_mutex);
 
     std::array<MessageHandler, 256> m_handlers{};
 

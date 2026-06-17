@@ -10,6 +10,7 @@
 #include <util/time.h>
 
 #include <atomic>
+#include <cstring>
 
 namespace p2pmsg {
 
@@ -71,6 +72,27 @@ void Transport::RegisterHandler(PayloadKind kind, MessageHandler handler)
     m_handlers[static_cast<uint8_t>(kind)] = std::move(handler);
 }
 
+void Transport::AddSessionKey(const blsct::PublicKey& pub, const blsct::PrivateKey& priv, int64_t expiry)
+{
+    const int64_t now = Now();
+    LOCK(m_session_mutex);
+    // Opportunistically drop expired keys so the trial-decrypt set stays small.
+    std::erase_if(m_session_keys, [now](const auto& e) {
+        return e.second.expiry != 0 && e.second.expiry <= now;
+    });
+    // Replace any existing entry for the same pubkey.
+    const auto vch = pub.GetVch();
+    std::erase_if(m_session_keys, [&vch](const auto& e) { return e.first.GetVch() == vch; });
+    m_session_keys.emplace_back(pub, SessionKey{priv, expiry});
+}
+
+void Transport::DropSessionKey(const blsct::PublicKey& pub)
+{
+    const auto vch = pub.GetVch();
+    LOCK(m_session_mutex);
+    std::erase_if(m_session_keys, [&vch](const auto& e) { return e.first.GetVch() == vch; });
+}
+
 Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
 {
     if (body.size() > MAX_JOB_BYTES) return WireResult::RejectInvalid;
@@ -118,6 +140,24 @@ void Transport::HandleJob(const Job& job)
     // well-known broadcast key (public announcements anyone can read).
     auto plain = Decrypt(m_inbox_priv, env.enc);
     if (!plain) plain = Decrypt(BroadcastPrivKey(), env.enc);
+    if (!plain) {
+        // Finally, any open per-request session keys (e.g. RFQ reply_keys). Take
+        // a snapshot of the still-live privs under the lock, then decrypt outside
+        // it — BLS decrypts are heavy and must not run while the mutex is held.
+        std::vector<blsct::PrivateKey> session_privs;
+        {
+            const int64_t now = Now();
+            LOCK(m_session_mutex);
+            session_privs.reserve(m_session_keys.size());
+            for (const auto& [pub, sk] : m_session_keys) {
+                if (sk.expiry == 0 || sk.expiry > now) session_privs.push_back(sk.priv);
+            }
+        }
+        for (const auto& priv : session_privs) {
+            plain = Decrypt(priv, env.enc);
+            if (plain) break;
+        }
+    }
     if (!plain) {
         // MAC failure: not addressed to us and not a public announcement, or
         // corrupt. Drop silently — the common case for traffic we just relayed.

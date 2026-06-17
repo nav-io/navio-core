@@ -41,7 +41,7 @@ struct EciesPacket {
         READWRITE(obj.eph, obj.ciphertext, obj.tag);
     }
 
-    //! Stable identifier for replay detection: SHA256(eph || tag).
+    //! Stable identifier for replay detection: SHA256(eph || ciphertext || tag).
     uint256 MsgHash() const;
 };
 
