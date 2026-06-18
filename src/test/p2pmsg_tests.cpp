@@ -475,7 +475,8 @@ BOOST_AUTO_TEST_CASE(transport_bad_pow_rejected)
     env.kind = static_cast<uint8_t>(PayloadKind::RFQ_REQ);
     env.enc = Encrypt(h.t->InboxPubKey(), std::vector<uint8_t>{1});
     env.pow.kind = env.kind;
-    env.pow.timestamp = h.t->now_override ? h.t->now_override : 1;
+    const int64_t now_ov = h.t->now_override.load();
+    env.pow.timestamp = now_ov ? now_ov : 1;
     env.pow.session_eph = env.enc.eph;
     env.pow.payload_hash = env.enc.MsgHash();
     env.pow.nonce = 0; // not ground

@@ -45,17 +45,25 @@ std::optional<Match> IntentStore::TryMatch(const RfqRequest& req, int64_t now) c
         // Maker pays out what the taker wants to buy; receives what they sell.
         if (!(intent.token_in == req.buy)) continue;
         if (!(intent.token_out == req.sell)) continue;
+        if (req.size <= 0) continue;
         if (req.size < intent.min_size || req.size > intent.max_size) continue;
+        // A negative price would slip past the positive-overflow guard below and
+        // yield a negative sell_cost; reject it outright (also defended at the RPC).
+        if (intent.price_min < 0) continue;
 
         // Quote at the intent's floor price. Skip intents whose scaled cost
         // does not fit in CAmount (portable: no __int128 on MSVC or 32-bit).
-        if (req.size > 0 && intent.price_min > std::numeric_limits<CAmount>::max() / req.size) {
+        if (intent.price_min > std::numeric_limits<CAmount>::max() / req.size) {
             continue;
         }
         Match m;
         m.intent_id = id;
         m.fill = req.size;
-        m.sell_cost = (req.size * intent.price_min) / PRICE_SCALE;
+        // Round the scaled cost UP (ceil division): truncating toward zero would
+        // let the maker quote fractionally below its declared price_min floor.
+        // Compute the remainder separately so the +denominator never overflows.
+        const CAmount scaled = req.size * intent.price_min;
+        m.sell_cost = scaled / PRICE_SCALE + ((scaled % PRICE_SCALE) ? 1 : 0);
         return m;
     }
     return std::nullopt;

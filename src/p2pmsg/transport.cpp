@@ -33,6 +33,10 @@ bool ParseEnvelope(std::span<const uint8_t> body, Envelope& out)
     try {
         DataStream ss{MakeByteSpan(body)};
         ss >> out;
+        // Reject trailing bytes: the envelope must consume the whole body. The
+        // replay key (enc.MsgHash) does not cover framing/trailing data, so
+        // accepting a suffix would be a malleability footgun.
+        if (!ss.empty()) return false;
         return true;
     } catch (const std::exception&) {
         return false;
@@ -47,6 +51,7 @@ Transport::Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, Relay
       m_inbox_pub(m_inbox_priv.GetPublicKey())
 {
     m_replay.setup_bytes(m_opts.replay_cache_bytes);
+    m_relay_tokens = static_cast<double>(m_opts.relay_burst); // start with a full burst
     // All decrypt work funnels through one worker handler keyed by JOB_KIND_DECRYPT.
     // Replay was already recorded on the net thread in OnWire(); HandleJob does
     // not touch the replay cache, so it holds no lock here.
@@ -63,8 +68,28 @@ Transport::Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, Relay
 
 int64_t Transport::Now() const
 {
-    if (now_override != 0) return now_override;
+    const int64_t ov = now_override.load(std::memory_order_relaxed);
+    if (ov != 0) return ov;
     return GetTime<std::chrono::seconds>().count();
+}
+
+bool Transport::AllowRelay()
+{
+    const int64_t now = Now();
+    LOCK(m_relay_limit_mutex);
+    if (m_relay_last_refill == 0) m_relay_last_refill = now;
+    const int64_t elapsed = now - m_relay_last_refill;
+    if (elapsed > 0) {
+        m_relay_tokens = std::min<double>(
+            static_cast<double>(m_opts.relay_burst),
+            m_relay_tokens + static_cast<double>(elapsed) * m_opts.relay_tokens_per_sec);
+        m_relay_last_refill = now;
+    }
+    if (m_relay_tokens >= 1.0) {
+        m_relay_tokens -= 1.0;
+        return true;
+    }
+    return false;
 }
 
 void Transport::RegisterHandler(PayloadKind kind, MessageHandler handler)
@@ -83,6 +108,12 @@ void Transport::AddSessionKey(const blsct::PublicKey& pub, const blsct::PrivateK
     // Replace any existing entry for the same pubkey.
     const auto vch = pub.GetVch();
     std::erase_if(m_session_keys, [&vch](const auto& e) { return e.first.GetVch() == vch; });
+    // Bound the trial-decrypt set: if full, evict the oldest key (front) so a
+    // caller that opens many requests without dropping them cannot grow the
+    // per-message decrypt cost without limit.
+    while (m_session_keys.size() >= MAX_SESSION_KEYS) {
+        m_session_keys.erase(m_session_keys.begin());
+    }
     m_session_keys.emplace_back(pub, SessionKey{priv, expiry});
 }
 
@@ -118,8 +149,11 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
 
     // App-agnostic flood: relay this new, valid message to every other peer,
     // whether or not we understand `kind` or can decrypt it. This is what lets
-    // a future application propagate network-wide with no node upgrade.
-    if (m_relay) m_relay(from_peer, stem, env);
+    // a future application propagate network-wide with no node upgrade. The
+    // token bucket caps how fast this node will amplify, since a single ground
+    // PoW is otherwise reusable to make us fan out to every peer. Over budget,
+    // we skip the relay but still decrypt anything addressed to us below.
+    if (m_relay && AllowRelay()) m_relay(from_peer, stem, env);
 
     // Enqueue the raw bytes for our own decryption on a worker; net thread done.
     Job job;

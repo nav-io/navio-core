@@ -97,7 +97,21 @@ public:
     struct Options {
         uint32_t pow_bits{DEFAULT_POW_BITS};
         size_t replay_cache_bytes{1 << 20}; // 1 MiB
+        //! Relay rate limit (token bucket). PoW gates per-message cost but is
+        //! reusable across all peers, so a sender that grinds continuously could
+        //! otherwise make this node fan every message out to all peers without
+        //! bound. Cap the messages this node relays per second (sustained) with a
+        //! burst allowance. Exceeding the budget drops the *relay* only; we still
+        //! decrypt and handle messages addressed to us.
+        uint32_t relay_tokens_per_sec{200};
+        uint32_t relay_burst{400};
     };
+
+    //! Hard cap on simultaneously-registered session keys. Each open key is
+    //! trial-decrypted against every inbound message that misses the inbox and
+    //! broadcast keys (O(keys) heavy BLS ops per message), so the set must stay
+    //! bounded even if a caller opens many requests without dropping them.
+    static constexpr size_t MAX_SESSION_KEYS = 256;
 
     Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, RelayFn relay, Options opts);
     Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, RelayFn relay)
@@ -105,6 +119,11 @@ public:
 
     //! Our inbox key: peers encrypt to this; we decrypt inbound with it.
     const blsct::PublicKey& InboxPubKey() const { return m_inbox_pub; }
+
+    //! Sign a 32-byte digest with this node's inbox key, authenticating outbound
+    //! RFQ quotes/orders under our session identity (InboxPubKey). Receivers
+    //! verify with RfqQuote::VerifySig().
+    blsct::Signature SignWithInbox(const uint256& digest) const { return m_inbox_priv.Sign(digest); }
 
     //! Register a per-request session keypair so inbound messages encrypted to
     //! `pub` (e.g. an RFQ taker's fresh `reply_key`) are decrypted alongside the
@@ -129,7 +148,7 @@ public:
     //! enqueued for our own handlers. Returns the disposition.
     enum class WireResult { Enqueued, RejectInvalid, RejectPoW, RejectReplay, Dropped };
     WireResult OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_replay_mutex);
+        EXCLUSIVE_LOCKS_REQUIRED(!m_replay_mutex, !m_relay_limit_mutex);
 
     //! Build + encrypt + PoW-stamp + broadcast an outbound message to
     //! `recipient`'s session key. PoW is always applied. Heavy; call off the net
@@ -140,13 +159,20 @@ public:
     //! Total PING payloads decrypted+dispatched to us. Debug/observability.
     uint64_t PingsReceived() const { return m_pings_received.load(std::memory_order_relaxed); }
 
-    int64_t now_override{0}; //!< test hook: if non-zero, used as "now"
+    //! Test hook: if non-zero, used as "now". Atomic because Now() is read from
+    //! both the net thread (OnWire) and worker threads (HandleJob).
+    std::atomic<int64_t> now_override{0};
 
 private:
     //! Decrypt + dispatch one enqueued job. Runs on a worker thread; touches no
     //! shared state guarded by m_replay_mutex.
     void HandleJob(const Job& job) EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
     int64_t Now() const;
+
+    //! Token-bucket gate for relay fan-out. Returns true (and consumes a token)
+    //! if this node may relay another message now; false when the budget is
+    //! spent. See Options::relay_tokens_per_sec.
+    bool AllowRelay() EXCLUSIVE_LOCKS_REQUIRED(!m_relay_limit_mutex);
 
     WorkerPool& m_pool;
     SendFn m_send;
@@ -173,6 +199,10 @@ private:
 
     Mutex m_replay_mutex;
     CuckooCache::cache<uint256, SignatureCacheHasher> m_replay GUARDED_BY(m_replay_mutex);
+
+    Mutex m_relay_limit_mutex;
+    double m_relay_tokens GUARDED_BY(m_relay_limit_mutex){0.0};
+    int64_t m_relay_last_refill GUARDED_BY(m_relay_limit_mutex){0};
 };
 
 //! Process-wide active transport, set by init when -p2pmsg is enabled and

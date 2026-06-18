@@ -220,10 +220,15 @@ static RPCHelpMan acceptquotewallet()
         "signs its own unbalanced taker half (paying the quoted sell amount from\n"
         "its coins, receiving the quoted fill of the buy token), combines it with\n"
         "the maker's half, and broadcasts the atomic swap. The maker's quote half\n"
-        "is expected to over-fund the combined fee.\n",
+        "is expected to over-fund the combined fee.\n\n"
+        "max_pay / min_recv are slippage bounds: the accept is rejected unless the\n"
+        "quote charges at most max_pay of the sell token and delivers at least\n"
+        "min_recv of the buy token.\n",
         {
             {"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The RFQ request uuid"},
             {"quote_id", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The chosen quote id"},
+            {"max_pay", RPCArg::Type::NUM, RPCArg::Optional::NO, "Max sell-token amount willing to pay (slippage bound)"},
+            {"min_recv", RPCArg::Type::NUM, RPCArg::Optional::NO, "Min buy-token amount required to receive (slippage bound)"},
         },
         RPCResult{RPCResult::Type::STR_HEX, "txid", "The broadcast swap transaction id"},
         RPCExamples{HelpExampleCli("acceptquotewallet", "\"<uuid>\" \"<quote_id>\"")},
@@ -235,13 +240,36 @@ static RPCHelpMan acceptquotewallet()
 
             const uint256 uuid(ParseHashV(request.params[0], "uuid"));
             const uint256 quote_id(ParseHashV(request.params[1], "quote_id"));
-            auto reqOpt = matcher->GetRequest(uuid);
-            auto quoteOpt = matcher->GetQuote(uuid, quote_id);
-            if (!reqOpt) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown uuid");
+            const CAmount max_pay = request.params[2].getInt<int64_t>();
+            const CAmount min_recv = request.params[3].getInt<int64_t>();
+            if (max_pay < 0 || !MoneyRange(max_pay) || min_recv < 0 || !MoneyRange(min_recv)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "max_pay/min_recv out of range");
+            }
+
+            // Atomically claim the quote (fetch + drop the request) so two
+            // concurrent accepts of the same uuid cannot each build a conflicting
+            // taker half. ClaimQuote also returns the quote's token pair, so we no
+            // longer need a separate GetRequest lookup.
+            auto quoteOpt = matcher->ClaimQuote(uuid, quote_id);
             if (!quoteOpt || !quoteOpt->half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
-            const rfq::RfqRequest& req = *reqOpt;
             const rfq::RfqQuote& quote = *quoteOpt;
 
+            // Slippage guard. The taker half must commit the SAME amounts the
+            // maker's (confidential) half expects, or the combined BLSCT balance
+            // proof fails to verify and no funds move — so we cannot be tricked
+            // into amounts other than the ones we build. What balance alone does
+            // NOT protect is an unfavourable *rate*: a perfectly balanced tx can
+            // still pay 1000 to receive 1. So gate the committed amounts against
+            // the caller's own max_pay/min_recv bounds. The two checks together
+            // are complete: a mutated/forged quote whose half_tx disagrees with
+            // its advertised numbers fails to combine (caught by balance), and an
+            // honest-but-bad rate is rejected here by the bound. The quote is
+            // otherwise unauthenticated, so these bounds are the taker's only
+            // trust anchor — never widen them from the quote's own fields.
+            if (quote.sell_cost > max_pay) throw JSONRPCError(RPC_VERIFY_ERROR, "quote sell_cost exceeds max_pay");
+            if (quote.fill < min_recv) throw JSONRPCError(RPC_VERIFY_ERROR, "quote fill below min_recv");
+
+            EnsureWalletIsUnlocked(*pwallet);
             LOCK(pwallet->cs_wallet);
             auto km = pwallet->GetOrCreateBLSCTKeyMan();
 
@@ -249,7 +277,7 @@ static RPCHelpMan acceptquotewallet()
             std::vector<blsct::InputCandidates> candidates;
             wallet::CoinFilterParams params;
             params.only_blsct = true;
-            params.token_id = req.sell;
+            params.token_id = quote.sell;
             params.min_amount = 1;
             blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
 
@@ -268,11 +296,13 @@ static RPCHelpMan acceptquotewallet()
             blsct::DoublePublicKey change = std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value());
 
             // The taker pays no fee (rate 0 -> zero-value fee output); the maker's
-            // half over-funds the combined fee. Taker pays req.sell, receives req.buy.
+            // half over-funds the combined fee. Taker pays quote.sell, receives
+            // quote.buy. These committed amounts must match the maker half for the
+            // combined balance proof to verify (see slippage note above).
             auto taker_half = factory.BuildUnbalancedHalf(
                 change, taker_recv,
-                /*pay_token=*/req.sell, /*pay_amount=*/quote.sell_cost,
-                /*recv_token=*/req.buy, /*recv_amount=*/quote.fill,
+                /*pay_token=*/quote.sell, /*pay_amount=*/quote.sell_cost,
+                /*recv_token=*/quote.buy, /*recv_amount=*/quote.fill,
                 /*nBLSCTDefaultFee=*/0, /*additionalFee=*/0);
             if (!taker_half) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build taker half");
 
@@ -285,7 +315,7 @@ static RPCHelpMan acceptquotewallet()
             if (!pwallet->chain().broadcastTransaction(tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string))
                 throw JSONRPCError(RPC_TRANSACTION_ERROR, err_string);
 
-            matcher->Cancel(uuid);
+            // Request already dropped by ClaimQuote; nothing left to cancel.
             return tx->GetHash().GetHex();
         },
     };
@@ -383,6 +413,9 @@ static RPCHelpMan broadcastorder()
             q.sell_cost = want_amount;          // sell-token the taker pays
             q.order_expiry = expiry;
             q.session_eph = transport->InboxPubKey();
+            // Authenticate the order under our session identity so receivers can
+            // verify it was not forged or tampered in flight (RfqQuote::VerifySig).
+            q.maker_sig = transport->SignWithInbox(q.SigningHash());
 
             const int64_t now = GetTime<std::chrono::seconds>().count();
             orders->StoreOrder(q, now); // cache locally too
@@ -475,10 +508,17 @@ static RPCHelpMan replyquote()
             q.uuid = uuid;
             q.quote_id = GetRandHash();
             q.half_tx = MakeTransactionRef(half.value());
+            // Self-describing token pair (taker's perspective): buy = what we pay
+            // out, sell = what we receive. The taker relies on these for matching
+            // and to build the balancing half.
+            q.buy = pay_token;   // == pm->req.buy
+            q.sell = recv_token; // == pm->req.sell
             q.fill = pm->fill;
             q.sell_cost = pm->sell_cost;
             q.order_expiry = pm->req.expiry;
             q.session_eph = transport->InboxPubKey();
+            // Authenticate under our session identity (verified by the taker).
+            q.maker_sig = transport->SignWithInbox(q.SigningHash());
 
             DataStream ss;
             ParamsStream ps{TX_WITH_WITNESS, ss};

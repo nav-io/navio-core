@@ -74,6 +74,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "addrfqquote", 2, "fill" },
     { "addrfqquote", 3, "sell_cost" },
     { "addrfqquote", 5, "order_expiry" },
+    { "acceptquotewallet", 2, "max_pay" },
+    { "acceptquotewallet", 3, "min_recv" },
     { "sendtoaddress", 1, "amount" },
     { "sendtoaddress", 4, "subtractfeefromamount" },
     { "sendtoaddress", 5 , "replaceable" },

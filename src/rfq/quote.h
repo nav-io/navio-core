@@ -9,6 +9,7 @@
 #include <blsct/signature.h>
 #include <consensus/amount.h>
 #include <ctokens/tokenid.h>
+#include <hash.h>
 #include <primitives/transaction.h>
 #include <serialize.h>
 #include <uint256.h>
@@ -44,6 +45,28 @@ struct RfqQuote {
     {
         if (fill <= 0) return static_cast<double>(1e18);
         return static_cast<double>(sell_cost) / static_cast<double>(fill);
+    }
+
+    //! Canonical bytes the maker signs. Binds the economic terms AND the half-tx
+    //! identity, so a relay node cannot tamper with a quote in flight and a third
+    //! party cannot forge one under someone else's session_eph. maker_sig itself
+    //! is excluded (it signs this hash).
+    uint256 SigningHash() const
+    {
+        HashWriter hw;
+        hw << uuid << quote_id << buy << sell << fill << sell_cost << order_expiry;
+        hw << (half_tx ? half_tx->GetHash().ToUint256() : uint256());
+        return hw.GetSHA256();
+    }
+
+    //! Verify maker_sig against session_eph over SigningHash(). Quotes/orders
+    //! that arrive over the wire are UNAUTHENTICATED until this returns true; the
+    //! network ingress handlers must gate on it before caching/ranking a quote.
+    bool VerifySig() const
+    {
+        if (!session_eph.IsValid()) return false;
+        const uint256 h = SigningHash();
+        return session_eph.Verify(blsct::PublicKey::Message(h.begin(), h.end()), maker_sig);
     }
 };
 
