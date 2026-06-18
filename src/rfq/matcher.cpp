@@ -4,6 +4,7 @@
 
 #include <rfq/matcher.h>
 
+#include <util/overflow.h>
 #include <util/time.h>
 
 #include <algorithm>
@@ -29,17 +30,17 @@ std::optional<RfqQuote> PickBest(const std::vector<RfqQuote>& quotes,
     // integer cross-multiplication. Avoids the rounding that makes `==` on
     // doubles an unreliable tiebreak. Returns <0 if `a` is cheaper, 0 if equal,
     // >0 if dearer; a non-positive fill always sorts last. int64 products can
-    // overflow at extreme amounts, so fall back to long double only then
-    // (__int128 is unavailable on the 32-bit targets we build).
+    // overflow at extreme amounts, so fall back to long double only then.
+    // CheckedMul is portable (no __builtin/__int128: MSVC + 32-bit safe).
     auto cmp_price = [](const RfqQuote& a, const RfqQuote& b) -> int {
         if (a.fill <= 0 || b.fill <= 0) {
             if (a.fill <= 0 && b.fill <= 0) return 0;
             return a.fill <= 0 ? 1 : -1;
         }
-        int64_t lhs, rhs;
-        if (!__builtin_mul_overflow(a.sell_cost, b.fill, &lhs) &&
-            !__builtin_mul_overflow(b.sell_cost, a.fill, &rhs)) {
-            return lhs < rhs ? -1 : (lhs > rhs ? 1 : 0);
+        const auto lhs = CheckedMul<int64_t>(a.sell_cost, b.fill);
+        const auto rhs = CheckedMul<int64_t>(b.sell_cost, a.fill);
+        if (lhs && rhs) {
+            return *lhs < *rhs ? -1 : (*lhs > *rhs ? 1 : 0);
         }
         const long double l = static_cast<long double>(a.sell_cost) * b.fill;
         const long double r = static_cast<long double>(b.sell_cost) * a.fill;

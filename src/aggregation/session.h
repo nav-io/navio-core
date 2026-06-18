@@ -8,6 +8,7 @@
 #include <blsct/wallet/txfactory_global.h>
 #include <consensus/amount.h>
 #include <primitives/transaction.h>
+#include <util/overflow.h>
 
 #include <span>
 #include <vector>
@@ -44,11 +45,10 @@ inline CAmount RequiredCandidateFee(std::span<const CTransactionRef> candidates,
     // network-supplied tx sizes, so guard the product against int64 overflow
     // rather than silently wrapping to a negative/under-funded fee.
     const int64_t weight = SumCandidateWeight(candidates);
-    CAmount fee;
-    if (weight < 0 || fee_rate < 0 || __builtin_mul_overflow(weight, fee_rate, &fee)) {
-        return MAX_MONEY; // clamp: caller treats an out-of-range fee as a hard failure
-    }
-    return fee;
+    if (weight < 0 || fee_rate < 0) return MAX_MONEY;
+    // Portable overflow check (no __builtin/__int128; MSVC + 32-bit safe). An
+    // out-of-range product is clamped; the caller treats it as a hard failure.
+    return CheckedMul<CAmount>(weight, fee_rate).value_or(MAX_MONEY);
 }
 
 inline CAmount RequiredCandidateFee(const std::vector<CTransactionRef>& candidates, CAmount fee_rate)
