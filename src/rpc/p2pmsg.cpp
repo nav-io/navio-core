@@ -130,6 +130,7 @@ static RPCHelpMan setswapintent()
             const CAmount price_min = request.params[4].getInt<int64_t>();
             const int64_t expiry = request.params[5].getInt<int64_t>();
             if (min_size < 0 || max_size < min_size) throw JSONRPCError(RPC_INVALID_PARAMETER, "bad size band");
+            if (price_min < 0) throw JSONRPCError(RPC_INVALID_PARAMETER, "price_min must be non-negative");
             return (uint64_t)store.Add(in, out, min_size, max_size, price_min, expiry);
         },
     };
@@ -384,6 +385,7 @@ static rfq::RfqRequest ParseRequestArgs(const JSONRPCRequest& request, const uin
     r.size = request.params[2].getInt<int64_t>();
     r.expiry = request.params[3].getInt<int64_t>();
     r.reply_key = reply_key;
+    if (r.size <= 0 || !MoneyRange(r.size)) throw JSONRPCError(RPC_INVALID_PARAMETER, "size out of range");
     return r;
 }
 
@@ -586,6 +588,9 @@ static RPCHelpMan addrfqquote()
             q.quote_id = uint256(ParseHashV(request.params[1], "quote_id"));
             q.fill = request.params[2].getInt<int64_t>();
             q.sell_cost = request.params[3].getInt<int64_t>();
+            if (q.fill < 0 || !MoneyRange(q.fill) || q.sell_cost < 0 || !MoneyRange(q.sell_cost)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "fill/sell_cost out of range");
+            }
             // Echo the open request's token pair so OrderCache matching and the
             // taker's re-validation see a self-describing quote.
             if (auto req = reg.GetRequest(q.uuid)) {

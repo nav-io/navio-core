@@ -4,8 +4,10 @@
 
 #include <rfq/matcher.h>
 
-#include <atomic>
+#include <util/time.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 
 namespace rfq {
@@ -13,7 +15,14 @@ namespace rfq {
 std::optional<RfqQuote> PickBest(const std::vector<RfqQuote>& quotes,
                                  CAmount size, double min_fill_ratio, RankBy by)
 {
-    const double min_fill = static_cast<double>(size) * min_fill_ratio;
+    // Minimum required fill as an exact integer. min_fill_ratio is a fractional
+    // ratio in [0,1]; round the single size*ratio product up so a partial-fill
+    // floor is never under-counted, and compare q.fill as the integer it is
+    // (casting each CAmount fill to double would lose precision past 2^53).
+    const double ratio = std::clamp(min_fill_ratio, 0.0, 1.0);
+    const CAmount min_fill = (ratio <= 0.0)
+        ? 0
+        : static_cast<CAmount>(std::ceil(static_cast<long double>(size) * ratio));
 
     // Compare two quotes by price (sell_cost/fill, lower is better) WITHOUT
     // floating point: a/x < b/y  <=>  a*y < b*x for positive fills, by exact
@@ -39,7 +48,7 @@ std::optional<RfqQuote> PickBest(const std::vector<RfqQuote>& quotes,
 
     const RfqQuote* best = nullptr;
     for (const RfqQuote& q : quotes) {
-        if (static_cast<double>(q.fill) < min_fill) continue; // fill filter
+        if (q.fill < min_fill) continue; // fill filter (exact integer compare)
         if (best == nullptr) { best = &q; continue; }
 
         bool better = false;
@@ -76,6 +85,12 @@ bool MatcherRegistry::AddQuote(const RfqQuote& q)
     LOCK(m_mutex);
     auto it = m_active.find(q.uuid);
     if (it == m_active.end()) return false;
+    // Bound per-request quotes: quotes arrive from the network, so an attacker
+    // could otherwise flood one open request with unbounded distinct quote_ids.
+    if (it->second.quotes.size() >= MAX_QUOTES_PER_REQUEST &&
+        !it->second.quotes.contains(q.quote_id)) {
+        return false;
+    }
     return it->second.quotes.emplace(q.quote_id, q).second;
 }
 
@@ -108,6 +123,20 @@ std::optional<RfqQuote> MatcherRegistry::GetQuote(const uint256& uuid, const uin
     return qit->second;
 }
 
+std::optional<RfqQuote> MatcherRegistry::ClaimQuote(const uint256& uuid, const uint256& quote_id)
+{
+    LOCK(m_mutex);
+    auto it = m_active.find(uuid);
+    if (it == m_active.end()) return std::nullopt;
+    auto qit = it->second.quotes.find(quote_id);
+    if (qit == it->second.quotes.end()) return std::nullopt;
+    RfqQuote q = qit->second;
+    // Drop the whole request so a concurrent accept of the same uuid finds
+    // nothing and cannot build a second conflicting taker half.
+    m_active.erase(it);
+    return q;
+}
+
 bool MatcherRegistry::Cancel(const uint256& uuid)
 {
     LOCK(m_mutex);
@@ -132,6 +161,13 @@ size_t MatcherRegistry::Size() const
 void MatcherRegistry::AddPendingMatch(const RfqRequest& req, CAmount fill, CAmount sell_cost)
 {
     LOCK(m_mutex);
+    // Drop any pending matches whose request collection window has closed, so
+    // the map self-trims from network traffic rather than growing forever.
+    const int64_t now = GetTime<std::chrono::seconds>().count();
+    std::erase_if(m_pending, [now](const auto& e) { return e.second.req.expiry <= now; });
+    // Hard cap as a backstop: refuse new uuids once full (existing uuids may
+    // still be refreshed). Prevents a flood of distinct uuids from OOMing us.
+    if (m_pending.size() >= MAX_PENDING_MATCHES && !m_pending.contains(req.uuid)) return;
     m_pending[req.uuid] = PendingMatch{req, fill, sell_cost};
 }
 

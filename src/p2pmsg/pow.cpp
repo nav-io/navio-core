@@ -33,8 +33,12 @@ bool CheckPoW(const PoWHeader& header, uint32_t bits)
 
 bool CheckStamp(const PoWHeader& header, uint32_t bits, int64_t now)
 {
-    const int64_t skew = std::abs(now - header.timestamp);
-    if (skew > POW_TIMESTAMP_TOLERANCE_SECONDS) return false;
+    // header.timestamp is attacker-controlled; computing (now - timestamp) can
+    // overflow for extreme values and std::abs(INT64_MIN) is itself UB. Compare
+    // against the tolerance window without forming a potentially-overflowing
+    // difference: the only arithmetic is on `now` (a small wall-clock value).
+    if (header.timestamp > now + POW_TIMESTAMP_TOLERANCE_SECONDS) return false;
+    if (header.timestamp < now - POW_TIMESTAMP_TOLERANCE_SECONDS) return false;
     return CheckPoW(header, bits);
 }
 

@@ -17,6 +17,12 @@
 
 namespace rfq {
 
+//! Bounds on the registry's network-fed maps, so a peer flooding RFQ traffic
+//! cannot grow them without limit (remote OOM). Pending matches and per-request
+//! quotes both arrive from decrypted inbound messages.
+static constexpr size_t MAX_PENDING_MATCHES = 4096;
+static constexpr size_t MAX_QUOTES_PER_REQUEST = 256;
+
 //! How a taker ranks collected quotes.
 enum class RankBy {
     Price,      //!< ascending sell_cost/fill (default): cheapest unit cost wins
@@ -56,6 +62,13 @@ public:
 
     //! Look up a specific collected quote by (uuid, quote_id).
     std::optional<RfqQuote> GetQuote(const uint256& uuid, const uint256& quote_id) const
+        EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+
+    //! Atomically fetch a quote AND drop its request, claiming it for a single
+    //! taker. Two concurrent accepts of the same uuid: only the first sees the
+    //! quote; the second gets nullopt. Prevents building two conflicting taker
+    //! halves against one order (the TOCTOU that GetQuote()+Cancel() leaves open).
+    std::optional<RfqQuote> ClaimQuote(const uint256& uuid, const uint256& quote_id)
         EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     //! Drop a request and its quotes. Returns true if it existed.

@@ -1628,7 +1628,34 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             args.GetIntArg("-p2pmsgpowbits", p2pmsg::DEFAULT_POW_BITS));
 
         CConnman* connman = node.connman.get();
-        // Serialize an envelope and push it to one peer.
+        // Forward an envelope. In the FLUFF phase (stem=false) flood every peer
+        // except `exclude_peer`. In the STEM phase (stem=true) forward to a
+        // SINGLE randomly chosen successor, not all peers: flooding stem traffic
+        // would both defeat the privacy intent of the stem phase and double the
+        // amplification. NOTE: this is simplified Dandelion — real Dandelion++
+        // pins the successor per epoch; here the successor is re-rolled per
+        // message, so the unlinkability is best-effort, not the full guarantee.
+        auto forward = [connman](bool stem, int64_t exclude_peer, const p2pmsg::Envelope& env) {
+            const char* type = stem ? NetMsgType::DP2PMSG : NetMsgType::P2PMSG;
+            if (!stem) {
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->GetId() == exclude_peer) return;
+                    connman->PushMessage(pnode, NetMsg::Make(type, env));
+                });
+                return;
+            }
+            // Stem: pick one eligible successor uniformly at random.
+            std::vector<NodeId> ids;
+            connman->ForEachNode([&](CNode* pnode) {
+                if (pnode->GetId() != exclude_peer) ids.push_back(pnode->GetId());
+            });
+            if (ids.empty()) return;
+            const NodeId chosen = ids[GetRand(ids.size())];
+            connman->ForEachNode([&](CNode* pnode) {
+                if (pnode->GetId() == chosen) connman->PushMessage(pnode, NetMsg::Make(type, env));
+            });
+        };
+        // Send a fresh outbound envelope to a specific peer (used by SendFn).
         auto push_to = [connman](int64_t peer_id, bool stem, const p2pmsg::Envelope& env) {
             const char* type = stem ? NetMsgType::DP2PMSG : NetMsgType::P2PMSG;
             connman->ForEachNode([&](CNode* pnode) {
@@ -1636,21 +1663,14 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 connman->PushMessage(pnode, NetMsg::Make(type, env));
             });
         };
-        auto broadcast = [connman](bool stem, const p2pmsg::Envelope& env) {
-            const char* type = stem ? NetMsgType::DP2PMSG : NetMsgType::P2PMSG;
-            connman->ForEachNode([&](CNode* pnode) {
-                connman->PushMessage(pnode, NetMsg::Make(type, env));
-            });
+        auto broadcast = [forward](bool stem, const p2pmsg::Envelope& env) {
+            forward(stem, /*exclude_peer=*/-1, env);
         };
-        // App-agnostic flood: re-broadcast a received message to every peer
-        // except the one it came from. Kind-blind — carries apps this node may
-        // not implement, so future uses propagate with no network upgrade.
-        auto relay = [connman](int64_t origin_peer, bool stem, const p2pmsg::Envelope& env) {
-            const char* type = stem ? NetMsgType::DP2PMSG : NetMsgType::P2PMSG;
-            connman->ForEachNode([&](CNode* pnode) {
-                if (pnode->GetId() == origin_peer) return;
-                connman->PushMessage(pnode, NetMsg::Make(type, env));
-            });
+        // App-agnostic relay: re-broadcast a received message (fluff = all peers
+        // except origin; stem = one successor). Kind-blind — carries apps this
+        // node may not implement, so future uses propagate with no upgrade.
+        auto relay = [forward](int64_t origin_peer, bool stem, const p2pmsg::Envelope& env) {
+            forward(stem, /*exclude_peer=*/origin_peer, env);
         };
 
         node.p2pmsg_transport = std::make_unique<p2pmsg::Transport>(
@@ -1727,6 +1747,9 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         ParamsStream ps{TX_WITH_WITNESS, ss};
                         rfq::RfqQuote q;
                         ps >> q;
+                        // Authenticate before caching: an unsigned/forged quote
+                        // must not poison the taker's ranked quote set.
+                        if (!q.VerifySig()) return;
                         matcher->AddQuote(q);
                     } catch (const std::exception&) { /* drop malformed */ }
                 });
@@ -1740,6 +1763,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         ParamsStream ps{TX_WITH_WITNESS, ss};
                         rfq::RfqQuote q;
                         ps >> q;
+                        // Authenticate before caching the standing order.
+                        if (!q.VerifySig()) return;
                         orders->StoreOrder(q, GetTime<std::chrono::seconds>().count());
                     } catch (const std::exception&) { /* drop malformed */ }
                 });

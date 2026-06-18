@@ -75,6 +75,18 @@ bool OrderCache::StoreOrder(const RfqQuote& q, int64_t now)
     LOCK(m_mutex);
     if (m_orders.contains(q.quote_id)) return false;
 
+    // Reject if any input is already claimed by a *different* stored order. The
+    // m_by_input index assumes one quote per outpoint; without this an attacker
+    // could craft a quote that references an honest order's input to overwrite
+    // its index slot, then deflect or steer spent-input eviction (hijack the
+    // honest order, or shield the attacker's). Two orders spending the same
+    // outpoint are mutually exclusive on chain anyway, so refusing the later
+    // arrival is the correct, conservative choice.
+    for (const CTxIn& in : q.half_tx->vin) {
+        auto bi = m_by_input.find(in.prevout);
+        if (bi != m_by_input.end() && bi->second != q.quote_id) return false;
+    }
+
     Entry e;
     e.quote = q;
     e.effective_expiry = std::min<int64_t>(q.order_expiry, now + MAX_ORDER_TTL_SECONDS);

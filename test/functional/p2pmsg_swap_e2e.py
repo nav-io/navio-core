@@ -83,7 +83,10 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         # Taker collects the quote and accepts it.
         self.wait_until(lambda: len(taker.listquotes(uuid)) >= 1, timeout=30)
         quote = taker.listquotes(uuid)[0]
-        txid = taker.acceptquotewallet(uuid, quote["quote_id"])
+        # Slippage bounds: accept exactly the quoted terms (max_pay=sell_cost,
+        # min_recv=fill). A worse quote would be rejected by these bounds.
+        txid = taker.acceptquotewallet(uuid, quote["quote_id"],
+                                       quote["sell_cost"], quote["fill"])
         self.log.info("swap txid=%s" % txid)
 
         # Confirm on-chain.

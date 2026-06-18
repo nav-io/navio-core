@@ -39,7 +39,16 @@ inline int64_t SumCandidateWeight(const std::vector<CTransactionRef>& candidates
 //! minimum fee for the COMBINED weight. = sum(candidate weights) * fee_rate.
 inline CAmount RequiredCandidateFee(std::span<const CTransactionRef> candidates, CAmount fee_rate)
 {
-    return static_cast<CAmount>(SumCandidateWeight(candidates)) * fee_rate;
+    // weight and fee_rate are both bounded in practice (POOL_MAX_COMBINED
+    // candidates, a policy fee rate), but candidate weight is influenced by
+    // network-supplied tx sizes, so guard the product against int64 overflow
+    // rather than silently wrapping to a negative/under-funded fee.
+    const int64_t weight = SumCandidateWeight(candidates);
+    CAmount fee;
+    if (weight < 0 || fee_rate < 0 || __builtin_mul_overflow(weight, fee_rate, &fee)) {
+        return MAX_MONEY; // clamp: caller treats an out-of-range fee as a hard failure
+    }
+    return fee;
 }
 
 inline CAmount RequiredCandidateFee(const std::vector<CTransactionRef>& candidates, CAmount fee_rate)
