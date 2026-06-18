@@ -15,6 +15,28 @@ std::optional<RfqQuote> PickBest(const std::vector<RfqQuote>& quotes,
 {
     const double min_fill = static_cast<double>(size) * min_fill_ratio;
 
+    // Compare two quotes by price (sell_cost/fill, lower is better) WITHOUT
+    // floating point: a/x < b/y  <=>  a*y < b*x for positive fills, by exact
+    // integer cross-multiplication. Avoids the rounding that makes `==` on
+    // doubles an unreliable tiebreak. Returns <0 if `a` is cheaper, 0 if equal,
+    // >0 if dearer; a non-positive fill always sorts last. int64 products can
+    // overflow at extreme amounts, so fall back to long double only then
+    // (__int128 is unavailable on the 32-bit targets we build).
+    auto cmp_price = [](const RfqQuote& a, const RfqQuote& b) -> int {
+        if (a.fill <= 0 || b.fill <= 0) {
+            if (a.fill <= 0 && b.fill <= 0) return 0;
+            return a.fill <= 0 ? 1 : -1;
+        }
+        int64_t lhs, rhs;
+        if (!__builtin_mul_overflow(a.sell_cost, b.fill, &lhs) &&
+            !__builtin_mul_overflow(b.sell_cost, a.fill, &rhs)) {
+            return lhs < rhs ? -1 : (lhs > rhs ? 1 : 0);
+        }
+        const long double l = static_cast<long double>(a.sell_cost) * b.fill;
+        const long double r = static_cast<long double>(b.sell_cost) * a.fill;
+        return l < r ? -1 : (l > r ? 1 : 0);
+    };
+
     const RfqQuote* best = nullptr;
     for (const RfqQuote& q : quotes) {
         if (static_cast<double>(q.fill) < min_fill) continue; // fill filter
@@ -23,14 +45,14 @@ std::optional<RfqQuote> PickBest(const std::vector<RfqQuote>& quotes,
         bool better = false;
         switch (by) {
         case RankBy::Price: {
-            const double pq = q.Price(), pb = best->Price();
-            if (pq < pb) better = true;
-            else if (pq == pb && q.fill > best->fill) better = true; // tiebreak
+            const int c = cmp_price(q, *best);
+            if (c < 0) better = true;
+            else if (c == 0 && q.fill > best->fill) better = true; // tiebreak
             break;
         }
         case RankBy::Fill:
             if (q.fill > best->fill) better = true;
-            else if (q.fill == best->fill && q.Price() < best->Price()) better = true;
+            else if (q.fill == best->fill && cmp_price(q, *best) < 0) better = true;
             break;
         case RankBy::LowestCost:
             if (q.sell_cost < best->sell_cost) better = true;

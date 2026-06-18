@@ -245,6 +245,26 @@ BOOST_AUTO_TEST_CASE(ecies_broadcast_key_roundtrip)
     BOOST_CHECK(BroadcastPubKey().GetVch() == BroadcastPubKey().GetVch());
 }
 
+BOOST_AUTO_TEST_CASE(ecies_infinity_eph_rejected)
+{
+    // A point-at-infinity ephemeral key forces shared = inf * sk = inf for every
+    // sk, i.e. a public-constant AEAD key. Build a packet under exactly that
+    // constant secret (encrypt to the infinity pubkey, which yields the same
+    // inf shared point) and set the wire eph to infinity. Without a guard this
+    // would decrypt under any recipient key; Decrypt must reject it.
+    const blsct::PublicKey infinity{}; // default-constructed G1 point == identity
+    BOOST_REQUIRE(infinity.GetG1Point().IsZero());
+
+    std::vector<uint8_t> pt{0x01, 0x02, 0x03, 0x04};
+    EciesPacket pkt = Encrypt(infinity, pt);
+    pkt.eph = infinity; // forge the ephemeral key to the point at infinity
+
+    // Any unrelated recipient key would otherwise recover the same constant key.
+    blsct::PrivateKey victim(MclScalar::Rand(true));
+    BOOST_CHECK(!Decrypt(victim, pkt).has_value());
+    BOOST_CHECK(!Decrypt(BroadcastPrivKey(), pkt).has_value());
+}
+
 // ---- PoW ----
 
 BOOST_AUTO_TEST_CASE(pow_grind_and_check)
