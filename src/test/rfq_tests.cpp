@@ -102,6 +102,20 @@ BOOST_AUTO_TEST_CASE(rank_by_price_picks_cheapest_full_fill)
     BOOST_CHECK_EQUAL(best->sell_cost, 95);
 }
 
+BOOST_AUTO_TEST_CASE(rank_by_price_tiebreak_uses_exact_ratio)
+{
+    // Same price (50/500 == 100/1000 == 0.1) reached via different integer
+    // ratios; the price tiebreak must treat them as equal and prefer the larger
+    // fill. Exact cross-multiplication catches this where float `==` may not.
+    std::vector<RfqQuote> qs{
+        MakeQuote(/*fill*/500, /*cost*/50),
+        MakeQuote(/*fill*/1000, /*cost*/100),
+    };
+    auto best = PickBest(qs, /*size=*/500, /*min_fill_ratio=*/1.0, RankBy::Price);
+    BOOST_REQUIRE(best.has_value());
+    BOOST_CHECK_EQUAL(best->fill, 1000);
+}
+
 BOOST_AUTO_TEST_CASE(min_fill_ratio_filters_partials)
 {
     std::vector<RfqQuote> qs{

@@ -92,8 +92,16 @@ std::optional<std::vector<uint8_t>> Decrypt(const blsct::PrivateKey& sk,
                                             const EciesPacket& pkt,
                                             std::span<const uint8_t> aad)
 {
+    // Reject a point-at-infinity (or otherwise invalid) ephemeral key. MCL
+    // clears malformed points to the identity on unserialization, and
+    // infinity * sk == infinity for every sk — so an attacker could otherwise
+    // force the ECDH shared secret (and thus the AEAD key) to a public
+    // constant and craft packets that decrypt under any recipient key.
+    const MclG1Point eph_point = pkt.eph.GetG1Point();
+    if (eph_point.IsZero() || !eph_point.IsValid()) return std::nullopt;
+
     // Shared secret = sk * eph_pub — the same point the sender computed.
-    MclG1Point shared = pkt.eph.GetG1Point() * sk.GetScalar();
+    MclG1Point shared = eph_point * sk.GetScalar();
     std::vector<uint8_t> secret = shared.GetVch();
 
     std::byte key[32];
