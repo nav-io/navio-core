@@ -1114,6 +1114,19 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
     bool fUpdated = update_wout && update_wout(wout, fInsertedNew);
     if (fInsertedNew) {
         wout.nTimeReceived = GetTime();
+        // When (re)scanning historical blocks — e.g. a wallet imported from a
+        // seed — stamp the output with its confirming block's time rather than
+        // wall-clock now, so its history shows the same dates as the wallet that
+        // observed the transaction live. Mirrors ComputeTimeSmart() for the
+        // CWalletTx path; without this every imported row reads as "just now".
+        if (rescanning_old_block) {
+            if (auto* conf = std::get_if<TxStateConfirmed>(&state)) {
+                int64_t block_max_time;
+                if (chain().findBlock(conf->confirmed_block_hash, FoundBlock().maxTime(block_max_time))) {
+                    wout.nTimeReceived = block_max_time;
+                }
+            }
+        }
         wout.nOrderPos = IncOrderPosNext(&batch);
         wout.fCoinbase = fCoinbase;
     }
@@ -1554,6 +1567,33 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 auto wout_ = GetWalletOutput(txin.prevout);
                 if (wout_)
                     assert(wout_->IsSpent() == (state.index() != 2));
+            }
+
+            // A transaction that spends our own outputs (send / stakelock /
+            // stakeunlock) needs a CWalletTx so its debit ("send") legs and
+            // change netting are reported by the CWalletTx accounting path
+            // (CachedTxGetAmounts). A wallet that only observed the tx during
+            // sync/rescan (e.g. imported from a seed) would otherwise see just
+            // the credit outputs in mapOutputs and miss the send side entirely,
+            // and the change output would leak as a spurious "receive".
+            //
+            // Only do this when the spend is not already accounted for. A
+            // locally-created send registers its inputs in mapTxSpends at
+            // CommitTransaction — and the staker may aggregate such sends into
+            // a block tx whose hash differs from any of ours, so a hash check
+            // alone is not enough; adding a second CWalletTx for the on-chain
+            // tx would then double-count the debit. The output-listing path
+            // dedups any output reachable via a CWalletTx, so credits are not
+            // double-counted either.
+            bool spend_already_tracked = false;
+            for (const auto& txin : tx.vin) {
+                if (mapTxSpends.contains(txin.prevout)) { spend_already_tracked = true; break; }
+            }
+            if (IsFromMe(tx) && !mapWallet.contains(tx.GetHash()) && !spend_already_tracked) {
+                CWalletTx* wtx = AddToWallet(MakeTransactionRef(tx), tx_state, /*update_wtx=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block);
+                if (!wtx) {
+                    throw std::runtime_error("DB error adding wallet transaction, write failed");
+                }
             }
             return true;
         }
