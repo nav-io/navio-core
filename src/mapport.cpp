@@ -105,7 +105,7 @@ static void ProcessPCP()
 
         // Log message if we got NO_RESOURCES.
         if (no_resources) {
-            LogPrintf("portmap: At least one mapping failed because of a NO_RESOURCES error. This usually indicates that the port is already used on the router. If this is the only instance of bitcoin running on the network, this will resolve itself automatically. Otherwise, you might want to choose a different P2P port to prevent this conflict.\n");
+            LogPrintf("portmap: At least one mapping failed because of a NO_RESOURCES error. This usually indicates that the port is already used on the router. If this is the only instance of Navio running on the network, this will resolve itself automatically. Otherwise, you might want to choose a different P2P port to prevent this conflict.\n");
         }
 
         // Sanity-check returned lifetime.
