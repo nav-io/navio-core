@@ -1267,7 +1267,7 @@ RPCHelpMan listblsctunspent()
                     const UniValue& input = inputs[idx];
                     CTxDestination dest = DecodeDestination(input.get_str());
                     if (!IsValidDestination(dest)) {
-                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Bitcoin address: ") + input.get_str());
+                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Navio address: ") + input.get_str());
                     }
                     if (!destinations.insert(dest).second) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, duplicated address: ") + input.get_str());
@@ -1394,7 +1394,7 @@ RPCHelpMan listblscttransactions()
             RPCResult::Type::ARR, "", "", {
                                               {RPCResult::Type::OBJ, "", "", Cat<std::vector<RPCResult>>({
                                                                                                              {RPCResult::Type::BOOL, "involvesWatchonly", /*optional=*/true, "Only returns true if imported addresses were involved in transaction."},
-                                                                                                             {RPCResult::Type::STR, "address", /*optional=*/true, "The bitcoin address of the transaction (not returned if the output does not have an address, e.g. OP_RETURN null data)."},
+                                                                                                             {RPCResult::Type::STR, "address", /*optional=*/true, "The Navio address of the transaction (not returned if the output does not have an address, e.g. OP_RETURN null data)."},
                                                                                                              {RPCResult::Type::STR, "category", "The transaction category.\n"
                                                                                                                                                 "\"send\"                  Transactions sent.\n"
                                                                                                                                                 "\"receive\"               Non-coinbase transactions received.\n"
