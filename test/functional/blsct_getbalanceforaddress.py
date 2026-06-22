@@ -274,7 +274,7 @@ class BlsctGetBalanceForAddressTest(BitcoinTestFramework):
         assert_equal(filtered_empty, [])
 
         # Invalid address triggers RPC_INVALID_ADDRESS_OR_KEY (-5).
-        assert_raises_rpc_error(-5, "Invalid Bitcoin address", self.w1.listblsctunspent, 1, 9999999, ["not_an_address"])
+        assert_raises_rpc_error(-5, "Invalid Navio address", self.w1.listblsctunspent, 1, 9999999, ["not_an_address"])
 
         # query_options: minimumAmount drops any UTXO worth less than the
         # smaller of our two amounts. amt1 (3.125) < amt2 (5.5), so a
