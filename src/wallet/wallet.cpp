@@ -2323,7 +2323,17 @@ CWallet::ScanResult CWallet::ScanForWalletTransactions(const uint256& start_bloc
             m_scanning_progress = 0;
         }
         if (block_height % 100 == 0 && progress_end - progress_begin > 0.0) {
-            ShowProgress(strprintf("%s " + _("Rescanning…").translated, GetDisplayName()), std::max(1, std::min(99, (int)(m_scanning_progress * 100))));
+            const int progress_percent = std::max(1, std::min(99, (int)(m_scanning_progress * 100)));
+            ShowProgress(strprintf("%s " + _("Rescanning…").translated, GetDisplayName()), progress_percent);
+            // The startup rescan (the only caller passing save_progress=true) runs
+            // during init, before the RPC warmup ends and before the wallet is
+            // registered, so getwalletinfo's scanning.progress is not yet
+            // reachable. Surface the percentage through the init message so it
+            // appears in the RPC warmup status (and on the GUI splash), giving
+            // users load feedback while the wallet is still loading.
+            if (save_progress) {
+                chain().initMessage(strprintf(_("Rescanning… (%d%%)").translated, progress_percent));
+            }
         }
 
         bool next_interval = reserver.now() >= current_time + INTERVAL_TIME;
