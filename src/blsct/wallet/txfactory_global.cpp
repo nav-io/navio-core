@@ -83,7 +83,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const Scalar
     return ret;
 }
 
-UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId, const Scalar& blindingKey, const CreateTransactionType& type, const CAmount& minStake)
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId, const Scalar& blindingKey, const CreateTransactionType& type, const CAmount& minStake, const bool& fAllowZeroValueRangeProof)
 {
     bulletproofs_plus::RangeProofLogic<T> rp;
     auto ret = UnsignedOutput();
@@ -114,7 +114,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
 
     std::vector<unsigned char> memo{sMemo.begin(), sMemo.end()};
 
-    if (nAmount > 0) {
+    if (nAmount > 0 || fAllowZeroValueRangeProof) {
         ret.out.scriptPubKey = CScript(OP_TRUE);
 
         if (type == STAKED_COMMITMENT && tokenId.IsNull()) {

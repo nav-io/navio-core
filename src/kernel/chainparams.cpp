@@ -148,7 +148,13 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
-        consensus.nLastPOWHeight = 100;
+        // PoW->PoS boundary. Block 1 mints the whole supply but its coinbase only
+        // matures at tip height 101 (COINBASE_MATURITY). Each wallet's stakelocks
+        // accumulate into a single staked commitment, so the PoS set-membership
+        // proof (ring >= 2) requires commitments from at least two wallets. Leave
+        // PoW headroom after maturity for the founder to fund a second wallet and
+        // lock stakes from both before PoS begins at height 111.
+        consensus.nLastPOWHeight = 110;
         // Mint the entire initial supply in the first block; subsequent
         // PoW blocks (heights 2..nLastPOWHeight) carry a 0 reward. PoS
         // blocks after nLastPOWHeight reward normally.
