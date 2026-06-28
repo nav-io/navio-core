@@ -16,30 +16,6 @@
 
 BOOST_FIXTURE_TEST_SUITE(validation_tests, TestingSetup)
 
-static void TestLegacyBlockSubsidyHalvings(const Consensus::Params& consensusParams)
-{
-    int maxHalvings = 64;
-    CAmount nInitialSubsidy = 50 * COIN;
-
-    CAmount nPreviousSubsidy = nInitialSubsidy * 2; // for height == 0
-    BOOST_CHECK_EQUAL(nPreviousSubsidy, nInitialSubsidy * 2);
-    for (int nHalvings = 0; nHalvings < maxHalvings; nHalvings++) {
-        int nHeight = nHalvings * consensusParams.nSubsidyHalvingInterval;
-        CAmount nSubsidy = GetBlockSubsidy(nHeight, consensusParams);
-        BOOST_CHECK(nSubsidy <= nInitialSubsidy);
-        BOOST_CHECK_EQUAL(nSubsidy, nPreviousSubsidy / 2);
-        nPreviousSubsidy = nSubsidy;
-    }
-    BOOST_CHECK_EQUAL(GetBlockSubsidy(maxHalvings * consensusParams.nSubsidyHalvingInterval, consensusParams), 0);
-}
-
-static void TestLegacyBlockSubsidyHalvings(int nSubsidyHalvingInterval)
-{
-    Consensus::Params consensusParams;
-    consensusParams.nSubsidyHalvingInterval = nSubsidyHalvingInterval;
-    TestLegacyBlockSubsidyHalvings(consensusParams);
-}
-
 static void TestNavioMainRewards(const Consensus::Params& consensusParams)
 {
     BOOST_REQUIRE(consensusParams.fBLSCT);
@@ -57,14 +33,8 @@ BOOST_AUTO_TEST_CASE(block_subsidy_test)
     const auto chainParams = CreateChainParams(*m_node.args, ChainType::MAIN);
     const auto& consensus = chainParams->GetConsensus();
 
-    if (consensus.fBLSCT) {
-        TestNavioMainRewards(consensus);
-    } else {
-        TestLegacyBlockSubsidyHalvings(consensus);
-    }
-
-    TestLegacyBlockSubsidyHalvings(150); // As in regtest
-    TestLegacyBlockSubsidyHalvings(1000); // Just another interval
+    BOOST_REQUIRE(consensus.fBLSCT);
+    TestNavioMainRewards(consensus);
 }
 
 BOOST_AUTO_TEST_CASE(subsidy_limit_test)
@@ -72,38 +42,28 @@ BOOST_AUTO_TEST_CASE(subsidy_limit_test)
     const auto chainParams = CreateChainParams(*m_node.args, ChainType::MAIN);
     const auto& consensus = chainParams->GetConsensus();
 
-    if (consensus.fBLSCT) {
-        CAmount nPowSum = 0;
-        for (int nHeight = 1; nHeight <= consensus.nLastPOWHeight; ++nHeight) {
-            CAmount nSubsidy = GetBLSCTBlockReward(nHeight, consensus, /*isPos=*/false);
-            if (nHeight == 1) {
-                BOOST_CHECK_EQUAL(nSubsidy, consensus.nBLSCTFirstBlockReward);
-            } else {
-                BOOST_CHECK_EQUAL(nSubsidy, 0);
-            }
-            nPowSum += nSubsidy;
-            BOOST_CHECK(MoneyRange(nPowSum));
-        }
-        BOOST_CHECK_EQUAL(nPowSum, consensus.nBLSCTFirstBlockReward);
+    BOOST_REQUIRE(consensus.fBLSCT);
 
-        CAmount nPosSum = 0;
-        for (int nHeight = consensus.nLastPOWHeight + 1; nHeight < consensus.nLastPOWHeight + 10000; nHeight += 1000) {
-            CAmount nSubsidy = GetBLSCTBlockReward(nHeight, consensus, /*isPos=*/true);
-            BOOST_CHECK_EQUAL(nSubsidy, consensus.nBLSCTBlockReward);
-            nPosSum += nSubsidy;
-            BOOST_CHECK(MoneyRange(nPosSum));
+    CAmount nPowSum = 0;
+    for (int nHeight = 1; nHeight <= consensus.nLastPOWHeight; ++nHeight) {
+        CAmount nSubsidy = GetBLSCTBlockReward(nHeight, consensus, /*isPos=*/false);
+        if (nHeight == 1) {
+            BOOST_CHECK_EQUAL(nSubsidy, consensus.nBLSCTFirstBlockReward);
+        } else {
+            BOOST_CHECK_EQUAL(nSubsidy, 0);
         }
-        return;
+        nPowSum += nSubsidy;
+        BOOST_CHECK(MoneyRange(nPowSum));
     }
+    BOOST_CHECK_EQUAL(nPowSum, consensus.nBLSCTFirstBlockReward);
 
-    CAmount nSum = 0;
-    for (int nHeight = 0; nHeight < 14000000; nHeight += 1000) {
-        CAmount nSubsidy = GetBlockSubsidy(nHeight, consensus);
-        BOOST_CHECK(nSubsidy <= 50 * COIN);
-        nSum += nSubsidy * 1000;
-        BOOST_CHECK(MoneyRange(nSum));
+    CAmount nPosSum = 0;
+    for (int nHeight = consensus.nLastPOWHeight + 1; nHeight < consensus.nLastPOWHeight + 10000; nHeight += 1000) {
+        CAmount nSubsidy = GetBLSCTBlockReward(nHeight, consensus, /*isPos=*/true);
+        BOOST_CHECK_EQUAL(nSubsidy, consensus.nBLSCTBlockReward);
+        nPosSum += nSubsidy;
+        BOOST_CHECK(MoneyRange(nPosSum));
     }
-    BOOST_CHECK_EQUAL(nSum, CAmount{2099999997690000});
 }
 
 BOOST_AUTO_TEST_CASE(signet_parse_tests)

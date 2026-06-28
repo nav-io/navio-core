@@ -337,9 +337,9 @@ void MinerTestingSetup::TestBasicMining(const CScript& scriptPubKey, const std::
         CTxMemPool& tx_mempool{MakeMempool()};
         LOCK(tx_mempool.cs);
 
-        // subsidy changing
+        // Build out to a high block height to exercise block assembly there.
         int nHeight = m_node.chainman->ActiveChain().Height();
-        const int halving_height = Params().GetConsensus().nSubsidyHalvingInterval;
+        const int halving_height = 210000;
         // Create an actual 209999-long block chain (without valid blocks).
         while (m_node.chainman->ActiveChain().Tip()->nHeight < halving_height - 1) {
             CBlockIndex* prev = m_node.chainman->ActiveChain().Tip();

@@ -434,9 +434,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
 
             m_chain_type = ChainType::SIGNET;
             consensus.signet_blocks = true;
-            consensus.signet_challenge.assign(bin.begin(), bin.end());
-            consensus.nSubsidyHalvingInterval = 210000;
-            consensus.BIP34Height = 1;
+            consensus.signet_challenge.assign(bin.begin(), bin.end());            consensus.BIP34Height = 1;
             consensus.BIP34Hash = uint256{};
             consensus.BIP65Height = 1;
             consensus.BIP66Height = 1;
@@ -517,9 +515,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         {
             m_chain_type = ChainType::REGTEST;
             consensus.signet_blocks = false;
-            consensus.signet_challenge.clear();
-            consensus.nSubsidyHalvingInterval = 150;
-            consensus.BIP34Height = 1; // Always active unless overridden
+            consensus.signet_challenge.clear();            consensus.BIP34Height = 1; // Always active unless overridden
             consensus.BIP34Hash = uint256();
             consensus.BIP65Height = 1;  // Always active unless overridden
             consensus.BIP66Height = 1;  // Always active unless overridden
@@ -661,9 +657,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         {
             m_chain_type = ChainType::BLSCTREGTEST;
             consensus.signet_blocks = false;
-            consensus.signet_challenge.clear();
-            consensus.nSubsidyHalvingInterval = 150;
-            consensus.BIP34Height = 1; // Always active unless overridden
+            consensus.signet_challenge.clear();            consensus.BIP34Height = 1; // Always active unless overridden
             consensus.BIP34Hash = uint256();
             consensus.BIP65Height = 1;  // Always active unless overridden
             consensus.BIP66Height = 1;  // Always active unless overridden

@@ -75,7 +75,6 @@ struct BIP9Deployment {
  */
 struct Params {
     uint256 hashGenesisBlock;
-    int nSubsidyHalvingInterval;
     CAmount nBLSCTBlockReward;
     CAmount nBLSCTFirstBlockReward;
     /**
