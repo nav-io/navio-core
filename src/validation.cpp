@@ -1759,15 +1759,10 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
         return 0;
     }
 
-    int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
-    // Force block reward to zero when right shift is undefined.
-    if (halvings >= 64)
-        return 0;
-
-    CAmount nSubsidy = 50 * COIN;
-    // Subsidy is cut in half every 210,000 blocks which will occur approximately every 4 years.
-    nSubsidy >>= halvings;
-    return nSubsidy;
+    // Navio does not use Bitcoin-style subsidy halving. BLSCT chains derive the
+    // block reward from GetBLSCTBlockReward (this value is overridden for them
+    // in ConnectBlock); legacy/non-BLSCT chains use a flat base subsidy.
+    return 50 * COIN;
 }
 
 CAmount GetBLSCTBlockReward(int nHeight, const Consensus::Params& consensusParams, const bool& isPos)
