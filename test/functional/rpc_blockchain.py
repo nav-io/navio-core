@@ -332,7 +332,8 @@ class BlockchainTest(BitcoinTestFramework):
         node = self.nodes[0]
         res = node.gettxoutsetinfo()
 
-        assert_equal(res['total_amount'], Decimal('8725.00000000'))
+        # Navio uses a flat block subsidy (no halving): HEIGHT blocks * 50.
+        assert_equal(res['total_amount'], Decimal('10000.00000000'))
         assert_equal(res['transactions'], HEIGHT)
         assert_equal(res['height'], HEIGHT)
         assert_equal(res['txouts'], HEIGHT)

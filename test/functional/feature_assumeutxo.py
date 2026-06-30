@@ -94,7 +94,7 @@ class AssumeutxoTest(BitcoinTestFramework):
                 f.write(valid_snapshot_contents[:32])
                 f.write((valid_num_coins + off).to_bytes(8, "little"))
                 f.write(valid_snapshot_contents[32 + 8:])
-            expected_error(log_msg=f"bad snapshot - coins left over after deserializing 298 coins" if off == -1 else f"bad snapshot format or truncated snapshot after deserializing 299 coins")
+            expected_error(log_msg=f"bad snapshot - coins left over after deserializing {valid_num_coins - 1} coins" if off == -1 else f"bad snapshot format or truncated snapshot after deserializing {valid_num_coins} coins")
 
         self.log.info("  - snapshot file with alternated UTXO data")
         cases = [
@@ -184,7 +184,7 @@ class AssumeutxoTest(BitcoinTestFramework):
 
         assert_equal(
             dump_output['txoutset_hash'],
-            'cd5c0f3e11b6da949be75b25064b0beaa097eaff2cb08b59f23a5060a631238f')
+            '20b7eed57e7ba73098bf3519c1b69325e4c8d2ed41799d5bd82ce967053e2ffc')
         assert_equal(dump_output['nchaintx'], 300)
         assert_equal(n0.getblockchaininfo()["blocks"], SNAPSHOT_BASE_HEIGHT)
 
@@ -223,7 +223,7 @@ class AssumeutxoTest(BitcoinTestFramework):
         out_hash = prev_tx['vout'][0]['hash']
         prevout = {"outid": out_hash, "scriptPubKey": prev_tx['vout'][0]['scriptPubKey']['hex']}
         privkey = n0.get_deterministic_priv_key().key
-        raw_tx = n1.createrawtransaction([prevout], {getnewdestination()[2]: 24.99})
+        raw_tx = n1.createrawtransaction([prevout], {getnewdestination()[2]: 49.99})
         signed_tx = n1.signrawtransactionwithkey(raw_tx, [privkey], [prevout])['hex']
         signed_txid = tx_from_hex(signed_tx).rehash()
 

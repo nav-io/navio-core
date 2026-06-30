@@ -122,7 +122,7 @@ std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet*
 
     std::vector<InputCandidates> inputCandidates;
 
-    TxFactory::AddAvailableCoins(wallet, blsct_km, transactionData.token_id, transactionData.type, inputCandidates, transactionData.nAmount);
+    TxFactory::AddAvailableCoins(wallet, blsct_km, transactionData.token_id, transactionData.type, inputCandidates, transactionData.nAmount, transactionData.fConsolidateStakedCommitments);
 
     auto changeType = transactionData.type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE ? STAKING_ACCOUNT : CHANGE_ACCOUNT;
 
@@ -139,10 +139,16 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
 {
     AssertLockHeld(wallet->cs_wallet);
 
-    CAmount nTotalAdded = 0;
     bool is_blsct_storage = wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
     auto availableCoins = is_blsct_storage ? AvailableBlsctCoins(*wallet, nullptr, coins_params) : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params);
 
+    // Recover every candidate first, then select largest-value-first below.
+    // Selecting in wallet order would pile in many small outputs (e.g. the
+    // numerous PoS staking rewards) to reach the target, producing oversized
+    // BLSCT transactions -- range proofs are large -- that hit the standard
+    // tx-size limit and, when chained, the mempool descendant-size limit.
+    // Largest-first keeps the input count, and therefore the tx size, minimal.
+    std::vector<InputCandidates> gathered;
     for (const wallet::COutput& output : availableCoins.All()) {
         CTxOut out;
         range_proof::RecoveredData<Mcl> recoveredInfo;
@@ -183,19 +189,37 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
             if (!blsct_km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
                 continue;
             }
-            inputCandidates.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment});
+            gathered.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment});
         } catch (const std::exception& e) {
             LogPrintf("Error adding input: %s\n", e.what());
             continue;
         }
-        nTotalAdded += value;
+    }
+
+    // Staked commitments are kept ahead of ordinary coins so the staked-input
+    // pass in BuildTx still sees them. Within each group the ordering differs:
+    // ordinary coins are taken largest-first (so a wallet of many small outputs
+    // does not pile thousands of tiny inputs into one tx), while staked
+    // commitments are taken smallest-first so an unstake consumes the minimal
+    // commitment(s) needed and leaves large stakes intact instead of splitting
+    // a big commitment.
+    std::sort(gathered.begin(), gathered.end(), [](const InputCandidates& a, const InputCandidates& b) {
+        if (a.is_staked_commitment != b.is_staked_commitment) return a.is_staked_commitment;
+        if (a.is_staked_commitment) return a.amount < b.amount;
+        return a.amount > b.amount;
+    });
+
+    CAmount nTotalAdded = 0;
+    for (auto& candidate : gathered) {
+        inputCandidates.push_back(candidate);
+        nTotalAdded += candidate.amount;
 
         if (nTotalAdded > nAmountLimit)
             break;
     }
 }
 
-void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit)
+void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const bool& consolidateStakedCommitments)
 {
     AssertLockHeld(wallet->cs_wallet);
 
@@ -203,17 +227,32 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     coins_params.min_amount = 0;
     coins_params.only_blsct = true;
     coins_params.token_id = token_id;
-    coins_params.min_sum_amount = nAmountLimit + COIN;
+    // Gather all spendable coins (not just enough to reach the target in wallet
+    // order). AddAvailableCoins selects largest-value-first, so we must let it
+    // see the large outputs; otherwise AvailableCoins stops early at min_sum and
+    // only the small staking outputs are considered, producing oversized txs.
+    coins_params.min_sum_amount = MAX_MONEY;
 
     AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, nAmountLimit + COIN);
 
-    if (type == CreateTransactionType::STAKED_COMMITMENT || type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) {
+    // Whether this transaction must pull in the wallet's existing staked
+    // commitments. Unstaking always must (the commitments are the funds being
+    // spent). Staking only does so when consolidating — with consolidation
+    // disabled, `stakelock` funds a fresh, separate commitment from spendable
+    // coins instead of folding the prior commitments in.
+    const bool gather_staked = (type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE) ||
+                               (type == CreateTransactionType::STAKED_COMMITMENT && consolidateStakedCommitments);
+
+    if (gather_staked) {
         coins_params.include_staked_commitment = true;
 
-        // For unstaking, we need to collect ALL staked commitments, not just up to the unstake amount
-        // This is because we need to check minimum stake constraints on the total
-        // The same applies when staking: we want to include all the staked commitments to the new stake
-        CAmount stakeCoinLimit = CAmount(999000000) * COIN; // Use max possible coins instead of std::numeric_limits
+        // When consolidating we collect ALL staked commitments (so the whole
+        // stake is checked against the minimum and merged into one output).
+        // Without consolidation we only need enough to cover the requested
+        // amount, leaving the remaining commitments intact as separate stakes.
+        CAmount stakeCoinLimit = consolidateStakedCommitments
+                                     ? CAmount(999000000) * COIN // effectively all
+                                     : nAmountLimit;
 
         coins_params.min_sum_amount = stakeCoinLimit;
         coins_params.skip_locked = false;
@@ -226,6 +265,39 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
         coins_params.min_sum_amount = COIN;
         AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, COIN);
     }
+}
+
+std::optional<CMutableTransaction> TxFactory::CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee)
+{
+    AssertLockHeld(wallet->cs_wallet);
+
+    // Gather every spendable native-token (non-staked) coin, then merge the
+    // SMALLEST ones first -- that is what reduces the output count fastest.
+    std::vector<InputCandidates> candidates;
+    AddAvailableCoins(wallet, blsct_km, TokenId(), CreateTransactionType::NORMAL, candidates, MAX_MONEY);
+
+    std::erase_if(candidates, [](const InputCandidates& c) {
+        return c.is_staked_commitment || !c.token_id.IsNull();
+    });
+    std::sort(candidates.begin(), candidates.end(), [](const InputCandidates& a, const InputCandidates& b) {
+        return a.amount < b.amount;
+    });
+
+    const size_t n = std::min({maxInputs, candidates.size(), MAX_TX_INPUT_COUNT});
+    // Nothing to do unless at least two outputs can be merged into one.
+    if (n < 2) return std::nullopt;
+
+    TxFactoryBase factory;
+    CAmount nSum = 0;
+    for (size_t i = 0; i < n; ++i) {
+        factory.AddInput(candidates[i].amount, candidates[i].gamma, candidates[i].spendingKey, TokenId(), candidates[i].outpoint);
+        nSum += candidates[i].amount;
+    }
+
+    // One output back to `destination`; the fee is taken from the merged amount.
+    factory.AddOutput(SubAddress(destination), nSum, "Consolidate", TokenId(), NORMAL, 0, /*fSubtractFeeFromAmount=*/true, MclScalar::Rand(), nBLSCTDefaultFee);
+
+    return factory.BuildTx(destination, /*minStake=*/0, NORMAL, /*fSubtractedFee=*/true, nBLSCTDefaultFee);
 }
 
 } // namespace blsct

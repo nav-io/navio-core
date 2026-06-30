@@ -646,7 +646,7 @@ public:
      * @return the recently added wtx pointer or nullptr if there was a db write error.
      */
     CWalletTx* AddToWallet(CTransactionRef tx, const TxState& state, const UpdateWalletTxFn& update_wtx = nullptr, bool fFlushOnClose = true, bool rescanning_old_block = false);
-    CWalletOutput* AddToWallet(const COutPoint& outpoint, CTxOutRef tx, const TxState& state, const UpdateWalletOutputFn& update_wout = nullptr, bool fFlushOnClose = true, bool rescanning_old_block = false, const SyncTxState& state_spent = TxStateInactive{}, bool fCoinbase = false);
+    CWalletOutput* AddToWallet(const COutPoint& outpoint, CTxOutRef tx, const TxState& state, const UpdateWalletOutputFn& update_wout = nullptr, bool fFlushOnClose = true, bool rescanning_old_block = false, const SyncTxState& state_spent = TxStateInactive{}, bool fCoinbase = false, const uint256& spent_by = uint256());
     bool LoadToWallet(const uint256& hash, const UpdateWalletTxFn& fill_wtx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     bool LoadToWallet(const COutPoint& outpoint, const UpdateWalletOutputFn& fill_wout) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     void transactionAddedToMempool(const CTransactionRef& tx) override;

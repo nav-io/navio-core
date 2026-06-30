@@ -211,6 +211,7 @@ public:
         fBLSCTOutput = false;
         fStakedCommitment = false;
         outputHash.SetNull();
+        m_spent_by.SetNull();
         blsctRecoveryData = {};
     }
 
@@ -223,7 +224,8 @@ public:
     CTxOutRef out;
     range_proof::RecoveredData<Mcl> blsctRecoveryData;
     TxState m_state;
-    SyncTxState m_state_spent; //!< whether the output is spent or not
+    SyncTxState m_state_spent;  //!< whether the output is spent or not
+    uint256 m_spent_by;         //!< txid of the transaction that spent this output (null if unspent / unknown)
 
     void updateState(interfaces::Chain& chain);
     int64_t GetTxTime() const;
@@ -240,6 +242,9 @@ public:
         s << serializedHash << serializedIndex << fCoinbase << fBLSCTOutput << fStakedCommitment << outputHash;
         // nOrderPos persisted so chronological listtransactions ordering survives DB reloads.
         s << nOrderPos;
+        // Spending txid, persisted so a confirmed spend survives DB reloads and
+        // can only be cleared by the same transaction (reorg), not a superseded one.
+        s << m_spent_by;
     }
 
     template <typename Stream>
@@ -261,6 +266,12 @@ public:
         // listtransactions fall back to nTimeReceived for ordering.
         if (!s.eof()) {
             s >> nOrderPos;
+        }
+        // Backward compatible: older DBs omit m_spent_by; leave null. A null
+        // value means "unknown spender" and is treated permissively (any tx may
+        // clear the spend) until a rescan repopulates it.
+        if (!s.eof()) {
+            s >> m_spent_by;
         }
     }
 
