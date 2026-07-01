@@ -1098,7 +1098,7 @@ bool CWallet::IsSpentKey(const CScript& scriptPubKey) const
     return false;
 }
 
-CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, const TxState& state, const UpdateWalletOutputFn& update_wout, bool fFlushOnClose, bool rescanning_old_block, const SyncTxState& state_spent, bool fCoinbase)
+CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, const TxState& state, const UpdateWalletOutputFn& update_wout, bool fFlushOnClose, bool rescanning_old_block, const SyncTxState& state_spent, bool fCoinbase, const uint256& spent_by)
 {
     LOCK(cs_wallet);
 
@@ -1143,8 +1143,30 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
             fUpdated = true;
         }
 
-        if (TxStateString(state_spent) != TxStateString(wout.m_state_spent)) {
+        // Spend-state update with spender tracking. m_spent_by records which
+        // transaction spent this output. "Upgrades" toward more-spent
+        // (unspent -> in-mempool -> confirmed) always apply; a "downgrade"
+        // (a tx being evicted or disconnected and re-synced Inactive) only
+        // applies when it comes from the SAME transaction that recorded the
+        // spend. This keeps a confirmed spend sticky when a superseded sibling
+        // is re-synced Inactive -- e.g. the pre-aggregation tx the staker
+        // replaced with an aggregated tx under a different txid, which would
+        // otherwise un-spend the output, double the balance and cause
+        // bad-txns-inputs-missingorspent -- while still correctly un-spending
+        // the output when its actual spending tx is disconnected in a reorg.
+        // A null spent_by (legacy DB rows, non-spend callers) is treated
+        // permissively so behaviour matches the old code until a rescan
+        // repopulates the spender.
+        auto spent_rank = [](const SyncTxState& s) -> int {
+            if (std::holds_alternative<TxStateConfirmed>(s)) return 2;
+            if (std::holds_alternative<TxStateInMempool>(s)) return 1;
+            return 0;
+        };
+        const bool is_downgrade = spent_rank(state_spent) < spent_rank(wout.m_state_spent);
+        const bool spender_mismatch = !spent_by.IsNull() && !wout.m_spent_by.IsNull() && wout.m_spent_by != spent_by;
+        if (!(is_downgrade && spender_mismatch) && TxStateString(state_spent) != TxStateString(wout.m_state_spent)) {
             wout.m_state_spent = state_spent;
+            wout.m_spent_by = (spent_rank(state_spent) > 0) ? spent_by : uint256();
             fUpdated = true;
         }
 
@@ -1562,11 +1584,12 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
 
             for (size_t i = 0; i < tx.vin.size(); i++) {
                 auto txin = tx.vin[i];
-                /*CWalletOutput* wout = */ AddToWallet(txin.prevout, nullptr, tx_state, /*update_wout=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block, state, tx.IsCoinBase());
+                /*CWalletOutput* wout = */ AddToWallet(txin.prevout, nullptr, tx_state, /*update_wout=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block, state, tx.IsCoinBase(), /*spent_by=*/tx.GetHash());
 
-                auto wout_ = GetWalletOutput(txin.prevout);
-                if (wout_)
-                    assert(wout_->IsSpent() == (state.index() != 2));
+                // No longer assert IsSpent() == (state active): AddToWallet now
+                // keeps a confirmed spend sticky, so re-syncing a superseded /
+                // conflicted (Inactive) tx that lists an already-confirmed-spent
+                // outpoint intentionally leaves it spent.
             }
 
             // A transaction that spends our own outputs (send / stakelock /
@@ -2084,8 +2107,18 @@ bool CWallet::IsFromMe(const CTransaction& tx) const
 
 CAmount CWallet::GetDebit(const CTransaction& tx, const isminefilter& filter, const TokenId& token_id) const
 {
+    // An aggregated transaction (the staker merges several BLSCT transactions
+    // into one block transaction) can contain outputs that are created and then
+    // spent by a later input of the SAME transaction. Those intermediates are
+    // internal to the aggregate and must not be counted as a debit -- otherwise
+    // a chain of large sends sums past MoneyRange and throws, crashing the node
+    // when the block is processed. Skip inputs that spend this tx's own outputs.
+    std::set<uint256> own_outputs;
+    for (const CTxOut& txout : tx.vout) own_outputs.insert(txout.GetHash());
+
     CAmount nDebit = 0;
     for (const CTxIn& txin : tx.vin) {
+        if (own_outputs.contains(txin.prevout.hash)) continue;
         nDebit += GetDebit(txin, filter, token_id);
         if (!MoneyRange(nDebit))
             throw std::runtime_error(std::string(__func__) + ": value out of range");

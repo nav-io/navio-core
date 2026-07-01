@@ -332,6 +332,52 @@ BOOST_FIXTURE_TEST_CASE(output_storage_spent_tracking, TestingSetup)
     BOOST_CHECK(updated->IsSpent());
 }
 
+// Regression for the "phantom double balance" bug. The staker aggregates a send
+// into a block under a different on-chain txid; the wallet's superseded
+// pre-aggregation transaction is then evicted as a conflict and re-synced
+// Inactive. The per-output spend flag must NOT be reset by that superseded
+// transaction (which would un-spend an already-confirmed-spent input, doubling
+// the balance), but MUST be reset by a genuine reorg of the actual spending tx.
+BOOST_FIXTURE_TEST_CASE(output_storage_spent_sticky_against_superseded_tx, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+    auto outResult = blsct::CreateOutput(recvAddress, 1000 * COIN, "phantom_test");
+    COutPoint outpoint(outResult.out.GetHash());
+    auto outRef = std::make_shared<const CTxOut>(outResult.out);
+
+    auto* result = wallet->AddToWallet(outpoint, outRef, TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false);
+    BOOST_REQUIRE(result != nullptr);
+    BOOST_CHECK(!result->IsSpent());
+
+    const uint256 aggregate_txid = InsecureRand256();   // on-chain (staker-aggregated) tx
+    const uint256 superseded_txid = InsecureRand256();  // wallet's pre-aggregation tx
+
+    // The aggregated transaction confirms: the input is spent by aggregate_txid.
+    wallet->AddToWallet(outpoint, nullptr, TxStateConfirmed{InsecureRand256(), 2, 0}, nullptr, true, false, TxStateConfirmed{InsecureRand256(), 2, 0}, false, /*spent_by=*/aggregate_txid);
+    BOOST_CHECK(wallet->GetWalletOutput(outpoint)->IsSpent());
+
+    // The superseded pre-aggregation tx is evicted and re-synced Inactive. It is
+    // a DIFFERENT txid, so it must not clear the confirmed spend. (Without the
+    // fix this resets the flag -> phantom double balance.)
+    wallet->AddToWallet(outpoint, nullptr, TxStateInactive{}, nullptr, true, false, TxStateInactive{}, false, /*spent_by=*/superseded_txid);
+    BOOST_CHECK_MESSAGE(wallet->GetWalletOutput(outpoint)->IsSpent(),
+                        "confirmed spend was cleared by a superseded transaction (phantom double balance)");
+
+    // A genuine reorg of the actual spending tx DOES un-spend the output.
+    wallet->AddToWallet(outpoint, nullptr, TxStateInactive{}, nullptr, true, false, TxStateInactive{}, false, /*spent_by=*/aggregate_txid);
+    BOOST_CHECK_MESSAGE(!wallet->GetWalletOutput(outpoint)->IsSpent(),
+                        "reorg of the actual spending tx should un-spend the output");
+}
+
 // Tests for getblsctoutput lookup logic:
 // 1. Output-storage mode: stripped output must be found by its original hash.
 // 2. Output-storage mode: IsSpent() is correctly reflected.

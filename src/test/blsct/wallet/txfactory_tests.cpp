@@ -209,4 +209,65 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
     BOOST_CHECK(TxGetCredit(*wallet, CTransaction(finalTx2.value()), wallet::ISMINE_SPENDABLE_BLSCT) == expected_change - 50 * COIN - second_fee);
 }
 
+BOOST_FIXTURE_TEST_CASE(coin_selection_largest_first_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test_sel", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    // A wallet full of small outputs (e.g. PoS staking rewards) plus one large
+    // output. Selecting in insertion order would pile in the small ones; the
+    // factory must instead pick the single large output that covers the send.
+    std::vector<COutPoint> smallOutpoints;
+    COutPoint bigOutpoint;
+    {
+        CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+        coins_view_cache.SetBestBlock(InsecureRand256());
+        for (int i = 0; i < 20; ++i) {
+            COutPoint op{Txid::FromUint256(InsecureRand256())};
+            Coin c;
+            c.nHeight = 1;
+            c.out = blsct::CreateOutput(recvAddress, 1 * COIN, "small").out;
+            coins_view_cache.AddCoin(op, std::move(c), true);
+            smallOutpoints.push_back(op);
+        }
+        bigOutpoint = COutPoint{Txid::FromUint256(InsecureRand256())};
+        Coin big;
+        big.nHeight = 1;
+        big.out = blsct::CreateOutput(recvAddress, 1000 * COIN, "big").out;
+        coins_view_cache.AddCoin(bigOutpoint, std::move(big), true);
+        BOOST_CHECK(coins_view_cache.Flush());
+    }
+
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+    auto tx = blsct::TxFactory(blsct_km);
+
+    // Add the small inputs first and the large one last, so a naive in-order
+    // selection would prefer the small ones.
+    for (const auto& op : smallOutpoints)
+        BOOST_CHECK(tx.AddInput(coins_view_cache, op));
+    BOOST_CHECK(tx.AddInput(coins_view_cache, bigOutpoint));
+
+    blsct::SubAddress randomAddress(blsct::DoublePublicKey(MclG1Point::MapToPoint("dest1"), MclG1Point::MapToPoint("dest2")));
+    tx.AddOutput(randomAddress, 500 * COIN, "send");
+
+    auto finalTx = tx.BuildTx();
+    BOOST_REQUIRE(finalTx.has_value());
+
+    // Largest-first: the single 1000-COIN input covers 500 + fee, so exactly one
+    // input is selected instead of the 20 small ones.
+    BOOST_CHECK_EQUAL(finalTx->vin.size(), 1U);
+
+    TxValidationState tx_state;
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx.value()), coins_view_cache, tx_state));
+}
+
 BOOST_AUTO_TEST_SUITE_END()

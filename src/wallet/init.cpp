@@ -3,6 +3,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/wallet/txfactory_base.h>
 #include <common/args.h>
 #include <init.h>
 #include <interfaces/chain.h>
@@ -48,6 +49,7 @@ void WalletInit::AddWalletOptions(ArgsManager& argsman) const
                    "-addresstype=legacy, else it is an implementation detail.",
                    ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-consolidatefeerate=<amt>", strprintf("The maximum feerate (in %s/kvB) at which transaction building may use more inputs than strictly necessary so that the wallet's UTXO pool can be reduced (default: %s).", CURRENCY_UNIT, FormatMoney(DEFAULT_CONSOLIDATE_FEERATE)), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
+    argsman.AddArg("-consolidatestakedcommitments", strprintf("When staking, fold the wallet's existing staked commitments into the new commitment so the wallet holds a single consolidated stake (default: %u). Set to 0 to keep each stakelock as its own commitment.", blsct::DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-disablewallet", "Do not load the wallet and disable wallet RPC calls", ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-discardfee=<amt>", strprintf("The fee rate (in %s/kvB) that indicates your tolerance for discarding change by adding it to the fee (default: %s). "
                                                                 "Note: An output is discarded if it is dust at this rate, but we will always discard up to the dust relay fee and a discard fee above that is limited by the fee estimate for the longest target",

@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <addresstype.h>
+#include <common/args.h>
 #include <blsct/wallet/balance_proof.h>
 #include <blsct/wallet/helpers.h>
 #include <blsct/wallet/keyman.h>
@@ -1139,6 +1140,7 @@ RPCHelpMan stakelock()
             const bool verbose{request.params[10].isNull() ? false : request.params[10].get_bool()};
 
             blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
+            transactionData.fConsolidateStakedCommitments = gArgs.GetBoolArg("-consolidatestakedcommitments", blsct::DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS);
 
             EnsureWalletIsUnlocked(*pwallet);
 
@@ -1201,10 +1203,65 @@ RPCHelpMan stakeunlock()
 
 
             blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT_UNSTAKE, Params().GetConsensus().nPePoSMinStakeAmount);
+            transactionData.fConsolidateStakedCommitments = gArgs.GetBoolArg("-consolidatestakedcommitments", blsct::DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS);
 
             EnsureWalletIsUnlocked(*pwallet);
 
             return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
+
+RPCHelpMan consolidate()
+{
+    return RPCHelpMan{
+        "consolidate",
+        "\nMerge many small spendable outputs into fewer large ones, paid back to this wallet.\n"
+        "Wallets that accumulate many small outputs (e.g. PoS staking rewards) cannot spend them all\n"
+        "in a single transaction once they exceed the per-transaction input limit. Run this to combine\n"
+        "the smallest outputs; each consolidation transaction merges up to the per-transaction input\n"
+        "cap.\n" +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"max_txs", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Maximum number of consolidation transactions to create this call (default 1)."},
+            {"max_inputs", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Maximum outputs to merge per transaction (default and hard cap: the per-transaction input limit)."},
+        },
+        RPCResult{RPCResult::Type::ARR, "", "The ids of the consolidation transactions created (empty if nothing to consolidate).", {{RPCResult::Type::STR_HEX, "txid", "The consolidation transaction id."}}},
+        RPCExamples{
+            HelpExampleCli("consolidate", "5") + HelpExampleRpc("consolidate", "5")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            const int max_txs = request.params[0].isNull() ? 1 : request.params[0].getInt<int>();
+            size_t max_inputs = request.params[1].isNull() ? blsct::MAX_TX_INPUT_COUNT : static_cast<size_t>(request.params[1].getInt<int>());
+            if (max_txs < 1) throw JSONRPCError(RPC_INVALID_PARAMETER, "max_txs must be at least 1");
+            if (max_inputs < 2) throw JSONRPCError(RPC_INVALID_PARAMETER, "max_inputs must be at least 2");
+            max_inputs = std::min(max_inputs, blsct::MAX_TX_INPUT_COUNT);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            const CAmount fee_rate = Params().GetConsensus().nBLSCTDefaultFee;
+
+            UniValue txids(UniValue::VARR);
+            for (int i = 0; i < max_txs; ++i) {
+                auto dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+                auto res = blsct::TxFactory::CreateConsolidationTransaction(pwallet.get(), blsct_km, dest, max_inputs, fee_rate);
+                if (!res) break; // fewer than two small outputs remain to merge
+
+                const CTransactionRef tx = MakeTransactionRef(res.value());
+                wallet::mapValue_t map_value;
+                pwallet->CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
+                txids.push_back(tx->GetHash().GetHex());
+            }
+
+            return txids;
         },
     };
 }
@@ -3255,6 +3312,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &sendtokentoblsctaddress},
         {"blsct", &stakelock},
         {"blsct", &stakeunlock},
+        {"blsct", &consolidate},
         {"blsct", &setblsctseed},
         {"blsct", &createblsctbalanceproof},
         {"blsct", &createblsctrawtransaction},

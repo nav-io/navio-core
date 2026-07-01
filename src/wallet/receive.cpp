@@ -86,10 +86,18 @@ CAmount OutputGetCredit(const CWallet& wallet, const CWalletOutput& wout, const 
 
 CAmount TxGetCredit(const CWallet& wallet, const CTransaction& tx, const isminefilter& filter, const TokenId& token_id)
 {
+    // Skip outputs that are spent by a later input of the SAME transaction.
+    // Aggregated block transactions (the staker merges several BLSCT txs into
+    // one) contain such intermediates; counting them inflates the credit past
+    // MoneyRange and throws, crashing the node on block processing.
+    std::set<uint256> spent_in_tx;
+    for (const CTxIn& txin : tx.vin) spent_in_tx.insert(txin.prevout.hash);
+
     CAmount nCredit = 0;
     for (const CTxOut& txout : tx.vout)
     {
         if (txout.tokenId != token_id) continue;
+        if (spent_in_tx.contains(txout.GetHash())) continue;
         nCredit += OutputGetCredit(wallet, txout, filter);
         if (!MoneyRange(nCredit))
             throw std::runtime_error(std::string(__func__) + ": value out of range");
@@ -141,10 +149,16 @@ CAmount OutputGetChange(const CWallet& wallet, const CTxOut& txout, const TokenI
 CAmount TxGetChange(const CWallet& wallet, const CTransaction& tx, const TokenId& token_id)
 {
     LOCK(wallet.cs_wallet);
+    // Skip intra-transaction self-spends (aggregated block tx intermediates),
+    // as in TxGetCredit, to avoid summing past MoneyRange.
+    std::set<uint256> spent_in_tx;
+    for (const CTxIn& txin : tx.vin) spent_in_tx.insert(txin.prevout.hash);
+
     CAmount nChange = 0;
     for (const CTxOut& txout : tx.vout)
     {
         if (txout.tokenId != token_id) continue;
+        if (spent_in_tx.contains(txout.GetHash())) continue;
         nChange += OutputGetChange(wallet, txout);
         if (!MoneyRange(nChange))
             throw std::runtime_error(std::string(__func__) + ": value out of range");

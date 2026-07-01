@@ -67,6 +67,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "stakelock", 1, "verbose" },
     { "stakeunlock", 0, "amount" },
     { "stakeunlock", 1, "verbose" },
+    { "consolidate", 0, "max_txs" },
+    { "consolidate", 1, "max_inputs" },
     { "getreceivedbyaddress", 1, "minconf" },
     { "getreceivedbyaddress", 2, "include_immature_coinbase" },
     { "getreceivedbylabel", 1, "minconf" },

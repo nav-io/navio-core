@@ -5,6 +5,8 @@
 #include <blsct/wallet/txfactory_base.h>
 #include <util/rbf.h>
 
+#include <random>
+
 using T = Mcl;
 using Point = T::Point;
 using Points = Elements<Point>;
@@ -111,6 +113,17 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         }
     }
 
+    // Select largest-value inputs first. The loops below add inputs in order
+    // until the target is covered, so without this a wallet full of small
+    // outputs (e.g. PoS staking rewards) would pile in many tiny inputs and
+    // produce an oversized BLSCT transaction. Sorting descending keeps the
+    // input count -- and therefore the tx size -- minimal.
+    for (auto& in_ : vInputs) {
+        std::sort(in_.second.begin(), in_.second.end(), [](const UnsignedInput& a, const UnsignedInput& b) {
+            return a.value.GetUint64() > b.value.GetUint64();
+        });
+    }
+
     while (true) {
         CMutableTransaction tx = this->tx;
         tx.nVersion |= CTransaction::BLSCT_MARKER;
@@ -119,6 +132,11 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         std::map<TokenId, CAmount> mapChange;
         std::map<TokenId, CAmount> mapInputs;
         std::vector<Signature> txSigs = outputSignatures;
+        // Set if selection stops because the per-tx input cap is reached while
+        // funds remain unselected -- i.e. the amount needs more inputs than fit
+        // in one transaction. Distinguishes "consolidate first" from genuine
+        // insufficient funds below.
+        bool hitInputCap = false;
 
         if (type == STAKED_COMMITMENT_UNSTAKE || type == STAKED_COMMITMENT) {
             for (auto& in_ : vInputs) {
@@ -140,12 +158,17 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
                 if (in.is_staked_commitment) continue;
                 if (!mapInputs[in_.first]) mapInputs[in_.first] = 0;
                 if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs + nAmounts[in_.first].nFromFee) break;
+                if (tx.vin.size() >= MAX_TX_INPUT_COUNT) {
+                    hitInputCap = true;
+                    break;
+                }
 
                 tx.vin.push_back(in.in);
                 gammaAcc = gammaAcc + in.gamma;
                 txSigs.push_back(in.sk.Sign(in.in.GetHash()));
                 mapInputs[in_.first] += in.value.GetUint64();
             }
+            if (hitInputCap) break;
         }
         for (auto& amounts : nAmounts) {
             auto tokenFee = nAmounts[amounts.first].nFromFee;
@@ -153,6 +176,12 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             auto nFromInputs = mapInputs[amounts.first];
 
             if (nFromInputs < amounts.second.nFromOutputs + tokenFee) {
+                if (hitInputCap) {
+                    throw std::runtime_error(strprintf(
+                        "This transaction would need more than %u inputs (too many small outputs to spend at once). "
+                        "Consolidate small outputs first with the 'consolidate' RPC, then retry.",
+                        MAX_TX_INPUT_COUNT));
+                }
                 return std::nullopt;
             }
 
@@ -188,6 +217,18 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
         const CAmount required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee;
         if (nAmounts[TokenId()].nFromFee == required_fee) {
+            // Randomise input and output ordering so the on-chain transaction
+            // does not leak the wallet's coin-selection order (e.g. that earlier
+            // inputs correspond to larger outputs, or the change position). The
+            // BLSCT aggregate signature and balance proof are order-independent,
+            // so reordering does not affect validity. Seed a PRNG from BLSCT's
+            // secure randomness (MclScalar::Rand) rather than FastRandomContext,
+            // which lives outside the libblsct library this file is built into.
+            std::seed_seq seed{MclScalar::Rand().GetUint64(), MclScalar::Rand().GetUint64(),
+                               MclScalar::Rand().GetUint64(), MclScalar::Rand().GetUint64()};
+            std::mt19937_64 rng(seed);
+            std::shuffle(tx.vin.begin(), tx.vin.end(), rng);
+            std::shuffle(tx.vout.begin(), tx.vout.end(), rng);
             return tx;
         }
         nAmounts[TokenId()].nFromFee = required_fee;
@@ -219,8 +260,13 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
         CAmount inputFromStakedCommitments = 0;
 
         for (const auto& output : inputCandidates) {
-            if (output.is_staked_commitment)
+            if (output.is_staked_commitment) {
+                // With consolidation disabled, leave existing commitments
+                // untouched so this stakelock yields a separate commitment.
+                if (!transactionData.fConsolidateStakedCommitments)
+                    continue;
                 inputFromStakedCommitments += output.amount;
+            }
 
             tx.AddInput(output.amount, output.gamma, output.spendingKey, output.token_id, COutPoint(output.outpoint.hash), output.is_staked_commitment);
         }

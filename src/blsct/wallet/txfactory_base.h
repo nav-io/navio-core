@@ -8,6 +8,20 @@
 #include <primitives/transaction.h>
 
 namespace blsct {
+// Maximum number of inputs the factory will put in a single transaction. Each
+// input adds weight, so an unbounded count (e.g. spending thousands of small PoS
+// staking outputs at once) would exceed MAX_STANDARD_TX_WEIGHT and be rejected
+// at broadcast. Beyond this, callers must split the spend across transactions
+// (see the 'consolidate' RPC). Chosen well under the weight limit to leave room
+// for outputs and range proofs.
+static constexpr size_t MAX_TX_INPUT_COUNT = 1000;
+
+// Default for the `-consolidatestakedcommitments` flag. When true, stake
+// operations fold a wallet's existing staked commitments into the new
+// commitment so the wallet holds a single consolidated stake. Set false to keep
+// each stakelock as its own commitment.
+static constexpr bool DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS{true};
+
 struct CreateTransactionData {
     CreateTransactionType type;
     blsct::TokenInfo tokenInfo;
@@ -23,6 +37,16 @@ struct CreateTransactionData {
     // so wallet-built transactions match the consensus minimum-fee rule
     // enforced by `blsct::VerifyTx`.
     CAmount nBLSCTDefaultFee{::BLSCT_DEFAULT_FEE};
+
+    // When true (default), stake operations fold every existing staked
+    // commitment of the wallet into the new commitment output, so a wallet
+    // holds a single consolidated stake. When false, `stakelock` funds the new
+    // stake purely from spendable coins (leaving prior commitments untouched,
+    // producing a separate commitment) and `stakeunlock` consumes only the
+    // commitments needed to cover the requested amount. Controlled by the
+    // `-consolidatestakedcommitments` flag. Disabling it lets a single wallet
+    // build the >=2 distinct commitments a PoS membership ring requires.
+    bool fConsolidateStakedCommitments{true};
 
     Scalar tokenKey;
     std::map<std::string, std::string> nftMetadata;

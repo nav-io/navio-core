@@ -624,9 +624,9 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
                  // outputs individually (instead of grouped by transaction). Run validation tests to see
                  // the calculated hash in the log output, then update this value.
                  .height = 299,
-                 .hash_serialized = AssumeutxoHash{uint256S("0xcd5c0f3e11b6da949be75b25064b0beaa097eaff2cb08b59f23a5060a631238f")},
+                 .hash_serialized = AssumeutxoHash{uint256S("0x20b7eed57e7ba73098bf3519c1b69325e4c8d2ed41799d5bd82ce967053e2ffc")},
                  .nChainTx = 300,
-                 .blockhash = uint256S("0x7cf12c7e4c5014623ec6463278b1f9302727d9d11763f0d5d569c5ae9bfde876")},
+                 .blockhash = uint256S("0x4f4f5d994e217881b22d34ff39d53ac7329ef7d6a9ca05b3c27cbfb3e08f5761")},
             };
 
             chainTxData = ChainTxData{

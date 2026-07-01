@@ -31,6 +31,7 @@ void DummyWalletInit::AddWalletOptions(ArgsManager& argsman) const
         "-avoidpartialspends",
         "-changetype",
         "-consolidatefeerate=<amt>",
+        "-consolidatestakedcommitments",
         "-disablewallet",
         "-discardfee=<amt>",
         "-fallbackfee=<amt>",
