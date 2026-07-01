@@ -246,15 +246,22 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     if (gather_staked) {
         coins_params.include_staked_commitment = true;
 
-        // When consolidating we collect ALL staked commitments (so the whole
-        // stake is checked against the minimum and merged into one output).
-        // Without consolidation we only need enough to cover the requested
-        // amount, leaving the remaining commitments intact as separate stakes.
+        // When consolidating we merge the whole stake into one output; without
+        // consolidation we only need enough commitments to cover the requested
+        // amount, leaving the rest intact as separate stakes.
         CAmount stakeCoinLimit = consolidateStakedCommitments
                                      ? CAmount(999000000) * COIN // effectively all
                                      : nAmountLimit;
 
-        coins_params.min_sum_amount = stakeCoinLimit;
+        // Always let AvailableCoins surface EVERY staked commitment (not just
+        // enough to reach the target in wallet-iteration order). The selection
+        // in the inner AddAvailableCoins then sorts them smallest-first and
+        // takes the minimal set covering stakeCoinLimit. Stopping the gather
+        // early (min_sum_amount = stakeCoinLimit) left the choice of which
+        // commitment is seen first up to wallet order, which is platform
+        // dependent -- an unstake could split a large commitment instead of
+        // consuming a smaller exact one, producing a different (wrong) result.
+        coins_params.min_sum_amount = MAX_MONEY;
         coins_params.skip_locked = false;
 
         AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, stakeCoinLimit);
