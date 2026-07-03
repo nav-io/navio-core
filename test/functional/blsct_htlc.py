@@ -296,6 +296,7 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         self.test_height_time_mode_mismatch(wallet1, wallet2, address1, address2)
         self.test_atomic_swap_timelock_opcode_selection(wallet1, address1, address2)
         self.test_importblsctscript(wallet1, wallet2, address1, address2)
+        self.test_auto_import_watch_only(wallet1, wallet2, address1, address2)
 
     def _create_and_broadcast_htlc(self, wallet, address_a, address_b,
                                     amount_sats, secret_hash_hex, locktime, blinding_key_hex,
@@ -923,6 +924,77 @@ class BLSCTHTLCTest(BitcoinTestFramework):
         self.log.info("Raw script import succeeded")
 
         self.log.info("=== importblsctscript test PASSED ===")
+
+    def test_auto_import_watch_only(self, wallet1, wallet2, address1, address2):
+        """createblsctrawtransaction auto-registers the atomic_swap HTLC script
+        as watch-only (default), so the party building the swap detects its own
+        output WITHOUT a separate importblsctscript call.
+
+        Here wallet2 owns address_b (the refund/timelock branch — the seller
+        initiating the swap) and funds the HTLC. The output is blinded to
+        address_a (wallet1), so wallet2 never matches its viewTag and was
+        previously blind to its own refund output. The auto-import closes that
+        gap; the ``watch_only`` output flag opts out of it."""
+        self.log.info("=== Testing atomic_swap auto watch-only import ===")
+
+        amount_sats = 1 * COIN
+
+        def build_and_broadcast(blinding_hex, secret_byte, watch_only=None):
+            secret_hash = hashlib.sha256(bytes([secret_byte] * 32)).hexdigest()
+            locktime = self.nodes[0].getblockcount() + 50
+            output = {
+                "type": "atomic_swap",
+                "address_a": address1,   # counterparty / redeem branch (output blinded here)
+                "address_b": address2,   # funder itself / refund branch
+                "amount": amount_sats,
+                "hash": secret_hash,
+                "locktime": locktime,
+                "blinding_key": blinding_hex,
+            }
+            if watch_only is not None:
+                output["watch_only"] = watch_only
+
+            # Auto-import (when enabled) happens at build time as a side effect.
+            raw = wallet2.createblsctrawtransaction([], [output])
+            funded = wallet2.fundblsctrawtransaction(raw)
+            signed = wallet2.signblsctrawtransaction(funded)
+            self.nodes[0].sendrawtransaction(signed)
+            self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr)
+            self.sync_blocks()
+
+            # wallet1 owns address_a, so it can recover the exact script bytes and
+            # output hash for the assertions below (no side effect on wallet2).
+            recovery = wallet1.getblsctrecoverydata(signed)
+            htlc = next(o for o in recovery["outputs"]
+                        if o["amount_navoshi"] == amount_sats and o.get("gamma"))
+            return htlc["script"], htlc["out_hash"]
+
+        # --- Default (watch_only omitted => true): auto-import ON. wallet2 never
+        #     calls importblsctscript. ---
+        script_auto, outid_auto = build_and_broadcast("a1" * 32, 0x71)
+        watch = [u for u in wallet2.listblsctunspent()
+                 if u.get("scriptPubKey") == script_auto]
+        assert len(watch) == 1, (
+            "funder did not auto-detect its atomic_swap output as watch-only "
+            "without importblsctscript")
+        utxo = watch[0]
+        assert utxo.get("watchonly") is True, "auto-imported HTLC output should be watch-only"
+        assert utxo.get("signable") is False, "watch-only HTLC output must not be signable"
+        assert utxo["outid"] == outid_auto
+        assert utxo["amount"] == Decimal(amount_sats) / Decimal(COIN), (
+            "auto-imported HTLC output should have its amount recovered via the "
+            "registered recovery nonce")
+        self.log.info(f"Funder auto-detected HTLC output as watch-only: {outid_auto}")
+
+        # --- watch_only=false: opt out. The funder stays blind to the output. ---
+        script_optout, _ = build_and_broadcast("a2" * 32, 0x72, watch_only=False)
+        matches = [u for u in wallet2.listblsctunspent()
+                   if u.get("scriptPubKey") == script_optout]
+        assert len(matches) == 0, (
+            "watch_only=false must skip auto-import; funder should not detect the output")
+        self.log.info("watch_only=false correctly skipped auto-import")
+
+        self.log.info("=== atomic_swap auto watch-only import test PASSED ===")
 
 
 if __name__ == '__main__':
