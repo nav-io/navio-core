@@ -1749,6 +1749,7 @@ RPCHelpMan createblsctrawtransaction()
                             {"locktime", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Locktime (block height or timestamp) for atomic_swap refund branch"},
                             {"timelock_opcode", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Timelock opcode for atomic_swap refund branch: \"cltv\" (default) or \"csv\""},
                             {"blinding_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Optional 32-byte blinding key to deterministically derive atomic_swap spending keys"},
+                            {"watch_only", RPCArg::Type::BOOL, RPCArg::Default{true}, "For atomic_swap outputs, automatically register the HTLC script as watch-only (with address_a's recovery nonce) so this wallet tracks and can recover the output without a separate importblsctscript call. Set to false to skip auto-import."},
                         },
                     },
                 },
@@ -2062,6 +2063,25 @@ RPCHelpMan createblsctrawtransaction()
 
                     // Nullify the spending key
                     unsigned_output.out.blsctData.spendingKey = MclG1Point();
+
+                    // Auto-register the HTLC as a watch-only script so the party
+                    // building the swap tracks the output without a separate
+                    // importblsctscript call. This matters most for the refund
+                    // initiator (address_b): the output is blinded to address_a,
+                    // so address_b never matches its viewTag and is otherwise
+                    // blind to the output. The recovery nonce is address_a's
+                    // shared secret (address_a_view_key * blindingKey), which is
+                    // all that is needed to decrypt the amount regardless of
+                    // which participant owns this wallet. Registering is
+                    // idempotent, so re-building the same swap is harmless.
+                    // Opt out with "watch_only": false (e.g. when building a swap
+                    // on behalf of another wallet).
+                    const bool import_watch_only = !o.exists("watch_only") || o["watch_only"].get_bool();
+                    MclG1Point address_a_view_key;
+                    if (import_watch_only && address_a.GetViewKey(address_a_view_key)) {
+                        blsct::PublicKey recovery_nonce(address_a_view_key * blindingKey);
+                        blsct_km->AddWatchOnly(script, recovery_nonce);
+                    }
                 } else {
                     blsct::SubAddress subAddress;
                     if (o.exists("address")) {
