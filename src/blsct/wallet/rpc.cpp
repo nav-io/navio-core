@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <addresstype.h>
+#include <common/args.h>
 #include <blsct/wallet/balance_proof.h>
 #include <blsct/wallet/helpers.h>
 #include <blsct/wallet/keyman.h>
@@ -1546,6 +1547,7 @@ RPCHelpMan stakelock()
             const bool verbose{request.params[10].isNull() ? false : request.params[10].get_bool()};
 
             blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
+            transactionData.fConsolidateStakedCommitments = gArgs.GetBoolArg("-consolidatestakedcommitments", blsct::DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS);
 
             EnsureWalletIsUnlocked(*pwallet);
 
@@ -1608,10 +1610,65 @@ RPCHelpMan stakeunlock()
 
 
             blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT_UNSTAKE, Params().GetConsensus().nPePoSMinStakeAmount);
+            transactionData.fConsolidateStakedCommitments = gArgs.GetBoolArg("-consolidatestakedcommitments", blsct::DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS);
 
             EnsureWalletIsUnlocked(*pwallet);
 
             return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
+
+RPCHelpMan consolidate()
+{
+    return RPCHelpMan{
+        "consolidate",
+        "\nMerge many small spendable outputs into fewer large ones, paid back to this wallet.\n"
+        "Wallets that accumulate many small outputs (e.g. PoS staking rewards) cannot spend them all\n"
+        "in a single transaction once they exceed the per-transaction input limit. Run this to combine\n"
+        "the smallest outputs; each consolidation transaction merges up to the per-transaction input\n"
+        "cap.\n" +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"max_txs", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Maximum number of consolidation transactions to create this call (default 1)."},
+            {"max_inputs", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Maximum outputs to merge per transaction (default and hard cap: the per-transaction input limit)."},
+        },
+        RPCResult{RPCResult::Type::ARR, "", "The ids of the consolidation transactions created (empty if nothing to consolidate).", {{RPCResult::Type::STR_HEX, "txid", "The consolidation transaction id."}}},
+        RPCExamples{
+            HelpExampleCli("consolidate", "5") + HelpExampleRpc("consolidate", "5")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            const int max_txs = request.params[0].isNull() ? 1 : request.params[0].getInt<int>();
+            size_t max_inputs = request.params[1].isNull() ? blsct::MAX_TX_INPUT_COUNT : static_cast<size_t>(request.params[1].getInt<int>());
+            if (max_txs < 1) throw JSONRPCError(RPC_INVALID_PARAMETER, "max_txs must be at least 1");
+            if (max_inputs < 2) throw JSONRPCError(RPC_INVALID_PARAMETER, "max_inputs must be at least 2");
+            max_inputs = std::min(max_inputs, blsct::MAX_TX_INPUT_COUNT);
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            const CAmount fee_rate = Params().GetConsensus().nBLSCTDefaultFee;
+
+            UniValue txids(UniValue::VARR);
+            for (int i = 0; i < max_txs; ++i) {
+                auto dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+                auto res = blsct::TxFactory::CreateConsolidationTransaction(pwallet.get(), blsct_km, dest, max_inputs, fee_rate);
+                if (!res) break; // fewer than two small outputs remain to merge
+
+                const CTransactionRef tx = MakeTransactionRef(res.value());
+                wallet::mapValue_t map_value;
+                pwallet->CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
+                txids.push_back(tx->GetHash().GetHex());
+            }
+
+            return txids;
         },
     };
 }
@@ -1674,7 +1731,7 @@ RPCHelpMan listblsctunspent()
                     const UniValue& input = inputs[idx];
                     CTxDestination dest = DecodeDestination(input.get_str());
                     if (!IsValidDestination(dest)) {
-                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Bitcoin address: ") + input.get_str());
+                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Navio address: ") + input.get_str());
                     }
                     if (!destinations.insert(dest).second) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, duplicated address: ") + input.get_str());
@@ -1801,7 +1858,7 @@ RPCHelpMan listblscttransactions()
             RPCResult::Type::ARR, "", "", {
                                               {RPCResult::Type::OBJ, "", "", Cat<std::vector<RPCResult>>({
                                                                                                              {RPCResult::Type::BOOL, "involvesWatchonly", /*optional=*/true, "Only returns true if imported addresses were involved in transaction."},
-                                                                                                             {RPCResult::Type::STR, "address", /*optional=*/true, "The bitcoin address of the transaction (not returned if the output does not have an address, e.g. OP_RETURN null data)."},
+                                                                                                             {RPCResult::Type::STR, "address", /*optional=*/true, "The Navio address of the transaction (not returned if the output does not have an address, e.g. OP_RETURN null data)."},
                                                                                                              {RPCResult::Type::STR, "category", "The transaction category.\n"
                                                                                                                                                 "\"send\"                  Transactions sent.\n"
                                                                                                                                                 "\"receive\"               Non-coinbase transactions received.\n"
@@ -2099,6 +2156,7 @@ RPCHelpMan createblsctrawtransaction()
                             {"locktime", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Locktime (block height or timestamp) for atomic_swap refund branch"},
                             {"timelock_opcode", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Timelock opcode for atomic_swap refund branch: \"cltv\" (default) or \"csv\""},
                             {"blinding_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Optional 32-byte blinding key to deterministically derive atomic_swap spending keys"},
+                            {"watch_only", RPCArg::Type::BOOL, RPCArg::Default{true}, "For atomic_swap outputs, automatically register the HTLC script as watch-only (with address_a's recovery nonce) so this wallet tracks and can recover the output without a separate importblsctscript call. Set to false to skip auto-import."},
                         },
                     },
                 },
@@ -2412,6 +2470,25 @@ RPCHelpMan createblsctrawtransaction()
 
                     // Nullify the spending key
                     unsigned_output.out.blsctData.spendingKey = MclG1Point();
+
+                    // Auto-register the HTLC as a watch-only script so the party
+                    // building the swap tracks the output without a separate
+                    // importblsctscript call. This matters most for the refund
+                    // initiator (address_b): the output is blinded to address_a,
+                    // so address_b never matches its viewTag and is otherwise
+                    // blind to the output. The recovery nonce is address_a's
+                    // shared secret (address_a_view_key * blindingKey), which is
+                    // all that is needed to decrypt the amount regardless of
+                    // which participant owns this wallet. Registering is
+                    // idempotent, so re-building the same swap is harmless.
+                    // Opt out with "watch_only": false (e.g. when building a swap
+                    // on behalf of another wallet).
+                    const bool import_watch_only = !o.exists("watch_only") || o["watch_only"].get_bool();
+                    MclG1Point address_a_view_key;
+                    if (import_watch_only && address_a.GetViewKey(address_a_view_key)) {
+                        blsct::PublicKey recovery_nonce(address_a_view_key * blindingKey);
+                        blsct_km->AddWatchOnly(script, recovery_nonce);
+                    }
                 } else {
                     blsct::SubAddress subAddress;
                     if (o.exists("address")) {
@@ -3666,6 +3743,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &sendtokentoblsctaddress},
         {"blsct", &stakelock},
         {"blsct", &stakeunlock},
+        {"blsct", &consolidate},
         {"blsct", &setblsctseed},
         {"blsct", &createblsctbalanceproof},
         {"blsct", &createblsctrawtransaction},

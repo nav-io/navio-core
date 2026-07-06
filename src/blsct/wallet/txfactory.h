@@ -34,8 +34,14 @@ public:
     //! initiator can cover the combined weight of its half + fee-0 candidates.
     std::optional<CMutableTransaction> BuildTx(const std::optional<CAmount>& nBLSCTDefaultFee = std::nullopt, const CAmount& additionalFee = 0);
     static std::optional<CMutableTransaction> CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData);
+    // Build one transaction that merges up to `maxInputs` of the wallet's
+    // smallest spendable outputs into a single output paid to `destination`
+    // (fee taken from the consolidated amount). Returns std::nullopt when there
+    // are fewer than two small outputs to merge. Used by the `consolidate` RPC
+    // and the staker's optional auto-consolidation.
+    static std::optional<CMutableTransaction> CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
     static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
-    static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
+    static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const bool& consolidateStakedCommitments = true) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
 };
 } // namespace blsct
 

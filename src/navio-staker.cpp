@@ -92,6 +92,8 @@ static void SetupCliArgs(ArgsManager& argsman)
     argsman.AddArg("-wallet=<wallet-name>", "Specify wallet name", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::OPTIONS);
     argsman.AddArg("-walletpassphrase=<password>", "Specify the password to unlock the wallet", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::OPTIONS);
     argsman.AddArg("-coinbasedest=<address>", "Specify the address to collect the staking rewards", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-autoconsolidate", "Periodically merge the wallet's small outputs (e.g. accumulated staking rewards) into fewer larger ones, so they remain spendable in a single transaction (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-autoconsolidateinterval=<seconds>", "How often to run auto-consolidation when -autoconsolidate is enabled (default: 3600)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 }
 
 /** libevent event log callback */
@@ -897,7 +899,14 @@ void Loop()
     CAmount last_balance = 0;
     std::string last_event = "starting up";
 
-    dash.Log(strprintf("staking started (wallet=%s)", walletName));
+    // Optional: periodically merge the wallet's small outputs (staking rewards
+    // accumulate one small output per block) so they stay spendable in a single
+    // transaction. Disabled by default.
+    const bool auto_consolidate = gArgs.GetBoolArg("-autoconsolidate", false);
+    const int64_t consolidate_interval = gArgs.GetIntArg("-autoconsolidateinterval", 3600);
+    auto last_consolidate{SteadyClock::now()};
+
+    dash.Log(strprintf("staking started (wallet=%s)%s", walletName, auto_consolidate ? ", auto-consolidate enabled" : ""));
 
     while (dash.State() != tui::RunState::Quitting) {
         // Drain keypresses (q/p/r) before each cycle.
@@ -940,6 +949,26 @@ void Loop()
                     } else {
                         ++rpc_errors;
                         last_event = "submitblock error: " + error.write();
+                        dash.Log(last_event);
+                    }
+                }
+
+                if (auto_consolidate && Ticks<std::chrono::seconds>(SteadyClock::now() - last_consolidate) >= consolidate_interval) {
+                    last_consolidate = SteadyClock::now();
+                    const UniValue reply = ConnectAndCallRPC(rh.get(), "consolidate", /*args=*/{}, walletName);
+                    const UniValue& error = reply.find_value("error");
+                    if (error.isNull()) {
+                        const UniValue& result = reply.find_value("result");
+                        if (result.isArray() && !result.empty()) {
+                            last_event = strprintf("auto-consolidation created %d transaction(s)", (int)result.size());
+                            dash.Log(last_event);
+                        }
+                    } else {
+                        ++rpc_errors;
+                        std::string strErr;
+                        int nErr = 0;
+                        ParseError(error, strErr, nErr);
+                        last_event = "auto-consolidation failed: " + strErr;
                         dash.Log(last_event);
                     }
                 }

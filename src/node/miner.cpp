@@ -272,11 +272,16 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
 
     std::vector<blsct::Signature> txSigs;
 
-    auto out = blsct::CreateOutput(destination.GetKeys(), nReward, "Reward");
+    // Always build a full BLSCT coinbase output (range proof + keys), even for a
+    // zero reward (heights 2..nLastPOWHeight under fOnlyFirstPoWBlockHasReward).
+    // fAllowZeroValueRangeProof stops CreateOutput() from shortcutting a 0 amount
+    // to an unspendable OP_RETURN with no range proof: the verifier skips such
+    // outputs, but the coinbase still carries balance/output signatures, which
+    // would then fail the aggregate signature check.
+    auto out = blsct::CreateOutput(destination.GetKeys(), nReward, "Reward", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true);
 
     txSigs.push_back(blsct::PrivateKey(out.blindingKey).Sign(out.out.GetHash()));
     txSigs.push_back(blsct::PrivateKey(out.gamma.Negate()).SignBalance());
-
 
     coinbaseTx.nVersion = CTransaction::BLSCT_MARKER;
     coinbaseTx.txSig = blsct::Signature::Aggregate(txSigs);

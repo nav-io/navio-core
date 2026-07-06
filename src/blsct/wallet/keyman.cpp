@@ -877,11 +877,30 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
                 return spendable_kind();
             }
         }
-        // Otherwise, the only way it can be ours is via an imported watch-only
+        // Next, the output may be ours via an explicitly imported watch-only
         // script (e.g. an HTLC added through importblsctscript). We can decrypt
         // the amount but cannot derive a signing key.
         if (IsMine(txout.scriptPubKey)) {
             return wallet::ISMINE_WATCH_ONLY;
+        }
+        // Finally, handle non-standard scripts (size != 50) that still embed one
+        // or more 48-byte BLS pubkeys — e.g. an atomic-swap HTLC carrying redeem
+        // and refund branches. The single-key extractor above bails on these via
+        // its size==50 guard, so probe every branch pubkey: if any resolves to
+        // one of our subaddresses, the output pays us. We can decrypt the amount,
+        // but the standard spend path cannot reconstruct the HTLC signing key
+        // (it needs the branch offset and the externally-supplied blinding key),
+        // so classify as watch-only rather than spendable. Standard 50-byte
+        // scripts were already fully handled by the single-key extractor above,
+        // so skip the re-parse and vector allocation for them.
+        std::vector<blsct::PublicKey> branchKeys;
+        if (txout.scriptPubKey.size() != 50 &&
+            ExtractAllSpendingKeysFromScript(txout.scriptPubKey, branchKeys)) {
+            for (const auto& branchKey : branchKeys) {
+                if (IsMine(txout.blsctData.blindingKey, branchKey, txout.blsctData.viewTag)) {
+                    return wallet::ISMINE_WATCH_ONLY;
+                }
+            }
         }
         return wallet::ISMINE_NO;
     }
