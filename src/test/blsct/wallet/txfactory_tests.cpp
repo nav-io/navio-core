@@ -115,6 +115,137 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_test, TestingSetup)
     BOOST_CHECK(blsct::TxFactory::CreateTransaction(wallet, wallet->GetOrCreateBLSCTKeyMan(), blsct::CreateTransactionData{recvAddress, 900 * COIN, "test"}) == std::nullopt);
 }
 
+BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test_sffa", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    wallet::CWallet* wallet(new wallet::CWallet(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase()));
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    const auto txid = Txid::FromUint256(InsecureRand256());
+    COutPoint outpoint{txid};
+
+    Coin coin;
+    auto out = blsct::CreateOutput(recvAddress, 1000 * COIN, "test");
+    coin.nHeight = 1;
+    coin.out = out.out;
+
+    auto tx = blsct::TxFactory(blsct_km);
+    TxValidationState tx_state;
+
+    {
+        CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+        coins_view_cache.SetBestBlock(InsecureRand256());
+        coins_view_cache.AddCoin(outpoint, std::move(coin), true);
+        BOOST_CHECK(coins_view_cache.Flush());
+    }
+
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+    BOOST_CHECK(tx.AddInput(coins_view_cache, outpoint));
+
+    // Send 900, subtracting the fee from the recipient's amount.
+    tx.AddOutput(recvAddress, 900 * COIN, "test", TokenId(), blsct::NORMAL, 0, /*fSubtractFeeFromAmount=*/true);
+
+    auto finalTx = tx.BuildTx();
+
+    BOOST_REQUIRE(finalTx.has_value());
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx.value()), coins_view_cache, tx_state));
+
+    const CAmount fee = GetFeeValue(CTransaction(finalTx.value()));
+    BOOST_REQUIRE(fee > 0);
+
+    // subtract-fee semantics: the recipient bears the fee (receives
+    // amount - fee), and the change is exactly inputs - requested amount,
+    // independent of the fee -- i.e. the wallet spends exactly the requested
+    // amount. (Without the flag the recipient would receive the full 900 and
+    // the change would be 100 - fee.)
+    auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
+    bool foundRecipient = false;
+    bool foundChange = false;
+    for (auto& res : result.amounts) {
+        if (res.message == "test") {
+            foundRecipient = true;
+            BOOST_CHECK_EQUAL(res.amount, 900 * COIN - fee);
+        }
+        if (res.message == "Change") {
+            foundChange = true;
+            BOOST_CHECK_EQUAL(res.amount, 1000 * COIN - 900 * COIN);
+        }
+    }
+    BOOST_CHECK(foundRecipient);
+    BOOST_CHECK(foundChange);
+}
+
+// subtract-fee "send everything": the recipient gets the whole input minus the
+// fee and there is no change output. This is the same shape the `consolidate`
+// RPC builds (one output back to self, fee taken from the merged amount), so it
+// guards that path too.
+BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_sendmax_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test_sffa_max", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    wallet::CWallet* wallet(new wallet::CWallet(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase()));
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    const auto txid = Txid::FromUint256(InsecureRand256());
+    COutPoint outpoint{txid};
+
+    Coin coin;
+    auto out = blsct::CreateOutput(recvAddress, 1000 * COIN, "test");
+    coin.nHeight = 1;
+    coin.out = out.out;
+
+    auto tx = blsct::TxFactory(blsct_km);
+    TxValidationState tx_state;
+
+    {
+        CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+        coins_view_cache.SetBestBlock(InsecureRand256());
+        coins_view_cache.AddCoin(outpoint, std::move(coin), true);
+        BOOST_CHECK(coins_view_cache.Flush());
+    }
+
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+    BOOST_CHECK(tx.AddInput(coins_view_cache, outpoint));
+
+    // Send the entire input, subtracting the fee: no change output can exist.
+    tx.AddOutput(recvAddress, 1000 * COIN, "test", TokenId(), blsct::NORMAL, 0, /*fSubtractFeeFromAmount=*/true);
+
+    auto finalTx = tx.BuildTx();
+
+    BOOST_REQUIRE(finalTx.has_value());
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx.value()), coins_view_cache, tx_state));
+
+    const CAmount fee = GetFeeValue(CTransaction(finalTx.value()));
+    BOOST_REQUIRE(fee > 0);
+
+    auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
+    bool foundRecipient = false;
+    for (auto& res : result.amounts) {
+        if (res.message == "test") {
+            foundRecipient = true;
+            BOOST_CHECK_EQUAL(res.amount, 1000 * COIN - fee);
+        }
+        // There must be no change output.
+        BOOST_CHECK(res.message != "Change");
+    }
+    BOOST_CHECK(foundRecipient);
+}
+
 BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
 {
     SeedInsecureRand(SeedRand::ZEROS);

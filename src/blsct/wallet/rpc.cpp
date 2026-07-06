@@ -92,7 +92,7 @@ static std::string FormatRecoveredGamma(const Scalar& gamma)
     return gamma.IsZero() ? "" : HexStr(gamma.GetVch());
 }
 
-UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose)
+UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose, wallet::mapValue_t mapValue)
 {
     // This should always try to sign, if we don't have private keys, don't try to do anything here.
     if (wallet.IsWalletFlagSet(wallet::WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
@@ -116,8 +116,10 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
 
     const CTransactionRef& tx = MakeTransactionRef(res.value());
 
-    wallet::mapValue_t map_value;
-    wallet.CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
+    // Store any wallet-local comment/comment_to on the sender's CWalletTx so
+    // listtransactions surfaces them (WalletTxToJSON emits every mapValue key).
+    // This is separate from the on-chain BLSCT memo, which the recipient sees.
+    wallet.CommitTransaction(tx, std::move(mapValue), /*orderForm=*/{});
     std::string outputHash = tx->vout[0].GetHash().GetHex();
     if (verbose) {
         UniValue entry(UniValue::VOBJ);
@@ -890,6 +892,9 @@ RPCHelpMan sendtoblsctaddress()
             {"memo", RPCArg::Type::STR, RPCArg::Default{""}, "A memo used to store in the transaction.\n"
                                                              "The recipient will see its value."},
             {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+            {"subtractfeefromamount", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, the fee is deducted from the amount being sent so the recipient receives less than the requested amount and the wallet spends exactly the requested amount."},
+            {"comment_to", RPCArg::Type::STR, RPCArg::Default{""}, "A wallet-local comment naming the person or organization the payment is to.\n"
+                                                                   "Stored only in this wallet (surfaced by listtransactions as \"to\"); not sent on-chain."},
         },
         {
             RPCResult{"if verbose is not set or set to false",
@@ -928,12 +933,24 @@ RPCHelpMan sendtoblsctaddress()
             const std::string address = request.params[0].get_str();
 
             const bool verbose{request.params[3].isNull() ? false : request.params[3].get_bool()};
+            const bool subtract_fee{request.params[4].isNull() ? false : request.params[4].get_bool()};
 
             blsct::CreateTransactionData transactionData(address, AmountFromValue(request.params[1]), sMemo, TokenId(), blsct::CreateTransactionType::NORMAL, 0);
+            transactionData.fSubtractFeeFromAmount = subtract_fee;
+
+            // Wallet-local comments, stored on the sender's CWalletTx and
+            // surfaced by listtransactions (not sent on-chain). The memo above
+            // is the on-chain, recipient-visible field; mirror it into "comment"
+            // so the sender also sees it in their own transaction history.
+            wallet::mapValue_t mapValue;
+            if (!sMemo.empty())
+                mapValue["comment"] = sMemo;
+            if (!request.params[5].isNull() && !request.params[5].get_str().empty())
+                mapValue["to"] = request.params[5].get_str();
 
             EnsureWalletIsUnlocked(*pwallet);
 
-            return blsct::SendTransaction(*pwallet, transactionData, verbose);
+            return blsct::SendTransaction(*pwallet, transactionData, verbose, std::move(mapValue));
         },
     };
 }
