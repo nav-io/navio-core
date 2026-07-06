@@ -116,6 +116,7 @@ set(BLSCT_WALLET_SOURCES
   blsct/external_api/blsct.cpp
   blsct/wallet/address.cpp
   blsct/wallet/balance_proof.cpp
+  blsct/wallet/delegation.cpp
   blsct/wallet/helpers.cpp
   blsct/wallet/keyman.cpp
   blsct/wallet/keyring.cpp
