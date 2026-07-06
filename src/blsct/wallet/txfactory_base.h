@@ -4,8 +4,11 @@
 
 #include <blsct/arith/mcl/mcl.h>
 #include <blsct/wallet/address.h>
+#include <blsct/wallet/delegation.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <primitives/transaction.h>
+
+#include <optional>
 
 namespace blsct {
 // Maximum number of inputs the factory will put in a single transaction. Each
@@ -47,6 +50,12 @@ struct CreateTransactionData {
     // `-consolidatestakedcommitments` flag. Disabling it lets a single wallet
     // build the >=2 distinct commitments a PoS membership ring requires.
     bool fConsolidateStakedCommitments{true};
+
+    // When set (delegatestake), the staked output carries an encrypted
+    // delegation payload addressed to this delegate so a third-party staker
+    // can stake it without any wallet keys. Only meaningful for
+    // STAKED_COMMITMENT transactions.
+    std::optional<delegation::DelegationRequest> stakeDelegation{std::nullopt};
 
     Scalar tokenKey;
     std::map<std::string, std::string> nftMetadata;
@@ -118,7 +127,7 @@ public:
     TxFactoryBase()= default;
 
     // Normal transfer
-    void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false, const Scalar& blindingKey = Scalar::Rand(), const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE);
+    void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false, const Scalar& blindingKey = Scalar::Rand(), const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const std::optional<delegation::DelegationRequest>& stakeDelegation = std::nullopt);
     // Create Token
     void AddOutput(const Scalar& tokenKey, const blsct::TokenInfo& tokenInfo);
     // Mint Token

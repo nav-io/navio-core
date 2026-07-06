@@ -15,7 +15,7 @@ using Scalars = Elements<Scalar>;
 
 namespace blsct {
 
-void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey, const CAmount& nBLSCTDefaultFee)
+void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey, const CAmount& nBLSCTDefaultFee, const std::optional<delegation::DelegationRequest>& stakeDelegation)
 {
     UnsignedOutput out;
 
@@ -27,6 +27,18 @@ void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmo
         nFee = GetTransactioOutputWeight(out.out) * nBLSCTDefaultFee;
         out = CreateOutput(destination.GetKeys(), nAmount - nFee, sMemo, token_id, blindingKey, type, minStake);
     };
+
+    if (stakeDelegation.has_value() && type == STAKED_COMMITMENT && token_id.IsNull()) {
+        // Attach the encrypted opening of the just-built commitment so the
+        // delegate can stake it. DATA predicates are consensus no-ops, and
+        // the predicate is set before BuildTx() computes the output
+        // signatures, so the payload is covered by the ownership signature.
+        delegation::DelegationInfo info;
+        info.value = nAmount - nFee;
+        info.gamma = out.gamma;
+        info.rewardAddress = stakeDelegation->rewardAddress;
+        out.out.predicate = DataPredicate(delegation::Encrypt(info, stakeDelegation->delegateKey)).GetVch();
+    }
 
     if (!nAmounts.contains(token_id))
         nAmounts[token_id] = {0, 0, 0};
@@ -277,7 +289,7 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
 
         bool fSubtractFeeFromAmount = false; // nAmount == inAmount + inputFromStakedCommitments;
 
-        tx.AddOutput(transactionData.destination, transactionData.nAmount + inputFromStakedCommitments, transactionData.sMemo, transactionData.token_id, transactionData.type, transactionData.minStake, fSubtractFeeFromAmount);
+        tx.AddOutput(transactionData.destination, transactionData.nAmount + inputFromStakedCommitments, transactionData.sMemo, transactionData.token_id, transactionData.type, transactionData.minStake, fSubtractFeeFromAmount, Scalar::Rand(), transactionData.nBLSCTDefaultFee, transactionData.stakeDelegation);
     } else {
         CAmount inputFromStakedCommitments = 0;
 
