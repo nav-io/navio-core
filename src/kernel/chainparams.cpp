@@ -261,12 +261,13 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             // TODO to be specified in a future patch.
         };
 
-        // chainTxData = ChainTxData{
-        //     // Data from RPC: getchaintxstats 4096 000000000000000000035c3f0d31e71a5ee24c5aaf3354689f65bd7b07dee632
-        //     .nTime = 1680665245,
-        //     .nTxCount = 820876044,
-        //     .dTxRate = 3.672283614033389,
-        // };
+        chainTxData = ChainTxData{
+            // Data from blocks.nav.io at mainnet height 3845
+            // (RPC: getchaintxstats 2048 c1d8ec3e9292be58d4b3d36de7ab97d899cba57ce6b808e9fa403bce8ad31167).
+            .nTime = 1783350480,
+            .nTxCount = 4018,
+            .dTxRate = 0.008305308125795311,
+        };
         }
     };
 
