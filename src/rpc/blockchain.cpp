@@ -2102,6 +2102,63 @@ static const auto scan_result_status_some = RPCResult{
 };
 
 
+static RPCHelpMan liststakedcommitmentsdata()
+{
+    return RPCHelpMan{
+        "liststakedcommitmentsdata",
+        "\nScan the UTXO set and return every unspent staked-commitment output together with\n"
+        "its outpoint and attached predicate data (if any). All returned data is public.\n"
+        "Third-party stakers use this to discover stake delegations addressed to them.\n"
+        "This call iterates the whole UTXO set and may take a while.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::ARR,
+            "",
+            "",
+            {{RPCResult::Type::OBJ, "", "", {
+                 {RPCResult::Type::STR_HEX, "commitment", "The staked Pedersen commitment (G1 point)."},
+                 {RPCResult::Type::STR_HEX, "outhash", "The hash identifying the staked output."},
+                 {RPCResult::Type::STR_HEX, "predicate", "The output's predicate data (empty if none)."},
+             }}},
+        },
+        RPCExamples{HelpExampleCli("liststakedcommitmentsdata", "") + HelpExampleRpc("liststakedcommitmentsdata", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            NodeContext& node = EnsureAnyNodeContext(request.context);
+            ChainstateManager& chainman = EnsureChainman(node);
+
+            std::unique_ptr<CCoinsViewCursor> pcursor;
+            {
+                LOCK(::cs_main);
+                Chainstate& active_chainstate = chainman.ActiveChainstate();
+                active_chainstate.ForceFlushStateToDisk();
+                pcursor = CHECK_NONFATAL(active_chainstate.CoinsDB().Cursor());
+            }
+
+            UniValue result(UniValue::VARR);
+            COutPoint key;
+            Coin coin;
+            unsigned int iter{0};
+
+            while (pcursor->Valid()) {
+                if (iter % 5000 == 0) node.rpc_interruption_point();
+                ++iter;
+                if (pcursor->GetKey(key) && pcursor->GetValue(coin)) {
+                    if (coin.out.IsStakedCommitment() && coin.out.HasBLSCTRangeProof()) {
+                        UniValue entry(UniValue::VOBJ);
+                        entry.pushKV("commitment", HexStr(coin.out.blsctData.rangeProof.Vs[0].GetVch()));
+                        entry.pushKV("outhash", key.hash.GetHex());
+                        entry.pushKV("predicate", HexStr(coin.out.predicate));
+                        result.push_back(entry);
+                    }
+                }
+                pcursor->Next();
+            }
+
+            return result;
+        },
+    };
+}
+
 static RPCHelpMan scantxoutset()
 {
     // scriptPubKey corresponding to mainnet address 12cbQLTFMXRnSzktFkuoG3eHoMeFtpTu3S
@@ -2900,6 +2957,7 @@ void RegisterBlockchainRPCCommands(CRPCTable& t)
         {"blockchain", &verifychain},
         {"blockchain", &preciousblock},
         {"blockchain", &scantxoutset},
+        {"blockchain", &liststakedcommitmentsdata},
         {"blockchain", &scanblocks},
         {"blockchain", &getblockfilter},
         {"blockchain", &dumptxoutset},
