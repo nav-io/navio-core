@@ -31,7 +31,7 @@ static void WalletToolReleaseWallet(CWallet* wallet)
     delete wallet;
 }
 
-static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flags, const std::vector<unsigned char>& seed, const blsct::SeedType& type)
+static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flags, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase)
 {
     LOCK(wallet_instance->cs_wallet);
     wallet_instance->SetMinVersion(FEATURE_LATEST);
@@ -48,7 +48,7 @@ static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flag
         auto blsct_man = wallet_instance->GetOrCreateBLSCTKeyMan();
 
         if (blsct_man) {
-            blsct_man->SetupGeneration(seed, type);
+            blsct_man->SetupGeneration(seed, type, /*force=*/false, mnemonic_passphrase);
         }
     }
 
@@ -56,7 +56,7 @@ static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flag
     wallet_instance->TopUpKeyPool();
 }
 
-static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::path& path, DatabaseOptions options, const std::vector<unsigned char>& seed, const blsct::SeedType& type)
+static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::path& path, DatabaseOptions options, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase = "")
 {
     DatabaseStatus status;
     bilingual_str error;
@@ -101,7 +101,7 @@ static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::pa
         }
     }
 
-    if (options.require_create) WalletCreate(wallet_instance.get(), options.create_flags, seed, type);
+    if (options.require_create) WalletCreate(wallet_instance.get(), options.create_flags, seed, type, mnemonic_passphrase);
 
     return wallet_instance;
 }
@@ -148,6 +148,10 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         tfm::format(std::cerr, "The -mnemonic option can only be used with the 'create' command.\n");
         return false;
     }
+    if (args.IsArgSet("-mnemonicpassphrase") && command != "create") {
+        tfm::format(std::cerr, "The -mnemonicpassphrase option can only be used with the 'create' command.\n");
+        return false;
+    }
     if (command == "create" && !args.IsArgSet("-wallet")) {
         tfm::format(std::cerr, "Wallet name must be provided when creating a new wallet.\n");
         return false;
@@ -188,6 +192,7 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
 
         std::string seed = args.GetArg("-seed", "");
         std::string mnemonic_str = args.GetArg("-mnemonic", "");
+        std::string mnemonic_passphrase = args.GetArg("-mnemonicpassphrase", "");
 
         // Reject seed/mnemonic when BLSCT is not enabled
         if (!seed.empty() && !make_blsct) {
@@ -198,10 +203,18 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             tfm::format(std::cerr, "The -mnemonic option requires -blsct\n");
             return false;
         }
+        if (!mnemonic_passphrase.empty() && !make_blsct) {
+            tfm::format(std::cerr, "The -mnemonicpassphrase option requires -blsct\n");
+            return false;
+        }
 
         // Validate mutual exclusivity
         if (!seed.empty() && !mnemonic_str.empty()) {
             tfm::format(std::cerr, "Cannot specify both -seed and -mnemonic\n");
+            return false;
+        }
+        if (!seed.empty() && !mnemonic_passphrase.empty()) {
+            tfm::format(std::cerr, "Cannot specify both -seed and -mnemonicpassphrase\n");
             return false;
         }
 
@@ -247,7 +260,7 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             options.create_flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
         }
 
-        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type);
+        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type, mnemonic_passphrase);
         // Cleanse seed hex now that MakeWallet has consumed it
         memory_cleanse(seed.data(), seed.size());
         if (wallet_instance) {

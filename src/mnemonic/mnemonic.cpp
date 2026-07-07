@@ -2,10 +2,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <crypto/pkcs5_pbkdf2.h>
 #include <crypto/sha256.h>
 #include <mnemonic/mnemonic.h>
 #include <mnemonic/wordlist.h>
 #include <random.h>
+#include <support/cleanse.h>
 
 #include <algorithm>
 #include <sstream>
@@ -115,6 +117,32 @@ std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& w
     }
 
     return entropy;
+}
+
+std::vector<unsigned char> MnemonicToSeed(const std::string& words, const std::string& passphrase)
+{
+    // BIP-39 sentences are single-space separated; normalize so callers that
+    // pass extra whitespace derive the same seed
+    std::string sentence;
+    std::istringstream iss(words);
+    std::string word;
+    while (iss >> word) {
+        if (!sentence.empty()) sentence += ' ';
+        sentence += word;
+    }
+
+    std::vector<unsigned char> password(sentence.begin(), sentence.end());
+    std::string salt_str = "mnemonic" + passphrase;
+    std::vector<unsigned char> salt(salt_str.begin(), salt_str.end());
+
+    auto seed = pkcs5_pbkdf2_hmacsha512(password, salt, 2048);
+
+    memory_cleanse(password.data(), password.size());
+    memory_cleanse(sentence.data(), sentence.size());
+    memory_cleanse(salt.data(), salt.size());
+    memory_cleanse(salt_str.data(), salt_str.size());
+
+    return seed;
 }
 
 bool Validate(const std::string& words)

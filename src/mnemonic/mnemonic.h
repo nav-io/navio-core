@@ -26,6 +26,12 @@ std::string EntropyToMnemonic(Span<const unsigned char> entropy);
 // Returns std::nullopt if mnemonic is invalid (bad word, bad checksum, bad length)
 std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& words);
 
+// Convert mnemonic sentence + optional passphrase -> 64-byte BIP-39 seed
+// (PBKDF2-HMAC-SHA512, 2048 iterations, salt = "mnemonic" + passphrase).
+// Inter-word whitespace is normalized to single spaces before derivation.
+// Does not validate the mnemonic; use Validate() for that.
+std::vector<unsigned char> MnemonicToSeed(const std::string& words, const std::string& passphrase = "");
+
 // Validate mnemonic (word count, word membership, checksum)
 bool Validate(const std::string& words);
 

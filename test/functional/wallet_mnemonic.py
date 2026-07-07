@@ -20,7 +20,7 @@ class WalletMnemonicTest(BitcoinTestFramework):
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
 
-    def navio_wallet_create(self, wallet_name, mnemonic=None, seed=None):
+    def navio_wallet_create(self, wallet_name, mnemonic=None, seed=None, mnemonic_passphrase=None):
         """Run navio-wallet create with -blsct. Options must come BEFORE the command."""
         args = [
             '-datadir={}'.format(self.nodes[0].datadir_path),
@@ -32,6 +32,8 @@ class WalletMnemonicTest(BitcoinTestFramework):
             args.append('-mnemonic={}'.format(mnemonic))
         if seed is not None:
             args.append('-seed={}'.format(seed))
+        if mnemonic_passphrase is not None:
+            args.append('-mnemonicpassphrase={}'.format(mnemonic_passphrase))
         args.append('create')
         p = subprocess.Popen(
             [self.options.naviowallet] + args,
@@ -286,6 +288,88 @@ class WalletMnemonicTest(BitcoinTestFramework):
         stdout_nbs, stderr_nbs = p_no_blsct_seed.communicate()
         assert_equal(p_no_blsct_seed.poll(), 1)
         assert "requires -blsct" in stderr_nbs
+
+        # === BIP-39 mnemonic passphrase ===
+
+        self.log.info("Test mnemonic_passphrase: restore with passphrase derives different keys")
+        node.createwallet(wallet_name="test_mp_source", blsct=True)
+        w_mp = node.get_wallet_rpc("test_mp_source")
+        mnemonic_mp = w_mp.dumpmnemonic()
+        seed_plain = w_mp.getblsctseed()
+        node.createwallet(wallet_name="test_mp_pass", blsct=True, mnemonic=mnemonic_mp,
+                          mnemonic_passphrase="hunter2")
+        w_mp2 = node.get_wallet_rpc("test_mp_pass")
+        seed_pass = w_mp2.getblsctseed()
+        assert seed_plain != seed_pass
+
+        self.log.info("Test mnemonic_passphrase: same mnemonic + passphrase is deterministic")
+        node.createwallet(wallet_name="test_mp_pass2", blsct=True, mnemonic=mnemonic_mp,
+                          mnemonic_passphrase="hunter2")
+        w_mp3 = node.get_wallet_rpc("test_mp_pass2")
+        assert_equal(seed_pass, w_mp3.getblsctseed())
+
+        self.log.info("Test mnemonic_passphrase: different passphrases derive different keys")
+        node.createwallet(wallet_name="test_mp_other", blsct=True, mnemonic=mnemonic_mp,
+                          mnemonic_passphrase="other")
+        w_mp4 = node.get_wallet_rpc("test_mp_other")
+        assert w_mp4.getblsctseed() != seed_pass
+
+        self.log.info("Test mnemonic_passphrase: dumpmnemonic returns the mnemonic without passphrase")
+        assert_equal(w_mp2.dumpmnemonic(), mnemonic_mp)
+
+        self.log.info("Test mnemonic_passphrase on newly generated wallet: restore roundtrip")
+        result_mp = node.createwallet(wallet_name="test_mp_new", blsct=True,
+                                      mnemonic_passphrase="newpass")
+        assert "mnemonic" in result_mp
+        w_mp_new = node.get_wallet_rpc("test_mp_new")
+        node.createwallet(wallet_name="test_mp_new_restored", blsct=True,
+                          mnemonic=result_mp["mnemonic"], mnemonic_passphrase="newpass")
+        w_mp_new2 = node.get_wallet_rpc("test_mp_new_restored")
+        assert_equal(w_mp_new.getblsctseed(), w_mp_new2.getblsctseed())
+        # Restoring without the passphrase yields a different wallet
+        node.createwallet(wallet_name="test_mp_new_nopass", blsct=True,
+                          mnemonic=result_mp["mnemonic"])
+        w_mp_new3 = node.get_wallet_rpc("test_mp_new_nopass")
+        assert w_mp_new3.getblsctseed() != w_mp_new.getblsctseed()
+
+        self.log.info("Test mnemonic_passphrase without blsct errors")
+        assert_raises_rpc_error(-8, "requires blsct=true",
+            node.createwallet, wallet_name="test_mp_no_blsct",
+            mnemonic_passphrase="pass")
+
+        self.log.info("Test mnemonic_passphrase with seed errors")
+        assert_raises_rpc_error(-8, "Cannot specify both",
+            node.createwallet, wallet_name="test_mp_seed",
+            blsct=True, seed="00" * 32, mnemonic_passphrase="pass")
+
+        self.log.info("Test CLI tool: -mnemonicpassphrase restore matches RPC-created wallet")
+        rc_mp, stdout_mp, stderr_mp = self.navio_wallet_create(
+            "test_cli_mp", mnemonic=mnemonic_mp, mnemonic_passphrase="hunter2")
+        assert_equal(rc_mp, 0)
+        node.loadwallet("test_cli_mp")
+        w_cli_mp = node.get_wallet_rpc("test_cli_mp")
+        assert_equal(w_cli_mp.getblsctseed(), seed_pass)
+
+        self.log.info("Test CLI tool: -mnemonicpassphrase with -seed errors")
+        rc_mp2, stdout_mp2, stderr_mp2 = self.navio_wallet_create(
+            "test_cli_mp_seed", seed="00" * 32, mnemonic_passphrase="pass")
+        assert_equal(rc_mp2, 1)
+        assert "Cannot specify both -seed and -mnemonicpassphrase" in stderr_mp2
+
+        self.log.info("Test CLI tool: -mnemonicpassphrase without -blsct errors")
+        cli_mp_no_blsct_args = [
+            '-datadir={}'.format(self.nodes[0].datadir_path),
+            '-chain={}'.format(self.chain),
+            '-wallet=test_cli_mp_no_blsct',
+            '-mnemonicpassphrase=pass',
+            'create',
+        ]
+        p_mp_no_blsct = subprocess.Popen(
+            [self.options.naviowallet] + cli_mp_no_blsct_args,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout_mp_nb, stderr_mp_nb = p_mp_no_blsct.communicate()
+        assert_equal(p_mp_no_blsct.poll(), 1)
+        assert "requires -blsct" in stderr_mp_nb
 
         self.log.info("Test roundtrip through CLI: CLI create -> RPC dumpmnemonic -> CLI restore")
         # Create a wallet via CLI

@@ -364,6 +364,7 @@ static RPCHelpMan createwallet()
             {"storage_output", RPCArg::Type::BOOL, RPCArg::Default{false}, "Enables the storage of outputs instead of full txs (experimental)."},
             {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the BLSCT wallet from the specified seed (can be a master seed or an audit key). Requires blsct=true."},
             {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words) to restore a BLSCT wallet from. Requires blsct=true. Mutually exclusive with 'seed'."},
+            {"mnemonic_passphrase", RPCArg::Type::STR, RPCArg::Default{""}, "Optional BIP-39 passphrase used to extend the mnemonic when deriving the wallet keys. Requires blsct=true. Cannot be combined with 'seed'. The same passphrase must be provided again to restore the wallet from its mnemonic."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -462,6 +463,19 @@ static RPCHelpMan createwallet()
                 mnemonic_str = request.params[11].get_str();
             }
 
+            std::string mnemonic_passphrase;
+            if (!request.params[12].isNull() && request.params[12].isStr()) {
+                mnemonic_passphrase = request.params[12].get_str();
+            }
+            if (!mnemonic_passphrase.empty()) {
+                if (!(flags & WALLET_FLAG_BLSCT)) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "The 'mnemonic_passphrase' parameter requires blsct=true");
+                }
+                if (has_seed_param) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot specify both 'seed' and 'mnemonic_passphrase'");
+                }
+            }
+
             // Validate mutual exclusivity
             if (!seed.empty() && !mnemonic_str.empty()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot specify both 'seed' and 'mnemonic'");
@@ -502,7 +516,7 @@ static RPCHelpMan createwallet()
             bilingual_str error;
 
             std::optional<bool> load_on_start = request.params[6].isNull() ? std::nullopt : std::optional<bool>(request.params[6].get_bool());
-            const std::shared_ptr<CWallet> wallet = CreateWallet(context, request.params[0].get_str(), seed, type, load_on_start, options, status, error, warnings);
+            const std::shared_ptr<CWallet> wallet = CreateWallet(context, request.params[0].get_str(), seed, type, load_on_start, options, status, error, warnings, mnemonic_passphrase);
             // Cleanse entropy from local buffer now that CreateWallet has consumed it
             memory_cleanse(seed.data(), seed.size());
             if (!wallet) {
