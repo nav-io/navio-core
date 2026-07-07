@@ -5,8 +5,16 @@
 #include <blsct/tokens/predicate_exec.h>
 
 namespace blsct {
-bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, const bool& fDisconnect)
+bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, const bool& fDisconnect, const nbp::PredicateContext* nbpCtx)
 {
+    if (predicate.IsNbpPredicate()) {
+        if (nbpCtx == nullptr) return false;
+        nbp::PredicateContext ctx = *nbpCtx;
+        ctx.fDisconnect = fDisconnect;
+        std::string err;
+        return nbp::ExecuteNbpPredicate(predicate, view, ctx, nullptr, err);
+    }
+
     if (predicate.IsCreateTokenPredicate()) {
         auto hash = predicate.GetPublicKey().GetHash();
 
@@ -107,10 +115,10 @@ bool ExecutePredicate(const ParsedPredicate& predicate, CCoinsViewCache& view, c
     return false;
 }
 
-bool ExecutePredicate(const VectorPredicate& vch, CCoinsViewCache& view, const bool& fDisconnect)
+bool ExecutePredicate(const VectorPredicate& vch, CCoinsViewCache& view, const bool& fDisconnect, const nbp::PredicateContext* nbpCtx)
 {
     try {
-        return ExecutePredicate(ParsePredicate(vch), view, fDisconnect);
+        return ExecutePredicate(ParsePredicate(vch), view, fDisconnect, nbpCtx);
     } catch (const std::ios_base::failure&) {
         // If predicate parsing fails, treat it as a no-op predicate.
         // This can happen with invalid or random predicate data.

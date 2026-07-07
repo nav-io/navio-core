@@ -59,6 +59,20 @@ struct GuardianExitPredicate {
     }
 };
 
+//! Reclaim an EXITING bond after nUnbondingBlocks. Carried on the payout
+//! output itself: the signature binds the output hash, so the destination
+//! and amount cannot be altered in flight.
+struct GuardianWithdrawPredicate {
+    blsct::PublicKey guardianKey;
+    //! Sign(sk_g, DST_POP ‖ "withdraw" ‖ pk_g ‖ out_hash)
+    blsct::Signature withdrawSig;
+
+    SERIALIZE_METHODS(GuardianWithdrawPredicate, obj)
+    {
+        READWRITE(obj.guardianKey, obj.withdrawSig);
+    }
+};
+
 //! Objective slashing evidence (DESIGN §9): S1 checkpoint equivocation,
 //! S2 wrong-roots checkpoint, S5 resolution-vote equivocation.
 struct GuardianSlashPredicate {

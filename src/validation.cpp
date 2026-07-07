@@ -6,6 +6,7 @@
 #include <validation.h>
 
 #include <arith_uint256.h>
+#include <blsct/bridge/logic.h>
 #include <blsct/pos/pos.h>
 #include <blsct/pos/pos_async_verifier.h>
 #include <blsct/pos/proof_logic.h>
@@ -1166,7 +1167,7 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
         const int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
         const int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
 
-        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee)) {
+        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee, &args.m_chainparams.GetConsensus())) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }
@@ -2116,6 +2117,10 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
     AssertLockHeld(::cs_main);
     bool fClean = true;
 
+    // NBP: undo block-level bridge state (embedded checkpoint record,
+    // committee snapshot at a period boundary) before per-tx predicate undo.
+    nbp::DisconnectNbpBlock(view, m_chainman.GetConsensus(), block, pindex);
+
     CBlockUndo blockUndo;
     if (!m_blockman.UndoReadFromDisk(blockUndo, *pindex)) {
         error("DisconnectBlock(): failure reading undo data");
@@ -2164,7 +2169,13 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
                 view.RemoveStakedCommitment(tx.vout[o].blsctData.rangeProof.Vs[0]);
             }
             if (tx.vout[o].predicate.size() > 0) {
-                if (!blsct::ExecutePredicate(tx.vout[o].predicate, view, true)) {
+                nbp::PredicateContext nbpCtx;
+                nbpCtx.params = &m_chainman.GetConsensus();
+                nbpCtx.height = pindex->nHeight;
+                nbpCtx.txid = tx.GetHash();
+                nbpCtx.out = &tx.vout[o];
+                nbpCtx.voutIndex = o;
+                if (!blsct::ExecutePredicate(tx.vout[o].predicate, view, true, &nbpCtx)) {
                     error("DisconnectBlock(): Could not revert predicate: %s", blsct::PredicateToString(tx.vout[o].predicate));
                     return DISCONNECT_FAILED;
                 }
@@ -2865,7 +2876,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                 if (params.GetConsensus().fBLSCT) {
                     int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
                     blsct::PreparedTxSignatureCheck sig_check;
-                    if (!blsct::PrepareTxForDeferredVerification(tx, view, tx_state, blockBLSCTProofs, sig_check, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee)) {
+                    if (!blsct::PrepareTxForDeferredVerification(tx, view, tx_state, blockBLSCTProofs, sig_check, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee, &params.GetConsensus())) {
                         state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                                       tx_state.GetRejectReason(), tx_state.GetDebugMessage());
                         return error("ConnectBlock(): VerifyTx on transaction %s %s failed with %s",
@@ -2914,7 +2925,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
         const auto t_reward_verify_start = SteadyClock::now();
         blsct::PreparedTxSignatureCheck sig_check;
-        if (!blsct::PrepareTxForDeferredVerification(*block.vtx[0], view, tx_state, blockBLSCTProofs, sig_check, blockReward, 0, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee)) {
+        if (!blsct::PrepareTxForDeferredVerification(*block.vtx[0], view, tx_state, blockBLSCTProofs, sig_check, blockReward, 0, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee, &params.GetConsensus())) {
             state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                           tx_state.GetRejectReason(), tx_state.GetDebugMessage());
             return error("ConnectBlock(): VerifyTx on coinbase of block %s failed (reward: %s)\n",
@@ -3044,6 +3055,15 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
              Ticks<MillisecondsDouble>(time_5 - time_4),
              Ticks<SecondsDouble>(time_verify),
              Ticks<MillisecondsDouble>(time_verify) / num_blocks_total);
+
+    // NBP: validate + record an embedded bridge checkpoint and take the
+    // committee snapshot at period boundaries (all txs applied to `view`).
+    {
+        std::string nbpErr;
+        if (!nbp::ConnectNbpBlock(view, params.GetConsensus(), block, pindex, nbpErr)) {
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, nbpErr);
+        }
+    }
 
     if (fJustCheck)
         return true;
@@ -3593,6 +3613,25 @@ CBlockIndex* Chainstate::FindMostWorkChain()
             if (it == setBlockIndexCandidates.rend())
                 return nullptr;
             pindexNew = *it;
+        }
+
+        // NBP dynamic finality (DESIGN §5.3): never reorganize below the
+        // highest epoch-boundary block referenced by an embedded checkpoint
+        // buried >= nFinalityBurial blocks on the active chain. Candidates
+        // on branches that do not contain that block are discarded
+        // regardless of accumulated work.
+        if (m_chain.Tip() != nullptr) {
+            uint256 finalHash;
+            int finalHeight = 0;
+            if (nbp::GetFinalizedCheckpoint(CoinsTip(), m_chainman.GetConsensus(), m_chain.Tip()->nHeight, finalHash, finalHeight)) {
+                const CBlockIndex* anc = pindexNew->GetAncestor(finalHeight);
+                if (anc == nullptr || anc->GetBlockHash() != finalHash) {
+                    LogPrintf("NBP: rejecting chain candidate %s (height %d): forks below finalized checkpoint %s (height %d)\n",
+                              pindexNew->GetBlockHash().ToString(), pindexNew->nHeight, finalHash.ToString(), finalHeight);
+                    setBlockIndexCandidates.erase(pindexNew);
+                    continue;
+                }
+            }
         }
 
         // Check whether all blocks on the path between the currently active chain and the candidate are valid.

@@ -7,6 +7,7 @@
 #define BITCOIN_PRIMITIVES_BLOCK_H
 
 #include <arith_uint256.h>
+#include <blsct/bridge/checkpoint_data.h>
 #include <blsct/pos/proof.h>
 #include <primitives/transaction.h>
 #include <serialize.h>
@@ -24,6 +25,7 @@ class CBlockHeader
 {
 public:
     static const int32_t VERSION_BIT_POS = 0x01000000UL;
+    static const int32_t VERSION_BIT_NBP_CKPT = 0x02000000UL;
     static const int32_t VERSION_BIT_BLSCT = 0x40000000UL;
     // header
     int32_t nVersion;
@@ -69,6 +71,13 @@ public:
         return (nVersion & VERSION_BIT_POS);
     }
 
+    //! Whether the block carries an NBP bridge checkpoint (CBlock-level
+    //! field like posProof; outside the header hash).
+    bool HasNbpCheckpoint() const
+    {
+        return (nVersion & VERSION_BIT_NBP_CKPT);
+    }
+
     uint256 GetHash() const;
 
     NodeSeconds Time() const
@@ -95,6 +104,7 @@ class CBlock : public CBlockHeader
 public:
     // network and disk
     blsct::ProofOfStake posProof;
+    nbp::CheckpointData nbpCheckpoint;
     std::vector<CTransactionRef> vtx;
 
     // memory only
@@ -115,9 +125,10 @@ public:
     {
         READWRITE(AsBase<CBlockHeader>(obj));
         if (obj.IsProofOfStake())
-            READWRITE(obj.posProof, obj.vtx);
-        else
-            READWRITE(obj.vtx);
+            READWRITE(obj.posProof);
+        if (obj.HasNbpCheckpoint())
+            READWRITE(obj.nbpCheckpoint);
+        READWRITE(obj.vtx);
     }
 
     void SetNull()

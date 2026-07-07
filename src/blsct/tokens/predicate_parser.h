@@ -5,6 +5,7 @@
 #ifndef NAVIO_BLSCT_TOKENS_PREDICATE_PARSER_H
 #define NAVIO_BLSCT_TOKENS_PREDICATE_PARSER_H
 
+#include <blsct/bridge/predicates.h>
 #include <blsct/public_key.h>
 #include <blsct/tokens/info.h>
 #include <blsct/tokens/predicate.h>
@@ -17,7 +18,16 @@ enum PredicateOperation : uint8_t {
     MINT,
     NFT_MINT,
     PAY_FEE,
-    DATA
+    DATA,
+    // NBP bridge operations (navio-bridge-protocol DESIGN.md §12).
+    NBP_GUARDIAN_REGISTER,
+    NBP_GUARDIAN_EXIT,
+    NBP_GUARDIAN_WITHDRAW,
+    NBP_GUARDIAN_SLASH,
+    NBP_BRIDGE_MINT,
+    NBP_BRIDGE_BURN,
+    NBP_BRIDGE_CHALLENGE,
+    NBP_BRIDGE_RESOLVE
 };
 
 struct CreateTokenPredicate {
@@ -142,6 +152,36 @@ public:
     ParsedPredicate(MintNftPredicate& predicate) : predicate_(predicate) {}
     ParsedPredicate(PayFeePredicate& predicate) : predicate_(predicate) {}
     ParsedPredicate(DataPredicate& predicate) : predicate_(predicate) {}
+    ParsedPredicate(nbp::GuardianRegisterPredicate& predicate) : predicate_(predicate) {}
+    ParsedPredicate(nbp::GuardianExitPredicate& predicate) : predicate_(predicate) {}
+    ParsedPredicate(nbp::GuardianWithdrawPredicate& predicate) : predicate_(predicate) {}
+    ParsedPredicate(nbp::GuardianSlashPredicate& predicate) : predicate_(predicate) {}
+    ParsedPredicate(nbp::BridgeMintPredicate& predicate) : predicate_(predicate) {}
+    ParsedPredicate(nbp::BridgeBurnPredicate& predicate) : predicate_(predicate) {}
+    ParsedPredicate(nbp::BridgeChallengePredicate& predicate) : predicate_(predicate) {}
+    ParsedPredicate(nbp::BridgeResolvePredicate& predicate) : predicate_(predicate) {}
+
+    //! Generic access to the NBP payload types.
+    template <typename T>
+    bool Is() const
+    {
+        return std::holds_alternative<T>(predicate_);
+    }
+
+    template <typename T>
+    const T& Get() const
+    {
+        if (!Is<T>()) throw std::ios_base::failure("wrong predicate type");
+        return std::get<T>(predicate_);
+    }
+
+    bool IsNbpPredicate() const
+    {
+        return Is<nbp::GuardianRegisterPredicate>() || Is<nbp::GuardianExitPredicate>() ||
+               Is<nbp::GuardianWithdrawPredicate>() || Is<nbp::GuardianSlashPredicate>() ||
+               Is<nbp::BridgeMintPredicate>() || Is<nbp::BridgeBurnPredicate>() ||
+               Is<nbp::BridgeChallengePredicate>() || Is<nbp::BridgeResolvePredicate>();
+    }
 
     bool IsCreateTokenPredicate() const
     {
@@ -215,9 +255,23 @@ public:
     }
 
 private:
-    std::variant<CreateTokenPredicate, MintTokenPredicate, MintNftPredicate, PayFeePredicate, DataPredicate>
+    std::variant<CreateTokenPredicate, MintTokenPredicate, MintNftPredicate, PayFeePredicate, DataPredicate,
+                 nbp::GuardianRegisterPredicate, nbp::GuardianExitPredicate, nbp::GuardianWithdrawPredicate,
+                 nbp::GuardianSlashPredicate, nbp::BridgeMintPredicate, nbp::BridgeBurnPredicate,
+                 nbp::BridgeChallengePredicate, nbp::BridgeResolvePredicate>
         predicate_;
 };
+
+//! Serialize an NBP predicate payload as `op-byte ‖ fields` (same wire
+//! format as the existing token predicates' GetVch()).
+template <typename T>
+VectorPredicate NbpPredicateToVch(PredicateOperation op, const T& payload)
+{
+    DataStream ss;
+    ss << op;
+    ss << payload;
+    return VectorPredicate(ss.data(), ss.data() + ss.size());
+}
 
 ParsedPredicate ParsePredicate(const VectorPredicate& vch);
 std::string PredicateToString(const VectorPredicate& vch);

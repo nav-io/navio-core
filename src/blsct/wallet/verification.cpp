@@ -94,7 +94,8 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                   int64_t nMedianTimePast,
                   bool verify_rp_inline,
                   const CAmount& nBLSCTDefaultFee,
-                  PreparedTxSignatureCheck* out_sig_check)
+                  PreparedTxSignatureCheck* out_sig_check,
+                  const Consensus::Params* consensusParams)
 {
     using Clock = std::chrono::steady_clock;
     const bool bench_on = LogAcceptCategory(BCLog::BENCH, BCLog::Level::Debug);
@@ -157,6 +158,15 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
         // own N workers — observed regression: 0.53 ms/txin → 2.46 ms/txin
         // on a 752-input block (8-core host, 64 contending threads).
         for (size_t i = 0; i < n_in; ++i) {
+            // NBP: outputs created by a bridge mint are unspendable while
+            // immature, frozen by an open challenge, or revoked.
+            if (consensusParams != nullptr) {
+                std::string nbpErr;
+                if (!nbp::CheckNbpSpend(view, *consensusParams, tx.vin[i].prevout, nSpendHeight, nbpErr)) {
+                    return state.Invalid(TxValidationResult::TX_CONSENSUS, nbpErr);
+                }
+            }
+
             BLSCTSignatureChecker checker(&tx, i);
             ScriptError serror;
             uint32_t flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY;
@@ -200,7 +210,11 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     const OrderedElements<MclG1Point> existing_staked = view.GetStakedCommitments();
     std::set<std::vector<unsigned char>> tx_staked_points;
 
+    size_t nbpPredicates = 0;
+    uint32_t voutIndex = 0;
+
     for (auto& out : tx.vout) {
+        const uint32_t thisVout = voutIndex++;
         auto out_hash = out.GetHash();
         blsct::ParsedPredicate parsedPredicate;
 
@@ -211,7 +225,34 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-to-parse-predicate");
             }
 
-            if (parsedPredicate.IsMintTokenPredicate()) {
+            if (parsedPredicate.IsNbpPredicate()) {
+                // NBP bridge predicate: validate + apply state, then feed
+                // its consensus-minted (pseudo-input) / consensus-burned
+                // (pseudo-output) value into the balance equation under the
+                // appropriate token generator.
+                if (++nbpPredicates > 1) {
+                    return state.Invalid(TxValidationResult::TX_CONSENSUS, "nbp-multiple-predicates");
+                }
+                nbp::PredicateContext nbpCtx;
+                nbpCtx.params = consensusParams;
+                nbpCtx.height = nSpendHeight;
+                nbpCtx.txid = tx.GetHash();
+                nbpCtx.out = &out;
+                nbpCtx.voutIndex = thisVout;
+                nbp::BalanceTerms terms;
+                std::string nbpErr;
+                if (!nbp::ExecuteNbpPredicate(parsedPredicate, view, nbpCtx, &terms, nbpErr)) {
+                    return state.Invalid(TxValidationResult::TX_CONSENSUS, nbpErr);
+                }
+                if (terms.pseudoInput > 0) {
+                    range_proof::Generators<Mcl> gen = gf.GetInstance(terms.tokenId);
+                    balanceKey = balanceKey + (gen.G * MclScalar(terms.pseudoInput));
+                }
+                if (terms.pseudoOutput > 0) {
+                    range_proof::Generators<Mcl> gen = gf.GetInstance(terms.tokenId);
+                    balanceKey = balanceKey - (gen.G * MclScalar(terms.pseudoOutput));
+                }
+            } else if (parsedPredicate.IsMintTokenPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
                 vMessages.emplace_back(out_hash.begin(), out_hash.end());
                 range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash()));
@@ -229,7 +270,9 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
             }
 
-            if (!ExecutePredicate(parsedPredicate, view))
+            // NBP predicates were already executed above (with balance
+            // terms); only token predicates go through the generic executor.
+            if (!parsedPredicate.IsNbpPredicate() && !ExecutePredicate(parsedPredicate, view))
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-to-execute-predicate");
         }
 
@@ -389,12 +432,13 @@ bool VerifyTxCore(const CTransaction& tx,
                   int64_t nMedianTimePast,
                   bool verify_rp_inline,
                   const CAmount& nBLSCTDefaultFee,
-                  PreparedTxSignatureCheck* out_sig_check = nullptr)
+                  PreparedTxSignatureCheck* out_sig_check = nullptr,
+                  const Consensus::Params* consensusParams = nullptr)
 {
     try {
         return VerifyTxCoreImpl(tx, view, state, out_proofs, blockReward, minStake,
                                 nSpendHeight, nMedianTimePast, verify_rp_inline,
-                                nBLSCTDefaultFee, out_sig_check);
+                                nBLSCTDefaultFee, out_sig_check, consensusParams);
     } catch (const std::exception& e) {
         LogPrint(BCLog::VALIDATION, "BLSCT tx verify threw for %s: %s\n",
                  tx.GetHash().ToString(), e.what());
@@ -403,10 +447,10 @@ bool VerifyTxCore(const CTransaction& tx,
 }
 } // namespace
 
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee)
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, const Consensus::Params* consensusParams)
 {
     std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> proofs;
-    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee);
+    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nullptr, consensusParams);
 }
 
 bool PrepareTxForDeferredVerification(const CTransaction& tx,
@@ -418,9 +462,10 @@ bool PrepareTxForDeferredVerification(const CTransaction& tx,
                                       const CAmount& minStake,
                                       int nSpendHeight,
                                       int64_t nMedianTimePast,
-                                      const CAmount& nBLSCTDefaultFee)
+                                      const CAmount& nBLSCTDefaultFee,
+                                      const Consensus::Params* consensusParams)
 {
-    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, &out_sig_check);
+    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, &out_sig_check, consensusParams);
 }
 
 bool VerifyTxCollectProofs(const CTransaction& tx,
@@ -431,9 +476,10 @@ bool VerifyTxCollectProofs(const CTransaction& tx,
                            const CAmount& minStake,
                            int nSpendHeight,
                            int64_t nMedianTimePast,
-                           const CAmount& nBLSCTDefaultFee)
+                           const CAmount& nBLSCTDefaultFee,
+                           const Consensus::Params* consensusParams)
 {
-    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee);
+    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nullptr, consensusParams);
 }
 
 TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSignatureCheck>& sig_checks)
