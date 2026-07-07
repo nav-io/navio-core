@@ -840,7 +840,8 @@ std::vector<DelegatedCommitment> GetDelegatedCommitments(const std::unique_ptr<B
             MclG1Point point;
             if (!point.SetVch(ParseHex(obj.find_value("commitment").get_str()))) continue;
 
-            const MclScalar value{static_cast<uint64_t>(info->value)};
+            if (info->value < 0) continue;
+            const MclScalar value{info->value};
             const MclScalar gamma = info->gamma;
             if (!((gen.G * value + gen.H * gamma) == point)) {
                 LogPrintf("%s: Delegation for commitment %s has an opening that does not match; skipping.\n", __func__, obj.find_value("commitment").get_str());
