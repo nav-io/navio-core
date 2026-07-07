@@ -613,6 +613,10 @@ static RPCHelpMan sethdseed()
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
+            if (pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "sethdseed only sets the seed for this wallet's legacy transparent keychain; it does not affect the wallet's BLSCT keys. Use setblsctseed to set or replace the BLSCT wallet seed.");
+            }
+
             LegacyScriptPubKeyMan& spk_man = EnsureLegacyScriptPubKeyMan(*pwallet, true);
 
             if (pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {

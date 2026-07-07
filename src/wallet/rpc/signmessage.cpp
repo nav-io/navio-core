@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/double_public_key.h>
 #include <key_io.h>
 #include <rpc/util.h>
 #include <util/message.h>
@@ -48,6 +49,10 @@ RPCHelpMan signmessage()
             CTxDestination dest = DecodeDestination(strAddress);
             if (!IsValidDestination(dest)) {
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+            }
+
+            if (std::get_if<blsct::DoublePublicKey>(&dest)) {
+                throw JSONRPCError(RPC_TYPE_ERROR, "Address is a BLSCT address; signmessage only supports transparent (ECDSA) addresses. Use signblsmessage to sign a message with a BLSCT key.");
             }
 
             const PKHash* pkhash = std::get_if<PKHash>(&dest);
