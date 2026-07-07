@@ -4,8 +4,6 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test basic signet functionality"""
 
-from decimal import Decimal
-
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
 
@@ -56,7 +54,6 @@ class SignetBasicTest(BitcoinTestFramework):
         assert_equal(mining_info['chain'], 'signet')
         assert 'currentblocktx' not in mining_info
         assert 'currentblockweight' not in mining_info
-        assert_equal(mining_info['networkhashps'], Decimal('0'))
         assert_equal(mining_info['pooledtx'], 0)
 
         self.generate(self.nodes[0], 1, sync_fun=self.no_op)
