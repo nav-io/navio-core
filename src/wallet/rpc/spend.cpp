@@ -28,6 +28,59 @@
 #include <univalue.h>
 
 namespace wallet {
+//! Guards for transparent-only spend RPCs that would otherwise silently build a
+//! transparent transaction (or skip confidential coins entirely) when run against
+//! a BLSCT (confidential) wallet, or when asked to pay a BLSCT destination.
+//! This is guards-only: none of these RPCs are rerouted to their blsct equivalents.
+static void EnsureNotBLSCTWallet(const CWallet& wallet, const std::string& blsct_rpc_alternative)
+{
+    if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
+                                                  "This RPC does not support BLSCT (confidential) wallets: it would silently "
+                                                  "build a transparent transaction and/or ignore confidential coins. Use %s instead.",
+                                                  blsct_rpc_alternative));
+    }
+}
+
+static void EnsureDestinationNotBLSCT(const CTxDestination& dest, const std::string& address, const std::string& blsct_rpc_alternative)
+{
+    if (std::holds_alternative<blsct::DoublePublicKey>(dest)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf(
+                                                       "%s is a BLSCT (confidential) address; this RPC cannot pay it and would "
+                                                       "silently build a broken transparent output. Use %s instead.",
+                                                       address, blsct_rpc_alternative));
+    }
+}
+
+//! Scan an `outputs`-style argument -- either the dict form ({"addr": amount, ...})
+//! or the array-of-single-key-object form ([{"addr": amount}, {"data": hex}, ...],
+//! as accepted by send()/walletcreatefundedpsbt()'s OutputsDoc() -- for any address
+//! key that decodes to a BLSCT destination.
+static void EnsureOutputsHaveNoBLSCTDestination(const UniValue& outputs_in, const std::string& blsct_rpc_alternative)
+{
+    if (outputs_in.isNull()) return;
+
+    auto check_key = [&](const std::string& name) {
+        if (name == "data") return;
+        CTxDestination dest = DecodeDestination(name);
+        if (IsValidDestination(dest)) {
+            EnsureDestinationNotBLSCT(dest, name, blsct_rpc_alternative);
+        }
+    };
+
+    if (outputs_in.isObject()) {
+        for (const std::string& name : outputs_in.getKeys()) check_key(name);
+        return;
+    }
+
+    const UniValue& outputs = outputs_in.get_array();
+    for (unsigned int i = 0; i < outputs.size(); ++i) {
+        const UniValue& output = outputs[i];
+        if (!output.isObject()) continue;
+        for (const std::string& name : output.getKeys()) check_key(name);
+    }
+}
+
 static void ParseRecipients(const UniValue& address_amounts, const UniValue& subtract_fee_outputs, std::vector<CRecipient>& recipients)
 {
     std::set<CTxDestination> destinations;
@@ -218,8 +271,10 @@ RPCHelpMan sendtoaddress()
         "sendtoaddress",
         "\nSend an amount to a given address." +
             HELP_REQUIRING_PASSPHRASE +
-            "\n\nOn BLSCT networks this call is routed like sendtoblsctaddress: use address, amount, "
-            "optional comment (stored as an on-chain memo), and optional verbose; other arguments are ignored.",
+            "\n\nOn BLSCT networks this call is routed like sendtoblsctaddress: only address, amount, "
+            "optional comment (stored as an on-chain memo), and optional verbose are used. The following "
+            "arguments are silently IGNORED in that case: comment_to, subtractfeefromamount, replaceable, "
+            "conf_target, estimate_mode, avoid_reuse, and fee_rate.",
         {
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The Navio address to send to."},
             {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to send. eg 0.1"},
@@ -395,6 +450,8 @@ RPCHelpMan sendmany()
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
+            EnsureNotBLSCTWallet(*pwallet, "sendtoblsctaddress");
+
             // Make sure the results are valid at least up to the most recent block
             // the user could have gotten from another RPC command prior to now
             pwallet->BlockUntilSyncedToCurrentChain();
@@ -405,6 +462,7 @@ RPCHelpMan sendmany()
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Dummy value must be set to \"\"");
             }
             UniValue sendTo = request.params[1].get_obj();
+            EnsureOutputsHaveNoBLSCTDestination(sendTo, "sendtoblsctaddress");
 
             mapValue_t mapValue;
             if (!request.params[3].isNull() && !request.params[3].get_str().empty())
@@ -836,6 +894,8 @@ RPCHelpMan fundrawtransaction()
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
+            EnsureNotBLSCTWallet(*pwallet, "fundblsctrawtransaction");
+
             // parse hex string from parameter
             CMutableTransaction tx;
             bool try_witness = request.params[2].isNull() ? true : request.params[2].get_bool();
@@ -919,6 +979,8 @@ RPCHelpMan signrawtransactionwithwallet()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
+
+            EnsureNotBLSCTWallet(*pwallet, "signblsctrawtransaction");
 
             CMutableTransaction mtx;
             if (!DecodeHexTx(mtx, request.params[0].get_str())) {
@@ -1044,6 +1106,11 @@ static RPCHelpMan bumpfee_helper(std::string method_name)
         [want_psbt](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
+
+            if (pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "BLSCT (confidential) wallets do not support transparent RBF fee bumping. "
+                                                      "Construct and broadcast a new confidential transaction instead (see sendtoblsctaddress).");
+            }
 
             if (pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS) && !pwallet->IsWalletFlagSet(WALLET_FLAG_EXTERNAL_SIGNER) && !want_psbt) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "bumpfee is not available with wallets that have private keys disabled. Use psbtbumpfee instead.");
@@ -1261,6 +1328,9 @@ RPCHelpMan send()
                           std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
                           if (!pwallet) return UniValue::VNULL;
 
+                          EnsureNotBLSCTWallet(*pwallet, "sendtoblsctaddress");
+                          EnsureOutputsHaveNoBLSCTDestination(request.params[0], "sendtoblsctaddress");
+
                           UniValue options{request.params[4].isNull() ? UniValue::VOBJ : request.params[4]};
                           InterpretFeeEstimationInstructions(/*conf_target=*/request.params[1], /*estimate_mode=*/request.params[2], /*fee_rate=*/request.params[3], options);
                           PreventOutdatedOptions(options);
@@ -1359,6 +1429,9 @@ RPCHelpMan sendall()
                       [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
                           std::shared_ptr<CWallet> const pwallet{GetWalletForJSONRPCRequest(request)};
                           if (!pwallet) return UniValue::VNULL;
+
+                          EnsureNotBLSCTWallet(*pwallet, "sendtoblsctaddress");
+
                           // Make sure the results are valid at least up to the most recent block
                           // the user could have gotten from another RPC command prior to now
                           pwallet->BlockUntilSyncedToCurrentChain();
@@ -1562,6 +1635,8 @@ RPCHelpMan walletprocesspsbt()
             const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
+            EnsureNotBLSCTWallet(*pwallet, "the blsct raw transaction RPCs (createblsctrawtransaction/fundblsctrawtransaction/signblsctrawtransaction)");
+
             const CWallet& wallet{*pwallet};
             // Make sure the results are valid at least up to the most recent block
             // the user could have gotten from another RPC command prior to now
@@ -1692,6 +1767,8 @@ RPCHelpMan walletcreatefundedpsbt()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
+
+            EnsureNotBLSCTWallet(*pwallet, "the blsct raw transaction RPCs (createblsctrawtransaction/fundblsctrawtransaction/signblsctrawtransaction)");
 
             CWallet& wallet{*pwallet};
             // Make sure the results are valid at least up to the most recent block
