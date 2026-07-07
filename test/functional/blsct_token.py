@@ -124,6 +124,23 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         self.log.info(f"Balance in NODE 1: {token_balance}")
         self.log.info(f"Balance in NODE 2: {token_balance_2}")
 
+        self.log.info("Testing sendtokentoblsctaddress verbose flag (params[4])")
+        # Non-verbose (default): plain output hash string.
+        send_result = wallet.sendtokentoblsctaddress(token['tokenId'], blsct_address_2, 0.1)
+        assert isinstance(send_result, str), "Non-verbose result should be a string"
+        assert len(send_result) == 64, "outputHash should be 64 characters"
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 2)
+
+        # Verbose=true: an object with outputHash.
+        # (A prior bug read params[11] instead of params[4] for this flag,
+        # which is always null, so verbose was silently ignored.)
+        send_result_verbose = wallet.sendtokentoblsctaddress(
+            token['tokenId'], blsct_address_2, 0.1, "", True)
+        assert isinstance(send_result_verbose, dict), "Verbose result should be an object"
+        assert "outputHash" in send_result_verbose, "Verbose result should contain outputHash"
+        assert len(send_result_verbose["outputHash"]) == 64, "outputHash should be 64 characters"
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 2)
+
     def test_output(self):
         self.log.info("Creating wallet1 with BLSCT")
 
