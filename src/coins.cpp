@@ -16,10 +16,11 @@
 bool CCoinsView::GetCoin(const COutPoint& outpoint, Coin& coin) const { return false; }
 bool CCoinsView::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const { return false; }
 bool CCoinsView::GetAllTokens(TokensMap& tokensMap) const { return false; };
+bool CCoinsView::GetNbpState(const std::vector<unsigned char>& key, std::vector<unsigned char>& value) const { return false; }
 uint256 CCoinsView::GetBestBlock() const { return uint256(); }
 OrderedElements<MclG1Point> CCoinsView::GetStakedCommitments() const { return OrderedElements<MclG1Point>(); };
 std::vector<uint256> CCoinsView::GetHeadBlocks() const { return std::vector<uint256>(); }
-bool CCoinsView::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase) { return false; }
+bool CCoinsView::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, NbpStateMap& nbpState, bool erase) { return false; }
 std::unique_ptr<CCoinsViewCursor> CCoinsView::Cursor() const { return nullptr; }
 std::unique_ptr<CTokensViewCursor> CCoinsView::CursorTokens() const { return nullptr; }
 
@@ -41,11 +42,12 @@ bool CCoinsViewBacked::HaveCoin(const COutPoint& outpoint) const { return base->
 bool CCoinsViewBacked::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const { return base->GetToken(tokenId, token); }
 bool CCoinsViewBacked::GetAllTokens(TokensMap& tokensMap) const { return base->GetAllTokens(tokensMap); };
 bool CCoinsViewBacked::HaveToken(const uint256& tokenId) const { return base->HaveToken(tokenId); }
+bool CCoinsViewBacked::GetNbpState(const std::vector<unsigned char>& key, std::vector<unsigned char>& value) const { return base->GetNbpState(key, value); }
 uint256 CCoinsViewBacked::GetBestBlock() const { return base->GetBestBlock(); }
 OrderedElements<MclG1Point> CCoinsViewBacked::GetStakedCommitments() const { return base->GetStakedCommitments(); };
 std::vector<uint256> CCoinsViewBacked::GetHeadBlocks() const { return base->GetHeadBlocks(); }
 void CCoinsViewBacked::SetBackend(CCoinsView &viewIn) { base = &viewIn; }
-bool CCoinsViewBacked::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase) { return base->BatchWrite(mapCoins, hashBlock, stakedCommitments, tokensMap, erase); }
+bool CCoinsViewBacked::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, NbpStateMap& nbpState, bool erase) { return base->BatchWrite(mapCoins, hashBlock, stakedCommitments, tokensMap, nbpState, erase); }
 std::unique_ptr<CCoinsViewCursor> CCoinsViewBacked::Cursor() const { return base->Cursor(); }
 std::unique_ptr<CTokensViewCursor> CCoinsViewBacked::CursorTokens() const { return base->CursorTokens(); }
 
@@ -440,7 +442,28 @@ void CCoinsViewCache::SetBestBlock(const uint256& hashBlockIn)
     hashBlock = hashBlockIn;
 }
 
-bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn, CStakedCommitmentsMap& cacheStakedCommitmentsIn, TokensMap& cacheTokensIn, bool erase)
+bool CCoinsViewCache::GetNbpState(const std::vector<unsigned char>& key, std::vector<unsigned char>& value) const
+{
+    auto it = cacheNbpState.find(key);
+    if (it != cacheNbpState.end()) {
+        if (!it->second.has_value()) return false; // erased in this layer
+        value = *it->second;
+        return true;
+    }
+    return base->GetNbpState(key, value);
+}
+
+void CCoinsViewCache::SetNbpState(const std::vector<unsigned char>& key, const std::vector<unsigned char>& value)
+{
+    cacheNbpState[key] = value;
+}
+
+void CCoinsViewCache::EraseNbpState(const std::vector<unsigned char>& key)
+{
+    cacheNbpState[key] = std::nullopt;
+}
+
+bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn, CStakedCommitmentsMap& cacheStakedCommitmentsIn, TokensMap& cacheTokensIn, NbpStateMap& cacheNbpStateIn, bool erase)
 {
     for (CCoinsMap::iterator it = mapCoins.begin();
             it != mapCoins.end();
@@ -523,14 +546,19 @@ bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn
     };
     if (erase)
         cacheTokensIn.clear();
+    for (auto& it : cacheNbpStateIn) {
+        cacheNbpState[it.first] = it.second;
+    };
+    if (erase)
+        cacheNbpStateIn.clear();
 
     return true;
 }
 
 bool CCoinsViewCache::Flush() {
-    bool fOk = base->BatchWrite(cacheCoins, hashBlock, cacheStakedCommitments, cacheTokens, /*erase=*/true);
+    bool fOk = base->BatchWrite(cacheCoins, hashBlock, cacheStakedCommitments, cacheTokens, cacheNbpState, /*erase=*/true);
     if (fOk) {
-        if (!cacheCoins.empty() || cacheStakedCommitments.size() != 0 || cacheTokens.size() != 0) {
+        if (!cacheCoins.empty() || cacheStakedCommitments.size() != 0 || cacheTokens.size() != 0 || cacheNbpState.size() != 0) {
             /* BatchWrite must erase all cacheCoins elements when erase=true. */
             throw std::logic_error("Not all cached coins were erased");
         }
@@ -542,7 +570,7 @@ bool CCoinsViewCache::Flush() {
 
 bool CCoinsViewCache::Sync()
 {
-    bool fOk = base->BatchWrite(cacheCoins, hashBlock, cacheStakedCommitments, cacheTokens, /*erase=*/false);
+    bool fOk = base->BatchWrite(cacheCoins, hashBlock, cacheStakedCommitments, cacheTokens, cacheNbpState, /*erase=*/false);
     // Instead of clearing `cacheCoins` as we would in Flush(), just clear the
     // FRESH/DIRTY flags of any coin that isn't spent.
     for (auto it = cacheCoins.begin(); it != cacheCoins.end(); ) {

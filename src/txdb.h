@@ -69,10 +69,11 @@ public:
     bool GetToken(const uint256& tokenId, blsct::TokenEntry& token) const override;
     bool GetAllTokens(TokensMap& tokensMap) const override;
     bool HaveToken(const uint256& tokenId) const override;
+    bool GetNbpState(const std::vector<unsigned char>& key, std::vector<unsigned char>& value) const override;
     uint256 GetBestBlock() const override;
     OrderedElements<MclG1Point> GetStakedCommitments() const override;
     std::vector<uint256> GetHeadBlocks() const override;
-    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true) override;
+    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, NbpStateMap& nbpState, bool erase = true) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override;
     std::unique_ptr<CTokensViewCursor> CursorTokens() const override;
 

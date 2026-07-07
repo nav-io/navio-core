@@ -56,7 +56,7 @@ public:
 
     uint256 GetBestBlock() const override { return hashBestBlock_; }
 
-    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true) override
+    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, NbpStateMap& nbpState, bool erase = true) override
     {
         for (CCoinsMap::iterator it = mapCoins.begin(); it != mapCoins.end(); it = erase ? mapCoins.erase(it) : std::next(it)) {
             if (it->second.flags & CCoinsCacheEntry::DIRTY) {
@@ -76,6 +76,9 @@ public:
         };
         if (erase)
             stakedCommitments.clear();
+
+        if (erase)
+            nbpState.clear();
 
         return true;
     }
@@ -632,7 +635,8 @@ void WriteCoinsViewEntry(CCoinsView& view, CAmount value, char flags)
     InsertCoinsMapEntry(map, value, flags);
     CStakedCommitmentsMap stakedCommitments;
     TokensMap tokensMap;
-    BOOST_CHECK(view.BatchWrite(map, {}, stakedCommitments, tokensMap));
+    NbpStateMap nbpState;
+    BOOST_CHECK(view.BatchWrite(map, {}, stakedCommitments, tokensMap, nbpState));
 }
 
 class SingleEntryCacheTest

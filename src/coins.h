@@ -206,6 +206,12 @@ public:
 
 using CStakedCommitmentsMap = std::map<MclG1Point, char>;
 
+//! NBP bridge consensus-state overlay: serialized key -> serialized value,
+//! std::nullopt meaning "erased". Typed accessors live in
+//! blsct/bridge/state.h; the coins-view layers treat entries as opaque
+//! blobs and only merge/flush them (same lifecycle as TokensMap).
+using NbpStateMap = std::map<std::vector<unsigned char>, std::optional<std::vector<unsigned char>>>;
+
 /** Cursor for iterating over CoinsView state */
 class CCoinsViewCursor
 {
@@ -243,6 +249,9 @@ public:
     virtual bool GetAllTokens(TokensMap& tokensMap) const;
     virtual bool HaveToken(const uint256& tokenId) const;
 
+    //! Retrieve an NBP bridge state entry (see NbpStateMap).
+    virtual bool GetNbpState(const std::vector<unsigned char>& key, std::vector<unsigned char>& value) const;
+
     //! Retrieve the block hash whose state this CCoinsView currently represents
     virtual uint256 GetBestBlock() const;
 
@@ -257,7 +266,7 @@ public:
 
     //! Do a bulk modification (multiple Coin changes + BestBlock change).
     //! The passed mapCoins can be modified.
-    virtual bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true);
+    virtual bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, NbpStateMap& nbpState, bool erase = true);
 
     //! Get a cursor to iterate over the whole state
     virtual std::unique_ptr<CCoinsViewCursor> Cursor() const;
@@ -284,11 +293,12 @@ public:
     bool GetToken(const uint256& tokenId, blsct::TokenEntry& token) const override;
     bool GetAllTokens(TokensMap& tokensMap) const override;
     bool HaveToken(const uint256& tokenId) const override;
+    bool GetNbpState(const std::vector<unsigned char>& key, std::vector<unsigned char>& value) const override;
     uint256 GetBestBlock() const override;
     OrderedElements<MclG1Point> GetStakedCommitments() const override;
     std::vector<uint256> GetHeadBlocks() const override;
     void SetBackend(CCoinsView &viewIn);
-    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true) override;
+    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, NbpStateMap& nbpState, bool erase = true) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override;
     std::unique_ptr<CTokensViewCursor> CursorTokens() const override;
 
@@ -312,6 +322,7 @@ protected:
     mutable CCoinsMap cacheCoins;
     mutable CStakedCommitmentsMap cacheStakedCommitments;
     mutable TokensMap cacheTokens;
+    mutable NbpStateMap cacheNbpState;
 
     // Memoized result of GetStakedCommitments(). Reset by any mutation of
     // cacheStakedCommitments or when the base view may have changed (Flush/Sync).
@@ -334,9 +345,10 @@ public:
     uint256 GetBestBlock() const override;
     bool GetToken(const uint256& tokenId, blsct::TokenEntry& token) const override;
     bool HaveToken(const uint256& tokenId) const override;
+    bool GetNbpState(const std::vector<unsigned char>& key, std::vector<unsigned char>& value) const override;
     OrderedElements<MclG1Point> GetStakedCommitments() const override;
     void SetBestBlock(const uint256 &hashBlock);
-    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true) override;
+    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, NbpStateMap& nbpState, bool erase = true) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override {
         throw std::logic_error("CCoinsViewCache cursor iteration not supported.");
     }
@@ -394,6 +406,10 @@ public:
     void AddCoin(const COutPoint& outpoint, Coin&& coin, bool possible_overwrite);
     void AddToken(const uint256& tokenId, blsct::TokenEntry&& token);
     void EraseToken(const uint256& tokenId);
+
+    //! Write / erase an NBP bridge state entry in this cache layer.
+    void SetNbpState(const std::vector<unsigned char>& key, const std::vector<unsigned char>& value);
+    void EraseNbpState(const std::vector<unsigned char>& key);
 
     /**
      * Emplace a coin into cacheCoins without performing any checks, marking

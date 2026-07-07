@@ -25,6 +25,8 @@ static constexpr uint8_t DB_BEST_BLOCK{'B'};
 static constexpr uint8_t DB_HEAD_BLOCKS{'H'};
 static constexpr uint8_t DB_STAKED_OUTPUTS{'S'};
 static constexpr uint8_t DB_TOKEN{'T'};
+//! NBP bridge state rows: key = DB_NBP_STATE ‖ opaque sub-key bytes.
+static constexpr uint8_t DB_NBP_STATE{'N'};
 
 // Keys used in previous version that might still be found in the DB:
 static constexpr uint8_t DB_COINS{'c'};
@@ -54,6 +56,21 @@ struct TokenDbEntry {
     explicit TokenDbEntry(const uint256* ptr) : tokenId(const_cast<uint256*>(ptr)) {}
 
     SERIALIZE_METHODS(TokenDbEntry, obj) { READWRITE(obj.key, *(obj.tokenId)); }
+};
+
+struct NbpStateDbEntry {
+    const std::vector<unsigned char>* subKey;
+    uint8_t key{DB_NBP_STATE};
+    explicit NbpStateDbEntry(const std::vector<unsigned char>* ptr) : subKey(ptr) {}
+
+    template <typename Stream>
+    void Serialize(Stream& s) const
+    {
+        ::Serialize(s, key);
+        // Raw bytes (no length prefix) so keys with a common prefix sort
+        // together; sub-keys are fixed-format per prefix byte.
+        s.write(MakeByteSpan(*subKey));
+    }
 };
 } // namespace
 
@@ -119,6 +136,11 @@ bool CCoinsViewDB::HaveToken(const uint256& tokenId) const
     return m_db->Exists(TokenDbEntry(&tokenId));
 };
 
+bool CCoinsViewDB::GetNbpState(const std::vector<unsigned char>& key, std::vector<unsigned char>& value) const
+{
+    return m_db->Read(NbpStateDbEntry(&key), value);
+}
+
 uint256 CCoinsViewDB::GetBestBlock() const
 {
     uint256 hashBestChain;
@@ -144,7 +166,7 @@ std::vector<uint256> CCoinsViewDB::GetHeadBlocks() const
     return vhashHeadBlocks;
 }
 
-bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase)
+bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, NbpStateMap& nbpState, bool erase)
 {
     CDBBatch batch(*m_db);
     size_t count = 0;
@@ -237,6 +259,16 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CSt
 
     if (erase)
         stakedCommitments.clear();
+
+    for (auto& it : nbpState) {
+        NbpStateDbEntry entry(&it.first);
+        if (it.second.has_value())
+            batch.Write(entry, *it.second);
+        else
+            batch.Erase(entry);
+    }
+    if (erase)
+        nbpState.clear();
 
     LogPrint(BCLog::COINDB, "Writing final batch of %.2f MiB\n", batch.SizeEstimate() * (1.0 / 1048576.0));
     bool ret = m_db->WriteBatch(batch);
