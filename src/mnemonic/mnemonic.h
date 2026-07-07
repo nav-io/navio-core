@@ -29,6 +29,8 @@ std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& w
 // Convert mnemonic sentence + optional passphrase -> 64-byte BIP-39 seed
 // (PBKDF2-HMAC-SHA512, 2048 iterations, salt = "mnemonic" + passphrase).
 // Inter-word whitespace is normalized to single spaces before derivation.
+// No NFKD normalization is applied: the English wordlist is ASCII-safe, but
+// passphrases should be ASCII to stay interoperable with other BIP-39 wallets.
 // Does not validate the mnemonic; use Validate() for that.
 std::vector<unsigned char> MnemonicToSeed(const std::string& words, const std::string& passphrase = "");
 

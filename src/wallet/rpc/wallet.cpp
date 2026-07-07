@@ -364,7 +364,7 @@ static RPCHelpMan createwallet()
             {"storage_output", RPCArg::Type::BOOL, RPCArg::Default{false}, "Enables the storage of outputs instead of full txs (experimental)."},
             {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the BLSCT wallet from the specified seed (can be a master seed or an audit key). Requires blsct=true."},
             {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words) to restore a BLSCT wallet from. Requires blsct=true. Mutually exclusive with 'seed'."},
-            {"mnemonic_passphrase", RPCArg::Type::STR, RPCArg::Default{""}, "Optional BIP-39 passphrase used to extend the mnemonic when deriving the wallet keys. Requires blsct=true. Cannot be combined with 'seed'. The same passphrase must be provided again to restore the wallet from its mnemonic."},
+            {"mnemonic_passphrase", RPCArg::Type::STR, RPCArg::Default{""}, "Optional BIP-39 passphrase used to extend the mnemonic when deriving the wallet keys. Requires blsct=true. Cannot be combined with 'seed'. The same passphrase must be provided again to restore the wallet from its mnemonic. Use ASCII characters to stay interoperable with other BIP-39 wallets (no NFKD normalization is applied)."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -464,7 +464,7 @@ static RPCHelpMan createwallet()
             }
 
             std::string mnemonic_passphrase;
-            if (!request.params[12].isNull() && request.params[12].isStr()) {
+            if (!request.params[12].isNull()) {
                 mnemonic_passphrase = request.params[12].get_str();
             }
             if (!mnemonic_passphrase.empty()) {

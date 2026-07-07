@@ -8,6 +8,7 @@
 #include <mnemonic/wordlist.h>
 #include <random.h>
 #include <support/cleanse.h>
+#include <util/strencodings.h>
 
 #include <algorithm>
 #include <sstream>
@@ -122,13 +123,19 @@ std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& w
 std::vector<unsigned char> MnemonicToSeed(const std::string& words, const std::string& passphrase)
 {
     // BIP-39 sentences are single-space separated; normalize so callers that
-    // pass extra whitespace derive the same seed
+    // pass extra whitespace derive the same seed. Tokenized by hand so no
+    // stream/temporary keeps an unwiped copy of the mnemonic.
     std::string sentence;
-    std::istringstream iss(words);
-    std::string word;
-    while (iss >> word) {
-        if (!sentence.empty()) sentence += ' ';
-        sentence += word;
+    sentence.reserve(words.size());
+    bool prev_space = true;
+    for (const char c : words) {
+        if (IsSpace(c)) {
+            prev_space = true;
+            continue;
+        }
+        if (prev_space && !sentence.empty()) sentence += ' ';
+        prev_space = false;
+        sentence += c;
     }
 
     std::vector<unsigned char> password(sentence.begin(), sentence.end());
