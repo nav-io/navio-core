@@ -16,7 +16,6 @@
 #include <compat/stdin.h>
 #include <policy/feerate.h>
 #include <rpc/client.h>
-#include <rpc/mining.h>
 #include <rpc/protocol.h>
 #include <rpc/request.h>
 #include <tinyformat.h>
@@ -64,9 +63,6 @@ static constexpr std::array NETWORKS{"not_publicly_routable", "ipv4", "ipv6", "o
 static constexpr std::array NETWORK_SHORT_NAMES{"npr", "ipv4", "ipv6", "onion", "i2p", "cjdns", "int"};
 static constexpr std::array UNREACHABLE_NETWORK_IDS{/*not_publicly_routable*/0, /*internal*/6};
 
-/** Default number of blocks to generate for RPC generatetoaddress. */
-static const std::string DEFAULT_NBLOCKS = "1";
-
 /** Default -color setting. */
 static const std::string DEFAULT_COLOR_SETTING{"auto"};
 
@@ -83,12 +79,6 @@ static void SetupCliArgs(ArgsManager& argsman)
     argsman.AddArg("-version", "Print version and exit", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-conf=<file>", strprintf("Specify configuration file. Relative paths will be prefixed by datadir location. (default: %s)", BITCOIN_CONF_FILENAME), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-datadir=<dir>", "Specify data directory", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-generate",
-                   strprintf("Generate blocks, equivalent to RPC getnewaddress followed by RPC generatetoaddress. Optional positional integer "
-                             "arguments are number of blocks to generate (default: %s) and maximum iterations to try (default: %s), equivalent to "
-                             "RPC generatetoaddress nblocks and maxtries arguments. Example: navio-cli -generate 4 1000",
-                             DEFAULT_NBLOCKS, DEFAULT_MAX_TRIES),
-                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-addrinfo", "Get the number of addresses known to the node, per network and total, after filtering for quality and recency. The total number of addresses known to the node may be higher.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-getinfo", "Get general information from the remote server. Note that unlike server-side RPC calls, the output of -getinfo is the result of multiple non-atomic requests. Some entries in the output may represent results from different states (e.g. wallet balance may be as of a different block from the chain state reported)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-netinfo", "Get network peer connection information from the remote server. An optional integer argument from 0 to 4 can be passed for different peers listings (default: 0). Pass \"help\" for detailed help documentation.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
@@ -356,7 +346,6 @@ public:
         result.pushKV("connections", connections);
 
         result.pushKV("networks", batch[ID_NETWORKINFO]["result"]["networks"]);
-        result.pushKV("difficulty", batch[ID_BLOCKCHAININFO]["result"]["difficulty"]);
         result.pushKV("chain", UniValue(batch[ID_BLOCKCHAININFO]["result"]["chain"]));
         if (!batch[ID_WALLETINFO]["result"].isNull()) {
             result.pushKV("has_wallet", true);
@@ -368,6 +357,9 @@ public:
             result.pushKV("paytxfee", batch[ID_WALLETINFO]["result"]["paytxfee"]);
         }
         if (!batch[ID_BALANCES]["result"].isNull()) {
+            // getbalances' mine.trusted already sums the transparent and BLSCT
+            // trusted balances (see GetBlsctBalance() usage in getbalances()),
+            // so this headline figure reflects the wallet's total spendable funds.
             result.pushKV("balance", batch[ID_BALANCES]["result"]["mine"]["trusted"]);
         }
         result.pushKV("relayfee", batch[ID_NETWORKINFO]["result"]["relayfee"]);
@@ -697,28 +689,6 @@ public:
         "> navio-cli -netinfo help\n"};
 };
 
-/** Process RPC generatetoaddress request. */
-class GenerateToAddressRequestHandler : public BaseRequestHandler
-{
-public:
-    UniValue PrepareRequest(const std::string& method, const std::vector<std::string>& args) override
-    {
-        address_str = args.at(1);
-        UniValue params{RPCConvertValues("generatetoaddress", args)};
-        return JSONRPCRequestObj("generatetoaddress", params, 1);
-    }
-
-    UniValue ProcessReply(const UniValue &reply) override
-    {
-        UniValue result(UniValue::VOBJ);
-        result.pushKV("address", address_str);
-        result.pushKV("blocks", reply.get_obj()["result"]);
-        return JSONRPCReplyObj(result, NullUniValue, 1);
-    }
-protected:
-    std::string address_str;
-};
-
 /** Process default single requests */
 class DefaultRequestHandler: public BaseRequestHandler {
 public:
@@ -1019,8 +989,7 @@ static void ParseGetInfoResult(UniValue& result)
       ibd_progress_bar += " ";
     }
 
-    result_string += strprintf("Verification progress: %s%.4f%%\n", ibd_progress_bar, ibd_progress * 100);
-    result_string += strprintf("Difficulty: %s\n\n", result["difficulty"].getValStr());
+    result_string += strprintf("Verification progress: %s%.4f%%\n\n", ibd_progress_bar, ibd_progress * 100);
 
     result_string += strprintf(
         "%sNetwork: in %s, out %s, total %s%s\n",
@@ -1092,34 +1061,6 @@ static void ParseGetInfoResult(UniValue& result)
     result.setStr(result_string);
 }
 
-/**
- * Call RPC getnewaddress.
- * @returns getnewaddress response as a UniValue object.
- */
-static UniValue GetNewAddress()
-{
-    std::optional<std::string> wallet_name{};
-    if (gArgs.IsArgSet("-rpcwallet")) wallet_name = gArgs.GetArg("-rpcwallet", "");
-    DefaultRequestHandler rh;
-    return ConnectAndCallRPC(&rh, "getnewaddress", /* args=*/{}, wallet_name);
-}
-
-/**
- * Check bounds and set up args for RPC generatetoaddress params: nblocks, address, maxtries.
- * @param[in] address  Reference to const string address to insert into the args.
- * @param     args     Reference to vector of string args to modify.
- */
-static void SetGenerateToAddressArgs(const std::string& address, std::vector<std::string>& args)
-{
-    if (args.size() > 2) throw std::runtime_error("too many arguments (maximum 2 for nblocks and maxtries)");
-    if (args.size() == 0) {
-        args.emplace_back(DEFAULT_NBLOCKS);
-    } else if (args.at(0) == "0") {
-        throw std::runtime_error("the first argument (number of blocks to generate, default: " + DEFAULT_NBLOCKS + ") must be an integer value greater than zero");
-    }
-    args.emplace(args.begin() + 1, address);
-}
-
 static int CommandLineRPC(int argc, char *argv[])
 {
     std::string strPrint;
@@ -1184,15 +1125,6 @@ static int CommandLineRPC(int argc, char *argv[])
                 return 0;
             }
             rh.reset(new NetinfoRequestHandler());
-        } else if (gArgs.GetBoolArg("-generate", false)) {
-            const UniValue getnewaddress{GetNewAddress()};
-            const UniValue& error{getnewaddress.find_value("error")};
-            if (error.isNull()) {
-                SetGenerateToAddressArgs(getnewaddress.find_value("result").get_str(), args);
-                rh.reset(new GenerateToAddressRequestHandler());
-            } else {
-                ParseError(error, strPrint, nRet);
-            }
         } else if (gArgs.GetBoolArg("-addrinfo", false)) {
             rh.reset(new AddrinfoRequestHandler());
         } else {
