@@ -116,6 +116,10 @@ struct InputCandidates {
     TokenId token_id;
     COutPoint outpoint;
     bool is_staked_commitment;
+    // Delegation identity (DelegationRequest::GetId()) of a delegated staked
+    // commitment; empty for undelegated outputs. Stake consolidation only
+    // folds commitments that share the same identity.
+    std::string delegation{};
 };
 
 class TxFactoryBase

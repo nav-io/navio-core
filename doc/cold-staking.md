@@ -65,11 +65,13 @@ Important caveats:
 - **Delegated outputs are publicly distinguishable** (they carry a predicate),
   though the amount and the operator's identity stay hidden from third
   parties.
-- **`stakelock` consolidation folds delegated commitments too.** By default
-  `stakelock` consolidates all of the wallet's staked commitments into one new
-  output, which would consume (and thereby revoke) existing delegations. Run
-  the node with `-consolidatestakedcommitments=0`, or delegate from a wallet
-  that holds no other stakes.
+- **Consolidation is delegation-aware.** Stake consolidation only folds
+  commitments that share the same delegation identity (same delegate key and
+  reward address, recovered by the owner wallet from the on-chain payload):
+  `stakelock` merges only undelegated stakes, and `delegatestake` merges only
+  stakes already delegated with identical parameters. A delegation is
+  therefore never silently revoked or extended by an unrelated stake
+  operation.
 - Rewards accumulate in the owner's wallet as ordinary outputs; re-staking
   them requires the owner to run `delegatestake` again (the spend key never
   leaves the owner's machine, so compounding cannot be automated by the
