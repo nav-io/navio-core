@@ -643,6 +643,149 @@ static RPCHelpMan listpendingquoterequests()
     };
 }
 
+static RPCHelpMan sendquote()
+{
+    return RPCHelpMan{
+        "sendquote",
+        "\nSend an externally built maker quote for an RFQ request over the p2pmsg\n"
+        "bus. The caller (e.g. a light wallet that built and signed its own\n"
+        "unbalanced half-transaction) supplies the half and the economic terms;\n"
+        "this node wraps them in a quote, authenticates it under its session\n"
+        "identity, encrypts it to the requester's reply key and broadcasts it.\n"
+        "If the uuid matches a pending matched request on this node (see\n"
+        "listpendingquoterequests) the pending entry is consumed.\n",
+        {
+            {"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The RFQ request uuid being answered"},
+            {"reply_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The requester's reply session pubkey (from the RFQ request)"},
+            {"half_tx_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The maker's signed unbalanced half-transaction"},
+            {"buy_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token delivered to the taker (hex, empty for NAV)"},
+            {"sell_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token charged to the taker (hex, empty for NAV)"},
+            {"fill", RPCArg::Type::NUM, RPCArg::Optional::NO, "Units of buy_token delivered"},
+            {"sell_cost", RPCArg::Type::NUM, RPCArg::Optional::NO, "Units of sell_token charged"},
+            {"order_expiry", RPCArg::Type::NUM, RPCArg::Optional::NO, "Unix time the quote expires"},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "quote_id", "Identifier of the sent quote"},
+        RPCExamples{HelpExampleCli("sendquote", "\"<uuid>\" \"<replykeyhex>\" \"<halfhex>\" \"\" \"01...\" 100000000 10000000 1893456000")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+            if (!transport) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            const uint256 uuid(ParseHashV(request.params[0], "uuid"));
+            blsct::PublicKey reply_key;
+            if (!reply_key.SetVch(ParseHex(request.params[1].get_str()))) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "invalid reply_key");
+            }
+            CMutableTransaction mtx;
+            if (!DecodeHexTx(mtx, request.params[2].get_str())) {
+                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "half decode failed");
+            }
+            auto parse_token = [](const UniValue& v) -> TokenId {
+                const std::string& s = v.get_str();
+                if (s.empty()) return TokenId();
+                return TokenId(uint256(ParseHashV(v, "token")));
+            };
+
+            rfq::RfqQuote q;
+            q.uuid = uuid;
+            q.quote_id = GetRandHash();
+            q.half_tx = MakeTransactionRef(std::move(mtx));
+            q.buy = parse_token(request.params[3]);
+            q.sell = parse_token(request.params[4]);
+            q.fill = request.params[5].getInt<int64_t>();
+            q.sell_cost = request.params[6].getInt<int64_t>();
+            q.order_expiry = request.params[7].getInt<int64_t>();
+            if (q.fill <= 0 || !MoneyRange(q.fill) || q.sell_cost <= 0 || !MoneyRange(q.sell_cost)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "fill/sell_cost out of range");
+            }
+            q.session_eph = transport->InboxPubKey();
+            q.maker_sig = transport->SignWithInbox(q.SigningHash());
+
+            // One-shot: if this node queued the request as a pending local match,
+            // consume it so a maker driving this RPC does not answer twice.
+            if (node.rfq_matcher) node.rfq_matcher->TakePendingMatch(uuid);
+
+            DataStream ss;
+            ParamsStream ps{TX_WITH_WITNESS, ss};
+            ps << q;
+            auto bytes = MakeUCharSpan(ss);
+            std::vector<uint8_t> body(bytes.begin(), bytes.end());
+            transport->Send(reply_key, p2pmsg::PayloadKind::RFQ_QUOTE, std::move(body), /*stem=*/false);
+
+            return q.quote_id.GetHex();
+        },
+    };
+}
+
+static RPCHelpMan sendorder()
+{
+    return RPCHelpMan{
+        "sendorder",
+        "\nPublish an externally built standing swap order over the p2pmsg bus.\n"
+        "The caller (e.g. a light wallet) supplies its signed unbalanced\n"
+        "half-transaction offering `offer_amount` of `offer_token` for\n"
+        "`want_amount` of `want_token`; this node wraps it in a quote,\n"
+        "authenticates it under its session identity, caches it locally and\n"
+        "broadcasts it as an ORDER_ANN so peers can answer RFQs on the maker's\n"
+        "behalf while the maker is offline.\n",
+        {
+            {"half_tx_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The maker's signed unbalanced half-transaction"},
+            {"offer_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token the maker offers (hex, empty for NAV)"},
+            {"offer_amount", RPCArg::Type::NUM, RPCArg::Optional::NO, "Units of offer_token delivered to the taker"},
+            {"want_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token the maker wants (hex, empty for NAV)"},
+            {"want_amount", RPCArg::Type::NUM, RPCArg::Optional::NO, "Units of want_token charged to the taker"},
+            {"expiry", RPCArg::Type::NUM, RPCArg::Optional::NO, "Unix time the order expires (capped to 14 days)"},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "quote_id", "Identifier of the broadcast standing order"},
+        RPCExamples{HelpExampleCli("sendorder", "\"<halfhex>\" \"\" 100000000 \"01...\" 10000000 1893456000")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+            rfq::OrderCache* orders = rfq::GetActiveOrderCache();
+            if (!transport || !orders) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            CMutableTransaction mtx;
+            if (!DecodeHexTx(mtx, request.params[0].get_str())) {
+                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "half decode failed");
+            }
+            auto parse_token = [](const UniValue& v) -> TokenId {
+                const std::string& s = v.get_str();
+                if (s.empty()) return TokenId();
+                return TokenId(uint256(ParseHashV(v, "token")));
+            };
+
+            rfq::RfqQuote q;
+            q.uuid = uint256(); // standing order: bound to an RFQ at match time
+            q.quote_id = GetRandHash();
+            q.half_tx = MakeTransactionRef(std::move(mtx));
+            q.buy = parse_token(request.params[1]);
+            q.sell = parse_token(request.params[3]);
+            q.fill = request.params[2].getInt<int64_t>();
+            q.sell_cost = request.params[4].getInt<int64_t>();
+            q.order_expiry = request.params[5].getInt<int64_t>();
+            if (q.fill <= 0 || !MoneyRange(q.fill) || q.sell_cost <= 0 || !MoneyRange(q.sell_cost)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "offer_amount/want_amount out of range");
+            }
+            q.session_eph = transport->InboxPubKey();
+            q.maker_sig = transport->SignWithInbox(q.SigningHash());
+
+            const int64_t now = GetTime<std::chrono::seconds>().count();
+            if (!orders->StoreOrder(q, now)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "order rejected (expired, duplicate, or input conflict)");
+            }
+
+            DataStream ss;
+            ParamsStream ps{TX_WITH_WITNESS, ss};
+            ps << q;
+            auto bytes = MakeUCharSpan(ss);
+            std::vector<uint8_t> body(bytes.begin(), bytes.end());
+            transport->Send(p2pmsg::BroadcastPubKey(), p2pmsg::PayloadKind::ORDER_ANN,
+                            std::move(body), /*stem=*/false);
+
+            return q.quote_id.GetHex();
+        },
+    };
+}
+
 void RegisterP2PMsgRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -663,6 +806,8 @@ void RegisterP2PMsgRPCCommands(CRPCTable& t)
         {"p2pmsg", &listrfqs},
         {"p2pmsg", &cancelrfq},
         {"hidden", &addrfqquote},
+        {"p2pmsg", &sendquote},
+        {"p2pmsg", &sendorder},
     };
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);

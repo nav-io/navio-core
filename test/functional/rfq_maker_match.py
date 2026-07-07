@@ -11,6 +11,7 @@ replyquote. We assert the pending request surfaces on the maker with the right
 fill / sell_cost / reply_key.
 """
 
+from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
 
@@ -49,6 +50,42 @@ class RfqMakerMatchTest(BitcoinTestFramework):
         assert_equal(taker.listpendingquoterequests(), [])
 
         self.log.info("maker RFQ match over the wire OK")
+
+        # Light-maker path: answer the pending request with sendquote, supplying
+        # an externally built half. The node wraps + signs + encrypts it; the
+        # taker's node must collect it under the open uuid. (A syntactically
+        # valid tx is enough here — combine/verify is exercised in the e2e test.)
+        half = CTransaction()
+        half.vin.append(CTxIn(COutPoint(1)))
+        half.vout.append(CTxOut(0, b""))
+        half_hex = half.serialize().hex()
+
+        quote_id = maker.sendquote(uuid, p["reply_key"], half_hex, TOKA, "", 500, 50, 1893456000)
+
+        # The pending match is consumed one-shot on the maker.
+        assert_equal(maker.listpendingquoterequests(), [])
+
+        # The taker collects the encrypted quote over the wire.
+        self.wait_until(lambda: len(taker.listquotes(uuid)) >= 1, timeout=20)
+        quotes = taker.listquotes(uuid)
+        assert_equal(len(quotes), 1)
+        assert_equal(quotes[0]["quote_id"], quote_id)
+        assert_equal(quotes[0]["fill"], 500)
+        assert_equal(quotes[0]["sell_cost"], 50)
+
+        self.log.info("light-maker sendquote over the wire OK")
+
+        # Light-maker standing order: sendorder caches locally and broadcasts.
+        order_half = CTransaction()
+        order_half.vin.append(CTxIn(COutPoint(2)))
+        order_half.vout.append(CTxOut(0, b""))
+        maker.sendorder(order_half.serialize().hex(), TOKA, 500, "", 50, 1893456000)
+
+        assert_equal(maker.listorders()["count"], 1)
+        # Peers cache the broadcast order too.
+        self.wait_until(lambda: taker.listorders()["count"] >= 1, timeout=20)
+
+        self.log.info("light-maker sendorder over the wire OK")
 
 
 if __name__ == "__main__":
