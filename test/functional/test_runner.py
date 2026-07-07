@@ -363,6 +363,7 @@ BASE_SCRIPTS = [
     'blsct_nft.py',
     'blsct_htlc.py',
     'blsct_setblsctseed.py',
+    'blsct_address_rpc.py',
     'blsct_script_validation.py',
     'blsct_balance_proof.py',
     'blsct_pops_consensus.py',
