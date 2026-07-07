@@ -4,7 +4,9 @@
 
 #include <addresstype.h>
 #include <common/args.h>
+#include <blsct/bridge/messages.h>
 #include <blsct/wallet/balance_proof.h>
+#include <blsct/wallet/bridge_txfactory.h>
 #include <blsct/wallet/helpers.h>
 #include <blsct/wallet/keyman.h>
 #include <blsct/wallet/rpc.h>
@@ -15,6 +17,7 @@
 #include <blsct/tokens/predicate_parser.h>
 #include <coins.h>
 #include <core_io.h>
+#include <crypto/sha256.h>
 #include <key_io.h>
 #include <logging.h>
 #include <primitives/transaction.h>
@@ -3331,6 +3334,474 @@ RPCHelpMan getblsctoutput()
     };
 }
 
+// --- NBP bridge RPCs ---------------------------------------------------------
+
+namespace {
+
+//! Parse a hex argument, optionally enforcing an exact byte length.
+std::vector<unsigned char> ParseHexArg(const UniValue& v, const std::string& name, size_t expected_size = 0)
+{
+    const std::string s = v.get_str();
+    if (!IsHex(s)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("%s must be a hex string", name));
+    }
+    auto bytes = ParseHex(s);
+    if (expected_size != 0 && bytes.size() != expected_size) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("%s must be %u bytes (%u hex characters)", name, expected_size, expected_size * 2));
+    }
+    return bytes;
+}
+
+blsct::Signature ParseSignatureArg(const UniValue& v, const std::string& name)
+{
+    return blsct::Signature(ParseHexArg(v, name, blsct::Signature::SERIALIZATION_SIZE));
+}
+
+//! Broadcast a built bridge tx via the wallet and return its txid.
+UniValue BroadcastBridgeTx(wallet::CWallet& wallet, const std::optional<CMutableTransaction>& res)
+{
+    if (!res) {
+        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+    }
+    const CTransactionRef tx = MakeTransactionRef(res.value());
+    wallet.CommitTransaction(tx, /*mapValue=*/{}, /*orderForm=*/{});
+    return tx->GetHash().GetHex();
+}
+
+struct BridgeWalletHandles {
+    std::shared_ptr<wallet::CWallet> wallet;
+    blsct::KeyMan* km{nullptr};
+};
+
+//! Common wallet plumbing for the bridge RPCs; also enforces unlock.
+std::optional<BridgeWalletHandles> GetBridgeWallet(const JSONRPCRequest& request)
+{
+    std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+    if (!pwallet) return std::nullopt;
+
+    pwallet->BlockUntilSyncedToCurrentChain();
+
+    blsct::KeyMan* km;
+    {
+        LOCK(pwallet->cs_wallet);
+        EnsureWalletIsUnlocked(*pwallet);
+        km = pwallet->GetOrCreateBLSCTKeyMan();
+    }
+    return BridgeWalletHandles{pwallet, km};
+}
+
+} // namespace
+
+static RPCHelpMan nbpregisterguardian()
+{
+    return RPCHelpMan{
+        "nbpregisterguardian",
+        "\nRegister this wallet as an NBP bridge guardian, posting a transparent bond.\n"
+        "The guardian key is derived deterministically from the wallet seed.\n",
+        {
+            {"bond_amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The bond in " + CURRENCY_UNIT + " (>= the consensus minimum bond)."},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                                              {RPCResult::Type::STR_HEX, "txid", "The transaction id"},
+                                              {RPCResult::Type::STR_HEX, "guardian_pubkey", "The guardian BLS public key (48 bytes)"},
+                                          }},
+        RPCExamples{HelpExampleCli("nbpregisterguardian", "25000")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto handles = GetBridgeWallet(request);
+            if (!handles) return UniValue::VNULL;
+
+            const CAmount bond = AmountFromValue(request.params[0]);
+            if (bond < Params().GetConsensus().nbp.minBond) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("bond_amount below the consensus minimum bond (%s)", FormatMoney(Params().GetConsensus().nbp.minBond)));
+            }
+
+            uint32_t refHeight;
+            {
+                LOCK(handles->wallet->cs_wallet);
+                refHeight = static_cast<uint32_t>(handles->wallet->GetLastBlockHeight());
+            }
+
+            auto res = blsct::bridge::BuildGuardianRegisterTx(handles->wallet.get(), handles->km, bond, refHeight);
+
+            UniValue ret{UniValue::VOBJ};
+            ret.pushKV("txid", BroadcastBridgeTx(*handles->wallet, res));
+            ret.pushKV("guardian_pubkey", HexStr(blsct::bridge::GetGuardianKey(handles->km).GetPublicKey().GetVch()));
+            return ret;
+        },
+    };
+}
+
+static RPCHelpMan nbpexitguardian()
+{
+    return RPCHelpMan{
+        "nbpexitguardian",
+        "\nBegin the voluntary exit of this wallet's NBP guardian (starts unbonding).\n",
+        {},
+        RPCResult{RPCResult::Type::STR_HEX, "txid", "The transaction id"},
+        RPCExamples{HelpExampleCli("nbpexitguardian", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto handles = GetBridgeWallet(request);
+            if (!handles) return UniValue::VNULL;
+
+            auto res = blsct::bridge::BuildGuardianExitTx(handles->wallet.get(), handles->km);
+            return BroadcastBridgeTx(*handles->wallet, res);
+        },
+    };
+}
+
+static RPCHelpMan nbpwithdrawbond()
+{
+    return RPCHelpMan{
+        "nbpwithdrawbond",
+        "\nWithdraw this wallet's NBP guardian bond after unbonding has matured.\n"
+        "The output value is minted by consensus; the amount must equal the bond\n"
+        "recorded in the guardian registry.\n",
+        {
+            {"bond_amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The bonded amount recorded at registration, in " + CURRENCY_UNIT + "."},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "txid", "The transaction id"},
+        RPCExamples{HelpExampleCli("nbpwithdrawbond", "25000")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto handles = GetBridgeWallet(request);
+            if (!handles) return UniValue::VNULL;
+
+            const CAmount bond = AmountFromValue(request.params[0]);
+            auto res = blsct::bridge::BuildGuardianWithdrawTx(handles->wallet.get(), handles->km, bond);
+            return BroadcastBridgeTx(*handles->wallet, res);
+        },
+    };
+}
+
+static RPCHelpMan nbpsignmessage()
+{
+    return RPCHelpMan{
+        "nbpsignmessage",
+        "\nSign an NBP bridge message with this wallet's guardian key. The DST prefix\n"
+        "for the given context is prepended automatically.\n"
+        "For the quorum contexts (checkpoint/attestation/resolution) an in-memory\n"
+        "signing log enforces the honest-guardian single-valued-log discipline:\n"
+        "signing a DIFFERENT payload under the same log key (same epoch / deposit /\n"
+        "challenge) is refused.\n",
+        {
+            {"context", RPCArg::Type::STR, RPCArg::Optional::NO, "One of: checkpoint, attestation, resolution, pop, exit, withdraw, challenge."},
+            {"payload_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The raw message payload (for checkpoint/attestation/resolution: the exact cp/att/res bytes)."},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                                              {RPCResult::Type::STR_HEX, "signature", "The signature in hex format"},
+                                              {RPCResult::Type::STR_HEX, "public_key", "The guardian public key"},
+                                          }},
+        RPCExamples{HelpExampleCli("nbpsignmessage", "\"checkpoint\" \"<144-byte checkpoint hex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto handles = GetBridgeWallet(request);
+            if (!handles) return UniValue::VNULL;
+
+            const std::string context = request.params[0].get_str();
+            const std::vector<unsigned char> payload = ParseHexArg(request.params[1], "payload_hex");
+
+            std::vector<unsigned char> msg;
+            std::optional<std::string> logKey;
+
+            if (context == "checkpoint") {
+                if (payload.size() != 144) throw JSONRPCError(RPC_INVALID_PARAMETER, "checkpoint payload must be 144 bytes");
+                msg = blsct::bridge::DstMessage(nbp::DST_CKPT, payload);
+                // chain_id ‖ epoch: one checkpoint vote per epoch.
+                logKey = "checkpoint:" + HexStr(Span{payload}.first(40));
+            } else if (context == "attestation") {
+                if (payload.size() != 132) throw JSONRPCError(RPC_INVALID_PARAMETER, "attestation payload must be 132 bytes");
+                msg = blsct::bridge::DstMessage(nbp::DST_ATT, payload);
+                // deposit id: one attestation per deposit.
+                logKey = "attestation:" + HexStr(Span{payload}.subspan(40, 32));
+            } else if (context == "resolution") {
+                if (payload.size() != 97) throw JSONRPCError(RPC_INVALID_PARAMETER, "resolution payload must be 97 bytes");
+                msg = blsct::bridge::DstMessage(nbp::DST_RES, payload);
+                // challenge txid: one verdict per challenge.
+                logKey = "resolution:" + HexStr(Span{payload}.subspan(32, 32));
+            } else if (context == "pop") {
+                msg = blsct::bridge::DstMessage(nbp::DST_POP, payload);
+            } else if (context == "exit") {
+                msg = blsct::bridge::ExitMessage(payload);
+            } else if (context == "withdraw") {
+                static const std::string action{"withdraw"};
+                std::vector<unsigned char> body(action.begin(), action.end());
+                body.insert(body.end(), payload.begin(), payload.end());
+                msg = blsct::bridge::DstMessage(nbp::DST_POP, body);
+            } else if (context == "challenge") {
+                static const std::string action{"challenge"};
+                std::vector<unsigned char> body(action.begin(), action.end());
+                body.insert(body.end(), payload.begin(), payload.end());
+                msg = blsct::bridge::DstMessage(nbp::DST_RES, body);
+            } else {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown context (expected checkpoint, attestation, resolution, pop, exit, withdraw or challenge)");
+            }
+
+            if (logKey) {
+                uint256 payloadHash;
+                CSHA256().Write(payload.data(), payload.size()).Finalize(payloadHash.begin());
+
+                // Honest-guardian single-valued signing log (Lean L3): at most
+                // one payload may ever be signed under a given log key.
+                static Mutex g_nbp_sign_log_mutex;
+                static std::map<std::string, uint256> g_nbp_sign_log GUARDED_BY(g_nbp_sign_log_mutex);
+
+                LOCK(g_nbp_sign_log_mutex);
+                auto [it, inserted] = g_nbp_sign_log.emplace(*logKey, payloadHash);
+                if (!inserted && it->second != payloadHash) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("refusing to sign: a different %s payload was already signed under log key %s", context, *logKey));
+                }
+            }
+
+            const auto guardianKey = blsct::bridge::GetGuardianKey(handles->km);
+            const auto signature = guardianKey.Sign(msg);
+
+            UniValue ret{UniValue::VOBJ};
+            ret.pushKV("signature", HexStr(signature.GetVch()));
+            ret.pushKV("public_key", HexStr(guardianKey.GetPublicKey().GetVch()));
+            return ret;
+        },
+    };
+}
+
+static RPCHelpMan nbpaggregatesigs()
+{
+    return RPCHelpMan{
+        "nbpaggregatesigs",
+        "\nAggregate a list of BLS signatures (e.g. guardian checkpoint or attestation\n"
+        "signatures) into a single aggregate signature.\n",
+        {
+            {"signatures",
+             RPCArg::Type::ARR,
+             RPCArg::Optional::NO,
+             "The signatures to aggregate.",
+             {
+                 {"signature", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "A 96-byte signature in hex"},
+             }},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "signature", "The aggregated signature in hex format"},
+        RPCExamples{HelpExampleCli("nbpaggregatesigs", "'[\"sig1hex\", \"sig2hex\"]'")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            const UniValue& arr = request.params[0].get_array();
+            if (arr.empty()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "signatures must be a non-empty array");
+            }
+            std::vector<blsct::Signature> sigs;
+            sigs.reserve(arr.size());
+            for (unsigned int i = 0; i < arr.size(); i++) {
+                sigs.push_back(ParseSignatureArg(arr[i], strprintf("signatures[%u]", i)));
+            }
+            return HexStr(blsct::Signature::Aggregate(sigs).GetVch());
+        },
+    };
+}
+
+static RPCHelpMan nbpgetclaimcommit()
+{
+    return RPCHelpMan{
+        "nbpgetclaimcommit",
+        "\nCompute the claim commitment SHA256(dpk ‖ r) for this wallet's claim\n"
+        "destination. Call this BEFORE depositing on Ethereum; nbpclaimdeposit uses\n"
+        "the same destination so the commitment opens correctly.\n",
+        {
+            {"r_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 32-byte blinding value r."},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                                              {RPCResult::Type::STR_HEX, "claim_commit", "SHA256(dpk ‖ r)"},
+                                              {RPCResult::Type::STR_HEX, "dpk", "The wallet's claim destination double public key (96 bytes)"},
+                                          }},
+        RPCExamples{HelpExampleCli("nbpgetclaimcommit", "\"<32-byte hex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto handles = GetBridgeWallet(request);
+            if (!handles) return UniValue::VNULL;
+
+            const uint256 r(ParseHexArg(request.params[0], "r_hex", 32));
+            const auto dpk = blsct::bridge::GetClaimDestination(handles->km);
+
+            UniValue ret{UniValue::VOBJ};
+            ret.pushKV("claim_commit", blsct::bridge::ComputeClaimCommit(dpk, r).GetHex());
+            ret.pushKV("dpk", HexStr(dpk.GetVch()));
+            return ret;
+        },
+    };
+}
+
+static RPCHelpMan nbpclaimdeposit()
+{
+    return RPCHelpMan{
+        "nbpclaimdeposit",
+        "\nClaim an attested Ethereum deposit: builds and broadcasts a bridge-mint\n"
+        "transaction paying the wrapped token confidentially to this wallet.\n",
+        {
+            {"eth_chain_id", RPCArg::Type::NUM, RPCArg::Optional::NO, "The Ethereum chain id."},
+            {"token_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 20-byte ERC20 token address."},
+            {"deposit_id_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 32-byte deposit id minted by the vault."},
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The deposited amount."},
+            {"r_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 32-byte blinding value used in nbpgetclaimcommit."},
+            {"bitfield_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The attester bitfield over the current committee."},
+            {"agg_sig_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The aggregate attestation signature (96 bytes)."},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "txid", "The transaction id"},
+        RPCExamples{HelpExampleCli("nbpclaimdeposit", "1 \"<token>\" \"<deposit id>\" 10 \"<r>\" \"01\" \"<agg sig>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto handles = GetBridgeWallet(request);
+            if (!handles) return UniValue::VNULL;
+
+            const uint64_t ethChainId = request.params[0].getInt<int64_t>();
+            const auto token = ParseHexArg(request.params[1], "token_hex", 20);
+            const uint256 depositId(ParseHexArg(request.params[2], "deposit_id_hex", 32));
+            const CAmount amount = AmountFromValue(request.params[3]);
+            const uint256 r(ParseHexArg(request.params[4], "r_hex", 32));
+            const auto bitfield = ParseHexArg(request.params[5], "bitfield_hex");
+            const auto aggSig = ParseSignatureArg(request.params[6], "agg_sig_hex");
+
+            auto res = blsct::bridge::BuildBridgeMintTx(handles->wallet.get(), handles->km,
+                                                        ethChainId, token, depositId, amount, r, bitfield, aggSig);
+            return BroadcastBridgeTx(*handles->wallet, res);
+        },
+    };
+}
+
+static RPCHelpMan nbpburntoeth()
+{
+    return RPCHelpMan{
+        "nbpburntoeth",
+        "\nBurn wrapped tokens held by this wallet to peg out to an Ethereum address.\n",
+        {
+            {"eth_chain_id", RPCArg::Type::NUM, RPCArg::Optional::NO, "The Ethereum chain id."},
+            {"token_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 20-byte ERC20 token address."},
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount to burn."},
+            {"eth_recipient_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 20-byte Ethereum recipient address."},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "txid", "The transaction id"},
+        RPCExamples{HelpExampleCli("nbpburntoeth", "1 \"<token>\" 10 \"<recipient>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto handles = GetBridgeWallet(request);
+            if (!handles) return UniValue::VNULL;
+
+            const uint64_t ethChainId = request.params[0].getInt<int64_t>();
+            const auto token = ParseHexArg(request.params[1], "token_hex", 20);
+            const CAmount amount = AmountFromValue(request.params[2]);
+            const auto ethRecipient = ParseHexArg(request.params[3], "eth_recipient_hex", 20);
+
+            auto res = blsct::bridge::BuildBridgeBurnTx(handles->wallet.get(), handles->km,
+                                                        ethChainId, token, amount, ethRecipient);
+            return BroadcastBridgeTx(*handles->wallet, res);
+        },
+    };
+}
+
+static RPCHelpMan nbpchallenge()
+{
+    return RPCHelpMan{
+        "nbpchallenge",
+        "\nChallenge an immature bridge mint, posting the consensus challenge bond.\n"
+        "This wallet must be a registered guardian.\n",
+        {
+            {"deposit_id_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 32-byte deposit id of the mint to challenge."},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "txid", "The transaction id"},
+        RPCExamples{HelpExampleCli("nbpchallenge", "\"<deposit id>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto handles = GetBridgeWallet(request);
+            if (!handles) return UniValue::VNULL;
+
+            const uint256 depositId(ParseHexArg(request.params[0], "deposit_id_hex", 32));
+            const CAmount challengeBond = Params().GetConsensus().nbp.challengeBond;
+
+            auto res = blsct::bridge::BuildChallengeTx(handles->wallet.get(), handles->km, depositId, challengeBond);
+            return BroadcastBridgeTx(*handles->wallet, res);
+        },
+    };
+}
+
+static RPCHelpMan nbpresolve()
+{
+    return RPCHelpMan{
+        "nbpresolve",
+        "\nSubmit the committee verdict on a mint challenge.\n"
+        "verdict=1 upholds the challenge (revokes the mint; the carrying output\n"
+        "receives the consensus-minted refund), verdict=0 rejects it.\n",
+        {
+            {"deposit_id_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 32-byte deposit id."},
+            {"challenge_txid_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The txid of the challenge transaction."},
+            {"verdict", RPCArg::Type::NUM, RPCArg::Optional::NO, "1 = uphold, 0 = reject."},
+            {"bitfield_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The voter bitfield over the current committee."},
+            {"agg_sig_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The aggregate resolution signature (96 bytes)."},
+            {"refund_amount", RPCArg::Type::AMOUNT, RPCArg::Default{UniValue(0)}, "For verdict=1: the expected refund (challenge bond + totalSlashed/10)."},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "txid", "The transaction id"},
+        RPCExamples{HelpExampleCli("nbpresolve", "\"<deposit id>\" \"<challenge txid>\" 1 \"01\" \"<agg sig>\" 2600")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto handles = GetBridgeWallet(request);
+            if (!handles) return UniValue::VNULL;
+
+            const uint256 depositId(ParseHexArg(request.params[0], "deposit_id_hex", 32));
+            const uint256 challengeTxid(ParseHashV(request.params[1], "challenge_txid_hex"));
+            const int verdictArg = request.params[2].getInt<int>();
+            if (verdictArg != 0 && verdictArg != 1) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "verdict must be 0 or 1");
+            }
+            const auto bitfield = ParseHexArg(request.params[3], "bitfield_hex");
+            const auto aggSig = ParseSignatureArg(request.params[4], "agg_sig_hex");
+            const CAmount refund = request.params[5].isNull() ? 0 : AmountFromValue(request.params[5]);
+            if (verdictArg == 1 && refund <= 0) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "refund_amount is required for verdict=1");
+            }
+
+            auto res = blsct::bridge::BuildResolveTx(handles->wallet.get(), handles->km, depositId, challengeTxid,
+                                                     static_cast<uint8_t>(verdictArg), bitfield, aggSig, refund);
+            return BroadcastBridgeTx(*handles->wallet, res);
+        },
+    };
+}
+
+static RPCHelpMan nbpslash()
+{
+    return RPCHelpMan{
+        "nbpslash",
+        "\nSubmit objective slashing evidence against a guardian. The carrying output\n"
+        "receives the consensus-minted reporter reward (bond / 10).\n",
+        {
+            {"evidence_type", RPCArg::Type::NUM, RPCArg::Optional::NO, "1 = checkpoint equivocation (S1), 2 = wrong-roots checkpoint (S2), 5 = resolution-vote equivocation (S5)."},
+            {"guardian_pubkey_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The offending guardian's 48-byte BLS public key."},
+            {"msg1_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The first signed message (raw bytes, no DST)."},
+            {"sig1_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The signature over msg1 (96 bytes)."},
+            {"msg2_hex", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "The second signed message (unused for S2)."},
+            {"sig2_hex", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "The signature over msg2 (unused for S2)."},
+            {"reward_amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The expected reporter reward (guardian bond / 10)."},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "txid", "The transaction id"},
+        RPCExamples{HelpExampleCli("nbpslash", "1 \"<pk>\" \"<msg1>\" \"<sig1>\" \"<msg2>\" \"<sig2>\" 2500")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto handles = GetBridgeWallet(request);
+            if (!handles) return UniValue::VNULL;
+
+            const int evidenceType = request.params[0].getInt<int>();
+            if (evidenceType != 1 && evidenceType != 2 && evidenceType != 5) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "evidence_type must be 1, 2 or 5");
+            }
+            const blsct::PublicKey guardianKey(ParseHexArg(request.params[1], "guardian_pubkey_hex", 48));
+            const auto msg1 = ParseHexArg(request.params[2], "msg1_hex");
+            const auto sig1 = ParseSignatureArg(request.params[3], "sig1_hex");
+            std::vector<unsigned char> msg2;
+            blsct::Signature sig2;
+            if (!request.params[4].isNull() && !request.params[4].get_str().empty()) {
+                msg2 = ParseHexArg(request.params[4], "msg2_hex");
+            }
+            if (!request.params[5].isNull() && !request.params[5].get_str().empty()) {
+                sig2 = ParseSignatureArg(request.params[5], "sig2_hex");
+            }
+            const CAmount reward = AmountFromValue(request.params[6]);
+
+            auto res = blsct::bridge::BuildSlashTx(handles->wallet.get(), handles->km,
+                                                   static_cast<uint8_t>(evidenceType), guardianKey,
+                                                   msg1, sig1, msg2, sig2, reward);
+            return BroadcastBridgeTx(*handles->wallet, res);
+        },
+    };
+}
+
 Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
 {
     static const CRPCCommand commands[]{
@@ -3364,6 +3835,17 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &verifyblsmessage},
         {"blsct", &deriveblsctspendingkey},
         {"blsct", &getblsctoutput},
+        {"blsct", &nbpregisterguardian},
+        {"blsct", &nbpexitguardian},
+        {"blsct", &nbpwithdrawbond},
+        {"blsct", &nbpsignmessage},
+        {"blsct", &nbpaggregatesigs},
+        {"blsct", &nbpgetclaimcommit},
+        {"blsct", &nbpclaimdeposit},
+        {"blsct", &nbpburntoeth},
+        {"blsct", &nbpchallenge},
+        {"blsct", &nbpresolve},
+        {"blsct", &nbpslash},
     };
     return commands;
 }
