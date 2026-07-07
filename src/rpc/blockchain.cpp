@@ -2135,13 +2135,18 @@ static RPCHelpMan liststakedcommitmentsdata()
             }
 
             UniValue result(UniValue::VARR);
-            COutPoint key;
-            Coin coin;
             unsigned int iter{0};
 
             while (pcursor->Valid()) {
                 if (iter % 5000 == 0) node.rpc_interruption_point();
                 ++iter;
+                COutPoint key;
+                // Fresh Coin each iteration: CTxOut::Unserialize only reads
+                // the optional fields (predicate, blsctData, tokenId) when
+                // their marker flag is present and leaves them untouched
+                // otherwise, so reusing one Coin across iterations bleeds a
+                // previous output's predicate into later ones.
+                Coin coin;
                 if (pcursor->GetKey(key) && pcursor->GetValue(coin)) {
                     if (coin.out.IsStakedCommitment() && coin.out.HasBLSCTRangeProof()) {
                         UniValue entry(UniValue::VOBJ);
