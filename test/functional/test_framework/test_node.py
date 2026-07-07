@@ -855,7 +855,11 @@ class RPCOverloadWrapper():
 
     def createwallet(self, wallet_name, disable_private_keys=None, blank=None, passphrase='', avoid_reuse=None, descriptors=None, load_on_startup=None, external_signer=None, blsct=False, storage_output=False, seed=None, mnemonic=None):
         if descriptors is None:
-            descriptors = self.descriptors
+            # BLSCT is the default wallet type on navio, and the RPC rejects
+            # explicitly requesting both blsct=true and descriptors=true. Only
+            # fall back to the node's configured descriptors default when not
+            # creating a BLSCT wallet.
+            descriptors = False if blsct else self.descriptors
         kwargs = {}
         if seed is not None:
             kwargs['seed'] = seed

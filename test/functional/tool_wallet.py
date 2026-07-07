@@ -33,8 +33,12 @@ class ToolWalletTest(BitcoinTestFramework):
 
     def bitcoin_wallet_process(self, *args):
         default_args = ['-datadir={}'.format(self.nodes[0].datadir_path), '-chain=%s' % self.chain]
-        if not self.options.descriptors and 'create' in args:
-            default_args.append('-legacy')
+        # navio-wallet defaults to creating a BLSCT wallet when none of
+        # -legacy, -descriptors or -blsct are given, so pin down the wallet
+        # type explicitly here to match this test's self.options.descriptors
+        # expectations instead of relying on the tool's own default.
+        if 'create' in args:
+            default_args.append('-legacy' if not self.options.descriptors else '-descriptors')
 
         return subprocess.Popen([self.options.naviowallet] + default_args + list(args), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 

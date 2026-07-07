@@ -258,10 +258,13 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert "Only 24-word" in stderr_12w
 
         self.log.info("Test CLI tool: navio-wallet create with -mnemonic but without -blsct errors")
+        # BLSCT is the tool's default wallet type, so -descriptors must be passed
+        # explicitly here to exercise the "-mnemonic requires -blsct" validation.
         cli_no_blsct_args = [
             '-datadir={}'.format(self.nodes[0].datadir_path),
             '-chain={}'.format(self.chain),
             '-wallet=test_cli_mnemonic_no_blsct',
+            '-descriptors',
             '-mnemonic={}'.format(cli_mnemonic),
             'create',
         ]
@@ -273,10 +276,13 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert "requires -blsct" in stderr_nb
 
         self.log.info("Test CLI tool: navio-wallet create with -seed but without -blsct errors")
+        # BLSCT is the tool's default wallet type, so -descriptors must be passed
+        # explicitly here to exercise the "-seed requires -blsct" validation.
         cli_no_blsct_seed_args = [
             '-datadir={}'.format(self.nodes[0].datadir_path),
             '-chain={}'.format(self.chain),
             '-wallet=test_cli_seed_no_blsct',
+            '-descriptors',
             '-seed={}'.format("00" * 32),
             'create',
         ]
