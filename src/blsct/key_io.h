@@ -25,6 +25,11 @@ namespace bech32_hrp {
     const std::string Mainnet = "nav";
     const std::string Testnet = "tnv";
     const std::string Signet = "snv";
+    // Must match the bech32_mod_hrp of the regtest/blsctregtest chainparams
+    // ("rnv"). External-API consumers (light-wallet bindings) derive regtest
+    // BLSCT addresses from this constant; "rnav" produced addresses the
+    // daemon could not decode (and, at 4 chars, violated the 3-byte-hrp
+    // DOUBLE_PUBKEY_ENC_SIZE layout above).
     const std::string Regtest = "rnv";
 }
 
