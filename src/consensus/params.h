@@ -182,6 +182,42 @@ struct Params {
      */
     int nPoPSKernelV2Height{0};
     /**
+     * Navio Bridge Protocol (NBP) parameters. See
+     * https://github.com/nav-io/navio-bridge-protocol — DESIGN.md §11/§12.
+     * All bridge consensus rules are gated on nBridgeHeight; a value of
+     * std::numeric_limits<int>::max() disables the bridge entirely.
+     */
+    struct NbpParams {
+        int nBridgeHeight{std::numeric_limits<int>::max()};
+        /** Blocks per checkpoint epoch (E). */
+        uint32_t nEpochBlocks{30};
+        /** Epochs per committee period (P). */
+        uint32_t nPeriodEpochs{24};
+        /** Blocks a bridge mint stays immature/challengeable (M). */
+        uint32_t nMintMaturity{60};
+        /** Blocks allowed for challenge resolution before fail-safe revoke (R_max). */
+        uint32_t nResolutionWindow{360};
+        /** Blocks a guardian bond stays locked after exit (U = 2·P·E + R_max). */
+        uint32_t nUnbondingBlocks{0};
+        /** Burial depth before an embedded checkpoint becomes final (q). */
+        uint32_t nFinalityBurial{8};
+        /** Maximum age (blocks) of the staked-set snapshot an SPP may reference. */
+        uint32_t nSppMaxAge{64};
+        /** Committee periods after which a guardian's SPP must be refreshed. */
+        uint32_t nSppRefreshPeriods{30};
+        /** Minimum transparent guardian bond. */
+        CAmount minBond{25000 * COIN};
+        /** Transparent bond posted with a mint challenge. */
+        CAmount challengeBond{100 * COIN};
+        /** Committee size cap per period. */
+        uint32_t maxCommittee{512};
+
+        bool IsActive(int height) const { return height >= nBridgeHeight; }
+        uint32_t PeriodBlocks() const { return nEpochBlocks * nPeriodEpochs; }
+    };
+    NbpParams nbp;
+
+    /**
      * Hard finality checkpoints. (height -> expected block hash).
      * Any fork whose block at a listed height has a different hash is
      * rejected, regardless of accumulated work. Populated per-release from

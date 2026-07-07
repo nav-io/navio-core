@@ -700,6 +700,22 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.nMinimumChainWork = uint256{};
             consensus.defaultAssumeValid = uint256{};
 
+            // NBP bridge — prototype parameters (navio-bridge-protocol
+            // IMPLEMENTATION.md §4). Active from height 1 on blsctregtest;
+            // disabled (default nBridgeHeight = INT_MAX) on all other chains.
+            consensus.nbp.nBridgeHeight = 1;
+            consensus.nbp.nEpochBlocks = 5;
+            consensus.nbp.nPeriodEpochs = 3;
+            consensus.nbp.nMintMaturity = 6;
+            consensus.nbp.nResolutionWindow = 20;
+            consensus.nbp.nFinalityBurial = 2;
+            consensus.nbp.nSppMaxAge = 16;
+            consensus.nbp.nSppRefreshPeriods = 10;
+            consensus.nbp.minBond = 1000 * COIN;
+            consensus.nbp.challengeBond = 100 * COIN;
+            consensus.nbp.maxCommittee = 16;
+            consensus.nbp.nUnbondingBlocks = 2 * consensus.nbp.PeriodBlocks() + consensus.nbp.nResolutionWindow;
+
             pchMessageStart[0] = 0xfd;
             pchMessageStart[1] = 0xbf;
             pchMessageStart[2] = 0x9f;

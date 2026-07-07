@@ -68,6 +68,8 @@ set(BLSCT_SOURCES
   blsct/arith/mcl/mcl_g1point.cpp
   blsct/arith/mcl/mcl_scalar.cpp
   blsct/bech32_mod.cpp
+  blsct/bridge/merkle.cpp
+  blsct/bridge/messages.cpp
   blsct/building_block/g_h_gi_hi_zero_verifier.cpp
   blsct/building_block/generator_deriver.cpp
   blsct/building_block/imp_inner_prod_arg.cpp
