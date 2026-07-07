@@ -15,7 +15,7 @@ typedef std::multimap<int64_t, CWalletOutput*> OutputItems;
 } // namespace wallet
 
 namespace blsct {
-UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose);
+UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose, wallet::mapValue_t mapValue = {});
 CScript BuildHTLCScript(
     const std::vector<unsigned char>& hash_bytes,
     const std::vector<unsigned char>& spendingKeyA,

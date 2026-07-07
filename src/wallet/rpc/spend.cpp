@@ -280,6 +280,20 @@ RPCHelpMan sendtoaddress()
                     verbose_val = request.params[10].get_bool();
                 }
                 inner.push_back(verbose_val);
+                // Forward subtractfeefromamount (sendtoaddress param 4) so the
+                // BLSCT send honors it. sendtoblsctaddress reads it as param 4.
+                bool subtract_fee_val = false;
+                if (request.params.size() > 4 && !request.params[4].isNull()) {
+                    subtract_fee_val = request.params[4].get_bool();
+                }
+                inner.push_back(subtract_fee_val);
+                // Forward comment_to (sendtoaddress param 3) as the wallet-local
+                // "to" comment. sendtoblsctaddress reads it as param 5.
+                if (request.params.size() > 3 && !request.params[3].isNull()) {
+                    inner.push_back(request.params[3]);
+                } else {
+                    inner.push_back("");
+                }
                 JSONRPCRequest subreq = request;
                 subreq.params = inner;
                 return ::sendtoblsctaddress().HandleRequest(subreq);

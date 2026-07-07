@@ -41,6 +41,12 @@ struct CreateTransactionData {
     // enforced by `blsct::VerifyTx`.
     CAmount nBLSCTDefaultFee{::BLSCT_DEFAULT_FEE};
 
+    // When true, the recipient bears the transaction fee: the output value is
+    // reduced by the total fee instead of the fee being added on top and taken
+    // from change. Only honored for NORMAL native-token sends. This is the
+    // BLSCT equivalent of the wallet's `subtractfeefromamount`.
+    bool fSubtractFeeFromAmount{false};
+
     // When true (default), stake operations fold every existing staked
     // commitment of the wallet into the new commitment output, so a wallet
     // holds a single consolidated stake. When false, `stakelock` funds the new
@@ -122,6 +128,24 @@ protected:
         vInputs;
     std::map<TokenId, Amounts>
         nAmounts;
+
+    // A pending subtract-fee-from-amount recipient. Its final value is
+    // (amount - total transaction fee), and the total fee is only known once
+    // BuildTx's fee fixpoint converges. Because BLSCT input/output serialized
+    // sizes are value-independent, the fee is identical whatever value we
+    // ultimately commit, so BuildTx can (re)build this output at the reduced
+    // value inside the fixpoint without perturbing the fee. AddOutput records
+    // it here rather than materializing it in vOutputs immediately.
+    struct SubtractFeeOutput {
+        SubAddress destination;
+        CAmount amount;
+        std::string memo;
+        TokenId token_id;
+        CreateTransactionType type;
+        CAmount minStake;
+        Scalar blindingKey;
+    };
+    std::optional<SubtractFeeOutput> subtractFeeOutput;
 
 public:
     TxFactoryBase()= default;
