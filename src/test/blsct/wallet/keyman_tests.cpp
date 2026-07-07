@@ -46,6 +46,43 @@ BOOST_FIXTURE_TEST_CASE(wallet_test, TestingSetup)
     }
 }
 
+// Regression test for a bug where GetSubAddressFromPool() derived the
+// SubAddressIdentifier's address index by checking `account > -1` instead of
+// `nIndex > -1`. For the special negative accounts (CHANGE_ACCOUNT = -1,
+// STAKING_ACCOUNT = -2) that guard was always false, so every reservation was
+// recorded under address index 0 regardless of the index actually reserved
+// from the pool by ReserveSubAddressFromPool() — change/staking subaddresses
+// never advanced past index 0.
+BOOST_FIXTURE_TEST_CASE(get_subaddress_from_pool_advances_index_for_negative_accounts, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    for (const int64_t account : {blsct::CHANGE_ACCOUNT, blsct::STAKING_ACCOUNT}) {
+        CKeyID keyId1, keyId2;
+        blsct::SubAddressIdentifier id1, id2;
+
+        BOOST_REQUIRE(blsct_km->GetSubAddressFromPool(account, keyId1, id1));
+        BOOST_REQUIRE(blsct_km->GetSubAddressFromPool(account, keyId2, id2));
+
+        BOOST_CHECK_EQUAL(id1.account, account);
+        BOOST_CHECK_EQUAL(id2.account, account);
+
+        // The bug forced both id1.address and id2.address to 0. Fixed
+        // behaviour advances the index on each reservation.
+        BOOST_CHECK_EQUAL(id1.address, uint64_t{0});
+        BOOST_CHECK_EQUAL(id2.address, uint64_t{1});
+        BOOST_CHECK(id1.address != id2.address);
+
+        // Distinct indices must also yield distinct keys.
+        BOOST_CHECK(keyId1 != keyId2);
+    }
+}
+
 namespace {
 // Set up a BLSCT wallet with a defined view key and a fresh subaddress keypool,
 // ready for GetNewDestination()/IsMineMode().
