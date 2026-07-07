@@ -102,14 +102,15 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 }
 
 std::optional<CMutableTransaction>
-TxFactory::BuildTx()
+TxFactory::BuildTx(const std::optional<CAmount>& nBLSCTDefaultFee, const CAmount& additionalFee)
 {
     return TxFactoryBase::BuildTx(
         std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value()),
         /*minStake=*/0,
         /*type=*/NORMAL,
         /*fSubtractedFee=*/false,
-        Params().GetConsensus().nBLSCTDefaultFee);
+        nBLSCTDefaultFee.value_or(Params().GetConsensus().nBLSCTDefaultFee),
+        additionalFee);
 }
 
 std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)

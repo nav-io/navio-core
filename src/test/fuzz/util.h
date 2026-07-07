@@ -201,29 +201,6 @@ template <typename WeakEnumType, size_t size>
 
 [[nodiscard]] CKey ConsumePrivateKey(FuzzedDataProvider& fuzzed_data_provider, std::optional<bool> compressed = std::nullopt) noexcept;
 
-template <typename T>
-[[nodiscard]] bool MultiplicationOverflow(const T i, const T j) noexcept
-{
-    static_assert(std::is_integral<T>::value, "Integral required.");
-    if (std::numeric_limits<T>::is_signed) {
-        if (i > 0) {
-            if (j > 0) {
-                return i > (std::numeric_limits<T>::max() / j);
-            } else {
-                return j < (std::numeric_limits<T>::min() / i);
-            }
-        } else {
-            if (j > 0) {
-                return i < (std::numeric_limits<T>::min() / j);
-            } else {
-                return i != 0 && (j < (std::numeric_limits<T>::max() / i));
-            }
-        }
-    } else {
-        return j != 0 && i > std::numeric_limits<T>::max() / j;
-    }
-}
-
 [[nodiscard]] bool ContainsSpentInput(const CTransaction& tx, const CCoinsViewCache& inputs) noexcept;
 
 /**

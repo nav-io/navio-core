@@ -24,6 +24,7 @@
 #include <netmessagemaker.h>
 #include <node/blockstorage.h>
 #include <node/txreconciliation.h>
+#include <p2pmsg/transport.h>
 #include <policy/fees.h>
 #include <policy/policy.h>
 #include <policy/settings.h>
@@ -732,7 +733,13 @@ private:
     std::chrono::seconds m_stale_tip_check_time GUARDED_BY(cs_main){0s};
 
     /** Next time to shuffle stem routes */
-    std::chrono::microseconds m_next_stem_peer_shuffle = 0s;
+    std::chrono::microseconds m_next_stem_peer_shuffle GUARDED_BY(NetEventsInterface::g_msgproc_mutex) = 0s;
+
+    /** Whether the last stem-route shuffle found no routes, and the node
+     *  count it saw; lets the next shuffle run early once the node set
+     *  changes instead of waiting out the retry backoff. */
+    bool m_stem_shuffle_found_none GUARDED_BY(NetEventsInterface::g_msgproc_mutex){false};
+    size_t m_stem_shuffle_node_count GUARDED_BY(NetEventsInterface::g_msgproc_mutex){0};
 
     const Options m_opts;
 
@@ -5159,6 +5166,39 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         return;
     }
 
+    if (msg_type == NetMsgType::P2PMSG || msg_type == NetMsgType::DP2PMSG) {
+        p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+        if (transport == nullptr) {
+            // Feature disabled: ignore without penalty (peer may run it, we don't).
+            return;
+        }
+
+        // Mirror DTX fluff: a stem-phase packet becomes fluff with some chance.
+        bool is_stem = msg_type == NetMsgType::DP2PMSG;
+        if (is_stem) {
+            is_stem = GetRandInternal(100) >= DANDELION_FLUFF_CHANCE;
+        }
+
+        std::vector<uint8_t> body(vRecv.size());
+        vRecv.read(MakeWritableByteSpan(body));
+
+        const auto res = transport->OnWire(
+            pfrom.GetId(),
+            is_stem,
+            std::span<const uint8_t>{body.data(), body.size()});
+        if (res == p2pmsg::Transport::WireResult::RejectInvalid ||
+            res == p2pmsg::Transport::WireResult::RejectPoW) {
+            // Malformed or missing/insufficient PoW: cheap to detect, costly to
+            // emit. Penalize so a flood eventually discourages the peer.
+            Misbehaving(*peer, 10, "invalid p2pmsg");
+        } else if (res == p2pmsg::Transport::WireResult::RejectReplay ||
+                   res == p2pmsg::Transport::WireResult::Dropped ||
+                   res == p2pmsg::Transport::WireResult::Enqueued) {
+            // Replay/overflow are not necessarily the peer's fault; no penalty.
+        }
+        return;
+    }
+
     // Ignore unknown commands for extensibility
     LogPrint(BCLog::NET, "Unknown command \"%s\" from peer=%d\n", SanitizeString(msg_type), pfrom.GetId());
     return;
@@ -5690,9 +5730,13 @@ void PeerManagerImpl::ShuffleStemRoutes(const std::vector<CNode*>& nodes)
 {
     AssertLockHeld(g_msgproc_mutex);
 
-    // Update Dandelion++ stem peers if needed
+    // Update Dandelion++ stem peers if needed. If the last shuffle found no
+    // routes, don't wait out the retry backoff once the node set changes:
+    // otherwise a peer connecting right after startup relays through no stem
+    // for up to the whole backoff.
     auto now = GetTime<std::chrono::microseconds>();
-    if (m_next_stem_peer_shuffle < now) {
+    const bool retry_early{m_stem_shuffle_found_none && nodes.size() != m_stem_shuffle_node_count};
+    if (m_next_stem_peer_shuffle < now || retry_early) {
         m_next_stem_peer_shuffle = GetExponentialRand(now, DANDELION_SHUFFLE_INTERVAL);
         std::vector<PeerRef> peers;
         for (CNode* pnode : nodes) {
@@ -5719,7 +5763,10 @@ void PeerManagerImpl::ShuffleStemRoutes(const std::vector<CNode*>& nodes)
 
         // We couldn't get stem peers (e.g. no peers connected yet); retry on
         // a short backoff rather than every msgproc tick, otherwise with
-        // -debug=dandelion the log fills at ~10 lines/s.
+        // -debug=dandelion the log fills at ~10 lines/s. The retry_early
+        // check above cuts the backoff short as soon as the node set changes.
+        m_stem_shuffle_found_none = found == 0;
+        m_stem_shuffle_node_count = nodes.size();
         if (found == 0) {
             m_next_stem_peer_shuffle = now + std::chrono::seconds{10};
         }

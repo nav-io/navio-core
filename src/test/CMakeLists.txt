@@ -27,6 +27,7 @@ add_executable(test_navio
   allocator_tests.cpp
   amount_tests.cpp
   argsman_tests.cpp
+  aggregation_tests.cpp
   arith_uint256_tests.cpp
   banman_tests.cpp
   base32_tests.cpp
@@ -108,8 +109,10 @@ add_executable(test_navio
   multisig_tests.cpp
   net_tests.cpp
   netbase_tests.cpp
+  p2pmsg_tests.cpp
   pmt_tests.cpp
   policyestimator_tests.cpp
+  rfq_tests.cpp
   random_tests.cpp
   rbf_tests.cpp
   rest_tests.cpp
