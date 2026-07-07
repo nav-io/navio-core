@@ -62,10 +62,11 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         self.log.info(f"Operator delegation pubkey: {operator_pub}")
 
         self.test_argument_validation(owner, operator_pub)
-        outhash = self.test_delegatestake(node, owner, owner_address, operator_pub)
+        outhash, reward_address = self.test_delegatestake(node, owner, owner_address, operator_pub)
         self.test_delegated_staker_tracking(node, operator_priv)
+        self.test_consolidation_grouping(node, owner, owner_address, operator_pub, reward_address)
         self.test_fee_split_template(node, owner)
-        self.test_revocation(node, owner, owner_address, outhash)
+        self.test_revocation(node, owner, owner_address)
 
     def test_argument_validation(self, owner, operator_pub):
         self.log.info("Testing delegatestake argument validation")
@@ -101,7 +102,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         assert_equal(len(own), 1)
         assert_equal(own[0]["commitment"], entry["commitment"])
 
-        return entry["outhash"]
+        return entry["outhash"], reward_address
 
     def test_delegated_staker_tracking(self, node, operator_priv):
         self.log.info("Testing that a delegated staker decrypts and tracks the delegation")
@@ -135,6 +136,60 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
             staker.kill()
             staker.wait()
 
+    def test_consolidation_grouping(self, node, owner, owner_address, operator_pub, reward_address):
+        """Consolidation must only fold stakes sharing the same delegation
+        identity (delegate key + reward address), and plain stakes must only
+        fold with plain stakes."""
+        self.log.info("Testing delegation-aware stake consolidation")
+
+        def snapshot():
+            entries = node.liststakedcommitmentsdata()
+            plain = [e for e in entries if not e["predicate"]]
+            delegated = [e for e in entries if e["predicate"]]
+            return plain, delegated
+
+        # Starting point: one delegated stake (min_stake to operator_pub).
+        plain, delegated = snapshot()
+        assert_equal((len(plain), len(delegated)), (0, 1))
+
+        # A plain stakelock must NOT touch the delegated stake.
+        owner.stakelock(self.min_stake)
+        self.generatetoblsctaddress(node, 1, owner_address)
+        plain, delegated = snapshot()
+        assert_equal((len(plain), len(delegated)), (1, 1))
+        first_delegated = delegated[0]["outhash"]
+
+        # A second plain stakelock consolidates with the first plain stake
+        # only; the delegated stake still stays untouched.
+        owner.stakelock(self.min_stake)
+        self.generatetoblsctaddress(node, 1, owner_address)
+        plain, delegated = snapshot()
+        assert_equal((len(plain), len(delegated)), (1, 1))
+        assert_equal(delegated[0]["outhash"], first_delegated)
+
+        # Delegating again with the SAME delegate and reward address
+        # consolidates with the existing delegation (one bigger delegated
+        # stake, new outhash), leaving the plain stake alone.
+        owner.delegatestake(self.min_stake, operator_pub, reward_address)
+        self.generatetoblsctaddress(node, 1, owner_address)
+        plain, delegated = snapshot()
+        assert_equal((len(plain), len(delegated)), (1, 1))
+        assert delegated[0]["outhash"] != first_delegated
+
+        # Delegating to a DIFFERENT delegate creates a separate delegated
+        # stake instead of folding into the existing one.
+        _, other_operator_pub = self.gen_delegation_key()
+        owner.delegatestake(self.min_stake, other_operator_pub)
+        self.generatetoblsctaddress(node, 1, owner_address)
+        plain, delegated = snapshot()
+        assert_equal((len(plain), len(delegated)), (1, 2))
+
+        # Wallet-side accounting agrees: three commitments total worth
+        # 5 * min_stake (2 plain consolidated + 2 same-delegation consolidated
+        # + 1 other-delegation).
+        own = owner.liststakedcommitments()
+        assert_equal(len(own), 3)
+
     def test_fee_split_template(self, node, owner):
         self.log.info("Testing getblocktemplate operator fee split parameters")
 
@@ -159,15 +214,17 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                                 {"rules": [""], "coinbasedest": owner_addr,
                                  "coinbasefeedest": operator_addr})
 
-    def test_revocation(self, node, owner, owner_address, outhash):
+    def test_revocation(self, node, owner, owner_address):
         self.log.info("Testing revocation via stakeunlock")
 
-        txid = owner.stakeunlock(self.min_stake)
+        # Unstake everything (2 plain + 2 same-delegation + 1 other-delegation
+        # commitments of min_stake each): delegated or not, the spend key
+        # revokes it all, and the staked set ends up empty.
+        txid = owner.stakeunlock(5 * self.min_stake)
         assert_equal(len(txid), 64)
         self.generatetoblsctaddress(node, 1, owner_address)
 
-        entries = node.liststakedcommitmentsdata()
-        assert_equal([e for e in entries if e["outhash"] == outhash], [])
+        assert_equal(node.liststakedcommitmentsdata(), [])
 
 
 if __name__ == "__main__":

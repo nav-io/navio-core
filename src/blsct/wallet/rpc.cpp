@@ -1175,7 +1175,9 @@ RPCHelpMan delegatestake()
         "the delegate, so the delegate can produce blocks with it but can never spend or\n"
         "unstake it. Block rewards are requested to be paid to reward_address; note this is\n"
         "advisory: a delegate controls its own coinbase, so choose delegates you trust to\n"
-        "honor it. Revoke at any time with stakeunlock." +
+        "honor it. Existing stakes delegated with the same delegate key and reward address\n"
+        "are consolidated into the new output; other stakes are left untouched. Revoke at\n"
+        "any time with stakeunlock." +
             wallet::HELP_REQUIRING_PASSPHRASE,
         {
             {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to stake. eg 0.1"},
@@ -1233,10 +1235,11 @@ RPCHelpMan delegatestake()
             const bool verbose{request.params[3].isNull() ? false : request.params[3].get_bool()};
 
             blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
-            // A delegated stake must be its own commitment with exactly the
-            // requested amount: folding the wallet's other commitments in
-            // would silently hand their staking rights to the delegate too.
-            transactionData.fConsolidateStakedCommitments = false;
+            // Consolidation is delegation-aware: only commitments that share
+            // this exact delegation (same delegate key and reward address)
+            // are folded into the new output; plain stakes and stakes
+            // delegated elsewhere stay untouched.
+            transactionData.fConsolidateStakedCommitments = gArgs.GetBoolArg("-consolidatestakedcommitments", blsct::DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS);
             transactionData.stakeDelegation = blsct::delegation::DelegationRequest{delegateKey, rewardAddress};
 
             EnsureWalletIsUnlocked(*pwallet);

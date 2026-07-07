@@ -15,10 +15,11 @@
 namespace blsct {
 namespace delegation {
 
-//! Plaintext carried inside a stake-delegation blob: the opening of the
-//! staked Pedersen commitment plus the address the delegate must pay block
-//! rewards to. Knowing (value, gamma) is enough to build a proof of stake
-//! but not to spend or unstake the output, which keeps the principal safe.
+//! Plaintext carried inside a stake-delegation blob for the delegate: the
+//! opening of the staked Pedersen commitment plus the address the delegate
+//! must pay block rewards to. Knowing (value, gamma) is enough to build a
+//! proof of stake but not to spend or unstake the output, which keeps the
+//! principal safe.
 struct DelegationInfo {
     CAmount value{0};
     MclScalar gamma;
@@ -26,29 +27,45 @@ struct DelegationInfo {
 };
 
 //! What a wallet needs to know to delegate a new staked output: whom to
-//! delegate to and where that delegate must send block rewards.
+//! delegate to and where that delegate must send block rewards. Also what
+//! the owner wallet recovers back from its own delegated outputs (via the
+//! owner section of the blob), so delegations survive a wallet restore and
+//! outputs sharing the same delegation can be identified and consolidated.
 struct DelegationRequest {
     MclG1Point delegateKey;
     std::string rewardAddress;
+
+    //! Stable identity of a delegation: same delegate and same reward
+    //! address. Used to group staked outputs for consolidation.
+    std::string GetId() const;
 };
 
-//! Size of a compressed G1 point (the ephemeral public key prefix).
-constexpr size_t EPHEMERAL_KEY_SIZE = 48;
+//! Size of a compressed G1 point (ephemeral and delegate public keys).
+constexpr size_t DELEGATION_POINT_SIZE = 48;
 
 //! Returns true if the vector looks like a stake-delegation payload
 //! (magic + version prefix). Cheap filter before attempting decryption.
 bool IsDelegationData(const std::vector<unsigned char>& data);
 
-//! Encrypt `info` to the delegate identified by `delegateKey` (a G1 public
-//! key). Produces: magic || version || E || AEAD(plaintext), where E is a
-//! fresh ephemeral key and the AEAD key is derived from ECDH(e, delegateKey).
-std::vector<unsigned char> Encrypt(const DelegationInfo& info, const MclG1Point& delegateKey);
+//! Encrypt `info` to the delegate identified by `request.delegateKey`.
+//! Produces: magic || version || E || owner-section || delegate-section,
+//! where E is a fresh ephemeral key, the delegate section is AEAD-encrypted
+//! under ECDH(e, delegateKey), and the owner section carries
+//! (delegateKey, rewardAddress) AEAD-encrypted under a key derived from the
+//! output's BLSCT nonce — the same secret the owner already uses to recover
+//! the output's amount — so the owner wallet can re-derive the delegation
+//! from the chain alone.
+std::vector<unsigned char> Encrypt(const DelegationInfo& info, const DelegationRequest& request, const MclG1Point& nonce);
 
-//! Attempt to decrypt a delegation payload with the delegate's private key.
-//! Returns std::nullopt on any mismatch (wrong recipient, tampered data,
-//! unknown version). Constant-shaped: the only early-outs are on public
-//! structure (magic/length), not on key material.
+//! Delegate side: attempt to decrypt the delegate section with the delegate's
+//! private key. Returns std::nullopt on any mismatch (wrong recipient,
+//! tampered data, unknown version).
 std::optional<DelegationInfo> TryDecrypt(const std::vector<unsigned char>& data, const MclScalar& delegatePrivKey);
+
+//! Owner side: recover (delegateKey, rewardAddress) from the owner section
+//! using the output's BLSCT nonce. Returns std::nullopt if the payload is
+//! not a delegation or the nonce does not match.
+std::optional<DelegationRequest> RecoverOwnerInfo(const std::vector<unsigned char>& data, const MclG1Point& nonce);
 
 } // namespace delegation
 } // namespace blsct
