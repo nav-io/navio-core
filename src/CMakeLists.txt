@@ -537,7 +537,10 @@ if(BUILD_LIBBLSCT_ONLY)
     blsct/external_api/blsct.cpp
     blsct/external_api/blsct_clientversion.cpp
     chain.cpp
+    crypto/chacha20.cpp
+    crypto/chacha20poly1305.cpp
     crypto/hmac_sha256.cpp
+    crypto/poly1305.cpp
     crypto/ripemd160.cpp
     crypto/sha256.cpp
     crypto/sha256_sse4.cpp
@@ -585,6 +588,7 @@ if(BUILD_LIBBLSCT_ONLY)
     blsct/signature.cpp
     blsct/tokens/predicate_parser.cpp
     blsct/wallet/address.cpp
+    blsct/wallet/delegation.cpp
     blsct/wallet/helpers.cpp
     blsct/wallet/txfactory_base.cpp
     blsct/wallet/txfactory_global.cpp
