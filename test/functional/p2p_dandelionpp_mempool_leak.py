@@ -44,7 +44,9 @@ class DandelionLoopTest(BitcoinTestFramework):
         wallet = MiniWallet(self.nodes[0])
 
         self.log.info("Adding stem P2PInterface")
-        with self.nodes[0].assert_debug_log(["Shuffled stem peers (found=1"]):
+        # The first shuffle runs before any peer is connected (found=0) and
+        # backs off for 10 seconds, so allow for that before the found=1 log
+        with self.nodes[0].assert_debug_log(["Shuffled stem peers (found=1"], timeout=15):
             stem_peer = self.nodes[0].add_p2p_connection(P2PInterface())
 
         self.log.info("Create the tx on node 1")
