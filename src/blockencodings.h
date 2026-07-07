@@ -106,6 +106,7 @@ public:
 
     CBlockHeader header;
     blsct::ProofOfStake posProof;
+    nbp::CheckpointData nbpCheckpoint;
 
     // Dummy for deserialization
     CBlockHeaderAndShortTxIDs() = default;
@@ -121,6 +122,8 @@ public:
         READWRITE(obj.header);
         if (obj.header.IsProofOfStake())
             READWRITE(obj.posProof);
+        if (obj.header.HasNbpCheckpoint())
+            READWRITE(obj.nbpCheckpoint);
         READWRITE(obj.nonce, Using<VectorFormatter<CustomUintFormatter<SHORTTXIDS_LENGTH>>>(obj.shorttxids), obj.prefilledtxn);
         if (ser_action.ForRead()) {
             if (obj.BlockTxCount() > std::numeric_limits<uint16_t>::max()) {
@@ -139,6 +142,7 @@ protected:
 public:
     CBlockHeader header;
     blsct::ProofOfStake posProof;
+    nbp::CheckpointData nbpCheckpoint;
 
     // Can be overridden for testing
     using CheckBlockFn = std::function<bool(const CBlock&, BlockValidationState&, const Consensus::Params&, bool, bool)>;

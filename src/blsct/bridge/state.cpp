@@ -11,7 +11,7 @@ namespace {
 enum KeyKind : uint8_t {
     KEY_GUARDIAN_SET = 'G',
     KEY_DEPOSIT = 'D',
-    KEY_MINT_TX = 'M',
+    KEY_MINT_OUT = 'M',
     KEY_EPOCH_PEGOUTS = 'E',
     KEY_COMMITTEE = 'P',
     KEY_CHECKPOINT = 'K',
@@ -48,7 +48,7 @@ std::vector<unsigned char> MakeKey(uint8_t kind, uint64_t id)
 
 std::vector<unsigned char> KeyGuardianSet() { return MakeKey(KEY_GUARDIAN_SET); }
 std::vector<unsigned char> KeyDeposit(const uint256& depositId) { return MakeKey(KEY_DEPOSIT, depositId); }
-std::vector<unsigned char> KeyMintTx(const uint256& txid) { return MakeKey(KEY_MINT_TX, txid); }
+std::vector<unsigned char> KeyMintOut(const uint256& outHash) { return MakeKey(KEY_MINT_OUT, outHash); }
 std::vector<unsigned char> KeyEpochPegOuts(uint64_t epoch) { return MakeKey(KEY_EPOCH_PEGOUTS, epoch); }
 std::vector<unsigned char> KeyCommittee(uint64_t period) { return MakeKey(KEY_COMMITTEE, period); }
 std::vector<unsigned char> KeyCheckpoint(uint64_t epoch) { return MakeKey(KEY_CHECKPOINT, epoch); }

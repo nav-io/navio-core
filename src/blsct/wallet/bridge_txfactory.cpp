@@ -465,8 +465,9 @@ std::optional<CMutableTransaction> BuildBridgeBurnTx(
     // Hidden token inputs must exceed the burned amount; the surplus comes
     // back as hidden token change.
     factory.AddPseudoOutput(tokenId, amount);
-    // Gathers both the wrapped-token coins and NAV for the fee.
+    // Wrapped-token coins to cover the burn, plus NAV coins for the fee.
     AddCoins(factory, wallet, blsct_km, tokenId, amount);
+    AddCoins(factory, wallet, blsct_km, TokenId(), FEE_FUNDING_LIMIT);
 
     return factory.Build(GetChangeDestination(blsct_km), FeeRate());
 }

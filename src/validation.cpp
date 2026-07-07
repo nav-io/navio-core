@@ -3628,6 +3628,17 @@ CBlockIndex* Chainstate::FindMostWorkChain()
                 if (anc == nullptr || anc->GetBlockHash() != finalHash) {
                     LogPrintf("NBP: rejecting chain candidate %s (height %d): forks below finalized checkpoint %s (height %d)\n",
                               pindexNew->GetBlockHash().ToString(), pindexNew->nHeight, finalHash.ToString(), finalHeight);
+                    // Mark the fork-below-finality tip invalid before dropping
+                    // it as a candidate: CheckBlockIndex requires that every
+                    // non-failed, fully-downloaded block with at least tip work
+                    // stay a candidate, so a bare erase trips its assertion.
+                    // A fork that omits a finalized checkpoint is a permanent
+                    // consensus violation, so treat it as any other failure.
+                    pindexNew->nStatus |= BLOCK_FAILED_VALID;
+                    m_blockman.m_dirty_blockindex.insert(pindexNew);
+                    if (m_chainman.m_best_invalid == nullptr || pindexNew->nChainWork > m_chainman.m_best_invalid->nChainWork) {
+                        m_chainman.m_best_invalid = pindexNew;
+                    }
                     setBlockIndexCandidates.erase(pindexNew);
                     continue;
                 }

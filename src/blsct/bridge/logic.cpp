@@ -15,6 +15,7 @@
 #include <primitives/block.h>
 #include <chain.h>
 #include <consensus/amount.h>
+#include <util/strencodings.h>
 
 #include <algorithm>
 
@@ -72,6 +73,27 @@ std::vector<unsigned char> ChallengeMessage(const uint256& depositId)
     std::vector<unsigned char> payload(action.begin(), action.end());
     payload.insert(payload.end(), depositId.begin(), depositId.end());
     return DstMessage(DST_RES, payload);
+}
+
+//! Keep a tokens-DB entry in sync with the bridge supply so ordinary
+//! wallet/token RPCs can see and transfer wrapped assets. The bridge's own
+//! accounting (TokenAggregate) stays authoritative for consensus checks.
+void AdjustBridgeTokenSupply(CCoinsViewCache& view, const uint256& tokenHash, uint64_t ethChainId,
+                             const std::vector<unsigned char>& token, CAmount delta)
+{
+    blsct::TokenEntry entry;
+    if (!view.GetToken(tokenHash, entry)) {
+        blsct::TokenInfo info;
+        info.type = blsct::TOKEN;
+        info.publicKey = blsct::PublicKey(MclG1Point::GetBasePoint());
+        info.nTotalSupply = MAX_MONEY;
+        info.mapMetadata["nbp"] = "bridge";
+        info.mapMetadata["eth_chain_id"] = std::to_string(ethChainId);
+        info.mapMetadata["erc20"] = HexStr(token);
+        entry = blsct::TokenEntry{info};
+    }
+    entry.Mint(delta);
+    view.AddToken(uint256{tokenHash}, std::move(entry));
 }
 
 uint256 ComputeClaimCommit(const blsct::DoublePublicKey& dpk, const uint256& r)
@@ -373,17 +395,25 @@ bool ExecBridgeMint(const BridgeMintPredicate& p, CCoinsViewCache& view,
     if (ctx.fDisconnect) {
         DepositRecord rec;
         if (GetState(view, key, rec) && rec.mintTxid == ctx.txid) {
-            if (!rec.prevRecord.empty()) {
-                view.SetNbpState(key, rec.prevRecord);
-            } else {
-                EraseState(view, key);
-            }
-            EraseState(view, KeyMintTx(ctx.txid));
             const uint256 tokenHash = BridgeTokenId(p.ethChainId, p.token);
             TokenAggregate agg;
             GetState(view, KeyTokenAggregate(tokenHash), agg);
             agg.minted -= p.amount;
+            AdjustBridgeTokenSupply(view, tokenHash, p.ethChainId, p.token, -p.amount);
+            if (!rec.prevRecord.empty()) {
+                // This mint replaced a timeout-revoked deposit whose dead
+                // supply was netted out on connect; restore it.
+                DepositRecord prev;
+                DataStream ss{rec.prevRecord};
+                ss >> prev;
+                agg.minted += prev.amount;
+                AdjustBridgeTokenSupply(view, tokenHash, p.ethChainId, p.token, prev.amount);
+                view.SetNbpState(key, rec.prevRecord);
+            } else {
+                EraseState(view, key);
+            }
             SetState(view, KeyTokenAggregate(tokenHash), agg);
+            EraseState(view, KeyMintOut(ctx.out->GetHash()));
         }
         return true;
     }
@@ -436,12 +466,20 @@ bool ExecBridgeMint(const BridgeMintPredicate& p, CCoinsViewCache& view,
     rec.attBitfield = p.bitfield;
     rec.prevRecord = prevRecord;
     SetState(view, key, rec);
-    SetState(view, KeyMintTx(ctx.txid), p.depositId);
+    SetState(view, KeyMintOut(ctx.out->GetHash()), p.depositId);
 
     TokenAggregate agg;
     GetState(view, KeyTokenAggregate(tokenHash), agg);
+    // Re-minting a timeout-revoked deposit: the predecessor's supply is dead
+    // (its outputs are permanently frozen), so net it out first — otherwise
+    // circulating supply would double-count the deposit and break solvency.
+    if (!prevRecord.empty()) {
+        agg.minted -= existing.amount;
+        AdjustBridgeTokenSupply(view, tokenHash, p.ethChainId, p.token, -existing.amount);
+    }
     agg.minted += p.amount;
     SetState(view, KeyTokenAggregate(tokenHash), agg);
+    AdjustBridgeTokenSupply(view, tokenHash, p.ethChainId, p.token, p.amount);
     return true;
 }
 
@@ -466,6 +504,7 @@ bool ExecBridgeBurn(const BridgeBurnPredicate& p, CCoinsViewCache& view,
         GetState(view, KeyTokenAggregate(tokenHash), agg);
         agg.burned -= p.amount;
         SetState(view, KeyTokenAggregate(tokenHash), agg);
+        AdjustBridgeTokenSupply(view, tokenHash, p.ethChainId, p.token, p.amount);
         return true;
     }
 
@@ -499,6 +538,7 @@ bool ExecBridgeBurn(const BridgeBurnPredicate& p, CCoinsViewCache& view,
 
     agg.burned += p.amount;
     SetState(view, KeyTokenAggregate(tokenHash), agg);
+    AdjustBridgeTokenSupply(view, tokenHash, p.ethChainId, p.token, -p.amount);
     return true;
 }
 
@@ -583,6 +623,7 @@ bool ExecBridgeResolve(const BridgeResolvePredicate& p, CCoinsViewCache& view,
                 GetState(view, KeyTokenAggregate(tokenHash), agg);
                 agg.minted += rec.amount;
                 SetState(view, KeyTokenAggregate(tokenHash), agg);
+                AdjustBridgeTokenSupply(view, tokenHash, rec.ethChainId, rec.token, rec.amount);
             }
             rec.status = static_cast<uint8_t>(DepositStatus::CHALLENGED);
             rec.resolveTxid.SetNull();
@@ -648,6 +689,7 @@ bool ExecBridgeResolve(const BridgeResolvePredicate& p, CCoinsViewCache& view,
         GetState(view, KeyTokenAggregate(tokenHash), agg);
         agg.minted -= rec.amount;
         SetState(view, KeyTokenAggregate(tokenHash), agg);
+        AdjustBridgeTokenSupply(view, tokenHash, rec.ethChainId, rec.token, -rec.amount);
 
         rec.status = static_cast<uint8_t>(DepositStatus::REVOKED_UPHELD);
     } else {
@@ -701,7 +743,7 @@ bool CheckNbpSpend(const CCoinsViewCache& view, const Consensus::Params& params,
     if (!params.nbp.IsActive(height)) return true;
 
     uint256 depositId;
-    if (!GetState(view, KeyMintTx(prevout.hash), depositId)) return true; // not a bridge mint
+    if (!GetState(view, KeyMintOut(prevout.hash), depositId)) return true; // not a bridge mint
 
     DepositRecord rec;
     if (!GetState(view, KeyDeposit(depositId), rec)) {

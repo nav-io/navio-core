@@ -176,7 +176,9 @@ struct TokenAggregate {
 
 std::vector<unsigned char> KeyGuardianSet();
 std::vector<unsigned char> KeyDeposit(const uint256& depositId);
-std::vector<unsigned char> KeyMintTx(const uint256& txid);
+//! Keyed by the minted BLSCT output's hash (== its COutPoint hash), so the
+//! spend gate can look a prevout up directly.
+std::vector<unsigned char> KeyMintOut(const uint256& outHash);
 std::vector<unsigned char> KeyEpochPegOuts(uint64_t epoch);
 std::vector<unsigned char> KeyCommittee(uint64_t period);
 std::vector<unsigned char> KeyCheckpoint(uint64_t epoch);

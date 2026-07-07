@@ -210,7 +210,6 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     const OrderedElements<MclG1Point> existing_staked = view.GetStakedCommitments();
     std::set<std::vector<unsigned char>> tx_staked_points;
 
-    size_t nbpPredicates = 0;
     uint32_t voutIndex = 0;
 
     for (auto& out : tx.vout) {
@@ -229,10 +228,10 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                 // NBP bridge predicate: validate + apply state, then feed
                 // its consensus-minted (pseudo-input) / consensus-burned
                 // (pseudo-output) value into the balance equation under the
-                // appropriate token generator.
-                if (++nbpPredicates > 1) {
-                    return state.Invalid(TxValidationResult::TX_CONSENSUS, "nbp-multiple-predicates");
-                }
+                // appropriate token generator. Several NBP predicates may
+                // coexist in one transaction (BLSCT block aggregation merges
+                // all block txs into one); each output is validated
+                // independently and their balance terms accumulate.
                 nbp::PredicateContext nbpCtx;
                 nbpCtx.params = consensusParams;
                 nbpCtx.height = nSpendHeight;
