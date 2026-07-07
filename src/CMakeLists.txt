@@ -122,6 +122,7 @@ set(BLSCT_WALLET_SOURCES
   blsct/wallet/balance_proof.cpp
   blsct/wallet/helpers.cpp
   blsct/wallet/keyman.cpp
+  blsct/wallet/bridge_txfactory.cpp
   blsct/wallet/keyring.cpp
   blsct/wallet/rpc.cpp
   blsct/wallet/txfactory.cpp
@@ -394,6 +395,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     validation.cpp
     validationinterface.cpp
     versionbits.cpp
+    blsct/bridge/rpc.cpp
     blsct/tokens/rpc.cpp
     blsct/range_proof/rpc.cpp
     blsct/range_proof/bulletproofs/range_proof_logic.cpp

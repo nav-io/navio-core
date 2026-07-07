@@ -60,11 +60,12 @@ struct GuardianExitPredicate {
 };
 
 //! Reclaim an EXITING bond after nUnbondingBlocks. Carried on the payout
-//! output itself: the signature binds the output hash, so the destination
-//! and amount cannot be altered in flight.
+//! output itself: the signature binds the destination script hash and the
+//! amount (it cannot bind the output hash — the predicate holding the
+//! signature is part of it), so the payout cannot be redirected in flight.
 struct GuardianWithdrawPredicate {
     blsct::PublicKey guardianKey;
-    //! Sign(sk_g, DST_POP ‖ "withdraw" ‖ pk_g ‖ out_hash)
+    //! Sign(sk_g, DST_POP ‖ "withdraw" ‖ pk_g ‖ SHA256(scriptPubKey) ‖ nValue(u64 LE))
     blsct::Signature withdrawSig;
 
     SERIALIZE_METHODS(GuardianWithdrawPredicate, obj)

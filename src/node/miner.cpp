@@ -5,6 +5,8 @@
 
 #include <node/miner.h>
 
+#include <blsct/bridge/rpc.h>
+#include <blsct/bridge/state.h>
 #include <blsct/pos/pos.h>
 #include <blsct/wallet/txfactory.h>
 #include <chain.h>
@@ -235,12 +237,20 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     for (const CMutableTransaction& tx : txns) {
         bool validPredicate = true;
         CAmount txFees = 0;
+        uint32_t voutIndex = 0;
 
         for (auto& out : tx.vout) {
+            const uint32_t thisVout = voutIndex++;
             if (out.predicate.size() > 0) {
                 try {
                     auto parsedPredicate = blsct::ParsePredicate(out.predicate);
-                    if (!ExecutePredicate(parsedPredicate, viewNew)) {
+                    nbp::PredicateContext nbpCtx;
+                    nbpCtx.params = &chainparams.GetConsensus();
+                    nbpCtx.height = nHeight;
+                    nbpCtx.txid = CTransaction(tx).GetHash();
+                    nbpCtx.out = &out;
+                    nbpCtx.voutIndex = thisVout;
+                    if (!ExecutePredicate(parsedPredicate, viewNew, false, &nbpCtx)) {
                         LogPrintf("%s: Failed validation of predicate of output %s\n", __func__, out.ToString());
                         validPredicate = false;
                         break;
@@ -314,10 +324,41 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     pblock->nNonce = 0;
     pblocktemplate->vTxSigOpsCost[0] = WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx[0]);
 
+    // NBP: embed a queued bridge checkpoint. Drop the pending entry when
+    // its epoch already has a checkpoint on this chain (it was included by
+    // an earlier block).
+    bool nbpCheckpointEmbedded = false;
+    if (chainparams.GetConsensus().nbp.IsActive(nHeight)) {
+        if (auto pending = nbp::GetPendingCheckpoint()) {
+            nbp::CheckpointRecord existing;
+            if (nbp::GetState(m_chainstate.CoinsTip(), nbp::KeyCheckpoint(pending->epoch), existing)) {
+                nbp::ClearPendingCheckpoint();
+            } else {
+                pblock->nVersion |= CBlockHeader::VERSION_BIT_NBP_CKPT;
+                pblock->nbpCheckpoint = *pending;
+                nbpCheckpointEmbedded = true;
+            }
+        }
+    }
+
     BlockValidationState state;
     if (m_options.test_block_validity && !TestBlockValidity(state, chainparams, m_chainstate, *pblock, pindexPrev,
                                                             GetAdjustedTime, /*fCheckPOW=*/false, /*fCheckMerkleRoot=*/false)) {
-        throw std::runtime_error(strprintf("%s: TestBlockValidity failed: %s", __func__, state.ToString()));
+        if (nbpCheckpointEmbedded) {
+            // A bad queued checkpoint must not wedge mining: drop it and
+            // retry the same block without it.
+            LogPrintf("%s: dropping invalid pending NBP checkpoint (%s)\n", __func__, state.ToString());
+            nbp::ClearPendingCheckpoint();
+            pblock->nVersion &= ~CBlockHeader::VERSION_BIT_NBP_CKPT;
+            pblock->nbpCheckpoint = nbp::CheckpointData{};
+            state = BlockValidationState{};
+            if (!TestBlockValidity(state, chainparams, m_chainstate, *pblock, pindexPrev,
+                                   GetAdjustedTime, /*fCheckPOW=*/false, /*fCheckMerkleRoot=*/false)) {
+                throw std::runtime_error(strprintf("%s: TestBlockValidity failed: %s", __func__, state.ToString()));
+            }
+        } else {
+            throw std::runtime_error(strprintf("%s: TestBlockValidity failed: %s", __func__, state.ToString()));
+        }
     }
     const auto time_2{SteadyClock::now()};
 

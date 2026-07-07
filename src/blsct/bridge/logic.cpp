@@ -50,12 +50,19 @@ std::vector<unsigned char> ExitMessage(const std::vector<unsigned char>& pk)
     return DstMessage(DST_POP, payload);
 }
 
-std::vector<unsigned char> WithdrawMessage(const std::vector<unsigned char>& pk, const uint256& outHash)
+//! The withdraw signature cannot cover the carrying output's hash (the
+//! predicate containing the signature is part of that hash), so it binds
+//! the destination script and amount directly.
+std::vector<unsigned char> WithdrawMessage(const std::vector<unsigned char>& pk, const CTxOut& out)
 {
     static const std::string action{"withdraw"};
     std::vector<unsigned char> payload(action.begin(), action.end());
     payload.insert(payload.end(), pk.begin(), pk.end());
-    payload.insert(payload.end(), outHash.begin(), outHash.end());
+    uint256 scriptHash;
+    CSHA256().Write(out.scriptPubKey.data(), out.scriptPubKey.size()).Finalize(scriptHash.begin());
+    payload.insert(payload.end(), scriptHash.begin(), scriptHash.end());
+    const uint64_t v = static_cast<uint64_t>(out.nValue);
+    for (int i = 0; i < 8; i++) payload.push_back(static_cast<unsigned char>((v >> (8 * i)) & 0xff));
     return DstMessage(DST_POP, payload);
 }
 
@@ -210,7 +217,7 @@ bool ExecGuardianWithdraw(const GuardianWithdrawPredicate& p, CCoinsViewCache& v
         err = "nbp-bad-withdraw-value";
         return false;
     }
-    if (!p.guardianKey.Verify(WithdrawMessage(pk, ctx.out->GetHash()), p.withdrawSig)) {
+    if (!p.guardianKey.Verify(WithdrawMessage(pk, *ctx.out), p.withdrawSig)) {
         err = "nbp-bad-withdraw-sig";
         return false;
     }

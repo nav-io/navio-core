@@ -22,6 +22,7 @@ void RegisterSignerRPCCommands(CRPCTable &tableRPC);
 void RegisterTxoutProofRPCCommands(CRPCTable&);
 void RegisterTokenRPCCommands(CRPCTable&);
 void RegisterRangeProofRPCCommands(CRPCTable&);
+void RegisterNbpRPCCommands(CRPCTable&);
 static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
 {
     RegisterBlockchainRPCCommands(t);
@@ -39,6 +40,7 @@ static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
     RegisterTxoutProofRPCCommands(t);
     RegisterTokenRPCCommands(t);
     RegisterRangeProofRPCCommands(t);
+    RegisterNbpRPCCommands(t);
 }
 
 #endif // BITCOIN_RPC_REGISTER_H
