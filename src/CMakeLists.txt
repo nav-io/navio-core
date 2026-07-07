@@ -71,6 +71,7 @@ set(BLSCT_SOURCES
   blsct/bridge/logic.cpp
   blsct/bridge/merkle.cpp
   blsct/bridge/messages.cpp
+  blsct/bridge/spp.cpp
   blsct/bridge/state.cpp
   blsct/building_block/g_h_gi_hi_zero_verifier.cpp
   blsct/building_block/generator_deriver.cpp

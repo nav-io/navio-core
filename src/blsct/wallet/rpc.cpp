@@ -9,6 +9,7 @@
 #include <blsct/wallet/bridge_txfactory.h>
 #include <blsct/wallet/helpers.h>
 #include <blsct/wallet/keyman.h>
+#include <blsct/bridge/epoch.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/unsigned_transaction.h>
 #include <blsct/common.h>
@@ -3416,13 +3417,23 @@ static RPCHelpMan nbpregisterguardian()
                 throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("bond_amount below the consensus minimum bond (%s)", FormatMoney(Params().GetConsensus().nbp.minBond)));
             }
 
-            uint32_t refHeight;
+            int height;
+            std::vector<Mcl::Point> stakedSet;
             {
                 LOCK(handles->wallet->cs_wallet);
-                refHeight = static_cast<uint32_t>(handles->wallet->GetLastBlockHeight());
+                height = handles->wallet->GetLastBlockHeight();
+                // Canonical staked-commitment set from consensus (via the
+                // wallet's chain interface — wallet RPCs have no NodeContext),
+                // so the SPP is built against exactly what the verifier uses.
+                for (const auto& vch : handles->wallet->chain().getNbpStakedCommitments()) {
+                    stakedSet.emplace_back(vch);
+                }
             }
+            const uint32_t refHeight = static_cast<uint32_t>(height);
+            const uint64_t period = static_cast<uint64_t>(
+                nbp::PeriodOfHeight(Params().GetConsensus(), height));
 
-            auto res = blsct::bridge::BuildGuardianRegisterTx(handles->wallet.get(), handles->km, bond, refHeight);
+            auto res = blsct::bridge::BuildGuardianRegisterTx(handles->wallet.get(), handles->km, bond, refHeight, stakedSet, period);
 
             UniValue ret{UniValue::VOBJ};
             ret.pushKV("txid", BroadcastBridgeTx(*handles->wallet, res));

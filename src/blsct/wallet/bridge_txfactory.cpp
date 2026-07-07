@@ -6,6 +6,7 @@
 
 #include <blsct/tokens/predicate_parser.h>
 #include <blsct/bridge/messages.h>
+#include <blsct/bridge/spp.h>
 #include <chainparams.h>
 #include <crypto/sha256.h>
 #include <hash.h>
@@ -346,17 +347,42 @@ constexpr CAmount FEE_FUNDING_LIMIT{COIN};
 // --- builders -----------------------------------------------------------------
 
 std::optional<CMutableTransaction> BuildGuardianRegisterTx(
-    wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const CAmount& bond, uint32_t sppRefHeight)
+    wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const CAmount& bond, uint32_t sppRefHeight,
+    const std::vector<Mcl::Point>& stakedSet, uint64_t period)
 {
     LOCK(wallet->cs_wallet);
 
     const auto guardianKey = GetGuardianKey(blsct_km);
     const auto pk = guardianKey.GetPublicKey();
 
+    // Gather the wallet's own staked commitments (value, blinding) until they
+    // cover the bond, then build the real stake-participation proof.
+    std::vector<InputCandidates> stakedCandidates;
+    TxFactory::AddAvailableCoins(wallet, blsct_km, TokenId(),
+                                 CreateTransactionType::STAKED_COMMITMENT_UNSTAKE,
+                                 stakedCandidates, MAX_MONEY);
+    std::vector<std::pair<Mcl::Scalar, Mcl::Scalar>> coins;
+    CAmount staked = 0;
+    for (const auto& c : stakedCandidates) {
+        if (!c.is_staked_commitment) continue;
+        coins.emplace_back(MclScalar(c.amount), c.gamma);
+        staked += c.amount;
+        if (staked >= bond) break;
+    }
+    if (staked < bond) return std::nullopt; // not enough staked to back the bond
+
+    auto stakeProof = nbp::ProveStake(stakedSet, coins, bond, period);
+    if (!stakeProof) return std::nullopt;
+
     nbp::GuardianRegisterPredicate predicate;
     predicate.guardianKey = pk;
     predicate.proofOfPossession = guardianKey.Sign(PopMessage(pk.GetVch()));
-    predicate.sppBlob = {0x01}; // mock SPP (IMPLEMENTATION.md P1)
+    {
+        DataStream ss;
+        ss << *stakeProof;
+        const auto bytes = MakeUCharSpan(ss);
+        predicate.sppBlob.assign(bytes.begin(), bytes.end());
+    }
     predicate.sppRefHeight = sppRefHeight;
 
     BridgeTxFactory factory;

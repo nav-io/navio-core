@@ -150,15 +150,22 @@ class NbpBridgeE2ETest(BitcoinTestFramework):
             node.createwallet(wallet_name=f"g{i}", blsct=True)
             g = node.get_wallet_rpc(f"g{i}")
             addr = g.getnewaddress(label="", address_type="blsct")
-            # Bond + headroom for challenge bonds and fees across the run.
-            funder.sendtoblsctaddress(addr, MIN_BOND + 500)
+            # Bond (burned) + stake (backs the SPP) + headroom for challenge
+            # bonds and fees across the run.
+            funder.sendtoblsctaddress(addr, 2 * MIN_BOND + 1000)
             self.guardians.append(g)
         node.createwallet(wallet_name="user", blsct=True)
         user = node.get_wallet_rpc("user")
         funder.sendtoblsctaddress(user.getnewaddress(label="", address_type="blsct"), 100)
         self.mine(2)
 
-        self.log.info("Register 3 guardians (mock SPP)")
+        self.log.info("Guardians stake >= bond, then register with a real SPP")
+        # The SPP proves ownership of staked commitments summing to >= the
+        # bond. Every guardian locks MIN_BOND of stake first; the resulting
+        # staked-commitment set (>= 2 members) backs the membership proofs.
+        for g in self.guardians:
+            g.stakelock(MIN_BOND)
+        self.mine(2)
         for g in self.guardians:
             g.nbpregisterguardian(MIN_BOND)
         self.mine(1)
@@ -166,6 +173,15 @@ class NbpBridgeE2ETest(BitcoinTestFramework):
         assert_equal(len(guardians), 3)
         assert all(e["status"] == "active" for e in guardians)
         reg_height = node.getblockcount()
+
+        self.log.info("Sybil: a fresh wallet with no stake cannot register")
+        # A wallet holding no staked commitments cannot produce an SPP proving
+        # stake >= bond, so the register RPC fails before broadcast.
+        node.createwallet(wallet_name="nostake", blsct=True)
+        nostake = node.get_wallet_rpc("nostake")
+        funder.sendtoblsctaddress(nostake.getnewaddress(label="", address_type="blsct"), MIN_BOND + 100)
+        self.mine(1)
+        assert_raises_rpc_error(-6, None, nostake.nbpregisterguardian, MIN_BOND)
 
         self.log.info("Mine to a period whose committee contains the guardians")
         # Snapshot at the last block of period p covers period p+2; the

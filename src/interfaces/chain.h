@@ -203,6 +203,12 @@ public:
     //! the height range from min_height to max_height, inclusive.
     virtual bool hasBlocks(const uint256& block_hash, int min_height = 0, std::optional<int> max_height = {}) = 0;
 
+    //! Serialized canonical staked-commitment set at the active tip (each
+    //! element is a compressed G1 point). Used by the NBP guardian
+    //! registration flow to build a stake-participation proof against the
+    //! exact set consensus will verify against.
+    virtual std::vector<std::vector<unsigned char>> getNbpStakedCommitments() = 0;
+
     //! Check if transaction is RBF opt in.
     virtual RBFTransactionState isRBFOptIn(const CTransaction& tx) = 0;
 

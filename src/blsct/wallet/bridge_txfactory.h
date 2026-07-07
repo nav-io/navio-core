@@ -55,9 +55,14 @@ blsct::DoublePublicKey GetClaimDestination(blsct::KeyMan* blsct_km);
 // failure (nullopt = insufficient funds).
 
 //! a. Guardian register: OP_RETURN output, transparent nValue = bond,
-//! NBP_GUARDIAN_REGISTER predicate (PoP + mock SPP). Funded from wallet NAV.
+//! NBP_GUARDIAN_REGISTER predicate (PoP + real stake-participation proof).
+//! `stakedSet` is the canonical consensus staked-commitment set and `period`
+//! the registration period; the builder proves the wallet's own staked coins
+//! sum to >= bond. Funded from wallet NAV. Returns nullopt if the wallet does
+//! not hold >= bond in staked commitments.
 std::optional<CMutableTransaction> BuildGuardianRegisterTx(
-    wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const CAmount& bond, uint32_t sppRefHeight);
+    wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const CAmount& bond, uint32_t sppRefHeight,
+    const std::vector<Mcl::Point>& stakedSet, uint64_t period);
 
 //! b. Guardian exit: OP_RETURN nValue=0 output with NBP_GUARDIAN_EXIT. Fee only.
 std::optional<CMutableTransaction> BuildGuardianExitTx(

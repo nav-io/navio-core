@@ -615,6 +615,15 @@ public:
     }
     void findCoins(std::map<COutPoint, Coin>& coins) override { return FindCoins(m_node, coins); }
     void findTokens(std::map<uint256, blsct::TokenEntry>& tokens) override { return FindTokens(m_node, tokens); };
+    std::vector<std::vector<unsigned char>> getNbpStakedCommitments() override
+    {
+        LOCK(::cs_main);
+        const auto elems = chainman().ActiveChainstate().CoinsTip().GetStakedCommitments().GetElements();
+        std::vector<std::vector<unsigned char>> out;
+        out.reserve(elems.Size());
+        for (size_t i = 0; i < elems.Size(); ++i) out.push_back(elems[i].GetVch());
+        return out;
+    }
     double guessVerificationProgress(const uint256& block_hash) override
     {
         LOCK(::cs_main);

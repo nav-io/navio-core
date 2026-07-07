@@ -8,6 +8,7 @@
 #include <blsct/bridge/merkle.h>
 #include <blsct/bridge/messages.h>
 #include <blsct/bridge/predicates.h>
+#include <blsct/bridge/spp.h>
 #include <blsct/public_keys.h>
 #include <blsct/tokens/predicate_parser.h>
 #include <crypto/sha256.h>
@@ -124,6 +125,10 @@ bool ExecGuardianRegister(const GuardianRegisterPredicate& p, CCoinsViewCache& v
                           const PredicateContext& ctx, std::string& err)
 {
     const auto pk = p.guardianKey.GetVch();
+    // The SPP seed and tag namespace are keyed by the period of the referenced
+    // snapshot height, not the inclusion height — the wallet builds the proof
+    // against sppRefHeight, and the two can straddle a period boundary.
+    const int64_t period = PeriodOfHeight(*ctx.params, static_cast<int>(p.sppRefHeight));
 
     GuardianSet gs;
     GetState(view, KeyGuardianSet(), gs);
@@ -131,6 +136,17 @@ bool ExecGuardianRegister(const GuardianRegisterPredicate& p, CCoinsViewCache& v
     if (ctx.fDisconnect) {
         gs.members.erase(pk);
         SetState(view, KeyGuardianSet(), gs);
+        // Release the SPP tags this registration claimed for the period.
+        StakeProof sp;
+        try {
+            DataStream ss{p.sppBlob};
+            ss >> sp;
+            for (const auto& tag : StakeProofTagHashes(sp)) {
+                EraseState(view, KeySppTag(period, tag));
+            }
+        } catch (const std::exception&) {
+            // Malformed blob never connected, so nothing to release.
+        }
         return true;
     }
 
@@ -148,21 +164,48 @@ bool ExecGuardianRegister(const GuardianRegisterPredicate& p, CCoinsViewCache& v
     }
     // Bond output: transparent value >= MIN_BOND, provably unspendable so
     // the bond is escrowed by burning (refunded later via the withdraw
-    // pseudo-input path).
+    // pseudo-input path). The bond IS the guardian's public committee weight.
     if (!ctx.out->scriptPubKey.IsUnspendable() || ctx.out->nValue < ctx.params->nbp.minBond ||
         !MoneyRange(ctx.out->nValue)) {
         err = "nbp-bad-bond";
-        return false;
-    }
-    if (p.sppBlob != MOCK_SPP) {
-        // Real SPP verification is not implemented in the prototype.
-        err = "nbp-spp-invalid";
         return false;
     }
     if (p.sppRefHeight > static_cast<uint32_t>(ctx.height) ||
         static_cast<uint32_t>(ctx.height) - p.sppRefHeight > ctx.params->nbp.nSppMaxAge) {
         err = "nbp-spp-stale";
         return false;
+    }
+
+    // Real stake-participation proof (DESIGN §4.1): prove ownership of staked
+    // commitments summing to >= bond, without revealing which. Verified
+    // against the canonical staked-commitment set at this block.
+    StakeProof stakeProof;
+    try {
+        DataStream ss{p.sppBlob};
+        ss >> stakeProof;
+    } catch (const std::exception&) {
+        err = "nbp-spp-malformed";
+        return false;
+    }
+    const Elements<Mcl::Point> stakedElems = view.GetStakedCommitments().GetElements();
+    std::vector<Mcl::Point> stakedSet;
+    stakedSet.reserve(stakedElems.Size());
+    for (size_t i = 0; i < stakedElems.Size(); ++i) stakedSet.push_back(stakedElems[i]);
+    std::vector<uint256> tagHashes;
+    if (!VerifyStakeProof(stakedSet, ctx.out->nValue, static_cast<uint64_t>(period),
+                          stakeProof, tagHashes, err)) {
+        return false;
+    }
+    // One staked coin backs at most one guardian per registration period.
+    for (const auto& tag : tagHashes) {
+        std::vector<unsigned char> dummy;
+        if (view.GetNbpState(KeySppTag(period, tag), dummy)) {
+            err = "nbp-spp-dup-tag";
+            return false;
+        }
+    }
+    for (const auto& tag : tagHashes) {
+        SetState(view, KeySppTag(period, tag), uint8_t{1});
     }
 
     GuardianEntry entry;
