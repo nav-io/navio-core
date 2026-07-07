@@ -50,6 +50,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "getnetworkhashps", 1, "height" },
     { "sendtoblsctaddress", 1, "amount" },
     { "sendtoblsctaddress", 3, "verbose" },
+    { "sendtoblsctaddress", 4, "subtractfeefromamount" },
     { "sendnfttoblsctaddress", 1, "nft_id" },
     { "sendnfttoblsctaddress", 4, "verbose" },
     { "sendtokentoblsctaddress", 2, "amount" },
