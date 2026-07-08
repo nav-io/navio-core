@@ -2,8 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/eip_2333/bls12_381_keygen.h>
 #include <test/util/logging.h>
 #include <test/util/setup_common.h>
+#include <util/strencodings.h>
 #include <wallet/test/util.h>
 #include <wallet/wallet.h>
 
@@ -208,6 +210,35 @@ BOOST_FIXTURE_TEST_CASE(wallet_load_ckey, TestingSetup)
         std::shared_ptr<CWallet> wallet(new CWallet(m_node.chain.get(), "", CreateMockableWalletDatabase(records)));
         BOOST_CHECK_EQUAL(wallet->LoadWallet(), DBErrors::CORRUPT);
     }
+}
+
+BOOST_FIXTURE_TEST_CASE(wallet_blsct_mnemonic_passphrase, TestingSetup)
+{
+    const std::vector<unsigned char> entropy = ParseHex("68a79eaca2324873eacc50cb9c6eca8cc68ea5d936f98787c60c7ebc74e6ce7c");
+
+    auto seed_id_for = [&](const std::string& mnemonic_passphrase) {
+        std::shared_ptr<CWallet> wallet(new CWallet(m_node.chain.get(), "", CreateMockableWalletDatabase()));
+        wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+        LOCK(wallet->cs_wallet);
+        auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+        BOOST_REQUIRE(blsct_km->SetupGeneration(entropy, blsct::IMPORT_MNEMONIC, true, mnemonic_passphrase));
+        return blsct_km->GetHDChain().seed_id;
+    };
+
+    auto id_plain = seed_id_for("");
+    auto id_pass = seed_id_for("passphrase");
+
+    // Derivation is deterministic for a given mnemonic + passphrase
+    BOOST_CHECK(id_plain == seed_id_for(""));
+    BOOST_CHECK(id_pass == seed_id_for("passphrase"));
+
+    // The passphrase changes the derived keys
+    BOOST_CHECK(id_plain != id_pass);
+    BOOST_CHECK(id_pass != seed_id_for("other"));
+
+    // Empty passphrase keeps the legacy direct-from-entropy derivation
+    auto legacy = blsct::PrivateKey(BLS12_381_KeyGen::derive_master_SK(entropy));
+    BOOST_CHECK(id_plain == legacy.GetPublicKey().GetID());
 }
 
 BOOST_FIXTURE_TEST_CASE(wallet_load_verif_crypted_blsct, TestingSetup)

@@ -44,7 +44,9 @@ class DandelionBlackholeTest(BitcoinTestFramework):
         wallet = MiniWallet(self.nodes[0])
 
         self.log.info("Adding P2PInterface stem")
-        with self.nodes[0].assert_debug_log(["Shuffled stem peers (found=1"]):
+        # The first shuffle runs before any peer is connected (found=0) and
+        # backs off for 10 seconds, so allow for that before the found=1 log
+        with self.nodes[0].assert_debug_log(["Shuffled stem peers (found=1"], timeout=15):
             self.nodes[0].add_p2p_connection(P2PInterface())  # Fake stem peer
 
         self.log.info("Create the tx on node 1")

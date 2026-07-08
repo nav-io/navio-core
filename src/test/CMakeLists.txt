@@ -104,6 +104,7 @@ add_executable(test_navio
   miner_tests.cpp
   miniscript_tests.cpp
   minisketch_tests.cpp
+  mnemonic_tests.cpp
   mock_process.cpp
   multisig_tests.cpp
   net_tests.cpp
