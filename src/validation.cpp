@@ -5772,6 +5772,17 @@ double GuessVerificationProgress(const ChainTxData& data, const CBlockIndex *pin
 
     int64_t nNow = time(nullptr);
 
+    // Both estimates below extrapolate the expected chain size for the time
+    // elapsed since the given block, so they asymptotically approach but never
+    // reach 1.0 while the clock keeps ticking. On a chain with a low
+    // transaction rate the resulting deficit is clearly visible (e.g. a fully
+    // synced mainnet node reporting 0.99998), so treat a block within a few
+    // block intervals of the current time as fully synced.
+    static constexpr int64_t FULLY_SYNCED_TIP_AGE{10 * 60};
+    if (nNow - pindex->GetBlockTime() <= FULLY_SYNCED_TIP_AGE) {
+        return 1.0;
+    }
+
     // When no transaction-rate statistics are available (e.g. a freshly reset
     // network whose chainTxData is still empty), the tx-count based estimate
     // below degenerates: fTxTotal becomes equal to nChainTx and the result is
