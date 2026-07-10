@@ -5770,7 +5770,7 @@ double GuessVerificationProgress(const ChainTxData& data, const CBlockIndex *pin
     if (pindex == nullptr)
         return 0.0;
 
-    int64_t nNow = time(nullptr);
+    const int64_t nNow = GetTime();
 
     // Both estimates below extrapolate the expected chain size for the time
     // elapsed since the given block, so they asymptotically approach but never
