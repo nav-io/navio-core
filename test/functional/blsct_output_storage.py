@@ -67,6 +67,7 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         self.test_block_reorg()
         self.test_staked_commitments()
         self.test_listtransactions_reports_balance_deltas()
+        self.test_listunspent_and_getreceivedby_agree_with_balance()
         self.test_many_transactions()
         self.test_wallet_size_comparison()
 
@@ -245,6 +246,75 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         # the listtransactions entries post-rescan must sum to whatever
         # balance getbalances now reports.
         self.assert_listtx_matches_balance(wb, "after rescan")
+
+    def test_listunspent_and_getreceivedby_agree_with_balance(self):
+        self.log.info("=== Test: listunspent/getreceivedbyaddress/getreceivedbylabel agree with getbalance for BLSCT coins ===")
+
+        # Fresh, output-storage BLSCT wallets isolated from earlier sub-tests'
+        # state, so the assertions below are exact rather than "at least".
+        self.nodes[0].createwallet(wallet_name="rp_a", blsct=True, storage_output=True)
+        self.nodes[1].createwallet(wallet_name="rp_b", blsct=True, storage_output=True)
+        wa = self.nodes[0].get_wallet_rpc("rp_a")
+        wb = self.nodes[1].get_wallet_rpc("rp_b")
+
+        aa = wa.getnewaddress(label="", address_type="blsct")
+        label = "recv-label"
+        ab = wb.getnewaddress(label=label, address_type="blsct")
+
+        # Fund wa past coinbase maturity so it has a trusted, spendable coin
+        # to send from.
+        self.generate_blsct_blocks(self.nodes[0], aa, 201)
+        self.sync_all()
+
+        send_amount = Decimal("7.5")
+        wa.sendtoblsctaddress(ab, send_amount)
+        self.sync_mempools()
+        self.generate_blsct_blocks(self.nodes[0], aa, 1)
+        self.sync_all()
+
+        # listunspent must surface the BLSCT-output-storage coin under its
+        # nv1... address with the correct recovered amount -- prior to this
+        # fix it only walked AvailableCoins() (mapWallet), which never sees
+        # coins that live solely in mapOutputs.
+        unspent = wb.listunspent()
+        matching = [u for u in unspent if u.get("address") == ab]
+        assert_equal(len(matching), 1)
+        entry = matching[0]
+        assert_equal(Decimal(str(entry["amount"])), send_amount)
+        assert_equal(entry["label"], label)
+        assert "outid" in entry and "scriptPubKey" in entry
+        assert isinstance(entry["spendable"], bool)
+        assert isinstance(entry["solvable"], bool)
+        assert isinstance(entry["safe"], bool)
+        assert_greater_than(entry["confirmations"], 0)
+
+        # wb only has this one coin, so listunspent's total must equal
+        # getbalance() exactly -- this is the invariant getbalance() itself
+        # already upholds by adding GetBlsctBalance() on top of GetBalance().
+        total_unspent = sum(Decimal(str(u["amount"])) for u in unspent)
+        assert_equal(total_unspent, Decimal(str(wb.getbalance())))
+
+        # The address filter must also work for BLSCT addresses.
+        filtered = wb.listunspent(1, 9999999, [ab])
+        assert_equal(len(filtered), 1)
+        assert_equal(filtered[0]["address"], ab)
+        empty_addr = wb.getnewaddress(label="", address_type="blsct")
+        assert_equal(wb.listunspent(1, 9999999, [empty_addr]), [])
+
+        # getreceivedbyaddress/getreceivedbylabel must report the actual
+        # received amount instead of 0 -- prior to this fix they matched via
+        # GetScriptForDestination(), which returns a fixed OP_1 placeholder
+        # for every BLSCT address and therefore could never match a real,
+        # masked BLSCT scriptPubKey.
+        assert_equal(Decimal(str(wb.getreceivedbyaddress(ab))), send_amount)
+        assert_equal(Decimal(str(wb.getreceivedbylabel(label))), send_amount)
+
+        # A BLSCT address that never received anything still reports 0
+        # (and does not raise).
+        assert_equal(Decimal(str(wb.getreceivedbyaddress(empty_addr))), Decimal(0))
+
+        self.nodes[0].unloadwallet("rp_a")
+        self.nodes[1].unloadwallet("rp_b")
 
     def test_basic_mining_and_balance(self):
         self.log.info("=== Test 1: Basic mining & balance ===")

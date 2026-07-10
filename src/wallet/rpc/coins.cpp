@@ -18,6 +18,24 @@
 
 
 namespace wallet {
+
+// Returns the credited amount when `txout` (a BLSCT output already known to
+// carry keys) pays one of `targets`. GetScriptForDestination() has no real
+// script to offer for a confidential address -- see addresstype.cpp's
+// CScriptVisitor, which returns a fixed OP_1 placeholder for every
+// blsct::DoublePublicKey -- so BLSCT destinations can only be matched by
+// recovering the actual destination via the BLSCT key manager, not by
+// comparing scriptPubKeys like the transparent path does.
+static CAmount GetBlsctReceivedIfMatch(const CWallet& wallet, const CTxOut& txout, CAmount recovered_amount, const std::set<CTxDestination>& targets) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    auto* blsct_km = wallet.GetBLSCTKeyMan();
+    if (!blsct_km) return 0;
+    const CTxDestination dest = blsct_km->GetDestination(txout);
+    if (!IsValidDestination(dest) || !targets.contains(dest)) return 0;
+    return recovered_amount;
+}
+
 static CAmount GetReceived(const CWallet& wallet, const UniValue& params, bool by_label) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
     std::vector<CTxDestination> addresses;
@@ -34,16 +52,26 @@ static CAmount GetReceived(const CWallet& wallet, const UniValue& params, bool b
         addresses.emplace_back(dest);
     }
 
-    // Filter by own scripts only
+    // Filter by own scripts/destinations only. Transparent addresses are
+    // matched by scriptPubKey as before; BLSCT addresses are matched by
+    // destination (via GetDestination()/HaveSubAddressStr()) since they have
+    // no meaningful literal scriptPubKey to compare against.
     std::set<CScript> output_scripts;
+    std::set<CTxDestination> blsct_destinations;
     for (const auto& address : addresses) {
+        if (std::holds_alternative<blsct::DoublePublicKey>(address)) {
+            if (wallet.IsMine(address) != ISMINE_NO) {
+                blsct_destinations.insert(address);
+            }
+            continue;
+        }
         auto output_script{GetScriptForDestination(address)};
         if (wallet.IsMine(output_script)) {
             output_scripts.insert(output_script);
         }
     }
 
-    if (output_scripts.empty()) {
+    if (output_scripts.empty() && blsct_destinations.empty()) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Address not found in wallet");
     }
 
@@ -67,10 +95,40 @@ static CAmount GetReceived(const CWallet& wallet, const UniValue& params, bool b
             continue;
         }
 
-        for (const CTxOut& txout : wtx.tx->vout) {
-            if (output_scripts.contains(txout.scriptPubKey)) {
+        for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+            const CTxOut& txout = wtx.tx->vout[i];
+            if (!blsct_destinations.empty() && txout.HasBLSCTKeys()) {
+                amount += GetBlsctReceivedIfMatch(wallet, txout, wtx.GetBLSCTRecoveryData(i).amount, blsct_destinations);
+            } else if (output_scripts.contains(txout.scriptPubKey)) {
                 amount += txout.nValue;
             }
+        }
+    }
+
+    // Under WALLET_FLAG_BLSCT_OUTPUT_STORAGE, receive-side BLSCT outputs can
+    // live in mapOutputs without ever getting a matching CWalletTx (range
+    // proofs stripped, recovery data cached per-output) -- see
+    // GetBlsctBalance() in wallet/receive.cpp for the same pattern. Skip an
+    // entry only when its matching CWalletTx is confirmed or in the mempool,
+    // since that means the mapWallet pass above already tallied it; an
+    // inactive CWalletTx (e.g. superseded by a staker-aggregated tx with a
+    // different txid) leaves the mapOutputs entry as the sole record of the
+    // credit.
+    if (!blsct_destinations.empty() && wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        for (const auto& [outpoint, wout] : wallet.mapOutputs) {
+            const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint);
+            if (wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool())) continue;
+
+            const int depth{wallet.GetOutputDepthInMainChain(wout)};
+            if (depth < min_depth
+                || (wout.IsCoinBase() && (depth < 1))
+                || (wallet.IsOutputImmatureCoinBase(wout) && !include_immature_coinbase))
+            {
+                continue;
+            }
+
+            if (!wout.fBLSCTOutput) continue;
+            amount += GetBlsctReceivedIfMatch(wallet, *wout.out, wout.blsctRecoveryData.amount, blsct_destinations);
         }
     }
 
@@ -669,6 +727,7 @@ RPCHelpMan listunspent()
 
     UniValue results(UniValue::VARR);
     std::vector<COutput> vecOutputs;
+    std::vector<COutput> vecBlsctOutputs;
     {
         CCoinControl cctl;
         cctl.m_avoid_address_reuse = false;
@@ -677,20 +736,44 @@ RPCHelpMan listunspent()
         cctl.m_include_unsafe_inputs = include_unsafe;
         LOCK(pwallet->cs_wallet);
         vecOutputs = AvailableCoinsListUnspent(*pwallet, &cctl, filter_coins).All();
+        if (pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+            // Under BLSCT output storage, confirmed BLSCT coins live in
+            // mapOutputs rather than mapWallet, so AvailableCoins() (used
+            // above via AvailableCoinsListUnspent) never sees them. This
+            // mirrors how getbalance() adds GetBlsctBalance() on top of
+            // GetBalance() to avoid under-reporting BLSCT funds; here we add
+            // AvailableBlsctCoins() on top of AvailableCoins() instead.
+            vecBlsctOutputs = AvailableBlsctCoins(*pwallet, &cctl, filter_coins).All();
+        }
     }
 
     LOCK(pwallet->cs_wallet);
 
     const bool avoid_reuse = pwallet->IsWalletFlagSet(WALLET_FLAG_AVOID_REUSE);
+    blsct::KeyMan* blsct_km = pwallet->GetBLSCTKeyMan();
 
-    for (const COutput& out : vecOutputs) {
-        CTxDestination address;
+    // Emits one listunspent entry for `out`. BLSCT coins are rendered using
+    // their recovered nv1... destination and amount (AvailableBlsctCoins
+    // already substitutes the recovered amount into out.txout.nValue) and
+    // skip the redeemScript/witnessScript/desc fields, which assume a
+    // standard, unmasked scriptPubKey and have no meaning for a confidential
+    // output.
+    auto add_entry = [&](const COutput& out, bool is_blsct) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+        AssertLockHeld(pwallet->cs_wallet);
         const CScript& scriptPubKey = out.txout.scriptPubKey;
-        bool fValidAddress = ExtractDestination(scriptPubKey, address);
-        bool reused = avoid_reuse && pwallet->IsSpentKey(scriptPubKey);
+        CTxDestination address;
+        bool fValidAddress;
+        bool reused = false;
+        if (is_blsct) {
+            address = blsct_km ? blsct_km->GetDestination(out.txout) : CTxDestination{};
+            fValidAddress = IsValidDestination(address);
+        } else {
+            fValidAddress = ExtractDestination(scriptPubKey, address);
+            reused = avoid_reuse && pwallet->IsSpentKey(scriptPubKey);
+        }
 
         if (destinations.size() && (!fValidAddress || !destinations.contains(address)))
-            continue;
+            return;
 
         UniValue entry(UniValue::VOBJ);
         entry.pushKV("outid", out.outpoint.hash.GetHex());
@@ -703,33 +786,35 @@ RPCHelpMan listunspent()
                 entry.pushKV("label", address_book_entry->GetLabel());
             }
 
-            std::unique_ptr<SigningProvider> provider = pwallet->GetSolvingProvider(scriptPubKey);
-            if (provider) {
-                if (scriptPubKey.IsPayToScriptHash()) {
-                    const CScriptID hash = ToScriptID(std::get<ScriptHash>(address));
-                    CScript redeemScript;
-                    if (provider->GetCScript(hash, redeemScript)) {
-                        entry.pushKV("redeemScript", HexStr(redeemScript));
-                        // Now check if the redeemScript is actually a P2WSH script
-                        CTxDestination witness_destination;
-                        if (redeemScript.IsPayToWitnessScriptHash()) {
-                            bool extracted = ExtractDestination(redeemScript, witness_destination);
-                            CHECK_NONFATAL(extracted);
-                            // Also return the witness script
-                            const WitnessV0ScriptHash& whash = std::get<WitnessV0ScriptHash>(witness_destination);
-                            CScriptID id{RIPEMD160(whash)};
-                            CScript witnessScript;
-                            if (provider->GetCScript(id, witnessScript)) {
-                                entry.pushKV("witnessScript", HexStr(witnessScript));
+            if (!is_blsct) {
+                std::unique_ptr<SigningProvider> provider = pwallet->GetSolvingProvider(scriptPubKey);
+                if (provider) {
+                    if (scriptPubKey.IsPayToScriptHash()) {
+                        const CScriptID hash = ToScriptID(std::get<ScriptHash>(address));
+                        CScript redeemScript;
+                        if (provider->GetCScript(hash, redeemScript)) {
+                            entry.pushKV("redeemScript", HexStr(redeemScript));
+                            // Now check if the redeemScript is actually a P2WSH script
+                            CTxDestination witness_destination;
+                            if (redeemScript.IsPayToWitnessScriptHash()) {
+                                bool extracted = ExtractDestination(redeemScript, witness_destination);
+                                CHECK_NONFATAL(extracted);
+                                // Also return the witness script
+                                const WitnessV0ScriptHash& whash = std::get<WitnessV0ScriptHash>(witness_destination);
+                                CScriptID id{RIPEMD160(whash)};
+                                CScript witnessScript;
+                                if (provider->GetCScript(id, witnessScript)) {
+                                    entry.pushKV("witnessScript", HexStr(witnessScript));
+                                }
                             }
                         }
-                    }
-                } else if (scriptPubKey.IsPayToWitnessScriptHash()) {
-                    const WitnessV0ScriptHash& whash = std::get<WitnessV0ScriptHash>(address);
-                    CScriptID id{RIPEMD160(whash)};
-                    CScript witnessScript;
-                    if (provider->GetCScript(id, witnessScript)) {
-                        entry.pushKV("witnessScript", HexStr(witnessScript));
+                    } else if (scriptPubKey.IsPayToWitnessScriptHash()) {
+                        const WitnessV0ScriptHash& whash = std::get<WitnessV0ScriptHash>(address);
+                        CScriptID id{RIPEMD160(whash)};
+                        CScript witnessScript;
+                        if (provider->GetCScript(id, witnessScript)) {
+                            entry.pushKV("witnessScript", HexStr(witnessScript));
+                        }
                     }
                 }
             }
@@ -750,7 +835,7 @@ RPCHelpMan listunspent()
         }
         entry.pushKV("spendable", out.spendable);
         entry.pushKV("solvable", out.solvable);
-        if (out.solvable) {
+        if (!is_blsct && out.solvable) {
             std::unique_ptr<SigningProvider> provider = pwallet->GetSolvingProvider(scriptPubKey);
             if (provider) {
                 auto descriptor = InferDescriptor(scriptPubKey, *provider);
@@ -761,7 +846,10 @@ RPCHelpMan listunspent()
         if (avoid_reuse) entry.pushKV("reused", reused);
         entry.pushKV("safe", out.safe);
         results.push_back(entry);
-    }
+    };
+
+    for (const COutput& out : vecOutputs) add_entry(out, /*is_blsct=*/false);
+    for (const COutput& out : vecBlsctOutputs) add_entry(out, /*is_blsct=*/true);
 
     return results;
 },
