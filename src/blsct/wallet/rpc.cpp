@@ -1019,7 +1019,7 @@ RPCHelpMan sendtokentoblsctaddress()
 
             const std::string address = request.params[1].get_str();
 
-            const bool verbose{request.params[4].isNull() ? false : request.params[11].get_bool()};
+            const bool verbose{request.params[4].isNull() ? false : request.params[4].get_bool()};
 
             blsct::SubAddress subAddress(std::get<blsct::DoublePublicKey>(destination));
             blsct::CreateTransactionData transactionData(address, AmountFromValue(request.params[2]), sMemo, TokenId(token_id), blsct::CreateTransactionType::NORMAL, 0);
@@ -1154,7 +1154,7 @@ RPCHelpMan stakelock()
 
             std::vector<wallet::CBLSCTRecipient> recipients;
             blsct::ParseBLSCTRecipients(address_amounts, false, "", recipients);
-            const bool verbose{request.params[10].isNull() ? false : request.params[10].get_bool()};
+            const bool verbose{request.params[1].isNull() ? false : request.params[1].get_bool()};
 
             blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
             transactionData.fConsolidateStakedCommitments = gArgs.GetBoolArg("-consolidatestakedcommitments", blsct::DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS);
@@ -1216,7 +1216,7 @@ RPCHelpMan stakeunlock()
 
             std::vector<wallet::CBLSCTRecipient> recipients;
             blsct::ParseBLSCTRecipients(address_amounts, false, "", recipients);
-            const bool verbose{request.params[10].isNull() ? false : request.params[10].get_bool()};
+            const bool verbose{request.params[1].isNull() ? false : request.params[1].get_bool()};
 
 
             blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT_UNSTAKE, Params().GetConsensus().nPePoSMinStakeAmount);

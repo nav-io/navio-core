@@ -135,25 +135,32 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
         wallet = self.nodes[0].get_wallet_rpc("wallet1")
         blsct_address = wallet.getnewaddress(label="", address_type="blsct")
 
-        # Test stakelock with verbose=false (default)
+        # Test stakelock with verbose=false (default): plain output hash string.
         stake_txid_simple = wallet.stakelock(self.min_stake)
         assert isinstance(stake_txid_simple, str), "Non-verbose output should be a string"
         assert len(stake_txid_simple) == 64, "Transaction ID should be 64 characters"
         self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
-        # Test stakelock with verbose=true
-        # Note: there might be a bug in verbose parameter handling
-        try:
-            stake_result_verbose = wallet.stakelock(self.min_stake, True)
-            if isinstance(stake_result_verbose, dict):
-                assert "txid" in stake_result_verbose, "Verbose output should contain txid"
-                assert len(stake_result_verbose["txid"]) == 64, "Transaction ID should be 64 characters"
-            else:
-                # If verbose doesn't work as expected, just check it's a valid txid
-                assert len(stake_result_verbose) == 64, "Should still return valid txid"
-            self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
-        except Exception as e:
-            self.log.info(f"Verbose staking may have parameter handling issue: {e}")
+        # Test stakelock with verbose=true: an object with an outputHash field.
+        # (stakelock's verbose arg is index 1; a prior bug read params[10],
+        # which is always null, silently ignoring the flag.)
+        stake_result_verbose = wallet.stakelock(self.min_stake, True)
+        assert isinstance(stake_result_verbose, dict), "Verbose output should be an object"
+        assert "outputHash" in stake_result_verbose, "Verbose output should contain outputHash"
+        assert len(stake_result_verbose["outputHash"]) == 64, "outputHash should be 64 characters"
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
+
+        # Same check for stakeunlock (shares the same previously-buggy params[10] read).
+        unlock_txid_simple = wallet.stakeunlock(self.min_stake)
+        assert isinstance(unlock_txid_simple, str), "Non-verbose output should be a string"
+        assert len(unlock_txid_simple) == 64, "Transaction ID should be 64 characters"
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
+
+        unlock_result_verbose = wallet.stakeunlock(self.min_stake, True)
+        assert isinstance(unlock_result_verbose, dict), "Verbose output should be an object"
+        assert "outputHash" in unlock_result_verbose, "Verbose output should contain outputHash"
+        assert len(unlock_result_verbose["outputHash"]) == 64, "outputHash should be 64 characters"
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
 if __name__ == '__main__':
     NavioBlsctStakingTest(__file__).main()
