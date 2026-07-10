@@ -350,17 +350,17 @@ static RPCHelpMan createwallet()
 {
     return RPCHelpMan{
         "createwallet",
-        "\nCreates and loads a new wallet.\n",
+        "\nCreates and loads a new wallet. By default this creates a BLSCT wallet, navio's standard wallet type; pass blsct=false to create a legacy/descriptor wallet instead.\n",
         {
             {"wallet_name", RPCArg::Type::STR, RPCArg::Optional::NO, "The name for the new wallet. If this is a path, the wallet will be created at the path location."},
             {"disable_private_keys", RPCArg::Type::BOOL, RPCArg::Default{false}, "Disable the possibility of private keys (only watchonlys are possible in this mode)."},
             {"blank", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a blank wallet. A blank wallet has no keys or HD seed. One can be set using setblsctseed."},
             {"passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Encrypt the wallet with this passphrase."},
             {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{false}, "Keep track of coin reuse, and treat dirty and clean coins differently with privacy considerations in mind."},
-            {"descriptors", RPCArg::Type::BOOL, RPCArg::Default{true}, "Create a native descriptor wallet. The wallet will use descriptors internally to handle address creation."},
+            {"descriptors", RPCArg::Type::BOOL, RPCArg::Default{true}, "Create a native descriptor wallet. The wallet will use descriptors internally to handle address creation. Ignored while 'blsct' is true (the default); explicitly setting both 'descriptors' and 'blsct' to true is an error. Set 'blsct' to false to create a descriptor wallet."},
             {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Save wallet name to persistent settings and load on startup. True to add wallet to startup list, false to remove, null to leave unchanged."},
-            {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true."},
-            {"blsct", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a wallet with BLSCT keys."},
+            {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true (and blsct set to false)."},
+            {"blsct", RPCArg::Type::BOOL, RPCArg::Default{true}, "Create a wallet with BLSCT keys. This is the default and standard wallet type on navio. Set to false to create a legacy or descriptor wallet instead."},
             {"storage_output", RPCArg::Type::BOOL, RPCArg::Default{false}, "Enables the storage of outputs instead of full txs (experimental)."},
             {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the BLSCT wallet from the specified seed (can be a master seed or an audit key). Requires blsct=true."},
             {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words) to restore a BLSCT wallet from. Requires blsct=true. Mutually exclusive with 'seed'."},
@@ -375,7 +375,7 @@ static RPCHelpMan createwallet()
                                                                                                                                  }},
                                               {RPCResult::Type::STR, "mnemonic", /*optional=*/true, "BIP-39 mnemonic phrase (24 words) for new BLSCT wallets. Only returned for new BLSCT wallets created without a seed or mnemonic."},
                                           }},
-        RPCExamples{HelpExampleCli("createwallet", "\"testwallet\"") + HelpExampleRpc("createwallet", "\"testwallet\"") + HelpExampleCliNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"load_on_startup", true}}) + HelpExampleRpcNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"load_on_startup", true}})},
+        RPCExamples{HelpExampleCli("createwallet", "\"testwallet\"") + HelpExampleRpc("createwallet", "\"testwallet\"") + HelpExampleCliNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"blsct", false}, {"load_on_startup", true}}) + HelpExampleRpcNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"blsct", false}, {"load_on_startup", true}})},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             WalletContext& context = EnsureWalletContext(request.context);
             uint64_t flags = 0;
@@ -400,10 +400,22 @@ static RPCHelpMan createwallet()
             if (!request.params[4].isNull() && request.params[4].get_bool()) {
                 flags |= WALLET_FLAG_AVOID_REUSE;
             }
-            // TODO(@aguycalled, @gogo): Discuss whether to remove legacy BDB and descriptor wallet support.
-            // With BLSCT as the standard wallet type, keeping these options may lead to users
-            // misconfiguring wallets. Consider simplifying to BLSCT-only.
-            if (request.params[5].isNull() || request.params[5].get_bool()) {
+            // BLSCT is the default and standard wallet type on navio. 'descriptors' still
+            // defaults to true for compatibility with upstream callers, but it is only
+            // honored when the wallet is not a BLSCT wallet. Explicitly requesting both
+            // blsct=true and descriptors=true is rejected rather than silently resolved,
+            // so users don't accidentally end up with a wallet type they didn't intend.
+            bool blsct_explicit = !request.params[8].isNull();
+            bool blsct = blsct_explicit ? request.params[8].get_bool() : true;
+
+            bool descriptors_explicit = !request.params[5].isNull();
+            bool descriptors = descriptors_explicit ? request.params[5].get_bool() : true;
+
+            if (blsct && descriptors_explicit && descriptors) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot set both 'blsct' and 'descriptors' to true. BLSCT is the default wallet type on navio; omit 'descriptors' (or set it to false) to create a BLSCT wallet, or set 'blsct' to false to create a descriptor wallet.");
+            }
+
+            if (descriptors && !blsct) {
 #ifndef USE_SQLITE
                 throw JSONRPCError(RPC_WALLET_ERROR, "Compiled without sqlite support (required for descriptor wallets)");
 #endif
@@ -417,10 +429,7 @@ static RPCHelpMan createwallet()
 #endif
             }
 
-
-            // TODO(@aguycalled, @gogo): Should blsct=true become the default? This would eliminate
-            // the need for the flag and reduce misconfiguration risk for new users.
-            if (!request.params[8].isNull() && request.params[8].get_bool()) {
+            if (blsct) {
                 flags |= WALLET_FLAG_BLSCT;
                 flags &= ~WALLET_FLAG_DESCRIPTORS;
                 // Output storage mode is default for BLSCT wallets

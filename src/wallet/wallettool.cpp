@@ -163,18 +163,15 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         DatabaseOptions options;
         ReadDatabaseArgs(args, options);
         options.require_create = true;
-        // TODO(@aguycalled, @gogo): Discuss whether to remove -legacy and -descriptors options.
-        // With BLSCT as the standard wallet type, these options create confusion and increase
-        // the chance of users creating the wrong wallet type. Consider making -blsct the default.
+        // BLSCT is the default and standard wallet type on navio: when none of
+        // -legacy, -descriptors or -blsct are specified, a BLSCT wallet is created.
         bool make_legacy = args.GetBoolArg("-legacy", false);
-        bool make_blsct = args.GetBoolArg("-blsct", false);
-        bool make_descriptors = (!args.IsArgSet("-descriptors") && !args.IsArgSet("-legacy") && !args.IsArgSet("-blsct")) || (args.IsArgSet("-descriptors") && args.GetBoolArg("-descriptors", true));
+        bool make_descriptors = args.GetBoolArg("-descriptors", false);
+        bool make_blsct = (!args.IsArgSet("-descriptors") && !args.IsArgSet("-legacy") && !args.IsArgSet("-blsct")) || (args.IsArgSet("-blsct") && args.GetBoolArg("-blsct", true));
         if (make_legacy + make_descriptors + make_blsct > 1) {
             tfm::format(std::cerr, "Only one of -legacy, -blsct or -descriptors can be set to true, not both\n");
             return false;
         }
-        // TODO(@aguycalled, @gogo): If legacy/descriptors are removed, this check can be simplified
-        // to just defaulting to BLSCT, removing the need for users to specify wallet type at all.
         if (!make_legacy && !make_descriptors && !make_blsct) {
             tfm::format(std::cerr, "One of -legacy, -blsct or -descriptors must be set to true (or omitted)\n");
             return false;
