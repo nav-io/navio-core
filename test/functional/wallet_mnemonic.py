@@ -363,10 +363,14 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert "Cannot specify both -seed and -mnemonicpassphrase" in stderr_mp2
 
         self.log.info("Test CLI tool: -mnemonicpassphrase without -blsct errors")
+        # BLSCT is the tool's default wallet type, so -descriptors must be passed
+        # explicitly here to exercise the "-mnemonicpassphrase requires -blsct"
+        # validation.
         cli_mp_no_blsct_args = [
             '-datadir={}'.format(self.nodes[0].datadir_path),
             '-chain={}'.format(self.chain),
             '-wallet=test_cli_mp_no_blsct',
+            '-descriptors',
             '-mnemonicpassphrase=pass',
             'create',
         ]
