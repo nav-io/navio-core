@@ -373,7 +373,8 @@ BASE_SCRIPTS = [
     'blsct_cold_signing.py',
     'blsct_import_scriptpubkeys.py',
     'blsct_subtractfee_comment.py',
-    'bls_message_signing.py'
+    'bls_message_signing.py',
+    'blsct_legacy_rpc_guards.py',
     # Don't append tests at the end to avoid merge conflicts
     # Put them in a random line within the section that fits their approximate run-time
 ]

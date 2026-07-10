@@ -7,6 +7,7 @@
 #include <blsct/public_key.h>
 #include <blsct/wallet/rpc.h>
 #include <chain.h>
+#include <chainparams.h>
 #include <clientversion.h>
 #include <core_io.h>
 #include <hash.h>
@@ -207,6 +208,13 @@ RPCHelpMan importprivkey()
     std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
     if (!pwallet) return UniValue::VNULL;
 
+    // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+    // transaction ("non-blsct-tx-not-allowed"), so a transparent ECDSA
+    // private key can never be used to send or receive funds here.
+    if (Params().GetConsensus().fBLSCT) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) keys cannot send or receive here, so importprivkey is not available. Use the BLSCT wallet functionality instead.");
+    }
+
     if (pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Cannot import private keys to a wallet with private keys disabled");
     }
@@ -309,6 +317,13 @@ RPCHelpMan importaddress()
 {
     std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
     if (!pwallet) return UniValue::VNULL;
+
+    // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+    // transaction ("non-blsct-tx-not-allowed"), so watching a transparent
+    // address/script can never see spendable or useful activity here.
+    if (Params().GetConsensus().fBLSCT) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) addresses cannot send or receive here, so importaddress is not available. Use the BLSCT wallet functionality instead.");
+    }
 
     EnsureLegacyScriptPubKeyMan(*pwallet, true);
 
@@ -502,6 +517,13 @@ RPCHelpMan importpubkey()
     std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
     if (!pwallet) return UniValue::VNULL;
 
+    // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+    // transaction ("non-blsct-tx-not-allowed"), so watching a transparent
+    // public key can never see spendable or useful activity here.
+    if (Params().GetConsensus().fBLSCT) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) keys cannot send or receive here, so importpubkey is not available. Use the BLSCT wallet functionality instead.");
+    }
+
     EnsureLegacyScriptPubKeyMan(*pwallet, true);
 
     const std::string strLabel{LabelFromValue(request.params[1])};
@@ -578,6 +600,10 @@ RPCHelpMan importwallet()
 {
     std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
     if (!pwallet) return UniValue::VNULL;
+
+    if (pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "importwallet only imports transparent (ECDSA) keys and scripts from the dump file; it cannot restore a BLSCT wallet's keys. To restore a BLSCT wallet, create a new wallet with createwallet using the 'seed' or 'mnemonic' parameter (see dumpmnemonic/getblsctseed for the values to export), or restore a database copy made with backupwallet.");
+    }
 
     EnsureLegacyScriptPubKeyMan(*pwallet, true);
 
@@ -725,6 +751,13 @@ RPCHelpMan dumpprivkey()
 {
     const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
     if (!pwallet) return UniValue::VNULL;
+
+    // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+    // transaction ("non-blsct-tx-not-allowed"), so a transparent ECDSA
+    // private key can never be used to send or receive funds here.
+    if (Params().GetConsensus().fBLSCT) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) keys cannot send or receive here, so dumpprivkey is not available. Use the BLSCT wallet functionality instead.");
+    }
 
     const LegacyScriptPubKeyMan& spk_man = EnsureConstLegacyScriptPubKeyMan(*pwallet);
 
@@ -879,6 +912,10 @@ RPCHelpMan dumpwallet()
 {
     const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
     if (!pwallet) return UniValue::VNULL;
+
+    if (pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "dumpwallet only backs up this wallet's transparent (ECDSA) keys and scripts; it does NOT back up your BLSCT keys and would give a false sense of having a full backup. To back up a BLSCT wallet, use dumpmnemonic (or getblsctseed) to save the BLSCT seed, and backupwallet to save the wallet database.");
+    }
 
     const CWallet& wallet = *pwallet;
     const LegacyScriptPubKeyMan& spk_man = EnsureConstLegacyScriptPubKeyMan(wallet);
@@ -1498,6 +1535,13 @@ RPCHelpMan importmulti()
     std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(mainRequest);
     if (!pwallet) return UniValue::VNULL;
     CWallet& wallet{*pwallet};
+
+    // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+    // transaction ("non-blsct-tx-not-allowed"), so importing transparent
+    // ECDSA keys/scripts/addresses can never be used to send or receive here.
+    if (Params().GetConsensus().fBLSCT) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) keys/scripts cannot send or receive here, so importmulti is not available. Use the BLSCT wallet functionality instead.");
+    }
 
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
