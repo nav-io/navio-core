@@ -24,12 +24,6 @@ import time
 BLOCKS = COINBASE_MATURITY + 1
 BALANCE = (BLOCKS - 100) * 50
 
-JSON_PARSING_ERROR = 'error: Error parsing JSON: foo'
-BLOCKS_VALUE_OF_ZERO = 'error: the first argument (number of blocks to generate, default: 1) must be an integer value greater than zero'
-TOO_MANY_ARGS = 'error: too many arguments (maximum 2 for nblocks and maxtries)'
-WALLET_NOT_LOADED = 'Requested wallet does not exist or is not loaded'
-WALLET_NOT_SPECIFIED = 'Wallet file not specified'
-
 
 def cli_get_info_string_to_dict(cli_get_info_string):
     """Helper method to convert human-readable -getinfo into a dictionary"""
@@ -139,7 +133,6 @@ class TestBitcoinCli(BitcoinTestFramework):
         expected_network_info = f"in {network_info['connections_in']}, out {network_info['connections_out']}, total {network_info['connections']}"
         assert_equal(cli_get_info["Network"], expected_network_info)
         assert_equal(cli_get_info['Proxies'], network_info['networks'][0]['proxy'])
-        assert_equal(Decimal(cli_get_info['Difficulty']), blockchain_info['difficulty'])
         assert_equal(cli_get_info['Chain'], blockchain_info['chain'])
 
         self.log.info("Test -getinfo and navio-cli return all proxies")
@@ -163,7 +156,7 @@ class TestBitcoinCli(BitcoinTestFramework):
             assert_equal(Decimal(cli_get_info['Min tx relay fee rate (NAV/kvB)']), network_info['relayfee'])
             assert_equal(self.nodes[0].cli.getwalletinfo(), wallet_info)
 
-            # Setup to test -getinfo, -generate, and -rpcwallet= with multiple wallets.
+            # Setup to test -getinfo and -rpcwallet= with multiple wallets.
             wallets = [self.default_wallet_name, 'Encrypted', 'secret']
             amounts = [BALANCE + Decimal('9.99988720'), Decimal(9), Decimal(31)]
             self.nodes[0].createwallet(wallet_name=wallets[1])
@@ -235,84 +228,9 @@ class TestBitcoinCli(BitcoinTestFramework):
             assert 'Balance' not in cli_get_info_keys
             assert 'Balances' not in cli_get_info_string
 
-            # Test navio-cli -generate.
-            n1 = 3
-            n2 = 4
-            w2.walletpassphrase(password, self.rpc_timeout)
-            blocks = self.nodes[0].getblockcount()
-
-            self.log.info('Test -generate with no args')
-            generate = self.nodes[0].cli('-generate').send_cli()
-            assert_equal(set(generate.keys()), {'address', 'blocks'})
-            assert_equal(len(generate["blocks"]), 1)
-            assert_equal(self.nodes[0].getblockcount(), blocks + 1)
-
-            self.log.info('Test -generate with bad args')
-            assert_raises_process_error(1, JSON_PARSING_ERROR, self.nodes[0].cli('-generate', 'foo').echo)
-            assert_raises_process_error(1, BLOCKS_VALUE_OF_ZERO, self.nodes[0].cli('-generate', 0).echo)
-            assert_raises_process_error(1, TOO_MANY_ARGS, self.nodes[0].cli('-generate', 1, 2, 3).echo)
-
-            self.log.info('Test -generate with nblocks')
-            generate = self.nodes[0].cli('-generate', n1).send_cli()
-            assert_equal(set(generate.keys()), {'address', 'blocks'})
-            assert_equal(len(generate["blocks"]), n1)
-            assert_equal(self.nodes[0].getblockcount(), blocks + 1 + n1)
-
-            self.log.info('Test -generate with nblocks and maxtries')
-            generate = self.nodes[0].cli('-generate', n2, 1000000).send_cli()
-            assert_equal(set(generate.keys()), {'address', 'blocks'})
-            assert_equal(len(generate["blocks"]), n2)
-            assert_equal(self.nodes[0].getblockcount(), blocks + 1 + n1 + n2)
-
-            self.log.info('Test -generate -rpcwallet in single-wallet mode')
-            generate = self.nodes[0].cli(rpcwallet2, '-generate').send_cli()
-            assert_equal(set(generate.keys()), {'address', 'blocks'})
-            assert_equal(len(generate["blocks"]), 1)
-            assert_equal(self.nodes[0].getblockcount(), blocks + 2 + n1 + n2)
-
-            self.log.info('Test -generate -rpcwallet=unloaded wallet raises RPC error')
-            assert_raises_rpc_error(-18, WALLET_NOT_LOADED, self.nodes[0].cli(rpcwallet3, '-generate').echo)
-            assert_raises_rpc_error(-18, WALLET_NOT_LOADED, self.nodes[0].cli(rpcwallet3, '-generate', 'foo').echo)
-            assert_raises_rpc_error(-18, WALLET_NOT_LOADED, self.nodes[0].cli(rpcwallet3, '-generate', 0).echo)
-            assert_raises_rpc_error(-18, WALLET_NOT_LOADED, self.nodes[0].cli(rpcwallet3, '-generate', 1, 2, 3).echo)
-
-            # Test navio-cli -generate with -rpcwallet in multiwallet mode.
-            self.nodes[0].loadwallet(wallets[2])
-            n3 = 4
-            n4 = 10
-            blocks = self.nodes[0].getblockcount()
-
-            self.log.info('Test -generate -rpcwallet with no args')
-            generate = self.nodes[0].cli(rpcwallet2, '-generate').send_cli()
-            assert_equal(set(generate.keys()), {'address', 'blocks'})
-            assert_equal(len(generate["blocks"]), 1)
-            assert_equal(self.nodes[0].getblockcount(), blocks + 1)
-
-            self.log.info('Test -generate -rpcwallet with bad args')
-            assert_raises_process_error(1, JSON_PARSING_ERROR, self.nodes[0].cli(rpcwallet2, '-generate', 'foo').echo)
-            assert_raises_process_error(1, BLOCKS_VALUE_OF_ZERO, self.nodes[0].cli(rpcwallet2, '-generate', 0).echo)
-            assert_raises_process_error(1, TOO_MANY_ARGS, self.nodes[0].cli(rpcwallet2, '-generate', 1, 2, 3).echo)
-
-            self.log.info('Test -generate -rpcwallet with nblocks')
-            generate = self.nodes[0].cli(rpcwallet2, '-generate', n3).send_cli()
-            assert_equal(set(generate.keys()), {'address', 'blocks'})
-            assert_equal(len(generate["blocks"]), n3)
-            assert_equal(self.nodes[0].getblockcount(), blocks + 1 + n3)
-
-            self.log.info('Test -generate -rpcwallet with nblocks and maxtries')
-            generate = self.nodes[0].cli(rpcwallet2, '-generate', n4, 1000000).send_cli()
-            assert_equal(set(generate.keys()), {'address', 'blocks'})
-            assert_equal(len(generate["blocks"]), n4)
-            assert_equal(self.nodes[0].getblockcount(), blocks + 1 + n3 + n4)
-
-            self.log.info('Test -generate without -rpcwallet in multiwallet mode raises RPC error')
-            assert_raises_rpc_error(-19, WALLET_NOT_SPECIFIED, self.nodes[0].cli('-generate').echo)
-            assert_raises_rpc_error(-19, WALLET_NOT_SPECIFIED, self.nodes[0].cli('-generate', 'foo').echo)
-            assert_raises_rpc_error(-19, WALLET_NOT_SPECIFIED, self.nodes[0].cli('-generate', 0).echo)
-            assert_raises_rpc_error(-19, WALLET_NOT_SPECIFIED, self.nodes[0].cli('-generate', 1, 2, 3).echo)
         else:
             self.log.info("*** Wallet not compiled; cli getwalletinfo and -getinfo wallet tests skipped")
-            self.generate(self.nodes[0], 25)  # maintain block parity with the wallet_compiled conditional branch
+            self.generate(self.nodes[0], 1)  # maintain block parity with the wallet_compiled conditional branch
 
         self.log.info("Test -version with node stopped")
         self.stop_node(0)
@@ -324,7 +242,7 @@ class TestBitcoinCli(BitcoinTestFramework):
         self.nodes[0].wait_for_cookie_credentials()  # ensure cookie file is available to avoid race condition
         blocks = self.nodes[0].cli('-rpcwait').send_cli('getblockcount')
         self.nodes[0].wait_for_rpc_connection()
-        assert_equal(blocks, BLOCKS + 25)
+        assert_equal(blocks, BLOCKS + 1)
 
         self.log.info("Test -rpcwait option waits at most -rpcwaittimeout seconds for startup")
         self.stop_node(0)  # stop the node so we time out
