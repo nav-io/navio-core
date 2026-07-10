@@ -25,7 +25,7 @@ namespace bech32_hrp {
     const std::string Mainnet = "nav";
     const std::string Testnet = "tnv";
     const std::string Signet = "snv";
-    const std::string Regtest = "rnav";
+    const std::string Regtest = "rnv";
 }
 
 /** Encode DoublePublicKey to Bech32 or Bech32m string. Encoding must be one of BECH32 or BECH32M. */

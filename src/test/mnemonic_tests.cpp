@@ -545,6 +545,112 @@ BOOST_AUTO_TEST_CASE(mnemonic_to_blsct_key_determinism)
     BOOST_CHECK(key1 == key2);
 }
 
+// BIP-39 seed derivation (PBKDF2-HMAC-SHA512, 2048 iterations)
+// Expected seeds are the official Trezor test vectors (passphrase "TREZOR")
+// from https://github.com/trezor/python-mnemonic/blob/master/vectors.json
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_trezor_vector_12_words)
+{
+    std::string m = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    BOOST_CHECK_EQUAL(HexStr(mnemonic::MnemonicToSeed(m, "TREZOR")),
+        "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04");
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_trezor_vector_12_words_2)
+{
+    std::string m = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+    BOOST_CHECK_EQUAL(HexStr(mnemonic::MnemonicToSeed(m, "TREZOR")),
+        "2e8905819b8723fe2c1d161860e5ee1830318dbf49a83bd451cfb8440c28bd6fa457fe1296106559a3c80937a1c1069be3a3a5bd381ee6260e8d9739fce1f607");
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_trezor_vector_24_words)
+{
+    std::string m = "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote";
+    BOOST_CHECK_EQUAL(HexStr(mnemonic::MnemonicToSeed(m, "TREZOR")),
+        "dd48c104698c30cfe2b6142103248622fb7bb0ff692eebb00089b32d22484e1613912f0a5b694407be899ffd31ed3992c456cdf60f5d4564b8ba3f05a69890ad");
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_trezor_vector_24_words_2)
+{
+    std::string m = "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold";
+    BOOST_CHECK_EQUAL(HexStr(mnemonic::MnemonicToSeed(m, "TREZOR")),
+        "01f5bced59dec48e362f2c45b5de68b9fd6c92c6634f44d6d40aab69056506f0e35524a518034ddc1192e1dacd32c1ed3eaa3c3b131c88ed8e7e54c49a5d0998");
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_trezor_vector_24_words_3)
+{
+    std::string m = "hamster diagram private dutch cause delay private meat slide toddler razor book happy fancy gospel tennis maple dilemma loan word shrug inflict delay length";
+    BOOST_CHECK_EQUAL(HexStr(mnemonic::MnemonicToSeed(m, "TREZOR")),
+        "64c87cde7e12ecf6704ab95bb1408bef047c22db4cc7491c4271d170a1b213d20b385bc1588d9c7b38f1b39d415665b8a9030c9ec653d75e65f847d8fc1fc440");
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_empty_passphrase)
+{
+    // Default (empty) passphrase uses salt "mnemonic"
+    std::string m = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    std::string expected = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
+    BOOST_CHECK_EQUAL(HexStr(mnemonic::MnemonicToSeed(m)), expected);
+    BOOST_CHECK_EQUAL(HexStr(mnemonic::MnemonicToSeed(m, "")), expected);
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_empty_passphrase_24_words)
+{
+    std::string m = "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold";
+    BOOST_CHECK_EQUAL(HexStr(mnemonic::MnemonicToSeed(m)),
+        "b873212f885ccffbf4692afcb84bc2e55886de2dfa07d90f5c3c239abc31c0a6ce047e30fd8bf6a281e71389aa82d73df74c7bbfb3b06b4639a5cee775cccd3c");
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_custom_passphrase)
+{
+    std::string m = "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold";
+    BOOST_CHECK_EQUAL(HexStr(mnemonic::MnemonicToSeed(m, "navio")),
+        "cde3ba869451d56058ed01e3f95332dba1a93e4ef56689ef31a6b7d6951acd6c383870843b0ccc3435c8723d274171dee2e0d44965797ada1cae45907c60f889");
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_returns_64_bytes)
+{
+    std::string m = mnemonic::Generate();
+    BOOST_CHECK_EQUAL(mnemonic::MnemonicToSeed(m).size(), 64U);
+    BOOST_CHECK_EQUAL(mnemonic::MnemonicToSeed(m, "passphrase").size(), 64U);
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_different_passphrases_different_seeds)
+{
+    std::string m = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    auto seed_none = mnemonic::MnemonicToSeed(m);
+    auto seed_a = mnemonic::MnemonicToSeed(m, "a");
+    auto seed_b = mnemonic::MnemonicToSeed(m, "b");
+    BOOST_CHECK(seed_none != seed_a);
+    BOOST_CHECK(seed_none != seed_b);
+    BOOST_CHECK(seed_a != seed_b);
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_whitespace_normalized)
+{
+    std::string m = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    std::string padded = "  abandon   abandon abandon\nabandon abandon abandon abandon abandon abandon abandon abandon about ";
+    BOOST_CHECK_EQUAL(HexStr(mnemonic::MnemonicToSeed(padded, "TREZOR")),
+                      HexStr(mnemonic::MnemonicToSeed(m, "TREZOR")));
+}
+
+BOOST_AUTO_TEST_CASE(mnemonic_to_seed_produces_valid_bls_key)
+{
+    // The 64-byte BIP-39 seed must be accepted by EIP-2333 master key derivation
+    std::string m = "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold";
+    auto entropy = mnemonic::MnemonicToEntropy(m);
+    BOOST_REQUIRE(entropy.has_value());
+
+    auto seed = mnemonic::MnemonicToSeed(m, "passphrase");
+    auto key_passphrase = BLS12_381_KeyGen::derive_master_SK(seed);
+    auto key_legacy = BLS12_381_KeyGen::derive_master_SK(entropy.value());
+    // Passphrase-derived key must differ from the legacy entropy-derived key
+    BOOST_CHECK(!(key_passphrase == key_legacy));
+
+    // Deterministic: same mnemonic + passphrase -> same key
+    auto key_again = BLS12_381_KeyGen::derive_master_SK(mnemonic::MnemonicToSeed(m, "passphrase"));
+    BOOST_CHECK(key_passphrase == key_again);
+}
+
 BOOST_AUTO_TEST_CASE(different_mnemonics_different_keys)
 {
     auto entropy1 = ParseHex("0000000000000000000000000000000000000000000000000000000000000000");

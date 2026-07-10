@@ -9,7 +9,7 @@ Wallets can be created with the `createwallet` RPC or with the `Create wallet` G
 
 In the GUI, the `Create a new wallet` button is displayed on the main screen when there is no wallet loaded. Alternatively, there is the option `File` ->`Create wallet`.
 
-The following command, for example, creates a descriptor wallet. More information about this command may be found by running `navio-cli help createwallet`.
+The following command, for example, creates a BLSCT wallet, navio's default and standard wallet type. Pass `blsct=false` to create a descriptor wallet instead. More information about this command may be found by running `navio-cli help createwallet`.
 
 ```
 $ navio-cli createwallet "wallet-01"

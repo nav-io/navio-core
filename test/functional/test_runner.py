@@ -364,6 +364,7 @@ BASE_SCRIPTS = [
     'blsct_htlc.py',
     'blsct_setblsctseed.py',
     'blsct_address_rpc.py',
+    'blsct_spend_rpc_guards.py',
     'blsct_script_validation.py',
     'blsct_balance_proof.py',
     'blsct_pops_consensus.py',
@@ -372,6 +373,7 @@ BASE_SCRIPTS = [
     'blsct_rawtransaction.py',
     'blsct_cold_signing.py',
     'blsct_import_scriptpubkeys.py',
+    'blsct_subtractfee_comment.py',
     'bls_message_signing.py'
     # Don't append tests at the end to avoid merge conflicts
     # Put them in a random line within the section that fits their approximate run-time

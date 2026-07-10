@@ -17,21 +17,21 @@ namespace blsct {
 
 void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey, const CAmount& nBLSCTDefaultFee)
 {
-    UnsignedOutput out;
-
-    out = CreateOutput(destination.GetKeys(), nAmount, sMemo, token_id, blindingKey, type, minStake);
-
-    CAmount nFee = 0;
-
-    if (fSubtractFeeFromAmount) {
-        nFee = GetTransactioOutputWeight(out.out) * nBLSCTDefaultFee;
-        out = CreateOutput(destination.GetKeys(), nAmount - nFee, sMemo, token_id, blindingKey, type, minStake);
-    };
-
     if (!nAmounts.contains(token_id))
         nAmounts[token_id] = {0, 0, 0};
 
-    nAmounts[token_id].nFromOutputs += nAmount - nFee;
+    if (fSubtractFeeFromAmount) {
+        // The final value is (nAmount - total transaction fee), and the total
+        // fee is only known once BuildTx's fee fixpoint converges. Defer the
+        // output; BuildTx materializes it at the reduced value. Reuse the
+        // supplied blindingKey across rebuilds so the deferral is deterministic.
+        subtractFeeOutput = SubtractFeeOutput{destination, nAmount, sMemo, token_id, type, minStake, blindingKey};
+        return;
+    }
+
+    UnsignedOutput out = CreateOutput(destination.GetKeys(), nAmount, sMemo, token_id, blindingKey, type, minStake);
+
+    nAmounts[token_id].nFromOutputs += nAmount;
 
     if (!vOutputs.contains(token_id))
         vOutputs[token_id] = std::vector<UnsignedOutput>();
@@ -138,6 +138,26 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         // insufficient funds below.
         bool hitInputCap = false;
 
+        // Materialize the deferred subtract-fee-from-amount recipient at
+        // (amount - current fee estimate). BLSCT output size is
+        // value-independent, so lowering the value does not change the fee and
+        // the fixpoint still converges (typically in two passes). Setting
+        // nFromOutputs to the reduced value makes input selection target the
+        // original amount (reduced + fee), so the fee is routed out of the
+        // recipient output rather than out of change.
+        std::optional<UnsignedOutput> sffaOut;
+        if (subtractFeeOutput) {
+            const CAmount fee = nAmounts[TokenId()].nFromFee;
+            const CAmount reduced = subtractFeeOutput->amount - fee;
+            if (reduced < 0) return std::nullopt; // fee exceeds the amount sent
+            nAmounts[subtractFeeOutput->token_id].nFromOutputs = reduced;
+            sffaOut = CreateOutput(subtractFeeOutput->destination.GetKeys(), reduced,
+                                   subtractFeeOutput->memo, subtractFeeOutput->token_id,
+                                   subtractFeeOutput->blindingKey, subtractFeeOutput->type,
+                                   subtractFeeOutput->minStake);
+            gammaAcc = gammaAcc - sffaOut->gamma;
+        }
+
         if (type == STAKED_COMMITMENT_UNSTAKE || type == STAKED_COMMITMENT) {
             for (auto& in_ : vInputs) {
                 for (auto& in : in_.second) {
@@ -203,6 +223,10 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
             tx.vout.push_back(changeOutput.out);
             txSigs.push_back(PrivateKey(changeOutput.blindingKey).Sign(changeOutput.out.GetHash()));
+        }
+        if (sffaOut) {
+            tx.vout.push_back(sffaOut->out);
+            txSigs.push_back(PrivateKey(sffaOut->blindingKey).Sign(sffaOut->out.GetHash()));
         }
         CTxOut fee_out{nAmounts[TokenId()].nFromFee, CScript(OP_RETURN)};
 
@@ -315,7 +339,10 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
                 tx.AddOutput(transactionData.tokenKey, transactionData.destination, transactionData.tokenInfo.publicKey, transactionData.token_id.subid, transactionData.nftMetadata);
             }
         } else if (transactionData.type == NORMAL) {
-            tx.AddOutput(transactionData.destination, transactionData.nAmount, transactionData.sMemo, transactionData.token_id, transactionData.type);
+            // subtract-fee-from-amount is only meaningful for native-token
+            // sends: the fee is always denominated in the native token.
+            const bool subtract_fee = transactionData.fSubtractFeeFromAmount && transactionData.token_id.IsNull();
+            tx.AddOutput(transactionData.destination, transactionData.nAmount, transactionData.sMemo, transactionData.token_id, transactionData.type, transactionData.minStake, subtract_fee, Scalar::Rand(), transactionData.nBLSCTDefaultFee);
         }
     }
     return tx.BuildTx(transactionData.changeDestination, transactionData.minStake, transactionData.type, /*fSubtractedFee=*/false, transactionData.nBLSCTDefaultFee);

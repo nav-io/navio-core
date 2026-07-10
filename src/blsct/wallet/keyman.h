@@ -42,7 +42,7 @@ public:
     explicit Manager(wallet::WalletStorage& storage) : m_storage(storage) {}
     virtual ~Manager()= default;
 
-    virtual bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force = false) { return false; }
+    virtual bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force = false, const std::string& mnemonic_passphrase = "") { return false; }
 
     /* Returns true if HD is enabled */
     virtual bool IsHDEnabled() const { return false; }
@@ -62,7 +62,7 @@ private:
     bool AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId);
     bool AddCryptedOutKeyInner(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
 
-    bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy);
+    bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase = "");
 
 
     wallet::WalletBatch* encrypted_batch GUARDED_BY(cs_KeyStore) = nullptr;
@@ -95,7 +95,7 @@ public:
     KeyMan(wallet::WalletStorage& storage, int64_t keypool_size)
         : Manager(storage), KeyRing(), m_keypool_size(keypool_size) {}
 
-    bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false) override;
+    bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false, const std::string& mnemonic_passphrase = "") override;
     bool IsHDEnabled() const override;
 
     void LoadMnemonicEntropy(const std::vector<unsigned char>& entropy)

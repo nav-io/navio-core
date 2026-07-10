@@ -42,9 +42,10 @@ static void SetupWalletToolArgs(ArgsManager& argsman)
     argsman.AddArg("-dumpfile=<file name>", "When used with 'dump', writes out the records to this file. When used with 'createfromdump', loads the records into a new wallet.", ArgsManager::ALLOW_ANY | ArgsManager::DISALLOW_NEGATION, OptionsCategory::OPTIONS);
     argsman.AddArg("-debug=<category>", "Output debugging information (default: 0).", ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-descriptors", "Create descriptors wallet. Only for 'create'", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-blsct", "Create blsct wallet. Only for 'create'", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-blsct", "Create blsct wallet (default wallet type on navio when -legacy and -descriptors are not set). Only for 'create'", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-seed", "Seed used for the wallet creation. Only for 'create'. Can be a master seed or an audit key.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-mnemonic", "BIP-39 mnemonic phrase (24 words) to restore a BLSCT wallet from. Only for 'create'. Mutually exclusive with '-seed'.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-mnemonicpassphrase", "Optional BIP-39 passphrase used to extend the mnemonic when deriving the wallet keys. Only for 'create'. Requires -blsct. Cannot be combined with '-seed'. Use ASCII characters to stay interoperable with other BIP-39 wallets (no NFKD normalization is applied).", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-legacy", "Create legacy wallet. Only for 'create'", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-format=<format>", "The format of the wallet file to create. Must be \"sqlite\". Only used with 'createfromdump'", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-printtoconsole", "Send trace/debug info to console (default: 1 when no -debug is true, 0 otherwise).", ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);

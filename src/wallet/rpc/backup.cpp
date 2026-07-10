@@ -825,6 +825,8 @@ RPCHelpMan dumpmnemonic()
         "dumpmnemonic",
         "\nDumps the BLSCT wallet mnemonic phrase (BIP-39), which can be used to reconstruct the wallet.\n"
         "The mnemonic can only be retrieved from wallets created with a BIP-39 mnemonic.\n"
+        "If the wallet was created with a BIP-39 mnemonic passphrase, the passphrase is NOT included\n"
+        "and must be supplied separately when restoring the wallet.\n"
         "Note: This command is only compatible with BLSCT wallets.\n",
         {},
         RPCResult{
