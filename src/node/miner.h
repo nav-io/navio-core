@@ -167,7 +167,11 @@ public:
 
     /** Construct a new block template with coinbase to scriptPubKeyIn */
     std::unique_ptr<CBlockTemplate> CreateNewBlock(const CScript& scriptPubKeyIn);
-    std::unique_ptr<CBlockTemplate> CreateNewBLSCTBlock(const blsct::SubAddress& destination, CAmount nReward, const std::vector<CMutableTransaction>& txns, const bool& fPos = false);
+    /** feeSplit, when set, pays that share of the reward (in basis points,
+     *  capped at 10000) to the given address and the remainder to
+     *  `destination`. Lets delegated stakers take their operator fee
+     *  directly from the coinbase. */
+    std::unique_ptr<CBlockTemplate> CreateNewBLSCTBlock(const blsct::SubAddress& destination, CAmount nReward, const std::vector<CMutableTransaction>& txns, const bool& fPos = false, const std::optional<std::pair<blsct::SubAddress, uint32_t>>& feeSplit = std::nullopt);
 
     inline static std::optional<int64_t> m_last_block_num_txs{};
     inline static std::optional<int64_t> m_last_block_weight{};

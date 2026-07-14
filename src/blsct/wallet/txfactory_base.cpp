@@ -15,7 +15,7 @@ using Scalars = Elements<Scalar>;
 
 namespace blsct {
 
-void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey, const CAmount& nBLSCTDefaultFee)
+void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey, const CAmount& nBLSCTDefaultFee, const std::optional<delegation::DelegationRequest>& stakeDelegation)
 {
     if (!nAmounts.contains(token_id))
         nAmounts[token_id] = {0, 0, 0};
@@ -25,11 +25,32 @@ void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmo
         // fee is only known once BuildTx's fee fixpoint converges. Defer the
         // output; BuildTx materializes it at the reduced value. Reuse the
         // supplied blindingKey across rebuilds so the deferral is deterministic.
+        // Stake operations never subtract the fee, so a stake delegation
+        // request cannot reach this path.
         subtractFeeOutput = SubtractFeeOutput{destination, nAmount, sMemo, token_id, type, minStake, blindingKey};
         return;
     }
 
     UnsignedOutput out = CreateOutput(destination.GetKeys(), nAmount, sMemo, token_id, blindingKey, type, minStake);
+
+    if (stakeDelegation.has_value() && type == STAKED_COMMITMENT && token_id.IsNull()) {
+        // Attach the encrypted opening of the just-built commitment so the
+        // delegate can stake it. DATA predicates are consensus no-ops, and
+        // the predicate is set before BuildTx() computes the output
+        // signatures, so the payload is covered by the ownership signature.
+        // The owner section is keyed on the output's BLSCT nonce, letting the
+        // owner wallet re-derive its delegations from the chain alone.
+        delegation::DelegationInfo info;
+        info.value = nAmount;
+        info.gamma = out.gamma;
+        info.rewardAddress = stakeDelegation->rewardAddress;
+        Point vk;
+        if (!destination.GetKeys().GetViewKey(vk)) {
+            throw std::runtime_error(std::string(__func__) + ": could not get view key from stake destination");
+        }
+        const Point nonce = vk * out.blindingKey;
+        out.out.predicate = DataPredicate(delegation::Encrypt(info, *stakeDelegation, nonce)).GetVch();
+    }
 
     nAmounts[token_id].nFromOutputs += nAmount;
 
@@ -159,11 +180,19 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         }
 
         if (type == STAKED_COMMITMENT_UNSTAKE || type == STAKED_COMMITMENT) {
+            // Consume EVERY staked input the caller added: CreateTransaction
+            // already selected exactly which commitments this transaction
+            // spends and sized the staked output (new stake or unstake
+            // change) assuming all of them are consumed. Capping selection
+            // here (the previous `mapInputs > nFromOutputs` break) broke that
+            // assumption for multi-commitment stakes: a full unstake consumed
+            // only the first commitment, and a partial unstake backfilled the
+            // remainder of the staked change from spendable coins — silently
+            // re-staking funds the user never asked to stake.
             for (auto& in_ : vInputs) {
                 for (auto& in : in_.second) {
                     if (!in.is_staked_commitment) continue;
                     if (!mapInputs[in_.first]) mapInputs[in_.first] = 0;
-                    if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs) break;
 
                     tx.vin.push_back(in.in);
                     gammaAcc = gammaAcc + in.gamma;
@@ -282,12 +311,19 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
 
     if (transactionData.type == STAKED_COMMITMENT) {
         CAmount inputFromStakedCommitments = 0;
+        // Consolidation only folds commitments that share this transaction's
+        // delegation identity: plain stakes merge with plain stakes, and a
+        // delegated stake only merges with stakes delegated to the same
+        // delegate and reward address. Folding across identities would either
+        // silently hand undelegated funds to a delegate or silently revoke an
+        // existing delegation.
+        const std::string delegationId = transactionData.stakeDelegation.has_value() ? transactionData.stakeDelegation->GetId() : "";
 
         for (const auto& output : inputCandidates) {
             if (output.is_staked_commitment) {
                 // With consolidation disabled, leave existing commitments
                 // untouched so this stakelock yields a separate commitment.
-                if (!transactionData.fConsolidateStakedCommitments)
+                if (!transactionData.fConsolidateStakedCommitments || output.delegation != delegationId)
                     continue;
                 inputFromStakedCommitments += output.amount;
             }
@@ -301,7 +337,7 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
 
         bool fSubtractFeeFromAmount = false; // nAmount == inAmount + inputFromStakedCommitments;
 
-        tx.AddOutput(transactionData.destination, transactionData.nAmount + inputFromStakedCommitments, transactionData.sMemo, transactionData.token_id, transactionData.type, transactionData.minStake, fSubtractFeeFromAmount);
+        tx.AddOutput(transactionData.destination, transactionData.nAmount + inputFromStakedCommitments, transactionData.sMemo, transactionData.token_id, transactionData.type, transactionData.minStake, fSubtractFeeFromAmount, Scalar::Rand(), transactionData.nBLSCTDefaultFee, transactionData.stakeDelegation);
     } else {
         CAmount inputFromStakedCommitments = 0;
 

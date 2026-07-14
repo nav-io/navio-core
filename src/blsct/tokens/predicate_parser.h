@@ -214,6 +214,14 @@ public:
             throw std::ios_base::failure("wrong predicate type");
     }
 
+    std::vector<unsigned char> GetData() const
+    {
+        if (IsDataPredicate())
+            return std::get<DataPredicate>(predicate_).data;
+        else
+            throw std::ios_base::failure("wrong predicate type");
+    }
+
 private:
     std::variant<CreateTokenPredicate, MintTokenPredicate, MintNftPredicate, PayFeePredicate, DataPredicate>
         predicate_;

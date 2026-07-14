@@ -64,6 +64,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "sethdseed", 0, "newkeypool" },
     { "stakelock", 0, "amount" },
     { "stakelock", 1, "verbose" },
+    { "delegatestake", 0, "amount" },
+    { "delegatestake", 3, "verbose" },
     { "stakeunlock", 0, "amount" },
     { "stakeunlock", 1, "verbose" },
     { "consolidate", 0, "max_txs" },

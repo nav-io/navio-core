@@ -1166,6 +1166,88 @@ RPCHelpMan stakelock()
     };
 }
 
+RPCHelpMan delegatestake()
+{
+    return RPCHelpMan{
+        "delegatestake",
+        "\nLock an amount for staking and delegate block production to a third-party staker.\n"
+        "The staked output carries an encrypted copy of its commitment opening addressed to\n"
+        "the delegate, so the delegate can produce blocks with it but can never spend or\n"
+        "unstake it. Block rewards are requested to be paid to reward_address; note this is\n"
+        "advisory: a delegate controls its own coinbase, so choose delegates you trust to\n"
+        "honor it. Existing stakes delegated with the same delegate key and reward address\n"
+        "are consolidated into the new output; other stakes are left untouched. Revoke at\n"
+        "any time with stakeunlock." +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to stake. eg 0.1"},
+            {"delegate_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The delegate's 48-byte G1 delegation public key (hex), published by the staking operator."},
+            {"reward_address", RPCArg::Type::STR, RPCArg::Default{""}, "BLSCT address the delegate should pay block rewards to. Defaults to a new address of this wallet."},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false",
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+            RPCResult{
+                "if verbose is set to true",
+                RPCResult::Type::OBJ,
+                "",
+                "",
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+            },
+        },
+        RPCExamples{
+            "\nDelegate a 100 " + CURRENCY_UNIT + " stake\n" + HelpExampleCli("delegatestake", "100 \"<delegate_pubkey_hex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            MclG1Point delegateKey;
+            if (!IsHex(request.params[1].get_str()) || !delegateKey.SetVch(ParseHex(request.params[1].get_str())) || delegateKey.IsZero()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "delegate_pubkey is not a valid G1 point");
+            }
+
+            std::string rewardAddress = request.params[2].isNull() ? "" : request.params[2].get_str();
+            if (rewardAddress.empty()) {
+                auto op_reward = pwallet->GetNewDestination(OutputType::BLSCT, "Delegated Staking Rewards");
+                if (!op_reward) {
+                    throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_reward).original);
+                }
+                rewardAddress = EncodeDestination(*op_reward);
+            } else if (!IsValidDestination(DecodeDestination(rewardAddress))) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
+            }
+
+            UniValue address_amounts(UniValue::VOBJ);
+            auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Delegated Stake");
+            if (!op_dest) {
+                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
+            }
+
+            address_amounts.pushKV(EncodeDestination(*op_dest), request.params[0]);
+
+            std::vector<wallet::CBLSCTRecipient> recipients;
+            blsct::ParseBLSCTRecipients(address_amounts, false, "", recipients);
+            const bool verbose{request.params[3].isNull() ? false : request.params[3].get_bool()};
+
+            blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
+            // Consolidation is delegation-aware: only commitments that share
+            // this exact delegation (same delegate key and reward address)
+            // are folded into the new output; plain stakes and stakes
+            // delegated elsewhere stay untouched.
+            transactionData.fConsolidateStakedCommitments = gArgs.GetBoolArg("-consolidatestakedcommitments", blsct::DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS);
+            transactionData.stakeDelegation = blsct::delegation::DelegationRequest{delegateKey, rewardAddress};
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
 
 RPCHelpMan stakeunlock()
 {
@@ -3230,6 +3312,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &sendnfttoblsctaddress},
         {"blsct", &sendtokentoblsctaddress},
         {"blsct", &stakelock},
+        {"blsct", &delegatestake},
         {"blsct", &stakeunlock},
         {"blsct", &consolidate},
         {"blsct", &setblsctseed},
