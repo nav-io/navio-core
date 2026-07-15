@@ -723,6 +723,17 @@ void delete_unsigned_output(void* vp_unsigned_output);
 const char* serialize_unsigned_output(const void* vp_unsigned_output);
 BlsctRetVal* deserialize_unsigned_output(const char* hex);
 
+/* Returns the gamma (blinding factor of the Pedersen commitment) of a built
+ * unsigned output as a serialized scalar. Needed e.g. to construct a stake
+ * delegation payload, which carries the commitment opening (value, gamma). */
+const BlsctScalar* get_unsigned_output_gamma(const void* vp_unsigned_output);
+
+/* Sets a DATA predicate carrying `data_hex` on a built unsigned output.
+ * Must be called before the transaction is signed: the predicate is part of
+ * the output hash covered by the output's ownership signature. Returns false
+ * on invalid input. */
+bool set_unsigned_output_data_predicate(void* vp_unsigned_output, const char* data_hex);
+
 void* create_unsigned_transaction();
 void add_unsigned_transaction_input(void* vp_unsigned_transaction, const void* vp_unsigned_input);
 void add_unsigned_transaction_output(void* vp_unsigned_transaction, const void* vp_unsigned_output);
