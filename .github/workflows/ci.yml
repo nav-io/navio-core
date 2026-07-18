@@ -464,7 +464,9 @@ jobs:
             cc: clang
             cxx: clang++
             depends_host: i686-pc-linux-gnu
-            depends_opts: MULTIPROCESS=1 DEBUG=1 CC='clang -m32' CXX='clang++ -m32'
+            # NO_I2P=1: 32-bit x86 needs libatomic for libcrypto's 8-byte atomics
+            # and isn't a release/guix target; skip the bundled I2P stack here.
+            depends_opts: MULTIPROCESS=1 DEBUG=1 CC='clang -m32' CXX='clang++ -m32' NO_I2P=1
             cmake_flags: >-
               -DCMAKE_BUILD_TYPE=Debug
               -DWITH_MULTIPROCESS=ON
@@ -650,7 +652,9 @@ jobs:
             cc: clang-17
             cxx: clang++-17
             depends_host: x86_64-pc-linux-gnu
-            depends_opts: CC=clang-17 CXX='clang++-17 -stdlib=libc++' NO_OPENMP=1
+            # NO_I2P=1: the bundled i2pd/OpenSSL/Boost are not instrumented, so
+            # building them under the sanitizer is wasteful/unsound.
+            depends_opts: CC=clang-17 CXX='clang++-17 -stdlib=libc++' NO_OPENMP=1 NO_I2P=1
             cmake_flags: >-
               -DSANITIZERS=thread
               -DWITH_MCL_OPENMP=OFF
@@ -719,6 +723,7 @@ jobs:
               -lc++ -lc++abi -lpthread
               -Wno-unused-command-line-argument"
               NO_OPENMP=1
+              NO_I2P=1
             # MSAN_AND_LIBCXX_FLAGS C++ side: full set passed to cmake so the
             # instrumented libc++ headers + rpath reach both compile and link lines.
             # APPEND_CFLAGS carries the non-sanitize extra MSan bits for C sources;
@@ -1018,6 +1023,9 @@ jobs:
           # from HOST instead of inheriting the linux-cmake matrix CC/CXX
           # (which would otherwise leak into per-package configure scripts —
           # e.g. zeromq would probe windows.h with the host gcc and fail).
+          # I2P is left enabled here so the bundled router (openssl+zlib+boost+
+          # i2pd) gets cross-compile coverage across the matrix (mingw, darwin,
+          # arm, i686). Pass NO_I2P=1 locally to skip it.
           env -u CC -u CXX make -C depends HOST=${{ matrix.depends_host }} ${{ matrix.depends_opts }}
 
       - name: Dump depends config.log on failure
@@ -1337,7 +1345,8 @@ jobs:
           docker exec "${CONTAINER_NAME}" bash -eu -c '
             env -u CC -u CXX make -C depends \
               HOST='"${DEPENDS_HOST}"' \
-              CC="gcc -m32" CXX="g++ -m32"
+              CC="gcc -m32" CXX="g++ -m32" \
+              NO_I2P=1
           '
 
       - name: Save depends cache

@@ -16,6 +16,13 @@ else()
   set(ENABLE_ZMQ 0)
 endif()
 
+# Wire ENABLE_I2PD from the WITH_I2P option (the bundled-i2pd subprocess manager).
+if(WITH_I2P)
+  set(ENABLE_I2PD 1)
+else()
+  set(ENABLE_I2PD 0)
+endif()
+
 configure_file(${PROJECT_SOURCE_DIR}/cmake/navio-build-config.h.in config/bitcoin-config.h USE_SOURCE_PERMISSIONS @ONLY)
 include_directories(${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -382,6 +389,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     script/sigcache.cpp
     signet.cpp
     timedata.cpp
+    $<$<BOOL:${WITH_I2P}>:i2pd_process.cpp>
     torcontrol.cpp
     txdb.cpp
     txmempool.cpp
@@ -434,6 +442,10 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       $<TARGET_NAME_IF_EXISTS:navio_wallet>
     )
     install_binary_component(naviod HAS_MANPAGE)
+    # Ship the bundled i2pd router alongside naviod so -i2pd works out of the box.
+    if(WITH_I2P AND BUNDLED_I2P_EXECUTABLE)
+      install(PROGRAMS "${BUNDLED_I2P_EXECUTABLE}" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT naviod)
+    endif()
   endif()
 
   add_library(navio_cli STATIC EXCLUDE_FROM_ALL
