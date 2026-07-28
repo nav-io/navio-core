@@ -755,6 +755,12 @@ bool KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifi
     if (!fViewKeyDefined || !viewKey.IsValid())
         throw std::runtime_error(strprintf("%s: the wallet has no view key available", __func__));
 
+    // A locked encrypted wallet cannot decrypt the spend key; report the key
+    // as unavailable instead of letting GetSpendingKey() throw. Callers treat
+    // false as "cannot derive", which is the correct answer while locked.
+    if (m_storage.HasEncryptionKeys() && m_storage.IsLocked())
+        return false;
+
     auto sk = GetSpendingKey();
 
     key = CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
@@ -783,6 +789,12 @@ bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddres
 {
     if (!fViewKeyDefined || !viewKey.IsValid())
         throw std::runtime_error(strprintf("%s: the wallet has no view key available", __func__));
+
+    // The cache id below is derived from the spend key scalar, so even a
+    // cache hit needs the decrypted spend key. Locked encrypted wallet:
+    // report unavailable rather than throw (see GetSpendingKeyForOutput).
+    if (m_storage.HasEncryptionKeys() && m_storage.IsLocked())
+        return false;
 
     auto sk = GetSpendingKey();
 
