@@ -195,4 +195,50 @@ BOOST_FIXTURE_TEST_CASE(locked_wallet_spending_key_unavailable_no_throw, Testing
     BOOST_CHECK(key_after.GetScalar() == key_before.GetScalar());
 }
 
+// Locks down the one-time key derivation the deriveblsctonetimekey RPC exposes
+// for externally constructed destinations (e.g. adaptor-swap outputs locked to
+// a combined key that no wallet owns). An output paid to destination (V, S)
+// with blinding key b carries ephemeralKey = b*G1 and one-time spending key
+// S + H(b*V)*G1; the claimant, holding the view scalar v and the combined
+// spend scalar s, must reconstruct the same key material from on-chain data
+// alone: nonce = v*ephemeralKey, tweak = H(nonce), private key = s + tweak.
+BOOST_FIXTURE_TEST_CASE(external_destination_one_time_key_derivation, TestingSetup)
+{
+    const MclScalar v(uint256(uint64_t{0x1111}));  // shared view scalar
+    const MclScalar s1(uint256(uint64_t{0x2222})); // party 1 spend share
+    const MclScalar s2(uint256(uint64_t{0x3333})); // party 2 spend share
+    const auto V = blsct::PrivateKey(v).GetPoint();
+    const auto S = blsct::PrivateKey(s1).GetPoint() + blsct::PrivateKey(s2).GetPoint();
+    const blsct::DoublePublicKey dest(V, S);
+
+    const MclScalar blindingKey(uint256(uint64_t{0x4444})); // sender-side only
+    auto unsigned_output = blsct::CreateOutput(dest, 42 * COIN, "", TokenId(), blindingKey);
+    const CTxOut& txout = unsigned_output.out;
+
+    // Claimant side: everything below uses only (v, s1+s2) and on-chain data.
+    const MclG1Point nonce = txout.blsctData.ephemeralKey * v;
+    const MclScalar tweak(nonce.GetHashWithSalt(0));
+
+    // tweak_point lets a claimant verify the output key by point addition.
+    BOOST_CHECK(txout.blsctData.spendingKey == S + blsct::PrivateKey(tweak).GetPoint());
+
+    // The full one-time private key signs for the output's spending key.
+    const MclScalar one_time = s1 + s2 + tweak;
+    BOOST_CHECK(blsct::PrivateKey(one_time).GetPoint() == txout.blsctData.spendingKey);
+
+    // The view tag computed from the reconstructed nonce matches the output.
+    HashWriter hasher{};
+    hasher << nonce;
+    BOOST_CHECK_EQUAL(hasher.GetHash().GetUint64(0) & 0xFFFF, txout.blsctData.viewTag);
+
+    // The same nonce opens the range proof (amount recovery path).
+    auto wallet = MakeBLSCTWallet(m_node.chain.get());
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    auto recovered = km->RecoverOutputsWithNonce({txout}, nonce);
+    BOOST_REQUIRE(recovered.is_completed);
+    BOOST_REQUIRE(!recovered.amounts.empty());
+    BOOST_CHECK_EQUAL(recovered.amounts[0].amount, 42 * COIN);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
