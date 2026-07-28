@@ -601,6 +601,131 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     free(signed_tx_rv);
 }
 
+BOOST_AUTO_TEST_CASE(test_unsigned_output_gamma_and_data_predicate)
+{
+    init();
+
+    auto* view_key_rv = gen_scalar(31);
+    auto* spend_key_rv = gen_scalar(32);
+    auto* blinding_key_rv = gen_scalar(33);
+    auto* input_spending_key_rv = gen_scalar(34);
+    auto* input_gamma_rv = gen_scalar(35);
+    auto* default_token_id_rv = gen_default_token_id();
+    BOOST_REQUIRE(view_key_rv != nullptr);
+    BOOST_REQUIRE(spend_key_rv != nullptr);
+    BOOST_REQUIRE(blinding_key_rv != nullptr);
+    BOOST_REQUIRE(input_spending_key_rv != nullptr);
+    BOOST_REQUIRE(input_gamma_rv != nullptr);
+    BOOST_REQUIRE(default_token_id_rv != nullptr);
+
+    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+    BOOST_REQUIRE(spend_pub_key != nullptr);
+    auto* sub_addr_id = gen_sub_addr_id(0, 3);
+    BOOST_REQUIRE(sub_addr_id != nullptr);
+    auto* dest = derive_sub_address(static_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
+    BOOST_REQUIRE(dest != nullptr);
+
+    auto* tx_out_rv = build_tx_out(
+        dest,
+        1000,
+        "",
+        static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+        TxOutputType::StakedCommitment,
+        1000,
+        false,
+        static_cast<const BlsctScalar*>(blinding_key_rv->value));
+    BOOST_REQUIRE(tx_out_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(tx_out_rv->result, BLSCT_SUCCESS);
+
+    auto* unsigned_output_rv = build_unsigned_output(static_cast<const BlsctTxOut*>(tx_out_rv->value));
+    BOOST_REQUIRE(unsigned_output_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(unsigned_output_rv->result, BLSCT_SUCCESS);
+
+    // the gamma getter must return the output's actual gamma
+    const auto* unsigned_output = static_cast<const blsct::UnsignedOutput*>(unsigned_output_rv->value);
+    const BlsctScalar* gamma = get_unsigned_output_gamma(unsigned_output_rv->value);
+    BOOST_REQUIRE(gamma != nullptr);
+    BlsctScalar expected_gamma;
+    SERIALIZE_AND_COPY(unsigned_output->gamma, expected_gamma);
+    BOOST_CHECK(are_scalar_equal(gamma, &expected_gamma) == 1);
+    BOOST_CHECK(get_unsigned_output_gamma(nullptr) == nullptr);
+
+    // attach a DATA predicate before signing
+    const std::string payload_hex = "4e56444701deadbeef";
+    BOOST_CHECK(!set_unsigned_output_data_predicate(unsigned_output_rv->value, "not hex"));
+    BOOST_CHECK(!set_unsigned_output_data_predicate(nullptr, payload_hex.c_str()));
+    BOOST_REQUIRE(set_unsigned_output_data_predicate(unsigned_output_rv->value, payload_hex.c_str()));
+
+    // sign a tx containing the output and verify the predicate survives
+    auto* out_point_rv = gen_out_point("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+    BOOST_REQUIRE(out_point_rv != nullptr);
+    auto* tx_in_rv = build_tx_in(
+        2000,
+        static_cast<const BlsctScalar*>(input_gamma_rv->value),
+        static_cast<const BlsctScalar*>(input_spending_key_rv->value),
+        static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+        static_cast<const BlsctOutPoint*>(out_point_rv->value),
+        false,
+        false);
+    BOOST_REQUIRE(tx_in_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(tx_in_rv->result, BLSCT_SUCCESS);
+    auto* unsigned_input_rv = build_unsigned_input(static_cast<const BlsctTxIn*>(tx_in_rv->value));
+    BOOST_REQUIRE(unsigned_input_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(unsigned_input_rv->result, BLSCT_SUCCESS);
+
+    void* unsigned_tx = create_unsigned_transaction();
+    BOOST_REQUIRE(unsigned_tx != nullptr);
+    add_unsigned_transaction_input(unsigned_tx, unsigned_input_rv->value);
+    add_unsigned_transaction_output(unsigned_tx, unsigned_output_rv->value);
+    set_unsigned_transaction_fee(unsigned_tx, 125);
+
+    auto* signed_tx_rv = sign_unsigned_transaction(unsigned_tx);
+    BOOST_REQUIRE(signed_tx_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(signed_tx_rv->result, BLSCT_SUCCESS);
+
+    CMutableTransaction decoded;
+    BOOST_REQUIRE(DecodeHexTx(decoded, static_cast<const char*>(signed_tx_rv->value)));
+    CTransaction signed_tx(decoded);
+    BOOST_REQUIRE_EQUAL(signed_tx.vout.size(), 2U);
+    auto parsed = blsct::ParsePredicate(signed_tx.vout[0].predicate);
+    BOOST_CHECK(parsed.IsDataPredicate());
+    BOOST_CHECK(signed_tx.vout[0].IsStakedCommitment());
+    const auto& pred_vch = signed_tx.vout[0].predicate;
+    const auto payload = ParseHex<std::byte>(payload_hex);
+    BOOST_REQUIRE(pred_vch.size() >= payload.size());
+    BOOST_CHECK(std::equal(payload.begin(), payload.end(), pred_vch.end() - payload.size()));
+
+    free_obj(view_key_rv->value);
+    free(view_key_rv);
+    free_obj(spend_key_rv->value);
+    free(spend_key_rv);
+    free_obj(blinding_key_rv->value);
+    free(blinding_key_rv);
+    free_obj(input_spending_key_rv->value);
+    free(input_spending_key_rv);
+    free_obj(input_gamma_rv->value);
+    free(input_gamma_rv);
+    free_obj(out_point_rv->value);
+    free(out_point_rv);
+    free_obj(tx_in_rv->value);
+    free(tx_in_rv);
+    delete_unsigned_input(unsigned_input_rv->value);
+    free(unsigned_input_rv);
+    free_obj(default_token_id_rv->value);
+    free(default_token_id_rv);
+    free_obj((void*)spend_pub_key);
+    free_obj((void*)sub_addr_id);
+    free_obj((void*)dest);
+    free_obj(tx_out_rv->value);
+    free(tx_out_rv);
+    free_obj((void*)gamma);
+    delete_unsigned_output(unsigned_output_rv->value);
+    free(unsigned_output_rv);
+    delete_unsigned_transaction(unsigned_tx);
+    free_obj(signed_tx_rv->value);
+    free(signed_tx_rv);
+}
+
 BOOST_AUTO_TEST_CASE(test_are_ctx_in_equal)
 {
     init();

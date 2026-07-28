@@ -2435,6 +2435,29 @@ BlsctRetVal* deserialize_unsigned_output(const char* hex)
     return DeserializeSerializableObject<blsct::UnsignedOutput>(hex);
 }
 
+const BlsctScalar* get_unsigned_output_gamma(const void* vp_unsigned_output)
+{
+    if (vp_unsigned_output == nullptr) return nullptr;
+    const auto* unsigned_output = static_cast<const blsct::UnsignedOutput*>(vp_unsigned_output);
+
+    MALLOC_BYTES(BlsctScalar, gamma, SCALAR_SIZE);
+    RETURN_IF_MEM_ALLOC_FAILED(gamma);
+    SERIALIZE_AND_COPY(unsigned_output->gamma, gamma);
+    return gamma;
+}
+
+bool set_unsigned_output_data_predicate(void* vp_unsigned_output, const char* data_hex)
+{
+    if (vp_unsigned_output == nullptr || data_hex == nullptr) return false;
+
+    std::vector<uint8_t> data;
+    if (!TryParseHexWrap(data_hex, data)) return false;
+
+    auto* unsigned_output = static_cast<blsct::UnsignedOutput*>(vp_unsigned_output);
+    unsigned_output->out.predicate = blsct::DataPredicate(std::vector<unsigned char>(data.begin(), data.end())).GetVch();
+    return true;
+}
+
 void* create_unsigned_transaction()
 {
     auto* unsigned_tx = new (std::nothrow) blsct::UnsignedTransaction{};
