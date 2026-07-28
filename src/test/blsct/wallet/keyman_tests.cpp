@@ -148,4 +148,51 @@ BOOST_FIXTURE_TEST_CASE(htlc_watch_only_registration_detects_refund_output, Test
     BOOST_CHECK(!km_c->IsMine(txout));
 }
 
+// A locked encrypted wallet must behave like a watch wallet for incoming BLSCT
+// outputs: detection and amount recovery work (view key is stored in the
+// clear), while spending-key derivation reports unavailable instead of
+// throwing. Regression test for the AddToWallet crash where a bridged output
+// arriving while the wallet was locked threw "GetSpendingKey: could not access
+// the spend key" out of AppInit() and shut the node down.
+BOOST_FIXTURE_TEST_CASE(locked_wallet_spending_key_unavailable_no_throw, TestingSetup)
+{
+    auto wallet = MakeBLSCTWallet(m_node.chain.get());
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+
+    auto dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+    auto unsigned_output = blsct::CreateOutput(dest, 42 * COIN, "memo");
+    const CTxOut& txout = unsigned_output.out;
+
+    BOOST_REQUIRE(blsct_km->IsMine(txout));
+
+    // Unencrypted wallet derives the spending key.
+    blsct::PrivateKey key_before;
+    BOOST_REQUIRE(blsct_km->GetSpendingKeyForOutput(txout, key_before));
+    BOOST_REQUIRE(key_before.IsValid());
+
+    BOOST_REQUIRE(wallet->EncryptWallet("passphrase"));
+    BOOST_REQUIRE(wallet->Lock());
+    BOOST_REQUIRE(wallet->IsLocked());
+
+    // Locked: detection and amount recovery still work off the view key...
+    BOOST_CHECK(blsct_km->IsMine(txout));
+    auto recovered = blsct_km->RecoverOutputs({txout});
+    BOOST_REQUIRE(recovered.is_completed);
+    BOOST_REQUIRE(!recovered.amounts.empty());
+    BOOST_CHECK_EQUAL(recovered.amounts[0].amount, 42 * COIN);
+
+    // ...but spending-key derivation reports unavailable rather than throwing.
+    blsct::PrivateKey key_locked;
+    BOOST_CHECK(!blsct_km->GetSpendingKeyForOutput(txout, key_locked));
+    BOOST_CHECK(!blsct_km->GetSpendingKeyForOutputWithCache(txout, key_locked));
+
+    // Unlocked again: derivation recovers and matches the pre-encryption key.
+    BOOST_REQUIRE(wallet->Unlock("passphrase"));
+    blsct::PrivateKey key_after;
+    BOOST_REQUIRE(blsct_km->GetSpendingKeyForOutputWithCache(txout, key_after));
+    BOOST_CHECK(key_after.IsValid());
+    BOOST_CHECK(key_after.GetScalar() == key_before.GetScalar());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
