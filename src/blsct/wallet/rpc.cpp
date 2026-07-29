@@ -3144,6 +3144,86 @@ RPCHelpMan deriveblsctspendingkey()
     };
 }
 
+RPCHelpMan deriveblsctonetimekey()
+{
+    return RPCHelpMan{
+        "deriveblsctonetimekey",
+        "\nStateless derivation of the one-time key material for a BLSCT output sent to an\n"
+        "externally constructed destination (view point V = view_key*G1, spend point S).\n"
+        "An output created for such a destination carries ephemeralKey = b*G1 (b = the\n"
+        "sender's blinding key) and one-time spending key S + H(b*V)*G1. Given the private\n"
+        "view scalar and the output's ephemeral key this returns the shared point\n"
+        "b*V (the recovery nonce for getblsctrecoverydatawithnonce), the derived scalar\n"
+        "tweak H(b*V) with its public point, and the expected view tag. If the private\n"
+        "spend scalar is also provided, the full one-time private spending key\n"
+        "spend_key + H(b*V) is returned, suitable for the spending_key input field of\n"
+        "createblsctrawtransaction.\n"
+        "Wallet keys are not consulted: intended for jointly derived destinations (e.g.\n"
+        "atomic-swap outputs locked to a combined key) that no wallet owns.\n",
+        {
+            {"view_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 32-byte private view scalar (hex) of the destination"},
+            {"ephemeral_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 48-byte ephemeral key (hex) of the output (blsctData.ephemeralKey)"},
+            {"spend_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The 32-byte private spend scalar (hex) of the destination; when given, the full one-time private key is returned"},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                                              {RPCResult::Type::STR_HEX, "nonce", "The shared point b*V as a 48-byte public key (hex); recovery nonce for getblsctrecoverydatawithnonce"},
+                                              {RPCResult::Type::NUM, "view_tag", "The view tag matching this output"},
+                                              {RPCResult::Type::STR_HEX, "tweak", "The derived scalar H(b*V) (32-byte hex)"},
+                                              {RPCResult::Type::STR_HEX, "tweak_point", "H(b*V)*G1 (48-byte hex); the output's spending key must equal S + tweak_point"},
+                                              {RPCResult::Type::STR_HEX, "one_time_key", /*optional=*/true, "spend_key + H(b*V) (32-byte hex); only when spend_key was provided"},
+                                          }},
+        RPCExamples{
+            HelpExampleCli("deriveblsctonetimekey", "\"<view scalar hex>\" \"<ephemeral key hex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto view_key_bytes = ParseHex(request.params[0].get_str());
+            if (view_key_bytes.size() != 32) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "View key must be 32 bytes (64 hex characters)");
+            }
+            Scalar viewKey(view_key_bytes);
+            if (viewKey.IsZero()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "View key must not be zero");
+            }
+
+            auto ephemeral_key_bytes = ParseHex(request.params[1].get_str());
+            if (ephemeral_key_bytes.size() != blsct::PublicKey::SIZE) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Ephemeral key must be 48 bytes (96 hex characters)");
+            }
+            blsct::PublicKey ephemeral_pubkey(ephemeral_key_bytes);
+            if (!ephemeral_pubkey.IsValid()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid ephemeral public key");
+            }
+
+            // b*V, computed from the claimant's side: view_key * (b*G1)
+            MclG1Point nonce = ephemeral_pubkey.GetG1Point() * viewKey;
+            Scalar tweak(nonce.GetHashWithSalt(0));
+
+            HashWriter hash{};
+            hash << nonce;
+
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("nonce", HexStr(blsct::PublicKey(nonce).GetVch()));
+            result.pushKV("view_tag", hash.GetHash().GetUint64(0) & 0xFFFF);
+            result.pushKV("tweak", HexStr(tweak.GetVch()));
+            result.pushKV("tweak_point", HexStr(blsct::PrivateKey(tweak).GetPublicKey().GetVch()));
+
+            if (!request.params[2].isNull() && !request.params[2].get_str().empty()) {
+                auto spend_key_bytes = ParseHex(request.params[2].get_str());
+                if (spend_key_bytes.size() != 32) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Spend key must be 32 bytes (64 hex characters)");
+                }
+                Scalar spendKey(spend_key_bytes);
+                if (spendKey.IsZero()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Spend key must not be zero");
+                }
+                result.pushKV("one_time_key", HexStr((spendKey + tweak).GetVch()));
+            }
+
+            return result;
+        },
+    };
+}
+
 RPCHelpMan getblsctoutput()
 {
     return RPCHelpMan{
@@ -3245,6 +3325,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &signblsmessage},
         {"blsct", &verifyblsmessage},
         {"blsct", &deriveblsctspendingkey},
+        {"blsct", &deriveblsctonetimekey},
         {"blsct", &getblsctoutput},
     };
     return commands;
