@@ -68,6 +68,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "delegatestake", 3, "verbose" },
     { "stakeunlock", 0, "amount" },
     { "stakeunlock", 1, "verbose" },
+    { "redelegatestake", 3, "verbose" },
+    { "compounddelegations", 1, "min_amount" },
     { "consolidate", 0, "max_txs" },
     { "consolidate", 1, "max_inputs" },
     { "getreceivedbyaddress", 1, "minconf" },

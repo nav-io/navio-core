@@ -9,6 +9,7 @@
 #include <primitives/transaction.h>
 
 #include <optional>
+#include <set>
 
 namespace blsct {
 // Maximum number of inputs the factory will put in a single transaction. Each
@@ -62,6 +63,13 @@ struct CreateTransactionData {
     // can stake it without any wallet keys. Only meaningful for
     // STAKED_COMMITMENT transactions.
     std::optional<delegation::DelegationRequest> stakeDelegation{std::nullopt};
+
+    // When non-empty (redelegatestake), staked commitments whose delegation
+    // identity is in this set are folded into the new staked output in
+    // addition to those matching stakeDelegation's identity — this is what
+    // moves a delegation to a new delegate or reward address in a single
+    // transaction, without ever leaving the staking set.
+    std::set<std::string> redelegateFromIds{};
 
     Scalar tokenKey;
     std::map<std::string, std::string> nftMetadata;

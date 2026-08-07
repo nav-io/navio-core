@@ -323,7 +323,11 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
             if (output.is_staked_commitment) {
                 // With consolidation disabled, leave existing commitments
                 // untouched so this stakelock yields a separate commitment.
-                if (!transactionData.fConsolidateStakedCommitments || output.delegation != delegationId)
+                // A redelegation additionally folds the commitments of the
+                // identities it is moving away from.
+                const bool matches = output.delegation == delegationId ||
+                                     transactionData.redelegateFromIds.contains(output.delegation);
+                if (!transactionData.fConsolidateStakedCommitments || !matches)
                     continue;
                 inputFromStakedCommitments += output.amount;
             }
