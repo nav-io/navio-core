@@ -4,14 +4,20 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 """Test delegated cold staking: delegatestake RPC, on-chain delegation payload,
-liststakedcommitmentsdata scan, fee-split block templates and revocation."""
+liststakedcommitmentsdata scan, owner-side visibility (listdelegations,
+delegated balances), redelegation, reward compounding, fee-split block
+templates, end-to-end delegated block production and revocation."""
 
+import json
 import os.path
 import subprocess
+
+from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
+    assert_greater_than,
     assert_raises_rpc_error,
 )
 
@@ -49,6 +55,32 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         assert priv and pub, f"unexpected -gendelegationkey output: {out}"
         return priv, pub
 
+    def spawn_staker(self, extra_args):
+        args = [
+            self.staker_path(),
+            f"-datadir={self.nodes[0].datadir_path}",
+            "-delegated",
+            "-delegationrefresh=1",
+            "-rpcwait",
+            "-printtoconsole=1",
+            "-nodebuglogfile",
+        ] + extra_args
+        return subprocess.Popen(args, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True)
+
+    def wait_for_staker_line(self, staker, needles, max_lines=600):
+        """Read staker stdout until a line containing any needle appears.
+        Returns the matching needle or None."""
+        for _ in range(max_lines):
+            line = staker.stdout.readline()
+            if not line:
+                return None
+            self.log.debug(f"staker: {line.rstrip()}")
+            for needle in needles:
+                if needle in line:
+                    return needle
+        return None
+
     def run_test(self):
         node = self.nodes[0]
         self.min_stake = 100
@@ -63,10 +95,15 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
 
         self.test_argument_validation(owner, operator_pub)
         outhash, reward_address = self.test_delegatestake(node, owner, owner_address, operator_pub)
+        self.test_owner_visibility(node, owner, operator_pub, reward_address)
         self.test_delegated_staker_tracking(node, operator_priv)
-        self.test_consolidation_grouping(node, owner, owner_address, operator_pub, reward_address)
+        self.test_wrong_key_sees_nothing(node)
+        other_operator_pub = self.test_consolidation_grouping(node, owner, owner_address, operator_pub, reward_address)
+        self.test_redelegation(node, owner, owner_address, operator_pub, other_operator_pub, reward_address)
+        self.test_compounding(node, owner, owner_address, operator_pub, reward_address)
         self.test_fee_split_template(node, owner)
-        self.test_revocation(node, owner, owner_address)
+        self.test_delegated_block_production(node, owner, operator_priv, reward_address)
+        self.test_revocation(node, owner, owner_address, operator_pub)
 
     def test_argument_validation(self, owner, operator_pub):
         self.log.info("Testing delegatestake argument validation")
@@ -97,6 +134,15 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         assert DELEGATION_MAGIC_HEX in entry["predicate"], entry["predicate"]
         assert_equal(len(entry["commitment"]), 96)  # compressed G1 point
 
+        # Height/confirmations let an operator judge output maturity.
+        tip_height = node.getblockcount()
+        assert_equal(entry["height"] + entry["confirmations"] - 1, tip_height)
+        assert_greater_than(entry["confirmations"], 0)
+
+        # The scan result is cached per tip: a second call at the same tip
+        # must return the identical result (and not pay a second UTXO scan).
+        assert_equal(node.liststakedcommitmentsdata(), entries)
+
         # The owner's wallet still tracks it as its own staked commitment.
         own = owner.liststakedcommitments()
         assert_equal(len(own), 1)
@@ -104,34 +150,71 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
 
         return entry["outhash"], reward_address
 
+    def test_owner_visibility(self, node, owner, operator_pub, reward_address):
+        self.log.info("Testing listdelegations and delegated balance reporting")
+
+        delegations = owner.listdelegations()
+        assert_equal(len(delegations), 1)
+        d = delegations[0]
+        assert_equal(d["amount"], Decimal(self.min_stake))
+        assert_equal(d["delegate_pubkey"], operator_pub)
+        assert_equal(d["reward_address"], reward_address)
+        assert_equal(d["reward_address_is_mine"], True)
+        assert_greater_than(d["confirmations"], 0)
+        # No delegated block has been produced yet.
+        assert_equal(d["rewards_received"], 0)
+        assert_equal(d["rewards_count"], 0)
+
+        balances = owner.getbalances()["mine"]
+        assert_equal(balances["delegated_staked_commitment_balance"], Decimal(self.min_stake))
+        # The delegated stake is part of (not additional to) the staked total.
+        assert_greater_than(balances["staked_commitment_balance"] + 1,
+                            balances["delegated_staked_commitment_balance"])
+
     def test_delegated_staker_tracking(self, node, operator_priv):
         self.log.info("Testing that a delegated staker decrypts and tracks the delegation")
 
-        # No -chain argument: the node's navio.conf inside datadir already
-        # selects blsctregtest, and the staker rejects setting both.
-        args = [
-            self.staker_path(),
-            f"-datadir={self.nodes[0].datadir_path}",
-            "-delegated",
-            f"-delegationkey={operator_priv}",
-            "-delegationrefresh=1",
-            "-rpcwait",
-            "-printtoconsole=1",
-            "-nodebuglogfile",
-        ]
-        staker = subprocess.Popen(args, stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT, text=True)
+        # Pass the key via -delegationkeyfile (the recommended way: a key on
+        # the command line is visible in the process list) and request a
+        # stats file.
+        keyfile = os.path.join(self.options.tmpdir, "delegation.key")
+        with open(keyfile, "w", encoding="utf8") as f:
+            f.write(operator_priv + "\n")
+        self.statsfile = os.path.join(self.options.tmpdir, "delegation-stats.json")
+
+        staker = self.spawn_staker([f"-delegationkeyfile={keyfile}",
+                                    f"-statsfile={self.statsfile}"])
         try:
-            tracked = False
-            for _ in range(600):
-                line = staker.stdout.readline()
-                if not line:
-                    break
-                self.log.debug(f"staker: {line.rstrip()}")
-                if "Tracking 1 delegated commitment(s)" in line:
-                    tracked = True
-                    break
-            assert tracked, "delegated staker did not report the delegation"
+            found = self.wait_for_staker_line(staker, ["Tracking 1 delegated commitment(s)"])
+            assert found, "delegated staker did not report the delegation"
+            # The stats file is written right after the "Tracking" log line;
+            # don't race the kill against it.
+            self.wait_until(lambda: os.path.exists(self.statsfile))
+        finally:
+            staker.kill()
+            staker.wait()
+
+        # The stats file was written on the delegation refresh and lists the
+        # delegation with no blocks yet.
+        with open(self.statsfile, encoding="utf8") as f:
+            stats = json.load(f)
+        assert_equal(len(stats["delegations"]), 1)
+        assert_equal(stats["delegations"][0]["blocks_accepted"], 0)
+
+        # Both key sources must not be combined.
+        proc = subprocess.run([self.staker_path(), f"-datadir={self.nodes[0].datadir_path}",
+                               "-delegated", "-delegationkey=00", f"-delegationkeyfile={keyfile}"],
+                              capture_output=True, text=True)
+        assert proc.returncode != 0
+        assert "mutually exclusive" in proc.stderr + proc.stdout
+
+    def test_wrong_key_sees_nothing(self, node):
+        self.log.info("Testing that an operator with a different key sees no delegations")
+        wrong_priv, _ = self.gen_delegation_key()
+        staker = self.spawn_staker([f"-delegationkey={wrong_priv}"])
+        try:
+            found = self.wait_for_staker_line(staker, ["Tracking 0 delegated commitment(s)"])
+            assert found, "staker with an unrelated key should track zero delegations"
         finally:
             staker.kill()
             staker.wait()
@@ -189,6 +272,59 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         # + 1 other-delegation).
         own = owner.liststakedcommitments()
         assert_equal(len(own), 3)
+        assert_equal(len(owner.listdelegations()), 2)
+
+        return other_operator_pub
+
+    def test_redelegation(self, node, owner, owner_address, operator_pub, other_operator_pub, reward_address):
+        self.log.info("Testing redelegatestake (operator swap in one transaction)")
+
+        _, unused_pub = self.gen_delegation_key()
+        assert_raises_rpc_error(-8, "No stakes are delegated to from_delegate_pubkey",
+                                owner.redelegatestake, unused_pub, operator_pub)
+
+        # Move the stake delegated to other_operator over to operator_pub,
+        # unifying it with the existing delegation (same delegate + reward
+        # address). The commitments never leave the staking set.
+        txid = owner.redelegatestake(other_operator_pub, operator_pub, reward_address)
+        assert_equal(len(txid), 64)
+        self.generatetoblsctaddress(node, 1, owner_address)
+
+        delegations = owner.listdelegations()
+        assert_equal(len(delegations), 1)
+        assert_equal(delegations[0]["delegate_pubkey"], operator_pub)
+        assert_equal(delegations[0]["reward_address"], reward_address)
+        # 2 x min_stake previously under operator_pub + 1 x min_stake moved.
+        assert_equal(delegations[0]["amount"], Decimal(3 * self.min_stake))
+
+        # The plain stake was not folded into the redelegation.
+        entries = node.liststakedcommitmentsdata()
+        plain = [e for e in entries if not e["predicate"]]
+        delegated = [e for e in entries if e["predicate"]]
+        assert_equal((len(plain), len(delegated)), (1, 1))
+
+    def test_compounding(self, node, owner, owner_address, operator_pub, reward_address):
+        self.log.info("Testing compounddelegations")
+
+        before = owner.listdelegations()[0]["amount"]
+        spendable = owner.getbalances()["mine"]["trusted"]
+        assert_greater_than(spendable, 2)
+
+        # Below min_amount: nothing to do.
+        assert_equal(owner.compounddelegations(operator_pub, spendable + 100), None)
+
+        txid = owner.compounddelegations()
+        assert_equal(len(txid), 64)
+        self.generatetoblsctaddress(node, 1, owner_address)
+
+        delegations = owner.listdelegations()
+        assert_equal(len(delegations), 1)
+        assert_greater_than(delegations[0]["amount"], before)
+        assert_equal(delegations[0]["delegate_pubkey"], operator_pub)
+        assert_equal(delegations[0]["reward_address"], reward_address)
+
+        balances = owner.getbalances()["mine"]
+        assert_equal(balances["delegated_staked_commitment_balance"], delegations[0]["amount"])
 
     def test_fee_split_template(self, node, owner):
         self.log.info("Testing getblocktemplate operator fee split parameters")
@@ -214,17 +350,82 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                                 {"rules": [""], "coinbasedest": owner_addr,
                                  "coinbasefeedest": operator_addr})
 
-    def test_revocation(self, node, owner, owner_address):
+    def test_delegated_block_production(self, node, owner, operator_priv, reward_address):
+        """End to end: a wallet-less operator staker produces an accepted
+        block with the delegated stake; the reward lands at the owner's reward
+        address and the operator fee output at the operator's address."""
+        self.log.info("Testing end-to-end delegated block production with an operator fee")
+
+        node.createwallet(wallet_name="operator", blsct=True)
+        operator_wallet = node.get_wallet_rpc("operator")
+        operator_addr = operator_wallet.getnewaddress(label="", address_type="blsct")
+
+        height_before = node.getblockcount()
+        rewards_before = owner.listdelegations()[0]["rewards_received"]
+
+        staker = self.spawn_staker([f"-delegationkey={operator_priv}",
+                                    "-operatorfee=1000",
+                                    f"-operatoraddress={operator_addr}",
+                                    f"-statsfile={self.statsfile}"])
+
+        def stats_show_block():
+            try:
+                with open(self.statsfile, encoding="utf8") as f:
+                    stats = json.load(f)
+                return stats["delegations"][0]["blocks_accepted"] > 0
+            except (FileNotFoundError, json.JSONDecodeError, KeyError, IndexError):
+                return False
+
+        try:
+            found = self.wait_for_staker_line(staker, ["(ACCEPTED)"], max_lines=3000)
+            assert found, "delegated staker did not produce an accepted block"
+            # The stats file is updated right after the acceptance log line;
+            # don't race the kill against it.
+            self.wait_until(stats_show_block)
+        finally:
+            staker.kill()
+            staker.wait()
+
+        self.wait_until(lambda: node.getblockcount() > height_before)
+
+        # The per-delegation accounting recorded the produced block.
+        with open(self.statsfile, encoding="utf8") as f:
+            stats = json.load(f)
+        assert_equal(len(stats["delegations"]), 1)
+        assert_greater_than(stats["delegations"][0]["blocks_accepted"], 0)
+        assert stats["delegations"][0]["last_block_hash"]
+
+        # 90% of the reward went to the owner's reward address...
+        owner.keypoolrefill()
+        deleg = owner.listdelegations()[0]
+        assert_greater_than(deleg["rewards_received"], rewards_before)
+        assert_greater_than(deleg["rewards_count"], 0)
+
+        # ...and the 10% operator fee arrived at the operator's own wallet
+        # (as an immature coinbase output).
+        operator_balances = operator_wallet.getbalances()["mine"]
+        operator_total = operator_balances["immature"] + operator_balances["trusted"] + operator_balances["untrusted_pending"]
+        assert_greater_than(operator_total, 0)
+
+    def test_revocation(self, node, owner, owner_address, operator_pub):
         self.log.info("Testing revocation via stakeunlock")
 
-        # Unstake everything (2 plain + 2 same-delegation + 1 other-delegation
-        # commitments of min_stake each): delegated or not, the spend key
-        # revokes it all, and the staked set ends up empty.
-        txid = owner.stakeunlock(5 * self.min_stake)
+        # Unstake everything: delegated or not, the spend key revokes it all,
+        # and the staked set ends up empty.
+        staked = owner.getbalances()["mine"]["staked_commitment_balance"]
+        txid = owner.stakeunlock(staked)
         assert_equal(len(txid), 64)
         self.generatetoblsctaddress(node, 1, owner_address)
 
         assert_equal(node.liststakedcommitmentsdata(), [])
+        assert_equal(owner.listdelegations(), [])
+        assert_equal(owner.getbalances()["mine"]["delegated_staked_commitment_balance"], 0)
+
+        # Delegating again after a revocation works: the delegation died with
+        # the commitment, not with the wallet or the operator key.
+        owner.delegatestake(self.min_stake, operator_pub)
+        self.generatetoblsctaddress(node, 1, owner_address)
+        assert_equal(len(owner.listdelegations()), 1)
 
 
 if __name__ == "__main__":
