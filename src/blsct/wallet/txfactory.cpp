@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/tokens/predicate_parser.h>
+#include <blsct/wallet/helpers.h>
 #include <blsct/wallet/txfactory.h>
 #include <chainparams.h>
 #include <limits>
@@ -184,12 +185,31 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
         }
         auto value = (out.HasBLSCTRangeProof() || wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) ? recoveredInfo.amount : out.nValue;
 
+        // Identify which delegation (if any) a staked commitment belongs to
+        // by recovering the owner section of its delegation payload with the
+        // output's nonce. Consolidation groups on this id. A payload we
+        // cannot recover gets a unique id so it is never folded into another
+        // stake (which would silently drop or change its delegation).
+        std::string delegationId;
+        if (isStakedCommitment && out.predicate.size() > 0) {
+            try {
+                const auto parsed = blsct::ParsePredicate(out.predicate);
+                if (parsed.IsDataPredicate() && delegation::IsDelegationData(parsed.GetData())) {
+                    const auto nonce = CalculateNonce(out.blsctData.blindingKey, blsct_km->GetPrivateViewKey().GetScalar());
+                    const auto request = delegation::RecoverOwnerInfo(parsed.GetData(), nonce);
+                    delegationId = request.has_value() ? request->GetId() : "unknown:" + output.outpoint.hash.GetHex();
+                }
+            } catch (const std::exception&) {
+                delegationId = "unknown:" + output.outpoint.hash.GetHex();
+            }
+        }
+
         try {
             blsct::PrivateKey spending_key;
             if (!blsct_km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
                 continue;
             }
-            gathered.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment});
+            gathered.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment, delegationId});
         } catch (const std::exception& e) {
             LogPrintf("Error adding input: %s\n", e.what());
             continue;

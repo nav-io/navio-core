@@ -186,7 +186,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
 }
 
 
-std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct::SubAddress& destination, CAmount nReward, const std::vector<CMutableTransaction>& txns, const bool& fPos)
+std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct::SubAddress& destination, CAmount nReward, const std::vector<CMutableTransaction>& txns, const bool& fPos, const std::optional<std::pair<blsct::SubAddress, uint32_t>>& feeSplit)
 {
     const auto time_start{SteadyClock::now()};
 
@@ -272,23 +272,43 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
 
     std::vector<blsct::Signature> txSigs;
 
+    // Optional operator-fee share of the reward, paid to a second coinbase
+    // output. Consensus only binds the coinbase's total amount, so the split
+    // is builder policy.
+    CAmount feeAmount = 0;
+    if (feeSplit.has_value() && nReward > 0) {
+        const CAmount bps = std::min<uint32_t>(feeSplit->second, 10000);
+        // floor(nReward * bps / 10000) without the 64-bit overflow of the
+        // naive product (and without __int128, absent on 32-bit targets).
+        feeAmount = (nReward / 10000) * bps + (nReward % 10000) * bps / 10000;
+    }
+
     // Always build a full BLSCT coinbase output (range proof + keys), even for a
     // zero reward (heights 2..nLastPOWHeight under fOnlyFirstPoWBlockHasReward).
     // fAllowZeroValueRangeProof stops CreateOutput() from shortcutting a 0 amount
     // to an unspendable OP_RETURN with no range proof: the verifier skips such
     // outputs, but the coinbase still carries balance/output signatures, which
     // would then fail the aggregate signature check.
-    auto out = blsct::CreateOutput(destination.GetKeys(), nReward, "Reward", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true);
+    auto out = blsct::CreateOutput(destination.GetKeys(), nReward - feeAmount, "Reward", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true);
 
     txSigs.push_back(blsct::PrivateKey(out.blindingKey).Sign(out.out.GetHash()));
-    txSigs.push_back(blsct::PrivateKey(out.gamma.Negate()).SignBalance());
+    Scalar gammaAcc = out.gamma;
 
     coinbaseTx.nVersion = CTransaction::BLSCT_MARKER;
-    coinbaseTx.txSig = blsct::Signature::Aggregate(txSigs);
     coinbaseTx.vin.resize(1);
     coinbaseTx.vin[0].prevout.SetNull();
     coinbaseTx.vout.resize(1);
     coinbaseTx.vout[0] = out.out;
+
+    if (feeAmount > 0) {
+        auto feeOut = blsct::CreateOutput(feeSplit->first.GetKeys(), feeAmount, "Operator Fee", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true);
+        txSigs.push_back(blsct::PrivateKey(feeOut.blindingKey).Sign(feeOut.out.GetHash()));
+        gammaAcc = gammaAcc + feeOut.gamma;
+        coinbaseTx.vout.push_back(feeOut.out);
+    }
+
+    txSigs.push_back(blsct::PrivateKey(gammaAcc.Negate()).SignBalance());
+    coinbaseTx.txSig = blsct::Signature::Aggregate(txSigs);
     coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
     pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
     // Preserve the original txid when there is only a single non-coinbase tx.
