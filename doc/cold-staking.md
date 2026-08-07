@@ -33,9 +33,13 @@ staking exploits exactly this split:
 3. The operator runs a wallet-less staker:
 
    ```
-   navio-staker -delegated -delegationkey=<hex> \
-       [-operatoraddress=<addr> -operatorfee=<bps>] [-delegationrefresh=<sec>]
+   navio-staker -delegated -delegationkeyfile=<path> \
+       [-operatoraddress=<addr> -operatorfee=<bps>] [-delegationrefresh=<sec>] \
+       [-statsfile=<path>]
    ```
+
+   (`-delegationkey=<hex>` is also accepted, but a key on the command line is
+   visible to other users in the process list; prefer `-delegationkeyfile`.)
 
    The staker periodically scans the chain's staked outputs
    (`liststakedcommitmentsdata` RPC), trial-decrypts each delegation payload,
@@ -72,10 +76,21 @@ Important caveats:
   stakes already delegated with identical parameters. A delegation is
   therefore never silently revoked or extended by an unrelated stake
   operation.
-- Rewards accumulate in the owner's wallet as ordinary outputs; re-staking
-  them requires the owner to run `delegatestake` again (the spend key never
-  leaves the owner's machine, so compounding cannot be automated by the
-  operator).
+- Rewards accumulate in the owner's wallet as ordinary outputs; the spend key
+  never leaves the owner's machine, so compounding cannot be automated by the
+  operator. The owner can run `compounddelegations` periodically (e.g. from
+  cron) to fold accumulated rewards back into the delegation.
+- **Owners can audit their delegations from the chain alone.**
+  `listdelegations` recovers every active delegation (delegate key, reward
+  address, amount) from the on-chain payloads, and — when the reward address
+  belongs to the wallet — sums the coinbase rewards received on it, so an
+  owner can check the operator is honoring the reward address before deciding
+  to revoke. `getbalances` reports the delegated portion of the staked balance
+  separately (`delegated_staked_commitment_balance`).
+- **Changing operator or reward address does not interrupt staking.**
+  `redelegatestake` spends the delegated commitments directly into a new
+  staked output carrying the new delegation payload, so the stake never
+  leaves the staking set (no unlock/re-lock gap).
 
 ## RPC / tool reference
 
@@ -83,12 +98,26 @@ Important caveats:
   RPC; locks `amount` and delegates block production. The delegation is bound
   to a fresh commitment (no consolidation), so each call delegates exactly the
   requested amount.
+- `listdelegations` — wallet RPC; lists the wallet's active delegations with
+  the delegate key, reward address, amount and (for wallet-owned reward
+  addresses) the coinbase rewards received.
+- `redelegatestake from_delegate_pubkey delegate_pubkey [reward_address]
+  [verbose]` — wallet RPC; moves existing delegations to a new delegate
+  and/or reward address in a single transaction, without leaving the staking
+  set.
+- `compounddelegations [delegate_pubkey] [min_amount]` — wallet RPC; folds the
+  wallet's spendable balance (minus a fee margin) into an existing delegation.
+  Intended to be run periodically to compound rewards.
 - `liststakedcommitmentsdata` — node RPC; lists all unspent staked-commitment
-  outputs with their predicate data. Public information; used by operators to
-  discover delegations.
+  outputs with their predicate data, creation height and confirmations. Public
+  information; used by operators to discover delegations. The scan is cached
+  per chain tip, so several polling operators only cost one UTXO iteration
+  per block.
 - `getblocktemplate {"coinbasedest": A, "coinbasefeedest": B, "coinbasefeebps": N}`
   — the template's coinbase pays `N/10000` of the reward to `B` and the rest
   to `A`.
 - `navio-staker -gendelegationkey` — generate an operator key pair.
-- `navio-staker -delegated -delegationkey=<hex>` — run as a delegation
-  operator; no wallet required on the staking machine.
+- `navio-staker -delegated -delegationkeyfile=<path>` — run as a delegation
+  operator; no wallet required on the staking machine. With `-statsfile=<path>`
+  the staker maintains a JSON file of per-delegation accounting: blocks
+  accepted/rejected per delegation, last block hash/time and reward address.
