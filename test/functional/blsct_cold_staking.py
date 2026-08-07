@@ -362,6 +362,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
 
         height_before = node.getblockcount()
         rewards_before = owner.listdelegations()[0]["rewards_received"]
+        self.e2e_reward_address = reward_address
 
         staker = self.spawn_staker([f"-delegationkey={operator_priv}",
                                     "-operatorfee=1000",
@@ -407,6 +408,19 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         operator_total = operator_balances["immature"] + operator_balances["trusted"] + operator_balances["untrusted_pending"]
         assert_greater_than(operator_total, 0)
 
+        # liststakingrewards tracks both kinds of staking rewards: the
+        # delegated ones (reward address of an active delegation) and the
+        # wallet's own, non-delegated coinbase rewards.
+        rewards = {r["address"]: r for r in owner.liststakingrewards()}
+        delegated_rewards = rewards[reward_address]
+        assert_equal(delegated_rewards["from_delegation"], True)
+        assert_greater_than(delegated_rewards["amount"], 0)
+        assert_greater_than(delegated_rewards["last_height"], height_before)
+        own_rewards = [r for r in rewards.values() if not r["from_delegation"]]
+        assert_greater_than(len(own_rewards), 0)
+        assert_greater_than(own_rewards[0]["amount"], 0)
+        assert_greater_than(own_rewards[0]["count"], 0)
+
     def test_revocation(self, node, owner, owner_address, operator_pub):
         self.log.info("Testing revocation via stakeunlock")
 
@@ -426,6 +440,17 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         owner.delegatestake(self.min_stake, operator_pub)
         self.generatetoblsctaddress(node, 1, owner_address)
         assert_equal(len(owner.listdelegations()), 1)
+
+        # Reward history survives revocation: the rewards earned under the
+        # old (now revoked) delegation are still listed, no longer tied to an
+        # active delegation. The new delegation uses a fresh reward address,
+        # so the old address must not be flagged.
+        new_reward_address = owner.listdelegations()[0]["reward_address"]
+        rewards = {r["address"]: r for r in owner.liststakingrewards()}
+        assert self.e2e_reward_address in rewards
+        assert new_reward_address != self.e2e_reward_address
+        assert_equal(rewards[self.e2e_reward_address]["from_delegation"], False)
+        assert_greater_than(rewards[self.e2e_reward_address]["amount"], 0)
 
 
 if __name__ == "__main__":

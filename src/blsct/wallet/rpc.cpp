@@ -1387,6 +1387,55 @@ static std::vector<WalletDelegation> GetWalletDelegations(const wallet::CWallet&
     return ret;
 }
 
+//! Per-address totals of the wallet's confirmed coinbase (staking reward)
+//! receipts.
+struct CoinbaseRewards {
+    CAmount amount{0};
+    int count{0};
+    int lastHeight{0};
+};
+
+static std::map<std::string, CoinbaseRewards> GetCoinbaseRewardsByAddress(const wallet::CWallet& wallet, blsct::KeyMan* blsct_km) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    std::map<std::string, CoinbaseRewards> ret;
+
+    const int tip_height = wallet.GetLastBlockHeight();
+    const auto add = [&](const CTxOut& out, const CAmount amount, const int depth) {
+        if (!out.HasBLSCTRangeProof()) return;
+        const CTxDestination dest = blsct_km->GetDestination(out);
+        if (std::holds_alternative<CNoDestination>(dest)) return;
+        auto& acc = ret[EncodeDestination(dest)];
+        acc.amount += amount;
+        acc.count += 1;
+        acc.lastHeight = std::max(acc.lastHeight, tip_height - depth + 1);
+    };
+
+    if (wallet.IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        for (const auto& entry : wallet.mapOutputs) {
+            const wallet::CWalletOutput& wout = entry.second;
+            if (!wout.fCoinbase) continue;
+            const int depth = wallet.GetOutputDepthInMainChain(wout);
+            if (depth < 1) continue;
+            add(*wout.out, wout.blsctRecoveryData.amount, depth);
+        }
+    } else {
+        for (const auto& entry : wallet.mapWallet) {
+            const wallet::CWalletTx& wtx = entry.second;
+            if (!wtx.IsCoinBase()) continue;
+            const int depth = wallet.GetTxDepthInMainChain(wtx);
+            if (depth < 1) continue;
+            for (uint32_t i = 0; i < wtx.tx->vout.size(); ++i) {
+                const CTxOut& out = wtx.tx->vout[i];
+                if (!(wallet.IsMine(out) & wallet::ISMINE_SPENDABLE_BLSCT)) continue;
+                add(out, wtx.GetBLSCTRecoveryData(i).amount, depth);
+            }
+        }
+    }
+
+    return ret;
+}
+
 CAmount blsct::GetDelegatedStakedBalance(const wallet::CWallet& wallet)
 {
     AssertLockHeld(wallet.cs_wallet);
@@ -1444,34 +1493,7 @@ RPCHelpMan listdelegations()
             // then attribute them to any delegation whose reward address is
             // ours. This is what lets an owner audit "is my operator actually
             // paying the reward address it was given".
-            std::map<std::string, std::pair<CAmount, int>> coinbase_by_address;
-            const auto addCoinbase = [&](const CTxOut& out, const CAmount amount) {
-                if (!out.HasBLSCTRangeProof()) return;
-                const CTxDestination dest = blsct_km->GetDestination(out);
-                if (std::holds_alternative<CNoDestination>(dest)) return;
-                auto& acc = coinbase_by_address[EncodeDestination(dest)];
-                acc.first += amount;
-                acc.second += 1;
-            };
-            if (pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
-                for (const auto& entry : pwallet->mapOutputs) {
-                    const wallet::CWalletOutput& wout = entry.second;
-                    if (!wout.fCoinbase) continue;
-                    if (pwallet->GetOutputDepthInMainChain(wout) < 1) continue;
-                    addCoinbase(*wout.out, wout.blsctRecoveryData.amount);
-                }
-            } else {
-                for (const auto& entry : pwallet->mapWallet) {
-                    const wallet::CWalletTx& wtx = entry.second;
-                    if (!wtx.IsCoinBase()) continue;
-                    if (pwallet->GetTxDepthInMainChain(wtx) < 1) continue;
-                    for (uint32_t i = 0; i < wtx.tx->vout.size(); ++i) {
-                        const CTxOut& out = wtx.tx->vout[i];
-                        if (!(pwallet->IsMine(out) & wallet::ISMINE_SPENDABLE_BLSCT)) continue;
-                        addCoinbase(out, wtx.GetBLSCTRecoveryData(i).amount);
-                    }
-                }
-            }
+            const auto coinbase_by_address = GetCoinbaseRewardsByAddress(*pwallet, blsct_km);
 
             UniValue result(UniValue::VARR);
             for (const auto& d : delegations) {
@@ -1485,9 +1507,71 @@ RPCHelpMan listdelegations()
                 const bool reward_is_mine = pwallet->IsMine(DecodeDestination(d.request.rewardAddress)) != wallet::ISMINE_NO;
                 entry.pushKV("reward_address_is_mine", reward_is_mine);
                 if (reward_is_mine) {
-                    entry.pushKV("rewards_received", ValueFromAmount(rewards != coinbase_by_address.end() ? rewards->second.first : 0));
-                    entry.pushKV("rewards_count", rewards != coinbase_by_address.end() ? rewards->second.second : 0);
+                    entry.pushKV("rewards_received", ValueFromAmount(rewards != coinbase_by_address.end() ? rewards->second.amount : 0));
+                    entry.pushKV("rewards_count", rewards != coinbase_by_address.end() ? rewards->second.count : 0);
                 }
+                result.push_back(entry);
+            }
+            return result;
+        },
+    };
+}
+
+RPCHelpMan liststakingrewards()
+{
+    return RPCHelpMan{
+        "liststakingrewards",
+        "\nList the coinbase (staking) rewards this wallet has received, grouped by the\n"
+        "address they were paid to. Entries whose address is the reward address of an\n"
+        "active delegation are flagged from_delegation; the remaining entries are the\n"
+        "wallet's own (non-delegated) staking rewards, e.g. from running navio-staker\n"
+        "with this wallet.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::ARR,
+            "",
+            "",
+            {{RPCResult::Type::OBJ, "", "", {
+                 {RPCResult::Type::STR, "address", "The address the rewards were paid to."},
+                 {RPCResult::Type::BOOL, "from_delegation", "Whether the address is the reward address of an active delegation."},
+                 {RPCResult::Type::STR_AMOUNT, "amount", "Total rewards received on the address."},
+                 {RPCResult::Type::NUM, "count", "Number of coinbase outputs received on the address."},
+                 {RPCResult::Type::NUM, "last_height", "Height of the most recent reward."},
+             }}},
+        },
+        RPCExamples{HelpExampleCli("liststakingrewards", "") + HelpExampleRpc("liststakingrewards", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetBLSCTKeyMan();
+            if (blsct_km == nullptr) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not have BLSCT keys");
+            }
+
+            std::set<std::string> delegation_reward_addresses;
+            for (const auto& d : GetWalletDelegations(*pwallet, blsct_km)) {
+                delegation_reward_addresses.insert(d.request.rewardAddress);
+            }
+
+            const auto coinbase_by_address = GetCoinbaseRewardsByAddress(*pwallet, blsct_km);
+
+            // Largest earner first.
+            std::vector<std::pair<std::string, CoinbaseRewards>> sorted{coinbase_by_address.begin(), coinbase_by_address.end()};
+            std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second.amount > b.second.amount; });
+
+            UniValue result(UniValue::VARR);
+            for (const auto& [address, rewards] : sorted) {
+                UniValue entry(UniValue::VOBJ);
+                entry.pushKV("address", address);
+                entry.pushKV("from_delegation", delegation_reward_addresses.contains(address));
+                entry.pushKV("amount", ValueFromAmount(rewards.amount));
+                entry.pushKV("count", rewards.count);
+                entry.pushKV("last_height", rewards.lastHeight);
                 result.push_back(entry);
             }
             return result;
@@ -3775,6 +3859,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &delegatestake},
         {"blsct", &stakeunlock},
         {"blsct", &listdelegations},
+        {"blsct", &liststakingrewards},
         {"blsct", &redelegatestake},
         {"blsct", &compounddelegations},
         {"blsct", &consolidate},

@@ -101,6 +101,10 @@ Important caveats:
 - `listdelegations` — wallet RPC; lists the wallet's active delegations with
   the delegate key, reward address, amount and (for wallet-owned reward
   addresses) the coinbase rewards received.
+- `liststakingrewards` — wallet RPC; lists the wallet's coinbase rewards
+  grouped by receiving address, flagging which addresses belong to an active
+  delegation — so both delegated and own (non-delegated) staking rewards can
+  be tracked from one place.
 - `redelegatestake from_delegate_pubkey delegate_pubkey [reward_address]
   [verbose]` — wallet RPC; moves existing delegations to a new delegate
   and/or reward address in a single transaction, without leaving the staking
