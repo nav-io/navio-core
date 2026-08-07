@@ -2107,9 +2107,11 @@ static RPCHelpMan liststakedcommitmentsdata()
     return RPCHelpMan{
         "liststakedcommitmentsdata",
         "\nScan the UTXO set and return every unspent staked-commitment output together with\n"
-        "its outpoint and attached predicate data (if any). All returned data is public.\n"
-        "Third-party stakers use this to discover stake delegations addressed to them.\n"
-        "This call iterates the whole UTXO set and may take a while.\n",
+        "its outpoint, creation height and attached predicate data (if any). All returned data\n"
+        "is public. Third-party stakers use this to discover stake delegations addressed to\n"
+        "them. The scan iterates the whole UTXO set and may take a while; its result is cached\n"
+        "per chain tip, so repeated calls at the same tip (e.g. several polling operators) only\n"
+        "pay the scan once.\n",
         {},
         RPCResult{
             RPCResult::Type::ARR,
@@ -2119,6 +2121,8 @@ static RPCHelpMan liststakedcommitmentsdata()
                  {RPCResult::Type::STR_HEX, "commitment", "The staked Pedersen commitment (G1 point)."},
                  {RPCResult::Type::STR_HEX, "outhash", "The hash identifying the staked output."},
                  {RPCResult::Type::STR_HEX, "predicate", "The output's predicate data (empty if none)."},
+                 {RPCResult::Type::NUM, "height", "The height of the block containing the output."},
+                 {RPCResult::Type::NUM, "confirmations", "The number of confirmations of the output."},
              }}},
         },
         RPCExamples{HelpExampleCli("liststakedcommitmentsdata", "") + HelpExampleRpc("liststakedcommitmentsdata", "")},
@@ -2126,10 +2130,28 @@ static RPCHelpMan liststakedcommitmentsdata()
             NodeContext& node = EnsureAnyNodeContext(request.context);
             ChainstateManager& chainman = EnsureChainman(node);
 
+            // The UTXO set only changes when the chain tip does, so one scan
+            // result is valid for every call made at the same tip. Several
+            // delegated-staking operators typically poll this on an interval;
+            // without the cache each of them would pay a full UTXO iteration
+            // every few minutes.
+            static Mutex cache_mutex;
+            static uint256 cache_tip GUARDED_BY(cache_mutex);
+            static UniValue cache_result GUARDED_BY(cache_mutex){UniValue::VARR};
+
+            uint256 tip_hash;
+            int tip_height;
             std::unique_ptr<CCoinsViewCursor> pcursor;
             {
                 LOCK(::cs_main);
                 Chainstate& active_chainstate = chainman.ActiveChainstate();
+                const CBlockIndex* tip = CHECK_NONFATAL(active_chainstate.m_chain.Tip());
+                tip_hash = tip->GetBlockHash();
+                tip_height = tip->nHeight;
+                {
+                    LOCK(cache_mutex);
+                    if (cache_tip == tip_hash) return cache_result;
+                }
                 active_chainstate.ForceFlushStateToDisk();
                 pcursor = CHECK_NONFATAL(active_chainstate.CoinsDB().Cursor());
             }
@@ -2153,10 +2175,18 @@ static RPCHelpMan liststakedcommitmentsdata()
                         entry.pushKV("commitment", HexStr(coin.out.blsctData.rangeProof.Vs[0].GetVch()));
                         entry.pushKV("outhash", key.hash.GetHex());
                         entry.pushKV("predicate", HexStr(coin.out.predicate));
+                        entry.pushKV("height", static_cast<int>(coin.nHeight));
+                        entry.pushKV("confirmations", tip_height - static_cast<int>(coin.nHeight) + 1);
                         result.push_back(entry);
                     }
                 }
                 pcursor->Next();
+            }
+
+            {
+                LOCK(cache_mutex);
+                cache_tip = tip_hash;
+                cache_result = result;
             }
 
             return result;
