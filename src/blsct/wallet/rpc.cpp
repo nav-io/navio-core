@@ -29,6 +29,7 @@
 #include <validation.h>
 #include <wallet/receive.h>
 #include <wallet/rpc/util.h>
+#include <wallet/spend.h>
 #include <wallet/wallet.h>
 #include <limits>
 #include <optional>
@@ -1315,6 +1316,385 @@ RPCHelpMan stakeunlock()
             EnsureWalletIsUnlocked(*pwallet);
 
             return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
+
+//! One delegated staked output of this wallet, with the delegation parameters
+//! recovered from the on-chain payload's owner section.
+struct WalletDelegation {
+    uint256 outhash;
+    CAmount amount{0};
+    int depth{0};
+    blsct::delegation::DelegationRequest request;
+};
+
+//! Recover every delegated staked output of the wallet (unspent, any depth)
+//! together with its delegation parameters. Works purely from the chain data:
+//! the owner section of each delegation payload is decrypted with the same
+//! per-output nonce the wallet already uses to recover amounts, so this needs
+//! no wallet-side metadata and survives a restore from seed.
+static std::vector<WalletDelegation> GetWalletDelegations(const wallet::CWallet& wallet, blsct::KeyMan* blsct_km) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    std::vector<WalletDelegation> ret;
+
+    // A non-BLSCT wallet still has a KeyMan object but no view key; it cannot
+    // hold delegations either.
+    MclScalar viewKey;
+    try {
+        viewKey = blsct_km->GetPrivateViewKey().GetScalar();
+    } catch (const std::exception&) {
+        return ret;
+    }
+
+    wallet::CoinFilterParams coins_params;
+    coins_params.min_amount = 0;
+    coins_params.only_blsct = true;
+    coins_params.include_staked_commitment = true;
+    coins_params.min_sum_amount = MAX_MONEY;
+
+    const bool is_blsct_storage = wallet.IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+    auto availableCoins = is_blsct_storage ? AvailableBlsctCoins(wallet, nullptr, coins_params) : AvailableCoins(wallet, nullptr, std::nullopt, coins_params);
+
+    for (const wallet::COutput& output : availableCoins.All()) {
+        CTxOut out;
+        CAmount amount{0};
+        bool isStakedCommitment = false;
+
+        if (is_blsct_storage) {
+            const auto wout = wallet.GetWalletOutput(output.outpoint);
+            if (wout == nullptr) continue;
+            out = *(wout->out);
+            amount = wout->blsctRecoveryData.amount;
+            isStakedCommitment = wout->fStakedCommitment;
+        } else {
+            const auto wtx = wallet.GetWalletTxFromOutpoint(output.outpoint);
+            if (wtx == nullptr) continue;
+            const auto txout_iter = std::find_if(wtx->tx->vout.begin(), wtx->tx->vout.end(), [&](const CTxOut& o) { return o.GetHash() == output.outpoint.hash; });
+            if (txout_iter == wtx->tx->vout.end()) continue;
+            out = *txout_iter;
+            amount = wtx->GetBLSCTRecoveryData(output.outpoint).amount;
+            isStakedCommitment = out.IsStakedCommitment();
+        }
+
+        if (!isStakedCommitment || out.predicate.empty()) continue;
+
+        try {
+            const auto parsed = blsct::ParsePredicate(out.predicate);
+            if (!parsed.IsDataPredicate() || !blsct::delegation::IsDelegationData(parsed.GetData())) continue;
+            const auto nonce = blsct::CalculateNonce(out.blsctData.blindingKey, viewKey);
+            const auto request = blsct::delegation::RecoverOwnerInfo(parsed.GetData(), nonce);
+            if (!request.has_value()) continue;
+            ret.push_back({output.outpoint.hash, amount, output.depth, *request});
+        } catch (const std::exception&) {
+            continue;
+        }
+    }
+
+    return ret;
+}
+
+CAmount blsct::GetDelegatedStakedBalance(const wallet::CWallet& wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    auto blsct_km = wallet.GetBLSCTKeyMan();
+    if (blsct_km == nullptr) return 0;
+    CAmount total{0};
+    for (const auto& d : GetWalletDelegations(wallet, blsct_km)) {
+        if (d.depth >= 1) total += d.amount;
+    }
+    return total;
+}
+
+RPCHelpMan listdelegations()
+{
+    return RPCHelpMan{
+        "listdelegations",
+        "\nList this wallet's active stake delegations: every unspent staked output that\n"
+        "carries a delegation payload, with the delegate key and reward address recovered\n"
+        "from the chain. When a delegation's reward address belongs to this wallet, the\n"
+        "coinbase rewards received on it are summed so the owner can check the delegate\n"
+        "is honoring the reward address.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::ARR,
+            "",
+            "",
+            {{RPCResult::Type::OBJ, "", "", {
+                 {RPCResult::Type::STR_HEX, "outhash", "The hash identifying the staked output."},
+                 {RPCResult::Type::STR_AMOUNT, "amount", "The delegated amount."},
+                 {RPCResult::Type::NUM, "confirmations", "The number of confirmations of the staked output."},
+                 {RPCResult::Type::STR_HEX, "delegate_pubkey", "The delegate's G1 delegation public key."},
+                 {RPCResult::Type::STR, "reward_address", "The address the delegate is asked to pay block rewards to."},
+                 {RPCResult::Type::BOOL, "reward_address_is_mine", "Whether the reward address belongs to this wallet."},
+                 {RPCResult::Type::STR_AMOUNT, "rewards_received", /*optional=*/true, "Total coinbase rewards received on the reward address (only when it belongs to this wallet)."},
+                 {RPCResult::Type::NUM, "rewards_count", /*optional=*/true, "Number of coinbase outputs received on the reward address (only when it belongs to this wallet)."},
+             }}},
+        },
+        RPCExamples{HelpExampleCli("listdelegations", "") + HelpExampleRpc("listdelegations", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetBLSCTKeyMan();
+            if (blsct_km == nullptr) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not have BLSCT keys");
+            }
+
+            const auto delegations = GetWalletDelegations(*pwallet, blsct_km);
+
+            // Sum the wallet's coinbase receipts per destination address once,
+            // then attribute them to any delegation whose reward address is
+            // ours. This is what lets an owner audit "is my operator actually
+            // paying the reward address it was given".
+            std::map<std::string, std::pair<CAmount, int>> coinbase_by_address;
+            const auto addCoinbase = [&](const CTxOut& out, const CAmount amount) {
+                if (!out.HasBLSCTRangeProof()) return;
+                const CTxDestination dest = blsct_km->GetDestination(out);
+                if (std::holds_alternative<CNoDestination>(dest)) return;
+                auto& acc = coinbase_by_address[EncodeDestination(dest)];
+                acc.first += amount;
+                acc.second += 1;
+            };
+            if (pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+                for (const auto& entry : pwallet->mapOutputs) {
+                    const wallet::CWalletOutput& wout = entry.second;
+                    if (!wout.fCoinbase) continue;
+                    if (pwallet->GetOutputDepthInMainChain(wout) < 1) continue;
+                    addCoinbase(*wout.out, wout.blsctRecoveryData.amount);
+                }
+            } else {
+                for (const auto& entry : pwallet->mapWallet) {
+                    const wallet::CWalletTx& wtx = entry.second;
+                    if (!wtx.IsCoinBase()) continue;
+                    if (pwallet->GetTxDepthInMainChain(wtx) < 1) continue;
+                    for (uint32_t i = 0; i < wtx.tx->vout.size(); ++i) {
+                        const CTxOut& out = wtx.tx->vout[i];
+                        if (!(pwallet->IsMine(out) & wallet::ISMINE_SPENDABLE_BLSCT)) continue;
+                        addCoinbase(out, wtx.GetBLSCTRecoveryData(i).amount);
+                    }
+                }
+            }
+
+            UniValue result(UniValue::VARR);
+            for (const auto& d : delegations) {
+                UniValue entry(UniValue::VOBJ);
+                entry.pushKV("outhash", d.outhash.GetHex());
+                entry.pushKV("amount", ValueFromAmount(d.amount));
+                entry.pushKV("confirmations", d.depth);
+                entry.pushKV("delegate_pubkey", HexStr(d.request.delegateKey.GetVch()));
+                entry.pushKV("reward_address", d.request.rewardAddress);
+                const auto rewards = coinbase_by_address.find(d.request.rewardAddress);
+                const bool reward_is_mine = pwallet->IsMine(DecodeDestination(d.request.rewardAddress)) != wallet::ISMINE_NO;
+                entry.pushKV("reward_address_is_mine", reward_is_mine);
+                if (reward_is_mine) {
+                    entry.pushKV("rewards_received", ValueFromAmount(rewards != coinbase_by_address.end() ? rewards->second.first : 0));
+                    entry.pushKV("rewards_count", rewards != coinbase_by_address.end() ? rewards->second.second : 0);
+                }
+                result.push_back(entry);
+            }
+            return result;
+        },
+    };
+}
+
+RPCHelpMan redelegatestake()
+{
+    return RPCHelpMan{
+        "redelegatestake",
+        "\nMove existing stake delegations to a different delegate and/or reward address in a\n"
+        "single transaction. The delegated commitments stay staked the whole time: the old\n"
+        "delegated outputs are spent directly into a new staked output carrying the new\n"
+        "delegation payload, so there is no separate unlock/re-lock step and no gap in stake\n"
+        "continuity. Only delegations to from_delegate_pubkey are moved; other stakes are\n"
+        "left untouched.\n" +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"from_delegate_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The delegate key the stakes are currently delegated to."},
+            {"delegate_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The new delegate's 48-byte G1 delegation public key (hex). May equal from_delegate_pubkey to only change the reward address."},
+            {"reward_address", RPCArg::Type::STR, RPCArg::Default{""}, "BLSCT address the new delegate should pay block rewards to. Defaults to the reward address of the delegations being moved."},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false",
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+            RPCResult{
+                "if verbose is set to true",
+                RPCResult::Type::OBJ,
+                "",
+                "",
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+            },
+        },
+        RPCExamples{
+            "\nMove all stakes delegated to one operator to another\n" + HelpExampleCli("redelegatestake", "\"<old_pubkey_hex>\" \"<new_pubkey_hex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetBLSCTKeyMan();
+            if (blsct_km == nullptr) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not have BLSCT keys");
+            }
+
+            MclG1Point fromKey;
+            if (!IsHex(request.params[0].get_str()) || !fromKey.SetVch(ParseHex(request.params[0].get_str())) || fromKey.IsZero()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "from_delegate_pubkey is not a valid G1 point");
+            }
+            MclG1Point delegateKey;
+            if (!IsHex(request.params[1].get_str()) || !delegateKey.SetVch(ParseHex(request.params[1].get_str())) || delegateKey.IsZero()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "delegate_pubkey is not a valid G1 point");
+            }
+
+            // Collect the delegations being moved; their ids drive the input
+            // selection and their reward address is the default for the new
+            // delegation.
+            std::set<std::string> fromIds;
+            std::set<std::string> fromRewardAddresses;
+            CAmount movedAmount{0};
+            for (const auto& d : GetWalletDelegations(*pwallet, blsct_km)) {
+                if (!(d.request.delegateKey == fromKey)) continue;
+                fromIds.insert(d.request.GetId());
+                fromRewardAddresses.insert(d.request.rewardAddress);
+                if (d.depth >= 1) movedAmount += d.amount;
+            }
+            if (fromIds.empty()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "No stakes are delegated to from_delegate_pubkey");
+            }
+
+            std::string rewardAddress = request.params[2].isNull() ? "" : request.params[2].get_str();
+            if (rewardAddress.empty()) {
+                if (fromRewardAddresses.size() > 1) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "The delegations being moved use different reward addresses; pass reward_address explicitly");
+                }
+                rewardAddress = *fromRewardAddresses.begin();
+            } else if (!IsValidDestination(DecodeDestination(rewardAddress))) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
+            }
+
+            auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Delegated Stake");
+            if (!op_dest) {
+                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
+            }
+
+            const bool verbose{request.params[3].isNull() ? false : request.params[3].get_bool()};
+
+            UniValue address_amounts(UniValue::VOBJ);
+            address_amounts.pushKV(EncodeDestination(*op_dest), ValueFromAmount(0));
+            std::vector<wallet::CBLSCTRecipient> recipients;
+            blsct::ParseBLSCTRecipients(address_amounts, false, "", recipients);
+
+            // nAmount 0: the whole staked value comes from folding the old
+            // delegated commitments in; no spendable coins are staked on top.
+            blsct::CreateTransactionData transactionData(recipients[0].destination, 0, "", TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
+            transactionData.fConsolidateStakedCommitments = true;
+            transactionData.stakeDelegation = blsct::delegation::DelegationRequest{delegateKey, rewardAddress};
+            transactionData.redelegateFromIds = fromIds;
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
+
+RPCHelpMan compounddelegations()
+{
+    return RPCHelpMan{
+        "compounddelegations",
+        "\nRe-delegate accumulated rewards: fold the wallet's spendable balance (minus a fee\n"
+        "margin) into an existing stake delegation. Block rewards paid to this wallet do not\n"
+        "auto-compound -- the spend key would need to be online for that -- so run this\n"
+        "periodically (e.g. from cron) to keep delegated stake growing.\n" +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"delegate_pubkey", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "The delegation to compound into. May be omitted when the wallet has exactly one delegation identity."},
+            {"min_amount", RPCArg::Type::AMOUNT, RPCArg::Default{1}, "Do nothing (return null) while the spendable balance is below this amount."},
+        },
+        {
+            RPCResult{"if there was something to compound",
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the compounding transaction."},
+            RPCResult{"if the spendable balance is below min_amount",
+                      RPCResult::Type::NONE, "", ""},
+        },
+        RPCExamples{HelpExampleCli("compounddelegations", "") + HelpExampleRpc("compounddelegations", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetBLSCTKeyMan();
+            if (blsct_km == nullptr) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not have BLSCT keys");
+            }
+
+            std::optional<MclG1Point> filterKey;
+            if (!request.params[0].isNull() && !request.params[0].get_str().empty()) {
+                MclG1Point key;
+                if (!IsHex(request.params[0].get_str()) || !key.SetVch(ParseHex(request.params[0].get_str())) || key.IsZero()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "delegate_pubkey is not a valid G1 point");
+                }
+                filterKey = key;
+            }
+
+            // Identify the delegation to compound into.
+            std::map<std::string, blsct::delegation::DelegationRequest> groups;
+            for (const auto& d : GetWalletDelegations(*pwallet, blsct_km)) {
+                if (filterKey.has_value() && !(d.request.delegateKey == *filterKey)) continue;
+                groups.emplace(d.request.GetId(), d.request);
+            }
+            if (groups.empty()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, filterKey.has_value() ? "No stakes are delegated to delegate_pubkey" : "This wallet has no stake delegations");
+            }
+            if (groups.size() > 1) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "This wallet has several delegation identities; pass delegate_pubkey (and use redelegatestake to unify reward addresses)");
+            }
+            const blsct::delegation::DelegationRequest target = groups.begin()->second;
+
+            const CAmount min_amount = request.params[1].isNull() ? COIN : AmountFromValue(request.params[1]);
+
+            // Compound the spendable balance minus a fee margin: the fee is
+            // paid from spendable coins on top of the staked amount, and input
+            // selection gathers up to (amount + 1 NAV) to cover it. Sum both
+            // balance paths like getbalances does: in BLSCT output-storage
+            // mode outputs whose CWalletTx is alive are counted by
+            // GetBalance, the rest by GetBlsctBalance.
+            const CAmount spendable = wallet::GetBalance(*pwallet).m_mine_trusted + wallet::GetBlsctBalance(*pwallet).m_mine_trusted;
+            const CAmount amount = spendable - COIN;
+            if (amount < min_amount || amount <= 0) return UniValue::VNULL;
+
+            auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Delegated Stake");
+            if (!op_dest) {
+                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
+            }
+
+            UniValue address_amounts(UniValue::VOBJ);
+            address_amounts.pushKV(EncodeDestination(*op_dest), ValueFromAmount(amount));
+            std::vector<wallet::CBLSCTRecipient> recipients;
+            blsct::ParseBLSCTRecipients(address_amounts, false, "", recipients);
+
+            blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
+            // Fold into the existing delegated commitment so the wallet keeps
+            // one output per delegation instead of accumulating a new one per
+            // compounding run.
+            transactionData.fConsolidateStakedCommitments = true;
+            transactionData.stakeDelegation = target;
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, false);
         },
     };
 }
@@ -3402,6 +3782,9 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &stakelock},
         {"blsct", &delegatestake},
         {"blsct", &stakeunlock},
+        {"blsct", &listdelegations},
+        {"blsct", &redelegatestake},
+        {"blsct", &compounddelegations},
         {"blsct", &consolidate},
         {"blsct", &setblsctseed},
         {"blsct", &createblsctbalanceproof},
