@@ -31,6 +31,14 @@ static std::optional<size_t> FindOutputIndex(const CMutableTransaction& tx, cons
     return std::nullopt;
 }
 
+// The minimum fee an already-built transaction has to carry: the same
+// weight x rate product `blsct::VerifyTx` enforces as a floor. Uses the rate
+// the factory builds with, so the two cannot drift apart under the test.
+static CAmount RequiredFee(const CTransaction& tx)
+{
+    return static_cast<CAmount>(blsct::GetTransactionWeight(tx)) * ::BLSCT_DEFAULT_FEE;
+}
+
 BOOST_FIXTURE_TEST_CASE(ismine_test, TestingSetup)
 {
     auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
@@ -103,6 +111,11 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_test, TestingSetup)
     const CAmount fee = GetFeeValue(CTransaction(finalTx->tx));
     const CAmount expected_change = 1000 * COIN - 900 * COIN - fee;
     BOOST_REQUIRE(fee > 0);
+    // The fixpoint accepts any fee that COVERS the requirement, since the
+    // consensus rule is a floor and an exact-equality exit cannot terminate.
+    // An ordinary send must still settle on exactly the minimum: the relaxed
+    // acceptance must not let the common path start over-paying.
+    BOOST_CHECK_EQUAL(fee, RequiredFee(CTransaction(finalTx->tx)));
 
     bool fFoundChange = false;
 
@@ -613,6 +626,97 @@ BOOST_FIXTURE_TEST_CASE(coin_selection_largest_first_test, TestingSetup)
 
     TxValidationState tx_state;
     BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx->tx), coins_view_cache, tx_state));
+}
+
+// The fee fixpoint must terminate even when the fee it assumes decides whether
+// a change output exists at all. Change that lands on exactly zero is dropped,
+// which shrinks the transaction and therefore LOWERS the fee it requires:
+//
+//   assume the with-change fee  -> change is 0, no change output -> a smaller
+//                                  fee is required
+//   assume the smaller fee      -> change is positive again, change output is
+//                                  emitted -> the larger fee is required
+//
+// A transaction whose inputs exceed its outputs by exactly the with-change fee
+// sits on that corner. With an exact-equality exit the two fees chase each
+// other forever and BuildTx never returns, spinning under cs_wallet.
+BOOST_FIXTURE_TEST_CASE(fee_fixpoint_zero_change_terminates_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test_fee_zero_change", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+    const CAmount send_amount = 900 * COIN;
+
+    const auto fund = [&](CCoinsViewCache& view, const CAmount amount) {
+        COutPoint outpoint{Txid::FromUint256(InsecureRand256())};
+        Coin coin;
+        coin.nHeight = 1;
+        coin.out = blsct::CreateOutput(recvAddress, amount, "test").out;
+        view.AddCoin(outpoint, std::move(coin), true);
+        return outpoint;
+    };
+
+    // Build an ordinary send of `send_amount` first, purely to read back the
+    // fee this one-input/one-recipient layout costs WITH a change output.
+    COutPoint funded_outpoint;
+    {
+        CCoinsViewCache flushed_view{&base, /*deterministic=*/true};
+        flushed_view.SetBestBlock(InsecureRand256());
+        funded_outpoint = fund(flushed_view, 1000 * COIN);
+        BOOST_CHECK(flushed_view.Flush());
+    }
+
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+
+    auto probe = blsct::TxFactory(blsct_km);
+    BOOST_CHECK(probe.AddInput(coins_view_cache, funded_outpoint));
+    probe.AddOutput(recvAddress, send_amount, "test");
+
+    auto probeTx = probe.BuildTx();
+    BOOST_REQUIRE(probeTx.has_value());
+    const CAmount fee_with_change = GetFeeValue(CTransaction(probeTx->tx));
+    BOOST_REQUIRE(fee_with_change > 0);
+
+    // Now fund a second transaction of the same layout with exactly
+    // `send_amount + fee_with_change`, so assuming that fee leaves zero change.
+    const COutPoint exact_outpoint = fund(coins_view_cache, send_amount + fee_with_change);
+
+    auto tx = blsct::TxFactory(blsct_km);
+    BOOST_CHECK(tx.AddInput(coins_view_cache, exact_outpoint));
+    tx.AddOutput(recvAddress, send_amount, "test");
+
+    // Against the unfixed exact-equality exit this call never returns.
+    auto finalTx = tx.BuildTx();
+    BOOST_REQUIRE(finalTx.has_value());
+
+    TxValidationState tx_state;
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx->tx), coins_view_cache, tx_state));
+
+    const CAmount fee = GetFeeValue(CTransaction(finalTx->tx));
+    const CAmount required = RequiredFee(CTransaction(finalTx->tx));
+
+    // The consensus floor is satisfied...
+    BOOST_CHECK(fee >= required);
+    // ...and this is the corner the test set out to build: the transaction
+    // settles on the with-change fee while carrying no change output, so it
+    // pays strictly more than the layout it actually emitted requires. A
+    // failure here means the funding amount missed the oscillating shape and
+    // the case above it proves nothing.
+    BOOST_CHECK_EQUAL(fee, fee_with_change);
+    BOOST_CHECK(fee > required);
+
+    auto result = blsct_km->RecoverOutputs(finalTx->tx.vout);
+    for (auto& res : result.amounts) {
+        BOOST_CHECK(res.message != "Change");
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

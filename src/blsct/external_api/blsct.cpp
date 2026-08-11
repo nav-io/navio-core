@@ -778,8 +778,19 @@ BlsctCTxRetVal* build_ctx(
     }
 
     // build ctx
+    //
+    // The factory reports some failures by throwing (an unsettled fee
+    // fixpoint, a consolidation that cannot be built). An exception escaping
+    // this extern "C" frame is std::terminate, so translate it into the
+    // failure code the caller already handles.
     blsct::DoublePublicKey change_amt_dest;
-    auto maybe_ctx = psbt.BuildTx(change_amt_dest);
+    std::optional<blsct::BuiltTransaction> maybe_ctx;
+    try {
+        maybe_ctx = psbt.BuildTx(change_amt_dest);
+    } catch (const std::exception&) {
+        rv->result = BLSCT_FAILURE;
+        return rv;
+    }
     if (!maybe_ctx.has_value()) {
         rv->result = BLSCT_FAILURE;
         return rv;
