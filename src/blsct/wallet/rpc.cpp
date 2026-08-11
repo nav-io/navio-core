@@ -462,11 +462,19 @@ RPCHelpMan getblsctbalance()
                         if (!txout.tokenId.IsNull()) continue;
                         if (pwallet->IsSpent(COutPoint(txout.GetHash()))) continue;
                         const wallet::isminetype mine = pwallet->IsMine(txout);
-                        const bool is_signable = (mine & (wallet::ISMINE_SPENDABLE_BLSCT | wallet::ISMINE_STAKED_COMMITMENT_BLSCT)) != 0;
+                        // Bucket exactly as wallet::GetBlsctBalance() does for
+                        // output-storage wallets: it credits
+                        // ISMINE_STAKED_COMMITMENT_BLSCT to
+                        // m_mine_staked_commitment and never to m_mine_trusted,
+                        // because a staked commitment cannot be spent until
+                        // `stakeunlock` releases it. Counting it here would
+                        // report the same coins as available or not depending
+                        // only on WALLET_FLAG_BLSCT_OUTPUT_STORAGE.
+                        const bool is_spendable = (mine & wallet::ISMINE_SPENDABLE_BLSCT) != 0;
                         const bool is_watchonly = (mine & wallet::ISMINE_WATCH_ONLY) != 0;
-                        if (!is_signable && !is_watchonly) continue;
+                        if (!is_spendable && !is_watchonly) continue;
                         const CAmount amount = wtx.GetBLSCTRecoveryData(i).amount;
-                        if (is_signable) {
+                        if (is_spendable) {
                             mine_trusted += amount;
                         } else if (is_watchonly) {
                             watchonly_trusted += amount;
