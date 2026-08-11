@@ -2,8 +2,9 @@ Navio Core integration/staging tree
 =====================================
 
 Navio Core is a fork of [Bitcoin Core](https://github.com/bitcoin/bitcoin). This
-repository hosts the source code for the next version of Navio Core, which is *not
-ready for production yet*.
+repository hosts the source code for Navio Core, the reference implementation of
+the Navio protocol, whose mainnet runs confidential BLSCT transactions and
+Proof-of-Private-Stake consensus.
 
 https://nav.io
 
@@ -11,7 +12,7 @@ For an immediately usable, binary version of the Navio Core software, see
 https://nav.io/get-started.
 
 Further information about Navio Core is available in the [doc folder](/doc),
-the [wiki](https://github.com/nav-io/navio-core/wiki) and the [documentation website](https://doc.nav.community).
+the [wiki](https://github.com/nav-io/navio-core/wiki) and the [documentation website](https://docs.nav.io).
 
 What is Navio?
 ----------------

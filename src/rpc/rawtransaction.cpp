@@ -465,7 +465,7 @@ static RPCHelpMan createrawtransaction()
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"},
         RPCExamples{
-            HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"address\\\":0.01}]\"") + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"") + HelpExampleRpc("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\", \"[{\\\"address\\\":0.01}]\"") + HelpExampleRpc("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\", \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
+            HelpExampleCli("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"address\\\":0.01}]\"") + HelpExampleCli("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"") + HelpExampleRpc("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\", \"[{\\\"address\\\":0.01}]\"") + HelpExampleRpc("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\", \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::optional<bool> rbf;
             if (!request.params[3].isNull()) {
@@ -1543,7 +1543,7 @@ static RPCHelpMan createpsbt()
         RPCResult{
             RPCResult::Type::STR, "", "The resulting raw transaction (base64-encoded string)"},
         RPCExamples{
-            HelpExampleCli("createpsbt", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
+            HelpExampleCli("createpsbt", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::optional<bool> rbf;
             if (!request.params[3].isNull()) {
@@ -1590,7 +1590,7 @@ static RPCHelpMan converttopsbt()
         RPCResult{
             RPCResult::Type::STR, "", "The resulting raw transaction (base64-encoded string)"},
         RPCExamples{
-            "\nCreate a transaction\n" + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"") +
+            "\nCreate a transaction\n" + HelpExampleCli("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"") +
             "\nConvert the transaction to a PSBT\n" + HelpExampleCli("converttopsbt", "\"rawtransaction\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             // parse hex string from parameter

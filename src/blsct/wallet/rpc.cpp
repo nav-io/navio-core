@@ -418,8 +418,8 @@ RPCHelpMan getblsctbalance()
             RPCResult::Type::STR_AMOUNT, "amount", "The total amount in " + CURRENCY_UNIT + " received for this wallet."},
         RPCExamples{
             "\nThe total amount in the wallet with 0 or more confirmations\n" + HelpExampleCli("getblsctbalance", "") +
-            "\nThe total amount in the wallet with at least 6 confirmations\n" + HelpExampleCli("getblsctbalance", "\"*\" 6") +
-            "\nAs a JSON-RPC call\n" + HelpExampleRpc("getblsctbalance", "\"*\", 6")},
+            "\nThe total amount in the wallet with at least 6 confirmations\n" + HelpExampleCli("getblsctbalance", "6") +
+            "\nAs a JSON-RPC call\n" + HelpExampleRpc("getblsctbalance", "6")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             const std::shared_ptr<const wallet::CWallet> pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -1245,7 +1245,8 @@ RPCHelpMan stakeunlock()
             },
         },
         RPCExamples{
-            "\nLock 0.1 " + CURRENCY_UNIT + "\n" + HelpExampleCli("stakelock", "0.1")},
+            "\nUnlock 0.1 " + CURRENCY_UNIT + "\n" + HelpExampleCli("stakeunlock", "0.1") +
+            "\nAs a JSON-RPC call\n" + HelpExampleRpc("stakeunlock", "0.1")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -2202,10 +2203,10 @@ RPCHelpMan createblsctrawtransaction()
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"},
         RPCExamples{
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"value\\\":1000000,\\\"gamma\\\":\\\"1234567890abcdef\\\",\\\"spending_key\\\":\\\"abcdef1234567890\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000,\\\"memo\\\":\\\"memo\\\",\\\"token_id\\\":\\\"tokenid\\\"}]\"") +
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000}]\"") +
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000,\\\"script\\\":\\\"51\\\"}]\"") +
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"type\\\":\\\"atomic_swap\\\",\\\"address_a\\\":\\\"blsctAddr1\\\",\\\"address_b\\\":\\\"blsctAddr2\\\",\\\"amount\\\":1000000,\\\"hash\\\":\\\"00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff\\\",\\\"locktime\\\":750000}]\"")},
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\",\\\"value\\\":1000000,\\\"gamma\\\":\\\"1234567890abcdef\\\",\\\"spending_key\\\":\\\"abcdef1234567890\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000,\\\"memo\\\":\\\"memo\\\",\\\"token_id\\\":\\\"tokenid\\\"}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000,\\\"script\\\":\\\"51\\\"}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"type\\\":\\\"atomic_swap\\\",\\\"address_a\\\":\\\"blsctAddr1\\\",\\\"address_b\\\":\\\"blsctAddr2\\\",\\\"amount\\\":1000000,\\\"hash\\\":\\\"00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff\\\",\\\"locktime\\\":750000}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
