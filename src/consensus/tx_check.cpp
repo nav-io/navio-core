@@ -8,7 +8,7 @@
 #include <primitives/transaction.h>
 #include <consensus/validation.h>
 
-bool CheckTransaction(const CTransaction& tx, TxValidationState& state, const bool& fBLSCT)
+bool CheckTransaction(const CTransaction& tx, TxValidationState& state)
 {
     // Basic checks that don't depend on any context
     if (tx.vin.empty() && !tx.IsBLSCT())

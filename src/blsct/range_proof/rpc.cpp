@@ -75,11 +75,3 @@ void RegisterRangeProofRPCCommands(CRPCTable& t)
         t.appendCommand(c.name, &c);
     }
 }
-
-Span<const CRPCCommand> GetRangeProofRPCCommands()
-{
-    static const CRPCCommand commands[]{
-        {"blsct", &verifyblsctbalanceproof},
-    };
-    return commands;
-}
