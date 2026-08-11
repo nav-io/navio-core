@@ -48,7 +48,7 @@ BOOST_FIXTURE_TEST_CASE(SyncTest, TestBLSCTChain100Setup)
 
     BOOST_CHECK(tx != std::nullopt);
 
-    auto block = CreateAndProcessBlock({tx.value()}, walletDestination);
+    auto block = CreateAndProcessBlock({tx->tx}, walletDestination);
 
     BOOST_CHECK(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
 

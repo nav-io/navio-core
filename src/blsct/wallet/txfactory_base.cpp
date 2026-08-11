@@ -107,7 +107,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
     vOutputs[token_id].push_back(out);
 }
 
-std::optional<CMutableTransaction>
+std::optional<BuiltTransaction>
 TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake, const CreateTransactionType& type, const bool& fSubtractedFee, const CAmount& nBLSCTDefaultFee)
 {
     this->tx = CMutableTransaction();
@@ -236,6 +236,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
             mapChange[amounts.first] = nFromInputs - amounts.second.nFromOutputs - tokenFee;
         }
+        std::optional<uint256> firstChangeOutputHash;
         for (auto& change : mapChange) {
             if (change.second == 0) continue;
 
@@ -252,11 +253,34 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
             tx.vout.push_back(changeOutput.out);
             txSigs.push_back(PrivateKey(changeOutput.blindingKey).Sign(changeOutput.out.GetHash()));
+
+            if (!firstChangeOutputHash) firstChangeOutputHash = changeOutput.out.GetHash();
         }
         if (sffaOut) {
             tx.vout.push_back(sffaOut->out);
             txSigs.push_back(PrivateKey(sffaOut->blindingKey).Sign(sffaOut->out.GetHash()));
         }
+
+        // Which output pays the destination this transaction was built for.
+        // The vout order is randomised on the way out, so record it here while
+        // the build order is still known:
+        //  - a subtract-fee-from-amount send pays through sffaOut, which is
+        //    appended after the change output rather than first;
+        //  - otherwise it is the first output AddOutput queued, i.e. what
+        //    pre-shuffle vout[0] used to be;
+        //  - a full unstake queues no output at all -- the unlocked funds come
+        //    back as the "Stake Unlock" change output -- so fall back to the
+        //    first change output of this pass.
+        // The fee output is appended after all three and is never a candidate.
+        std::optional<uint256> recipientOutputHash;
+        if (sffaOut) {
+            recipientOutputHash = sffaOut->out.GetHash();
+        } else if (!this->tx.vout.empty()) {
+            recipientOutputHash = this->tx.vout[0].GetHash();
+        } else {
+            recipientOutputHash = firstChangeOutputHash;
+        }
+
         CTxOut fee_out{nAmounts[TokenId()].nFromFee, CScript(OP_RETURN)};
 
         auto feeKey = blsct::PrivateKey(MclScalar::Rand());
@@ -270,6 +294,11 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
         const CAmount required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee;
         if (nAmounts[TokenId()].nFromFee == required_fee) {
+            // Every output was consumed by the fee, so there is no output to
+            // hand back as the payment. Nothing builds that shape today; fail
+            // rather than return a handle that points at the fee output.
+            if (!recipientOutputHash) return std::nullopt;
+
             // Randomise input and output ordering so the on-chain transaction
             // does not leak the wallet's coin-selection order (e.g. that earlier
             // inputs correspond to larger outputs, or the change position). The
@@ -282,7 +311,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             std::mt19937_64 rng(seed);
             std::shuffle(tx.vin.begin(), tx.vin.end(), rng);
             std::shuffle(tx.vout.begin(), tx.vout.end(), rng);
-            return tx;
+            return BuiltTransaction{tx, *recipientOutputHash};
         }
         nAmounts[TokenId()].nFromFee = required_fee;
     }
@@ -305,7 +334,7 @@ bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, cons
     return true;
 }
 
-std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData)
+std::optional<BuiltTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData)
 {
     auto tx = blsct::TxFactoryBase();
 

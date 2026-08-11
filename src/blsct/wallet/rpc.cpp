@@ -114,13 +114,15 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
     }
 
-    const CTransactionRef& tx = MakeTransactionRef(res.value());
+    const CTransactionRef& tx = MakeTransactionRef(res->tx);
 
     // Store any wallet-local comment/comment_to on the sender's CWalletTx so
     // listtransactions surfaces them (WalletTxToJSON emits every mapValue key).
     // This is separate from the on-chain BLSCT memo, which the recipient sees.
     wallet.CommitTransaction(tx, std::move(mapValue), /*orderForm=*/{});
-    std::string outputHash = tx->vout[0].GetHash().GetHex();
+    // The factory reports which output pays the destination: vout is shuffled
+    // for privacy, so the recipient is not at any fixed position.
+    std::string outputHash = res->recipientOutputHash.GetHex();
     if (verbose) {
         UniValue entry(UniValue::VOBJ);
         entry.pushKV("outputHash", outputHash);
@@ -1362,7 +1364,7 @@ RPCHelpMan consolidate()
                 auto res = blsct::TxFactory::CreateConsolidationTransaction(pwallet.get(), blsct_km, dest, max_inputs, fee_rate);
                 if (!res) break; // fewer than two small outputs remain to merge
 
-                const CTransactionRef tx = MakeTransactionRef(res.value());
+                const CTransactionRef tx = MakeTransactionRef(res->tx);
                 wallet::mapValue_t map_value;
                 pwallet->CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
                 txids.push_back(tx->GetHash().GetHex());

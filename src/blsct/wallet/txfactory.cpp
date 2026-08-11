@@ -102,7 +102,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
     return true;
 }
 
-std::optional<CMutableTransaction>
+std::optional<BuiltTransaction>
 TxFactory::BuildTx()
 {
     return TxFactoryBase::BuildTx(
@@ -113,7 +113,7 @@ TxFactory::BuildTx()
         Params().GetConsensus().nBLSCTDefaultFee);
 }
 
-std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)
+std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)
 {
     LOCK(wallet->cs_wallet);
 
@@ -294,7 +294,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     }
 }
 
-std::optional<CMutableTransaction> TxFactory::CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee)
+std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee)
 {
     AssertLockHeld(wallet->cs_wallet);
 

@@ -65,7 +65,7 @@ BOOST_FIXTURE_TEST_CASE(validation_test, TestingSetup)
     TxValidationState tx_state;
 
     BOOST_CHECK(finalTx.has_value());
-    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx.value()), coins_view_cache, tx_state));
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx->tx), coins_view_cache, tx_state));
 }
 
 BOOST_FIXTURE_TEST_CASE(validation_reward_test, TestingSetup)
@@ -124,7 +124,7 @@ BOOST_FIXTURE_TEST_CASE(validation_reserved_sequence_bits_test, TestingSetup)
 
     // Inject reserved bit 31 into the first input's nSequence.
     // 0x80000001 has bit 31 set and is != SEQUENCE_FINAL (0xFFFFFFFF).
-    CMutableTransaction mtx(finalTxOpt.value());
+    CMutableTransaction mtx(finalTxOpt->tx);
     BOOST_REQUIRE(!mtx.vin.empty());
     mtx.vin[0].nSequence = 0x80000001;
 
@@ -181,11 +181,11 @@ BOOST_FIXTURE_TEST_CASE(validation_min_fee_lowered_fee_rejected_test, TestingSet
     // Sanity: untampered tx verifies (it was built at exactly the minimum).
     {
         TxValidationState tx_state;
-        BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTxOpt.value()), coins_view_cache, tx_state));
+        BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTxOpt->tx), coins_view_cache, tx_state));
     }
 
     // Lower the fee output's nValue by 1 sat without touching tx weight.
-    CMutableTransaction mtx(finalTxOpt.value());
+    CMutableTransaction mtx(finalTxOpt->tx);
     bool found_fee = false;
     for (auto& vout : mtx.vout) {
         if (vout.scriptPubKey.IsFee()) {
@@ -256,8 +256,8 @@ BOOST_FIXTURE_TEST_CASE(validation_min_fee_phantom_output_rejected_test, Testing
     auto phantom = blsct::CreateOutput(attackerAddress, kStolen, "stolen");
 
     // Patch the tx: insert phantom, lower fee by `kStolen`.
-    CMutableTransaction mtx(finalTxOpt.value());
-    BOOST_REQUIRE(GetFeeValue(CTransaction(finalTxOpt.value())) > kStolen);
+    CMutableTransaction mtx(finalTxOpt->tx);
+    BOOST_REQUIRE(GetFeeValue(CTransaction(finalTxOpt->tx)) > kStolen);
     mtx.vout.push_back(phantom.out);
 
     bool found_fee = false;
@@ -327,14 +327,14 @@ BOOST_FIXTURE_TEST_CASE(validation_payfee_on_spendable_output_not_counted_test, 
     // Sanity: untampered tx verifies.
     {
         TxValidationState tx_state;
-        BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTxOpt.value()), coins_view_cache, tx_state));
+        BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTxOpt->tx), coins_view_cache, tx_state));
     }
 
     // Turn the unspendable OP_RETURN fee output into a spendable one while
     // keeping its PayFee predicate and value. With the fix, this output no
     // longer counts toward the fee (IsFee() is now required), so nFee drops to
     // 0 and the min-fee rule rejects the tx.
-    CMutableTransaction mtx(finalTxOpt.value());
+    CMutableTransaction mtx(finalTxOpt->tx);
     bool patched = false;
     for (auto& vout : mtx.vout) {
         if (vout.scriptPubKey.IsFee()) {

@@ -787,7 +787,7 @@ BlsctCTxRetVal* build_ctx(
 
     // move the ctx to newly created ctx in heap
     CMutableTransaction* ctx_in_heap = new (std::nothrow) CMutableTransaction;
-    *ctx_in_heap = std::move(maybe_ctx.value());
+    *ctx_in_heap = std::move(maybe_ctx->tx);
 
     rv->result = BLSCT_SUCCESS;
     rv->ctx = static_cast<void*>(ctx_in_heap);
