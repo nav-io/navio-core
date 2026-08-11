@@ -901,9 +901,9 @@ static RPCHelpMan gettxoutsetinfo()
                         {RPCResult::Type::STR_HEX, "muhash", /*optional=*/true, "The serialized hash (only present if 'muhash' hash_type is chosen)"},
                         {RPCResult::Type::NUM, "transactions", /*optional=*/true, "The number of transactions with unspent outputs (not available when coinstatsindex is used)"},
                         {RPCResult::Type::NUM, "disk_size", /*optional=*/true, "The estimated size of the chainstate on disk (not available when coinstatsindex is used)"},
-                        {RPCResult::Type::STR_AMOUNT, "total_amount", "The total amount of coins in the UTXO set"},
-                        {RPCResult::Type::STR_AMOUNT, "total_unspendable_amount", /*optional=*/true, "The total amount of coins permanently excluded from the UTXO set (only available if coinstatsindex is used)"},
-                        {RPCResult::Type::OBJ, "block_info", /*optional=*/true, "Info on amounts in the block at this block height (only available if coinstatsindex is used)",
+                        {RPCResult::Type::STR_AMOUNT, "total_amount", /*optional=*/true, "The total amount of coins in the UTXO set (omitted on a confidential chain, where output values are Pedersen commitments rather than plain amounts, so no coin total can be derived from the UTXO set)"},
+                        {RPCResult::Type::STR_AMOUNT, "total_unspendable_amount", /*optional=*/true, "The total amount of coins permanently excluded from the UTXO set (only available if coinstatsindex is used; omitted on a confidential chain, where output values are Pedersen commitments rather than plain amounts)"},
+                        {RPCResult::Type::OBJ, "block_info", /*optional=*/true, "Info on amounts in the block at this block height (only available if coinstatsindex is used; omitted on a confidential chain, where output values are Pedersen commitments rather than plain amounts, so every amount below would be meaningless)",
                         {
                             {RPCResult::Type::STR_AMOUNT, "prevout_spent", "Total amount of all prevouts spent in this block"},
                             {RPCResult::Type::STR_AMOUNT, "coinbase", "Coinbase subsidy amount of this block"},
@@ -991,12 +991,19 @@ static RPCHelpMan gettxoutsetinfo()
         if (hash_type == CoinStatsHashType::MUHASH) {
             ret.pushKV("muhash", stats.hashSerialized.GetHex());
         }
-        CHECK_NONFATAL(stats.total_amount.has_value());
-        ret.pushKV("total_amount", ValueFromAmount(stats.total_amount.value()));
+        // On a confidential chain an output carries a Pedersen commitment, not a
+        // plain nValue, so every amount the coin statistics accumulate is
+        // meaningless. Omit them rather than hand back a confident-looking
+        // number that is not the coin supply.
+        const bool confidential{chainman.GetConsensus().fBLSCT};
+        if (!confidential) {
+            CHECK_NONFATAL(stats.total_amount.has_value());
+            ret.pushKV("total_amount", ValueFromAmount(stats.total_amount.value()));
+        }
         if (!stats.index_used) {
             ret.pushKV("transactions", static_cast<int64_t>(stats.nTransactions));
             ret.pushKV("disk_size", stats.nDiskSize);
-        } else {
+        } else if (!confidential) {
             ret.pushKV("total_unspendable_amount", ValueFromAmount(stats.total_unspendable_amount));
 
             CCoinsStats prev_stats{};
@@ -2245,7 +2252,7 @@ static RPCHelpMan scantxoutset()
                         {RPCResult::Type::NUM, "height", "Height of the unspent transaction output"},
                     }},
                 }},
-                {RPCResult::Type::STR_AMOUNT, "total_amount", "The total amount of all found unspent outputs in " + CURRENCY_UNIT},
+                {RPCResult::Type::STR_AMOUNT, "total_amount", /*optional=*/true, "The total amount of all found unspent outputs in " + CURRENCY_UNIT + " (omitted on a confidential chain, where output values are Pedersen commitments rather than plain amounts, so the outputs cannot be totalled)"},
             }},
             scan_result_abort,
             scan_result_status_some,
@@ -2313,8 +2320,8 @@ static RPCHelpMan scantxoutset()
         std::unique_ptr<CCoinsViewCursor> pcursor;
         const CBlockIndex* tip;
         NodeContext& node = EnsureAnyNodeContext(request.context);
+        ChainstateManager& chainman = EnsureChainman(node);
         {
-            ChainstateManager& chainman = EnsureChainman(node);
             LOCK(cs_main);
             Chainstate& active_chainstate = chainman.ActiveChainstate();
             active_chainstate.ForceFlushStateToDisk();
@@ -2345,7 +2352,12 @@ static RPCHelpMan scantxoutset()
             unspents.push_back(unspent);
         }
         result.pushKV("unspents", unspents);
-        result.pushKV("total_amount", ValueFromAmount(total_in));
+        // On a confidential chain an output carries a Pedersen commitment rather
+        // than a plain nValue, so the scanned outputs cannot be totalled. Omit
+        // the total instead of reporting a number that is not the amount found.
+        if (!chainman.GetConsensus().fBLSCT) {
+            result.pushKV("total_amount", ValueFromAmount(total_in));
+        }
     } else {
         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid action '%s'", request.params[0].get_str()));
     }
