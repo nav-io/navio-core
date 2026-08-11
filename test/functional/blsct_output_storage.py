@@ -12,6 +12,7 @@ reduced compared to transaction mode.
 
 import os
 from decimal import Decimal
+from test_framework.messages import COIN
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -389,7 +390,18 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         output_hash = self.wallet_a.sendtoblsctaddress(self_addr, send_amount)
         self.log.info(f"Self-send outputHash: {output_hash}")
 
+        # The returned hash must identify the output that pays the recipient.
+        # The tx factory randomises the vout order to hide the change position,
+        # so a hash taken by position lands on the change output (reporting the
+        # whole change value) or on the fee output (reporting 0) instead.
+        assert_equal(self.wallet_a.getblsctoutput(output_hash)["amount"],
+                     int(send_amount * COIN))
+
         self.generate_blsct_blocks(self.nodes[0], self.addr_a, 1)
+
+        # Same after confirmation.
+        assert_equal(self.wallet_a.getblsctoutput(output_hash)["amount"],
+                     int(send_amount * COIN))
 
         balance_after = self.wallet_a.getbalance()
         self.log.info(f"Balance after self-send: {balance_after}")
