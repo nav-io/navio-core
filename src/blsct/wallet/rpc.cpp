@@ -174,8 +174,6 @@ UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request,
     if (tokens.contains(tokenId))
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Token already exists");
 
-    auto token = tokens[tokenId];
-
     tokenInfo.publicKey = blsct_km->GetTokenKey(tokenId).GetPublicKey();
 
     blsct::CreateTransactionData
@@ -1859,6 +1857,7 @@ RPCHelpMan listblsctunspent()
                                                                                  {RPCResult::Type::BOOL, "spendable", "Whether the output may be selected for spending right now (depends on coin control / wallet state)"},
                                                                                  {RPCResult::Type::BOOL, "signable", "Whether the wallet can derive a non-zero spending key for this output. Outputs imported via importblsctscript (e.g. HTLCs) are reported as signable=false because the wallet only holds view material for them."},
                                                                                  {RPCResult::Type::BOOL, "watchonly", "Whether this output matches an imported watch-only scriptPubKey (e.g. an HTLC added via importblsctscript)"},
+                                                                                 {RPCResult::Type::STR, "scriptAddress", /*optional=*/true, "The decoded destination address for the output script, omitted when the script has no standard destination"},
                                                                                  {RPCResult::Type::STR_HEX, "scriptPubKey", "The scriptPubKey of the output"},
                                                                              }},
                                           }},
@@ -3817,20 +3816,23 @@ RPCHelpMan getblsctoutput()
                 }
             }
 
-            // Try mapOutputs (output storage mode)
-            for (const auto& [outpoint, wout] : pwallet->mapOutputs) {
-                if (wout.out && wout.GetOutputHash() == output_hash) {
-                    const auto& tokenId = wout.out->tokenId;
+            // Try mapOutputs (output storage mode). It is keyed by COutPoint,
+            // which in this chain is the output hash itself — the same value
+            // CWalletOutput::GetOutputHash() reports — so this is a direct
+            // lookup rather than a scan.
+            const auto wout_it = pwallet->mapOutputs.find(COutPoint(output_hash));
+            if (wout_it != pwallet->mapOutputs.end() && wout_it->second.out) {
+                const wallet::CWalletOutput& wout = wout_it->second;
+                const auto& tokenId = wout.out->tokenId;
 
-                    UniValue result(UniValue::VOBJ);
-                    result.pushKV("outputHash", output_hash.GetHex());
-                    result.pushKV("amount", wout.blsctRecoveryData.amount);
-                    result.pushKV("memo", wout.blsctRecoveryData.message);
-                    result.pushKV("tokenId", tokenId.IsNull() ? "" : tokenId.ToString());
-                    result.pushKV("confirmations", pwallet->GetOutputDepthInMainChain(wout));
-                    result.pushKV("spendable", !wout.IsSpent());
-                    return result;
-                }
+                UniValue result(UniValue::VOBJ);
+                result.pushKV("outputHash", output_hash.GetHex());
+                result.pushKV("amount", wout.blsctRecoveryData.amount);
+                result.pushKV("memo", wout.blsctRecoveryData.message);
+                result.pushKV("tokenId", tokenId.IsNull() ? "" : tokenId.ToString());
+                result.pushKV("confirmations", pwallet->GetOutputDepthInMainChain(wout));
+                result.pushKV("spendable", !wout.IsSpent());
+                return result;
             }
 
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Output not found");

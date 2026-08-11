@@ -412,17 +412,13 @@ BOOST_FIXTURE_TEST_CASE(getblsctoutput_output_storage_lookup, TestingSetup)
     BOOST_CHECK(wout->GetOutputHash() == originalHash);
     BOOST_CHECK(!wout->out->HasBLSCTRangeProof());
 
-    // Lookup by original hash using the same logic as getblsctoutput.
-    bool found = false;
-    for (const auto& [op, w] : wallet->mapOutputs) {
-        if (w.out && w.GetOutputHash() == originalHash) {
-            found = true;
-            BOOST_CHECK_EQUAL(w.blsctRecoveryData.amount, 500 * COIN);
-            BOOST_CHECK(!w.IsSpent());
-            break;
-        }
-    }
-    BOOST_CHECK(found);
+    // Lookup by original hash using the same logic as getblsctoutput: the
+    // mapOutputs key is the output hash, so this is a direct find().
+    const auto found = wallet->mapOutputs.find(COutPoint(originalHash));
+    BOOST_REQUIRE(found != wallet->mapOutputs.end());
+    BOOST_REQUIRE(found->second.out);
+    BOOST_CHECK_EQUAL(found->second.blsctRecoveryData.amount, 500 * COIN);
+    BOOST_CHECK(!found->second.IsSpent());
 }
 
 BOOST_FIXTURE_TEST_CASE(getblsctoutput_output_storage_spent_flag, TestingSetup)
@@ -452,15 +448,10 @@ BOOST_FIXTURE_TEST_CASE(getblsctoutput_output_storage_spent_flag, TestingSetup)
                         nullptr, true, false, TxStateConfirmed{InsecureRand256(), 2, 0}, false);
 
     // getblsctoutput should report spendable=false for a spent output.
-    bool found = false;
-    for (const auto& [op, w] : wallet->mapOutputs) {
-        if (w.out && w.GetOutputHash() == originalHash) {
-            found = true;
-            BOOST_CHECK(w.IsSpent());
-            break;
-        }
-    }
-    BOOST_CHECK(found);
+    const auto found = wallet->mapOutputs.find(COutPoint(originalHash));
+    BOOST_REQUIRE(found != wallet->mapOutputs.end());
+    BOOST_REQUIRE(found->second.out);
+    BOOST_CHECK(found->second.IsSpent());
 }
 
 BOOST_AUTO_TEST_SUITE_END()
