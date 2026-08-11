@@ -364,6 +364,7 @@ BASE_SCRIPTS = [
     'blsct_token.py',
     'blsct_nft.py',
     'blsct_htlc.py',
+    'blsct_watchonly_balances.py',
     'blsct_setblsctseed.py',
     'blsct_spend_rpc_guards.py',
     'blsct_script_validation.py',

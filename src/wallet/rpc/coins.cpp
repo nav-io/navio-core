@@ -575,12 +575,18 @@ RPCHelpMan getbalances()
                 }
                 balances.pushKV("mine", balances_mine);
             }
+            // Watch-only material comes in two flavours: legacy scripts held by
+            // the LegacyScriptPubKeyMan, and BLSCT scripts imported with
+            // importblsctscript, which a BLSCT wallet keeps in blsct::KeyMan
+            // (it has no legacy ScriptPubKeyMan at all). Either one earns the
+            // section, and the amounts are the sum of both.
             auto spk_man = wallet.GetLegacyScriptPubKeyMan();
-            if (spk_man && spk_man->HaveWatchOnly()) {
+            auto blsct_km = wallet.GetBLSCTKeyMan();
+            if ((spk_man && spk_man->HaveWatchOnly()) || (blsct_km && blsct_km->HaveWatchOnly())) {
                 UniValue balances_watchonly{UniValue::VOBJ};
-                balances_watchonly.pushKV("trusted", ValueFromAmount(bal.m_watchonly_trusted));
-                balances_watchonly.pushKV("untrusted_pending", ValueFromAmount(bal.m_watchonly_untrusted_pending));
-                balances_watchonly.pushKV("immature", ValueFromAmount(bal.m_watchonly_immature));
+                balances_watchonly.pushKV("trusted", ValueFromAmount(bal.m_watchonly_trusted + blsct_bal.m_watchonly_trusted));
+                balances_watchonly.pushKV("untrusted_pending", ValueFromAmount(bal.m_watchonly_untrusted_pending + blsct_bal.m_watchonly_untrusted_pending));
+                balances_watchonly.pushKV("immature", ValueFromAmount(bal.m_watchonly_immature + blsct_bal.m_watchonly_immature));
                 balances.pushKV("watchonly", balances_watchonly);
             }
 

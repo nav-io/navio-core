@@ -289,6 +289,8 @@ public:
 
     /** Watch-only script management */
     bool AddWatchOnly(const CScript& script, const std::optional<blsct::PublicKey>& recovery_nonce = std::nullopt);
+    //! Whether any script is watched (e.g. imported with importblsctscript).
+    bool HaveWatchOnly() const;
     void LoadWatchOnly(const CScript& script);
     void LoadWatchOnlyRecoveryNonce(const CScript& script, const blsct::PublicKey& nonce);
     std::optional<blsct::PublicKey> GetWatchOnlyRecoveryNonce(const CScript& script) const;

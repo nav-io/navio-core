@@ -1454,6 +1454,12 @@ bool KeyMan::AddWatchOnly(const CScript& script, const std::optional<blsct::Publ
     return true;
 }
 
+bool KeyMan::HaveWatchOnly() const
+{
+    LOCK(cs_KeyStore);
+    return !setWatchOnly.empty();
+}
+
 void KeyMan::LoadWatchOnly(const CScript& script)
 {
     LOCK(cs_KeyStore);
