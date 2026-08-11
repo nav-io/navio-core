@@ -56,7 +56,7 @@ static RPCHelpMan sendrawtransaction()
         },
         RPCExamples{
             "\nCreate a transaction\n"
-            + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\" : \\\"mytxid\\\",\\\"vout\\\":0}]\" \"{\\\"myaddress\\\":0.01}\"") +
+            + HelpExampleCli("createrawtransaction", "\"[{\\\"outid\\\" : \\\"myoutid\\\"}]\" \"{\\\"myaddress\\\":0.01}\"") +
             "Sign the transaction, and get back the hex\n"
             + HelpExampleCli("signrawtransactionwithwallet", "\"myhex\"") +
             "\nSend the transaction (signed hex)\n"
@@ -146,7 +146,7 @@ static RPCHelpMan testmempoolaccept()
         },
         RPCExamples{
             "\nCreate a transaction\n"
-            + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\" : \\\"mytxid\\\",\\\"vout\\\":0}]\" \"{\\\"myaddress\\\":0.01}\"") +
+            + HelpExampleCli("createrawtransaction", "\"[{\\\"outid\\\" : \\\"myoutid\\\"}]\" \"{\\\"myaddress\\\":0.01}\"") +
             "Sign the transaction, and get back the hex\n"
             + HelpExampleCli("signrawtransactionwithwallet", "\"myhex\"") +
             "\nTest acceptance of the transaction (signed hex)\n"
