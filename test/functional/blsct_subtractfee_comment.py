@@ -18,6 +18,7 @@ B. `comment` / `comment_to` passed to `sendtoaddress` (or `comment_to` to
 
 from decimal import Decimal
 
+from test_framework.messages import COIN
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_greater_than
 
@@ -83,9 +84,18 @@ class BlsctSubtractFeeCommentTest(BitcoinTestFramework):
         # The sendtoblsctaddress subtractfeefromamount arg (positional) behaves
         # identically.
         addr_direct = self.receiver.getnewaddress(label="", address_type="blsct")
-        self.sender.sendtoblsctaddress(addr_direct, amount, "", False, True)
+        output_hash = self.sender.sendtoblsctaddress(addr_direct, amount, "", False, True)
         self.generatetoblsctaddress(self.nodes[0], 1, self.mining_addr)
-        assert_greater_than(amount, self._received(addr_direct))
+        received_direct = self._received(addr_direct)
+        assert_greater_than(amount, received_direct)
+
+        # The returned outputHash must identify the fee-reduced recipient
+        # output. The subtract-fee recipient is only materialised once the fee
+        # fixpoint converges, after the change output has been added, and the
+        # factory then randomises the vout order -- so a hash taken by position
+        # points at the change or fee output instead.
+        assert_equal(self.receiver.getblsctoutput(output_hash)["amount"],
+                     int(received_direct * COIN))
 
     def _find_send_row(self, wallet, comment):
         for e in wallet.listtransactions("*", 1000, 0, True):
