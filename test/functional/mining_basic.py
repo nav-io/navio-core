@@ -334,7 +334,25 @@ class MiningTest(BitcoinTestFramework):
         node.submitheader(hexdata=CBlockHeader(bad_block_root).serialize().hex())
         assert_equal(node.submitblock(hexdata=block.serialize().hex()), 'duplicate')  # valid
 
+        self.test_gbt_depends()
         self.test_blockmintxfee_parameter()
+
+    def test_gbt_depends(self):
+        self.log.info("getblocktemplate: Test that depends links a child to its parent")
+        node = self.nodes[0]
+        self.wallet.rescan_utxos()
+        parent, child = self.wallet.send_self_transfer_chain(from_node=node, chain_length=2)
+
+        tmpl = node.getblocktemplate(NORMAL_GBT_REQUEST_PARAMS)
+        template_txids = [tx['txid'] for tx in tmpl['transactions']]
+        entries = {tx['txid']: tx for tx in tmpl['transactions']}
+        assert_equal(entries[parent['txid']]['depends'], [])
+        # A `depends` entry is the 1-based index into the `transactions` list,
+        # the coinbase taking index 0 of the block itself.
+        assert_equal(entries[child['txid']]['depends'],
+                     [template_txids.index(parent['txid']) + 1])
+
+        self.generate(self.wallet, 1, sync_fun=self.no_op)
 
 
 if __name__ == '__main__':

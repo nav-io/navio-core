@@ -260,6 +260,11 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
 
         nFees += txFees;
         pblock->vtx.push_back(MakeTransactionRef(tx));
+        // Keep the per-transaction template vectors in lockstep with vtx:
+        // getblocktemplate indexes them by the transaction's position in the
+        // block, so a vtx entry without them is an out-of-range read.
+        pblocktemplate->vTxFees.push_back(txFees);
+        pblocktemplate->vTxSigOpsCost.push_back(WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx.back()));
     }
 
     const auto time_1{SteadyClock::now()};
@@ -318,6 +323,19 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
         auto aggregatedTx = blsct::AggregateTransactions(vToAggregate);
         pblock->vtx.resize(1);
         pblock->vtx.push_back(aggregatedTx);
+        // The merged transactions no longer exist in the block, so their
+        // per-transaction fee / sigop entries have to collapse onto the single
+        // aggregate as well. Left alone, getblocktemplate would index these
+        // vectors by block position and report the first merged transaction's
+        // figures as the aggregate's.
+        CAmount aggregated_fees = 0;
+        for (size_t idx = 1; idx < pblocktemplate->vTxFees.size(); ++idx) {
+            aggregated_fees += pblocktemplate->vTxFees[idx];
+        }
+        pblocktemplate->vTxFees.resize(1);
+        pblocktemplate->vTxFees.push_back(aggregated_fees);
+        pblocktemplate->vTxSigOpsCost.resize(1);
+        pblocktemplate->vTxSigOpsCost.push_back(WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*aggregatedTx));
     }
     Assert(pblock->vtx.size() <= 2);
 
