@@ -585,6 +585,63 @@ Balance GetBlsctBalance(const CWallet& wallet, const int min_depth, const TokenI
     return ret;
 }
 
+//! Credits `amount` to the bucket `mine` selects. ISMINE_STAKED_COMMITMENT_BLSCT
+//! matches neither, which is how staked commitments stay out of the available
+//! balance -- the same bucketing GetBlsctBalance() applies.
+static void AddBlsctTrustedCredit(BlsctTrustedBalance& balance, isminetype mine, CAmount amount)
+{
+    if (mine & ISMINE_SPENDABLE_BLSCT) {
+        balance.m_mine += amount;
+    } else if (mine & ISMINE_WATCH_ONLY) {
+        balance.m_watchonly += amount;
+    }
+}
+
+BlsctTrustedBalance GetBlsctTrustedBalance(const CWallet& wallet, const int min_depth)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    BlsctTrustedBalance ret;
+
+    // Locally-created BLSCT transactions are recorded in mapWallet whatever the
+    // storage mode is, and under output storage that is the only place their
+    // change is fully described (the mapOutputs mirror is deduplicated below).
+    std::set<uint256> trusted_parents;
+    for (const auto& [_, wtx] : wallet.mapWallet) {
+        if (!CachedTxIsTrusted(wallet, wtx, trusted_parents)) continue;
+        if (wallet.IsTxImmatureCoinBase(wtx)) continue;
+        if (wallet.GetTxDepthInMainChain(wtx) < min_depth) continue;
+        for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+            const CTxOut& txout = wtx.tx->vout[i];
+            if (!txout.HasBLSCTRangeProof()) continue;
+            if (!txout.tokenId.IsNull()) continue;
+            if (wallet.IsSpent(COutPoint(txout.GetHash()))) continue;
+            AddBlsctTrustedCredit(ret, wallet.IsMine(txout), wtx.GetBLSCTRecoveryData(i).amount);
+        }
+    }
+
+    // mapOutputs is populated only under WALLET_FLAG_BLSCT_OUTPUT_STORAGE, where
+    // externally-received outputs never get a CWalletTx at all. Skip an entry
+    // only when its matching CWalletTx is confirmed or in the mempool, since
+    // that means the mapWallet pass above already counted it; an inactive
+    // CWalletTx (e.g. superseded by a staker-aggregated tx with a different
+    // txid) is untrusted there, leaving the mapOutputs entry as the sole record
+    // of the credit. This is the dedup rule GetBlsctBalance() and GetReceived()
+    // (wallet/rpc/coins.cpp) already use.
+    for (const auto& [outpoint, wout] : wallet.mapOutputs) {
+        const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint);
+        if (wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool())) continue;
+        if (!wout.fBLSCTOutput) continue;
+        if (!wout.out->tokenId.IsNull()) continue;
+        if (wout.IsSpent()) continue;
+        if (!IsOutputTrusted(wallet, wout)) continue;
+        if (wallet.IsOutputImmatureCoinBase(wout)) continue;
+        if (wallet.GetOutputDepthInMainChain(wout) < min_depth) continue;
+        AddBlsctTrustedCredit(ret, wallet.IsMine(*wout.out), wout.blsctRecoveryData.amount);
+    }
+
+    return ret;
+}
+
 std::vector<StakedCommitmentInfo> GetStakedCommitmentInfo(const CWallet& wallet)
 {
     AssertLockHeld(wallet.cs_wallet);

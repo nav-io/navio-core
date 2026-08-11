@@ -436,54 +436,13 @@ RPCHelpMan getblsctbalance()
 
             bool include_watchonly = ParseIncludeWatchonly(request.params[1], *pwallet);
 
-            // GetBlsctBalance only sees outputs stored in mapOutputs, which is
-            // populated only when WALLET_FLAG_BLSCT_OUTPUT_STORAGE is set. For
-            // legacy (e.g. bdb) BLSCT wallets the BLSCT outputs live in
-            // mapWallet, so we have to walk them directly to avoid the RPC
-            // reporting a confusing 0.
-            CAmount mine_trusted = 0;
-            CAmount watchonly_trusted = 0;
+            // BLSCT outputs live in mapWallet, in mapOutputs, or in both
+            // depending on WALLET_FLAG_BLSCT_OUTPUT_STORAGE; the helper walks
+            // both and deduplicates, so this RPC reports the same balance
+            // whichever way the wallet stores them.
+            const auto bal = wallet::GetBlsctTrustedBalance(*pwallet, min_depth);
 
-            if (pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
-                const auto bal = wallet::GetBlsctBalance(*pwallet, min_depth);
-                mine_trusted = bal.m_mine_trusted;
-                watchonly_trusted = bal.m_watchonly_trusted;
-            } else {
-                std::set<uint256> trusted_parents;
-                for (const auto& entry : pwallet->mapWallet) {
-                    const wallet::CWalletTx& wtx = entry.second;
-                    if (!wallet::CachedTxIsTrusted(*pwallet, wtx, trusted_parents)) continue;
-                    if (pwallet->IsTxImmatureCoinBase(wtx)) continue;
-                    const int depth = pwallet->GetTxDepthInMainChain(wtx);
-                    if (depth < min_depth) continue;
-                    for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
-                        const CTxOut& txout = wtx.tx->vout[i];
-                        if (!txout.HasBLSCTRangeProof()) continue;
-                        if (!txout.tokenId.IsNull()) continue;
-                        if (pwallet->IsSpent(COutPoint(txout.GetHash()))) continue;
-                        const wallet::isminetype mine = pwallet->IsMine(txout);
-                        // Bucket exactly as wallet::GetBlsctBalance() does for
-                        // output-storage wallets: it credits
-                        // ISMINE_STAKED_COMMITMENT_BLSCT to
-                        // m_mine_staked_commitment and never to m_mine_trusted,
-                        // because a staked commitment cannot be spent until
-                        // `stakeunlock` releases it. Counting it here would
-                        // report the same coins as available or not depending
-                        // only on WALLET_FLAG_BLSCT_OUTPUT_STORAGE.
-                        const bool is_spendable = (mine & wallet::ISMINE_SPENDABLE_BLSCT) != 0;
-                        const bool is_watchonly = (mine & wallet::ISMINE_WATCH_ONLY) != 0;
-                        if (!is_spendable && !is_watchonly) continue;
-                        const CAmount amount = wtx.GetBLSCTRecoveryData(i).amount;
-                        if (is_spendable) {
-                            mine_trusted += amount;
-                        } else if (is_watchonly) {
-                            watchonly_trusted += amount;
-                        }
-                    }
-                }
-            }
-
-            return ValueFromAmount(mine_trusted + (include_watchonly ? watchonly_trusted : 0));
+            return ValueFromAmount(bal.m_mine + (include_watchonly ? bal.m_watchonly : 0));
         },
     };
 }
