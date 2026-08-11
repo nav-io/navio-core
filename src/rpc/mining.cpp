@@ -838,12 +838,19 @@ static RPCHelpMan getblocktemplate()
             aCaps.push_back("proposal");
 
             UniValue transactions(UniValue::VARR);
-            std::map<uint256, int64_t> setTxIndex;
+            // An outpoint on this chain names an output by its own hash, not by
+            // (txid, n), so a dependency is resolved by mapping every output
+            // hash produced so far back to the index of the transaction that
+            // produced it. Keying this by txid would never match a prevout.
+            std::map<uint256, int64_t> setOutputIndex;
             int i = 0;
             for (const auto& it : pblock->vtx) {
                 const CTransaction& tx = *it;
                 uint256 txHash = tx.GetHash();
-                setTxIndex[txHash] = i++;
+                for (const CTxOut& out : tx.vout) {
+                    setOutputIndex[out.GetHash()] = i;
+                }
+                ++i;
 
                 if (!consensusParams.fBLSCT && tx.IsCoinBase())
                     continue;
@@ -856,8 +863,9 @@ static RPCHelpMan getblocktemplate()
 
                 UniValue deps(UniValue::VARR);
                 for (const CTxIn& in : tx.vin) {
-                    if (setTxIndex.contains(in.prevout.hash))
-                        deps.push_back(setTxIndex[in.prevout.hash]);
+                    const auto dep = setOutputIndex.find(in.prevout.hash);
+                    if (dep != setOutputIndex.end())
+                        deps.push_back(dep->second);
                 }
                 entry.pushKV("depends", deps);
 
