@@ -15,9 +15,9 @@ typedef std::multimap<int64_t, CWalletOutput*> OutputItems;
 } // namespace wallet
 
 namespace blsct {
-//! Sum of the wallet's confirmed staked commitments that carry a stake-delegation
-//! payload. Requires wallet.cs_wallet.
-CAmount GetDelegatedStakedBalance(const wallet::CWallet& wallet);
+//! Sum of the wallet's confirmed staked commitments that carry a
+//! stake-delegation payload.
+CAmount GetDelegatedStakedBalance(const wallet::CWallet& wallet) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose, wallet::mapValue_t mapValue = {});
 CScript BuildHTLCScript(
     const std::vector<unsigned char>& hash_bytes,

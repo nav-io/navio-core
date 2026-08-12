@@ -18,6 +18,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_greater_than,
+    assert_greater_than_or_equal,
     assert_raises_rpc_error,
 )
 
@@ -121,8 +122,8 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         self.log.info("Testing delegatestake and the on-chain payload")
 
         reward_address = owner.getnewaddress(label="rewards", address_type="blsct")
-        txid = owner.delegatestake(self.min_stake, operator_pub, reward_address)
-        assert_equal(len(txid), 64)
+        out_hash = owner.delegatestake(self.min_stake, operator_pub, reward_address)
+        assert_equal(len(out_hash), 64)
         self.generatetoblsctaddress(node, 1, owner_address)
 
         entries = node.liststakedcommitmentsdata()
@@ -139,8 +140,9 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         assert_equal(entry["height"] + entry["confirmations"] - 1, tip_height)
         assert_greater_than(entry["confirmations"], 0)
 
-        # The scan result is cached per tip: a second call at the same tip
-        # must return the identical result (and not pay a second UTXO scan).
+        # Smoke test: a repeated call at the same tip returns the identical
+        # result. (This holds with or without the per-tip cache — the cache
+        # itself is not observable from here.)
         assert_equal(node.liststakedcommitmentsdata(), entries)
 
         # The owner's wallet still tracks it as its own staked commitment.
@@ -168,8 +170,8 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         balances = owner.getbalances()["mine"]
         assert_equal(balances["delegated_staked_commitment_balance"], Decimal(self.min_stake))
         # The delegated stake is part of (not additional to) the staked total.
-        assert_greater_than(balances["staked_commitment_balance"] + 1,
-                            balances["delegated_staked_commitment_balance"])
+        assert_greater_than_or_equal(balances["staked_commitment_balance"],
+                                     balances["delegated_staked_commitment_balance"])
 
     def test_delegated_staker_tracking(self, node, operator_priv):
         self.log.info("Testing that a delegated staker decrypts and tracks the delegation")
@@ -286,8 +288,8 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         # Move the stake delegated to other_operator over to operator_pub,
         # unifying it with the existing delegation (same delegate + reward
         # address). The commitments never leave the staking set.
-        txid = owner.redelegatestake(other_operator_pub, operator_pub, reward_address)
-        assert_equal(len(txid), 64)
+        out_hash = owner.redelegatestake(other_operator_pub, operator_pub, reward_address)
+        assert_equal(len(out_hash), 64)
         self.generatetoblsctaddress(node, 1, owner_address)
 
         delegations = owner.listdelegations()
@@ -313,8 +315,8 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         # Below min_amount: nothing to do.
         assert_equal(owner.compounddelegations(operator_pub, spendable + 100), None)
 
-        txid = owner.compounddelegations()
-        assert_equal(len(txid), 64)
+        out_hash = owner.compounddelegations()
+        assert_equal(len(out_hash), 64)
         self.generatetoblsctaddress(node, 1, owner_address)
 
         delegations = owner.listdelegations()
@@ -427,8 +429,8 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         # Unstake everything: delegated or not, the spend key revokes it all,
         # and the staked set ends up empty.
         staked = owner.getbalances()["mine"]["staked_commitment_balance"]
-        txid = owner.stakeunlock(staked)
-        assert_equal(len(txid), 64)
+        out_hash = owner.stakeunlock(staked)
+        assert_equal(len(out_hash), 64)
         self.generatetoblsctaddress(node, 1, owner_address)
 
         assert_equal(node.liststakedcommitmentsdata(), [])
