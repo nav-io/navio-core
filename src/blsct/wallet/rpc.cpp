@@ -1219,8 +1219,14 @@ RPCHelpMan delegatestake()
                     throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_reward).original);
                 }
                 rewardAddress = EncodeDestination(*op_reward);
-            } else if (!IsValidDestination(DecodeDestination(rewardAddress))) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
+            } else {
+                const CTxDestination reward_dest = DecodeDestination(rewardAddress);
+                if (!IsValidDestination(reward_dest)) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
+                }
+                // Store the canonical encoding so later lookups (rewards
+                // tracking, delegation-identity grouping) compare equal.
+                rewardAddress = EncodeDestination(reward_dest);
             }
 
             UniValue address_amounts(UniValue::VOBJ);
@@ -1326,6 +1332,14 @@ struct WalletDelegation {
 //! the owner section of each delegation payload is decrypted with the same
 //! per-output nonce the wallet already uses to recover amounts, so this needs
 //! no wallet-side metadata and survives a restore from seed.
+//!
+//! Iterates the wallet's own output maps rather than going through
+//! AvailableCoins: the delegation view must describe the chain, so it must not
+//! inherit coin selection's spending policy (only_spendable would hide the
+//! list from a view-key-only auditing wallet, skip_locked would make it
+//! disagree with staked_commitment_balance, which is lock-unaware). This also
+//! keeps callers like getbalances at the cost of a map walk, the same class
+//! as the existing balance computations, instead of a coin-selection pass.
 static std::vector<WalletDelegation> GetWalletDelegations(const wallet::CWallet& wallet, blsct::KeyMan* blsct_km) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
     AssertLockHeld(wallet.cs_wallet);
@@ -1340,47 +1354,45 @@ static std::vector<WalletDelegation> GetWalletDelegations(const wallet::CWallet&
         return ret;
     }
 
-    wallet::CoinFilterParams coins_params;
-    coins_params.min_amount = 0;
-    coins_params.only_blsct = true;
-    coins_params.include_staked_commitment = true;
-    coins_params.min_sum_amount = MAX_MONEY;
-
-    const bool is_blsct_storage = wallet.IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
-    auto availableCoins = is_blsct_storage ? AvailableBlsctCoins(wallet, nullptr, coins_params) : AvailableCoins(wallet, nullptr, std::nullopt, coins_params);
-
-    for (const wallet::COutput& output : availableCoins.All()) {
-        CTxOut out;
-        CAmount amount{0};
-        bool isStakedCommitment = false;
-
-        if (is_blsct_storage) {
-            const auto wout = wallet.GetWalletOutput(output.outpoint);
-            if (wout == nullptr) continue;
-            out = *(wout->out);
-            amount = wout->blsctRecoveryData.amount;
-            isStakedCommitment = wout->fStakedCommitment;
-        } else {
-            const auto wtx = wallet.GetWalletTxFromOutpoint(output.outpoint);
-            if (wtx == nullptr) continue;
-            const auto txout_iter = std::find_if(wtx->tx->vout.begin(), wtx->tx->vout.end(), [&](const CTxOut& o) { return o.GetHash() == output.outpoint.hash; });
-            if (txout_iter == wtx->tx->vout.end()) continue;
-            out = *txout_iter;
-            amount = wtx->GetBLSCTRecoveryData(output.outpoint).amount;
-            isStakedCommitment = out.IsStakedCommitment();
-        }
-
-        if (!isStakedCommitment || out.predicate.empty()) continue;
-
+    const auto consider = [&](const uint256& outhash, const CTxOut& out, const CAmount amount, const int depth) {
+        if (out.predicate.empty()) return;
         try {
             const auto parsed = blsct::ParsePredicate(out.predicate);
-            if (!parsed.IsDataPredicate() || !blsct::delegation::IsDelegationData(parsed.GetData())) continue;
+            if (!parsed.IsDataPredicate() || !blsct::delegation::IsDelegationData(parsed.GetData())) return;
             const auto nonce = blsct::CalculateNonce(out.blsctData.blindingKey, viewKey);
-            const auto request = blsct::delegation::RecoverOwnerInfo(parsed.GetData(), nonce);
-            if (!request.has_value()) continue;
-            ret.push_back({output.outpoint.hash, amount, output.depth, *request});
+            auto request = blsct::delegation::RecoverOwnerInfo(parsed.GetData(), nonce);
+            if (!request.has_value()) return;
+            // Canonicalise the reward address: the payload stores whatever
+            // string the delegator passed, and downstream lookups (rewards
+            // maps, IsMine) compare encoded destinations. Any valid spelling
+            // of the same address must match.
+            const CTxDestination dest = DecodeDestination(request->rewardAddress);
+            if (IsValidDestination(dest)) request->rewardAddress = EncodeDestination(dest);
+            ret.push_back({outhash, amount, depth, *request});
         } catch (const std::exception&) {
-            continue;
+        }
+    };
+
+    if (wallet.IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        for (const auto& [outpoint, wout] : wallet.mapOutputs) {
+            if (!wout.fStakedCommitment) continue;
+            if (wallet.IsSpent(outpoint) || wout.IsSpent()) continue;
+            if (!(wallet.IsMine(*wout.out) & wallet::ISMINE_STAKED_COMMITMENT_BLSCT)) continue;
+            const int depth = wallet.GetOutputDepthInMainChain(wout);
+            if (depth < 0) continue;
+            consider(outpoint.hash, *wout.out, wout.blsctRecoveryData.amount, depth);
+        }
+    } else {
+        for (const auto& [txid, wtx] : wallet.mapWallet) {
+            const int depth = wallet.GetTxDepthInMainChain(wtx);
+            if (depth < 0) continue;
+            for (uint32_t i = 0; i < wtx.tx->vout.size(); ++i) {
+                const CTxOut& out = wtx.tx->vout[i];
+                if (!out.IsStakedCommitment()) continue;
+                if (wallet.IsSpent(COutPoint(out.GetHash()))) continue;
+                if (!(wallet.IsMine(out) & wallet::ISMINE_STAKED_COMMITMENT_BLSCT)) continue;
+                consider(out.GetHash(), out, wtx.GetBLSCTRecoveryData(i).amount, depth);
+            }
         }
     }
 
@@ -1411,10 +1423,14 @@ static std::map<std::string, CoinbaseRewards> GetCoinbaseRewardsByAddress(const 
         acc.lastHeight = std::max(acc.lastHeight, tip_height - depth + 1);
     };
 
+    // Same ownership rule on both storage paths: every coinbase output the
+    // wallet recognises as its own counts, watch-only included, so a
+    // view-key-only auditing wallet sees the same totals as the full wallet.
     if (wallet.IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
         for (const auto& entry : wallet.mapOutputs) {
             const wallet::CWalletOutput& wout = entry.second;
             if (!wout.fCoinbase) continue;
+            if (wallet.IsMine(*wout.out) == wallet::ISMINE_NO) continue;
             const int depth = wallet.GetOutputDepthInMainChain(wout);
             if (depth < 1) continue;
             add(*wout.out, wout.blsctRecoveryData.amount, depth);
@@ -1427,7 +1443,7 @@ static std::map<std::string, CoinbaseRewards> GetCoinbaseRewardsByAddress(const 
             if (depth < 1) continue;
             for (uint32_t i = 0; i < wtx.tx->vout.size(); ++i) {
                 const CTxOut& out = wtx.tx->vout[i];
-                if (!(wallet.IsMine(out) & wallet::ISMINE_SPENDABLE_BLSCT)) continue;
+                if (wallet.IsMine(out) == wallet::ISMINE_NO) continue;
                 add(out, wtx.GetBLSCTRecoveryData(i).amount, depth);
             }
         }
@@ -1641,10 +1657,16 @@ RPCHelpMan redelegatestake()
                 if (!(d.request.delegateKey == fromKey)) continue;
                 fromIds.insert(d.request.GetId());
                 fromRewardAddresses.insert(d.request.rewardAddress);
-                if (d.depth >= 1) movedAmount += d.amount;
+                movedAmount += d.amount;
             }
             if (fromIds.empty()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "No stakes are delegated to from_delegate_pubkey");
+            }
+            // The moved commitments are the sole funding of the new staked
+            // output; fail with a clear error instead of a generic factory
+            // failure if they cannot satisfy the consensus minimum.
+            if (movedAmount < Params().GetConsensus().nPePoSMinStakeAmount) {
+                throw JSONRPCError(RPC_WALLET_ERROR, strprintf("The delegated amount being moved (%s) is below the minimum stake of %s", FormatMoney(movedAmount), FormatMoney(Params().GetConsensus().nPePoSMinStakeAmount)));
             }
 
             std::string rewardAddress = request.params[2].isNull() ? "" : request.params[2].get_str();
@@ -1653,8 +1675,12 @@ RPCHelpMan redelegatestake()
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "The delegations being moved use different reward addresses; pass reward_address explicitly");
                 }
                 rewardAddress = *fromRewardAddresses.begin();
-            } else if (!IsValidDestination(DecodeDestination(rewardAddress))) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
+            } else {
+                const CTxDestination reward_dest = DecodeDestination(rewardAddress);
+                if (!IsValidDestination(reward_dest)) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
+                }
+                rewardAddress = EncodeDestination(reward_dest);
             }
 
             auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Delegated Stake");
@@ -1694,7 +1720,7 @@ RPCHelpMan compounddelegations()
             wallet::HELP_REQUIRING_PASSPHRASE,
         {
             {"delegate_pubkey", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "The delegation to compound into. May be omitted when the wallet has exactly one delegation identity."},
-            {"min_amount", RPCArg::Type::AMOUNT, RPCArg::Default{1}, "Do nothing (return null) while the spendable balance is below this amount."},
+            {"min_amount", RPCArg::Type::AMOUNT, RPCArg::Default{1}, "Do nothing (return null) while the spendable balance is below this amount. Independently of it, 1 NAV of the spendable balance is always held back as a fee margin."},
         },
         {
             RPCResult{"if there was something to compound",
@@ -1741,15 +1767,18 @@ RPCHelpMan compounddelegations()
 
             const CAmount min_amount = request.params[1].isNull() ? COIN : AmountFromValue(request.params[1]);
 
-            // Compound the spendable balance minus a fee margin: the fee is
-            // paid from spendable coins on top of the staked amount, and input
-            // selection gathers up to (amount + 1 NAV) to cover it. Sum both
-            // balance paths like getbalances does: in BLSCT output-storage
-            // mode outputs whose CWalletTx is alive are counted by
-            // GetBalance, the rest by GetBlsctBalance.
+            // Held back from the compounded amount so the transaction fee can
+            // be paid from spendable coins: input selection gathers up to
+            // (amount + COMPOUND_FEE_MARGIN) to cover amount + fee.
+            constexpr CAmount COMPOUND_FEE_MARGIN{COIN};
+
+            // Sum both balance paths like getbalances does: in BLSCT
+            // output-storage mode outputs whose CWalletTx is alive are counted
+            // by GetBalance, the rest by GetBlsctBalance.
             const CAmount spendable = wallet::GetBalance(*pwallet).m_mine_trusted + wallet::GetBlsctBalance(*pwallet).m_mine_trusted;
-            const CAmount amount = spendable - COIN;
-            if (amount < min_amount || amount <= 0) return UniValue::VNULL;
+            if (spendable < min_amount) return UniValue::VNULL;
+            const CAmount amount = spendable - COMPOUND_FEE_MARGIN;
+            if (amount <= 0) return UniValue::VNULL;
 
             auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Delegated Stake");
             if (!op_dest) {

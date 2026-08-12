@@ -2135,6 +2135,13 @@ static RPCHelpMan liststakedcommitmentsdata()
             // delegated-staking operators typically poll this on an interval;
             // without the cache each of them would pay a full UTXO iteration
             // every few minutes.
+            //
+            // Function-local statics are per-process, not per-chainman: an
+            // in-process embedder running several ChainstateManagers could be
+            // served one manager's scan for the other when tip hashes match.
+            // naviod runs a single chainman, and RPC handlers resolve it from
+            // one NodeContext, so this stays a deliberate simplification; move
+            // the cache onto NodeContext if that ever changes.
             static Mutex cache_mutex;
             static uint256 cache_tip GUARDED_BY(cache_mutex);
             static UniValue cache_result GUARDED_BY(cache_mutex){UniValue::VARR};

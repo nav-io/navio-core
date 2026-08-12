@@ -840,7 +840,7 @@ static void WriteDelegationStats()
         entry.pushKV("outhash", outhash);
         entry.pushKV("commitment", s.commitment);
         entry.pushKV("reward_address", s.rewardAddress);
-        entry.pushKV("value", s.value);
+        entry.pushKV("value", ValueFromAmount(s.value));
         entry.pushKV("blocks_accepted", s.blocksAccepted);
         entry.pushKV("blocks_rejected", s.blocksRejected);
         if (!s.lastBlockHash.empty()) {
@@ -1139,6 +1139,17 @@ void Loop()
                     last_delegation_refresh = SteadyClock::now();
                     delegations = GetDelegatedCommitments(rh);
                     LogPrintf("%s: Tracking %d delegated commitment(s).\n", __func__, (int)delegations.size());
+                    // Drop stats entries whose delegation is gone from the
+                    // chain and that never produced a block: compounding
+                    // owners re-create their delegated output on every run,
+                    // so without pruning the map (and the stats file) grows
+                    // by one dead entry per compounding round.
+                    std::set<std::string> tracked;
+                    for (const auto& d : delegations)
+                        tracked.insert(d.outhash);
+                    std::erase_if(delegationStats, [&](const auto& item) {
+                        return !tracked.contains(item.first) && item.second.blocksAccepted == 0 && item.second.blocksRejected == 0;
+                    });
                     WriteDelegationStats();
                 }
 
