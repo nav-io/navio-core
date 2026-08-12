@@ -367,6 +367,7 @@ BASE_SCRIPTS = [
     'blsct_watchonly_balances.py',
     'blsct_setblsctseed.py',
     'blsct_spend_rpc_guards.py',
+    'blsct_address_rpc.py',
     'blsct_script_validation.py',
     'blsct_balance_proof.py',
     'blsct_pops_consensus.py',

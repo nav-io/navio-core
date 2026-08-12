@@ -126,10 +126,17 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         ones. importprivkey/dumpprivkey/importaddress/importpubkey/
         importmulti are guarded on Params().GetConsensus().fBLSCT (the
         chain's consensus flag, not the wallet's BLSCT flag) and now raise a
-        clear error here instead of silently operating on dead keys."""
+        clear error here instead of silently operating on dead keys.
+
+        The transparent address these RPCs are called with is minted by a
+        separate plain wallet: a BLSCT wallet does not hand out transparent
+        addresses at all (blsct_address_rpc.py covers that refusal). Its
+        origin does not matter here -- every guard below fires before the RPC
+        parses its arguments."""
         self.log.info("Transparent-key import/dump RPCs raise a clear guard error on an fBLSCT chain")
 
-        legacy_addr = wallet.getnewaddress(label="", address_type="legacy")
+        self.nodes[0].createwallet(wallet_name="transparent_addr_source", descriptors=False, blsct=False)
+        legacy_addr = self.nodes[0].get_wallet_rpc("transparent_addr_source").getnewaddress(label="", address_type="legacy")
 
         assert_raises_rpc_error(
             -4,
@@ -170,11 +177,16 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
             }],
         )
 
-        # signmessage on a transparent address inside a BLSCT wallet is
-        # unaffected: it only signs a message with the key, it does not
-        # touch transparent-tx spendability, so it keeps working.
-        sig = wallet.signmessage(legacy_addr, "hello transparent")
-        assert sig
+        # The BLSCT wallet holds no transparent key to sign with, so this
+        # address is not its own. signmessage with a transparent key is
+        # covered on a plain wallet in test_legacy_wallet_unaffected.
+        assert_raises_rpc_error(
+            -4,
+            "Private key not available",
+            wallet.signmessage,
+            legacy_addr,
+            "hello transparent",
+        )
 
     def test_legacy_wallet_unaffected(self):
         """A plain (non-BLSCT-flagged) wallet is unaffected by the 4
