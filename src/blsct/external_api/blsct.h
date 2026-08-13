@@ -120,8 +120,10 @@ if (name == nullptr) { \
     fputs("Failed to allocate memory\n", stderr); \
     return nullptr; \
 }
+// NOTE: only for functions returning BlsctRetVal*. Functions returning other
+// Blsct*RetVal types must construct their own error return on malloc failure.
 #define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
-    if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
+    if (name == nullptr) return err(BLSCT_MEM_ALLOC_FAILED);
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
@@ -165,16 +167,21 @@ inline const char* SerializeToHex(
     return StrToAllocCStr(hex_str);
 }
 
+// Deserializes a fixed-size object from hex into freshly malloc'd memory.
+// Returns nullptr on any failure (bad hex, wrong size, OOM). Callers MUST
+// null-check: a previous version returned a BlsctRetVal* error object as
+// void*, which callers then wrapped in succ(), reporting success with a
+// garbage/short-lived pointer.
 inline void* DeserializeFromHex(const char* hex, const size_t obj_size)
 {
     std::vector<uint8_t> vec;
     if (!TryParseHexWrap(hex, vec)) {
-        return err(BLSCT_FAILURE);
+        return nullptr;
     }
 
     // check if the size is correct
     if (vec.size() != obj_size) {
-        return err(BLSCT_BAD_SIZE);
+        return nullptr;
     }
 
     void* blsct_obj = malloc(obj_size);
@@ -372,6 +379,17 @@ void delete_tx_out_vec(void* vp_tx_out_vec);
 BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs);
+
+/* Like build_ctx, but pays the change output (if any is needed) to
+ * `change_addr`. build_ctx has no change destination; it builds successfully
+ * only when the inputs exactly cover the outputs plus fee, and fails
+ * (BLSCT_FAILURE) whenever a change output would be required. Callers that
+ * cannot pre-compute exact inputs MUST use build_ctx_with_change with a
+ * self-owned change address instead. */
+BlsctCTxRetVal* build_ctx_with_change(
+    const void* void_tx_ins,
+    const void* void_tx_outs,
+    const BlsctSubAddr* change_addr);
 // using void* instead of const void* to avoid const_cast
 const char* get_ctx_id(void* vp_ctx);
 const void* get_ctx_ins(void* vp_ctx);

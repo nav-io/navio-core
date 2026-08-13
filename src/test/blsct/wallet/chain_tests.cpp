@@ -44,7 +44,9 @@ BOOST_FIXTURE_TEST_CASE(SyncTest, TestBLSCTChain100Setup)
     BOOST_CHECK(coins.size() == 1);
 
     // Create Transaction sending to another address
-    auto tx = blsct::TxFactory::CreateTransaction(wallet.get(), wallet->GetOrCreateBLSCTKeyMan(), blsct::CreateTransactionData{blsct::SubAddress(), 1 * COIN, "test"});
+    // Send to a wallet-owned destination: a default-constructed (zero-key)
+    // SubAddress is anyone-can-spend and is rejected by CreateOutput.
+    auto tx = blsct::TxFactory::CreateTransaction(wallet.get(), wallet->GetOrCreateBLSCTKeyMan(), blsct::CreateTransactionData{walletDestination, 1 * COIN, "test"});
 
     BOOST_CHECK(tx != std::nullopt);
 
