@@ -880,4 +880,175 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
     free(aggregate_rv);
 }
 
+
+BOOST_AUTO_TEST_CASE(test_ffi_hardening_regressions)
+{
+    init();
+
+    // deserialize_token_id: over-long hex previously heap-overflowed the
+    // 40-byte BlsctTokenId buffer; must now fail cleanly.
+    {
+        std::string long_hex(82, '1'); // 41 bytes > TOKEN_ID_SIZE
+        auto* rv = deserialize_token_id(long_hex.c_str());
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK_NE(rv->result, BLSCT_SUCCESS);
+        free(rv);
+
+        std::string ok_hex(80, '1'); // exactly 40 bytes
+        rv = deserialize_token_id(ok_hex.c_str());
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
+        free_obj(rv->value);
+        free(rv);
+    }
+
+    // deserialize_ctx_id: invalid hex previously returned BLSCT_SUCCESS with
+    // a pointer to a BlsctRetVal error object; must now fail.
+    {
+        auto* rv = deserialize_ctx_id("0123"); // too short
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK_NE(rv->result, BLSCT_SUCCESS);
+        free(rv);
+
+        rv = deserialize_ctx_id("zz"); // invalid hex
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK_NE(rv->result, BLSCT_SUCCESS);
+        free(rv);
+
+        std::string ok_hex(64, 'a');
+        rv = deserialize_ctx_id(ok_hex.c_str());
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
+        free_obj(rv->value);
+        free(rv);
+    }
+
+    // gen_out_point: a short string previously read 64 bytes past the end of
+    // the caller's buffer; must now fail cleanly.
+    {
+        auto* rv = gen_out_point("abcd");
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK_NE(rv->result, BLSCT_SUCCESS);
+        free(rv);
+    }
+
+    // derive_sub_address: a zero view key previously threw across the
+    // extern "C" boundary (std::terminate); must now return nullptr.
+    {
+        std::vector<uint8_t> zero_scalar_bytes(SCALAR_SIZE, 0);
+        auto* zero_view_key = reinterpret_cast<const BlsctScalar*>(zero_scalar_bytes.data());
+        auto* spend_key_rv = gen_scalar(42);
+        BOOST_REQUIRE(spend_key_rv != nullptr);
+        const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+        BOOST_REQUIRE(spend_pub_key != nullptr);
+        auto* sub_addr_id = gen_sub_addr_id(0, 1);
+        BOOST_REQUIRE(sub_addr_id != nullptr);
+
+        BOOST_CHECK(derive_sub_address(zero_view_key, spend_pub_key, sub_addr_id) == nullptr);
+
+        free_obj(spend_key_rv->value);
+        free(spend_key_rv);
+        free_obj((void*)spend_pub_key);
+        free_obj((void*)sub_addr_id);
+    }
+
+    // build_ctx: non-exact inputs previously produced change payable to a
+    // zero-key (anyone-can-spend) destination. Must now fail closed...
+    auto* view_key_rv = gen_scalar(21);
+    auto* spend_key_rv = gen_scalar(22);
+    auto* blinding_key_rv = gen_scalar(23);
+    auto* input_spending_key_rv = gen_scalar(24);
+    auto* input_gamma_rv = gen_scalar(25);
+    auto* default_token_id_rv = gen_default_token_id();
+    BOOST_REQUIRE(view_key_rv && spend_key_rv && blinding_key_rv &&
+                  input_spending_key_rv && input_gamma_rv && default_token_id_rv);
+
+    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+    BOOST_REQUIRE(spend_pub_key != nullptr);
+    auto* sub_addr_id = gen_sub_addr_id(0, 7);
+    BOOST_REQUIRE(sub_addr_id != nullptr);
+    auto* dest = derive_sub_address(static_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
+    BOOST_REQUIRE(dest != nullptr);
+
+    auto* out_point_rv = gen_out_point("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+    BOOST_REQUIRE_EQUAL(out_point_rv->result, BLSCT_SUCCESS);
+
+    auto* tx_in_rv = build_tx_in(
+        100000000,
+        static_cast<const BlsctScalar*>(input_gamma_rv->value),
+        static_cast<const BlsctScalar*>(input_spending_key_rv->value),
+        static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+        static_cast<const BlsctOutPoint*>(out_point_rv->value),
+        false,
+        false);
+    BOOST_REQUIRE_EQUAL(tx_in_rv->result, BLSCT_SUCCESS);
+
+    auto* tx_out_rv = build_tx_out(
+        dest,
+        1000,
+        "",
+        static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+        TxOutputType::Normal,
+        0,
+        false,
+        static_cast<const BlsctScalar*>(blinding_key_rv->value));
+    BOOST_REQUIRE_EQUAL(tx_out_rv->result, BLSCT_SUCCESS);
+
+    void* ins = create_tx_in_vec();
+    void* outs = create_tx_out_vec();
+    add_to_tx_in_vec(ins, static_cast<const BlsctTxIn*>(tx_in_rv->value));
+    add_to_tx_out_vec(outs, static_cast<const BlsctTxOut*>(tx_out_rv->value));
+
+    {
+        // change (99000 - fee) needed but no change address: must fail
+        auto* rv = build_ctx(ins, outs);
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK_NE(rv->result, BLSCT_SUCCESS);
+        BOOST_CHECK(rv->ctx == nullptr); // never a garbage/uninitialised ptr
+        free(rv);
+    }
+
+    {
+        // ...and succeed when a change address is supplied
+        auto* rv = build_ctx_with_change(ins, outs, dest);
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
+        BOOST_REQUIRE(rv->ctx != nullptr);
+
+        // the built ctx must serialize; its script getter must return real
+        // serialized script bytes (previously it memcpy'd C++ object internals)
+        const void* ctx_outs = get_ctx_outs(rv->ctx);
+        BOOST_REQUIRE(ctx_outs != nullptr);
+        const size_t n_outs = get_ctx_outs_size(ctx_outs);
+        BOOST_REQUIRE(n_outs >= 2);
+        bool saw_spk = false;
+        for (size_t i = 0; i < n_outs; ++i) {
+            const void* ctx_out = get_ctx_out_at(ctx_outs, i); // borrowed; do not free
+            BOOST_REQUIRE(ctx_out != nullptr);
+            const BlsctScript* spk = get_ctx_out_script_pub_key(ctx_out);
+            if (spk == nullptr) continue; // fee/staked script does not fit BlsctScript
+            saw_spk = true;
+            free_obj((void*)spk);
+        }
+        BOOST_CHECK(saw_spk);
+        delete_ctx(rv->ctx);
+        free(rv);
+    }
+
+    delete_tx_in_vec(ins);
+    delete_tx_out_vec(outs);
+    free_obj(view_key_rv->value); free(view_key_rv);
+    free_obj(spend_key_rv->value); free(spend_key_rv);
+    free_obj(blinding_key_rv->value); free(blinding_key_rv);
+    free_obj(input_spending_key_rv->value); free(input_spending_key_rv);
+    free_obj(input_gamma_rv->value); free(input_gamma_rv);
+    free_obj(default_token_id_rv->value); free(default_token_id_rv);
+    free_obj((void*)spend_pub_key);
+    free_obj((void*)sub_addr_id);
+    free_obj((void*)dest);
+    free_obj(out_point_rv->value); free(out_point_rv);
+    free_obj(tx_in_rv->value); free(tx_in_rv);
+    free_obj(tx_out_rv->value); free(tx_out_rv);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
