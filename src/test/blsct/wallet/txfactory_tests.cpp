@@ -191,6 +191,86 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_test, TestingSetup)
     BOOST_CHECK(foundChange);
 }
 
+// A subtract-fee recipient alongside an ordinary one. The deferred recipient is
+// materialized once the fee is known, and that materialization must ADD to the
+// token's output total rather than replace it -- the ordinary output's amount is
+// already in there. Replacing it makes input selection and change work from a
+// total that is short by the other output, so the committed outputs no longer
+// balance against the inputs and the transaction cannot verify.
+//
+// Reachable through the external API, whose `build_ctx` takes a list of
+// BlsctTxOut and lets any one of them set subtract_fee_from_amount.
+BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_with_other_output_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test_sffa_other", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    COutPoint outpoint{Txid::FromUint256(InsecureRand256())};
+    {
+        CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+        coins_view_cache.SetBestBlock(InsecureRand256());
+        Coin coin;
+        coin.nHeight = 1;
+        coin.out = blsct::CreateOutput(recvAddress, 1000 * COIN, "test").out;
+        coins_view_cache.AddCoin(outpoint, std::move(coin), true);
+        BOOST_CHECK(coins_view_cache.Flush());
+    }
+
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+    auto tx = blsct::TxFactory(blsct_km);
+    BOOST_CHECK(tx.AddInput(coins_view_cache, outpoint));
+
+    tx.AddOutput(recvAddress, 100 * COIN, "plain");
+    tx.AddOutput(recvAddress, 800 * COIN, "sffa", TokenId(), blsct::NORMAL, 0, /*fSubtractFeeFromAmount=*/true);
+
+    auto finalTx = tx.BuildTx();
+    BOOST_REQUIRE(finalTx.has_value());
+
+    TxValidationState tx_state;
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx.value()), coins_view_cache, tx_state));
+
+    const CAmount fee = GetFeeValue(CTransaction(finalTx.value()));
+    BOOST_REQUIRE(fee > 0);
+
+    // The plain output is paid in full, the deferred one bears the whole fee,
+    // and the change is what is left of the input once both are paid.
+    auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
+    bool foundPlain = false;
+    bool foundSffa = false;
+    bool foundChange = false;
+    CAmount recovered = 0;
+    for (auto& res : result.amounts) {
+        recovered += res.amount;
+        if (res.message == "plain") {
+            foundPlain = true;
+            BOOST_CHECK_EQUAL(res.amount, 100 * COIN);
+        }
+        if (res.message == "sffa") {
+            foundSffa = true;
+            BOOST_CHECK_EQUAL(res.amount, 800 * COIN - fee);
+        }
+        if (res.message == "Change") {
+            foundChange = true;
+            BOOST_CHECK_EQUAL(res.amount, 1000 * COIN - 100 * COIN - 800 * COIN);
+        }
+    }
+    BOOST_CHECK(foundPlain);
+    BOOST_CHECK(foundSffa);
+    BOOST_CHECK(foundChange);
+    // Everything the input carried is accounted for by the recovered outputs
+    // plus the explicit fee output.
+    BOOST_CHECK_EQUAL(recovered + fee, 1000 * COIN);
+}
+
 // subtract-fee "send everything": the recipient gets the whole input minus the
 // fee and there is no change output. This is the same shape the `consolidate`
 // RPC builds (one output back to self, fee taken from the merged amount), so it

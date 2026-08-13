@@ -145,6 +145,12 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         });
     }
 
+    // What the ordinary (non-deferred) outputs of the deferred recipient's
+    // token contribute. The deferred output is re-materialized on every pass
+    // at a value that depends on the current fee estimate, so its token's
+    // total has to be rebuilt from this each time rather than accumulated.
+    const CAmount nFromPlainOutputs = subtractFeeOutput ? nAmounts[subtractFeeOutput->token_id].nFromOutputs : 0;
+
     while (true) {
         CMutableTransaction tx = this->tx;
         tx.nVersion |= CTransaction::BLSCT_MARKER;
@@ -165,13 +171,15 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         // the fixpoint still converges (typically in two passes). Setting
         // nFromOutputs to the reduced value makes input selection target the
         // original amount (reduced + fee), so the fee is routed out of the
-        // recipient output rather than out of change.
+        // recipient output rather than out of change. Any ordinary output of
+        // the same token is still owed in full, hence the sum rather than a
+        // plain assignment.
         std::optional<UnsignedOutput> sffaOut;
         if (subtractFeeOutput) {
             const CAmount fee = nAmounts[TokenId()].nFromFee;
             const CAmount reduced = subtractFeeOutput->amount - fee;
             if (reduced < 0) return std::nullopt; // fee exceeds the amount sent
-            nAmounts[subtractFeeOutput->token_id].nFromOutputs = reduced;
+            nAmounts[subtractFeeOutput->token_id].nFromOutputs = nFromPlainOutputs + reduced;
             sffaOut = CreateOutput(subtractFeeOutput->destination.GetKeys(), reduced,
                                    subtractFeeOutput->memo, subtractFeeOutput->token_id,
                                    subtractFeeOutput->blindingKey, subtractFeeOutput->type,
