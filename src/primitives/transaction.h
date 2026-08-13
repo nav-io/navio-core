@@ -416,8 +416,18 @@ public:
         return !(a == b);
     }
 
+    // A BLSCT fee output: the value burned as the transaction fee. Consensus
+    // (`blsct::VerifyTx`) recognises exactly ONE fee output per tx, and only
+    // when it is BOTH the unspendable OP_RETURN burn script AND carries a
+    // PayFee predicate. Checking the predicate alone (the previous behaviour)
+    // let a *spendable* output carry a PayFee predicate: consensus fee
+    // accounting (Consensus::CheckTxInputs), mempool fee/priority/RBF logic
+    // and GetBLSCTFee() then counted value that was never burned, diverging
+    // from the consensus min-fee/burn rule.
     bool IsFee() const
     {
+        if (!scriptPubKey.IsFee()) return false;
+
         blsct::ParsedPredicate parsedPredicate;
 
         if (predicate.size() > 0) {
