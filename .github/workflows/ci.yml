@@ -122,22 +122,40 @@ jobs:
           CXX: clang++
           CCACHE_MAXSIZE: '2G'
         run: |
-          # Run tests on the commit checked out above (HEAD~). The
-          # git-rebase-per-commit iteration was previously commented out
-          # in this job; preserved as-is — migrate the build chain only.
-          # mempool_limit excluded because eviction timing fails under 2x
-          # parallelism here, same reason Win64 native excludes it.
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DWITH_ZMQ=ON \
-            -DWITH_USDT=ON
-          cmake --build build -j"$(nproc)"
-          ci/smoke_test_binaries.sh build
-          ctest --test-dir build -j"$(nproc)" --output-on-failure
-          build/test/functional/test_runner.py -j "$(( $(nproc) * 2 ))" \
-            --ci --quiet --tmpdirprefix="${RUNNER_TEMP}" \
-            --combinedlogslen=99999999 \
-            --exclude mempool_limit
+          if [ -z "${COMMITS_FILE}" ]; then
+            echo "No commits to test."
+            exit 0
+          fi
+          # Build and test every commit in the range, not just the newest one:
+          # a commit that is only green because a later commit fixes it has to
+          # fail here rather than under whoever bisects onto it later.
+          #
+          # Each commit is checked out as it actually is. Replaying them with
+          # `git rebase --exec` would instead drop merge commits and build
+          # trees that exist nowhere on the branch.
+          while read -r commit; do
+            echo "::group::$(git log -1 --oneline --no-decorate "${commit}")"
+            git checkout --quiet --detach "${commit}"
+            # Start each commit from a clean build tree: a CMake cache or an
+            # object file left by the previous commit is exactly how a commit
+            # that does not build on its own reaches green here. ccache lives
+            # outside build/, so unchanged sources are still served from it.
+            rm -rf build
+            # mempool_limit excluded because eviction timing fails under 2x
+            # parallelism here, same reason Win64 native excludes it.
+            cmake -B build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DWITH_ZMQ=ON \
+              -DWITH_USDT=ON
+            cmake --build build -j"$(nproc)"
+            ci/smoke_test_binaries.sh build
+            ctest --test-dir build -j"$(nproc)" --output-on-failure --stop-on-failure
+            build/test/functional/test_runner.py -j "$(( $(nproc) * 2 ))" \
+              --ci --quiet --tmpdirprefix="${RUNNER_TEMP}" \
+              --combinedlogslen=99999999 \
+              --exclude mempool_limit
+            echo "::endgroup::"
+          done < "${COMMITS_FILE}"
 
   macos-native-arm64:
     name: 'macOS 15 native, arm64, no depends, sqlite only (CMake)'
