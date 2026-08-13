@@ -2607,11 +2607,32 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                                  setmem_ok ? "Valid" : blsct::ProofOfStake::VerificationResultToString(blsct::ProofOfStake::SM_INVALID));
                     }
                     return {setmem_ok, setmem_ok ? "" : blsct::ProofOfStake::VerificationResultToString(blsct::ProofOfStake::SM_INVALID)};
-                } catch (const std::runtime_error& e) {
-                    return {false, std::string(e.what())};
+                } catch (...) {
+                    // Any failure to verify (including unexpected exception
+                    // types) is a block rejection, never a process abort:
+                    // this task runs on the async-verifier thread and its
+                    // result is .get()-rethrown on the validation thread
+                    // holding cs_main.
+                    return {false, std::string("exception during PoS proof verification")};
                 }
             });
         pos_verify_dispatched = true;
+
+        // RAII join guard. The dispatched task captures `block.posProof` BY
+        // REFERENCE, so ConnectBlock must not return before the task has
+        // finished reading it. The success path below .get()-joins the
+        // future, but the early `return state.Invalid(...)` exits between
+        // here and there (bad-stake-modifier, duplicate-commitment, tx
+        // failures, range-proof/script failures) previously abandoned it —
+        // leaving the worker reading a CBlock the caller may already have
+        // freed (e.g. RPC-owned blocks in submitblock / TestBlockValidity),
+        // a use-after-free race. The guard .wait()s on those exits; wait()
+        // never throws and does not consume the stored result.
+        struct PosVerifyJoinGuard {
+            std::future<std::pair<bool, std::string>>& f;
+            ~PosVerifyJoinGuard() { if (f.valid()) f.wait(); }
+        };
+        auto pos_verify_join_guard = PosVerifyJoinGuard{pos_verify_future};
 
         time_2_ = SteadyClock::now();
         time_pos_dispatch += time_2_ - time_1;
