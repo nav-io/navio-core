@@ -236,14 +236,14 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_with_other_output_test, Te
     BOOST_REQUIRE(finalTx.has_value());
 
     TxValidationState tx_state;
-    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx.value()), coins_view_cache, tx_state));
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx->tx), coins_view_cache, tx_state));
 
-    const CAmount fee = GetFeeValue(CTransaction(finalTx.value()));
+    const CAmount fee = GetFeeValue(CTransaction(finalTx->tx));
     BOOST_REQUIRE(fee > 0);
 
     // The plain output is paid in full, the deferred one bears the whole fee,
     // and the change is what is left of the input once both are paid.
-    auto result = blsct_km->RecoverOutputs(finalTx.value().vout);
+    auto result = blsct_km->RecoverOutputs(finalTx->tx.vout);
     bool foundPlain = false;
     bool foundSffa = false;
     bool foundChange = false;
