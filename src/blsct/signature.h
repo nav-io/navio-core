@@ -11,6 +11,7 @@
 #define BLS_ETH 1
 
 #include <bls/bls384_256.h>
+#include <blsct/arith/mcl/mcl_scalar.h>
 #include <serialize.h>
 
 #include <vector>
@@ -29,7 +30,9 @@ public:
 
     bool operator==(const Signature& b) const;
     std::vector<uint8_t> GetVch() const;
-    void SetVch(const std::vector<uint8_t>& b);
+    // Returns false on undecodable or off-subgroup input; the previous
+    // behaviour silently cleared the signature to the identity point.
+    bool SetVch(const std::vector<uint8_t>& b);
 
     template <typename Stream>
     void Serialize(Stream& s) const
@@ -43,7 +46,13 @@ public:
     {
         std::vector<unsigned char> vec(SERIALIZATION_SIZE);
         s.read(MakeWritableByteSpan(vec));
-        SetVch(vec);
+        // Same policy as MclG1Point::Unserialize: invalid encodings are a
+        // deserialization error, except under the legacy-decode scope used
+        // for binary-baked consensus parameters (genesis blobs).
+        if (!SetVch(vec)) {
+            if (MclLegacyPointDecodeActive()) return; // SetVch already cleared to identity
+            throw std::ios_base::failure("blsct::Signature: invalid or off-subgroup encoding");
+        }
     }
 
     blsSignature m_data;

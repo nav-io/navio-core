@@ -11,6 +11,7 @@
 namespace {
 thread_local std::vector<MclG1Point>* g_mcl_g1_deferral_collector = nullptr;
 thread_local int g_mcl_g1_skip_depth = 0;
+thread_local int g_mcl_g1_legacy_decode_depth = 0;
 }
 
 MclG1Point::MclG1Point()
@@ -233,6 +234,29 @@ std::vector<MclG1Point>* MclG1Point::CurrentDeferralCollector()
 bool MclG1Point::IsSubgroupCheckSkipped()
 {
     return g_mcl_g1_skip_depth > 0;
+}
+
+bool MclG1Point::IsLegacyDecodeActive()
+{
+    return g_mcl_g1_legacy_decode_depth > 0;
+}
+
+MclG1Point::LegacyPointDecodeScope::LegacyPointDecodeScope()
+    : m_prev_depth(g_mcl_g1_legacy_decode_depth)
+{
+    g_mcl_g1_legacy_decode_depth = m_prev_depth + 1;
+}
+
+MclG1Point::LegacyPointDecodeScope::~LegacyPointDecodeScope()
+{
+    g_mcl_g1_legacy_decode_depth = m_prev_depth;
+}
+
+// Free-function accessor so MclScalar / blsct::Signature (whose headers do
+// not see the MclG1Point class) can honour the same legacy scope.
+bool MclLegacyPointDecodeActive()
+{
+    return MclG1Point::IsLegacyDecodeActive();
 }
 
 MclG1Point::SubgroupCheckSkipScope::SubgroupCheckSkipScope()
