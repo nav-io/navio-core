@@ -34,6 +34,7 @@ const std::string BESTBLOCK_NOMERKLE{"bestblock_nomerkle"};
 const std::string BESTBLOCK{"bestblock"};
 const std::string BLSCTHDCHAIN{"blscthdchain"};
 const std::string BLSCTMNEMONIC{"blsctmnemonic"};
+const std::string BLSCTBIRTHDAY{"blsctbirthday"};
 const std::string BLSCTKEY{"blsctkey"};
 const std::string BLSCTOUTKEY{"blsctoutkey"};
 const std::string BLSCTKEYMETA{"blsctkeymeta"};
@@ -875,6 +876,26 @@ bool LoadBLSCTHDChain(CWallet* pwallet, DataStream& ssValue, std::string& strErr
     return true;
 }
 
+bool LoadBLSCTBirthday(CWallet* pwallet, DataStream& ssValue, std::string& strErr)
+{
+    LOCK(pwallet->cs_wallet);
+    try {
+        int64_t birthday;
+        ssValue >> birthday;
+        if (birthday <= 0) {
+            strErr = "Error reading wallet database: BLSCT birthday must be positive";
+            return false;
+        }
+        pwallet->GetOrCreateBLSCTKeyMan()->LoadWalletBirthday(birthday);
+    } catch (const std::exception& e) {
+        if (strErr.empty()) {
+            strErr = e.what();
+        }
+        return false;
+    }
+    return true;
+}
+
 bool LoadBLSCTMnemonicEntropy(CWallet* pwallet, DataStream& ssValue, std::string& strErr)
 {
     LOCK(pwallet->cs_wallet);
@@ -1075,6 +1096,12 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
         return LoadCryptedBLSCTMnemonicEntropy(pwallet, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
     });
     result = std::max(result, blsct_crypted_mnemonic_res.m_result);
+
+    LoadResult blsct_birthday_res = LoadRecords(pwallet, batch, DBKeys::BLSCTBIRTHDAY,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        return LoadBLSCTBirthday(pwallet, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
+    });
+    result = std::max(result, blsct_birthday_res.m_result);
 
     LoadResult blsctkey_res = LoadRecords(pwallet, batch, DBKeys::BLSCTKEY,
         [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
@@ -2013,6 +2040,12 @@ bool WalletBatch::WriteBLSCTMnemonicEntropy(const std::vector<unsigned char>& en
 {
     return WriteIC(DBKeys::BLSCTMNEMONIC, entropy);
 }
+
+bool WalletBatch::WriteBLSCTBirthday(int64_t birthday)
+{
+    return WriteIC(DBKeys::BLSCTBIRTHDAY, birthday);
+}
+
 
 bool WalletBatch::WriteCryptedBLSCTMnemonicEntropy(const std::vector<unsigned char>& crypted_entropy)
 {

@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/wallet/keyman.h>
+#include <chain.h>
 #include <core_io.h>
 #include <key_io.h>
 #include <policy/rbf.h>
@@ -1329,7 +1330,7 @@ RPCHelpMan rescanblockchain()
                 "The rescan is significantly faster when used on a descriptor wallet\n"
                 "and block filters are available (using startup option \"-blockfilterindex=1\").\n",
                 {
-                    {"start_height", RPCArg::Type::NUM, RPCArg::Default{0}, "block height where the rescan should start"},
+                    {"start_height", RPCArg::Type::NUM, RPCArg::DefaultHint{"the wallet birth time when known, else 0"}, "block height where the rescan should start"},
                     {"stop_height", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the last block height that should be scanned. If none is provided it will rescan up to the tip at return time of this call."},
                 },
                 RPCResult{
@@ -1358,7 +1359,19 @@ RPCHelpMan rescanblockchain()
         throw JSONRPCError(RPC_WALLET_ERROR, "Wallet is currently rescanning. Abort existing rescan or wait.");
     }
 
+    // A rescan's start height defaults to the wallet's birth time, so a
+    // restore only scans blocks that could contain its history. The birth
+    // time is genuinely known for freshly created wallets and birthday-
+    // mnemonic restores; when unknown (e.g. a plain 24-word restore) scan
+    // from genesis as before.
     int start_height = 0;
+    if (request.params[0].isNull()) {
+        const int64_t birth_time = pwallet->GetBirthTime();
+        if (birth_time > 0) {
+            // grace for block-time variance, as AttachChain does
+            pwallet->chain().findFirstBlockWithTimeAndHeight(birth_time - TIMESTAMP_WINDOW, 0, FoundBlock().height(start_height));
+        }
+    }
     std::optional<int> stop_height;
     uint256 start_block;
 

@@ -291,7 +291,7 @@ void KeyMan::AddInactiveHDChain(const blsct::HDChain& chain)
 }
 
 
-void KeyMan::SetHDSeed(const PrivateKey& key)
+void KeyMan::SetHDSeed(const PrivateKey& key, const std::optional<int64_t>& creation_time)
 {
     LOCK(cs_KeyStore);
     // store the keyid (hash160) together with
@@ -314,7 +314,13 @@ void KeyMan::SetHDSeed(const PrivateKey& key)
     newHdChain.token_id = tokenKey.GetPublicKey().GetID();
     newHdChain.blinding_id = blindingKey.GetPublicKey().GetID();
 
-    int64_t nCreationTime = GetTime();
+    int64_t nCreationTime = creation_time.value_or(GetTime());
+    if (creation_time.has_value()) {
+        // The wallet's birthday is genuinely known (fresh creation or a
+        // birthday-mnemonic restore): record it in-session too, so the birth
+        // time is right without waiting for the metadata reload at restart.
+        nTimeFirstKey = *creation_time;
+    }
 
     wallet::CKeyMetadata spendMetadata(nCreationTime);
     wallet::CKeyMetadata viewMetadata(nCreationTime);
@@ -367,7 +373,7 @@ void KeyMan::SetHDSeed(const PrivateKey& key)
     wallet::WalletBatch batch(m_storage.GetDatabase());
 }
 
-bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase)
+bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time)
 {
     auto masterKey = [&] {
         if (mnemonic_passphrase.empty()) {
@@ -382,7 +388,7 @@ bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy,
         memory_cleanse(seed.data(), seed.size());
         return key;
     }();
-    SetHDSeed(masterKey);
+    SetHDSeed(masterKey, creation_time);
     LoadMnemonicEntropy(entropy);
     wallet::WalletBatch batch(m_storage.GetDatabase());
     if (m_storage.HasEncryptionKeys()) {
@@ -400,18 +406,18 @@ bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy,
     return true;
 }
 
-bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force, const std::string& mnemonic_passphrase)
+bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time)
 {
     if ((CanGenerateKeys() && !force) || m_storage.IsLocked()) {
         return false;
     }
 
     if (seed.size() == 32 && type == IMPORT_MNEMONIC) {
-        if (!SetupMnemonicFromEntropy(seed, mnemonic_passphrase)) return false;
+        if (!SetupMnemonicFromEntropy(seed, mnemonic_passphrase, creation_time)) return false;
     } else if (seed.size() == 32 && type == IMPORT_MASTER_KEY) {
         MclScalar scalarSeed;
         scalarSeed.SetVch(seed);
-        SetHDSeed(scalarSeed);
+        SetHDSeed(scalarSeed, creation_time);
     } else if (seed.size() == 80 && type == IMPORT_VIEW_KEY) {
         std::vector<unsigned char> viewVch(seed.begin(), seed.begin() + 32);
         std::vector<unsigned char> spendingVch(seed.begin() + 32, seed.end());
@@ -430,7 +436,7 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
     } else if (seed.empty()) {
         std::vector<unsigned char> entropy(32);
         GetStrongRandBytes(entropy);
-        if (!SetupMnemonicFromEntropy(entropy, mnemonic_passphrase)) return false;
+        if (!SetupMnemonicFromEntropy(entropy, mnemonic_passphrase, creation_time)) return false;
     } else {
         return false;
     }
@@ -1480,5 +1486,16 @@ std::optional<blsct::PublicKey> KeyMan::GetWatchOnlyRecoveryNonce(const CScript&
         return std::nullopt;
     }
     return it->second;
+}
+} // namespace blsct
+
+namespace blsct {
+bool KeyMan::WriteWalletBirthday(int64_t birthday)
+{
+    if (birthday <= 0) return false;
+    wallet::WalletBatch batch(m_storage.GetDatabase());
+    if (!batch.WriteBLSCTBirthday(birthday)) return false;
+    m_wallet_birthday = birthday;
+    return true;
 }
 } // namespace blsct

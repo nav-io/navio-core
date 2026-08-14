@@ -69,6 +69,7 @@ extern const std::string BESTBLOCK_NOMERKLE;
 extern const std::string BLSCTHDCHAIN;
 extern const std::string BLSCTKEY;
 extern const std::string BLSCTMNEMONIC;
+extern const std::string BLSCTBIRTHDAY;
 extern const std::string BLSCTKEYMETA;
 extern const std::string BLSCTSUBADDRESS;
 extern const std::string BLSCTSUBADDRESSSTR;
@@ -319,6 +320,11 @@ public:
     bool WriteHDChain(const CHDChain& chain);
     bool WriteBLSCTHDChain(const blsct::HDChain& chain);
     bool WriteBLSCTMnemonicEntropy(const std::vector<unsigned char>& entropy);
+
+    //! The wallet's genuine creation time, persisted so the wallet birthday
+    //! survives restarts (and so `dumpmnemonic` can re-derive the two-word
+    //! birthday suffix). Only written when the birthday is truly known.
+    bool WriteBLSCTBirthday(int64_t birthday);
     bool WriteCryptedBLSCTMnemonicEntropy(const std::vector<unsigned char>& crypted_entropy);
     //! Erase the BIP-39 mnemonic entropy from the wallet database.
     bool EraseBLSCTMnemonicEntropy();
@@ -350,6 +356,7 @@ bool LoadBLSCTCryptedKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValu
 bool LoadBLSCTCryptedOutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTHDChain(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTMnemonicEntropy(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
+bool LoadBLSCTBirthday(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
 bool LoadCryptedBLSCTMnemonicEntropy(CWallet* pwallet, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCTKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadBLSCToutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);

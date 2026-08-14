@@ -881,7 +881,18 @@ RPCHelpMan dumpmnemonic()
             }
 
             auto entropy = blsct_km.GetMnemonicEntropy();
-            return mnemonic::EntropyToMnemonic(entropy);
+            auto mnemonic = mnemonic::EntropyToMnemonic(entropy);
+            // If the wallet's genuine creation time was recorded at setup
+            // (fresh wallet, or a restore from a birthday mnemonic), return
+            // the 26-word birthday variant so a later restore knows where to
+            // start scanning. Plain 24-word restores keep the base form:
+            // their history can predate this instantiation, so a birthday
+            // must not be invented for them.
+            if (auto birthday = blsct_km.GetWalletBirthday(); birthday.has_value()) {
+                auto with_birthday = mnemonic::MnemonicWithBirthday(mnemonic, *birthday);
+                if (!with_birthday.empty()) return with_birthday;
+            }
+            return mnemonic;
         },
     };
 }

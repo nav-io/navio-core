@@ -2,6 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <crypto/hmac_sha256.h>
+#include <string_view>
 #include <crypto/pkcs5_pbkdf2.h>
 #include <crypto/sha256.h>
 #include <mnemonic/mnemonic.h>
@@ -152,9 +154,95 @@ std::vector<unsigned char> MnemonicToSeed(const std::string& words, const std::s
     return seed;
 }
 
+namespace {
+
+// first 11 bits of HMAC-SHA256(key=entropy, msg="navio-birthday" || w be16)
+uint16_t BirthdayCheckIndex(Span<const unsigned char> entropy, uint16_t week)
+{
+    // Fixed at compile time: MSVC has no VLAs, and this must build everywhere.
+    static constexpr std::string_view tag{"navio-birthday"};
+    unsigned char msg[tag.size() + 2];
+    std::copy(tag.begin(), tag.end(), msg);
+    msg[tag.size()] = static_cast<unsigned char>(week >> 8);
+    msg[tag.size() + 1] = static_cast<unsigned char>(week & 0xFF);
+    unsigned char mac[CHMAC_SHA256::OUTPUT_SIZE];
+    CHMAC_SHA256(entropy.data(), entropy.size()).Write(msg, sizeof(msg)).Finalize(mac);
+    return static_cast<uint16_t>(((mac[0] << 8) | mac[1]) >> 5);
+}
+
+std::optional<uint16_t> WordIndex(const std::string& w)
+{
+    auto it = std::lower_bound(wordlist_en.begin(), wordlist_en.end(), w,
+                               [](const char* a, const std::string& b) { return std::string(a) < b; });
+    if (it == wordlist_en.end() || std::string(*it) != w) return std::nullopt;
+    return static_cast<uint16_t>(std::distance(wordlist_en.begin(), it));
+}
+
+} // namespace
+
+std::string MnemonicWithBirthday(const std::string& words24, int64_t time)
+{
+    auto entropy = MnemonicToEntropy(words24);
+    if (!entropy || entropy->size() != 32) return "";
+    // Range-check the difference BEFORE dividing: C++ integer division
+    // truncates toward zero, so a pre-epoch time with |delta| < 1 week would
+    // otherwise produce week 0 instead of being rejected. (This is also the
+    // only C++/Python divergence risk here: Python's // floors.)
+    const int64_t d = time - BIRTHDAY_MNEMONIC_EPOCH;
+    if (d < 0 || d >= 2048 * BIRTHDAY_MNEMONIC_WEEK) return "";
+    const auto week = static_cast<uint16_t>(d / BIRTHDAY_MNEMONIC_WEEK);
+    const uint16_t check = BirthdayCheckIndex(*entropy, week);
+    std::string sentence;
+    // normalize base whitespace
+    std::istringstream iss(words24);
+    std::string word;
+    while (iss >> word) {
+        if (!sentence.empty()) sentence += ' ';
+        sentence += word;
+    }
+    sentence += ' ';
+    sentence += wordlist_en[week];
+    sentence += ' ';
+    sentence += wordlist_en[check];
+    return sentence;
+}
+
+std::string GenerateWithBirthday(int64_t time)
+{
+    return MnemonicWithBirthday(Generate(), time);
+}
+
+std::optional<DecodedMnemonic> DecodeMnemonic(const std::string& words_str)
+{
+    std::vector<std::string> words;
+    std::istringstream iss(words_str);
+    std::string word;
+    while (iss >> word) {
+        words.push_back(word);
+    }
+    if (words.size() == 26) {
+        std::string base;
+        for (size_t i = 0; i < 24; i++) {
+            if (!base.empty()) base += ' ';
+            base += words[i];
+        }
+        auto entropy = MnemonicToEntropy(base);
+        if (!entropy || entropy->size() != 32) return std::nullopt;
+        auto week = WordIndex(words[24]);
+        auto check = WordIndex(words[25]);
+        if (!week || !check) return std::nullopt;
+        if (*check != BirthdayCheckIndex(*entropy, *week)) return std::nullopt;
+        return DecodedMnemonic{std::move(*entropy),
+                               BIRTHDAY_MNEMONIC_EPOCH + static_cast<int64_t>(*week) * BIRTHDAY_MNEMONIC_WEEK};
+    }
+    auto entropy = MnemonicToEntropy(words_str);
+    if (!entropy) return std::nullopt;
+    return DecodedMnemonic{std::move(*entropy), std::nullopt};
+}
+
 bool Validate(const std::string& words)
 {
-    return MnemonicToEntropy(words).has_value();
+    return DecodeMnemonic(words).has_value();
 }
 
 } // namespace mnemonic
