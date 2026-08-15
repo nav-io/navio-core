@@ -65,8 +65,11 @@ FUZZ_TARGET(mini_miner, .init = initialize_miner)
         }
 
         if (fuzzed_data_provider.ConsumeBool() && !tx->vout.empty()) {
-            // Add outpoint from this tx (may or not be spent by a later tx)
-            outpoints.emplace_back(tx->vout[(uint32_t)fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, tx->vout.size())].GetHash());
+            // Add outpoint from this tx (may or not be spent by a later tx).
+            // ConsumeIntegralInRange is INCLUSIVE, so the upper bound must be
+            // size()-1: (0, size()) could return size() and index one past the
+            // end of vout, reading a garbage CTxOut in GetHash() (heap overflow).
+            outpoints.emplace_back(tx->vout[(uint32_t)fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, tx->vout.size() - 1)].GetHash());
         } else {
             // Add some random outpoint (will be interpreted as confirmed or not yet submitted
             // to mempool).
