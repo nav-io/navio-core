@@ -385,6 +385,7 @@ BASE_SCRIPTS = [
     'p2pmsg_integration.py',
     'p2pmsg_aggregate.py',
     'p2pmsg_aggregate_e2e.py',
+    'p2pmsg_candidate.py',
     'p2pmsg_swap_e2e.py',
     'rfq_maker_match.py',
     # Don't append tests at the end to avoid merge conflicts

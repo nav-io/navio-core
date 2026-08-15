@@ -4,9 +4,12 @@
 
 #include <aggregation/pool.h>
 
+#include <consensus/validation.h>
 #include <kernel/mempool_entry.h>
 #include <primitives/block.h>
+#include <random.h>
 
+#include <algorithm>
 #include <atomic>
 
 namespace aggregation {
@@ -43,8 +46,22 @@ bool CandidatePool::Contains(const COutPoint& input) const
 bool CandidatePool::AddCandidate(const CTransactionRef& candidate, int64_t peer)
 {
     if (candidate == nullptr) return false;
-    // Candidates are exactly one input.
+    // Structural validation. Candidates arrive unauthenticated from the network
+    // and are combined WITHOUT a per-candidate signature/UTXO recheck, so a
+    // malformed one would only fail when the whole aggregate is built --
+    // wasting the initiator's attempt. Reject the obviously-invalid shapes here:
+    //  - a BLSCT tx (marker set),
+    //  - exactly one input and one output (a 1-in/1-out self-spend),
+    //  - NOT a fee output (candidates must be fee-0 and fee-output-free; a fee
+    //    output would give the combined tx a second fee output and fail
+    //    consensus's one-fee-output rule),
+    //  - within a sane weight bound (oversized candidates inflate the
+    //    initiator's additionalFee and memory use).
+    if ((candidate->nVersion & CTransaction::BLSCT_MARKER) == 0) return false;
     if (candidate->vin.size() != 1) return false;
+    if (candidate->vout.size() != 1) return false;
+    if (candidate->vout[0].scriptPubKey.IsFee()) return false;
+    if (GetTransactionWeight(*candidate) > CANDIDATE_MAX_WEIGHT) return false;
     const COutPoint& input = candidate->vin[0].prevout;
 
     // Global cap (best-effort; Size() is a snapshot).
@@ -74,16 +91,25 @@ bool CandidatePool::AddCandidate(const CTransactionRef& candidate, int64_t peer)
 
 std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n) const
 {
-    std::vector<CTransactionRef> out;
     if (max_n > POOL_MAX_COMBINED) max_n = POOL_MAX_COMBINED;
-    for (size_t i = 0; i < POOL_SHARDS && out.size() < max_n; ++i) {
+
+    // Gather all candidates, then pick a RANDOM subset. A deterministic scan
+    // (shards 0..15, each map in outpoint order) always returns the same
+    // candidates, so a single poison candidate that makes an aggregate fail
+    // would be re-selected on every attempt -- a permanent DoS. Randomizing
+    // means a failed candidate is unlikely to be re-picked, and (with
+    // evict-on-failure at the call site) the pool self-heals.
+    std::vector<CTransactionRef> all;
+    for (size_t i = 0; i < POOL_SHARDS; ++i) {
         LOCK(m_shard_mutex[i]);
-        for (const auto& [outpoint, entry] : m_shards[i]) {
-            out.push_back(entry.tx);
-            if (out.size() >= max_n) break;
-        }
+        for (const auto& [outpoint, entry] : m_shards[i]) all.push_back(entry.tx);
     }
-    return out;
+    if (all.size() <= max_n) return all;
+
+    FastRandomContext rng;
+    std::shuffle(all.begin(), all.end(), rng);
+    all.resize(max_n);
+    return all;
 }
 
 bool CandidatePool::EvictByInput(const COutPoint& input)

@@ -60,6 +60,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "broadcastorder", 4, "expiry" },
     { "addaggregationcandidate", 1, "peer" },
     { "sendcandidate", 2, "stem" },
+    { "broadcastcandidate", 0, "stem" },
     { "sendp2pping", 1, "stem" },
     { "getp2pmsgaggregate", 1, "max_candidates" },
     { "setswapintent", 2, "min_size" },

@@ -340,20 +340,31 @@ static RPCHelpMan getp2pmsgaggregate()
             halves.push_back(MakeTransactionRef(own));
             for (const auto& c : node.agg_pool->PickForAggregate(max_k)) halves.push_back(c);
 
+            // Evict picked candidates whether the aggregate succeeds or not, so
+            // a malformed/stale candidate cannot be re-picked on every call
+            // (permanent DoS) and a used one cannot be double-spent.
+            const size_t merged = halves.size() - 1;
+            const auto evict_candidates = [&]() {
+                for (size_t i = 1; i < halves.size(); ++i)
+                    for (const CTxIn& in : halves[i]->vin) node.agg_pool->EvictByInput(in.prevout);
+            };
+
             auto combined = aggregation::CombineHalves(halves);
-            if (!combined) throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed (duplicate input?)");
+            if (!combined) {
+                evict_candidates();
+                throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed (duplicate input?)");
+            }
 
             CTransactionRef tx = MakeTransactionRef(std::move(*combined));
             std::string err_string;
             const TransactionError err = node::BroadcastTransaction(
                 node, tx, err_string, /*max_tx_fee=*/0, /*relay=*/true, /*wait_callback=*/true);
-            if (TransactionError::OK != err) throw JSONRPCTransactionError(err, err_string);
-
-            // Evict the candidates we just spent so they are not reused.
-            size_t merged = halves.size() - 1;
-            for (size_t i = 1; i < halves.size(); ++i) {
-                for (const CTxIn& in : halves[i]->vin) node.agg_pool->EvictByInput(in.prevout);
+            if (TransactionError::OK != err) {
+                evict_candidates();
+                throw JSONRPCTransactionError(err, err_string);
             }
+
+            evict_candidates();
 
             UniValue o(UniValue::VOBJ);
             o.pushKV("txid", tx->GetHash().GetHex());

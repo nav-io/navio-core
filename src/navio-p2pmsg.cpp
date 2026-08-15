@@ -94,6 +94,7 @@ static void SetupCliArgs(ArgsManager& argsman)
     argsman.AddArg("-rpcwaittimeout=<n>", strprintf("Timeout in seconds to wait for the RPC server to start, or 0 for no timeout. (default: %d)", DEFAULT_WAIT_CLIENT_TIMEOUT), ArgsManager::ALLOW_ANY | ArgsManager::DISALLOW_NEGATION, OptionsCategory::OPTIONS);
     argsman.AddArg("-wallet=<wallet-name>", "Wallet used to build quote replies", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::OPTIONS);
     argsman.AddArg("-pollinterval=<n>", strprintf("Seconds between work polls (default: %d)", DEFAULT_POLL_SECONDS), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-producecandidates", "Each poll cycle, build and broadcast one fee-0 cover candidate from the wallet to supply the network's aggregation pools (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 }
 
 static void libevent_log_cb(int severity, const char* msg)
@@ -296,6 +297,27 @@ static void PollOnce(tui::Dashboard& dash, PollStats& st)
 {
     const std::optional<std::string> wallet = walletName.empty() ? std::nullopt : std::optional<std::string>(walletName);
     ++st.cycles;
+
+    // Candidate producer: opt-in cover traffic. Each enabled cycle broadcasts one
+    // fee-0 self-spend candidate so the network's aggregation pools stay supplied
+    // (without this, pools sit empty and aggregatesend has no cover to merge).
+    if (gArgs.GetBoolArg("-producecandidates", false)) {
+        try {
+            UniValue reply = CallRPC("broadcastcandidate", {}, wallet);
+            const UniValue& err = reply.find_value("error");
+            if (!err.isNull()) {
+                ++st.errors;
+                st.last_event = "broadcastcandidate: " + err.write();
+            } else {
+                st.last_event = "broadcast cover candidate";
+            }
+            dash.Log(st.last_event);
+        } catch (const std::exception& e) {
+            ++st.errors;
+            st.last_event = std::string("broadcastcandidate failed: ") + e.what();
+            dash.Log(st.last_event);
+        }
+    }
 
     UniValue pending;
     try {

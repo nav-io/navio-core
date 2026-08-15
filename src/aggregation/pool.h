@@ -24,6 +24,12 @@ static constexpr size_t POOL_MAX_TOTAL = 512;
 static constexpr size_t POOL_MAX_PER_PEER = 8;
 //! Max candidates merged into one aggregate (bounds aggregate size).
 static constexpr size_t POOL_MAX_COMBINED = 16;
+//! Upper bound on a single candidate's serialized weight. A candidate is a
+//! 1-input/1-output BLSCT self-spend (~2.5k weight); anything materially larger
+//! is malformed or a griefing attempt (it would inflate the initiator's
+//! additionalFee, since RequiredCandidateFee sums candidate weights). Rejected
+//! at ingest so it can neither bloat memory nor the fee.
+static constexpr int64_t CANDIDATE_MAX_WEIGHT = 6000;
 //! Number of lock shards (by input-outpoint hash top byte).
 static constexpr size_t POOL_SHARDS = 16;
 

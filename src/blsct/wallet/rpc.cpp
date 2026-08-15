@@ -198,20 +198,97 @@ static RPCHelpMan aggregatesend()
             halves.push_back(MakeTransactionRef(own->tx));
             for (const auto& c : candidates) halves.push_back(c);
 
+            // Evict the picked candidates from the pool whether or not this
+            // aggregate succeeds. On failure this is what stops a malformed or
+            // stale candidate from being re-picked on every subsequent call
+            // (permanent DoS); on success it prevents double-spending a
+            // candidate into a second aggregate.
+            const auto evict_candidates = [&]() {
+                for (size_t i = 1; i < halves.size(); ++i)
+                    for (const CTxIn& in : halves[i]->vin) pool->EvictByInput(in.prevout);
+            };
+
             auto combined = aggregation::CombineHalves(halves);
-            if (!combined) throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed (duplicate input?)");
+            if (!combined) {
+                evict_candidates();
+                throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed (duplicate input?)");
+            }
 
             CTransactionRef tx = MakeTransactionRef(std::move(*combined));
             std::string err_string;
-            if (!pwallet->chain().broadcastTransaction(tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string))
+            if (!pwallet->chain().broadcastTransaction(tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string)) {
+                evict_candidates();
                 throw JSONRPCError(RPC_TRANSACTION_ERROR, err_string);
+            }
 
-            for (size_t i = 1; i < halves.size(); ++i)
-                for (const CTxIn& in : halves[i]->vin) pool->EvictByInput(in.prevout);
+            evict_candidates();
 
             UniValue o(UniValue::VOBJ);
             o.pushKV("txid", tx->GetHash().GetHex());
             o.pushKV("candidates_merged", (uint64_t)(halves.size() - 1));
+            return o;
+        },
+    };
+}
+
+static RPCHelpMan broadcastcandidate()
+{
+    return RPCHelpMan{
+        "broadcastcandidate",
+        "\nBuild a fee-0 cover candidate from one of the wallet's own coins (a\n"
+        "value-balanced self-spend with no fee output) and broadcast it as a\n"
+        "CANDIDATE_TX over p2pmsg. Other nodes pool it and can merge it into their\n"
+        "aggregated sends as cover traffic, so the wallet contributes to (and\n"
+        "benefits from) the aggregation anonymity set. This is the candidate\n"
+        "*producer*: run it periodically (e.g. from navio-p2pmsg -producecandidates)\n"
+        "to keep the network's candidate pools supplied.\n",
+        {
+            {"stem", RPCArg::Type::BOOL, RPCArg::Default{true}, "Broadcast via the Dandelion stem variant"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "candidate_txid", "The candidate half-transaction id"},
+        }},
+        RPCExamples{HelpExampleCli("broadcastcandidate", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+            p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+            if (!transport) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            const bool stem = request.params[0].isNull() ? true : request.params[0].get_bool();
+
+            LOCK(pwallet->cs_wallet);
+            auto km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            // Pick a single spendable NAV coin to cover-spend to ourselves.
+            std::vector<blsct::InputCandidates> coins;
+            wallet::CoinFilterParams params;
+            params.only_blsct = true;
+            params.token_id = TokenId();
+            params.min_amount = 1;
+            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, coins, /*nAmountLimit=*/0);
+            if (coins.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No spendable NAV coin to build a candidate from");
+
+            const auto& c = coins.front();
+            auto factory = blsct::TxFactory(km);
+            factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+            // Self-spend the whole value back to a fresh own address: input value
+            // == output value, zero fee. BuildCandidate emits no fee output.
+            blsct::SubAddress self_dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+            factory.AddOutput(self_dest, c.amount, "candidate", TokenId(), blsct::NORMAL, /*minStake=*/0,
+                              /*fSubtractFeeFromAmount=*/false, MclScalar::Rand(), /*nBLSCTDefaultFee=*/0);
+            auto built = factory.BuildCandidate();
+            if (!built) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build candidate");
+
+            CTransactionRef cand = MakeTransactionRef(built->tx);
+            DataStream ss;
+            ParamsStream ps{TX_WITH_WITNESS, ss};
+            ps << cand;
+            auto bytes = MakeUCharSpan(ss);
+            std::vector<uint8_t> body(bytes.begin(), bytes.end());
+            transport->Send(p2pmsg::BroadcastPubKey(), p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
+
+            UniValue o(UniValue::VOBJ);
+            o.pushKV("candidate_txid", cand->GetHash().GetHex());
             return o;
         },
     };
@@ -4265,6 +4342,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &listblsctunspent},
         {"blsct", &sendtoblsctaddress},
         {"blsct", &aggregatesend},
+        {"blsct", &broadcastcandidate},
         {"blsct", &acceptquotewallet},
         {"blsct", &broadcastorder},
         {"blsct", &replyquote},

@@ -237,26 +237,32 @@ Built, wired into the node, and tested:
 - the maker/debug RPCs above;
 - a cross-wire PING echo functional test.
 
-### Deferred orchestration
+### Aggregation session loop
 
-The following background flows are **not yet wired**; their building blocks are
-all complete and tested. They are the remaining work before the full
-broadcast-and-collect orchestration is enabled:
+The loop is **push-based**, so no in-process node→wallet wiring on the
+net/worker threads is needed:
 
-- aggregation session loop: broadcast `AGG_ANN`, responders auto-build
-  candidates, initiator collects `CANDIDATE_TX`, combines, broadcasts;
-  `ReplenishOwned` heuristic; `sendtoaddress aggregate=true`;
-- RFQ taker loop: `requestquote` / `acceptquote` broadcast-and-collect state
-  machine; passive maker auto-reply to inbound `RFQ_REQ`; multi-TokenId swap
-  combine;
-- standing-order gossip: wallet-built `broadcastorder` half + `ORDER_ANN`
-  propagation + on-receipt caching.
+1. **Produce** — `broadcastcandidate` (wallet RPC) builds a fee-0 self-spend
+   candidate from the wallet's own coin (no fee output) and floods it as a
+   `CANDIDATE_TX`. `navio-p2pmsg -producecandidates` calls it once per poll
+   cycle so a node continuously supplies cover traffic.
+2. **Collect** — every node's `CANDIDATE_TX` handler validates the candidate
+   structurally and pools it (spent-input eviction keeps the pool fresh).
+3. **Aggregate** — `aggregatesend` picks a RANDOM subset from the pool,
+   over-funds its own half's fee to cover the combined weight, combines behind
+   a single shuffled fee output, and broadcasts.
 
-These require running wallet coin selection and tx building on worker threads
-(off the net/validation path) with a wallet snapshot taken under lock and
-released before the heavy build. The transport subsystem itself is enabled by
-default (`-p2pmsg=1`); these higher-level orchestration flows remain gated off
-until they land and pass a full end-to-end functional suite.
+Wallet building always runs on the RPC/daemon thread under `cs_wallet`, never on
+the net or worker threads. The transport is enabled by default (`-p2pmsg=1`);
+candidate *production* is opt-in (`-producecandidates`) so a node only spends
+its own coins on cover traffic when asked.
+
+### Still deferred
+
+- `AGG_ANN` pull requests (solicit candidates on demand) — the push producer
+  above supersedes this for keeping pools full; a pull path is a later
+  optimization.
+- RFQ taker broadcast-and-collect helper RPCs and multi-TokenId swap combine.
 
 ## Security posture
 
