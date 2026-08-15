@@ -108,7 +108,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
 }
 
 std::optional<BuiltTransaction>
-TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake, const CreateTransactionType& type, const bool& fSubtractedFee, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee)
+TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake, const CreateTransactionType& type, const bool& fSubtractedFee, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee, const bool& emitFeeOutput)
 {
     this->tx = CMutableTransaction();
 
@@ -289,18 +289,29 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             recipientOutputHash = firstChangeOutputHash;
         }
 
-        CTxOut fee_out{nAmounts[TokenId()].nFromFee, CScript(OP_RETURN)};
-
-        auto feeKey = blsct::PrivateKey(MclScalar::Rand());
-        fee_out.predicate = blsct::PayFeePredicate(feeKey.GetPublicKey()).GetVch();
-
-        tx.vout.push_back(fee_out);
+        // The balance signature is always required; the fee output and its
+        // signature are emitted only for a normal (fee-bearing) transaction.
         txSigs.push_back(PrivateKey(gammaAcc).SignBalance());
-        txSigs.push_back(PrivateKey(feeKey).SignFee());
+
+        CAmount required_fee = 0;
+        if (emitFeeOutput) {
+            CTxOut fee_out{nAmounts[TokenId()].nFromFee, CScript(OP_RETURN)};
+
+            auto feeKey = blsct::PrivateKey(MclScalar::Rand());
+            fee_out.predicate = blsct::PayFeePredicate(feeKey.GetPublicKey()).GetVch();
+
+            tx.vout.push_back(fee_out);
+            txSigs.push_back(PrivateKey(feeKey).SignFee());
+
+            required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee + additionalFee;
+        }
+        // A candidate half (emitFeeOutput=false) carries no fee output and no
+        // fee signature: it is a value-balanced self-spend, so required_fee
+        // stays 0 and the fixpoint accepts on the first pass. This is what lets
+        // CombineHalves produce an aggregate with a single fee output.
 
         tx.txSig = Signature::Aggregate(txSigs);
 
-        const CAmount required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee + additionalFee;
         if (nAmounts[TokenId()].nFromFee == required_fee) {
             // Every output was consumed by the fee, so there is no output to
             // hand back as the payment. Nothing builds that shape today; fail

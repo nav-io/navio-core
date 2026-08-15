@@ -5,9 +5,12 @@
 #ifndef BITCOIN_AGGREGATION_COMBINE_H
 #define BITCOIN_AGGREGATION_COMBINE_H
 
+#include <blsct/arith/mcl/mcl.h>
 #include <blsct/signature.h>
 #include <primitives/transaction.h>
 
+#include <algorithm>
+#include <random>
 #include <set>
 #include <optional>
 #include <span>
@@ -28,10 +31,16 @@ namespace aggregation {
 //! Preconditions the caller must uphold for the result to verify:
 //!  - every half is a BLSCT tx (`BLSCT_MARKER` set),
 //!  - inputs are disjoint across halves (no double-spend),
-//!  - at most one half contributes a non-zero-value fee output (candidates are
-//!    fee-0; the initiator's half carries the whole fee). Zero-value fee outputs
-//!    are allowed on every half and are preserved so their predicate signatures
-//!    remain covered by the aggregate `txSig`.
+//!  - at most one half contributes a fee output at all. Candidate halves are
+//!    built with NO fee output (BuildTx `emitFeeOutput=false`), so only the
+//!    initiator's half carries one and the combined tx has exactly one fee
+//!    output. This is what keeps the aggregate from leaking its party count:
+//!    a per-half fee output would delimit each party's output run.
+//!
+//! The combined inputs and outputs are shuffled so their on-chain order does
+//! not reveal which half contributed them. The BLSCT aggregate signature and
+//! balance proof are order-independent, so reordering does not affect validity
+//! (mirrors the shuffle `TxFactoryBase::BuildTx` applies to a single tx).
 //!
 //! Returns std::nullopt if `halves` is empty or any input is duplicated across
 //! halves (a programming/peer error the caller should treat as invalid).
@@ -61,6 +70,17 @@ inline std::optional<CMutableTransaction> CombineHalves(std::span<const CTransac
     }
 
     out.txSig = blsct::Signature::Aggregate(sigs);
+
+    // Shuffle inputs and outputs so the aggregate does not expose the per-half
+    // grouping (which inputs/outputs belong to the same party). Seed from
+    // BLSCT's secure randomness (MclScalar::Rand), matching BuildTx, so the
+    // aggregation lib does not need FastRandomContext.
+    std::seed_seq seed{MclScalar::Rand().GetUint64(), MclScalar::Rand().GetUint64(),
+                       MclScalar::Rand().GetUint64(), MclScalar::Rand().GetUint64()};
+    std::mt19937_64 rng(seed);
+    std::shuffle(out.vin.begin(), out.vin.end(), rng);
+    std::shuffle(out.vout.begin(), out.vout.end(), rng);
+
     return out;
 }
 

@@ -187,7 +187,13 @@ public:
     //! `additionalFee` lets an aggregation initiator over-fund the fee output so
     //! the combined transaction (own half + K fee-0 candidate halves) meets the
     //! consensus min-fee for the COMBINED weight. Defaults to 0 (normal txs).
-    std::optional<BuiltTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const CAmount& additionalFee = 0);
+    //!
+    //! `emitFeeOutput=false` builds a fee-0 aggregation *candidate* half: it
+    //! carries no fee output and no fee signature (only its balance + input
+    //! signatures), so CombineHalves can merge many candidates behind the
+    //! initiator's single fee output. The caller must pass a value-balanced set
+    //! of inputs/outputs (a self-spend), since no fee is charged.
+    std::optional<BuiltTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const CAmount& additionalFee = 0, const bool& emitFeeOutput = true);
     static std::optional<BuiltTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData);
 
     //! Build a deliberately UNBALANCED half-transaction for an atomic swap.

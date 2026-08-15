@@ -115,6 +115,19 @@ TxFactory::BuildTx(const std::optional<CAmount>& nBLSCTDefaultFee, const CAmount
         additionalFee);
 }
 
+std::optional<BuiltTransaction>
+TxFactory::BuildCandidate()
+{
+    return TxFactoryBase::BuildTx(
+        std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value()),
+        /*minStake=*/0,
+        /*type=*/NORMAL,
+        /*fSubtractedFee=*/false,
+        /*nBLSCTDefaultFee=*/0,
+        /*additionalFee=*/0,
+        /*emitFeeOutput=*/false);
+}
+
 std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)
 {
     LOCK(wallet->cs_wallet);

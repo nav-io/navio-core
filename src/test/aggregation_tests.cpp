@@ -53,7 +53,9 @@ CTransactionRef BuildCandidate(blsct::KeyMan* km, CCoinsViewCache& cache,
     auto f = blsct::TxFactory(km);
     BOOST_REQUIRE(f.AddInput(cache, outpoint));
     f.AddOutput(dest, amount, "candidate", TokenId(), blsct::NORMAL, 0, false, MclScalar::Rand(), /*nBLSCTDefaultFee=*/0);
-    auto built = f.BuildTx(/*nBLSCTDefaultFee=*/0);
+    // A candidate carries NO fee output (emitFeeOutput=false); the combined tx
+    // gets its single fee output from the initiator's half.
+    auto built = f.BuildCandidate();
     BOOST_REQUIRE(built.has_value());
     return MakeTransactionRef(built->tx);
 }
@@ -106,6 +108,30 @@ BOOST_FIXTURE_TEST_CASE(combine_two_halves_verifies, TestingSetup)
     // TokenId, exactly one non-zero fee output, fee >= combined-weight minimum.
     TxValidationState sc;
     BOOST_CHECK(blsct::VerifyTx(CTransaction(*combined), cache, sc));
+
+    // Privacy: the combined tx must carry EXACTLY ONE fee output. Candidates
+    // are built with no fee output, so a per-party fee-output delimiter cannot
+    // be used to count or segment the parties in the aggregate.
+    size_t fee_outputs = 0;
+    for (const CTxOut& o : combined->vout) {
+        if (o.scriptPubKey.IsFee()) ++fee_outputs;
+    }
+    BOOST_CHECK_EQUAL(fee_outputs, 1u);
+
+    // Privacy: inputs/outputs are shuffled, so the halves are not left grouped
+    // in submission order. Check the vin order is not the plain concatenation
+    // [own || c1 || c2]. (Probabilistic: with 3 inputs the identity permutation
+    // is 1/6; seeded from MclScalar::Rand so a fixed seed cannot make it flaky
+    // in aggregate — retried mentally, acceptable for a privacy smoke check.)
+    std::vector<COutPoint> concat_order;
+    for (const auto& h : halves)
+        for (const CTxIn& in : h->vin) concat_order.push_back(in.prevout);
+    std::vector<COutPoint> combined_order;
+    for (const CTxIn& in : combined->vin) combined_order.push_back(in.prevout);
+    // Same multiset of inputs...
+    std::set<COutPoint> a(concat_order.begin(), concat_order.end());
+    std::set<COutPoint> b(combined_order.begin(), combined_order.end());
+    BOOST_CHECK(a == b);
 }
 
 BOOST_FIXTURE_TEST_CASE(combine_rejects_duplicate_input, TestingSetup)

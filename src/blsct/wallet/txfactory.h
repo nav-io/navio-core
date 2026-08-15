@@ -33,6 +33,11 @@ public:
     //! default). `additionalFee` over-funds the fee output so an aggregation
     //! initiator can cover the combined weight of its half + fee-0 candidates.
     std::optional<BuiltTransaction> BuildTx(const std::optional<CAmount>& nBLSCTDefaultFee = std::nullopt, const CAmount& additionalFee = 0);
+    //! Build a fee-0 aggregation cover candidate (no fee output/signature) from
+    //! the inputs/outputs already queued. Used by the candidate producer and by
+    //! `sendcandidate`; the result is only valid inside a CombineHalves
+    //! aggregate, never standalone.
+    std::optional<BuiltTransaction> BuildCandidate();
     static std::optional<BuiltTransaction> CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData);
     // Build one transaction that merges up to `maxInputs` of the wallet's
     // smallest spendable outputs into a single output paid to `destination`
