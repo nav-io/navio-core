@@ -71,9 +71,6 @@ struct NodeContext {
     std::unique_ptr<const NetGroupManager> netgroupman;
     std::unique_ptr<CBlockPolicyEstimator> fee_estimator;
     std::unique_ptr<PeerManager> peerman;
-    //! p2p encrypted-messaging subsystem (only set when -p2pmsg is enabled).
-    std::unique_ptr<p2pmsg::WorkerPool> p2pmsg_pool;
-    std::unique_ptr<p2pmsg::Transport> p2pmsg_transport;
     //! Cover-traffic candidate pool; registered as a validation interface so it
     //! evicts candidates whose inputs are spent.
     std::unique_ptr<aggregation::CandidatePool> agg_pool;
@@ -84,6 +81,15 @@ struct NodeContext {
     std::unique_ptr<rfq::OrderCache> rfq_orders;
     //! Taker-side registry of outstanding RFQ requests and collected quotes.
     std::unique_ptr<rfq::MatcherRegistry> rfq_matcher;
+    //! p2p encrypted-messaging subsystem (only set when -p2pmsg is enabled).
+    //! Declared AFTER agg_pool / rfq_* on purpose: the worker pool's decrypt
+    //! jobs dispatch to transport handlers that capture raw pointers to those
+    //! objects, and the pool's destructor joins the worker threads. Reverse-
+    //! order member destruction therefore stops the workers BEFORE the objects
+    //! they reference are torn down, avoiding a use-after-free if Shutdown()'s
+    //! explicit ordering is ever skipped.
+    std::unique_ptr<p2pmsg::WorkerPool> p2pmsg_pool;
+    std::unique_ptr<p2pmsg::Transport> p2pmsg_transport;
     std::unique_ptr<ChainstateManager> chainman;
     std::unique_ptr<BanMan> banman;
     ArgsManager* args{nullptr}; // Currently a raw pointer because the memory is not managed by this struct

@@ -125,6 +125,15 @@ public:
     //! verify with RfqQuote::VerifySig().
     blsct::Signature SignWithInbox(const uint256& digest) const { return m_inbox_priv.Sign(digest); }
 
+    //! Sign `digest` under a FRESH, single-use keypair and return the matching
+    //! pubkey to publish as the quote's `session_eph`. A self-signed quote only
+    //! needs integrity, not identity — signing every quote/order with the stable
+    //! inbox key instead makes all of a node's RFQ activity linkable to one
+    //! pubkey (and, via getp2pmsginfo, to the node). A per-quote key gives the
+    //! same tamper-resistance with no cross-quote linkage. Prefer this over
+    //! SignWithInbox for anything that goes on the wire.
+    std::pair<blsct::PublicKey, blsct::Signature> SignEphemeral(const uint256& digest) const;
+
     //! Register a per-request session keypair so inbound messages encrypted to
     //! `pub` (e.g. an RFQ taker's fresh `reply_key`) are decrypted alongside the
     //! node inbox key. `expiry` is a unix-seconds bound past which the key is
@@ -146,7 +155,7 @@ public:
     //! message is new and valid it is RELAYED to all other peers (kind-blind, so
     //! the bus carries apps this node does not implement) and a decrypt job is
     //! enqueued for our own handlers. Returns the disposition.
-    enum class WireResult { Enqueued, RejectInvalid, RejectPoW, RejectReplay, Dropped };
+    enum class WireResult { Enqueued, RejectInvalid, RejectPoW, RejectStale, RejectReplay, Dropped };
     WireResult OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
         EXCLUSIVE_LOCKS_REQUIRED(!m_replay_mutex, !m_relay_limit_mutex);
 

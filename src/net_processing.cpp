@@ -5191,10 +5191,15 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             // Malformed or missing/insufficient PoW: cheap to detect, costly to
             // emit. Penalize so a flood eventually discourages the peer.
             Misbehaving(*peer, 10, "invalid p2pmsg");
-        } else if (res == p2pmsg::Transport::WireResult::RejectReplay ||
+        } else if (res == p2pmsg::Transport::WireResult::RejectStale ||
+                   res == p2pmsg::Transport::WireResult::RejectReplay ||
                    res == p2pmsg::Transport::WireResult::Dropped ||
                    res == p2pmsg::Transport::WireResult::Enqueued) {
-            // Replay/overflow are not necessarily the peer's fault; no penalty.
+            // NOT the relaying peer's fault: a stale timestamp is an honest
+            // message that aged in flight (or a small clock skew); replay is
+            // the expected steady state of a flood relay; overflow is our own
+            // capacity limit. Penalizing any of these would let normal
+            // propagation delay discourage honest peers. No penalty.
         }
         return;
     }

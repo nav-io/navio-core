@@ -318,6 +318,16 @@ void Shutdown(NodeContext& node)
     rfq::SetActiveMatcher(nullptr);
     rfq::SetActiveOrderCache(nullptr);
     aggregation::SetActivePool(nullptr);
+    // Order matters: the worker pool's decrypt jobs dispatch to transport
+    // handlers that hold RAW pointers to rfq_matcher / rfq_intents / rfq_orders
+    // / agg_pool. Clearing the SetActive* globals does NOT reach those captured
+    // pointers, and connman->Stop() (above) only stops NEW inbound work -- jobs
+    // already in the ring keep draining until the pool is stopped. So STOP the
+    // workers (join threads, drain the ring) BEFORE freeing any object a handler
+    // references, or an in-flight job calls into freed memory.
+    if (node.p2pmsg_pool) node.p2pmsg_pool->Stop();
+    node.p2pmsg_transport.reset();
+    node.p2pmsg_pool.reset();
     node.rfq_matcher.reset();
     node.rfq_intents.reset();
     if (node.rfq_orders) {
@@ -328,9 +338,6 @@ void Shutdown(NodeContext& node)
         UnregisterValidationInterface(node.agg_pool.get());
         node.agg_pool.reset();
     }
-    if (node.p2pmsg_pool) node.p2pmsg_pool->Stop();
-    node.p2pmsg_transport.reset();
-    node.p2pmsg_pool.reset();
     node.peerman.reset();
     node.connman.reset();
     node.banman.reset();
@@ -1620,12 +1627,24 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     if (args.GetBoolArg("-p2pmsg", p2pmsg::DEFAULT_P2PMSG_ENABLE)) {
         p2pmsg::WorkerPool::Options pool_opts;
         const int64_t workers = args.GetIntArg("-onionworkers", 0);
-        if (workers > 0) pool_opts.num_workers = static_cast<size_t>(workers);
+        // Clamp to a sane range: 0 keeps the default; an unbounded value would
+        // spawn arbitrarily many threads.
+        if (workers > 0) {
+            pool_opts.num_workers = static_cast<size_t>(std::min<int64_t>(workers, 64));
+        }
         node.p2pmsg_pool = std::make_unique<p2pmsg::WorkerPool>(pool_opts);
 
         p2pmsg::Transport::Options tr_opts;
-        tr_opts.pow_bits = static_cast<uint32_t>(
-            args.GetIntArg("-p2pmsgpowbits", p2pmsg::DEFAULT_POW_BITS));
+        // Clamp -p2pmsgpowbits to [1, 32]. Unclamped this is a foot-gun: a
+        // negative value casts to a huge uint32 (infinite Grind on the sending
+        // RPC thread), and a value >= ~60 makes TargetFromBits() ~0 so every
+        // inbound message fails the difficulty check -- which, before the
+        // timestamp/difficulty split, also got every honest relaying peer
+        // Misbehaving-scored. 32 bits is already far above any useful CPU cost.
+        {
+            const int64_t bits = args.GetIntArg("-p2pmsgpowbits", p2pmsg::DEFAULT_POW_BITS);
+            tr_opts.pow_bits = static_cast<uint32_t>(std::clamp<int64_t>(bits, 1, 32));
+        }
 
         CConnman* connman = node.connman.get();
         // Forward an envelope. In the FLUFF phase (stem=false) flood every peer
@@ -1637,9 +1656,14 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // message, so the unlinkability is best-effort, not the full guarantee.
         auto forward = [connman](bool stem, int64_t exclude_peer, const p2pmsg::Envelope& env) {
             const char* type = stem ? NetMsgType::DP2PMSG : NetMsgType::P2PMSG;
+            // Never send p2pmsg traffic to block-relay-only connections: their
+            // whole purpose is to carry blocks and nothing else, so pushing
+            // application messages to them both wastes the connection and
+            // fingerprints it as p2pmsg-carrying, weakening its privacy role.
             if (!stem) {
                 connman->ForEachNode([&](CNode* pnode) {
                     if (pnode->GetId() == exclude_peer) return;
+                    if (pnode->IsBlockOnlyConn()) return;
                     connman->PushMessage(pnode, NetMsg::Make(type, env));
                 });
                 return;
@@ -1647,7 +1671,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // Stem: pick one eligible successor uniformly at random.
             std::vector<NodeId> ids;
             connman->ForEachNode([&](CNode* pnode) {
-                if (pnode->GetId() != exclude_peer) ids.push_back(pnode->GetId());
+                if (pnode->GetId() != exclude_peer && !pnode->IsBlockOnlyConn()) ids.push_back(pnode->GetId());
             });
             if (ids.empty()) return;
             const NodeId chosen = ids[GetRand(ids.size())];

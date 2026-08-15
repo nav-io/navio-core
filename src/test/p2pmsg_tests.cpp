@@ -203,6 +203,38 @@ BOOST_AUTO_TEST_CASE(ecies_empty_plaintext)
     BOOST_CHECK(out->empty());
 }
 
+BOOST_AUTO_TEST_CASE(ecies_aad_mismatch_rejected)
+{
+    // The kind byte is carried as AEAD associated data. A ciphertext encrypted
+    // under one kind must not authenticate under a different kind: this is what
+    // stops an attacker flipping the cleartext kind to route the same ciphertext
+    // to a different handler.
+    blsct::PrivateKey sk(MclScalar::Rand(true));
+    const std::vector<uint8_t> pt{9, 8, 7};
+    const uint8_t kindA[1] = {3};
+    const uint8_t kindB[1] = {4};
+    EciesPacket pkt = Encrypt(sk.GetPublicKey(), pt, std::span<const uint8_t>{kindA, 1});
+    BOOST_CHECK(Decrypt(sk, pkt, std::span<const uint8_t>{kindA, 1}).has_value());
+    BOOST_CHECK(!Decrypt(sk, pkt, std::span<const uint8_t>{kindB, 1}).has_value());
+}
+
+BOOST_AUTO_TEST_CASE(ecies_padding_hides_length)
+{
+    // Two payloads of different lengths that fall in the same padding bucket
+    // must produce ciphertexts of identical length, so the wire size does not
+    // reveal the exact application payload size.
+    blsct::PrivateKey sk(MclScalar::Rand(true));
+    EciesPacket a = Encrypt(sk.GetPublicKey(), std::vector<uint8_t>(5, 0xaa));
+    EciesPacket b = Encrypt(sk.GetPublicKey(), std::vector<uint8_t>(40, 0xbb));
+    BOOST_CHECK_EQUAL(a.ciphertext.size(), b.ciphertext.size());
+    // And each still round-trips to its exact original length.
+    auto ra = Decrypt(sk, a);
+    auto rb = Decrypt(sk, b);
+    BOOST_REQUIRE(ra && rb);
+    BOOST_CHECK_EQUAL(ra->size(), 5u);
+    BOOST_CHECK_EQUAL(rb->size(), 40u);
+}
+
 BOOST_AUTO_TEST_CASE(ecies_wrong_key_fails)
 {
     blsct::PrivateKey sk(MclScalar::Rand(true));
@@ -393,7 +425,9 @@ Envelope StampedEnvelope(const blsct::PublicKey& inbox, PayloadKind kind,
 {
     Envelope env;
     env.kind = static_cast<uint8_t>(kind);
-    env.enc = Encrypt(inbox, payload);
+    // Bind the kind byte as AEAD associated data, matching Transport::Send.
+    const uint8_t aad[1] = {env.kind};
+    env.enc = Encrypt(inbox, payload, std::span<const uint8_t>{aad, 1});
     env.pow.version = 1;
     env.pow.timestamp = now;
     env.pow.kind = env.kind;

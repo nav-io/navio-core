@@ -24,10 +24,13 @@ Two applications ship on the bus today:
 
 Kinds `7..255` are reserved for future applications.
 
-There are **no persistent node identities**. Every session uses a freshly
-generated BLS keypair; the session pubkey *is* the identity and is discarded
-when the session ends. No identity key is written to disk. This is the
-navcoin-core BLS-ECIES + Dandelion posture.
+No identity key is written to disk, and every quote/order is signed under a
+**fresh, single-use** BLS keypair (`Transport::SignEphemeral`), so a maker's
+messages are not linkable to one another or to the node. Note the node's
+*inbox* key (the key peers encrypt confidential replies to, reported by
+`getp2pmsginfo`) is generated once per process run, not per message: it is a
+per-run identity, not written to disk but stable for the node's uptime. This is
+the navcoin-core BLS-ECIES + Dandelion posture.
 
 The subsystem is enabled by default and can be turned off with `-p2pmsg=0`.
 
@@ -115,8 +118,14 @@ EciesPacket = G1 eph_pubkey (48) || ciphertext || u8[16] tag
 - `CHKDF_HMAC_SHA256_L32` derives the AEAD key from the shared secret.
 - `AEADChaCha20Poly1305` encrypts with a zero nonce. The zero nonce is safe
   because the key is unique per message (fresh ephemeral key every time).
-- Decryption failure (wrong recipient, tampered ciphertext/tag) is silent — the
-  common case for broadcast traffic a node is merely relaying.
+- The `kind` byte is passed as AEAD **associated data**, so it is
+  authenticated: an attacker cannot flip the cleartext `kind` in flight to route
+  the same ciphertext to a different handler (the tag check fails).
+- The plaintext is **length-padded** to a small ladder of fixed bucket sizes
+  before encryption (framed as `u32 length || payload || zero pad`), so the
+  ciphertext length reveals only a coarse bucket, not the exact payload size.
+- Decryption failure (wrong recipient, tampered ciphertext/tag, altered kind) is
+  silent — the common case for broadcast traffic a node is merely relaying.
 
 ### Anti-spam PoW
 
@@ -141,22 +150,38 @@ functional tests run at trivial difficulty. If CPU drift ever makes the flat
 target too cheap, a `P2PMSG_POW_TARGET_V2` can be activated at a scheduled
 height via the existing version-bits machinery.
 
-The single replay cache is a `CuckooCache<uint256>` keyed by the encrypted
-packet hash. It is memory-bounded (sized by `replay_cache_bytes`); eviction is
-LRU/probabilistic under load rather than a fixed time-based TTL.
+The single replay cache is a `CuckooCache<uint256>` keyed by
+`SHA256(kind || encrypted-packet-hash)`. The packet hash alone does not cover
+the `kind` byte, so keying on it would let an attacker pre-broadcast a
+kind-flipped copy that arrives first and suppresses the genuine message as a
+"replay"; including `kind` gives each `(kind, ciphertext)` its own slot while
+staying nonce-independent (re-grinding the PoW nonce cannot bypass it, so there
+is no relay amplification). It is memory-bounded (sized by `replay_cache_bytes`);
+eviction is LRU/probabilistic under load rather than a fixed time-based TTL. A
+message dropped because the worker ring was full is removed from the cache so a
+later re-broadcast is not black-holed.
+
+The net thread separates the two PoW rejection reasons: an under-difficulty
+stamp is the sending peer's fault (DoS-scored), but a timestamp outside the
+±120 s window is not — an honest message can age past it during multi-hop
+propagation, so the relaying peer is not penalized for forwarding it.
 
 ## Aggregation
 
 A candidate is a 1-input-1-output BLSCT self-spend with `input.value ==
-output.value` and **zero fee**. It does not verify standalone (it pays no fee)
-but contributes a valid balance/signature to an aggregate.
+output.value`, **zero fee**, and **no fee output** (built via
+`TxFactory::BuildCandidate` / `BuildTx(emitFeeOutput=false)`: only its balance
+and input signatures are produced). It does not verify standalone but
+contributes a valid balance/signature to an aggregate.
 
 `CombineHalves` builds the aggregate: union all inputs (rejecting cross-half
-double-spends), union all outputs (including the zero-value fee outputs so their
-PayFee predicate signatures stay covered), and set the combined `txSig` to the
-BLS aggregate of every half's `txSig`. BLS aggregation is associative, so the
-result is a single valid signature over the union; no party shares or recomputes
-another's gamma.
+double-spends), union all outputs, and set the combined `txSig` to the BLS
+aggregate of every half's `txSig`. BLS aggregation is associative, so the result
+is a single valid signature over the union; no party shares or recomputes
+another's gamma. Because candidates carry no fee output, the combined tx has
+**exactly one** fee output (the initiator's), and the combined inputs and
+outputs are **shuffled** — so an observer can neither count the parties by
+their fee outputs nor segment the tx back into per-party runs by output order.
 
 **Fee.** The initiator pays the whole aggregate fee. BLSCT enforces
 `fee >= weight(tx) * BLSCT_DEFAULT_FEE` and rejects more than one non-zero fee
@@ -238,13 +263,20 @@ until they land and pass a full end-to-end functional suite.
 - **Unlinkability**: 1-layer ECIES + Dandelion stem. Matches legacy navcoin-core.
   Weaker than onion routing against a global passive adversary; an optional
   Loopix-style mix layer is possible future work.
-- **DoS**: flat-target PoW on requests, per-peer rate limiting, DoS scoring for
-  malformed/under-PoW messages, silent drop on MAC failure, bounded queues and
-  caches that drop rather than grow.
+- **DoS**: flat-target PoW on every message, a **global** relay token bucket
+  (`relay_tokens_per_sec`) capping this node's amplification, DoS scoring for
+  malformed/under-PoW messages (but NOT for merely stale timestamps), silent
+  drop on MAC failure, and bounded queues/caches that drop rather than grow.
+  Per-source caps additionally bound the aggregation candidate pool
+  (`POOL_MAX_PER_PEER`). Note the relay limiter is global, not per-peer.
 - **RFQ probing**: config-only matching means probing cannot binary-search a
   maker's balance; it can only enumerate advertised config.
-- **Half-tx replay**: a quote signs `(uuid, half_tx hash, expiry)`; the matcher
-  is one-shot per `uuid`.
-- **Crypto**: per-message ephemeral BLS ECDH + ChaCha20Poly1305 + HKDF. No
+- **Half-tx replay**: a quote signs `(uuid, half_tx hash, expiry)` under a fresh
+  single-use key; the matcher is one-shot per `uuid` and first-write-wins on a
+  uuid (a re-broadcast of the same uuid cannot redirect a maker's reply). The
+  taker enforces the token pair (`AddQuote` rejects a quote whose pair differs
+  from the request) and the quote's expiry at accept time.
+- **Crypto**: per-message ephemeral BLS ECDH + ChaCha20Poly1305 + HKDF, with the
+  `kind` byte bound as AEAD associated data and length-bucket padding. No
   post-quantum primitives yet; PQ migration is tracked separately.
 ```

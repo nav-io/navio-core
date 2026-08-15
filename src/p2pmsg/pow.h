@@ -56,6 +56,12 @@ arith_uint256 TargetFromBits(uint32_t bits);
 //! True iff `header.Hash()` meets the difficulty `bits`.
 bool CheckPoW(const PoWHeader& header, uint32_t bits);
 
+//! True iff `header.timestamp` is within POW_TIMESTAMP_TOLERANCE_SECONDS of
+//! `now`. Split out from CheckStamp so callers can distinguish an honest
+//! message that merely aged in flight (do not penalize the relaying peer) from
+//! a genuinely under-difficulty stamp.
+bool CheckTimestamp(const PoWHeader& header, int64_t now);
+
 //! Full acceptance: difficulty AND timestamp within tolerance of `now`.
 //! Replay is checked separately by the caller's shared cache.
 bool CheckStamp(const PoWHeader& header, uint32_t bits, int64_t now);

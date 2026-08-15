@@ -445,6 +445,11 @@ static UniValue QuoteToUni(const rfq::RfqQuote& q)
 {
     UniValue o(UniValue::VOBJ);
     o.pushKV("quote_id", q.quote_id.GetHex());
+    // Surface the token pair: the taker must be able to see WHICH assets a quote
+    // trades, not just the amounts. AddQuote rejects pair-mismatched quotes, but
+    // showing buy/sell here lets a caller confirm the asset it will pay/receive.
+    o.pushKV("buy", q.buy.ToString());
+    o.pushKV("sell", q.sell.ToString());
     o.pushKV("fill", q.fill);
     o.pushKV("sell_cost", q.sell_cost);
     o.pushKV("price", q.Price());
@@ -463,6 +468,8 @@ static RPCHelpMan listquotes()
         },
         RPCResult{RPCResult::Type::ARR, "", "", {{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "quote_id", "Quote id"},
+            {RPCResult::Type::STR, "buy", "Token delivered to the taker"},
+            {RPCResult::Type::STR, "sell", "Token charged to the taker"},
             {RPCResult::Type::NUM, "fill", "Units of buy token offered"},
             {RPCResult::Type::NUM, "sell_cost", "Units of sell token charged"},
             {RPCResult::Type::NUM, "price", "sell_cost / fill"},
@@ -698,8 +705,8 @@ static RPCHelpMan sendquote()
             if (q.fill <= 0 || !MoneyRange(q.fill) || q.sell_cost <= 0 || !MoneyRange(q.sell_cost)) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "fill/sell_cost out of range");
             }
-            q.session_eph = transport->InboxPubKey();
-            q.maker_sig = transport->SignWithInbox(q.SigningHash());
+            // Fresh single-use signing key: unlinkable from our other quotes.
+            std::tie(q.session_eph, q.maker_sig) = transport->SignEphemeral(q.SigningHash());
 
             // One-shot: if this node queued the request as a pending local match,
             // consume it so a maker driving this RPC does not answer twice.
@@ -765,8 +772,8 @@ static RPCHelpMan sendorder()
             if (q.fill <= 0 || !MoneyRange(q.fill) || q.sell_cost <= 0 || !MoneyRange(q.sell_cost)) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "offer_amount/want_amount out of range");
             }
-            q.session_eph = transport->InboxPubKey();
-            q.maker_sig = transport->SignWithInbox(q.SigningHash());
+            // Fresh single-use signing key: unlinkable from our other quotes.
+            std::tie(q.session_eph, q.maker_sig) = transport->SignEphemeral(q.SigningHash());
 
             const int64_t now = GetTime<std::chrono::seconds>().count();
             if (!orders->StoreOrder(q, now)) {

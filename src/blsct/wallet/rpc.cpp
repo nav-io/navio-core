@@ -44,7 +44,6 @@
 #include <rfq/request.h>
 #include <streams.h>
 #include <util/time.h>
-#include <wallet/spend.h>
 #include <wallet/wallet.h>
 #include <limits>
 #include <optional>
@@ -274,6 +273,12 @@ static RPCHelpMan acceptquotewallet()
             // trust anchor — never widen them from the quote's own fields.
             if (quote.sell_cost > max_pay) throw JSONRPCError(RPC_VERIFY_ERROR, "quote sell_cost exceeds max_pay");
             if (quote.fill < min_recv) throw JSONRPCError(RPC_VERIFY_ERROR, "quote fill below min_recv");
+            // Honor the quote's own expiry: an expired quote must not be
+            // executed. `order_expiry == 0` means "no expiry set" (accepted).
+            if (quote.order_expiry != 0) {
+                const int64_t now = GetTime<std::chrono::seconds>().count();
+                if (quote.order_expiry < now) throw JSONRPCError(RPC_VERIFY_ERROR, "quote has expired");
+            }
 
             EnsureWalletIsUnlocked(*pwallet);
             LOCK(pwallet->cs_wallet);
@@ -418,10 +423,9 @@ static RPCHelpMan broadcastorder()
             q.fill = offer_amount;              // buy-token the taker receives
             q.sell_cost = want_amount;          // sell-token the taker pays
             q.order_expiry = expiry;
-            q.session_eph = transport->InboxPubKey();
-            // Authenticate the order under our session identity so receivers can
-            // verify it was not forged or tampered in flight (RfqQuote::VerifySig).
-            q.maker_sig = transport->SignWithInbox(q.SigningHash());
+            // Sign under a fresh, single-use key (not the persistent inbox
+            // identity) so this order is not linkable to our other RFQ traffic.
+            std::tie(q.session_eph, q.maker_sig) = transport->SignEphemeral(q.SigningHash());
 
             const int64_t now = GetTime<std::chrono::seconds>().count();
             orders->StoreOrder(q, now); // cache locally too
@@ -522,9 +526,8 @@ static RPCHelpMan replyquote()
             q.fill = pm->fill;
             q.sell_cost = pm->sell_cost;
             q.order_expiry = pm->req.expiry;
-            q.session_eph = transport->InboxPubKey();
-            // Authenticate under our session identity (verified by the taker).
-            q.maker_sig = transport->SignWithInbox(q.SigningHash());
+            // Fresh single-use signing key: unlinkable from our other quotes.
+            std::tie(q.session_eph, q.maker_sig) = transport->SignEphemeral(q.SigningHash());
 
             DataStream ss;
             ParamsStream ps{TX_WITH_WITNESS, ss};

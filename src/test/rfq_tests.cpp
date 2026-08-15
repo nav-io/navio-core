@@ -40,6 +40,10 @@ RfqRequest MakeReq(const TokenId& buy, const TokenId& sell, CAmount size, int64_
 RfqQuote MakeQuote(CAmount fill, CAmount sell_cost)
 {
     RfqQuote q;
+    // Match the TokA()->TokB() pair the request helpers open with: AddQuote now
+    // rejects a quote whose pair differs from its request.
+    q.buy = TokA();
+    q.sell = TokB();
     q.fill = fill;
     q.sell_cost = sell_cost;
     return q;
@@ -294,6 +298,16 @@ BOOST_AUTO_TEST_CASE(matcher_registry_lifecycle)
     q2.uuid = uint256::ONE;
     q2.quote_id = uint256(uint64_t{2});
     BOOST_CHECK(reg.AddQuote(q2));
+    BOOST_CHECK_EQUAL(reg.GetQuotes(uint256::ONE).size(), 2u);
+
+    // A quote whose token pair does not match the request is rejected, even
+    // with a valid uuid — otherwise acceptquotewallet would build the taker
+    // half against an attacker-chosen asset.
+    RfqQuote q_badpair = MakeQuote(1000, 90);
+    q_badpair.uuid = uint256::ONE;
+    q_badpair.quote_id = uint256(uint64_t{3});
+    q_badpair.sell = TokA(); // request sell is TokB()
+    BOOST_CHECK(!reg.AddQuote(q_badpair));
     BOOST_CHECK_EQUAL(reg.GetQuotes(uint256::ONE).size(), 2u);
 
     // Lookup by id, then cancel.

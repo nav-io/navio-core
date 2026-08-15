@@ -23,6 +23,14 @@ namespace rfq {
 static constexpr size_t MAX_PENDING_MATCHES = 4096;
 static constexpr size_t MAX_QUOTES_PER_REQUEST = 256;
 
+//! Upper bound on how far in the future a request's collection deadline may sit,
+//! enforced at ingress. The pending-match map self-trims entries whose
+//! `req.expiry <= now`; without a bound an attacker could set expiry = INT64_MAX
+//! so their junk entries never trim and permanently fill the map (blocking a
+//! maker from seeing real RFQs). One hour is far longer than any real quote
+//! collection window.
+static constexpr int64_t MAX_RFQ_EXPIRY_WINDOW_SECONDS = 3600;
+
 //! How a taker ranks collected quotes.
 enum class RankBy {
     Price,      //!< ascending sell_cost/fill (default): cheapest unit cost wins

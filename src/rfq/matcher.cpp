@@ -86,6 +86,13 @@ bool MatcherRegistry::AddQuote(const RfqQuote& q)
     LOCK(m_mutex);
     auto it = m_active.find(q.uuid);
     if (it == m_active.end()) return false;
+    // Enforce the token pair against the open request. Nothing else downstream
+    // rechecks it: acceptquotewallet builds the taker half from the QUOTE's
+    // buy/sell fields with only amount-based slippage bounds, so a quote that
+    // matches the uuid but names a different (attacker-chosen) sell token would
+    // make the taker pay the wrong asset. The pair is part of the offer the
+    // taker asked for; a mismatched quote is not a valid answer.
+    if (q.buy != it->second.req.buy || q.sell != it->second.req.sell) return false;
     // Bound per-request quotes: quotes arrive from the network, so an attacker
     // could otherwise flood one open request with unbounded distinct quote_ids.
     if (it->second.quotes.size() >= MAX_QUOTES_PER_REQUEST &&
@@ -162,14 +169,26 @@ size_t MatcherRegistry::Size() const
 void MatcherRegistry::AddPendingMatch(const RfqRequest& req, CAmount fill, CAmount sell_cost)
 {
     LOCK(m_mutex);
+    // Clamp an attacker-supplied expiry to a sane window BEFORE it is used as a
+    // trim key: an unbounded expiry would make this entry immune to the
+    // self-trim below and let junk requests permanently fill the map.
+    const int64_t now = GetTime<std::chrono::seconds>().count();
+    RfqRequest bounded = req;
+    if (bounded.expiry > now + MAX_RFQ_EXPIRY_WINDOW_SECONDS) {
+        bounded.expiry = now + MAX_RFQ_EXPIRY_WINDOW_SECONDS;
+    }
     // Drop any pending matches whose request collection window has closed, so
     // the map self-trims from network traffic rather than growing forever.
-    const int64_t now = GetTime<std::chrono::seconds>().count();
     std::erase_if(m_pending, [now](const auto& e) { return e.second.req.expiry <= now; });
     // Hard cap as a backstop: refuse new uuids once full (existing uuids may
     // still be refreshed). Prevents a flood of distinct uuids from OOMing us.
     if (m_pending.size() >= MAX_PENDING_MATCHES && !m_pending.contains(req.uuid)) return;
-    m_pending[req.uuid] = PendingMatch{req, fill, sell_cost};
+    // First-write-wins: uuid is public in the broadcast request, so once we have
+    // matched a uuid we must not let a later same-uuid request (an attacker
+    // re-broadcasting with their own reply_key) overwrite the entry and redirect
+    // our maker reply to them. Only the first matching request for a uuid is
+    // answered; a genuine duplicate is a no-op.
+    m_pending.emplace(bounded.uuid, PendingMatch{bounded, fill, sell_cost});
 }
 
 std::vector<MatcherRegistry::PendingMatch> MatcherRegistry::ListPendingMatches() const

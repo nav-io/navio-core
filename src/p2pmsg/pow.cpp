@@ -31,7 +31,7 @@ bool CheckPoW(const PoWHeader& header, uint32_t bits)
     return UintToArith256(header.Hash()) <= target;
 }
 
-bool CheckStamp(const PoWHeader& header, uint32_t bits, int64_t now)
+bool CheckTimestamp(const PoWHeader& header, int64_t now)
 {
     // header.timestamp is attacker-controlled; computing (now - timestamp) can
     // overflow for extreme values and std::abs(INT64_MIN) is itself UB. Compare
@@ -39,7 +39,12 @@ bool CheckStamp(const PoWHeader& header, uint32_t bits, int64_t now)
     // difference: the only arithmetic is on `now` (a small wall-clock value).
     if (header.timestamp > now + POW_TIMESTAMP_TOLERANCE_SECONDS) return false;
     if (header.timestamp < now - POW_TIMESTAMP_TOLERANCE_SECONDS) return false;
-    return CheckPoW(header, bits);
+    return true;
+}
+
+bool CheckStamp(const PoWHeader& header, uint32_t bits, int64_t now)
+{
+    return CheckTimestamp(header, now) && CheckPoW(header, bits);
 }
 
 uint64_t Grind(PoWHeader& header, uint32_t bits, uint64_t max_iters)

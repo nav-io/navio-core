@@ -54,7 +54,12 @@ public:
     RawMode()
     {
 #ifndef WIN32
-        if (!StdoutIsTty()) return;
+        // Gate on STDIN, not STDOUT: this configures the input terminal. Gating
+        // on stdout meant a stdout-piped-but-stdin-tty invocation silently
+        // disabled all key handling (no way to quit), while relying on
+        // tcgetattr(STDIN) failing to bail out in the stdout-tty-stdin-piped
+        // case. Check the fd we actually touch.
+        if (!::isatty(STDIN_FILENO)) return;
         if (tcgetattr(STDIN_FILENO, &m_orig) != 0) return;
         m_active = true;
         struct termios raw = m_orig;
@@ -113,13 +118,23 @@ public:
     //! Append a log line (also printed immediately when not a TTY).
     void Log(const std::string& line)
     {
+        // Strip control bytes before the string reaches the terminal. Log lines
+        // can carry network- or wallet-derived text (RFQ fields, RPC errors);
+        // an unsanitized control/escape sequence would let such input drive the
+        // terminal (cursor moves, screen clears, title rewrites). Replace any
+        // byte < 0x20 or DEL with '?'.
+        std::string safe;
+        safe.reserve(line.size());
+        for (unsigned char c : line) {
+            safe.push_back((c < 0x20 || c == 0x7f) ? '?' : static_cast<char>(c));
+        }
         if (!m_is_tty) {
-            tfm::format(std::cout, "%s\n", line);
+            tfm::format(std::cout, "%s\n", safe);
             std::cout.flush();
             return;
         }
         std::lock_guard<std::mutex> lk(m_mutex);
-        m_log.push_back(line);
+        m_log.push_back(safe);
         while (m_log.size() > m_max_log) m_log.pop_front();
     }
 

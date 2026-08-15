@@ -136,11 +136,22 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
     // PoW vouches for the body before we relay it or spend a worker decrypting.
     if (env.pow.kind != env.kind) return WireResult::RejectPoW;
     if (env.pow.payload_hash != env.enc.MsgHash()) return WireResult::RejectPoW;
-    if (!CheckStamp(env.pow, m_opts.pow_bits, Now())) return WireResult::RejectPoW;
+    // Distinguish a stale/clock-skewed timestamp from a genuinely bad-difficulty
+    // stamp: an honest message can age past the tolerance window during
+    // multi-hop propagation, and the relaying peer is not at fault for that.
+    if (!CheckPoW(env.pow, m_opts.pow_bits)) return WireResult::RejectPoW;
+    if (!CheckTimestamp(env.pow, Now())) return WireResult::RejectStale;
 
-    // Single replay cache, keyed by the encrypted-packet hash. Also the relay
-    // loop-breaker: a message is relayed at most once per node.
-    const uint256 msg_hash = env.enc.MsgHash();
+    // Single replay cache. Keyed by SHA256(kind || packet-hash): the packet
+    // hash (MsgHash) does NOT cover the kind byte, so keying on it alone would
+    // let an attacker pre-broadcast a kind-flipped copy that arrives first and
+    // suppresses the genuine message as a "replay". Including kind gives each
+    // (kind, ciphertext) its own slot while staying nonce-independent, so
+    // re-grinding the PoW nonce still cannot bypass the replay cache (no relay
+    // amplification). Also the relay loop-breaker: relayed at most once/node.
+    HashWriter hw;
+    hw << env.kind << env.enc.MsgHash();
+    const uint256 msg_hash = hw.GetSHA256();
     {
         LOCK(m_replay_mutex);
         if (m_replay.contains(msg_hash, /*erase=*/false)) return WireResult::RejectReplay;
@@ -161,7 +172,15 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
     job.peer = from_peer;
     job.len = static_cast<uint32_t>(body.size());
     std::memcpy(job.buf.data(), body.data(), body.size());
-    if (!m_pool.Enqueue(job)) return WireResult::Dropped;
+    if (!m_pool.Enqueue(job)) {
+        // The worker ring is full. Do NOT leave this message recorded as seen:
+        // otherwise a burst that fills the ring would permanently black-hole a
+        // message addressed to us (every re-broadcast rejected as replay, never
+        // decrypted). Erase it so a later re-broadcast gets another chance.
+        LOCK(m_replay_mutex);
+        m_replay.contains(msg_hash, /*erase=*/true);
+        return WireResult::Dropped;
+    }
     return WireResult::Enqueued;
 }
 
@@ -170,10 +189,15 @@ void Transport::HandleJob(const Job& job)
     Envelope env;
     if (!ParseEnvelope({job.buf.data(), job.len}, env)) return;
 
+    // The kind byte is bound as AEAD associated data, so decryption also
+    // verifies the kind was not altered in flight.
+    const uint8_t aad[1] = {env.kind};
+    const std::span<const uint8_t> aad_span{aad, 1};
+
     // Try our private inbox key first (confidential, addressed to us), then the
     // well-known broadcast key (public announcements anyone can read).
-    auto plain = Decrypt(m_inbox_priv, env.enc);
-    if (!plain) plain = Decrypt(BroadcastPrivKey(), env.enc);
+    auto plain = Decrypt(m_inbox_priv, env.enc, aad_span);
+    if (!plain) plain = Decrypt(BroadcastPrivKey(), env.enc, aad_span);
     if (!plain) {
         // Finally, any open per-request session keys (e.g. RFQ reply_keys). Take
         // a snapshot of the still-live privs under the lock, then decrypt outside
@@ -188,7 +212,7 @@ void Transport::HandleJob(const Job& job)
             }
         }
         for (const auto& priv : session_privs) {
-            plain = Decrypt(priv, env.enc);
+            plain = Decrypt(priv, env.enc, aad_span);
             if (plain) break;
         }
     }
@@ -210,12 +234,22 @@ void Transport::HandleJob(const Job& job)
     handler(msg);
 }
 
+std::pair<blsct::PublicKey, blsct::Signature> Transport::SignEphemeral(const uint256& digest) const
+{
+    blsct::PrivateKey k(MclScalar::Rand(/*exclude_zero=*/true));
+    return {k.GetPublicKey(), k.Sign(digest)};
+}
+
 void Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
                      std::vector<uint8_t> body, bool stem)
 {
     Envelope env;
     env.kind = static_cast<uint8_t>(kind);
-    env.enc = Encrypt(recipient, std::span<const uint8_t>{body.data(), body.size()});
+    // Authenticate the (cleartext) kind byte under the AEAD so it cannot be
+    // flipped in flight to route the same ciphertext to a different handler.
+    const uint8_t aad[1] = {env.kind};
+    env.enc = Encrypt(recipient, std::span<const uint8_t>{body.data(), body.size()},
+                      std::span<const uint8_t>{aad, 1});
 
     // PoW is mandatory on every message — it is the bus's universal admission
     // gate, applied regardless of `kind`.

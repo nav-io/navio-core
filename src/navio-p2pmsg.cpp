@@ -26,7 +26,9 @@
 #include <util/tui_dashboard.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -55,6 +57,14 @@ static const char* const DEFAULT_COLOR_SETTING = "auto";
 static const int DEFAULT_POLL_SECONDS = 5;
 
 static std::string walletName;
+
+//! Set by SIGINT/SIGTERM so the poll loop exits cleanly, letting RawMode's
+//! destructor restore the terminal. Under systemd (SIGTERM) the previous
+//! q-key-only exit skipped all cleanup.
+static std::atomic<bool> g_shutdown_requested{false};
+#ifndef WIN32
+static void HandleShutdownSignal(int) { g_shutdown_requested.store(true); }
+#endif
 
 static void SetupCliArgs(ArgsManager& argsman)
 {
@@ -245,7 +255,10 @@ static UniValue ConnectAndCallRPC(const std::string& strMethod, const std::vecto
                                   const std::optional<std::string>& rpcwallet = {})
 {
     UniValue reply(UniValue::VOBJ);
-    const bool fWait = gArgs.GetBoolArg("-rpcwait", true);
+    // Opt-in like bitcoin-cli: with the previous default-true and a default
+    // -rpcwaittimeout of 0 (no timeout), a down node made the daemon hang
+    // forever at startup instead of erroring.
+    const bool fWait = gArgs.GetBoolArg("-rpcwait", false);
     const int timeout = gArgs.GetIntArg("-rpcwaittimeout", DEFAULT_WAIT_CLIENT_TIMEOUT);
     const auto deadline{std::chrono::steady_clock::now() + 1s * timeout};
     do {
@@ -305,8 +318,12 @@ static void PollOnce(tui::Dashboard& dash, PollStats& st)
     if (!pending.isArray()) { st.pending = 0; return; }
     st.pending = pending.size();
     for (const UniValue& p : pending.getValues()) {
-        const std::string uuid = p.find_value("uuid").get_str();
         try {
+            // Parse inside the try: get_str() throws if `uuid` is missing or not
+            // a string, and an exception escaping PollOnce unwinds through Loop()
+            // and main() -- past RawMode's destructor -- leaving the operator's
+            // terminal stuck in raw mode.
+            const std::string uuid = p.find_value("uuid").get_str();
             UniValue reply = CallRPC("replyquote", {uuid}, wallet);
             const UniValue& err = reply.find_value("error");
             if (!err.isNull()) {
@@ -319,7 +336,7 @@ static void PollOnce(tui::Dashboard& dash, PollStats& st)
             dash.Log(st.last_event);
         } catch (const std::exception& e) {
             ++st.errors;
-            st.last_event = strprintf("replyquote %s failed: %s", uuid.substr(0, 12), e.what());
+            st.last_event = strprintf("replyquote failed: %s", e.what());
             dash.Log(st.last_event);
         }
     }
@@ -343,13 +360,13 @@ static void Loop()
     const auto start = std::chrono::steady_clock::now();
     dash.Log(strprintf("p2pmsg worker started (poll=%ds, wallet=%s)", interval, walletName));
 
-    while (dash.State() != tui::RunState::Quitting) {
+    while (dash.State() != tui::RunState::Quitting && !g_shutdown_requested.load()) {
         for (char k = raw.PollKey(); k != 0; k = raw.PollKey()) {
             if (k == 'q') dash.SetState(tui::RunState::Quitting);
             else if (k == 'p') { dash.SetState(tui::RunState::Paused); dash.Log("paused by operator"); }
             else if (k == 'r') { dash.SetState(tui::RunState::Running); dash.Log("resumed by operator"); }
         }
-        if (dash.State() == tui::RunState::Quitting) break;
+        if (dash.State() == tui::RunState::Quitting || g_shutdown_requested.load()) break;
 
         const bool paused = dash.State() == tui::RunState::Paused;
         if (!paused) PollOnce(dash, st);
@@ -364,7 +381,13 @@ static void Loop()
         dash.SetStat("Last event", st.last_event);
         dash.Render();
 
-        UninterruptibleSleep(std::chrono::seconds{interval});
+        // Sleep in short slices so a q keypress or SIGINT/SIGTERM is noticed
+        // within ~200ms instead of after the full poll interval.
+        for (int slept = 0; slept < interval * 5; ++slept) {
+            if (g_shutdown_requested.load()) break;
+            if (raw.PollKey() == 'q') { dash.SetState(tui::RunState::Quitting); break; }
+            UninterruptibleSleep(std::chrono::milliseconds{200});
+        }
     }
     dash.Log("shutting down");
     dash.Render();
@@ -410,6 +433,18 @@ MAIN_FUNCTION
         return EXIT_FAILURE;
     }
 
-    Loop();
+#ifndef WIN32
+    std::signal(SIGTERM, HandleShutdownSignal);
+    std::signal(SIGINT, HandleShutdownSignal);
+#endif
+
+    try {
+        Loop();
+    } catch (const std::exception& e) {
+        // Loop() owns the RawMode guard; unwinding through here still runs its
+        // destructor (terminal restored), but log the reason before exiting.
+        tfm::format(std::cerr, "Fatal error in poll loop: %s\n", e.what());
+        return EXIT_FAILURE;
+    }
     return EXIT_SUCCESS;
 }
