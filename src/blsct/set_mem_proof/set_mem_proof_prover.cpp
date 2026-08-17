@@ -304,6 +304,17 @@ bool SetMemProofProver<T>::Verify(
     if (n > setup.N) {
         throw std::runtime_error(std::string(__func__) + ": # of commitments exceeds the setup maximum");
     }
+    // The inner product argument halves the set each round, so a proof over n
+    // commitments carries exactly log2(n) (L, R) pairs. Bind the proof's own
+    // length to that count: the round challenges are derived over Ls.Size()
+    // (ImpInnerProdArg::GenAllRoundXs) while the accumulation below reads only
+    // the first num_rounds of them, and the transcript is not drawn from again
+    // afterwards -- so appended pairs enter no equation, and a padded proof
+    // would verify exactly like the proof it was padded from. The range proof
+    // enforces the same invariant in range_proof::Common::ValidateProofsBySizes.
+    const size_t num_rounds = std::log2(n);
+    if (proof.Ls.Size() != num_rounds) return false;
+
     Points Ys = ExtendYs(setup, Ys_src, n);
 
     auto fiat_shamir = GenInitialFiatShamir(
@@ -371,7 +382,6 @@ retry:
         verifier.AddPoint(LazyPoint(h2, proof.mu.Negate()));
 
         GEN_FIAT_SHAMIR_VAR(c_factor, fiat_shamir, retry);
-        size_t num_rounds = std::log2(n);
 
         Scalars xs;
         {
