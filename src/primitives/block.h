@@ -127,8 +127,6 @@ public:
         fChecked = false;
     }
 
-    uint256 GetHashWithoutPoSProof() const;
-
     CBlockHeader GetBlockHeader() const
     {
         CBlockHeader block;
