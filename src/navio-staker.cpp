@@ -1282,11 +1282,23 @@ MAIN_FUNCTION
         return EXIT_SUCCESS;
     }
 
-    Setup();
-    if (!TestSetup())
-        return EXIT_FAILURE;
+    // Setup() reports every argument error by throwing, so it needs a handler
+    // here: an exception escaping main aborts the process, and only libstdc++
+    // prints what() on the way out. The MSVC runtime prints nothing, which
+    // turns a misspelled option into a bare crash on Windows.
+    try {
+        Setup();
+        if (!TestSetup())
+            return EXIT_FAILURE;
 
-    Loop();
+        Loop();
+    } catch (const std::exception& e) {
+        tfm::format(std::cerr, "Error: %s\n", e.what());
+        return EXIT_FAILURE;
+    } catch (...) {
+        PrintExceptionContinue(nullptr, "navio-staker");
+        return EXIT_FAILURE;
+    }
 
     return EXIT_SUCCESS;
 }

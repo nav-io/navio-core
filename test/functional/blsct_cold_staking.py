@@ -207,7 +207,10 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         proc = subprocess.run([self.staker_path(), f"-datadir={self.nodes[0].datadir_path}",
                                "-delegated", "-delegationkey=00", f"-delegationkeyfile={keyfile}"],
                               capture_output=True, text=True)
-        assert proc.returncode != 0
+        # A clean EXIT_FAILURE, not an abort: an uncaught exception leaves the
+        # message to the C++ runtime, which prints it on libstdc++ and nothing
+        # at all on the MSVC runtime.
+        assert_equal(proc.returncode, 1)
         assert "mutually exclusive" in proc.stderr + proc.stdout
 
     def test_wrong_key_sees_nothing(self, node):
