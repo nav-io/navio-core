@@ -15,14 +15,14 @@
 template <typename T>
 Elements<typename T::Point> range_proof::Generators<T>::GetGiSubset(const size_t& size) const
 {
-    return Gi.To(size);
+    return Gi->To(size);
 }
 template Elements<Mcl::Point> range_proof::Generators<Mcl>::GetGiSubset(const size_t&) const;
 
 template <typename T>
 Elements<typename T::Point> range_proof::Generators<T>::GetHiSubset(const size_t& size) const
 {
-    return Hi.To(size);
+    return Hi->To(size);
 }
 template Elements<Mcl::Point> range_proof::Generators<Mcl>::GetHiSubset(const size_t&) const;
 

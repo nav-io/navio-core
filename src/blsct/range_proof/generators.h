@@ -25,15 +25,22 @@ public:
         const Point& H,
         const Points& Gi,
         const Points& Hi
-    ) : G{G}, H{H}, Gi{Gi}, Hi{Hi} {}
+    ) : G{G}, H{H}, Gi{&Gi}, Hi{&Hi} {}
 
     Points GetGiSubset(const size_t& size) const;
     Points GetHiSubset(const size_t& size) const;
 
     const Point G;
     const Point H;
-    const Points Gi;
-    const Points Hi;
+    // Gi/Hi are the shared 1024-point generator tables. They are held by
+    // pointer, NOT by value: they are the same immutable, process-lifetime
+    // GeneratorsFactory statics (m_Gi/m_Hi) for every instance, so copying them
+    // (~294 KB each) into every Generators returned by GetInstance was pure
+    // overhead -- and GetInstance is called per input, per output and per range
+    // proof on the block-verify hot path. The factory is the only constructor
+    // of Generators and always passes those statics, so these never dangle.
+    const Points* Gi;
+    const Points* Hi;
 };
 
 /**
