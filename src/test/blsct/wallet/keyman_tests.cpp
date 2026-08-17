@@ -59,6 +59,44 @@ std::unique_ptr<wallet::CWallet> MakeBLSCTWallet(interfaces::Chain* chain)
     return wallet;
 }
 
+std::string DrawDestination(blsct::KeyMan* km, const int64_t account)
+{
+    auto dest = km->GetNewDestination(account);
+    BOOST_REQUIRE(dest.has_value());
+    return blsct::SubAddress(std::get<blsct::DoublePublicKey>(dest.value())).GetString();
+}
+
+// The negative accounts are single-destination by design: BLSCT outputs are
+// stealth-derived, so repeated payments to one sub-address are unlinkable on
+// chain, and a small sub-address set keeps wallet sync cheap. Receive accounts
+// must still advance. Either way the reserve pool must not leak the index each
+// draw reserves.
+BOOST_FIXTURE_TEST_CASE(negative_accounts_are_single_destination, TestingSetup)
+{
+    auto wallet = MakeBLSCTWallet(m_node.chain.get());
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+
+    for (const int64_t account : {blsct::CHANGE_ACCOUNT, blsct::STAKING_ACCOUNT}) {
+        const auto first = DrawDestination(km, account);
+        for (int i = 0; i < 4; i++) {
+            BOOST_CHECK_EQUAL(DrawDestination(km, account), first);
+        }
+        // ...and the draws must not drain the pool: the index each one reserves
+        // is handed back, so the pool settles at the top-up target instead of
+        // losing an index per call.
+        BOOST_CHECK_EQUAL(km->GetSubAddressPoolSize(account), wallet->m_keypool_size);
+    }
+
+    // Receive addresses do advance -- reusing one of those would link payments
+    // made by different senders to the same wallet.
+    std::set<std::string> seen;
+    for (int i = 0; i < 5; i++) {
+        BOOST_CHECK(seen.insert(DrawDestination(km, 0)).second);
+    }
+    BOOST_CHECK_EQUAL(seen.size(), 5U);
+}
+
 // Mirror the branch-key derivation used by the createblsctrawtransaction /
 // importblsctscript atomic-swap paths: the blinded per-output spending pubkey
 // baked into one HTLC branch of the script.

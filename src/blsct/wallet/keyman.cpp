@@ -1182,7 +1182,7 @@ void KeyMan::ReturnSubAddress(const SubAddressIdentifier& id)
         setSubAddressReservePool[id.account].erase(id.address);
     }
     NotifyCanGetAddressesChanged();
-    WalletLogPrintf("KeyMan::ReturnSubAddress(): return %d/%d\n", id.account / id.address);
+    WalletLogPrintf("KeyMan::ReturnSubAddress(): return %d/%d\n", id.account, id.address);
 }
 
 bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAddressIdentifier& id)
@@ -1193,7 +1193,26 @@ bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAd
     SubAddressPool keypool;
 
     ReserveSubAddressFromPool(account, nIndex, keypool);
-    id = SubAddressIdentifier{account, (account > -1 ? static_cast<uint64_t>(nIndex) : 0)};
+    // The negative accounts -- change (CHANGE_ACCOUNT) and staking
+    // (STAKING_ACCOUNT) -- are single-destination by design and stay on
+    // sub-address index 0. Reusing one index leaks nothing here because BLSCT
+    // outputs are stealth-derived: CreateOutput draws a fresh blinding key per
+    // output and derives the on-chain ephemeral/spending keys from it, so two
+    // payments to the same sub-address are unlinkable on chain. Keeping the set
+    // small also keeps wallet sync cheap, since every sub-address of every
+    // account has to be re-derived and matched against each output.
+    //
+    // Only receive accounts advance through the pool, so hand the index the
+    // pool just reserved straight back for the negative ones instead of
+    // abandoning it in setSubAddressReservePool.
+    if (account < 0) {
+        if (nIndex > -1) {
+            ReturnSubAddress(SubAddressIdentifier{account, static_cast<uint64_t>(nIndex)});
+        }
+        id = SubAddressIdentifier{account, 0};
+    } else {
+        id = SubAddressIdentifier{account, (nIndex > -1 ? static_cast<uint64_t>(nIndex) : 0)};
+    }
     if (nIndex <= -1) {
         if (m_storage.IsLocked()) return false;
         SubAddress subAddress = GenerateNewSubAddress(account, id);
@@ -1201,7 +1220,10 @@ bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAd
         return true;
     }
     KeepSubAddress({account, id.address});
-    result = keypool.hashId;
+    // keypool.hashId belongs to the index the pool reserved, which the negative
+    // accounts handed back -- so there `result` has to come from the id
+    // returned, or it would name a different sub-address than `id` does.
+    result = account < 0 ? GetSubAddress(id).GetKeys().GetID() : keypool.hashId;
 
     return true;
 }
