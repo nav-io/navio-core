@@ -95,5 +95,18 @@ class NavioBlsctBalanceProofTest(BitcoinTestFramework):
         assert verify_result["valid"], "Proof should be valid"
         assert_equal(verify_result["min_amount"], balance / 2)
 
+        # A locked wallet cannot derive the spending key the proof is signed
+        # with, so it must refuse rather than return a proof signed with a
+        # default (zero) key, which could never verify.
+        self.log.info("Testing createblsctbalanceproof on a locked wallet")
+        wallet.encryptwallet("pass")
+        assert_raises_rpc_error(-13, "Please enter the wallet passphrase with walletpassphrase first",
+                                wallet.createblsctbalanceproof, 1)
+
+        wallet.walletpassphrase("pass", 60)
+        unlocked_proof = wallet.createblsctbalanceproof(1)
+        assert wallet_2.verifyblsctbalanceproof(unlocked_proof["proof"])["valid"], \
+            "proof from an unlocked wallet should verify"
+
 if __name__ == '__main__':
     NavioBlsctBalanceProofTest(__file__).main()
