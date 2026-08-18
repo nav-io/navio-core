@@ -1192,7 +1192,6 @@ bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAd
     int64_t nIndex = 0;
     SubAddressPool keypool;
 
-    ReserveSubAddressFromPool(account, nIndex, keypool);
     // The negative accounts -- change (CHANGE_ACCOUNT) and staking
     // (STAKING_ACCOUNT) -- are single-destination by design and stay on
     // sub-address index 0. Reusing one index leaks nothing here because BLSCT
@@ -1202,17 +1201,23 @@ bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAd
     // small also keeps wallet sync cheap, since every sub-address of every
     // account has to be re-derived and matched against each output.
     //
-    // Only receive accounts advance through the pool, so hand the index the
-    // pool just reserved straight back for the negative ones instead of
-    // abandoning it in setSubAddressReservePool.
+    // They never advance through the pool, so never draw from it: reserving an
+    // index only to hand it straight back was pure churn, and routing them past
+    // the empty-pool fallback risked GenerateNewSubAddress overwriting `id`
+    // with the counter and breaking the pinned index. TopUpAccount is still
+    // called for its other side effects -- it registers the account in
+    // setSubAddressPool and keeps the lookahead fresh -- and it is what
+    // re-creates index 0 for a wallet whose pool for this account was never
+    // built (the counter starts at 0, so the first key generated is index 0).
     if (account < 0) {
-        if (nIndex > -1) {
-            ReturnSubAddress(SubAddressIdentifier{account, static_cast<uint64_t>(nIndex)});
-        }
+        if (!m_storage.IsLocked()) TopUpAccount(account);
         id = SubAddressIdentifier{account, 0};
-    } else {
-        id = SubAddressIdentifier{account, (nIndex > -1 ? static_cast<uint64_t>(nIndex) : 0)};
+        result = GetSubAddress(id).GetKeys().GetID();
+        return true;
     }
+
+    ReserveSubAddressFromPool(account, nIndex, keypool);
+    id = SubAddressIdentifier{account, (nIndex > -1 ? static_cast<uint64_t>(nIndex) : 0)};
     if (nIndex <= -1) {
         if (m_storage.IsLocked()) return false;
         SubAddress subAddress = GenerateNewSubAddress(account, id);
@@ -1220,10 +1225,7 @@ bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAd
         return true;
     }
     KeepSubAddress({account, id.address});
-    // keypool.hashId belongs to the index the pool reserved, which the negative
-    // accounts handed back -- so there `result` has to come from the id
-    // returned, or it would name a different sub-address than `id` does.
-    result = account < 0 ? GetSubAddress(id).GetKeys().GetID() : keypool.hashId;
+    result = keypool.hashId;
 
     return true;
 }
