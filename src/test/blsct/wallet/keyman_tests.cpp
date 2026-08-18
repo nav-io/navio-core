@@ -195,6 +195,35 @@ BOOST_FIXTURE_TEST_CASE(locked_wallet_spending_key_unavailable_no_throw, Testing
     BOOST_CHECK(key_after.GetScalar() == key_before.GetScalar());
 }
 
+// Per-output spending keys cached in the wallet DB (blsctoutkey records, loaded
+// through KeyMan::LoadOutKey) must survive encryptwallet: KeyMan::Encrypt has to
+// migrate mapOutKeys into mapCryptedOutKeys the same way it migrates mapKeys.
+// Without that migration the plaintext records are never erased from the wallet
+// file (WriteCryptedOutKey is what erases them) and the key is unreachable on
+// the encrypted wallet.
+BOOST_FIXTURE_TEST_CASE(encrypt_wallet_migrates_out_keys, TestingSetup)
+{
+    auto wallet = MakeBLSCTWallet(m_node.chain.get());
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+
+    // Seed a plaintext out key the way a wallet load would.
+    const uint256 outId(uint64_t{0xabcdef});
+    const blsct::PrivateKey out_key(MclScalar(uint256(uint64_t{0x7777})));
+    BOOST_REQUIRE(blsct_km->LoadOutKey(out_key, outId));
+
+    blsct::PrivateKey before;
+    BOOST_REQUIRE(blsct_km->GetOutKey(outId, before));
+    BOOST_CHECK(before.GetScalar() == out_key.GetScalar());
+
+    BOOST_REQUIRE(wallet->EncryptWallet("passphrase"));
+    BOOST_REQUIRE(wallet->Unlock("passphrase"));
+
+    blsct::PrivateKey recovered;
+    BOOST_REQUIRE(blsct_km->GetOutKey(outId, recovered));
+    BOOST_CHECK(recovered.GetScalar() == out_key.GetScalar());
+}
+
 // Locks down the one-time key derivation the deriveblsctonetimekey RPC exposes
 // for externally constructed destinations (e.g. adaptor-swap outputs locked to
 // a combined key that no wallet owns). An output paid to destination (V, S)
