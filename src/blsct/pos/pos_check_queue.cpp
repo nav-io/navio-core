@@ -12,11 +12,10 @@
 
 namespace blsct {
 
-namespace {
 // Batched PoS verification (SetMemProofProver::VerifyBatch) is opt-in while it
 // is under review. Enable with NAVIO_BLSCT_POSBATCH=1. The batch path is
-// correctness-equivalent to the per-item path (it always falls back to per-item
-// verify to confirm a failure), so the flag only selects the fast path.
+// correctness-equivalent to the per-item path (deferred proofs are re-checked
+// individually on a batch failure), so the flag only selects the fast path.
 bool PoSBatchEnabled()
 {
     static const bool enabled = [] {
@@ -25,7 +24,6 @@ bool PoSBatchEnabled()
     }();
     return enabled;
 }
-} // namespace
 
 bool PoSCheckItem::VerifyStandalone() const
 {

@@ -2605,6 +2605,23 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         }
 
         pos_kernel_range_proof.emplace(block.posProof.GetKernelRangeProof(min_value_u64, eta_phi));
+
+        if (blsct::PoSBatchEnabled() && !fJustCheck) {
+            // Defer the set-membership proof to a batched verify at the end of
+            // the connect run (FlushDeferredPoSBatch, called from
+            // ActivateBestChainStep). Only on the real connect path (never
+            // fJustCheck, whose throwaway pindex must not be deferred). Own
+            // copies so the entry outlives this block. The kernel range proof
+            // emplaced above is still verified inline with the block's other
+            // range proofs; only the (shared-generator) set-membership proof is
+            // batched.
+            m_deferred_pos_batch.push_back(blsct::PoSBatchEntry{
+                pindex,
+                staked_commitments_snapshot,
+                eta_fiat_shamir,
+                eta_phi,
+                block.posProof.setMemProof});
+        } else {
         pos_verify_future = blsct::GetPosAsyncVerifier().Submit(
             [staked_commitments = staked_commitments_snapshot,
              eta_fiat_shamir = std::move(eta_fiat_shamir),
@@ -2635,6 +2652,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                 }
             });
         pos_verify_dispatched = true;
+        }
 
         time_2_ = SteadyClock::now();
         time_pos_dispatch += time_2_ - time_1;
@@ -3681,6 +3699,35 @@ void Chainstate::PruneBlockIndexCandidates() {
  *
  * @returns true unless a system error occurred
  */
+bool Chainstate::FlushDeferredPoSBatch(CBlockIndex** failing)
+{
+    AssertLockHeld(cs_main);
+    if (failing) *failing = nullptr;
+    if (m_deferred_pos_batch.empty()) return true;
+
+    const auto& setup = SetMemProofSetup<Mcl>::Get();
+    std::vector<SetMemProofProver<Mcl>::VerifyBatchItem> items;
+    items.reserve(m_deferred_pos_batch.size());
+    for (const auto& e : m_deferred_pos_batch) {
+        items.push_back({&e.staked_commitments, e.eta_fiat_shamir, e.eta_phi, &e.set_mem_proof});
+    }
+
+    const bool ok = SetMemProofProver<Mcl>::VerifyBatch(setup, items);
+    if (!ok && failing) {
+        // Identify the offending block so the caller can rewind to it. The
+        // per-item verify is authoritative, so a spurious batch failure with all
+        // items individually valid leaves *failing null and the caller accepts.
+        for (const auto& e : m_deferred_pos_batch) {
+            if (!SetMemProofProver<Mcl>::Verify(setup, e.staked_commitments, e.eta_fiat_shamir, e.eta_phi, e.set_mem_proof)) {
+                *failing = e.pindex;
+                break;
+            }
+        }
+    }
+    m_deferred_pos_batch.clear();
+    return ok || (failing && *failing == nullptr);
+}
+
 bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex* pindexMostWork, const std::shared_ptr<const CBlock>& pblock, bool& fInvalidFound, ConnectTrace& connectTrace, DisconnectedBlockTransactions& disconnectpool, bool& fBlocksDisconnectedOut)
 {
     AssertLockHeld(cs_main);
@@ -3750,6 +3797,33 @@ bool Chainstate::ActivateBestChainStep(BlockValidationState& state, CBlockIndex*
                     break;
                 }
             }
+        }
+    }
+
+    // Batched PoS set-membership verification for the blocks connected in this
+    // step (deferred by ConnectBlock when NAVIO_BLSCT_POSBATCH is enabled). On
+    // failure, rewind to the offending block and mark it invalid so the next
+    // best-chain selection avoids it — mirroring how an inline PoS failure is
+    // handled, just deferred to the end of the connect run.
+    if (blsct::PoSBatchEnabled()) {
+        CBlockIndex* failing = nullptr;
+        if (!FlushDeferredPoSBatch(&failing)) {
+            LogPrintf("%s: PoS set-membership batch failed at height %d; rewinding\n",
+                      __func__, failing ? failing->nHeight : -1);
+            while (m_chain.Tip() && failing && m_chain.Tip()->nHeight >= failing->nHeight) {
+                if (!DisconnectTip(state, &disconnectpool)) {
+                    MaybeUpdateMempoolForReorg(disconnectpool, false);
+                    FatalError(m_chainman.GetNotifications(), state, "Failed to disconnect block after PoS batch failure");
+                    return false;
+                }
+                fBlocksDisconnected = true;
+            }
+            if (failing) {
+                BlockValidationState invalid_state;
+                invalid_state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
+                InvalidBlockFound(failing, invalid_state);
+            }
+            fInvalidFound = true;
         }
     }
 

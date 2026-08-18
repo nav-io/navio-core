@@ -18,6 +18,22 @@ class CBlockIndex;
 
 namespace blsct {
 
+// True when batched PoS set-membership verification is enabled
+// (NAVIO_BLSCT_POSBATCH=1). Read once, process-wide.
+bool PoSBatchEnabled();
+
+// One block's set-membership proof deferred for batched verification during a
+// connect run. Unlike PoSCheckItem this OWNS copies of everything (the set, the
+// challenges, and the set-membership proof), so it stays valid after the block
+// it came from is freed — deferred entries outlive their CBlock.
+struct PoSBatchEntry {
+    CBlockIndex* pindex{nullptr};
+    Elements<Mcl::Point> staked_commitments;
+    Mcl::Scalar eta_fiat_shamir;
+    Message eta_phi;
+    SetMemProof<Mcl> set_mem_proof;
+};
+
 // A snapshot of all inputs needed to verify one block's PoS proof. Captured
 // by value at ConnectBlock time so the tx-verify loop and subsequent block
 // processing cannot invalidate the data underneath an in-flight verification.

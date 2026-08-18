@@ -12,6 +12,7 @@
 
 #include <arith_uint256.h>
 #include <attributes.h>
+#include <blsct/pos/pos_check_queue.h>
 #include <blsct/wallet/verification.h>
 #include <chain.h>
 #include <checkqueue.h>
@@ -603,6 +604,11 @@ public:
      */
     std::set<CBlockIndex*, node::CBlockIndexWorkComparator> setBlockIndexCandidates;
 
+    //! Set-membership proofs deferred by ConnectBlock for batched verification,
+    //! drained by FlushDeferredPoSBatch at each ActivateBestChainStep boundary.
+    //! Only used when NAVIO_BLSCT_POSBATCH is enabled.
+    std::vector<blsct::PoSBatchEntry> m_deferred_pos_batch GUARDED_BY(::cs_main);
+
     //! @returns A reference to the in-memory cache of the UTXO set.
     CCoinsViewCache& CoinsTip() EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
     {
@@ -768,6 +774,12 @@ private:
 
     void InvalidBlockFound(CBlockIndex* pindex, const BlockValidationState& state) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
     CBlockIndex* FindMostWorkChain() EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
+    //! Batch-verify the set-membership proofs deferred by ConnectBlock during a
+    //! connect run (NAVIO_BLSCT_POSBATCH). Returns true if all verify; on failure
+    //! sets *failing to the first offending block (identified per-item) and
+    //! clears the deferred set. A no-op unless batching is enabled.
+    bool FlushDeferredPoSBatch(CBlockIndex** failing) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
     bool RollforwardBlock(const CBlockIndex* pindex, CCoinsViewCache& inputs) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
