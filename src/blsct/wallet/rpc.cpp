@@ -47,6 +47,7 @@
 #include <util/time.h>
 #include <wallet/wallet.h>
 #include <limits>
+#include <numeric>
 #include <optional>
 
 namespace blsct {
@@ -262,21 +263,25 @@ std::optional<uint256> BuildAndSendCandidate(wallet::CWallet& wallet, const blsc
         // spend a distinct coin.
         blsct::TxFactory::AddAvailableCoins(&wallet, km, params, coins, /*nAmountLimit=*/MAX_MONEY);
         // Each outstanding candidate must spend a DISTINCT coin (see
-        // ReserveCandidateInput). Scan from a RANDOM start: the reservation
-        // ledger is in-memory, so after a restart a deterministic front-first
-        // pick would rebuild the exact candidate a requester already pools
-        // (rejected by its input dedupe); randomising makes collisions with
-        // forgotten reservations unlikely instead of certain.
+        // ReserveCandidateInput), picked UNIFORMLY at random from the free
+        // ones. Randomness matters twice: the reservation ledger is in-memory,
+        // so after a restart a deterministic pick would rebuild the exact
+        // candidate a requester already pools (rejected by its input dedupe);
+        // and a predictable choice (e.g. always largest-first, which is how
+        // AddAvailableCoins orders coins) would let an observer guess which of
+        // a producer's coins back its cover candidates.
         const blsct::InputCandidates* chosen = nullptr;
         const int64_t now = GetTime<std::chrono::seconds>().count();
-        if (!coins.empty()) {
-            const size_t start = static_cast<size_t>(GetRand(coins.size()));
-            for (size_t i = 0; i < coins.size(); ++i) {
-                const auto& coin = coins[(start + i) % coins.size()];
-                if (ReserveCandidateInput(COutPoint(coin.outpoint.hash), now)) {
-                    chosen = &coin;
-                    break;
-                }
+        std::vector<size_t> free_idx(coins.size());
+        std::iota(free_idx.begin(), free_idx.end(), size_t{0});
+        while (!free_idx.empty() && !chosen) {
+            const size_t pick = static_cast<size_t>(GetRand(free_idx.size()));
+            const auto& coin = coins[free_idx[pick]];
+            if (ReserveCandidateInput(COutPoint(coin.outpoint.hash), now)) {
+                chosen = &coin;
+            } else {
+                free_idx[pick] = free_idx.back();
+                free_idx.pop_back();
             }
         }
         if (!chosen) {
