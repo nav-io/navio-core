@@ -215,6 +215,7 @@ const std::vector<std::string> RPC_COMMANDS_SAFE_FOR_FUZZING{
     "getp2pmsgaggregate",
     "addaggregationcandidate",
     "sendcandidate",
+    "listpendingcandidaterequests",
     "requestquote",
     "listquotes",
     "acceptquote",

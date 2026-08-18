@@ -196,8 +196,12 @@ void Transport::HandleJob(const Job& job)
 
     // Try our private inbox key first (confidential, addressed to us), then the
     // well-known broadcast key (public announcements anyone can read).
+    RecipientKey recipient = RecipientKey::INBOX;
     auto plain = Decrypt(m_inbox_priv, env.enc, aad_span);
-    if (!plain) plain = Decrypt(BroadcastPrivKey(), env.enc, aad_span);
+    if (!plain) {
+        plain = Decrypt(BroadcastPrivKey(), env.enc, aad_span);
+        if (plain) recipient = RecipientKey::BROADCAST;
+    }
     if (!plain) {
         // Finally, any open per-request session keys (e.g. RFQ reply_keys). Take
         // a snapshot of the still-live privs under the lock, then decrypt outside
@@ -213,7 +217,10 @@ void Transport::HandleJob(const Job& job)
         }
         for (const auto& priv : session_privs) {
             plain = Decrypt(priv, env.enc, aad_span);
-            if (plain) break;
+            if (plain) {
+                recipient = RecipientKey::SESSION;
+                break;
+            }
         }
     }
     if (!plain) {
@@ -230,6 +237,7 @@ void Transport::HandleJob(const Job& job)
     msg.kind = kind;
     msg.from_peer = job.peer;
     msg.sender_session = env.enc.eph;
+    msg.recipient = recipient;
     msg.body = std::move(*plain);
     handler(msg);
 }

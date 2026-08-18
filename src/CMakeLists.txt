@@ -369,6 +369,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     policy/settings.cpp
     aggregation/combine.cpp
     aggregation/pool.cpp
+    aggregation/pull.cpp
     aggregation/session.cpp
     p2pmsg/crypto.cpp
     p2pmsg/pow.cpp

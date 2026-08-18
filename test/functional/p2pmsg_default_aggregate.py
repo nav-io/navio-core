@@ -2,11 +2,12 @@
 # Copyright (c) 2026 The Navio Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-"""Default-on aggregation of plain wallet sends (-aggregatesends).
+"""Default-on aggregation of plain wallet sends (-aggregatesends), pull flow.
 
-Two connected p2pmsg nodes. Node1 produces a fee-0 cover candidate
-(broadcastcandidate) which node0 pools. A PLAIN sendtoblsctaddress on node0
-must then merge the candidate by default: the broadcast tx spends the
+Two connected p2pmsg nodes with fast background pull rounds. Node0's puller
+solicits candidates via AGG_ANN; node1's wallet serves one 1:1-encrypted to
+node0's reply key (replycandidate). A PLAIN sendtoblsctaddress on node0 must
+then merge the pooled candidate by default: the broadcast tx spends the
 candidate's input alongside the wallet's own, and the candidate is evicted
 from the pool. Node1 runs with -aggregatesends=0 and must NOT consume its
 pooled candidates on a plain send.
@@ -15,6 +16,8 @@ pooled candidates on a plain send.
 from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
+
+PULL_ARGS = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2"]
 
 
 class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
@@ -26,8 +29,8 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         self.chain = "blsctregtest"
         self.setup_clean_chain = True
         self.extra_args = [
-            ["-p2pmsg=1", "-p2pmsgpowbits=1"],
-            ["-p2pmsg=1", "-p2pmsgpowbits=1", "-aggregatesends=0"],
+            PULL_ARGS,
+            PULL_ARGS + ["-aggregatesends=0"],
         ]
 
     def skip_test_if_missing_module(self):
@@ -43,6 +46,20 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
             to = min(batch_size, remaining)
             self.generatetoblsctaddress(node, to, address)
             remaining -= to
+
+    def serve_candidate(self, requester_node, producer_node, producer_wallet):
+        """Claim one of requester's queued pull requests on the producer and
+        answer it, then wait for the requester to pool the candidate."""
+        keys = []
+
+        def got_one():
+            keys.extend(producer_node.listpendingcandidaterequests())
+            return len(keys) > 0
+
+        self.wait_until(got_one, timeout=30)
+        before = requester_node.getaggregationhint()["available"]
+        producer_wallet.replycandidate(keys[0])
+        self.wait_until(lambda: requester_node.getaggregationhint()["available"] > before, timeout=30)
 
     def run_test(self):
         n0, n1 = self.nodes
@@ -61,10 +78,8 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         assert Decimal(str(w0.getbalances()["mine"]["trusted"])) > 0
         assert Decimal(str(w1.getbalances()["mine"]["trusted"])) > 0
 
-        # --- Node1 supplies a cover candidate; node0 pools it. ---
-        w1.broadcastcandidate()
-        self.wait_until(lambda: n0.getaggregationhint()["available"] >= 1, timeout=30)
-        pooled = n0.getaggregationhint()["available"]
+        # --- Node1 serves node0's pull request; node0 pools the candidate. ---
+        self.serve_candidate(n0, n1, w1)
 
         # --- A PLAIN send on node0 merges by default. ---
         dest = w1.getnewaddress(label="", address_type="blsct")
@@ -85,12 +100,12 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         self.wait_until(
             lambda: Decimal(str(w1.getbalances()["mine"]["trusted"])) >= recv_before + Decimal("1.0") - Decimal("0.1"),
             timeout=30)
-        self.log.info("default-aggregated plain send confirmed, %d candidate(s) merged" % pooled)
+        self.log.info("default-aggregated plain send confirmed")
 
         # --- Node1 opted out (-aggregatesends=0): its pooled candidates stay. ---
-        w0.broadcastcandidate()
-        self.wait_until(lambda: n1.getaggregationhint()["available"] >= 1, timeout=30)
+        self.serve_candidate(n1, n0, w0)
         before = n1.getaggregationhint()["available"]
+        assert before >= 1
         w1.sendtoblsctaddress(w0.getnewaddress(label="", address_type="blsct"), 1.0)
         self.wait_until(lambda: len(n1.getrawmempool()) >= 1, timeout=20)
         assert_equal(n1.getaggregationhint()["available"], before)

@@ -4,6 +4,7 @@
 
 #include <aggregation/combine.h>
 #include <aggregation/pool.h>
+#include <aggregation/pull.h>
 #include <aggregation/session.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
 #include <blsct/private_key.h>
@@ -235,15 +236,47 @@ static RPCHelpMan addaggregationcandidate()
     };
 }
 
+static RPCHelpMan listpendingcandidaterequests()
+{
+    return RPCHelpMan{
+        "listpendingcandidaterequests",
+        "\nFetch and REMOVE (one-shot) queued candidate pull requests received via\n"
+        "AGG_ANN. Each entry is a requester's fresh reply session pubkey; answer\n"
+        "it with the wallet RPC replycandidate, which sends a CANDIDATE_TX\n"
+        "encrypted 1:1 to that key. Stale requests (older than the requester's\n"
+        "reply-key TTL) are pruned, not returned.\n",
+        {
+            {"max", RPCArg::Type::NUM, RPCArg::Default{16}, "Maximum requests to claim"},
+        },
+        RPCResult{RPCResult::Type::ARR, "", "", {
+            {RPCResult::Type::STR_HEX, "reply_pubkey", "A requester's reply session pubkey"},
+        }},
+        RPCExamples{HelpExampleCli("listpendingcandidaterequests", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            if (!node.agg_requests) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            size_t max_n = request.params[0].isNull() ? 16 : request.params[0].getInt<int64_t>();
+            if (max_n > aggregation::REQUEST_QUEUE_CAP) max_n = aggregation::REQUEST_QUEUE_CAP;
+            const int64_t now = GetTime<std::chrono::seconds>().count();
+            UniValue arr(UniValue::VARR);
+            for (const auto& key : node.agg_requests->Claim(max_n, now)) {
+                arr.push_back(HexStr(key.GetVch()));
+            }
+            return arr;
+        },
+    };
+}
+
 static RPCHelpMan sendcandidate()
 {
     return RPCHelpMan{
         "sendcandidate",
-        "\nEncrypt a cover candidate half-transaction to `inbox_pubkey` and broadcast\n"
-        "it as a CANDIDATE_TX over p2pmsg (debug). The recipient decrypts it on a\n"
-        "worker thread and adds it to its candidate pool.\n",
+        "\nEncrypt a cover candidate half-transaction to `reply_pubkey` and send it\n"
+        "as a CANDIDATE_TX over p2pmsg (debug). The requester decrypts it under\n"
+        "its registered pull session key and adds it to its candidate pool;\n"
+        "recipients reject candidates not encrypted to one of their pull keys.\n",
         {
-            {"inbox_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Recipient inbox pubkey (from getp2pmsginfo)"},
+            {"reply_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Requester's reply session pubkey (from its AGG_ANN pull request)"},
             {"tx_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The candidate half-transaction"},
             {"stem", RPCArg::Type::BOOL, RPCArg::Default{true}, "Send via the Dandelion stem variant"},
         },
@@ -255,7 +288,7 @@ static RPCHelpMan sendcandidate()
 
             blsct::PublicKey recipient;
             if (!recipient.SetVch(ParseHex(request.params[0].get_str()))) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "invalid inbox_pubkey");
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "invalid reply_pubkey");
             }
             CMutableTransaction mtx;
             if (!DecodeHexTx(mtx, request.params[1].get_str())) {
@@ -816,6 +849,7 @@ void RegisterP2PMsgRPCCommands(CRPCTable& t)
         {"p2pmsg", &listorders},
         {"p2pmsg", &getaggregationhint},
         {"p2pmsg", &getp2pmsgaggregate},
+        {"p2pmsg", &listpendingcandidaterequests},
         {"hidden", &addaggregationcandidate},
         {"hidden", &sendcandidate},
         {"p2pmsg", &requestquote},

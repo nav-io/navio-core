@@ -94,7 +94,7 @@ static void SetupCliArgs(ArgsManager& argsman)
     argsman.AddArg("-rpcwaittimeout=<n>", strprintf("Timeout in seconds to wait for the RPC server to start, or 0 for no timeout. (default: %d)", DEFAULT_WAIT_CLIENT_TIMEOUT), ArgsManager::ALLOW_ANY | ArgsManager::DISALLOW_NEGATION, OptionsCategory::OPTIONS);
     argsman.AddArg("-wallet=<wallet-name>", "Wallet used to build quote replies", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::OPTIONS);
     argsman.AddArg("-pollinterval=<n>", strprintf("Seconds between work polls (default: %d)", DEFAULT_POLL_SECONDS), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-producecandidates", "Each poll cycle, build and broadcast one fee-0 cover candidate from the wallet to supply the network's aggregation pools (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-producecandidates", "Each poll cycle, answer the node's queued candidate pull requests with wallet-built fee-0 cover candidates, each encrypted 1:1 to its requester (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 }
 
 static void libevent_log_cb(int severity, const char* msg)
@@ -298,23 +298,45 @@ static void PollOnce(tui::Dashboard& dash, PollStats& st)
     const std::optional<std::string> wallet = walletName.empty() ? std::nullopt : std::optional<std::string>(walletName);
     ++st.cycles;
 
-    // Candidate producer: opt-in cover traffic. Each enabled cycle broadcasts one
-    // fee-0 self-spend candidate so the network's aggregation pools stay supplied
-    // (without this, pools sit empty and aggregatesend has no cover to merge).
+    // Candidate producer: opt-in cover traffic. Each enabled cycle claims the
+    // pull requests (AGG_ANN reply keys) the node has queued and answers each
+    // with a wallet-built fee-0 self-spend candidate, encrypted 1:1 to the
+    // requester's reply key — only the requester learns the candidate, so the
+    // cover it provides cannot be subtracted out of a later aggregate by other
+    // bus observers. Without producers, pools sit empty and aggregated sends
+    // have no cover to merge.
     if (gArgs.GetBoolArg("-producecandidates", false)) {
         try {
-            UniValue reply = CallRPC("broadcastcandidate", {}, wallet);
+            UniValue reply = CallRPC("listpendingcandidaterequests", {});
             const UniValue& err = reply.find_value("error");
             if (!err.isNull()) {
                 ++st.errors;
-                st.last_event = "broadcastcandidate: " + err.write();
+                st.last_event = "listpendingcandidaterequests: " + err.write();
+                dash.Log(st.last_event);
             } else {
-                st.last_event = "broadcast cover candidate";
+                const UniValue& keys = reply.find_value("result");
+                size_t served = 0;
+                for (unsigned int i = 0; keys.isArray() && i < keys.size(); ++i) {
+                    UniValue r = CallRPC("replycandidate", {keys[i].get_str()}, wallet);
+                    const UniValue& rerr = r.find_value("error");
+                    if (!rerr.isNull()) {
+                        ++st.errors;
+                        st.last_event = "replycandidate: " + rerr.write();
+                        dash.Log(st.last_event);
+                        // Wallet out of coins (or locked): later keys will fail
+                        // the same way this cycle, so stop early.
+                        break;
+                    }
+                    ++served;
+                }
+                if (served > 0) {
+                    st.last_event = strprintf("served %u cover candidate(s)", (unsigned)served);
+                    dash.Log(st.last_event);
+                }
             }
-            dash.Log(st.last_event);
         } catch (const std::exception& e) {
             ++st.errors;
-            st.last_event = std::string("broadcastcandidate failed: ") + e.what();
+            st.last_event = std::string("candidate serve failed: ") + e.what();
             dash.Log(st.last_event);
         }
     }

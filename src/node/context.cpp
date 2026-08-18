@@ -12,6 +12,7 @@
 #include <net_processing.h>
 #include <netgroup.h>
 #include <aggregation/pool.h>
+#include <aggregation/pull.h>
 #include <rfq/intent_store.h>
 #include <rfq/matcher.h>
 #include <rfq/order_cache.h>

@@ -239,16 +239,33 @@ Built, wired into the node, and tested:
 
 ### Aggregation session loop
 
-The loop is **push-based**, so no in-process node→wallet wiring on the
-net/worker threads is needed:
+The loop is **pull-based**. Candidates are never broadcast in the clear: a
+publicly readable candidate is a decoy any bus observer could subtract back
+out of the aggregate it later appears in (its inputs/outputs are copied into
+the combined transaction verbatim), reducing the anonymity set to zero against
+anyone running a p2pmsg node. Instead each node privately fills its own pool:
 
-1. **Produce** — `broadcastcandidate` (wallet RPC) builds a fee-0 self-spend
-   candidate from the wallet's own coin (no fee output) and floods it as a
-   `CANDIDATE_TX`. `navio-p2pmsg -producecandidates` calls it once per poll
-   cycle so a node continuously supplies cover traffic.
-2. **Collect** — every node's `CANDIDATE_TX` handler validates the candidate
-   structurally and pools it (spent-input eviction keeps the pool fresh).
-3. **Aggregate** — every wallet send RPC (`sendtoblsctaddress`, token/NFT
+1. **Pull** — every node runs a background `CandidatePuller` thread
+   (`-candidatepullinterval`, default 60s). While its pool is below
+   `POOL_TARGET` it generates a FRESH reply keypair per round, registers it as
+   a transport session key (bounded TTL), and broadcasts an `AGG_ANN` request
+   carrying only the reply pubkey. Pulling runs on a steady cadence decoupled
+   from any actual send, so pull traffic never signals that a send is imminent.
+2. **Serve** — producer nodes queue incoming `AGG_ANN` reply keys
+   (`CandidateRequestQueue`, deduped/capped/TTL'd). `navio-p2pmsg
+   -producecandidates` claims them over RPC (`listpendingcandidaterequests`,
+   one-shot) and answers each with `replycandidate` (wallet RPC): a fee-0
+   self-spend candidate built from the wallet's own coin, sent as a
+   `CANDIDATE_TX` encrypted **1:1 to the requester's reply key**. Only the
+   requester learns the candidate; each producer can recognise only its own
+   contribution in a later aggregate, so fully undoing the cover requires
+   every producer of that aggregate to collude.
+3. **Collect** — the `CANDIDATE_TX` handler pools a candidate ONLY when it
+   decrypted under one of the node's registered pull session keys
+   (`InboundMessage::recipient == SESSION`); candidates readable under the
+   inbox or broadcast key are rejected. Spent-input eviction keeps the pool
+   fresh. Pool contents are node-private.
+4. **Aggregate** — every wallet send RPC (`sendtoblsctaddress`, token/NFT
    sends, staking ops — anything routed through `blsct::SendTransaction`) picks
    a RANDOM subset from the pool by default (`-aggregatesends=1`), over-funds
    its own half's fee to cover the combined weight, combines behind a single
@@ -259,15 +276,12 @@ net/worker threads is needed:
 
 Wallet building always runs on the RPC/daemon thread under `cs_wallet`, never on
 the net or worker threads. The transport is enabled by default (`-p2pmsg=1`);
-candidate *production* is opt-in (`-producecandidates`) so a node only spends
+candidate *serving* is opt-in (`-producecandidates`) so a node only spends
 its own coins on cover traffic when asked, while *consumption* is on by default
 (`-aggregatesends=0` opts out).
 
 ### Still deferred
 
-- `AGG_ANN` pull requests (solicit candidates on demand) — the push producer
-  above supersedes this for keeping pools full; a pull path is a later
-  optimization.
 - RFQ taker broadcast-and-collect helper RPCs and multi-TokenId swap combine.
 
 ## Security posture

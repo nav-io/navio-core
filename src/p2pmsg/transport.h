@@ -77,10 +77,22 @@ using BroadcastFn = std::function<void(bool stem, const Envelope&)>;
 using RelayFn = std::function<void(int64_t origin_peer, bool stem, const Envelope&)>;
 
 //! Decrypted, authenticated inbound message handed to a feature module.
+//! Which local key class decrypted an inbound message. Handlers use this to
+//! enforce delivery semantics: e.g. a CANDIDATE_TX is only accepted when it
+//! was encrypted 1:1 to one of our registered pull session keys — a candidate
+//! readable under the well-known broadcast key is public, and public cover
+//! candidates can be subtracted back out of an aggregate by any bus observer.
+enum class RecipientKey : uint8_t {
+    INBOX,     //!< our stable node inbox key
+    BROADCAST, //!< the well-known broadcast key (anyone can read)
+    SESSION,   //!< a per-request session key registered via AddSessionKey
+};
+
 struct InboundMessage {
     PayloadKind kind;
     int64_t from_peer;
     blsct::PublicKey sender_session; //!< the envelope's ephemeral pubkey
+    RecipientKey recipient{RecipientKey::INBOX}; //!< which local key decrypted it
     std::vector<uint8_t> body;       //!< decrypted terminal payload
 };
 using MessageHandler = std::function<void(const InboundMessage&)>;

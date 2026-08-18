@@ -32,6 +32,8 @@ class Transport;
 } // namespace p2pmsg
 namespace aggregation {
 class CandidatePool;
+class CandidatePuller;
+class CandidateRequestQueue;
 } // namespace aggregation
 namespace rfq {
 class IntentStore;
@@ -74,6 +76,9 @@ struct NodeContext {
     //! Cover-traffic candidate pool; registered as a validation interface so it
     //! evicts candidates whose inputs are spent.
     std::unique_ptr<aggregation::CandidatePool> agg_pool;
+    //! Producer-side queue of AGG_ANN candidate pull requests awaiting a
+    //! wallet-built reply (claimed over RPC by the serving daemon).
+    std::unique_ptr<aggregation::CandidateRequestQueue> agg_requests;
     //! Maker-local swap intents for RFQ matching (never gossiped).
     std::unique_ptr<rfq::IntentStore> rfq_intents;
     //! Cache of broadcast standing orders; registered as a validation interface
@@ -90,6 +95,10 @@ struct NodeContext {
     //! explicit ordering is ever skipped.
     std::unique_ptr<p2pmsg::WorkerPool> p2pmsg_pool;
     std::unique_ptr<p2pmsg::Transport> p2pmsg_transport;
+    //! Background candidate puller. Declared AFTER p2pmsg_transport (and
+    //! stopped explicitly in Shutdown) because its thread calls into the
+    //! transport: reverse-order destruction joins it before the transport dies.
+    std::unique_ptr<aggregation::CandidatePuller> agg_puller;
     std::unique_ptr<ChainstateManager> chainman;
     std::unique_ptr<BanMan> banman;
     ArgsManager* args{nullptr}; // Currently a raw pointer because the memory is not managed by this struct

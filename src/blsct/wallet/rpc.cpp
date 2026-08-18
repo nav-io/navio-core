@@ -288,30 +288,36 @@ static RPCHelpMan aggregatesend()
     };
 }
 
-static RPCHelpMan broadcastcandidate()
+static RPCHelpMan replycandidate()
 {
     return RPCHelpMan{
-        "broadcastcandidate",
-        "\nBuild a fee-0 cover candidate from one of the wallet's own coins (a\n"
-        "value-balanced self-spend with no fee output) and broadcast it as a\n"
-        "CANDIDATE_TX over p2pmsg. Other nodes pool it and can merge it into their\n"
-        "aggregated sends as cover traffic, so the wallet contributes to (and\n"
-        "benefits from) the aggregation anonymity set. This is the candidate\n"
-        "*producer*: run it periodically (e.g. from navio-p2pmsg -producecandidates)\n"
-        "to keep the network's candidate pools supplied.\n",
+        "replycandidate",
+        "\nAnswer one candidate pull request: build a fee-0 cover candidate from one\n"
+        "of the wallet's own coins (a value-balanced self-spend with no fee output)\n"
+        "and send it as a CANDIDATE_TX encrypted 1:1 to the requester's reply key.\n"
+        "Only the requester learns the candidate, so the cover it provides in a\n"
+        "later aggregate cannot be subtracted out by other bus observers. This is\n"
+        "the candidate *producer*: run it against the reply keys queued by the\n"
+        "node's AGG_ANN handler (listpendingcandidaterequests), e.g. from\n"
+        "navio-p2pmsg -producecandidates.\n",
         {
-            {"stem", RPCArg::Type::BOOL, RPCArg::Default{true}, "Broadcast via the Dandelion stem variant"},
+            {"reply_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The requester's reply session pubkey (from listpendingcandidaterequests)"},
+            {"stem", RPCArg::Type::BOOL, RPCArg::Default{true}, "Send via the Dandelion stem variant"},
         },
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "candidate_txid", "The candidate half-transaction id"},
         }},
-        RPCExamples{HelpExampleCli("broadcastcandidate", "")},
+        RPCExamples{HelpExampleCli("replycandidate", "\"<replypubkeyhex>\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
             p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
             if (!transport) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
-            const bool stem = request.params[0].isNull() ? true : request.params[0].get_bool();
+            blsct::PublicKey reply_key;
+            if (!reply_key.SetVch(ParseHex(request.params[0].get_str()))) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "invalid reply_pubkey");
+            }
+            const bool stem = request.params[1].isNull() ? true : request.params[1].get_bool();
 
             LOCK(pwallet->cs_wallet);
             auto km = pwallet->GetOrCreateBLSCTKeyMan();
@@ -342,7 +348,7 @@ static RPCHelpMan broadcastcandidate()
             ps << cand;
             auto bytes = MakeUCharSpan(ss);
             std::vector<uint8_t> body(bytes.begin(), bytes.end());
-            transport->Send(p2pmsg::BroadcastPubKey(), p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
+            transport->Send(reply_key, p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
 
             UniValue o(UniValue::VOBJ);
             o.pushKV("candidate_txid", cand->GetHash().GetHex());
@@ -4404,7 +4410,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &listblsctunspent},
         {"blsct", &sendtoblsctaddress},
         {"blsct", &aggregatesend},
-        {"blsct", &broadcastcandidate},
+        {"blsct", &replycandidate},
         {"blsct", &acceptquotewallet},
         {"blsct", &broadcastorder},
         {"blsct", &replyquote},

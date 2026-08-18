@@ -48,6 +48,7 @@
 #include <node/chainstatemanager_args.h>
 #include <node/context.h>
 #include <aggregation/pool.h>
+#include <aggregation/pull.h>
 #include <aggregation/session.h>
 #include <netmessagemaker.h>
 #include <p2pmsg/transport.h>
@@ -319,6 +320,8 @@ void Shutdown(NodeContext& node)
     rfq::SetActiveMatcher(nullptr);
     rfq::SetActiveOrderCache(nullptr);
     aggregation::SetActivePool(nullptr);
+    // Join the puller thread before the transport it sends through goes away.
+    node.agg_puller.reset();
     // Order matters: the worker pool's decrypt jobs dispatch to transport
     // handlers that hold RAW pointers to rfq_matcher / rfq_intents / rfq_orders
     // / agg_pool. Clearing the SetActive* globals does NOT reach those captured
@@ -339,6 +342,7 @@ void Shutdown(NodeContext& node)
         UnregisterValidationInterface(node.agg_pool.get());
         node.agg_pool.reset();
     }
+    node.agg_requests.reset();
     node.peerman.reset();
     node.connman.reset();
     node.banman.reset();
@@ -554,6 +558,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-p2pmsg", strprintf("Enable the encrypted p2p messaging subsystem (default: %u)", p2pmsg::DEFAULT_P2PMSG_ENABLE), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-aggregatesends", strprintf("Merge fee-0 cover candidates from the p2pmsg pool into every wallet BLSCT send, hiding the wallet's inputs and outputs among cover traffic at the cost of a higher fee. Sends fall back to plain transactions when no candidates are available. (default: %u)", aggregation::DEFAULT_AGGREGATE_SENDS), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-candidatepullinterval=<n>", strprintf("Seconds between background candidate pull rounds (default: %d)", aggregation::PULL_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onionworkers=<n>", "Number of worker threads for p2p-messaging heavy crypto (0 = auto, default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bantime=<n>", strprintf("Default duration (in seconds) of manually configured bans (default: %u)", DEFAULT_MISBEHAVING_BANTIME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bind=<addr>[:<port>][=onion]", strprintf("Bind to given address and always listen on it (default: 0.0.0.0). Use [host]:port notation for IPv6. Append =onion to tag any incoming connections to that address and port as incoming Tor connections (default: 127.0.0.1:%u=onion, testnet: 127.0.0.1:%u=onion, signet: 127.0.0.1:%u=onion, regtest: 127.0.0.1:%u=onion, blsctregtest: 127.0.0.1:%u=onion)", defaultBaseParams->OnionServiceTargetPort(), testnetBaseParams->OnionServiceTargetPort(), signetBaseParams->OnionServiceTargetPort(), regtestBaseParams->OnionServiceTargetPort(), blsctRegtestBaseParams->OnionServiceTargetPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
@@ -1709,6 +1714,9 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         RegisterValidationInterface(node.agg_pool.get());
         aggregation::SetActivePool(node.agg_pool.get());
 
+        // Producer-side queue of candidate pull requests awaiting a wallet reply.
+        node.agg_requests = std::make_unique<aggregation::CandidateRequestQueue>();
+
         // Maker-local RFQ swap intents.
         node.rfq_intents = std::make_unique<rfq::IntentStore>();
 
@@ -1751,10 +1759,16 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                     } catch (const std::exception&) { /* drop malformed */ }
                 });
 
-            // A cover candidate addressed to us: add to the pool.
+            // A cover candidate answering one of OUR pull requests: add to the
+            // pool. Only accepted when it decrypted under a per-round pull
+            // session key — a candidate readable under the inbox or broadcast
+            // key was not solicited by us 1:1, and pooling publicly readable
+            // candidates would let any bus observer subtract the cover halves
+            // back out of a later aggregate (defeating the decoys entirely).
             node.p2pmsg_transport->RegisterHandler(
                 p2pmsg::PayloadKind::CANDIDATE_TX,
                 [pool](const p2pmsg::InboundMessage& m) {
+                    if (m.recipient != p2pmsg::RecipientKey::SESSION) return;
                     try {
                         DataStream ss{MakeByteSpan(m.body)};
                         ParamsStream ps{TX_WITH_WITNESS, ss};
@@ -1763,6 +1777,19 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         pool->AddCandidate(tx, m.from_peer);
                     } catch (const std::exception&) { /* drop malformed */ }
                 });
+
+            // A candidate pull request: queue the requester's reply key for
+            // the serving daemon to answer with a wallet-built candidate.
+            {
+                aggregation::CandidateRequestQueue* requests = node.agg_requests.get();
+                node.p2pmsg_transport->RegisterHandler(
+                    p2pmsg::PayloadKind::AGG_ANN,
+                    [requests](const p2pmsg::InboundMessage& m) {
+                        blsct::PublicKey reply_key;
+                        if (!reply_key.SetVch(m.body)) return; // drop malformed
+                        requests->Add(reply_key, GetTime<std::chrono::seconds>().count());
+                    });
+            }
 
             // A maker quote for one of our open RFQs: record it.
             node.p2pmsg_transport->RegisterHandler(
@@ -1794,6 +1821,19 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         orders->StoreOrder(q, GetTime<std::chrono::seconds>().count());
                     } catch (const std::exception&) { /* drop malformed */ }
                 });
+        }
+
+        // Background candidate puller: keeps the pool supplied via AGG_ANN
+        // pull rounds on a steady cadence, decoupled from any actual send (so
+        // pull traffic never signals that a send is imminent). Replies arrive
+        // 1:1-encrypted to a per-round key, keeping this node's pool contents
+        // private to it.
+        {
+            const int64_t interval = std::clamp<int64_t>(
+                args.GetIntArg("-candidatepullinterval", aggregation::PULL_INTERVAL_SECONDS), 1, 3600);
+            node.agg_puller = std::make_unique<aggregation::CandidatePuller>(
+                *node.p2pmsg_transport, *node.agg_pool, interval);
+            node.agg_puller->Start();
         }
 
         LogPrintf("p2pmsg: enabled (workers=%u, powbits=%u)\n",

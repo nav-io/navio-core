@@ -4,6 +4,7 @@
 
 #include <aggregation/combine.h>
 #include <aggregation/pool.h>
+#include <aggregation/pull.h>
 #include <aggregation/session.h>
 
 #include <blsct/wallet/keyman.h>
@@ -421,6 +422,42 @@ BOOST_FIXTURE_TEST_CASE(session_required_fee, TestingSetup)
     // An empty candidate set requires no extra fee.
     std::vector<CTransactionRef> empty;
     BOOST_CHECK_EQUAL(aggregation::RequiredCandidateFee(empty, BLSCT_DEFAULT_FEE), 0);
+}
+
+BOOST_AUTO_TEST_CASE(request_queue_dedupe_cap_ttl)
+{
+    aggregation::CandidateRequestQueue q;
+    const int64_t t0 = 1000;
+
+    auto key = [](uint8_t seed) {
+        blsct::PrivateKey priv(MclScalar(std::vector<uint8_t>{seed, 1}));
+        return priv.GetPublicKey();
+    };
+
+    // Dedupe: the same reply key queues once.
+    BOOST_CHECK(q.Add(key(1), t0));
+    BOOST_CHECK(!q.Add(key(1), t0));
+    BOOST_CHECK_EQUAL(q.Size(), 1U);
+
+    // Claim is one-shot: entries are removed.
+    auto claimed = q.Claim(16, t0);
+    BOOST_CHECK_EQUAL(claimed.size(), 1U);
+    BOOST_CHECK_EQUAL(q.Size(), 0U);
+    // ...so the same key may be requested again afterwards.
+    BOOST_CHECK(q.Add(key(1), t0));
+
+    // Cap: no more than REQUEST_QUEUE_CAP queued.
+    for (uint8_t i = 2; i < 2 + aggregation::REQUEST_QUEUE_CAP + 8; ++i) {
+        q.Add(key(i), t0);
+    }
+    BOOST_CHECK_EQUAL(q.Size(), aggregation::REQUEST_QUEUE_CAP);
+
+    // TTL: stale entries are pruned on Add and never returned by Claim.
+    const int64_t later = t0 + aggregation::REQUEST_TTL_SECONDS;
+    BOOST_CHECK(q.Add(key(200), later)); // prunes the full, stale queue first
+    claimed = q.Claim(aggregation::REQUEST_QUEUE_CAP, later);
+    BOOST_CHECK_EQUAL(claimed.size(), 1U);
+    BOOST_CHECK(claimed[0].GetVch() == key(200).GetVch());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -399,6 +399,52 @@ BOOST_AUTO_TEST_CASE(transport_ping_loopback)
     BOOST_CHECK(got == payload);
 }
 
+BOOST_AUTO_TEST_CASE(transport_recipient_key_tagging)
+{
+    // Handlers gate on which local key decrypted a message (e.g. CANDIDATE_TX
+    // only accepts SESSION), so the tag must reflect the actual decrypt path.
+    LoopbackTransport h(/*bits=*/4);
+
+    std::atomic<int> got{0};
+    std::mutex gm;
+    std::vector<RecipientKey> tags;
+    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage& m) {
+        {
+            std::lock_guard<std::mutex> lk(gm);
+            tags.push_back(m.recipient);
+        }
+        got.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    using namespace std::chrono_literals;
+    auto wait_for = [&](int n) {
+        auto deadline = std::chrono::steady_clock::now() + 10s;
+        while (got.load() < n && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(1ms);
+        }
+        BOOST_REQUIRE_EQUAL(got.load(), n);
+    };
+
+    // Inbox-encrypted -> INBOX.
+    h.t->Send(h.t->InboxPubKey(), PayloadKind::PING, {1}, /*stem=*/false);
+    wait_for(1);
+    // Broadcast-encrypted -> BROADCAST.
+    h.t->Send(BroadcastPubKey(), PayloadKind::PING, {2}, /*stem=*/false);
+    wait_for(2);
+    // Encrypted to a registered session key -> SESSION.
+    blsct::PrivateKey sess_priv(MclScalar::Rand(/*exclude_zero=*/true));
+    blsct::PublicKey sess_pub = sess_priv.GetPublicKey();
+    h.t->AddSessionKey(sess_pub, sess_priv, /*expiry=*/0);
+    h.t->Send(sess_pub, PayloadKind::PING, {3}, /*stem=*/false);
+    wait_for(3);
+
+    std::lock_guard<std::mutex> lk(gm);
+    BOOST_REQUIRE_EQUAL(tags.size(), 3U);
+    BOOST_CHECK(tags[0] == RecipientKey::INBOX);
+    BOOST_CHECK(tags[1] == RecipientKey::BROADCAST);
+    BOOST_CHECK(tags[2] == RecipientKey::SESSION);
+}
+
 BOOST_AUTO_TEST_CASE(transport_pow_kind_loopback)
 {
     LoopbackTransport h(/*bits=*/6);
