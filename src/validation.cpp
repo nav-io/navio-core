@@ -2703,18 +2703,23 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             // BLSCT aggregation can carry vouts that are spent by sibling vins
             // inside the same tx; those never enter the UTXO set (see
             // coins.cpp::AddCoins), so they cannot collide and are exempt.
+            // Hash each output's content once (a BLSCT output hash serializes the
+            // whole range proof + double-SHA256) and reuse it for the self-spent
+            // scan and the overwrite check below, rather than hashing twice.
+            std::vector<uint256> out_hashes(tx->vout.size());
+            for (size_t o = 0; o < tx->vout.size(); o++) out_hashes[o] = tx->vout[o].GetHash();
+
             std::set<uint256> self_spent;
             if (is_blsct_noncoinbase) {
                 std::set<uint256> vin_prevouts;
                 for (const auto& in : tx->vin) vin_prevouts.insert(in.prevout.hash);
-                for (const auto& out : tx->vout) {
-                    const uint256 oh = out.GetHash();
+                for (const auto& oh : out_hashes) {
                     if (vin_prevouts.contains(oh)) self_spent.insert(oh);
                 }
             }
             for (size_t o = 0; o < tx->vout.size(); o++) {
                 if (tx->vout[o].scriptPubKey.IsUnspendable()) continue; // not stored in UTXO set
-                const uint256 outid = tx->vout[o].GetHash();
+                const uint256& outid = out_hashes[o];
                 if (self_spent.contains(outid)) continue;
                 if (view.HaveCoin(COutPoint(outid)) || !block_outids.insert(outid).second) {
                     LogPrintf("ERROR: ConnectBlock(): tried to overwrite transaction\n");
