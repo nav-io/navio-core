@@ -15,6 +15,21 @@ using Scalars = Elements<Scalar>;
 
 namespace blsct {
 
+namespace {
+// Backstop for the fee fixpoint in BuildTx(). The loop terminates on its own:
+// the assumed fee never decreases and every non-accepting pass raises it
+// strictly (see the comment at the acceptance test), so it cannot cycle. This
+// cap only ensures that a future change breaking that argument fails loudly
+// instead of spinning forever inside the loop -- BuildTx runs under
+// cs_wallet, so a spin wedges the whole wallet until the process is killed.
+//
+// Sized off the input cap rather than picked round: a raised fee only forces
+// another pass by pulling in more inputs, of which there can be at most
+// MAX_TX_INPUT_COUNT, the change output can appear or disappear once at each
+// input count, and one further pass accepts.
+constexpr size_t MAX_FEE_FIXPOINT_PASSES = 2 * MAX_TX_INPUT_COUNT + 2;
+} // namespace
+
 void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey, const CAmount& nBLSCTDefaultFee, const std::optional<delegation::DelegationRequest>& stakeDelegation)
 {
     if (!nAmounts.contains(token_id))
@@ -151,7 +166,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
     // total has to be rebuilt from this each time rather than accumulated.
     const CAmount nFromPlainOutputs = subtractFeeOutput ? nAmounts[subtractFeeOutput->token_id].nFromOutputs : 0;
 
-    while (true) {
+    for (size_t pass = 0; pass < MAX_FEE_FIXPOINT_PASSES; ++pass) {
         CMutableTransaction tx = this->tx;
         tx.nVersion |= CTransaction::BLSCT_MARKER;
 
@@ -312,7 +327,26 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
         tx.txSig = Signature::Aggregate(txSigs);
 
-        if (nAmounts[TokenId()].nFromFee == required_fee) {
+        // The consensus rule is a floor, not an equality: VerifyTxCore rejects
+        // only `nFee < GetTransactionWeight(tx) * nBLSCTDefaultFee`, so a
+        // transaction paying more than the requirement is valid (and a higher
+        // fee only helps relay). Accepting on ">=" instead of "==" -- and
+        // never lowering the fee once raised -- makes the assumed fee strictly
+        // increasing across non-accepting passes, which is what makes this
+        // loop terminate.
+        //
+        // The exact-equality form could not terminate: dropping a change
+        // output that lands on zero (see the `change.second == 0` skip above)
+        // shrinks the transaction, so the fee required without change is lower
+        // than the fee required with it. When inputs - outputs equals the
+        // with-change fee exactly, the two fees chase each other forever and
+        // the wallet spins under cs_wallet until it is killed. In that corner
+        // this settles instead on the with-change fee while the emitted
+        // (change-less) transaction only requires the smaller one: it
+        // overpays by one change output's worth of weight. That trade is
+        // deliberate -- a few hundred navoshis in a corner case, against a
+        // wedged wallet.
+        if (nAmounts[TokenId()].nFromFee >= required_fee) {
             // Every output was consumed by the fee, so there is no output to
             // hand back as the payment. Nothing builds that shape today; fail
             // rather than return a handle that points at the fee output.
@@ -332,10 +366,15 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             std::shuffle(tx.vout.begin(), tx.vout.end(), rng);
             return BuiltTransaction{tx, *recipientOutputHash};
         }
+        // Only reached with required_fee > nFromFee, so this raises the fee.
         nAmounts[TokenId()].nFromFee = required_fee;
     }
 
-    return std::nullopt;
+    throw std::runtime_error(strprintf(
+        "The transaction fee did not settle after %u passes. This is a bug in the "
+        "wallet's fee calculation; please report it along with the amount sent and "
+        "the number of inputs the wallet holds.",
+        MAX_FEE_FIXPOINT_PASSES));
 }
 
 bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, const PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)

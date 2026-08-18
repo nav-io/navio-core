@@ -2641,6 +2641,11 @@ RPCHelpMan createblsctbalanceproof()
 
             LOCK(pwallet->cs_wallet);
 
+            // The proof is signed with the output's spending key, which a
+            // locked wallet cannot derive. Check under cs_wallet so a relock
+            // cannot slip in between here and the proof construction below.
+            EnsureWalletIsUnlocked(*pwallet);
+
             if (target_amount <= 0) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Amount must be positive");
             }
