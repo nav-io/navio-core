@@ -18,6 +18,7 @@
 #include <bench/bench.h>
 
 #include <blsct/arith/mcl/mcl.h>
+#include <util/string.h>
 #include <blsct/arith/mcl/mcl_init.h>
 #include <blsct/set_mem_proof/set_mem_proof.h>
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
@@ -64,7 +65,7 @@ struct BatchFixture {
                 if (i == member_idx) {
                     Ys.Add(sigma);
                 } else {
-                    Ys.Add(Point::MapToPoint("y" + std::to_string(b) + "_" + std::to_string(i),
+                    Ys.Add(Point::MapToPoint("y" + ToString(b) + "_" + ToString(i),
                                              Endianness::Little));
                 }
             }

@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <sstream>
 #include <test/util/setup_common.h>
+#include <util/string.h>
 
 using Scalar = Mcl::Scalar;
 using Scalars = Elements<Scalar>;
@@ -533,7 +534,7 @@ BatchSample MakeBatchSample(const SetMemProofSetup<Arith>& setup, size_t set_siz
         if (i == member_idx) {
             Ys.Add(sigma);
         } else {
-            Ys.Add(Point::MapToPoint("y" + std::to_string(tag) + "_" + std::to_string(i), Endianness::Little));
+            Ys.Add(Point::MapToPoint("y" + ToString(tag) + "_" + ToString(i), Endianness::Little));
         }
     }
 
