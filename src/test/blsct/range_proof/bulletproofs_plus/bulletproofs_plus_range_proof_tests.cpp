@@ -8,6 +8,11 @@
 #include <boost/test/unit_test.hpp>
 #include <streams.h>
 
+#include <functional>
+#include <string>
+#include <utility>
+#include <vector>
+
 BOOST_FIXTURE_TEST_SUITE(bulletproofs_plus_range_proof_tests, BasicTestingSetup)
 
 using T = Mcl;
@@ -69,6 +74,42 @@ BOOST_AUTO_TEST_CASE(test_equal)
     q.A = q.A + q.A;
 
     BOOST_CHECK(p != q);
+}
+
+// Every field Serialize() writes has to take part in equality, otherwise two
+// proofs that serialize to different bytes compare equal.
+BOOST_AUTO_TEST_CASE(test_equal_covers_serialized_fields)
+{
+    const auto p = GenProof();
+
+    const std::vector<std::pair<std::string, std::function<void(bulletproofs_plus::RangeProof<T>&)>>> mutations = {
+        {"Vs", [](auto& q) { q.Vs.Add(Point::GetBasePoint()); }},
+        {"Ls", [](auto& q) { q.Ls.Add(Point::GetBasePoint()); }},
+        {"Rs", [](auto& q) { q.Rs.Add(Point::GetBasePoint()); }},
+        {"A", [](auto& q) { q.A = q.A + q.A; }},
+        {"A_wip", [](auto& q) { q.A_wip = q.A_wip + q.A_wip; }},
+        {"B", [](auto& q) { q.B = q.B + q.B; }},
+        {"r_prime", [](auto& q) { q.r_prime = q.r_prime + Scalar(1); }},
+        {"s_prime", [](auto& q) { q.s_prime = q.s_prime + Scalar(1); }},
+        {"delta_prime", [](auto& q) { q.delta_prime = q.delta_prime + Scalar(1); }},
+        {"alpha_hat", [](auto& q) { q.alpha_hat = q.alpha_hat + Scalar(1); }},
+        {"tau_x", [](auto& q) { q.tau_x = q.tau_x + Scalar(1); }},
+    };
+
+    DataStream st_p{};
+    p.Serialize(st_p);
+
+    for (const auto& [name, mutate] : mutations) {
+        auto q = GenProof();
+        mutate(q);
+
+        DataStream st_q{};
+        q.Serialize(st_q);
+        BOOST_CHECK_MESSAGE(st_p.str() != st_q.str(),
+                            "mutating " + name + " did not change the serialization");
+
+        BOOST_CHECK_MESSAGE(p != q, "proofs differing in " + name + " compare equal");
+    }
 }
 
 BOOST_AUTO_TEST_CASE(test_de_ser)

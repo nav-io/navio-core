@@ -39,7 +39,7 @@ public:
     bool Find(const T& x) const;
     std::vector<uint8_t> GetVch() const;
 
-    void ConfirmIndexInsideRange(const uint32_t& index) const;
+    void ConfirmIndexInsideRange(const size_t& index) const;
     void ConfirmSizesMatch(const size_t& other_size) const;
 
     /**
