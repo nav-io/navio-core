@@ -32,6 +32,7 @@
 #include <wallet/spend.h>
 #include <aggregation/combine.h>
 #include <aggregation/pool.h>
+#include <aggregation/pull.h>
 #include <aggregation/session.h>
 #include <node/context.h>
 #include <node/transaction.h>
@@ -202,6 +203,128 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         return outputHash;
     }
 }
+
+namespace {
+//! Coins recently spent into a served candidate, with expiry. A candidate is
+//! not a mempool transaction, so serving one does NOT remove its coin from the
+//! wallet's spendable set — without this ledger every served candidate would
+//! reuse the same first coin, and requesters' pools (deduped by input
+//! outpoint) would reject all but the first. Two live candidates sharing an
+//! input would also conflict if merged into two aggregates. Entries expire
+//! with the requester's reply-key TTL; a merged candidate's coin drops out of
+//! the wallet's coin set on its own once the aggregate confirms.
+Mutex g_candidate_inputs_mutex;
+std::map<COutPoint, int64_t> g_candidate_inputs GUARDED_BY(g_candidate_inputs_mutex);
+
+//! Reserve `outpoint` for one candidate. Returns false if still reserved.
+bool ReserveCandidateInput(const COutPoint& outpoint, int64_t now)
+{
+    LOCK(g_candidate_inputs_mutex);
+    std::erase_if(g_candidate_inputs, [now](const auto& e) { return e.second <= now; });
+    return g_candidate_inputs.emplace(outpoint, now + aggregation::PULL_KEY_TTL_SECONDS).second;
+}
+} // namespace
+
+std::optional<uint256> BuildAndSendCandidate(wallet::CWallet& wallet, const blsct::PublicKey& reply_key, bool stem, std::string& error)
+{
+    p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+    if (!transport) {
+        error = "p2pmsg disabled";
+        return std::nullopt;
+    }
+    if (!wallet.IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT)) {
+        error = "not a BLSCT wallet";
+        return std::nullopt;
+    }
+    if (wallet.IsLocked()) {
+        error = "wallet is locked";
+        return std::nullopt;
+    }
+
+    CTransactionRef cand;
+    {
+        LOCK(wallet.cs_wallet);
+        auto km = wallet.GetBLSCTKeyMan();
+        if (!km) {
+            error = "no BLSCT key manager";
+            return std::nullopt;
+        }
+
+        // Pick a single spendable NAV coin to cover-spend to ourselves.
+        std::vector<blsct::InputCandidates> coins;
+        wallet::CoinFilterParams params;
+        params.only_blsct = true;
+        params.token_id = TokenId();
+        params.min_amount = 1;
+        // nAmountLimit stops gathering once the running total EXCEEDS it, so 0
+        // yields exactly one (the largest) coin; MAX_MONEY yields all of them,
+        // which candidate serving needs -- each outstanding candidate must
+        // spend a distinct coin.
+        blsct::TxFactory::AddAvailableCoins(&wallet, km, params, coins, /*nAmountLimit=*/MAX_MONEY);
+        // Each outstanding candidate must spend a DISTINCT coin (see
+        // ReserveCandidateInput). Scan from a RANDOM start: the reservation
+        // ledger is in-memory, so after a restart a deterministic front-first
+        // pick would rebuild the exact candidate a requester already pools
+        // (rejected by its input dedupe); randomising makes collisions with
+        // forgotten reservations unlikely instead of certain.
+        const blsct::InputCandidates* chosen = nullptr;
+        const int64_t now = GetTime<std::chrono::seconds>().count();
+        if (!coins.empty()) {
+            const size_t start = static_cast<size_t>(GetRand(coins.size()));
+            for (size_t i = 0; i < coins.size(); ++i) {
+                const auto& coin = coins[(start + i) % coins.size()];
+                if (ReserveCandidateInput(COutPoint(coin.outpoint.hash), now)) {
+                    chosen = &coin;
+                    break;
+                }
+            }
+        }
+        if (!chosen) {
+            error = "No spendable NAV coin free to build a candidate from";
+            return std::nullopt;
+        }
+
+        const auto& c = *chosen;
+        auto factory = blsct::TxFactory(km);
+        factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+        // Self-spend the whole value back to a fresh own address: input value
+        // == output value, zero fee. BuildCandidate emits no fee output.
+        blsct::SubAddress self_dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+        factory.AddOutput(self_dest, c.amount, "candidate", TokenId(), blsct::NORMAL, /*minStake=*/0,
+                          /*fSubtractFeeFromAmount=*/false, MclScalar::Rand(), /*nBLSCTDefaultFee=*/0);
+        auto built = factory.BuildCandidate();
+        if (!built) {
+            error = "failed to build candidate";
+            return std::nullopt;
+        }
+        cand = MakeTransactionRef(built->tx);
+    }
+
+    // Encrypt + PoW-grind + send OUTSIDE cs_wallet: none of it touches wallet
+    // state, and Send is the expensive part.
+    DataStream ss;
+    ParamsStream ps{TX_WITH_WITNESS, ss};
+    ps << cand;
+    auto bytes = MakeUCharSpan(ss);
+    std::vector<uint8_t> body(bytes.begin(), bytes.end());
+    transport->Send(reply_key, p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
+    return cand->GetHash().ToUint256();
+}
+
+void ServeCandidateRequests(const std::vector<std::shared_ptr<wallet::CWallet>>& wallets)
+{
+    aggregation::CandidateRequestQueue* queue = aggregation::GetActiveRequestQueue();
+    if (!queue || wallets.empty()) return;
+    const int64_t now = GetTime<std::chrono::seconds>().count();
+    for (const auto& reply_key : queue->Claim(aggregation::SERVE_MAX_PER_TICK, now)) {
+        // First wallet able to fund a candidate answers; a request no wallet
+        // can serve is dropped (claimed already) and the requester re-pulls.
+        for (const auto& w : wallets) {
+            std::string error;
+            if (BuildAndSendCandidate(*w, reply_key, /*stem=*/true, error)) break;
+        }
+    }
+}
 } // namespace blsct
 
 static RPCHelpMan aggregatesend()
@@ -319,39 +442,12 @@ static RPCHelpMan replycandidate()
             }
             const bool stem = request.params[1].isNull() ? true : request.params[1].get_bool();
 
-            LOCK(pwallet->cs_wallet);
-            auto km = pwallet->GetOrCreateBLSCTKeyMan();
-
-            // Pick a single spendable NAV coin to cover-spend to ourselves.
-            std::vector<blsct::InputCandidates> coins;
-            wallet::CoinFilterParams params;
-            params.only_blsct = true;
-            params.token_id = TokenId();
-            params.min_amount = 1;
-            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, coins, /*nAmountLimit=*/0);
-            if (coins.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No spendable NAV coin to build a candidate from");
-
-            const auto& c = coins.front();
-            auto factory = blsct::TxFactory(km);
-            factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
-            // Self-spend the whole value back to a fresh own address: input value
-            // == output value, zero fee. BuildCandidate emits no fee output.
-            blsct::SubAddress self_dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
-            factory.AddOutput(self_dest, c.amount, "candidate", TokenId(), blsct::NORMAL, /*minStake=*/0,
-                              /*fSubtractFeeFromAmount=*/false, MclScalar::Rand(), /*nBLSCTDefaultFee=*/0);
-            auto built = factory.BuildCandidate();
-            if (!built) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build candidate");
-
-            CTransactionRef cand = MakeTransactionRef(built->tx);
-            DataStream ss;
-            ParamsStream ps{TX_WITH_WITNESS, ss};
-            ps << cand;
-            auto bytes = MakeUCharSpan(ss);
-            std::vector<uint8_t> body(bytes.begin(), bytes.end());
-            transport->Send(reply_key, p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
+            std::string error;
+            auto txid = blsct::BuildAndSendCandidate(*pwallet, reply_key, stem, error);
+            if (!txid) throw JSONRPCError(RPC_WALLET_ERROR, error);
 
             UniValue o(UniValue::VOBJ);
-            o.pushKV("candidate_txid", cand->GetHash().GetHex());
+            o.pushKV("candidate_txid", txid->GetHex());
             return o;
         },
     };

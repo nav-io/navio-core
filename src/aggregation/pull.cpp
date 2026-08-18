@@ -15,7 +15,13 @@
 
 #include <chrono>
 
+#include <atomic>
+
 namespace aggregation {
+
+static std::atomic<CandidateRequestQueue*> g_active_request_queue{nullptr};
+void SetActiveRequestQueue(CandidateRequestQueue* queue) { g_active_request_queue.store(queue, std::memory_order_release); }
+CandidateRequestQueue* GetActiveRequestQueue() { return g_active_request_queue.load(std::memory_order_acquire); }
 
 bool CandidateRequestQueue::Add(const blsct::PublicKey& reply_key, int64_t now)
 {

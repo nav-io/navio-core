@@ -251,15 +251,18 @@ anyone running a p2pmsg node. Instead each node privately fills its own pool:
    a transport session key (bounded TTL), and broadcasts an `AGG_ANN` request
    carrying only the reply pubkey. Pulling runs on a steady cadence decoupled
    from any actual send, so pull traffic never signals that a send is imminent.
-2. **Serve** — producer nodes queue incoming `AGG_ANN` reply keys
-   (`CandidateRequestQueue`, deduped/capped/TTL'd). `navio-p2pmsg
-   -producecandidates` claims them over RPC (`listpendingcandidaterequests`,
-   one-shot) and answers each with `replycandidate` (wallet RPC): a fee-0
-   self-spend candidate built from the wallet's own coin, sent as a
-   `CANDIDATE_TX` encrypted **1:1 to the requester's reply key**. Only the
-   requester learns the candidate; each producer can recognise only its own
-   contribution in a later aggregate, so fully undoing the cover requires
-   every producer of that aggregate to collude.
+2. **Serve** — nodes queue incoming `AGG_ANN` reply keys
+   (`CandidateRequestQueue`, deduped/capped/TTL'd). A `naviod` with a loaded
+   BLSCT wallet answers them AUTOMATICALLY: a wallet-scheduler task
+   (`-servecandidates`, default on; `-servecandidateinterval` ticks) claims
+   queued requests and answers each with a fee-0 self-spend candidate built
+   from the wallet's own coin, sent as a `CANDIDATE_TX` encrypted **1:1 to
+   the requester's reply key**. `navio-p2pmsg -producecandidates` does the
+   same over RPC (`listpendingcandidaterequests` one-shot claim +
+   `replycandidate`) for wallet-less orchestration. Only the requester learns
+   a candidate; each producer can recognise only its own contribution in a
+   later aggregate, so fully undoing the cover requires every producer of
+   that aggregate to collude.
 3. **Collect** — the `CANDIDATE_TX` handler pools a candidate ONLY when it
    decrypted under one of the node's registered pull session keys
    (`InboundMessage::recipient == SESSION`); candidates readable under the
@@ -274,11 +277,12 @@ anyone running a p2pmsg node. Instead each node privately fills its own pool:
    blocks a payment. `aggregatesend` remains for explicit control
    (`max_candidates`, merged-count reporting).
 
-Wallet building always runs on the RPC/daemon thread under `cs_wallet`, never on
-the net or worker threads. The transport is enabled by default (`-p2pmsg=1`);
-candidate *serving* is opt-in (`-producecandidates`) so a node only spends
-its own coins on cover traffic when asked, while *consumption* is on by default
-(`-aggregatesends=0` opts out).
+Wallet building always runs on the RPC/daemon/wallet-scheduler threads under
+`cs_wallet`, never on the net or worker threads. The transport is enabled by
+default (`-p2pmsg=1`); with a loaded BLSCT wallet both sides of the loop are on
+by default — serving (`-servecandidates=0` opts out) and consumption
+(`-aggregatesends=0` opts out) — so a stock node both supplies and uses cover
+with zero configuration.
 
 ### Still deferred
 

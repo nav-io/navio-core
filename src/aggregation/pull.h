@@ -34,6 +34,14 @@ static constexpr size_t REQUEST_QUEUE_CAP = 64;
 //! Producer side: a queued pull request older than this is stale (its reply
 //! key has expired on the requester) and is pruned instead of answered.
 static constexpr int64_t REQUEST_TTL_SECONDS = PULL_KEY_TTL_SECONDS;
+//! Default for -servecandidates: a loaded BLSCT wallet automatically answers
+//! queued pull requests with cover candidates (no navio-p2pmsg daemon needed).
+static constexpr bool DEFAULT_SERVE_CANDIDATES{true};
+//! Seconds between the wallet's built-in candidate-serving ticks.
+static constexpr int64_t SERVE_INTERVAL_SECONDS = 20;
+//! Cap on requests answered per built-in serving tick, bounding the wallet
+//! scheduler time spent building/encrypting/PoW-stamping candidates.
+static constexpr size_t SERVE_MAX_PER_TICK = 2;
 
 /**
  * Producer-side queue of candidate pull requests (AGG_ANN) awaiting a wallet
@@ -60,6 +68,13 @@ private:
     //! reply-key bytes -> enqueue time. Keyed by serialized key for dedupe.
     std::map<std::vector<unsigned char>, int64_t> m_requests GUARDED_BY(m_mutex);
 };
+
+//! Process-global handle to the active request queue (set at init, cleared at
+//! shutdown), mirroring SetActivePool: the wallet's built-in candidate server
+//! reaches it from a WalletContext, which has no NodeContext. nullptr when
+//! -p2pmsg is disabled.
+void SetActiveRequestQueue(CandidateRequestQueue* queue);
+CandidateRequestQueue* GetActiveRequestQueue();
 
 /**
  * Requester-side background puller. Keeps the local candidate pool supplied

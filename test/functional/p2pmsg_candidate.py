@@ -4,19 +4,21 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """End-to-end test of the pull-based aggregation candidate flow.
 
-Node0's background puller broadcasts AGG_ANN requests (fresh reply key per
-round). Node1 queues them; the wallet answers one with replycandidate, which
-builds a fee-0 self-spend cover candidate (no fee output) and sends it as a
-CANDIDATE_TX encrypted 1:1 to node0's reply key. Node0 pools it. The candidate
-is only valid inside a CombineHalves aggregate, so it must NOT be accepted to
-the mempool on its own.
+Built-in path (zero config): node0's background puller broadcasts AGG_ANN
+requests; node1 (loaded BLSCT wallet, -servecandidates default on) queues them
+and its wallet-scheduler task answers automatically with fee-0 self-spend
+candidates encrypted 1:1 to node0's reply keys. Node0 pools them without any
+RPC orchestration and no navio-p2pmsg daemon.
+
+Manual path: with auto-serving off, a queued request is claimed one-shot via
+listpendingcandidaterequests and answered via replycandidate.
 """
 
 from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
 
-# Fast pull cadence so the test does not wait a minute per round.
-PULL_ARGS = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2"]
+# Fast pull/serve cadence so the test does not wait a minute per round.
+FAST = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2", "-servecandidateinterval=2"]
 
 
 class P2PMsgCandidateTest(BitcoinTestFramework):
@@ -27,7 +29,8 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         self.num_nodes = 2
         self.chain = "blsctregtest"
         self.setup_clean_chain = True
-        self.extra_args = [PULL_ARGS, PULL_ARGS]
+        # node0: requester (no wallet). node1: producer, auto-serving ON.
+        self.extra_args = [FAST, FAST]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -43,17 +46,6 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
             self.generatetoblsctaddress(node, to, address)
             remaining -= to
 
-    def claim_request(self, node):
-        """Poll until the node has queued a pull request; claim and return one key."""
-        keys = []
-
-        def got_one():
-            keys.extend(node.listpendingcandidaterequests())
-            return len(keys) > 0
-
-        self.wait_until(got_one, timeout=30)
-        return keys[0]
-
     def run_test(self):
         n0, n1 = self.nodes
         n1.createwallet(wallet_name="w1", blsct=True, storage_output=True)
@@ -64,27 +56,37 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         self.sync_blocks()
         assert Decimal(str(w1.getbalances()["mine"]["trusted"])) > 0
 
-        # Node0's puller floods AGG_ANN rounds; node1 queues the reply keys.
-        reply_key = self.claim_request(n1)
-        self.log.info("claimed pull request reply key %s..." % reply_key[:16])
+        # --- Built-in serving: node0's pool fills with NO orchestration. ---
+        self.wait_until(lambda: n0.getaggregationhint()["available"] >= 1, timeout=60)
+        self.log.info("built-in serving filled the requester's pool automatically")
 
-        # The wallet answers 1:1 to the reply key; node0 pools the candidate.
-        res = w1.replycandidate(reply_key)
-        assert "candidate_txid" in res, res
-        self.wait_until(lambda: n0.getaggregationhint()["available"] >= 1, timeout=30)
-        self.log.info("candidate served and pooled by the requester")
-
-        # The candidate pays no fee, so it must NOT stand alone in the mempool.
-        assert res["candidate_txid"] not in n0.getrawmempool(), \
-            "fee-0 candidate must not be accepted standalone"
-        assert res["candidate_txid"] not in n1.getrawmempool(), \
-            "fee-0 candidate must not be accepted standalone"
-
-        # The producer never pools its own served candidate (it was encrypted
-        # to node0's key, and producers reject non-session CANDIDATE_TX).
+        # Producer never pools its own served candidates (they were encrypted
+        # to node0's keys, and nodes reject non-session CANDIDATE_TX). Its own
+        # pulls go unserved: node0 has no wallet.
         assert n1.getaggregationhint()["available"] == 0
 
-        self.log.info("pull-based candidate flow OK")
+        # Fee-0 candidates must never stand alone in a mempool.
+        assert n0.getrawmempool() == []
+        assert n1.getrawmempool() == []
+
+        # --- Manual serving path (daemon flow): claim + replycandidate. ---
+        self.restart_node(1, extra_args=FAST + ["-servecandidates=0"])
+        self.connect_nodes(0, 1)
+        n1.loadwallet("w1")
+        w1 = n1.get_wallet_rpc("w1")
+        keys = []
+
+        def got_one():
+            keys.extend(n1.listpendingcandidaterequests())
+            return len(keys) > 0
+
+        self.wait_until(got_one, timeout=30)
+        before = n0.getaggregationhint()["available"]
+        res = w1.replycandidate(keys[0])
+        assert "candidate_txid" in res, res
+        self.wait_until(lambda: n0.getaggregationhint()["available"] > before, timeout=30)
+        assert res["candidate_txid"] not in n0.getrawmempool()
+        self.log.info("manual claim + replycandidate served OK")
 
 
 if __name__ == "__main__":

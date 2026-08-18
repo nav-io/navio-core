@@ -17,7 +17,11 @@ from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
 
-PULL_ARGS = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2"]
+# Auto-serving is disabled on both nodes: this test's assertions on exact pool
+# counts (evicted-to-zero after a merge, untouched on opt-out) need candidates
+# served only at the moments the test chooses. The built-in server is covered
+# by p2pmsg_candidate.py.
+PULL_ARGS = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2", "-servecandidates=0"]
 
 
 class P2PMsgDefaultAggregateTest(BitcoinTestFramework):

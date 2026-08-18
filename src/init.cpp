@@ -320,6 +320,7 @@ void Shutdown(NodeContext& node)
     rfq::SetActiveMatcher(nullptr);
     rfq::SetActiveOrderCache(nullptr);
     aggregation::SetActivePool(nullptr);
+    aggregation::SetActiveRequestQueue(nullptr);
     // Join the puller thread before the transport it sends through goes away.
     node.agg_puller.reset();
     // Order matters: the worker pool's decrypt jobs dispatch to transport
@@ -557,6 +558,8 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-asmap=<file>", strprintf("Specify asn mapping used for bucketing of the peers (default: %s). Relative paths will be prefixed by the net-specific datadir location.", DEFAULT_ASMAP_FILENAME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsg", strprintf("Enable the encrypted p2p messaging subsystem (default: %u)", p2pmsg::DEFAULT_P2PMSG_ENABLE), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-aggregatesends", strprintf("Merge fee-0 cover candidates from the p2pmsg pool into every wallet BLSCT send, hiding the wallet's inputs and outputs among cover traffic at the cost of a higher fee. Sends fall back to plain transactions when no candidates are available. (default: %u)", aggregation::DEFAULT_AGGREGATE_SENDS), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
+    argsman.AddArg("-servecandidates", strprintf("Automatically answer p2pmsg candidate pull requests with fee-0 cover candidates built from loaded BLSCT wallets' coins, each encrypted 1:1 to its requester (default: %u)", aggregation::DEFAULT_SERVE_CANDIDATES), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
+    argsman.AddArg("-servecandidateinterval=<n>", strprintf("Seconds between built-in candidate serving ticks (default: %d)", aggregation::SERVE_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::WALLET);
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-candidatepullinterval=<n>", strprintf("Seconds between background candidate pull rounds (default: %d)", aggregation::PULL_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onionworkers=<n>", "Number of worker threads for p2p-messaging heavy crypto (0 = auto, default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
@@ -1716,6 +1719,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
         // Producer-side queue of candidate pull requests awaiting a wallet reply.
         node.agg_requests = std::make_unique<aggregation::CandidateRequestQueue>();
+        aggregation::SetActiveRequestQueue(node.agg_requests.get());
 
         // Maker-local RFQ swap intents.
         node.rfq_intents = std::make_unique<rfq::IntentStore>();
@@ -1768,13 +1772,18 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             node.p2pmsg_transport->RegisterHandler(
                 p2pmsg::PayloadKind::CANDIDATE_TX,
                 [pool](const p2pmsg::InboundMessage& m) {
-                    if (m.recipient != p2pmsg::RecipientKey::SESSION) return;
+                    if (m.recipient != p2pmsg::RecipientKey::SESSION) {
+                        LogPrint(BCLog::NET, "p2pmsg: dropping CANDIDATE_TX not addressed to a pull session key (recipient=%d)\n", (int)m.recipient);
+                        return;
+                    }
                     try {
                         DataStream ss{MakeByteSpan(m.body)};
                         ParamsStream ps{TX_WITH_WITNESS, ss};
                         CTransactionRef tx;
                         ps >> tx;
-                        pool->AddCandidate(tx, m.from_peer);
+                        const bool added = pool->AddCandidate(tx, m.from_peer);
+                        LogPrint(BCLog::NET, "p2pmsg: CANDIDATE_TX %s %s (peer=%d)\n",
+                                 tx->GetHash().ToString(), added ? "pooled" : "rejected (duplicate input or cap)", m.from_peer);
                     } catch (const std::exception&) { /* drop malformed */ }
                 });
 
