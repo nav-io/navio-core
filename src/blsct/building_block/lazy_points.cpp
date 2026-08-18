@@ -77,6 +77,14 @@ typename T::Point LazyPoints<T>::Sum() const {
 template Mcl::Point LazyPoints<Mcl>::Sum() const;
 
 template <typename T>
+void LazyPoints<T>::AddScaledTo(LazyPoints<T>& acc, const Scalar& factor) const {
+    for (const auto& p : m_points) {
+        acc.m_points.push_back(LazyPoint<T>(p.m_base, p.m_exp * factor));
+    }
+}
+template void LazyPoints<Mcl>::AddScaledTo(LazyPoints<Mcl>& acc, const Mcl::Scalar& factor) const;
+
+template <typename T>
 LazyPoints<T> LazyPoints<T>::operator+(const LazyPoints<T>& rhs) const {
     Elements<typename T::Point> bases;
     Elements<typename T::Scalar> exps;

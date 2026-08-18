@@ -161,6 +161,31 @@ ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commi
     return ProofOfStake::VALID;
 }
 
+bool ProofOfStake::VerifyBatch(const std::vector<BatchItem>& items)
+{
+    if (items.empty()) return true;
+
+    const auto& setup = SetMemProofSetup<Arith>::Get();
+
+    // Batch the (expensive, shared-generator) set-membership proofs.
+    std::vector<SetProver::VerifyBatchItem> sm_items;
+    sm_items.reserve(items.size());
+    for (const auto& it : items) {
+        if (!it.proof) return false;
+        sm_items.push_back({it.staked_commitments, it.eta_fiat_shamir, it.eta_phi, &it.proof->setMemProof});
+    }
+    if (!SetProver::VerifyBatch(setup, sm_items)) return false;
+
+    // Kernel range proofs are one small proof per block; verify per item.
+    for (const auto& it : items) {
+        if (!VerifyKernelHash(it.proof->rangeProof, it.kernel_hash, it.next_target,
+                              it.eta_phi, it.proof->setMemProof.phi)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ProofOfStake::VerifySetMembership(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, VerificationStats* stats) const
 {
     using Clock = std::chrono::steady_clock;

@@ -510,4 +510,124 @@ BOOST_AUTO_TEST_CASE(test_pos_scenario)
     BOOST_CHECK_EQUAL(res, true);
 }
 
+namespace {
+// One valid set-membership proof plus the inputs needed to verify it. Stored by
+// value so a VerifyBatchItem can borrow stable pointers into it.
+struct BatchSample {
+    Points Ys;
+    Scalar eta_fiat_shamir;
+    blsct::Message eta_phi;
+    SetMemProof<Arith> proof;
+};
+
+BatchSample MakeBatchSample(const SetMemProofSetup<Arith>& setup, size_t set_size, uint8_t tag)
+{
+    range_proof::Generators<Arith> gen = setup.Gf().GetInstance(TokenId());
+    Scalar m = Scalar::Rand();
+    Scalar f = Scalar::Rand();
+    auto sigma = gen.G * m + gen.H * f;
+
+    Points Ys;
+    const size_t member_idx = tag % set_size;
+    for (size_t i = 0; i < set_size; ++i) {
+        if (i == member_idx) {
+            Ys.Add(sigma);
+        } else {
+            Ys.Add(Point::MapToPoint("y" + std::to_string(tag) + "_" + std::to_string(i), Endianness::Little));
+        }
+    }
+
+    Scalar eta_fiat_shamir = Scalar::Rand();
+    blsct::Message eta_phi{tag, uint8_t(tag + 1), uint8_t(tag + 2)};
+    auto proof = Prover::Prove(setup, Ys, sigma, m, f, eta_fiat_shamir, eta_phi);
+    return BatchSample{Ys, eta_fiat_shamir, eta_phi, proof};
+}
+
+std::vector<Prover::VerifyBatchItem> MakeItems(const std::vector<BatchSample>& samples)
+{
+    std::vector<Prover::VerifyBatchItem> items;
+    items.reserve(samples.size());
+    for (const auto& s : samples) {
+        items.push_back({&s.Ys, s.eta_fiat_shamir, s.eta_phi, &s.proof});
+    }
+    return items;
+}
+} // namespace
+
+// VerifyBatch must return exactly the AND of per-item Verify. Uses a mix of set
+// sizes so the shared-generator coefficient merge spans different n.
+BOOST_AUTO_TEST_CASE(test_verify_batch_matches_per_proof)
+{
+    const auto& setup = SetMemProofSetup<Arith>::Get();
+
+    std::vector<BatchSample> samples;
+    samples.reserve(6);
+    samples.push_back(MakeBatchSample(setup, 2, 1));
+    samples.push_back(MakeBatchSample(setup, 4, 2));
+    samples.push_back(MakeBatchSample(setup, 4, 3));
+    samples.push_back(MakeBatchSample(setup, 8, 4));
+    samples.push_back(MakeBatchSample(setup, 2, 5));
+    samples.push_back(MakeBatchSample(setup, 8, 6));
+
+    // Every sample verifies on its own.
+    for (const auto& s : samples) {
+        BOOST_CHECK(Prover::Verify(setup, s.Ys, s.eta_fiat_shamir, s.eta_phi, s.proof));
+    }
+
+    BOOST_CHECK(Prover::VerifyBatch(setup, MakeItems(samples)));
+}
+
+BOOST_AUTO_TEST_CASE(test_verify_batch_empty_and_single)
+{
+    const auto& setup = SetMemProofSetup<Arith>::Get();
+
+    BOOST_CHECK(Prover::VerifyBatch(setup, {})); // vacuously true
+
+    std::vector<BatchSample> one;
+    one.reserve(1);
+    one.push_back(MakeBatchSample(setup, 4, 7));
+    BOOST_CHECK(Prover::VerifyBatch(setup, MakeItems(one)));
+}
+
+// A single invalid proof anywhere in the batch must fail the whole batch.
+BOOST_AUTO_TEST_CASE(test_verify_batch_detects_one_bad)
+{
+    const auto& setup = SetMemProofSetup<Arith>::Get();
+
+    std::vector<BatchSample> samples;
+    samples.reserve(4);
+    samples.push_back(MakeBatchSample(setup, 4, 10));
+    samples.push_back(MakeBatchSample(setup, 4, 11));
+    samples.push_back(MakeBatchSample(setup, 4, 12));
+    samples.push_back(MakeBatchSample(setup, 4, 13));
+
+    // Corrupt the third proof by verifying it against the wrong eta_fiat_shamir.
+    samples[2].eta_fiat_shamir = samples[2].eta_fiat_shamir + Scalar(1);
+    BOOST_CHECK(!Prover::Verify(setup, samples[2].Ys, samples[2].eta_fiat_shamir,
+                                samples[2].eta_phi, samples[2].proof));
+
+    BOOST_CHECK(!Prover::VerifyBatch(setup, MakeItems(samples)));
+}
+
+// The batch must fail if any proof is verified against a set it does not prove
+// membership in (wrong Ys), even though every other proof is valid.
+BOOST_AUTO_TEST_CASE(test_verify_batch_detects_wrong_set)
+{
+    const auto& setup = SetMemProofSetup<Arith>::Get();
+
+    std::vector<BatchSample> samples;
+    samples.reserve(3);
+    samples.push_back(MakeBatchSample(setup, 4, 20));
+    samples.push_back(MakeBatchSample(setup, 4, 21));
+    samples.push_back(MakeBatchSample(setup, 4, 22));
+
+    // Swap one commitment in the second sample's set so the membership witness
+    // no longer matches.
+    samples[1].Ys[0] = Point::MapToPoint("tampered", Endianness::Little);
+    BOOST_CHECK(!Prover::Verify(setup, samples[1].Ys, samples[1].eta_fiat_shamir,
+                                samples[1].eta_phi, samples[1].proof));
+
+    BOOST_CHECK(!Prover::VerifyBatch(setup, MakeItems(samples)));
+}
+
 BOOST_AUTO_TEST_SUITE_END()

@@ -41,6 +41,11 @@ struct LazyPoints {
 
     Point Sum() const;
 
+    // Adds every contained (base, exp) into `acc`, each exponent multiplied by
+    // `factor`. Used to fold one proof's terms into a batched accumulator under
+    // a random-linear-combination weight without materialising a new Sum.
+    void AddScaledTo(LazyPoints<T>& acc, const Scalar& factor) const;
+
     LazyPoints<T> operator+(const LazyPoints<T>& rhs) const;
     LazyPoints<T> operator+(const LazyPoint<T>& rhs) const;
 

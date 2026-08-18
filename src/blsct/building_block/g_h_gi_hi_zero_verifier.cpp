@@ -82,3 +82,36 @@ bool G_H_Gi_Hi_ZeroVerifier<T>::Verify(const Point& g, const Point&h, const Poin
 }
 template
 bool G_H_Gi_Hi_ZeroVerifier<Mcl>::Verify(const Point& g, const Point&h, const Points& Gi, const Points& Hi);
+
+template <typename T>
+void G_H_Gi_Hi_ZeroVerifier<T>::EmitScaled(
+    LazyPoints<T>& acc,
+    Scalar& g_coeff,
+    Scalar& h_coeff,
+    std::vector<Scalar>& hi_coeff,
+    const Points& Gi,
+    const Scalar& rho) const
+{
+    // Per-proof points (T1, T2, A1, A2, S1..S3, phi, Ls, Rs, h2, g2, h3, …).
+    m_points.AddScaledTo(acc, rho);
+
+    // Shared bases g and h: accumulate their scaled net exponents.
+    g_coeff = g_coeff + rho * (m_g_pos_exp - m_g_neg_exp);
+    h_coeff = h_coeff + rho * (m_h_pos_exp - m_h_neg_exp);
+
+    for (size_t i = 0; i < m_n; ++i) {
+        // Gi (the per-proof set commitments) differ per proof: add directly.
+        acc.Add(LazyPoint<T>(Gi[i], rho * m_gi_exps[i]));
+        // Hi (the shared setup.hs generators): merge coefficients so the whole
+        // batch multiplies each hs[i] exactly once.
+        hi_coeff[i] = hi_coeff[i] + rho * m_hi_exps[i];
+    }
+}
+template
+void G_H_Gi_Hi_ZeroVerifier<Mcl>::EmitScaled(
+    LazyPoints<Mcl>& acc,
+    Mcl::Scalar& g_coeff,
+    Mcl::Scalar& h_coeff,
+    std::vector<Mcl::Scalar>& hi_coeff,
+    const Points& Gi,
+    const Mcl::Scalar& rho) const;

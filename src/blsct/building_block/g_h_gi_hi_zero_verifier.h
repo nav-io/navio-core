@@ -8,6 +8,8 @@
 #include <blsct/arith/elements.h>
 #include <blsct/building_block/lazy_points.h>
 
+#include <vector>
+
 template <typename T>
 struct G_H_Gi_Hi_ZeroVerifier {
     using Scalar = typename T::Scalar;
@@ -26,6 +28,20 @@ struct G_H_Gi_Hi_ZeroVerifier {
     void SetGiExp(const size_t& i, const Scalar& s);
     void SetHiExp(const size_t& i, const Scalar& s);
     bool Verify(const Point& g, const Point&h, const Points& Gi, const Points& Hi);
+
+    // Folds this verifier's zero-equation, scaled by `rho`, into a shared batch
+    // accumulator instead of checking it on its own. The per-proof Gi points are
+    // added into `acc` directly (scaled); the g/h/Hi terms are accumulated as
+    // coefficients (into g_coeff/h_coeff/hi_coeff) because those bases are shared
+    // across the whole batch and are added once, after all proofs are folded.
+    // `hi_coeff` must have size >= this verifier's n. See SetMemProofProver::VerifyBatch.
+    void EmitScaled(
+        LazyPoints<T>& acc,
+        Scalar& g_coeff,
+        Scalar& h_coeff,
+        std::vector<Scalar>& hi_coeff,
+        const Points& Gi,
+        const Scalar& rho) const;
 
 private:
     size_t m_n;

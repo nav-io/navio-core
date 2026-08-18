@@ -32,6 +32,7 @@ add_executable(bench_navio
   blsct_rp_verify.cpp
   blsct_setmem_verify.cpp
   blsct_view_tag.cpp
+  blsct_setmem_batch.cpp
   block_assemble.cpp
   ccoins_caching.cpp
   chacha20.cpp

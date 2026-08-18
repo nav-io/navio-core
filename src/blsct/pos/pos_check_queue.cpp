@@ -8,7 +8,24 @@
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <chain.h>
 
+#include <cstdlib>
+
 namespace blsct {
+
+namespace {
+// Batched PoS verification (SetMemProofProver::VerifyBatch) is opt-in while it
+// is under review. Enable with NAVIO_BLSCT_POSBATCH=1. The batch path is
+// correctness-equivalent to the per-item path (it always falls back to per-item
+// verify to confirm a failure), so the flag only selects the fast path.
+bool PoSBatchEnabled()
+{
+    static const bool enabled = [] {
+        const char* v = std::getenv("NAVIO_BLSCT_POSBATCH");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return enabled;
+}
+} // namespace
 
 bool PoSCheckItem::VerifyStandalone() const
 {
@@ -31,19 +48,27 @@ bool PoSCheckQueue::Flush(const CBlockIndex** failing)
         items.swap(m_items);
     }
     if (failing) *failing = nullptr;
+    if (items.empty()) return true;
 
-    // TODO(#3): replace this loop with:
-    //   (1) SetMemProofProver<Mcl>::VerifyBatch(setup, batch_items)  — needs
-    //       random-linear-combination batching across each proof's pairing
-    //       equation. Requires crypto review.
-    //   (2) bulletproofs_plus::RangeProofLogic<Mcl>::Verify(vector) over
-    //       every item's range proof — batches internally, but stays on the
-    //       caller thread when OpenMP-backed MSM is enabled.
-    //
-    // Until VerifyBatch lands, fallback: per-item standalone verify. This is
-    // correctness-preserving but gives no crypto-batch speedup; the
-    // cross-block pipelining via PoSCheckQueue alone buys only thread-
-    // amortisation wins (~0.5-1 ms/block).
+    // Fast path: random-linear-combination batch of the set-membership proofs
+    // (one shared-generator MSM for the whole batch) plus per-item kernel range
+    // proofs. If the batch rejects, fall through to per-item verify below: that
+    // path is authoritative and pinpoints the offending block, so a (would-be
+    // bug) batch false-negative cannot wrongly invalidate a valid chain.
+    if (PoSBatchEnabled()) {
+        std::vector<ProofOfStake::BatchItem> batch;
+        batch.reserve(items.size());
+        bool buildable = true;
+        for (const auto& item : items) {
+            if (!item.proof) { buildable = false; break; }
+            batch.push_back({&item.staked_commitments, item.eta_fiat_shamir,
+                             item.eta_phi, item.kernel_hash, item.next_target, item.proof});
+        }
+        if (buildable && ProofOfStake::VerifyBatch(batch)) return true;
+        // else: fall through to the per-item pass.
+    }
+
+    // Per-item standalone verify. Also the failure-isolation path for the batch.
     for (const auto& item : items) {
         if (!item.VerifyStandalone()) {
             if (failing) *failing = item.pindex;

@@ -13,6 +13,7 @@
 #include <streams.h>
 #include <util/strencodings.h>
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -289,7 +290,8 @@ SetMemProof<Mcl> SetMemProofProver<Mcl>::Prove(
 );
 
 template <typename T>
-bool SetMemProofProver<T>::Verify(
+std::optional<std::pair<G_H_Gi_Hi_ZeroVerifier<T>, typename SetMemProofProver<T>::Points>>
+SetMemProofProver<T>::BuildVerifier(
     const SetMemProofSetup<T>& setup,
     const Points& Ys_src,
     const Scalar& eta_fiat_shamir,
@@ -298,7 +300,7 @@ bool SetMemProofProver<T>::Verify(
 ) {
     using LazyPoint = LazyPoint<T>;
 
-    if (proof.Ls.Size() != proof.Rs.Size()) return false;
+    if (proof.Ls.Size() != proof.Rs.Size()) return std::nullopt;
 
     size_t n = blsct::Common::GetFirstPowerOf2GreaterOrEqTo(Ys_src.Size());
     if (n > setup.N) {
@@ -313,7 +315,7 @@ bool SetMemProofProver<T>::Verify(
     // would verify exactly like the proof it was padded from. The range proof
     // enforces the same invariant in range_proof::Common::ValidateProofsBySizes.
     const size_t num_rounds = std::log2(n);
-    if (proof.Ls.Size() != num_rounds) return false;
+    if (proof.Ls.Size() != num_rounds) return std::nullopt;
 
     Points Ys = ExtendYs(setup, Ys_src, n);
 
@@ -340,7 +342,7 @@ retry:
     // reject any proof whose omega disagrees with the value derived from the
     // transcript -- otherwise an attacker could supply an omega the transcript
     // never authorized and break the soundness of the membership relation.
-    if (proof.omega != omega) return false;
+    if (proof.omega != omega) return std::nullopt;
 
     // Note: y_inv / y_inv_to_n used to be precomputed here but were never
     // referenced; the per-iteration y_inv_pow values come from
@@ -433,6 +435,30 @@ retry:
         verifier.AddPoint(LazyPoint(proof.phi, x));
     }
 
+    return std::make_pair(std::move(verifier), std::move(Ys));
+}
+template
+std::optional<std::pair<G_H_Gi_Hi_ZeroVerifier<Mcl>, SetMemProofProver<Mcl>::Points>>
+SetMemProofProver<Mcl>::BuildVerifier(
+    const SetMemProofSetup<Mcl>& setup,
+    const Points& Ys_src,
+    const Scalar& eta_fiat_shamir,
+    const blsct::Message& eta_phi,
+    const SetMemProof<Mcl>& proof
+);
+
+template <typename T>
+bool SetMemProofProver<T>::Verify(
+    const SetMemProofSetup<T>& setup,
+    const Points& Ys_src,
+    const Scalar& eta_fiat_shamir,
+    const blsct::Message& eta_phi,
+    const SetMemProof<T>& proof
+) {
+    auto built = BuildVerifier(setup, Ys_src, eta_fiat_shamir, eta_phi, proof);
+    if (!built) return false;
+    auto& [verifier, Ys] = *built;
+    const size_t n = Ys.Size();
     return verifier.Verify(setup.g, setup.h, Ys, setup.hs.To(n));
 }
 template
@@ -442,4 +468,74 @@ bool SetMemProofProver<Mcl>::Verify(
     const Scalar& eta_fiat_shamir,
     const blsct::Message& eta_phi,
     const SetMemProof<Mcl>& proof
+);
+
+template <typename T>
+bool SetMemProofProver<T>::VerifyBatch(
+    const SetMemProofSetup<T>& setup,
+    const std::vector<VerifyBatchItem>& items
+) {
+    if (items.empty()) return true;
+    if (items.size() == 1) {
+        const auto& it = items[0];
+        return Verify(setup, *it.Ys, it.eta_fiat_shamir, it.eta_phi, *it.proof);
+    }
+
+    // Assemble each proof's zero-verifier. A structural reject fails the batch;
+    // the caller re-runs per-item Verify() to pinpoint the offender.
+    std::vector<G_H_Gi_Hi_ZeroVerifier<T>> verifiers;
+    std::vector<Points> Yss;
+    verifiers.reserve(items.size());
+    Yss.reserve(items.size());
+    for (const auto& it : items) {
+        auto built = BuildVerifier(setup, *it.Ys, it.eta_fiat_shamir, it.eta_phi, *it.proof);
+        if (!built) return false;
+        verifiers.push_back(std::move(built->first));
+        Yss.push_back(std::move(built->second));
+    }
+
+    // Fiat-Shamir seed committing to every proof: the random-linear-combination
+    // weights must be unpredictable to a prover, so bind them to all proof data.
+    HashWriter seed_hasher;
+    for (const auto& it : items) {
+        seed_hasher << it.Ys->GetVch();
+        seed_hasher << it.eta_fiat_shamir;
+        seed_hasher << it.eta_phi;
+        seed_hasher << *it.proof;
+    }
+    const uint256 seed = seed_hasher.GetHash();
+
+    LazyPoints<T> acc;
+    Scalar g_coeff(0);
+    Scalar h_coeff(0);
+    size_t max_n = 0;
+    for (const auto& Ys : Yss) max_n = std::max(max_n, Ys.Size());
+    std::vector<Scalar> hi_coeff(max_n, Scalar(0));
+
+    for (size_t i = 0; i < items.size(); ++i) {
+        // rho_i = H(seed || i), reduced to a scalar. Guard the negligible zero
+        // case (which would drop a proof from the check) by falling back to 1.
+        HashWriter rho_hasher;
+        rho_hasher << seed;
+        rho_hasher << static_cast<uint64_t>(i);
+        const uint256 rho_hash = rho_hasher.GetHash();
+        Scalar rho(std::vector<uint8_t>(rho_hash.begin(), rho_hash.end()));
+        if (rho.IsZero()) rho = Scalar(1);
+
+        verifiers[i].EmitScaled(acc, g_coeff, h_coeff, hi_coeff, Yss[i], rho);
+    }
+
+    // Shared bases, multiplied once for the whole batch.
+    acc.Add(setup.g, g_coeff);
+    acc.Add(setup.h, h_coeff);
+    for (size_t i = 0; i < max_n; ++i) {
+        acc.Add(setup.hs[i], hi_coeff[i]);
+    }
+
+    return acc.Sum().IsZero();
+}
+template
+bool SetMemProofProver<Mcl>::VerifyBatch(
+    const SetMemProofSetup<Mcl>& setup,
+    const std::vector<SetMemProofProver<Mcl>::VerifyBatchItem>& items
 );

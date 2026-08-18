@@ -113,6 +113,24 @@ public:
     VerificationResult Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, VerificationStats* stats = nullptr) const;
 
     bool VerifySetMembership(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, VerificationStats* stats = nullptr) const;
+
+    // One block's PoS proof plus the consensus inputs needed to verify it.
+    // staked_commitments/proof are borrowed and must outlive the VerifyBatch call.
+    struct BatchItem {
+        const Points* staked_commitments;
+        Scalar eta_fiat_shamir;
+        blsct::Message eta_phi;
+        uint256 kernel_hash;
+        unsigned int next_target;
+        const ProofOfStake* proof;
+    };
+
+    // Verifies a batch of PoS proofs. The set-membership proofs are verified
+    // together via SetMemProofProver::VerifyBatch (one shared-generator MSM for
+    // the whole batch); each kernel range proof is checked per item. Returns the
+    // same verdict as ANDing Verify() over the items. On false, the caller should
+    // fall back to per-item Verify() to identify the offending block.
+    static bool VerifyBatch(const std::vector<BatchItem>& items);
     bulletproofs_plus::RangeProofWithSeed<Arith> GetKernelRangeProof(const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi) const;
     bulletproofs_plus::RangeProofWithSeed<Arith> GetKernelRangeProof(const uint64_t& min_value, const blsct::Message& eta_phi) const;
 
