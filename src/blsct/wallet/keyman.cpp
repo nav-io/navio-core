@@ -920,10 +920,10 @@ bool KeyMan::IsMine(const CScript& script) const
 
 wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
 {
-    return IsMineMode(txout, GetExpectedViewTag(txout));
+    return IsMineMode(txout, GetExpectedNonce(txout));
 }
 
-wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<uint16_t>& expectedViewTag)
+wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<MclG1Point>& expectedNonce)
 {
     const auto spendable_kind = [&]() {
         return txout.IsStakedCommitment() ? wallet::ISMINE_STAKED_COMMITMENT_BLSCT
@@ -938,7 +938,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<u
         // own the resulting subaddress, the output is fully spendable.
         blsct::PublicKey extractedSpendingKey;
         if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
-            if (IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag, expectedViewTag)) {
+            if (IsMine(extractedSpendingKey, txout.blsctData.viewTag, expectedNonce)) {
                 return spendable_kind();
             }
         }
@@ -962,7 +962,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<u
         if (txout.scriptPubKey.size() != 50 &&
             ExtractAllSpendingKeysFromScript(txout.scriptPubKey, branchKeys)) {
             for (const auto& branchKey : branchKeys) {
-                if (IsMine(txout.blsctData.blindingKey, branchKey, txout.blsctData.viewTag, expectedViewTag)) {
+                if (IsMine(branchKey, txout.blsctData.viewTag, expectedNonce)) {
                     return wallet::ISMINE_WATCH_ONLY;
                 }
             }
@@ -970,7 +970,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<u
         return wallet::ISMINE_NO;
     }
 
-    if (IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag, expectedViewTag)) {
+    if (IsMine(txout.blsctData.spendingKey, txout.blsctData.viewTag, expectedNonce)) {
         return spendable_kind();
     }
     // Real BLSCT output that we don't own as a subaddress, but whose
@@ -981,20 +981,15 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<u
     return wallet::ISMINE_NO;
 }
 
-bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag)
+bool KeyMan::IsMine(const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<MclG1Point>& expectedNonce)
 {
-    if (!fViewKeyDefined || !viewKey.IsValid())
-        return false;
+    if (!expectedNonce) return false;
+    if (viewTag != static_cast<uint16_t>(ViewTagFromNonce(*expectedNonce))) return false;
 
-    return IsMine(blindingKey, spendingKey, viewTag,
-                  static_cast<uint16_t>(CalculateViewTag(blindingKey.GetG1Point(), viewKey.GetScalar())));
-}
-
-bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<uint16_t>& expectedViewTag)
-{
-    if (!expectedViewTag || viewTag != *expectedViewTag) return false;
-
-    auto hashId = GetHashId(blindingKey, spendingKey);
+    // The hash id comes from the cached nonce: no view key access, no second
+    // scalar multiplication, and no GetHashId throw path for callers without
+    // a view key.
+    const CKeyID hashId = CalculateHashId(*expectedNonce, spendingKey.GetG1Point());
 
     {
         LOCK(cs_KeyStore);
@@ -1317,35 +1312,43 @@ util::Result<CTxDestination> KeyMan::GetNewDestination(const int64_t& account)
     return CTxDestination(GetSubAddress(id).GetKeys());
 }
 
-std::optional<uint16_t> KeyMan::GetExpectedViewTag(const CTxOut& txout)
+std::optional<MclG1Point> KeyMan::GetExpectedNonce(const CTxOut& txout) const
 {
-    if (!fViewKeyDefined || !viewKey.IsValid()) return std::nullopt;
-    if (!txout.HasBLSCTKeys()) return std::nullopt;
-    if (txout.blsctData.blindingKey.IsZero()) return std::nullopt;
-    return static_cast<uint16_t>(CalculateViewTag(txout.blsctData.blindingKey, viewKey.GetScalar()));
+    try {
+        if (!fViewKeyDefined || !viewKey.IsValid()) return std::nullopt;
+        if (!txout.HasBLSCTKeys()) return std::nullopt;
+        if (txout.blsctData.blindingKey.IsZero()) return std::nullopt;
+        return CalculateNonce(txout.blsctData.blindingKey, viewKey.GetScalar());
+    } catch (const std::exception& e) {
+        // Callers run outside any handler (e.g. AddToWalletIfInvolvingMe);
+        // treat a malformed output as not-ours instead of letting the
+        // exception escape the scan.
+        WalletLogPrintf("%s: failed to derive nonce for output: %s\n", __func__, e.what());
+        return std::nullopt;
+    }
 }
 
 std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout)
 {
-    const auto expected = GetExpectedViewTag(txout);
-    if (!expected) return std::nullopt;
-    return MarkUnusedSubAddress(txout, *expected);
+    const auto nonce = GetExpectedNonce(txout);
+    if (!nonce) return std::nullopt;
+    return MarkUnusedSubAddress(txout, *nonce);
 }
 
-std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout, const uint16_t& expectedViewTag)
+std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout, const MclG1Point& expectedNonce)
 {
     try {
         // Cheap prefilter: viewTag must match before we do any expensive work.
         // Without this, every non-wallet BLSCT output forces the
         // 3 × keypool × full subaddress derivation scan below, which dominates
         // rescan cost (millions of BLS scalar multiplications per chain). The
-        // expensive part (CalculateViewTag = one G1 scalar mult) was already
-        // paid to obtain `expectedViewTag`; here we only compare.
-        if (txout.blsctData.viewTag != expectedViewTag) {
+        // expensive part (the nonce, one G1 scalar mult) was already paid by
+        // the caller; deriving the tag from it is a hash.
+        if (txout.blsctData.viewTag != static_cast<uint16_t>(ViewTagFromNonce(expectedNonce))) {
             return std::nullopt;
         }
 
-        const CKeyID hash_id = GetHashId(txout);
+        const CKeyID hash_id = GetHashId(txout, expectedNonce);
         if (hash_id.IsNull()) return std::nullopt;
 
         std::optional<SubAddressIdentifier> matched_id;

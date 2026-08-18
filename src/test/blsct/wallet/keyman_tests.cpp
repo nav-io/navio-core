@@ -303,6 +303,58 @@ BOOST_FIXTURE_TEST_CASE(encrypt_wallet_migrates_out_keys, TestingSetup)
     BOOST_CHECK(after_reload.GetScalar() == out_key.GetScalar());
 }
 
+// The memoized ownership entry points (GetExpectedNonce + the nonce-taking
+// overloads of IsMineMode/MarkUnusedSubAddress) must agree with the
+// self-contained ones for every output kind the wallet scan can meet.
+BOOST_FIXTURE_TEST_CASE(memoized_ownership_checks_match, TestingSetup)
+{
+    auto wallet = MakeBLSCTWallet(m_node.chain.get());
+    auto other = MakeBLSCTWallet(m_node.chain.get());
+    LOCK2(wallet->cs_wallet, other->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    auto km_other = other->GetOrCreateBLSCTKeyMan();
+
+    const auto dest = std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value());
+    const auto dest_other = std::get<blsct::DoublePublicKey>(km_other->GetNewDestination(0).value());
+
+    const CTxOut owned = blsct::CreateOutput(dest, 42 * COIN, "").out;
+    const CTxOut foreign = blsct::CreateOutput(dest_other, 42 * COIN, "").out;
+
+    // Owned output: the nonce engages, the tag derived from it matches the
+    // output's, the hash id derived from it matches the view-key derivation,
+    // and the memoized path agrees with the self-contained one.
+    const auto nonce = km->GetExpectedNonce(owned);
+    BOOST_REQUIRE(nonce.has_value());
+    BOOST_CHECK_EQUAL(static_cast<uint16_t>(blsct::ViewTagFromNonce(*nonce)), owned.blsctData.viewTag);
+    BOOST_CHECK(blsct::CalculateHashId(*nonce, owned.blsctData.spendingKey) == km->GetHashId(owned));
+    BOOST_CHECK(km->GetHashId(owned, *nonce) == km->GetHashId(owned));
+    BOOST_CHECK(km->IsMineMode(owned) == km->IsMineMode(owned, nonce));
+    BOOST_CHECK(km->IsMineMode(owned, nonce) != wallet::ISMINE_NO);
+
+    // Foreign output: the nonce engages (it is a valid BLSCT output) but the
+    // tag mismatch makes both entry points report not-ours.
+    const auto nonce_foreign = km->GetExpectedNonce(foreign);
+    BOOST_REQUIRE(nonce_foreign.has_value());
+    BOOST_CHECK(km->IsMineMode(foreign) == km->IsMineMode(foreign, nonce_foreign));
+    BOOST_CHECK(km->IsMineMode(foreign, nonce_foreign) == wallet::ISMINE_NO);
+
+    // Zero blinding key: no nonce, and a nullopt nonce fails the BLSCT checks
+    // without EC work, exactly like the self-contained path.
+    CTxOut zero_blinding = owned;
+    zero_blinding.blsctData.blindingKey = MclG1Point();
+    BOOST_CHECK(!km->GetExpectedNonce(zero_blinding).has_value());
+    BOOST_CHECK(km->IsMineMode(zero_blinding) == km->IsMineMode(zero_blinding, std::nullopt));
+
+    // MarkUnusedSubAddress: memoized and self-contained variants find the same
+    // destination for an owned output and nothing for a foreign one.
+    const auto marked_direct = km->MarkUnusedSubAddress(owned);
+    const auto marked_nonce = km->MarkUnusedSubAddress(owned, *nonce);
+    BOOST_REQUIRE(marked_direct.has_value());
+    BOOST_REQUIRE(marked_nonce.has_value());
+    BOOST_CHECK(marked_direct->dest == marked_nonce->dest);
+    BOOST_CHECK(!km->MarkUnusedSubAddress(foreign).has_value());
+}
+
 // Locks down the one-time key derivation the deriveblsctonetimekey RPC exposes
 // for externally constructed destinations (e.g. adaptor-swap outputs locked to
 // a combined key that no wallet owns). An output paid to destination (V, S)
