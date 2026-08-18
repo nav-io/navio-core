@@ -105,5 +105,44 @@ BOOST_AUTO_TEST_CASE(bech32_mod_test_detecting_errors)
     BOOST_CHECK(!failed);
 }
 
+BOOST_AUTO_TEST_CASE(decode_rejects_short_data_part)
+{
+    // The separator search takes the LAST '1', so these all leave a data part
+    // shorter than the 8-character checksum, and Decode must report INVALID
+    // without throwing. Only the last three have a checksum that verifies, so
+    // before the length guard only those got past VerifyChecksum to build
+    // `values.end() - 8` from a too-short vector -- out-of-range iterator
+    // arithmetic, which throws length_error on libstdc++ for any data part
+    // shorter than 8, not just an empty one. The first four returned INVALID
+    // from the checksum check first, so they cover the guard's empty-hrp and
+    // short-data-part branches rather than the crash.
+    for (const std::string& s : {
+             std::string("1"),                     // empty hrp and empty data
+             std::string("nav1"),                  // empty data part
+             std::string("nav1qqqqqqq"),           // 7 data chars, checksum is 8
+             std::string("nav1qpzry9x8g1"),        // separator at the end
+             // These two have an empty data part AND a checksum that verifies
+             // (found by solving PolyMod(ExpandHRP(hrp)) == the encoding
+             // constant over GF(2)), so they reach the tail computation that
+             // the length guard exists to prevent -- one for each encoding.
+             std::string("gbhzrtpciuclqtea1"),    // valid BECH32 checksum
+             std::string("dtufcjcmqqrbzwmr1"),    // valid BECH32M checksum
+             // Address-shaped: 166 chars, "nav" hrp, '1' at index 3, and the
+             // last '1' at the end -- so it clears every guard in
+             // blsct::DecodeDoublePublicKey and reaches Decode from any
+             // address-parsing path (RPC arguments, MessageVerify, descriptors).
+             // Its empty data part also carries a verifying BECH32 checksum.
+             std::string("nav1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                         "aaaaaaaaaaaaaaaaaaaaaefkdeprqsrmvksdclbslnbnx1"),
+         }) {
+        BOOST_CHECK_NO_THROW({
+            auto res = bech32_mod::Decode(s);
+            BOOST_CHECK(res.encoding == bech32_mod::Encoding::INVALID);
+            BOOST_CHECK(res.data.empty());
+        });
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
