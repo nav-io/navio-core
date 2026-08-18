@@ -1020,13 +1020,13 @@ bool KeyMan::HaveSubAddressStr(const SubAddress& subAddress) const
 
 SubAddress KeyMan::GenerateNewSubAddress(const int64_t& account, SubAddressIdentifier& id)
 {
-    if (!m_hd_chain.nSubAddressCounter.contains(account))
-        m_hd_chain.nSubAddressCounter.insert(std::make_pair(account, 0));
-
     SubAddress subAddress{DoublePublicKey{}};
 
     {
         LOCK(cs_KeyStore);
+        if (!m_hd_chain.nSubAddressCounter.contains(account))
+            m_hd_chain.nSubAddressCounter.insert(std::make_pair(account, 0));
+
         wallet::WalletBatch batch(m_storage.GetDatabase());
         do {
             id.account = account;
