@@ -511,15 +511,20 @@ static RPCHelpMan createwallet()
             // For new BLSCT wallets (no seed or mnemonic), generate entropy here
             // so we can return the mnemonic in the response even for encrypted wallets.
             std::string mnemonic_response;
+            // Blank and watch-only wallets skip key generation entirely
+            // (fFirstRun excludes them), so a generated seed would never be
+            // imported and stamping "now" as their birthday would be wrong:
+            // a blank wallet exists to have an older seed imported later.
+            const bool fresh_blsct_seed = seed.empty() && mnemonic_str.empty() && (flags & WALLET_FLAG_BLSCT) &&
+                                          !(flags & (WALLET_FLAG_BLANK_WALLET | WALLET_FLAG_DISABLE_PRIVATE_KEYS));
             // The creation time handed to the wallet. For a restore from a
             // birthday mnemonic it is the decoded creation time; for a fresh
             // wallet it is now (a real birthday); for any other restore it
             // stays unknown, since the wallet's history can predate this
             // instance and inferring one would break scanning.
-            const std::optional<int64_t> creation_time = mnemonic_birthday.has_value() ? mnemonic_birthday
-                : (seed.empty() && mnemonic_str.empty() && (flags & WALLET_FLAG_BLSCT)) ? std::optional<int64_t>(GetTime())
-                : std::nullopt;
-            if (seed.empty() && mnemonic_str.empty() && (flags & WALLET_FLAG_BLSCT)) {
+            std::optional<int64_t> creation_time = mnemonic_birthday;
+            if (fresh_blsct_seed) {
+                creation_time = GetTime();
                 seed.resize(32);
                 GetStrongRandBytes(seed);
                 type = blsct::IMPORT_MNEMONIC;
@@ -531,12 +536,16 @@ static RPCHelpMan createwallet()
                     // Clock outside the encodable 2026..2065 range (mis-set RTC
                     // or setmocktime): keep the wallet working but say so,
                     // instead of silently handing back a plain 24-word phrase
-                    // that permanently loses the birthday.
+                    // that permanently loses the birthday. Drop the creation
+                    // time too: a birthday the mnemonic cannot encode must not
+                    // be stamped on the wallet either, or its default rescan
+                    // window would be pinned to a bogus clock.
                     warnings.push_back(Untranslated(strprintf(
                         "The node clock (%s) is outside the birthday-mnemonic range; "
                         "the returned mnemonic does not encode a wallet creation time.",
                         GetTime())));
                     mnemonic_response = mnemonic::EntropyToMnemonic(seed);
+                    creation_time.reset();
                 }
             }
 
@@ -557,14 +566,16 @@ static RPCHelpMan createwallet()
                 throw JSONRPCError(code, error.original);
             }
 
-            if (creation_time && *creation_time >= mnemonic::BIRTHDAY_MNEMONIC_EPOCH) {
-                // The birth time is genuinely known (fresh creation or a
-                // birthday-mnemonic restore): set it directly — the
-                // lowers-only MaybeUpdateBirthTime cannot raise the 0 that a
-                // fresh BLSCT KeyMan seeds. Persist a wallet-birthday record
-                // so dumpmnemonic can re-derive the two-word suffix later.
-                // Out-of-range clocks (mis-set RTC, setmocktime) skip the
-                // stamp: an out-of-range birthday cannot be re-encoded.
+            if (creation_time) {
+                // The birth time is genuinely known (fresh creation with a
+                // successfully encoded birthday, or a birthday-mnemonic
+                // restore — whose decoded time is in range by construction):
+                // set it directly — the lowers-only MaybeUpdateBirthTime
+                // cannot raise the 0 that a fresh BLSCT KeyMan seeds.
+                // Persist a wallet-birthday record so dumpmnemonic can
+                // re-derive the two-word suffix later. Out-of-range clocks
+                // (mis-set RTC, setmocktime) reset creation_time above, so
+                // no record is written that the mnemonic cannot re-encode.
                 wallet->SetBirthTime(*creation_time);
                 if (auto* km = wallet->GetBLSCTKeyMan(); km != nullptr) {
                     if (!km->WriteWalletBirthday(*creation_time)) {

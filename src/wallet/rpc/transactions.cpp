@@ -1359,17 +1359,23 @@ RPCHelpMan rescanblockchain()
         throw JSONRPCError(RPC_WALLET_ERROR, "Wallet is currently rescanning. Abort existing rescan or wait.");
     }
 
-    // A rescan's start height defaults to the wallet's birth time, so a
-    // restore only scans blocks that could contain its history. The birth
-    // time is genuinely known for freshly created wallets and birthday-
-    // mnemonic restores; when unknown (e.g. a plain 24-word restore) scan
-    // from genesis as before.
+    // A rescan's start height defaults to the wallet's birthday, so a
+    // restore only scans blocks that could contain its history. Read the
+    // persisted wallet-birthday record rather than m_birth_time: the record
+    // is only written when the creation time is genuinely known (fresh
+    // creation, birthday-mnemonic restore), while m_birth_time can carry a
+    // fresh-wallet stamp that setblsctseed never lowers — which would make
+    // this default skip the imported seed's whole history. When no record
+    // exists (e.g. a plain 24-word restore) scan from genesis as before.
     int start_height = 0;
     if (request.params[0].isNull()) {
-        const int64_t birth_time = pwallet->GetBirthTime();
-        if (birth_time > 0) {
+        std::optional<int64_t> birthday;
+        if (const auto* km = pwallet->GetBLSCTKeyMan(); km != nullptr) {
+            birthday = km->GetWalletBirthday();
+        }
+        if (birthday) {
             // grace for block-time variance, as AttachChain does
-            pwallet->chain().findFirstBlockWithTimeAndHeight(birth_time - TIMESTAMP_WINDOW, 0, FoundBlock().height(start_height));
+            pwallet->chain().findFirstBlockWithTimeAndHeight(*birthday - TIMESTAMP_WINDOW, 0, FoundBlock().height(start_height));
         }
     }
     std::optional<int> stop_height;

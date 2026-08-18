@@ -886,7 +886,15 @@ bool LoadBLSCTBirthday(CWallet* pwallet, DataStream& ssValue, std::string& strEr
             strErr = "Error reading wallet database: BLSCT birthday must be positive";
             return false;
         }
+        // GetOrCreateBLSCTKeyMan runs SetupBLSCTKeyMan first, whose
+        // MaybeUpdateBirthTime(GetTimeFirstKey()) lowers m_birth_time to 0
+        // for a keyman with no loaded metadata — so SetBirthTime must come
+        // after it, and this ordering keeps the persisted birthday from
+        // being clobbered. Restoring m_birth_time here is what makes
+        // getwalletinfo.birthtime and the AttachChain rescan window survive
+        // a restart; the keyman copy only feeds dumpmnemonic.
         pwallet->GetOrCreateBLSCTKeyMan()->LoadWalletBirthday(birthday);
+        pwallet->SetBirthTime(birthday);
     } catch (const std::exception& e) {
         if (strErr.empty()) {
             strErr = e.what();
