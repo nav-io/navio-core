@@ -18,6 +18,7 @@
 #include <wallet/receive.h>
 #include <wallet/test/util.h>
 #include <wallet/wallet.h>
+#include <cstring>
 #include <iostream>
 
 #include <boost/test/unit_test.hpp>
@@ -1026,13 +1027,66 @@ BOOST_AUTO_TEST_CASE(test_ffi_hardening_regressions)
             const void* ctx_out = get_ctx_out_at(ctx_outs, i); // borrowed; do not free
             BOOST_REQUIRE(ctx_out != nullptr);
             const BlsctScript* spk = get_ctx_out_script_pub_key(ctx_out);
-            if (spk == nullptr) continue; // fee/staked script does not fit BlsctScript
+            if (spk == nullptr) continue; // does not fit BlsctScript; pinned below on a staked output
             saw_spk = true;
             free_obj((void*)spk);
         }
         BOOST_CHECK(saw_spk);
         delete_ctx(rv->ctx);
         free(rv);
+    }
+
+    {
+        // Pin the SCRIPT_SIZE ABI ceiling on a staked-commitment output: its
+        // scriptPubKey (OP_STAKED_COMMITMENT <blob> OP_DROP OP_TRUE) cannot
+        // fit the fixed 28-byte BlsctScript, so the fixed-size getter must
+        // return nullptr — never a truncated buffer — while the hex getter
+        // returns the complete script.
+        auto* staked_out_rv = build_tx_out(
+            dest,
+            99000,
+            "",
+            static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+            TxOutputType::StakedCommitment,
+            99000,
+            false,
+            static_cast<const BlsctScalar*>(blinding_key_rv->value));
+        BOOST_REQUIRE_EQUAL(staked_out_rv->result, BLSCT_SUCCESS);
+        void* staked_outs = create_tx_out_vec();
+        add_to_tx_out_vec(staked_outs, static_cast<const BlsctTxOut*>(staked_out_rv->value));
+
+        auto* rv = build_ctx_with_change(ins, staked_outs, dest);
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
+        BOOST_REQUIRE(rv->ctx != nullptr);
+
+        const void* ctx_outs = get_ctx_outs(rv->ctx);
+        BOOST_REQUIRE(ctx_outs != nullptr);
+        const size_t n_outs = get_ctx_outs_size(ctx_outs);
+        bool saw_staked = false;
+        for (size_t i = 0; i < n_outs; ++i) {
+            const void* ctx_out = get_ctx_out_at(ctx_outs, i); // borrowed; do not free
+            BOOST_REQUIRE(ctx_out != nullptr);
+            const char* hex = get_ctx_out_script_pub_key_hex(ctx_out);
+            BOOST_REQUIRE(hex != nullptr);
+            const size_t script_size = std::strlen(hex) / 2;
+            const BlsctScript* spk = get_ctx_out_script_pub_key(ctx_out);
+            if (script_size > SCRIPT_SIZE) {
+                BOOST_CHECK(spk == nullptr);
+                saw_staked = true;
+            } else {
+                BOOST_REQUIRE(spk != nullptr);
+                free_obj((void*)spk);
+            }
+            free_obj((void*)hex);
+        }
+        BOOST_CHECK(saw_staked);
+
+        delete_ctx(rv->ctx);
+        free(rv);
+        delete_tx_out_vec(staked_outs);
+        free_obj(staked_out_rv->value);
+        free(staked_out_rv);
     }
 
     delete_tx_in_vec(ins);

@@ -1129,6 +1129,22 @@ const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in)
     return CopyScriptBytes(bytes);
 }
 
+const char* get_ctx_in_script_sig_hex(const void* vp_ctx_in)
+{
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
+    if (ctx_in == nullptr) return nullptr;
+    return SerializeToHex(ctx_in->scriptSig.data(), ctx_in->scriptSig.size());
+}
+
+const char* get_ctx_in_script_witness_hex(const void* vp_ctx_in)
+{
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
+    if (ctx_in == nullptr) return nullptr;
+    DataStream st{};
+    st << ctx_in->scriptWitness.stack;
+    return SerializeToHex(reinterpret_cast<const uint8_t*>(st.data()), st.size());
+}
+
 // ctx outs
 bool are_ctx_outs_equal(const void* vp_a, const void* vp_b)
 {
@@ -1171,6 +1187,13 @@ const BlsctScript* get_ctx_out_script_pub_key(const void* vp_ctx_out)
     auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
     if (ctx_out == nullptr) return nullptr;
     return CopyScriptBytes(ctx_out->scriptPubKey);
+}
+
+const char* get_ctx_out_script_pub_key_hex(const void* vp_ctx_out)
+{
+    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    if (ctx_out == nullptr) return nullptr;
+    return SerializeToHex(ctx_out->scriptPubKey.data(), ctx_out->scriptPubKey.size());
 }
 
 const BlsctPoint* get_ctx_out_spending_key(const void* vp_ctx_out)

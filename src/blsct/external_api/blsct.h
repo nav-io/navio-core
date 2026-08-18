@@ -415,11 +415,27 @@ size_t get_ctx_ins_size(const void* blsct_ctx_ins);
 const void* get_ctx_in_at(const void* vp_ctx_ins, size_t i);
 
 // ctx in
+//
+// Script getters come in two forms. The BlsctScript form is a fixed-size ABI
+// buffer of SCRIPT_SIZE bytes, zero-padded on the right; it returns nullptr
+// when the data does not fit (as well as on bad input or OOM). The *_hex form
+// has no size limit: it returns the complete data as a malloc'd hex string
+// (free with free_obj), and is the way to read anything larger than
+// SCRIPT_SIZE — e.g. a staked-commitment scriptPubKey — or to learn the size
+// the fixed buffer would have needed.
+//
+// get_ctx_in_script_witness{,_hex} do NOT return flat script bytes: the
+// witness stack has no flat in-memory layout, so both return its wire
+// serialization (CompactSize-prefixed stack elements). Any non-empty stack
+// exceeds SCRIPT_SIZE serialized, making the fixed-size form return nullptr;
+// use the hex form for real witness data.
 bool are_ctx_in_equal(const void* vp_a, const void* vp_b);
 const BlsctCTxId* get_ctx_in_prev_out_hash(const void* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in);
+const char* get_ctx_in_script_sig_hex(const void* vp_ctx_in);
 uint32_t get_ctx_in_sequence(const void* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in);
+const char* get_ctx_in_script_witness_hex(const void* vp_ctx_in);
 
 // ctx_outs
 bool are_ctx_outs_equal(const void* vp_a, const void* vp_b);
@@ -430,6 +446,7 @@ const void* get_ctx_out_at(const void* vp_ctx_outs, size_t i);
 bool are_ctx_out_equal(const void* vp_a, const void* vp_b);
 uint64_t get_ctx_out_value(const void* vp_ctx_out);
 const BlsctScript* get_ctx_out_script_pub_key(const void* vp_ctx_out);
+const char* get_ctx_out_script_pub_key_hex(const void* vp_ctx_out);
 const BlsctTokenId* get_ctx_out_token_id(const void* vp_ctx_out);
 BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out);
 
