@@ -114,6 +114,49 @@ BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_good_inputs_of_power_of_2)
     BOOST_CHECK_EQUAL(res, true);
 }
 
+BOOST_AUTO_TEST_CASE(test_verify_rejects_padded_ls_rs)
+{
+    auto y1 = Point::MapToPoint("y1", Endianness::Little);
+    auto y2 = Point::MapToPoint("y2", Endianness::Little);
+    auto y4 = Point::MapToPoint("y4", Endianness::Little);
+
+    const auto& setup = SetMemProofSetup<Arith>::Get();
+    range_proof::Generators<Arith> gen =
+        setup.Gf().GetInstance(TokenId());
+
+    Scalar m = Scalar::Rand();
+    Scalar f = Scalar::Rand();
+    auto sigma = gen.G * m + gen.H * f;
+
+    Points Ys;
+    Ys.Add(y1);
+    Ys.Add(y2);
+    Ys.Add(sigma);
+    Ys.Add(y4);
+
+    Scalar eta_fiat_shamir = Scalar::Rand();
+    blsct::Message eta_phi { 1, 2, 3 };
+    auto proof = Prover::Prove(
+        setup, Ys, sigma, m, f, eta_fiat_shamir, eta_phi
+    );
+    BOOST_REQUIRE_EQUAL(proof.Ls.Size(), 2);  // log2(4) rounds
+    BOOST_REQUIRE(Prover::Verify(setup, Ys, eta_fiat_shamir, eta_phi, proof));
+
+    // Appending (L, R) pairs beyond the round count must not verify: the extra
+    // pairs enter no verification equation, so accepting them would make the
+    // proof malleable.
+    auto padded = proof;
+    padded.Ls.Add(Point::GetBasePoint());
+    padded.Rs.Add(Point::GetBasePoint());
+    BOOST_CHECK(!Prover::Verify(setup, Ys, eta_fiat_shamir, eta_phi, padded));
+
+    // Truncated proofs were already rejected; keep that pinned too.
+    auto truncated = proof;
+    truncated.Ls = Points(std::vector<Point>{proof.Ls[0]});
+    truncated.Rs = Points(std::vector<Point>{proof.Rs[0]});
+    BOOST_CHECK(!Prover::Verify(setup, Ys, eta_fiat_shamir, eta_phi, truncated));
+}
+
 BOOST_AUTO_TEST_CASE(test_prove_verify_small_size_good_inputs_of_non_power_of_2)
 {
     auto y1 = Point::MapToPoint("y1", Endianness::Little);
