@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/wallet/hdchain.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
@@ -239,6 +240,32 @@ BOOST_FIXTURE_TEST_CASE(external_destination_one_time_key_derivation, TestingSet
     BOOST_REQUIRE(recovered.is_completed);
     BOOST_REQUIRE(!recovered.amounts.empty());
     BOOST_CHECK_EQUAL(recovered.amounts[0].amount, 42 * COIN);
+}
+
+// A chain read back out of the wallet database has to equal the one that was
+// written, so equality may only look at fields SERIALIZE_METHODS writes.
+BOOST_FIXTURE_TEST_CASE(hdchain_survives_a_serialization_round_trip, BasicTestingSetup)
+{
+    const auto key_id = [](uint8_t byte) {
+        const std::vector<unsigned char> bytes(uint160::size(), byte);
+        return CKeyID(uint160(bytes));
+    };
+
+    blsct::HDChain chain;
+    chain.seed_id = key_id(1);
+    chain.spend_id = key_id(2);
+    chain.view_id = key_id(3);
+    chain.blinding_id = key_id(4);
+    chain.token_id = key_id(5);
+    chain.nSubAddressCounter[0] = 7;
+
+    DataStream st{};
+    st << chain;
+
+    blsct::HDChain reloaded;
+    st >> reloaded;
+
+    BOOST_CHECK(chain == reloaded);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

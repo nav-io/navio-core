@@ -44,7 +44,8 @@ public:
 
     bool operator==(const HDChain& chain) const
     {
-        return seed_id == chain.seed_id && spend_id == chain.spend_id && view_id == chain.view_id && token_id == chain.token_id && blinding_id == chain.blinding_id && nSubAddressCounter == chain.nSubAddressCounter;
+        // blinding_id is deliberately excluded: SERIALIZE_METHODS never writes it, so a reloaded chain would never equal the one that was stored.
+        return seed_id == chain.seed_id && spend_id == chain.spend_id && view_id == chain.view_id && token_id == chain.token_id && nSubAddressCounter == chain.nSubAddressCounter;
     }
 };
 } // namespace blsct

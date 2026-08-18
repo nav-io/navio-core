@@ -9,6 +9,9 @@
 #include <blsct/common.h>
 #include <streams.h>
 
+#include <limits>
+#include <stdexcept>
+
 BOOST_FIXTURE_TEST_SUITE(common_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(test_cdatastream_to_vector)
@@ -49,6 +52,18 @@ BOOST_AUTO_TEST_CASE(test_get_first_power_of_2_greater_or_eq_to)
 
     // check boundary of 8
     BOOST_CHECK(blsct::Common::GetFirstPowerOf2GreaterOrEqTo(9) == 16);
+}
+
+BOOST_AUTO_TEST_CASE(test_get_first_power_of_2_greater_or_eq_to_overflow)
+{
+    // The largest power of 2 a size_t can hold is still answerable ...
+    constexpr size_t largest_power_of_2 = size_t{1} << (std::numeric_limits<size_t>::digits - 1);
+    BOOST_CHECK(blsct::Common::GetFirstPowerOf2GreaterOrEqTo(largest_power_of_2) == largest_power_of_2);
+
+    // ... but anything above it has no representable answer, and the doubling
+    // loop must report that rather than overflow to 0 and spin forever.
+    BOOST_CHECK_THROW(blsct::Common::GetFirstPowerOf2GreaterOrEqTo(largest_power_of_2 + 1), std::runtime_error);
+    BOOST_CHECK_THROW(blsct::Common::GetFirstPowerOf2GreaterOrEqTo(std::numeric_limits<size_t>::max()), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_CASE(test_trim_preceeding_zeros)
