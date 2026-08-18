@@ -230,6 +230,22 @@ public:
     wallet::isminetype IsMineMode(const CTxOut& txout);
     bool IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag);
     bool IsMine(const CScript& script) const;
+
+    //! The view tag an output would carry if it were addressed to this wallet:
+    //! CalculateViewTag(blindingKey, ourViewKey). This is the expensive part of
+    //! the ownership test (one BLS12-381 G1 scalar multiplication). Both
+    //! MarkUnusedSubAddress and IsMineMode recompute it per output during a
+    //! scan; compute it ONCE with this and pass it to the overloads below so the
+    //! dominant per-output cost is paid a single time. Returns nullopt when the
+    //! output cannot be ours (no view key / not a BLSCT output / zero blinding).
+    std::optional<uint16_t> GetExpectedViewTag(const CTxOut& txout);
+    //! IsMineMode / IsMine / MarkUnusedSubAddress variants that take the
+    //! precomputed expected view tag instead of recomputing it. A nullopt
+    //! expected tag (output cannot be a BLSCT output of ours) makes the BLSCT
+    //! ownership checks fail without any EC work, falling through to the
+    //! scriptPubKey watch-only path exactly as the original did.
+    wallet::isminetype IsMineMode(const CTxOut& txout, const std::optional<uint16_t>& expectedViewTag);
+    bool IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<uint16_t>& expectedViewTag);
     CKeyID GetHashId(const CTxOut& txout) const
     {
         if (!txout.scriptPubKey.IsSpendable() && !txout.IsStakedCommitment()) {
@@ -276,6 +292,7 @@ public:
     bool TopUp(const unsigned int& size = 0);
     bool TopUpAccount(const int64_t& account, const unsigned int& size = 0);
     std::optional<wallet::WalletDestination> MarkUnusedSubAddress(const CTxOut& txout);
+    std::optional<wallet::WalletDestination> MarkUnusedSubAddress(const CTxOut& txout, const uint16_t& expectedViewTag);
     void ReserveSubAddressFromPool(const int64_t& account, int64_t& nIndex, SubAddressPool& keypool);
     void KeepSubAddress(const SubAddressIdentifier& id);
     void ReturnSubAddress(const SubAddressIdentifier& id);

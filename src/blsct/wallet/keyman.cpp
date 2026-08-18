@@ -920,6 +920,11 @@ bool KeyMan::IsMine(const CScript& script) const
 
 wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
 {
+    return IsMineMode(txout, GetExpectedViewTag(txout));
+}
+
+wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<uint16_t>& expectedViewTag)
+{
     const auto spendable_kind = [&]() {
         return txout.IsStakedCommitment() ? wallet::ISMINE_STAKED_COMMITMENT_BLSCT
                                           : wallet::ISMINE_SPENDABLE_BLSCT;
@@ -933,7 +938,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
         // own the resulting subaddress, the output is fully spendable.
         blsct::PublicKey extractedSpendingKey;
         if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
-            if (IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag)) {
+            if (IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag, expectedViewTag)) {
                 return spendable_kind();
             }
         }
@@ -957,7 +962,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
         if (txout.scriptPubKey.size() != 50 &&
             ExtractAllSpendingKeysFromScript(txout.scriptPubKey, branchKeys)) {
             for (const auto& branchKey : branchKeys) {
-                if (IsMine(txout.blsctData.blindingKey, branchKey, txout.blsctData.viewTag)) {
+                if (IsMine(txout.blsctData.blindingKey, branchKey, txout.blsctData.viewTag, expectedViewTag)) {
                     return wallet::ISMINE_WATCH_ONLY;
                 }
             }
@@ -965,7 +970,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
         return wallet::ISMINE_NO;
     }
 
-    if (IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag)) {
+    if (IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag, expectedViewTag)) {
         return spendable_kind();
     }
     // Real BLSCT output that we don't own as a subaddress, but whose
@@ -981,7 +986,13 @@ bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey&
     if (!fViewKeyDefined || !viewKey.IsValid())
         return false;
 
-    if (viewTag != CalculateViewTag(blindingKey.GetG1Point(), viewKey.GetScalar())) return false;
+    return IsMine(blindingKey, spendingKey, viewTag,
+                  static_cast<uint16_t>(CalculateViewTag(blindingKey.GetG1Point(), viewKey.GetScalar())));
+}
+
+bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<uint16_t>& expectedViewTag)
+{
+    if (!expectedViewTag || viewTag != *expectedViewTag) return false;
 
     auto hashId = GetHashId(blindingKey, spendingKey);
 
@@ -1306,18 +1317,31 @@ util::Result<CTxDestination> KeyMan::GetNewDestination(const int64_t& account)
     return CTxDestination(GetSubAddress(id).GetKeys());
 }
 
+std::optional<uint16_t> KeyMan::GetExpectedViewTag(const CTxOut& txout)
+{
+    if (!fViewKeyDefined || !viewKey.IsValid()) return std::nullopt;
+    if (!txout.HasBLSCTKeys()) return std::nullopt;
+    if (txout.blsctData.blindingKey.IsZero()) return std::nullopt;
+    return static_cast<uint16_t>(CalculateViewTag(txout.blsctData.blindingKey, viewKey.GetScalar()));
+}
+
 std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout)
+{
+    const auto expected = GetExpectedViewTag(txout);
+    if (!expected) return std::nullopt;
+    return MarkUnusedSubAddress(txout, *expected);
+}
+
+std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout, const uint16_t& expectedViewTag)
 {
     try {
         // Cheap prefilter: viewTag must match before we do any expensive work.
         // Without this, every non-wallet BLSCT output forces the
         // 3 × keypool × full subaddress derivation scan below, which dominates
-        // rescan cost (millions of BLS scalar multiplications per chain).
-        if (!fViewKeyDefined || !viewKey.IsValid()) return std::nullopt;
-        if (!txout.HasBLSCTKeys()) return std::nullopt;
-        if (txout.blsctData.blindingKey.IsZero()) return std::nullopt;
-        if (txout.blsctData.viewTag != CalculateViewTag(
-                txout.blsctData.blindingKey, viewKey.GetScalar())) {
+        // rescan cost (millions of BLS scalar multiplications per chain). The
+        // expensive part (CalculateViewTag = one G1 scalar mult) was already
+        // paid to obtain `expectedViewTag`; here we only compare.
+        if (txout.blsctData.viewTag != expectedViewTag) {
             return std::nullopt;
         }
 

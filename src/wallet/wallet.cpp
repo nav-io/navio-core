@@ -1565,14 +1565,20 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
 
                 bool fExisted = mapOutputs.contains(outpoint);
                 if (fExisted && !fUpdate) return false;
+                std::optional<uint16_t> expectedViewTag;
                 if (blsct_man) {
-                    const auto learned_dest = blsct_man->MarkUnusedSubAddress(txout);
-                    if (learned_dest && learned_dest->internal.has_value() && !learned_dest->internal.value() &&
-                        !FindAddressBookEntry(learned_dest->dest, /* allow_change= */ false)) {
-                        SetAddressBook(learned_dest->dest, "", AddressPurpose::RECEIVE);
+                    // Derive blindingKey * viewKey once and share it between the
+                    // subaddress-recovery scan and IsMine below.
+                    expectedViewTag = blsct_man->GetExpectedViewTag(txout);
+                    if (expectedViewTag) {
+                        const auto learned_dest = blsct_man->MarkUnusedSubAddress(txout, *expectedViewTag);
+                        if (learned_dest && learned_dest->internal.has_value() && !learned_dest->internal.value() &&
+                            !FindAddressBookEntry(learned_dest->dest, /* allow_change= */ false)) {
+                            SetAddressBook(learned_dest->dest, "", AddressPurpose::RECEIVE);
+                        }
                     }
                 }
-                if (fExisted || IsMine(txout)) {
+                if (fExisted || IsMine(txout, expectedViewTag)) {
                     CWalletOutput* wout = AddToWallet(
                         outpoint,
                         MakeOutputRef<CTxOut>(std::move(txout)),
@@ -2053,6 +2059,21 @@ isminetype CWallet::IsMine(const CTxOut& txout) const
             // them as spendable: the wallet has no derivable spending key
             // for an imported HTLC even though it can decrypt the amount.
             return blsct_man->IsMineMode(txout);
+        }
+    }
+    return IsMine(txout.scriptPubKey);
+}
+
+isminetype CWallet::IsMine(const CTxOut& txout, const std::optional<uint16_t>& expectedViewTag) const
+{
+    AssertLockHeld(cs_wallet);
+    if (txout.HasBLSCTKeys()) {
+        auto blsct_man = GetBLSCTKeyMan();
+        if (blsct_man) {
+            // Same as IsMine(txout) but reuses the view tag already derived by
+            // the caller (blindingKey * viewKey), avoiding a second EC mult per
+            // output during wallet scan.
+            return blsct_man->IsMineMode(txout, expectedViewTag);
         }
     }
     return IsMine(txout.scriptPubKey);
