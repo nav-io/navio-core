@@ -16,6 +16,17 @@ from test_framework.util import (
 )
 from test_framework.messages import COIN
 
+# Well-formed regtest BLSCT addresses whose keys are the identity (point at
+# infinity). They decode fine and DoublePublicKey::IsValid() accepts them, but
+# an output built for them is anyone-can-spend, so every RPC that takes a
+# destination must reject them. The one-sided pairs pin both halves of the
+# view-key/spend-key check: the encoded payload is the 48-byte compressed
+# identity (0xc0 followed by zeroes) and/or the BLS12-381 G1 generator.
+NULL_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwwvmtas"
+NULL_VIEW_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp9l36wnnr97hjsnf2cuvf756cr7rdzxyl9m5hyz6zn368ut3htzcd327s0le0gdwl7e67q9dkgkxhvmdqls40d"
+NULL_SPEND_KEY_ADDRESS = "rnv1jlca8fe3jltegf54vwxyl2dvplpk3rz0ja6tjpdpfcar79cm43vxc40g8luh5xh0lva0qzkmytrthsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqma0f57ul"
+NULL_KEY_ADDRESSES = (NULL_KEY_ADDRESS, NULL_VIEW_KEY_ADDRESS, NULL_SPEND_KEY_ADDRESS)
+
 
 class BLSCTRawTransactionTest(BitcoinTestFramework):
     def add_options(self, parser):
@@ -126,6 +137,13 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         assert_raises_rpc_error(-5, "Invalid BLSCT address",
                                wallet1.createblsctrawtransaction, inputs, outputs_invalid)
 
+        # An address encoding the identity for either key decodes fine but is
+        # anyone-can-spend, so it must be rejected too.
+        for null_address in NULL_KEY_ADDRESSES:
+            outputs_null = [{"address": null_address, "amount": 10000000}]
+            assert_raises_rpc_error(-5, "BLSCT address has null keys",
+                                   wallet1.createblsctrawtransaction, inputs, outputs_null)
+
         # Negative amount
         outputs_negative = [{"address": address2, "amount": -10000000}]
         assert_raises_rpc_error(-8, "Invalid amount, must be positive",
@@ -182,8 +200,14 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
                                wallet1.fundblsctrawtransaction, "invalid_hex")
 
         # Invalid change address
-        assert_raises_rpc_error(-5, "Invalid BLSCT change address",
+        assert_raises_rpc_error(-5, "Invalid BLSCT address",
                                wallet1.fundblsctrawtransaction, raw_tx, "invalid_address")
+
+        # A change address whose view or spend key is the identity would send
+        # the change to an anyone-can-spend output.
+        for null_address in NULL_KEY_ADDRESSES:
+            assert_raises_rpc_error(-5, "BLSCT address has null keys",
+                                   wallet1.fundblsctrawtransaction, raw_tx, null_address)
 
         # Invalid fee
         assert_raises_rpc_error(-8, "Fee must be a non-negative amount in navoshis",

@@ -57,15 +57,38 @@ CScript BuildHTLCScript(
     return script;
 }
 
+//! Reject anything that is not a BLSCT address, and return its keys.
+//! SubAddress(const std::string&) leaves its keys default-constructed (the
+//! point at infinity) for a string it cannot decode, and an output built for
+//! those keys has publicly derivable ownership keys, so every RPC that takes a
+//! destination as a raw string has to check it first.
+static blsct::DoublePublicKey EnsureBlsctDestination(const std::string& address)
+{
+    CTxDestination destination = DecodeDestination(address);
+    if (!std::holds_alternative<blsct::DoublePublicKey>(destination)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
+    }
+    blsct::DoublePublicKey keys = std::get<blsct::DoublePublicKey>(destination);
+
+    // A well-formed address can still encode the identity for either key:
+    // MclG1Point::SetVch accepts the point at infinity, and
+    // DoublePublicKey::IsValid() only reports that both keys deserialized. The
+    // resulting output is the same anyone-can-spend output as the
+    // default-constructed case, so reject those keys too.
+    MclG1Point view_key, spend_key;
+    if (!keys.GetViewKey(view_key) || !keys.GetSpendKey(spend_key) || view_key.IsZero() || spend_key.IsZero()) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("BLSCT address has null keys: ") + address);
+    }
+
+    return keys;
+}
+
 static void ParseBLSCTRecipients(const UniValue& address_amounts, const UniValue& subtract_fee_outputs, const std::string& sMemo, std::vector<wallet::CBLSCTRecipient>& recipients)
 {
     std::set<CTxDestination> destinations;
     int i = 0;
     for (const std::string& address : address_amounts.getKeys()) {
-        CTxDestination dest = DecodeDestination(address);
-        if (!IsValidDestination(dest) || dest.index() != 8) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
-        }
+        const CTxDestination dest{EnsureBlsctDestination(address)};
 
         if (destinations.contains(dest)) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, duplicated address: ") + address);
@@ -91,32 +114,6 @@ template <typename Scalar>
 static std::string FormatRecoveredGamma(const Scalar& gamma)
 {
     return gamma.IsZero() ? "" : HexStr(gamma.GetVch());
-}
-
-//! Reject anything that is not a BLSCT address, and return its keys.
-//! SubAddress(const std::string&) leaves its keys default-constructed (the
-//! point at infinity) for a string it cannot decode, and an output built for
-//! those keys has publicly derivable ownership keys, so every RPC that takes a
-//! destination as a raw string has to check it first.
-static blsct::DoublePublicKey EnsureBlsctDestination(const std::string& address)
-{
-    CTxDestination destination = DecodeDestination(address);
-    if (!std::holds_alternative<blsct::DoublePublicKey>(destination)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
-    }
-    blsct::DoublePublicKey keys = std::get<blsct::DoublePublicKey>(destination);
-
-    // A well-formed address can still encode the identity for either key:
-    // MclG1Point::SetVch accepts the point at infinity, and
-    // DoublePublicKey::IsValid() only reports that both keys deserialized. The
-    // resulting output is the same anyone-can-spend output as the
-    // default-constructed case, so reject those keys too.
-    MclG1Point view_key, spend_key;
-    if (!keys.GetViewKey(view_key) || !keys.GetSpendKey(spend_key) || view_key.IsZero() || spend_key.IsZero()) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("BLSCT address has null keys: ") + address);
-    }
-
-    return keys;
 }
 
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose, wallet::mapValue_t mapValue)
@@ -921,12 +918,8 @@ RPCHelpMan sendtoblsctaddress()
             if (!request.params[2].isNull() && !request.params[2].get_str().empty())
                 sMemo = request.params[2].get_str();
 
-            CTxDestination destination = DecodeDestination(request.params[0].get_str());
-            if (!IsValidDestination(destination) || destination.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
-            }
-
             const std::string address = request.params[0].get_str();
+            blsct::EnsureBlsctDestination(address);
 
             const bool verbose{request.params[3].isNull() ? false : request.params[3].get_bool()};
             const bool subtract_fee{request.params[4].isNull() ? false : request.params[4].get_bool()};
@@ -1008,16 +1001,11 @@ RPCHelpMan sendtokentoblsctaddress()
             if (!request.params[3].isNull() && !request.params[3].get_str().empty())
                 sMemo = request.params[3].get_str();
 
-            CTxDestination destination = DecodeDestination(request.params[1].get_str());
-            if (!IsValidDestination(destination) || destination.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
-            }
-
             const std::string address = request.params[1].get_str();
+            blsct::EnsureBlsctDestination(address);
 
             const bool verbose{request.params[4].isNull() ? false : request.params[4].get_bool()};
 
-            blsct::SubAddress subAddress(std::get<blsct::DoublePublicKey>(destination));
             blsct::CreateTransactionData transactionData(address, AmountFromValue(request.params[2]), sMemo, TokenId(token_id), blsct::CreateTransactionType::NORMAL, 0);
 
             EnsureWalletIsUnlocked(*pwallet);
@@ -1086,16 +1074,11 @@ RPCHelpMan sendnfttoblsctaddress()
             if (!request.params[3].isNull() && !request.params[3].get_str().empty())
                 sMemo = request.params[3].get_str();
 
-            CTxDestination destination = DecodeDestination(request.params[2].get_str());
-            if (!IsValidDestination(destination) || destination.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
-            }
-
             const std::string address = request.params[2].get_str();
+            blsct::EnsureBlsctDestination(address);
 
             const bool verbose{request.params[4].isNull() ? false : request.params[4].get_bool()};
 
-            blsct::SubAddress subAddress(std::get<blsct::DoublePublicKey>(destination));
             blsct::CreateTransactionData transactionData(address, 1, sMemo, TokenId(token_id, nft_id), blsct::CreateTransactionType::NORMAL, 0);
 
             EnsureWalletIsUnlocked(*pwallet);
@@ -2475,20 +2458,12 @@ RPCHelpMan createblsctrawtransaction()
                 }
 
                 if (output_type == "atomic_swap") {
-                    auto parse_address = [&](const std::string& address, const std::string& field_name) -> blsct::DoublePublicKey {
-                        CTxDestination destination = DecodeDestination(address);
-                        if (!IsValidDestination(destination) || destination.index() != 8) {
-                            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address for ") + field_name + ": " + address);
-                        }
-                        return std::get<blsct::DoublePublicKey>(destination);
-                    };
-
                     if (!o.exists("address_a") || !o.exists("address_b")) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Atomic swap output requires address_a and address_b");
                     }
 
-                    blsct::DoublePublicKey address_a = parse_address(o["address_a"].get_str(), "address_a");
-                    blsct::DoublePublicKey address_b = parse_address(o["address_b"].get_str(), "address_b");
+                    blsct::DoublePublicKey address_a = blsct::EnsureBlsctDestination(o["address_a"].get_str());
+                    blsct::DoublePublicKey address_b = blsct::EnsureBlsctDestination(o["address_b"].get_str());
 
                     if (!o.exists("hash")) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Atomic swap output requires a 32-byte hash");
@@ -2562,12 +2537,7 @@ RPCHelpMan createblsctrawtransaction()
                 } else {
                     blsct::SubAddress subAddress;
                     if (o.exists("address")) {
-                        std::string address = o["address"].get_str();
-                        CTxDestination destination = DecodeDestination(address);
-                        if (!IsValidDestination(destination) || destination.index() != 8) {
-                            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
-                        }
-                        subAddress = std::get<blsct::DoublePublicKey>(destination);
+                        subAddress = blsct::EnsureBlsctDestination(o["address"].get_str());
                     } else {
                         subAddress = blsct::DoublePublicKey(MclG1Point::GetBasePoint(), MclG1Point::GetBasePoint());
                     }
@@ -2748,10 +2718,7 @@ RPCHelpMan fundblsctrawtransaction()
                 // Get change address (needed for both cases)
                 CTxDestination change_dest;
                 if (!request.params[1].isNull()) {
-                    change_dest = DecodeDestination(request.params[1].get_str());
-                    if (!IsValidDestination(change_dest) || change_dest.index() != 8) {
-                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BLSCT change address");
-                    }
+                    change_dest = blsct::EnsureBlsctDestination(request.params[1].get_str());
                 } else {
                     change_dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(blsct::CHANGE_ACCOUNT).value());
                 }
@@ -3530,12 +3497,7 @@ RPCHelpMan deriveblsctnonce()
             }
             Scalar blindingKey(blinding_key_bytes);
 
-            std::string address_str = request.params[1].get_str();
-            CTxDestination dest = DecodeDestination(address_str);
-            if (!IsValidDestination(dest) || dest.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BLSCT address");
-            }
-            auto dpk = std::get<blsct::DoublePublicKey>(dest);
+            auto dpk = blsct::EnsureBlsctDestination(request.params[1].get_str());
 
             MclG1Point vk_point;
             if (!dpk.GetViewKey(vk_point)) {
@@ -3690,12 +3652,7 @@ RPCHelpMan deriveblsctspendingkey()
             }
             Scalar blindingKey(blinding_key_bytes);
 
-            std::string address_str = request.params[1].get_str();
-            CTxDestination dest = DecodeDestination(address_str);
-            if (!IsValidDestination(dest) || dest.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BLSCT address");
-            }
-            auto dpk = std::get<blsct::DoublePublicKey>(dest);
+            auto dpk = blsct::EnsureBlsctDestination(request.params[1].get_str());
 
             MclG1Point sk_point;
             if (!dpk.GetSpendKey(sk_point)) {
