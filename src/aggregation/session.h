@@ -15,6 +15,11 @@
 
 namespace aggregation {
 
+//! Default for -aggregatesends: every wallet BLSCT send is merged with fee-0
+//! cover candidates from the node's pool when any are available (falling back
+//! to a plain send when none are, or when the merge fails).
+static constexpr bool DEFAULT_AGGREGATE_SENDS{true};
+
 //! Per-byte weight of a 1-in-1-out fee-0 BLSCT candidate, used to size the
 //! initiator's over-funded fee. Measured empirically; refined by bench. A
 //! conservative over-estimate only costs the initiator a little extra fee.

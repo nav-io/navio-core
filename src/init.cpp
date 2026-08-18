@@ -48,6 +48,7 @@
 #include <node/chainstatemanager_args.h>
 #include <node/context.h>
 #include <aggregation/pool.h>
+#include <aggregation/session.h>
 #include <netmessagemaker.h>
 #include <p2pmsg/transport.h>
 #include <p2pmsg/worker_pool.h>
@@ -551,6 +552,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-addnode=<ip>", strprintf("Add a node to connect to and attempt to keep the connection open (see the addnode RPC help for more info). This option can be specified multiple times to add multiple nodes; connections are limited to %u at a time and are counted separately from the -maxconnections limit.", MAX_ADDNODE_CONNECTIONS), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-asmap=<file>", strprintf("Specify asn mapping used for bucketing of the peers (default: %s). Relative paths will be prefixed by the net-specific datadir location.", DEFAULT_ASMAP_FILENAME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsg", strprintf("Enable the encrypted p2p messaging subsystem (default: %u)", p2pmsg::DEFAULT_P2PMSG_ENABLE), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-aggregatesends", strprintf("Merge fee-0 cover candidates from the p2pmsg pool into every wallet BLSCT send, hiding the wallet's inputs and outputs among cover traffic at the cost of a higher fee. Sends fall back to plain transactions when no candidates are available. (default: %u)", aggregation::DEFAULT_AGGREGATE_SENDS), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onionworkers=<n>", "Number of worker threads for p2p-messaging heavy crypto (0 = auto, default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bantime=<n>", strprintf("Default duration (in seconds) of manually configured bans (default: %u)", DEFAULT_MISBEHAVING_BANTIME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);

@@ -122,28 +122,85 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
     if (txData.nBLSCTDefaultFee == ::BLSCT_DEFAULT_FEE) {
         txData.nBLSCTDefaultFee = Params().GetConsensus().nBLSCTDefaultFee;
     }
-    // Send
-    auto res = blsct::TxFactory::CreateTransaction(&wallet, wallet.GetBLSCTKeyMan(), txData);
 
-    if (!res) {
-        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+    // By default every wallet send is aggregated with fee-0 cover candidates
+    // from the node's p2pmsg pool (same merge `aggregatesend` performs), hiding
+    // which inputs/outputs are the wallet's among the cover self-spends. The
+    // sender pays RequiredCandidateFee extra for the cover weight; disable with
+    // -aggregatesends=0. Any aggregation failure falls back to a plain send, so
+    // enabling this by default can never make a send fail that would otherwise
+    // succeed.
+    std::vector<CTransactionRef> candidates;
+    aggregation::CandidatePool* pool = aggregation::GetActivePool();
+    if (pool && gArgs.GetBoolArg("-aggregatesends", aggregation::DEFAULT_AGGREGATE_SENDS)) {
+        candidates = pool->PickForAggregate(aggregation::POOL_MAX_COMBINED);
     }
 
-    const CTransactionRef& tx = MakeTransactionRef(res->tx);
+    for (;;) {
+        blsct::CreateTransactionData attempt = txData;
+        if (!candidates.empty()) {
+            attempt.additionalFee = aggregation::RequiredCandidateFee(candidates, attempt.nBLSCTDefaultFee);
+        }
+        auto res = blsct::TxFactory::CreateTransaction(&wallet, wallet.GetBLSCTKeyMan(), attempt);
+        if (!res) {
+            // Over-funding the fee for cover can push the wallet short; a plain
+            // send may still fit. (PickForAggregate does not remove from the
+            // pool, so dropping the candidates here loses nothing.)
+            if (!candidates.empty()) {
+                candidates.clear();
+                continue;
+            }
+            throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+        }
 
-    // Store any wallet-local comment/comment_to on the sender's CWalletTx so
-    // listtransactions surfaces them (WalletTxToJSON emits every mapValue key).
-    // This is separate from the on-chain BLSCT memo, which the recipient sees.
-    wallet.CommitTransaction(tx, std::move(mapValue), /*orderForm=*/{});
-    // The factory reports which output pays the destination: vout is shuffled
-    // for privacy, so the recipient is not at any fixed position.
-    std::string outputHash = res->recipientOutputHash.GetHex();
-    if (verbose) {
-        UniValue entry(UniValue::VOBJ);
-        entry.pushKV("outputHash", outputHash);
-        return entry;
+        if (!candidates.empty()) {
+            std::vector<CTransactionRef> halves;
+            halves.reserve(candidates.size() + 1);
+            halves.push_back(MakeTransactionRef(res->tx));
+            halves.insert(halves.end(), candidates.begin(), candidates.end());
+
+            auto combined = aggregation::CombineHalves(halves);
+            CTransactionRef agg_tx;
+            bool broadcast_ok = false;
+            std::string err_string;
+            if (combined) {
+                agg_tx = MakeTransactionRef(std::move(*combined));
+                broadcast_ok = wallet.chain().broadcastTransaction(agg_tx, wallet.m_default_max_tx_fee, /*relay=*/true, err_string);
+            }
+            // Evict the picked candidates whether or not the aggregate went
+            // through: a broadcast one must not be merged into a second
+            // aggregate, and a malformed/stale one must not be re-picked and
+            // poison every subsequent send.
+            for (const auto& c : candidates) {
+                for (const CTxIn& in : c->vin) pool->EvictByInput(in.prevout);
+            }
+            if (!broadcast_ok) {
+                candidates.clear();
+                continue;
+            }
+            // The combined tx's hash differs from the wallet's own half, so
+            // there is no CWalletTx to commit; the wallet recovers its inputs
+            // and outputs from the broadcast tx via BLSCT scanning (wallet-local
+            // mapValue comments are dropped on this path).
+        } else {
+            const CTransactionRef& tx = MakeTransactionRef(res->tx);
+
+            // Store any wallet-local comment/comment_to on the sender's CWalletTx so
+            // listtransactions surfaces them (WalletTxToJSON emits every mapValue key).
+            // This is separate from the on-chain BLSCT memo, which the recipient sees.
+            wallet.CommitTransaction(tx, std::move(mapValue), /*orderForm=*/{});
+        }
+
+        // The factory reports which output pays the destination: vout is shuffled
+        // for privacy, so the recipient is not at any fixed position.
+        std::string outputHash = res->recipientOutputHash.GetHex();
+        if (verbose) {
+            UniValue entry(UniValue::VOBJ);
+            entry.pushKV("outputHash", outputHash);
+            return entry;
+        }
+        return outputHash;
     }
-    return outputHash;
 }
 } // namespace blsct
 

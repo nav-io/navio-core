@@ -248,14 +248,20 @@ net/worker threads is needed:
    cycle so a node continuously supplies cover traffic.
 2. **Collect** — every node's `CANDIDATE_TX` handler validates the candidate
    structurally and pools it (spent-input eviction keeps the pool fresh).
-3. **Aggregate** — `aggregatesend` picks a RANDOM subset from the pool,
-   over-funds its own half's fee to cover the combined weight, combines behind
-   a single shuffled fee output, and broadcasts.
+3. **Aggregate** — every wallet send RPC (`sendtoblsctaddress`, token/NFT
+   sends, staking ops — anything routed through `blsct::SendTransaction`) picks
+   a RANDOM subset from the pool by default (`-aggregatesends=1`), over-funds
+   its own half's fee to cover the combined weight, combines behind a single
+   shuffled fee output, and broadcasts. When the pool is empty or the merge
+   fails the send falls back to a plain transaction, so aggregation never
+   blocks a payment. `aggregatesend` remains for explicit control
+   (`max_candidates`, merged-count reporting).
 
 Wallet building always runs on the RPC/daemon thread under `cs_wallet`, never on
 the net or worker threads. The transport is enabled by default (`-p2pmsg=1`);
 candidate *production* is opt-in (`-producecandidates`) so a node only spends
-its own coins on cover traffic when asked.
+its own coins on cover traffic when asked, while *consumption* is on by default
+(`-aggregatesends=0` opts out).
 
 ### Still deferred
 
