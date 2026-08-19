@@ -80,15 +80,13 @@ class BlsctAddressRpcTest(BitcoinTestFramework):
         receive_addr = blsct_wallet.getnewaddress()
         assert receive_addr != change_addr
         assert receive_addr != change_addr2
-        # NOTE: change_addr == change_addr2 here. This mirrors a pre-existing
-        # quirk of blsct::KeyMan's negative "special account" handling
-        # (CHANGE_ACCOUNT/STAKING_ACCOUNT always resolve to sub-address index 0,
-        # see blsct::KeyMan::GetSubAddressFromPool in src/blsct/wallet/keyman.cpp)
-        # that also affects real BLSCT sends via blsct::TxFactory, which calls
-        # the identical GetNewDestination(blsct::CHANGE_ACCOUNT) path. It is out
-        # of scope for this RPC-consistency fix to change keyman derivation
-        # behavior, so this test documents current behavior rather than
-        # asserting index uniqueness across repeated change-address calls.
+        # Every change-address call returns the same address on purpose: the
+        # change account (CHANGE_ACCOUNT) is a single destination pinned to
+        # sub-address index 0 in blsct::KeyMan::GetSubAddressFromPool. Reuse
+        # leaks nothing because BLSCT outputs are stealth-derived -- each output
+        # gets a fresh blinding key, so payments to one sub-address are
+        # unlinkable on chain -- and a small sub-address set keeps wallet sync
+        # cheap. Real sends through blsct::TxFactory take the identical path.
         assert_equal(change_addr, change_addr2)
 
         self.log.info("Transparent wallets are unaffected: getnewaddress/getrawchangeaddress keep working")

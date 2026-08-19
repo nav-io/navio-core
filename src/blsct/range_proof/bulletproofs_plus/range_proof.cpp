@@ -18,7 +18,8 @@ bool RangeProof<T>::operator==(const RangeProof<T>& other) const
         r_prime == other.r_prime &&
         s_prime == other.s_prime &&
         delta_prime == other.delta_prime &&
-        alpha_hat == other.alpha_hat
+        alpha_hat == other.alpha_hat &&
+        tau_x == other.tau_x
         ;
 }
 template

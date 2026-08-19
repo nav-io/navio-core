@@ -93,6 +93,32 @@ static std::string FormatRecoveredGamma(const Scalar& gamma)
     return gamma.IsZero() ? "" : HexStr(gamma.GetVch());
 }
 
+//! Reject anything that is not a BLSCT address, and return its keys.
+//! SubAddress(const std::string&) leaves its keys default-constructed (the
+//! point at infinity) for a string it cannot decode, and an output built for
+//! those keys has publicly derivable ownership keys, so every RPC that takes a
+//! destination as a raw string has to check it first.
+static blsct::DoublePublicKey EnsureBlsctDestination(const std::string& address)
+{
+    CTxDestination destination = DecodeDestination(address);
+    if (!std::holds_alternative<blsct::DoublePublicKey>(destination)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
+    }
+    blsct::DoublePublicKey keys = std::get<blsct::DoublePublicKey>(destination);
+
+    // A well-formed address can still encode the identity for either key:
+    // MclG1Point::SetVch accepts the point at infinity, and
+    // DoublePublicKey::IsValid() only reports that both keys deserialized. The
+    // resulting output is the same anyone-can-spend output as the
+    // default-constructed case, so reject those keys too.
+    MclG1Point view_key, spend_key;
+    if (!keys.GetViewKey(view_key) || !keys.GetSpendKey(spend_key) || view_key.IsZero() || spend_key.IsZero()) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("BLSCT address has null keys: ") + address);
+    }
+
+    return keys;
+}
+
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose, wallet::mapValue_t mapValue)
 {
     // This should always try to sign, if we don't have private keys, don't try to do anything here.
@@ -279,6 +305,7 @@ RPCHelpMan minttoken()
 
             uint256 token_id(ParseHashV(request.params[0], "token_id"));
             const std::string address = request.params[1].get_str();
+            blsct::EnsureBlsctDestination(address);
             CAmount mint_amount = AmountFromValue(request.params[2]);
 
             std::map<uint256, blsct::TokenEntry> tokens;
@@ -358,6 +385,7 @@ static RPCHelpMan mintnft()
             uint256 token_id(ParseHashV(request.params[0], "token_id"));
             uint64_t nft_id = request.params[1].get_uint64();
             const std::string address = request.params[2].get_str();
+            blsct::EnsureBlsctDestination(address);
             std::map<std::string, UniValue> metadata;
             if (!request.params[3].isNull() && !request.params[3].get_obj().empty())
                 request.params[3].get_obj().getObjMap(metadata);

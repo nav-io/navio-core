@@ -9,8 +9,11 @@
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
 #include <boost/test/unit_test.hpp>
+#include <limits>
 #include <set>
+#include <stdexcept>
 #include <streams.h>
+#include <utility>
 
 BOOST_FIXTURE_TEST_SUITE(elements_tests, BasicTestingSetup)
 
@@ -539,6 +542,27 @@ BOOST_AUTO_TEST_CASE(test_get_via_index_operator)
         BOOST_CHECK(xs[0] == g);
         BOOST_CHECK(xs[1] == g2);
         BOOST_CHECK_THROW(xs[2], std::runtime_error);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_index_operator_rejects_index_wider_than_32_bits)
+{
+    // 2^32 truncates to 0 in a uint32_t, so a bounds check that narrows the
+    // index before comparing it lets the read through and indexes the vector
+    // out of bounds. Where size_t is 32 bits wide there is nothing to narrow.
+    if constexpr (sizeof(size_t) > sizeof(uint32_t)) {
+        const size_t index = size_t{1} << std::numeric_limits<uint32_t>::digits;
+        {
+            Scalars xs(std::vector<Scalar> { Scalar{1}, Scalar{2} });
+            BOOST_CHECK_THROW(xs[index], std::runtime_error);
+            BOOST_CHECK_THROW(std::as_const(xs)[index], std::runtime_error);
+        }
+        {
+            auto g = Point::GetBasePoint();
+            Points xs(std::vector<Point> { g, g + g });
+            BOOST_CHECK_THROW(xs[index], std::runtime_error);
+            BOOST_CHECK_THROW(std::as_const(xs)[index], std::runtime_error);
+        }
     }
 }
 

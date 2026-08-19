@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/wallet/hdchain.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
@@ -58,6 +59,44 @@ std::unique_ptr<wallet::CWallet> MakeBLSCTWallet(interfaces::Chain* chain)
     auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
     BOOST_REQUIRE(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
     return wallet;
+}
+
+std::string DrawDestination(blsct::KeyMan* km, const int64_t account)
+{
+    auto dest = km->GetNewDestination(account);
+    BOOST_REQUIRE(dest.has_value());
+    return blsct::SubAddress(std::get<blsct::DoublePublicKey>(dest.value())).GetString();
+}
+
+// The negative accounts are single-destination by design: BLSCT outputs are
+// stealth-derived, so repeated payments to one sub-address are unlinkable on
+// chain, and a small sub-address set keeps wallet sync cheap. Receive accounts
+// must still advance. Either way the reserve pool must not leak the index each
+// draw reserves.
+BOOST_FIXTURE_TEST_CASE(negative_accounts_are_single_destination, TestingSetup)
+{
+    auto wallet = MakeBLSCTWallet(m_node.chain.get());
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+
+    for (const int64_t account : {blsct::CHANGE_ACCOUNT, blsct::STAKING_ACCOUNT}) {
+        const auto first = DrawDestination(km, account);
+        for (int i = 0; i < 4; i++) {
+            BOOST_CHECK_EQUAL(DrawDestination(km, account), first);
+        }
+        // ...and the draws must not drain the pool: the index each one reserves
+        // is handed back, so the pool settles at the top-up target instead of
+        // losing an index per call.
+        BOOST_CHECK_EQUAL(km->GetSubAddressPoolSize(account), wallet->m_keypool_size);
+    }
+
+    // Receive addresses do advance -- reusing one of those would link payments
+    // made by different senders to the same wallet.
+    std::set<std::string> seen;
+    for (int i = 0; i < 5; i++) {
+        BOOST_CHECK(seen.insert(DrawDestination(km, 0)).second);
+    }
+    BOOST_CHECK_EQUAL(seen.size(), 5U);
 }
 
 // Mirror the branch-key derivation used by the createblsctrawtransaction /
@@ -308,6 +347,32 @@ BOOST_FIXTURE_TEST_CASE(external_destination_one_time_key_derivation, TestingSet
     BOOST_REQUIRE(recovered.is_completed);
     BOOST_REQUIRE(!recovered.amounts.empty());
     BOOST_CHECK_EQUAL(recovered.amounts[0].amount, 42 * COIN);
+}
+
+// A chain read back out of the wallet database has to equal the one that was
+// written, so equality may only look at fields SERIALIZE_METHODS writes.
+BOOST_FIXTURE_TEST_CASE(hdchain_survives_a_serialization_round_trip, BasicTestingSetup)
+{
+    const auto key_id = [](uint8_t byte) {
+        const std::vector<unsigned char> bytes(uint160::size(), byte);
+        return CKeyID(uint160(bytes));
+    };
+
+    blsct::HDChain chain;
+    chain.seed_id = key_id(1);
+    chain.spend_id = key_id(2);
+    chain.view_id = key_id(3);
+    chain.blinding_id = key_id(4);
+    chain.token_id = key_id(5);
+    chain.nSubAddressCounter[0] = 7;
+
+    DataStream st{};
+    st << chain;
+
+    blsct::HDChain reloaded;
+    st >> reloaded;
+
+    BOOST_CHECK(chain == reloaded);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
