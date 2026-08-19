@@ -707,12 +707,14 @@ CKeyID KeyMan::GetHashId(const blsct::PublicKey& blindingKey, const blsct::Publi
 
 blsct::PrivateKey KeyMan::GetMasterSeedKey() const
 {
-    if (!IsHDEnabled())
-        throw std::runtime_error(strprintf("%s: the wallet has no HD enabled", __func__));
-
-    // Read the id under cs_KeyStore, then release it: GetKey() may take
-    // cs_wallet, and cs_KeyStore must never be held while doing so.
+    // One acquisition for both the HD check and the id: IsHDEnabled() reads the
+    // same field, so checking it separately let a re-seed in between hand back
+    // an id belonging to a different chain than the one that was checked.
+    // Released before GetKey(), which takes cs_wallet -- cs_KeyStore must never
+    // be held while doing so.
     const CKeyID seedId = WITH_LOCK(cs_KeyStore, return m_hd_chain.seed_id);
+    if (seedId.IsNull())
+        throw std::runtime_error(strprintf("%s: the wallet has no HD enabled", __func__));
 
     PrivateKey ret;
 
@@ -724,11 +726,12 @@ blsct::PrivateKey KeyMan::GetMasterSeedKey() const
 
 blsct::PrivateKey KeyMan::GetMasterTokenKey() const
 {
-    if (!IsHDEnabled())
+    // See GetMasterSeedKey(): one acquisition, and the lock is dropped before
+    // GetKey().
+    const auto [seedIsNull, tokenKeyId] = WITH_LOCK(cs_KeyStore,
+        return std::make_pair(m_hd_chain.seed_id.IsNull(), m_hd_chain.token_id));
+    if (seedIsNull)
         throw std::runtime_error(strprintf("%s: the wallet has no HD enabled", __func__));
-
-    // See GetMasterSeedKey(): cs_KeyStore is dropped before calling GetKey().
-    const CKeyID tokenKeyId = WITH_LOCK(cs_KeyStore, return m_hd_chain.token_id);
 
     PrivateKey ret;
 
