@@ -2372,7 +2372,7 @@ RPCHelpMan createblsctrawtransaction()
                 if (!o.exists("spending_key")) {
                     blsct::PrivateKey spending_key;
                     const bool can_derive = !pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_DISABLE_PRIVATE_KEYS);
-                    if (!wallet_prevout.IsNull() && can_derive && blsct_km->GetSpendingKeyForOutputWithCache(wallet_prevout, spending_key) && spending_key.IsValid()) {
+                    if (!wallet_prevout.IsNull() && can_derive && blsct_km->GetSpendingKeyForOutput(wallet_prevout, spending_key) && spending_key.IsValid()) {
                         unsigned_input.sk = spending_key;
                     } else if (wallet_prevout.IsNull()) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf(
@@ -2817,7 +2817,7 @@ RPCHelpMan fundblsctrawtransaction()
                                 // our sub-address pool, or custom scripts we do not
                                 // own) instead of force-including them and failing
                                 // the later sign with RPC_WALLET_ERROR.
-                                if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
+                                if (!blsct_km->GetSpendingKeyForOutput(output.txout, spending_key) || !spending_key.IsValid()) {
                                     continue;
                                 }
                                 if (!output.txout.blsctData.spendingKey.IsZero()) {
@@ -3016,7 +3016,7 @@ RPCHelpMan signblsctrawtransaction()
                     }
 
                     blsct::PrivateKey spending_key;
-                    if (!blsct_km->GetSpendingKeyForOutputWithCache(prevout, spending_key) || !spending_key.IsValid()) {
+                    if (!blsct_km->GetSpendingKeyForOutput(prevout, spending_key) || !spending_key.IsValid()) {
                         throw JSONRPCError(RPC_WALLET_ERROR,
                             "Unable to derive the spending key for an input; this wallet may not own it, or its sub-address pool does not cover the address");
                     }
@@ -3120,7 +3120,7 @@ RPCHelpMan decodeblsctrawtransaction()
                     auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
 
                     blsct::PrivateKey spending_key;
-                    bool found = blsct_km->GetSpendingKeyForOutputWithCache(output.out, spending_key) && spending_key.IsValid();
+                    bool found = blsct_km->GetSpendingKeyForOutput(output.out, spending_key) && spending_key.IsValid();
 
                     if (!found) {
                         // For HTLC and other complex scripts, try all BLS public keys in the script
@@ -3128,7 +3128,7 @@ RPCHelpMan decodeblsctrawtransaction()
                         if (blsct_km->ExtractAllSpendingKeysFromScript(output.out.scriptPubKey, script_keys)) {
                             for (const auto& candidate_key : script_keys) {
                                 auto hashId = blsct_km->GetHashId(output.out.blsctData.blindingKey, candidate_key);
-                                if (!hashId.IsNull() && blsct_km->GetSpendingKeyForOutputWithCache(output.out, hashId, spending_key) && spending_key.IsValid()) {
+                                if (!hashId.IsNull() && blsct_km->GetSpendingKeyForOutput(output.out, hashId, spending_key) && spending_key.IsValid()) {
                                     found = true;
                                     break;
                                 }
@@ -3684,7 +3684,7 @@ RPCHelpMan deriveblsctspendingkey()
             fakeOut.blsctData.blindingKey = sk_point * blindingKey;
 
             blsct::PrivateKey spendingKey;
-            if (!blsct_km->GetSpendingKeyForOutputWithCache(fakeOut, hashId, spendingKey) || !spendingKey.IsValid()) {
+            if (!blsct_km->GetSpendingKeyForOutput(fakeOut, hashId, spendingKey) || !spendingKey.IsValid()) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive spending key — address may not belong to this wallet");
             }
 

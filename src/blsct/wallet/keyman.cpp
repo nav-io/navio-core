@@ -25,34 +25,6 @@ bool KeyMan::CanGenerateKeys() const
     return IsHDEnabled();
 }
 
-bool KeyMan::AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId)
-{
-    // Check if encryption keys exist first (doesn't require lock)
-    if (!m_storage.HasEncryptionKeys()) {
-        LOCK(cs_KeyStore);
-        return KeyRing::AddKeyOutKey(key, outId);
-    }
-
-    // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
-    // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
-    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
-    if (m_storage.IsLocked()) {
-        return false;
-    }
-
-    std::vector<unsigned char> vchCryptedSecret;
-    auto keyVch = key.GetScalar().GetVch();
-    wallet::CKeyingMaterial vchSecret(keyVch.begin(), keyVch.end());
-    if (!wallet::EncryptSecret(m_storage.GetEncryptionKey(), vchSecret, outId, vchCryptedSecret)) {
-        return false;
-    }
-
-    if (!AddCryptedOutKey(outId, key.GetPublicKey(), vchCryptedSecret)) {
-        return false;
-    }
-    return true;
-}
-
 bool KeyMan::AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey)
 {
     // Check if encryption keys exist first (doesn't require lock)
@@ -86,13 +58,6 @@ bool KeyMan::AddKeyPubKey(const PrivateKey& secret, const PublicKey& pubkey)
     LOCK(cs_KeyStore);
     wallet::WalletBatch batch(m_storage.GetDatabase());
     return KeyMan::AddKeyPubKeyWithDB(batch, secret, pubkey);
-}
-
-bool KeyMan::AddKeyOutKey(const PrivateKey& secret, const uint256& outId)
-{
-    LOCK(cs_KeyStore);
-    wallet::WalletBatch batch(m_storage.GetDatabase());
-    return KeyMan::AddKeyOutKeyWithDB(batch, secret, outId);
 }
 
 bool KeyMan::AddViewKey(const PrivateKey& secret, const PublicKey& pubkey)
@@ -146,27 +111,6 @@ bool KeyMan::AddKeyPubKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& se
     return true;
 }
 
-bool KeyMan::AddKeyOutKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& secret, const uint256& outId)
-{
-    AssertLockHeld(cs_KeyStore);
-
-    bool needsDB = !encrypted_batch;
-    if (needsDB) {
-        encrypted_batch = &batch;
-    }
-    if (!AddKeyOutKeyInner(secret, outId)) {
-        if (needsDB) encrypted_batch = nullptr;
-        return false;
-    }
-    if (needsDB) encrypted_batch = nullptr;
-
-    if (!m_storage.HasEncryptionKeys()) {
-        return batch.WriteOutKey(outId,
-                                 secret);
-    }
-    return true;
-}
-
 bool KeyMan::AddSubAddressPoolWithDB(wallet::WalletBatch& batch, const SubAddressIdentifier& id, const SubAddress& subAddress, const bool& fLock)
 {
     LOCK(cs_KeyStore);
@@ -195,31 +139,12 @@ bool KeyMan::LoadCryptedKey(const PublicKey& vchPubKey, const std::vector<unsign
     return AddCryptedKeyInner(vchPubKey, vchCryptedSecret);
 }
 
-bool KeyMan::LoadCryptedOutKey(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, bool checksum_valid)
-{
-    // Set fDecryptionThoroughlyChecked to false when the checksum is invalid
-    if (!checksum_valid) {
-        fDecryptionThoroughlyChecked = false;
-    }
-
-    return AddCryptedOutKeyInner(outId, vchPubKey, vchCryptedSecret);
-}
-
 bool KeyMan::AddCryptedKeyInner(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret)
 {
     LOCK(cs_KeyStore);
     assert(mapKeys.empty());
 
     mapCryptedKeys[vchPubKey.GetID()] = make_pair(vchPubKey, vchCryptedSecret);
-    return true;
-}
-
-bool KeyMan::AddCryptedOutKeyInner(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret)
-{
-    LOCK(cs_KeyStore);
-    assert(mapOutKeys.empty());
-
-    mapCryptedOutKeys[outId] = make_pair(vchPubKey, vchCryptedSecret);
     return true;
 }
 
@@ -236,23 +161,6 @@ bool KeyMan::AddCryptedKey(const PublicKey& vchPubKey,
                                                     mapKeyMetadata[vchPubKey.GetID()]);
         else
             return wallet::WalletBatch(m_storage.GetDatabase()).WriteCryptedKey(vchPubKey, vchCryptedSecret, mapKeyMetadata[vchPubKey.GetID()]);
-    }
-}
-
-bool KeyMan::AddCryptedOutKey(const uint256& outId,
-                              const PublicKey& vchPubKey,
-                              const std::vector<unsigned char>& vchCryptedSecret)
-{
-    if (!AddCryptedOutKeyInner(outId, vchPubKey, vchCryptedSecret))
-        return false;
-    {
-        LOCK(cs_KeyStore);
-        if (encrypted_batch)
-            return encrypted_batch->WriteCryptedOutKey(outId,
-                                                       vchPubKey,
-                                                       vchCryptedSecret);
-        else
-            return wallet::WalletBatch(m_storage.GetDatabase()).WriteCryptedOutKey(outId, vchPubKey, vchCryptedSecret);
     }
 }
 
@@ -519,11 +427,6 @@ bool KeyMan::LoadKey(const PrivateKey& key, const PublicKey& pubkey)
     return AddKeyPubKeyInner(key, pubkey);
 }
 
-bool KeyMan::LoadOutKey(const PrivateKey& key, const uint256& outId)
-{
-    return AddKeyOutKeyInner(key, outId);
-}
-
 bool KeyMan::LoadViewKey(const PrivateKey& key, const PublicKey& pubkey)
 {
     return KeyRing::AddViewKey(key, pubkey);
@@ -584,27 +487,6 @@ bool KeyMan::GetKey(const CKeyID& id, PrivateKey& keyOut) const
     return false;
 }
 
-bool KeyMan::GetOutKey(const uint256& id, PrivateKey& keyOut) const
-{
-    // Check if encryption keys exist first (doesn't require lock)
-    if (!m_storage.HasEncryptionKeys()) {
-        LOCK(cs_KeyStore);
-        return KeyRing::GetOutKey(id, keyOut);
-    }
-
-    // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
-    // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
-    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
-    CryptedOutKeyMap::const_iterator mi = mapCryptedOutKeys.find(id);
-    if (mi != mapCryptedOutKeys.end()) {
-        const uint256& outId = (*mi).first;
-        const PublicKey& vchPubKey = (*mi).second.first;
-        const std::vector<unsigned char>& vchCryptedSecret = (*mi).second.second;
-        return wallet::DecryptKey(m_storage.GetEncryptionKey(), vchCryptedSecret, outId, vchPubKey, keyOut);
-    }
-    return false;
-}
-
 bool KeyMan::DeleteRecords()
 {
     LOCK(cs_KeyStore);
@@ -640,24 +522,6 @@ bool KeyMan::Encrypt(const wallet::CKeyingMaterial& master_key, wallet::WalletBa
             return false;
         }
         if (!AddCryptedKey(pubKey, vchCryptedSecret)) {
-            encrypted_batch = nullptr;
-            return false;
-        }
-    }
-
-    OutKeyMap out_keys_to_encrypt;
-    out_keys_to_encrypt.swap(mapOutKeys); // Clear mapOutKeys so AddCryptedOutKeyInner will succeed.
-    for (const OutKeyMap::value_type& mOutKey : out_keys_to_encrypt) {
-        const uint256& outId = mOutKey.first;
-        const PrivateKey& key = mOutKey.second;
-        auto keyVch = key.GetScalar().GetVch();
-        wallet::CKeyingMaterial vchSecret(keyVch.begin(), keyVch.end());
-        std::vector<unsigned char> vchCryptedSecret;
-        if (!wallet::EncryptSecret(master_key, vchSecret, outId, vchCryptedSecret)) {
-            encrypted_batch = nullptr;
-            return false;
-        }
-        if (!AddCryptedOutKey(outId, key.GetPublicKey(), vchCryptedSecret)) {
             encrypted_batch = nullptr;
             return false;
         }
@@ -802,48 +666,6 @@ bool KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifi
     auto sk = GetSpendingKey();
 
     key = CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
-
-    return true;
-}
-
-bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, blsct::PrivateKey& key)
-{
-    auto hashId = GetHashId(out);
-
-    return GetSpendingKeyForOutput(out, hashId, key);
-}
-
-bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& hashId, blsct::PrivateKey& key)
-{
-    SubAddressIdentifier id;
-
-    if (!GetSubAddressId(hashId, id))
-        return false;
-
-    return GetSpendingKeyForOutput(out, id, key);
-}
-
-bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key)
-{
-    if (!fViewKeyDefined || !viewKey.IsValid())
-        throw std::runtime_error(strprintf("%s: the wallet has no view key available", __func__));
-
-    // The cache id below is derived from the spend key scalar, so even a
-    // cache hit needs the decrypted spend key. Locked encrypted wallet:
-    // report unavailable rather than throw (see GetSpendingKeyForOutput).
-    if (m_storage.HasEncryptionKeys() && m_storage.IsLocked())
-        return false;
-
-    auto sk = GetSpendingKey();
-
-    auto outId = (HashWriter() << out.blsctData.blindingKey << viewKey.GetScalar() << sk.GetScalar() << id.account << id.address).GetHash();
-
-    if (GetOutKey(outId, key))
-        return true;
-
-    key = CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
-
-    AddKeyOutKey(key, outId);
 
     return true;
 }

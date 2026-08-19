@@ -11,7 +11,6 @@
 #include <txdb.h>
 #include <wallet/receive.h>
 #include <wallet/test/util.h>
-#include <wallet/walletdb.h>
 #include <wallet/wallet.h>
 
 #include <boost/test/unit_test.hpp>
@@ -268,82 +267,13 @@ BOOST_FIXTURE_TEST_CASE(locked_wallet_spending_key_unavailable_no_throw, Testing
     // ...but spending-key derivation reports unavailable rather than throwing.
     blsct::PrivateKey key_locked;
     BOOST_CHECK(!blsct_km->GetSpendingKeyForOutput(txout, key_locked));
-    BOOST_CHECK(!blsct_km->GetSpendingKeyForOutputWithCache(txout, key_locked));
 
     // Unlocked again: derivation recovers and matches the pre-encryption key.
     BOOST_REQUIRE(wallet->Unlock("passphrase"));
     blsct::PrivateKey key_after;
-    BOOST_REQUIRE(blsct_km->GetSpendingKeyForOutputWithCache(txout, key_after));
+    BOOST_REQUIRE(blsct_km->GetSpendingKeyForOutput(txout, key_after));
     BOOST_CHECK(key_after.IsValid());
     BOOST_CHECK(key_after.GetScalar() == key_before.GetScalar());
-}
-
-// Per-output spending keys cached in the wallet DB (blsctoutkey records, loaded
-// through KeyMan::LoadOutKey) must survive encryptwallet: KeyMan::Encrypt has to
-// migrate mapOutKeys into mapCryptedOutKeys the same way it migrates mapKeys.
-// Without that migration the plaintext records are never erased from the wallet
-// file (WriteCryptedOutKey is what erases them) and the key is unreachable on
-// the encrypted wallet.
-// True if the database holds at least one record of the given type.
-bool HasRecordOfType(wallet::WalletDatabase& db, const std::string& key)
-{
-    std::unique_ptr<wallet::DatabaseBatch> batch = db.MakeBatch(false);
-    BOOST_REQUIRE(batch);
-    std::unique_ptr<wallet::DatabaseCursor> cursor = batch->GetNewCursor();
-    BOOST_REQUIRE(cursor);
-    while (true) {
-        DataStream ssKey{};
-        DataStream ssValue{};
-        wallet::DatabaseCursor::Status status = cursor->Next(ssKey, ssValue);
-        BOOST_REQUIRE(status != wallet::DatabaseCursor::Status::FAIL);
-        if (status == wallet::DatabaseCursor::Status::DONE) break;
-        std::string type;
-        ssKey >> type;
-        if (type == key) return true;
-    }
-    return false;
-}
-
-BOOST_FIXTURE_TEST_CASE(encrypt_wallet_migrates_out_keys, TestingSetup)
-{
-    auto wallet = MakeBLSCTWallet(m_node.chain.get());
-    LOCK(wallet->cs_wallet);
-    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
-
-    // Seed a plaintext out key the way a wallet load would.
-    const uint256 outId(uint64_t{0xabcdef});
-    const blsct::PrivateKey out_key(MclScalar(uint256(uint64_t{0x7777})));
-    BOOST_REQUIRE(blsct_km->LoadOutKey(out_key, outId));
-
-    blsct::PrivateKey before;
-    BOOST_REQUIRE(blsct_km->GetOutKey(outId, before));
-    BOOST_CHECK(before.GetScalar() == out_key.GetScalar());
-
-    BOOST_REQUIRE(wallet->EncryptWallet("passphrase"));
-    BOOST_REQUIRE(wallet->Unlock("passphrase"));
-
-    blsct::PrivateKey recovered;
-    BOOST_REQUIRE(blsct_km->GetOutKey(outId, recovered));
-    BOOST_CHECK(recovered.GetScalar() == out_key.GetScalar());
-
-    // The in-memory migration above passes even if the record cannot be read
-    // back, so round-trip through the database: this is the first code path
-    // that ever writes a cblsctoutkey record, and its loader read the two
-    // halves of the record key in the opposite order to the writer.
-    wallet->Flush();
-    BOOST_CHECK(!HasRecordOfType(wallet->GetDatabase(), wallet::DBKeys::BLSCTOUTKEY));
-    BOOST_CHECK(HasRecordOfType(wallet->GetDatabase(), wallet::DBKeys::CRYPTED_BLSCTOUTKEY));
-
-    auto reloaded_db = wallet::DuplicateMockDatabase(wallet->GetDatabase());
-    auto reloaded = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", std::move(reloaded_db));
-    BOOST_REQUIRE_EQUAL(reloaded->LoadWallet(), wallet::DBErrors::LOAD_OK);
-    LOCK(reloaded->cs_wallet);
-    BOOST_REQUIRE(reloaded->IsCrypted());
-    BOOST_REQUIRE(reloaded->Unlock("passphrase"));
-
-    blsct::PrivateKey after_reload;
-    BOOST_REQUIRE(reloaded->GetBLSCTKeyMan()->GetOutKey(outId, after_reload));
-    BOOST_CHECK(after_reload.GetScalar() == out_key.GetScalar());
 }
 
 // The memoized ownership entry points (GetExpectedNonce + the nonce-taking

@@ -32,7 +32,7 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
 
     try {
         blsct::PrivateKey spending_key;
-        if (!km->GetSpendingKeyForOutputWithCache(coin.out, spending_key)) {
+        if (!km->GetSpendingKeyForOutput(coin.out, spending_key)) {
             return false;
         }
         vInputs[coin.out.tokenId].emplace_back(CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, spending_key, stakedCommitment);
@@ -84,7 +84,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 
     try {
         blsct::PrivateKey spending_key;
-        if (!km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+        if (!km->GetSpendingKeyForOutput(out, spending_key)) {
             return false;
         }
         vInputs[out.tokenId]
@@ -206,7 +206,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
 
         try {
             blsct::PrivateKey spending_key;
-            if (!blsct_km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+            if (!blsct_km->GetSpendingKeyForOutput(out, spending_key)) {
                 continue;
             }
             gathered.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment, delegationId});

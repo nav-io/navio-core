@@ -36,14 +36,12 @@ const std::string BLSCTHDCHAIN{"blscthdchain"};
 const std::string BLSCTMNEMONIC{"blsctmnemonic"};
 const std::string BLSCTBIRTHDAY{"blsctbirthday"};
 const std::string BLSCTKEY{"blsctkey"};
-const std::string BLSCTOUTKEY{"blsctoutkey"};
 const std::string BLSCTKEYMETA{"blsctkeymeta"};
 const std::string BLSCTSUBADDRESS{"blsctsubaddress"};
 const std::string BLSCTSUBADDRESSSTR{"blsctsubaddressstr"};
 const std::string BLSCTSUBADDRESSPOOL{"blsctsubaddresspool"};
 const std::string CRYPTED_BLSCTKEY{"cblsctkey"};
 const std::string CRYPTED_BLSCTMNEMONIC{"cblsctmnemonic"};
-const std::string CRYPTED_BLSCTOUTKEY{"cblsctoutkey"};
 const std::string CRYPTED_KEY{"ckey"};
 const std::string CSCRIPT{"cscript"};
 const std::string DEFAULTKEY{"defaultkey"};
@@ -77,8 +75,8 @@ const std::string BLSCTWATCHMETA{"blsctwatchmeta"};
 const std::string BLSCTWATCHS{"blsctwatchs"};
 const std::string BLSCTWATCHNONCE{"blsctwatchnonce"};
 const std::unordered_set<std::string> LEGACY_TYPES{CRYPTED_KEY, CSCRIPT, DEFAULTKEY, HDCHAIN, KEYMETA, KEY, OLD_KEY, POOL, WATCHMETA, WATCHS};
-const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTOUTKEY, BLSCTWATCHMETA, BLSCTWATCHS, BLSCTMNEMONIC, CRYPTED_BLSCTMNEMONIC};
-const std::unordered_set<std::string> BLSCTKEY_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, BLSCTOUTKEY, CRYPTED_BLSCTOUTKEY};
+const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTWATCHMETA, BLSCTWATCHS, BLSCTMNEMONIC, CRYPTED_BLSCTMNEMONIC};
+const std::unordered_set<std::string> BLSCTKEY_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY};
 } // namespace DBKeys
 
 //
@@ -170,11 +168,6 @@ bool WalletBatch::WriteKey(const blsct::PublicKey& pubKey, const blsct::PrivateK
     return WriteIC(std::make_pair(DBKeys::BLSCTKEY, pubKey), std::make_pair(privKey, Hash(vchKey)), false);
 }
 
-bool WalletBatch::WriteOutKey(const uint256& outId, const blsct::PrivateKey& privKey)
-{
-    return WriteIC(std::make_pair(DBKeys::BLSCTOUTKEY, outId), privKey, false);
-}
-
 bool WalletBatch::WriteViewKey(const blsct::PublicKey& pubKey, const blsct::PrivateKey& privKey, const CKeyMetadata& keyMeta)
 {
     if (!WriteKeyMetadata(keyMeta, pubKey, false)) {
@@ -255,28 +248,6 @@ bool WalletBatch::WriteCryptedKey(const blsct::PublicKey& pubKey,
         }
     }
     EraseIC(std::make_pair(DBKeys::BLSCTKEY, pubKey));
-    return true;
-}
-
-bool WalletBatch::WriteCryptedOutKey(const uint256& outId,
-                                     const blsct::PublicKey& vchPubKey,
-                                     const std::vector<unsigned char>& vchCryptedSecret)
-{
-    // Compute a checksum of the encrypted key
-    uint256 checksum = Hash(vchCryptedSecret);
-
-    const auto key = std::make_pair(DBKeys::CRYPTED_BLSCTOUTKEY, std::make_pair(vchPubKey, outId));
-    if (!WriteIC(key, std::make_pair(vchCryptedSecret, checksum), false)) {
-        // It may already exist, so try writing just the checksum
-        std::vector<unsigned char> val;
-        if (!m_batch->Read(key, val)) {
-            return false;
-        }
-        if (!WriteIC(key, std::make_pair(val, checksum), true)) {
-            return false;
-        }
-    }
-    EraseIC(std::make_pair(DBKeys::BLSCTOUTKEY, outId));
     return true;
 }
 
@@ -600,29 +571,6 @@ bool LoadBLSCTKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std:
     return true;
 }
 
-bool LoadBLSCTOutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
-{
-    LOCK(pwallet->cs_wallet);
-    try {
-        uint256 outId;
-        ssKey >> outId;
-
-        blsct::PrivateKey key;
-        ssValue >> key;
-
-        if (!pwallet->GetOrCreateBLSCTKeyMan()->LoadOutKey(key, outId)) {
-            strErr = "Error reading wallet database: BLSCTKeyMan::LoadOutKey failed";
-            return false;
-        }
-    } catch (const std::exception& e) {
-        if (strErr.empty()) {
-            strErr = e.what();
-        }
-        return false;
-    }
-    return true;
-}
-
 bool LoadSpendKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
 {
     LOCK(pwallet->cs_wallet);
@@ -770,47 +718,6 @@ bool LoadBLSCTCryptedKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValu
 
         if (!pwallet->GetOrCreateBLSCTKeyMan()->LoadCryptedKey(vchPubKey, vchPrivKey, checksum_valid)) {
             strErr = "Error reading wallet database: GetOrCreateBLSCTKeyMan::LoadCryptedKey failed";
-            return false;
-        }
-    } catch (const std::exception& e) {
-        if (strErr.empty()) {
-            strErr = e.what();
-        }
-        return false;
-    }
-    return true;
-}
-
-bool LoadBLSCTCryptedOutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
-{
-    LOCK(pwallet->cs_wallet);
-    try {
-        // WriteCryptedOutKey serializes the record key as (vchPubKey, outId);
-        // read it back in that order. Reading outId first silently misparses --
-        // both halves together are exactly 80 bytes, so nothing truncates, and
-        // the G1 decode of the misaligned remainder throws, failing the whole
-        // wallet load with DBErrors::CORRUPT.
-        blsct::PublicKey vchPubKey;
-        ssKey >> vchPubKey;
-        uint256 outId;
-        ssKey >> outId;
-
-        std::vector<unsigned char> vchPrivKey;
-        ssValue >> vchPrivKey;
-
-        // Get the checksum and check it
-        bool checksum_valid = false;
-        if (!ssValue.eof()) {
-            uint256 checksum;
-            ssValue >> checksum;
-            if (!(checksum_valid = Hash(vchPrivKey) == checksum)) {
-                strErr = "Error reading wallet database: Encrypted blsct private output key corrupt";
-                return false;
-            }
-        }
-
-        if (!pwallet->GetOrCreateBLSCTKeyMan()->LoadCryptedOutKey(outId, vchPubKey, vchPrivKey, checksum_valid)) {
-            strErr = "Error reading wallet database: GetOrCreateBLSCTKeyMan::LoadBLSCTCryptedOutKey failed";
             return false;
         }
     } catch (const std::exception& e) {
@@ -1122,12 +1029,6 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
     });
     result = std::max(result, blsctkey_res.m_result);
 
-    LoadResult blsctoutkey_res = LoadRecords(pwallet, batch, DBKeys::BLSCTOUTKEY,
-                                             [](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
-                                                 return LoadBLSCTOutKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
-                                             });
-    result = std::max(result, blsctoutkey_res.m_result);
-
     LoadResult viewkey_res = LoadRecords(pwallet, batch, DBKeys::VIEWKEY,
         [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
         return LoadViewKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
@@ -1145,12 +1046,6 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
                                                 return LoadBLSCTCryptedKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
                                             });
     result = std::max(result, blsct_ckey_res.m_result);
-
-    LoadResult blsct_coutkey_res = LoadRecords(pwallet, batch, DBKeys::CRYPTED_BLSCTOUTKEY,
-                                               [](CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
-                                                   return LoadBLSCTCryptedOutKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
-                                               });
-    result = std::max(result, blsct_coutkey_res.m_result);
 
     LoadResult blsctsubaddress_res = LoadRecords(pwallet, batch, DBKeys::BLSCTSUBADDRESS,
         [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& strErr) {
