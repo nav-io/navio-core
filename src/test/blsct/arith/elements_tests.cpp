@@ -9,10 +9,12 @@
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
 #include <boost/test/unit_test.hpp>
+#include <cstdint>
 #include <limits>
 #include <set>
 #include <stdexcept>
 #include <streams.h>
+#include <string>
 #include <utility>
 
 BOOST_FIXTURE_TEST_SUITE(elements_tests, BasicTestingSetup)
@@ -551,7 +553,13 @@ BOOST_AUTO_TEST_CASE(test_index_operator_rejects_index_wider_than_32_bits)
     // index before comparing it lets the read through and indexes the vector
     // out of bounds. Where size_t is 32 bits wide there is nothing to narrow.
     if constexpr (sizeof(size_t) > sizeof(uint32_t)) {
-        const size_t index = size_t{1} << std::numeric_limits<uint32_t>::digits;
+        // Compute the shift in uint64_t: `if constexpr` in a non-template
+        // function does not stop the discarded branch being compiled, so
+        // shifting a 32-bit size_t by 32 would be UB if it were ever
+        // evaluated. (No diagnostic is emitted today -- verified with gcc and
+        // clang at -m32 -Wall -Wextra -- but the branch should not contain a
+        // shift that is only well-defined on the platforms that run it.)
+        const size_t index = static_cast<size_t>(uint64_t{1} << std::numeric_limits<uint32_t>::digits);
         {
             Scalars xs(std::vector<Scalar> { Scalar{1}, Scalar{2} });
             BOOST_CHECK_THROW(xs[index], std::runtime_error);
@@ -563,6 +571,41 @@ BOOST_AUTO_TEST_CASE(test_index_operator_rejects_index_wider_than_32_bits)
             BOOST_CHECK_THROW(xs[index], std::runtime_error);
             BOOST_CHECK_THROW(std::as_const(xs)[index], std::runtime_error);
         }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_index_error_message_on_empty_container)
+{
+    // size() - 1 underflows when the container is empty, so the old message
+    // advertised a range of [0..18446744073709551615] -- the shape that turned
+    // up in a testnet staker crash log, where it reads as though the index was
+    // inside the range it is being rejected for.
+    // Assert on the wording rather than on the absence of SIZE_MAX's digits:
+    // the underflowed value differs between 32- and 64-bit size_t, and
+    // std::to_string is locale-dependent (test/lint/lint-locale-dependence.py).
+    const auto reports_empty = [](const std::runtime_error& e) {
+        return std::string(e.what()).find("the container is empty") != std::string::npos;
+    };
+
+    {
+        Scalars xs;
+        BOOST_REQUIRE_EQUAL(xs.Size(), 0);
+        BOOST_CHECK_EXCEPTION(xs[0], std::runtime_error, reports_empty);
+        BOOST_CHECK_EXCEPTION(std::as_const(xs)[0], std::runtime_error, reports_empty);
+    }
+    {
+        Points xs;
+        BOOST_REQUIRE_EQUAL(xs.Size(), 0);
+        BOOST_CHECK_EXCEPTION(xs[0], std::runtime_error, reports_empty);
+        BOOST_CHECK_EXCEPTION(std::as_const(xs)[0], std::runtime_error, reports_empty);
+    }
+
+    // A non-empty container still reports its real upper bound.
+    {
+        Scalars xs(std::vector<Scalar>{Scalar{1}, Scalar{2}});
+        BOOST_CHECK_EXCEPTION(xs[2], std::runtime_error, [](const std::runtime_error& e) {
+            return std::string(e.what()).find("[0..1]") != std::string::npos;
+        });
     }
 }
 

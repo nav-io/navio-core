@@ -265,7 +265,12 @@ template <typename T>
 void Elements<T>::ConfirmIndexInsideRange(const size_t& index) const
 {
     if (index >= m_vec.size()) {
-        auto s = strprintf("index %d is out of range [0..%d]", index, m_vec.size() - 1ul);
+        // size() - 1 underflows on an empty container, reporting the range as
+        // [0..SIZE_MAX] -- which reads as "the index was in range" to whoever
+        // finds it in a crash log. Say what actually happened instead.
+        auto s = m_vec.empty()
+                     ? strprintf("index %d is out of range: the container is empty", index)
+                     : strprintf("index %d is out of range [0..%d]", index, m_vec.size() - 1ul);
         throw std::runtime_error(s);
     }
 }
