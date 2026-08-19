@@ -15,6 +15,7 @@
 namespace blsct {
 bool KeyMan::IsHDEnabled() const
 {
+    LOCK(cs_KeyStore);
     return !m_hd_chain.seed_id.IsNull();
 }
 
@@ -386,6 +387,11 @@ bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy,
     LoadMnemonicEntropy(entropy);
     wallet::WalletBatch batch(m_storage.GetDatabase());
     if (m_storage.HasEncryptionKeys()) {
+        // GetEncryptionKey() reads wallet state guarded by cs_wallet and the IV
+        // comes from m_hd_chain, so both locks are needed here. Acquire
+        // cs_wallet first, then cs_KeyStore, to maintain consistent lock
+        // ordering.
+        LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
         wallet::CKeyingMaterial plaintext(entropy.begin(), entropy.end());
         std::vector<unsigned char> crypted_entropy;
         uint256 iv = Hash(m_hd_chain.seed_id);
@@ -680,7 +686,9 @@ blsct::PrivateKey KeyMan::GetMasterSeedKey() const
     if (!IsHDEnabled())
         throw std::runtime_error(strprintf("%s: the wallet has no HD enabled", __func__));
 
-    auto seedId = m_hd_chain.seed_id;
+    // Read the id under cs_KeyStore, then release it: GetKey() may take
+    // cs_wallet, and cs_KeyStore must never be held while doing so.
+    const CKeyID seedId = WITH_LOCK(cs_KeyStore, return m_hd_chain.seed_id);
 
     PrivateKey ret;
 
@@ -695,7 +703,8 @@ blsct::PrivateKey KeyMan::GetMasterTokenKey() const
     if (!IsHDEnabled())
         throw std::runtime_error(strprintf("%s: the wallet has no HD enabled", __func__));
 
-    auto tokenKeyId = m_hd_chain.token_id;
+    // See GetMasterSeedKey(): cs_KeyStore is dropped before calling GetKey().
+    const CKeyID tokenKeyId = WITH_LOCK(cs_KeyStore, return m_hd_chain.token_id);
 
     PrivateKey ret;
 
@@ -723,7 +732,8 @@ blsct::PrivateKey KeyMan::GetSpendingKey() const
     if (!fSpendKeyDefined)
         throw std::runtime_error(strprintf("%s: the wallet has no spend key available", __func__));
 
-    auto spendingKeyId = m_hd_chain.spend_id;
+    // See GetMasterSeedKey(): cs_KeyStore is dropped before calling GetKey().
+    const CKeyID spendingKeyId = WITH_LOCK(cs_KeyStore, return m_hd_chain.spend_id);
 
     PrivateKey ret;
 
@@ -1292,30 +1302,35 @@ std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxO
         bool was_unused_pool_key = false;
         bool learned_beyond_lookahead = false;
 
-        {
-            LOCK(cs_KeyStore);
+        // Held across the whole computation below: the lookahead scan derives
+        // matched_id from m_hd_chain.nSubAddressCounter and setSubAddressPool,
+        // and the catch-up / pool-pruning steps that follow act on it. Dropping
+        // the lock in between would let another thread advance the counter or
+        // consume the pool entry under us. cs_KeyStore is recursive, so the
+        // GenerateNewSubAddress() and TopUpAccount() calls below can still take
+        // it themselves.
+        LOCK(cs_KeyStore);
 
-            const auto known_it = mapSubAddresses.find(hash_id);
-            if (known_it != mapSubAddresses.end()) {
-                matched_id = known_it->second;
-                if (const auto pool_it = setSubAddressPool.find(matched_id->account);
-                    pool_it != setSubAddressPool.end()) {
-                    was_unused_pool_key = pool_it->second.contains(matched_id->address);
+        const auto known_it = mapSubAddresses.find(hash_id);
+        if (known_it != mapSubAddresses.end()) {
+            matched_id = known_it->second;
+            if (const auto pool_it = setSubAddressPool.find(matched_id->account);
+                pool_it != setSubAddressPool.end()) {
+                was_unused_pool_key = pool_it->second.contains(matched_id->address);
+            }
+        } else {
+            const uint64_t lookahead = std::max<int64_t>(m_keypool_size, int64_t{1});
+            for (const int64_t account : {int64_t{0}, CHANGE_ACCOUNT, STAKING_ACCOUNT}) {
+                const uint64_t start = m_hd_chain.nSubAddressCounter.contains(account)
+                    ? m_hd_chain.nSubAddressCounter.at(account)
+                    : 0;
+                for (uint64_t index = start; index < start + lookahead; ++index) {
+                    if (GetSubAddress({account, index}).GetKeys().GetID() != hash_id) continue;
+                    matched_id = SubAddressIdentifier{account, index};
+                    learned_beyond_lookahead = true;
+                    break;
                 }
-            } else {
-                const uint64_t lookahead = std::max<int64_t>(m_keypool_size, int64_t{1});
-                for (const int64_t account : {int64_t{0}, CHANGE_ACCOUNT, STAKING_ACCOUNT}) {
-                    const uint64_t start = m_hd_chain.nSubAddressCounter.contains(account)
-                        ? m_hd_chain.nSubAddressCounter.at(account)
-                        : 0;
-                    for (uint64_t index = start; index < start + lookahead; ++index) {
-                        if (GetSubAddress({account, index}).GetKeys().GetID() != hash_id) continue;
-                        matched_id = SubAddressIdentifier{account, index};
-                        learned_beyond_lookahead = true;
-                        break;
-                    }
-                    if (matched_id) break;
-                }
+                if (matched_id) break;
             }
         }
 
@@ -1336,18 +1351,15 @@ std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxO
         }
 
         if (was_unused_pool_key) {
-            {
-                LOCK(cs_KeyStore);
-                wallet::WalletBatch batch(m_storage.GetDatabase());
-                auto& pool = setSubAddressPool[matched_id->account];
-                for (auto it = pool.begin(); it != pool.end() && *it <= matched_id->address;) {
-                    batch.EraseSubAddressPool({matched_id->account, *it});
-                    if (auto reserve_it = setSubAddressReservePool.find(matched_id->account);
-                        reserve_it != setSubAddressReservePool.end()) {
-                        reserve_it->second.erase(*it);
-                    }
-                    it = pool.erase(it);
+            wallet::WalletBatch batch(m_storage.GetDatabase());
+            auto& pool = setSubAddressPool[matched_id->account];
+            for (auto it = pool.begin(); it != pool.end() && *it <= matched_id->address;) {
+                batch.EraseSubAddressPool({matched_id->account, *it});
+                if (auto reserve_it = setSubAddressReservePool.find(matched_id->account);
+                    reserve_it != setSubAddressReservePool.end()) {
+                    reserve_it->second.erase(*it);
                 }
+                it = pool.erase(it);
             }
             WalletLogPrintf("%s: detected used BLSCT keypool entry %d/%d, topping up lookahead\n",
                             __func__,
