@@ -67,11 +67,45 @@ std::string DrawDestination(blsct::KeyMan* km, const int64_t account)
     return blsct::SubAddress(std::get<blsct::DoublePublicKey>(dest.value())).GetString();
 }
 
+// A locked wallet must still be able to hand out its change and staking
+// destinations. Those accounts are pinned to sub-address index 0, which is pure
+// view-key derivation and needs no spending key -- but before the pool draw was
+// removed for them, a locked wallet with an emptied pool hit "Keypool ran out"
+// instead, which is what the unchecked GetNewDestination(CHANGE_ACCOUNT).value()
+// calls in txfactory and the RPCs would have thrown on.
+BOOST_FIXTURE_TEST_CASE(negative_accounts_are_available_while_locked, TestingSetup)
+{
+    auto wallet = MakeBLSCTWallet(m_node.chain.get());
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+
+    const auto before_lock = DrawDestination(km, blsct::CHANGE_ACCOUNT);
+
+    BOOST_REQUIRE(wallet->EncryptWallet("passphrase"));
+    BOOST_REQUIRE(wallet->Lock());
+    BOOST_REQUIRE(wallet->IsLocked());
+
+    // Empty the account's pool while locked: NewSubAddressPool erases the
+    // existing records and its top-up cannot refill them without the
+    // encryption key. This is the state that used to fail the draw.
+    BOOST_REQUIRE(!km->NewSubAddressPool(blsct::CHANGE_ACCOUNT));
+    BOOST_CHECK_EQUAL(km->GetSubAddressPoolSize(blsct::CHANGE_ACCOUNT), 0);
+
+    // The destination is still derivable, still index 0, and still the same one.
+    BOOST_CHECK_EQUAL(DrawDestination(km, blsct::CHANGE_ACCOUNT), before_lock);
+
+    // And it stays recognisable as ours -- index 0 was registered at wallet
+    // setup and nothing erases mapSubAddresses, which is what the locked-wallet
+    // guard in GetSubAddressFromPool checks before handing the address out.
+    BOOST_CHECK_EQUAL(DrawDestination(km, blsct::STAKING_ACCOUNT),
+                      DrawDestination(km, blsct::STAKING_ACCOUNT));
+}
+
 // The negative accounts are single-destination by design: BLSCT outputs are
 // stealth-derived, so repeated payments to one sub-address are unlinkable on
 // chain, and a small sub-address set keeps wallet sync cheap. Receive accounts
-// must still advance. Either way the reserve pool must not leak the index each
-// draw reserves.
+// must still advance. Either way the reserve pool must not leak an index per
+// draw.
 BOOST_FIXTURE_TEST_CASE(negative_accounts_are_single_destination, TestingSetup)
 {
     auto wallet = MakeBLSCTWallet(m_node.chain.get());
@@ -83,8 +117,8 @@ BOOST_FIXTURE_TEST_CASE(negative_accounts_are_single_destination, TestingSetup)
         for (int i = 0; i < 4; i++) {
             BOOST_CHECK_EQUAL(DrawDestination(km, account), first);
         }
-        // ...and the draws must not drain the pool: the index each one reserves
-        // is handed back, so the pool settles at the top-up target instead of
+        // ...and the draws must not drain the pool: negative accounts never
+        // draw from it at all, so it stays at the top-up target instead of
         // losing an index per call.
         BOOST_CHECK_EQUAL(km->GetSubAddressPoolSize(account), wallet->m_keypool_size);
     }
