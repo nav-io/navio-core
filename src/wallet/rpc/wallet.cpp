@@ -15,6 +15,7 @@
 #include <wallet/wallet.h>
 #include <wallet/walletutil.h>
 #include <mnemonic/mnemonic.h>
+#include <util/time.h>
 #include <random.h>
 #include <support/cleanse.h>
 
@@ -363,7 +364,7 @@ static RPCHelpMan createwallet()
             {"blsct", RPCArg::Type::BOOL, RPCArg::Default{true}, "Create a wallet with BLSCT keys. This is the default and standard wallet type on navio. Set to false to create a legacy or descriptor wallet instead."},
             {"storage_output", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for BLSCT wallets, otherwise false"}, "Store outputs instead of full transactions. BLSCT wallets enable this by default; pass false to keep full transactions."},
             {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the BLSCT wallet from the specified seed (can be a master seed or an audit key). Requires blsct=true."},
-            {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words) to restore a BLSCT wallet from. Requires blsct=true. Mutually exclusive with 'seed'."},
+            {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words, or 26 with the Navio birthday suffix encoding the wallet creation time) to restore a BLSCT wallet from. Requires blsct=true. Mutually exclusive with 'seed'."},
             {"mnemonic_passphrase", RPCArg::Type::STR, RPCArg::Default{""}, "Optional BIP-39 passphrase used to extend the mnemonic when deriving the wallet keys. Requires blsct=true. Cannot be combined with 'seed'. The same passphrase must be provided again to restore the wallet from its mnemonic. Use ASCII characters to stay interoperable with other BIP-39 wallets (no NFKD normalization is applied)."},
         },
         RPCResult{
@@ -373,7 +374,7 @@ static RPCHelpMan createwallet()
                                               {RPCResult::Type::ARR, "warnings", /*optional=*/true, "Warning messages, if any, related to creating the wallet.", {
                                                                                                                                      {RPCResult::Type::STR, "", ""},
                                                                                                                                  }},
-                                              {RPCResult::Type::STR, "mnemonic", /*optional=*/true, "BIP-39 mnemonic phrase (24 words) for new BLSCT wallets. Only returned for new BLSCT wallets created without a seed or mnemonic."},
+                                              {RPCResult::Type::STR, "mnemonic", /*optional=*/true, "Mnemonic phrase for new BLSCT wallets: 24 BIP-39 words plus two words encoding the wallet creation time (Navio birthday mnemonic). Only returned for new BLSCT wallets created without a seed or mnemonic."},
                                           }},
         RPCExamples{HelpExampleCli("createwallet", "\"testwallet\"") + HelpExampleRpc("createwallet", "\"testwallet\"") + HelpExampleCliNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"blsct", false}, {"load_on_startup", true}}) + HelpExampleRpcNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"blsct", false}, {"load_on_startup", true}})},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -490,30 +491,62 @@ static RPCHelpMan createwallet()
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot specify both 'seed' and 'mnemonic'");
             }
 
-            // If mnemonic provided, convert to entropy
+            // If mnemonic provided, convert to entropy. Accepts plain
+            // 24-word BIP-39 or the 26-word Navio birthday variant, whose
+            // two extra words encode the wallet creation time.
+            std::optional<int64_t> mnemonic_birthday;
             if (!mnemonic_str.empty()) {
-                if (!mnemonic::Validate(mnemonic_str)) {
+                auto decoded = mnemonic::DecodeMnemonic(mnemonic_str);
+                if (!decoded) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid mnemonic phrase");
                 }
-                auto entropy_opt = mnemonic::MnemonicToEntropy(mnemonic_str);
-                if (!entropy_opt) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to decode mnemonic");
+                if (decoded->entropy.size() != 32) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Only 24-word mnemonics (optionally with the two-word birthday suffix) are supported");
                 }
-                if (entropy_opt.value().size() != 32) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Only 24-word mnemonics are supported");
-                }
-                seed = entropy_opt.value();
+                seed = decoded->entropy;
+                mnemonic_birthday = decoded->birthday;
                 type = blsct::IMPORT_MNEMONIC;
             }
 
             // For new BLSCT wallets (no seed or mnemonic), generate entropy here
             // so we can return the mnemonic in the response even for encrypted wallets.
             std::string mnemonic_response;
-            if (seed.empty() && mnemonic_str.empty() && (flags & WALLET_FLAG_BLSCT)) {
+            // Blank and watch-only wallets skip key generation entirely
+            // (fFirstRun excludes them), so a generated seed would never be
+            // imported and stamping "now" as their birthday would be wrong:
+            // a blank wallet exists to have an older seed imported later.
+            const bool fresh_blsct_seed = seed.empty() && mnemonic_str.empty() && (flags & WALLET_FLAG_BLSCT) &&
+                                          !(flags & (WALLET_FLAG_BLANK_WALLET | WALLET_FLAG_DISABLE_PRIVATE_KEYS));
+            // The creation time handed to the wallet. For a restore from a
+            // birthday mnemonic it is the decoded creation time; for a fresh
+            // wallet it is now (a real birthday); for any other restore it
+            // stays unknown, since the wallet's history can predate this
+            // instance and inferring one would break scanning.
+            std::optional<int64_t> creation_time = mnemonic_birthday;
+            if (fresh_blsct_seed) {
+                creation_time = GetTime();
                 seed.resize(32);
                 GetStrongRandBytes(seed);
                 type = blsct::IMPORT_MNEMONIC;
-                mnemonic_response = mnemonic::EntropyToMnemonic(seed);
+                // return the 26-word birthday variant so a later restore
+                // knows where to start scanning
+                mnemonic_response = mnemonic::MnemonicWithBirthday(
+                    mnemonic::EntropyToMnemonic(seed), *creation_time);
+                if (mnemonic_response.empty()) {
+                    // Clock outside the encodable 2026..2065 range (mis-set RTC
+                    // or setmocktime): keep the wallet working but say so,
+                    // instead of silently handing back a plain 24-word phrase
+                    // that permanently loses the birthday. Drop the creation
+                    // time too: a birthday the mnemonic cannot encode must not
+                    // be stamped on the wallet either, or its default rescan
+                    // window would be pinned to a bogus clock.
+                    warnings.push_back(Untranslated(strprintf(
+                        "The node clock (%s) is outside the birthday-mnemonic range; "
+                        "the returned mnemonic does not encode a wallet creation time.",
+                        GetTime())));
+                    mnemonic_response = mnemonic::EntropyToMnemonic(seed);
+                    creation_time.reset();
+                }
             }
 
             DatabaseOptions options;
@@ -525,12 +558,30 @@ static RPCHelpMan createwallet()
             bilingual_str error;
 
             std::optional<bool> load_on_start = request.params[6].isNull() ? std::nullopt : std::optional<bool>(request.params[6].get_bool());
-            const std::shared_ptr<CWallet> wallet = CreateWallet(context, request.params[0].get_str(), seed, type, load_on_start, options, status, error, warnings, mnemonic_passphrase);
+            const std::shared_ptr<CWallet> wallet = CreateWallet(context, request.params[0].get_str(), seed, type, load_on_start, options, status, error, warnings, mnemonic_passphrase, creation_time);
             // Cleanse entropy from local buffer now that CreateWallet has consumed it
             memory_cleanse(seed.data(), seed.size());
             if (!wallet) {
                 RPCErrorCode code = status == DatabaseStatus::FAILED_ENCRYPT ? RPC_WALLET_ENCRYPTION_FAILED : RPC_WALLET_ERROR;
                 throw JSONRPCError(code, error.original);
+            }
+
+            if (creation_time) {
+                // The birth time is genuinely known (fresh creation with a
+                // successfully encoded birthday, or a birthday-mnemonic
+                // restore — whose decoded time is in range by construction):
+                // set it directly — the lowers-only MaybeUpdateBirthTime
+                // cannot raise the 0 that a fresh BLSCT KeyMan seeds.
+                // Persist a wallet-birthday record so dumpmnemonic can
+                // re-derive the two-word suffix later. Out-of-range clocks
+                // (mis-set RTC, setmocktime) reset creation_time above, so
+                // no record is written that the mnemonic cannot re-encode.
+                wallet->SetBirthTime(*creation_time);
+                if (auto* km = wallet->GetBLSCTKeyMan(); km != nullptr) {
+                    if (!km->WriteWalletBirthday(*creation_time)) {
+                        throw JSONRPCError(RPC_WALLET_ERROR, "Unable to write wallet birthday");
+                    }
+                }
             }
 
             UniValue obj(UniValue::VOBJ);

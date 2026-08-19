@@ -5,6 +5,7 @@
 #ifndef NAVIO_MNEMONIC_MNEMONIC_H
 #define NAVIO_MNEMONIC_MNEMONIC_H
 
+#include <cstdint>
 #include <optional>
 #include <span.h>
 #include <string>
@@ -34,8 +35,47 @@ std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& w
 // Does not validate the mnemonic; use Validate() for that.
 std::vector<unsigned char> MnemonicToSeed(const std::string& words, const std::string& passphrase = "");
 
-// Validate mnemonic (word count, word membership, checksum)
+// Validate mnemonic (word count, word membership, checksum).
+// Accepts standard BIP-39 lengths and the 26-word birthday variant.
 bool Validate(const std::string& words);
+
+// ---------------------------------------------------------------------------
+// Navio birthday mnemonic v1
+//
+// A standard BIP-39 24-word mnemonic followed by two extra words (26 total)
+// encoding the wallet's creation time ("birthday"), so a restore knows where
+// to start scanning:
+//
+//   word 25: index w = weeks elapsed since BIRTHDAY_MNEMONIC_EPOCH
+//            (2026-01-01 00:00 UTC). 11 bits cover ~39 years.
+//   word 26: first 11 bits of
+//            HMAC-SHA256(key=entropy, msg="navio-birthday" || w as uint16 BE)
+//            binding the birthday to this seed and catching typos.
+//
+// Key derivation uses ONLY the first 24 words, so the derived wallet is
+// identical to a plain 24-word restore and the extra words can always be
+// dropped. The same format is implemented in navio-electrum and navio-sdk.
+// ---------------------------------------------------------------------------
+
+inline constexpr int64_t BIRTHDAY_MNEMONIC_EPOCH{1767225600}; // 2026-01-01 UTC
+inline constexpr int64_t BIRTHDAY_MNEMONIC_WEEK{7 * 24 * 3600};
+
+struct DecodedMnemonic {
+    std::vector<unsigned char> entropy;
+    std::optional<int64_t> birthday; // unix time (week floor), if encoded
+};
+
+// Append the two birthday words to a 24-word mnemonic. Returns "" if the
+// mnemonic is not a valid 24-word phrase or the time is out of range.
+std::string MnemonicWithBirthday(const std::string& words24, int64_t time);
+
+// Generate a 26-word birthday mnemonic from OS entropy for creation time
+// `time` (typically GetTime()).
+std::string GenerateWithBirthday(int64_t time);
+
+// Decode a standard BIP-39 mnemonic or the 26-word birthday variant.
+// Returns std::nullopt if invalid (bad word, checksum, or check word).
+std::optional<DecodedMnemonic> DecodeMnemonic(const std::string& words);
 
 } // namespace mnemonic
 

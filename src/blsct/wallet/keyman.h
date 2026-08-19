@@ -42,7 +42,7 @@ public:
     explicit Manager(wallet::WalletStorage& storage) : m_storage(storage) {}
     virtual ~Manager()= default;
 
-    virtual bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force = false, const std::string& mnemonic_passphrase = "") { return false; }
+    virtual bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force = false, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt) { return false; }
 
     /* Returns true if HD is enabled */
     virtual bool IsHDEnabled() const { return false; }
@@ -55,6 +55,7 @@ private:
     SecureBytes m_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::vector<unsigned char> m_crypted_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains;
+    std::optional<int64_t> m_wallet_birthday;
 
     bool AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey);
     bool AddCryptedKeyInner(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
@@ -62,7 +63,7 @@ private:
     bool AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId);
     bool AddCryptedOutKeyInner(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
 
-    bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase = "");
+    bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt);
 
 
     wallet::WalletBatch* encrypted_batch GUARDED_BY(cs_KeyStore) = nullptr;
@@ -95,7 +96,7 @@ public:
     KeyMan(wallet::WalletStorage& storage, int64_t keypool_size)
         : Manager(storage), KeyRing(), m_keypool_size(keypool_size) {}
 
-    bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false, const std::string& mnemonic_passphrase = "") override;
+    bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt) override;
     bool IsHDEnabled() const override;
 
     void LoadMnemonicEntropy(const std::vector<unsigned char>& entropy)
@@ -138,7 +139,19 @@ public:
        Sets the seed's version based on the current wallet version (so the
        caller must ensure the current wallet version is correct before calling
        this function). */
-    void SetHDSeed(const PrivateKey& key);
+    void SetHDSeed(const PrivateKey& key, const std::optional<int64_t>& creation_time = std::nullopt);
+
+    //! The wallet's genuine creation time, when known: recorded at setup for
+    //! freshly created wallets (their creation instant) and for restores from
+    //! a birthday mnemonic (the decoded time), persisted in the wallet DB. It
+    //! is deliberately NOT inferred for other restores (e.g. a plain 24-word
+    //! mnemonic), whose on-chain history can predate this instantiation.
+    std::optional<int64_t> GetWalletBirthday() const { return m_wallet_birthday; }
+
+    //! Persist a genuine-birthday record for this wallet (see above). Only
+    //! called by the wallet-creation flow when the creation time is truly
+    //! known.
+    bool WriteWalletBirthday(int64_t birthday);
 
     //! Adds a key to the store, and saves it to disk.
     bool AddKeyPubKey(const PrivateKey& key, const PublicKey& pubkey) override;
@@ -273,6 +286,9 @@ public:
     bool OutputIsChange(const CTxOut& out) const;
 
     int64_t GetTimeFirstKey() const;
+
+    //! Load the persisted birthday record (if any) during wallet open.
+    void LoadWalletBirthday(int64_t birthday) { m_wallet_birthday = birthday; }
 
     /** Keypool has new keys */
     btcsignals::signal<void()>
