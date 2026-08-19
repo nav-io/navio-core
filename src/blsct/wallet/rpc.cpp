@@ -70,13 +70,7 @@ static blsct::DoublePublicKey EnsureBlsctDestination(const std::string& address)
     }
     blsct::DoublePublicKey keys = std::get<blsct::DoublePublicKey>(destination);
 
-    // A well-formed address can still encode the identity for either key:
-    // MclG1Point::SetVch accepts the point at infinity, and
-    // DoublePublicKey::IsValid() only reports that both keys deserialized. The
-    // resulting output is the same anyone-can-spend output as the
-    // default-constructed case, so reject those keys too.
-    MclG1Point view_key, spend_key;
-    if (!keys.GetViewKey(view_key) || !keys.GetSpendKey(spend_key) || view_key.IsZero() || spend_key.IsZero()) {
+    if (!keys.HasNonIdentityKeys()) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("BLSCT address has null keys: ") + address);
     }
 
@@ -1202,6 +1196,14 @@ RPCHelpMan delegatestake()
                 if (!IsValidDestination(reward_dest)) {
                     throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
                 }
+                // A transparent reward address is legal here, so the BLSCT
+                // helper cannot be dropped in wholesale -- but a BLSCT one
+                // encoding the identity for either key would have the delegate
+                // pay the block reward into an anyone-can-spend output.
+                if (const auto* keys = std::get_if<blsct::DoublePublicKey>(&reward_dest);
+                    keys && !keys->HasNonIdentityKeys()) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "reward_address has null keys");
+                }
                 // Store the canonical encoding so later lookups (rewards
                 // tracking, delegation-identity grouping) compare equal.
                 rewardAddress = EncodeDestination(reward_dest);
@@ -1658,6 +1660,14 @@ RPCHelpMan redelegatestake()
                 const CTxDestination reward_dest = DecodeDestination(rewardAddress);
                 if (!IsValidDestination(reward_dest)) {
                     throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
+                }
+                // A transparent reward address is legal here, so the BLSCT
+                // helper cannot be dropped in wholesale -- but a BLSCT one
+                // encoding the identity for either key would have the delegate
+                // pay the block reward into an anyone-can-spend output.
+                if (const auto* keys = std::get_if<blsct::DoublePublicKey>(&reward_dest);
+                    keys && !keys->HasNonIdentityKeys()) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "reward_address has null keys");
                 }
                 rewardAddress = EncodeDestination(reward_dest);
             }

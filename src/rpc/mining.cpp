@@ -3,6 +3,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/double_public_key.h>
 #include <blsct/pos/pos.h>
 #include <chain.h>
 #include <chainparams.h>
@@ -220,8 +221,14 @@ static RPCHelpMan generatetoblsctaddress()
             const uint64_t max_tries{request.params[2].isNull() ? DEFAULT_MAX_TRIES : request.params[2].getInt<int>()};
 
             CTxDestination destination = DecodeDestination(request.params[1].get_str());
-            if (!IsValidDestination(destination) || destination.index() != 8) {
+            const auto* blsct_keys = std::get_if<blsct::DoublePublicKey>(&destination);
+            if (!blsct_keys) {
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
+            }
+            // Identity keys decode fine but make the coinbase anyone-can-spend,
+            // so the block reward would be claimable by whoever sees it first.
+            if (!blsct_keys->HasNonIdentityKeys()) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: address has null keys");
             }
 
             NodeContext& node = EnsureAnyNodeContext(request.context);
