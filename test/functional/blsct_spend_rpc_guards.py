@@ -16,6 +16,12 @@ correct blsct RPC, instead of silently doing the wrong thing.
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_raises_rpc_error
 
+# A well-formed regtest BLSCT address whose view and spend keys are both the
+# identity (point at infinity). It decodes fine and validateaddress calls it
+# valid, but its outputs are anyone-can-spend, so the spend RPCs must reject
+# it rather than pay it.
+NULL_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwwvmtas"
+
 
 class BLSCTSpendRPCGuardsTest(BitcoinTestFramework):
     def add_options(self, parser):
@@ -107,6 +113,18 @@ class BLSCTSpendRPCGuardsTest(BitcoinTestFramework):
         assert_raises_rpc_error(
             -8, "sendtoblsctaddress",
             transparent_wallet.send, {blsct_addr: 1},
+        )
+
+        self.log.info("sendtoblsctaddress rejects a destination that is not a BLSCT address")
+        assert_raises_rpc_error(
+            -5, "Invalid BLSCT address",
+            blsct_wallet.sendtoblsctaddress, transparent_addr, 1,
+        )
+
+        self.log.info("sendtoblsctaddress rejects a BLSCT address with identity keys")
+        assert_raises_rpc_error(
+            -5, "BLSCT address has null keys",
+            blsct_wallet.sendtoblsctaddress, NULL_KEY_ADDRESS, 1,
         )
 
 
