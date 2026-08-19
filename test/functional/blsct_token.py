@@ -6,7 +6,12 @@
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
+    assert_raises_rpc_error,
 )
+
+# blsctregtest ('rnv' hrp) encoding of the ETH-serialized identity (0xc0 followed
+# by 47 zero bytes) for both the view and the spend key.
+NULL_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwwvmtas"
 
 class NavioBlsctTokenTest(BitcoinTestFramework):
     def add_options(self, parser):
@@ -85,6 +90,19 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         assert tokens[0]['metadata'] == [{'key':'name', 'value':'Test'}], "incorrect metadata"
         assert tokens[0]['maxSupply'] == 100000000000, "incorrect max supply"
         assert tokens[0]['currentSupply'] == 0, "incorrect current supply"
+
+        # A destination that is not a BLSCT address must be rejected: it would
+        # otherwise mint into an output whose ownership keys are publicly
+        # derivable constants, i.e. spendable by anyone.
+        for bad_address in ["notanaddress", ""]:
+            assert_raises_rpc_error(-5, "Invalid BLSCT address",
+                                    wallet.minttoken, token['tokenId'], bad_address, 1)
+
+        # A well-formed BLSCT address encoding the identity (point at infinity)
+        # for both keys decodes fine and validateaddress calls it valid, but its
+        # outputs are anyone-can-spend just the same, so it must be rejected.
+        assert_raises_rpc_error(-5, "BLSCT address has null keys",
+                                wallet.minttoken, token['tokenId'], NULL_KEY_ADDRESS, 1)
 
         wallet.minttoken(token['tokenId'], blsct_address, 1)
         block_hashes = self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
