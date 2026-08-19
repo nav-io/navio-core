@@ -639,6 +639,24 @@ bool KeyMan::Encrypt(const wallet::CKeyingMaterial& master_key, wallet::WalletBa
         }
     }
 
+    OutKeyMap out_keys_to_encrypt;
+    out_keys_to_encrypt.swap(mapOutKeys); // Clear mapOutKeys so AddCryptedOutKeyInner will succeed.
+    for (const OutKeyMap::value_type& mOutKey : out_keys_to_encrypt) {
+        const uint256& outId = mOutKey.first;
+        const PrivateKey& key = mOutKey.second;
+        auto keyVch = key.GetScalar().GetVch();
+        wallet::CKeyingMaterial vchSecret(keyVch.begin(), keyVch.end());
+        std::vector<unsigned char> vchCryptedSecret;
+        if (!wallet::EncryptSecret(master_key, vchSecret, outId, vchCryptedSecret)) {
+            encrypted_batch = nullptr;
+            return false;
+        }
+        if (!AddCryptedOutKey(outId, key.GetPublicKey(), vchCryptedSecret)) {
+            encrypted_batch = nullptr;
+            return false;
+        }
+    }
+
     // Encrypt mnemonic entropy if present
     if (!m_mnemonic_entropy.empty()) {
         wallet::CKeyingMaterial plaintext(m_mnemonic_entropy.begin(), m_mnemonic_entropy.end());
