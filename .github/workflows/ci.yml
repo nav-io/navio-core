@@ -289,10 +289,17 @@ jobs:
 
       - name: Refresh vcpkg
         run: |
-          # Runner image's local C:\vcpkg clone lags master; fetch so the
-          # builtin-baseline commit pinned in build_msvc/vcpkg.json is reachable.
+          # Pin the whole vcpkg checkout (tool, scripts, version database) to
+          # the builtin-baseline commit from build_msvc/vcpkg.json. A bare
+          # fetch is not enough: the runner image's old vcpkg.exe and scripts
+          # can mismatch a newer baseline's registry ("no version database
+          # entry"), and its old scripts pin msys2 packages the mirrors have
+          # rotated away (404 on autoconf2.71-2.71-3).
+          $baseline = (Get-Content "$env:GITHUB_WORKSPACE\build_msvc\vcpkg.json" | ConvertFrom-Json).'builtin-baseline'
           Set-Location "$env:VCPKG_INSTALLATION_ROOT"
           git fetch --no-tags origin master
+          git checkout --force $baseline
+          .\bootstrap-vcpkg.bat -disableMetrics
           Add-Content -Path "triplets\x64-windows-static.cmake" -Value "set(VCPKG_BUILD_TYPE release)"
           Add-Content -Path "triplets\x64-windows-static.cmake" -Value "set(VCPKG_PLATFORM_TOOLSET_VERSION $env:VCToolsVersion)"
 
