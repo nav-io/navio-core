@@ -784,10 +784,15 @@ bool LoadBLSCTCryptedOutKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssV
 {
     LOCK(pwallet->cs_wallet);
     try {
-        uint256 outId;
-        ssKey >> outId;
+        // WriteCryptedOutKey serializes the record key as (vchPubKey, outId);
+        // read it back in that order. Reading outId first silently misparses --
+        // both halves together are exactly 80 bytes, so nothing truncates, and
+        // the G1 decode of the misaligned remainder throws, failing the whole
+        // wallet load with DBErrors::CORRUPT.
         blsct::PublicKey vchPubKey;
         ssKey >> vchPubKey;
+        uint256 outId;
+        ssKey >> outId;
 
         std::vector<unsigned char> vchPrivKey;
         ssValue >> vchPrivKey;
