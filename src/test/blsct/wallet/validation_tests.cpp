@@ -2,6 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/private_key.h>
+#include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <primitives/transaction.h>
@@ -350,6 +352,45 @@ BOOST_FIXTURE_TEST_CASE(validation_payfee_on_spendable_output_not_counted_test, 
     TxValidationState tx_state;
     BOOST_CHECK(!blsct::VerifyTx(CTransaction(mtx), coins_view_cache, tx_state));
     BOOST_CHECK_EQUAL(tx_state.GetRejectReason(), "blsct-fee-below-min");
+}
+
+
+// CTxOut::IsFee() (and therefore Consensus::CheckTxInputs fee accounting,
+// mempool fee/priority/RBF logic and GetBLSCTFee()) must agree with the
+// consensus burn rule in VerifyTx: a PayFee predicate only counts on the
+// unspendable OP_RETURN burn output. A spendable output carrying a PayFee
+// predicate is not a fee: its value stays spendable, so counting it would let
+// a tx feign a fee it never burns.
+BOOST_FIXTURE_TEST_CASE(fee_output_definition_matches_consensus_test, TestingSetup)
+{
+    // Spendable script with a PayFee predicate: not a fee output.
+    CTxOut spendable_payfee;
+    spendable_payfee.nValue = 1000;
+    spendable_payfee.scriptPubKey = CScript() << OP_TRUE;
+    const auto fee_key = blsct::PrivateKey(MclScalar::Rand());
+    spendable_payfee.predicate = blsct::PayFeePredicate(fee_key.GetPublicKey()).GetVch();
+    BOOST_CHECK(!spendable_payfee.IsFee());
+
+    // Genuine burn output: OP_RETURN + PayFee predicate.
+    CTxOut burn_payfee;
+    burn_payfee.nValue = 1000;
+    burn_payfee.scriptPubKey = CScript(OP_RETURN);
+    burn_payfee.predicate = blsct::PayFeePredicate(fee_key.GetPublicKey()).GetVch();
+    BOOST_CHECK(burn_payfee.IsFee());
+
+    // Bare OP_RETURN without the predicate: not a fee output.
+    CTxOut bare_burn;
+    bare_burn.nValue = 1000;
+    bare_burn.scriptPubKey = CScript(OP_RETURN);
+    BOOST_CHECK(!bare_burn.IsFee());
+
+    // GetBLSCTFee counts only the genuine burn output.
+    CMutableTransaction mtx;
+    mtx.nVersion |= CTransaction::BLSCT_MARKER;
+    mtx.vout.push_back(spendable_payfee);
+    mtx.vout.push_back(burn_payfee);
+    mtx.vout.push_back(bare_burn);
+    BOOST_CHECK_EQUAL(CTransaction(mtx).GetBLSCTFee(), 1000);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
