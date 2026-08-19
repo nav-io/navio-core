@@ -580,21 +580,24 @@ BOOST_AUTO_TEST_CASE(test_index_error_message_on_empty_container)
     // advertised a range of [0..18446744073709551615] -- the shape that turned
     // up in a testnet staker crash log, where it reads as though the index was
     // inside the range it is being rejected for.
-    const auto has_no_underflowed_bound = [](const std::runtime_error& e) {
-        return std::string(e.what()).find(std::to_string(SIZE_MAX)) == std::string::npos;
+    // Assert on the wording rather than on the absence of SIZE_MAX's digits:
+    // the underflowed value differs between 32- and 64-bit size_t, and
+    // std::to_string is locale-dependent (test/lint/lint-locale-dependence.py).
+    const auto reports_empty = [](const std::runtime_error& e) {
+        return std::string(e.what()).find("the container is empty") != std::string::npos;
     };
 
     {
         Scalars xs;
         BOOST_REQUIRE_EQUAL(xs.Size(), 0);
-        BOOST_CHECK_EXCEPTION(xs[0], std::runtime_error, has_no_underflowed_bound);
-        BOOST_CHECK_EXCEPTION(std::as_const(xs)[0], std::runtime_error, has_no_underflowed_bound);
+        BOOST_CHECK_EXCEPTION(xs[0], std::runtime_error, reports_empty);
+        BOOST_CHECK_EXCEPTION(std::as_const(xs)[0], std::runtime_error, reports_empty);
     }
     {
         Points xs;
         BOOST_REQUIRE_EQUAL(xs.Size(), 0);
-        BOOST_CHECK_EXCEPTION(xs[0], std::runtime_error, has_no_underflowed_bound);
-        BOOST_CHECK_EXCEPTION(std::as_const(xs)[0], std::runtime_error, has_no_underflowed_bound);
+        BOOST_CHECK_EXCEPTION(xs[0], std::runtime_error, reports_empty);
+        BOOST_CHECK_EXCEPTION(std::as_const(xs)[0], std::runtime_error, reports_empty);
     }
 
     // A non-empty container still reports its real upper bound.
