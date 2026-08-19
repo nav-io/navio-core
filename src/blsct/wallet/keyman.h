@@ -51,7 +51,7 @@ public:
 class KeyMan : public Manager, public KeyRing
 {
 private:
-    blsct::HDChain m_hd_chain;
+    blsct::HDChain m_hd_chain GUARDED_BY(cs_KeyStore);
     SecureBytes m_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::vector<unsigned char> m_crypted_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains;
@@ -178,7 +178,14 @@ public:
     /* Set the HD chain model (chain child index counters) and writes it to the database */
     void AddHDChain(const blsct::HDChain& chain);
     void LoadHDChain(const blsct::HDChain& chain);
-    const blsct::HDChain& GetHDChain() const { return m_hd_chain; }
+    /* Returns a snapshot of the HD chain model. Deliberately by value: a
+       reference would let the caller keep reading m_hd_chain after cs_KeyStore
+       is released, which the GUARDED_BY annotation cannot detect. */
+    blsct::HDChain GetHDChain() const
+    {
+        LOCK(cs_KeyStore);
+        return m_hd_chain;
+    }
     void AddInactiveHDChain(const blsct::HDChain& chain);
 
     //! Load metadata (used by LoadWallet)
