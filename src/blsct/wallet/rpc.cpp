@@ -151,6 +151,18 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
     }
 
+    // Refuse to commit a transaction whose staked commitment already exists
+    // in the chain's commitment set. Consensus would reject it in a block
+    // (bad-txns-duplicate-staked-commitment) and mempool acceptance would
+    // reject it on broadcast -- but by then CommitTransaction has stored it
+    // in the wallet, where it lingers as forever-pending and keeps being
+    // rebroadcast. Fail the RPC with a clear error instead.
+    for (const auto& out : res->tx.vout) {
+        if (out.IsStakedCommitment() && wallet.chain().hasStakedCommitment(out.blsctData.rangeProof.Vs[0])) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "The resulting staked commitment already exists on chain; unstake the existing commitment first or stake a different amount");
+        }
+    }
+
     const CTransactionRef& tx = MakeTransactionRef(res->tx);
 
     // Store any wallet-local comment/comment_to on the sender's CWalletTx so

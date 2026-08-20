@@ -267,6 +267,48 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
         pblocktemplate->vTxSigOpsCost.push_back(WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx.back()));
     }
 
+    // Drop any selected transaction whose staked-commitment output collides
+    // with the chain's commitment set or with another selected transaction.
+    // Such a transaction makes the whole aggregated block invalid
+    // (bad-txns-duplicate-staked-commitment), and one poisoned entry must
+    // degrade the template, not halt block production entirely: this is
+    // exactly what stalled mainnet when a commitment was staked on-chain
+    // while an older transaction re-adding it was still in every mempool.
+    {
+        const auto existing_staked = m_chainstate.CoinsTip().GetStakedCommitments();
+        std::set<std::vector<unsigned char>> selected_points;
+        for (size_t i = 1; i < pblock->vtx.size();) {
+            bool drop = false;
+            std::vector<std::vector<unsigned char>> tx_points;
+            for (const auto& out : pblock->vtx[i]->vout) {
+                if (!out.IsStakedCommitment()) continue;
+                const MclG1Point& point = out.blsctData.rangeProof.Vs[0];
+                if (existing_staked.Exists(point) || selected_points.contains(point.GetVch())) {
+                    drop = true;
+                    break;
+                }
+                tx_points.push_back(point.GetVch());
+            }
+            if (drop) {
+                LogPrintf("%s: excluding tx %s from block template: duplicate staked commitment\n", __func__, pblock->vtx[i]->GetHash().ToString());
+                nFees -= pblocktemplate->vTxFees[i];
+                if (nBlockTx > 0) --nBlockTx;
+                // Clamped: entries from the txns parameter never incremented
+                // these counters, so blind subtraction could underflow.
+                const auto tx_weight = static_cast<uint64_t>(GetTransactionWeight(*pblock->vtx[i]));
+                nBlockWeight -= std::min<uint64_t>(nBlockWeight, tx_weight);
+                const auto tx_sigops = static_cast<uint64_t>(pblocktemplate->vTxSigOpsCost[i]);
+                nBlockSigOpsCost -= std::min<uint64_t>(nBlockSigOpsCost, tx_sigops);
+                pblock->vtx.erase(pblock->vtx.begin() + i);
+                pblocktemplate->vTxFees.erase(pblocktemplate->vTxFees.begin() + i);
+                pblocktemplate->vTxSigOpsCost.erase(pblocktemplate->vTxSigOpsCost.begin() + i);
+            } else {
+                selected_points.insert(tx_points.begin(), tx_points.end());
+                ++i;
+            }
+        }
+    }
+
     const auto time_1{SteadyClock::now()};
 
     m_last_block_num_txs = nBlockTx;

@@ -209,6 +209,10 @@ public:
     //! Check if transaction is in mempool.
     virtual bool isInMempool(const uint256& txid) = 0;
 
+    //! Check if a staked commitment point already exists in the active
+    //! chain's staked-commitment set.
+    virtual bool hasStakedCommitment(const MclG1Point& commitment) = 0;
+
     //! Check if transaction has descendants in mempool.
     virtual bool hasDescendantsInMempool(const uint256& txid) = 0;
 
