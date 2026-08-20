@@ -23,8 +23,9 @@
 //   Window<w> - FixedBaseWindow (the shared helper also used in verification),
 //               tables built once then reused each round.
 //
-// The window result is asserted bit-identical to the production MSM at fixture
-// construction (consensus determinism), and each table's footprint is logged.
+// The window result is checked bit-identical to the production MSM at fixture
+// construction (consensus determinism) -- a mismatch throws and fails the
+// bench run -- and each table's footprint is logged.
 //
 // FixedBaseWindow is built on navio's MclG1Point wrapper (routing through the
 // initialised C ABI), so every point op pays a C-API call. mcl's header-only
@@ -38,7 +39,10 @@
 #include <blsct/arith/mcl/mcl_init.h>
 #include <blsct/building_block/fixed_base_window.h>
 
+#include <tinyformat.h>
+
 #include <iostream>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -123,8 +127,10 @@ void RunWindow(benchmark::Bench& bench, size_t n, size_t R, size_t winSize)
     FixedBaseWindow fbw(fx.bases, winSize);
 
     // Consensus determinism: window MSM must equal the production MSM exactly.
+    // Throwing makes the bench run fail; a stderr note would leave exit status
+    // 0 and go unnoticed.
     if (!(fbw.MSM(fx.exps[0], n) == fx.MulVecMT(0))) {
-        std::cerr << "FixedBaseWindow MISMATCH (n=" << n << " w=" << winSize << ")\n";
+        throw std::runtime_error(strprintf("FixedBaseWindow MISMATCH (n=%d w=%d)", n, winSize));
     }
     std::cerr << "  [window w=" << winSize << " n=" << n << "] ~"
               << (fbw.Bytes() >> 20) << " MiB tables\n";
@@ -153,11 +159,11 @@ static void BLSCTFixedBaseNaive_256(benchmark::Bench& b)    { RunNaive(b, 256, k
 static void BLSCTFixedBaseWindow4_256(benchmark::Bench& b)  { RunWindow(b, 256, kRounds, 4); }
 static void BLSCTFixedBaseWindow8_256(benchmark::Bench& b)  { RunWindow(b, 256, kRounds, 8); }
 
-BENCHMARK(BLSCTFixedBaseMulVecMT_64,  benchmark::PriorityLevel::HIGH);
-BENCHMARK(BLSCTFixedBaseNaive_64,     benchmark::PriorityLevel::HIGH);
-BENCHMARK(BLSCTFixedBaseWindow4_64,   benchmark::PriorityLevel::HIGH);
-BENCHMARK(BLSCTFixedBaseWindow8_64,   benchmark::PriorityLevel::HIGH);
-BENCHMARK(BLSCTFixedBaseMulVecMT_256, benchmark::PriorityLevel::HIGH);
-BENCHMARK(BLSCTFixedBaseNaive_256,    benchmark::PriorityLevel::HIGH);
-BENCHMARK(BLSCTFixedBaseWindow4_256,  benchmark::PriorityLevel::HIGH);
-BENCHMARK(BLSCTFixedBaseWindow8_256,  benchmark::PriorityLevel::HIGH);
+BENCHMARK(BLSCTFixedBaseMulVecMT_64,  benchmark::PriorityLevel::LOW);
+BENCHMARK(BLSCTFixedBaseNaive_64,     benchmark::PriorityLevel::LOW);
+BENCHMARK(BLSCTFixedBaseWindow4_64,   benchmark::PriorityLevel::LOW);
+BENCHMARK(BLSCTFixedBaseWindow8_64,   benchmark::PriorityLevel::LOW);
+BENCHMARK(BLSCTFixedBaseMulVecMT_256, benchmark::PriorityLevel::LOW);
+BENCHMARK(BLSCTFixedBaseNaive_256,    benchmark::PriorityLevel::LOW);
+BENCHMARK(BLSCTFixedBaseWindow4_256,  benchmark::PriorityLevel::LOW);
+BENCHMARK(BLSCTFixedBaseWindow8_256,  benchmark::PriorityLevel::LOW);

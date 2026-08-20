@@ -54,6 +54,9 @@ private:
     size_t m_winSize = 8;
     FixedBaseWindow m_gi;
     FixedBaseWindow m_hi;
+    // First tabled base, kept to assert the generators the tables were built
+    // from still match the ones each verification passes in.
+    MclG1Point m_gi_base0;
 };
 
 } // namespace bulletproofs_plus

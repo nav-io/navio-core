@@ -47,10 +47,10 @@ add_executable(test_navio
   blsct/arith/mcl/mcl_integration_tests.cpp
   blsct/arith/mcl/mcl_scalar_tests.cpp
   blsct/bech32_mod_tests.cpp
+  blsct/building_block/fixed_base_window_tests.cpp
   blsct/building_block/generator_deriver_tests.cpp
   blsct/building_block/imp_inner_prod_arg_tests.cpp
   blsct/building_block/lazy_points_tests.cpp
-  blsct/building_block/fixed_base_window_tests.cpp
   blsct/common_tests.cpp
   blsct/eip_2333/bls12_381_keygen_tests.cpp
   blsct/external_api/external_api_tests.cpp

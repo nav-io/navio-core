@@ -29,10 +29,10 @@ add_executable(bench_navio
   bech32.cpp
   bech32_mod.cpp
   bip324_ecdh.cpp
+  blsct_fixed_base_msm.cpp
   blsct_rp_verify.cpp
   blsct_setmem_verify.cpp
   blsct_view_tag.cpp
-  blsct_fixed_base_msm.cpp
   block_assemble.cpp
   ccoins_caching.cpp
   chacha20.cpp

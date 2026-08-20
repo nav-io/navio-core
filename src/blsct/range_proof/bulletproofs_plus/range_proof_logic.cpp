@@ -431,8 +431,6 @@ bool RangeProofLogic<T>::VerifyProofs(
 
         range_proof::Generators<T> gens = m_common.Gf().GetInstance(pt.proof.seed);
 
-        auto gs = gens.GetGiSubset(pt.mn);
-        auto hs = gens.GetHiSubset(pt.mn);
         auto h = gens.H;
         auto g = gens.G;
 
@@ -526,8 +524,10 @@ bool RangeProofLogic<T>::VerifyProofs(
             }
         }
         if (!used_fixed_base) {
-            lp.Add(gs, gs_exp);
-            lp.Add(hs, hs_exp);
+            // Materialized only on this path: the fast path never touches the
+            // subset copies.
+            lp.Add(gens.GetGiSubset(pt.mn), gs_exp);
+            lp.Add(gens.GetHiSubset(pt.mn), hs_exp);
         }
 
         for (size_t i = 0; i < pt.proof.Vs.Size(); ++i) {

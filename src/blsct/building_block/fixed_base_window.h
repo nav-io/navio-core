@@ -37,12 +37,14 @@ public:
     // Total table footprint in bytes.
     size_t Bytes() const { return m_tbl.size() * sizeof(MclG1Point::Underlying); }
 
-    // Returns Σ_{i<count} base_i * exps[i], where count = min(exps.size(), size()).
-    // The caller must ensure exps.size() <= size() for a full result; the method
-    // asserts this in debug builds.
+    // Returns Σ_{i<count} base_i * exps[i]. `count` is clamped to size(): a
+    // count beyond the tabled bases would otherwise index out of bounds and
+    // produce a silently wrong point, so the clamp is enforced here rather
+    // than documented at the caller.
     template <typename ScalarVec>
     MclG1Point MSM(const ScalarVec& exps, size_t count) const
     {
+        if (count > m_nbases) count = m_nbases;
         MclG1Point acc; // identity
         for (size_t i = 0; i < count; ++i) {
             acc = acc + MulOne(i, exps[i]);

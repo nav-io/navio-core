@@ -4,6 +4,8 @@
 
 #include <blsct/building_block/fixed_base_window.h>
 
+#include <stdexcept>
+
 namespace {
 // 32-byte little-endian form of a scalar, for window-digit extraction.
 std::vector<uint8_t> ScalarLE(const MclScalar& s)
@@ -34,6 +36,12 @@ FixedBaseWindow::FixedBaseWindow(const std::vector<MclG1Point>& bases, size_t wi
       m_r(size_t(1) << winSize),
       m_nbases(bases.size())
 {
+    // winSize == 0 divides by zero above; >= 32 shifts m_r out of range. The
+    // cache clamps its input to 1..12, but a consensus building block must not
+    // rely on its caller for well-definedness.
+    if (winSize < 1 || winSize > 16) {
+        throw std::invalid_argument("FixedBaseWindow: winSize must be in [1, 16]");
+    }
     m_tbl.assign(m_nbases * m_tblNum * m_r, MclG1Point()); // MclG1Point() is identity
     for (size_t i = 0; i < m_nbases; ++i) {
         MclG1Point t = bases[i];

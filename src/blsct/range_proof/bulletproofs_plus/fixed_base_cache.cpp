@@ -5,6 +5,7 @@
 #include <blsct/range_proof/bulletproofs_plus/fixed_base_cache.h>
 #include <blsct/range_proof/setup.h>
 
+#include <cassert>
 #include <cstdlib>
 #include <mutex>
 #include <string>
@@ -22,6 +23,9 @@ size_t EnvSize(const char* name, size_t def)
     size_t n = 0;
     for (const char* p = v; *p; ++p) {
         if (*p < '0' || *p > '9') return def;
+        // Reject rather than wrap on absurd input; both consumers clamp to
+        // small ranges anyway.
+        if (n > 1000000) return def;
         n = n * 10 + static_cast<size_t>(*p - '0');
     }
     return n;
@@ -54,16 +58,38 @@ void FixedBaseCache::MaybeInit(const range_proof::Generators<Mcl>& gens)
         m_prefix = prefix;
         if (m_prefix == 0) { m_enabled = false; return; }
 
-        std::vector<MclG1Point> gi, hi;
-        gi.reserve(m_prefix);
-        hi.reserve(m_prefix);
-        for (size_t i = 0; i < m_prefix; ++i) {
-            gi.push_back(gens.Gi[i]);
-            hi.push_back(gens.Hi[i]);
+        // The whole build is inside try: a bad_alloc (the tables can be large)
+        // escaping the call_once callable would leave the once-flag unset and
+        // make every subsequent proof retry the same oversized allocation from
+        // inside block validation. Failing closed disables the fast path once
+        // and keeps the generic MSM.
+        try {
+            std::vector<MclG1Point> gi, hi;
+            gi.reserve(m_prefix);
+            hi.reserve(m_prefix);
+            for (size_t i = 0; i < m_prefix; ++i) {
+                gi.push_back(gens.Gi[i]);
+                hi.push_back(gens.Hi[i]);
+            }
+            m_gi = FixedBaseWindow(gi, m_winSize);
+            m_hi = FixedBaseWindow(hi, m_winSize);
+            m_gi_base0 = gens.Gi[0];
+        } catch (const std::exception&) {
+            m_enabled = false;
+            m_prefix = 0;
+            m_gi = FixedBaseWindow();
+            m_hi = FixedBaseWindow();
         }
-        m_gi = FixedBaseWindow(gi, m_winSize);
-        m_hi = FixedBaseWindow(hi, m_winSize);
     });
+
+    // The tables are built from the FIRST caller's generators and never
+    // rebuilt. Correct today because Gi/Hi are seed-independent process
+    // statics (only G varies per TokenId); assert the coupling so a future
+    // seed-dependent generator change fails loudly instead of producing wrong
+    // verdicts from stale tables.
+    if (m_enabled) {
+        assert(m_gi_base0 == gens.Gi[0]);
+    }
 }
 
 } // namespace bulletproofs_plus
