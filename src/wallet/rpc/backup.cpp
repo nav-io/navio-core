@@ -2266,9 +2266,14 @@ RPCHelpMan importblsctscript()
 
                               auto parse_address = [](const std::string& addr, const std::string& field) -> blsct::DoublePublicKey {
                                   CTxDestination dest = DecodeDestination(addr);
-                                  if (!IsValidDestination(dest) || dest.index() != 8)
+                                  const auto* keys = std::get_if<blsct::DoublePublicKey>(&dest);
+                                  if (!keys)
                                       throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("Invalid BLSCT address for %s: %s", field, addr));
-                                  return std::get<blsct::DoublePublicKey>(dest);
+                                  // Identity keys decode fine but make the branch
+                                  // they are baked into anyone-can-spend.
+                                  if (!keys->HasNonIdentityKeys())
+                                      throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("BLSCT address for %s has null keys: %s", field, addr));
+                                  return *keys;
                               };
 
                               blsct::DoublePublicKey address_a = parse_address(desc["address_a"].get_str(), "address_a");

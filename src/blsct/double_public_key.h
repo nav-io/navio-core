@@ -50,6 +50,14 @@ public:
 
     bool IsValid() const;
 
+    //! True when the key is valid AND neither half is the point at infinity.
+    //! IsValid() only reports that both halves deserialized; an address
+    //! encoding the identity for either key decodes fine, but an output built
+    //! for it has publicly derivable ownership keys -- i.e. anyone-can-spend.
+    //! Every path that turns a user-supplied destination into an output has to
+    //! check this, not just IsValid().
+    bool HasNonIdentityKeys() const;
+
     std::vector<unsigned char> GetVkVch() const;
     std::vector<unsigned char> GetSkVch() const;
     std::vector<unsigned char> GetVch() const;
