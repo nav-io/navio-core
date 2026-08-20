@@ -5,6 +5,8 @@
 
 #include <wallet/load.h>
 
+#include <aggregation/pull.h>
+#include <blsct/wallet/rpc.h>
 #include <common/args.h>
 #include <interfaces/chain.h>
 #include <scheduler.h>
@@ -19,6 +21,7 @@
 
 #include <univalue.h>
 
+#include <algorithm>
 #include <system_error>
 
 namespace wallet {
@@ -149,6 +152,19 @@ void StartWallets(WalletContext& context)
 
     // Schedule periodic tx rebroadcasts
     context.scheduler->scheduleEvery([&context] { MaybeResendWalletTxs(context); }, 1min);
+
+    // Built-in candidate serving: answer queued AGG_ANN pull requests with
+    // wallet-built cover candidates, so a plain naviod with a loaded BLSCT
+    // wallet supplies the network's aggregation pools without running
+    // navio-p2pmsg. Work per tick is bounded (SERVE_MAX_PER_TICK); wallets
+    // that cannot fund a candidate are skipped.
+    if (gArgs.GetBoolArg("-servecandidates", aggregation::DEFAULT_SERVE_CANDIDATES)) {
+        const auto interval = std::chrono::seconds(std::clamp<int64_t>(
+            gArgs.GetIntArg("-servecandidateinterval", aggregation::SERVE_INTERVAL_SECONDS), 1, 3600));
+        context.scheduler->scheduleEvery([&context] {
+            blsct::ServeCandidateRequests(GetWallets(context));
+        }, interval);
+    }
 }
 
 void FlushWallets(WalletContext& context)

@@ -26,6 +26,20 @@ class CTxMemPool;
 class ChainstateManager;
 class NetGroupManager;
 class PeerManager;
+namespace p2pmsg {
+class WorkerPool;
+class Transport;
+} // namespace p2pmsg
+namespace aggregation {
+class CandidatePool;
+class CandidatePuller;
+class CandidateRequestQueue;
+} // namespace aggregation
+namespace rfq {
+class IntentStore;
+class OrderCache;
+class MatcherRegistry;
+} // namespace rfq
 namespace interfaces {
 class Chain;
 class ChainClient;
@@ -59,6 +73,32 @@ struct NodeContext {
     std::unique_ptr<const NetGroupManager> netgroupman;
     std::unique_ptr<CBlockPolicyEstimator> fee_estimator;
     std::unique_ptr<PeerManager> peerman;
+    //! Cover-traffic candidate pool; registered as a validation interface so it
+    //! evicts candidates whose inputs are spent.
+    std::unique_ptr<aggregation::CandidatePool> agg_pool;
+    //! Producer-side queue of AGG_ANN candidate pull requests awaiting a
+    //! wallet-built reply (claimed over RPC by the serving daemon).
+    std::unique_ptr<aggregation::CandidateRequestQueue> agg_requests;
+    //! Maker-local swap intents for RFQ matching (never gossiped).
+    std::unique_ptr<rfq::IntentStore> rfq_intents;
+    //! Cache of broadcast standing orders; registered as a validation interface
+    //! for spent-input eviction.
+    std::unique_ptr<rfq::OrderCache> rfq_orders;
+    //! Taker-side registry of outstanding RFQ requests and collected quotes.
+    std::unique_ptr<rfq::MatcherRegistry> rfq_matcher;
+    //! p2p encrypted-messaging subsystem (only set when -p2pmsg is enabled).
+    //! Declared AFTER agg_pool / rfq_* on purpose: the worker pool's decrypt
+    //! jobs dispatch to transport handlers that capture raw pointers to those
+    //! objects, and the pool's destructor joins the worker threads. Reverse-
+    //! order member destruction therefore stops the workers BEFORE the objects
+    //! they reference are torn down, avoiding a use-after-free if Shutdown()'s
+    //! explicit ordering is ever skipped.
+    std::unique_ptr<p2pmsg::WorkerPool> p2pmsg_pool;
+    std::unique_ptr<p2pmsg::Transport> p2pmsg_transport;
+    //! Background candidate puller. Declared AFTER p2pmsg_transport (and
+    //! stopped explicitly in Shutdown) because its thread calls into the
+    //! transport: reverse-order destruction joins it before the transport dies.
+    std::unique_ptr<aggregation::CandidatePuller> agg_puller;
     std::unique_ptr<ChainstateManager> chainman;
     std::unique_ptr<BanMan> banman;
     ArgsManager* args{nullptr}; // Currently a raw pointer because the memory is not managed by this struct

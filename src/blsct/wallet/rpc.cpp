@@ -30,8 +30,24 @@
 #include <wallet/receive.h>
 #include <wallet/rpc/util.h>
 #include <wallet/spend.h>
+#include <aggregation/combine.h>
+#include <aggregation/pool.h>
+#include <aggregation/pull.h>
+#include <aggregation/session.h>
+#include <node/context.h>
+#include <node/transaction.h>
+#include <p2pmsg/crypto.h>
+#include <p2pmsg/transport.h>
+#include <random.h>
+#include <rfq/matcher.h>
+#include <rfq/order_cache.h>
+#include <rfq/quote.h>
+#include <rfq/request.h>
+#include <streams.h>
+#include <util/time.h>
 #include <wallet/wallet.h>
 #include <limits>
+#include <numeric>
 #include <optional>
 
 namespace blsct {
@@ -131,30 +147,665 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
     if (txData.nBLSCTDefaultFee == ::BLSCT_DEFAULT_FEE) {
         txData.nBLSCTDefaultFee = Params().GetConsensus().nBLSCTDefaultFee;
     }
-    // Send
-    auto res = blsct::TxFactory::CreateTransaction(&wallet, wallet.GetBLSCTKeyMan(), txData);
 
-    if (!res) {
-        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+    // By default every wallet send is aggregated with fee-0 cover candidates
+    // from the node's p2pmsg pool (same merge `aggregatesend` performs), hiding
+    // which inputs/outputs are the wallet's among the cover self-spends. The
+    // sender pays RequiredCandidateFee extra for the cover weight; disable with
+    // -aggregatesends=0. Any aggregation failure falls back to a plain send, so
+    // enabling this by default can never make a send fail that would otherwise
+    // succeed.
+    std::vector<CTransactionRef> candidates;
+    aggregation::CandidatePool* pool = aggregation::GetActivePool();
+    if (pool && gArgs.GetBoolArg("-aggregatesends", aggregation::DEFAULT_AGGREGATE_SENDS)) {
+        candidates = pool->PickForAggregate(aggregation::POOL_MAX_COMBINED);
     }
 
-    const CTransactionRef& tx = MakeTransactionRef(res->tx);
+    for (;;) {
+        blsct::CreateTransactionData attempt = txData;
+        if (!candidates.empty()) {
+            attempt.additionalFee = aggregation::RequiredCandidateFee(candidates, attempt.nBLSCTDefaultFee);
+        }
+        auto res = blsct::TxFactory::CreateTransaction(&wallet, wallet.GetBLSCTKeyMan(), attempt);
+        if (!res) {
+            // Over-funding the fee for cover can push the wallet short; a plain
+            // send may still fit. (PickForAggregate does not remove from the
+            // pool, so dropping the candidates here loses nothing.)
+            if (!candidates.empty()) {
+                candidates.clear();
+                continue;
+            }
+            throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+        }
 
-    // Store any wallet-local comment/comment_to on the sender's CWalletTx so
-    // listtransactions surfaces them (WalletTxToJSON emits every mapValue key).
-    // This is separate from the on-chain BLSCT memo, which the recipient sees.
-    wallet.CommitTransaction(tx, std::move(mapValue), /*orderForm=*/{});
-    // The factory reports which output pays the destination: vout is shuffled
-    // for privacy, so the recipient is not at any fixed position.
-    std::string outputHash = res->recipientOutputHash.GetHex();
-    if (verbose) {
-        UniValue entry(UniValue::VOBJ);
-        entry.pushKV("outputHash", outputHash);
-        return entry;
+        if (!candidates.empty()) {
+            std::vector<CTransactionRef> halves;
+            halves.reserve(candidates.size() + 1);
+            halves.push_back(MakeTransactionRef(res->tx));
+            halves.insert(halves.end(), candidates.begin(), candidates.end());
+
+            auto combined = aggregation::CombineHalves(halves);
+            CTransactionRef agg_tx;
+            bool broadcast_ok = false;
+            std::string err_string;
+            if (combined) {
+                agg_tx = MakeTransactionRef(std::move(*combined));
+                broadcast_ok = wallet.chain().broadcastTransaction(agg_tx, wallet.m_default_max_tx_fee, /*relay=*/true, err_string);
+            }
+            // Evict the picked candidates whether or not the aggregate went
+            // through: a broadcast one must not be merged into a second
+            // aggregate, and a malformed/stale one must not be re-picked and
+            // poison every subsequent send.
+            for (const auto& c : candidates) {
+                for (const CTxIn& in : c->vin) pool->EvictByInput(in.prevout);
+            }
+            if (!broadcast_ok) {
+                candidates.clear();
+                continue;
+            }
+            // The combined tx's hash differs from the wallet's own half, so
+            // there is no CWalletTx to commit; the wallet recovers its inputs
+            // and outputs from the broadcast tx via BLSCT scanning (wallet-local
+            // mapValue comments are dropped on this path).
+        } else {
+            const CTransactionRef& tx = MakeTransactionRef(res->tx);
+
+            // Store any wallet-local comment/comment_to on the sender's CWalletTx so
+            // listtransactions surfaces them (WalletTxToJSON emits every mapValue key).
+            // This is separate from the on-chain BLSCT memo, which the recipient sees.
+            wallet.CommitTransaction(tx, std::move(mapValue), /*orderForm=*/{});
+        }
+
+        // The factory reports which output pays the destination: vout is shuffled
+        // for privacy, so the recipient is not at any fixed position.
+        std::string outputHash = res->recipientOutputHash.GetHex();
+        if (verbose) {
+            UniValue entry(UniValue::VOBJ);
+            entry.pushKV("outputHash", outputHash);
+            return entry;
+        }
+        return outputHash;
     }
-    return outputHash;
+}
+
+namespace {
+//! Coins recently spent into a served candidate, with expiry. A candidate is
+//! not a mempool transaction, so serving one does NOT remove its coin from the
+//! wallet's spendable set — without this ledger every served candidate would
+//! reuse the same first coin, and requesters' pools (deduped by input
+//! outpoint) would reject all but the first. Two live candidates sharing an
+//! input would also conflict if merged into two aggregates. Entries expire
+//! with the requester's reply-key TTL; a merged candidate's coin drops out of
+//! the wallet's coin set on its own once the aggregate confirms.
+Mutex g_candidate_inputs_mutex;
+std::map<COutPoint, int64_t> g_candidate_inputs GUARDED_BY(g_candidate_inputs_mutex);
+
+//! Reserve `outpoint` for one candidate. Returns false if still reserved.
+bool ReserveCandidateInput(const COutPoint& outpoint, int64_t now)
+{
+    LOCK(g_candidate_inputs_mutex);
+    std::erase_if(g_candidate_inputs, [now](const auto& e) { return e.second <= now; });
+    return g_candidate_inputs.emplace(outpoint, now + aggregation::PULL_KEY_TTL_SECONDS).second;
+}
+} // namespace
+
+std::optional<uint256> BuildAndSendCandidate(wallet::CWallet& wallet, const blsct::PublicKey& reply_key, bool stem, std::string& error)
+{
+    p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+    if (!transport) {
+        error = "p2pmsg disabled";
+        return std::nullopt;
+    }
+    if (!wallet.IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT)) {
+        error = "not a BLSCT wallet";
+        return std::nullopt;
+    }
+    if (wallet.IsLocked()) {
+        error = "wallet is locked";
+        return std::nullopt;
+    }
+
+    CTransactionRef cand;
+    {
+        LOCK(wallet.cs_wallet);
+        auto km = wallet.GetBLSCTKeyMan();
+        if (!km) {
+            error = "no BLSCT key manager";
+            return std::nullopt;
+        }
+
+        // Pick a single spendable NAV coin to cover-spend to ourselves.
+        std::vector<blsct::InputCandidates> coins;
+        wallet::CoinFilterParams params;
+        params.only_blsct = true;
+        params.token_id = TokenId();
+        params.min_amount = 1;
+        // nAmountLimit stops gathering once the running total EXCEEDS it, so 0
+        // yields exactly one (the largest) coin; MAX_MONEY yields all of them,
+        // which candidate serving needs -- each outstanding candidate must
+        // spend a distinct coin.
+        blsct::TxFactory::AddAvailableCoins(&wallet, km, params, coins, /*nAmountLimit=*/MAX_MONEY);
+        // Each outstanding candidate must spend a DISTINCT coin (see
+        // ReserveCandidateInput), picked UNIFORMLY at random from the free
+        // ones. Randomness matters twice: the reservation ledger is in-memory,
+        // so after a restart a deterministic pick would rebuild the exact
+        // candidate a requester already pools (rejected by its input dedupe);
+        // and a predictable choice (e.g. always largest-first, which is how
+        // AddAvailableCoins orders coins) would let an observer guess which of
+        // a producer's coins back its cover candidates.
+        const blsct::InputCandidates* chosen = nullptr;
+        const int64_t now = GetTime<std::chrono::seconds>().count();
+        std::vector<size_t> free_idx(coins.size());
+        std::iota(free_idx.begin(), free_idx.end(), size_t{0});
+        while (!free_idx.empty() && !chosen) {
+            const size_t pick = static_cast<size_t>(GetRand(free_idx.size()));
+            const auto& coin = coins[free_idx[pick]];
+            if (ReserveCandidateInput(COutPoint(coin.outpoint.hash), now)) {
+                chosen = &coin;
+            } else {
+                free_idx[pick] = free_idx.back();
+                free_idx.pop_back();
+            }
+        }
+        if (!chosen) {
+            error = "No spendable NAV coin free to build a candidate from";
+            return std::nullopt;
+        }
+
+        const auto& c = *chosen;
+        auto factory = blsct::TxFactory(km);
+        factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+        // Self-spend the whole value back to a fresh own address: input value
+        // == output value, zero fee. BuildCandidate emits no fee output.
+        blsct::SubAddress self_dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+        factory.AddOutput(self_dest, c.amount, "candidate", TokenId(), blsct::NORMAL, /*minStake=*/0,
+                          /*fSubtractFeeFromAmount=*/false, MclScalar::Rand(), /*nBLSCTDefaultFee=*/0);
+        auto built = factory.BuildCandidate();
+        if (!built) {
+            error = "failed to build candidate";
+            return std::nullopt;
+        }
+        cand = MakeTransactionRef(built->tx);
+    }
+
+    // Encrypt + PoW-grind + send OUTSIDE cs_wallet: none of it touches wallet
+    // state, and Send is the expensive part.
+    DataStream ss;
+    ParamsStream ps{TX_WITH_WITNESS, ss};
+    ps << cand;
+    auto bytes = MakeUCharSpan(ss);
+    std::vector<uint8_t> body(bytes.begin(), bytes.end());
+    transport->Send(reply_key, p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
+    return cand->GetHash().ToUint256();
+}
+
+void ServeCandidateRequests(const std::vector<std::shared_ptr<wallet::CWallet>>& wallets)
+{
+    aggregation::CandidateRequestQueue* queue = aggregation::GetActiveRequestQueue();
+    if (!queue || wallets.empty()) return;
+    const int64_t now = GetTime<std::chrono::seconds>().count();
+    for (const auto& reply_key : queue->Claim(aggregation::SERVE_MAX_PER_TICK, now)) {
+        // First wallet able to fund a candidate answers; a request no wallet
+        // can serve is dropped (claimed already) and the requester re-pulls.
+        for (const auto& w : wallets) {
+            std::string error;
+            if (BuildAndSendCandidate(*w, reply_key, /*stem=*/true, error)) break;
+        }
+    }
 }
 } // namespace blsct
+
+static RPCHelpMan aggregatesend()
+{
+    return RPCHelpMan{
+        "aggregatesend",
+        "\nSend `amount` to a BLSCT `address`, aggregating the spend with up to\n"
+        "`max_candidates` fee-0 cover candidates from the node's pool so the\n"
+        "broadcast transaction hides which outputs are yours. The wallet builds\n"
+        "and signs its own half (over-funding the fee to cover the combined\n"
+        "weight), combines with the pool candidates, and broadcasts.\n",
+        {
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The destination BLSCT address"},
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount to send"},
+            {"max_candidates", RPCArg::Type::NUM, RPCArg::Default{16}, "Maximum cover candidates to merge"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "txid", "The broadcast aggregate transaction id"},
+            {RPCResult::Type::NUM, "candidates_merged", "How many cover candidates were merged"},
+        }},
+        RPCExamples{HelpExampleCli("aggregatesend", "\"<blsctaddress>\" 1.0 16")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+            aggregation::CandidatePool* pool = aggregation::GetActivePool();
+            if (!pool) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            CTxDestination dest = DecodeDestination(request.params[0].get_str());
+            if (!std::holds_alternative<blsct::DoublePublicKey>(dest)) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Not a BLSCT address");
+            }
+            const CAmount amount = AmountFromValue(request.params[1]);
+            size_t max_k = request.params[2].isNull() ? aggregation::POOL_MAX_COMBINED
+                                                      : request.params[2].getInt<int64_t>();
+            if (max_k > aggregation::POOL_MAX_COMBINED) max_k = aggregation::POOL_MAX_COMBINED;
+
+            // Pull cover candidates first so we know how much extra fee to fund.
+            std::vector<CTransactionRef> candidates = pool->PickForAggregate(max_k);
+            const CAmount rate = Params().GetConsensus().nBLSCTDefaultFee;
+            const CAmount extra = aggregation::RequiredCandidateFee(candidates, rate);
+
+            // Build (do not commit) the wallet's own half, over-funding the fee.
+            blsct::SubAddress sub_dest(std::get<blsct::DoublePublicKey>(dest));
+            blsct::CreateTransactionData txData{sub_dest, amount, "aggregatesend"};
+            txData.nBLSCTDefaultFee = rate;
+            txData.additionalFee = extra;
+            auto own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
+            if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+
+            std::vector<CTransactionRef> halves;
+            halves.push_back(MakeTransactionRef(own->tx));
+            for (const auto& c : candidates) halves.push_back(c);
+
+            // Evict the picked candidates from the pool whether or not this
+            // aggregate succeeds. On failure this is what stops a malformed or
+            // stale candidate from being re-picked on every subsequent call
+            // (permanent DoS); on success it prevents double-spending a
+            // candidate into a second aggregate.
+            const auto evict_candidates = [&]() {
+                for (size_t i = 1; i < halves.size(); ++i)
+                    for (const CTxIn& in : halves[i]->vin) pool->EvictByInput(in.prevout);
+            };
+
+            auto combined = aggregation::CombineHalves(halves);
+            if (!combined) {
+                evict_candidates();
+                throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed (duplicate input?)");
+            }
+
+            CTransactionRef tx = MakeTransactionRef(std::move(*combined));
+            std::string err_string;
+            if (!pwallet->chain().broadcastTransaction(tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string)) {
+                evict_candidates();
+                throw JSONRPCError(RPC_TRANSACTION_ERROR, err_string);
+            }
+
+            evict_candidates();
+
+            UniValue o(UniValue::VOBJ);
+            o.pushKV("txid", tx->GetHash().GetHex());
+            o.pushKV("candidates_merged", (uint64_t)(halves.size() - 1));
+            return o;
+        },
+    };
+}
+
+static RPCHelpMan replycandidate()
+{
+    return RPCHelpMan{
+        "replycandidate",
+        "\nAnswer one candidate pull request: build a fee-0 cover candidate from one\n"
+        "of the wallet's own coins (a value-balanced self-spend with no fee output)\n"
+        "and send it as a CANDIDATE_TX encrypted 1:1 to the requester's reply key.\n"
+        "Only the requester learns the candidate, so the cover it provides in a\n"
+        "later aggregate cannot be subtracted out by other bus observers. This is\n"
+        "the candidate *producer*: run it against the reply keys queued by the\n"
+        "node's AGG_ANN handler (listpendingcandidaterequests), e.g. from\n"
+        "navio-p2pmsg -producecandidates.\n",
+        {
+            {"reply_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The requester's reply session pubkey (from listpendingcandidaterequests)"},
+            {"stem", RPCArg::Type::BOOL, RPCArg::Default{true}, "Send via the Dandelion stem variant"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "candidate_txid", "The candidate half-transaction id"},
+        }},
+        RPCExamples{HelpExampleCli("replycandidate", "\"<replypubkeyhex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+            p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+            if (!transport) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            blsct::PublicKey reply_key;
+            if (!reply_key.SetVch(ParseHex(request.params[0].get_str()))) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "invalid reply_pubkey");
+            }
+            const bool stem = request.params[1].isNull() ? true : request.params[1].get_bool();
+
+            std::string error;
+            auto txid = blsct::BuildAndSendCandidate(*pwallet, reply_key, stem, error);
+            if (!txid) throw JSONRPCError(RPC_WALLET_ERROR, error);
+
+            UniValue o(UniValue::VOBJ);
+            o.pushKV("candidate_txid", txid->GetHex());
+            return o;
+        },
+    };
+}
+
+static RPCHelpMan acceptquotewallet()
+{
+    return RPCHelpMan{
+        "acceptquotewallet",
+        "\nAccept a collected RFQ quote using this wallet: the wallet builds and\n"
+        "signs its own unbalanced taker half (paying the quoted sell amount from\n"
+        "its coins, receiving the quoted fill of the buy token), combines it with\n"
+        "the maker's half, and broadcasts the atomic swap. The maker's quote half\n"
+        "is expected to over-fund the combined fee.\n\n"
+        "max_pay / min_recv are slippage bounds: the accept is rejected unless the\n"
+        "quote charges at most max_pay of the sell token and delivers at least\n"
+        "min_recv of the buy token.\n",
+        {
+            {"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The RFQ request uuid"},
+            {"quote_id", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The chosen quote id"},
+            {"max_pay", RPCArg::Type::NUM, RPCArg::Optional::NO, "Max sell-token amount willing to pay (slippage bound)"},
+            {"min_recv", RPCArg::Type::NUM, RPCArg::Optional::NO, "Min buy-token amount required to receive (slippage bound)"},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "txid", "The broadcast swap transaction id"},
+        RPCExamples{HelpExampleCli("acceptquotewallet", "\"<uuid>\" \"<quote_id>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+            rfq::MatcherRegistry* matcher = rfq::GetActiveMatcher();
+            if (!matcher) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            const uint256 uuid(ParseHashV(request.params[0], "uuid"));
+            const uint256 quote_id(ParseHashV(request.params[1], "quote_id"));
+            const CAmount max_pay = request.params[2].getInt<int64_t>();
+            const CAmount min_recv = request.params[3].getInt<int64_t>();
+            if (max_pay < 0 || !MoneyRange(max_pay) || min_recv < 0 || !MoneyRange(min_recv)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "max_pay/min_recv out of range");
+            }
+
+            // Atomically claim the quote (fetch + drop the request) so two
+            // concurrent accepts of the same uuid cannot each build a conflicting
+            // taker half. ClaimQuote also returns the quote's token pair, so we no
+            // longer need a separate GetRequest lookup.
+            auto quoteOpt = matcher->ClaimQuote(uuid, quote_id);
+            if (!quoteOpt || !quoteOpt->half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
+            const rfq::RfqQuote& quote = *quoteOpt;
+
+            // Slippage guard. The taker half must commit the SAME amounts the
+            // maker's (confidential) half expects, or the combined BLSCT balance
+            // proof fails to verify and no funds move — so we cannot be tricked
+            // into amounts other than the ones we build. What balance alone does
+            // NOT protect is an unfavourable *rate*: a perfectly balanced tx can
+            // still pay 1000 to receive 1. So gate the committed amounts against
+            // the caller's own max_pay/min_recv bounds. The two checks together
+            // are complete: a mutated/forged quote whose half_tx disagrees with
+            // its advertised numbers fails to combine (caught by balance), and an
+            // honest-but-bad rate is rejected here by the bound. The quote is
+            // otherwise unauthenticated, so these bounds are the taker's only
+            // trust anchor — never widen them from the quote's own fields.
+            if (quote.sell_cost > max_pay) throw JSONRPCError(RPC_VERIFY_ERROR, "quote sell_cost exceeds max_pay");
+            if (quote.fill < min_recv) throw JSONRPCError(RPC_VERIFY_ERROR, "quote fill below min_recv");
+            // Honor the quote's own expiry: an expired quote must not be
+            // executed. `order_expiry == 0` means "no expiry set" (accepted).
+            if (quote.order_expiry != 0) {
+                const int64_t now = GetTime<std::chrono::seconds>().count();
+                if (quote.order_expiry < now) throw JSONRPCError(RPC_VERIFY_ERROR, "quote has expired");
+            }
+
+            EnsureWalletIsUnlocked(*pwallet);
+            LOCK(pwallet->cs_wallet);
+            auto km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            // Gather sell-token coins covering the quote's sell_cost.
+            std::vector<blsct::InputCandidates> candidates;
+            wallet::CoinFilterParams params;
+            params.only_blsct = true;
+            params.token_id = quote.sell;
+            params.min_amount = 1;
+            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
+
+            auto factory = blsct::TxFactory(km);
+            CAmount gathered = 0;
+            for (const auto& c : candidates) {
+                if (gathered >= quote.sell_cost) break;
+                factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+                gathered += c.amount;
+            }
+            if (gathered < quote.sell_cost) {
+                throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough of the sell token");
+            }
+
+            blsct::SubAddress taker_recv(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+            blsct::DoublePublicKey change = std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value());
+
+            // The taker pays no fee (rate 0 -> zero-value fee output); the maker's
+            // half over-funds the combined fee. Taker pays quote.sell, receives
+            // quote.buy. These committed amounts must match the maker half for the
+            // combined balance proof to verify (see slippage note above).
+            auto taker_half = factory.BuildUnbalancedHalf(
+                change, taker_recv,
+                /*pay_token=*/quote.sell, /*pay_amount=*/quote.sell_cost,
+                /*recv_token=*/quote.buy, /*recv_amount=*/quote.fill,
+                /*nBLSCTDefaultFee=*/0, /*additionalFee=*/0);
+            if (!taker_half) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build taker half");
+
+            std::vector<CTransactionRef> halves{MakeTransactionRef(taker_half.value()), quote.half_tx};
+            auto combined = aggregation::CombineHalves(halves);
+            if (!combined) throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed");
+
+            CTransactionRef tx = MakeTransactionRef(std::move(*combined));
+            std::string err_string;
+            if (!pwallet->chain().broadcastTransaction(tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string))
+                throw JSONRPCError(RPC_TRANSACTION_ERROR, err_string);
+
+            // Request already dropped by ClaimQuote; nothing left to cancel.
+            return tx->GetHash().GetHex();
+        },
+    };
+}
+
+static RPCHelpMan broadcastorder()
+{
+    return RPCHelpMan{
+        "broadcastorder",
+        "\nPublish a standing swap order: this wallet builds and signs an unbalanced\n"
+        "half-transaction offering `offer_amount` of `offer_token` for `want_amount`\n"
+        "of `want_token`, wraps it in a quote, caches it locally, and broadcasts it\n"
+        "over the p2pmsg bus as an ORDER_ANN so peers cache it and can answer RFQs\n"
+        "on the maker's behalf. The half over-funds the fee so a taker can accept\n"
+        "with a fee-free half.\n",
+        {
+            {"offer_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token the maker offers (hex, empty for NAV)"},
+            {"offer_amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "Amount of offer_token to deliver"},
+            {"want_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token the maker wants (hex, empty for NAV)"},
+            {"want_amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "Amount of want_token to receive"},
+            {"expiry", RPCArg::Type::NUM, RPCArg::Optional::NO, "Unix time the order expires (capped to 14 days)"},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "quote_id", "Identifier of the broadcast standing order"},
+        RPCExamples{HelpExampleCli("broadcastorder", "\"\" 1.0 \"01...\" 1000 1893456000")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+            p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+            rfq::OrderCache* orders = rfq::GetActiveOrderCache();
+            if (!transport || !orders) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            auto parse_token = [](const UniValue& v) -> TokenId {
+                const std::string& s = v.get_str();
+                if (s.empty()) return TokenId();
+                return TokenId(uint256(ParseHashV(v, "token")));
+            };
+            const TokenId offer_token = parse_token(request.params[0]);
+            const CAmount offer_amount = AmountFromValue(request.params[1]);
+            const TokenId want_token = parse_token(request.params[2]);
+            const CAmount want_amount = AmountFromValue(request.params[3]);
+            const int64_t expiry = request.params[4].getInt<int64_t>();
+
+            LOCK(pwallet->cs_wallet);
+            auto km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            // Gather offer-token coins covering offer_amount (+ NAV for the fee
+            // if offer_token is not NAV — the maker funds the whole combined fee).
+            std::vector<blsct::InputCandidates> candidates;
+            wallet::CoinFilterParams params;
+            params.only_blsct = true;
+            params.token_id = offer_token;
+            params.min_amount = 1;
+            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
+
+            auto factory = blsct::TxFactory(km);
+            CAmount gathered = 0;
+            for (const auto& c : candidates) {
+                if (gathered >= offer_amount) break;
+                factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+                gathered += c.amount;
+            }
+            if (gathered < offer_amount) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough of the offer token");
+
+            // If the offer token is not NAV, also add a NAV coin for the fee.
+            const CAmount rate = Params().GetConsensus().nBLSCTDefaultFee;
+            if (!(offer_token == TokenId())) {
+                std::vector<blsct::InputCandidates> nav;
+                wallet::CoinFilterParams np; np.only_blsct = true; np.token_id = TokenId(); np.min_amount = 1;
+                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, nav, /*nAmountLimit=*/0);
+                if (nav.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No NAV to fund the order fee");
+                const auto& c = nav.front();
+                factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+            }
+
+            blsct::SubAddress maker_recv(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+            blsct::DoublePublicKey change = std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value());
+
+            // Over-fund the fee for a generous taker-half allowance so the
+            // combined swap clears the consensus minimum.
+            const CAmount extra = static_cast<CAmount>(aggregation::CANDIDATE_WEIGHT_ESTIMATE) * rate;
+            auto half = factory.BuildUnbalancedHalf(
+                change, maker_recv,
+                /*pay_token=*/offer_token, /*pay_amount=*/offer_amount,
+                /*recv_token=*/want_token, /*recv_amount=*/want_amount,
+                rate, /*additionalFee=*/extra);
+            if (!half) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build order half");
+
+            rfq::RfqQuote q;
+            q.uuid = uint256();                 // standing order: bound to an RFQ at match time
+            q.quote_id = GetRandHash();
+            q.half_tx = MakeTransactionRef(half.value());
+            q.buy = offer_token;                // buy-token the taker receives
+            q.sell = want_token;                // sell-token the taker pays
+            q.fill = offer_amount;              // buy-token the taker receives
+            q.sell_cost = want_amount;          // sell-token the taker pays
+            q.order_expiry = expiry;
+            // Sign under a fresh, single-use key (not the persistent inbox
+            // identity) so this order is not linkable to our other RFQ traffic.
+            std::tie(q.session_eph, q.maker_sig) = transport->SignEphemeral(q.SigningHash());
+
+            const int64_t now = GetTime<std::chrono::seconds>().count();
+            orders->StoreOrder(q, now); // cache locally too
+
+            DataStream ss;
+            ParamsStream ps{TX_WITH_WITNESS, ss};
+            ps << q;
+            auto bytes = MakeUCharSpan(ss);
+            std::vector<uint8_t> body(bytes.begin(), bytes.end());
+            transport->Send(p2pmsg::BroadcastPubKey(),
+                            p2pmsg::PayloadKind::ORDER_ANN, std::move(body), /*stem=*/false);
+
+            return q.quote_id.GetHex();
+        },
+    };
+}
+
+static RPCHelpMan replyquote()
+{
+    return RPCHelpMan{
+        "replyquote",
+        "\nAnswer a pending matched RFQ request (see listpendingquoterequests): this\n"
+        "wallet builds and signs the unbalanced quote half — delivering `fill` of the\n"
+        "requested buy token, receiving `sell_cost` of the sell token — wraps it in a\n"
+        "quote bound to the request uuid, and sends it encrypted to the requester's\n"
+        "reply key over the p2pmsg bus. The half over-funds the fee so the taker can\n"
+        "accept with a fee-free half.\n",
+        {
+            {"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The pending request uuid to answer"},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "quote_id", "Identifier of the sent quote"},
+        RPCExamples{HelpExampleCli("replyquote", "\"<uuid>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+            rfq::MatcherRegistry* matcher = rfq::GetActiveMatcher();
+            p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
+            if (!matcher || !transport) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            const uint256 uuid(ParseHashV(request.params[0], "uuid"));
+            auto pm = matcher->TakePendingMatch(uuid);
+            if (!pm) throw JSONRPCError(RPC_INVALID_PARAMETER, "no pending request with that uuid");
+
+            // We deliver the taker's buy token (pm->fill) and receive their sell
+            // token (pm->sell_cost). buy/sell are from the taker's perspective.
+            const TokenId pay_token = pm->req.buy;   // we pay what the taker buys
+            const TokenId recv_token = pm->req.sell;  // we receive what the taker sells
+
+            LOCK(pwallet->cs_wallet);
+            auto km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            std::vector<blsct::InputCandidates> candidates;
+            wallet::CoinFilterParams params;
+            params.only_blsct = true;
+            params.token_id = pay_token;
+            params.min_amount = 1;
+            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
+
+            auto factory = blsct::TxFactory(km);
+            CAmount gathered = 0;
+            for (const auto& c : candidates) {
+                if (gathered >= pm->fill) break;
+                factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+                gathered += c.amount;
+            }
+            if (gathered < pm->fill) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough of the pay token");
+
+            const CAmount rate = Params().GetConsensus().nBLSCTDefaultFee;
+            if (!(pay_token == TokenId())) {
+                std::vector<blsct::InputCandidates> nav;
+                wallet::CoinFilterParams np; np.only_blsct = true; np.token_id = TokenId(); np.min_amount = 1;
+                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, nav, /*nAmountLimit=*/0);
+                if (nav.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No NAV to fund the quote fee");
+                const auto& c = nav.front();
+                factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+            }
+
+            blsct::SubAddress maker_recv(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+            blsct::DoublePublicKey change = std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value());
+
+            const CAmount extra = static_cast<CAmount>(aggregation::CANDIDATE_WEIGHT_ESTIMATE) * rate;
+            auto half = factory.BuildUnbalancedHalf(
+                change, maker_recv,
+                /*pay_token=*/pay_token, /*pay_amount=*/pm->fill,
+                /*recv_token=*/recv_token, /*recv_amount=*/pm->sell_cost,
+                rate, /*additionalFee=*/extra);
+            if (!half) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build quote half");
+
+            rfq::RfqQuote q;
+            q.uuid = uuid;
+            q.quote_id = GetRandHash();
+            q.half_tx = MakeTransactionRef(half.value());
+            // Self-describing token pair (taker's perspective): buy = what we pay
+            // out, sell = what we receive. The taker relies on these for matching
+            // and to build the balancing half.
+            q.buy = pay_token;   // == pm->req.buy
+            q.sell = recv_token; // == pm->req.sell
+            q.fill = pm->fill;
+            q.sell_cost = pm->sell_cost;
+            q.order_expiry = pm->req.expiry;
+            // Fresh single-use signing key: unlinkable from our other quotes.
+            std::tie(q.session_eph, q.maker_sig) = transport->SignEphemeral(q.SigningHash());
+
+            DataStream ss;
+            ParamsStream ps{TX_WITH_WITNESS, ss};
+            ps << q;
+            auto bytes = MakeUCharSpan(ss);
+            std::vector<uint8_t> body(bytes.begin(), bytes.end());
+            // Encrypt the quote to the requester's reply key (confidential).
+            transport->Send(pm->req.reply_key, p2pmsg::PayloadKind::RFQ_QUOTE,
+                            std::move(body), /*stem=*/false);
+
+            return q.quote_id.GetHex();
+        },
+    };
+}
 
 UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request, const blsct::TokenType& type)
 {
@@ -3844,6 +4495,11 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &gettokenbalance},
         {"blsct", &listblsctunspent},
         {"blsct", &sendtoblsctaddress},
+        {"blsct", &aggregatesend},
+        {"blsct", &replycandidate},
+        {"blsct", &acceptquotewallet},
+        {"blsct", &broadcastorder},
+        {"blsct", &replyquote},
         {"blsct", &sendnfttoblsctaddress},
         {"blsct", &sendtokentoblsctaddress},
         {"blsct", &stakelock},

@@ -207,8 +207,18 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, TxValidationState& state, 
 
         txfee = txfee_aux;
     } else {
+        // The fee is carried in a dedicated OP_RETURN fee output. Skip
+        // zero-value fee outputs and read only the single non-zero one, matching
+        // blsct::VerifyTx. An aggregate or atomic-swap transaction combines
+        // several half-transactions and can carry more than one fee output (the
+        // cover/counterparty halves contribute zero-value ones); those halves'
+        // and the whole transaction's outputs are shuffled, so keying the fee on
+        // output ORDER (e.g. "last fee output wins") would read the fee
+        // non-deterministically. blsct::VerifyTx already enforces at most one
+        // non-zero fee output, so this reads exactly that value regardless of
+        // position.
         for (auto& out : tx.vout) {
-            if (out.IsFee())
+            if (out.IsFee() && out.nValue > 0)
                 txfee = out.nValue;
         }
     }

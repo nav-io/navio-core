@@ -5,9 +5,15 @@
 #ifndef BITCOIN_BLSCT_WALLET_RPC_H
 #define BITCOIN_BLSCT_WALLET_RPC_H
 
+#include <blsct/public_key.h>
 #include <blsct/wallet/txfactory.h>
 #include <script/script.h>
 #include <span.h>
+#include <uint256.h>
+
+#include <memory>
+#include <optional>
+#include <vector>
 
 namespace wallet {
 class CWallet;
@@ -19,6 +25,14 @@ namespace blsct {
 //! stake-delegation payload.
 CAmount GetDelegatedStakedBalance(const wallet::CWallet& wallet) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose, wallet::mapValue_t mapValue = {});
+//! Build a fee-0 cover candidate from one of the wallet's coins and send it as
+//! a CANDIDATE_TX encrypted 1:1 to `reply_key`. Returns the candidate txid, or
+//! std::nullopt with `error` set.
+std::optional<uint256> BuildAndSendCandidate(wallet::CWallet& wallet, const blsct::PublicKey& reply_key, bool stem, std::string& error);
+//! Answer up to SERVE_MAX_PER_TICK queued candidate pull requests using the
+//! first of `wallets` able to fund one. Used by the built-in serving task
+//! (-servecandidates) scheduled from StartWallets.
+void ServeCandidateRequests(const std::vector<std::shared_ptr<wallet::CWallet>>& wallets);
 CScript BuildHTLCScript(
     const std::vector<unsigned char>& hash_bytes,
     const std::vector<unsigned char>& spendingKeyA,

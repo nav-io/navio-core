@@ -53,6 +53,7 @@ add_executable(bench_navio
   mempool_eviction.cpp
   mempool_stress.cpp
   merkle_root.cpp
+  p2pmsg.cpp
   peer_eviction.cpp
   poly1305.cpp
   pool.cpp

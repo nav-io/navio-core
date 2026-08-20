@@ -36,6 +36,7 @@
 #include <util/string.h>
 #include <util/time.h>
 #include <util/translation.h>
+#include <util/tui_dashboard.h>
 
 #include <algorithm>
 #include <chrono>
@@ -1092,15 +1093,29 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
 }
 
 
+//! Format a duration in compact h/m/s.
+static std::string FmtUptime(std::chrono::seconds s)
+{
+    auto total = s.count();
+    long h = total / 3600, m = (total % 3600) / 60, sec = total % 60;
+    if (h > 0) return strprintf("%dh %dm %ds", h, m, sec);
+    if (m > 0) return strprintf("%dm %ds", m, sec);
+    return strprintf("%ds", sec);
+}
+
 void Loop()
 {
     std::unique_ptr<BaseRequestHandler> rh;
-
     rh.reset(new DefaultRequestHandler());
+    tui::Dashboard dash(strprintf("navio-staker  [%s]", walletName.empty() ? "default wallet" : walletName));
+    tui::RawMode raw;
 
-    auto last_update{SteadyClock::now()};
-    auto start{SteadyClock::now()};
-    double nFound = 0;
+    const auto start = SteadyClock::now();
+    auto last_block = SteadyClock::now();
+    double found = 0;
+    uint64_t cycles = 0, rpc_errors = 0;
+    CAmount last_balance = 0;
+    std::string last_event = "starting up";
 
     // Optional: periodically merge the wallet's small outputs (staking rewards
     // accumulate one small output per block) so they stay spendable in a single
@@ -1115,135 +1130,165 @@ void Loop()
     const int64_t delegation_refresh_interval = std::max<int64_t>(1, gArgs.GetIntArg("-delegationrefresh", 300));
     auto last_delegation_refresh{SteadyClock::now() - std::chrono::seconds(delegation_refresh_interval)};
 
-    LogPrintf("%s: [%s] Starting staking...%s%s\n", __func__, walletName, auto_consolidate ? " (auto-consolidate enabled)" : "", fDelegated ? " (delegated mode)" : "");
+    dash.Log(strprintf("staking started (wallet=%s)%s%s", walletName, auto_consolidate ? " (auto-consolidate enabled)" : "", fDelegated ? " (delegated mode)" : ""));
 
-    while (true) {
-        // Each loop iteration is best-effort: if anything throws (RPC
-        // parsing, mcl deserialisation, range-proof construction,
-        // submitblock failure...) log it and keep the staker alive. The
-        // alternative — letting std::terminate kill the process on the
-        // first hiccup — burns the whole staking session for what is
-        // typically a transient condition (node restarting mid-RPC,
-        // wallet just-locked, single malformed reply, etc.).
-        try {
-            CBlock proposal;
-            CAmount nTotalMoney = 0;
-            bool found = false;
-            // Which delegation produced the accepted proposal (delegated mode
-            // only); points into `delegations`, which is stable for the rest
-            // of this loop iteration.
-            const DelegatedCommitment* producing = nullptr;
+    while (dash.State() != tui::RunState::Quitting) {
+        // Drain keypresses (q/p/r) before each cycle.
+        for (char k = raw.PollKey(); k != 0; k = raw.PollKey()) {
+            if (k == 'q') dash.SetState(tui::RunState::Quitting);
+            else if (k == 'p') { dash.SetState(tui::RunState::Paused); dash.Log("paused by operator"); }
+            else if (k == 'r') { dash.SetState(tui::RunState::Running); dash.Log("resumed by operator"); }
+        }
+        if (dash.State() == tui::RunState::Quitting) break;
 
-            if (fDelegated) {
-                if (Ticks<std::chrono::seconds>(SteadyClock::now() - last_delegation_refresh) >= delegation_refresh_interval) {
-                    last_delegation_refresh = SteadyClock::now();
-                    delegations = GetDelegatedCommitments(rh);
-                    LogPrintf("%s: Tracking %d delegated commitment(s).\n", __func__, (int)delegations.size());
-                    // Drop stats entries whose delegation is gone from the
-                    // chain and that never produced a block: compounding
-                    // owners re-create their delegated output on every run,
-                    // so without pruning the map (and the stats file) grows
-                    // by one dead entry per compounding round.
-                    std::set<std::string> tracked;
-                    for (const auto& d : delegations)
-                        tracked.insert(d.outhash);
-                    std::erase_if(delegationStats, [&](const auto& item) {
-                        return !tracked.contains(item.first) && item.second.blocksAccepted == 0 && item.second.blocksRejected == 0;
-                    });
-                    WriteDelegationStats();
-                }
+        const bool paused = dash.State() == tui::RunState::Paused;
+        if (!paused) {
+            ++cycles;
+            // Best-effort cycle: a transient RPC/crypto hiccup must not kill the
+            // session. Errors are surfaced on the dashboard, not fatal.
+            try {
+                CBlock proposal;
+                CAmount nTotalMoney = 0;
+                bool got = false;
+                // Which delegation produced the accepted proposal (delegated mode
+                // only); points into `delegations`, which is stable for the rest
+                // of this loop iteration.
+                const DelegatedCommitment* producing = nullptr;
 
-                for (auto& it : delegations) {
-                    nTotalMoney += it.staked.value.GetUint64();
-
-                    if (!found) {
-                        auto candidate = GetBlockProposal(rh, it.staked, it.rewardAddress);
-
-                        found = candidate.has_value();
-                        if (found) {
-                            proposal = candidate.value();
-                            producing = &it;
-                        }
-                    }
-                }
-            } else {
-                auto staked_commitments = GetStakedCommitments(rh);
-
-                for (auto& it : staked_commitments) {
-                    nTotalMoney += it.value.GetUint64();
-
-                    if (!found) {
-                        auto candidate = GetBlockProposal(rh, it, coinbase_dest);
-
-                        found = candidate.has_value();
-                        if (found)
-                            proposal = candidate.value();
-                    }
-                }
-            }
-
-            if (found) {
-                const UniValue& reply_submit = ConnectAndCallRPC(rh.get(), "submitblock", /* args=*/{EncodeHexBlock(proposal)}, RpcWallet());
-
-                const UniValue& result_submit = reply_submit.find_value("result");
-                const UniValue& error_submit = reply_submit.find_value("error");
-
-                if (error_submit.isNull()) {
-                    if (result_submit.isNull()) {
-                        nFound++;
-                        last_update = SteadyClock::now();
-                    }
-                    LogPrintf("%s: [%s] Found block %s (%s%s). Current difficulty: %s\n", __func__, walletName, proposal.GetHash().ToString(), result_submit.isNull() ? "ACCEPTED" : "REJECTED: ", result_submit.isNull() ? "" : reply_submit.write(0, 0), currentDifficulty.ToString());
-
-                    if (producing != nullptr) {
-                        auto& stats = delegationStats[producing->outhash];
-                        if (result_submit.isNull()) {
-                            stats.blocksAccepted++;
-                            stats.lastBlockHash = proposal.GetHash().ToString();
-                            stats.lastBlockTime = GetTime();
-                        } else {
-                            stats.blocksRejected++;
-                        }
-                        LogPrintf("%s: Block %s staked with delegation %s (reward address %s): %d block(s) accepted, %d rejected this session.\n", __func__, proposal.GetHash().ToString(), producing->outhash, producing->rewardAddress, (int)stats.blocksAccepted, (int)stats.blocksRejected);
+                if (fDelegated) {
+                    if (Ticks<std::chrono::seconds>(SteadyClock::now() - last_delegation_refresh) >= delegation_refresh_interval) {
+                        last_delegation_refresh = SteadyClock::now();
+                        delegations = GetDelegatedCommitments(rh);
+                        dash.Log(strprintf("tracking %d delegated commitment(s)", (int)delegations.size()));
+                        // Also emit to the log/console (-printtoconsole): operators
+                        // and the functional test scrape this exact line from stdout.
+                        LogPrintf("%s: Tracking %d delegated commitment(s).\n", __func__, (int)delegations.size());
+                        // Drop stats entries whose delegation is gone from the
+                        // chain and that never produced a block: compounding
+                        // owners re-create their delegated output on every run,
+                        // so without pruning the map (and the stats file) grows
+                        // by one dead entry per compounding round.
+                        std::set<std::string> tracked;
+                        for (const auto& d : delegations)
+                            tracked.insert(d.outhash);
+                        std::erase_if(delegationStats, [&](const auto& item) {
+                            return !tracked.contains(item.first) && item.second.blocksAccepted == 0 && item.second.blocksRejected == 0;
+                        });
                         WriteDelegationStats();
                     }
 
-                    auto elapsed = Ticks<std::chrono::minutes>(SteadyClock::now() - start);
+                    for (auto& it : delegations) {
+                        nTotalMoney += it.staked.value.GetUint64();
 
-                    if (elapsed > 60) {
-                        LogPrintf("%s: [%s] Stake rate: %.4f blocks/hour. Staking balance: %s\n", __func__, walletName, (nFound / elapsed) * 60.0f, FormatMoney(nTotalMoney));
+                        if (!got) {
+                            auto candidate = GetBlockProposal(rh, it.staked, it.rewardAddress);
+
+                            got = candidate.has_value();
+                            if (got) {
+                                proposal = candidate.value();
+                                producing = &it;
+                            }
+                        }
+                    }
+                } else {
+                    auto staked_commitments = GetStakedCommitments(rh);
+
+                    for (auto& it : staked_commitments) {
+                        nTotalMoney += it.value.GetUint64();
+
+                        if (!got) {
+                            auto candidate = GetBlockProposal(rh, it, coinbase_dest);
+
+                            got = candidate.has_value();
+                            if (got)
+                                proposal = candidate.value();
+                        }
                     }
                 }
-            }
+                last_balance = nTotalMoney;
 
-            if (Ticks<std::chrono::milliseconds>(SteadyClock::now() - last_update) > 60000) {
-                last_update = SteadyClock::now();
-                LogPrintf("%s: [%s] Did not find a block yet. Current difficulty: %s\n", __func__, walletName, currentDifficulty.ToString());
-            }
+                if (got) {
+                    const UniValue& reply_submit = ConnectAndCallRPC(rh.get(), "submitblock", /* args=*/{EncodeHexBlock(proposal)}, RpcWallet());
 
-            if (auto_consolidate && Ticks<std::chrono::seconds>(SteadyClock::now() - last_consolidate) >= consolidate_interval) {
-                last_consolidate = SteadyClock::now();
-                const UniValue& reply = ConnectAndCallRPC(rh.get(), "consolidate", /*args=*/{}, walletName);
-                const UniValue& error = reply.find_value("error");
-                if (error.isNull()) {
-                    const UniValue& result = reply.find_value("result");
-                    if (result.isArray() && !result.empty())
-                        LogPrintf("%s: [%s] Auto-consolidation created %d transaction(s).\n", __func__, walletName, (int)result.size());
-                } else {
-                    std::string strErr;
-                    int nErr = 0;
-                    ParseError(error, strErr, nErr);
-                    LogPrintf("%s: [%s] Auto-consolidation failed: %s\n", __func__, walletName, strErr);
+                    const UniValue& result_submit = reply_submit.find_value("result");
+                    const UniValue& error_submit = reply_submit.find_value("error");
+
+                    if (error_submit.isNull()) {
+                        const bool accepted = result_submit.isNull();
+                        if (accepted) { ++found; last_block = SteadyClock::now(); }
+                        last_event = strprintf("%s block %s", accepted ? "ACCEPTED" : "REJECTED",
+                                               proposal.GetHash().ToString().substr(0, 16));
+                        dash.Log(last_event);
+                        LogPrintf("%s: [%s] Found block %s (%s%s). Current difficulty: %s\n", __func__, walletName, proposal.GetHash().ToString(), accepted ? "ACCEPTED" : "REJECTED: ", accepted ? "" : reply_submit.write(0, 0), currentDifficulty.ToString());
+
+                        if (producing != nullptr) {
+                            auto& stats = delegationStats[producing->outhash];
+                            if (accepted) {
+                                stats.blocksAccepted++;
+                                stats.lastBlockHash = proposal.GetHash().ToString();
+                                stats.lastBlockTime = GetTime();
+                            } else {
+                                stats.blocksRejected++;
+                            }
+                            dash.Log(strprintf("delegation %s (reward %s): %d accepted, %d rejected this session", producing->outhash.substr(0, 16), producing->rewardAddress, (int)stats.blocksAccepted, (int)stats.blocksRejected));
+                            WriteDelegationStats();
+                        }
+                    } else {
+                        ++rpc_errors;
+                        last_event = "submitblock error: " + error_submit.write();
+                        dash.Log(last_event);
+                    }
                 }
+
+                if (auto_consolidate && Ticks<std::chrono::seconds>(SteadyClock::now() - last_consolidate) >= consolidate_interval) {
+                    last_consolidate = SteadyClock::now();
+                    const UniValue& reply = ConnectAndCallRPC(rh.get(), "consolidate", /*args=*/{}, walletName);
+                    const UniValue& error = reply.find_value("error");
+                    if (error.isNull()) {
+                        const UniValue& result = reply.find_value("result");
+                        if (result.isArray() && !result.empty())
+                            dash.Log(strprintf("auto-consolidation created %d transaction(s)", (int)result.size()));
+                    } else {
+                        std::string strErr;
+                        int nErr = 0;
+                        ParseError(error, strErr, nErr);
+                        ++rpc_errors;
+                        last_event = "auto-consolidation failed: " + strErr;
+                        dash.Log(last_event);
+                    }
+                }
+            } catch (const std::exception& e) {
+                ++rpc_errors;
+                last_event = std::string("error: ") + e.what();
+                dash.Log(last_event);
+            } catch (...) {
+                ++rpc_errors;
+                last_event = "unknown error";
+                dash.Log(last_event);
             }
-        } catch (const std::exception& e) {
-            LogPrintf("%s: [%s] Exception in staking loop: %s. Continuing.\n", __func__, walletName, e.what());
-        } catch (...) {
-            LogPrintf("%s: [%s] Unknown exception in staking loop. Continuing.\n", __func__, walletName);
         }
+
+        // Refresh stats.
+        const auto uptime = std::chrono::duration_cast<std::chrono::seconds>(SteadyClock::now() - start);
+        const double hours = std::max(1e-9, Ticks<std::chrono::duration<double>>(SteadyClock::now() - start) / 3600.0);
+        dash.SetStat("State", paused ? "paused" : (fDelegated ? "staking (delegated)" : "staking"));
+        dash.SetStat("Uptime", FmtUptime(uptime));
+        dash.SetStat("Blocks found", strprintf("%.0f", found));
+        dash.SetStat("Rate", strprintf("%.4f blocks/hour", found / hours));
+        dash.SetStat("Staking balance", FormatMoney(last_balance));
+        dash.SetStat("Difficulty", currentDifficulty.ToString());
+        dash.SetStat("Last block", FmtUptime(std::chrono::duration_cast<std::chrono::seconds>(SteadyClock::now() - last_block)) + " ago");
+        dash.SetStat("Cycles", strprintf("%d", cycles));
+        dash.SetStat("RPC errors", strprintf("%d", rpc_errors));
+        dash.SetStat("Last event", last_event);
+        dash.Render();
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
+
+    dash.Log("shutting down");
+    dash.Render();
+    LogPrintf("%s: [%s] staker stopped by operator\n", __func__, walletName);
 }
 
 MAIN_FUNCTION

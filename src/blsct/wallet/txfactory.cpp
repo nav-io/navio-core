@@ -35,7 +35,8 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
         if (!km->GetSpendingKeyForOutputWithCache(coin.out, spending_key)) {
             return false;
         }
-        vInputs[coin.out.tokenId].emplace_back(CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, spending_key, stakedCommitment);
+        // NOLINTNEXTLINE(modernize-use-emplace) UnsignedInput is an aggregate; parenthesized emplace_back is not portable across libstdc++/libc++.
+        vInputs[coin.out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, spending_key, stakedCommitment});
     } catch (const std::exception& e) {
         LogPrintf("Error adding input: %s\n", e.what());
         return false;
@@ -87,8 +88,8 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
         if (!km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
             return false;
         }
-        vInputs[out.tokenId]
-            .emplace_back(CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, spending_key, stakedCommitment);
+        // NOLINTNEXTLINE(modernize-use-emplace) UnsignedInput is an aggregate; parenthesized emplace_back is not portable across libstdc++/libc++.
+        vInputs[out.tokenId].push_back({CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, spending_key, stakedCommitment});
     } catch (const std::exception& e) {
         LogPrintf("Error adding input: %s\n", e.what());
         return false;
@@ -103,14 +104,28 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 }
 
 std::optional<BuiltTransaction>
-TxFactory::BuildTx()
+TxFactory::BuildTx(const std::optional<CAmount>& nBLSCTDefaultFee, const CAmount& additionalFee)
 {
     return TxFactoryBase::BuildTx(
         std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value()),
         /*minStake=*/0,
         /*type=*/NORMAL,
         /*fSubtractedFee=*/false,
-        Params().GetConsensus().nBLSCTDefaultFee);
+        nBLSCTDefaultFee.value_or(Params().GetConsensus().nBLSCTDefaultFee),
+        additionalFee);
+}
+
+std::optional<BuiltTransaction>
+TxFactory::BuildCandidate()
+{
+    return TxFactoryBase::BuildTx(
+        std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value()),
+        /*minStake=*/0,
+        /*type=*/NORMAL,
+        /*fSubtractedFee=*/false,
+        /*nBLSCTDefaultFee=*/0,
+        /*additionalFee=*/0,
+        /*emitFeeOutput=*/false);
 }
 
 std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)
