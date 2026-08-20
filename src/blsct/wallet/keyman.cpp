@@ -1253,6 +1253,14 @@ bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAd
         if (!m_storage.IsLocked()) TopUpAccount(account);
         id = SubAddressIdentifier{account, 0};
         result = GetSubAddress(id).GetKeys().GetID();
+        // Derivation always succeeds, but if the account was never topped up
+        // its index 0 is absent from mapSubAddresses, so an output paid to the
+        // destination we are about to hand out would not be recognised as ours
+        // until an unlock and rescan. Unlocked, the TopUpAccount above has just
+        // registered it; locked, we cannot, so keep the pre-existing "keypool
+        // ran out" failure rather than returning a destination the wallet
+        // cannot see.
+        if (m_storage.IsLocked() && !HaveSubAddress(result)) return false;
         return true;
     }
 
