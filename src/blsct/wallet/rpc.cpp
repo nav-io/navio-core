@@ -77,6 +77,25 @@ static blsct::DoublePublicKey EnsureBlsctDestination(const std::string& address)
     return keys;
 }
 
+//! Validate an explicitly-supplied delegation reward address and return its
+//! canonical encoding. A transparent reward address is legal here, so
+//! EnsureBlsctDestination cannot be dropped in wholesale -- but a BLSCT one
+//! encoding the identity for either key would have the delegate pay the block
+//! reward into an anyone-can-spend output. Canonicalising keeps later lookups
+//! (rewards tracking, delegation-identity grouping) comparing equal.
+static std::string EnsureRewardAddress(const std::string& reward_address)
+{
+    const CTxDestination reward_dest = DecodeDestination(reward_address);
+    if (!IsValidDestination(reward_dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
+    }
+    if (const auto* keys = std::get_if<blsct::DoublePublicKey>(&reward_dest);
+        keys && !keys->HasNonIdentityKeys()) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "reward_address has null keys");
+    }
+    return EncodeDestination(reward_dest);
+}
+
 static void ParseBLSCTRecipients(const UniValue& address_amounts, const UniValue& subtract_fee_outputs, const std::string& sMemo, std::vector<wallet::CBLSCTRecipient>& recipients)
 {
     std::set<CTxDestination> destinations;
@@ -1192,21 +1211,7 @@ RPCHelpMan delegatestake()
                 }
                 rewardAddress = EncodeDestination(*op_reward);
             } else {
-                const CTxDestination reward_dest = DecodeDestination(rewardAddress);
-                if (!IsValidDestination(reward_dest)) {
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
-                }
-                // A transparent reward address is legal here, so the BLSCT
-                // helper cannot be dropped in wholesale -- but a BLSCT one
-                // encoding the identity for either key would have the delegate
-                // pay the block reward into an anyone-can-spend output.
-                if (const auto* keys = std::get_if<blsct::DoublePublicKey>(&reward_dest);
-                    keys && !keys->HasNonIdentityKeys()) {
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "reward_address has null keys");
-                }
-                // Store the canonical encoding so later lookups (rewards
-                // tracking, delegation-identity grouping) compare equal.
-                rewardAddress = EncodeDestination(reward_dest);
+                rewardAddress = blsct::EnsureRewardAddress(rewardAddress);
             }
 
             UniValue address_amounts(UniValue::VOBJ);
@@ -1657,19 +1662,7 @@ RPCHelpMan redelegatestake()
                 }
                 rewardAddress = *fromRewardAddresses.begin();
             } else {
-                const CTxDestination reward_dest = DecodeDestination(rewardAddress);
-                if (!IsValidDestination(reward_dest)) {
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
-                }
-                // A transparent reward address is legal here, so the BLSCT
-                // helper cannot be dropped in wholesale -- but a BLSCT one
-                // encoding the identity for either key would have the delegate
-                // pay the block reward into an anyone-can-spend output.
-                if (const auto* keys = std::get_if<blsct::DoublePublicKey>(&reward_dest);
-                    keys && !keys->HasNonIdentityKeys()) {
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "reward_address has null keys");
-                }
-                rewardAddress = EncodeDestination(reward_dest);
+                rewardAddress = blsct::EnsureRewardAddress(rewardAddress);
             }
 
             auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Delegated Stake");
