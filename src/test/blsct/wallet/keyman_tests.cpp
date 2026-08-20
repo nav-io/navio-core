@@ -100,6 +100,15 @@ BOOST_FIXTURE_TEST_CASE(negative_accounts_are_available_while_locked, TestingSet
     // guard in GetSubAddressFromPool checks before handing the address out.
     BOOST_CHECK_EQUAL(DrawDestination(km, blsct::STAKING_ACCOUNT),
                       DrawDestination(km, blsct::STAKING_ACCOUNT));
+
+    // The other side of that guard: an account SetupGeneration never registered
+    // has no index 0 in mapSubAddresses, and a locked wallet cannot add one
+    // (TopUpAccount needs the encryption key). Derivation still succeeds -- it
+    // is view-key only -- so without the guard the draw would hand out an
+    // address the wallet cannot recognise as its own. The assertions above pass
+    // with the guard deleted, because CHANGE_ACCOUNT and STAKING_ACCOUNT are
+    // both registered at setup; this one is what fails.
+    BOOST_CHECK(!km->GetNewDestination(int64_t{-5}).has_value());
 }
 
 // The negative accounts are single-destination by design: BLSCT outputs are
