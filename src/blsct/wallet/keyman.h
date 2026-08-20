@@ -54,7 +54,7 @@ private:
     blsct::HDChain m_hd_chain GUARDED_BY(cs_KeyStore);
     SecureBytes m_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::vector<unsigned char> m_crypted_mnemonic_entropy GUARDED_BY(cs_KeyStore);
-    std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains;
+    std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains GUARDED_BY(cs_KeyStore);
     std::optional<int64_t> m_wallet_birthday;
 
     bool AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey);
