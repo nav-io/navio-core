@@ -1256,11 +1256,17 @@ bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAd
         // Derivation always succeeds, but if the account was never topped up
         // its index 0 is absent from mapSubAddresses, so an output paid to the
         // destination we are about to hand out would not be recognised as ours
-        // until an unlock and rescan. Unlocked, the TopUpAccount above has just
-        // registered it; locked, we cannot, so keep the pre-existing "keypool
-        // ran out" failure rather than returning a destination the wallet
-        // cannot see.
-        if (m_storage.IsLocked() && !HaveSubAddress(result)) return false;
+        // until an unlock and rescan. Keep the pre-existing "keypool ran out"
+        // failure rather than returning a destination the wallet cannot see.
+        //
+        // Unconditional rather than gated on IsLocked(): unlocked, the
+        // TopUpAccount above has just registered index 0, so this is trivially
+        // true and costs one map lookup. Re-reading the lock state would
+        // instead take cs_wallet a second time from under cs_KeyStore, and the
+        // two reads can disagree if an unlock lands between them. It also means
+        // a top-up that silently failed to register the index fails the draw
+        // here instead of handing out an invisible destination.
+        if (!HaveSubAddress(result)) return false;
         return true;
     }
 
