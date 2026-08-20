@@ -755,6 +755,43 @@ void CTxMemPool::removeConflicts(const CTransaction &tx)
     }
 }
 
+void CTxMemPool::removeStakedCommitmentConflicts(const CTransaction& tx)
+{
+    AssertLockHeld(cs);
+    // Collect the commitment points the connected transaction adds.
+    std::set<std::vector<unsigned char>> added;
+    for (const CTxOut& out : tx.vout) {
+        if (out.IsStakedCommitment()) {
+            added.insert(out.blsctData.rangeProof.Vs[0].GetVch());
+        }
+    }
+    if (added.empty()) return;
+
+    // A mempool transaction adding any of those commitments can never be
+    // mined (bad-txns-duplicate-staked-commitment) and poisons every
+    // aggregated block template it is selected into; evict it like an
+    // input-spend conflict. Collect hashes by value and re-look each one up:
+    // removeRecursive erases descendants too, so a cached pointer into an
+    // entry removed as an earlier conflict's descendant would dangle.
+    std::vector<uint256> conflicts;
+    for (const auto& entry : mapTx) {
+        const CTransaction& mtx = entry.GetTx();
+        if (mtx.GetHash() == tx.GetHash()) continue;
+        for (const CTxOut& out : mtx.vout) {
+            if (out.IsStakedCommitment() && added.contains(out.blsctData.rangeProof.Vs[0].GetVch())) {
+                conflicts.push_back(mtx.GetHash());
+                break;
+            }
+        }
+    }
+    for (const uint256& conflict : conflicts) {
+        txiter it = mapTx.find(conflict);
+        if (it == mapTx.end()) continue; // already removed as a descendant
+        ClearPrioritisation(conflict);
+        removeRecursive(it->GetTx(), MemPoolRemovalReason::CONFLICT);
+    }
+}
+
 /**
  * Called when a block is connected. Removes from mempool.
  */
@@ -773,6 +810,7 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
             RemoveStaged(stage, true, MemPoolRemovalReason::BLOCK);
         }
         removeConflicts(*tx);
+        removeStakedCommitmentConflicts(*tx);
         ClearPrioritisation(tx->GetHash());
     }
     GetMainSignals().MempoolTransactionsRemovedForBlock(txs_removed_for_block, nBlockHeight);
