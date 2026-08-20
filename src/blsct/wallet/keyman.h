@@ -228,8 +228,27 @@ public:
      *   ISMINE_NO                       - not ours.
      */
     wallet::isminetype IsMineMode(const CTxOut& txout);
-    bool IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag);
     bool IsMine(const CScript& script) const;
+
+    //! The nonce an output addressed to this wallet would share with us:
+    //! blindingKey * ourViewKey — the expensive part of the ownership test
+    //! (one BLS12-381 G1 scalar multiplication) and the intermediate every
+    //! downstream check derives from (view tag via ViewTagFromNonce, hash id
+    //! via CalculateHashId). Both MarkUnusedSubAddress and IsMineMode need it
+    //! per output during a scan; compute it ONCE with this and pass it to the
+    //! overloads below so the dominant per-output cost is paid a single time.
+    //! Returns nullopt when the output cannot be ours (no view key / not a
+    //! BLSCT output / zero blinding key) or when derivation throws (malformed
+    //! blsctData), so callers outside a handler stay exception-safe.
+    std::optional<MclG1Point> GetExpectedNonce(const CTxOut& txout) const;
+    //! IsMineMode / IsMine / MarkUnusedSubAddress variants that take the
+    //! precomputed nonce instead of re-deriving it. A nullopt nonce (output
+    //! cannot be a BLSCT output of ours) makes the BLSCT ownership checks
+    //! fail without any EC work, falling through to the scriptPubKey
+    //! watch-only path exactly as the original did. The hash id is computed
+    //! from the nonce directly, so these need no view key access at all.
+    wallet::isminetype IsMineMode(const CTxOut& txout, const std::optional<MclG1Point>& expectedNonce);
+    bool IsMine(const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<MclG1Point>& expectedNonce);
     CKeyID GetHashId(const CTxOut& txout) const
     {
         if (!txout.scriptPubKey.IsSpendable() && !txout.IsStakedCommitment()) {
@@ -243,6 +262,23 @@ public:
             return CKeyID();
         }
         return GetHashId(txout.blsctData.blindingKey, txout.blsctData.spendingKey);
+    }
+    //! Same key selection as GetHashId(txout), but derives the id from a
+    //! precomputed nonce (blindingKey * viewKey), so it needs no view key and
+    //! pays no extra scalar multiplication.
+    CKeyID GetHashId(const CTxOut& txout, const MclG1Point& expectedNonce) const
+    {
+        if (!txout.scriptPubKey.IsSpendable() && !txout.IsStakedCommitment()) {
+            return CKeyID();
+        }
+        if (txout.blsctData.spendingKey.IsZero()) {
+            blsct::PublicKey extractedSpendingKey;
+            if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
+                return CalculateHashId(expectedNonce, extractedSpendingKey.GetG1Point());
+            }
+            return CKeyID();
+        }
+        return CalculateHashId(expectedNonce, txout.blsctData.spendingKey);
     }
     CKeyID GetHashId(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey) const;
     CTxDestination GetDestination(const CTxOut& txout) const;
@@ -276,6 +312,7 @@ public:
     bool TopUp(const unsigned int& size = 0);
     bool TopUpAccount(const int64_t& account, const unsigned int& size = 0);
     std::optional<wallet::WalletDestination> MarkUnusedSubAddress(const CTxOut& txout);
+    std::optional<wallet::WalletDestination> MarkUnusedSubAddress(const CTxOut& txout, const MclG1Point& expectedNonce);
     void ReserveSubAddressFromPool(const int64_t& account, int64_t& nIndex, SubAddressPool& keypool);
     void KeepSubAddress(const SubAddressIdentifier& id);
     void ReturnSubAddress(const SubAddressIdentifier& id);

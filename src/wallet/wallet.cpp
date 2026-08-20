@@ -1565,14 +1565,26 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
 
                 bool fExisted = mapOutputs.contains(outpoint);
                 if (fExisted && !fUpdate) return false;
+                isminetype mine = ISMINE_NO;
                 if (blsct_man) {
-                    const auto learned_dest = blsct_man->MarkUnusedSubAddress(txout);
-                    if (learned_dest && learned_dest->internal.has_value() && !learned_dest->internal.value() &&
-                        !FindAddressBookEntry(learned_dest->dest, /* allow_change= */ false)) {
-                        SetAddressBook(learned_dest->dest, "", AddressPurpose::RECEIVE);
+                    // Derive the nonce (blindingKey * viewKey) once and share
+                    // it between the subaddress-recovery scan and the
+                    // ownership check below.
+                    const auto expectedNonce = blsct_man->GetExpectedNonce(txout);
+                    if (expectedNonce) {
+                        const auto learned_dest = blsct_man->MarkUnusedSubAddress(txout, *expectedNonce);
+                        if (learned_dest && learned_dest->internal.has_value() && !learned_dest->internal.value() &&
+                            !FindAddressBookEntry(learned_dest->dest, /* allow_change= */ false)) {
+                            SetAddressBook(learned_dest->dest, "", AddressPurpose::RECEIVE);
+                        }
                     }
+                    // Same as IsMine(txout), with the already-derived nonce.
+                    mine = txout.HasBLSCTKeys() ? blsct_man->IsMineMode(txout, expectedNonce)
+                                                : IsMine(txout);
+                } else {
+                    mine = IsMine(txout);
                 }
-                if (fExisted || IsMine(txout)) {
+                if (fExisted || mine) {
                     CWalletOutput* wout = AddToWallet(
                         outpoint,
                         MakeOutputRef<CTxOut>(std::move(txout)),
