@@ -572,7 +572,7 @@ RPCHelpMan getbalanceforaddress()
             // Build the set of scriptPubKeys equivalent to the target address.
             // For BLSCT addresses we'll match via the recovered destination
             // since the on-chain script is masked.
-            const bool target_is_blsct = (target.index() == 8);
+            const bool target_is_blsct = std::holds_alternative<blsct::DoublePublicKey>(target);
             std::set<CScript> target_scripts;
             if (!target_is_blsct) {
                 target_scripts.insert(GetScriptForDestination(target));
