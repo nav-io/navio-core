@@ -26,6 +26,15 @@ from test_framework.util import (
 # The payload starts with the delegation magic "NVDG" + version 0x01.
 DELEGATION_MAGIC_HEX = "4e56444701"
 
+# Well-formed blsctregtest addresses whose view key, spend key, or both are the
+# identity (point at infinity). They decode fine and validateaddress calls them
+# valid, but outputs paid to them are anyone-can-spend, so a delegate must never
+# be asked to send block rewards there.
+NULL_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwwvmtas"
+NULL_VIEW_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp9l36wnnr97hjsnf2cuvf756cr7rdzxyl9m5hyz6zn368ut3htzcd327s0le0gdwl7e67q9dkgkxhvmdqls40d"
+NULL_SPEND_KEY_ADDRESS = "rnv1jlca8fe3jltegf54vwxyl2dvplpk3rz0ja6tjpdpfcar79cm43vxc40g8luh5xh0lva0qzkmytrthsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqma0f57ul"
+NULL_KEY_ADDRESSES = (NULL_KEY_ADDRESS, NULL_VIEW_KEY_ADDRESS, NULL_SPEND_KEY_ADDRESS)
+
 
 class NavioBlsctColdStakingTest(BitcoinTestFramework):
     def add_options(self, parser):
@@ -287,6 +296,15 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         _, unused_pub = self.gen_delegation_key()
         assert_raises_rpc_error(-8, "No stakes are delegated to from_delegate_pubkey",
                                 owner.redelegatestake, unused_pub, operator_pub)
+
+        # An explicit reward_address is validated here the same way
+        # delegatestake validates it. This RPC reaches that check only once
+        # real delegations exist, which is why it is pinned here rather than in
+        # blsct_spend_rpc_guards.py.
+        for null_address in NULL_KEY_ADDRESSES:
+            assert_raises_rpc_error(-5, "reward_address has null keys",
+                                    owner.redelegatestake, other_operator_pub,
+                                    operator_pub, null_address)
 
         # Move the stake delegated to other_operator over to operator_pub,
         # unifying it with the existing delegation (same delegate + reward
