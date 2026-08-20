@@ -19,12 +19,16 @@ void UnsignedOutput::GenerateKeys(Scalar blindingKey, DoublePublicKey destKeys)
 
     Point vk, sk;
 
-    if (!destKeys.GetViewKey(vk)) {
-        assert(false);
+    // Zero (point-at-infinity) destination keys must never reach key
+    // derivation: blindingKey/spendingKey would collapse to publicly-
+    // computable values (nonce = infinity * blindingKey = infinity), making
+    // the output anyone-can-spend. This is exactly what a default-constructed
+    // DoublePublicKey holds, so fail loudly instead.
+    if (!destKeys.GetViewKey(vk) || vk.IsZero()) {
         throw std::runtime_error(strprintf("%s: could not get view key from destination address\n", __func__));
     }
 
-    if (!destKeys.GetSpendKey(sk)) {
+    if (!destKeys.GetSpendKey(sk) || sk.IsZero()) {
         throw std::runtime_error(strprintf("%s: could not get spend key from destination address\n", __func__));
     }
 
