@@ -207,16 +207,17 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool 
     // and signature checks resolved correctly; SpendCoin (called from
     // UpdateCoins) then removed them. Re-adding them here would resurrect
     // already-spent outputs.
-    // CTxOut::GetHash() serializes the whole output (for a BLSCT output that
-    // means the full bulletproof range proof) and double-SHA256s it -- the most
-    // expensive per-output primitive here. Compute each output's content hash
-    // exactly once and reuse it for the self-spent scan and the add loop below,
-    // instead of hashing every output twice on the BLSCT path.
-    std::vector<uint256> out_hashes(tx.vout.size());
-    for (size_t i = 0; i < tx.vout.size(); ++i) out_hashes[i] = tx.vout[i].GetHash();
-
     std::set<uint256> self_spent;
+    // CTxOut::GetHash() serializes the whole output (for a BLSCT output that
+    // means the full bulletproof range proof) and double-SHA256s it -- not
+    // cheap per output. When the self-spent scan runs it already hashes every
+    // output, so compute each content hash once there and reuse it in the add
+    // loop below instead of hashing twice; other paths keep hashing lazily in
+    // the loop.
+    std::vector<uint256> out_hashes;
     if (tx.IsBLSCT() && !fCoinbase) {
+        out_hashes.resize(tx.vout.size());
+        for (size_t i = 0; i < tx.vout.size(); ++i) out_hashes[i] = tx.vout[i].GetHash();
         std::set<uint256> vin_prevouts;
         for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
         for (const auto& out_hash : out_hashes) {
@@ -224,7 +225,7 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool 
         }
     }
     for (size_t i = 0; i < tx.vout.size(); ++i) {
-        const uint256& outid = out_hashes[i];
+        const uint256 outid = out_hashes.empty() ? tx.vout[i].GetHash() : out_hashes[i];
         if (self_spent.contains(outid)) continue;
         bool overwrite = check_for_overwrite ? cache.HaveCoin(COutPoint(outid)) : fCoinbase;
         // Coinbase transactions can always be overwritten, in order to correctly

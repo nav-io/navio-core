@@ -2147,13 +2147,18 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
         // were never added to the UTXO set on connect, so SpendCoin must not
         // be called for them on disconnect — otherwise it returns false and
         // marks the disconnect UNCLEAN, which DisconnectTip treats as fatal.
+        // Same single-hash reuse as ConnectBlock/AddCoins: when the self-spent
+        // scan runs it already hashes every output, so keep those hashes for
+        // the SpendCoin loop below instead of hashing each output twice.
+        std::vector<uint256> out_hashes;
         std::set<uint256> self_spent;
         if (tx.IsBLSCT() && !is_coinbase) {
+            out_hashes.resize(tx.vout.size());
+            for (size_t o = 0; o < tx.vout.size(); o++) out_hashes[o] = tx.vout[o].GetHash();
             std::set<uint256> vin_prevouts;
             for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
-            for (const auto& out : tx.vout) {
-                const uint256 out_hash = out.GetHash();
-                if (vin_prevouts.contains(out_hash)) self_spent.insert(out_hash);
+            for (const auto& oh : out_hashes) {
+                if (vin_prevouts.contains(oh)) self_spent.insert(oh);
             }
         }
 
@@ -2170,7 +2175,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
                 }
             }
             if (!tx.vout[o].scriptPubKey.IsUnspendable()) {
-                COutPoint out(tx.vout[o].GetHash());
+                COutPoint out(out_hashes.empty() ? tx.vout[o].GetHash() : out_hashes[o]);
                 if (self_spent.contains(out.hash)) continue;
                 Coin coin;
                 bool is_spent = view.SpendCoin(out, &coin);
@@ -2706,11 +2711,16 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             // Hash each output's content once (a BLSCT output hash serializes the
             // whole range proof + double-SHA256) and reuse it for the self-spent
             // scan and the overwrite check below, rather than hashing twice.
-            std::vector<uint256> out_hashes(tx->vout.size());
-            for (size_t o = 0; o < tx->vout.size(); o++) out_hashes[o] = tx->vout[o].GetHash();
-
+            // Gated on the self-spent scan actually running: that scan already
+            // hashed every output unconditionally, so the precompute is free
+            // there, while the ungated paths (non-BLSCT tx, coinbase) would pay
+            // a new hash for unspendable outputs the loop below skips before
+            // hashing.
+            std::vector<uint256> out_hashes;
             std::set<uint256> self_spent;
             if (is_blsct_noncoinbase) {
+                out_hashes.resize(tx->vout.size());
+                for (size_t o = 0; o < tx->vout.size(); o++) out_hashes[o] = tx->vout[o].GetHash();
                 std::set<uint256> vin_prevouts;
                 for (const auto& in : tx->vin) vin_prevouts.insert(in.prevout.hash);
                 for (const auto& oh : out_hashes) {
@@ -2719,7 +2729,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             }
             for (size_t o = 0; o < tx->vout.size(); o++) {
                 if (tx->vout[o].scriptPubKey.IsUnspendable()) continue; // not stored in UTXO set
-                const uint256& outid = out_hashes[o];
+                const uint256 outid = out_hashes.empty() ? tx->vout[o].GetHash() : out_hashes[o];
                 if (self_spent.contains(outid)) continue;
                 if (view.HaveCoin(COutPoint(outid)) || !block_outids.insert(outid).second) {
                     LogPrintf("ERROR: ConnectBlock(): tried to overwrite transaction\n");
