@@ -20,6 +20,10 @@ public:
     // the call, so holding a span avoids copying the whole vector (hundreds of
     // ~145-byte points) on the aggregate-verify hot path.
     PublicKeys(std::span<const PublicKey> pks): m_pks(pks) {}
+    // A temporary vector would satisfy span's borrowed-range escape hatch
+    // (element_type is const) and compile into a silent use-after-free once
+    // the full-expression ends. Force callers to name the backing vector.
+    PublicKeys(std::vector<PublicKey>&&) = delete;
 
     PublicKey Aggregate() const;
 

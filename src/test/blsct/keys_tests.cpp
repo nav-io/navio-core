@@ -215,13 +215,15 @@ BOOST_AUTO_TEST_CASE(blsct_keys)
                                            privateKeyFromVector.GetPoint());
     BOOST_CHECK(privateKeyFromAddition.GetPublicKey() == publicKeyFromAddition);
 
-    blsct::PublicKeys vecKeys(std::vector<blsct::PublicKey>{privateKeyFromScalar.GetPublicKey(), privateKeyFromVector.GetPublicKey()});
+    const std::vector<blsct::PublicKey> vec_keys_backing{privateKeyFromScalar.GetPublicKey(), privateKeyFromVector.GetPublicKey()};
+    blsct::PublicKeys vecKeys(vec_keys_backing);
     BOOST_CHECK(vecKeys.Aggregate() == publicKeyFromAddition);
 }
 
 BOOST_AUTO_TEST_CASE(aggretate_empty_public_keys)
 {
-    blsct::PublicKeys pks(std::vector<blsct::PublicKey>{});
+    const std::vector<blsct::PublicKey> empty_backing;
+    blsct::PublicKeys pks(empty_backing);
     BOOST_CHECK_THROW(pks.Aggregate(), std::runtime_error);
 }
 
