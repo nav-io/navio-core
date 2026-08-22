@@ -20,6 +20,13 @@ public:
     // the call, so holding a span avoids copying the whole vector (hundreds of
     // ~145-byte points) on the aggregate-verify hot path.
     PublicKeys(std::span<const PublicKey> pks): m_pks(pks) {}
+    // Build the span from the vector explicitly rather than leaning on
+    // span's range constructor: libc++ 14 (clang-14, the libnaviokernel CI
+    // job) does not offer that conversion, so every call site here failed to
+    // compile with "no known conversion from std::vector<PublicKey> to
+    // std::span<const PublicKey>". The pointer+size constructor is part of
+    // span's core interface and available everywhere.
+    PublicKeys(const std::vector<PublicKey>& pks): m_pks(pks.data(), pks.size()) {}
     // A temporary vector would satisfy span's borrowed-range escape hatch
     // (element_type is const) and compile into a silent use-after-free once
     // the full-expression ends. Force callers to name the backing vector.
