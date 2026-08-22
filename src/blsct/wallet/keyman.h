@@ -65,6 +65,16 @@ private:
 
     bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt);
 
+    //! The HD-enabled predicate, for callers already holding cs_KeyStore.
+    //! IsHDEnabled() takes the lock and answers on its own; the master-key
+    //! accessors need this answer and the id they return to come from the
+    //! *same* acquisition, so they read both inside one WITH_LOCK instead.
+    //! Defined once here so the three cannot drift apart.
+    bool HasHDSeed() const EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore)
+    {
+        return !m_hd_chain.seed_id.IsNull();
+    }
+
 
     wallet::WalletBatch* encrypted_batch GUARDED_BY(cs_KeyStore) = nullptr;
 
