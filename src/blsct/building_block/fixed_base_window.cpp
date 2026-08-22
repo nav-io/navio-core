@@ -30,18 +30,28 @@ inline uint32_t Window(const std::vector<uint8_t>& le, size_t bit, size_t winSiz
 }
 } // namespace
 
-FixedBaseWindow::FixedBaseWindow(const std::vector<MclG1Point>& bases, size_t winSize)
-    : m_winSize(winSize),
-      m_tblNum((kBitSize + winSize - 1) / winSize),
-      m_r(size_t(1) << winSize),
-      m_nbases(bases.size())
+namespace {
+// Validated in the member-initializer list, BEFORE any member computes with
+// the value: winSize == 0 divides by zero in m_tblNum's initializer and
+// >= 64 shifts m_r out of range, so a body-side check would run after the
+// undefined behaviour it exists to prevent. The cache clamps its input to
+// 1..12, but a consensus building block must not rely on its caller for
+// well-definedness.
+size_t CheckedWinSize(size_t winSize)
 {
-    // winSize == 0 divides by zero above; >= 32 shifts m_r out of range. The
-    // cache clamps its input to 1..12, but a consensus building block must not
-    // rely on its caller for well-definedness.
     if (winSize < 1 || winSize > 16) {
         throw std::invalid_argument("FixedBaseWindow: winSize must be in [1, 16]");
     }
+    return winSize;
+}
+} // namespace
+
+FixedBaseWindow::FixedBaseWindow(const std::vector<MclG1Point>& bases, size_t winSize)
+    : m_winSize(CheckedWinSize(winSize)),
+      m_tblNum((kBitSize + m_winSize - 1) / m_winSize),
+      m_r(size_t(1) << m_winSize),
+      m_nbases(bases.size())
+{
     m_tbl.assign(m_nbases * m_tblNum * m_r, MclG1Point()); // MclG1Point() is identity
     for (size_t i = 0; i < m_nbases; ++i) {
         MclG1Point t = bases[i];

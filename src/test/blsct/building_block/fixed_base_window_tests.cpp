@@ -89,4 +89,17 @@ BOOST_AUTO_TEST_CASE(handles_scalar_edge_values)
     BOOST_CHECK(got == ref);
 }
 
+BOOST_AUTO_TEST_CASE(rejects_invalid_window_size)
+{
+    // Validation must happen before any member computes with the value:
+    // winSize 0 would divide by zero in an initializer, large values would
+    // shift out of range. Both must throw, not reach UB.
+    std::vector<MclG1Point> bases = RandBases(1);
+    BOOST_CHECK_THROW(FixedBaseWindow(bases, 0), std::invalid_argument);
+    BOOST_CHECK_THROW(FixedBaseWindow(bases, 17), std::invalid_argument);
+    BOOST_CHECK_THROW(FixedBaseWindow(bases, 64), std::invalid_argument);
+    BOOST_CHECK_NO_THROW(FixedBaseWindow(bases, 1));
+    BOOST_CHECK_NO_THROW(FixedBaseWindow(bases, 16));
+}
+
 BOOST_AUTO_TEST_SUITE_END()
