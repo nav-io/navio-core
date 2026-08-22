@@ -20,6 +20,11 @@ public:
     // the call, so holding a span avoids copying the whole vector (hundreds of
     // ~145-byte points) on the aggregate-verify hot path.
     PublicKeys(std::span<const PublicKey> pks): m_pks(pks) {}
+    // Explicit lvalue-vector overload: libc++ 14 (the Ubuntu 22.04 kernel CI
+    // job) cannot use std::span's range constructor for the implicit
+    // vector -> span conversion, so spell the pointer+size form out here
+    // instead of at every call site.
+    PublicKeys(const std::vector<PublicKey>& pks): m_pks(pks.data(), pks.size()) {}
     // A temporary vector would satisfy span's borrowed-range escape hatch
     // (element_type is const) and compile into a silent use-after-free once
     // the full-expression ends. Force callers to name the backing vector.
