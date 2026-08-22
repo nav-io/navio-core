@@ -18,10 +18,37 @@ $(package)_build_subdir=navio-build
 # glibc name resolution.
 define $(package)_set_vars
 $(package)_config_opts=-DWITH_BINARY=ON -DWITH_LIBRARY=OFF -DWITH_UPNP=OFF
-$(package)_config_opts+=-DWITH_STATIC=OFF -DBUILD_SHARED_LIBS=OFF
+$(package)_config_opts+=-DBUILD_SHARED_LIBS=OFF
 $(package)_config_opts+=-DBoost_USE_STATIC_LIBS=ON -DOPENSSL_USE_STATIC_LIBS=ON
 $(package)_config_opts+=-DCMAKE_PREFIX_PATH=$(host_prefix)
 $(package)_config_opts+=-DCMAKE_FIND_ROOT_PATH=$(host_prefix)
+# WITH_STATIC is i2pd's own "link everything statically" switch. It stays at its
+# OFF default everywhere except Windows: its non-MSVC branch forces a
+# whole-binary -static, which statically links glibc and breaks NSS name
+# resolution.
+#
+# Windows has no glibc, and this recipe already passes -static below, so that
+# objection does not apply -- and leaving it off there actively breaks the
+# build. With WITH_STATIC off, i2pd's else-branch runs
+# `set(Boost_USE_STATIC_LIBS OFF)` for WIN32 (build/CMakeLists.txt). That is a
+# normal variable, so it shadows the -DBoost_USE_STATIC_LIBS=ON above rather
+# than being overridden by it, and the following find_package asks for a shared
+# Boost. depends installs Boost static-only, so its config reports itself
+# unsuitable ("1.90.0 (static)") and configuration fails. The same branch also
+# adds -DBOOST_*_DYN_LINK, which would mark those static archives
+# __declspec(dllimport) even if the lookup had succeeded.
+$(package)_config_opts_mingw32+=-DWITH_STATIC=ON
+
+# The mingw toolchain depends selects is the POSIX-threads variant, so libgcc's
+# emutls and libstdc++'s chrono reference pthread_* and clock_gettime64 -- both
+# live in libwinpthread. The compiler driver appends libstdc++ after everything
+# on the command line, so a -lwinpthread placed in the linker FLAGS (which CMake
+# emits before the objects) is consumed too early and those references stay
+# undefined. CMAKE_CXX_STANDARD_LIBRARIES is the one slot CMake puts after the
+# target's libraries, so terminate the line with libstdc++ followed by
+# libwinpthread. The leading entries are CMake's own mingw default for this
+# variable, repeated because setting it replaces rather than appends.
+$(package)_config_opts_mingw32+=-DCMAKE_CXX_STANDARD_LIBRARIES="-lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32 -lstdc++ -lwinpthread"
 ifeq ($(host_os),mingw32)
 $(package)_ldflags+=-static
 else ifneq ($(host_os),darwin)
