@@ -39,7 +39,8 @@ public:
         const range_proof::GammaSeed<T>& nonce,
         const std::vector<uint8_t>& message,
         const Seed& seed,
-        const typename T::Scalar& minValue = 0);
+        const typename T::Scalar& minValue = 0,
+        const bool transcript_v2 = false);
 
     bool Verify(
         const std::vector<RangeProofWithSeed<T>>& proofs);

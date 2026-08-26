@@ -6,6 +6,7 @@
 #include <kernel/chainparams.h>
 
 #include <arith_uint256.h>
+#include <limits>
 #include <blsct/wallet/txfactory_global.h>
 #include <chainparamsseeds.h>
 #include <consensus/amount.h>
@@ -148,6 +149,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
+        // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
+        consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
         // PoW->PoS boundary. Block 1 mints the whole supply but its coinbase only
         // matures at tip height 101 (COINBASE_MATURITY). Each wallet's stakelocks
         // accumulate into a single staked commitment, so the PoS set-membership
@@ -297,6 +300,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
+        // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
+        consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
         consensus.nLastPOWHeight = 1000;
         consensus.MinBIP9WarningHeight = 836640; // segwit activation height + miner confirmation window
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -447,6 +452,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
+            // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
+            consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
             consensus.nLastPOWHeight = 1000;
             consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
             consensus.nPowTargetSpacing = 10 * 60;
@@ -528,6 +535,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
+            // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
+            consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
             consensus.nLastPOWHeight = 1000;
             consensus.MinBIP9WarningHeight = 0;
             consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -670,6 +679,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.nPePoSMinStakeAmount = 100 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
+            // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
+            consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
             consensus.nLastPOWHeight = 25000;
             consensus.MinBIP9WarningHeight = 0;
             consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");

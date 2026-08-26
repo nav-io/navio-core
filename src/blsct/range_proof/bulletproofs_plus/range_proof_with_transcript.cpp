@@ -37,10 +37,20 @@ retry:
         fiat_shamir << proof.Vs[i];
     }
 
+    // v2 binds the A commitment into the transcript before the y/z challenges
+    // are drawn; the legacy ordering absorbs it afterwards. This must mirror the
+    // prover (RangeProofLogic::Prove) exactly. See RangeProofWithSeed::
+    // transcript_v2.
+    if (proof.transcript_v2) {
+        fiat_shamir << proof.A;
+    }
+
     GEN_FIAT_SHAMIR_VAR(y, fiat_shamir, retry);
     GEN_FIAT_SHAMIR_VAR(z, fiat_shamir, retry);
 
-    fiat_shamir << proof.A;
+    if (!proof.transcript_v2) {
+        fiat_shamir << proof.A;
+    }
 
     // to update hasher to expected state. generated values are not used
     static_cast<void>(Util<T>::GetYPows(y, mn, fiat_shamir));

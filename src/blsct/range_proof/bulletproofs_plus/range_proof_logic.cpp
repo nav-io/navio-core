@@ -224,7 +224,8 @@ RangeProof<T> RangeProofLogic<T>::Prove(
     const range_proof::GammaSeed<T>& nonce,
     const std::vector<uint8_t>& message,
     const Seed& seed,
-    const typename T::Scalar& minValue)
+    const typename T::Scalar& minValue,
+    const bool transcript_v2)
 {
     using Scalar = typename T::Scalar;
     using Scalars = Elements<Scalar>;
@@ -291,27 +292,11 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
         fiat_shamir << V;
     }
 
-    GEN_FIAT_SHAMIR_VAR(y, fiat_shamir, retry);
-    GEN_FIAT_SHAMIR_VAR(z, fiat_shamir, retry);
-
-    // Commitment to aL and aR (obfuscated with alpha)
+    // Commitment to aL and aR (obfuscated with alpha). A depends only on the
+    // input values and the nonce, never on y/z, so it is computed here and, in
+    // v2, bound into the transcript before the y/z challenges are drawn.
     Scalar nonce_alpha = nonce.GetHashWithSalt(1);
     Scalar alpha = range_proof::MsgAmtCipher<T>::ComputeAlpha(message, vsOriginal[0], nonce_alpha);
-
-    Scalar tau1 = nonce.GetHashWithSalt(2);
-    Scalar tau2 = nonce.GetHashWithSalt(3);
-    Scalars z_pows_from_2 = Scalars::FirstNPow(z, gammas.Size(), 2);
-
-    //proof.tau_x = (tau2 * y.Square()) + ((tau1 + msg2) * y) + (z_pows_from_2 * gammas).Sum();
-    proof.tau_x = range_proof::MsgAmtCipher<T>::ComputeTauX(
-        message,
-        y,
-        z,
-        tau1,
-        tau2,
-        z_pows_from_2,
-        gammas
-    );
 
     // Values to be obfuscated are encoded in binary and flattened to a single vector aL
     // only the first 64 bits of each Scalar<S> is picked up
@@ -331,7 +316,34 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
     // aR is aL - 1
     Scalars aR = aL - one_value_concat_bits;
     proof.A = (LazyPoints<T>(gs, aL) + LazyPoints<T>(hs, aR) + LazyPoint<T>(h, alpha)).Sum();
-    fiat_shamir << proof.A;
+
+    // v2 binds A into the transcript before drawing y/z; the legacy ordering
+    // absorbs it afterwards. Must mirror RangeProofWithTranscript::Build.
+    if (transcript_v2) {
+        fiat_shamir << proof.A;
+    }
+
+    GEN_FIAT_SHAMIR_VAR(y, fiat_shamir, retry);
+    GEN_FIAT_SHAMIR_VAR(z, fiat_shamir, retry);
+
+    Scalar tau1 = nonce.GetHashWithSalt(2);
+    Scalar tau2 = nonce.GetHashWithSalt(3);
+    Scalars z_pows_from_2 = Scalars::FirstNPow(z, gammas.Size(), 2);
+
+    //proof.tau_x = (tau2 * y.Square()) + ((tau1 + msg2) * y) + (z_pows_from_2 * gammas).Sum();
+    proof.tau_x = range_proof::MsgAmtCipher<T>::ComputeTauX(
+        message,
+        y,
+        z,
+        tau1,
+        tau2,
+        z_pows_from_2,
+        gammas
+    );
+
+    if (!transcript_v2) {
+        fiat_shamir << proof.A;
+    }
 
     auto [
         two_pows,
@@ -411,7 +423,8 @@ template RangeProof<Mcl> RangeProofLogic<Mcl>::Prove(
     const range_proof::GammaSeed<Mcl>&,
     const std::vector<uint8_t>&,
     const Seed&,
-    const Mcl::Scalar&);
+    const Mcl::Scalar&,
+    const bool);
 
 template <typename T>
 bool RangeProofLogic<T>::VerifyProofs(

@@ -156,6 +156,16 @@ struct Params {
     /** Whether BLSCT is activated */
     bool fBLSCT;
     /**
+     * Activation height of BLSCT proof transcript v2. At and above this
+     * height, range proofs and set-membership proofs are built and verified
+     * with the v2 transcript (canonical domain separation over all
+     * commitments); below it the legacy transcript is used. Existing proofs
+     * are not re-verified on spend, so only new blocks at/above the height
+     * are affected. Set to std::numeric_limits<int>::max() to keep it
+     * dormant until an activation height is chosen.
+     */
+    int nBLSCTProofV2Height;
+    /**
      * If true, only the first block (height 1) receives a PoW block
      * reward; every subsequent block in the PoW phase
      * (heights (1, nLastPOWHeight]) has a reward of 0. PoS blocks

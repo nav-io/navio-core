@@ -491,4 +491,48 @@ BOOST_AUTO_TEST_CASE(test_range_proof_get_num_leading_zeros)
     }
 }
 
+BOOST_AUTO_TEST_CASE(test_range_proof_transcript_v2_roundtrip)
+{
+    auto nonce = GenNonce();
+    auto msg = GenMsgPair();
+    auto token_id = GenTokenId();
+
+    Scalars vs;
+    vs.Add(Scalar(2));
+    vs.Add(Scalar(5));
+
+    RangeProofLogic rpl;
+
+    // v1 (legacy) prove + verify still round-trips: the default path is
+    // unchanged, so no existing proof is invalidated.
+    auto p_v1 = rpl.Prove(vs, nonce, msg.second, token_id, Scalar(0), /*transcript_v2=*/false);
+    {
+        bulletproofs_plus::RangeProofWithSeed<T> s(p_v1, token_id);
+        s.transcript_v2 = false;
+        BOOST_CHECK(rpl.Verify(std::vector<bulletproofs_plus::RangeProofWithSeed<T>>{s}));
+    }
+
+    // v2 prove + v2 verify round-trips.
+    auto p_v2 = rpl.Prove(vs, nonce, msg.second, token_id, Scalar(0), /*transcript_v2=*/true);
+    {
+        bulletproofs_plus::RangeProofWithSeed<T> s(p_v2, token_id);
+        s.transcript_v2 = true;
+        BOOST_CHECK(rpl.Verify(std::vector<bulletproofs_plus::RangeProofWithSeed<T>>{s}));
+    }
+
+    // The two transcripts are genuinely different: a v1 proof verified under
+    // the v2 rule and a v2 proof verified under the v1 rule both fail. This is
+    // what makes the height gate a real rule change rather than a no-op.
+    {
+        bulletproofs_plus::RangeProofWithSeed<T> s(p_v1, token_id);
+        s.transcript_v2 = true;
+        BOOST_CHECK(!rpl.Verify(std::vector<bulletproofs_plus::RangeProofWithSeed<T>>{s}));
+    }
+    {
+        bulletproofs_plus::RangeProofWithSeed<T> s(p_v2, token_id);
+        s.transcript_v2 = false;
+        BOOST_CHECK(!rpl.Verify(std::vector<bulletproofs_plus::RangeProofWithSeed<T>>{s}));
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

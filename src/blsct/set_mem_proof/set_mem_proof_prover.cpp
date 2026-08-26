@@ -122,7 +122,8 @@ SetMemProof<T> SetMemProofProver<T>::Prove(
     const Scalar& m,
     const Scalar& f,
     const Scalar& eta_fiat_shamir,
-    const blsct::Message& eta_phi
+    const blsct::Message& eta_phi,
+    const bool transcript_v2
 ) {
     size_t n = blsct::Common::GetFirstPowerOf2GreaterOrEqTo(Ys_src.Size());
     if (n > setup.N) {
@@ -240,6 +241,14 @@ retry: // retrying without generating fiat_shamir again to get different hashes
     // Challenge 2
     Scalar x = ComputeX(setup, omega, y, z, T1, T2);
 
+    // v2 binds x -- and thereby T1/T2, which x is computed over -- into the
+    // transcript before c_factor and the inner-product round challenges are
+    // drawn, so they can no longer be fixed independently of T1/T2. Legacy
+    // ordering leaves x out of the transcript. Must mirror Verify.
+    if (transcript_v2) {
+        fiat_shamir << x;
+    }
+
     // Response
     Scalar tau_x = tau_1 * x + tau_2 * x.Square();
     Scalar mu = alpha + beta * omega + rho * x;
@@ -285,7 +294,8 @@ SetMemProof<Mcl> SetMemProofProver<Mcl>::Prove(
     const Scalar& m,
     const Scalar& f,
     const Scalar& eta_fiat_shamir,
-    const blsct::Message& eta_phi
+    const blsct::Message& eta_phi,
+    const bool transcript_v2
 );
 
 template <typename T>
@@ -294,7 +304,8 @@ bool SetMemProofProver<T>::Verify(
     const Points& Ys_src,
     const Scalar& eta_fiat_shamir,
     const blsct::Message& eta_phi,
-    const SetMemProof<T>& proof
+    const SetMemProof<T>& proof,
+    const bool transcript_v2
 ) {
     using LazyPoint = LazyPoint<T>;
 
@@ -338,6 +349,12 @@ retry:
     Scalars y_to_n = Scalars::FirstNPow(y, n);
     Scalar z_sq = z.Square();
     Scalar x = ComputeX(setup, omega, y, z, proof.T1, proof.T2);
+
+    // v2 binds x (and thereby T1/T2) into the transcript before c_factor and
+    // the inner-product round challenges are drawn. Must mirror Prove.
+    if (transcript_v2) {
+        fiat_shamir << x;
+    }
 
     G_H_Gi_Hi_ZeroVerifier<T> verifier(n);
 
@@ -431,5 +448,6 @@ bool SetMemProofProver<Mcl>::Verify(
     const Points& Ys_src,
     const Scalar& eta_fiat_shamir,
     const blsct::Message& eta_phi,
-    const SetMemProof<Mcl>& proof
+    const SetMemProof<Mcl>& proof,
+    const bool transcript_v2
 );
