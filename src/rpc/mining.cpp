@@ -220,16 +220,9 @@ static RPCHelpMan generatetoblsctaddress()
             const int num_blocks{request.params[0].getInt<int>()};
             const uint64_t max_tries{request.params[2].isNull() ? DEFAULT_MAX_TRIES : request.params[2].getInt<int>()};
 
-            CTxDestination destination = DecodeDestination(request.params[1].get_str());
-            const auto* blsct_keys = std::get_if<blsct::DoublePublicKey>(&destination);
-            if (!blsct_keys) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
-            }
             // Identity keys decode fine but make the coinbase anyone-can-spend,
             // so the block reward would be claimable by whoever sees it first.
-            if (!blsct_keys->HasNonIdentityKeys()) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: address has null keys");
-            }
+            const CTxDestination destination{EnsureBlsctDestination(request.params[1].get_str())};
 
             NodeContext& node = EnsureAnyNodeContext(request.context);
             const CTxMemPool& mempool = EnsureMemPool(node);

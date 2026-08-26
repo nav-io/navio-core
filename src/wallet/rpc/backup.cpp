@@ -2264,20 +2264,10 @@ RPCHelpMan importblsctscript()
                                       throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("atomic_swap requires \"%s\"", field));
                               }
 
-                              auto parse_address = [](const std::string& addr, const std::string& field) -> blsct::DoublePublicKey {
-                                  CTxDestination dest = DecodeDestination(addr);
-                                  const auto* keys = std::get_if<blsct::DoublePublicKey>(&dest);
-                                  if (!keys)
-                                      throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("Invalid BLSCT address for %s: %s", field, addr));
-                                  // Identity keys decode fine but make the branch
-                                  // they are baked into anyone-can-spend.
-                                  if (!keys->HasNonIdentityKeys())
-                                      throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("BLSCT address for %s has null keys: %s", field, addr));
-                                  return *keys;
-                              };
-
-                              blsct::DoublePublicKey address_a = parse_address(desc["address_a"].get_str(), "address_a");
-                              blsct::DoublePublicKey address_b = parse_address(desc["address_b"].get_str(), "address_b");
+                              // Identity keys decode fine but make the branch
+                              // they are baked into anyone-can-spend.
+                              blsct::DoublePublicKey address_a = EnsureBlsctDestination(desc["address_a"].get_str(), "address_a");
+                              blsct::DoublePublicKey address_b = EnsureBlsctDestination(desc["address_b"].get_str(), "address_b");
 
                               std::vector<unsigned char> hash_bytes = ParseHex(desc["hash"].get_str());
                               if (hash_bytes.size() != 32)
