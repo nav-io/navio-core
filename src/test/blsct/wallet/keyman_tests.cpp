@@ -128,9 +128,23 @@ BOOST_FIXTURE_TEST_CASE(negative_accounts_are_single_destination, TestingSetup)
         }
         // ...and the draws must not drain the pool: negative accounts never
         // draw from it at all, so it stays at the top-up target instead of
-        // losing an index per call.
-        BOOST_CHECK_EQUAL(km->GetSubAddressPoolSize(account), wallet->m_keypool_size);
+        // losing an index per call. That target is one entry, not
+        // m_keypool_size: nothing can consume a pooled index for an account
+        // pinned to index 0.
+        BOOST_CHECK_EQUAL(km->GetSubAddressPoolSize(account), 1);
     }
+
+    // The one entry is index 0 itself -- the destination the account hands
+    // out. Without it GetNewDestination returns nothing, since it refuses to
+    // hand back a hashId that IsMine cannot see.
+    for (const int64_t account : {blsct::CHANGE_ACCOUNT, blsct::STAKING_ACCOUNT}) {
+        const CKeyID hash_id = km->GetSubAddress({account, 0}).GetKeys().GetID();
+        BOOST_CHECK(WITH_LOCK(km->cs_KeyStore, return km->HaveSubAddress(hash_id)));
+    }
+
+    // Receive accounts keep the full pool: they do draw from it, one index per
+    // destination.
+    BOOST_CHECK_EQUAL(km->GetSubAddressPoolSize(0), wallet->m_keypool_size);
 
     // Receive addresses do advance -- reusing one of those would link payments
     // made by different senders to the same wallet.
