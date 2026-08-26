@@ -973,7 +973,15 @@ bool KeyMan::TopUpAccount(const int64_t& account, const unsigned int& size)
     } else {
         nTargetSize = m_keypool_size;
     }
-    int64_t target = std::max((int64_t)nTargetSize, int64_t{1});
+    // The negative accounts -- change (CHANGE_ACCOUNT) and staking
+    // (STAKING_ACCOUNT) -- are pinned to sub-address index 0 and never draw
+    // from the pool: GetNewDestination short-circuits ahead of
+    // ReserveSubAddressFromPool for them. A full-size pool there is therefore
+    // one derivation and one database record per entry that nothing can ever
+    // consume. One entry is all they need, and it still has to be generated:
+    // the counter starts at 0, so it is this call that creates index 0 on a
+    // fresh wallet.
+    int64_t target = account < 0 ? int64_t{1} : std::max((int64_t)nTargetSize, int64_t{1});
     int64_t missing = std::max(target - (int64_t)setSubAddressPool[account].size(), int64_t{0});
 
     SubAddressIdentifier id;
