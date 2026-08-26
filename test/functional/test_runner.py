@@ -357,6 +357,7 @@ BASE_SCRIPTS = [
     'blsct_unconfirmed_spending.py',
     'blsct_unconfirmed_chain_single_utxo.py',
     'blsct_chain_in_one_block.py',
+    'blsct_fixed_base_verify.py',
     'blsct_same_block_multi_send.py',
     'blsct_send_outputhash.py',
     'blsct_aggregated_spend_no_phantom.py',
