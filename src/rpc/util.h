@@ -6,6 +6,7 @@
 #define BITCOIN_RPC_UTIL_H
 
 #include <addresstype.h>
+#include <blsct/double_public_key.h>
 #include <consensus/amount.h>
 #include <node/transaction.h>
 #include <outputtype.h>
@@ -116,6 +117,24 @@ CPubKey AddrToPubKey(const FillableSigningProvider& keystore, const std::string&
 CTxDestination AddAndGetMultisigDestination(int required, const std::vector<CPubKey>& pubkeys, OutputType type, FillableSigningProvider& keystore, CScript& script_out);
 
 UniValue DescribeAddress(const CTxDestination& dest);
+
+/**
+ * Decode a BLSCT address and return its keys, raising an RPC error if the
+ * string is not a BLSCT address or encodes the identity (the point at
+ * infinity) for either of its two keys.
+ *
+ * An identity-key address decodes cleanly and passes validateaddress, but an
+ * output built for it has publicly derivable ownership keys -- it is
+ * anyone-can-spend -- so every RPC that takes a BLSCT destination as a raw
+ * string has to reject one. SubAddress(const std::string&) also leaves its
+ * keys default-constructed (the identity) for a string it cannot decode, which
+ * is the same hole reached by a different route.
+ *
+ * @param address  The address to decode.
+ * @param context  Name of the parameter being validated, for the error
+ *                 message; omitted when the RPC takes a single destination.
+ */
+blsct::DoublePublicKey EnsureBlsctDestination(const std::string& address, const std::string& context = "");
 
 /** Parse a sighash string representation and raise an RPC error if it is invalid. */
 int ParseSighashString(const UniValue& sighash);

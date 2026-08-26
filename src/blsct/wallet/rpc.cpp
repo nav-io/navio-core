@@ -57,26 +57,6 @@ CScript BuildHTLCScript(
     return script;
 }
 
-//! Reject anything that is not a BLSCT address, and return its keys.
-//! SubAddress(const std::string&) leaves its keys default-constructed (the
-//! point at infinity) for a string it cannot decode, and an output built for
-//! those keys has publicly derivable ownership keys, so every RPC that takes a
-//! destination as a raw string has to check it first.
-static blsct::DoublePublicKey EnsureBlsctDestination(const std::string& address)
-{
-    CTxDestination destination = DecodeDestination(address);
-    if (!std::holds_alternative<blsct::DoublePublicKey>(destination)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
-    }
-    blsct::DoublePublicKey keys = std::get<blsct::DoublePublicKey>(destination);
-
-    if (!keys.HasNonIdentityKeys()) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("BLSCT address has null keys: ") + address);
-    }
-
-    return keys;
-}
-
 //! Validate an explicitly-supplied delegation reward address and return its
 //! canonical encoding. A transparent reward address is legal here, so
 //! EnsureBlsctDestination cannot be dropped in wholesale -- but a BLSCT one
@@ -327,7 +307,7 @@ RPCHelpMan minttoken()
 
             uint256 token_id(ParseHashV(request.params[0], "token_id"));
             const std::string address = request.params[1].get_str();
-            blsct::EnsureBlsctDestination(address);
+            EnsureBlsctDestination(address);
             CAmount mint_amount = AmountFromValue(request.params[2]);
 
             std::map<uint256, blsct::TokenEntry> tokens;
@@ -407,7 +387,7 @@ static RPCHelpMan mintnft()
             uint256 token_id(ParseHashV(request.params[0], "token_id"));
             uint64_t nft_id = request.params[1].get_uint64();
             const std::string address = request.params[2].get_str();
-            blsct::EnsureBlsctDestination(address);
+            EnsureBlsctDestination(address);
             std::map<std::string, UniValue> metadata;
             if (!request.params[3].isNull() && !request.params[3].get_obj().empty())
                 request.params[3].get_obj().getObjMap(metadata);
@@ -944,7 +924,7 @@ RPCHelpMan sendtoblsctaddress()
                 sMemo = request.params[2].get_str();
 
             const std::string address = request.params[0].get_str();
-            blsct::EnsureBlsctDestination(address);
+            EnsureBlsctDestination(address);
 
             const bool verbose{request.params[3].isNull() ? false : request.params[3].get_bool()};
             const bool subtract_fee{request.params[4].isNull() ? false : request.params[4].get_bool()};
@@ -1027,7 +1007,7 @@ RPCHelpMan sendtokentoblsctaddress()
                 sMemo = request.params[3].get_str();
 
             const std::string address = request.params[1].get_str();
-            blsct::EnsureBlsctDestination(address);
+            EnsureBlsctDestination(address);
 
             const bool verbose{request.params[4].isNull() ? false : request.params[4].get_bool()};
 
@@ -1100,7 +1080,7 @@ RPCHelpMan sendnfttoblsctaddress()
                 sMemo = request.params[3].get_str();
 
             const std::string address = request.params[2].get_str();
-            blsct::EnsureBlsctDestination(address);
+            EnsureBlsctDestination(address);
 
             const bool verbose{request.params[4].isNull() ? false : request.params[4].get_bool()};
 
@@ -2477,8 +2457,8 @@ RPCHelpMan createblsctrawtransaction()
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Atomic swap output requires address_a and address_b");
                     }
 
-                    blsct::DoublePublicKey address_a = blsct::EnsureBlsctDestination(o["address_a"].get_str());
-                    blsct::DoublePublicKey address_b = blsct::EnsureBlsctDestination(o["address_b"].get_str());
+                    blsct::DoublePublicKey address_a = EnsureBlsctDestination(o["address_a"].get_str());
+                    blsct::DoublePublicKey address_b = EnsureBlsctDestination(o["address_b"].get_str());
 
                     if (!o.exists("hash")) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Atomic swap output requires a 32-byte hash");
@@ -2552,7 +2532,7 @@ RPCHelpMan createblsctrawtransaction()
                 } else {
                     blsct::SubAddress subAddress;
                     if (o.exists("address")) {
-                        subAddress = blsct::EnsureBlsctDestination(o["address"].get_str());
+                        subAddress = EnsureBlsctDestination(o["address"].get_str());
                     } else {
                         subAddress = blsct::DoublePublicKey(MclG1Point::GetBasePoint(), MclG1Point::GetBasePoint());
                     }
@@ -2733,7 +2713,7 @@ RPCHelpMan fundblsctrawtransaction()
                 // Get change address (needed for both cases)
                 CTxDestination change_dest;
                 if (!request.params[1].isNull()) {
-                    change_dest = blsct::EnsureBlsctDestination(request.params[1].get_str());
+                    change_dest = EnsureBlsctDestination(request.params[1].get_str());
                 } else {
                     change_dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(blsct::CHANGE_ACCOUNT).value());
                 }
@@ -3512,7 +3492,7 @@ RPCHelpMan deriveblsctnonce()
             }
             Scalar blindingKey(blinding_key_bytes);
 
-            auto dpk = blsct::EnsureBlsctDestination(request.params[1].get_str());
+            auto dpk = EnsureBlsctDestination(request.params[1].get_str());
 
             MclG1Point vk_point;
             if (!dpk.GetViewKey(vk_point)) {
@@ -3667,7 +3647,7 @@ RPCHelpMan deriveblsctspendingkey()
             }
             Scalar blindingKey(blinding_key_bytes);
 
-            auto dpk = blsct::EnsureBlsctDestination(request.params[1].get_str());
+            auto dpk = EnsureBlsctDestination(request.params[1].get_str());
 
             MclG1Point sk_point;
             if (!dpk.GetSpendKey(sk_point)) {

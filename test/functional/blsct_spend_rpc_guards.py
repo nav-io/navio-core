@@ -146,7 +146,7 @@ class BLSCTSpendRPCGuardsTest(BitcoinTestFramework):
 
         self.log.info("generatetoblsctaddress still rejects a non-BLSCT address")
         assert_raises_rpc_error(
-            -5, "Invalid address",
+            -5, "Invalid BLSCT address",
             self.nodes[0].rpc.generatetoblsctaddress, 1, transparent_addr,
         )
 
