@@ -94,9 +94,15 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                   int64_t nMedianTimePast,
                   bool verify_rp_inline,
                   const CAmount& nBLSCTDefaultFee,
+                  int nBLSCTProofV2Height,
                   PreparedTxSignatureCheck* out_sig_check)
 {
     using Clock = std::chrono::steady_clock;
+
+    // Range proofs in a block at/above the activation height are verified
+    // under the v2 transcript; below it, the legacy transcript. Set once and
+    // stamped onto every RangeProofWithSeed collected for the batch verify.
+    const bool rp_transcript_v2 = nSpendHeight >= nBLSCTProofV2Height;
     const bool bench_on = LogAcceptCategory(BCLog::BENCH, BCLog::Level::Debug);
     const auto t_begin = Clock::now();
 
@@ -240,6 +246,7 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
 
         if (out.HasBLSCTRangeProof()) {
             bulletproofs_plus::RangeProofWithSeed<Mcl> proof{out.blsctData.rangeProof, out.tokenId};
+            proof.transcript_v2 = rp_transcript_v2;
             out_proofs.emplace_back(proof);
             balanceKey = balanceKey - out.blsctData.rangeProof.Vs[0];
 
@@ -254,6 +261,7 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                 stakedCommitmentRangeProof.Vs.Add(out.blsctData.rangeProof.Vs[0]);
 
                 proof = bulletproofs_plus::RangeProofWithSeed<Mcl>{stakedCommitmentRangeProof, TokenId(), minStake};
+                proof.transcript_v2 = rp_transcript_v2;
 
                 out_proofs.push_back(proof);
             }
@@ -389,12 +397,13 @@ bool VerifyTxCore(const CTransaction& tx,
                   int64_t nMedianTimePast,
                   bool verify_rp_inline,
                   const CAmount& nBLSCTDefaultFee,
+                  int nBLSCTProofV2Height = std::numeric_limits<int>::max(),
                   PreparedTxSignatureCheck* out_sig_check = nullptr)
 {
     try {
         return VerifyTxCoreImpl(tx, view, state, out_proofs, blockReward, minStake,
                                 nSpendHeight, nMedianTimePast, verify_rp_inline,
-                                nBLSCTDefaultFee, out_sig_check);
+                                nBLSCTDefaultFee, nBLSCTProofV2Height, out_sig_check);
     } catch (const std::exception& e) {
         LogPrint(BCLog::VALIDATION, "BLSCT tx verify threw for %s: %s\n",
                  tx.GetHash().ToString(), e.what());
@@ -403,10 +412,10 @@ bool VerifyTxCore(const CTransaction& tx,
 }
 } // namespace
 
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee)
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, int nBLSCTProofV2Height)
 {
     std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> proofs;
-    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee);
+    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nBLSCTProofV2Height);
 }
 
 bool PrepareTxForDeferredVerification(const CTransaction& tx,
@@ -418,9 +427,10 @@ bool PrepareTxForDeferredVerification(const CTransaction& tx,
                                       const CAmount& minStake,
                                       int nSpendHeight,
                                       int64_t nMedianTimePast,
-                                      const CAmount& nBLSCTDefaultFee)
+                                      const CAmount& nBLSCTDefaultFee,
+                                      int nBLSCTProofV2Height)
 {
-    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, &out_sig_check);
+    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height, &out_sig_check);
 }
 
 bool VerifyTxCollectProofs(const CTransaction& tx,
@@ -431,9 +441,10 @@ bool VerifyTxCollectProofs(const CTransaction& tx,
                            const CAmount& minStake,
                            int nSpendHeight,
                            int64_t nMedianTimePast,
-                           const CAmount& nBLSCTDefaultFee)
+                           const CAmount& nBLSCTDefaultFee,
+                           int nBLSCTProofV2Height)
 {
-    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee);
+    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height);
 }
 
 TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSignatureCheck>& sig_checks)

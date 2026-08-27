@@ -1166,7 +1166,7 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
         const int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
         const int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
 
-        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee)) {
+        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee, args.m_chainparams.GetConsensus().nBLSCTProofV2Height)) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }
@@ -2587,16 +2587,22 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
         }
 
+        // PoS eligibility proofs (kernel range proof + set-membership proof)
+        // follow the same transcript-version gate as ordinary range proofs.
+        const bool pos_transcript_v2 = pindex->nHeight >= params.GetConsensus().nBLSCTProofV2Height;
+
         pos_kernel_range_proof.emplace(block.posProof.GetKernelRangeProof(min_value_u64, eta_phi));
+        pos_kernel_range_proof->transcript_v2 = pos_transcript_v2;
         pos_verify_future = blsct::GetPosAsyncVerifier().Submit(
             [staked_commitments = staked_commitments_snapshot,
              eta_fiat_shamir = std::move(eta_fiat_shamir),
              eta_phi = std::move(eta_phi),
+             pos_transcript_v2,
              &pos_proof = block.posProof]() -> std::pair<bool, std::string> {
                 try {
                     const bool bench_on = LogAcceptCategory(BCLog::BENCH, BCLog::Level::Debug);
                     blsct::ProofOfStake::VerificationStats pos_stats;
-                    const bool setmem_ok = pos_proof.VerifySetMembership(staked_commitments, eta_fiat_shamir, eta_phi, bench_on ? &pos_stats : nullptr);
+                    const bool setmem_ok = pos_proof.VerifySetMembership(staked_commitments, eta_fiat_shamir, eta_phi, bench_on ? &pos_stats : nullptr, pos_transcript_v2);
                     if (bench_on) {
                         LogPrint(BCLog::BENCH,
                                  "      - pos setmem: sample=%zu padded=%zu setmem=%.2fms total=%.2fms result=%s\n",
@@ -2865,7 +2871,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                 if (params.GetConsensus().fBLSCT) {
                     int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
                     blsct::PreparedTxSignatureCheck sig_check;
-                    if (!blsct::PrepareTxForDeferredVerification(tx, view, tx_state, blockBLSCTProofs, sig_check, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee)) {
+                    if (!blsct::PrepareTxForDeferredVerification(tx, view, tx_state, blockBLSCTProofs, sig_check, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee, params.GetConsensus().nBLSCTProofV2Height)) {
                         state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                                       tx_state.GetRejectReason(), tx_state.GetDebugMessage());
                         return error("ConnectBlock(): VerifyTx on transaction %s %s failed with %s",
@@ -2914,7 +2920,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
         const auto t_reward_verify_start = SteadyClock::now();
         blsct::PreparedTxSignatureCheck sig_check;
-        if (!blsct::PrepareTxForDeferredVerification(*block.vtx[0], view, tx_state, blockBLSCTProofs, sig_check, blockReward, 0, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee)) {
+        if (!blsct::PrepareTxForDeferredVerification(*block.vtx[0], view, tx_state, blockBLSCTProofs, sig_check, blockReward, 0, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee, params.GetConsensus().nBLSCTProofV2Height)) {
             state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                           tx_state.GetRejectReason(), tx_state.GetDebugMessage());
             return error("ConnectBlock(): VerifyTx on coinbase of block %s failed (reward: %s)\n",

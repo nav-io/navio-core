@@ -161,7 +161,7 @@ ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commi
     return ProofOfStake::VALID;
 }
 
-bool ProofOfStake::VerifySetMembership(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, VerificationStats* stats) const
+bool ProofOfStake::VerifySetMembership(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, VerificationStats* stats, bool transcript_v2) const
 {
     using Clock = std::chrono::steady_clock;
     const auto t_begin = stats ? Clock::now() : Clock::time_point{};
@@ -174,7 +174,7 @@ bool ProofOfStake::VerifySetMembership(const Points& staked_commitments, const S
     }
 
     auto setup = SetMemProofSetup<Arith>::Get();
-    const bool setmemres = SetProver::Verify(setup, staked_commitments, eta_fiat_shamir, eta_phi, setMemProof);
+    const bool setmemres = SetProver::Verify(setup, staked_commitments, eta_fiat_shamir, eta_phi, setMemProof, transcript_v2);
 
     if (stats) {
         const auto t_end = Clock::now();
