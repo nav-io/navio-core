@@ -2027,6 +2027,8 @@ RPCHelpMan createblsctrawtransaction()
             for (const auto& output : unsigned_outputs) {
                 unsigned_tx.AddOutput(output);
             }
+            // Carry the transcript version so the signer stamps the v2 marker.
+            unsigned_tx.SetTranscriptV2(transcript_v2);
 
             // Serialize the transaction
             return HexStr(unsigned_tx.Serialize());

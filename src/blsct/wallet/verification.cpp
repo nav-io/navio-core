@@ -99,10 +99,16 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
 {
     using Clock = std::chrono::steady_clock;
 
-    // Range proofs in a block at/above the activation height are verified
-    // under the v2 transcript; below it, the legacy transcript. Set once and
-    // stamped onto every RangeProofWithSeed collected for the batch verify.
-    const bool rp_transcript_v2 = nSpendHeight >= nBLSCTProofV2Height;
+    // Select the range-proof transcript from the transaction's v2 flag, and
+    // enforce that flag against the activation height: a BLSCT transaction at or
+    // above nBLSCTProofV2Height MUST carry BLSCT_PROOF_V2_MARKER. Below it the
+    // flag is free and the proofs are verified under whichever transcript it
+    // selects. The flag is stamped once onto every RangeProofWithSeed collected
+    // for the batch verify.
+    if (nSpendHeight >= nBLSCTProofV2Height && tx.IsBLSCT() && !tx.IsBLSCTProofV2()) {
+        return state.Invalid(TxValidationResult::TX_CONSENSUS, "missing-blsct-proof-v2-flag");
+    }
+    const bool rp_transcript_v2 = tx.IsBLSCTProofV2();
     const bool bench_on = LogAcceptCategory(BCLog::BENCH, BCLog::Level::Debug);
     const auto t_begin = Clock::now();
 

@@ -841,6 +841,11 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         }
 
         proposal.nVersion = result.find_value("version").get_real();
+        // Stamp the BLSCT proof-v2 flag to match the transcript the PoS proof
+        // and reward output below are built under, so the block passes the
+        // consensus flag-enforcement check at/above the activation height.
+        if (transcript_v2)
+            proposal.nVersion |= CBlockHeader::VERSION_BIT_BLSCT_PROOF_V2;
         proposal.nTime = result.find_value("curtime").get_real();
         proposal.nBits = next_target;
         proposal.hashPrevBlock = uint256S(result.find_value("previousblockhash").get_str());

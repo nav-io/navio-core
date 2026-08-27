@@ -41,6 +41,8 @@ std::optional<CTransaction> UnsignedTransaction::Sign() const
         // Create a mutable transaction
         CMutableTransaction tx;
         tx.nVersion |= CTransaction::BLSCT_MARKER;
+        if (m_transcript_v2)
+            tx.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
 
         // Add inputs
         std::vector<Signature> txSigs;

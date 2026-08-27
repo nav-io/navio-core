@@ -127,6 +127,11 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
     while (true) {
         CMutableTransaction tx = this->tx;
         tx.nVersion |= CTransaction::BLSCT_MARKER;
+        // Stamp the proof-v2 marker when the outputs are built under the v2
+        // transcript, so verifiers select v2 and the flag-enforcement check
+        // passes at/above the activation height.
+        if (m_transcript_v2)
+            tx.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
 
         Scalar gammaAcc = outputGammas;
         std::map<TokenId, CAmount> mapChange;

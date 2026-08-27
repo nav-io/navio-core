@@ -243,6 +243,16 @@ CTransactionRef AggregateTransactions(const std::vector<CTransactionRef>& txs)
 
     ret.txSig = blsct::Signature::Aggregate(vSigs);
     ret.nVersion = CTransaction::BLSCT_MARKER;
+    // Preserve the proof-v2 marker: an aggregate carries v2 output proofs iff its
+    // constituent txs do (all are built at the same tip and share one transcript
+    // version). Without this the aggregate would be flagged v1 and rejected by
+    // the flag-enforcement check at/above the activation height.
+    for (const auto& tx : txs) {
+        if (tx->IsBLSCTProofV2()) {
+            ret.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
+            break;
+        }
+    }
 
     return MakeTransactionRef(ret);
 }

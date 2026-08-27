@@ -2588,8 +2588,14 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         }
 
         // PoS eligibility proofs (kernel range proof + set-membership proof)
-        // follow the same transcript-version gate as ordinary range proofs.
-        const bool pos_transcript_v2 = pindex->nHeight >= params.GetConsensus().nBLSCTProofV2Height;
+        // select their transcript from the block's v2 flag, enforced against the
+        // activation height: at and above nBLSCTProofV2Height the block MUST
+        // carry VERSION_BIT_BLSCT_PROOF_V2.
+        if (pindex->nHeight >= params.GetConsensus().nBLSCTProofV2Height && !block.IsBLSCTProofV2()) {
+            LogPrint(BCLog::POPS, "PoPS rejected: block at height %d missing required BLSCT proof-v2 flag\n", pindex->nHeight);
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
+        }
+        const bool pos_transcript_v2 = block.IsBLSCTProofV2();
 
         pos_kernel_range_proof.emplace(block.posProof.GetKernelRangeProof(min_value_u64, eta_phi));
         pos_kernel_range_proof->transcript_v2 = pos_transcript_v2;

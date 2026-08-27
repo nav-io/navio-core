@@ -214,6 +214,13 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     if (fPos)
         pblock->nVersion |= CBlockHeader::VERSION_BIT_POS;
 
+    // Stamp the BLSCT proof-v2 flag once the block lands at or above the
+    // activation height, so verifiers select the v2 transcript and the consensus
+    // flag-enforcement check passes. The PoS proof and output range proofs are
+    // built under the matching transcript.
+    if (fPos && nHeight >= chainparams.GetConsensus().nBLSCTProofV2Height)
+        pblock->nVersion |= CBlockHeader::VERSION_BIT_BLSCT_PROOF_V2;
+
     // -regtest only: allow overriding block.nVersion with
     // -blockversion=N to test forking scenarios
     if (chainparams.MineBlocksOnDemand()) {
@@ -288,6 +295,10 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     txSigs.push_back(blsct::PrivateKey(out.gamma.Negate()).SignBalance());
 
     coinbaseTx.nVersion = CTransaction::BLSCT_MARKER;
+    // Match the reward output's transcript: mark the coinbase v2 at/above the
+    // activation height so it passes the flag-enforcement check.
+    if (reward_transcript_v2)
+        coinbaseTx.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
     coinbaseTx.txSig = blsct::Signature::Aggregate(txSigs);
     coinbaseTx.vin.resize(1);
     coinbaseTx.vin[0].prevout.SetNull();

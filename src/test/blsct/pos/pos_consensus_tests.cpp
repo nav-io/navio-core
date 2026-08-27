@@ -36,6 +36,12 @@ static bool BuildValidPoSBlock(
     const Consensus::Params& params,
     int max_grinds = 10000)
 {
+    // Mirror the miner: stamp the BLSCT proof-v2 flag when the block lands at or
+    // above the activation height, so the flag-based selection/enforcement in
+    // ProofOfStakeLogic::Verify accepts the v2 proof Create builds here.
+    if (pindexPrev->nHeight + 1 >= params.nBLSCTProofV2Height)
+        block.nVersion |= CBlockHeader::VERSION_BIT_BLSCT_PROOF_V2;
+
     for (int i = 0; i < max_grinds; ++i) {
         block.posProof = blsct::ProofOfStakeLogic::Create(view, value, gamma, pindexPrev, block, params);
         if (blsct::ProofOfStakeLogic::Verify(view, pindexPrev, block, params)) {

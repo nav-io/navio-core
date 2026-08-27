@@ -95,10 +95,16 @@ bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* 
 
     LogPrint(BCLog::POPS, "Verifying PoPS:\n   Prev block %s\n   Eta fiat shamir: %s\n   Eta phi: %s\n   Kernel Hash: %s\n   Next Target: %d\n   Staked Commitments:%s\n", pindexPrev->GetBlockHash().ToString(), HexStr(eta_fiat_shamir), HexStr(eta_phi), kernel_hash.ToString(), next_target, staked_commitments.GetString());
 
-    // Honor the transcript-v2 gate, matching ProofOfStakeLogic::Create and the
-    // inlined PoS verification in ConnectBlock. Without this the proof would be
-    // checked under v1 at/above the activation height and every block rejected.
-    const bool transcript_v2 = (pindexPrev->nHeight + 1) >= params.nBLSCTProofV2Height;
+    // Select the transcript from the block's v2 flag, and enforce that flag
+    // against the activation height: at and above nBLSCTProofV2Height a BLSCT
+    // block MUST carry VERSION_BIT_BLSCT_PROOF_V2. Below it the flag is free and
+    // the proof is verified under whichever transcript the flag selects.
+    const int height = pindexPrev->nHeight + 1;
+    if (height >= params.nBLSCTProofV2Height && !block.IsBLSCTProofV2()) {
+        LogPrint(BCLog::POPS, "PoPS rejected: block at height %d missing required BLSCT proof-v2 flag\n", height);
+        return false;
+    }
+    const bool transcript_v2 = block.IsBLSCTProofV2();
     auto res = block.posProof.Verify(staked_commitments, eta_fiat_shamir, eta_phi, kernel_hash, next_target, /*stats=*/nullptr, transcript_v2);
 
     LogPrint(BCLog::POPS, "Result: %s\n", VerificationResultToString(res));
