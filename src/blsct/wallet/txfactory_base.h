@@ -31,10 +31,12 @@ struct CreateTransactionData {
     blsct::TokenInfo tokenInfo;
     blsct::DoublePublicKey changeDestination;
     SubAddress destination;
-    CAmount nAmount;
+    // Zero-initialized: the create-token and NFT-mint constructors never set
+    // these, yet coin selection reads nAmount as its input-value limit.
+    CAmount nAmount{0};
     std::string sMemo;
     TokenId token_id;
-    CAmount minStake;
+    CAmount minStake{0};
     // Per-byte BLSCT fee rate the wallet will price the transaction at.
     // Defaults to `BLSCT_DEFAULT_FEE`; production callers (RPC / wallet
     // helpers) overwrite this with `Params().GetConsensus().nBLSCTDefaultFee`
