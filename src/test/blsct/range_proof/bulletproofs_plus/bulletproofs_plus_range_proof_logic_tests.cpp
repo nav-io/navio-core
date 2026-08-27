@@ -5,6 +5,7 @@
 #define BOOST_UNIT_TEST
 
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
+#include <blsct/range_proof/bulletproofs_plus/range_proof_with_transcript.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/arith/mcl/mcl.h>
 #include <test/util/setup_common.h>
@@ -533,6 +534,60 @@ BOOST_AUTO_TEST_CASE(test_range_proof_transcript_v2_roundtrip)
         s.transcript_v2 = false;
         BOOST_CHECK(!rpl.Verify(std::vector<bulletproofs_plus::RangeProofWithSeed<T>>{s}));
     }
+}
+
+BOOST_AUTO_TEST_CASE(test_range_proof_forgery_A_binding_poc)
+{
+    // PoC for the Bulletproofs+ soundness break and its fix.
+    //
+    // The forgery in the disclosure works because, under the legacy (v1)
+    // transcript, the y and z challenges are derived from the value
+    // commitments alone and A is absorbed only afterwards. A prover therefore
+    // learns y and z BEFORE having to commit to A, and can solve for an A that
+    // satisfies the verification equation for an out-of-range value.
+    //
+    // The precise exploitable property is that (y, z) do not depend on A. This
+    // test demonstrates it directly: tampering A leaves (y, z) unchanged under
+    // v1 (so A can be chosen adaptively -> forgeable) but changes them under v2
+    // (so A is committed before the challenges -> the forgery is impossible).
+    auto nonce = GenNonce();
+    auto msg = GenMsgPair();
+    auto token_id = GenTokenId();
+    Scalars vs;
+    vs.Add(Scalar(2));
+
+    RangeProofLogic rpl;
+    const Point tamper = Point::GetBasePoint();
+
+    // --- v1: A is NOT bound into y/z ---
+    auto p1 = rpl.Prove(vs, nonce, msg.second, token_id, Scalar(0), /*transcript_v2=*/false);
+    bulletproofs_plus::RangeProofWithSeed<T> s1(p1, token_id);
+    s1.transcript_v2 = false;
+    auto t1 = bulletproofs_plus::RangeProofWithTranscript<T>::Build(s1);
+
+    bulletproofs_plus::RangeProofWithSeed<T> s1_tampered(p1, token_id);
+    s1_tampered.transcript_v2 = false;
+    s1_tampered.A = s1_tampered.A + tamper; // an adaptive prover picks A after y,z
+    auto t1_tampered = bulletproofs_plus::RangeProofWithTranscript<T>::Build(s1_tampered);
+
+    // y and z are unchanged despite A changing -> A is unbound -> forgeable.
+    BOOST_CHECK(t1.y == t1_tampered.y);
+    BOOST_CHECK(t1.z == t1_tampered.z);
+
+    // --- v2: A IS bound into y/z ---
+    auto p2 = rpl.Prove(vs, nonce, msg.second, token_id, Scalar(0), /*transcript_v2=*/true);
+    bulletproofs_plus::RangeProofWithSeed<T> s2(p2, token_id);
+    s2.transcript_v2 = true;
+    auto t2 = bulletproofs_plus::RangeProofWithTranscript<T>::Build(s2);
+
+    bulletproofs_plus::RangeProofWithSeed<T> s2_tampered(p2, token_id);
+    s2_tampered.transcript_v2 = true;
+    s2_tampered.A = s2_tampered.A + tamper;
+    auto t2_tampered = bulletproofs_plus::RangeProofWithTranscript<T>::Build(s2_tampered);
+
+    // y (and hence z) change with A -> A is committed before the challenges ->
+    // the adaptive choice, and thus the forgery, is impossible.
+    BOOST_CHECK(t2.y != t2_tampered.y);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
