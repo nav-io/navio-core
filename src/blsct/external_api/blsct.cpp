@@ -337,7 +337,9 @@ static std::optional<blsct::UnsignedOutput> UnsignedOutputFromC(const BlsctTxOut
         token_id,
         blinding_key,
         out_type,
-        min_stake);
+        min_stake,
+        /*fAllowZeroValueRangeProof=*/false,
+        tx_out.transcript_v2);
 }
 
 static BlsctRetVal* MallocAndCopyUint256(const uint256& value)

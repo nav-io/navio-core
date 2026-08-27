@@ -305,6 +305,12 @@ typedef struct {
     uint64_t min_stake;
     bool subtract_fee_from_amount;
     BlsctScalar blinding_key;
+    // BLSCT proof transcript version to build the output's range proof under.
+    // The caller must set true when building an output for a block at or above
+    // the network's transcript-v2 activation height, false otherwise. A v1
+    // proof at/above the height (or a v2 proof below it) is rejected by
+    // consensus.
+    bool transcript_v2;
 } BlsctTxOut;
 
 void free_obj(void* x);
