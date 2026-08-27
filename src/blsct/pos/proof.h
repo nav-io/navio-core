@@ -109,15 +109,15 @@ public:
     }
 
     VerificationResult
-    Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernelHash, const unsigned int& posTarget, VerificationStats* stats = nullptr) const;
+    Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernelHash, const unsigned int& posTarget, VerificationStats* stats = nullptr, bool transcript_v2 = false) const;
     VerificationResult Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, VerificationStats* stats = nullptr) const;
 
     bool VerifySetMembership(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, VerificationStats* stats = nullptr, bool transcript_v2 = false) const;
     bulletproofs_plus::RangeProofWithSeed<Arith> GetKernelRangeProof(const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi) const;
     bulletproofs_plus::RangeProofWithSeed<Arith> GetKernelRangeProof(const uint64_t& min_value, const blsct::Message& eta_phi) const;
 
-    static bool VerifyKernelHash(const RangeProof& range_proof, const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi, const Point& phi);
-    static bool VerifyKernelHash(const RangeProof& range_proof, const uint64_t& min_value, const blsct::Message& eta_phi, const Point& phi);
+    static bool VerifyKernelHash(const RangeProof& range_proof, const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi, const Point& phi, bool transcript_v2 = false);
+    static bool VerifyKernelHash(const RangeProof& range_proof, const uint64_t& min_value, const blsct::Message& eta_phi, const Point& phi, bool transcript_v2 = false);
 
     static uint256 CalculateMinValue(const uint256& kernel_hash, const unsigned int& next_target);
     static uint64_t SaturateToU64(const uint256& v);

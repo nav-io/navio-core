@@ -131,9 +131,9 @@ ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commi
     return Verify(staked_commitments, eta_fiat_shamir, eta_phi, CalculateKernelHash(prev_time, stake_modifier, time), next_target, stats);
 }
 
-ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernel_hash, const unsigned int& next_target, VerificationStats* stats) const
+ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const uint256& kernel_hash, const unsigned int& next_target, VerificationStats* stats, bool transcript_v2) const
 {
-    if (!VerifySetMembership(staked_commitments, eta_fiat_shamir, eta_phi, stats)) {
+    if (!VerifySetMembership(staked_commitments, eta_fiat_shamir, eta_phi, stats, transcript_v2)) {
         return ProofOfStake::SM_INVALID;
     }
 
@@ -147,7 +147,7 @@ ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commi
     //           << "\n\t setmemres=" << setmemres
     //           << "\n\n";
 
-    auto kernelhashres = ProofOfStake::VerifyKernelHash(rangeProof, kernel_hash, next_target, eta_phi, setMemProof.phi);
+    auto kernelhashres = ProofOfStake::VerifyKernelHash(rangeProof, kernel_hash, next_target, eta_phi, setMemProof.phi, transcript_v2);
     const auto t_end = stats ? Clock::now() : Clock::time_point{};
     if (stats) {
         stats->range = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_after_setmem);
@@ -195,12 +195,12 @@ bulletproofs_plus::RangeProofWithSeed<Arith> ProofOfStake::GetKernelRangeProof(c
     return MakeKernelRangeProof(rangeProof, min_value, eta_phi, setMemProof.phi);
 }
 
-bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi, const Point& phi)
+bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint256& kernel_hash, const unsigned int& next_target, const blsct::Message& eta_phi, const Point& phi, bool transcript_v2)
 {
     auto min_value = CalculateMinValue(kernel_hash, next_target);
     uint64_t min_value_u64 = SaturateToU64(min_value);
 
-    auto ret = VerifyKernelHash(range_proof, min_value_u64, eta_phi, phi);
+    auto ret = VerifyKernelHash(range_proof, min_value_u64, eta_phi, phi, transcript_v2);
 
     // std::cout << __func__ << ": Verifying Range proof with"
     //           << "\n\t kernel_hash=" << kernel_hash.ToString()
@@ -212,11 +212,13 @@ bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint256
     return ret;
 }
 
-bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint64_t& min_value, const blsct::Message& eta_phi, const Point& phi)
+bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint64_t& min_value, const blsct::Message& eta_phi, const Point& phi, bool transcript_v2)
 {
     RangeProver rp;
     std::vector<bulletproofs_plus::RangeProofWithSeed<Arith>> proofs;
-    proofs.emplace_back(MakeKernelRangeProof(range_proof, min_value, eta_phi, phi));
+    auto kernel_proof = MakeKernelRangeProof(range_proof, min_value, eta_phi, phi);
+    kernel_proof.transcript_v2 = transcript_v2;
+    proofs.emplace_back(std::move(kernel_proof));
 
     return rp.Verify(proofs);
 }

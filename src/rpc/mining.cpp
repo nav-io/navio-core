@@ -614,6 +614,7 @@ static RPCHelpMan getblocktemplate()
                                                                      {RPCResult::Type::STR_HEX, "prev_chainwork", /*optional=*/true, "Accumulated chain work of the previous block as a 32-byte big-endian hex string. Required by stakers to compute the chain-work-bound kernel hash that consensus uses on hardened chains."},
                                                                      {RPCResult::Type::BOOL, "pops_hardened", /*optional=*/true, "Whether PoPS hardening (time-bucketing + chain-work binding in the kernel hash) is in force for the next block. Stakers MUST construct the kernel hash accordingly; otherwise the resulting block is rejected with bad-blsct-pos-proof."},
                                                                      {RPCResult::Type::BOOL, "pops_bind_phi", /*optional=*/true, "Whether the V2 PoPS kernel is active at the next height (>= nPoPSKernelV2Height): the kernel hash binds the set-membership image point phi. Stakers MUST bind phi accordingly; otherwise the resulting block is rejected with bad-blsct-pos-proof."},
+                                                                     {RPCResult::Type::BOOL, "pops_transcript_v2", /*optional=*/true, "Whether the BLSCT proof transcript v2 is active at the next height (>= nBLSCTProofV2Height): the PoS set-membership and range proofs must use the v2 Fiat-Shamir transcript. Stakers MUST match this; otherwise the resulting block is rejected with bad-blsct-pos-proof."},
                                                                      {RPCResult::Type::ARR, "staked_commitments", /*optional=*/true, "Only on Proof of Stake", {
                                                                                                                                                                    {RPCResult::Type::STR_HEX, "", "staked_commitment"},
                                                                                                                                                                }},
@@ -969,6 +970,12 @@ static RPCHelpMan getblocktemplate()
                 // kernel hash binds setMemProof.phi (per-coin independent draw).
                 // Out-of-process stakers must match this exactly.
                 result.pushKV("pops_bind_phi", (pindexPrev->nHeight + 1) >= consensusParams.nPoPSKernelV2Height);
+                // BLSCT proof transcript v2 activation at the next height. When
+                // active, the set-membership and range proofs in the PoS proof
+                // must be built with the v2 Fiat-Shamir transcript. Out-of-
+                // process stakers MUST match this; a v1 proof at/above the
+                // height is rejected as bad-blsct-pos-proof.
+                result.pushKV("pops_transcript_v2", (pindexPrev->nHeight + 1) >= consensusParams.nBLSCTProofV2Height);
             }
 
             if (consensusParams.signet_blocks) {
