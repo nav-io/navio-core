@@ -174,7 +174,7 @@ public:
     static std::unique_ptr<const CChainParams> BLSCTRegTest(const BLSCTRegTestOptions& options);
     static std::unique_ptr<const CChainParams> SigNet(const SigNetOptions& options);
     static std::unique_ptr<const CChainParams> Main();
-    static std::unique_ptr<const CChainParams> TestNet();
+    static std::unique_ptr<const CChainParams> TestNet(std::optional<int> blsct_proof_v2_height = std::nullopt);
 
 protected:
     CChainParams() = default;

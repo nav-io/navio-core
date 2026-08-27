@@ -280,7 +280,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
     class CTestNetParams : public CChainParams
     {
     public:
-        CTestNetParams()
+        explicit CTestNetParams(std::optional<int> blsct_proof_v2_height = std::nullopt)
         {
         m_chain_type = ChainType::TESTNET;
         consensus.signet_blocks = false;
@@ -301,7 +301,9 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
         // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
-        consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
+        // Overridable via -blsctproofv2height=N so a testnet flag-day can be
+        // coordinated among the (few, self-run) testnet nodes without a rebuild.
+        consensus.nBLSCTProofV2Height = blsct_proof_v2_height.value_or(std::numeric_limits<int>::max());
         consensus.nLastPOWHeight = 1000;
         consensus.MinBIP9WarningHeight = 836640; // segwit activation height + miner confirmation window
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -799,7 +801,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         return std::make_unique<const CMainParams>();
     }
 
-    std::unique_ptr<const CChainParams> CChainParams::TestNet()
+    std::unique_ptr<const CChainParams> CChainParams::TestNet(std::optional<int> blsct_proof_v2_height)
     {
-        return std::make_unique<const CTestNetParams>();
+        return std::make_unique<const CTestNetParams>(blsct_proof_v2_height);
     }
