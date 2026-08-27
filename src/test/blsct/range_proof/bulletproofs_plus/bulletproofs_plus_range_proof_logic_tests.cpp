@@ -536,20 +536,17 @@ BOOST_AUTO_TEST_CASE(test_range_proof_transcript_v2_roundtrip)
     }
 }
 
-BOOST_AUTO_TEST_CASE(test_range_proof_forgery_A_binding_poc)
+BOOST_AUTO_TEST_CASE(test_range_proof_transcript_v2_binds_A)
 {
-    // PoC for the Bulletproofs+ soundness break and its fix.
+    // Regression test for the transcript ordering difference between v1 and v2.
     //
-    // The forgery in the disclosure works because, under the legacy (v1)
-    // transcript, the y and z challenges are derived from the value
-    // commitments alone and A is absorbed only afterwards. A prover therefore
-    // learns y and z BEFORE having to commit to A, and can solve for an A that
-    // satisfies the verification equation for an out-of-range value.
+    // Under the legacy (v1) transcript, the y and z challenges are derived from
+    // the value commitments alone and A is absorbed only afterwards, so (y, z)
+    // do not depend on A. Under v2, A is absorbed into the transcript before y
+    // and z are drawn, so (y, z) do depend on A.
     //
-    // The precise exploitable property is that (y, z) do not depend on A. This
-    // test demonstrates it directly: tampering A leaves (y, z) unchanged under
-    // v1 (so A can be chosen adaptively -> forgeable) but changes them under v2
-    // (so A is committed before the challenges -> the forgery is impossible).
+    // This test pins that property directly: modifying A leaves (y, z) unchanged
+    // under v1 but changes them under v2.
     auto nonce = GenNonce();
     auto msg = GenMsgPair();
     auto token_id = GenTokenId();
@@ -567,10 +564,10 @@ BOOST_AUTO_TEST_CASE(test_range_proof_forgery_A_binding_poc)
 
     bulletproofs_plus::RangeProofWithSeed<T> s1_tampered(p1, token_id);
     s1_tampered.transcript_v2 = false;
-    s1_tampered.A = s1_tampered.A + tamper; // an adaptive prover picks A after y,z
+    s1_tampered.A = s1_tampered.A + tamper; // modify A after y,z are derived
     auto t1_tampered = bulletproofs_plus::RangeProofWithTranscript<T>::Build(s1_tampered);
 
-    // y and z are unchanged despite A changing -> A is unbound -> forgeable.
+    // y and z are unchanged despite A changing -> A is not bound into them.
     BOOST_CHECK(t1.y == t1_tampered.y);
     BOOST_CHECK(t1.z == t1_tampered.z);
 
@@ -585,8 +582,8 @@ BOOST_AUTO_TEST_CASE(test_range_proof_forgery_A_binding_poc)
     s2_tampered.A = s2_tampered.A + tamper;
     auto t2_tampered = bulletproofs_plus::RangeProofWithTranscript<T>::Build(s2_tampered);
 
-    // y (and hence z) change with A -> A is committed before the challenges ->
-    // the adaptive choice, and thus the forgery, is impossible.
+    // y (and hence z) change with A -> A is absorbed before the challenges are
+    // drawn, so the challenges are bound to A.
     BOOST_CHECK(t2.y != t2_tampered.y);
 }
 

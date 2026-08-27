@@ -149,8 +149,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
-        // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
-        consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
+        // BLSCT proof transcript v2 activation height. At and above this height,
+        // BLSCT range proofs and set-membership/PoS proofs are built and verified
+        // under the v2 Fiat-Shamir transcript. Expected block time ~2026-08-28
+        // 22:30 Berlin (20:30 UTC); consensus keys off height, not timestamp.
+        consensus.nBLSCTProofV2Height = 39174;
         // PoW->PoS boundary. Block 1 mints the whole supply but its coinbase only
         // matures at tip height 101 (COINBASE_MATURITY). Each wallet's stakelocks
         // accumulate into a single staked commitment, so the PoS set-membership
@@ -300,10 +303,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
-        // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
-        // Overridable via -blsctproofv2height=N so a testnet flag-day can be
-        // coordinated among the (few, self-run) testnet nodes without a rebuild.
-        consensus.nBLSCTProofV2Height = blsct_proof_v2_height.value_or(std::numeric_limits<int>::max());
+        // BLSCT proof transcript v2 flag-day, locked in at the height testnet
+        // actually crossed (block 70600, 2026-08-27). Buried/permanent so a
+        // fresh testnet sync reproduces v1-below / v2-at-and-above by height.
+        // Still overridable via -blsctproofv2height=N for regtest/local testing.
+        consensus.nBLSCTProofV2Height = blsct_proof_v2_height.value_or(70600);
         consensus.nLastPOWHeight = 1000;
         consensus.MinBIP9WarningHeight = 836640; // segwit activation height + miner confirmation window
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
