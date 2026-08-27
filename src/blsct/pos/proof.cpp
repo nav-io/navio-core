@@ -68,17 +68,17 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
     rangeProof.Vs.Clear();
 }
 
-ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, bool hardened, bool transcript_v2)
+ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, bool hardened)
     : ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f,
                    CalculateKernelHash(prev_time, stake_modifier, time, hardened),
-                   next_target, transcript_v2)
+                   next_target)
 {
 }
 
-ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened, bool transcript_v2)
+ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened)
     : ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f,
                    CalculateKernelHashWithChainWork(prev_time, stake_modifier, prev_chain_work, time, hardened),
-                   next_target, transcript_v2)
+                   next_target)
 {
 }
 

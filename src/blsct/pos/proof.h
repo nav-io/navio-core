@@ -62,7 +62,7 @@ public:
     // for the bench harness and callers that explicitly want the no-chain-
     // work kernel; consensus-tracking callers must NOT use this overload on
     // hardened chains.
-    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, bool hardened = true, bool transcript_v2 = false);
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, bool hardened = true);
 
     // Chain-work-aware convenience constructor. Equivalent to computing
     // `kernel_hash = CalculateKernelHashWithChainWork(prev_time,
@@ -70,7 +70,7 @@ public:
     // the kernel-hash overload. This is what the staker (over RPC) and
     // ProofOfStakeLogic::Create use to stay aligned with consensus on
     // hardened chains.
-    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened = true, bool transcript_v2 = false);
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened = true);
 
     // V2 constructor. When `bind_phi` is true the kernel hash binds the
     // set-membership image point `phi`, giving each staked coin an independent
