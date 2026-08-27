@@ -734,4 +734,34 @@ BOOST_AUTO_TEST_CASE(test_unserialize_rejects_oversized_length)
     }
 }
 
+// Pins the canonical deterministic-shuffle order (seed handling through
+// uint256_to_seed_array / compress_seed / XorShift32). The expected order is
+// what LP64 little-endian nodes produce -- the consensus-canonical form after
+// the explicit-LE read; a future endianness or width regression on any
+// platform turns this red instead of silently forking the anonymity ring.
+BOOST_AUTO_TEST_CASE(test_deterministic_shuffle_canonical_vector)
+{
+    OrderedElements<Point> set;
+    for (int i = 1; i <= 8; ++i) {
+        set.Add(Point::GetBasePoint() * Scalar(i));
+    }
+    uint256 seed;
+    seed.SetHex("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+
+    const auto shuffled = set.GetElements(seed, 8);
+    BOOST_REQUIRE_EQUAL(shuffled.Size(), 8);
+
+    // Scalar multiples of the base point serialize uniquely, so record which
+    // multiple landed at each position.
+    std::vector<int> got;
+    for (size_t i = 0; i < shuffled.Size(); ++i) {
+        for (int m = 1; m <= 8; ++m) {
+            if (shuffled[i] == Point::GetBasePoint() * Scalar(m)) { got.push_back(m); break; }
+        }
+    }
+    BOOST_REQUIRE_EQUAL(got.size(), 8U);
+    const std::vector<int> expected{4, 6, 8, 7, 5, 3, 1, 2};
+    BOOST_CHECK_EQUAL_COLLECTIONS(got.begin(), got.end(), expected.begin(), expected.end());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
