@@ -187,7 +187,9 @@ std::unique_ptr<const CChainParams> CreateChainParams(const ArgsManager& args, c
 {
     switch (chain) {
     case ChainType::MAIN:
-        return CChainParams::Main();
+        // Honored defer-only on mainnet (see CMainParams): can push activation
+        // later than the buried height, never earlier, never arm a dormant chain.
+        return CChainParams::Main(ReadBLSCTProofV2Height(args));
     case ChainType::TESTNET:
         return CChainParams::TestNet(ReadBLSCTProofV2Height(args));
     case ChainType::SIGNET: {

@@ -90,11 +90,24 @@ class BlsctProofTranscriptV2Test(BitcoinTestFramework):
         # output proofs. (The on-chain hash of a default aggregate send differs
         # from the returned txid, so assert on mempool drain, not the txid.)
         dest = wallet.getnewaddress(label="", address_type="blsct")
+        balance_before = wallet.getbalance()
         wallet.sendtoaddress(dest, 1)
         assert_equal(node.getmempoolinfo()["size"], 1)
         self.generate_blsct_blocks(node, addr, 1)
         assert_equal(node.getmempoolinfo()["size"], 0)
         self.log.info(f"v2 confidential spend accepted and mined at height {node.getblockcount()}")
+
+        # Amount-recovery regression -- the core of the v2 wallet break. The
+        # spend above pays the wallet's own address, so both the payment and the
+        # change output belong to this wallet and carry v2 range proofs. If
+        # KeyMan::RecoverOutputs cannot recover v2 outputs, the change (the bulk
+        # of the spent input) becomes invisible and the balance collapses;
+        # correct gate-aware recovery loses only the fee. This assertion fails
+        # hard on the pre-fix tree (balance drops by nearly the whole input) and
+        # passes once recovery honors the transcript version.
+        balance_after = wallet.getbalance()
+        assert_greater_than(balance_after, balance_before - 1)
+        self.log.info(f"v2 amount recovery ok: balance {balance_before} -> {balance_after} (only fee lost)")
 
         # Sanity: a full reindex re-verifies every block from genesis, so it
         # re-checks the v1 blocks under v1 and the v2 blocks under v2 by height.

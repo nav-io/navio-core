@@ -819,14 +819,60 @@ blsct::PrivateKey KeyMan::GetTokenKey(const uint256& tokenId) const
 
 using Arith = Mcl;
 
+namespace {
+// Recover amounts trying the legacy (v1) Fiat-Shamir transcript first, then
+// retrying only the outputs that did not recover under the v2 transcript.
+//
+// A range proof is built and verified under a transcript whose version depends
+// on the height of the block the output was created at. Recovery has no height
+// context -- a rescan batch can straddle the activation height -- and it fails
+// closed: MsgAmtCipher::Decrypt rejects a proof replayed under the wrong
+// transcript. So trying both versions is safe, and because every recovered
+// amount is commitment-authenticated a wrong-transcript attempt cannot yield a
+// false positive. Without this, a v2 output is silently dropped (its amount is
+// never recovered) and disappears from the wallet balance.
+bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverWithTranscriptFallback(
+    bulletproofs_plus::RangeProofLogic<Mcl>& rp,
+    const std::vector<CTxOut>& outs,
+    const std::vector<std::pair<size_t, MclG1Point>>& candidates)
+{
+    auto run = [&](const std::vector<std::pair<size_t, MclG1Point>>& cands, bool transcript_v2) {
+        std::vector<bulletproofs_plus::AmountRecoveryRequest<Mcl>> reqs;
+        reqs.reserve(cands.size());
+        for (const auto& [i, nonce] : cands) {
+            const CTxOut& out = outs[i];
+            bulletproofs_plus::RangeProofWithSeed<Mcl> proof = {out.blsctData.rangeProof, out.tokenId};
+            proof.transcript_v2 = transcript_v2;
+            reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Mcl>::of(proof, nonce, i));
+        }
+        return rp.RecoverAmounts(reqs);
+    };
+
+    auto result = run(candidates, /*transcript_v2=*/false);
+    if (!result.is_completed) return result;
+
+    std::vector<char> recovered(outs.size(), 0);
+    for (const auto& x : result.amounts) {
+        if (x.id < recovered.size()) recovered[x.id] = 1;
+    }
+    std::vector<std::pair<size_t, MclG1Point>> misses;
+    for (const auto& c : candidates) {
+        if (!recovered[c.first]) misses.push_back(c);
+    }
+    if (!misses.empty()) {
+        auto v2 = run(misses, /*transcript_v2=*/true);
+        for (auto& x : v2.amounts) result.amounts.push_back(std::move(x));
+    }
+    return result;
+}
+} // namespace
+
 bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std::vector<CTxOut>& outs)
 {
     if (!fViewKeyDefined || !viewKey.IsValid())
         return bulletproofs_plus::AmountRecoveryResult<Arith>::failure();
 
     bulletproofs_plus::RangeProofLogic<Arith> rp;
-    std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
-    reqs.reserve(outs.size());
 
     // Collect candidate blinding keys for parallel view-tag calculation.
     // We only do the v·R scalar mult for outputs that are structurally BLSCT;
@@ -845,17 +891,17 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
 
     auto tags = CalculateViewTagBatch(candidateBlindingKeys, viewKey.GetScalar());
 
+    // (output index, recovery nonce) for every view-tag match.
+    std::vector<std::pair<size_t, MclG1Point>> candidates;
     for (size_t k = 0; k < candidateIdx.size(); ++k) {
         size_t i = candidateIdx[k];
         const CTxOut& out = outs[i];
         if (out.blsctData.viewTag != tags[k])
             continue;
-        auto nonce = CalculateNonce(out.blsctData.blindingKey, viewKey.GetScalar());
-        bulletproofs_plus::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
-        reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Arith>::of(proof, nonce, i));
+        candidates.emplace_back(i, CalculateNonce(out.blsctData.blindingKey, viewKey.GetScalar()));
     }
 
-    return rp.RecoverAmounts(reqs);
+    return RecoverWithTranscriptFallback(rp, outs, candidates);
 }
 
 bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce)
@@ -864,18 +910,16 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputsWithNonce(c
     // a pre-computed nonce is supplied by the caller (e.g. from an imported
     // script's recovery hint).  The viewKey is not consulted and may be absent.
     bulletproofs_plus::RangeProofLogic<Arith> rp;
-    std::vector<bulletproofs_plus::AmountRecoveryRequest<Arith>> reqs;
-    reqs.reserve(outs.size());
 
+    std::vector<std::pair<size_t, MclG1Point>> candidates;
     for (size_t i = 0; i < outs.size(); i++) {
-        CTxOut out = outs[i];
+        const CTxOut& out = outs[i];
         if (!out.HasBLSCTKeys() || !out.HasBLSCTRangeProof()) continue;
         // Use the provided nonce instead of calculating it
-        bulletproofs_plus::RangeProofWithSeed<Arith> proof = {out.blsctData.rangeProof, out.tokenId};
-        reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Arith>::of(proof, nonce, i));
+        candidates.emplace_back(i, nonce);
     }
 
-    return rp.RecoverAmounts(reqs);
+    return RecoverWithTranscriptFallback(rp, outs, candidates);
 }
 
 bool KeyMan::IsMine(const CScript& script) const

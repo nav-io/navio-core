@@ -359,7 +359,8 @@ retry:
     // omega is a Fiat-Shamir challenge, not a prover-chosen response. It is
     // carried in the serialized proof for convenience, but the verifier
     // recomputes it from the transcript and rejects any proof whose carried
-    // omega disagrees with the derived value.
+    // omega disagrees with the derived value -- otherwise a prover-supplied
+    // omega would not be constrained by the transcript.
     if (proof.omega != omega) return false;
 
     // Note: y_inv / y_inv_to_n used to be precomputed here but were never

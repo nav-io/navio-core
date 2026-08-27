@@ -129,7 +129,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
     class CMainParams : public CChainParams
     {
     public:
-        CMainParams()
+        explicit CMainParams(std::optional<int> blsct_proof_v2_height = std::nullopt)
         {
         m_chain_type = ChainType::MAIN;
         consensus.signet_blocks = false;
@@ -149,11 +149,24 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
-        // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
-        // Do NOT arm mainnet until wallet v2-output recovery is fixed and verified
-        // (KeyMan::RecoverOutputs / C API recovery must honor the gate) — otherwise
-        // change/rewards above the gate become unrecoverable.
-        consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
+        // Dormant until an activation height is buried here in a release. Do NOT
+        // arm mainnet until wallet v2-output recovery is fixed and verified
+        // (KeyMan::RecoverOutputs and the C API recovery surface honor the gate);
+        // otherwise change/rewards above the gate become unrecoverable.
+        //
+        // -blsctproofv2height is honored on mainnet as a DEFER-ONLY escape hatch:
+        // it can push activation LATER than the buried height (to stand down a
+        // flag day without shipping a new binary) but can never pull it earlier
+        // or arm a dormant chain, so an operator cannot unilaterally fork mainnet.
+        // A value not strictly greater than the buried height is ignored (with a
+        // warning emitted by ReadBLSCTProofV2Height).
+        {
+            const int buried = std::numeric_limits<int>::max();
+            consensus.nBLSCTProofV2Height =
+                (blsct_proof_v2_height && *blsct_proof_v2_height > buried)
+                    ? *blsct_proof_v2_height
+                    : buried;
+        }
         // PoW->PoS boundary. Block 1 mints the whole supply but its coinbase only
         // matures at tip height 101 (COINBASE_MATURITY). Each wallet's stakelocks
         // accumulate into a single staked commitment, so the PoS set-membership
@@ -685,9 +698,12 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.nPePoSMinStakeAmount = 100 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
-            // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
-            // Overridable on blsctregtest via -blsctproofv2height=N for tests.
-            consensus.nBLSCTProofV2Height = opts.blsct_proof_v2_height.value_or(std::numeric_limits<int>::max());
+            // Active from genesis on blsctregtest so the whole functional suite
+            // exercises the v2 transcript by default (any wallet/tx path that is
+            // not gate-aware fails its test immediately). Overridable via
+            // -blsctproofv2height=N so the dedicated boundary test can still put
+            // the activation mid-chain and exercise the v1->v2 cutover.
+            consensus.nBLSCTProofV2Height = opts.blsct_proof_v2_height.value_or(0);
             consensus.nLastPOWHeight = 25000;
             consensus.MinBIP9WarningHeight = 0;
             consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -800,9 +816,9 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         return std::make_unique<const CBLSCTRegTestParams>(options);
     }
 
-    std::unique_ptr<const CChainParams> CChainParams::Main()
+    std::unique_ptr<const CChainParams> CChainParams::Main(std::optional<int> blsct_proof_v2_height)
     {
-        return std::make_unique<const CMainParams>();
+        return std::make_unique<const CMainParams>(blsct_proof_v2_height);
     }
 
     std::unique_ptr<const CChainParams> CChainParams::TestNet(std::optional<int> blsct_proof_v2_height)
