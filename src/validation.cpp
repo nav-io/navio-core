@@ -2164,7 +2164,17 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
 
         // Check that all outputs are available and match the outputs in the block itself
         // exactly.
-        for (size_t o = 0; o < tx.vout.size(); o++) {
+        //
+        // Iterate outputs in reverse. Predicate side effects are applied in
+        // forward output order on connect (blsct::VerifyTxCore), and some are
+        // ordered dependencies within a single transaction: a CREATE_TOKEN
+        // output followed by a MINT output for the same token must be unwound
+        // MINT-first, or the mint revert's GetToken lookup fails against a
+        // token the create revert has already erased and the whole disconnect
+        // aborts (DISCONNECT_FAILED). Unwinding in reverse mirrors application
+        // order. Staked-commitment removal and the output/coin match below are
+        // per-output and order-independent, so reversing does not affect them.
+        for (int o = static_cast<int>(tx.vout.size()) - 1; o >= 0; o--) {
             if (tx.vout[o].IsStakedCommitment()) {
                 view.RemoveStakedCommitment(tx.vout[o].blsctData.rangeProof.Vs[0]);
             }

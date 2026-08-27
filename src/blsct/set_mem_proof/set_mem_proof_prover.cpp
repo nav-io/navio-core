@@ -9,6 +9,7 @@
 #include <blsct/building_block/lazy_points.h>
 #include <blsct/common.h>
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
+#include <crypto/common.h>
 #include <hash.h>
 #include <streams.h>
 #include <util/strencodings.h>
@@ -91,17 +92,22 @@ typename SetMemProofProver<T>::Points SetMemProofProver<T>::ExtendYs(
     if (Ys_src.Size() > new_size) {
         throw std::runtime_error(std::string(__func__) + ": Not expecting new_size < current_size");
     }
+    // Encode the padding index as a fixed 8-byte little-endian integer rather
+    // than raw `size_t` bytes. sizeof(size_t) and host byte order both vary by
+    // build target (8 bytes LE on the LP64 little-endian nodes that make up the
+    // network, 4 bytes on ILP32, byte-swapped on big-endian), which would give
+    // a different padding point on different architectures. The fixed LE-64
+    // encoding is byte-for-byte identical to what LP64 LE nodes already produce.
+    constexpr size_t kIndexBytes = 8;
     std::string padding_prefix = "SET_MEMBERSHIP_DUMMY";
     std::vector<uint8_t> msg(padding_prefix.begin(), padding_prefix.end());
     size_t prefix_len = msg.size();
-    msg.resize(prefix_len + sizeof(size_t));
+    msg.resize(prefix_len + kIndexBytes);
 
     Points Ys = Ys_src;
-    std::vector<uint8_t> i_buf(sizeof(size_t));
 
     for (size_t i=Ys_src.Size(); i<new_size; ++i) {
-        std::memcpy(i_buf.data(), &i, sizeof(i));
-        std::copy(i_buf.begin(), i_buf.end(), &msg[prefix_len]);
+        WriteLE64(&msg[prefix_len], static_cast<uint64_t>(i));
         Point padding_point = setup.H5(msg);
         Ys.Add(padding_point);
     }

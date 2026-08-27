@@ -6,6 +6,7 @@
 #include <blsct/arith/elements.h>
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
+#include <crypto/common.h>
 #include <deque>
 #include <iterator>
 #include <random>
@@ -50,10 +51,17 @@ void _deterministic_shuffle(std::vector<T>& vec, XorShift32& rng)
 
 void uint256_to_seed_array(const uint256& value, uint64_t seed_data[4])
 {
-    const unsigned char* bytes = value.begin(); // Little-endian
+    const unsigned char* bytes = value.begin();
 
+    // Read each 64-bit lane as explicit little-endian rather than a raw memcpy
+    // reinterpret. A memcpy takes host byte order, so a big-endian node would
+    // fold a different seed in compress_seed(), shuffle the staked-commitment
+    // set differently, and build a different anonymity ring than the
+    // little-endian nodes that make up the network. ReadLE64 is identical to
+    // the memcpy on little-endian hosts, so the canonical form matches the
+    // live chain and only corrects big-endian builds.
     for (int i = 0; i < 4; ++i) {
-        std::memcpy(&seed_data[i], bytes + i * 8, sizeof(uint64_t));
+        seed_data[i] = ReadLE64(bytes + i * 8);
     }
 }
 
