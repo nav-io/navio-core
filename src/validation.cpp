@@ -3554,6 +3554,31 @@ bool Chainstate::ConnectTip(BlockValidationState& state, CBlockIndex* pindexNew,
     if (m_mempool) {
         m_mempool->removeForBlock(blockConnecting.vtx, pindexNew->nHeight);
         disconnectpool.removeForBlock(blockConnecting.vtx);
+
+        // BLSCT proof transcript v2 flag day: transactions accepted below the
+        // gate carry v1 proofs and become unminable once the next block is at
+        // or above nBLSCTProofV2Height -- the miner's own TestBlockValidity
+        // would reject any template that includes them, stalling block
+        // production for as long as they linger. As the tip reaches the last
+        // pre-activation block, evict every BLSCT transaction so wallets
+        // resubmit them rebuilt with the v2 transcript. One-shot: triggered
+        // only by the block at height nBLSCTProofV2Height - 1, and only when a
+        // real (non-dormant) activation height is configured.
+        const int v2_height = m_chainman.GetConsensus().nBLSCTProofV2Height;
+        if (v2_height != std::numeric_limits<int>::max() && pindexNew->nHeight == v2_height - 1) {
+            std::vector<CTransactionRef> blsct_txs;
+            for (const auto& entry : m_mempool->mapTx) {
+                if (entry.GetTx().IsBLSCT()) blsct_txs.push_back(entry.GetSharedTx());
+            }
+            for (const auto& tx : blsct_txs) {
+                if (m_mempool->exists(GenTxid::Txid(tx->GetHash()))) {
+                    m_mempool->removeRecursive(*tx, MemPoolRemovalReason::REORG);
+                }
+            }
+            if (!blsct_txs.empty()) {
+                LogPrintf("BLSCT transcript v2 activation at height %d: evicted %u v1 BLSCT transaction(s) from the mempool; wallets must resubmit them under the v2 transcript.\n", v2_height, static_cast<unsigned>(blsct_txs.size()));
+            }
+        }
     }
     // Update m_chain & related variables.
     m_chain.SetTip(*pindexNew);
