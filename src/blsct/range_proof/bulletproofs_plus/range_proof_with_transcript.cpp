@@ -27,9 +27,12 @@ RangeProofWithTranscript<T> RangeProofWithTranscript<T>::Build(const RangeProofW
     Scalars es;
 
     // v2 domain separation: mirror RangeProofLogic::Prove — a context tag as the
-    // first absorbed item.
+    // first absorbed item, then the generator seed and min_value.
     if (proof.transcript_v2) {
         fiat_shamir << std::string("NAVIO_BULLETPROOFS_PLUS_V2");
+        fiat_shamir << static_cast<uint8_t>(proof.seed.index());
+        std::visit([&](const auto& s) { fiat_shamir << s; }, proof.seed);
+        fiat_shamir << proof.min_value;
     }
 
     size_t m = blsct::Common::GetFirstPowerOf2GreaterOrEqTo(proof.Vs.Size());

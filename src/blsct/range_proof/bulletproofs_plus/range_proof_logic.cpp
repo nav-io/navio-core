@@ -284,10 +284,15 @@ RangeProof<T> RangeProofLogic<T>::Prove(
     HashWriter fiat_shamir{};
 
     // v2 domain separation: a context tag as the first absorbed item, so this
-    // transcript cannot collide with any other proof system or version. Mirror
+    // transcript cannot collide with any other proof system or version. Also
+    // bind the generator seed (token id) and min_value, which under v1 were
+    // pinned only through the verification equation, not the challenges. Mirror
     // exactly in RangeProofWithTranscript::Build.
     if (transcript_v2) {
         fiat_shamir << std::string("NAVIO_BULLETPROOFS_PLUS_V2");
+        fiat_shamir << static_cast<uint8_t>(seed.index());
+        std::visit([&](const auto& s) { fiat_shamir << s; }, seed);
+        fiat_shamir << minValue;
     }
 
 retry: // hasher is not cleared so that different hash will be obtained upon retry
