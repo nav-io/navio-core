@@ -1675,6 +1675,10 @@ RPCHelpMan createblsctrawtransaction()
 
             auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
 
+            // Rule A: build v2 proof transcripts once the next block is at/above
+            // the activation height. The tx is verified at its inclusion height.
+            const bool transcript_v2 = (pwallet->chain().getHeight().value_or(-1) + 1) >= Params().GetConsensus().nBLSCTProofV2Height;
+
             // Parse inputs
             const UniValue& inputs = request.params[0].get_array();
             std::vector<blsct::UnsignedInput> unsigned_inputs;
@@ -1959,7 +1963,7 @@ RPCHelpMan createblsctrawtransaction()
 
                     CScript script = blsct::BuildHTLCScript(hash_bytes, spendingKeyABytes, spendingKeyBBytes, locktime, timelock_opcode);
 
-                    unsigned_output = CreateOutput(std::make_pair(address_a, script), nAmount, memo, token_id, blindingKey, type, 0);
+                    unsigned_output = CreateOutput(std::make_pair(address_a, script), nAmount, memo, token_id, blindingKey, type, 0, transcript_v2);
 
                     // Nullify the spending key
                     unsigned_output.out.blsctData.spendingKey = MclG1Point();
@@ -2001,12 +2005,12 @@ RPCHelpMan createblsctrawtransaction()
                         try {
                             std::vector<unsigned char> script_bytes = ParseHex(script_hex);
                             CScript script(script_bytes.begin(), script_bytes.end());
-                            unsigned_output = CreateOutput(std::make_pair(subAddress.GetKeys(), script), nAmount, memo, token_id, blindingKey, type, 0);
+                            unsigned_output = CreateOutput(std::make_pair(subAddress.GetKeys(), script), nAmount, memo, token_id, blindingKey, type, 0, transcript_v2);
                         } catch (const std::exception& e) {
                             throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid script hex string: %s", e.what()));
                         }
                     } else {
-                        unsigned_output = CreateOutput(subAddress.GetKeys(), nAmount, memo, token_id, blindingKey, type);
+                        unsigned_output = CreateOutput(subAddress.GetKeys(), nAmount, memo, token_id, blindingKey, type, 0, /*fAllowZeroValueRangeProof=*/false, transcript_v2);
                     }
                 }
 
@@ -2097,6 +2101,10 @@ RPCHelpMan fundblsctrawtransaction()
             LOCK(pwallet->cs_wallet);
 
             auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            // Rule A: build v2 proof transcripts once the next block is at/above
+            // the activation height. The tx is verified at its inclusion height.
+            const bool transcript_v2 = (pwallet->chain().getHeight().value_or(-1) + 1) >= Params().GetConsensus().nBLSCTProofV2Height;
 
             // Parse the unsigned transaction
             std::vector<unsigned char> txData = ParseHex(request.params[0].get_str());
@@ -2190,7 +2198,7 @@ RPCHelpMan fundblsctrawtransaction()
                     if (total_input_value_early > required_value) {
                         const CAmount change_value = total_input_value_early - required_value;
                         blsct::SubAddress change_subaddr(std::get<blsct::DoublePublicKey>(change_dest));
-                        blsct::UnsignedOutput change_output = CreateOutput(change_subaddr.GetKeys(), change_value, "", TokenId(), Scalar::Rand());
+                        blsct::UnsignedOutput change_output = CreateOutput(change_subaddr.GetKeys(), change_value, "", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/false, transcript_v2);
                         unsigned_tx.AddOutput(change_output);
                     }
                 } else {
@@ -2294,7 +2302,7 @@ RPCHelpMan fundblsctrawtransaction()
                     if (total_input_value > required_value) {
                         const CAmount change_value = total_input_value - required_value;
                         blsct::SubAddress change_subaddr(std::get<blsct::DoublePublicKey>(change_dest));
-                        blsct::UnsignedOutput change_output = CreateOutput(change_subaddr.GetKeys(), change_value, "", TokenId(), Scalar::Rand());
+                        blsct::UnsignedOutput change_output = CreateOutput(change_subaddr.GetKeys(), change_value, "", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/false, transcript_v2);
                         unsigned_tx.AddOutput(change_output);
                     }
                 }

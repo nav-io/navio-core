@@ -60,7 +60,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
 {
     UnsignedOutput out;
 
-    out = CreateOutput(destination.GetKeys(), mintAmount, Scalar::Rand(), tokenKey, tokenPublicKey);
+    out = CreateOutput(destination.GetKeys(), mintAmount, Scalar::Rand(), tokenKey, tokenPublicKey, m_transcript_v2);
 
     TokenId token_id{tokenPublicKey.GetHash()};
 

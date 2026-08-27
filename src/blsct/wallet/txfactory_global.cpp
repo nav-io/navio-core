@@ -55,11 +55,11 @@ UnsignedOutput CreateOutput(const Scalar& tokenKey, const blsct::TokenInfo& toke
     return ret;
 }
 
-UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey)
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey, const bool transcript_v2)
 {
     TokenId tokenId{tokenPublicKey.GetHash()};
 
-    auto ret = CreateOutput(destKeys, nAmount, "", tokenId, blindingKey, TX_MINT_TOKEN);
+    auto ret = CreateOutput(destKeys, nAmount, "", tokenId, blindingKey, TX_MINT_TOKEN, 0, /*fAllowZeroValueRangeProof=*/false, transcript_v2);
 
     if (!tokenId.IsNFT()) {
         ret.out.predicate = MintTokenPredicate(tokenPublicKey, nAmount).GetVch();
