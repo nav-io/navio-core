@@ -103,6 +103,14 @@ void ReadBLSCTRegTestArgs(const ArgsManager& args, CChainParams::BLSCTRegTestOpt
 {
     if (auto value = args.GetBoolArg("-fastprune")) options.fastprune = *value;
 
+    if (args.IsArgSet("-blsctproofv2height")) {
+        const int64_t height = args.GetIntArg("-blsctproofv2height", std::numeric_limits<int>::max());
+        if (height < 0 || height > std::numeric_limits<int>::max()) {
+            throw std::runtime_error(strprintf("Invalid height (%d) for -blsctproofv2height.", height));
+        }
+        options.blsct_proof_v2_height = static_cast<int>(height);
+    }
+
     for (const std::string& arg : args.GetArgs("-testactivationheight")) {
         const auto found{arg.find('@')};
         if (found == std::string::npos) {

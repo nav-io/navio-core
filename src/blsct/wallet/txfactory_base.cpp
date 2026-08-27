@@ -29,7 +29,7 @@ void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmo
         return;
     }
 
-    UnsignedOutput out = CreateOutput(destination.GetKeys(), nAmount, sMemo, token_id, blindingKey, type, minStake);
+    UnsignedOutput out = CreateOutput(destination.GetKeys(), nAmount, sMemo, token_id, blindingKey, type, minStake, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
 
     nAmounts[token_id].nFromOutputs += nAmount;
 
@@ -154,7 +154,8 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             sffaOut = CreateOutput(subtractFeeOutput->destination.GetKeys(), reduced,
                                    subtractFeeOutput->memo, subtractFeeOutput->token_id,
                                    subtractFeeOutput->blindingKey, subtractFeeOutput->type,
-                                   subtractFeeOutput->minStake);
+                                   subtractFeeOutput->minStake, /*fAllowZeroValueRangeProof=*/false,
+                                   m_transcript_v2);
             gammaAcc = gammaAcc - sffaOut->gamma;
         }
 
@@ -217,7 +218,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             const std::string change_memo = (type == STAKED_COMMITMENT_UNSTAKE)
                 ? std::string{"Stake Unlock"}
                 : std::string{"Change"};
-            auto changeOutput = CreateOutput(changeDestination, change.second, change_memo, change.first, MclScalar::Rand(), NORMAL, minStake);
+            auto changeOutput = CreateOutput(changeDestination, change.second, change_memo, change.first, MclScalar::Rand(), NORMAL, minStake, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
 
             gammaAcc = gammaAcc - changeOutput.gamma;
 
@@ -279,6 +280,7 @@ bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, cons
 std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData)
 {
     auto tx = blsct::TxFactoryBase();
+    tx.SetTranscriptV2(transactionData.transcript_v2);
 
     if (transactionData.type == STAKED_COMMITMENT) {
         CAmount inputFromStakedCommitments = 0;

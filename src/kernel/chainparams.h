@@ -165,6 +165,9 @@ public:
         std::unordered_map<Consensus::DeploymentPos, VersionBitsParameters> version_bits_parameters{};
         std::unordered_map<Consensus::BuriedDeployment, int> activation_heights{};
         bool fastprune{false};
+        // Override for the BLSCT proof transcript v2 activation height on
+        // blsctregtest, via -blsctproofv2height=N. Unset leaves it dormant.
+        std::optional<int> blsct_proof_v2_height{};
     };
 
     static std::unique_ptr<const CChainParams> RegTest(const RegTestOptions& options);

@@ -31,6 +31,13 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
     LogPrint(BCLog::POPS, "Creating PoPS:\n    Eta fiat shamir: %s\n   Eta phi: %s\n   Next Target: %d\n   Staked Commitments:%s\n", HexStr(eta_fiat_shamir), HexStr(eta_phi), next_target, staked_commitments.GetString());
 
     const int height = pindexPrev->nHeight + 1;
+
+    // Rule A (hard cutover): produce v2 proof transcripts once the block being
+    // built lands at/above the activation height. Verification keys off the
+    // same block height, so a proof built here for height H is checked under
+    // the version active at H.
+    const bool transcript_v2 = height >= params.nBLSCTProofV2Height;
+
     if (height >= params.nPoPSKernelV2Height) {
         // V2: the kernel hash binds setMemProof.phi, which does not exist until
         // the set-membership proof is built. The V2 ctor computes phi first,
@@ -39,7 +46,7 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
         return ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f,
                             pindexPrev->nTime, pindexPrev->nStakeModifier,
                             pindexPrev->nChainWork, block.nTime, next_target,
-                            params.fPoPSHardened, /*bind_phi=*/true);
+                            params.fPoPSHardened, /*bind_phi=*/true, transcript_v2);
     }
 
     // V1: compute the kernel hash via the EXACT same path consensus
@@ -49,7 +56,7 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
     // rejected with `bad-blsct-pos-proof`.
     const uint256 kernel_hash = blsct::CalculateKernelHash(pindexPrev, block, params);
 
-    return ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f, kernel_hash, next_target);
+    return ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f, kernel_hash, next_target, transcript_v2);
 }
 
 bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)

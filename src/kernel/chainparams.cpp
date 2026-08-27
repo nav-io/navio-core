@@ -680,7 +680,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
             // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
-            consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
+            // Overridable on blsctregtest via -blsctproofv2height=N for tests.
+            consensus.nBLSCTProofV2Height = opts.blsct_proof_v2_height.value_or(std::numeric_limits<int>::max());
             consensus.nLastPOWHeight = 25000;
             consensus.MinBIP9WarningHeight = 0;
             consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");

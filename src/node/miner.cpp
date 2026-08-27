@@ -278,7 +278,11 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     // to an unspendable OP_RETURN with no range proof: the verifier skips such
     // outputs, but the coinbase still carries balance/output signatures, which
     // would then fail the aggregate signature check.
-    auto out = blsct::CreateOutput(destination.GetKeys(), nReward, "Reward", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true);
+    // Rule A: the reward output's range proof must use the transcript version
+    // the verifier applies at this block's height, or the block fails its own
+    // TestBlockValidity range-proof check at/above the activation height.
+    const bool reward_transcript_v2 = nHeight >= chainparams.GetConsensus().nBLSCTProofV2Height;
+    auto out = blsct::CreateOutput(destination.GetKeys(), nReward, "Reward", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true, reward_transcript_v2);
 
     txSigs.push_back(blsct::PrivateKey(out.blindingKey).Sign(out.out.GetHash()));
     txSigs.push_back(blsct::PrivateKey(out.gamma.Negate()).SignBalance());

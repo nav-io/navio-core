@@ -120,6 +120,13 @@ std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet*
         transactionData.nBLSCTDefaultFee = Params().GetConsensus().nBLSCTDefaultFee;
     }
 
+    // Rule A (hard cutover): build v2 proof transcripts once the next block
+    // would be at/above the activation height. The tx is verified at its
+    // inclusion height, so building for tip + 1 matches the verifier for any
+    // height >= tip + 1 it is actually mined at.
+    const int tip_height = wallet->chain().getHeight().value_or(-1);
+    transactionData.transcript_v2 = (tip_height + 1) >= Params().GetConsensus().nBLSCTProofV2Height;
+
     std::vector<InputCandidates> inputCandidates;
 
     TxFactory::AddAvailableCoins(wallet, blsct_km, transactionData.token_id, transactionData.type, inputCandidates, transactionData.nAmount, transactionData.fConsolidateStakedCommitments);

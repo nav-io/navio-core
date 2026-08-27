@@ -54,7 +54,7 @@ public:
     // MUST compute the kernel hash via the same code path consensus uses
     // (`blsct::CalculateKernelHash(pindexPrev, block, params)` or
     // `CalculateKernelHashWithChainWork(...)`) and pass it in here.
-    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint256& kernel_hash, const unsigned int& next_target);
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint256& kernel_hash, const unsigned int& next_target, bool transcript_v2 = false);
 
     // Legacy convenience constructor (no chain-work binding). Equivalent to
     // computing `kernel_hash = CalculateKernelHash(prev_time, stake_modifier,
@@ -62,7 +62,7 @@ public:
     // for the bench harness and callers that explicitly want the no-chain-
     // work kernel; consensus-tracking callers must NOT use this overload on
     // hardened chains.
-    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, bool hardened = true);
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const uint32_t& time, const unsigned int& next_target, bool hardened = true, bool transcript_v2 = false);
 
     // Chain-work-aware convenience constructor. Equivalent to computing
     // `kernel_hash = CalculateKernelHashWithChainWork(prev_time,
@@ -70,7 +70,7 @@ public:
     // the kernel-hash overload. This is what the staker (over RPC) and
     // ProofOfStakeLogic::Create use to stay aligned with consensus on
     // hardened chains.
-    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened = true);
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened = true, bool transcript_v2 = false);
 
     // V2 constructor. When `bind_phi` is true the kernel hash binds the
     // set-membership image point `phi`, giving each staked coin an independent
@@ -82,7 +82,7 @@ public:
     // make this overload distinct from the chain-work ctor above. Consensus-
     // tracking callers (ProofOfStakeLogic::Create, the staker) select
     // `bind_phi = height >= nPoPSKernelV2Height`.
-    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened, bool bind_phi);
+    ProofOfStake(const Points& staked_commitments, const Scalar& eta_fiat_shamir, const blsct::Message& eta_phi, const Scalar& m, const Scalar& f, const uint32_t& prev_time, const uint64_t& stake_modifier, const arith_uint256& prev_chain_work, const uint32_t& time, const unsigned int& next_target, bool hardened, bool bind_phi, bool transcript_v2 = false);
 
     enum VerificationResult : uint32_t {
         NONE = 0,
