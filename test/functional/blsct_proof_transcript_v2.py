@@ -61,6 +61,13 @@ class BlsctProofTranscriptV2Test(BitcoinTestFramework):
         assert_greater_than(self.ACTIVATION_HEIGHT, height)
         self.log.info(f"Mined to height {height} (below gate {self.ACTIVATION_HEIGHT}, v1 transcript)")
 
+        # Negative assertion: the gate must NOT be active below the height. This
+        # distinguishes "gate fired correctly" from "gate plumbing silently
+        # broke and both sides stayed on v1" -- without it, a broken gate passes
+        # this test unnoticed.
+        gbt = node.getblocktemplate({"rules": ["segwit"]})
+        assert_equal(gbt.get("pops_transcript_v2"), False)
+
         # Mine across the boundary and well past it. Every block from
         # ACTIVATION_HEIGHT up is built and verified under v2; if the prover and
         # verifier disagreed at or across the cutover, generatetoblsctaddress
@@ -69,6 +76,12 @@ class BlsctProofTranscriptV2Test(BitcoinTestFramework):
         height = node.getblockcount()
         assert_greater_than(height, self.ACTIVATION_HEIGHT)
         self.log.info(f"Mined across gate to height {height} (v2 transcript accepted)")
+
+        # Positive assertion: the gate IS active above the height -- confirms the
+        # -blsctproofv2height plumbing actually fired, so the clean cross-boundary
+        # mining above is real v2 verification, not two sides silently on v1.
+        gbt = node.getblocktemplate({"rules": ["segwit"]})
+        assert_equal(gbt.get("pops_transcript_v2"), True)
 
         # A confidential spend built above the gate carries v2 output range
         # proofs. sendtoaddress returning a txid already means the tx passed
