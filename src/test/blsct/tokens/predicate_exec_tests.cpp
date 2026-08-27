@@ -195,4 +195,62 @@ BOOST_AUTO_TEST_CASE(mint_nft_high_bit_id_rejected)
     BOOST_CHECK(!blsct::ExecutePredicate(parsed_max, view));
 }
 
+// A single transaction may carry a CREATE_TOKEN output followed by a MINT
+// output for the same token (consensus-valid; block aggregation can also
+// produce the shape). Connect applies predicates in forward vout order, so
+// disconnect must unwind them in REVERSE vout order: reverting the create
+// first erases the token entry, the mint revert's token lookup then fails,
+// and DisconnectBlock would return DISCONNECT_FAILED -- aborting the reorg.
+// This pins the ordering dependency DisconnectBlock's reverse loop relies on.
+BOOST_AUTO_TEST_CASE(create_then_mint_reverts_in_reverse_order_only)
+{
+    const auto apply_forward = [](CCoinsViewCache& view) {
+        auto create = MakeCreate(blsct::TOKEN, /*total_supply=*/1000);
+        blsct::ParsedPredicate parsed_create(create);
+        BOOST_REQUIRE(blsct::ExecutePredicate(parsed_create, view));
+
+        blsct::PrivateKey owner_sk(7);
+        blsct::MintTokenPredicate mint(owner_sk.GetPublicKey(), /*amount=*/100);
+        blsct::ParsedPredicate parsed_mint(mint);
+        BOOST_REQUIRE(blsct::ExecutePredicate(parsed_mint, view));
+    };
+
+    // Forward-order unwind (the old DisconnectBlock iteration) fails: the
+    // create revert erases the token, so the mint revert cannot find it.
+    {
+        CCoinsViewDB base{{.path = "test_fwd", .cache_bytes = 1 << 20, .memory_only = true}, {}};
+        CCoinsViewCache view{&base};
+        apply_forward(view);
+
+        auto create = MakeCreate(blsct::TOKEN, /*total_supply=*/1000);
+        blsct::ParsedPredicate parsed_create(create);
+        BOOST_REQUIRE(blsct::ExecutePredicate(parsed_create, view, /*fDisconnect=*/true));
+
+        blsct::PrivateKey owner_sk(7);
+        blsct::MintTokenPredicate mint(owner_sk.GetPublicKey(), /*amount=*/100);
+        blsct::ParsedPredicate parsed_mint(mint);
+        BOOST_CHECK(!blsct::ExecutePredicate(parsed_mint, view, /*fDisconnect=*/true));
+    }
+
+    // Reverse-order unwind (mint first, then create -- what DisconnectBlock
+    // does now) succeeds and leaves no trace of the token.
+    {
+        CCoinsViewDB base{{.path = "test_rev", .cache_bytes = 1 << 20, .memory_only = true}, {}};
+        CCoinsViewCache view{&base};
+        apply_forward(view);
+
+        blsct::PrivateKey owner_sk(7);
+        blsct::MintTokenPredicate mint(owner_sk.GetPublicKey(), /*amount=*/100);
+        blsct::ParsedPredicate parsed_mint(mint);
+        BOOST_CHECK(blsct::ExecutePredicate(parsed_mint, view, /*fDisconnect=*/true));
+
+        auto create = MakeCreate(blsct::TOKEN, /*total_supply=*/1000);
+        blsct::ParsedPredicate parsed_create(create);
+        BOOST_CHECK(blsct::ExecutePredicate(parsed_create, view, /*fDisconnect=*/true));
+
+        blsct::TokenEntry gone;
+        BOOST_CHECK(!view.GetToken(owner_sk.GetPublicKey().GetHash(), gone));
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
