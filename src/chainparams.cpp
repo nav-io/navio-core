@@ -21,6 +21,21 @@
 #include <stdexcept>
 #include <vector>
 
+// Parse the optional -blsctproofv2height override (testnet / blsctregtest only).
+// Returns nullopt when unset; throws on an out-of-range value.
+static std::optional<int> ReadBLSCTProofV2Height(const ArgsManager& args)
+{
+    if (!args.IsArgSet("-blsctproofv2height")) return std::nullopt;
+    const int64_t height = args.GetIntArg("-blsctproofv2height", std::numeric_limits<int>::max());
+    if (height < 0 || height > std::numeric_limits<int>::max()) {
+        throw std::runtime_error(strprintf("Invalid height (%d) for -blsctproofv2height.", height));
+    }
+    LogPrintf("WARNING: -blsctproofv2height=%d overrides the BLSCT proof transcript v2 activation height. "
+              "This is a consensus-forking parameter: every node on the network MUST use the same value, "
+              "or nodes will fork at the activation height.\n", static_cast<int>(height));
+    return static_cast<int>(height);
+}
+
 void ReadSigNetArgs(const ArgsManager& args, CChainParams::SigNetOptions& options)
 {
     if (args.IsArgSet("-signetseednode")) {
@@ -103,13 +118,7 @@ void ReadBLSCTRegTestArgs(const ArgsManager& args, CChainParams::BLSCTRegTestOpt
 {
     if (auto value = args.GetBoolArg("-fastprune")) options.fastprune = *value;
 
-    if (args.IsArgSet("-blsctproofv2height")) {
-        const int64_t height = args.GetIntArg("-blsctproofv2height", std::numeric_limits<int>::max());
-        if (height < 0 || height > std::numeric_limits<int>::max()) {
-            throw std::runtime_error(strprintf("Invalid height (%d) for -blsctproofv2height.", height));
-        }
-        options.blsct_proof_v2_height = static_cast<int>(height);
-    }
+    options.blsct_proof_v2_height = ReadBLSCTProofV2Height(args);
 
     for (const std::string& arg : args.GetArgs("-testactivationheight")) {
         const auto found{arg.find('@')};
@@ -179,17 +188,8 @@ std::unique_ptr<const CChainParams> CreateChainParams(const ArgsManager& args, c
     switch (chain) {
     case ChainType::MAIN:
         return CChainParams::Main();
-    case ChainType::TESTNET: {
-        std::optional<int> blsct_proof_v2_height;
-        if (args.IsArgSet("-blsctproofv2height")) {
-            const int64_t height = args.GetIntArg("-blsctproofv2height", std::numeric_limits<int>::max());
-            if (height < 0 || height > std::numeric_limits<int>::max()) {
-                throw std::runtime_error(strprintf("Invalid height (%d) for -blsctproofv2height.", height));
-            }
-            blsct_proof_v2_height = static_cast<int>(height);
-        }
-        return CChainParams::TestNet(blsct_proof_v2_height);
-    }
+    case ChainType::TESTNET:
+        return CChainParams::TestNet(ReadBLSCTProofV2Height(args));
     case ChainType::SIGNET: {
         auto opts = CChainParams::SigNetOptions{};
         ReadSigNetArgs(args, opts);
