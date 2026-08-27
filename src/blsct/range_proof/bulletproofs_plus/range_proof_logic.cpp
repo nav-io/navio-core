@@ -283,6 +283,13 @@ RangeProof<T> RangeProofLogic<T>::Prove(
     // This hash is updated for Fiat-Shamir throughout the proof
     HashWriter fiat_shamir{};
 
+    // v2 domain separation: a context tag as the first absorbed item, so this
+    // transcript cannot collide with any other proof system or version. Mirror
+    // exactly in RangeProofWithTranscript::Build.
+    if (transcript_v2) {
+        fiat_shamir << std::string("NAVIO_BULLETPROOFS_PLUS_V2");
+    }
+
 retry: // hasher is not cleared so that different hash will be obtained upon retry
 
     // Calculate value commitments directly form the input values

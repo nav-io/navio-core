@@ -215,6 +215,12 @@ SetMemProof<T> SetMemProofProver<T>::Prove(
         Ys, A1, A2, S1, S2, S3, phi, eta_fiat_shamir
     );
 
+    // v2 domain separation: a context tag so this transcript cannot collide
+    // with any other proof system or version. Mirror exactly in Verify.
+    if (transcript_v2) {
+        fiat_shamir << std::string("NAVIO_SETMEM_V2");
+    }
+
 retry: // retrying without generating fiat_shamir again to get different hashes
     GEN_FIAT_SHAMIR_VAR(y, fiat_shamir, retry);
     GEN_FIAT_SHAMIR_VAR(z, fiat_shamir, retry);
@@ -321,6 +327,13 @@ bool SetMemProofProver<T>::Verify(
         Ys, proof.A1, proof.A2, proof.S1,
         proof.S2, proof.S3, proof.phi, eta_fiat_shamir
     );
+
+    // v2 domain separation: mirror Prove — a context tag right after the
+    // initial transcript, before any challenge is drawn.
+    if (transcript_v2) {
+        fiat_shamir << std::string("NAVIO_SETMEM_V2");
+    }
+
     Point h2 = setup.H5(Ys.GetVch());
 
     auto gens = setup.Gf().GetInstance(eta_phi);

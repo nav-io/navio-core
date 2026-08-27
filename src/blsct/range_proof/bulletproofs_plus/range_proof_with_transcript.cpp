@@ -26,6 +26,12 @@ RangeProofWithTranscript<T> RangeProofWithTranscript<T>::Build(const RangeProofW
     HashWriter fiat_shamir{};
     Scalars es;
 
+    // v2 domain separation: mirror RangeProofLogic::Prove — a context tag as the
+    // first absorbed item.
+    if (proof.transcript_v2) {
+        fiat_shamir << std::string("NAVIO_BULLETPROOFS_PLUS_V2");
+    }
+
     size_t m = blsct::Common::GetFirstPowerOf2GreaterOrEqTo(proof.Vs.Size());
     size_t n = range_proof::Setup::num_input_value_bits;
     size_t mn = m * n;
