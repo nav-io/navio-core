@@ -508,6 +508,7 @@ Elements<T> Elements<T>::From(const size_t from_index) const
     }
 
     Elements<T> ret;
+    ret.m_vec.reserve(m_vec.size() - from_index);
     for (size_t i = from_index; i < m_vec.size(); ++i) {
         ret.m_vec.push_back(m_vec[i]);
     }
@@ -524,6 +525,7 @@ Elements<T> Elements<T>::To(const size_t to_index) const
     }
 
     Elements<T> ret;
+    ret.m_vec.reserve(to_index);
     for (size_t i = 0; i < to_index; ++i) {
         ret.m_vec.push_back(m_vec[i]);
     }

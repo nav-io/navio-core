@@ -15,14 +15,14 @@
 template <typename T>
 Elements<typename T::Point> range_proof::Generators<T>::GetGiSubset(const size_t& size) const
 {
-    return Gi.To(size);
+    return Gi->To(size);
 }
 template Elements<Mcl::Point> range_proof::Generators<Mcl>::GetGiSubset(const size_t&) const;
 
 template <typename T>
 Elements<typename T::Point> range_proof::Generators<T>::GetHiSubset(const size_t& size) const
 {
-    return Hi.To(size);
+    return Hi->To(size);
 }
 template Elements<Mcl::Point> range_proof::Generators<Mcl>::GetHiSubset(const size_t&) const;
 
@@ -93,7 +93,7 @@ range_proof::Generators<T> range_proof::GeneratorsFactory<T>::GetInstance(const 
         G = m_deriver.Derive(m_H, 0, seed);
     }
 
-    Generators<T> gens(G, m_H, m_Gi, m_Hi);
+    Generators<T> gens(G, m_H, &m_Gi, &m_Hi);
     return gens;
 }
 template range_proof::Generators<Mcl> range_proof::GeneratorsFactory<Mcl>::GetInstance(const Seed&) const;
