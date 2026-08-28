@@ -116,6 +116,31 @@ class BlsctProofTranscriptV2Test(BitcoinTestFramework):
         assert_equal(node.getblockcount(), height + 1)
         self.log.info("Reindex re-verified the full chain across the gate")
 
+        # Reload + re-acquire the wallet RPC handle after the restart.
+        if "w" not in node.listwallets():
+            node.loadwallet("w")
+        wallet = node.get_wallet_rpc("w")
+
+        # H-3: a reorg across the gate must not stall block production. A tx
+        # accepted above the gate carries the mandatory v2 marker; after the tip
+        # moves back below the gate that marker is a consensus violation, and if
+        # the tx lingers in the mempool the miner's own TestBlockValidity rejects
+        # every template and the chain stalls. The reorg-aware eviction must drop
+        # it so the node keeps producing blocks. Assert exactly that: build a v2
+        # tx above the gate, reorg to below the gate, then confirm a block is
+        # still produced (it would throw/stall on the pre-fix tree).
+        wallet.sendtoaddress(wallet.getnewaddress(label="", address_type="blsct"), 1)
+        assert_equal(node.getmempoolinfo()["size"], 1)
+        below_gate = node.getblockhash(self.ACTIVATION_HEIGHT - 3)
+        node.invalidateblock(below_gate)
+        # tip is now below the gate: tip + 1 < ACTIVATION_HEIGHT
+        assert_greater_than(self.ACTIVATION_HEIGHT, node.getblockcount() + 1)
+        h_before = node.getblockcount()
+        self.generate_blsct_blocks(node, addr, 1)
+        assert_equal(node.getblockcount(), h_before + 1)
+        self.log.info(f"H-3: produced a block at height {node.getblockcount()} after a cross-gate reorg (no stall)")
+        node.reconsiderblock(below_gate)
+
 
 if __name__ == '__main__':
     BlsctProofTranscriptV2Test(__file__).main()

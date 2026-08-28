@@ -752,6 +752,18 @@ BlsctCTxRetVal* build_ctx(
             tx_in.rbf);
     }
 
+    // Wire the caller's transcript-v2 request through to the factory: if any
+    // output asks for v2, build the whole transaction under v2 (all outputs of a
+    // transaction share one transcript version, and BuildTx then stamps
+    // BLSCT_PROOF_V2_MARKER). Without this, a set_tx_out_transcript_v2 request
+    // would be silently dropped and the transaction rejected above the gate.
+    for (size_t i = 0; i < tx_outs->size(); ++i) {
+        if (tx_outs->at(i).transcript_v2) {
+            psbt.SetTranscriptV2(true);
+            break;
+        }
+    }
+
     for (size_t i = 0; i < tx_outs->size(); ++i) {
         // unserialize tx_out fields and add to TxFactoryBase
         const BlsctTxOut& tx_out = tx_outs->at(i);

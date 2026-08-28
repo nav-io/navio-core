@@ -101,6 +101,16 @@ public:
 
     bool Verify(const CCoinsViewCache& view, const blsct::Message& additional_commitment) const
     {
+        // The version byte is attacker-controlled (it comes from the proof blob
+        // supplied to verifyblsctbalanceproof). Accept ONLY the current version:
+        // a lower version would be verified under the legacy transcript the
+        // disclosure calls unsound (a downgrade switch), and an unknown higher
+        // version must not be silently treated as v2. There is no legacy corpus
+        // to support -- pre-release proofs are regenerated.
+        if (m_version != VERSION_V2) {
+            return false;
+        }
+
         // Sum up all commitments from the outputs
         MclG1Point sum_commitment;
         MclG1Point public_key;

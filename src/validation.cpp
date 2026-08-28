@@ -348,6 +348,22 @@ void Chainstate::MaybeUpdateMempoolForReorg(
         AssertLockHeld(::cs_main);
         const CTransaction& tx = it->GetTx();
 
+        // BLSCT proof transcript v2 flag rule: a BLSCT tx's BLSCT_PROOF_V2_MARKER
+        // must match the regime at the new tip (set iff tip+1 >= nBLSCTProofV2Height).
+        // A reorg across the activation height leaves a once-valid tx with a marker
+        // that now disagrees; it is a consensus violation that would stall block
+        // production (the miner's own TestBlockValidity rejects any template with
+        // it), so evict it here and let the wallet resubmit under the right
+        // transcript. This is the reorg (downward) counterpart of the forward
+        // eviction in ConnectTip.
+        if (tx.IsBLSCT()) {
+            const int v2_height = m_chainman.GetConsensus().nBLSCTProofV2Height;
+            if (v2_height != std::numeric_limits<int>::max()) {
+                const bool require_v2 = (m_chain.Tip()->nHeight + 1) >= v2_height;
+                if (tx.IsBLSCTProofV2() != require_v2) return true;
+            }
+        }
+
         // The transaction must be final.
         if (!CheckFinalTxAtTip(*Assert(m_chain.Tip()), tx)) return true;
 
@@ -3564,28 +3580,30 @@ bool Chainstate::ConnectTip(BlockValidationState& state, CBlockIndex* pindexNew,
         m_mempool->removeForBlock(blockConnecting.vtx, pindexNew->nHeight);
         disconnectpool.removeForBlock(blockConnecting.vtx);
 
-        // BLSCT proof transcript v2 flag day: transactions accepted below the
-        // gate carry v1 proofs and become unminable once the next block is at
-        // or above nBLSCTProofV2Height -- the miner's own TestBlockValidity
-        // would reject any template that includes them, stalling block
-        // production for as long as they linger. As the tip reaches the last
-        // pre-activation block, evict every BLSCT transaction so wallets
-        // resubmit them rebuilt with the v2 transcript. One-shot: triggered
-        // only by the block at height nBLSCTProofV2Height - 1, and only when a
-        // real (non-dormant) activation height is configured.
+        // BLSCT proof transcript v2: a BLSCT tx's BLSCT_PROOF_V2_MARKER must match
+        // the regime at the tip (set iff tip+1 >= nBLSCTProofV2Height). Evict every
+        // mempool BLSCT tx whose marker now disagrees. Going forward across the
+        // gate a v1-flagged tx becomes unminable; the same rule on the reorg
+        // predicate (filter_final_and_mature -> removeForReorg) handles the
+        // downward case when the tip moves back below the gate. Without this the
+        // miner's own TestBlockValidity rejects any template carrying the tx and
+        // block production stalls for as long as it lingers. Wallets resubmit the
+        // tx rebuilt under the correct transcript.
         const int v2_height = m_chainman.GetConsensus().nBLSCTProofV2Height;
-        if (v2_height != std::numeric_limits<int>::max() && pindexNew->nHeight == v2_height - 1) {
-            std::vector<CTransactionRef> blsct_txs;
+        if (v2_height != std::numeric_limits<int>::max()) {
+            const bool require_v2 = (pindexNew->nHeight + 1) >= v2_height;
+            std::vector<CTransactionRef> stale;
             for (const auto& entry : m_mempool->mapTx) {
-                if (entry.GetTx().IsBLSCT()) blsct_txs.push_back(entry.GetSharedTx());
+                const auto& t = entry.GetTx();
+                if (t.IsBLSCT() && t.IsBLSCTProofV2() != require_v2) stale.push_back(entry.GetSharedTx());
             }
-            for (const auto& tx : blsct_txs) {
+            for (const auto& tx : stale) {
                 if (m_mempool->exists(GenTxid::Txid(tx->GetHash()))) {
                     m_mempool->removeRecursive(*tx, MemPoolRemovalReason::REORG);
                 }
             }
-            if (!blsct_txs.empty()) {
-                LogPrintf("BLSCT transcript v2 activation at height %d: evicted %u v1 BLSCT transaction(s) from the mempool; wallets must resubmit them under the v2 transcript.\n", v2_height, static_cast<unsigned>(blsct_txs.size()));
+            if (!stale.empty()) {
+                LogPrintf("BLSCT transcript v2: evicted %u mempool transaction(s) whose proof-v2 flag no longer matches the tip at height %d.\n", static_cast<unsigned>(stale.size()), pindexNew->nHeight);
             }
         }
     }
