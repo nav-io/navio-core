@@ -53,8 +53,8 @@ void FixedBaseCache::MaybeInit(const range_proof::Generators<Mcl>& gens)
         const size_t pool = range_proof::Setup::max_input_value_vec_len;
         size_t prefix = EnvSize("NAVIO_BLSCT_FIXEDBASE_PREFIX", 128);
         if (prefix > pool) prefix = pool;
-        if (prefix > gens.Gi.Size()) prefix = gens.Gi.Size();
-        if (prefix > gens.Hi.Size()) prefix = gens.Hi.Size();
+        if (prefix > gens.Gi->Size()) prefix = gens.Gi->Size();
+        if (prefix > gens.Hi->Size()) prefix = gens.Hi->Size();
         m_prefix = prefix;
         if (m_prefix == 0) { m_enabled = false; return; }
 
@@ -68,12 +68,12 @@ void FixedBaseCache::MaybeInit(const range_proof::Generators<Mcl>& gens)
             gi.reserve(m_prefix);
             hi.reserve(m_prefix);
             for (size_t i = 0; i < m_prefix; ++i) {
-                gi.push_back(gens.Gi[i]);
-                hi.push_back(gens.Hi[i]);
+                gi.push_back((*gens.Gi)[i]);
+                hi.push_back((*gens.Hi)[i]);
             }
             m_gi = FixedBaseWindow(gi, m_winSize);
             m_hi = FixedBaseWindow(hi, m_winSize);
-            m_gi_base0 = gens.Gi[0];
+            m_gi_base0 = (*gens.Gi)[0];
         } catch (const std::exception&) {
             m_enabled = false;
             m_prefix = 0;
@@ -88,7 +88,7 @@ void FixedBaseCache::MaybeInit(const range_proof::Generators<Mcl>& gens)
     // seed-dependent generator change fails loudly instead of producing wrong
     // verdicts from stale tables.
     if (m_enabled) {
-        assert(m_gi_base0 == gens.Gi[0]);
+        assert(m_gi_base0 == (*gens.Gi)[0]);
     }
 }
 
