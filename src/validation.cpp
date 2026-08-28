@@ -359,7 +359,7 @@ void Chainstate::MaybeUpdateMempoolForReorg(
         if (tx.IsBLSCT()) {
             const int v2_height = m_chainman.GetConsensus().nBLSCTProofV2Height;
             if (v2_height != std::numeric_limits<int>::max()) {
-                const bool require_v2 = (m_chain.Tip()->nHeight + 1) >= v2_height;
+                const bool require_v2 = (Assert(m_chain.Tip())->nHeight + 1) >= v2_height;
                 if (tx.IsBLSCTProofV2() != require_v2) return true;
             }
         }
@@ -3590,7 +3590,15 @@ bool Chainstate::ConnectTip(BlockValidationState& state, CBlockIndex* pindexNew,
         // block production stalls for as long as it lingers. Wallets resubmit the
         // tx rebuilt under the correct transcript.
         const int v2_height = m_chainman.GetConsensus().nBLSCTProofV2Height;
-        if (v2_height != std::numeric_limits<int>::max()) {
+        // Only scan when connecting this block moves the next-block regime across
+        // the gate. A mempool tx accepted matching the old tip+1 regime stays
+        // consistent as the tip advances within the same regime, so away from the
+        // crossing block the scan would find nothing -- skip it entirely, so this
+        // costs nothing before or after the flag day. The downward (reorg) case is
+        // handled by the removeForReorg predicate.
+        const bool crossing = v2_height != std::numeric_limits<int>::max() &&
+                              ((pindexNew->nHeight + 1 >= v2_height) != (pindexNew->nHeight >= v2_height));
+        if (crossing) {
             const bool require_v2 = (pindexNew->nHeight + 1) >= v2_height;
             std::vector<CTransactionRef> stale;
             for (const auto& entry : m_mempool->mapTx) {

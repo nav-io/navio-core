@@ -1614,14 +1614,13 @@ BlsctBoolRetVal* verify_range_proofs(
             return seeds;
         };
 
-        // There is no height context here: a proof was built under either the
-        // legacy (v1) or the v2 Fiat-Shamir transcript. Verification fails closed
-        // under the wrong version, so verify the batch under v1 and, failing
-        // that, under v2. A batch mixing the two versions is not supported via
-        // this API (build separate batches per version).
-        bool is_valid = g_rpl->Verify(seeds_for(/*transcript_v2=*/false)) ||
-                        g_rpl->Verify(seeds_for(/*transcript_v2=*/true));
-        return succ_bool(is_valid);
+        // v2 only. This entry point has no version context, so accepting a proof
+        // under whichever transcript happens to verify it would let a proof
+        // forged under the unsound legacy (v1) transcript verify true -- the same
+        // downgrade the balance-proof version floor closes. Refuse v1 here; a
+        // caller that wants to check a v1 proof deliberately must use
+        // verify_range_proofs_with_transcript(..., /*transcript_v2=*/false).
+        return succ_bool(g_rpl->Verify(seeds_for(/*transcript_v2=*/true)));
 
     } catch (...) {
     }

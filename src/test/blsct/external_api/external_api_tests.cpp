@@ -880,4 +880,43 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
     free(aggregate_rv);
 }
 
+// M-3: the default C API range-proof verifier accepts v2 only. A proof built
+// under the legacy (v1) transcript must be refused, so a proof forged under the
+// unsound transcript cannot verify true out of band. The explicit
+// version-aware entry point still checks each proof under a stated version.
+BOOST_AUTO_TEST_CASE(test_verify_range_proofs_is_v2_only)
+{
+    init();
+
+    bulletproofs_plus::RangeProofLogic<Mcl> rpl;
+    auto nonce = Mcl::Point::Rand();
+    std::vector<uint8_t> msg;
+    TokenId token_id;
+
+    Scalars vs1; vs1.Add(Mcl::Scalar(static_cast<int64_t>(42)));
+    auto v1_proof = rpl.Prove(vs1, nonce, msg, token_id, Mcl::Scalar(0), /*transcript_v2=*/false);
+    Scalars vs2; vs2.Add(Mcl::Scalar(static_cast<int64_t>(42)));
+    auto v2_proof = rpl.Prove(vs2, nonce, msg, token_id, Mcl::Scalar(0), /*transcript_v2=*/true);
+
+    std::vector<bulletproofs_plus::RangeProof<Mcl>> v1_vec{v1_proof};
+    std::vector<bulletproofs_plus::RangeProof<Mcl>> v2_vec{v2_proof};
+
+    // Default verifier: v2 accepted, v1 refused (the downgrade this closes).
+    auto* r_v2 = verify_range_proofs(&v2_vec);
+    BOOST_REQUIRE(r_v2->result == BLSCT_SUCCESS);
+    BOOST_CHECK(r_v2->value);
+    auto* r_v1 = verify_range_proofs(&v1_vec);
+    BOOST_REQUIRE(r_v1->result == BLSCT_SUCCESS);
+    BOOST_CHECK(!r_v1->value);
+
+    // Explicit version-aware verifier: each proof checks true under its own
+    // version, and a v1 proof checked under v2 fails.
+    auto* e_v1 = verify_range_proofs_with_transcript(&v1_vec, /*transcript_v2=*/false);
+    BOOST_CHECK(e_v1->result == BLSCT_SUCCESS && e_v1->value);
+    auto* e_v2 = verify_range_proofs_with_transcript(&v2_vec, /*transcript_v2=*/true);
+    BOOST_CHECK(e_v2->result == BLSCT_SUCCESS && e_v2->value);
+    auto* e_v1_wrong = verify_range_proofs_with_transcript(&v1_vec, /*transcript_v2=*/true);
+    BOOST_CHECK(!e_v1_wrong->value);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

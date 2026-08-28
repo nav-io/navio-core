@@ -494,6 +494,10 @@ BlsctRetVal* build_range_proof(
     const char* blsct_msg,
     const BlsctTokenId* blsct_token_id);
 
+// Verify range proofs under the v2 transcript ONLY. This has no version context,
+// so it refuses v1 rather than guessing: accepting whichever transcript verifies
+// would let a proof forged under the unsound v1 transcript pass. To check a v1
+// proof deliberately, use verify_range_proofs_with_transcript(..., false).
 BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs);
 
