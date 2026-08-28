@@ -18,6 +18,10 @@ namespace blsct {
 class UnsignedTransaction
 {
 private:
+    // Serialization format version, written FIRST so a decoder can dispatch on
+    // it (a decoder that predates this field cannot parse the blob; pre-release
+    // unsigned transactions must be regenerated). Bump when the layout changes.
+    uint8_t m_ser_version{1};
     // Inputs and outputs
     std::vector<UnsignedInput> m_inputs;
     std::vector<UnsignedOutput> m_outputs;
@@ -47,7 +51,7 @@ public:
     // Serialization
     SERIALIZE_METHODS(UnsignedTransaction, obj)
     {
-        READWRITE(obj.m_inputs, obj.m_outputs, obj.m_fee, obj.m_transcript_v2);
+        READWRITE(obj.m_ser_version, obj.m_inputs, obj.m_outputs, obj.m_fee, obj.m_transcript_v2);
     }
 
     // Serialization helpers

@@ -135,9 +135,12 @@ public:
         return prover.Verify(proofs) && blsct::PublicKey(public_key).Verify(additional_commitment, m_signature);
     }
 
+    // Version byte FIRST so a decoder can dispatch on it before reading the rest
+    // (a v1 reader that predates the byte cannot parse this; pre-release proofs
+    // must be regenerated -- balance proofs are ephemeral attestations).
     SERIALIZE_METHODS(BalanceProof, obj)
     {
-        READWRITE(obj.m_outpoints, obj.m_min_amount, obj.m_proof, obj.m_signature, obj.m_index, obj.m_version);
+        READWRITE(obj.m_version, obj.m_outpoints, obj.m_min_amount, obj.m_proof, obj.m_signature, obj.m_index);
     }
 };
 

@@ -89,6 +89,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
     auto ret = UnsignedOutput();
 
     ret.type = type;
+    ret.transcript_v2 = transcript_v2;
 
     ret.out.nValue = 0;
     ret.out.tokenId = tokenId;
@@ -151,6 +152,7 @@ UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& de
     auto ret = UnsignedOutput();
 
     ret.type = type;
+    ret.transcript_v2 = transcript_v2;
 
     ret.out.nValue = 0;
     ret.out.tokenId = tokenId;

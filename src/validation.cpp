@@ -2587,12 +2587,15 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
         }
 
-        // PoS eligibility proofs (kernel range proof + set-membership proof)
-        // select their transcript from the block's v2 flag, enforced against the
-        // activation height: at and above nBLSCTProofV2Height the block MUST
-        // carry VERSION_BIT_BLSCT_PROOF_V2.
-        if (pindex->nHeight >= params.GetConsensus().nBLSCTProofV2Height && !block.IsBLSCTProofV2()) {
-            LogPrint(BCLog::POPS, "PoPS rejected: block at height %d missing required BLSCT proof-v2 flag\n", pindex->nHeight);
+        // PoS eligibility proofs (kernel range proof + set-membership proof) use
+        // the height-derived transcript, and the block's VERSION_BIT_BLSCT_PROOF_V2
+        // must agree with the activation height both ways: set at/above
+        // nBLSCTProofV2Height, clear below it. A mismatch is rejected so the flag
+        // cannot disagree with the height.
+        const bool pos_require_v2 = pindex->nHeight >= params.GetConsensus().nBLSCTProofV2Height;
+        if (block.IsBLSCTProofV2() != pos_require_v2) {
+            LogPrint(BCLog::POPS, "PoPS rejected: block at height %d has BLSCT proof-v2 flag=%d, expected %d\n",
+                     pindex->nHeight, block.IsBLSCTProofV2() ? 1 : 0, pos_require_v2 ? 1 : 0);
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
         }
         const bool pos_transcript_v2 = block.IsBLSCTProofV2();

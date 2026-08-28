@@ -110,6 +110,15 @@ BOOST_FIXTURE_TEST_CASE(invalid_pos_proof_is_rejected, TestBLSCTChain100Setup)
     // Sanity: the freshly-built block must pass verification.
     BOOST_CHECK(blsct::ProofOfStakeLogic::Verify(view, &index, block, params));
 
+    // ---- mutation 0: clear the BLSCT proof-v2 flag. blsctregtest activates from
+    // genesis, so this block is at/above the activation height and must carry the
+    // flag; clearing it is the negative side of the flag-enforcement rule.
+    {
+        CBlock tampered = block;
+        tampered.nVersion &= ~CBlockHeader::VERSION_BIT_BLSCT_PROOF_V2;
+        BOOST_CHECK(!blsct::ProofOfStakeLogic::Verify(view, &index, tampered, params));
+    }
+
     // ---- mutation 1: swap pindexPrev for one with a different stake modifier.
     // The set-mem-proof Fiat-Shamir seed is derived from pindexPrev; any
     // divergence from the grinded context must invalidate the proof.

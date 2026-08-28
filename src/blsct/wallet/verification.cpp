@@ -99,14 +99,21 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
 {
     using Clock = std::chrono::steady_clock;
 
-    // Select the range-proof transcript from the transaction's v2 flag, and
-    // enforce that flag against the activation height: a BLSCT transaction at or
-    // above nBLSCTProofV2Height MUST carry BLSCT_PROOF_V2_MARKER. Below it the
-    // flag is free and the proofs are verified under whichever transcript it
-    // selects. The flag is stamped once onto every RangeProofWithSeed collected
-    // for the batch verify.
-    if (nSpendHeight >= nBLSCTProofV2Height && tx.IsBLSCT() && !tx.IsBLSCTProofV2()) {
-        return state.Invalid(TxValidationResult::TX_CONSENSUS, "missing-blsct-proof-v2-flag");
+    // The BLSCT_PROOF_V2_MARKER must agree with the activation height, both ways:
+    // a BLSCT transaction at or above nBLSCTProofV2Height MUST carry it, and one
+    // below the height MUST NOT. Rejecting a v2-flagged tx below the gate is what
+    // keeps the flag from being an independent selector -- otherwise a v2-flagged
+    // tx would be consensus-valid below the gate, and the miner (which OR-s the
+    // marker across an aggregate) would build a mixed aggregate whose v1
+    // constituents fail v2 verification, stalling block production. The marker is
+    // a self-describing signal, not a free selector. The verified transcript is
+    // then simply the height-derived one.
+    if (tx.IsBLSCT()) {
+        const bool require_v2 = nSpendHeight >= nBLSCTProofV2Height;
+        if (tx.IsBLSCTProofV2() != require_v2) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS,
+                                 require_v2 ? "missing-blsct-proof-v2-flag" : "unexpected-blsct-proof-v2-flag");
+        }
     }
     const bool rp_transcript_v2 = tx.IsBLSCTProofV2();
     const bool bench_on = LogAcceptCategory(BCLog::BENCH, BCLog::Level::Debug);

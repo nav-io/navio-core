@@ -41,6 +41,9 @@ struct UnsignedOutput {
     Scalar gamma;
     Scalar tokenKey;
     CreateTransactionType type{NORMAL};
+    // Transcript version the output's range proof was built under. Carried so a
+    // transaction assembled from this output can stamp BLSCT_PROOF_V2_MARKER.
+    bool transcript_v2{false};
 
     void
     GenerateKeys(Scalar blindingKey, DoublePublicKey destKeys);
@@ -57,6 +60,7 @@ struct UnsignedOutput {
         ::Serialize(s, tokenKey);
         int32_t typeInt = static_cast<int32_t>(type);
         ::Serialize(s, typeInt);
+        ::Serialize(s, transcript_v2);
     }
 
     template <typename Stream>
@@ -70,6 +74,7 @@ struct UnsignedOutput {
         int32_t typeInt;
         ::Unserialize(s, typeInt);
         type = static_cast<CreateTransactionType>(typeInt);
+        ::Unserialize(s, transcript_v2);
     }
 };
 

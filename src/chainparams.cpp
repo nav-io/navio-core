@@ -192,18 +192,20 @@ std::unique_ptr<const CChainParams> CreateChainParams(const ArgsManager& args, c
 {
     switch (chain) {
     case ChainType::MAIN: {
-        // Honored defer-only on mainnet (see CMainParams): can push activation
-        // later than the buried height, never earlier, never arm a dormant chain.
-        // The buried height is INT_MAX (dormant) today, so no value can exceed it
-        // and any override is ignored -- warn plainly rather than let the log in
-        // ReadBLSCTProofV2Height imply it took effect.
+        // Honored defer-only on mainnet (see CMainParams): a value strictly
+        // greater than the buried activation height defers it; anything else is
+        // ignored. Warn only when the override was actually ignored -- compare
+        // the requested value against the effective one -- so the message stays
+        // correct after mainnet is armed at a real height (a legitimate deferring
+        // value then takes effect and is not warned about).
         auto override_height = ReadBLSCTProofV2Height(args);
-        if (override_height) {
-            LogPrintf("WARNING: -blsctproofv2height is IGNORED on mainnet: the override is defer-only and "
-                      "mainnet activation is dormant (buried height is INT_MAX), so no value can take effect. "
-                      "It can only ever push a future buried activation later, never arm or pull one earlier.\n");
+        auto params = CChainParams::Main(override_height);
+        if (override_height && params->GetConsensus().nBLSCTProofV2Height != *override_height) {
+            LogPrintf("WARNING: -blsctproofv2height=%d IGNORED on mainnet: the override is defer-only (only a "
+                      "value greater than the buried activation height takes effect). It cannot arm a dormant "
+                      "chain or pull activation earlier.\n", *override_height);
         }
-        return CChainParams::Main(override_height);
+        return params;
     }
     case ChainType::TESTNET:
         return CChainParams::TestNet(ReadBLSCTProofV2Height(args));

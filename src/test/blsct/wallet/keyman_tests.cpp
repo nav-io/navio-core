@@ -229,10 +229,16 @@ BOOST_FIXTURE_TEST_CASE(recover_outputs_transcript_v2_fallback, TestingSetup)
     BOOST_REQUIRE(!rec_v2.amounts.empty());
     BOOST_CHECK_EQUAL(rec_v2.amounts[0].amount, 77 * COIN);
 
-    // A batch straddling both transcripts recovers every output.
+    // A batch straddling both transcripts recovers every output, and each id
+    // maps to its own amount (the by-id mapping the C API relies on when it
+    // appends the v2 retry's results out of order).
     auto rec_mixed = blsct_km->RecoverOutputs({out_v1.out, out_v2.out});
     BOOST_REQUIRE(rec_mixed.is_completed);
-    BOOST_CHECK_EQUAL(rec_mixed.amounts.size(), 2U);
+    BOOST_REQUIRE_EQUAL(rec_mixed.amounts.size(), 2U);
+    std::map<size_t, CAmount> by_id;
+    for (const auto& a : rec_mixed.amounts) by_id[a.id] = a.amount;
+    BOOST_CHECK_EQUAL(by_id[0], 42 * COIN);  // index 0 was the v1 output
+    BOOST_CHECK_EQUAL(by_id[1], 77 * COIN);  // index 1 was the v2 output
 }
 
 BOOST_AUTO_TEST_SUITE_END()

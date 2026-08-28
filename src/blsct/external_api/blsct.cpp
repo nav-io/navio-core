@@ -1617,6 +1617,28 @@ BlsctBoolRetVal* verify_range_proofs(
     return err_bool(BLSCT_EXCEPTION);
 }
 
+BlsctBoolRetVal* verify_range_proofs_with_transcript(
+    const void* vp_range_proofs,
+    const bool transcript_v2)
+{
+    try {
+        auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+
+        std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> seeds;
+        seeds.reserve(range_proofs->size());
+        for (const auto& rp : *range_proofs) {
+            bulletproofs_plus::RangeProofWithSeed<Mcl> s(rp);
+            s.transcript_v2 = transcript_v2;
+            seeds.push_back(s);
+        }
+        return succ_bool(g_rpl->Verify(seeds));
+
+    } catch (...) {
+    }
+
+    return err_bool(BLSCT_EXCEPTION);
+}
+
 #define DEFINE_RANGE_PROOF_POINT_GETTER(field)                                                                   \
     BlsctPoint* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
     {                                                                                                            \
@@ -2318,6 +2340,14 @@ const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out) {
     RETURN_IF_MEM_ALLOC_FAILED(blinding_key);
     BLSCT_COPY(tx_out->blinding_key, *blinding_key);
     return blinding_key;
+}
+
+void set_tx_out_transcript_v2(BlsctTxOut* tx_out, const bool transcript_v2) {
+    tx_out->transcript_v2 = transcript_v2;
+}
+
+bool get_tx_out_transcript_v2(const BlsctTxOut* tx_out) {
+    return tx_out->transcript_v2;
 }
 
 // unsigned input/output/transaction helpers
