@@ -195,4 +195,44 @@ BOOST_FIXTURE_TEST_CASE(locked_wallet_spending_key_unavailable_no_throw, Testing
     BOOST_CHECK(key_after.GetScalar() == key_before.GetScalar());
 }
 
+// O-5: the v1->v2 recovery fallback. An output whose range proof was built
+// under the v2 transcript must still recover its amount through
+// KeyMan::RecoverOutputs, which tries v1 first and retries the misses under v2.
+// This is the fix for the wallet losing v2 change/rewards above the activation
+// height; without the v2 retry the v2 amount below would not be recovered.
+BOOST_FIXTURE_TEST_CASE(recover_outputs_transcript_v2_fallback, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    blsct_km->SetHDSeed(MclScalar(uint256(uint64_t{1})));
+    BOOST_CHECK(blsct_km->NewSubAddressPool());
+
+    auto dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    // v1 output recovers (legacy transcript path).
+    auto out_v1 = blsct::CreateOutput(dest, 42 * COIN, "v1", TokenId(), MclScalar::Rand(),
+                                      blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/false,
+                                      /*transcript_v2=*/false);
+    auto rec_v1 = blsct_km->RecoverOutputs({out_v1.out});
+    BOOST_REQUIRE(rec_v1.is_completed);
+    BOOST_REQUIRE(!rec_v1.amounts.empty());
+    BOOST_CHECK_EQUAL(rec_v1.amounts[0].amount, 42 * COIN);
+
+    // v2 output recovers only because the fallback retries under v2.
+    auto out_v2 = blsct::CreateOutput(dest, 77 * COIN, "v2", TokenId(), MclScalar::Rand(),
+                                      blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/false,
+                                      /*transcript_v2=*/true);
+    auto rec_v2 = blsct_km->RecoverOutputs({out_v2.out});
+    BOOST_REQUIRE(rec_v2.is_completed);
+    BOOST_REQUIRE(!rec_v2.amounts.empty());
+    BOOST_CHECK_EQUAL(rec_v2.amounts[0].amount, 77 * COIN);
+
+    // A batch straddling both transcripts recovers every output.
+    auto rec_mixed = blsct_km->RecoverOutputs({out_v1.out, out_v2.out});
+    BOOST_REQUIRE(rec_mixed.is_completed);
+    BOOST_CHECK_EQUAL(rec_mixed.amounts.size(), 2U);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

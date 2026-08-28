@@ -13,15 +13,25 @@ namespace blsct {
 
 class BalanceProof
 {
+public:
+    // Serialized transcript version of the range proof. v1 is the legacy
+    // Fiat-Shamir transcript the disclosure calls unsound; v2 binds A before the
+    // challenges. New proofs are always built as v2; the byte lets a verifier
+    // pick the matching transcript and lets the format evolve without a break.
+    static constexpr uint8_t VERSION_V1 = 1;
+    static constexpr uint8_t VERSION_V2 = 2;
+
 private:
     std::vector<COutPoint> m_outpoints;
     CAmount m_min_amount;
     bulletproofs_plus::RangeProof<Mcl> m_proof;
     blsct::Signature m_signature;
     uint16_t m_index;
+    uint8_t m_version{VERSION_V2};
 
 public:
     BalanceProof() = default;
+    uint8_t GetVersion() const { return m_version; }
     BalanceProof(const std::vector<COutPoint>& outpoints, CAmount min_amount, const bulletproofs_plus::RangeProof<Mcl>& proof, const blsct::Signature& signature)
         : m_outpoints(outpoints), m_min_amount(min_amount), m_proof(proof), m_signature(signature), m_index(0) {}
 
@@ -76,11 +86,12 @@ public:
             index++;
         }
 
-        // Create range proof
+        // Create range proof under the v2 transcript and record the version.
+        m_version = VERSION_V2;
         bulletproofs_plus::RangeProofLogic<Mcl> prover;
         range_proof::GammaSeed<Mcl> nonce(Elements<MclScalar>{1, gamma});
         std::vector<uint8_t> message;
-        m_proof = prover.Prove({1, value}, nonce, message, TokenId(), MclScalar(min_amount));
+        m_proof = prover.Prove({1, value}, nonce, message, TokenId(), MclScalar(min_amount), /*transcript_v2=*/true);
         m_signature = private_key.Sign(additional_commitment);
     }
 
@@ -112,8 +123,10 @@ public:
         const_cast<bulletproofs_plus::RangeProof<Mcl>&>(m_proof).Vs.Clear();
         const_cast<bulletproofs_plus::RangeProof<Mcl>&>(m_proof).Vs.Add(sum_commitment);
 
-        // Create a range proof with seed for verification
+        // Create a range proof with seed for verification, under the transcript
+        // the proof's version byte records.
         bulletproofs_plus::RangeProofWithSeed<Mcl> proof(m_proof, TokenId(), MclScalar(m_min_amount));
+        proof.transcript_v2 = (m_version >= VERSION_V2);
         std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> proofs;
         proofs.push_back(proof);
 
@@ -124,7 +137,7 @@ public:
 
     SERIALIZE_METHODS(BalanceProof, obj)
     {
-        READWRITE(obj.m_outpoints, obj.m_min_amount, obj.m_proof, obj.m_signature, obj.m_index);
+        READWRITE(obj.m_outpoints, obj.m_min_amount, obj.m_proof, obj.m_signature, obj.m_index, obj.m_version);
     }
 };
 

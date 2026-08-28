@@ -158,8 +158,9 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         // it can push activation LATER than the buried height (to stand down a
         // flag day without shipping a new binary) but can never pull it earlier
         // or arm a dormant chain, so an operator cannot unilaterally fork mainnet.
-        // A value not strictly greater than the buried height is ignored (with a
-        // warning emitted by ReadBLSCTProofV2Height).
+        // A value not strictly greater than the buried height is ignored;
+        // CreateChainParams logs the ignored-on-mainnet warning (this kernel
+        // params object does not log).
         {
             const int buried = std::numeric_limits<int>::max();
             consensus.nBLSCTProofV2Height =

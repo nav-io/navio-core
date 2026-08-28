@@ -21,7 +21,12 @@
 #include <stdexcept>
 #include <vector>
 
-// Parse the optional -blsctproofv2height override (testnet / blsctregtest only).
+// Parse the optional -blsctproofv2height value. Its EFFECT is network-dependent
+// and applied by the per-network params: testnet/blsctregtest take it directly;
+// mainnet honors it defer-only (only a value greater than the buried height, to
+// stand a flag day down) and otherwise ignores it. This helper only parses and
+// range-checks; it does not know the buried height, so it does not claim the
+// value took effect -- the params log whether it was applied or ignored.
 // Returns nullopt when unset; throws on an out-of-range value.
 static std::optional<int> ReadBLSCTProofV2Height(const ArgsManager& args)
 {
@@ -30,9 +35,9 @@ static std::optional<int> ReadBLSCTProofV2Height(const ArgsManager& args)
     if (height < 0 || height > std::numeric_limits<int>::max()) {
         throw std::runtime_error(strprintf("Invalid height (%d) for -blsctproofv2height.", height));
     }
-    LogPrintf("WARNING: -blsctproofv2height=%d overrides the BLSCT proof transcript v2 activation height. "
-              "This is a consensus-forking parameter: every node on the network MUST use the same value, "
-              "or nodes will fork at the activation height.\n", static_cast<int>(height));
+    LogPrintf("-blsctproofv2height=%d requested. This is a consensus-forking parameter where it takes "
+              "effect: every node on the network MUST use the same effective activation height or nodes "
+              "will fork. Its effect is network-dependent (see the chain params).\n", static_cast<int>(height));
     return static_cast<int>(height);
 }
 
@@ -186,10 +191,20 @@ const CChainParams &Params() {
 std::unique_ptr<const CChainParams> CreateChainParams(const ArgsManager& args, const ChainType chain)
 {
     switch (chain) {
-    case ChainType::MAIN:
+    case ChainType::MAIN: {
         // Honored defer-only on mainnet (see CMainParams): can push activation
         // later than the buried height, never earlier, never arm a dormant chain.
-        return CChainParams::Main(ReadBLSCTProofV2Height(args));
+        // The buried height is INT_MAX (dormant) today, so no value can exceed it
+        // and any override is ignored -- warn plainly rather than let the log in
+        // ReadBLSCTProofV2Height imply it took effect.
+        auto override_height = ReadBLSCTProofV2Height(args);
+        if (override_height) {
+            LogPrintf("WARNING: -blsctproofv2height is IGNORED on mainnet: the override is defer-only and "
+                      "mainnet activation is dormant (buried height is INT_MAX), so no value can take effect. "
+                      "It can only ever push a future buried activation later, never arm or pull one earlier.\n");
+        }
+        return CChainParams::Main(override_height);
+    }
     case ChainType::TESTNET:
         return CChainParams::TestNet(ReadBLSCTProofV2Height(args));
     case ChainType::SIGNET: {

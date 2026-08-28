@@ -305,11 +305,15 @@ typedef struct {
     uint64_t min_stake;
     bool subtract_fee_from_amount;
     BlsctScalar blinding_key;
-    // BLSCT proof transcript version to build the output's range proof under.
-    // The caller must set true when building an output for a block at or above
-    // the network's transcript-v2 activation height, false otherwise. A v1
-    // proof at/above the height (or a v2 proof below it) is rejected by
-    // consensus.
+    // BLSCT proof transcript version the output's range proof is built under.
+    // The C API currently builds v1 (legacy transcript) outputs only:
+    // build_tx_out initialises this to false and the C API does not stamp the
+    // transaction-level BLSCT_PROOF_V2_MARKER, so a C-API-built transaction is
+    // rejected by consensus at or above a network's transcript-v2 activation
+    // height. Building v2 outputs through the C API is not yet supported; use the
+    // wallet/RPC path for transactions at or above the activation height. This
+    // field is retained for a future v2-capable C API and to keep the struct
+    // layout stable.
     bool transcript_v2;
 } BlsctTxOut;
 
