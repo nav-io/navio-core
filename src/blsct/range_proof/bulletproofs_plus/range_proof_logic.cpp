@@ -383,7 +383,7 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
     proof.alpha_hat = alpha + (z_asc_by_2_pows * gammas).Sum() * y_to_mn_plus_1;
 
     {
-        auto res = WeightedInnerProdArg::Run<Mcl>(
+        auto res = WeightedInnerProdArg::Run<T>(
             mn,
             y,
             gs,
@@ -695,3 +695,40 @@ template AmountRecoveryResult<Mcl> RangeProofLogic<Mcl>::RecoverAmounts(
 );
 
 } // namespace bulletproofs_plus
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+namespace bulletproofs_plus {
+template
+Elements<Blst::Scalar> RangeProofLogic<Blst>::Compute_D(
+    const Elements<Blst::Scalar>& z_asc_by_2_pows,
+    const Elements<Blst::Scalar>& two_pows,
+    const Blst::Scalar& z_sq,
+    const size_t& m
+);
+template
+Elements<Blst::Scalar> RangeProofLogic<Blst>::ComputeZAscBy2Pows(
+    const Scalar& z,
+    const size_t& m
+);
+template
+size_t RangeProofLogic<Blst>::GetNumLeadingZeros(const uint32_t& n);
+template RangeProof<Blst> RangeProofLogic<Blst>::Prove(
+    Elements<Blst::Scalar>,
+    const range_proof::GammaSeed<Blst>&,
+    const std::vector<uint8_t>&,
+    const Seed&,
+    const Blst::Scalar&);
+template bool RangeProofLogic<Blst>::VerifyProofs(
+    const std::vector<RangeProofWithTranscript<Blst>>&
+);
+template bool RangeProofLogic<Blst>::Verify(
+    const std::vector<RangeProofWithSeed<Blst>>&);
+template AmountRecoveryResult<Blst> RangeProofLogic<Blst>::RecoverAmounts(
+    const std::vector<AmountRecoveryRequest<Blst>>&
+);
+} // namespace bulletproofs_plus
+#endif // NAVIO_BLSCT_ARITH_BLST
