@@ -4,14 +4,14 @@
 
 #define BOOST_UNIT_TEST
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <ctokens/tokenid.h>
 #include <boost/test/unit_test.hpp>
 #include <test/util/setup_common.h>
 #include <blsct/building_block/generator_deriver.h>
 #include <blsct/common.h>
 
-using Point = Mcl::Point;
+using Point = Blst::Point;
 
 BOOST_FIXTURE_TEST_SUITE(generator_deriver_tests, BasicTestingSetup)
 

@@ -4,7 +4,7 @@
 
 #include <p2pmsg/transport.h>
 
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <logging.h>
 #include <streams.h>
 #include <util/time.h>
@@ -47,9 +47,9 @@ bool ParseEnvelope(std::span<const uint8_t> body, Envelope& out)
 Transport::Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay, Options opts)
     : m_pool(pool), m_broadcast(std::move(broadcast)), m_relay(std::move(relay)),
       m_opts(opts),
-      m_identity_priv(MclScalar::Rand(/*exclude_zero=*/true)),
+      m_identity_priv(BlstScalar::Rand(/*exclude_zero=*/true)),
       m_identity_pub(m_identity_priv.GetPublicKey()),
-      m_inbox_priv(MclScalar::Rand(/*exclude_zero=*/true)),
+      m_inbox_priv(BlstScalar::Rand(/*exclude_zero=*/true)),
       m_inbox_pub(m_inbox_priv.GetPublicKey())
 {
     // Sign the initial prekey under the identity so the published bundle is
@@ -301,7 +301,7 @@ blsct::Signature Transport::SignWithIdentity(const uint256& digest) const
 
 void Transport::RotatePrekey()
 {
-    blsct::PrivateKey fresh(MclScalar::Rand(/*exclude_zero=*/true));
+    blsct::PrivateKey fresh(BlstScalar::Rand(/*exclude_zero=*/true));
     blsct::PublicKey fresh_pub(fresh.GetPublicKey());
     LOCK(m_inbox_mutex);
     // Retire the current prekey into the grace ring (newest first) so a message
@@ -338,7 +338,7 @@ void Transport::MaybeRotatePrekey()
 
 std::pair<blsct::PublicKey, blsct::Signature> Transport::SignEphemeral(const uint256& digest) const
 {
-    blsct::PrivateKey k(MclScalar::Rand(/*exclude_zero=*/true));
+    blsct::PrivateKey k(BlstScalar::Rand(/*exclude_zero=*/true));
     return {k.GetPublicKey(), k.Sign(digest)};
 }
 

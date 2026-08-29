@@ -6,14 +6,14 @@
 
 #include <test/util/setup_common.h>
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/wallet/delegation.h>
 #include <boost/test/unit_test.hpp>
 
 BOOST_FIXTURE_TEST_SUITE(delegation_tests, BasicTestingSetup)
 
-using Point = MclG1Point;
-using Scalar = MclScalar;
+using Point = BlstG1Point;
+using Scalar = BlstScalar;
 
 namespace {
 

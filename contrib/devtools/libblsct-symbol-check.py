@@ -8,7 +8,7 @@ Two checks for libblsct.a:
 2. Undefined symbols — every strong undefined symbol in the archive must be
    satisfied by one of:
      a) another object in the archive itself,
-     b) a provided dependency archive (BLS, MCL, secp256k1, univalue, …), or
+     b) a provided dependency archive (blst, secp256k1, univalue, …), or
      c) a known system/stdlib symbol (libc, libstdc++, pthreads, C++ ABI, …).
 
    Anything that falls outside those three categories is a navio-internal
@@ -71,6 +71,7 @@ SYSTEM_SYMBOL_PATTERNS = [
                r'stderr|stdout|stdin|'
                r'mlock|munlock|mmap|munmap|madvise|'
                r'getenv|getrlimit|sysconf|nanosleep|gmtime_r|'
+               r'open|read|close|getentropy|'  # BlstScalar::Rand OS entropy (LIBBLSCT)
                r'log2|log2f|log|exp|sqrt|'
                r'ceil|ceilf|floor|floorf|fmod|fmodf|pow|powf|'
                r'strcmp|strlen)$'),

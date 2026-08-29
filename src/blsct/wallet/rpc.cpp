@@ -393,7 +393,7 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
         }
         blsct::SubAddress self_dest(std::get<blsct::DoublePublicKey>(dest_res.value()));
         factory.AddOutput(self_dest, c.amount, "candidate", TokenId(), blsct::NORMAL, /*minStake=*/0,
-                          /*fSubtractFeeFromAmount=*/false, MclScalar::Rand(), /*nBLSCTDefaultFee=*/0);
+                          /*fSubtractFeeFromAmount=*/false, BlstScalar::Rand(), /*nBLSCTDefaultFee=*/0);
         auto built = factory.BuildCandidate();
         if (!built) {
             // Release the reservation: leaking it burns this coin's serving
@@ -1920,7 +1920,7 @@ RPCHelpMan delegatestake()
 
             LOCK(pwallet->cs_wallet);
 
-            MclG1Point delegateKey;
+            BlstG1Point delegateKey;
             if (!IsHex(request.params[1].get_str()) || !delegateKey.SetVch(ParseHex(request.params[1].get_str())) || delegateKey.IsZero()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "delegate_pubkey is not a valid G1 point");
             }
@@ -2055,7 +2055,7 @@ static std::vector<WalletDelegation> GetWalletDelegations(const wallet::CWallet&
 
     // A non-BLSCT wallet still has a KeyMan object but no view key; it cannot
     // hold delegations either.
-    MclScalar viewKey;
+    BlstScalar viewKey;
     try {
         viewKey = blsct_km->GetPrivateViewKey().GetScalar();
     } catch (const std::exception&) {
@@ -2346,11 +2346,11 @@ RPCHelpMan redelegatestake()
                 throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not have BLSCT keys");
             }
 
-            MclG1Point fromKey;
+            BlstG1Point fromKey;
             if (!IsHex(request.params[0].get_str()) || !fromKey.SetVch(ParseHex(request.params[0].get_str())) || fromKey.IsZero()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "from_delegate_pubkey is not a valid G1 point");
             }
-            MclG1Point delegateKey;
+            BlstG1Point delegateKey;
             if (!IsHex(request.params[1].get_str()) || !delegateKey.SetVch(ParseHex(request.params[1].get_str())) || delegateKey.IsZero()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "delegate_pubkey is not a valid G1 point");
             }
@@ -2446,9 +2446,9 @@ RPCHelpMan compounddelegations()
                 throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not have BLSCT keys");
             }
 
-            std::optional<MclG1Point> filterKey;
+            std::optional<BlstG1Point> filterKey;
             if (!request.params[0].isNull() && !request.params[0].get_str().empty()) {
-                MclG1Point key;
+                BlstG1Point key;
                 if (!IsHex(request.params[0].get_str()) || !key.SetVch(ParseHex(request.params[0].get_str())) || key.IsZero()) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "delegate_pubkey is not a valid G1 point");
                 }
@@ -2778,7 +2778,7 @@ static RPCHelpMan setblsctseed()
                 if (keydata.size() != 32) {
                     throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Failed to extract 32-byte key from WIF");
                 }
-                MclScalar scalar;
+                BlstScalar scalar;
                 scalar.SetVch(keydata);
                 // Reject if the raw bytes encode a value >= the field order: SetVch
                 // uses setBigEndianMod which silently reduces, so we verify round-trip.
@@ -2975,7 +2975,7 @@ RPCHelpMan createblsctrawtransaction()
                 blsct::UnsignedInput unsigned_input;
                 unsigned_input.in.prevout = COutPoint(txid);
                 CTxOut wallet_prevout;
-                std::optional<range_proof::RecoveredData<Mcl>> wallet_recovery_data;
+                std::optional<range_proof::RecoveredData<Blst>> wallet_recovery_data;
 
                 if (const wallet::CWalletOutput* wallet_output = pwallet->GetWalletOutput(unsigned_input.in.prevout)) {
                     wallet_prevout = *wallet_output->out;
@@ -3131,8 +3131,8 @@ RPCHelpMan createblsctrawtransaction()
             std::vector<blsct::UnsignedOutput> unsigned_outputs;
 
             auto derive_spending_key = [&](const blsct::DoublePublicKey& dest_keys, const Scalar& blinding_key) -> blsct::PublicKey {
-                MclG1Point vk;
-                MclG1Point sk;
+                BlstG1Point vk;
+                BlstG1Point sk;
 
                 if (!dest_keys.GetViewKey(vk)) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Could not extract view key from BLSCT address");
@@ -3243,7 +3243,7 @@ RPCHelpMan createblsctrawtransaction()
                     unsigned_output = CreateOutput(std::make_pair(address_a, script), nAmount, memo, token_id, blindingKey, type, 0, transcript_v2);
 
                     // Nullify the spending key
-                    unsigned_output.out.blsctData.spendingKey = MclG1Point();
+                    unsigned_output.out.blsctData.spendingKey = BlstG1Point();
 
                     // Auto-register the HTLC as a watch-only script so the party
                     // building the swap tracks the output without a separate
@@ -3258,7 +3258,7 @@ RPCHelpMan createblsctrawtransaction()
                     // Opt out with "watch_only": false (e.g. when building a swap
                     // on behalf of another wallet).
                     const bool import_watch_only = !o.exists("watch_only") || o["watch_only"].get_bool();
-                    MclG1Point address_a_view_key;
+                    BlstG1Point address_a_view_key;
                     if (import_watch_only && address_a.GetViewKey(address_a_view_key)) {
                         blsct::PublicKey recovery_nonce(address_a_view_key * blindingKey);
                         blsct_km->AddWatchOnly(script, recovery_nonce);
@@ -3268,7 +3268,7 @@ RPCHelpMan createblsctrawtransaction()
                     if (o.exists("address")) {
                         subAddress = EnsureBlsctDestination(o["address"].get_str());
                     } else {
-                        subAddress = blsct::DoublePublicKey(MclG1Point::GetBasePoint(), MclG1Point::GetBasePoint());
+                        subAddress = blsct::DoublePublicKey(BlstG1Point::GetBasePoint(), BlstG1Point::GetBasePoint());
                     }
 
                     // Check if script is provided
@@ -3488,7 +3488,7 @@ RPCHelpMan fundblsctrawtransaction()
                                 continue;
                             }
 
-                            std::optional<range_proof::RecoveredData<Mcl>> recovery_data;
+                            std::optional<range_proof::RecoveredData<Blst>> recovery_data;
                             if (const wallet::CWalletOutput* wallet_output = pwallet->GetWalletOutput(output.outpoint)) {
                                 recovery_data = wallet_output->blsctRecoveryData;
                             } else if (const wallet::CWalletTx* wallet_tx = pwallet->GetWalletTxFromOutpoint(output.outpoint)) {
@@ -4122,7 +4122,7 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
             if (!nonce_pubkey.IsValid()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid nonce public key");
             }
-            MclG1Point nonce = nonce_pubkey.GetG1Point();
+            BlstG1Point nonce = nonce_pubkey.GetG1Point();
 
             int specific_vout = -1;
             if (!request.params[2].isNull()) {
@@ -4153,7 +4153,7 @@ static RPCHelpMan getblsctrecoverydatawithnonce()
             // Use BLSCT key manager to recover outputs with specified nonce
             auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
 
-            auto append_output = [&](const CTxOut& out, int vout_index, const uint256* out_hash_override = nullptr, const range_proof::RecoveredData<Mcl>* recovery_override = nullptr) {
+            auto append_output = [&](const CTxOut& out, int vout_index, const uint256* out_hash_override = nullptr, const range_proof::RecoveredData<Blst>* recovery_override = nullptr) {
                 UniValue output(UniValue::VOBJ);
                 output.pushKV("vout", vout_index);
                 output.pushKV("out_hash", (out_hash_override ? *out_hash_override : out.GetHash()).GetHex());
@@ -4234,7 +4234,7 @@ RPCHelpMan deriveblsctnonce()
 
             auto dpk = EnsureBlsctDestination(request.params[1].get_str());
 
-            MclG1Point vk_point;
+            BlstG1Point vk_point;
             if (!dpk.GetViewKey(vk_point)) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Could not extract view key from address");
             }
@@ -4275,7 +4275,7 @@ static RPCHelpMan signblsmessage()
             }
 
             // Create private key object
-            blsct::PrivateKey private_key = MclScalar(private_key_bytes);
+            blsct::PrivateKey private_key = BlstScalar(private_key_bytes);
             if (!private_key.IsValid()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid private key");
             }
@@ -4389,7 +4389,7 @@ RPCHelpMan deriveblsctspendingkey()
 
             auto dpk = EnsureBlsctDestination(request.params[1].get_str());
 
-            MclG1Point sk_point;
+            BlstG1Point sk_point;
             if (!dpk.GetSpendKey(sk_point)) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Could not extract spend key from address");
             }
@@ -4464,7 +4464,7 @@ RPCHelpMan deriveblsctonetimekey()
             }
 
             // b*V, computed from the claimant's side: view_key * (b*G1)
-            MclG1Point nonce = ephemeral_pubkey.GetG1Point() * viewKey;
+            BlstG1Point nonce = ephemeral_pubkey.GetG1Point() * viewKey;
             Scalar tweak(nonce.GetHashWithSalt(0));
 
             HashWriter hash{};

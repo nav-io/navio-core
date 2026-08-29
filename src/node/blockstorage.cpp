@@ -5,7 +5,7 @@
 #include <node/blockstorage.h>
 
 #include <arith_uint256.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
+#include <blsct/arith/blst/blst_g1point.h>
 #include <chain.h>
 #include <consensus/params.h>
 #include <consensus/validation.h>
@@ -38,9 +38,9 @@ namespace {
 // Collect every G1 point stored inside the CBlockUndo so they can be
 // batch-normalised (single field inversion via Montgomery's trick) before
 // serialisation. After this pass, each point's z coord is 1 and the patched
-// normalise() shortcut inside mclBnG1_serialize returns early — turning N
+// normalisation inside BlstG1Point::GetVch becomes a no-op — turning N
 // expensive per-point inversions into O(1) amortised over the whole block.
-void CollectG1PointsFromUndo(CBlockUndo& blockundo, std::vector<MclG1Point*>& out)
+void CollectG1PointsFromUndo(CBlockUndo& blockundo, std::vector<BlstG1Point*>& out)
 {
     // Only collect the G1 points that will actually be written to the undo
     // file under the stripped-for-undo format. Skipping the range-proof body
@@ -705,7 +705,7 @@ bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos
     // header + body + checksum in one bulk write.
     //
     // BLSCT undo entries each carry a full range proof (~dozen G1 points)
-    // whose serialization calls mclBnG1_serialize per point (~50µs each).
+    // whose serialization normalises (one field inversion) per point.
     // A 365-input block produces ~365 × 15 ≈ 5500 G1 serializations, which
     // dominated the old single-threaded path (~485 ms observed). Writing
     // per-entry into per-thread buffers and concatenating in vector order
@@ -720,16 +720,16 @@ bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos
     CTxOutBLSCTData::StrippedForUndoScope strip_scope;
 
     // Pre-pass: batch-normalise every G1 point that WILL be serialised to
-    // affine form with a single field inversion (Montgomery's trick). mcl's
-    // per-serialize normalise short-circuits on points where z == 1 (see the
-    // `if (P.z.isOne()) return;` guard in mcl/ec.hpp), so after this call
-    // the per-point serialisation skips the expensive F::inv and runs at
-    // memcpy speed.
+    // affine form with a single field inversion (Montgomery's trick). blst's
+    // per-serialize normalise short-circuits on points where z == 1 (the
+    // `vec_is_equal(in->Z, BLS12_381_Rx.p)` guard in blst's
+    // POINTonE1_Compress_BE), so after this call the per-point serialisation
+    // skips the expensive field inversion and runs at memcpy speed.
     {
-        std::vector<MclG1Point*> g1_points;
+        std::vector<BlstG1Point*> g1_points;
         g1_points.reserve(256);
         CollectG1PointsFromUndo(const_cast<CBlockUndo&>(blockundo), g1_points);
-        MclG1Point::BatchNormalize(std::span<MclG1Point* const>{g1_points.data(), g1_points.size()});
+        BlstG1Point::BatchNormalize(std::span<BlstG1Point* const>{g1_points.data(), g1_points.size()});
     }
 
     const auto& vtx = blockundo.vtxundo;
@@ -1159,7 +1159,7 @@ bool BlockManager::ReadBlockFromDisk(CBlock& block, const FlatFilePos& pos) cons
     // is protected by the block hash on the owning BlockIndex. Re-running the
     // check on every reload would cost ~10-18ms per PoS block during IBD.
     try {
-        MclG1Point::SubgroupCheckSkipScope skip_subgroup_check;
+        BlstG1Point::SubgroupCheckSkipScope skip_subgroup_check;
         filein >> TX_WITH_WITNESS(block);
     } catch (const std::exception& e) {
         return error("%s: Deserialize or I/O error - %s at %s", __func__, e.what(), pos.ToString());

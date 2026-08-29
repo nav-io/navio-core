@@ -1,4 +1,4 @@
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/arith/elements.h>
 #include <blsct/building_block/weighted_inner_prod_arg.h>
 #include <blsct/building_block/lazy_points.h>
@@ -19,12 +19,12 @@ Elements<typename T::Point> WeightedInnerProdArg::ReduceGs(
     return gs1 * e_inv + gs2 * (e * y_inv_to_n);
 }
 template
-Elements<Mcl::Point> WeightedInnerProdArg::ReduceGs<Mcl>(
-    const Elements<Mcl::Point>& gs1,
-    const Elements<Mcl::Point>& gs2,
-    const typename Mcl::Scalar& e,
-    const typename Mcl::Scalar& e_inv,
-    const typename Mcl::Scalar& y_inv_to_n
+Elements<Blst::Point> WeightedInnerProdArg::ReduceGs<Blst>(
+    const Elements<Blst::Point>& gs1,
+    const Elements<Blst::Point>& gs2,
+    const typename Blst::Scalar& e,
+    const typename Blst::Scalar& e_inv,
+    const typename Blst::Scalar& y_inv_to_n
 );
 
 template <typename T>
@@ -37,11 +37,11 @@ Elements<typename T::Point> WeightedInnerProdArg::ReduceHs(
     return hs1 * e + hs2 * e_inv;
 }
 template
-Elements<Mcl::Point> WeightedInnerProdArg::ReduceHs<Mcl>(
-    const Elements<Mcl::Point>& hs1,
-    const Elements<Mcl::Point>& hs2,
-    const typename Mcl::Scalar& e,
-    const typename Mcl::Scalar& e_inv
+Elements<Blst::Point> WeightedInnerProdArg::ReduceHs<Blst>(
+    const Elements<Blst::Point>& hs1,
+    const Elements<Blst::Point>& hs2,
+    const typename Blst::Scalar& e,
+    const typename Blst::Scalar& e_inv
 );
 
 template <typename T>
@@ -55,12 +55,12 @@ typename T::Point WeightedInnerProdArg::UpdateP(
     return L * e_sq + P + R * e_inv_sq;
 }
 template
-typename Mcl::Point WeightedInnerProdArg::UpdateP<Mcl>(
-    const typename Mcl::Point& P,
-    const typename Mcl::Point& L,
-    const typename Mcl::Point& R,
-    const typename Mcl::Scalar& e_sq,
-    const typename Mcl::Scalar& e_inv_sq
+typename Blst::Point WeightedInnerProdArg::UpdateP<Blst>(
+    const typename Blst::Point& P,
+    const typename Blst::Point& L,
+    const typename Blst::Point& R,
+    const typename Blst::Scalar& e_sq,
+    const typename Blst::Scalar& e_inv_sq
 );
 
 template <typename T>
@@ -198,49 +198,6 @@ retry:
     return std::nullopt;
 }
 template
-std::optional<WeightedInnerProdArgResult<Mcl>> WeightedInnerProdArg::Run(
-    const size_t& N,
-    const typename Mcl::Scalar& y,
-    Elements<typename Mcl::Point>& gs,
-    Elements<typename Mcl::Point>& hs,
-    typename Mcl::Point& g,
-    typename Mcl::Point& h,
-    typename Mcl::Point& P,
-    Elements<typename Mcl::Scalar>& a,
-    Elements<typename Mcl::Scalar>& b,
-    const typename Mcl::Scalar& alpha_src,
-    HashWriter& fiat_shamir
-);
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-template
-Elements<Blst::Point> WeightedInnerProdArg::ReduceGs<Blst>(
-    const Elements<Blst::Point>& gs1,
-    const Elements<Blst::Point>& gs2,
-    const typename Blst::Scalar& e,
-    const typename Blst::Scalar& e_inv,
-    const typename Blst::Scalar& y_inv_to_n
-);
-template
-Elements<Blst::Point> WeightedInnerProdArg::ReduceHs<Blst>(
-    const Elements<Blst::Point>& hs1,
-    const Elements<Blst::Point>& hs2,
-    const typename Blst::Scalar& e,
-    const typename Blst::Scalar& e_inv
-);
-template
-typename Blst::Point WeightedInnerProdArg::UpdateP<Blst>(
-    const typename Blst::Point& P,
-    const typename Blst::Point& L,
-    const typename Blst::Point& R,
-    const typename Blst::Scalar& e_sq,
-    const typename Blst::Scalar& e_inv_sq
-);
-template
 std::optional<WeightedInnerProdArgResult<Blst>> WeightedInnerProdArg::Run(
     const size_t& N,
     const typename Blst::Scalar& y,
@@ -254,4 +211,3 @@ std::optional<WeightedInnerProdArgResult<Blst>> WeightedInnerProdArg::Run(
     const typename Blst::Scalar& alpha_src,
     HashWriter& fiat_shamir
 );
-#endif // NAVIO_BLSCT_ARITH_BLST

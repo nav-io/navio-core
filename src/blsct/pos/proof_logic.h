@@ -2,17 +2,17 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BLSCT_POS_PROOF_LOGIC_H
-#define BLSCT_POS_PROOF_LOGIC_H
+#ifndef NAVIO_BLSCT_POS_PROOF_LOGIC_H
+#define NAVIO_BLSCT_POS_PROOF_LOGIC_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/pos/proof.h>
 #include <blsct/set_mem_proof/set_mem_proof.h>
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <chain.h>
 #include <coins.h>
 
-using Arith = Mcl;
+using Arith = Blst;
 using Point = Arith::Point;
 using Scalar = Arith::Scalar;
 using Points = Elements<Point>;
@@ -30,4 +30,4 @@ public:
 };
 } // namespace blsct
 
-#endif // BLSCT_POS_PROOF_LOGIC_H
+#endif // NAVIO_BLSCT_POS_PROOF_LOGIC_H

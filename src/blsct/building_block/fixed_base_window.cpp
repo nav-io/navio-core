@@ -8,7 +8,7 @@
 
 namespace {
 // 32-byte little-endian form of a scalar, for window-digit extraction.
-std::vector<uint8_t> ScalarLE(const MclScalar& s)
+std::vector<uint8_t> ScalarLE(const BlstScalar& s)
 {
     std::vector<uint8_t> be = s.GetVch(); // untrimmed 32-byte big-endian form
     std::vector<uint8_t> le(be.rbegin(), be.rend());
@@ -46,18 +46,18 @@ size_t CheckedWinSize(size_t winSize)
 }
 } // namespace
 
-FixedBaseWindow::FixedBaseWindow(const std::vector<MclG1Point>& bases, size_t winSize)
+FixedBaseWindow::FixedBaseWindow(const std::vector<BlstG1Point>& bases, size_t winSize)
     : m_winSize(CheckedWinSize(winSize)),
       m_tblNum((kBitSize + m_winSize - 1) / m_winSize),
       m_r(size_t(1) << m_winSize),
       m_nbases(bases.size())
 {
-    m_tbl.assign(m_nbases * m_tblNum * m_r, MclG1Point()); // MclG1Point() is identity
+    m_tbl.assign(m_nbases * m_tblNum * m_r, BlstG1Point()); // BlstG1Point() is identity
     for (size_t i = 0; i < m_nbases; ++i) {
-        MclG1Point t = bases[i];
-        MclG1Point* base_tbl = &m_tbl[i * m_tblNum * m_r];
+        BlstG1Point t = bases[i];
+        BlstG1Point* base_tbl = &m_tbl[i * m_tblNum * m_r];
         for (size_t b = 0; b < m_tblNum; ++b) {
-            MclG1Point* w = &base_tbl[b * m_r];
+            BlstG1Point* w = &base_tbl[b * m_r];
             // w[0] stays identity; build w[j] = j * t via doubling spans, then t *= 2^winSize.
             for (size_t d = 1; d < m_r; d *= 2) {
                 for (size_t j = 0; j < d; ++j) {
@@ -69,11 +69,11 @@ FixedBaseWindow::FixedBaseWindow(const std::vector<MclG1Point>& bases, size_t wi
     }
 }
 
-MclG1Point FixedBaseWindow::MulOne(size_t i, const MclScalar& s) const
+BlstG1Point FixedBaseWindow::MulOne(size_t i, const BlstScalar& s) const
 {
     const std::vector<uint8_t> le = ScalarLE(s);
-    const MclG1Point* base_tbl = &m_tbl[i * m_tblNum * m_r];
-    MclG1Point z; // identity
+    const BlstG1Point* base_tbl = &m_tbl[i * m_tblNum * m_r];
+    BlstG1Point z; // identity
     for (size_t b = 0; b < m_tblNum; ++b) {
         uint32_t v = Window(le, b * m_winSize, m_winSize, kBitSize);
         if (v) z = z + base_tbl[b * m_r + v];

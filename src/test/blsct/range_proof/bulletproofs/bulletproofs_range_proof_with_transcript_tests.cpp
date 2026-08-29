@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/building_block/imp_inner_prod_arg.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/bulletproofs/range_proof_with_transcript.h>
@@ -12,7 +12,7 @@
 
 BOOST_FIXTURE_TEST_SUITE(bulletproofs_range_proof_with_transcript_tests, BasicTestingSetup)
 
-using T = Mcl;
+using T = Blst;
 
 BOOST_AUTO_TEST_CASE(test_range_proof_with_transcript_recover_num_rounds)
 {

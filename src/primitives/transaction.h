@@ -7,7 +7,7 @@
 #define BITCOIN_PRIMITIVES_TRANSACTION_H
 
 #include <attributes.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/private_key.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/generators.h>
@@ -156,10 +156,10 @@ public:
 class CTxOutBLSCTData
 {
 public:
-    MclG1Point spendingKey;
-    MclG1Point ephemeralKey;
-    MclG1Point blindingKey;
-    bulletproofs_plus::RangeProof<Mcl> rangeProof;
+    BlstG1Point spendingKey;
+    BlstG1Point ephemeralKey;
+    BlstG1Point blindingKey;
+    bulletproofs_plus::RangeProof<Blst> rangeProof;
     uint16_t viewTag;
 
     // RAII scope. While active on the current thread, Serialize() emits
@@ -214,7 +214,7 @@ public:
         if (IsStrippedForUndo()) {
             // Matches the stripped Serialize() above. Range-proof body
             // fields (A, A_wip, B, Ls, Rs, scalars) remain default.
-            rangeProof = bulletproofs_plus::RangeProof<Mcl>{};
+            rangeProof = bulletproofs_plus::RangeProof<Blst>{};
             ::Unserialize(s, rangeProof.Vs);
             ::Unserialize(s, spendingKey);
             ::Unserialize(s, blindingKey);
@@ -260,7 +260,7 @@ public:
 struct CTxOutBLSCTDataCompressedForRecovery {
     FORMATTER_METHODS(CTxOutBLSCTData, obj)
     {
-        READWRITE(Using<bulletproofs_plus::RangeProofCompressedForRecovery<Mcl>>(obj.rangeProof), obj.spendingKey, obj.blindingKey, obj.ephemeralKey, obj.viewTag);
+        READWRITE(Using<bulletproofs_plus::RangeProofCompressedForRecovery<Blst>>(obj.rangeProof), obj.spendingKey, obj.blindingKey, obj.ephemeralKey, obj.viewTag);
     }
 };
 
@@ -371,12 +371,12 @@ public:
 
     bool IsStakedCommitment() const
     {
-        bulletproofs_plus::RangeProofWithSeed<Mcl> dummy;
+        bulletproofs_plus::RangeProofWithSeed<Blst> dummy;
 
         return GetStakedCommitmentRangeProof(dummy);
     }
 
-    bool GetStakedCommitmentRangeProof(bulletproofs_plus::RangeProofWithSeed<Mcl>& rangeProof) const
+    bool GetStakedCommitmentRangeProof(bulletproofs_plus::RangeProofWithSeed<Blst>& rangeProof) const
     {
         if (!HasBLSCTRangeProof())
             return false;
@@ -395,7 +395,7 @@ public:
             auto commitment = std::vector<unsigned char>(scriptPubKey.begin() + 4, scriptPubKey.end());
 
             DataStream s(MakeByteSpan(commitment));
-            s >> Using<bulletproofs_plus::RangeProofWithoutVs<Mcl>>(rangeProof);
+            s >> Using<bulletproofs_plus::RangeProofWithoutVs<Blst>>(rangeProof);
         } catch (...) {
             return false;
         }

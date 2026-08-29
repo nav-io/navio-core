@@ -64,13 +64,14 @@ store_path() {
 # Set environment variables to point the NATIVE toolchain to the right
 # includes/libs
 NATIVE_GCC="$(store_path gcc-toolchain)"
-# navio-specific: depends/gmp's Makefile builds host helpers (gen-bases,
-# gen-fac, gen-fib, gen-sieve) with a bare `gcc gen-fac.c -o gen-fac`
-# rule that does not honor CFLAGS/CPPFLAGS. glibc's bits/local_lim.h
-# pulls in <linux/limits.h>, which after the `unset C_INCLUDE_PATH`
-# below is no longer on the default search path. Re-export
-# C_INCLUDE_PATH pointing at linux-libre-headers (materialized by the
-# manifest) so even unflagged `gcc` invocations resolve kernel headers.
+# navio-specific: some depends packages compile native host helpers with
+# bare `gcc` rules that do not honor CFLAGS/CPPFLAGS (this was introduced
+# for the since-removed gmp package; kept because it is harmless and other
+# packages' probes have relied on it). glibc's bits/local_lim.h pulls in
+# <linux/limits.h>, which after the `unset C_INCLUDE_PATH` below is no
+# longer on the default search path. Re-export C_INCLUDE_PATH pointing at
+# linux-libre-headers (materialized by the manifest) so even unflagged
+# `gcc` invocations resolve kernel headers.
 NATIVE_KERNEL="$(store_path linux-libre-headers)"
 
 unset LIBRARY_PATH

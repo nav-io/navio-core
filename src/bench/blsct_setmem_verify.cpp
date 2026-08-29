@@ -4,8 +4,8 @@
 
 #include <bench/bench.h>
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <blsct/pos/helpers.h>
 #include <blsct/pos/proof.h>
 #include <blsct/range_proof/generators.h>
@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-using Arith = Mcl;
+using Arith = Blst;
 using Point = Arith::Point;
 using Scalar = Arith::Scalar;
 using Points = Elements<Point>;
@@ -39,7 +39,7 @@ struct SetMemFixture {
 
     explicit SetMemFixture(size_t n)
     {
-        volatile MclInit init;
+        volatile BlstInit init;
         (void)init;
 
         const auto& setup = SetMemProofSetup<Arith>::Get();
@@ -110,7 +110,7 @@ struct PoPSFixture {
 
     explicit PoPSFixture(size_t n)
     {
-        volatile MclInit init;
+        volatile BlstInit init;
         (void)init;
 
         const auto& setup = SetMemProofSetup<Arith>::Get();

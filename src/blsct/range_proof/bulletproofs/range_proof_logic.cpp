@@ -2,9 +2,9 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <blsct/building_block/fiat_shamir.h>
 #include <blsct/building_block/g_h_gi_hi_zero_verifier.h>
 #include <blsct/building_block/imp_inner_prod_arg.h>
@@ -219,7 +219,7 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
     GEN_FIAT_SHAMIR_VAR(c_factor, fiat_shamir, retry);
 
     {
-        auto res = ImpInnerProdArg::Run<Mcl>(
+        auto res = ImpInnerProdArg::Run<Blst>(
             concat_input_values_in_bits,
             Gi, Hi, G,
             l, r,
@@ -235,12 +235,12 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
 
     return proof;
 }
-template RangeProof<Mcl> RangeProofLogic<Mcl>::Prove(
-    Elements<Mcl::Scalar>,
-    const range_proof::GammaSeed<Mcl>&,
+template RangeProof<Blst> RangeProofLogic<Blst>::Prove(
+    Elements<Blst::Scalar>,
+    const range_proof::GammaSeed<Blst>&,
     const std::vector<uint8_t>&,
     const Seed&,
-    const Mcl::Scalar&) const;
+    const Blst::Scalar&) const;
 
 template <typename T>
 bool RangeProofLogic<T>::VerifyProofs(
@@ -294,7 +294,7 @@ bool RangeProofLogic<T>::VerifyProofs(
             //////// (67), (68)
             auto gen_exps = ImpInnerProdArg::GenGeneratorExponents<T>(num_rounds, p.xs);
 
-            ImpInnerProdArg::LoopWithYPows<Mcl>(p.concat_input_values_in_bits, p.y,
+            ImpInnerProdArg::LoopWithYPows<Blst>(p.concat_input_values_in_bits, p.y,
                                                 [&](const size_t& i, const Scalar& y_pow, const Scalar& y_inv_pow) {
                                                     Scalar gi_exp = p.proof.a * gen_exps[i];
                                                     Scalar hi_exp = p.proof.b * y_inv_pow * gen_exps[p.concat_input_values_in_bits - 1 - i];
@@ -336,8 +336,8 @@ bool RangeProofLogic<T>::VerifyProofs(
 
     return true;
 }
-template bool RangeProofLogic<Mcl>::VerifyProofs(
-    const std::vector<RangeProofWithTranscript<Mcl>>&,
+template bool RangeProofLogic<Blst>::VerifyProofs(
+    const std::vector<RangeProofWithTranscript<Blst>>&,
     const size_t&) const;
 
 template <typename T>
@@ -364,8 +364,8 @@ bool RangeProofLogic<T>::Verify(
         proof_transcripts,
         max_mn);
 }
-template bool RangeProofLogic<Mcl>::Verify(
-    const std::vector<RangeProofWithSeed<Mcl>>&) const;
+template bool RangeProofLogic<Blst>::Verify(
+    const std::vector<RangeProofWithSeed<Blst>>&) const;
 
 template <typename T>
 AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
@@ -445,7 +445,7 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
         true,
         xs};
 }
-template AmountRecoveryResult<Mcl> RangeProofLogic<Mcl>::RecoverAmounts(
-    const std::vector<AmountRecoveryRequest<Mcl>>&) const;
+template AmountRecoveryResult<Blst> RangeProofLogic<Blst>::RecoverAmounts(
+    const std::vector<AmountRecoveryRequest<Blst>>&) const;
 
 } // namespace bulletproofs

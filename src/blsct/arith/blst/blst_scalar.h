@@ -2,10 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-// Fr (BLS12-381 scalar field) wrapper over supranational/blst. API-compatible
-// with MclScalar so the templated BLSCT proof code can be instantiated with
-// either backend (see blsct/arith/blst/blst.h). Evaluation prototype for the
-// mcl -> blst migration; see doc/blsct-blst-evaluation.md.
+// Fr (BLS12-381 scalar field) wrapper over supranational/blst. `Blst::Scalar`
+// for the templated BLSCT proof code (see blsct/arith/blst/blst.h).
 
 #ifndef NAVIO_BLSCT_ARITH_BLST_BLST_SCALAR_H
 #define NAVIO_BLSCT_ARITH_BLST_BLST_SCALAR_H
@@ -22,6 +20,11 @@
 #include <stddef.h>
 #include <string>
 #include <vector>
+
+// Defined in blst_g1point.cpp. True while BlstG1Point::LegacyPointDecodeScope
+// is active on this thread; honoured when strict deserialization must stay
+// lenient for binary-baked consensus-parameter data (genesis blobs).
+bool BlstLegacyPointDecodeActive();
 
 class BlstScalar
 {
@@ -103,16 +106,23 @@ public:
         std::vector<unsigned char> vec(SERIALIZATION_SIZE);
         s.read(MakeWritableByteSpan(vec));
         SetVch(vec);
-        // Canonical-encoding check, as in MclScalar::Unserialize. The blst
-        // backend has no legacy-decode scope: it is strict everywhere.
-        if (GetVch() != vec) {
+        // Enforce the canonical encoding. SetVch reduces mod r, so a
+        // non-canonical input (v >= r) would silently deserialize to a
+        // DIFFERENT scalar than its byte string denotes; reject it instead.
+        // The legacy-decode scope (baked consensus parameters whose encoding
+        // predates the canonical serializer) keeps the lenient behaviour.
+        // Note GetVch() here must be the untrimmed 32-byte form.
+        if (!BlstLegacyPointDecodeActive() && GetVch() != vec) {
             throw std::ios_base::failure("BlstScalar: non-canonical encoding");
         }
     }
 
     static constexpr int SERIALIZATION_SIZE = 32;
 
-    Underlying m_scalar;
+    // Value-initialised so every constructor hands blst a zeroed object:
+    // blst's assembly is invisible to MemorySanitizer, and a poisoned
+    // destination would stay poisoned after it is written.
+    Underlying m_scalar{};
 
 private:
     // Canonical little-endian 32-byte form (blst_scalar) of m_scalar.

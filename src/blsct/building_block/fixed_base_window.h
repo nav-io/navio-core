@@ -5,8 +5,8 @@
 #ifndef NAVIO_BLSCT_BUILDING_BLOCK_FIXED_BASE_WINDOW_H
 #define NAVIO_BLSCT_BUILDING_BLOCK_FIXED_BASE_WINDOW_H
 
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_scalar.h>
 
 #include <cstdint>
 #include <vector>
@@ -14,10 +14,10 @@
 // Fixed-base window method for a set of points that never change (the
 // Bulletproofs+ range-proof generators Gi/Hi/H). Each base gets a precomputed
 // window table built ONCE; a later multi-scalar multiplication over those bases
-// is then a table-lookup + add per base, instead of the NAF tables mcl's
+// is then a table-lookup + add per base, instead of the bucket tables blst's
 // mulVec rebuilds on every call.
 //
-// The result of MSM() is bit-identical to mclBnG1_mulVecMT over the same bases
+// The result of MSM() is bit-identical to BlstUtil::MSM over the same bases
 // and scalars (elliptic-curve addition is associative/commutative), so this is
 // safe to use inside consensus verification: only the final point matters.
 //
@@ -29,23 +29,23 @@ class FixedBaseWindow
 {
 public:
     FixedBaseWindow() = default;
-    FixedBaseWindow(const std::vector<MclG1Point>& bases, size_t winSize);
+    FixedBaseWindow(const std::vector<BlstG1Point>& bases, size_t winSize);
 
     size_t size() const { return m_nbases; }
     size_t winSize() const { return m_winSize; }
     bool empty() const { return m_nbases == 0; }
     // Total table footprint in bytes.
-    size_t Bytes() const { return m_tbl.size() * sizeof(MclG1Point::Underlying); }
+    size_t Bytes() const { return m_tbl.size() * sizeof(BlstG1Point::Underlying); }
 
     // Returns Σ_{i<count} base_i * exps[i]. `count` is clamped to size(): a
     // count beyond the tabled bases would otherwise index out of bounds and
     // produce a silently wrong point, so the clamp is enforced here rather
     // than documented at the caller.
     template <typename ScalarVec>
-    MclG1Point MSM(const ScalarVec& exps, size_t count) const
+    BlstG1Point MSM(const ScalarVec& exps, size_t count) const
     {
         if (count > m_nbases) count = m_nbases;
-        MclG1Point acc; // identity
+        BlstG1Point acc; // identity
         for (size_t i = 0; i < count; ++i) {
             acc = acc + MulOne(i, exps[i]);
         }
@@ -54,7 +54,7 @@ public:
 
 private:
     // Windowed multiply of base i by scalar s, using its precomputed table.
-    MclG1Point MulOne(size_t i, const MclScalar& s) const;
+    BlstG1Point MulOne(size_t i, const BlstScalar& s) const;
 
     static constexpr size_t kBitSize = 256; // Fr is < 255 bits; round to a byte.
 
@@ -64,7 +64,7 @@ private:
     size_t m_nbases = 0;
     // Flattened tables: base i occupies [i*m_tblNum*m_r, (i+1)*m_tblNum*m_r).
     // Entry (block b, digit v) is at i*m_tblNum*m_r + b*m_r + v == v * 2^(b*w) * base_i.
-    std::vector<MclG1Point> m_tbl;
+    std::vector<BlstG1Point> m_tbl;
 };
 
 #endif // NAVIO_BLSCT_BUILDING_BLOCK_FIXED_BASE_WINDOW_H

@@ -5,7 +5,7 @@
 #ifndef BITCOIN_AGGREGATION_COMBINE_H
 #define BITCOIN_AGGREGATION_COMBINE_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/signature.h>
 #include <primitives/transaction.h>
 
@@ -73,10 +73,10 @@ inline std::optional<CMutableTransaction> CombineHalves(std::span<const CTransac
 
     // Shuffle inputs and outputs so the aggregate does not expose the per-half
     // grouping (which inputs/outputs belong to the same party). Seed from
-    // BLSCT's secure randomness (MclScalar::Rand), matching BuildTx, so the
+    // BLSCT's secure randomness (BlstScalar::Rand), matching BuildTx, so the
     // aggregation lib does not need FastRandomContext.
-    std::seed_seq seed{MclScalar::Rand().GetUint64(), MclScalar::Rand().GetUint64(),
-                       MclScalar::Rand().GetUint64(), MclScalar::Rand().GetUint64()};
+    std::seed_seq seed{BlstScalar::Rand().GetUint64(), BlstScalar::Rand().GetUint64(),
+                       BlstScalar::Rand().GetUint64(), BlstScalar::Rand().GetUint64()};
     std::mt19937_64 rng(seed);
     std::shuffle(out.vin.begin(), out.vin.end(), rng);
     std::shuffle(out.vout.begin(), out.vout.end(), rng);

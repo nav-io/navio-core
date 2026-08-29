@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BLSCTHDCHAIN_H
-#define BLSCTHDCHAIN_H
+#ifndef NAVIO_BLSCT_WALLET_HDCHAIN_H
+#define NAVIO_BLSCT_WALLET_HDCHAIN_H
 
 #include <wallet/db.h>
 #include <wallet/walletutil.h>
@@ -50,4 +50,4 @@ public:
 };
 } // namespace blsct
 
-#endif // BLSCTHDCHAIN_H
+#endif // NAVIO_BLSCT_WALLET_HDCHAIN_H

@@ -5,8 +5,8 @@
 #ifndef BITCOIN_TEST_UTIL_SETUP_COMMON_H
 #define BITCOIN_TEST_UTIL_SETUP_COMMON_H
 
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <blsct/wallet/address.h>
 #include <chainparamsbase.h>
 #include <common/args.h> // IWYU pragma: export
@@ -61,7 +61,7 @@ struct BasicTestingSetup {
     ArgsManager m_args;
 
 private:
-    volatile MclInit m_for_side_effect_only;
+    volatile BlstInit m_for_side_effect_only;
 };
 
 /** Testing setup that performs all steps up until right before
@@ -219,7 +219,7 @@ struct TestChain100Setup : public TestingSetup {
  * Testing fixture that pre-creates a 100-block REGTEST-mode BLSCT block chain
  */
 struct TestBLSCTChain100Setup : public TestingSetup {
-    volatile MclInit for_side_effect_only;
+    volatile BlstInit for_side_effect_only;
     blsct::SubAddress coinbaseDest;
 
     TestBLSCTChain100Setup(

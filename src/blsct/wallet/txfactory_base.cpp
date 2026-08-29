@@ -9,7 +9,7 @@
 
 #include <random>
 
-using T = Mcl;
+using T = Blst;
 using Point = T::Point;
 using Points = Elements<Point>;
 using Scalar = T::Scalar;
@@ -285,7 +285,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             const std::string change_memo = (type == STAKED_COMMITMENT_UNSTAKE)
                 ? std::string{"Stake Unlock"}
                 : std::string{"Change"};
-            auto changeOutput = CreateOutput(changeDestination, change.second, change_memo, change.first, MclScalar::Rand(), NORMAL, minStake, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
+            auto changeOutput = CreateOutput(changeDestination, change.second, change_memo, change.first, BlstScalar::Rand(), NORMAL, minStake, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
 
             gammaAcc = gammaAcc - changeOutput.gamma;
 
@@ -327,7 +327,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         if (emitFeeOutput) {
             CTxOut fee_out{nAmounts[TokenId()].nFromFee, CScript(OP_RETURN)};
 
-            auto feeKey = blsct::PrivateKey(MclScalar::Rand());
+            auto feeKey = blsct::PrivateKey(BlstScalar::Rand());
             fee_out.predicate = blsct::PayFeePredicate(feeKey.GetPublicKey()).GetVch();
 
             tx.vout.push_back(fee_out);
@@ -372,10 +372,10 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             // inputs correspond to larger outputs, or the change position). The
             // BLSCT aggregate signature and balance proof are order-independent,
             // so reordering does not affect validity. Seed a PRNG from BLSCT's
-            // secure randomness (MclScalar::Rand) rather than FastRandomContext,
+            // secure randomness (BlstScalar::Rand) rather than FastRandomContext,
             // which lives outside the libblsct library this file is built into.
-            std::seed_seq seed{MclScalar::Rand().GetUint64(), MclScalar::Rand().GetUint64(),
-                               MclScalar::Rand().GetUint64(), MclScalar::Rand().GetUint64()};
+            std::seed_seq seed{BlstScalar::Rand().GetUint64(), BlstScalar::Rand().GetUint64(),
+                               BlstScalar::Rand().GetUint64(), BlstScalar::Rand().GetUint64()};
             std::mt19937_64 rng(seed);
             std::shuffle(tx.vin.begin(), tx.vin.end(), rng);
             std::shuffle(tx.vout.begin(), tx.vout.end(), rng);
@@ -392,7 +392,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         MAX_FEE_FIXPOINT_PASSES));
 }
 
-bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, const PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)
+bool TxFactoryBase::AddInput(const CAmount& amount, const BlstScalar& gamma, const PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)
 {
     if (!vInputs.contains(token_id))
         vInputs[token_id] = std::vector<UnsignedInput>();
@@ -489,7 +489,7 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
         }
 
         CTxOut fee_out{nAmounts[TokenId()].nFromFee, CScript(OP_RETURN)};
-        auto feeKey = blsct::PrivateKey(MclScalar::Rand());
+        auto feeKey = blsct::PrivateKey(BlstScalar::Rand());
         fee_out.predicate = blsct::PayFeePredicate(feeKey.GetPublicKey()).GetVch();
         tx.vout.push_back(fee_out);
 

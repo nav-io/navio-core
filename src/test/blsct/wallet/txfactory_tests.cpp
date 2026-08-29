@@ -554,7 +554,7 @@ BOOST_FIXTURE_TEST_CASE(addinput_test, TestingSetup)
 
     BOOST_CHECK(tx2.AddInput(coins_view_cache, outpoint2));
 
-    blsct::SubAddress randomAddress(blsct::DoublePublicKey(MclG1Point::MapToPoint("test1"), MclG1Point::MapToPoint("test2")));
+    blsct::SubAddress randomAddress(blsct::DoublePublicKey(BlstG1Point::MapToPoint("test1"), BlstG1Point::MapToPoint("test2")));
     tx2.AddOutput(randomAddress, 50 * COIN, "test");
 
     auto finalTx2 = tx2.BuildTx();
@@ -614,7 +614,7 @@ BOOST_FIXTURE_TEST_CASE(coin_selection_largest_first_test, TestingSetup)
         BOOST_CHECK(tx.AddInput(coins_view_cache, op));
     BOOST_CHECK(tx.AddInput(coins_view_cache, bigOutpoint));
 
-    blsct::SubAddress randomAddress(blsct::DoublePublicKey(MclG1Point::MapToPoint("dest1"), MclG1Point::MapToPoint("dest2")));
+    blsct::SubAddress randomAddress(blsct::DoublePublicKey(BlstG1Point::MapToPoint("dest1"), BlstG1Point::MapToPoint("dest2")));
     tx.AddOutput(randomAddress, 500 * COIN, "send");
 
     auto finalTx = tx.BuildTx();

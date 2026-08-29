@@ -97,10 +97,10 @@ bool IsDelegationData(const std::vector<unsigned char>& data)
            std::equal(MAGIC.begin(), MAGIC.end(), data.begin());
 }
 
-std::vector<unsigned char> Encrypt(const DelegationInfo& info, const DelegationRequest& request, const MclG1Point& nonce)
+std::vector<unsigned char> Encrypt(const DelegationInfo& info, const DelegationRequest& request, const BlstG1Point& nonce)
 {
-    const MclScalar ephemeralPriv = MclScalar::Rand(/*exclude_zero=*/true);
-    const MclG1Point ephemeralPub = MclG1Point::GetBasePoint() * ephemeralPriv;
+    const BlstScalar ephemeralPriv = BlstScalar::Rand(/*exclude_zero=*/true);
+    const BlstG1Point ephemeralPub = BlstG1Point::GetBasePoint() * ephemeralPriv;
     const auto ephemeralVch = ephemeralPub.GetVch();
 
     std::vector<unsigned char> aad(MAGIC);
@@ -133,12 +133,12 @@ std::vector<unsigned char> Encrypt(const DelegationInfo& info, const DelegationR
     return out;
 }
 
-std::optional<DelegationInfo> TryDecrypt(const std::vector<unsigned char>& data, const MclScalar& delegatePrivKey)
+std::optional<DelegationInfo> TryDecrypt(const std::vector<unsigned char>& data, const BlstScalar& delegatePrivKey)
 {
     const auto sections = SplitSections(data);
     if (!sections.has_value()) return std::nullopt;
 
-    MclG1Point ephemeralPub;
+    BlstG1Point ephemeralPub;
     if (!ephemeralPub.SetVch(sections->ephemeralVch)) return std::nullopt;
     if (ephemeralPub.IsZero()) return std::nullopt;
 
@@ -159,7 +159,7 @@ std::optional<DelegationInfo> TryDecrypt(const std::vector<unsigned char>& data,
     }
 }
 
-std::optional<DelegationRequest> RecoverOwnerInfo(const std::vector<unsigned char>& data, const MclG1Point& nonce)
+std::optional<DelegationRequest> RecoverOwnerInfo(const std::vector<unsigned char>& data, const BlstG1Point& nonce)
 {
     const auto sections = SplitSections(data);
     if (!sections.has_value()) return std::nullopt;

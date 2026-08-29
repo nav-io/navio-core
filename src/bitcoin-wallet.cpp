@@ -6,7 +6,7 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <chainparams.h>
 #include <chainparamsbase.h>
 #include <clientversion.h>
@@ -102,7 +102,7 @@ static std::optional<int> WalletAppInit(ArgsManager& args, int argc, char* argv[
 
 MAIN_FUNCTION
 {
-    volatile MclInit for_side_effect_only;
+    volatile BlstInit for_side_effect_only;
     ArgsManager& args = gArgs;
 #ifdef WIN32
     common::WinCmdLineArgs winArgs;

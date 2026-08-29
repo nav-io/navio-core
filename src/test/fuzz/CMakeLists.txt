@@ -129,7 +129,7 @@ target_link_libraries(fuzz
   leveldb
   univalue
   secp256k1
-  bls_interface
+  blst_interface
   Boost::headers
   libevent::extra
 )

@@ -2,12 +2,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BLSCT_POS_PROOF_H
-#define BLSCT_POS_PROOF_H
+#ifndef NAVIO_BLSCT_POS_PROOF_H
+#define NAVIO_BLSCT_POS_PROOF_H
 
 #include <arith_uint256.h>
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_g1point.h>
 #include <blsct/pos/helpers.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
@@ -19,7 +19,7 @@
 #include <span>
 #include <stdexcept>
 
-using Arith = Mcl;
+using Arith = Blst;
 using Point = Arith::Point;
 using Scalar = Arith::Scalar;
 using Points = Elements<Point>;
@@ -136,11 +136,11 @@ public:
         // that appears in this proof; batch-check them all via a single
         // random-linear-combination multiexp after decoding. Reduces
         // ~dozens of scalar-mul-by-r calls to one.
-        MclG1Point::SubgroupCheckDeferralScope deferral;
+        BlstG1Point::SubgroupCheckDeferralScope deferral;
         ::Unserialize(s, setMemProof);
         ::Unserialize(s, Using<bulletproofs_plus::RangeProofWithoutVs<Arith>>(rangeProof));
         auto collected = deferral.Take();
-        if (!MclG1Point::BatchCheckSubgroup(std::span<const MclG1Point>{collected.data(), collected.size()})) {
+        if (!BlstG1Point::BatchCheckSubgroup(std::span<const BlstG1Point>{collected.data(), collected.size()})) {
             throw std::ios_base::failure("ProofOfStake: G1 point failed subgroup check");
         }
     }
@@ -150,4 +150,4 @@ public:
 };
 } // namespace blsct
 
-#endif // BLSCT_POS_PROOF_H
+#endif // NAVIO_BLSCT_POS_PROOF_H

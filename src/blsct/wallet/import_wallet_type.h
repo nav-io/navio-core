@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef NAVIO_BLSCT_IMPORT_WALLET_TYPE_H
-#define NAVIO_BLSCT_IMPORT_WALLET_TYPE_H
+#ifndef NAVIO_BLSCT_WALLET_IMPORT_WALLET_TYPE_H
+#define NAVIO_BLSCT_WALLET_IMPORT_WALLET_TYPE_H
 
 namespace blsct {
 enum SeedType {
@@ -14,4 +14,4 @@ enum SeedType {
 
 } // namespace blsct
 
-#endif // NAVIO_BLSCT_IMPORT_WALLET_TYPE_H
+#endif // NAVIO_BLSCT_WALLET_IMPORT_WALLET_TYPE_H

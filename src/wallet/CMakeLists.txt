@@ -43,7 +43,7 @@ target_link_libraries(navio_wallet
     navio_blsct_wallet
     SQLite3::SQLite3
     univalue
-    bls_interface
+    blst_interface
     Boost::headers
     $<TARGET_NAME_IF_EXISTS:USDT::headers>
 )

@@ -5,7 +5,7 @@
 #ifndef NAVIO_BLSCT_PRIVATE_KEY_H
 #define NAVIO_BLSCT_PRIVATE_KEY_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/public_key.h>
 #include <blsct/common.h>
 #include <key.h>
@@ -15,8 +15,8 @@ namespace blsct {
 class PrivateKey
 {
 private:
-    using Point = MclG1Point;
-    using Scalar = MclScalar;
+    using Point = BlstG1Point;
+    using Scalar = BlstScalar;
 
     CPrivKey k;
 
@@ -68,4 +68,4 @@ public:
 
 }
 
-#endif  // NAVIO_BLSCT_PRIVATE_KEY_H
+#endif // NAVIO_BLSCT_PRIVATE_KEY_H

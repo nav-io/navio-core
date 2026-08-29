@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/bulletproofs/range_proof.h>
 #include <test/util/setup_common.h>
@@ -14,24 +14,24 @@ BOOST_FIXTURE_TEST_SUITE(range_proof_common_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(test_get_num_rounds_excl_last)
 {
-    auto num_rounds = range_proof::Common<Mcl>::GetNumRoundsExclLast(64);
+    auto num_rounds = range_proof::Common<Blst>::GetNumRoundsExclLast(64);
     BOOST_CHECK(num_rounds == 12);
 }
 
 BOOST_AUTO_TEST_CASE(test_range_proof_validate_proofs_by_sizes)
 {
-    using T = Mcl;
+    using T = Blst;
 
     auto gen_valid_proof_wo_value_commitments = [](size_t num_inputs) {
         bulletproofs::RangeProof<T> p;
         auto n = blsct::Common::GetFirstPowerOf2GreaterOrEqTo(num_inputs);
         for (size_t i=0; i<n; ++i) {
-            p.Vs.Add(MclG1Point::GetBasePoint());
+            p.Vs.Add(BlstG1Point::GetBasePoint());
         }
         auto num_rounds = range_proof::Common<T>::GetNumRoundsExclLast(n);
         for (size_t i=0; i<num_rounds; ++i) {
-            p.Ls.Add(MclG1Point::GetBasePoint());
-            p.Rs.Add(MclG1Point::GetBasePoint());
+            p.Ls.Add(BlstG1Point::GetBasePoint());
+            p.Rs.Add(BlstG1Point::GetBasePoint());
         }
         return p;
     };

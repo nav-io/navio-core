@@ -194,7 +194,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_recovers_watchonly_output_with_nonce_hint
     auto recv_address = std::get<blsct::DoublePublicKey>(source_blsct_km->GetNewDestination(0).value());
     Scalar blinding_key{ParseHex("42c0926471b3bd01ae130d9382c5fca2e2b5000abbf826a93132696ffa5f2c65")};
 
-    MclG1Point view_key;
+    BlstG1Point view_key;
     BOOST_CHECK(recv_address.GetViewKey(view_key));
     blsct::PublicKey recovery_nonce(view_key * blinding_key);
 

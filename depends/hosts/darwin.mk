@@ -52,8 +52,8 @@ darwin_STRIP=$(shell command -v llvm-strip)
 #         non-determinism issues with the Identifier field.
 
 # `env -u …` strips the build-side C/C++ include path that
-# contrib/guix/libexec/build.sh exports so the native gmp gen-* helpers
-# can find linux-libre-headers. clang targeting darwin must NOT see those
+# contrib/guix/libexec/build.sh exports for native depends helpers to
+# find linux-libre-headers. clang targeting darwin must NOT see those
 # Linux include paths — it has its own SDK sysroot via -isysroot.
 darwin_CC=env -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
               -u OBJC_INCLUDE_PATH -u OBJCPLUS_INCLUDE_PATH -u CPATH \
@@ -76,8 +76,8 @@ darwin_LDFLAGS=-Wl,-platform_version,macos,$(OSX_MIN_VERSION),$(OSX_SDK_VERSION)
 
 ifneq ($(build_os),darwin)
 # -fuse-ld=lld appears in *FLAGS (not just LDFLAGS) so it reaches
-# gmp's AC_PROG_CC sanity check — gmp's configure compiles+links a
-# conftest with CC + CFLAGS only (no LDFLAGS), and without
+# autoconf AC_PROG_CC sanity checks — a package's configure compiles+links
+# a conftest with CC + CFLAGS only (no LDFLAGS), and without
 # -fuse-ld=lld clang falls back to /usr/bin/ld (GNU ld), which
 # rejects darwin's Mach-O-flavored linker args with "unrecognised
 # emulation mode: llvm" and the probe fails with "could not find a

@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BLSCT_POS_H
-#define BLSCT_POS_H
+#ifndef NAVIO_BLSCT_POS_POS_H
+#define NAVIO_BLSCT_POS_POS_H
 
 #include <blsct/pos/helpers.h>
 #include <chain.h>
@@ -46,4 +46,4 @@ uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block, 
 uint256 CalculateStakeRingSeed(const CBlockIndex* pindexPrev, const uint256& header_hash_fallback, const uint32_t& block_time, const Consensus::Params& params);
 } // namespace blsct
 
-#endif // BLSCT_POS_H
+#endif // NAVIO_BLSCT_POS_POS_H
