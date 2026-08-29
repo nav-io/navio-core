@@ -20,8 +20,6 @@ namespace aggregation {
 static constexpr size_t POOL_TARGET = 20;
 //! Hard cap on total candidates held, to bound memory.
 static constexpr size_t POOL_MAX_TOTAL = 512;
-//! Cap on candidates accepted from any single source peer.
-static constexpr size_t POOL_MAX_PER_PEER = 8;
 //! Max candidates merged into one aggregate (bounds aggregate size).
 static constexpr size_t POOL_MAX_COMBINED = 16;
 //! Upper bound on a single candidate's serialized weight. A candidate is a
@@ -75,7 +73,6 @@ public:
 private:
     struct Entry {
         CTransactionRef tx;
-        int64_t peer;
     };
 
     static size_t ShardFor(const COutPoint& input);
@@ -85,9 +82,6 @@ private:
     //! cannot express a mutex array, so the pairing is enforced by convention.)
     mutable std::array<Mutex, POOL_SHARDS> m_shard_mutex;
     std::array<std::map<COutPoint, Entry>, POOL_SHARDS> m_shards;
-    //! Per-peer counts, guarded by its own mutex (cross-shard).
-    mutable Mutex m_peer_mutex;
-    std::map<int64_t, size_t> m_per_peer GUARDED_BY(m_peer_mutex);
 };
 
 //! Process-global handle to the active candidate pool (set at init, cleared at

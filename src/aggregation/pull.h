@@ -32,10 +32,15 @@ static constexpr int64_t PULL_INTERVAL_SECONDS = 60;
 static constexpr int64_t PULL_KEY_TTL_SECONDS = 600;
 //! Producer side: cap on queued, not-yet-answered pull requests.
 static constexpr size_t REQUEST_QUEUE_CAP = 64;
-//! Producer side: cap on queued requests per source peer. Reply keys are
-//! attacker-minted (a fresh keypair per request defeats key-level dedupe by
-//! design), so the only stable identity to account against is the delivering
-//! peer.
+//! Producer side: cap on queued requests per DELIVERING peer (the directly
+//! connected neighbour that relayed the AGG_ANN, i.e. pfrom.GetId()). This is
+//! a local relay-flood control, not per-requester accounting: reply keys are
+//! ephemeral and Dandelion stem routing hides the origin, so no stable
+//! per-originator identity exists to account against. It bounds how many
+//! queue slots any single direct connection can occupy; a distributed or
+//! multi-hop-routed requester is bounded instead by REQUEST_QUEUE_CAP and, on
+//! the serving side, by the origin-independent SERVE_MAX_COINS_PER_WINDOW
+//! budget -- which is the actual enumeration bound.
 static constexpr size_t REQUEST_MAX_PER_PEER = 4;
 //! Producer side: a queued pull request older than this is stale (its reply
 //! key has expired on the requester) and is pruned instead of answered.
@@ -53,11 +58,16 @@ static constexpr int64_t SERVE_INTERVAL_SECONDS = 20;
 //! Cap on requests answered per built-in serving tick, bounding the work
 //! spent building/encrypting/PoW-stamping candidates.
 static constexpr size_t SERVE_MAX_PER_TICK = 2;
-//! Rolling-window budget on DISTINCT coins a wallet will reveal through
-//! served candidates, independent of the per-reservation TTL. Without it a
-//! puller that keeps minting fresh reply keys walks a wallet's coin set at
-//! SERVE_MAX_PER_TICK per tick; with it enumeration saturates at this many
-//! coins per window regardless of request volume.
+//! Rolling-window budget on candidates served, enforced per NODE (the ledger
+//! is a process-global static shared by every loaded wallet), independent of
+//! the per-reservation TTL. Serves >= distinct coins, so this bounds distinct
+//! coins revealed <= this value per window. Without it a puller minting fresh
+//! reply keys walks the coin set at SERVE_MAX_PER_TICK per tick; with it
+//! enumeration saturates regardless of request volume. NOTE: because it is
+//! per-node and ServeCandidateRequests tries wallets in order with
+//! first-success, a multi-wallet node spends the budget on the first funded
+//! wallet -- acceptable for the common single-wallet node, but see the
+//! follow-up on per-wallet accounting.
 static constexpr size_t SERVE_MAX_COINS_PER_WINDOW = 30;
 static constexpr int64_t SERVE_WINDOW_SECONDS = 60 * 60;
 
@@ -71,9 +81,11 @@ static constexpr int64_t SERVE_WINDOW_SECONDS = 60 * 60;
 class CandidateRequestQueue
 {
 public:
-    //! Queue `reply_key` delivered by `from_peer` at time `now`. Returns
-    //! false (no insert) when the key is already queued, the global cap is
-    //! hit, or `from_peer` already has REQUEST_MAX_PER_PEER entries queued.
+    //! Queue `reply_key` delivered by `from_peer` (the relaying neighbour,
+    //! pfrom.GetId()) at time `now`. Returns false (no insert) when the key is
+    //! already queued, the global cap is hit, or `from_peer` already has
+    //! REQUEST_MAX_PER_PEER entries queued. See REQUEST_MAX_PER_PEER: this
+    //! caps per relaying neighbour, not per originating requester.
     bool Add(const blsct::PublicKey& reply_key, int64_t from_peer, int64_t now) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     //! Fetch + remove up to `max_n` non-stale requests in FIFO order on

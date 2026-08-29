@@ -253,8 +253,11 @@ anyone running a p2pmsg node. Instead each node privately fills its own pool:
    from any actual send, so pull traffic never signals that a send is imminent.
 2. **Serve** — nodes queue incoming `AGG_ANN` reply keys
    (`CandidateRequestQueue`, deduped, capped globally and per source peer,
-   TTL'd, claimed FIFO on enqueue time). A `naviod` with a loaded BLSCT
-   wallet answers them by default: a serving thread (`-servecandidates`,
+   TTL'd, claimed FIFO on enqueue time; the per-peer request cap keys on the
+   relaying neighbour, `pfrom.GetId()`, so it is a local flood control, not
+   per-requester accounting — ephemeral reply keys and stem routing leave no
+   stable origin identity). A `naviod` with a loaded BLSCT wallet answers them
+   by default: a serving thread (`-servecandidates`,
    default on, opt out with `-servecandidates=0`;
    `-servecandidateinterval` ticks) claims queued requests and
    answers each with a fee-0 self-spend candidate built from the wallet's
@@ -318,11 +321,16 @@ with zero configuration.
   one real, unspent output — a proof of ownership resolvable on-chain by the
   requester (navio outpoints are output hashes anyone can derive). Serving is
   on by default (opt out with `-servecandidates=0`) and bounded against
-  enumeration: per-peer request caps, FIFO claim order on
-  enqueue time (never on requester-chosen key bytes), a per-input reservation
-  TTL, and a rolling per-window budget on distinct coins served
+  enumeration. The enumeration bound that matters is origin-independent: a
+  rolling per-window budget on distinct coins served
   (`SERVE_MAX_COINS_PER_WINDOW`), so repeated pulling saturates instead of
-  walking the coin set. Amounts stay blinded and a candidate cannot be
+  walking the coin set — this holds regardless of who asks or how the request
+  is routed. Ephemeral reply keys and Dandelion stem routing mean there is no
+  stable per-requester identity, so the per-peer request cap and FIFO claim
+  order (on enqueue time, never on requester-chosen key bytes) are local
+  relay-flood/fairness controls on the queue rather than per-origin accounting.
+  A per-input reservation TTL keeps concurrent candidates spending distinct
+  coins. Amounts stay blinded and a candidate cannot be
   redirected or broadcast standalone.
 - **Half-tx replay**: a quote signs `(uuid, half_tx hash, expiry)` under a fresh
   single-use key; the matcher is one-shot per `uuid` and first-write-wins on a

@@ -35,8 +35,12 @@ bool CandidateRequestQueue::Add(const blsct::PublicKey& reply_key, int64_t from_
     // starve fresh ones.
     std::erase_if(m_requests, [now](const auto& e) { return e.second.time + REQUEST_TTL_SECONDS <= now; });
     if (m_requests.size() >= REQUEST_QUEUE_CAP) return false;
-    // Reply keys are requester-minted, so dedupe on the key binds nobody; the
-    // delivering peer is the only stable identity to account against.
+    // Dedupe on the reply key binds nobody (keys are ephemeral, one per
+    // request). from_peer is the relaying neighbour (pfrom.GetId()), not the
+    // origin, which Dandelion hides -- so this is a per-neighbour flood cap,
+    // not per-requester accounting. It still bounds what any single direct
+    // connection can queue; the origin-independent enumeration bound is the
+    // serve-side coin budget.
     size_t from_this_peer = 0;
     for (const auto& [_, e] : m_requests) {
         if (e.peer == from_peer && ++from_this_peer >= REQUEST_MAX_PER_PEER) return false;

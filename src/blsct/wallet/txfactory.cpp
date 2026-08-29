@@ -118,8 +118,14 @@ TxFactory::BuildTx(const std::optional<CAmount>& nBLSCTDefaultFee, const CAmount
 std::optional<BuiltTransaction>
 TxFactory::BuildCandidate()
 {
+    // Guard the destination derivation: BuildCandidate runs on the background
+    // candidate-serving thread, where a raw .value() on a keypool-exhaustion
+    // error would throw bad_optional_access past TraceThread and abort the
+    // node. Return nullopt so the serve tick fails the one candidate instead.
+    auto dest = km->GetNewDestination(-1);
+    if (!dest) return std::nullopt;
     return TxFactoryBase::BuildTx(
-        std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value()),
+        std::get<blsct::DoublePublicKey>(dest.value()),
         /*minStake=*/0,
         /*type=*/NORMAL,
         /*fSubtractedFee=*/false,

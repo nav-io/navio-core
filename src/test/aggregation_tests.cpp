@@ -207,18 +207,19 @@ BOOST_FIXTURE_TEST_CASE(pool_rejects_multi_input, BasicTestingSetup)
     BOOST_CHECK_EQUAL(pool.Size(), 0u);
 }
 
-BOOST_FIXTURE_TEST_CASE(pool_per_peer_cap, BasicTestingSetup)
+BOOST_FIXTURE_TEST_CASE(pool_no_per_peer_cap, BasicTestingSetup)
 {
+    // There is no per-peer cap: `peer` is the Dandelion-obscured relaying
+    // neighbour, not a source identity, so many candidates from one `peer`
+    // value are all accepted (deduped only by input outpoint). Abuse is
+    // bounded by POOL_MAX_TOTAL, not per peer.
     aggregation::CandidatePool pool;
     size_t accepted = 0;
-    for (size_t i = 0; i < aggregation::POOL_MAX_PER_PEER + 5; ++i) {
+    for (size_t i = 0; i < 50; ++i) {
         if (pool.AddCandidate(FakeCandidate(InsecureRand256()), /*peer=*/42)) ++accepted;
     }
-    BOOST_CHECK_EQUAL(accepted, aggregation::POOL_MAX_PER_PEER);
-    BOOST_CHECK_EQUAL(pool.Size(), aggregation::POOL_MAX_PER_PEER);
-
-    // A different peer can still contribute.
-    BOOST_CHECK(pool.AddCandidate(FakeCandidate(InsecureRand256()), /*peer=*/43));
+    BOOST_CHECK_EQUAL(accepted, 50U);
+    BOOST_CHECK_EQUAL(pool.Size(), 50U);
 }
 
 BOOST_FIXTURE_TEST_CASE(pool_block_connected_evicts, BasicTestingSetup)

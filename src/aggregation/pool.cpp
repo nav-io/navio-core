@@ -43,7 +43,7 @@ bool CandidatePool::Contains(const COutPoint& input) const
     return m_shards[s].contains(input);
 }
 
-bool CandidatePool::AddCandidate(const CTransactionRef& candidate, int64_t peer)
+bool CandidatePool::AddCandidate(const CTransactionRef& candidate, int64_t /*peer*/)
 {
     if (candidate == nullptr) return false;
     // Structural validation. Candidates arrive unauthenticated from the network
@@ -64,27 +64,20 @@ bool CandidatePool::AddCandidate(const CTransactionRef& candidate, int64_t peer)
     if (GetTransactionWeight(*candidate) > CANDIDATE_MAX_WEIGHT) return false;
     const COutPoint& input = candidate->vin[0].prevout;
 
-    // Global cap (best-effort; Size() is a snapshot).
+    // Total cap only (best-effort; Size() is a snapshot). There is deliberately
+    // NO per-peer cap: `peer` is the delivering neighbour (pfrom.GetId()), which
+    // Dandelion stem routing and ephemeral reply keys make non-identifying, so a
+    // per-peer cap bounds neither the originating server nor an injecting
+    // attacker -- it only imposed a false ceiling that a single honest server
+    // routinely exceeded. Pool abuse is bounded instead by POOL_MAX_TOTAL,
+    // input-outpoint dedupe, and evict-on-failure at aggregate time.
     if (Size() >= POOL_MAX_TOTAL) return false;
-
-    // Per-peer cap. Reserve a slot up front; release it if the insert fails.
-    {
-        LOCK(m_peer_mutex);
-        if (m_per_peer[peer] >= POOL_MAX_PER_PEER) return false;
-        ++m_per_peer[peer];
-    }
 
     const size_t s = ShardFor(input);
     bool inserted = false;
     {
         LOCK(m_shard_mutex[s]);
-        inserted = m_shards[s].emplace(input, Entry{candidate, peer}).second;
-    }
-
-    if (!inserted) {
-        // Dedupe (input already pooled): give back the per-peer slot.
-        LOCK(m_peer_mutex);
-        if (m_per_peer[peer] > 0) --m_per_peer[peer];
+        inserted = m_shards[s].emplace(input, Entry{candidate}).second;
     }
     return inserted;
 }
@@ -115,17 +108,8 @@ std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n) const
 bool CandidatePool::EvictByInput(const COutPoint& input)
 {
     const size_t s = ShardFor(input);
-    int64_t peer = -1;
-    {
-        LOCK(m_shard_mutex[s]);
-        auto it = m_shards[s].find(input);
-        if (it == m_shards[s].end()) return false;
-        peer = it->second.peer;
-        m_shards[s].erase(it);
-    }
-    LOCK(m_peer_mutex);
-    if (m_per_peer[peer] > 0) --m_per_peer[peer];
-    return true;
+    LOCK(m_shard_mutex[s]);
+    return m_shards[s].erase(input) > 0;
 }
 
 void CandidatePool::EvictSpentBy(const CTransaction& tx)

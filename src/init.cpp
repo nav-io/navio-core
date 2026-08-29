@@ -1802,9 +1802,10 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                     [requests](const p2pmsg::InboundMessage& m) {
                         blsct::PublicKey reply_key;
                         if (!reply_key.SetVch(m.body)) return; // drop malformed
-                        // from_peer feeds the queue's per-peer cap: reply keys
-                        // are requester-minted so only the delivering peer is
-                        // a stable identity to account against.
+                        // m.from_peer is the relaying neighbour (pfrom.GetId()),
+                        // not the origin (Dandelion hides it). It feeds the
+                        // queue's per-neighbour flood cap, which is local DoS
+                        // protection rather than per-requester accounting.
                         requests->Add(reply_key, m.from_peer, GetTime<std::chrono::seconds>().count());
                     });
             }
