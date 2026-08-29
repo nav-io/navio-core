@@ -2,7 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
+#ifndef NAVIO_BLSCT_WALLET_TXFACTORY_BASE_H
+#define NAVIO_BLSCT_WALLET_TXFACTORY_BASE_H
+
+#include <blsct/arith/blst/blst.h>
 #include <blsct/wallet/address.h>
 #include <blsct/wallet/delegation.h>
 #include <blsct/wallet/txfactory_global.h>
@@ -130,7 +133,7 @@ struct BuiltTransaction {
 
 struct InputCandidates {
     CAmount amount;
-    MclScalar gamma;
+    BlstScalar gamma;
     blsct::PrivateKey spendingKey;
     TokenId token_id;
     COutPoint outpoint;
@@ -181,9 +184,11 @@ public:
     void AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const CAmount& mintAmount);
     // Mint NFT
     void AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata);
-    bool AddInput(const CAmount& amount, const MclScalar& gamma, const blsct::PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false);
+    bool AddInput(const CAmount& amount, const BlstScalar& gamma, const blsct::PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false);
     std::optional<BuiltTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE);
     static std::optional<BuiltTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData);
 };
 
 } // namespace blsct
+
+#endif // NAVIO_BLSCT_WALLET_TXFACTORY_BASE_H

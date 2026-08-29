@@ -1,5 +1,5 @@
 #include <blsct/arith/elements.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/set_mem_proof/set_mem_proof_setup.h>
 #include <blsct/building_block/generator_deriver.h>
 #include <ctokens/tokenid.h>
@@ -27,7 +27,7 @@ const SetMemProofSetup<T>& SetMemProofSetup<T>::Get()
     return *x;
 }
 template
-const SetMemProofSetup<Mcl>& SetMemProofSetup<Mcl>::Get();
+const SetMemProofSetup<Blst>& SetMemProofSetup<Blst>::Get();
 
 template <typename T>
 typename SetMemProofSetup<T>::Points SetMemProofSetup<T>::GenGenerators(
@@ -43,8 +43,8 @@ typename SetMemProofSetup<T>::Points SetMemProofSetup<T>::GenGenerators(
     return ps;
 }
 template
-typename SetMemProofSetup<Mcl>::Points SetMemProofSetup<Mcl>::GenGenerators(
-    const typename Mcl::Point& base_point,
+typename SetMemProofSetup<Blst>::Points SetMemProofSetup<Blst>::GenGenerators(
+    const typename Blst::Point& base_point,
     const size_t& size
 );
 
@@ -55,7 +55,7 @@ typename T::Scalar SetMemProofSetup<T>::H1(const std::vector<uint8_t>& msg) cons
     return ret;
 }
 template
-typename Mcl::Scalar SetMemProofSetup<Mcl>::H1(const std::vector<uint8_t>& msg) const;
+typename Blst::Scalar SetMemProofSetup<Blst>::H1(const std::vector<uint8_t>& msg) const;
 
 template <typename T>
 typename T::Scalar SetMemProofSetup<T>::H2(const std::vector<uint8_t>& msg) const
@@ -64,7 +64,7 @@ typename T::Scalar SetMemProofSetup<T>::H2(const std::vector<uint8_t>& msg) cons
     return ret;
 }
 template
-typename Mcl::Scalar SetMemProofSetup<Mcl>::H2(const std::vector<uint8_t>& msg) const;
+typename Blst::Scalar SetMemProofSetup<Blst>::H2(const std::vector<uint8_t>& msg) const;
 
 template <typename T>
 typename T::Scalar SetMemProofSetup<T>::H3(const std::vector<uint8_t>& msg) const
@@ -73,7 +73,7 @@ typename T::Scalar SetMemProofSetup<T>::H3(const std::vector<uint8_t>& msg) cons
     return ret;
 }
 template
-typename Mcl::Scalar SetMemProofSetup<Mcl>::H3(const std::vector<uint8_t>& msg) const;
+typename Blst::Scalar SetMemProofSetup<Blst>::H3(const std::vector<uint8_t>& msg) const;
 
 template <typename T>
 typename T::Scalar SetMemProofSetup<T>::H4(const std::vector<uint8_t>& msg) const
@@ -82,7 +82,7 @@ typename T::Scalar SetMemProofSetup<T>::H4(const std::vector<uint8_t>& msg) cons
     return ret;
 }
 template
-typename Mcl::Scalar SetMemProofSetup<Mcl>::H4(const std::vector<uint8_t>& msg) const;
+typename Blst::Scalar SetMemProofSetup<Blst>::H4(const std::vector<uint8_t>& msg) const;
 
 template <typename T>
 typename T::Point SetMemProofSetup<T>::H5(const std::vector<uint8_t>& msg) const
@@ -90,7 +90,7 @@ typename T::Point SetMemProofSetup<T>::H5(const std::vector<uint8_t>& msg) const
     return GenPoint(msg, 5);
 }
 template
-typename Mcl::Point SetMemProofSetup<Mcl>::H5(const std::vector<uint8_t>& msg) const;
+typename Blst::Point SetMemProofSetup<Blst>::H5(const std::vector<uint8_t>& msg) const;
 
 template <typename T>
 typename T::Point SetMemProofSetup<T>::GenPoint(const std::vector<uint8_t>& msg, const uint64_t& i)
@@ -103,7 +103,7 @@ typename T::Point SetMemProofSetup<T>::GenPoint(const std::vector<uint8_t>& msg,
     return p;
 }
 template
-typename Mcl::Point SetMemProofSetup<Mcl>::GenPoint(const std::vector<uint8_t>& msg, const uint64_t& i);
+typename Blst::Point SetMemProofSetup<Blst>::GenPoint(const std::vector<uint8_t>& msg, const uint64_t& i);
 
 template <typename T>
 const range_proof::GeneratorsFactory<T>& SetMemProofSetup<T>::Gf() const
@@ -111,33 +111,4 @@ const range_proof::GeneratorsFactory<T>& SetMemProofSetup<T>::Gf() const
     return *m_gf;
 }
 template
-const range_proof::GeneratorsFactory<Mcl>& SetMemProofSetup<Mcl>::Gf() const;
-
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-template
-const SetMemProofSetup<Blst>& SetMemProofSetup<Blst>::Get();
-template
-typename SetMemProofSetup<Blst>::Points SetMemProofSetup<Blst>::GenGenerators(
-    const typename Blst::Point& base_point,
-    const size_t& size
-);
-template
-typename Blst::Scalar SetMemProofSetup<Blst>::H1(const std::vector<uint8_t>& msg) const;
-template
-typename Blst::Scalar SetMemProofSetup<Blst>::H2(const std::vector<uint8_t>& msg) const;
-template
-typename Blst::Scalar SetMemProofSetup<Blst>::H3(const std::vector<uint8_t>& msg) const;
-template
-typename Blst::Scalar SetMemProofSetup<Blst>::H4(const std::vector<uint8_t>& msg) const;
-template
-typename Blst::Point SetMemProofSetup<Blst>::H5(const std::vector<uint8_t>& msg) const;
-template
-typename Blst::Point SetMemProofSetup<Blst>::GenPoint(const std::vector<uint8_t>& msg, const uint64_t& i);
-template
 const range_proof::GeneratorsFactory<Blst>& SetMemProofSetup<Blst>::Gf() const;
-#endif // NAVIO_BLSCT_ARITH_BLST

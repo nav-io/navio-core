@@ -3,7 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/double_public_key.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 
 namespace blsct {
 
@@ -17,7 +17,7 @@ DoublePublicKey::DoublePublicKey(const std::vector<unsigned char>& keys)
     std::copy(keys.begin() + blsct::PublicKey::SIZE, keys.end(), skData.begin());
 
     // check vkData and skData are valid serialization of points
-    MclG1Point p;
+    BlstG1Point p;
     if (!p.SetVch(vkData) || !p.SetVch(skData)) return;
 
     vk = vkData;

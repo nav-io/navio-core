@@ -6,24 +6,24 @@
 ## Implementation class structure
 An implementation of `Generic Arith Classes` should have one top-level structure. The top-level structure should expose `Scalar`, `Point` and `Initializer` class aliases, and let each alias point to the actual implementation. Nothing else is enforced by `Generic Arith Classes` interface.
 
-For example, [struct Mcl](../arith//mcl/mcl.h) below is a top-level structure of the `Mcl` classes. Underneath it, there exist [MclScalar](../arith/mcl/mcl_scalar.h) and [MclG1Point](../arith/mcl/mcl_g1point.h) which are aliases of `Scalar` and `Point`.
+For example, [struct Blst](../arith/blst/blst.h) below is a top-level structure of the `Blst` classes. Underneath it, there exist [BlstScalar](../arith/blst/blst_scalar.h) and [BlstG1Point](../arith/blst/blst_g1point.h) which are aliases of `Scalar` and `Point`.
 
 ```c++
-struct Mcl
+struct Blst
 {
-  using Point = MclG1Point;
-  using Scalar = MclScalar;
+  using Point = BlstG1Point;
+  using Scalar = BlstScalar;
 };
 ```
 
-`Generic Arith Classes` doesn't define how the `Mcl` classes should actually be implemented.
+`Generic Arith Classes` doesn't define how the `Blst` classes should actually be implemented.
 
 ## An implementation as an interface
-[Mcl](../arith//mcl/mcl.h) classes are designed to be generic so that it can be used to implement other cryptographic logic. So, other `Generic Arith Classes` implementations sharing the same API as [Mcl](../arith//mcl/mcl.h) can replace [Mcl](../arith//mcl/mcl.h) in the user classes of [Mcl]().
+[Blst](../arith/blst/blst.h) classes are designed to be generic so that it can be used to implement other cryptographic logic. So, other `Generic Arith Classes` implementations sharing the same API as [Blst](../arith/blst/blst.h) can replace [Blst](../arith/blst/blst.h) in the user classes of [Blst]().
 
-For instance, [RangeProofLogic](../range_proof/range_proof_logic.h) that currently uses an implementation based on `libmcl` library can later switch to a new implementation based on `libsecp256k1` library without changing the user code aside from the type parameter as long as the new implementation has the same set of API as [Mcl](../arith/mcl/mcl.h).
+For instance, [RangeProofLogic](../range_proof/range_proof_logic.h) that currently uses an implementation based on `blst` library can later switch to a new implementation based on `libsecp256k1` library without changing the user code aside from the type parameter as long as the new implementation has the same set of API as [Blst](../arith/blst/blst.h).
 
-This effectively makes the [Mcl](../arith//mcl/mcl.h) implementation an interface.
+This effectively makes the [Blst](../arith/blst/blst.h) implementation an interface.
 
 ## Adding a new implementation
 ### Based on existing implementation
@@ -57,12 +57,12 @@ Below is an example taken from [range_proof_logic.h](../range_proof/range_proof_
 
 ## Example implementation and user class
 ### Implementation
-- [Mcl](../arith/mcl/mcl.h) -- the top-level class of `Generic Arith Classes` implementation
-- [MclScalar](../arith/mcl/mcl_scalar.h) -- `Scalar` implementation of `Mcl`
-- [MclG1Point](../arith/mcl/mcl_g1point.h) -- `Point` implementation of `Mcl`
+- [Blst](../arith/blst/blst.h) -- the top-level class of `Generic Arith Classes` implementation
+- [BlstScalar](../arith/blst/blst_scalar.h) -- `Scalar` implementation of `Blst`
+- [BlstG1Point](../arith/blst/blst_g1point.h) -- `Point` implementation of `Blst`
 
 ### User Class
-- [RangeProofLogic](../range_proof/range_proof.h) -- User class of `Mcl` classes
+- [RangeProofLogic](../range_proof/range_proof.h) -- User class of `Blst` classes
 
 ## Design candidates in the development process
 1. Interface based on abstract classes: it requires usage of pointers that makes the code harder to write and requires memory management. It also involves a cost of vtable look-up. *Not adopted*.

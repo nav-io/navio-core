@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef TXFACTORY_GLOBAL_H
-#define TXFACTORY_GLOBAL_H
+#ifndef NAVIO_BLSCT_WALLET_TXFACTORY_GLOBAL_H
+#define NAVIO_BLSCT_WALLET_TXFACTORY_GLOBAL_H
 
 #include <blsct/double_public_key.h>
 #include <blsct/public_keys.h>
@@ -12,7 +12,7 @@
 #include <consensus/amount.h>
 #include <primitives/transaction.h>
 
-using T = Mcl;
+using T = Blst;
 using Point = T::Point;
 using Points = Elements<Point>;
 using Scalar = T::Scalar;
@@ -156,4 +156,4 @@ int32_t GetTransactionWeight(const CTransaction& tx);
 int32_t GetTransactioOutputWeight(const CTxOut& out);
 } // namespace blsct
 
-#endif // TXFACTORY_GLOBAL_H
+#endif // NAVIO_BLSCT_WALLET_TXFACTORY_GLOBAL_H

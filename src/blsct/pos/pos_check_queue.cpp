@@ -33,10 +33,10 @@ bool PoSCheckQueue::Flush(const CBlockIndex** failing)
     if (failing) *failing = nullptr;
 
     // TODO(#3): replace this loop with:
-    //   (1) SetMemProofProver<Mcl>::VerifyBatch(setup, batch_items)  — needs
+    //   (1) SetMemProofProver<Blst>::VerifyBatch(setup, batch_items)  — needs
     //       random-linear-combination batching across each proof's pairing
     //       equation. Requires crypto review.
-    //   (2) bulletproofs_plus::RangeProofLogic<Mcl>::Verify(vector) over
+    //   (2) bulletproofs_plus::RangeProofLogic<Blst>::Verify(vector) over
     //       every item's range proof — batches internally, but stays on the
     //       caller thread when OpenMP-backed MSM is enabled.
     //

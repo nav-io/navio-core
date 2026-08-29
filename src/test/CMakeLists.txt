@@ -43,9 +43,9 @@ add_executable(test_navio
   bloom_tests.cpp
   blsct_signature_checker_tests.cpp
   blsct/arith/elements_tests.cpp
-  blsct/arith/mcl/mcl_g1point_tests.cpp
-  blsct/arith/mcl/mcl_integration_tests.cpp
-  blsct/arith/mcl/mcl_scalar_tests.cpp
+  blsct/arith/blst/blst_g1point_tests.cpp
+  blsct/arith/blst/blst_integration_tests.cpp
+  blsct/arith/blst/blst_scalar_tests.cpp
   blsct/bech32_mod_tests.cpp
   blsct/building_block/fixed_base_window_tests.cpp
   blsct/building_block/generator_deriver_tests.cpp
@@ -175,10 +175,6 @@ target_json_data_sources(test_navio
   data/tx_valid.json
 )
 
-if(WITH_BLST)
-  target_sources(test_navio PRIVATE blsct/arith/blst/blst_equivalence_tests.cpp)
-endif()
-
 target_link_libraries(test_navio
   core_interface
   test_util
@@ -196,7 +192,7 @@ target_link_libraries(test_navio
   $<$<BOOL:${ENABLE_WALLET}>:navio_blsct_wallet>
   minisketch
   secp256k1
-  bls_interface
+  blst_interface
   Boost::headers
   libevent::extra
   $<TARGET_NAME_IF_EXISTS:USDT::headers>

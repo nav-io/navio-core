@@ -6,7 +6,7 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <blsct/range_proof/generators.h>
 #include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/delegation.h>
@@ -470,7 +470,7 @@ static std::string coinbase_dest;
 static bool mustUnlockWallet = false;
 static arith_uint256 currentDifficulty;
 static bool fDelegated = false;
-static MclScalar delegationPrivKey;
+static BlstScalar delegationPrivKey;
 static std::string operatorAddress;
 static int64_t operatorFeeBps = 0;
 
@@ -611,7 +611,7 @@ bool TestSetup()
             // Operator mode: no wallet needed. The delegation key was already
             // validated in Setup(); the reward destinations come from the
             // delegations themselves.
-            const auto delegationPubKey = MclG1Point::GetBasePoint() * delegationPrivKey;
+            const auto delegationPubKey = BlstG1Point::GetBasePoint() * delegationPrivKey;
             LogPrintf("%s: Delegated staking mode. Delegation public key: %s%s\n", __func__, HexStr(delegationPubKey.GetVch()),
                       operatorFeeBps > 0 ? strprintf(" (operator fee: %d bps to %s)", operatorFeeBps, operatorAddress) : "");
             return true;
@@ -727,9 +727,9 @@ bool TestSetup()
 }
 
 struct StakedCommitment {
-    MclG1Point point;
-    MclScalar value;
-    MclScalar gamma;
+    BlstG1Point point;
+    BlstScalar value;
+    BlstScalar gamma;
 };
 
 std::vector<StakedCommitment>
@@ -739,9 +739,9 @@ UniValueArrayToStakedCommitmentsMine(const UniValue& array)
 
     for (const UniValue& elementobject : array.getValues()) {
         const UniValue& obj = elementobject.get_obj();
-        MclG1Point point;
-        MclScalar value;
-        MclScalar gamma;
+        BlstG1Point point;
+        BlstScalar value;
+        BlstScalar gamma;
         point.SetVch(ParseHex(obj.find_value("commitment").get_str()));
         value.SetVch(ParseHex(obj.find_value("value").get_str()));
         gamma.SetVch(ParseHex(obj.find_value("gamma").get_str()));
@@ -750,13 +750,13 @@ UniValueArrayToStakedCommitmentsMine(const UniValue& array)
     return ret;
 }
 
-std::vector<MclG1Point>
+std::vector<BlstG1Point>
 UniValueArrayToStakedCommitments(const UniValue& array)
 {
-    std::vector<MclG1Point> ret;
+    std::vector<BlstG1Point> ret;
 
     for (const UniValue& elementobject : array.getValues()) {
-        MclG1Point point;
+        BlstG1Point point;
         point.SetVch(ParseHex(elementobject.get_str()));
         ret.push_back(point);
     }
@@ -896,8 +896,8 @@ std::vector<DelegatedCommitment> GetDelegatedCommitments(const std::unique_ptr<B
         return ret;
     }
 
-    range_proof::GeneratorsFactory<Mcl> gf;
-    range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId());
+    range_proof::GeneratorsFactory<Blst> gf;
+    range_proof::Generators<Blst> gen = gf.GetInstance(TokenId());
 
     for (const UniValue& elementobject : result.get_array().getValues()) {
         try {
@@ -914,12 +914,12 @@ std::vector<DelegatedCommitment> GetDelegatedCommitments(const std::unique_ptr<B
             const auto info = blsct::delegation::TryDecrypt(parsed.GetData(), delegationPrivKey);
             if (!info.has_value()) continue;
 
-            MclG1Point point;
+            BlstG1Point point;
             if (!point.SetVch(ParseHex(obj.find_value("commitment").get_str()))) continue;
 
             if (info->value < 0) continue;
-            const MclScalar value{info->value};
-            const MclScalar gamma = info->gamma;
+            const BlstScalar value{info->value};
+            const BlstScalar gamma = info->gamma;
             if (!((gen.G * value + gen.H * gamma) == point)) {
                 LogPrintf("%s: Delegation for commitment %s has an opening that does not match; skipping.\n", __func__, obj.find_value("commitment").get_str());
                 continue;
@@ -956,7 +956,7 @@ std::vector<DelegatedCommitment> GetDelegatedCommitments(const std::unique_ptr<B
 std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>& rh, const StakedCommitment& staked_commitment, const std::string& coinbaseDest)
 {
     // Wrap the whole proposal flow so that any failure (malformed RPC reply,
-    // mcl/G1 deserialisation throwing, range-proof construction asserting
+    // G1 point deserialisation throwing, range-proof construction asserting
     // on a degenerate input, ...) is logged and treated as "no candidate
     // this slot" instead of terminating the staker. The 147190-testnet
     // crash:
@@ -1019,8 +1019,8 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         auto eta_fiat_shamir = ParseHex(result.find_value("eta_fiat_shamir").get_str());
         auto eta_phi = ParseHex(result.find_value("eta_phi").get_str());
 
-        MclScalar m = staked_commitment.value;
-        MclScalar f = staked_commitment.gamma;
+        BlstScalar m = staked_commitment.value;
+        BlstScalar f = staked_commitment.gamma;
 
         uint32_t prev_time = result.find_value("prev_time").get_real();
         uint64_t modifier = result.find_value("modifier").get_uint64();
@@ -1077,7 +1077,7 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         return std::nullopt;
     } catch (const std::exception& e) {
         // Surface the exception type+message so the next bug-report does
-        // not require gdb. Any throw from RPC parsing / mcl deserialisation
+        // not require gdb. Any throw from RPC parsing / point deserialisation
         // / proof construction lands here. Skip this slot, sleep briefly so
         // we do not hot-loop on a sticky failure (e.g. node restarting),
         // then let Loop() try the next iteration.
@@ -1119,7 +1119,7 @@ void Loop()
 
     while (true) {
         // Each loop iteration is best-effort: if anything throws (RPC
-        // parsing, mcl deserialisation, range-proof construction,
+        // parsing, point deserialisation, range-proof construction,
         // submitblock failure...) log it and keep the staker alive. The
         // alternative — letting std::terminate kill the process on the
         // first hiccup — burns the whole staking session for what is
@@ -1252,7 +1252,7 @@ MAIN_FUNCTION
     common::WinCmdLineArgs winArgs;
     std::tie(argc, argv) = winArgs.get();
 #endif
-    volatile MclInit for_side_effect_only;
+    volatile BlstInit for_side_effect_only;
 
     SetupEnvironment();
     if (!SetupNetworking()) {
@@ -1274,8 +1274,8 @@ MAIN_FUNCTION
     }
 
     if (gArgs.GetBoolArg("-gendelegationkey", false)) {
-        const MclScalar priv = MclScalar::Rand(/*exclude_zero=*/true);
-        const MclG1Point pub = MclG1Point::GetBasePoint() * priv;
+        const BlstScalar priv = BlstScalar::Rand(/*exclude_zero=*/true);
+        const BlstG1Point pub = BlstG1Point::GetBasePoint() * priv;
         tfm::format(std::cout, "delegation private key: %s\n", HexStr(priv.GetVch()));
         tfm::format(std::cout, "delegation public key:  %s\n", HexStr(pub.GetVch()));
         tfm::format(std::cout, "Keep the private key secret (pass it to navio-staker with -delegated -delegationkey=<hex>).\nPublish the public key so wallet owners can delegate to you with the delegatestake RPC.\n");

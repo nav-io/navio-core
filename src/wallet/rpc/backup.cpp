@@ -2284,13 +2284,13 @@ RPCHelpMan importblsctscript()
                                   throw JSONRPCError(RPC_INVALID_PARAMETER, "blinding_key must be 32 bytes (64 hex chars)");
 
                               Scalar blindingKey(bk_bytes);
-                              MclG1Point address_a_view_key;
+                              BlstG1Point address_a_view_key;
                               if (!address_a.GetViewKey(address_a_view_key))
                                   throw JSONRPCError(RPC_INVALID_PARAMETER, "Could not extract view key from address_a");
                               watch_only_recovery_nonce = blsct::PublicKey(address_a_view_key * blindingKey);
 
                               auto derive_key = [](const blsct::DoublePublicKey& dpk, const Scalar& bk) -> blsct::PublicKey {
-                                  MclG1Point vk, sk;
+                                  BlstG1Point vk, sk;
                                   if (!dpk.GetViewKey(vk))
                                       throw JSONRPCError(RPC_INVALID_PARAMETER, "Could not extract view key from address");
                                   if (!dpk.GetSpendKey(sk))

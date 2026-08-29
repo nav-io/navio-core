@@ -4,7 +4,7 @@
 
 #include <blsct/building_block/imp_inner_prod_arg.h>
 #include <blsct/range_proof/setup.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/arith/elements.h>
 #include <hash.h>
 #include <test/util/setup_common.h>
@@ -12,8 +12,8 @@
 
 BOOST_FIXTURE_TEST_SUITE(imp_inner_prod_arg_tests, BasicTestingSetup)
 
-using Scalar = Mcl::Scalar;
-using Point = Mcl::Point;
+using Scalar = Blst::Scalar;
+using Point = Blst::Point;
 using Scalars = Elements<Scalar>;
 using Points = Elements<Point>;
 
@@ -30,7 +30,7 @@ BOOST_AUTO_TEST_CASE(test_gen_generator_exponents)
     xs.Add(three);
     xs.Add(four);
 
-    auto res = ImpInnerProdArg::GenGeneratorExponents<Mcl>(4, xs);
+    auto res = ImpInnerProdArg::GenGeneratorExponents<Blst>(4, xs);
 
     BOOST_CHECK(res[0].GetString(16) == "6f1915afb28c42ba866cc45d093b19afc595bd2d8aa91829b555555460000001");
     BOOST_CHECK(res[1].GetString(16) == "26a48d1bb889d46d66689d580335f2ac713f36abaaaa1eaa5555555500000001");
@@ -54,7 +54,7 @@ BOOST_AUTO_TEST_CASE(test_exec_ypow_loop)
 {
     Scalar y(2);
     std::vector<Scalar> act;
-    ImpInnerProdArg::LoopWithYPows<Mcl>(3, y,
+    ImpInnerProdArg::LoopWithYPows<Blst>(3, y,
         [&](const size_t& i, const Scalar& y_pow, const Scalar& y_inv_pow) {
             act.emplace_back(i);
             act.emplace_back(y_pow);
@@ -92,7 +92,7 @@ BOOST_AUTO_TEST_CASE(test_gen_all_round_xs_xinvs)
     Rs.Add(g + g + g);
     Rs.Add(g + g + g + g);
 
-    auto res = ImpInnerProdArg::GenAllRoundXs<Mcl>(Ls, Rs, fiat_shamir).value();
+    auto res = ImpInnerProdArg::GenAllRoundXs<Blst>(Ls, Rs, fiat_shamir).value();
     BOOST_CHECK(res.Size() == 2);
     BOOST_CHECK(res[0].GetString(16) == "1549ffc50ba69bf258b57da9e829cf787d7996fb9b6f779667a3d83544f8fac3");
     BOOST_CHECK(res[1].GetString(16) == "198816319c5d3178b6569166c76e75c956e3382487a95fed771d4312686b6e8");

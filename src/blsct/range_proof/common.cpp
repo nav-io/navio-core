@@ -1,4 +1,4 @@
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/common.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/setup.h>
@@ -36,7 +36,7 @@ const typename T::Scalar& Common<T>::GetUint64Max() const
 {
     return *m_uint64_max;
 }
-template const Mcl::Scalar& Common<Mcl>::GetUint64Max() const;
+template const Blst::Scalar& Common<Blst>::GetUint64Max() const;
 
 template <typename T>
 range_proof::GeneratorsFactory<T>& Common<T>::Gf() const
@@ -44,7 +44,7 @@ range_proof::GeneratorsFactory<T>& Common<T>::Gf() const
     return *m_gf;
 }
 template
-range_proof::GeneratorsFactory<Mcl>& Common<Mcl>::Gf() const;
+range_proof::GeneratorsFactory<Blst>& Common<Blst>::Gf() const;
 
 template <typename T>
 const typename T::Scalar& Common<T>::Zero() const
@@ -52,7 +52,7 @@ const typename T::Scalar& Common<T>::Zero() const
     return *m_zero;
 }
 template
-const Mcl::Scalar& Common<Mcl>::Zero() const;
+const Blst::Scalar& Common<Blst>::Zero() const;
 
 template <typename T>
 const typename T::Scalar& Common<T>::One() const
@@ -60,7 +60,7 @@ const typename T::Scalar& Common<T>::One() const
     return *m_one;
 }
 template
-const Mcl::Scalar& Common<Mcl>::One() const;
+const Blst::Scalar& Common<Blst>::One() const;
 
 template <typename T>
 const typename T::Scalar& Common<T>::Two() const
@@ -68,7 +68,7 @@ const typename T::Scalar& Common<T>::Two() const
     return *m_two;
 }
 template
-const Mcl::Scalar& Common<Mcl>::Two() const;
+const Blst::Scalar& Common<Blst>::Two() const;
 
 template <typename T>
 const Elements<typename T::Scalar>& Common<T>::TwoPows64() const
@@ -77,7 +77,7 @@ const Elements<typename T::Scalar>& Common<T>::TwoPows64() const
 
 }
 template
-const Elements<Mcl::Scalar>& Common<Mcl>::TwoPows64() const;
+const Elements<Blst::Scalar>& Common<Blst>::TwoPows64() const;
 
 template <typename T>
 const typename T::Scalar& Common<T>::InnerProd1x2Pows64() const
@@ -86,7 +86,7 @@ const typename T::Scalar& Common<T>::InnerProd1x2Pows64() const
 
 }
 template
-const Mcl::Scalar& Common<Mcl>::InnerProd1x2Pows64() const;
+const Blst::Scalar& Common<Blst>::InnerProd1x2Pows64() const;
 
 template <typename T>
 const typename T::Scalar& Common<T>::Uint64Max() const
@@ -94,7 +94,7 @@ const typename T::Scalar& Common<T>::Uint64Max() const
     return *m_uint64_max;
 }
 template
-const Mcl::Scalar& Common<Mcl>::Uint64Max() const;
+const Blst::Scalar& Common<Blst>::Uint64Max() const;
 
 template <typename T>
 Common<T>::Common()
@@ -134,7 +134,7 @@ Common<T>::Common()
     }
     m_is_initialized = true;
 }
-template Common<Mcl>::Common();
+template Common<Blst>::Common();
 
 template <typename T>
 size_t Common<T>::GetNumRoundsExclLast(
@@ -149,7 +149,7 @@ size_t Common<T>::GetNumRoundsExclLast(
     return num_rounds;
 }
 template
-size_t Common<Mcl>::GetNumRoundsExclLast(
+size_t Common<Blst>::GetNumRoundsExclLast(
     const size_t& num_input_values
 );
 
@@ -169,8 +169,8 @@ void Common<T>::ValidateParameters(
     }
 }
 template
-void Common<Mcl>::ValidateParameters(
-    const Elements<Mcl::Scalar>& vs,
+void Common<Blst>::ValidateParameters(
+    const Elements<Blst::Scalar>& vs,
     const std::vector<uint8_t>& message
 );
 
@@ -201,45 +201,8 @@ void Common<T>::ValidateProofsBySizes(
                                                __func__, proof.Ls.Size(), proof.Rs.Size()));
     }
 }
-template void Common<Mcl>::ValidateProofsBySizes(
-    const std::vector<bulletproofs::RangeProofWithSeed<Mcl>>&);
-template void Common<Mcl>::ValidateProofsBySizes(
-    const std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>&);
-}
-
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-namespace range_proof {
-template const Blst::Scalar& Common<Blst>::GetUint64Max() const;
-template
-range_proof::GeneratorsFactory<Blst>& Common<Blst>::Gf() const;
-template
-const Blst::Scalar& Common<Blst>::Zero() const;
-template
-const Blst::Scalar& Common<Blst>::One() const;
-template
-const Blst::Scalar& Common<Blst>::Two() const;
-template
-const Elements<Blst::Scalar>& Common<Blst>::TwoPows64() const;
-template
-const Blst::Scalar& Common<Blst>::InnerProd1x2Pows64() const;
-template
-const Blst::Scalar& Common<Blst>::Uint64Max() const;
-template Common<Blst>::Common();
-template
-size_t Common<Blst>::GetNumRoundsExclLast(
-    const size_t& num_input_values
-);
-template
-void Common<Blst>::ValidateParameters(
-    const Elements<Blst::Scalar>& vs,
-    const std::vector<uint8_t>& message
-);
+template void Common<Blst>::ValidateProofsBySizes(
+    const std::vector<bulletproofs::RangeProofWithSeed<Blst>>&);
 template void Common<Blst>::ValidateProofsBySizes(
     const std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>&);
-} // namespace range_proof
-#endif // NAVIO_BLSCT_ARITH_BLST
+}

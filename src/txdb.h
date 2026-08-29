@@ -70,7 +70,7 @@ public:
     bool GetAllTokens(TokensMap& tokensMap) const override;
     bool HaveToken(const uint256& tokenId) const override;
     uint256 GetBestBlock() const override;
-    OrderedElements<MclG1Point> GetStakedCommitments() const override;
+    OrderedElements<BlstG1Point> GetStakedCommitments() const override;
     std::vector<uint256> GetHeadBlocks() const override;
     bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override;

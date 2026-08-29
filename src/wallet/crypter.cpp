@@ -147,7 +147,7 @@ bool DecryptKey(const CKeyingMaterial& vMasterKey, const std::vector<unsigned ch
     if (vchSecret.size() != 32)
         return false;
 
-    key = MclScalar(std::vector<unsigned char>(vchSecret.begin(), vchSecret.end()));
+    key = BlstScalar(std::vector<unsigned char>(vchSecret.begin(), vchSecret.end()));
     return key.VerifyPubKey(vchPubKey);
 }
 } // namespace wallet

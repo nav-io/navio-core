@@ -7,7 +7,7 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <chainparams.h>
 #include <clientversion.h>
 #include <common/args.h>
@@ -250,7 +250,7 @@ MAIN_FUNCTION
     std::tie(argc, argv) = winArgs.get();
 #endif
 
-    volatile MclInit for_side_effect_only;
+    volatile BlstInit for_side_effect_only;
     NodeContext node;
     int exit_status;
     std::unique_ptr<interfaces::Init> init = interfaces::MakeNodeInit(node, argc, argv, exit_status);

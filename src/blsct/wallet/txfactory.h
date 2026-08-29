@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef TXFACTORY_H
-#define TXFACTORY_H
+#ifndef NAVIO_BLSCT_WALLET_TXFACTORY_H
+#define NAVIO_BLSCT_WALLET_TXFACTORY_H
 
 #include <blsct/arith/elements.h>
 #include <blsct/wallet/keyman.h>
@@ -42,4 +42,4 @@ public:
 };
 } // namespace blsct
 
-#endif // TXFACTORY_H
+#endif // NAVIO_BLSCT_WALLET_TXFACTORY_H

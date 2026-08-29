@@ -31,8 +31,8 @@ static bool BuildValidPoSBlock(
     CCoinsViewCache& view,
     const CBlockIndex* pindexPrev,
     CBlock& block,
-    const MclScalar& value,
-    const MclScalar& gamma,
+    const BlstScalar& value,
+    const BlstScalar& gamma,
     const Consensus::Params& params,
     int max_grinds = 10000)
 {
@@ -121,21 +121,21 @@ BOOST_FIXTURE_TEST_CASE(invalid_pos_proof_is_rejected, TestBLSCTChain100Setup)
     // ---- mutation 2: corrupt setMemProof by zeroing one of its G1 points.
     {
         CBlock mutated = block;
-        mutated.posProof.setMemProof.phi = MclG1Point();
+        mutated.posProof.setMemProof.phi = BlstG1Point();
         BOOST_CHECK(!blsct::ProofOfStakeLogic::Verify(view, &index, mutated, params));
     }
 
     // ---- mutation 3: corrupt rangeProof by zeroing A_wip.
     {
         CBlock mutated = block;
-        mutated.posProof.rangeProof.A_wip = MclG1Point();
+        mutated.posProof.rangeProof.A_wip = BlstG1Point();
         BOOST_CHECK(!blsct::ProofOfStakeLogic::Verify(view, &index, mutated, params));
     }
 
     // ---- mutation 4: corrupt rangeProof by perturbing a scalar.
     {
         CBlock mutated = block;
-        mutated.posProof.rangeProof.r_prime = mutated.posProof.rangeProof.r_prime + MclScalar(1);
+        mutated.posProof.rangeProof.r_prime = mutated.posProof.rangeProof.r_prime + BlstScalar(1);
         BOOST_CHECK(!blsct::ProofOfStakeLogic::Verify(view, &index, mutated, params));
     }
 

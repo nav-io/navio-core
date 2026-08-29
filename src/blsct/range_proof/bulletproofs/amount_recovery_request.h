@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef NAVIO_BLSCT_ARITH_RANGE_PROOF_BULLETPROOFS_AMOUNT_RECOVERY_REQUEST_H
-#define NAVIO_BLSCT_ARITH_RANGE_PROOF_BULLETPROOFS_AMOUNT_RECOVERY_REQUEST_H
+#ifndef NAVIO_BLSCT_RANGE_PROOF_BULLETPROOFS_AMOUNT_RECOVERY_REQUEST_H
+#define NAVIO_BLSCT_RANGE_PROOF_BULLETPROOFS_AMOUNT_RECOVERY_REQUEST_H
 
 #include <blsct/arith/elements.h>
 #include <blsct/building_block/generator_deriver.h>
@@ -39,5 +39,5 @@ struct AmountRecoveryRequest
 
 } // namespace bulletproofs
 
-#endif // NAVIO_BLSCT_ARITH_RANGE_PROOF_BULLETPROOFS_AMOUNT_RECOVERY_REQUEST_H
+#endif // NAVIO_BLSCT_RANGE_PROOF_BULLETPROOFS_AMOUNT_RECOVERY_REQUEST_H
 

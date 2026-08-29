@@ -329,17 +329,17 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
     if (seed.size() == 32 && type == IMPORT_MNEMONIC) {
         if (!SetupMnemonicFromEntropy(seed, mnemonic_passphrase, creation_time)) return false;
     } else if (seed.size() == 32 && type == IMPORT_MASTER_KEY) {
-        MclScalar scalarSeed;
+        BlstScalar scalarSeed;
         scalarSeed.SetVch(seed);
         SetHDSeed(scalarSeed, creation_time);
     } else if (seed.size() == 80 && type == IMPORT_VIEW_KEY) {
         std::vector<unsigned char> viewVch(seed.begin(), seed.begin() + 32);
         std::vector<unsigned char> spendingVch(seed.begin() + 32, seed.end());
 
-        MclScalar scalarView;
+        BlstScalar scalarView;
         scalarView.SetVch(viewVch);
 
-        MclG1Point pointSpending;
+        BlstG1Point pointSpending;
         pointSpending.SetVch(spendingVch);
 
         if (!AddViewKey(scalarView, PrivateKey(scalarView).GetPublicKey()))
@@ -677,7 +677,7 @@ blsct::PrivateKey KeyMan::GetTokenKey(const uint256& tokenId) const
     return BLS12_381_KeyGen::derive_child_SK_hash(masterTokenKey.GetScalar(), tokenId);
 }
 
-using Arith = Mcl;
+using Arith = Blst;
 
 bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std::vector<CTxOut>& outs)
 {
@@ -692,7 +692,7 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
     // We only do the v·R scalar mult for outputs that are structurally BLSCT;
     // per-output scalar mult is the hot cost, so batching amortises thread overhead.
     std::vector<size_t> candidateIdx;
-    std::vector<MclG1Point> candidateBlindingKeys;
+    std::vector<BlstG1Point> candidateBlindingKeys;
     candidateIdx.reserve(outs.size());
     candidateBlindingKeys.reserve(outs.size());
 
@@ -749,7 +749,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
     return IsMineMode(txout, GetExpectedNonce(txout));
 }
 
-wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<MclG1Point>& expectedNonce)
+wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<BlstG1Point>& expectedNonce)
 {
     const auto spendable_kind = [&]() {
         return txout.IsStakedCommitment() ? wallet::ISMINE_STAKED_COMMITMENT_BLSCT
@@ -807,7 +807,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<M
     return wallet::ISMINE_NO;
 }
 
-bool KeyMan::IsMine(const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<MclG1Point>& expectedNonce)
+bool KeyMan::IsMine(const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<BlstG1Point>& expectedNonce)
 {
     if (!expectedNonce) return false;
     if (viewTag != static_cast<uint16_t>(ViewTagFromNonce(*expectedNonce))) return false;
@@ -1160,7 +1160,7 @@ util::Result<CTxDestination> KeyMan::GetNewDestination(const int64_t& account)
     return CTxDestination(GetSubAddress(id).GetKeys());
 }
 
-std::optional<MclG1Point> KeyMan::GetExpectedNonce(const CTxOut& txout) const
+std::optional<BlstG1Point> KeyMan::GetExpectedNonce(const CTxOut& txout) const
 {
     try {
         if (!fViewKeyDefined || !viewKey.IsValid()) return std::nullopt;
@@ -1183,7 +1183,7 @@ std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxO
     return MarkUnusedSubAddress(txout, *nonce);
 }
 
-std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout, const MclG1Point& expectedNonce)
+std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout, const BlstG1Point& expectedNonce)
 {
     try {
         // Cheap prefilter: viewTag must match before we do any expensive work.

@@ -4,15 +4,15 @@
 
 #define BOOST_UNIT_TEST
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/arith/elements.h>
 #include <blsct/set_mem_proof/set_mem_proof.h>
 #include <streams.h>
 #include <boost/test/unit_test.hpp>
 #include <test/util/setup_common.h>
 
-using Scalar = Mcl::Scalar;
-using Point = Mcl::Point;
+using Scalar = Blst::Scalar;
+using Point = Blst::Point;
 using Points = Elements<Point>;
 
 BOOST_FIXTURE_TEST_SUITE(set_mem_proof_tests, BasicTestingSetup)
@@ -45,7 +45,7 @@ BOOST_AUTO_TEST_CASE(test_equal)
     Scalar b(8);
     Scalar omega(9);
 
-    auto p = SetMemProof<Mcl>(
+    auto p = SetMemProof<Blst>(
         phi,
         A1,
         A2,
@@ -67,7 +67,7 @@ BOOST_AUTO_TEST_CASE(test_equal)
         omega
     );
 
-    auto q = SetMemProof<Mcl>(
+    auto q = SetMemProof<Blst>(
         phi,
         g,
         A2,
@@ -121,7 +121,7 @@ BOOST_AUTO_TEST_CASE(test_de_ser)
     Scalar b(8);
     Scalar omega(9);
 
-    auto p = SetMemProof<Mcl>(
+    auto p = SetMemProof<Blst>(
         phi,
         A1,
         A2,
@@ -146,7 +146,7 @@ BOOST_AUTO_TEST_CASE(test_de_ser)
     DataStream st{};
     p.Serialize(st);
 
-    SetMemProof<Mcl> q;
+    SetMemProof<Blst> q;
     q.Unserialize(st);
 
     BOOST_CHECK(p  == q);

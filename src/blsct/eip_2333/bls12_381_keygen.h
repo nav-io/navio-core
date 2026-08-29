@@ -6,10 +6,8 @@
 #ifndef NAVIO_BLSCT_EIP_2333_BLS12_381_KEYGEN_H
 #define NAVIO_BLSCT_EIP_2333_BLS12_381_KEYGEN_H
 
-#define BLS_ETH 1
 
-#include <bls/bls384_256.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <crypto/hmac_sha256.h>
 #include <crypto/sha256.h>
 
@@ -18,9 +16,9 @@
 class BLS12_381_KeyGen
 {
 public:
-    static MclScalar derive_master_SK(const std::vector<uint8_t>& seed);
-    static MclScalar derive_child_SK(const MclScalar& parent_SK, const uint32_t& index);
-    static MclScalar derive_child_SK_hash(const MclScalar& parent_SK, const uint256& hash);
+    static BlstScalar derive_master_SK(const std::vector<uint8_t>& seed);
+    static BlstScalar derive_child_SK(const BlstScalar& parent_SK, const uint32_t& index);
+    static BlstScalar derive_child_SK_hash(const BlstScalar& parent_SK, const uint256& hash);
 
 #ifndef BOOST_UNIT_TEST
 private:
@@ -35,14 +33,13 @@ private:
     template <size_t L>
     static std::array<uint8_t, L> HKDF_Expand(const std::array<uint8_t, DigestSize>& PRK, const std::vector<uint8_t>& info);
 
-    static std::vector<uint8_t> I2OSP(const MclScalar& x, const size_t& xLen);
-    static MclScalar OS2IP(const std::array<uint8_t, 48ul>& X);
+    static std::vector<uint8_t> I2OSP(const BlstScalar& x, const size_t& xLen);
+    static BlstScalar OS2IP(const std::array<uint8_t, 48ul>& X);
     static std::vector<uint8_t> flip_bits(const std::vector<uint8_t>& vec);
     static LamportChunks bytes_split(const std::array<uint8_t, 8160>& octet_string);
-    static MclScalar HKDF_mod_r(const std::vector<uint8_t>& IKM);
+    static BlstScalar HKDF_mod_r(const std::vector<uint8_t>& IKM);
     static LamportChunks IKM_to_lamport_SK(const std::vector<uint8_t>& IKM, const std::vector<uint8_t>& salt);
-    static std::array<uint8_t, DigestSize> parent_SK_to_lamport_PK(const MclScalar& parent_SK, const uint32_t& index);
+    static std::array<uint8_t, DigestSize> parent_SK_to_lamport_PK(const BlstScalar& parent_SK, const uint32_t& index);
 };
 
-#endif  // NAVIO_BLSCT_EIP_2333_BLS12_381_KEYGEN_H
-
+#endif // NAVIO_BLSCT_EIP_2333_BLS12_381_KEYGEN_H

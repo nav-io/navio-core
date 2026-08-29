@@ -10,7 +10,7 @@
 #include <chrono>
 #include <limits>
 
-using Arith = Mcl;
+using Arith = Blst;
 using Point = Arith::Point;
 using Scalar = Arith::Scalar;
 using Points = Elements<Point>;
@@ -48,7 +48,7 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
         throw std::runtime_error(std::string(__func__) + ": staked_commitments must be non-empty");
     }
 
-    range_proof::GeneratorsFactory<Mcl> gf;
+    range_proof::GeneratorsFactory<Blst> gf;
     range_proof::Generators<Arith> gen = gf.GetInstance(TokenId());
 
     Point sigma = gen.G * m + gen.H * f;
@@ -101,7 +101,7 @@ ProofOfStake::ProofOfStake(const Points& staked_commitments, const Scalar& eta_f
         throw std::runtime_error(std::string(__func__) + ": staked_commitments must be non-empty");
     }
 
-    range_proof::GeneratorsFactory<Mcl> gf;
+    range_proof::GeneratorsFactory<Blst> gf;
     range_proof::Generators<Arith> gen = gf.GetInstance(TokenId());
 
     Point sigma = gen.G * m + gen.H * f;

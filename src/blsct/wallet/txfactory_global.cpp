@@ -6,7 +6,7 @@
 #include <blsct/wallet/txfactory_global.h>
 #include <util/strencodings.h>
 
-using T = Mcl;
+using T = Blst;
 using Point = T::Point;
 using Points = Elements<Point>;
 using Scalar = T::Scalar;
@@ -100,7 +100,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
     Scalars vs;
     vs.Add(nAmount);
 
-    ret.blindingKey = blindingKey.IsZero() ? MclScalar::Rand() : blindingKey;
+    ret.blindingKey = blindingKey.IsZero() ? BlstScalar::Rand() : blindingKey;
 
     Points nonces;
     Point vk;
@@ -162,7 +162,7 @@ UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& de
     Scalars vs;
     vs.Add(nAmount);
 
-    ret.blindingKey = blindingKey.IsZero() ? MclScalar::Rand() : blindingKey;
+    ret.blindingKey = blindingKey.IsZero() ? BlstScalar::Rand() : blindingKey;
 
     Points nonces;
     Point vk;

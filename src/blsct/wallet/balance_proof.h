@@ -1,6 +1,6 @@
 // src/blsct/wallet/balance_proof.h
-#ifndef BITCOIN_BLSCT_WALLET_BALANCE_PROOF_H
-#define BITCOIN_BLSCT_WALLET_BALANCE_PROOF_H
+#ifndef NAVIO_BLSCT_WALLET_BALANCE_PROOF_H
+#define NAVIO_BLSCT_WALLET_BALANCE_PROOF_H
 
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
@@ -16,13 +16,13 @@ class BalanceProof
 private:
     std::vector<COutPoint> m_outpoints;
     CAmount m_min_amount;
-    bulletproofs_plus::RangeProof<Mcl> m_proof;
+    bulletproofs_plus::RangeProof<Blst> m_proof;
     blsct::Signature m_signature;
     uint16_t m_index;
 
 public:
     BalanceProof() = default;
-    BalanceProof(const std::vector<COutPoint>& outpoints, CAmount min_amount, const bulletproofs_plus::RangeProof<Mcl>& proof, const blsct::Signature& signature)
+    BalanceProof(const std::vector<COutPoint>& outpoints, CAmount min_amount, const bulletproofs_plus::RangeProof<Blst>& proof, const blsct::Signature& signature)
         : m_outpoints(outpoints), m_min_amount(min_amount), m_proof(proof), m_signature(signature), m_index(0) {}
 
     BalanceProof(const std::vector<COutPoint>& outpoints, CAmount min_amount, const wallet::CWallet& wallet, const blsct::Message& additional_commitment)
@@ -31,8 +31,8 @@ public:
         m_min_amount = min_amount;
 
         // Sum up all commitments from the outputs
-        MclScalar value = 0;
-        MclScalar gamma = 0;
+        BlstScalar value = 0;
+        BlstScalar gamma = 0;
 
         if (outpoints.empty()) {
             throw std::runtime_error("No outpoints provided");
@@ -45,7 +45,7 @@ public:
 
         for (const auto& outpoint : outpoints) {
             CTxOut out;
-            range_proof::RecoveredData<Mcl> recoveryData;
+            range_proof::RecoveredData<Blst> recoveryData;
             bool has_blsct_output = false;
 
             if (const wallet::CWalletOutput* wout = wallet.GetWalletOutput(outpoint)) {
@@ -71,8 +71,8 @@ public:
             if (!has_blsct_output) {
                 throw std::runtime_error("Outpoint does not have BLSCT range proof");
             }
-            value = value + MclScalar(recoveryData.amount);
-            gamma = gamma + MclScalar(recoveryData.gamma);
+            value = value + BlstScalar(recoveryData.amount);
+            gamma = gamma + BlstScalar(recoveryData.gamma);
             index++;
         }
 
@@ -86,22 +86,22 @@ public:
         }
 
         // Create range proof
-        bulletproofs_plus::RangeProofLogic<Mcl> prover;
-        range_proof::GammaSeed<Mcl> nonce(Elements<MclScalar>{1, gamma});
+        bulletproofs_plus::RangeProofLogic<Blst> prover;
+        range_proof::GammaSeed<Blst> nonce(Elements<BlstScalar>{1, gamma});
         std::vector<uint8_t> message;
-        m_proof = prover.Prove({1, value}, nonce, message, TokenId(), MclScalar(min_amount));
+        m_proof = prover.Prove({1, value}, nonce, message, TokenId(), BlstScalar(min_amount));
         m_signature = private_key.Sign(additional_commitment);
     }
 
     const std::vector<COutPoint>& GetOutpoints() const { return m_outpoints; }
     CAmount GetMinAmount() const { return m_min_amount; }
-    const bulletproofs_plus::RangeProof<Mcl>& GetProof() const { return m_proof; }
+    const bulletproofs_plus::RangeProof<Blst>& GetProof() const { return m_proof; }
 
     bool Verify(const CCoinsViewCache& view, const blsct::Message& additional_commitment) const
     {
         // Sum up all commitments from the outputs
-        MclG1Point sum_commitment;
-        MclG1Point public_key;
+        BlstG1Point sum_commitment;
+        BlstG1Point public_key;
         uint16_t index = 0;
         for (const auto& outpoint : m_outpoints) {
             Coin coin;
@@ -118,16 +118,16 @@ public:
             index++;
         }
 
-        const_cast<bulletproofs_plus::RangeProof<Mcl>&>(m_proof).Vs.Clear();
-        const_cast<bulletproofs_plus::RangeProof<Mcl>&>(m_proof).Vs.Add(sum_commitment);
+        const_cast<bulletproofs_plus::RangeProof<Blst>&>(m_proof).Vs.Clear();
+        const_cast<bulletproofs_plus::RangeProof<Blst>&>(m_proof).Vs.Add(sum_commitment);
 
         // Create a range proof with seed for verification
-        bulletproofs_plus::RangeProofWithSeed<Mcl> proof(m_proof, TokenId(), MclScalar(m_min_amount));
-        std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> proofs;
+        bulletproofs_plus::RangeProofWithSeed<Blst> proof(m_proof, TokenId(), BlstScalar(m_min_amount));
+        std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> proofs;
         proofs.push_back(proof);
 
         // Verify the range proof
-        bulletproofs_plus::RangeProofLogic<Mcl> prover;
+        bulletproofs_plus::RangeProofLogic<Blst> prover;
         return prover.Verify(proofs) && blsct::PublicKey(public_key).Verify(additional_commitment, m_signature);
     }
 
@@ -139,4 +139,4 @@ public:
 
 } // namespace blsct
 
-#endif // BITCOIN_BLSCT_WALLET_BALANCE_PROOF_H
+#endif // NAVIO_BLSCT_WALLET_BALANCE_PROOF_H

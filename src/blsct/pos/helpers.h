@@ -2,10 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BLSCT_POS_HELPERS_H
-#define BLSCT_POS_HELPERS_H
+#ifndef NAVIO_BLSCT_POS_HELPERS_H
+#define NAVIO_BLSCT_POS_HELPERS_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <uint256.h>
 #include <arith_uint256.h>
 
@@ -53,7 +53,7 @@ uint256 CalculateKernelHashWithChainWork(const uint32_t& prevTime, const uint64_
 // V2 kernel: additionally binds the set-membership proof image point `phi`
 // (`block.posProof.setMemProof.phi`) into the kernel hash. Activated by block
 // height (Consensus::Params::nPoPSKernelV2Height).
-uint256 CalculateKernelHashWithChainWork(const uint32_t& prevTime, const uint64_t& stakeModifier, const arith_uint256& prevChainWork, const uint32_t& time, const MclG1Point& phi, bool hardened = true);
+uint256 CalculateKernelHashWithChainWork(const uint32_t& prevTime, const uint64_t& stakeModifier, const arith_uint256& prevChainWork, const uint32_t& time, const BlstG1Point& phi, bool hardened = true);
 } // namespace blsct
 
-#endif // BLSCT_POS_H
+#endif // NAVIO_BLSCT_POS_HELPERS_H

@@ -4,12 +4,12 @@
 
 #include <bench/bench.h>
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <blsct/range_proof/generators.h>
 #include <ctokens/tokenid.h>
 
-using Arith = Mcl;
+using Arith = Blst;
 
 // GeneratorsFactory::GetInstance is called once per transaction input, per
 // output and per range proof on the block-connect / mempool-accept verify path
@@ -19,7 +19,7 @@ using Arith = Mcl;
 // the per-call cost.
 static void BLSCTGeneratorsGetInstance(benchmark::Bench& bench)
 {
-    volatile MclInit init;
+    volatile BlstInit init;
     (void)init;
 
     range_proof::GeneratorsFactory<Arith> gf;

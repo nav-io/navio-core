@@ -37,7 +37,7 @@
 #include <string>
 
 static std::mutex g_init_mutex;
-static bulletproofs_plus::RangeProofLogic<Mcl>* g_rpl;
+static bulletproofs_plus::RangeProofLogic<Blst>* g_rpl;
 static bool g_is_little_endian;
 
 static bool is_little_endian()
@@ -49,11 +49,11 @@ static bool is_little_endian()
 
 void init() {
     std::lock_guard<std::mutex> lock(g_init_mutex);
-    Mcl::Init for_side_effect_only;
+    Blst::Init for_side_effect_only;
 
     set_chain(blsct::bech32_hrp::Mainnet);
     g_is_little_endian = is_little_endian();
-    g_rpl = new (std::nothrow) bulletproofs_plus::RangeProofLogic<Mcl>();
+    g_rpl = new (std::nothrow) bulletproofs_plus::RangeProofLogic<Blst>();
 }
 
 enum BlsctChain get_blsct_chain() {
@@ -483,21 +483,21 @@ BlsctAmountsRetVal* recover_amount(
             static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
 
         // construct AmountRecoveryRequest vector
-        std::vector<bulletproofs_plus::AmountRecoveryRequest<Mcl>> reqs;
+        std::vector<bulletproofs_plus::AmountRecoveryRequest<Blst>> reqs;
 
         for (size_t i = 0; i < amt_recovery_req_vec->size(); ++i) {
             const auto& ar_req = amt_recovery_req_vec->at(i);
-            bulletproofs_plus::RangeProof<Mcl> range_proof;
+            bulletproofs_plus::RangeProof<Blst> range_proof;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.range_proof, ar_req.range_proof_size, range_proof);
  
-            Mcl::Point nonce;
+            Blst::Point nonce;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.nonce, POINT_SIZE, nonce);
 
             TokenId token_id;
             UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.token_id, TOKEN_ID_SIZE, token_id);
 
-            auto proof_w_seed = bulletproofs_plus::RangeProofWithSeed<Mcl>(range_proof, token_id);
-            auto req = bulletproofs_plus::AmountRecoveryRequest<Mcl>::of(
+            auto proof_w_seed = bulletproofs_plus::RangeProofWithSeed<Blst>(range_proof, token_id);
+            auto req = bulletproofs_plus::AmountRecoveryRequest<Blst>::of(
                 proof_w_seed,
                 nonce,
                 i);
@@ -1675,12 +1675,12 @@ BlsctRetVal* build_range_proof(
             if (v > INT64_MAX) {
                 return err(BLSCT_VALUE_OUTSIDE_THE_RANGE);
             }
-            Mcl::Scalar x(static_cast<int64_t>(v));
+            Blst::Scalar x(static_cast<int64_t>(v));
             vs.Add(x);
         }
 
         // blsct_nonce to nonce
-        Mcl::Point nonce = Mcl::Point::GetBasePoint();
+        Blst::Point nonce = Blst::Point::GetBasePoint();
         auto blsct_nonce_u8 = U8C(blsct_nonce);
         std::vector<uint8_t> ser_point(
             blsct_nonce_u8, blsct_nonce_u8 + POINT_SIZE);
@@ -1721,12 +1721,12 @@ BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs)
 {
     try {
-        auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+        auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Blst>>*>(vp_range_proofs);
 
-        std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> range_proof_w_seeds;
+        std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> range_proof_w_seeds;
 
         for (const auto& rp : *range_proofs) {
-            auto rp_w_seed = bulletproofs_plus::RangeProofWithSeed<Mcl>(rp);
+            auto rp_w_seed = bulletproofs_plus::RangeProofWithSeed<Blst>(rp);
             range_proof_w_seeds.push_back(rp_w_seed);
         }
         bool is_valid = g_rpl->Verify(range_proof_w_seeds);
@@ -1742,7 +1742,7 @@ BlsctBoolRetVal* verify_range_proofs(
     BlsctPoint* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
     {                                                                                                            \
         try {                                                                                                    \
-            bulletproofs_plus::RangeProof<Mcl> range_proof;                                                      \
+            bulletproofs_plus::RangeProof<Blst> range_proof;                                                      \
             UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof);                  \
             auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));                                            \
             if (copy == nullptr) return nullptr;                                                                 \
@@ -1764,7 +1764,7 @@ DEFINE_RANGE_PROOF_POINT_GETTER(B)
     BlsctScalar* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
     {                                                                                                             \
         try {                                                                                                     \
-            bulletproofs_plus::RangeProof<Mcl> range_proof;                                                       \
+            bulletproofs_plus::RangeProof<Blst> range_proof;                                                       \
             UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof);                   \
             auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));                                           \
             if (copy == nullptr) return nullptr;                                                                  \
@@ -1803,7 +1803,7 @@ BlsctRetVal* deserialize_range_proof(
 
 void* create_range_proof_vec()
 {
-    auto vec = new (std::nothrow) std::vector<bulletproofs_plus::RangeProof<Mcl>>;
+    auto vec = new (std::nothrow) std::vector<bulletproofs_plus::RangeProof<Blst>>;
     HANDLE_MEM_ALLOC_FAILURE(vec);
     return static_cast<void*>(vec);
 }
@@ -1814,11 +1814,11 @@ void add_to_range_proof_vec(
     size_t blsct_range_proof_size)
 {
     try {
-        auto range_proofs = static_cast<std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+        auto range_proofs = static_cast<std::vector<bulletproofs_plus::RangeProof<Blst>>*>(vp_range_proofs);
         if (range_proofs == nullptr || blsct_range_proof == nullptr) return;
         // unserialize range proof; Unserialize throws ios_base::failure on
         // truncated/malformed bytes — must not escape extern "C"
-        bulletproofs_plus::RangeProof<Mcl> range_proof;
+        bulletproofs_plus::RangeProof<Blst> range_proof;
 
         DataStream st{};
         for (size_t i = 0; i < blsct_range_proof_size; ++i) {
@@ -1836,7 +1836,7 @@ void add_to_range_proof_vec(
 void delete_range_proof_vec(const void* vp_range_proofs)
 {
     if (vp_range_proofs == nullptr) return;
-    auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+    auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Blst>>*>(vp_range_proofs);
     delete range_proofs;
 }
 

@@ -25,7 +25,7 @@ BOOST_FIXTURE_TEST_CASE(wallet_test, TestingSetup)
 
     LOCK(wallet->cs_wallet);
     auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
-    blsct_km->SetHDSeed(MclScalar(uint256(uint64_t{1})));
+    blsct_km->SetHDSeed(BlstScalar(uint256(uint64_t{1})));
     BOOST_CHECK(blsct_km->NewSubAddressPool());
     BOOST_CHECK(blsct_km->NewSubAddressPool(-1));
 
@@ -158,13 +158,13 @@ BOOST_FIXTURE_TEST_CASE(negative_accounts_are_single_destination, TestingSetup)
 // Mirror the branch-key derivation used by the createblsctrawtransaction /
 // importblsctscript atomic-swap paths: the blinded per-output spending pubkey
 // baked into one HTLC branch of the script.
-blsct::PublicKey DeriveBranchKey(const blsct::DoublePublicKey& dpk, const MclScalar& blindingKey)
+blsct::PublicKey DeriveBranchKey(const blsct::DoublePublicKey& dpk, const BlstScalar& blindingKey)
 {
-    MclG1Point vk, sk;
+    BlstG1Point vk, sk;
     BOOST_REQUIRE(dpk.GetViewKey(vk));
     BOOST_REQUIRE(dpk.GetSpendKey(sk));
     auto rV = vk * blindingKey;
-    return blsct::PublicKey(sk + blsct::PrivateKey(MclScalar(rV.GetHashWithSalt(0))).GetPoint());
+    return blsct::PublicKey(sk + blsct::PrivateKey(BlstScalar(rV.GetHashWithSalt(0))).GetPoint());
 }
 } // namespace
 
@@ -196,7 +196,7 @@ BOOST_FIXTURE_TEST_CASE(htlc_watch_only_registration_detects_refund_output, Test
     auto addr_a = std::get<blsct::DoublePublicKey>(km_a->GetNewDestination(0).value());
     auto addr_b = std::get<blsct::DoublePublicKey>(km_b->GetNewDestination(0).value());
 
-    const MclScalar blindingKey(uint256(uint64_t{0x5eed})); // shared, known blinding key
+    const BlstScalar blindingKey(uint256(uint64_t{0x5eed})); // shared, known blinding key
     const std::vector<unsigned char> hash_bytes(32, 0x11);
 
     auto keyA = DeriveBranchKey(addr_a, blindingKey).GetVch();
@@ -210,7 +210,7 @@ BOOST_FIXTURE_TEST_CASE(htlc_watch_only_registration_detects_refund_output, Test
     // path: blinded to address_a, HTLC script as scriptPubKey, spendingKey nullified.
     auto unsigned_output = blsct::CreateOutput(std::make_pair(addr_a, htlc_script), 42 * COIN, "swap", TokenId(), blindingKey);
     CTxOut txout = unsigned_output.out;
-    txout.blsctData.spendingKey = MclG1Point();
+    txout.blsctData.spendingKey = BlstG1Point();
 
     // Pre-condition: without registration, the refund initiator is blind to the
     // output — it is not the party the output is blinded to. (The redeem party,
@@ -220,7 +220,7 @@ BOOST_FIXTURE_TEST_CASE(htlc_watch_only_registration_detects_refund_output, Test
 
     // The recovery nonce createblsctrawtransaction auto-registers for the script:
     // address_a's shared secret, which decrypts the amount for any participant.
-    MclG1Point addr_a_view_key;
+    BlstG1Point addr_a_view_key;
     BOOST_REQUIRE(addr_a.GetViewKey(addr_a_view_key));
     blsct::PublicKey recovery_nonce(addr_a_view_key * blindingKey);
 
@@ -328,7 +328,7 @@ BOOST_FIXTURE_TEST_CASE(memoized_ownership_checks_match, TestingSetup)
     // Zero blinding key: no nonce, and a nullopt nonce fails the BLSCT checks
     // without EC work, exactly like the self-contained path.
     CTxOut zero_blinding = owned;
-    zero_blinding.blsctData.blindingKey = MclG1Point();
+    zero_blinding.blsctData.blindingKey = BlstG1Point();
     BOOST_CHECK(!km->GetExpectedNonce(zero_blinding).has_value());
     BOOST_CHECK(km->IsMineMode(zero_blinding) == km->IsMineMode(zero_blinding, std::nullopt));
 
@@ -351,26 +351,26 @@ BOOST_FIXTURE_TEST_CASE(memoized_ownership_checks_match, TestingSetup)
 // alone: nonce = v*ephemeralKey, tweak = H(nonce), private key = s + tweak.
 BOOST_FIXTURE_TEST_CASE(external_destination_one_time_key_derivation, TestingSetup)
 {
-    const MclScalar v(uint256(uint64_t{0x1111}));  // shared view scalar
-    const MclScalar s1(uint256(uint64_t{0x2222})); // party 1 spend share
-    const MclScalar s2(uint256(uint64_t{0x3333})); // party 2 spend share
+    const BlstScalar v(uint256(uint64_t{0x1111}));  // shared view scalar
+    const BlstScalar s1(uint256(uint64_t{0x2222})); // party 1 spend share
+    const BlstScalar s2(uint256(uint64_t{0x3333})); // party 2 spend share
     const auto V = blsct::PrivateKey(v).GetPoint();
     const auto S = blsct::PrivateKey(s1).GetPoint() + blsct::PrivateKey(s2).GetPoint();
     const blsct::DoublePublicKey dest(V, S);
 
-    const MclScalar blindingKey(uint256(uint64_t{0x4444})); // sender-side only
+    const BlstScalar blindingKey(uint256(uint64_t{0x4444})); // sender-side only
     auto unsigned_output = blsct::CreateOutput(dest, 42 * COIN, "", TokenId(), blindingKey);
     const CTxOut& txout = unsigned_output.out;
 
     // Claimant side: everything below uses only (v, s1+s2) and on-chain data.
-    const MclG1Point nonce = txout.blsctData.ephemeralKey * v;
-    const MclScalar tweak(nonce.GetHashWithSalt(0));
+    const BlstG1Point nonce = txout.blsctData.ephemeralKey * v;
+    const BlstScalar tweak(nonce.GetHashWithSalt(0));
 
     // tweak_point lets a claimant verify the output key by point addition.
     BOOST_CHECK(txout.blsctData.spendingKey == S + blsct::PrivateKey(tweak).GetPoint());
 
     // The full one-time private key signs for the output's spending key.
-    const MclScalar one_time = s1 + s2 + tweak;
+    const BlstScalar one_time = s1 + s2 + tweak;
     BOOST_CHECK(blsct::PrivateKey(one_time).GetPoint() == txout.blsctData.spendingKey);
 
     // The view tag computed from the reconstructed nonce matches the output.

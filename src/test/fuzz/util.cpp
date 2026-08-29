@@ -213,8 +213,8 @@ CTxDestination ConsumeTxDestination(FuzzedDataProvider& fuzzed_data_provider) no
             tx_destination = WitnessV1Taproot{XOnlyPubKey{ConsumeUInt256(fuzzed_data_provider)}};
         },
         [&] {
-            tx_destination = blsct::DoublePublicKey{blsct::PrivateKey(ConsumeMclScalar(fuzzed_data_provider)).GetPublicKey(),
-                    blsct::PrivateKey(ConsumeMclScalar(fuzzed_data_provider)).GetPublicKey()};
+            tx_destination = blsct::DoublePublicKey{blsct::PrivateKey(ConsumeBlstScalar(fuzzed_data_provider)).GetPublicKey(),
+                    blsct::PrivateKey(ConsumeBlstScalar(fuzzed_data_provider)).GetPublicKey()};
         },
         [&] {
             std::vector<unsigned char> program{ConsumeRandomLengthByteVector(fuzzed_data_provider, /*max_length=*/40)};

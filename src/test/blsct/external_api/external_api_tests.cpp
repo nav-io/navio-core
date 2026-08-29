@@ -148,14 +148,14 @@ BOOST_AUTO_TEST_CASE(test_amount_recovery_returns_gamma)
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id, TOKEN_ID_SIZE, token_id);
 
     // build a range proof using the C++ API so we know the expected gamma
-    bulletproofs_plus::RangeProofLogic<Mcl> rpl;
+    bulletproofs_plus::RangeProofLogic<Blst> rpl;
     Scalars vs;
-    vs.Add(Mcl::Scalar(static_cast<int64_t>(amount)));
-    auto nonce = Mcl::Point::Rand();
+    vs.Add(Blst::Scalar(static_cast<int64_t>(amount)));
+    auto nonce = Blst::Point::Rand();
     auto range_proof = rpl.Prove(vs, nonce, msg_vec, token_id);
 
     // recover via C++ API to get expected gamma
-    auto cpp_req = bulletproofs_plus::AmountRecoveryRequest<Mcl>::of(range_proof, nonce);
+    auto cpp_req = bulletproofs_plus::AmountRecoveryRequest<Blst>::of(range_proof, nonce);
     auto cpp_result = rpl.RecoverAmounts({cpp_req});
     BOOST_REQUIRE(cpp_result.is_completed);
     BOOST_REQUIRE_EQUAL(cpp_result.amounts.size(), 1u);
@@ -215,10 +215,10 @@ BOOST_AUTO_TEST_CASE(test_recovered_gamma_round_trips_through_tx_in)
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id, TOKEN_ID_SIZE, token_id);
 
     // produce a range proof and recover to get a real gamma
-    bulletproofs_plus::RangeProofLogic<Mcl> rpl;
+    bulletproofs_plus::RangeProofLogic<Blst> rpl;
     Scalars vs;
-    vs.Add(Mcl::Scalar(static_cast<int64_t>(amount)));
-    auto nonce = Mcl::Point::Rand();
+    vs.Add(Blst::Scalar(static_cast<int64_t>(amount)));
+    auto nonce = Blst::Point::Rand();
     auto range_proof = rpl.Prove(vs, nonce, msg_vec, token_id);
 
     DataStream rp_st{};
@@ -302,8 +302,8 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
     BOOST_REQUIRE_EQUAL(token_key_rv->result, BLSCT_SUCCESS);
     auto* token_key = static_cast<BlsctScalar*>(token_key_rv->value);
 
-    MclScalar expected_token_key = BLS12_381_KeyGen::derive_child_SK_hash(MclScalar(uint64_t{42}), expected_collection_hash);
-    MclScalar token_key_native;
+    BlstScalar expected_token_key = BLS12_381_KeyGen::derive_child_SK_hash(BlstScalar(uint64_t{42}), expected_collection_hash);
+    BlstScalar token_key_native;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(token_key, SCALAR_SIZE, token_key_native);
     BOOST_CHECK(token_key_native == expected_token_key);
 

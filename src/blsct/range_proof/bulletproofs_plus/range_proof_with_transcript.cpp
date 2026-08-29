@@ -2,9 +2,9 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_scalar.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/building_block/fiat_shamir.h>
 #include <blsct/building_block/weighted_inner_prod_arg.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_with_transcript.h>
@@ -75,16 +75,6 @@ retry:
         ++i;
     }
 }
-template RangeProofWithTranscript<Mcl> RangeProofWithTranscript<Mcl>::Build(const RangeProofWithSeed<Mcl>&);
-
-} // namespace bulletproofs_plus
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-namespace bulletproofs_plus {
 template RangeProofWithTranscript<Blst> RangeProofWithTranscript<Blst>::Build(const RangeProofWithSeed<Blst>&);
+
 } // namespace bulletproofs_plus
-#endif // NAVIO_BLSCT_ARITH_BLST

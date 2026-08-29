@@ -443,7 +443,7 @@ jobs:
             label: '[tidy] Ubuntu 24.04, clang-17 (CMake)'
             runner: ubuntu-24.04
             packages: >-
-              clang-17 libclang-17-dev llvm-17-dev libomp-17-dev
+              clang-17 libclang-17-dev llvm-17-dev
               clang-tidy-17 iwyu jq libevent-dev libboost-dev
               libminiupnpc-dev libnatpmp-dev libzmq3-dev
               systemtap-sdt-dev libsqlite3-dev
@@ -463,7 +463,6 @@ jobs:
           # upstream-supported equivalent and produces identical ABI results.
           # -stdlib=libc++ mirrors DEP_OPTS="CXX='clang++-13 -stdlib=libc++'"
           # in 00_setup_env_native_libblsct_only.sh.
-          # NO_OPENMP=1 → -DWITH_MCL_OPENMP=OFF (already the default; explicit).
           # NO_WALLET=1 → implied by BUILD_LIBBLSCT_ONLY=ON.
           - name: no-wallet-libblsct
             label: 'Ubuntu 24.04, no wallet, libblsct only (CMake)'
@@ -478,7 +477,6 @@ jobs:
               -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
               -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++
               -DBUILD_LIBBLSCT_ONLY=ON
-              -DWITH_MCL_OPENMP=OFF
             check_libblsct_symbols: true
 
           # Replaces the autotools `i686-multiprocess` matrix entry.
@@ -487,9 +485,6 @@ jobs:
           # depends toolchain.cmake no longer trips on missing cc1obj.
           # Host packages: clang/llvm for the compiler driver, g++-multilib
           # for the 32-bit ABI bring-up (matches 00_setup_env_i686_multiprocess.sh).
-          # gobjc++ is needed because GMP's autoconf in depends probes for
-          # ObjC/ObjC++ support; without it gcc reports "cannot execute 'cc1obj'"
-          # and GMP's configure aborts with "could not find a working compiler".
           # Functional tests are intentionally skipped: they require the
           # navio-node IPC daemon executable (upstream `bitcoin-node`),
           # which depends on a CMake-side ENABLE_IPC + navio_ipc library
@@ -563,7 +558,7 @@ jobs:
             # Debian trixie ships clang 19, matching the version guix
             # produces and the version upstream bitcoin tests with for
             # mac-cross. Ubuntu 24.04's default clang is 18, which is
-            # too old: gmp's compile probe fails when configuring
+            # too old: depends' compile probes fail when configuring
             # darwin cross because clang 18 + lld 18 don't handle the
             # depends/hosts/darwin.mk driver chain
             # (--target=x86_64-apple-darwin + -mlinker-version=711 +
@@ -623,7 +618,7 @@ jobs:
           # -stdlib=libc++ is passed via CMAKE_{CXX,EXE_LINKER}_FLAGS rather
           # than the CXX env var because cmake strips compiler flags out of
           # CXX when detecting the compiler, which would mean libstdc++/libc++
-          # mixing in the bls/mcl subprojects.
+          # mixing in the depends subprojects.
           # Replaces the autotools `fuzz` matrix entry.
           # BUILD_FOR_FUZZING=ON enables fuzz binary and disables non-fuzz targets,
           # matching --enable-fuzz. SANITIZERS mirrors the autotools value.
@@ -653,11 +648,7 @@ jobs:
           # CMAKE_SYSTEM_NAME, so CMake does not enter cross-compile mode. The
           # toolchain still wires up the depends-installed libraries and headers.
           #
-          # depends_opts passes CC=clang-17 (mirrors DEP_OPTS CC=clang-17) and
-          # NO_OPENMP=1 to skip building depends/libomp — OpenMP inside MCL
-          # (parallel MSM) races with libomp in ways ThreadSanitizer flags as
-          # false-positive data races; the TSan job intentionally runs
-          # single-threaded through the BLSCT crypto path.
+          # depends_opts passes CC=clang-17 (mirrors DEP_OPTS CC=clang-17).
           #
           # -stdlib=libc++ is passed via CMAKE_CXX_FLAGS / CMAKE_EXE_LINKER_FLAGS
           # / CMAKE_SHARED_LINKER_FLAGS rather than through the CXX env var or
@@ -665,12 +656,10 @@ jobs:
           # during compiler detection (the same reason no-wallet-libblsct and
           # nowallet-libnaviokernel use this pattern). Passing it through DEP_OPTS
           # CXX would propagate it into depends package configure scripts, causing
-          # libstdc++/libc++ mixing in the bls/mcl subprojects.
+          # libstdc++/libc++ mixing in the depends subprojects.
           #
           # autotools → CMake flag mapping:
           #   --with-sanitizers=thread → -DSANITIZERS=thread
-          #   --disable-openmp         → -DWITH_MCL_OPENMP=OFF (also NO_OPENMP=1 in
-          #                              depends_opts to skip the libomp port build)
           #   --enable-zmq             → -DWITH_ZMQ=ON
           #   CPPFLAGS=-DARENA_DEBUG -DDEBUG_LOCKORDER -DDEBUG_LOCKCONTENTION
           #                            → "-DAPPEND_CPPFLAGS=-DARENA_DEBUG
@@ -689,10 +678,9 @@ jobs:
             cc: clang-17
             cxx: clang++-17
             depends_host: x86_64-pc-linux-gnu
-            depends_opts: CC=clang-17 CXX='clang++-17 -stdlib=libc++' NO_OPENMP=1
+            depends_opts: CC=clang-17 CXX='clang++-17 -stdlib=libc++'
             cmake_flags: >-
               -DSANITIZERS=thread
-              -DWITH_MCL_OPENMP=OFF
               -DWITH_ZMQ=ON
               "-DAPPEND_CPPFLAGS=-DARENA_DEBUG -DDEBUG_LOCKORDER -DDEBUG_LOCKCONTENTION"
               "-DAPPEND_CXXFLAGS=-g"
@@ -714,7 +702,6 @@ jobs:
           #   --disable-hardening       → no flag (CMake build has no hardening by
           #                               default; ENABLE_HARDENING option does not
           #                               exist — confirmed in CMakeLists.txt)
-          #   --disable-openmp          → -DWITH_MCL_OPENMP=OFF (cmake/bls.cmake)
           #   --with-asm=no             → -DUSE_ASM=OFF (CMakeLists.txt line 118)
           #   MSAN_FLAGS extra bits      → APPEND_CFLAGS + EXTRA_CMAKE_FLAGS (blacklist)
           #   MSAN_AND_LIBCXX_FLAGS     → CMAKE_CXX_FLAGS + linker flags
@@ -727,7 +714,7 @@ jobs:
           #
           # Inlined-chain suppression note: if CI reports use-of-uninitialized-value
           # in an inlined function where the fun: glob does not match (e.g. inlined
-          # gmp/blsct helpers), add src: patterns to test/sanitizer_suppressions/msan
+          # blst/blsct helpers), add src: patterns to test/sanitizer_suppressions/msan
           # — see session memory "MSan suppression for inlined chains". Do not widen
           # suppressions pre-emptively; flag as known issue first.
           - name: msan
@@ -738,11 +725,10 @@ jobs:
               ninja-build python3
             cc: clang-17
             cxx: clang++-17
-            # depends builds boost/libevent/gmp/sqlite3 against the instrumented
+            # depends builds boost/libevent/sqlite3 against the instrumented
             # libc++ so every memory operation through them is tracked by MSan.
             # DEP_OPTS mirrors the autotools DEP_OPTS / MSAN_AND_LIBCXX_FLAGS set
-            # in ci/test/00_setup_env_native_msan.sh. NO_OPENMP=1 matches
-            # --disable-openmp. The -stdlib=libc++ on CXX routes depends'
+            # in ci/test/00_setup_env_native_msan.sh. The -stdlib=libc++ on CXX routes depends'
             # C++ sources to the instrumented libc++ at /msan/cxx_build/.
             depends_host: x86_64-pc-linux-gnu
             depends_opts: >-
@@ -757,7 +743,6 @@ jobs:
               -L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib
               -lc++ -lc++abi -lpthread
               -Wno-unused-command-line-argument"
-              NO_OPENMP=1
             # MSAN_AND_LIBCXX_FLAGS C++ side: full set passed to cmake so the
             # instrumented libc++ headers + rpath reach both compile and link lines.
             # APPEND_CFLAGS carries the non-sanitize extra MSan bits for C sources;
@@ -770,7 +755,6 @@ jobs:
               -DCMAKE_BUILD_TYPE=None
               -DSANITIZERS=memory
               -DUSE_ASM=OFF
-              -DWITH_MCL_OPENMP=OFF
               "-DCMAKE_CXX_FLAGS=-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -g -O1 -fno-optimize-sibling-calls -nostdinc++ -nostdlib++ -isystem /msan/cxx_build/include/c++/v1 -L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib -lc++ -lc++abi -lpthread -Wno-unused-command-line-argument"
               "-DCMAKE_EXE_LINKER_FLAGS=-L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib -lc++ -lc++abi -fsanitize=memory"
               "-DCMAKE_SHARED_LINKER_FLAGS=-L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib -lc++ -lc++abi -fsanitize=memory"
@@ -991,12 +975,14 @@ jobs:
         run: |
           # CMake initial-cache syntax: set(VAR "value" CACHE TYPE "" FORCE)
           # APPEND_C/CXXFLAGS must be STRING so cmake --build inherits them.
-          # The blacklist flag MUST reach C++ compiles too: src/blsct/ code
-          # instantiates MclG1Point/MclScalar etc, which the fun:*mcl*
-          # pattern in test/sanitizer_suppressions/msan keeps uninstrumented.
-          # Without it on C++ compile, those calls remain instrumented and
-          # the uninit shadow leaks out of mcl, surfacing as a false-positive
-          # uint256 compare in SigNetParams::SigNetParams (chainparams.cpp).
+          # The blacklist flag MUST reach C++ compiles too: blst's C parts
+          # (server.c) are compiled by the C driver, but the src:*/src/blst/*
+          # pattern in test/sanitizer_suppressions/msan also has to apply to
+          # the inline blst.h helpers instantiated from C++ TUs. The C++
+          # wrappers in src/blsct/arith/blst/ are deliberately NOT
+          # suppressed: their zero-initialisation of every blst output is
+          # what keeps MSan's shadow clean across the uninstrumented
+          # assembly.
           #
           # The hardening overrides at the tail (-U_FORTIFY_SOURCE,
           # -fno-stack-protector, -fcf-protection=none, -fno-stack-clash-
@@ -1153,14 +1139,12 @@ jobs:
         run: |
           # Artifact paths (CMake BUILD_LIBBLSCT_ONLY=ON):
           #   libblsct.a    → build/lib/libblsct.a          (target: blsct)
-          #   libbls384_256 → src/bls/lib/libbls384_256.a   (ExternalProject in-source)
-          #   libmcl.a      → src/bls/mcl/lib/libmcl.a      (ExternalProject in-source)
+          #   libblst.a     → build/lib/libblst.a           (target: blst, src/blst)
           #   libunivalue   → build/lib/libunivalue.a        (CMake target: univalue)
           #   libsecp256k1  → build/lib/libsecp256k1.a       (subdirectory target)
           python3 contrib/devtools/libblsct-symbol-check.py \
             build/lib/libblsct.a \
-            src/bls/lib/libbls384_256.a \
-            src/bls/mcl/lib/libmcl.a \
+            build/lib/libblst.a \
             build/lib/libunivalue.a \
             build/lib/libsecp256k1.a
 

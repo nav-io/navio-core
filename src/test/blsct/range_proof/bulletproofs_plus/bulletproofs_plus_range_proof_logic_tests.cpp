@@ -6,7 +6,7 @@
 
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/range_proof/common.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <test/util/setup_common.h>
 
 #include <tinyformat.h>
@@ -16,7 +16,7 @@
 
 BOOST_FIXTURE_TEST_SUITE(bulletproofs_plus_range_proof_logic_tests, BasicTestingSetup)
 
-using T = Mcl;
+using T = Blst;
 using Point = T::Point;
 using Points = Elements<Point>;
 using Scalar = T::Scalar;
@@ -36,10 +36,10 @@ struct TestCase
     Scalar min_value;
 };
 
-static MclG1Point GenNonce()
+static BlstG1Point GenNonce()
 {
     std::string nonce_str("nonce");
-    MclG1Point nonce = MclG1Point::HashAndMap(std::vector<unsigned char> { nonce_str.begin(), nonce_str.end() });
+    BlstG1Point nonce = BlstG1Point::HashAndMap(std::vector<unsigned char> { nonce_str.begin(), nonce_str.end() });
     return nonce;
 }
 
@@ -350,7 +350,7 @@ BOOST_AUTO_TEST_CASE(test_range_proof_message_size)
 {
     Scalars values;
     values.Add(Scalar(1));
-    MclG1Point nonce = MclG1Point::GetBasePoint();
+    BlstG1Point nonce = BlstG1Point::GetBasePoint();
     TokenId token_id;
     RangeProofLogic rpl;
 
@@ -375,7 +375,7 @@ BOOST_AUTO_TEST_CASE(test_range_proof_message_size)
 
 BOOST_AUTO_TEST_CASE(test_range_proof_number_of_input_values)
 {
-    MclG1Point nonce = MclG1Point::GetBasePoint();
+    BlstG1Point nonce = BlstG1Point::GetBasePoint();
     std::vector<unsigned char> msg;
     TokenId token_id;
     RangeProofLogic rpl;
@@ -407,12 +407,12 @@ BOOST_AUTO_TEST_CASE(test_range_proof_validate_proofs_by_sizes)
         bulletproofs_plus::RangeProofWithSeed<T> p;
         auto n = blsct::Common::GetFirstPowerOf2GreaterOrEqTo(num_inputs);
         for (size_t i=0; i<n; ++i) {
-            p.Vs.Add(MclG1Point::GetBasePoint());
+            p.Vs.Add(BlstG1Point::GetBasePoint());
         }
         auto num_rounds = range_proof::Common<T>::GetNumRoundsExclLast(n);
         for (size_t i=0; i<num_rounds; ++i) {
-            p.Ls.Add(MclG1Point::GetBasePoint());
-            p.Rs.Add(MclG1Point::GetBasePoint());
+            p.Ls.Add(BlstG1Point::GetBasePoint());
+            p.Rs.Add(BlstG1Point::GetBasePoint());
         }
         return p;
     };

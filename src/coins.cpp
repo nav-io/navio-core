@@ -17,7 +17,7 @@ bool CCoinsView::GetCoin(const COutPoint& outpoint, Coin& coin) const { return f
 bool CCoinsView::GetToken(const uint256& tokenId, blsct::TokenEntry& token) const { return false; }
 bool CCoinsView::GetAllTokens(TokensMap& tokensMap) const { return false; };
 uint256 CCoinsView::GetBestBlock() const { return uint256(); }
-OrderedElements<MclG1Point> CCoinsView::GetStakedCommitments() const { return OrderedElements<MclG1Point>(); };
+OrderedElements<BlstG1Point> CCoinsView::GetStakedCommitments() const { return OrderedElements<BlstG1Point>(); };
 std::vector<uint256> CCoinsView::GetHeadBlocks() const { return std::vector<uint256>(); }
 bool CCoinsView::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase) { return false; }
 std::unique_ptr<CCoinsViewCursor> CCoinsView::Cursor() const { return nullptr; }
@@ -42,7 +42,7 @@ bool CCoinsViewBacked::GetToken(const uint256& tokenId, blsct::TokenEntry& token
 bool CCoinsViewBacked::GetAllTokens(TokensMap& tokensMap) const { return base->GetAllTokens(tokensMap); };
 bool CCoinsViewBacked::HaveToken(const uint256& tokenId) const { return base->HaveToken(tokenId); }
 uint256 CCoinsViewBacked::GetBestBlock() const { return base->GetBestBlock(); }
-OrderedElements<MclG1Point> CCoinsViewBacked::GetStakedCommitments() const { return base->GetStakedCommitments(); };
+OrderedElements<BlstG1Point> CCoinsViewBacked::GetStakedCommitments() const { return base->GetStakedCommitments(); };
 std::vector<uint256> CCoinsViewBacked::GetHeadBlocks() const { return base->GetHeadBlocks(); }
 void CCoinsViewBacked::SetBackend(CCoinsView &viewIn) { base = &viewIn; }
 bool CCoinsViewBacked::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase) { return base->BatchWrite(mapCoins, hashBlock, stakedCommitments, tokensMap, erase); }
@@ -253,7 +253,7 @@ bool CCoinsViewCache::SpendCoin(const COutPoint& outpoint, Coin* moveout)
     // deterministic staked-commitment set that PoS set-membership proofs
     // are verified against.
     const bool was_staked_commitment = it->second.coin.out.IsStakedCommitment();
-    MclG1Point staked_point;
+    BlstG1Point staked_point;
     if (was_staked_commitment) {
         staked_point = it->second.coin.out.blsctData.rangeProof.Vs[0];
     }
@@ -272,7 +272,7 @@ bool CCoinsViewCache::SpendCoin(const COutPoint& outpoint, Coin* moveout)
     return true;
 }
 
-void CCoinsViewCache::RemoveStakedCommitment(const MclG1Point& commitment) {
+void CCoinsViewCache::RemoveStakedCommitment(const BlstG1Point& commitment) {
     LogPrint(BCLog::POPS, "%s: Removing staked commitment %s\n", __func__, HexStr(commitment.GetVch()));
     cacheStakedCommitments[commitment] = STAKED_COMMITMENT_SPENT;
     InvalidateStakedCommitmentsMemo();
@@ -423,7 +423,7 @@ uint256 CCoinsViewCache::GetBestBlock() const
     return hashBlock;
 }
 
-OrderedElements<MclG1Point> CCoinsViewCache::GetStakedCommitments() const
+OrderedElements<BlstG1Point> CCoinsViewCache::GetStakedCommitments() const
 {
     if (!m_memo_staked_commitments) {
         auto ret = base->GetStakedCommitments();

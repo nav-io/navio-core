@@ -6,7 +6,7 @@
 #include <kernel/chainparams.h>
 
 #include <arith_uint256.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
+#include <blsct/arith/blst/blst_g1point.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <chainparamsseeds.h>
 #include <consensus/amount.h>
@@ -87,7 +87,7 @@ static CBlock CreateBLSCTGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t 
     // fields map to the identity point). Strict decoding remains in force
     // for all network/chain/wallet data.
     {
-        MclG1Point::LegacyPointDecodeScope legacy_scope;
+        BlstG1Point::LegacyPointDecodeScope legacy_scope;
         ss >> out;
     }
 

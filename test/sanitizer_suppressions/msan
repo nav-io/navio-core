@@ -1,23 +1,14 @@
 [memory]
-# false-positive in mcl. fun:*mcl* alone doesn't catch the inlined
-# template instantiations (mcl::fp::Add<...>::func, mcl::fp::initInvTbl,
-# etc.) where the uninit-use propagates through inlined chains; add the
-# source-path patterns for the same reason as the gmp block below.
-src:*/src/bls/mcl/*
-fun:*mcl*
+# blst: the field arithmetic is assembly on x86_64/aarch64 (there is no
+# portable-C build on 64-bit targets), so MSan cannot see its stores and
+# would report its outputs as uninitialised. The C++ wrappers in
+# src/blsct/arith/blst/ zero-initialise every blst output object before
+# handing it to the library, which keeps the shadow clean — those wrappers
+# must therefore stay INSTRUMENTED (their memsets are what unpoisons the
+# memory); only the library itself is suppressed.
+src:*/src/blst/*
+fun:blst_*
 # false-positive in secp256k1 crypto operations (scalar_reduce_512,
 # scalar_mul, ecdsa_sig_sign): the library manually manages
 # initialization of internal scratch buffers in ways MSan does not track.
 src:*/src/secp256k1/*
-# false-positive in gmp fat-build CPU dispatch (__gmpn_cpuvec_init reads
-# uninitialized scratch on x86_64 --enable-fat). Suppress by source path
-# because the use propagates through inlined gmp.h / gmpxx.h call chains
-# (e.g. __gmpz_neg) and function-name globs alone do not catch the inlined
-# uninit-use site.
-src:*/depends/work/build/*/gmp/*
-src:*/depends/*/include/gmp.h
-src:*/depends/*/include/gmpxx.h
-fun:*gmp*
-fun:__gmpn_*
-fun:__gmpz_*
-fun:mpn_*

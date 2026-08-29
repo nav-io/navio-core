@@ -5,7 +5,7 @@
 #define BOOST_UNIT_TEST
 
 #include <blsct/arith/elements.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/building_block/pedersen_commitment.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
@@ -17,13 +17,13 @@
 #include <sstream>
 #include <test/util/setup_common.h>
 
-using Scalar = Mcl::Scalar;
+using Scalar = Blst::Scalar;
 using Scalars = Elements<Scalar>;
 using MsgPair = std::pair<std::string, std::vector<unsigned char>>;
 
 BOOST_FIXTURE_TEST_SUITE(set_mem_proof_prover_tests, BasicTestingSetup)
 
-using Arith = Mcl;
+using Arith = Blst;
 using Point = Arith::Point;
 using Scalar = Arith::Scalar;
 using Points = Elements<Point>;

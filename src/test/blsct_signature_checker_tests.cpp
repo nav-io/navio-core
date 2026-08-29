@@ -43,8 +43,8 @@ BOOST_AUTO_TEST_CASE(test_transaction_signature_checker_bls_signature_storage)
     TransactionSignatureChecker checker(&transaction, 0, 1000000, MissingDataBehavior::FAIL);
 
     // Create test BLS public keys
-    std::vector<unsigned char> pubkey1_data = MclG1Point::Rand().GetVch();
-    std::vector<unsigned char> pubkey2_data = MclG1Point::Rand().GetVch();
+    std::vector<unsigned char> pubkey1_data = BlstG1Point::Rand().GetVch();
+    std::vector<unsigned char> pubkey2_data = BlstG1Point::Rand().GetVch();
 
     // Create scriptSig (unlocking script) - empty for BLS signatures
     CScript scriptSig;
@@ -105,8 +105,8 @@ BOOST_AUTO_TEST_CASE(test_transaction_signature_checker_conditional_bls_signatur
     TransactionSignatureChecker checker(&transaction, 0, 1000000, MissingDataBehavior::FAIL);
 
     // Create test BLS public keys
-    std::vector<unsigned char> pubkey1_data = MclG1Point::Rand().GetVch();
-    std::vector<unsigned char> pubkey2_data = MclG1Point::Rand().GetVch();
+    std::vector<unsigned char> pubkey1_data = BlstG1Point::Rand().GetVch();
+    std::vector<unsigned char> pubkey2_data = BlstG1Point::Rand().GetVch();
 
     // Create scriptSig (unlocking script) - empty for BLS signatures
     CScript scriptSig;
@@ -142,10 +142,10 @@ BOOST_AUTO_TEST_CASE(test_transaction_signature_checker_conditional_bls_signatur
     BOOST_CHECK_EQUAL(checker.GetKeyMessagePairs().size(), 2);
 
     // First execution should use pubkey1
-    BOOST_CHECK(checker.GetKeyMessagePairs()[0].first == MclG1Point(pubkey1_data));
+    BOOST_CHECK(checker.GetKeyMessagePairs()[0].first == BlstG1Point(pubkey1_data));
 
     // Second execution should use pubkey2
-    BOOST_CHECK(checker.GetKeyMessagePairs()[1].first == MclG1Point(pubkey2_data));
+    BOOST_CHECK(checker.GetKeyMessagePairs()[1].first == BlstG1Point(pubkey2_data));
 }
 
 
@@ -175,7 +175,7 @@ BOOST_AUTO_TEST_CASE(test_transaction_signature_checker_single_bls_signature)
     TransactionSignatureChecker checker(&transaction, 0, 5000000, MissingDataBehavior::FAIL);
 
     // Create a test BLS public key
-    std::vector<unsigned char> pubkey_data = MclG1Point::Rand().GetVch();
+    std::vector<unsigned char> pubkey_data = BlstG1Point::Rand().GetVch();
 
     // Create scriptSig (unlocking script) - empty for BLS signatures
     CScript scriptSig;
