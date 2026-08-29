@@ -49,7 +49,7 @@ BOOST_AUTO_TEST_CASE(matches_reference_across_window_sizes)
     std::vector<BlstScalar> exps;
     for (size_t i = 0; i < n; ++i) exps.push_back(BlstScalar::Rand(true));
 
-    for (size_t w : {1, 2, 4, 5, 8, 11}) {
+    for (size_t w : {2, 4, 5, 8, 11}) {  // blst wbits requires width >= 2
         FixedBaseWindow fbw(bases, w);
         BOOST_CHECK_EQUAL(fbw.size(), n);
         BlstG1Point got = fbw.MSM(exps, n);
@@ -96,9 +96,10 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_window_size)
     // shift out of range. Both must throw, not reach UB.
     std::vector<BlstG1Point> bases = RandBases(1);
     BOOST_CHECK_THROW(FixedBaseWindow(bases, 0), std::invalid_argument);
+    // blst wbits requires a window width >= 2; width 1 aborts inside blst.
+    BOOST_CHECK_THROW(FixedBaseWindow(bases, 1), std::invalid_argument);
     BOOST_CHECK_THROW(FixedBaseWindow(bases, 17), std::invalid_argument);
     BOOST_CHECK_THROW(FixedBaseWindow(bases, 64), std::invalid_argument);
-    BOOST_CHECK_NO_THROW(FixedBaseWindow(bases, 1));
     BOOST_CHECK_NO_THROW(FixedBaseWindow(bases, 16));
 }
 
