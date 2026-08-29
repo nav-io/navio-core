@@ -3601,6 +3601,9 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
         pfrom.m_has_all_wanted_services = HasAllDesirableServiceFlags(nServices);
         peer->m_their_services = nServices;
+        // Mirror onto CNode so connection-level code without a Peer handle
+        // (p2pmsg relay peer selection) can see the peer's advertised services.
+        pfrom.m_their_services = nServices;
         pfrom.SetAddrLocal(addrMe);
         {
             LOCK(pfrom.m_subver_mutex);

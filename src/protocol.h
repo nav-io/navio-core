@@ -314,6 +314,16 @@ enum ServiceFlags : uint64_t {
     // NODE_P2P_V2 means the node supports BIP324 transport
     NODE_P2P_V2 = (1 << 11),
 
+    // NODE_P2PMSG means the node runs the p2pmsg encrypted-messaging overlay
+    // (aggregation candidates, RFQ) and will process AND relay P2PMSG/DP2PMSG.
+    // Used to route the overlay only through capable peers: a non-supporting
+    // node silently drops these messages without relaying, so a stem hop or
+    // broadcast to it is lost. Navio-specific; occupies a reserved-experiment
+    // bit. Advertisements are unauthenticated, so senders must tolerate a peer
+    // that sets it but does not actually relay (the message is simply lost, as
+    // it would be anyway).
+    NODE_P2PMSG = (1 << 24),
+
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the
     // bitcoin-development mailing list. Remember that service bits are just

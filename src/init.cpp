@@ -1641,6 +1641,10 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
     // p2p encrypted-messaging subsystem (dark until features land; gated).
     if (args.GetBoolArg("-p2pmsg", p2pmsg::DEFAULT_P2PMSG_ENABLE)) {
+        // Advertise p2pmsg capability so other nodes route the overlay through
+        // us. Peers use this to avoid stemming/broadcasting P2PMSG to nodes
+        // that would silently drop it (see forward() below).
+        nLocalServices = ServiceFlags(nLocalServices | NODE_P2PMSG);
         p2pmsg::WorkerPool::Options pool_opts;
         const int64_t workers = args.GetIntArg("-onionworkers", 0);
         // Clamp to a sane range: 0 keeps the default; an unbounded value would
@@ -1676,18 +1680,30 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // whole purpose is to carry blocks and nothing else, so pushing
             // application messages to them both wastes the connection and
             // fingerprints it as p2pmsg-carrying, weakening its privacy role.
+            // Only route to peers that advertised NODE_P2PMSG: a non-supporting
+            // node silently drops P2PMSG/DP2PMSG without relaying, so a fluff
+            // copy to it is wasted and a stem hop to it is LOST (the message
+            // never fluffs). Advertisements are unauthenticated, so a peer may
+            // set the bit and still not relay -- the message is then simply
+            // lost, exactly as if it had no path, so this is best-effort but
+            // strictly better than routing blind.
+            const auto supports_p2pmsg = [](const CNode* pnode) {
+                return (pnode->m_their_services.load() & NODE_P2PMSG) != 0;
+            };
             if (!stem) {
                 connman->ForEachNode([&](CNode* pnode) {
                     if (pnode->GetId() == exclude_peer) return;
                     if (pnode->IsBlockOnlyConn()) return;
+                    if (!supports_p2pmsg(pnode)) return;
                     connman->PushMessage(pnode, NetMsg::Make(type, env));
                 });
                 return;
             }
-            // Stem: pick one eligible successor uniformly at random.
+            // Stem: pick one eligible successor uniformly at random, among
+            // p2pmsg-capable peers only.
             std::vector<NodeId> ids;
             connman->ForEachNode([&](CNode* pnode) {
-                if (pnode->GetId() != exclude_peer && !pnode->IsBlockOnlyConn()) ids.push_back(pnode->GetId());
+                if (pnode->GetId() != exclude_peer && !pnode->IsBlockOnlyConn() && supports_p2pmsg(pnode)) ids.push_back(pnode->GetId());
             });
             if (ids.empty()) return;
             const NodeId chosen = ids[GetRand(ids.size())];

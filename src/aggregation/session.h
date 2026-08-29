@@ -25,12 +25,40 @@ static constexpr bool DEFAULT_AGGREGATE_SENDS{true};
 //! conservative over-estimate only costs the initiator a little extra fee.
 static constexpr int64_t CANDIDATE_WEIGHT_ESTIMATE = 2500;
 
-//! Sum the BLSCT transaction weight of a set of candidate half-txs.
+//! Serialized-weight overhead a standalone BLSCT tx carries that a COMBINED
+//! aggregate does NOT duplicate per half: the version marker, the lock time,
+//! the empty in/out count varints, and -- the large part -- the ~96-byte BLS
+//! txSig. CombineHalves aggregates every half's txSig into a single signature
+//! and keeps one version/locktime, so each merged candidate contributes only
+//! its input+output body to the aggregate, not this fixed per-tx overhead.
+inline int64_t EmptyBlsctTxOverhead()
+{
+    // A default CMutableTransaction already carries a txSig member, which the
+    // serializer emits once the BLSCT marker is set -- so the empty tx's weight
+    // captures the full per-tx overhead (marker + counts + locktime + txSig).
+    CMutableTransaction empty;
+    empty.nVersion |= CTransaction::BLSCT_MARKER;
+    return blsct::GetTransactionWeight(CTransaction(empty));
+}
+
+//! Sum the INCREMENTAL weight a set of candidate half-txs adds to a combined
+//! aggregate: each candidate's standalone weight minus the per-tx overhead
+//! (EmptyBlsctTxOverhead) that combining removes. Using the standalone weight
+//! instead would over-fund the initiator's fee by ~overhead per candidate --
+//! and that surplus is observable on-chain (fee/rate minus the aggregate's
+//! actual weight), leaking the cover-half count the single fee output is meant
+//! to hide. Charging the incremental weight makes the aggregate's fee equal
+//! its true size * rate, so an aggregated send is fee-indistinguishable from a
+//! plain send of the same final size.
 inline int64_t SumCandidateWeight(std::span<const CTransactionRef> candidates)
 {
+    const int64_t overhead = EmptyBlsctTxOverhead();
     int64_t w = 0;
     for (const auto& c : candidates) {
-        if (c) w += blsct::GetTransactionWeight(*c);
+        if (c) {
+            const int64_t incremental = blsct::GetTransactionWeight(*c) - overhead;
+            w += incremental > 0 ? incremental : 0;
+        }
     }
     return w;
 }

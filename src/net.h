@@ -856,6 +856,12 @@ public:
     /** Whether this peer provides all services that we want. Used for eviction decisions */
     std::atomic_bool m_has_all_wanted_services{false};
 
+    /** The peer's advertised service flags (from its version message), mirrored
+     *  here so connection-level code (e.g. the p2pmsg relay peer selection in
+     *  init.cpp, which sees CNode but not the net_processing Peer object) can
+     *  read them. NODE_NONE until VERSION is processed. */
+    std::atomic<uint64_t> m_their_services{NODE_NONE};
+
     /** Whether we should relay transactions to this peer. This only changes
      * from false to true. It will never change back to false. */
     std::atomic_bool m_relays_txs{false};

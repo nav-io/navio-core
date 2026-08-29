@@ -315,6 +315,14 @@ with zero configuration.
   drop on MAC failure, and bounded queues/caches that drop rather than grow.
   Per-source caps additionally bound the aggregation candidate pool
   (`POOL_MAX_PER_PEER`). Note the relay limiter is global, not per-peer.
+- **Mixed networks**: p2pmsg capability is advertised via the `NODE_P2PMSG`
+  service bit, and `forward()` stems/broadcasts only to peers that set it. A
+  node that does not run p2pmsg silently drops these messages without relaying,
+  so routing to it would lose the message (a stem hop dead-ends, a fluff copy is
+  wasted); the service bit keeps the overlay on capable peers. Advertisements
+  are unauthenticated, so a peer may set the bit and not actually relay -- the
+  message is then just lost, as it would be with no path, so this is
+  best-effort but strictly better than routing blind.
 - **RFQ probing**: config-only matching means probing cannot binary-search a
   maker's balance; it can only enumerate advertised config.
 - **Candidate-serving probing**: a served candidate is a signed self-spend of

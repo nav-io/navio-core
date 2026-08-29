@@ -415,10 +415,22 @@ BOOST_FIXTURE_TEST_CASE(session_required_fee, TestingSetup)
     CTransactionRef c2 = BuildCandidate(km, cache, 200 * COIN, dest);
     std::vector<CTransactionRef> cands{c1, c2};
 
-    const int64_t expected_w = blsct::GetTransactionWeight(*c1) + blsct::GetTransactionWeight(*c2);
+    // SumCandidateWeight is the INCREMENTAL weight each candidate adds to a
+    // combined aggregate: standalone weight minus the per-tx overhead
+    // (version marker + counts + locktime + BLS txSig) that combining removes.
+    // This is what makes the aggregate's fee equal its true final size * rate,
+    // so it cannot over-fund and leak the cover count.
+    const int64_t oh = aggregation::EmptyBlsctTxOverhead();
+    const int64_t expected_w = (blsct::GetTransactionWeight(*c1) - oh)
+                             + (blsct::GetTransactionWeight(*c2) - oh);
+    BOOST_CHECK_GT(oh, 0);
     BOOST_CHECK_EQUAL(aggregation::SumCandidateWeight(cands), expected_w);
     BOOST_CHECK_EQUAL(aggregation::RequiredCandidateFee(cands, BLSCT_DEFAULT_FEE),
                       static_cast<CAmount>(expected_w) * BLSCT_DEFAULT_FEE);
+    // Each candidate's incremental weight is strictly less than its standalone
+    // weight (overhead removed), i.e. we no longer over-count.
+    BOOST_CHECK_LT(aggregation::SumCandidateWeight(cands),
+                   blsct::GetTransactionWeight(*c1) + blsct::GetTransactionWeight(*c2));
 
     // An empty candidate set requires no extra fee.
     std::vector<CTransactionRef> empty;
