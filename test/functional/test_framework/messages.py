@@ -1866,6 +1866,36 @@ class msg_addrv2:
         return "msg_addrv2(addrs=%s)" % (repr(self.addrs))
 
 
+class msg_p2pmsg:
+    """Encrypted p2pmsg overlay message (candidate/RFQ). The framework does not
+    interpret its ciphertext; it captures the raw payload so a test can inspect
+    it, and otherwise ignores it so a stock node's default p2pmsg broadcast does
+    not crash a connected test node."""
+    __slots__ = ("payload",)
+    msgtype = b"p2pmsg"
+
+    def __init__(self, payload=b""):
+        self.payload = payload
+
+    def deserialize(self, f):
+        self.payload = f.read()
+
+    def serialize(self):
+        return self.payload
+
+    def __repr__(self):
+        return "msg_p2pmsg(%d bytes)" % len(self.payload)
+
+
+class msg_dp2pmsg(msg_p2pmsg):
+    """Dandelion stem variant of msg_p2pmsg."""
+    __slots__ = ()
+    msgtype = b"dp2pmsg"
+
+    def __repr__(self):
+        return "msg_dp2pmsg(%d bytes)" % len(self.payload)
+
+
 class msg_sendaddrv2:
     __slots__ = ()
     msgtype = b"sendaddrv2"

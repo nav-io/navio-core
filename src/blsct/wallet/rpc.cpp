@@ -247,7 +247,7 @@ Mutex g_candidate_inputs_mutex;
 std::map<COutPoint, int64_t> g_candidate_inputs GUARDED_BY(g_candidate_inputs_mutex);
 
 //! Reserve `outpoint` for one candidate. Returns false if still reserved.
-bool ReserveCandidateInput(const COutPoint& outpoint, int64_t now)
+bool ReserveCandidateInput(const COutPoint& outpoint, int64_t now) EXCLUSIVE_LOCKS_REQUIRED(!g_candidate_inputs_mutex)
 {
     LOCK(g_candidate_inputs_mutex);
     std::erase_if(g_candidate_inputs, [now](const auto& e) { return e.second <= now; });
@@ -258,7 +258,7 @@ bool ReserveCandidateInput(const COutPoint& outpoint, int64_t now)
 //! failure path after a successful reserve: leaking the entry would burn the
 //! coin's serving eligibility for PULL_KEY_TTL_SECONDS per failure, and
 //! repeated failures on a small wallet would lock out every coin.
-void ReleaseCandidateInput(const COutPoint& outpoint)
+void ReleaseCandidateInput(const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(!g_candidate_inputs_mutex)
 {
     LOCK(g_candidate_inputs_mutex);
     g_candidate_inputs.erase(outpoint);
@@ -271,7 +271,7 @@ void ReleaseCandidateInput(const COutPoint& outpoint)
 //! saturates at SERVE_MAX_COINS_PER_WINDOW coins per window.
 std::vector<int64_t> g_candidates_served GUARDED_BY(g_candidate_inputs_mutex);
 
-bool TakeServeBudget(int64_t now)
+bool TakeServeBudget(int64_t now) EXCLUSIVE_LOCKS_REQUIRED(!g_candidate_inputs_mutex)
 {
     LOCK(g_candidate_inputs_mutex);
     std::erase_if(g_candidates_served, [now](int64_t t) { return t + aggregation::SERVE_WINDOW_SECONDS <= now; });
@@ -280,7 +280,7 @@ bool TakeServeBudget(int64_t now)
     return true;
 }
 
-void ReturnServeBudget()
+void ReturnServeBudget() EXCLUSIVE_LOCKS_REQUIRED(!g_candidate_inputs_mutex)
 {
     LOCK(g_candidate_inputs_mutex);
     if (!g_candidates_served.empty()) g_candidates_served.pop_back();
