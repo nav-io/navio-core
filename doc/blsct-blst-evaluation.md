@@ -137,6 +137,42 @@ workers, `-par`, the PoS async verifier) without any library runtime.
 
 ## Results
 
+### x86_64 cross-check (AMD EPYC 9354) and an architecture note
+
+The original numbers below are Apple M2 Max (arm64). Re-running the same
+`BLSCTCmp_*` suite on an AMD EPYC 9354 (x86_64, ADX confirmed in `libblst.a`
+via `nm | grep mulx_384`; mcl built `WITH_GMP=OFF`) shows a very different
+single-threaded picture, while the multi-threaded/large-MSM story is
+unchanged:
+
+| operation | M2 (blst/mcl) | EPYC (blst/mcl) |
+|---|---:|---:|
+| MSM 2048 (MT) | ~3.4× | 21× |
+| MSM 8192 (MT) | — | 29× |
+| SetMemVerify 1024 (MT) | — | 8.3× |
+| Range-proof verify ×32 (ST) | — | 1.35× |
+| Sign | — | 1.17× |
+| **RecoverAmounts ×16 (ST)** | **~3.4×** | **0.62×** |
+| Range-proof prove (ST) | ~1.5× | 0.92× |
+| SetMemProve ring 4 (ST) | — | 0.80× |
+| MSM 16 (small, ST) | — | 0.72× |
+
+**Architecture note.** mcl carries an xbyak-JIT hand-tuned x86-64 assembly
+path for its `Fr` field arithmetic. On x86_64 that path is strong enough to
+beat blst's `Fr` single-threaded for scalar-heavy operations (amount
+recovery, range-proof prove, small-ring set-membership prove) *even with
+`WITH_GMP=OFF`* — hence the sign flip vs the arm64 numbers, where mcl has no
+comparable JIT path and blst wins those same ops. The point/MSM/pairing side
+still favours blst on both architectures (and blst's threaded MSM dominates
+at scale). So on x86_64 the migration's wins concentrate in the MSM- and
+pairing-bound paths, and the scalar-bound paths need help to not regress:
+this is exactly why the fixed-base generator precompute (removes the fixed
+Gi/Hi/hs points from the per-call MSM) and the threaded amount recovery
+matter more on x86_64 than the arm64 headline suggested. Measured on this
+EPYC: full mainnet `-reindex-chainstate` is 258s baseline vs 227s with the
+fixed-base precompute (~12%).
+
+
 Host: Apple M2 Max (12 cores), macOS, clang, `-O2`/Release; mcl built by its
 GNU Makefile (`MCL_USE_LLVM=0`, no GMP, arm64), blst v0.3.17 with its arm64
 assembly. `bench_navio -filter='BLSCTCmp_.*' -min-time=500`. mcl "MT"
