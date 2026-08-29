@@ -15,6 +15,11 @@ multiprocess_native_packages = native_libmultiprocess native_capnp
 
 usdt_linux_packages=systemtap
 
+# Bundled I2P router (i2pd) and its dependencies. Boost is pulled in via i2pd's
+# _dependencies (it adds the compiled filesystem/program_options/atomic
+# components). Built unless NO_I2P=1.
+i2p_packages = i2pd openssl zlib
+
 # Darwin no longer needs a depends-managed toolchain: the guix profile
 # defined by contrib/guix/manifest.scm's darwin branch ships clang +
 # llvm-* + lld, and depends/hosts/darwin.mk wires them via PATH. The
