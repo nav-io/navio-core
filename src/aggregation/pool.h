@@ -42,7 +42,7 @@ static constexpr size_t POOL_SHARDS = 16;
  * Sharded by outpoint hash so inserts/evictions on unrelated inputs do not
  * contend. No BLS/AEAD work happens under a shard lock.
  */
-class CandidatePool : public CValidationInterface
+class CandidatePool final : public CValidationInterface
 {
 public:
     CandidatePool() = default;

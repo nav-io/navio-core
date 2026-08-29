@@ -35,7 +35,7 @@ static constexpr int64_t MAX_ORDER_TTL_SECONDS = 14 * 24 * 60 * 60;
  * Registered as a CValidationInterface for spent-input eviction, mirroring
  * aggregation::CandidatePool.
  */
-class OrderCache : public CValidationInterface
+class OrderCache final : public CValidationInterface
 {
 public:
     explicit OrderCache(int64_t now);
