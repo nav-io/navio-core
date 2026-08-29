@@ -4,11 +4,11 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """End-to-end test of the pull-based aggregation candidate flow.
 
-Built-in path (zero config): node0's background puller broadcasts AGG_ANN
-requests; node1 (loaded BLSCT wallet, -servecandidates default on) queues them
-and its wallet-scheduler task answers automatically with fee-0 self-spend
-candidates encrypted 1:1 to node0's reply keys. Node0 pools them without any
-RPC orchestration and no navio-p2pmsg daemon.
+Built-in path: node0's background puller broadcasts AGG_ANN requests; node1
+(loaded BLSCT wallet, -servecandidates default on) queues them and its
+serving thread answers automatically with fee-0 self-spend candidates
+encrypted 1:1 to node0's reply keys. Node0 pools them without any RPC
+orchestration and no navio-p2pmsg daemon.
 
 Manual path: with auto-serving off, a queued request is claimed one-shot via
 listpendingcandidaterequests and answered via replycandidate.
@@ -80,13 +80,28 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
             keys.extend(n1.listpendingcandidaterequests())
             return len(keys) > 0
 
-        self.wait_until(got_one, timeout=30)
+        def got_two():
+            keys.extend(n1.listpendingcandidaterequests())
+            return len(set(keys)) >= 2
+
+        self.wait_until(got_two, timeout=60)
+        uniq = list(dict.fromkeys(keys))
         before = n0.getaggregationhint()["available"]
-        res = w1.replycandidate(keys[0])
+        res = w1.replycandidate(uniq[0])
         assert "candidate_txid" in res, res
         self.wait_until(lambda: n0.getaggregationhint()["available"] > before, timeout=30)
         assert res["candidate_txid"] not in n0.getrawmempool()
         self.log.info("manual claim + replycandidate served OK")
+
+        # Reservation ledger: a second candidate served while the first is
+        # still live must spend a DISTINCT coin (this is the point of the
+        # per-input reservation; without it every candidate reuses the same
+        # first coin and requesters' input-deduped pools reject the rest).
+        res2 = w1.replycandidate(uniq[1])
+        assert res2["candidate_txid"] != res["candidate_txid"]
+        assert set(res["inputs"]).isdisjoint(set(res2["inputs"])), (
+            "second candidate reused a reserved coin: %r vs %r" % (res["inputs"], res2["inputs"]))
+        self.log.info("two live candidates spend distinct coins")
 
 
 if __name__ == "__main__":

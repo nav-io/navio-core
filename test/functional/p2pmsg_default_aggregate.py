@@ -62,8 +62,9 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
 
         self.wait_until(got_one, timeout=30)
         before = requester_node.getaggregationhint()["available"]
-        producer_wallet.replycandidate(keys[0])
+        reply = producer_wallet.replycandidate(keys[0])
         self.wait_until(lambda: requester_node.getaggregationhint()["available"] > before, timeout=30)
+        return reply["inputs"]
 
     def run_test(self):
         n0, n1 = self.nodes
@@ -83,7 +84,7 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         assert Decimal(str(w1.getbalances()["mine"]["trusted"])) > 0
 
         # --- Node1 serves node0's pull request; node0 pools the candidate. ---
-        self.serve_candidate(n0, n1, w1)
+        cand_inputs = self.serve_candidate(n0, n1, w1)
 
         # --- A PLAIN send on node0 merges by default. ---
         dest = w1.getnewaddress(label="", address_type="blsct")
@@ -93,6 +94,14 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         tx = n0.getrawtransaction(txid, True)
         # Own half (>=1 input) + merged candidate (1 input each).
         assert len(tx["vin"]) >= 2, "plain send did not merge the pooled candidate: %r" % tx["vin"]
+        # The candidate's exact input outpoints appear in the broadcast tx.
+        # (available == 0 alone also holds on the fallback path -- eviction
+        # runs win or lose -- so it cannot distinguish a merge from a plain
+        # send; the outpoints can.)
+        broadcast_prevouts = {vin["outid"] for vin in tx["vin"] if "outid" in vin}
+        for outpoint in cand_inputs:
+            assert outpoint in broadcast_prevouts, (
+                "candidate input %s missing from broadcast tx inputs %r" % (outpoint, sorted(broadcast_prevouts)))
         # Every picked candidate was evicted from the pool.
         assert_equal(n0.getaggregationhint()["available"], 0)
 

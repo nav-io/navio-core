@@ -253,9 +253,41 @@ bool ReserveCandidateInput(const COutPoint& outpoint, int64_t now)
     std::erase_if(g_candidate_inputs, [now](const auto& e) { return e.second <= now; });
     return g_candidate_inputs.emplace(outpoint, now + aggregation::PULL_KEY_TTL_SECONDS).second;
 }
+
+//! Release a reservation taken by ReserveCandidateInput. Called on every
+//! failure path after a successful reserve: leaking the entry would burn the
+//! coin's serving eligibility for PULL_KEY_TTL_SECONDS per failure, and
+//! repeated failures on a small wallet would lock out every coin.
+void ReleaseCandidateInput(const COutPoint& outpoint)
+{
+    LOCK(g_candidate_inputs_mutex);
+    g_candidate_inputs.erase(outpoint);
+}
+
+//! Timestamps of candidates actually SENT, for the rolling serving budget.
+//! The per-input reservation above bounds concurrent exposure; this bounds
+//! cumulative exposure: without it a puller minting fresh reply keys walks
+//! the wallet's coin set as reservations lapse, and with it enumeration
+//! saturates at SERVE_MAX_COINS_PER_WINDOW coins per window.
+std::vector<int64_t> g_candidates_served GUARDED_BY(g_candidate_inputs_mutex);
+
+bool TakeServeBudget(int64_t now)
+{
+    LOCK(g_candidate_inputs_mutex);
+    std::erase_if(g_candidates_served, [now](int64_t t) { return t + aggregation::SERVE_WINDOW_SECONDS <= now; });
+    if (g_candidates_served.size() >= aggregation::SERVE_MAX_COINS_PER_WINDOW) return false;
+    g_candidates_served.push_back(now);
+    return true;
+}
+
+void ReturnServeBudget()
+{
+    LOCK(g_candidate_inputs_mutex);
+    if (!g_candidates_served.empty()) g_candidates_served.pop_back();
+}
 } // namespace
 
-std::optional<uint256> BuildAndSendCandidate(wallet::CWallet& wallet, const blsct::PublicKey& reply_key, bool stem, std::string& error)
+std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, const blsct::PublicKey& reply_key, bool stem, std::string& error)
 {
     p2pmsg::Transport* transport = p2pmsg::GetActiveTransport();
     if (!transport) {
@@ -271,11 +303,18 @@ std::optional<uint256> BuildAndSendCandidate(wallet::CWallet& wallet, const blsc
         return std::nullopt;
     }
 
+    const int64_t budget_now = GetTime<std::chrono::seconds>().count();
+    if (!TakeServeBudget(budget_now)) {
+        error = "candidate serving budget exhausted for this window";
+        return std::nullopt;
+    }
+
     CTransactionRef cand;
     {
         LOCK(wallet.cs_wallet);
         auto km = wallet.GetBLSCTKeyMan();
         if (!km) {
+            ReturnServeBudget();
             error = "no BLSCT key manager";
             return std::nullopt;
         }
@@ -314,6 +353,7 @@ std::optional<uint256> BuildAndSendCandidate(wallet::CWallet& wallet, const blsc
             }
         }
         if (!chosen) {
+            ReturnServeBudget();
             error = "No spendable NAV coin free to build a candidate from";
             return std::nullopt;
         }
@@ -321,13 +361,30 @@ std::optional<uint256> BuildAndSendCandidate(wallet::CWallet& wallet, const blsc
         const auto& c = *chosen;
         auto factory = blsct::TxFactory(km);
         factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
-        // Self-spend the whole value back to a fresh own address: input value
-        // == output value, zero fee. BuildCandidate emits no fee output.
-        blsct::SubAddress self_dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+        // Self-spend the whole value back to a fresh own CHANGE address:
+        // input value == output value, zero fee (BuildCandidate emits no fee
+        // output). CHANGE_ACCOUNT, not the user-facing receive account 0 --
+        // serving must not burn receive subaddresses or pollute the address
+        // book with per-candidate RECEIVE entries. GetNewDestination is a
+        // util::Result and this runs on a background thread, where .value()
+        // on an error (keypool exhaustion) would escape through TraceThread
+        // and abort the node; fail the one candidate instead.
+        auto dest_res = km->GetNewDestination(blsct::CHANGE_ACCOUNT);
+        if (!dest_res) {
+            ReleaseCandidateInput(COutPoint(c.outpoint.hash));
+            ReturnServeBudget();
+            error = "could not derive a candidate destination";
+            return std::nullopt;
+        }
+        blsct::SubAddress self_dest(std::get<blsct::DoublePublicKey>(dest_res.value()));
         factory.AddOutput(self_dest, c.amount, "candidate", TokenId(), blsct::NORMAL, /*minStake=*/0,
                           /*fSubtractFeeFromAmount=*/false, MclScalar::Rand(), /*nBLSCTDefaultFee=*/0);
         auto built = factory.BuildCandidate();
         if (!built) {
+            // Release the reservation: leaking it burns this coin's serving
+            // eligibility for the full TTL per failure.
+            ReleaseCandidateInput(COutPoint(c.outpoint.hash));
+            ReturnServeBudget();
             error = "failed to build candidate";
             return std::nullopt;
         }
@@ -342,7 +399,7 @@ std::optional<uint256> BuildAndSendCandidate(wallet::CWallet& wallet, const blsc
     auto bytes = MakeUCharSpan(ss);
     std::vector<uint8_t> body(bytes.begin(), bytes.end());
     transport->Send(reply_key, p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
-    return cand->GetHash().ToUint256();
+    return cand;
 }
 
 void ServeCandidateRequests(const std::vector<std::shared_ptr<wallet::CWallet>>& wallets)
@@ -463,6 +520,7 @@ static RPCHelpMan replycandidate()
         },
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "candidate_txid", "The candidate half-transaction id"},
+            {RPCResult::Type::ARR, "inputs", "Output hashes spent by the candidate", {{RPCResult::Type::STR_HEX, "", "outpoint hash"}}},
         }},
         RPCExamples{HelpExampleCli("replycandidate", "\"<replypubkeyhex>\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -477,11 +535,16 @@ static RPCHelpMan replycandidate()
             const bool stem = request.params[1].isNull() ? true : request.params[1].get_bool();
 
             std::string error;
-            auto txid = blsct::BuildAndSendCandidate(*pwallet, reply_key, stem, error);
-            if (!txid) throw JSONRPCError(RPC_WALLET_ERROR, error);
+            auto cand = blsct::BuildAndSendCandidate(*pwallet, reply_key, stem, error);
+            if (!cand) throw JSONRPCError(RPC_WALLET_ERROR, error);
 
             UniValue o(UniValue::VOBJ);
-            o.pushKV("candidate_txid", txid->GetHex());
+            o.pushKV("candidate_txid", (*cand)->GetHash().GetHex());
+            // The candidate's input outpoints, so callers (and tests) can
+            // verify the exact coin later reappears inside an aggregate.
+            UniValue ins(UniValue::VARR);
+            for (const CTxIn& in : (*cand)->vin) ins.push_back(in.prevout.hash.GetHex());
+            o.pushKV("inputs", ins);
             return o;
         },
     };

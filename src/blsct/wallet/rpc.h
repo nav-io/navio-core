@@ -28,7 +28,7 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
 //! Build a fee-0 cover candidate from one of the wallet's coins and send it as
 //! a CANDIDATE_TX encrypted 1:1 to `reply_key`. Returns the candidate txid, or
 //! std::nullopt with `error` set.
-std::optional<uint256> BuildAndSendCandidate(wallet::CWallet& wallet, const blsct::PublicKey& reply_key, bool stem, std::string& error);
+std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, const blsct::PublicKey& reply_key, bool stem, std::string& error);
 //! Answer up to SERVE_MAX_PER_TICK queued candidate pull requests using the
 //! first of `wallets` able to fund one. Used by the built-in serving task
 //! (-servecandidates) scheduled from StartWallets.

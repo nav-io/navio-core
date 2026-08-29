@@ -435,8 +435,8 @@ BOOST_AUTO_TEST_CASE(request_queue_dedupe_cap_ttl)
     };
 
     // Dedupe: the same reply key queues once.
-    BOOST_CHECK(q.Add(key(1), t0));
-    BOOST_CHECK(!q.Add(key(1), t0));
+    BOOST_CHECK(q.Add(key(1), /*from_peer=*/1, t0));
+    BOOST_CHECK(!q.Add(key(1), /*from_peer=*/2, t0));
     BOOST_CHECK_EQUAL(q.Size(), 1U);
 
     // Claim is one-shot: entries are removed.
@@ -444,20 +444,84 @@ BOOST_AUTO_TEST_CASE(request_queue_dedupe_cap_ttl)
     BOOST_CHECK_EQUAL(claimed.size(), 1U);
     BOOST_CHECK_EQUAL(q.Size(), 0U);
     // ...so the same key may be requested again afterwards.
-    BOOST_CHECK(q.Add(key(1), t0));
+    BOOST_CHECK(q.Add(key(1), 1, t0));
 
-    // Cap: no more than REQUEST_QUEUE_CAP queued.
+    // Cap: no more than REQUEST_QUEUE_CAP queued (spread across peers so the
+    // per-peer cap is not the binding limit here).
     for (uint8_t i = 2; i < 2 + aggregation::REQUEST_QUEUE_CAP + 8; ++i) {
-        q.Add(key(i), t0);
+        q.Add(key(i), /*from_peer=*/i, t0);
     }
     BOOST_CHECK_EQUAL(q.Size(), aggregation::REQUEST_QUEUE_CAP);
 
     // TTL: stale entries are pruned on Add and never returned by Claim.
     const int64_t later = t0 + aggregation::REQUEST_TTL_SECONDS;
-    BOOST_CHECK(q.Add(key(200), later)); // prunes the full, stale queue first
+    BOOST_CHECK(q.Add(key(200), 1, later)); // prunes the full, stale queue first
     claimed = q.Claim(aggregation::REQUEST_QUEUE_CAP, later);
     BOOST_CHECK_EQUAL(claimed.size(), 1U);
     BOOST_CHECK(claimed[0].GetVch() == key(200).GetVch());
+}
+
+// Reply keys are requester-minted (a fresh keypair per request is the honest
+// puller's own behaviour), so key-level dedupe binds nobody; the per-peer cap
+// on the DELIVERING peer is the accounting that actually limits one source.
+BOOST_AUTO_TEST_CASE(request_queue_per_peer_cap)
+{
+    aggregation::CandidateRequestQueue q;
+    const int64_t t0 = 1000;
+
+    auto key = [](uint8_t seed) {
+        blsct::PrivateKey priv(MclScalar(std::vector<uint8_t>{seed, 2}));
+        return priv.GetPublicKey();
+    };
+
+    // One peer flooding fresh keys stops at REQUEST_MAX_PER_PEER...
+    uint8_t seed = 1;
+    for (size_t i = 0; i < aggregation::REQUEST_MAX_PER_PEER; ++i) {
+        BOOST_CHECK(q.Add(key(seed++), /*from_peer=*/7, t0));
+    }
+    BOOST_CHECK(!q.Add(key(seed++), 7, t0));
+    BOOST_CHECK_EQUAL(q.Size(), aggregation::REQUEST_MAX_PER_PEER);
+
+    // ...while another peer still gets in.
+    BOOST_CHECK(q.Add(key(seed++), /*from_peer=*/8, t0));
+
+    // Claiming frees the flooding peer's budget again.
+    q.Claim(aggregation::REQUEST_QUEUE_CAP, t0);
+    BOOST_CHECK(q.Add(key(seed++), 7, t0));
+}
+
+// Claim must serve FIFO on enqueue time. The map is keyed by requester-chosen
+// pubkey bytes, so key order would let ground keys with small leading bytes
+// jump ahead of (and starve) honest requests.
+BOOST_AUTO_TEST_CASE(request_queue_claim_fifo)
+{
+    aggregation::CandidateRequestQueue q;
+
+    auto key = [](uint8_t seed) {
+        blsct::PrivateKey priv(MclScalar(std::vector<uint8_t>{seed, 3}));
+        return priv.GetPublicKey();
+    };
+
+    // Enqueue at strictly increasing times, from distinct peers. Key bytes
+    // are effectively random relative to enqueue order, so if Claim iterated
+    // the map by key at least one pair out of these five would come back out
+    // of enqueue order.
+    std::vector<std::vector<unsigned char>> in_order;
+    for (uint8_t i = 0; i < 5; ++i) {
+        auto k = key(i + 1);
+        BOOST_CHECK(q.Add(k, /*from_peer=*/i, 1000 + i));
+        in_order.push_back(k.GetVch());
+    }
+
+    // Partial claims drain strictly oldest-first.
+    auto first = q.Claim(2, 1010);
+    auto second = q.Claim(16, 1010);
+    BOOST_REQUIRE_EQUAL(first.size(), 2U);
+    BOOST_REQUIRE_EQUAL(second.size(), 3U);
+    std::vector<std::vector<unsigned char>> got;
+    for (const auto& k : first) got.push_back(k.GetVch());
+    for (const auto& k : second) got.push_back(k.GetVch());
+    BOOST_CHECK(got == in_order);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

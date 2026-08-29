@@ -252,17 +252,30 @@ anyone running a p2pmsg node. Instead each node privately fills its own pool:
    carrying only the reply pubkey. Pulling runs on a steady cadence decoupled
    from any actual send, so pull traffic never signals that a send is imminent.
 2. **Serve** — nodes queue incoming `AGG_ANN` reply keys
-   (`CandidateRequestQueue`, deduped/capped/TTL'd). A `naviod` with a loaded
-   BLSCT wallet answers them AUTOMATICALLY: a wallet-scheduler task
-   (`-servecandidates`, default on; `-servecandidateinterval` ticks) claims
-   queued requests and answers each with a fee-0 self-spend candidate built
-   from the wallet's own coin, sent as a `CANDIDATE_TX` encrypted **1:1 to
-   the requester's reply key**. `navio-p2pmsg -producecandidates` does the
+   (`CandidateRequestQueue`, deduped, capped globally and per source peer,
+   TTL'd, claimed FIFO on enqueue time). A `naviod` with a loaded BLSCT
+   wallet answers them by default: a serving thread (`-servecandidates`,
+   default on, opt out with `-servecandidates=0`;
+   `-servecandidateinterval` ticks) claims queued requests and
+   answers each with a fee-0 self-spend candidate built from the wallet's
+   own coin, sent as a `CANDIDATE_TX` encrypted **1:1 to the requester's
+   reply key**. Serving is bounded twice: a per-input reservation (TTL) so
+   concurrent candidates spend distinct coins, and a rolling per-window
+   budget (`SERVE_MAX_COINS_PER_WINDOW`) so a requester that keeps minting
+   fresh reply keys cannot walk the wallet's coin set as reservations
+   lapse. `navio-p2pmsg -producecandidates` does the
    same over RPC (`listpendingcandidaterequests` one-shot claim +
    `replycandidate`) for wallet-less orchestration. Only the requester learns
    a candidate; each producer can recognise only its own contribution in a
-   later aggregate, so fully undoing the cover requires every producer of
-   that aggregate to collude.
+   later aggregate, so a PASSIVE observer can only undo the cover with every
+   producer of that aggregate colluding. An ACTIVE puller is stronger: by
+   requesting continuously it can come to hold a share of each serving
+   wallet's candidates, later recognise those same coins when they appear as
+   cover in an aggregate, and subtract them. The per-peer request cap and
+   the rolling serve budget bound how fast that position can be built, and
+   operators who do not want the exposure can opt out with
+   `-servecandidates=0` — but the collusion argument alone should not be
+   read as a guarantee against an active adversary.
 3. **Collect** — the `CANDIDATE_TX` handler pools a candidate ONLY when it
    decrypted under one of the node's registered pull session keys
    (`InboundMessage::recipient == SESSION`); candidates readable under the
@@ -301,6 +314,16 @@ with zero configuration.
   (`POOL_MAX_PER_PEER`). Note the relay limiter is global, not per-peer.
 - **RFQ probing**: config-only matching means probing cannot binary-search a
   maker's balance; it can only enumerate advertised config.
+- **Candidate-serving probing**: a served candidate is a signed self-spend of
+  one real, unspent output — a proof of ownership resolvable on-chain by the
+  requester (navio outpoints are output hashes anyone can derive). Serving is
+  on by default (opt out with `-servecandidates=0`) and bounded against
+  enumeration: per-peer request caps, FIFO claim order on
+  enqueue time (never on requester-chosen key bytes), a per-input reservation
+  TTL, and a rolling per-window budget on distinct coins served
+  (`SERVE_MAX_COINS_PER_WINDOW`), so repeated pulling saturates instead of
+  walking the coin set. Amounts stay blinded and a candidate cannot be
+  redirected or broadcast standalone.
 - **Half-tx replay**: a quote signs `(uuid, half_tx hash, expiry)` under a fresh
   single-use key; the matcher is one-shot per `uuid` and first-write-wins on a
   uuid (a re-broadcast of the same uuid cannot redirect a maker's reply). The

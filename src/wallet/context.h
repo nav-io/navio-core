@@ -14,6 +14,9 @@
 
 class ArgsManager;
 class CScheduler;
+namespace aggregation {
+class CandidateServer;
+} // namespace aggregation
 namespace interfaces {
 class Chain;
 class Wallet;
@@ -42,6 +45,10 @@ struct WalletContext {
     Mutex wallets_mutex;
     std::vector<std::shared_ptr<CWallet>> wallets GUARDED_BY(wallets_mutex);
     std::list<LoadWalletFn> wallet_load_fns GUARDED_BY(wallets_mutex);
+    //! Built-in candidate-serving thread (-servecandidates); started by
+    //! StartWallets, joined by StopWallets before wallets close. Owns its own
+    //! thread because serving grinds p2pmsg proof-of-work per reply.
+    std::unique_ptr<aggregation::CandidateServer> candidate_server;
 
     //! Declare default constructor and destructor that are not inline, so code
     //! instantiating the WalletContext struct doesn't need to #include class

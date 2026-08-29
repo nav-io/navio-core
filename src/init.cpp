@@ -323,6 +323,12 @@ void Shutdown(NodeContext& node)
     aggregation::SetActiveRequestQueue(nullptr);
     // Join the puller thread before the transport it sends through goes away.
     node.agg_puller.reset();
+    // Likewise the wallet's candidate-serving thread: it also sends through
+    // the transport, and the wallet client's stop() runs only after the
+    // teardown below (Stop is idempotent, so that later stop is a no-op).
+    if (aggregation::CandidateServer* server = aggregation::GetActiveCandidateServer()) {
+        server->Stop();
+    }
     // Order matters: the worker pool's decrypt jobs dispatch to transport
     // handlers that hold RAW pointers to rfq_matcher / rfq_intents / rfq_orders
     // / agg_pool. Clearing the SetActive* globals does NOT reach those captured
@@ -558,7 +564,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-asmap=<file>", strprintf("Specify asn mapping used for bucketing of the peers (default: %s). Relative paths will be prefixed by the net-specific datadir location.", DEFAULT_ASMAP_FILENAME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsg", strprintf("Enable the encrypted p2p messaging subsystem (default: %u)", p2pmsg::DEFAULT_P2PMSG_ENABLE), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-aggregatesends", strprintf("Merge fee-0 cover candidates from the p2pmsg pool into every wallet BLSCT send, hiding the wallet's inputs and outputs among cover traffic at the cost of a higher fee. Sends fall back to plain transactions when no candidates are available. (default: %u)", aggregation::DEFAULT_AGGREGATE_SENDS), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
-    argsman.AddArg("-servecandidates", strprintf("Automatically answer p2pmsg candidate pull requests with fee-0 cover candidates built from loaded BLSCT wallets' coins, each encrypted 1:1 to its requester (default: %u)", aggregation::DEFAULT_SERVE_CANDIDATES), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
+    argsman.AddArg("-servecandidates", strprintf("Answer p2pmsg candidate pull requests with fee-0 cover candidates built from loaded BLSCT wallets' coins, each encrypted 1:1 to its requester. Each served candidate proves this node owns one specific on-chain output to that requester, so serving trades some wallet-clustering resistance for the network's aggregation supply and is rate-limited per peer and by a rolling per-window coin budget; disable with -servecandidates=0 (default: %u)", aggregation::DEFAULT_SERVE_CANDIDATES), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-servecandidateinterval=<n>", strprintf("Seconds between built-in candidate serving ticks (default: %d)", aggregation::SERVE_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::WALLET);
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-candidatepullinterval=<n>", strprintf("Seconds between background candidate pull rounds (default: %d)", aggregation::PULL_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
@@ -1796,7 +1802,10 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                     [requests](const p2pmsg::InboundMessage& m) {
                         blsct::PublicKey reply_key;
                         if (!reply_key.SetVch(m.body)) return; // drop malformed
-                        requests->Add(reply_key, GetTime<std::chrono::seconds>().count());
+                        // from_peer feeds the queue's per-peer cap: reply keys
+                        // are requester-minted so only the delivering peer is
+                        // a stable identity to account against.
+                        requests->Add(reply_key, m.from_peer, GetTime<std::chrono::seconds>().count());
                     });
             }
 
