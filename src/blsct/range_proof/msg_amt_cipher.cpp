@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/range_proof/msg_amt_cipher.h>
 #include <blsct/range_proof/setup.h>
 #include <string>
@@ -30,7 +30,7 @@ typename T::Scalar MsgAmtCipher<T>::RetrieveMsg2(
     }
 }
 template
-Mcl::Scalar MsgAmtCipher<Mcl>::RetrieveMsg2(
+Blst::Scalar MsgAmtCipher<Blst>::RetrieveMsg2(
     const std::vector<uint8_t>& msg
 );
 
@@ -53,10 +53,10 @@ typename T::Scalar MsgAmtCipher<T>::ComputeAlpha(
 
     return alpha;
 }
-template Mcl::Scalar MsgAmtCipher<Mcl>::ComputeAlpha(
+template Blst::Scalar MsgAmtCipher<Blst>::ComputeAlpha(
     const std::vector<uint8_t>& msg,
-    const Mcl::Scalar& vs0,
-    const Mcl::Scalar& nonce_alpha
+    const Blst::Scalar& vs0,
+    const Blst::Scalar& nonce_alpha
 );
 
 template <typename T>
@@ -79,7 +79,7 @@ typename T::Scalar MsgAmtCipher<T>::ComputeTauX(
 
     return tau_x;
 }
-template Mcl::Scalar MsgAmtCipher<Mcl>::ComputeTauX(
+template Blst::Scalar MsgAmtCipher<Blst>::ComputeTauX(
     const std::vector<uint8_t>& msg,
     const Scalar& x,
     const Scalar& z,
@@ -136,47 +136,6 @@ std::optional<MsgAmt> MsgAmtCipher<T>::Decrypt(
 
     return std::optional<MsgAmt> {MsgAmt::of(msg, amount)};
 }
-template std::optional<MsgAmt> MsgAmtCipher<Mcl>::Decrypt(
-    const Mcl::Scalar& msg1_vs0,
-    const Mcl::Scalar& gamma_vs0,
-    const Mcl::Scalar& tau1,
-    const Mcl::Scalar& tau2,
-    const Mcl::Scalar& tau_x,
-    const Mcl::Scalar& x,
-    const Mcl::Scalar& z,
-    const Mcl::Scalar& uint64_max,
-    const Mcl::Point& H,
-    const Mcl::Point& G,
-    const Mcl::Point& exp_vs0_commitment
-);
-
-} // namespace range_proof
-
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-namespace range_proof {
-template
-Blst::Scalar MsgAmtCipher<Blst>::RetrieveMsg2(
-    const std::vector<uint8_t>& msg
-);
-template Blst::Scalar MsgAmtCipher<Blst>::ComputeAlpha(
-    const std::vector<uint8_t>& msg,
-    const Blst::Scalar& vs0,
-    const Blst::Scalar& nonce_alpha
-);
-template Blst::Scalar MsgAmtCipher<Blst>::ComputeTauX(
-    const std::vector<uint8_t>& msg,
-    const Scalar& x,
-    const Scalar& z,
-    const Scalar& tau1,
-    const Scalar& tau2,
-    const Scalars& z_pows_from_2,
-    const Scalars& gammas
-);
 template std::optional<MsgAmt> MsgAmtCipher<Blst>::Decrypt(
     const Blst::Scalar& msg1_vs0,
     const Blst::Scalar& gamma_vs0,
@@ -190,5 +149,5 @@ template std::optional<MsgAmt> MsgAmtCipher<Blst>::Decrypt(
     const Blst::Point& G,
     const Blst::Point& exp_vs0_commitment
 );
+
 } // namespace range_proof
-#endif // NAVIO_BLSCT_ARITH_BLST

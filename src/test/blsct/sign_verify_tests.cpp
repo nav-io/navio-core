@@ -4,6 +4,7 @@
 
 #define BOOST_UNIT_TEST
 
+#include <blst.h>
 #include <blsct/common.h>
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
@@ -18,22 +19,28 @@ BOOST_FIXTURE_TEST_SUITE(sign_verify_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(test_compatibility_bet_bls_keys_and_blsct_keys)
 {
-    // secret key
-    blsSecretKey bls_sk{1};
-    blsct::PrivateKey blsct_sk(bls_sk.v);
-    auto a = blsct_sk.GetScalar().m_scalar;
-    auto b = bls_sk.v;
-    BOOST_CHECK(mclBnFr_isEqual(&a, &b) == 1);
+    // A BLSCT private key is a raw BLS12-381 scalar; its public key is the
+    // standard BLS min-pk key sk * G1 (blst_sk_to_pk_in_g1).
+    blsct::PrivateKey blsct_sk(BlstScalar(int64_t{1}));
+    BOOST_CHECK(blsct_sk.GetScalar() == BlstScalar(int64_t{1}));
 
-    // public key
     blsct::PublicKey blsct_pk = blsct_sk.GetPublicKey();
-    MclG1Point blsct_g1_point = blsct_pk.GetG1Point();
+    BOOST_CHECK(blsct_pk.GetG1Point() == BlstG1Point::GetBasePoint());
 
-    blsPublicKey bls_pk;
-    blsGetPublicKey(&bls_pk, &bls_sk);
-    auto c = blsct_g1_point.m_point;
-    auto d = bls_pk.v;
-    BOOST_CHECK(mclBnG1_isEqual(&c, &d) == 1);
+    blsct::PrivateKey sk2(BlstScalar(int64_t{123456789}));
+    blst_scalar raw;
+    blst_scalar_from_fr(&raw, &sk2.GetScalar().GetUnderlying());
+    blst_p1 pk;
+    blst_sk_to_pk_in_g1(&pk, &raw);
+    BOOST_CHECK(sk2.GetPublicKey().GetG1Point() == BlstG1Point(pk));
+
+    // And the signature is the standard BLS signature over the same DST.
+    std::vector<uint8_t> msg = {1, 2, 3};
+    auto sig = sk2.CoreSign(msg);
+    blst_p2 hash, expected;
+    blst_hash_to_g2(&hash, msg.data(), msg.size(), reinterpret_cast<const byte*>(BLS_SIG_G2_DST), BLS_SIG_G2_DST_LEN, nullptr, 0);
+    blst_sign_pk_in_g1(&expected, &hash, &raw);
+    BOOST_CHECK(blst_p2_is_equal(&sig.m_data, &expected));
 }
 
 BOOST_AUTO_TEST_CASE(test_sign_verify_balance)
@@ -77,7 +84,7 @@ BOOST_AUTO_TEST_CASE(test_sign_verify_balance_batch_bad_inputs)
 
 BOOST_AUTO_TEST_CASE(test_augment_message)
 {
-    auto pk = MclG1Point::GetBasePoint();
+    auto pk = BlstG1Point::GetBasePoint();
     std::vector<uint8_t> pk_data = pk.GetVch();
     auto msg = std::vector<uint8_t>{1, 2, 3, 4, 5};
     auto act = PublicKey(pk).AugmentMessage(msg);

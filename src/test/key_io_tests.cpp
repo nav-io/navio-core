@@ -149,8 +149,8 @@ BOOST_AUTO_TEST_CASE(key_io_invalid)
 BOOST_AUTO_TEST_CASE(key_io_double_public_key_endode_decode)
 {
     // randomly generated double public key
-    blsct::PublicKey pk1(MclG1Point::Rand());
-    blsct::PublicKey pk2(MclG1Point::Rand());
+    blsct::PublicKey pk1(BlstG1Point::Rand());
+    blsct::PublicKey pk2(BlstG1Point::Rand());
     blsct::DoublePublicKey dpk(pk1, pk2);
 
     // check if encoding and then decoding it

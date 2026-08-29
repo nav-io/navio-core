@@ -6,29 +6,29 @@
 
 #include <boost/test/unit_test.hpp>
 #include <test/util/setup_common.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/set_mem_proof/set_mem_proof_setup.h>
 
 BOOST_FIXTURE_TEST_SUITE(set_mem_proof_setup_tests, BasicTestingSetup)
 
-using Scalar = Mcl::Scalar;
-using Point = Mcl::Point;
+using Scalar = Blst::Scalar;
+using Point = Blst::Point;
 
 BOOST_AUTO_TEST_CASE(test_size_of_hs)
 {
-    const auto& setup = SetMemProofSetup<Mcl>::Get();
+    const auto& setup = SetMemProofSetup<Blst>::Get();
     BOOST_CHECK(setup.N == setup.hs.Size());
 }
 
 BOOST_AUTO_TEST_CASE(test_g)
 {
-    const auto& setup = SetMemProofSetup<Mcl>::Get();
+    const auto& setup = SetMemProofSetup<Blst>::Get();
     BOOST_CHECK(setup.g == Point::GetBasePoint());
 }
 
 BOOST_AUTO_TEST_CASE(test_all_generators_differ)
 {
-    const auto& setup = SetMemProofSetup<Mcl>::Get();
+    const auto& setup = SetMemProofSetup<Blst>::Get();
     BOOST_CHECK(setup.g != setup.h);
 
     Point prev_p = setup.h;
@@ -40,7 +40,7 @@ BOOST_AUTO_TEST_CASE(test_all_generators_differ)
 
 BOOST_AUTO_TEST_CASE(test_h1_to_h7)
 {
-    const auto& setup = SetMemProofSetup<Mcl>::Get();
+    const auto& setup = SetMemProofSetup<Blst>::Get();
 
     std::vector<uint8_t> msg {1,2,3};
 

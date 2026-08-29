@@ -9,7 +9,7 @@
 #include <thread>
 
 namespace blsct {
-uint64_t ViewTagFromNonce(const MclG1Point& nonce)
+uint64_t ViewTagFromNonce(const BlstG1Point& nonce)
 {
     HashWriter hash{};
     hash << nonce;
@@ -17,13 +17,13 @@ uint64_t ViewTagFromNonce(const MclG1Point& nonce)
     return (hash.GetHash().GetUint64(0) & 0xFFFF);
 }
 
-uint64_t CalculateViewTag(const MclG1Point& blindingKey, const MclScalar& viewKey)
+uint64_t CalculateViewTag(const BlstG1Point& blindingKey, const BlstScalar& viewKey)
 {
     return ViewTagFromNonce(blindingKey * viewKey);
 }
 
-std::vector<uint64_t> CalculateViewTagBatch(const std::vector<MclG1Point>& blindingKeys,
-                                            const MclScalar& viewKey,
+std::vector<uint64_t> CalculateViewTagBatch(const std::vector<BlstG1Point>& blindingKeys,
+                                            const BlstScalar& viewKey,
                                             size_t threads)
 {
     const size_t n = blindingKeys.size();
@@ -62,20 +62,20 @@ std::vector<uint64_t> CalculateViewTagBatch(const std::vector<MclG1Point>& blind
     return tags;
 }
 
-CKeyID CalculateHashId(const MclG1Point& nonce, const MclG1Point& spendingKey)
+CKeyID CalculateHashId(const BlstG1Point& nonce, const BlstG1Point& spendingKey)
 {
-    auto dh = MclG1Point::GetBasePoint() * nonce.GetHashWithSalt(0).Negate();
+    auto dh = BlstG1Point::GetBasePoint() * nonce.GetHashWithSalt(0).Negate();
     auto D_prime = spendingKey + dh;
 
     return blsct::PublicKey(D_prime).GetID();
 }
 
-CKeyID CalculateHashId(const MclG1Point& blindingKey, const MclG1Point& spendingKey, const MclScalar& viewKey)
+CKeyID CalculateHashId(const BlstG1Point& blindingKey, const BlstG1Point& spendingKey, const BlstScalar& viewKey)
 {
     return CalculateHashId(blindingKey * viewKey, spendingKey);
 }
 
-MclScalar CalculatePrivateSpendingKey(const MclG1Point& blindingKey, const MclScalar& viewKey, const MclScalar& spendingKey, const int64_t& account, const uint64_t& address)
+BlstScalar CalculatePrivateSpendingKey(const BlstG1Point& blindingKey, const BlstScalar& viewKey, const BlstScalar& spendingKey, const int64_t& account, const uint64_t& address)
 {
     HashWriter string{};
 
@@ -84,12 +84,12 @@ MclScalar CalculatePrivateSpendingKey(const MclG1Point& blindingKey, const MclSc
     string << account;
     string << address;
 
-    MclG1Point t = blindingKey * viewKey;
+    BlstG1Point t = blindingKey * viewKey;
 
-    return t.GetHashWithSalt(0) + spendingKey + MclScalar(string.GetHash());
+    return t.GetHashWithSalt(0) + spendingKey + BlstScalar(string.GetHash());
 }
 
-MclG1Point CalculateNonce(const MclG1Point& blindingKey, const MclScalar& viewKey)
+BlstG1Point CalculateNonce(const BlstG1Point& blindingKey, const BlstScalar& viewKey)
 {
     return blindingKey * viewKey;
 }
@@ -99,32 +99,32 @@ SubAddress DeriveSubAddress(const PrivateKey& viewKey, const PublicKey& spendKey
     return SubAddress(viewKey, spendKey, subAddressId);
 }
 
-MclScalar FromSeedToChildKey(const MclScalar& seed)
+BlstScalar FromSeedToChildKey(const BlstScalar& seed)
 {
     return BLS12_381_KeyGen::derive_child_SK(seed, 130);
 }
 
-MclScalar FromChildToTransactionKey(const MclScalar& seed)
+BlstScalar FromChildToTransactionKey(const BlstScalar& seed)
 {
     return BLS12_381_KeyGen::derive_child_SK(seed, 0);
 }
 
-MclScalar FromChildToBlindingKey(const MclScalar& seed)
+BlstScalar FromChildToBlindingKey(const BlstScalar& seed)
 {
     return BLS12_381_KeyGen::derive_child_SK(seed, 1);
 }
 
-MclScalar FromChildToTokenKey(const MclScalar& seed)
+BlstScalar FromChildToTokenKey(const BlstScalar& seed)
 {
     return BLS12_381_KeyGen::derive_child_SK(seed, 2);
 }
 
-MclScalar FromTransactionToViewKey(const MclScalar& seed)
+BlstScalar FromTransactionToViewKey(const BlstScalar& seed)
 {
     return BLS12_381_KeyGen::derive_child_SK(seed, 0);
 }
 
-MclScalar FromTransactionToSpendKey(const MclScalar& seed)
+BlstScalar FromTransactionToSpendKey(const BlstScalar& seed)
 {
     return BLS12_381_KeyGen::derive_child_SK(seed, 1);
 }

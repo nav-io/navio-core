@@ -24,7 +24,7 @@ target_link_libraries(test_util
   PRIVATE
     core_interface
     Boost::headers
-    bls_interface
+    blst_interface
     $<$<BOOL:${ENABLE_WALLET}>:SQLite3::SQLite3>
   PUBLIC
     univalue

@@ -6,9 +6,9 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <blsct/building_block/fiat_shamir.h>
 #include <blsct/building_block/g_h_gi_hi_zero_verifier.h>
 #include <blsct/building_block/lazy_points.h>
@@ -26,16 +26,6 @@
 // - https://eprint.iacr.org/2020/735.pdf
 // - https://github.com/KyoohyungHan/BulletProofsPlus/tree/master
 
-namespace {
-bool UseOuterAsyncProofWorkers()
-{
-#if defined(HAVE_OPENMP)
-    return false;
-#else
-    return true;
-#endif
-}
-} // namespace
 
 namespace bulletproofs_plus {
 
@@ -56,10 +46,10 @@ Elements<typename T::Scalar> RangeProofLogic<T>::Compute_D(
     return d;
 }
 template
-Elements<Mcl::Scalar> RangeProofLogic<Mcl>::Compute_D(
-    const Elements<Mcl::Scalar>& z_asc_by_2_pows,
-    const Elements<Mcl::Scalar>& two_pows,
-    const Mcl::Scalar& z_sq,
+Elements<Blst::Scalar> RangeProofLogic<Blst>::Compute_D(
+    const Elements<Blst::Scalar>& z_asc_by_2_pows,
+    const Elements<Blst::Scalar>& two_pows,
+    const Blst::Scalar& z_sq,
     const size_t& m
 );
 
@@ -123,7 +113,7 @@ Elements<typename T::Scalar> RangeProofLogic<T>::ComputeZAscBy2Pows(
     return z_asc_by_2_pows;
 }
 template
-Elements<Mcl::Scalar> RangeProofLogic<Mcl>::ComputeZAscBy2Pows(
+Elements<Blst::Scalar> RangeProofLogic<Blst>::ComputeZAscBy2Pows(
     const Scalar& z,
     const size_t& m
 );
@@ -180,7 +170,7 @@ size_t RangeProofLogic<T>::GetNumLeadingZeros(const uint32_t& n) {
     return count;
 }
 template
-size_t RangeProofLogic<Mcl>::GetNumLeadingZeros(const uint32_t& n);
+size_t RangeProofLogic<Blst>::GetNumLeadingZeros(const uint32_t& n);
 
 template <typename T>
 std::tuple<
@@ -432,12 +422,12 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
     }
     return proof;
 }
-template RangeProof<Mcl> RangeProofLogic<Mcl>::Prove(
-    Elements<Mcl::Scalar>,
-    const range_proof::GammaSeed<Mcl>&,
+template RangeProof<Blst> RangeProofLogic<Blst>::Prove(
+    Elements<Blst::Scalar>,
+    const range_proof::GammaSeed<Blst>&,
     const std::vector<uint8_t>&,
     const Seed&,
-    const Mcl::Scalar&,
+    const Blst::Scalar&,
     const bool);
 
 template <typename T>
@@ -547,7 +537,7 @@ bool RangeProofLogic<T>::VerifyProofs(
         // and the proof's aggregated length fits the tabled generator prefix.
         bool used_fixed_base = false;
         Point fixed_base_sum; // identity
-        if constexpr (std::is_same_v<T, Mcl>) {
+        if constexpr (std::is_same_v<T, Blst>) {
             auto& fbc = FixedBaseCache::Get();
             fbc.MaybeInit(gens);
             if (fbc.Enabled() && pt.mn <= fbc.Prefix()) {
@@ -576,11 +566,11 @@ bool RangeProofLogic<T>::VerifyProofs(
         return true;
     };
 
-    // With HAVE_OPENMP, the dominant work inside lp.Sum() already fans out via
-    // MCL's multi-threaded MSM. Spawning a fresh std::async host thread per
-    // proof on top of that adds thread churn and makes Windows/OpenMP runtime
-    // interactions fragile without buying useful parallelism.
-    if (!UseOuterAsyncProofWorkers() || proof_transcripts.size() <= 1) {
+    // One worker per proof: each proof's MSM (lp.Sum) runs single-threaded on
+    // its own std::async thread, so a batch of n proofs uses up to n cores
+    // with no nested threading (BlstUtil::MSM's own tiling stays off unless
+    // BlstUtil::SetDefaultThreads is raised).
+    if (proof_transcripts.size() <= 1) {
         for (size_t idx = 0; idx < proof_transcripts.size(); ++idx) {
             if (!verify_one(idx)) return false;
         }
@@ -603,8 +593,8 @@ bool RangeProofLogic<T>::VerifyProofs(
 
     return true;
 }
-template bool RangeProofLogic<Mcl>::VerifyProofs(
-    const std::vector<RangeProofWithTranscript<Mcl>>&
+template bool RangeProofLogic<Blst>::VerifyProofs(
+    const std::vector<RangeProofWithTranscript<Blst>>&
 );
 
 template <typename T>
@@ -629,8 +619,8 @@ bool RangeProofLogic<T>::Verify(
     return VerifyProofs(
         proof_transcripts);
 }
-template bool RangeProofLogic<Mcl>::Verify(
-    const std::vector<RangeProofWithSeed<Mcl>>&);
+template bool RangeProofLogic<Blst>::Verify(
+    const std::vector<RangeProofWithSeed<Blst>>&);
 
 template <typename T>
 AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
@@ -722,45 +712,9 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
         xs
     };
 }
-template AmountRecoveryResult<Mcl> RangeProofLogic<Mcl>::RecoverAmounts(
-    const std::vector<AmountRecoveryRequest<Mcl>>&
-);
-
-} // namespace bulletproofs_plus
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-namespace bulletproofs_plus {
-template
-Elements<Blst::Scalar> RangeProofLogic<Blst>::Compute_D(
-    const Elements<Blst::Scalar>& z_asc_by_2_pows,
-    const Elements<Blst::Scalar>& two_pows,
-    const Blst::Scalar& z_sq,
-    const size_t& m
-);
-template
-Elements<Blst::Scalar> RangeProofLogic<Blst>::ComputeZAscBy2Pows(
-    const Scalar& z,
-    const size_t& m
-);
-template
-size_t RangeProofLogic<Blst>::GetNumLeadingZeros(const uint32_t& n);
-template RangeProof<Blst> RangeProofLogic<Blst>::Prove(
-    Elements<Blst::Scalar>,
-    const range_proof::GammaSeed<Blst>&,
-    const std::vector<uint8_t>&,
-    const Seed&,
-    const Blst::Scalar&);
-template bool RangeProofLogic<Blst>::VerifyProofs(
-    const std::vector<RangeProofWithTranscript<Blst>>&
-);
-template bool RangeProofLogic<Blst>::Verify(
-    const std::vector<RangeProofWithSeed<Blst>>&);
 template AmountRecoveryResult<Blst> RangeProofLogic<Blst>::RecoverAmounts(
     const std::vector<AmountRecoveryRequest<Blst>>&
 );
+
 } // namespace bulletproofs_plus
-#endif // NAVIO_BLSCT_ARITH_BLST
+

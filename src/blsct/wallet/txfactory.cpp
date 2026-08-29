@@ -8,7 +8,7 @@
 #include <chainparams.h>
 #include <limits>
 
-using T = Mcl;
+using T = Blst;
 using Point = T::Point;
 using Points = Elements<Point>;
 using Scalar = T::Scalar;
@@ -55,7 +55,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
     AssertLockHeld(wallet->cs_wallet);
 
     CTxOut out;
-    range_proof::RecoveredData<Mcl> recoveredInfo;
+    range_proof::RecoveredData<Blst> recoveredInfo;
 
     if (wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
         auto wout = wallet->GetWalletOutput(outpoint);
@@ -180,7 +180,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     std::vector<InputCandidates> gathered;
     for (const wallet::COutput& output : availableCoins.All()) {
         CTxOut out;
-        range_proof::RecoveredData<Mcl> recoveredInfo;
+        range_proof::RecoveredData<Blst> recoveredInfo;
 
         bool isStakedCommitment = false;
         if (wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
@@ -357,7 +357,7 @@ std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet
     }
 
     // One output back to `destination`; the fee is taken from the merged amount.
-    factory.AddOutput(SubAddress(destination), nSum, "Consolidate", TokenId(), NORMAL, 0, /*fSubtractFeeFromAmount=*/true, MclScalar::Rand(), nBLSCTDefaultFee);
+    factory.AddOutput(SubAddress(destination), nSum, "Consolidate", TokenId(), NORMAL, 0, /*fSubtractFeeFromAmount=*/true, BlstScalar::Rand(), nBLSCTDefaultFee);
 
     return factory.BuildTx(destination, /*minStake=*/0, NORMAL, /*fSubtractedFee=*/true, nBLSCTDefaultFee);
 }

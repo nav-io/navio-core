@@ -6,11 +6,27 @@
 #include <blsct/arith/blst/blst_strconv.h>
 #include <blsct/common.h>
 #include <crypto/sha256.h>
+#ifndef LIBBLSCT
 #include <random.h>
+#endif
 #include <util/strencodings.h>
 
 #include <cstring>
 #include <stdexcept>
+
+#ifdef LIBBLSCT
+#if defined(_WIN32)
+#include <windows.h>
+#include <bcrypt.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#if defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__) || defined(__NetBSD__) || (defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 25)))
+#include <sys/random.h>
+#define BLST_SCALAR_HAVE_GETENTROPY 1
+#endif
+#endif
+#endif // LIBBLSCT
 
 namespace {
 const blst_scalar& ZeroScalar()
@@ -18,11 +34,39 @@ const blst_scalar& ZeroScalar()
     static const blst_scalar z{};
     return z;
 }
+
+// Fill `buf` with OS entropy. The full node uses random.cpp's GetRandBytes;
+// the standalone libblsct.a does not carry random.cpp (it needs the whole
+// util layer), and the mcl backend it replaced brought its own CSPRNG, so
+// keep an OS-only source here for that build. Throws if the OS refuses.
+void RandBytes(unsigned char* buf, size_t n)
+{
+#ifndef LIBBLSCT
+    GetRandBytes({buf, n});
+#elif defined(_WIN32)
+    if (BCryptGenRandom(nullptr, buf, static_cast<ULONG>(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
+        throw std::runtime_error("BlstScalar::Rand: BCryptGenRandom failed");
+    }
+#else
+#ifdef BLST_SCALAR_HAVE_GETENTROPY
+    if (getentropy(buf, n) == 0) return;
+#endif
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) throw std::runtime_error("BlstScalar::Rand: cannot open /dev/urandom");
+    size_t got = 0;
+    while (got < n) {
+        ssize_t r = read(fd, buf + got, n - got);
+        if (r <= 0) { close(fd); throw std::runtime_error("BlstScalar::Rand: /dev/urandom read failed"); }
+        got += static_cast<size_t>(r);
+    }
+    close(fd);
+#endif
+}
 } // namespace
 
 blst_scalar BlstScalar::ToScalar() const
 {
-    blst_scalar s;
+    blst_scalar s{};
     blst_scalar_from_fr(&s, &m_scalar);
     return s;
 }
@@ -64,7 +108,7 @@ BlstScalar::BlstScalar(const uint256& n)
 {
     // Mirrors mclBnFr_setBigEndianMod(n.data(), 32): the raw uint256 bytes
     // are interpreted as a big-endian integer and reduced mod r.
-    blst_scalar s;
+    blst_scalar s{};
     blst_scalar_from_be_bytes(&s, n.data(), 32);
     FromScalar(s);
 }
@@ -79,7 +123,7 @@ BlstScalar::BlstScalar(const std::string& s, int radix)
     } catch (const std::exception&) {
         throw std::runtime_error(std::string(__func__) + ": Failed to instantiate Scalar from " + s);
     }
-    blst_scalar sc;
+    blst_scalar sc{};
     blst_scalar_from_be_bytes(&sc, be.data(), be.size());
     FromScalar(sc);
 }
@@ -97,7 +141,7 @@ BlstScalar::BlstScalar(const std::vector<uint8_t>& msg, uint8_t index)
     hasher.Finalize(hash);
 
     // mclBnFr_setLittleEndianMod equivalent.
-    blst_scalar s;
+    blst_scalar s{};
     blst_scalar_from_le_bytes(&s, hash, CSHA256::OUTPUT_SIZE);
     FromScalar(s);
 }
@@ -171,7 +215,7 @@ BlstScalar BlstScalar::operator&(const BlstScalar& rhs) const
 
 BlstScalar BlstScalar::operator~() const
 {
-    // Same semantics as MclScalar: complement of the low 8 bytes only.
+    // Same semantics as BlstScalar: complement of the low 8 bytes only.
     const int64_t n_complement_scalar = (int64_t)~GetUint64();
     return BlstScalar(n_complement_scalar);
 }
@@ -188,7 +232,7 @@ BlstScalar BlstScalar::operator<<(const uint32_t& shift) const
 BlstScalar BlstScalar::operator>>(const uint32_t& shift) const
 {
     // Integer right shift over the canonical representative, as in
-    // MclScalar: subtract 1 when odd, then divide by two (in the field).
+    // BlstScalar: subtract 1 when odd, then divide by two (in the field).
     static const BlstScalar one(int64_t{1});
     static const BlstScalar two(int64_t{2});
     BlstScalar temp(*this);
@@ -304,8 +348,8 @@ BlstScalar BlstScalar::Rand(bool exclude_zero)
     BlstScalar temp;
     while (true) {
         unsigned char buf[32];
-        GetRandBytes(buf);
-        blst_scalar s;
+        RandBytes(buf, sizeof(buf));
+        blst_scalar s{};
         blst_scalar_from_le_bytes(&s, buf, sizeof(buf));
         temp.FromScalar(s);
         if (!exclude_zero || !temp.IsZero()) break;
@@ -342,7 +386,7 @@ void BlstScalar::SetVch(const std::vector<uint8_t>& v)
         std::memset(&m_scalar, 0, sizeof(Underlying));
         return;
     }
-    blst_scalar s;
+    blst_scalar s{};
     blst_scalar_from_be_bytes(&s, v.data(), v.size());
     FromScalar(s);
 }

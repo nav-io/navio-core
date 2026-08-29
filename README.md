@@ -41,15 +41,11 @@ Building from sources
 
 Platform-specific instructions live in [`doc/build-*.md`](/doc).
 
-For best performance, install [GMP](https://gmplib.org/) before configuring
-(`libgmp-dev` on Debian/Ubuntu, `gmp-devel` on Fedora/RHEL, `gmp` on Arch
-or Homebrew). The build auto-detects GMP and routes the BLS12-381 arithmetic
-used by BLSCT through it. Real-world impact on `bench_navio` is most visible
-on point (de)serialization (1.2–1.9× faster); sign / verify / range proof
-gain ~0–4%. Builds without GMP transparently fall back to the internal
-`VINT` backend. Reproducible `depends/` builds include GMP automatically.
-See [doc/build-gmp.md](doc/build-gmp.md) for benchmark numbers and configure
-flags.
+The BLS12-381 arithmetic behind BLSCT comes from the vendored
+[supranational/blst](https://github.com/supranational/blst) (`src/blst`),
+built by CMake with no extra dependencies. On x86_64 both the ADX and the
+non-ADX code paths are compiled and selected at runtime (`BLST_PORTABLE=ON`,
+the default); other architectures use blst's portable C implementation.
 
 The contribution workflow is described in [CONTRIBUTING.md](CONTRIBUTING.md)
 and useful hints for developers can be found in [doc/developer-notes.md](doc/developer-notes.md).

@@ -1810,7 +1810,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                     return InitError(strprintf(_("p2pmsg identity file %s is invalid (expected %d bytes, got %d). Move it aside to regenerate."),
                                                fs::PathToString(id_path), blsct::PrivateKey::SIZE, raw.size()));
                 }
-                MclScalar s;
+                BlstScalar s;
                 s.SetVch(raw);
                 if (s.IsZero()) {
                     return InitError(strprintf(_("p2pmsg identity file %s holds an invalid (zero) key. Move it aside to regenerate."),

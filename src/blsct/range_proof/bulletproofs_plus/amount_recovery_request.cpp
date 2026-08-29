@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/range_proof/bulletproofs_plus/amount_recovery_request.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_with_transcript.h>
 
@@ -30,16 +30,6 @@ AmountRecoveryRequest<T> AmountRecoveryRequest<T>::of(const RangeProofWithSeed<T
         0};
     return req;
 }
-template AmountRecoveryRequest<Mcl> AmountRecoveryRequest<Mcl>::of(const RangeProofWithSeed<Mcl>&, const range_proof::GammaSeed<Mcl>&, const size_t&);
-
-} // namespace bulletproofs_plus
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-namespace bulletproofs_plus {
 template AmountRecoveryRequest<Blst> AmountRecoveryRequest<Blst>::of(const RangeProofWithSeed<Blst>&, const range_proof::GammaSeed<Blst>&, const size_t&);
+
 } // namespace bulletproofs_plus
-#endif // NAVIO_BLSCT_ARITH_BLST

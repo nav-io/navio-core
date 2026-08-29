@@ -4,19 +4,19 @@
 
 #include <bench/bench.h>
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <ctokens/tokenid.h>
 
 #include <vector>
 
-using Arith = Mcl;
+using Arith = Blst;
 using RP = bulletproofs_plus::RangeProofLogic<Arith>;
 using Proof = bulletproofs_plus::RangeProofWithSeed<Arith>;
-using Scalar = Mcl::Scalar;
-using Point = Mcl::Point;
+using Scalar = Blst::Scalar;
+using Point = Blst::Point;
 using Scalars = Elements<Scalar>;
 
 namespace {
@@ -26,7 +26,7 @@ namespace {
 // the ctor/factory init is guarded but we keep the hot object alive anyway.
 std::vector<Proof> MakeProofs(size_t n)
 {
-    volatile MclInit init;
+    volatile BlstInit init;
     (void)init;
 
     static RP rp;
@@ -51,7 +51,7 @@ std::vector<Proof> MakeProofs(size_t n)
 
 void BenchVerify(benchmark::Bench& bench, size_t n)
 {
-    volatile MclInit init;
+    volatile BlstInit init;
     (void)init;
 
     auto proofs = MakeProofs(n);

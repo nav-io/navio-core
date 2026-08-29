@@ -4,8 +4,8 @@
 
 #include <bench/bench.h>
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <blsct/wallet/helpers.h>
 
 #include <vector>
@@ -16,18 +16,18 @@ using blsct::CalculateViewTagBatch;
 namespace {
 
 struct ViewTagFixture {
-    std::vector<MclG1Point> blindingKeys;
-    MclScalar viewKey;
+    std::vector<BlstG1Point> blindingKeys;
+    BlstScalar viewKey;
 
     explicit ViewTagFixture(size_t n)
     {
-        volatile MclInit mcl_init;
+        volatile BlstInit mcl_init;
         (void)mcl_init;
-        viewKey = MclScalar::Rand(true);
+        viewKey = BlstScalar::Rand(true);
         blindingKeys.reserve(n);
         for (size_t i = 0; i < n; ++i) {
-            MclScalar r = MclScalar::Rand(true);
-            blindingKeys.emplace_back(MclG1Point::GetBasePoint() * r);
+            BlstScalar r = BlstScalar::Rand(true);
+            blindingKeys.emplace_back(BlstG1Point::GetBasePoint() * r);
         }
     }
 };

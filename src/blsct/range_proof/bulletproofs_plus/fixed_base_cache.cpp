@@ -38,7 +38,7 @@ FixedBaseCache& FixedBaseCache::Get()
     return instance;
 }
 
-void FixedBaseCache::MaybeInit(const range_proof::Generators<Mcl>& gens)
+void FixedBaseCache::MaybeInit(const range_proof::Generators<Blst>& gens)
 {
     static std::once_flag once;
     std::call_once(once, [&] {
@@ -64,7 +64,7 @@ void FixedBaseCache::MaybeInit(const range_proof::Generators<Mcl>& gens)
         // inside block validation. Failing closed disables the fast path once
         // and keeps the generic MSM.
         try {
-            std::vector<MclG1Point> gi, hi;
+            std::vector<BlstG1Point> gi, hi;
             gi.reserve(m_prefix);
             hi.reserve(m_prefix);
             for (size_t i = 0; i < m_prefix; ++i) {

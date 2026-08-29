@@ -27,7 +27,7 @@ bool RangeProof<T>::operator==(const RangeProof<T>& other) const
            t_hat == other.t_hat;
 }
 template
-bool RangeProof<Mcl>::operator==(const RangeProof<Mcl>& other) const;
+bool RangeProof<Blst>::operator==(const RangeProof<Blst>& other) const;
 
 template <typename T>
 bool RangeProof<T>::operator!=(const RangeProof<T>& other) const
@@ -35,7 +35,7 @@ bool RangeProof<T>::operator!=(const RangeProof<T>& other) const
     return !operator==(other);
 }
 template
-bool RangeProof<Mcl>::operator!=(const RangeProof<Mcl>& other) const;
+bool RangeProof<Blst>::operator!=(const RangeProof<Blst>& other) const;
 
 template <typename T>
 bool RangeProofWithSeed<T>::operator==(const RangeProofWithSeed<T>& other) const
@@ -47,13 +47,13 @@ bool RangeProofWithSeed<T>::operator==(const RangeProofWithSeed<T>& other) const
     return this_parent == other_parent &&
            seed == other.seed;
 }
-template bool RangeProofWithSeed<Mcl>::operator==(const RangeProofWithSeed<Mcl>& other) const;
+template bool RangeProofWithSeed<Blst>::operator==(const RangeProofWithSeed<Blst>& other) const;
 
 template <typename T>
 bool RangeProofWithSeed<T>::operator!=(const RangeProofWithSeed<T>& other) const
 {
     return !operator==(other);
 }
-template bool RangeProofWithSeed<Mcl>::operator!=(const RangeProofWithSeed<Mcl>& other) const;
+template bool RangeProofWithSeed<Blst>::operator!=(const RangeProofWithSeed<Blst>& other) const;
 
 } // namespace bulletproofs

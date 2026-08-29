@@ -10,5 +10,5 @@
 const std::string& get_chain();
 bool set_chain(const std::string& chain);
 
-#endif  // NAVIO_BLSCT_CHAIN_H
+#endif // NAVIO_BLSCT_CHAIN_H
 

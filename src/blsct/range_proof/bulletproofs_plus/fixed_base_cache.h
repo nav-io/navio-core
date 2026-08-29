@@ -5,7 +5,7 @@
 #ifndef NAVIO_BLSCT_RANGE_PROOF_BULLETPROOFS_PLUS_FIXED_BASE_CACHE_H
 #define NAVIO_BLSCT_RANGE_PROOF_BULLETPROOFS_PLUS_FIXED_BASE_CACHE_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/building_block/fixed_base_window.h>
 #include <blsct/range_proof/generators.h>
 
@@ -37,7 +37,7 @@ public:
     static FixedBaseCache& Get();
 
     // Build the tables from `gens` on first call (no-op afterwards / when off).
-    void MaybeInit(const range_proof::Generators<Mcl>& gens);
+    void MaybeInit(const range_proof::Generators<Blst>& gens);
 
     bool Enabled() const { return m_enabled; }
     // Largest mn for which the tables can serve a proof (0 when disabled).
@@ -56,7 +56,7 @@ private:
     FixedBaseWindow m_hi;
     // First tabled base, kept to assert the generators the tables were built
     // from still match the ones each verification passes in.
-    MclG1Point m_gi_base0;
+    BlstG1Point m_gi_base0;
 };
 
 } // namespace bulletproofs_plus

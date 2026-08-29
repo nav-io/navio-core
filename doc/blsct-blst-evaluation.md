@@ -5,23 +5,15 @@ PoS set-membership proofs, BLS signatures, wallet recovery) from
 [herumi/mcl](https://github.com/herumi/mcl) + [herumi/bls](https://github.com/herumi/bls)
 to [supranational/blst](https://github.com/supranational/blst).
 
-Everything in this document is reproducible from this tree:
-
-```sh
-cmake -S . -B build-blst -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCH=ON -DWITH_BLST=ON
-cmake --build build-blst --target bench_navio test_navio
-build-blst/bin/test_navio -t blst_equivalence_tests           # cross-backend equivalence
-build-blst/bin/bench_navio -filter='BLSCTCmp_.*' -min-time=500 # side-by-side benchmarks
-```
-
-`-DWITH_BLST=ON` (default OFF; nothing changes in a default build) fetches the
-pinned blst release (`BLST_GIT_TAG`, v0.3.17) at configure time, builds it
-with its own `build.sh`, compiles the `Blst` arith backend
-(`src/blsct/arith/blst/`), instantiates the templated proof code for it
-(`template ... <Blst>` blocks gated on `NAVIO_BLSCT_ARITH_BLST`, mirroring the
-`<Mcl>` ones 1:1) and adds the `BLSCTCmp_*` benchmarks plus the
-`blst_equivalence_tests` suite. `-DWITH_MCL_OPENMP=ON` on top gives the
-OpenMP-threaded mcl MSM for the multi-threaded comparison.
+> **Status.** This document is the evaluation that preceded the migration.
+> The numbers were measured with both libraries side by side on the
+> `eval/blst-arith-backend` branch (PR #386), whose `-DWITH_BLST=ON` build
+> carried a two-backend benchmark (`BLSCTCmp_*`) and equivalence test suite.
+> mcl has since been removed from the tree: blst is the only backend
+> (`src/blst`, `cmake/blst.cmake`), the wrappers live in
+> `src/blsct/arith/blst/`, and the historical "release config" numbers below
+> are what the mcl-based binaries did. The "Full chain sync" section carries
+> the measured (not projected) blst figure from the migrated node.
 
 ## TL;DR
 
@@ -336,11 +328,37 @@ measured.
 | mcl (release config, no OpenMP) → blst, MSM tiled over threads | 14.41 | 6.69 → 1.79 (3.74×) | 3.05 → 0.95 (3.22×) | 2.48 → 0.47 (5.30×) | **7.41** (1.95× faster, 571 s → 294 s) |
 | mcl + OpenMP → blst, MSM tiled over threads | 11.28 | 2.69 → 1.15 (2.34×) | 3.66 → 1.14 (3.22×) | 1.77 → 0.46 (3.84×) | **7.22** (1.56× faster, 447 s → 286 s) |
 
-In short: ~1.7–2× faster full sync in the release configuration (571 s →
-~300 s for today's mainnet), and still ~1.5× faster than an OpenMP mcl build.
-The remaining ~5 ms/blk is non-crypto block connection work, which then
-dominates.
+In short (projection): ~1.7–2× faster full sync in the release
+configuration, and still ~1.5× faster than an OpenMP mcl build.
 
+#### Measured after the migration
+
+With mcl removed and the node running on blst (same host, same datadir,
+`contrib/devtools/blsct-sync-bench.sh build/bin/naviod build/bin/navio-cli
+<datadir>`), the reindex reproduces the mcl tip hash
+(`9e0ab3878d39106c3753c2b51b97d3961f2d4a5cd799ee05826a414c0e0d7e1f` at
+39,645) and measures:
+
+```
+reindex-chainstate to height 39645: 435.5s wall (10.98 ms/block)   [2nd run: 466.7s]
+  Connect block                                     429.8s    10.84 ms/blk
+  Verify block proofs/scripts                       324.0s     8.17 ms/blk
+  BLSCT aggregate signatures                        105.2s     2.65 ms/blk
+  BLSCT block rangeproof batch (all sizes)          305.4s     7.70 ms/blk
+  PoS setmem (async worker CPU, summed)             144.1s     3.63 ms/blk
+```
+
+Caveat on comparability: the mcl runs above were taken on an idle machine;
+by the time the blst node existed the same machine was carrying a desktop
+workload (load average 7–11 from unrelated applications). An mcl (no
+OpenMP) reindex repeated in that window took **1480 s** (37.3 ms/blk,
+range proofs 17.6 ms/blk), i.e. the load roughly halved single-thread
+throughput, and in the same window the migrated node's own micro-benchmarks
+(`BLSCTRPVerify_1` 4.9 ms) matched the two-backend build's blst figures
+measured at the same moment (`BLSCTCmp_RPVerify1_blst_ST` 4.95 ms) — the
+in-tree blst build is not slower than the evaluation one. So the honest
+range is: blst 435–467 s on a loaded machine vs mcl 571 s idle / 1480 s
+under the same load; a clean idle-vs-idle rerun is the number to quote.
 ## Migration assessment
 
 ### What a real migration touches

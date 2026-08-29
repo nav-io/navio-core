@@ -15,95 +15,95 @@ BOOST_AUTO_TEST_CASE(test_i2osp)
 {
     // Size zero is invalid
     {
-        MclScalar s(31);
+        BlstScalar s(31);
         BOOST_CHECK_THROW(BLS12_381_KeyGen::I2OSP(s, 0), std::runtime_error);
     }
     // 1 byte cases
     {
-        MclScalar s(0);
+        BlstScalar s(0);
         auto act = BLS12_381_KeyGen::I2OSP(s, 1);
         std::vector<uint8_t> exp = { 0x00 };
         BOOST_CHECK(act == exp);
     }
     {
-        MclScalar s(1);
+        BlstScalar s(1);
         auto act = BLS12_381_KeyGen::I2OSP(s, 1);
         std::vector<uint8_t> exp = { 0x01 };
         BOOST_CHECK(act == exp);
     }
     {
-        MclScalar s(255);
+        BlstScalar s(255);
         auto act = BLS12_381_KeyGen::I2OSP(s, 1);
         std::vector<uint8_t> exp = { 0xff };
         BOOST_CHECK(act == exp);
     }
     {
-        MclScalar s(256);
+        BlstScalar s(256);
         BOOST_CHECK_THROW(BLS12_381_KeyGen::I2OSP(s, 1), std::runtime_error);
     }
     // 2 byte cases
     {
-        MclScalar s(0);
+        BlstScalar s(0);
         auto act = BLS12_381_KeyGen::I2OSP(s, 2);
         std::vector<uint8_t> exp = { 0x00, 0x00 };
         BOOST_CHECK(act == exp);
     }
     {
-        MclScalar s(1);
+        BlstScalar s(1);
         auto act = BLS12_381_KeyGen::I2OSP(s, 2);
         std::vector<uint8_t> exp = { 0x00, 0x01 };
         BOOST_CHECK(act == exp);
     }
     {
-        MclScalar s(255);
+        BlstScalar s(255);
         auto act = BLS12_381_KeyGen::I2OSP(s, 2);
         std::vector<uint8_t> exp = { 0x00, 0xff };
         BOOST_CHECK(act == exp);
     }
     {
-        MclScalar s(256);
+        BlstScalar s(256);
         auto act = BLS12_381_KeyGen::I2OSP(s, 2);
         std::vector<uint8_t> exp = { 0x01, 0x00 };
         BOOST_CHECK(act == exp);
     }
     {
-        MclScalar s(65535);
+        BlstScalar s(65535);
         auto act = BLS12_381_KeyGen::I2OSP(s, 2);
         std::vector<uint8_t> exp = { 0xff, 0xff };
         BOOST_CHECK(act == exp);
     }
     {
-        MclScalar s(65536);
+        BlstScalar s(65536);
         BOOST_CHECK_THROW(BLS12_381_KeyGen::I2OSP(s, 2), std::runtime_error);
     }
     // 4 byte cases
     {
-        MclScalar s(0);
+        BlstScalar s(0);
         auto act = BLS12_381_KeyGen::I2OSP(s, 4);
         std::vector<uint8_t> exp = { 0x00, 0x00, 0x00, 0x00 };
         BOOST_CHECK(act == exp);
     }
     {
-        MclScalar s(1);
+        BlstScalar s(1);
         auto act = BLS12_381_KeyGen::I2OSP(s, 4);
         std::vector<uint8_t> exp = { 0x00, 0x00, 0x00, 0x01 };
         BOOST_CHECK(act == exp);
     }
     {
-        MclScalar s(std::numeric_limits<uint32_t>::max());
+        BlstScalar s(std::numeric_limits<uint32_t>::max());
         auto act = BLS12_381_KeyGen::I2OSP(s, 4);
         std::vector<uint8_t> exp = { 0xff, 0xff, 0xff, 0xff };
         BOOST_CHECK(act == exp);
     }
     {
         uint64_t uint32_t_max = std::numeric_limits<uint32_t>::max();
-        MclScalar s(uint32_t_max + 1);
+        BlstScalar s(uint32_t_max + 1);
         BOOST_CHECK_THROW(BLS12_381_KeyGen::I2OSP(s, 4), std::runtime_error);
     }
 
     // 32 byte cases
     {
-        MclScalar s(0);
+        BlstScalar s(0);
         auto act = BLS12_381_KeyGen::I2OSP(s, 32);
         std::vector<uint8_t> exp = {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -148,7 +148,7 @@ BOOST_AUTO_TEST_CASE(test_i2osp)
             0x00,
             0x01,
         };
-        MclScalar s(bls12_381_r);
+        BlstScalar s(bls12_381_r);
         auto act = BLS12_381_KeyGen::I2OSP(s, 32);
 
         // r is the order and act should become zero
@@ -285,10 +285,10 @@ void RunTestCase(
 ) {
     auto seed = ParseHex(seed_str);
     auto act_master = BLS12_381_KeyGen::derive_master_SK(seed);
-    MclScalar exp_master(exp_master_str, 10);
+    BlstScalar exp_master(exp_master_str, 10);
     BOOST_CHECK(act_master == exp_master);
 
-    MclScalar exp_child(exp_child_str, 10);
+    BlstScalar exp_child(exp_child_str, 10);
     auto act_child = BLS12_381_KeyGen::derive_child_SK(act_master, child_index);
     BOOST_CHECK(act_child == exp_child);
 

@@ -29,7 +29,7 @@ ALLOWED_EXECUTABLE_SHEBANG = {
     "py": [b"#!/usr/bin/env python3"],
     "sh": [b"#!/usr/bin/env bash", b"#!/bin/sh"],
 }
-EXCLUDED_DIRS = ("^src/bls/")
+EXCLUDED_DIRS = ("^src/blst/")
 
 
 class FileMeta(object):

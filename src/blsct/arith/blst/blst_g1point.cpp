@@ -4,15 +4,18 @@
 
 #include <blsct/arith/blst/blst_g1point.h>
 #include <blsct/arith/blst/blst_strconv.h>
-#include <random.h>
 #include <streams.h>
 #include <util/strencodings.h>
 
 #include <algorithm>
 #include <cstring>
 #include <sstream>
+#include <utility>
 
 namespace {
+thread_local std::vector<BlstG1Point>* g_blst_g1_deferral_collector = nullptr;
+thread_local int g_blst_g1_skip_depth = 0;
+thread_local int g_blst_g1_legacy_decode_depth = 0;
 
 // Reduce an arbitrary-length big-endian integer mod p into an Fp element.
 // Horner over bytes in Fp (acc = acc*256 + b); cost is irrelevant for the
@@ -20,7 +23,7 @@ namespace {
 // which mirrors mclBnFp_setBigEndianMod.
 blst_fp FpFromBigEndianMod(const uint8_t* be, size_t n)
 {
-    blst_fp acc;
+    blst_fp acc{};
     std::memset(&acc, 0, sizeof(acc));
     if (n <= 48) {
         // Fast path: value < 2^384. blst_fp_from_bendian requires the input
@@ -39,7 +42,7 @@ blst_fp FpFromBigEndianMod(const uint8_t* be, size_t n)
         blst_fp_from_uint64(&c256, v);
     }
     for (size_t i = 0; i < n; ++i) {
-        blst_fp digit;
+        blst_fp digit{};
         const uint64_t v[6] = {be[i], 0, 0, 0, 0, 0};
         blst_fp_from_uint64(&digit, v);
         blst_fp_mul(&acc, &acc, &c256);
@@ -77,7 +80,7 @@ BlstG1Point::BlstG1Point(const Underlying& p)
 
 BlstG1Point::BlstG1Point(const uint256& n)
 {
-    // uint256 raw bytes taken as big-endian, mod p (see MclG1Point).
+    // uint256 raw bytes taken as big-endian, mod p (see BlstG1Point).
     blst_fp u = FpFromBigEndianMod(n.data(), n.size());
     *this = MapFpToG1(u);
 }
@@ -110,7 +113,7 @@ BlstG1Point BlstG1Point::operator-(const BlstG1Point& rhs) const
 BlstG1Point BlstG1Point::operator*(const Scalar& rhs) const
 {
     BlstG1Point ret;
-    blst_scalar s;
+    blst_scalar s{};
     blst_scalar_from_fr(&s, &rhs.m_scalar);
     blst_p1_mult(&ret.m_point, &m_point, s.b, 255);
     return ret;
@@ -149,7 +152,7 @@ BlstG1Point BlstG1Point::MapToPoint(const std::vector<uint8_t>& vec, const Endia
     if (vec.size() > 48 * 2) {
         throw std::runtime_error(std::string(__func__) + ": Size of vector must be smaller or equal to the size of Fp * 2");
     }
-    blst_fp u;
+    blst_fp u{};
     if (e == Endianness::Little) {
         std::vector<uint8_t> be(vec.rbegin(), vec.rend());
         u = FpFromBigEndianMod(be.data(), be.size());
@@ -215,7 +218,7 @@ bool BlstG1Point::SetVchUnchecked(const std::vector<uint8_t>& b)
         *this = BlstG1Point();
         return false;
     }
-    blst_p1_affine aff;
+    blst_p1_affine aff{};
     // blst_p1_uncompress validates the encoding and the curve equation.
     if (blst_p1_uncompress(&aff, b.data()) != BLST_SUCCESS) {
         *this = BlstG1Point();
@@ -228,7 +231,7 @@ bool BlstG1Point::SetVchUnchecked(const std::vector<uint8_t>& b)
 bool BlstG1Point::SetVch(const std::vector<uint8_t>& b)
 {
     if (!SetVchUnchecked(b)) return false;
-    // Prime-order subgroup membership, as in MclG1Point::SetVch. The
+    // Prime-order subgroup membership, as in BlstG1Point::SetVch. The
     // identity is permitted.
     if (!IsZero() && !blst_p1_in_g1(&m_point)) {
         *this = BlstG1Point();
@@ -256,7 +259,7 @@ void BlstG1Point::BatchNormalize(std::span<BlstG1Point* const> pts)
     std::vector<BlstG1Point> buffer;
     buffer.reserve(pts.size());
     for (auto* p : pts) buffer.push_back(*p);
-    BatchNormalize(std::span<BlstG1Point>(buffer));
+    BatchNormalize(std::span<BlstG1Point>(buffer.data(), buffer.size()));
     for (size_t i = 0; i < pts.size(); ++i) *pts[i] = buffer[i];
 }
 
@@ -264,7 +267,7 @@ std::string BlstG1Point::GetString(const uint8_t& radix) const
 {
     // mcl getStr format: "0" for the identity, "1 <x> <y>" otherwise.
     if (IsZero()) return "0";
-    blst_p1_affine aff;
+    blst_p1_affine aff{};
     blst_p1_to_affine(&aff, &m_point);
     uint8_t x[48], y[48];
     blst_bendian_from_fp(x, &aff.x);
@@ -287,13 +290,71 @@ void BlstG1Point::SetString(const std::string& hex)
     }
     auto xb = blst_arith::RadixStringToBytes(xs, 16, 48);
     auto yb = blst_arith::RadixStringToBytes(ys, 16, 48);
-    blst_p1_affine aff;
+    blst_p1_affine aff{};
     blst_fp_from_bendian(&aff.x, xb.data());
     blst_fp_from_bendian(&aff.y, yb.data());
     if (!blst_p1_affine_on_curve(&aff)) {
         throw std::runtime_error(std::string(__func__) + ": blst_p1 setStr failed (not on curve)");
     }
     blst_p1_from_affine(&m_point, &aff);
+}
+
+std::vector<BlstG1Point>* BlstG1Point::CurrentDeferralCollector()
+{
+    return g_blst_g1_deferral_collector;
+}
+
+bool BlstG1Point::IsSubgroupCheckSkipped()
+{
+    return g_blst_g1_skip_depth > 0;
+}
+
+bool BlstG1Point::IsLegacyDecodeActive()
+{
+    return g_blst_g1_legacy_decode_depth > 0;
+}
+
+bool BlstLegacyPointDecodeActive()
+{
+    return BlstG1Point::IsLegacyDecodeActive();
+}
+
+BlstG1Point::LegacyPointDecodeScope::LegacyPointDecodeScope()
+    : m_prev_depth(g_blst_g1_legacy_decode_depth)
+{
+    g_blst_g1_legacy_decode_depth = m_prev_depth + 1;
+}
+
+BlstG1Point::LegacyPointDecodeScope::~LegacyPointDecodeScope()
+{
+    g_blst_g1_legacy_decode_depth = m_prev_depth;
+}
+
+BlstG1Point::SubgroupCheckSkipScope::SubgroupCheckSkipScope()
+    : m_prev_depth(g_blst_g1_skip_depth)
+{
+    g_blst_g1_skip_depth = m_prev_depth + 1;
+}
+
+BlstG1Point::SubgroupCheckSkipScope::~SubgroupCheckSkipScope()
+{
+    g_blst_g1_skip_depth = m_prev_depth;
+}
+
+BlstG1Point::SubgroupCheckDeferralScope::SubgroupCheckDeferralScope()
+    : m_prev(g_blst_g1_deferral_collector)
+{
+    g_blst_g1_deferral_collector = &m_collected;
+}
+
+BlstG1Point::SubgroupCheckDeferralScope::~SubgroupCheckDeferralScope()
+{
+    g_blst_g1_deferral_collector = m_prev;
+}
+
+std::vector<BlstG1Point> BlstG1Point::SubgroupCheckDeferralScope::Take()
+{
+    return std::exchange(m_collected, {});
 }
 
 BlstG1Point::Scalar BlstG1Point::GetHashWithSalt(const uint64_t salt) const

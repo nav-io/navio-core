@@ -4,7 +4,7 @@
 
 #include <blsct/range_proof/bulletproofs/range_proof_logic.h>
 #include <blsct/range_proof/common.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/building_block/imp_inner_prod_arg.h>
 #include <test/util/setup_common.h>
 
@@ -14,7 +14,7 @@
 
 BOOST_FIXTURE_TEST_SUITE(bulletproofs_range_proof_logic_tests, BasicTestingSetup)
 
-using T = Mcl;
+using T = Blst;
 using Point = T::Point;
 using Scalar = T::Scalar;
 using Scalars = Elements<Scalar>;
@@ -32,10 +32,10 @@ struct TestCase
     Scalar min_value;
 };
 
-static MclG1Point GenNonce()
+static BlstG1Point GenNonce()
 {
     std::string nonce_str("nonce");
-    MclG1Point nonce = MclG1Point::HashAndMap(std::vector<unsigned char> { nonce_str.begin(), nonce_str.end() });
+    BlstG1Point nonce = BlstG1Point::HashAndMap(std::vector<unsigned char> { nonce_str.begin(), nonce_str.end() });
     return nonce;
 }
 
@@ -343,7 +343,7 @@ BOOST_AUTO_TEST_CASE(test_range_proof_message_size)
 
     Scalars values;
     values.Add(Scalar(1));
-    MclG1Point nonce = MclG1Point::GetBasePoint();
+    BlstG1Point nonce = BlstG1Point::GetBasePoint();
     TokenId token_id;
 
     {
@@ -368,7 +368,7 @@ BOOST_AUTO_TEST_CASE(test_range_proof_message_size)
 BOOST_AUTO_TEST_CASE(test_range_proof_number_of_input_values)
 {
     bulletproofs::RangeProofLogic<T> rp;
-    MclG1Point nonce = MclG1Point::GetBasePoint();
+    BlstG1Point nonce = BlstG1Point::GetBasePoint();
     std::vector<unsigned char> msg;
     TokenId token_id;
 

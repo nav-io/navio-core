@@ -18,5 +18,5 @@ target_link_libraries(navio_zmq
     core_interface
     univalue
     zeromq
-    bls_interface
+    blst_interface
 )

@@ -8,7 +8,7 @@
 #include <util/strencodings.h>
 
 namespace blsct {
-using Point = MclG1Point;
+using Point = BlstG1Point;
 
 uint256 PublicKey::GetHash() const
 {
@@ -61,10 +61,11 @@ bool PublicKey::SetVch(const std::vector<unsigned char> vec)
     return point.SetVch(vec);
 }
 
-blsPublicKey PublicKey::ToBlsPublicKey() const
+blst_p1_affine PublicKey::ToAffine() const
 {
-    blsPublicKey bls_pk{point.GetUnderlying()};
-    return bls_pk;
+    blst_p1_affine aff{};
+    blst_p1_to_affine(&aff, &point.GetUnderlying());
+    return aff;
 }
 
 std::vector<uint8_t> PublicKey::AugmentMessage(const Message& msg) const
@@ -79,9 +80,15 @@ std::vector<uint8_t> PublicKey::AugmentMessage(const Message& msg) const
 
 bool PublicKey::CoreVerify(const Message& msg, const Signature& sig) const
 {
-    auto bls_pk = ToBlsPublicKey();
-    auto res = blsVerify(&sig.m_data, &bls_pk, &msg[0], msg.size());
-    return res == 1;
+    // e(pk, H(msg)) == e(G1, sig). An identity public key is rejected
+    // (BLST_PK_IS_INFINITY), as is a signature outside the G2 subgroup.
+    blst_p1_affine pk = ToAffine();
+    blst_p2_affine s{};
+    blst_p2_to_affine(&s, &sig.m_data);
+    return blst_core_verify_pk_in_g1(&pk, &s, /*hash_or_encode=*/true,
+                                     msg.data(), msg.size(),
+                                     reinterpret_cast<const byte*>(BLS_SIG_G2_DST), BLS_SIG_G2_DST_LEN,
+                                     nullptr, 0) == BLST_SUCCESS;
 }
 
 bool PublicKey::VerifyBalance(const Signature& sig) const

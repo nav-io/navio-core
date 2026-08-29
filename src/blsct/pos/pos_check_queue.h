@@ -2,11 +2,11 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BLSCT_POS_POS_CHECK_QUEUE_H
-#define BLSCT_POS_POS_CHECK_QUEUE_H
+#ifndef NAVIO_BLSCT_POS_POS_CHECK_QUEUE_H
+#define NAVIO_BLSCT_POS_POS_CHECK_QUEUE_H
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_g1point.h>
 #include <blsct/pos/proof.h>
 #include <primitives/block.h>
 #include <uint256.h>
@@ -23,8 +23,8 @@ namespace blsct {
 // processing cannot invalidate the data underneath an in-flight verification.
 struct PoSCheckItem {
     const CBlockIndex* pindex{nullptr};
-    Elements<Mcl::Point> staked_commitments;
-    Mcl::Scalar eta_fiat_shamir;
+    Elements<Blst::Point> staked_commitments;
+    Blst::Scalar eta_fiat_shamir;
     Message eta_phi;
     uint256 kernel_hash;
     unsigned int next_target{0};
@@ -44,7 +44,7 @@ struct PoSCheckItem {
 // a batched verify.
 //
 // PERFORMANCE GOAL (pending crypto work): implement
-//   SetMemProofProver<Mcl>::VerifyBatch(vector<...>)
+//   SetMemProofProver<Blst>::VerifyBatch(vector<...>)
 // so that N proofs can be verified in a single random-linear-combination
 // multiexp + pairing check. Combined with the already-batchable
 // bulletproofs_plus::RangeProofLogic::Verify(vector<...>), this reduces
@@ -74,4 +74,4 @@ private:
 
 } // namespace blsct
 
-#endif // BLSCT_POS_POS_CHECK_QUEUE_H
+#endif // NAVIO_BLSCT_POS_POS_CHECK_QUEUE_H

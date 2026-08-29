@@ -53,6 +53,14 @@ elseif(MSVC)
   endif()
   add_library(blst STATIC ${BLST_SRC_DIR}/src/server.c ${_blst_asm})
 else()
+  # depends cross toolchains (e.g. darwin: "env -u ... clang --target=...")
+  # hand CMake a multi-token CC, which it splits into CMAKE_C_COMPILER plus
+  # CMAKE_C_COMPILER_ARG1. CMake derives the ASM compiler from the C one but
+  # drops ARG1, so the assembler would be invoked as bare `/bin/env`; carry
+  # the argument tail over before the language is enabled.
+  if(DEFINED CMAKE_C_COMPILER_ARG1 AND NOT DEFINED CMAKE_ASM_COMPILER_ARG1)
+    set(CMAKE_ASM_COMPILER_ARG1 "${CMAKE_C_COMPILER_ARG1}")
+  endif()
   enable_language(ASM)
   add_library(blst STATIC ${BLST_SRC_DIR}/src/server.c ${BLST_SRC_DIR}/build/assembly.S)
   # Mirrors build.sh: -O2 -fno-builtin -fPIC; -mno-avx avoids costly AVX/SSE
@@ -72,9 +80,12 @@ target_include_directories(blst PUBLIC ${BLST_SRC_DIR}/bindings)
 # The archive output directory is set by src/CMakeLists.txt after this file
 # is included and is captured at target creation, so pin it explicitly:
 # ci's libblsct symbol check reads build/lib/libblst.a.
+# Third-party code: keep it out of the compile database so clang-tidy / iwyu
+# do not analyse it (they would try to parse the assembly translation unit).
 set_target_properties(blst PROPERTIES
   POSITION_INDEPENDENT_CODE ON
   ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib
+  EXPORT_COMPILE_COMMANDS OFF
 )
 
 # Interface target for consumers.

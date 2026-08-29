@@ -3,7 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/range_proof/bulletproofs/range_proof.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/common.h>
 #include <test/util/setup_common.h>
 #include <boost/test/unit_test.hpp>
@@ -13,7 +13,7 @@
 
 BOOST_FIXTURE_TEST_SUITE(bulletproofs_range_proof_tests, BasicTestingSetup)
 
-using T = Mcl;
+using T = Blst;
 using Point = T::Point;
 using Scalar = T::Scalar;
 using Points = Elements<Point>;

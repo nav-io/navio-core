@@ -5,7 +5,7 @@
 #ifndef NAVIO_BLSCT_DOUBLE_PUBLIC_KEY_H
 #define NAVIO_BLSCT_DOUBLE_PUBLIC_KEY_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/public_key.h>
 
 namespace blsct {
@@ -13,7 +13,7 @@ namespace blsct {
 class DoublePublicKey
 {
 private:
-    using Point = MclG1Point;
+    using Point = BlstG1Point;
 
     PublicKey vk;
     PublicKey sk;
@@ -28,7 +28,7 @@ public:
 
     DoublePublicKey(const std::vector<unsigned char>& vk_, const std::vector<unsigned char>& sk_) : vk(vk_), sk(sk_)
     {
-        MclG1Point p;
+        BlstG1Point p;
         is_fully_built = p.SetVch(vk_) && p.SetVch(sk_);
     }
 

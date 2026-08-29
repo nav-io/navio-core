@@ -4,7 +4,7 @@
 
 #include <base58.h>
 #include <bech32.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/bech32_mod.h>
 #include <blsct/double_public_key.h>
 #include <blsct/key_io.h>
@@ -354,4 +354,3 @@ std::optional<blsct::DoublePublicKey> DecodeDoublePublicKey(
         str
     );
 }
-

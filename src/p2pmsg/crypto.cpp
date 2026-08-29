@@ -4,8 +4,8 @@
 
 #include <p2pmsg/crypto.h>
 
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <crypto/chacha20poly1305.h>
 #include <crypto/hkdf_sha256_32.h>
 #include <hash.h>
@@ -100,13 +100,13 @@ EciesPacket Encrypt(const blsct::PublicKey& recipient,
                     std::span<const uint8_t> aad)
 {
     // Fresh ephemeral keypair for this message.
-    blsct::PrivateKey eph_sk(MclScalar::Rand(/*exclude_zero=*/true));
+    blsct::PrivateKey eph_sk(BlstScalar::Rand(/*exclude_zero=*/true));
 
     EciesPacket pkt;
     pkt.eph = eph_sk.GetPublicKey();
 
     // Shared secret = eph_sk * recipient_pub (G1 point), serialized to 48 bytes.
-    MclG1Point shared = recipient.GetG1Point() * eph_sk.GetScalar();
+    BlstG1Point shared = recipient.GetG1Point() * eph_sk.GetScalar();
     std::vector<uint8_t> secret = shared.GetVch();
 
     std::byte key[32];
@@ -132,7 +132,7 @@ const blsct::PrivateKey& BroadcastPrivKey()
 {
     // Fixed, public constant — NOT a secret. A small non-zero scalar so the
     // whole network shares one decryption key for public announcements.
-    static const blsct::PrivateKey key{MclScalar(uint64_t{0x1})};
+    static const blsct::PrivateKey key{BlstScalar(uint64_t{0x1})};
     return key;
 }
 
@@ -151,11 +151,11 @@ std::optional<std::vector<uint8_t>> Decrypt(const blsct::PrivateKey& sk,
     // infinity * sk == infinity for every sk — so an attacker could otherwise
     // force the ECDH shared secret (and thus the AEAD key) to a public
     // constant and craft packets that decrypt under any recipient key.
-    const MclG1Point eph_point = pkt.eph.GetG1Point();
+    const BlstG1Point eph_point = pkt.eph.GetG1Point();
     if (eph_point.IsZero() || !eph_point.IsValid()) return std::nullopt;
 
     // Shared secret = sk * eph_pub — the same point the sender computed.
-    MclG1Point shared = eph_point * sk.GetScalar();
+    BlstG1Point shared = eph_point * sk.GetScalar();
     std::vector<uint8_t> secret = shared.GetVch();
 
     std::byte key[32];

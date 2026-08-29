@@ -2,9 +2,9 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_scalar.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/building_block/fiat_shamir.h>
 #include <blsct/building_block/imp_inner_prod_arg.h>
 #include <blsct/range_proof/bulletproofs/range_proof_with_transcript.h>
@@ -66,6 +66,6 @@ retry:
         concat_input_values_in_bits
     );
 }
-template RangeProofWithTranscript<Mcl> RangeProofWithTranscript<Mcl>::Build(const RangeProofWithSeed<Mcl>&);
+template RangeProofWithTranscript<Blst> RangeProofWithTranscript<Blst>::Build(const RangeProofWithSeed<Blst>&);
 
 } // namespace bulletproofs

@@ -1,6 +1,4 @@
-packages:=gmp
-
-libomp_packages = libomp
+packages:=
 
 boost_packages = boost
 
