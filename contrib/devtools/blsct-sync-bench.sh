@@ -17,6 +17,8 @@
 # The datadir must already hold the chain (blocks/blk*.dat). Any node using it
 # must be stopped first. RPC is bound to a private port so the run never
 # collides with a regular node.
+export LC_ALL=C
+
 set -euo pipefail
 
 NAVIOD=${1:?naviod path}
