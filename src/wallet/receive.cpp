@@ -442,8 +442,7 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
             if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
                 const CWalletOutput* wout = wallet.GetWalletOutput(txin.prevout);
                 if (wout && wallet.GetOutputDepthInMainChain(*wout) >= 1) {
-                    const isminetype mine = wallet.IsMine(*wout->out);
-                    if (mine == ISMINE_SPENDABLE || mine == ISMINE_SPENDABLE_BLSCT) {
+                    if (wallet.IsMine(*wout->out) & (ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT)) {
                         continue;
                     }
                 }
@@ -457,8 +456,14 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
                 break;
             }
         }
-        // Check that this specific input being spent is trusted
-        if (wallet.IsMine(parentOut) != ISMINE_SPENDABLE && wallet.IsMine(parentOut) != ISMINE_SPENDABLE_BLSCT) return false;
+        // Check that this specific input being spent is trusted. A staked
+        // commitment of our own counts: a consolidating stakelock/stakeunlock
+        // spends the wallet's previous commitment output, which is exactly as
+        // vettable as spendable change -- rejecting it here misclassified
+        // every consolidating stake tx as untrusted, so its in-flight amount
+        // showed up in the untrusted pending balance instead of
+        // pending_staked_commitment_balance.
+        if ((wallet.IsMine(parentOut) & (ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT)) == 0) return false;
         // If we've already trusted this parent, continue
         if (trusted_parents.contains(parent->GetHash())) continue;
         // Recurse to check that the parent is also trusted
