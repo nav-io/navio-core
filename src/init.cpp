@@ -1662,7 +1662,17 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // timestamp/difficulty split, also got every honest relaying peer
         // Misbehaving-scored. 32 bits is already far above any useful CPU cost.
         {
-            const int64_t bits = args.GetIntArg("-p2pmsgpowbits", p2pmsg::DEFAULT_POW_BITS);
+            // Regtest chains don't need production anti-spam PoW: at the 23-bit
+            // default a background serve/pull tick can be mid-grind when the
+            // node shuts down, and the shutdown join then waits on that grind,
+            // which repeatedly tripped the functional tests' 60s node-stop
+            // timeout. Default regtest to a trivial difficulty so grinds are
+            // instant; an explicit -p2pmsgpowbits still overrides on any chain.
+            const bool is_regtest =
+                Params().GetChainType() == ChainType::REGTEST ||
+                Params().GetChainType() == ChainType::BLSCTREGTEST;
+            const int64_t default_bits = is_regtest ? 8 : p2pmsg::DEFAULT_POW_BITS;
+            const int64_t bits = args.GetIntArg("-p2pmsgpowbits", default_bits);
             tr_opts.pow_bits = static_cast<uint32_t>(std::clamp<int64_t>(bits, 1, 32));
         }
 
