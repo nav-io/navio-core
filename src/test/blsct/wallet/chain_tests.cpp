@@ -162,5 +162,66 @@ BOOST_FIXTURE_TEST_CASE(TokenCreateMintReorgTest, TestBLSCTChain100Setup)
     }
 }
 
+// Regression: a consolidating stakelock spends the wallet's previous staked
+// commitment output. CachedTxIsTrusted used to reject that input because its
+// isminetype is ISMINE_STAKED_COMMITMENT_BLSCT (neither "spendable" value),
+// classifying the whole transaction as untrusted -- so while the stake tx sat
+// in the mempool the wallet reported the entire in-flight amount under the
+// untrusted pending balance and pending_staked_commitment_balance stayed 0.
+BOOST_FIXTURE_TEST_CASE(StakelockConsolidationPendingBalanceTest, TestBLSCTChain100Setup)
+{
+    CreateAndProcessBlock({});
+    auto wallet = CreateBLSCTWallet(*m_node.chain, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain()));
+    BOOST_CHECK(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+
+    auto blsct_km = wallet->GetBLSCTKeyMan();
+    auto walletDestination = blsct::SubAddress(std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value()));
+
+    LOCK(wallet->cs_wallet);
+
+    // Enough mature 4-COIN coinbases to cover the 100-COIN blsctregtest
+    // minimum stake plus fees for two stake transactions.
+    const CAmount min_stake = Params().GetConsensus().nPePoSMinStakeAmount;
+    const int extra_blocks = static_cast<int>(min_stake / (4 * COIN)) + 5;
+    for (int i = 0; i <= COINBASE_MATURITY + extra_blocks; i++) {
+        CreateAndProcessBlock({}, walletDestination);
+    }
+    BOOST_CHECK(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+
+    auto stakeDest = blsct::SubAddress(std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(blsct::STAKING_ACCOUNT).value()));
+
+    // First stakelock: lock the minimum stake and confirm it.
+    blsct::CreateTransactionData stake1(stakeDest, min_stake, "", TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, min_stake);
+    auto tx1 = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, stake1);
+    BOOST_REQUIRE(tx1 != std::nullopt);
+    CreateAndProcessBlock({tx1->tx}, walletDestination);
+    BOOST_CHECK(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+
+    const Balance before = GetBalance(*wallet);
+    BOOST_REQUIRE_EQUAL(before.m_mine_staked_commitment, min_stake);
+    BOOST_CHECK_EQUAL(before.m_mine_pending_staked_commitment, 0);
+
+    // Second stakelock with consolidation (the default): folds the confirmed
+    // commitment plus a fresh 4 COIN into one new commitment output.
+    const CAmount added = 4 * COIN;
+    blsct::CreateTransactionData stake2(stakeDest, added, "", TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, min_stake);
+    BOOST_REQUIRE(stake2.fConsolidateStakedCommitments);
+    auto tx2 = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, stake2);
+    BOOST_REQUIRE(tx2 != std::nullopt);
+
+    const auto tx2ref = MakeTransactionRef(tx2->tx);
+    const auto res = WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ProcessTransaction(tx2ref));
+    BOOST_REQUIRE_MESSAGE(res.m_result_type == MempoolAcceptResult::ResultType::VALID,
+                          "mempool rejected consolidating stakelock: " + res.m_state.ToString());
+    wallet->transactionAddedToMempool(tx2ref);
+
+    // The in-flight consolidated stake must be reported as trusted pending
+    // staked commitment, not as untrusted pending balance.
+    const Balance after = GetBalance(*wallet);
+    BOOST_CHECK_EQUAL(after.m_mine_staked_commitment, 0);
+    BOOST_CHECK_EQUAL(after.m_mine_pending_staked_commitment, before.m_mine_staked_commitment + added);
+    BOOST_CHECK_EQUAL(after.m_mine_untrusted_pending, 0);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 } // namespace wallet
