@@ -53,3 +53,18 @@ bool RangeProofWithSeed<T>::operator!=(const RangeProofWithSeed<T>& other) const
 template bool RangeProofWithSeed<Mcl>::operator!=(const RangeProofWithSeed<Mcl>& other) const;
 
 } // namespace bulletproofs_plus
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+namespace bulletproofs_plus {
+template
+bool RangeProof<Blst>::operator==(const RangeProof<Blst>& other) const;
+template
+bool RangeProof<Blst>::operator!=(const RangeProof<Blst>& other) const;
+template bool RangeProofWithSeed<Blst>::operator==(const RangeProofWithSeed<Blst>& other) const;
+template bool RangeProofWithSeed<Blst>::operator!=(const RangeProofWithSeed<Blst>& other) const;
+} // namespace bulletproofs_plus
+#endif // NAVIO_BLSCT_ARITH_BLST

@@ -152,3 +152,43 @@ template std::optional<MsgAmt> MsgAmtCipher<Mcl>::Decrypt(
 
 } // namespace range_proof
 
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+namespace range_proof {
+template
+Blst::Scalar MsgAmtCipher<Blst>::RetrieveMsg2(
+    const std::vector<uint8_t>& msg
+);
+template Blst::Scalar MsgAmtCipher<Blst>::ComputeAlpha(
+    const std::vector<uint8_t>& msg,
+    const Blst::Scalar& vs0,
+    const Blst::Scalar& nonce_alpha
+);
+template Blst::Scalar MsgAmtCipher<Blst>::ComputeTauX(
+    const std::vector<uint8_t>& msg,
+    const Scalar& x,
+    const Scalar& z,
+    const Scalar& tau1,
+    const Scalar& tau2,
+    const Scalars& z_pows_from_2,
+    const Scalars& gammas
+);
+template std::optional<MsgAmt> MsgAmtCipher<Blst>::Decrypt(
+    const Blst::Scalar& msg1_vs0,
+    const Blst::Scalar& gamma_vs0,
+    const Blst::Scalar& tau1,
+    const Blst::Scalar& tau2,
+    const Blst::Scalar& tau_x,
+    const Blst::Scalar& x,
+    const Blst::Scalar& z,
+    const Blst::Scalar& uint64_max,
+    const Blst::Point& H,
+    const Blst::Point& G,
+    const Blst::Point& exp_vs0_commitment
+);
+} // namespace range_proof
+#endif // NAVIO_BLSCT_ARITH_BLST

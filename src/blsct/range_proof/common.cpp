@@ -207,3 +207,39 @@ template void Common<Mcl>::ValidateProofsBySizes(
     const std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>&);
 }
 
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+namespace range_proof {
+template const Blst::Scalar& Common<Blst>::GetUint64Max() const;
+template
+range_proof::GeneratorsFactory<Blst>& Common<Blst>::Gf() const;
+template
+const Blst::Scalar& Common<Blst>::Zero() const;
+template
+const Blst::Scalar& Common<Blst>::One() const;
+template
+const Blst::Scalar& Common<Blst>::Two() const;
+template
+const Elements<Blst::Scalar>& Common<Blst>::TwoPows64() const;
+template
+const Blst::Scalar& Common<Blst>::InnerProd1x2Pows64() const;
+template
+const Blst::Scalar& Common<Blst>::Uint64Max() const;
+template Common<Blst>::Common();
+template
+size_t Common<Blst>::GetNumRoundsExclLast(
+    const size_t& num_input_values
+);
+template
+void Common<Blst>::ValidateParameters(
+    const Elements<Blst::Scalar>& vs,
+    const std::vector<uint8_t>& message
+);
+template void Common<Blst>::ValidateProofsBySizes(
+    const std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>&);
+} // namespace range_proof
+#endif // NAVIO_BLSCT_ARITH_BLST

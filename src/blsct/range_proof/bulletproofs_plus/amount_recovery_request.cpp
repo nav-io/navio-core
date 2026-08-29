@@ -33,3 +33,13 @@ AmountRecoveryRequest<T> AmountRecoveryRequest<T>::of(const RangeProofWithSeed<T
 template AmountRecoveryRequest<Mcl> AmountRecoveryRequest<Mcl>::of(const RangeProofWithSeed<Mcl>&, const range_proof::GammaSeed<Mcl>&, const size_t&);
 
 } // namespace bulletproofs_plus
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+namespace bulletproofs_plus {
+template AmountRecoveryRequest<Blst> AmountRecoveryRequest<Blst>::of(const RangeProofWithSeed<Blst>&, const range_proof::GammaSeed<Blst>&, const size_t&);
+} // namespace bulletproofs_plus
+#endif // NAVIO_BLSCT_ARITH_BLST

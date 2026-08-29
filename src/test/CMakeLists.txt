@@ -175,6 +175,10 @@ target_json_data_sources(test_navio
   data/tx_valid.json
 )
 
+if(WITH_BLST)
+  target_sources(test_navio PRIVATE blsct/arith/blst/blst_equivalence_tests.cpp)
+endif()
+
 target_link_libraries(test_navio
   core_interface
   test_util

@@ -29,6 +29,7 @@ add_subdirectory(univalue)
 include(../cmake/secp256k1.cmake)
 add_secp256k1(secp256k1)
 include(../cmake/bls.cmake)
+include(../cmake/blst.cmake)
 
 # Set top-level target output locations.
 if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
@@ -129,6 +130,15 @@ set(BLSCT_WALLET_SOURCES
   blsct/wallet/unsigned_transaction.cpp
   blsct/wallet/verification.cpp
 )
+
+if(WITH_BLST)
+  # Evaluation-only blst arith backend (cmake/blst.cmake).
+  list(APPEND BLSCT_SOURCES
+    blsct/arith/blst/blst_g1point.cpp
+    blsct/arith/blst/blst_scalar.cpp
+    blsct/arith/blst/blst_util.cpp
+  )
+endif()
 
 # Skip all node/wallet/consensus/common libs when only the standalone libblsct
 # is being built — they all reference Boost::headers which we don't pull in

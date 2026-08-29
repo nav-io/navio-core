@@ -109,3 +109,22 @@ LazyPoints<T> LazyPoints<T>::operator+(const LazyPoint<T>& rhs) const {
     return LazyPoints<T>(bases, exps);
 }
 template LazyPoints<Mcl> LazyPoints<Mcl>::operator+(const LazyPoint<Mcl>& rhs) const;
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+template LazyPoints<Blst>::LazyPoints(const Elements<Blst::Point>& bases, const Elements<Blst::Scalar>& exps);
+template void LazyPoints<Blst>::Add(const LazyPoint<Blst>& point);
+template void LazyPoints<Blst>::Add(const Blst::Point& p);
+template void LazyPoints<Blst>::Add(const Blst::Point& p, const Blst::Scalar& s);
+template void LazyPoints<Blst>::Add(const Elements<Blst::Point>& ps, const Blst::Scalar& s);
+template void LazyPoints<Blst>::Add(
+    const Elements<Blst::Point>& ps,
+    const Elements<Blst::Scalar>& ss
+);
+template Blst::Point LazyPoints<Blst>::Sum() const;
+template LazyPoints<Blst> LazyPoints<Blst>::operator+(const LazyPoints<Blst>& rhs) const;
+template LazyPoints<Blst> LazyPoints<Blst>::operator+(const LazyPoint<Blst>& rhs) const;
+#endif // NAVIO_BLSCT_ARITH_BLST
