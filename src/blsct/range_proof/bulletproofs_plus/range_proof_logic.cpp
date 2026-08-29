@@ -19,6 +19,7 @@
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/msg_amt_cipher.h>
 #include <atomic>
+#include <exception>
 #include <future>
 #include <thread>
 #include <type_traits>
@@ -714,25 +715,34 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
             req.nonce.GetHashWithSalt(100), // gamma for vs[0]
             msg_amt.msg
         );
-        Scalar msg2_scalar = ((req.tau_x - (tau2 * req.y.Square()) - (req.z.Square() * gamma_vs0)) * req.y.Invert()) - tau1;
-        std::vector<uint8_t> msg2 = msg2_scalar.GetVch(true);
-        (void)msg2;
-
         return One{St::Ok, x};
+    };
+
+    // recover_one runs on worker threads; wallet-scan input is chain data, so
+    // an exception inside it (field inverse of zero, malformed decode,
+    // bad_alloc) must NOT reach std::terminate. Capture it per slot and rethrow
+    // the first after join, matching the serial loop's propagate-to-the-caller.
+    std::vector<std::exception_ptr> errors(n);
+    auto do_one = [&](size_t i) {
+        try {
+            results[i] = recover_one(i);
+        } catch (...) {
+            errors[i] = std::current_exception();
+        }
     };
 
     size_t nthreads = std::thread::hardware_concurrency();
     if (nthreads == 0) nthreads = 1;
     nthreads = std::min(nthreads, n);
     if (nthreads <= 1) {
-        for (size_t i = 0; i < n; ++i) results[i] = recover_one(i);
+        for (size_t i = 0; i < n; ++i) do_one(i);
     } else {
         std::atomic<size_t> next{0};
         auto worker = [&]() {
             for (;;) {
                 const size_t i = next.fetch_add(1, std::memory_order_relaxed);
                 if (i >= n) return;
-                results[i] = recover_one(i);
+                do_one(i);
             }
         };
         std::vector<std::thread> pool;
@@ -740,6 +750,12 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
         for (size_t t = 1; t < nthreads; ++t) pool.emplace_back(worker);
         worker();
         for (auto& th : pool) th.join();
+    }
+
+    // Propagate the first worker exception (if any) on this thread, as the
+    // serial loop would have.
+    for (auto& e : errors) {
+        if (e) std::rethrow_exception(e);
     }
 
     // Assemble in request order; any Fail fails the whole batch.
