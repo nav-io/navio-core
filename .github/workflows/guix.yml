@@ -426,6 +426,15 @@ jobs:
           # outputs natively — no post-build rename, SHA256SUMS.part stays valid
           # and reproducible, and navio-signer consumes the files as-is.
           FORCE_VERSION: ${{ steps.version.outputs.cmake_version }}
+          # Release builds do not carry the bundled I2P router. Without this a
+          # depends build enables WITH_I2P and stages i2pd next to naviod, so a
+          # tagged release would start shipping a second network daemon (and the
+          # openssl/zlib/compiled-Boost chain behind it) before that has been
+          # agreed. Running it is already opt-in (-i2pd defaults to off); this
+          # is about what the release artifacts contain. guix-build forwards
+          # this into the container env, which build.sh passes to
+          # `make -C depends`. Drop it once I2P bundling is decided.
+          NO_I2P: '1'
         run: |
           set -euo pipefail
           # Cache the depends source downloads + built prefixes under $HOME,

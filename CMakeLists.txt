@@ -123,6 +123,10 @@ if(WITH_ZMQ)
   find_package(ZeroMQ 4.0.0 MODULE REQUIRED)
 endif()
 
+# Set ON by the depends toolchain when a bundled i2pd router was built; it also
+# sets BUNDLED_I2P_EXECUTABLE. naviod can still manage a system i2pd without it.
+option(WITH_I2P "Bundle/manage an i2pd I2P router." OFF)
+
 option(WITH_USDT "Enable tracepoints for Userspace, Statically Defined Tracing." OFF)
 if(WITH_USDT)
   find_package(USDT MODULE REQUIRED)
