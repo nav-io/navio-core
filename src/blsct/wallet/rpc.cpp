@@ -48,6 +48,7 @@
 #include <wallet/wallet.h>
 #include <limits>
 #include <numeric>
+#include <mutex>
 #include <optional>
 
 namespace blsct {
@@ -243,13 +244,13 @@ namespace {
 //! input would also conflict if merged into two aggregates. Entries expire
 //! with the requester's reply-key TTL; a merged candidate's coin drops out of
 //! the wallet's coin set on its own once the aggregate confirms.
-Mutex g_candidate_inputs_mutex;
-std::map<COutPoint, int64_t> g_candidate_inputs GUARDED_BY(g_candidate_inputs_mutex);
+std::mutex g_candidate_inputs_mutex;
+std::map<COutPoint, int64_t> g_candidate_inputs;
 
 //! Reserve `outpoint` for one candidate. Returns false if still reserved.
-bool ReserveCandidateInput(const COutPoint& outpoint, int64_t now) EXCLUSIVE_LOCKS_REQUIRED(!g_candidate_inputs_mutex)
+bool ReserveCandidateInput(const COutPoint& outpoint, int64_t now)
 {
-    LOCK(g_candidate_inputs_mutex);
+    std::lock_guard<std::mutex> lock(g_candidate_inputs_mutex);
     std::erase_if(g_candidate_inputs, [now](const auto& e) { return e.second <= now; });
     return g_candidate_inputs.emplace(outpoint, now + aggregation::PULL_KEY_TTL_SECONDS).second;
 }
@@ -258,9 +259,9 @@ bool ReserveCandidateInput(const COutPoint& outpoint, int64_t now) EXCLUSIVE_LOC
 //! failure path after a successful reserve: leaking the entry would burn the
 //! coin's serving eligibility for PULL_KEY_TTL_SECONDS per failure, and
 //! repeated failures on a small wallet would lock out every coin.
-void ReleaseCandidateInput(const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(!g_candidate_inputs_mutex)
+void ReleaseCandidateInput(const COutPoint& outpoint)
 {
-    LOCK(g_candidate_inputs_mutex);
+    std::lock_guard<std::mutex> lock(g_candidate_inputs_mutex);
     g_candidate_inputs.erase(outpoint);
 }
 
@@ -269,20 +270,20 @@ void ReleaseCandidateInput(const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(!
 //! cumulative exposure: without it a puller minting fresh reply keys walks
 //! the wallet's coin set as reservations lapse, and with it enumeration
 //! saturates at SERVE_MAX_COINS_PER_WINDOW coins per window.
-std::vector<int64_t> g_candidates_served GUARDED_BY(g_candidate_inputs_mutex);
+std::vector<int64_t> g_candidates_served;
 
-bool TakeServeBudget(int64_t now) EXCLUSIVE_LOCKS_REQUIRED(!g_candidate_inputs_mutex)
+bool TakeServeBudget(int64_t now)
 {
-    LOCK(g_candidate_inputs_mutex);
+    std::lock_guard<std::mutex> lock(g_candidate_inputs_mutex);
     std::erase_if(g_candidates_served, [now](int64_t t) { return t + aggregation::SERVE_WINDOW_SECONDS <= now; });
     if (g_candidates_served.size() >= aggregation::SERVE_MAX_COINS_PER_WINDOW) return false;
     g_candidates_served.push_back(now);
     return true;
 }
 
-void ReturnServeBudget() EXCLUSIVE_LOCKS_REQUIRED(!g_candidate_inputs_mutex)
+void ReturnServeBudget()
 {
-    LOCK(g_candidate_inputs_mutex);
+    std::lock_guard<std::mutex> lock(g_candidate_inputs_mutex);
     if (!g_candidates_served.empty()) g_candidates_served.pop_back();
 }
 } // namespace
