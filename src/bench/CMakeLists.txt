@@ -78,6 +78,13 @@ target_link_libraries(bench_navio
   Boost::headers
 )
 
+if(WITH_BLST)
+  # mcl-vs-blst comparison benchmarks (cmake/blst.cmake); the TU is empty
+  # without NAVIO_BLSCT_ARITH_BLST so listing it unconditionally would be
+  # harmless, but keep the dependency explicit.
+  target_sources(bench_navio PRIVATE blsct_blst_vs_mcl.cpp)
+endif()
+
 if(ENABLE_WALLET)
   target_sources(bench_navio
     PRIVATE

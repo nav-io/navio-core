@@ -98,3 +98,14 @@ range_proof::Generators<T> range_proof::GeneratorsFactory<T>::GetInstance(const 
 }
 template range_proof::Generators<Mcl> range_proof::GeneratorsFactory<Mcl>::GetInstance(const Seed&) const;
 
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+template Elements<Blst::Point> range_proof::Generators<Blst>::GetGiSubset(const size_t&) const;
+template Elements<Blst::Point> range_proof::Generators<Blst>::GetHiSubset(const size_t&) const;
+template range_proof::GeneratorsFactory<Blst>::GeneratorsFactory();
+template range_proof::Generators<Blst> range_proof::GeneratorsFactory<Blst>::GetInstance(const Seed&) const;
+#endif // NAVIO_BLSCT_ARITH_BLST

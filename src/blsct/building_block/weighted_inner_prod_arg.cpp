@@ -211,3 +211,47 @@ std::optional<WeightedInnerProdArgResult<Mcl>> WeightedInnerProdArg::Run(
     const typename Mcl::Scalar& alpha_src,
     HashWriter& fiat_shamir
 );
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+template
+Elements<Blst::Point> WeightedInnerProdArg::ReduceGs<Blst>(
+    const Elements<Blst::Point>& gs1,
+    const Elements<Blst::Point>& gs2,
+    const typename Blst::Scalar& e,
+    const typename Blst::Scalar& e_inv,
+    const typename Blst::Scalar& y_inv_to_n
+);
+template
+Elements<Blst::Point> WeightedInnerProdArg::ReduceHs<Blst>(
+    const Elements<Blst::Point>& hs1,
+    const Elements<Blst::Point>& hs2,
+    const typename Blst::Scalar& e,
+    const typename Blst::Scalar& e_inv
+);
+template
+typename Blst::Point WeightedInnerProdArg::UpdateP<Blst>(
+    const typename Blst::Point& P,
+    const typename Blst::Point& L,
+    const typename Blst::Point& R,
+    const typename Blst::Scalar& e_sq,
+    const typename Blst::Scalar& e_inv_sq
+);
+template
+std::optional<WeightedInnerProdArgResult<Blst>> WeightedInnerProdArg::Run(
+    const size_t& N,
+    const typename Blst::Scalar& y,
+    Elements<typename Blst::Point>& gs,
+    Elements<typename Blst::Point>& hs,
+    typename Blst::Point& g,
+    typename Blst::Point& h,
+    typename Blst::Point& P,
+    Elements<typename Blst::Scalar>& a,
+    Elements<typename Blst::Scalar>& b,
+    const typename Blst::Scalar& alpha_src,
+    HashWriter& fiat_shamir
+);
+#endif // NAVIO_BLSCT_ARITH_BLST

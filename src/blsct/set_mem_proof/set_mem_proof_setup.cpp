@@ -113,3 +113,31 @@ const range_proof::GeneratorsFactory<T>& SetMemProofSetup<T>::Gf() const
 template
 const range_proof::GeneratorsFactory<Mcl>& SetMemProofSetup<Mcl>::Gf() const;
 
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+template
+const SetMemProofSetup<Blst>& SetMemProofSetup<Blst>::Get();
+template
+typename SetMemProofSetup<Blst>::Points SetMemProofSetup<Blst>::GenGenerators(
+    const typename Blst::Point& base_point,
+    const size_t& size
+);
+template
+typename Blst::Scalar SetMemProofSetup<Blst>::H1(const std::vector<uint8_t>& msg) const;
+template
+typename Blst::Scalar SetMemProofSetup<Blst>::H2(const std::vector<uint8_t>& msg) const;
+template
+typename Blst::Scalar SetMemProofSetup<Blst>::H3(const std::vector<uint8_t>& msg) const;
+template
+typename Blst::Scalar SetMemProofSetup<Blst>::H4(const std::vector<uint8_t>& msg) const;
+template
+typename Blst::Point SetMemProofSetup<Blst>::H5(const std::vector<uint8_t>& msg) const;
+template
+typename Blst::Point SetMemProofSetup<Blst>::GenPoint(const std::vector<uint8_t>& msg, const uint64_t& i);
+template
+const range_proof::GeneratorsFactory<Blst>& SetMemProofSetup<Blst>::Gf() const;
+#endif // NAVIO_BLSCT_ARITH_BLST

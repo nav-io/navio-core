@@ -62,3 +62,16 @@ typename Mcl::Point GeneratorDeriver<typename Mcl::Point>::Derive(
     const size_t index,
     const std::optional<Seed>& seed
 ) const;
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+template
+typename Blst::Point GeneratorDeriver<typename Blst::Point>::Derive(
+    const Blst::Point& p,
+    const size_t index,
+    const std::optional<Seed>& seed
+) const;
+#endif // NAVIO_BLSCT_ARITH_BLST

@@ -449,3 +449,56 @@ bool SetMemProofProver<Mcl>::Verify(
     const blsct::Message& eta_phi,
     const SetMemProof<Mcl>& proof
 );
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+template
+const typename SetMemProofProver<Blst>::Scalar& SetMemProofProver<Blst>::One();
+template
+typename Blst::Scalar SetMemProofProver<Blst>::ComputeX(
+    const SetMemProofSetup<Blst>& setup,
+    const Scalar& omega,
+    const Scalar& y,
+    const Scalar& z,
+    const Point& T1,
+    const Point& T2
+);
+template
+HashWriter SetMemProofProver<Blst>::GenInitialFiatShamir(
+    const Points& Ys,
+    const Point& A1,
+    const Point& A2,
+    const Point& S1,
+    const Point& S2,
+    const Point& S3,
+    const Point& phi,
+    const Scalar& eta
+);
+template
+typename SetMemProofProver<Blst>::Points SetMemProofProver<Blst>::ExtendYs(
+    const SetMemProofSetup<Blst>& setup,
+    const Points& Ys_src,
+    const size_t& new_size
+);
+template
+SetMemProof<Blst> SetMemProofProver<Blst>::Prove(
+    const SetMemProofSetup<Blst>& setup,
+    const Points& Ys_src,
+    const Point& sigma,
+    const Scalar& m,
+    const Scalar& f,
+    const Scalar& eta_fiat_shamir,
+    const blsct::Message& eta_phi
+);
+template
+bool SetMemProofProver<Blst>::Verify(
+    const SetMemProofSetup<Blst>& setup,
+    const Points& Ys_src,
+    const Scalar& eta_fiat_shamir,
+    const blsct::Message& eta_phi,
+    const SetMemProof<Blst>& proof
+);
+#endif // NAVIO_BLSCT_ARITH_BLST

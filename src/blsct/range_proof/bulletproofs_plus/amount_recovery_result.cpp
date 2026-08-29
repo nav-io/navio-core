@@ -18,3 +18,13 @@ AmountRecoveryResult<T> AmountRecoveryResult<T>::failure()
 template AmountRecoveryResult<Mcl> AmountRecoveryResult<Mcl>::failure();
 
 } // namespace bulletproofs_plus
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+namespace bulletproofs_plus {
+template AmountRecoveryResult<Blst> AmountRecoveryResult<Blst>::failure();
+} // namespace bulletproofs_plus
+#endif // NAVIO_BLSCT_ARITH_BLST

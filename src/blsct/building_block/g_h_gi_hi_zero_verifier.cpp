@@ -82,3 +82,26 @@ bool G_H_Gi_Hi_ZeroVerifier<T>::Verify(const Point& g, const Point&h, const Poin
 }
 template
 bool G_H_Gi_Hi_ZeroVerifier<Mcl>::Verify(const Point& g, const Point&h, const Points& Gi, const Points& Hi);
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+template
+void G_H_Gi_Hi_ZeroVerifier<Blst>::AddPoint(const LazyPoint<Blst>& p);
+template
+void G_H_Gi_Hi_ZeroVerifier<Blst>::AddPositiveG(const Scalar& exp);
+template
+void G_H_Gi_Hi_ZeroVerifier<Blst>::AddPositiveH(const Scalar& exp);
+template
+void G_H_Gi_Hi_ZeroVerifier<Blst>::AddNegativeG(const Scalar& exp);
+template
+void G_H_Gi_Hi_ZeroVerifier<Blst>::AddNegativeH(const Scalar& exp);
+template
+void G_H_Gi_Hi_ZeroVerifier<Blst>::SetGiExp(const size_t& i, const Scalar& s);
+template
+void G_H_Gi_Hi_ZeroVerifier<Blst>::SetHiExp(const size_t& i, const Scalar& s);
+template
+bool G_H_Gi_Hi_ZeroVerifier<Blst>::Verify(const Point& g, const Point&h, const Points& Gi, const Points& Hi);
+#endif // NAVIO_BLSCT_ARITH_BLST

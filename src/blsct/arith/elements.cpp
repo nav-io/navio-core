@@ -631,3 +631,82 @@ std::string Elements<T>::GetString(const uint8_t& radix) const
 }
 template std::string Elements<MclG1Point>::GetString(const uint8_t& radix) const;
 template std::string Elements<MclScalar>::GetString(const uint8_t& radix) const;
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+template OrderedElements<BlstG1Point>::OrderedElements(const std::set<BlstG1Point>& set);
+template Elements<BlstG1Point> OrderedElements<BlstG1Point>::GetElements() const;
+template Elements<BlstG1Point> OrderedElements<BlstG1Point>::GetElements(const uint256& seed, const size_t& max_size) const;
+template size_t OrderedElements<BlstG1Point>::Size() const;
+template void OrderedElements<BlstG1Point>::Add(const BlstG1Point&);
+template void OrderedElements<BlstG1Point>::Add(const OrderedElements<BlstG1Point>&);
+template bool OrderedElements<BlstG1Point>::Exists(const BlstG1Point&) const;
+template void OrderedElements<BlstG1Point>::Clear();
+template bool OrderedElements<BlstG1Point>::Empty() const;
+template bool OrderedElements<BlstG1Point>::Remove(const BlstG1Point& x);
+template std::vector<uint8_t> OrderedElements<BlstG1Point>::GetVch() const;
+template std::string OrderedElements<BlstG1Point>::GetString(const uint8_t& radix) const;
+template Elements<BlstG1Point>::Elements(const std::vector<BlstG1Point>& vec);
+template Elements<BlstScalar>::Elements(const std::vector<BlstScalar>& vec);
+template Elements<BlstScalar>::Elements(const size_t&, const BlstScalar&);
+template Elements<BlstG1Point>::Elements(const size_t&, const BlstG1Point&);
+template Elements<BlstScalar>::Elements(const Elements<BlstScalar>& x);
+template Elements<BlstG1Point>::Elements(const Elements<BlstG1Point>& x);
+template bool Elements<BlstScalar>::Empty() const;
+template bool Elements<BlstG1Point>::Empty() const;
+template bool Elements<BlstG1Point>::Find(const BlstG1Point& x) const;
+template std::vector<uint8_t> Elements<BlstScalar>::GetVch() const;
+template std::vector<uint8_t> Elements<BlstG1Point>::GetVch() const;
+template BlstScalar Elements<BlstScalar>::Sum() const;
+template BlstG1Point Elements<BlstG1Point>::Sum() const;
+template void Elements<BlstScalar>::ConfirmIndexInsideRange(const size_t&) const;
+template void Elements<BlstG1Point>::ConfirmIndexInsideRange(const size_t&) const;
+template BlstScalar& Elements<BlstScalar>::operator[](const size_t&);
+template BlstG1Point& Elements<BlstG1Point>::operator[](const size_t&);
+template BlstScalar Elements<BlstScalar>::operator[](const size_t&) const;
+template BlstG1Point Elements<BlstG1Point>::operator[](const size_t&) const;
+template size_t Elements<BlstScalar>::Size() const;
+template size_t Elements<BlstG1Point>::Size() const;
+template void Elements<BlstScalar>::Add(const BlstScalar&);
+template void Elements<BlstG1Point>::Add(const BlstG1Point&);
+template void Elements<BlstScalar>::Clear();
+template void Elements<BlstG1Point>::Clear();
+template void Elements<BlstScalar>::ConfirmSizesMatch(const size_t&) const;
+template void Elements<BlstG1Point>::ConfirmSizesMatch(const size_t&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::FirstNPow(const BlstScalar&, const size_t&, const size_t& from_index);
+template Elements<BlstScalar> Elements<BlstScalar>::RepeatN(const BlstScalar&, const size_t&);
+template Elements<BlstG1Point> Elements<BlstG1Point>::RepeatN(const BlstG1Point&, const size_t&);
+template Elements<BlstScalar> Elements<BlstScalar>::RandVec(const size_t&, const bool);
+template Elements<BlstScalar> Elements<BlstScalar>::operator*(const Elements<BlstScalar>&) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::operator*(const Elements<BlstScalar>&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::operator*(const BlstScalar&) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::operator*(const BlstScalar&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::operator+(const Elements<BlstScalar>&) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::operator+(const Elements<BlstG1Point>&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::operator-(const Elements<BlstScalar>&) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::operator-(const Elements<BlstG1Point>&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::operator-(const BlstScalar&) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::operator-(const BlstG1Point&) const;
+template bool Elements<BlstScalar>::operator<=(const BlstScalar&) const;
+template bool Elements<BlstScalar>::operator>=(const BlstScalar&) const;
+template void Elements<BlstScalar>::operator=(const Elements<BlstScalar>&);
+template void Elements<BlstG1Point>::operator=(const Elements<BlstG1Point>&);
+template bool Elements<BlstScalar>::operator==(const Elements<BlstScalar>&) const;
+template bool Elements<BlstG1Point>::operator==(const Elements<BlstG1Point>&) const;
+template bool Elements<BlstScalar>::operator!=(const Elements<BlstScalar>&) const;
+template bool Elements<BlstG1Point>::operator!=(const Elements<BlstG1Point>&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::From(const size_t from_index) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::From(const size_t from_index) const;
+template Elements<BlstScalar> Elements<BlstScalar>::To(const size_t to_index) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::To(const size_t to_index) const;
+template Elements<BlstScalar> Elements<BlstScalar>::Negate() const;
+template Elements<BlstScalar> Elements<BlstScalar>::Invert() const;
+template Elements<BlstScalar> Elements<BlstScalar>::Reverse() const;
+template BlstScalar Elements<BlstScalar>::Product() const;
+template Elements<BlstScalar> Elements<BlstScalar>::Square() const;
+template std::string Elements<BlstG1Point>::GetString(const uint8_t& radix) const;
+template std::string Elements<BlstScalar>::GetString(const uint8_t& radix) const;
+#endif // NAVIO_BLSCT_ARITH_BLST

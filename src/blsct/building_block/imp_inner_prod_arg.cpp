@@ -166,3 +166,37 @@ template std::optional<Elements<Mcl::Scalar>> ImpInnerProdArg::GenAllRoundXs<Mcl
     const Elements<Mcl::Point>& Ls,
     const Elements<Mcl::Point>& Rs,
     HashWriter& fiat_shamir);
+
+// ---------------------------------------------------------------------------
+// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
+// the Mcl instantiations above 1:1; compiled out of default builds.
+#ifdef NAVIO_BLSCT_ARITH_BLST
+#include <blsct/arith/blst/blst.h>
+template
+std::optional<ImpInnerProdArgResult<Blst>> ImpInnerProdArg::Run(
+    const size_t& N,
+    Elements<typename Blst::Point>& Gi,
+    Elements<typename Blst::Point>& Hi,
+    const typename Blst::Point& u,
+    Elements<typename Blst::Scalar>& a,
+    Elements<typename Blst::Scalar>& b,
+    const typename Blst::Scalar& c_factor,
+    const typename Blst::Scalar& y,
+    HashWriter& fiat_shamir
+);
+template
+std::vector<Blst::Scalar> ImpInnerProdArg::GenGeneratorExponents<Blst>(
+    const size_t& num_rounds,
+    const Elements<Blst::Scalar>& xs
+);
+template
+void ImpInnerProdArg::LoopWithYPows<Blst>(
+    const size_t& num_loops,
+    const Blst::Scalar& y,
+    std::function<void(const size_t&, const Blst::Scalar&, const Blst::Scalar&)>
+);
+template std::optional<Elements<Blst::Scalar>> ImpInnerProdArg::GenAllRoundXs<Blst>(
+    const Elements<Blst::Point>& Ls,
+    const Elements<Blst::Point>& Rs,
+    HashWriter& fiat_shamir);
+#endif // NAVIO_BLSCT_ARITH_BLST
