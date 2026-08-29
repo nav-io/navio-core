@@ -47,7 +47,7 @@ void FixedBaseCache::MaybeInit(const range_proof::Generators<Blst>& gens)
         if (!m_enabled) return;
 
         m_winSize = EnvSize("NAVIO_BLSCT_FIXEDBASE_WIN", 8);
-        if (m_winSize < 1 || m_winSize > 12) m_winSize = 8;
+        if (m_winSize < 2 || m_winSize > 12) m_winSize = 8;
 
         // Clamp the prefix to the generator pool actually available.
         const size_t pool = range_proof::Setup::max_input_value_vec_len;
