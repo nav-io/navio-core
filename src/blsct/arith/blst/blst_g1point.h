@@ -22,6 +22,8 @@
 // honoured by BlstScalar / blsct::Signature deserialization too.
 bool BlstLegacyPointDecodeActive();
 
+class FixedBaseWindow; // reads m_point for blst fixed-base wbits tables
+
 class BlstG1Point
 {
 public:
