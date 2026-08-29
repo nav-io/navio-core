@@ -26,6 +26,12 @@ std::vector<uint64_t> CalculateViewTagBatch(const std::vector<MclG1Point>& blind
                                             size_t threads = 0);
 
 inline constexpr size_t kViewTagBatchSerialThreshold = 16;
+// The nonce (blindingKey * viewKey) is the expensive shared intermediate of
+// the ownership test: the view tag, the hash id and amount recovery all
+// derive from it. These variants take a precomputed nonce so a caller can pay
+// the G1 scalar multiplication once per output and reuse it.
+uint64_t ViewTagFromNonce(const MclG1Point& nonce);
+CKeyID CalculateHashId(const MclG1Point& nonce, const MclG1Point& spendingKey);
 CKeyID CalculateHashId(const MclG1Point& blindingKey, const MclG1Point& spendingKey, const MclScalar& viewKey);
 MclScalar CalculatePrivateSpendingKey(const MclG1Point& blindingKey, const MclScalar& viewKey, const MclScalar& spendingKey, const int64_t& account, const uint64_t& address);
 MclG1Point CalculateNonce(const MclG1Point& blindingKey, const MclScalar& viewKey);

@@ -32,7 +32,7 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
 
     try {
         blsct::PrivateKey spending_key;
-        if (!km->GetSpendingKeyForOutputWithCache(coin.out, spending_key)) {
+        if (!km->GetSpendingKeyForOutput(coin.out, spending_key)) {
             return false;
         }
         // NOLINTNEXTLINE(modernize-use-emplace) UnsignedInput is an aggregate; parenthesized emplace_back is not portable across libstdc++/libc++.
@@ -85,7 +85,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 
     try {
         blsct::PrivateKey spending_key;
-        if (!km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+        if (!km->GetSpendingKeyForOutput(out, spending_key)) {
             return false;
         }
         // NOLINTNEXTLINE(modernize-use-emplace) UnsignedInput is an aggregate; parenthesized emplace_back is not portable across libstdc++/libc++.
@@ -221,7 +221,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
 
         try {
             blsct::PrivateKey spending_key;
-            if (!blsct_km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+            if (!blsct_km->GetSpendingKeyForOutput(out, spending_key)) {
                 continue;
             }
             gathered.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment, delegationId});

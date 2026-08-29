@@ -97,7 +97,7 @@ std::vector<std::shared_ptr<CWallet>> GetWallets(WalletContext& context);
 std::shared_ptr<CWallet> GetDefaultWallet(WalletContext& context, size_t& count);
 std::shared_ptr<CWallet> GetWallet(WalletContext& context, const std::string& name);
 std::shared_ptr<CWallet> LoadWallet(WalletContext& context, const std::string& name, std::optional<bool> load_on_start, const DatabaseOptions& options, DatabaseStatus& status, bilingual_str& error, std::vector<bilingual_str>& warnings);
-std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string& name, const std::vector<unsigned char>& seed, const blsct::SeedType& type, std::optional<bool> load_on_start, DatabaseOptions& options, DatabaseStatus& status, bilingual_str& error, std::vector<bilingual_str>& warnings, const std::string& mnemonic_passphrase = "");
+std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string& name, const std::vector<unsigned char>& seed, const blsct::SeedType& type, std::optional<bool> load_on_start, DatabaseOptions& options, DatabaseStatus& status, bilingual_str& error, std::vector<bilingual_str>& warnings, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt);
 std::shared_ptr<CWallet> RestoreWallet(WalletContext& context, const fs::path& backup_file, const std::string& wallet_name, std::optional<bool> load_on_start, DatabaseStatus& status, bilingual_str& error, std::vector<bilingual_str>& warnings);
 std::unique_ptr<interfaces::Handler> HandleLoadWallet(WalletContext& context, LoadWalletFn load_wallet);
 void NotifyWalletLoaded(WalletContext& context, const std::shared_ptr<CWallet>& wallet);
@@ -940,6 +940,12 @@ public:
 
     /* Returns the time of the first created key or, in case of an import, it could be the time of the first received transaction */
     int64_t GetBirthTime() const { return m_birth_time; }
+
+    //! Override the wallet birth time. For a fresh wallet this is the wallet's
+    //! creation instant; for a restore from a birthday mnemonic it is the
+    //! decoded creation time. Must NOT be called when the birthday is unknown
+    //! (e.g. a plain 24-word restore), where history may predate this instance.
+    void SetBirthTime(int64_t time) { m_birth_time = time; }
 
     /**
      * Blocks until the wallet state is up-to-date to /at least/ the current

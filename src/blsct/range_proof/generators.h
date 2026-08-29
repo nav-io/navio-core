@@ -20,11 +20,14 @@ struct Generators {
     using Points = Elements<Point>;
 
 public:
+    // Gi/Hi are taken and stored as pointers so the caller states explicitly
+    // that the pointees must outlive this object -- passing a temporary no
+    // longer compiles into a silent dangle.
     Generators(
         const Point& G,
         const Point& H,
-        const Points& Gi,
-        const Points& Hi
+        const Points* Gi,
+        const Points* Hi
     ) : G{G}, H{H}, Gi{Gi}, Hi{Hi} {}
 
     Points GetGiSubset(const size_t& size) const;
@@ -32,8 +35,17 @@ public:
 
     const Point G;
     const Point H;
-    const Points Gi;
-    const Points Hi;
+    // Gi/Hi are the shared 1024-point generator tables. They are held by
+    // pointer, NOT by value: they are the same immutable, process-lifetime
+    // GeneratorsFactory statics (m_Gi/m_Hi) for every instance, so copying them
+    // (~144 KiB each, ~288 KiB per pair) into every Generators returned by
+    // GetInstance was pure overhead -- and GetInstance runs once per range
+    // proof on the block-verify hot path. The factory is the only constructor
+    // of Generators and always passes those statics, so these never dangle.
+    // The pointers themselves are const so `gens.Gi = ...` stays ill-formed,
+    // as it was when these were `const Points` values.
+    const Points* const Gi;
+    const Points* const Hi;
 };
 
 /**

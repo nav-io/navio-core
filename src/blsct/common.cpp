@@ -1,5 +1,9 @@
 #include <blsct/common.h>
 
+#include <limits>
+#include <stdexcept>
+#include <tinyformat.h>
+
 std::vector<uint8_t> blsct::Common::DataStreamToVector(const DataStream& st)
 {
     auto data = reinterpret_cast<const int8_t*>(st.data());
@@ -12,6 +16,10 @@ size_t blsct::Common::GetFirstPowerOf2GreaterOrEqTo(const size_t& n)
 {
     size_t i = 1;
     while (i < n) {
+        if (i > std::numeric_limits<size_t>::max() / 2) {
+            throw std::runtime_error(strprintf(
+                "no power of 2 greater or equal to %d is representable", n));
+        }
         i *= 2;
     }
     return i;

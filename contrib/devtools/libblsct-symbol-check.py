@@ -70,7 +70,7 @@ SYSTEM_SYMBOL_PATTERNS = [
                r'fwrite|fread|fopen|fclose|fflush|puts|fputs|fputc|putchar|'
                r'stderr|stdout|stdin|'
                r'mlock|munlock|mmap|munmap|madvise|'
-               r'getrlimit|sysconf|nanosleep|gmtime_r|'
+               r'getenv|getrlimit|sysconf|nanosleep|gmtime_r|'
                r'log2|log2f|log|exp|sqrt|'
                r'ceil|ceilf|floor|floorf|fmod|fmodf|pow|powf|'
                r'strcmp|strlen)$'),

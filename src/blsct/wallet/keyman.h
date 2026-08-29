@@ -42,7 +42,7 @@ public:
     explicit Manager(wallet::WalletStorage& storage) : m_storage(storage) {}
     virtual ~Manager()= default;
 
-    virtual bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force = false, const std::string& mnemonic_passphrase = "") { return false; }
+    virtual bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force = false, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt) { return false; }
 
     /* Returns true if HD is enabled */
     virtual bool IsHDEnabled() const { return false; }
@@ -51,24 +51,31 @@ public:
 class KeyMan : public Manager, public KeyRing
 {
 private:
-    blsct::HDChain m_hd_chain;
+    blsct::HDChain m_hd_chain GUARDED_BY(cs_KeyStore);
     SecureBytes m_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::vector<unsigned char> m_crypted_mnemonic_entropy GUARDED_BY(cs_KeyStore);
-    std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains;
+    std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains GUARDED_BY(cs_KeyStore);
+    std::optional<int64_t> m_wallet_birthday;
 
     bool AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey);
     bool AddCryptedKeyInner(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
 
-    bool AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId);
-    bool AddCryptedOutKeyInner(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
+    bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt);
 
-    bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase = "");
+    //! The HD-enabled predicate, for callers already holding cs_KeyStore.
+    //! IsHDEnabled() takes the lock and answers on its own; the master-key
+    //! accessors need this answer and the id they return to come from the
+    //! *same* acquisition, so they read both inside one WITH_LOCK instead.
+    //! Defined once here so the three cannot drift apart.
+    bool HasHDSeed() const EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore)
+    {
+        return !m_hd_chain.seed_id.IsNull();
+    }
 
 
     wallet::WalletBatch* encrypted_batch GUARDED_BY(cs_KeyStore) = nullptr;
 
     using CryptedKeyMap = std::map<CKeyID, std::pair<PublicKey, std::vector<unsigned char>>>;
-    using CryptedOutKeyMap = std::map<uint256, std::pair<PublicKey, std::vector<unsigned char>>>;
     using SubAddressMap = std::map<CKeyID, SubAddressIdentifier>;
     using SubAddressStrMap = std::map<SubAddress, CKeyID>;
     using SubAddressPoolMapSet = std::map<int64_t, std::set<uint64_t>>;
@@ -76,7 +83,6 @@ private:
     using WatchOnlyNonceMap = std::map<CScriptID, blsct::PublicKey>;
 
     CryptedKeyMap mapCryptedKeys GUARDED_BY(cs_KeyStore);
-    CryptedOutKeyMap mapCryptedOutKeys GUARDED_BY(cs_KeyStore);
     SubAddressMap mapSubAddresses GUARDED_BY(cs_KeyStore);
     SubAddressStrMap mapSubAddressesStr GUARDED_BY(cs_KeyStore);
     SubAddressPoolMapSet setSubAddressPool GUARDED_BY(cs_KeyStore);
@@ -95,7 +101,7 @@ public:
     KeyMan(wallet::WalletStorage& storage, int64_t keypool_size)
         : Manager(storage), KeyRing(), m_keypool_size(keypool_size) {}
 
-    bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false, const std::string& mnemonic_passphrase = "") override;
+    bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt) override;
     bool IsHDEnabled() const override;
 
     void LoadMnemonicEntropy(const std::vector<unsigned char>& entropy)
@@ -138,11 +144,22 @@ public:
        Sets the seed's version based on the current wallet version (so the
        caller must ensure the current wallet version is correct before calling
        this function). */
-    void SetHDSeed(const PrivateKey& key);
+    void SetHDSeed(const PrivateKey& key, const std::optional<int64_t>& creation_time = std::nullopt);
+
+    //! The wallet's genuine creation time, when known: recorded at setup for
+    //! freshly created wallets (their creation instant) and for restores from
+    //! a birthday mnemonic (the decoded time), persisted in the wallet DB. It
+    //! is deliberately NOT inferred for other restores (e.g. a plain 24-word
+    //! mnemonic), whose on-chain history can predate this instantiation.
+    std::optional<int64_t> GetWalletBirthday() const { return m_wallet_birthday; }
+
+    //! Persist a genuine-birthday record for this wallet (see above). Only
+    //! called by the wallet-creation flow when the creation time is truly
+    //! known.
+    bool WriteWalletBirthday(int64_t birthday);
 
     //! Adds a key to the store, and saves it to disk.
     bool AddKeyPubKey(const PrivateKey& key, const PublicKey& pubkey) override;
-    bool AddKeyOutKey(const PrivateKey& secret, const uint256& outId) override;
     bool AddViewKey(const PrivateKey& key, const PublicKey& pubkey) override;
     bool AddSpendKey(const PublicKey& pubkey) override;
 
@@ -150,22 +167,17 @@ public:
     bool LoadKey(const PrivateKey& key, const PublicKey& pubkey);
     bool LoadViewKey(const PrivateKey& key, const PublicKey& pubkey);
     bool LoadSpendKey(const PublicKey& pubkey);
-    bool LoadOutKey(const PrivateKey& key, const uint256& outId);
     //! Adds an encrypted key to the store, and saves it to disk.
     bool AddCryptedKey(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
-    bool AddCryptedOutKey(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
     //! Adds an encrypted key to the store, without saving it to disk (used by LoadWallet)
     bool LoadCryptedKey(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, bool checksum_valid);
-    bool LoadCryptedOutKey(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, bool checksum_valid);
     bool AddKeyPubKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& secret, const PublicKey& pubkey) EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
-    bool AddKeyOutKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& secret, const uint256& outId) EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
     bool AddSubAddressPoolWithDB(wallet::WalletBatch& batch, const SubAddressIdentifier& id, const SubAddress& subAddress, const bool& fLock = true);
     bool AddSubAddressPoolInner(const SubAddressIdentifier& id, const bool& fLock = true);
 
     /* KeyRing overrides */
     bool HaveKey(const CKeyID& address) const override;
     bool GetKey(const CKeyID& address, PrivateKey& keyOut) const override;
-    bool GetOutKey(const uint256& outId, PrivateKey& keyOut) const override;
 
     bool Encrypt(const wallet::CKeyingMaterial& master_key, wallet::WalletBatch* batch);
     bool CheckDecryptionKey(const wallet::CKeyingMaterial& master_key, bool accept_no_keys);
@@ -178,7 +190,14 @@ public:
     /* Set the HD chain model (chain child index counters) and writes it to the database */
     void AddHDChain(const blsct::HDChain& chain);
     void LoadHDChain(const blsct::HDChain& chain);
-    const blsct::HDChain& GetHDChain() const { return m_hd_chain; }
+    /* Returns a snapshot of the HD chain model. Deliberately by value: a
+       reference would let the caller keep reading m_hd_chain after cs_KeyStore
+       is released, which the GUARDED_BY annotation cannot detect. */
+    blsct::HDChain GetHDChain() const
+    {
+        LOCK(cs_KeyStore);
+        return m_hd_chain;
+    }
     void AddInactiveHDChain(const blsct::HDChain& chain);
 
     //! Load metadata (used by LoadWallet)
@@ -208,8 +227,27 @@ public:
      *   ISMINE_NO                       - not ours.
      */
     wallet::isminetype IsMineMode(const CTxOut& txout);
-    bool IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag);
     bool IsMine(const CScript& script) const;
+
+    //! The nonce an output addressed to this wallet would share with us:
+    //! blindingKey * ourViewKey — the expensive part of the ownership test
+    //! (one BLS12-381 G1 scalar multiplication) and the intermediate every
+    //! downstream check derives from (view tag via ViewTagFromNonce, hash id
+    //! via CalculateHashId). Both MarkUnusedSubAddress and IsMineMode need it
+    //! per output during a scan; compute it ONCE with this and pass it to the
+    //! overloads below so the dominant per-output cost is paid a single time.
+    //! Returns nullopt when the output cannot be ours (no view key / not a
+    //! BLSCT output / zero blinding key) or when derivation throws (malformed
+    //! blsctData), so callers outside a handler stay exception-safe.
+    std::optional<MclG1Point> GetExpectedNonce(const CTxOut& txout) const;
+    //! IsMineMode / IsMine / MarkUnusedSubAddress variants that take the
+    //! precomputed nonce instead of re-deriving it. A nullopt nonce (output
+    //! cannot be a BLSCT output of ours) makes the BLSCT ownership checks
+    //! fail without any EC work, falling through to the scriptPubKey
+    //! watch-only path exactly as the original did. The hash id is computed
+    //! from the nonce directly, so these need no view key access at all.
+    wallet::isminetype IsMineMode(const CTxOut& txout, const std::optional<MclG1Point>& expectedNonce);
+    bool IsMine(const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<MclG1Point>& expectedNonce);
     CKeyID GetHashId(const CTxOut& txout) const
     {
         if (!txout.scriptPubKey.IsSpendable() && !txout.IsStakedCommitment()) {
@@ -224,6 +262,23 @@ public:
         }
         return GetHashId(txout.blsctData.blindingKey, txout.blsctData.spendingKey);
     }
+    //! Same key selection as GetHashId(txout), but derives the id from a
+    //! precomputed nonce (blindingKey * viewKey), so it needs no view key and
+    //! pays no extra scalar multiplication.
+    CKeyID GetHashId(const CTxOut& txout, const MclG1Point& expectedNonce) const
+    {
+        if (!txout.scriptPubKey.IsSpendable() && !txout.IsStakedCommitment()) {
+            return CKeyID();
+        }
+        if (txout.blsctData.spendingKey.IsZero()) {
+            blsct::PublicKey extractedSpendingKey;
+            if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
+                return CalculateHashId(expectedNonce, extractedSpendingKey.GetG1Point());
+            }
+            return CKeyID();
+        }
+        return CalculateHashId(expectedNonce, txout.blsctData.spendingKey);
+    }
     CKeyID GetHashId(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey) const;
     CTxDestination GetDestination(const CTxOut& txout) const;
     blsct::PrivateKey GetMasterSeedKey() const;
@@ -234,9 +289,6 @@ public:
     bool GetSpendingKeyForOutput(const CTxOut& out, blsct::PrivateKey& key) const;
     bool GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key) const;
     bool GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key) const;
-    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, blsct::PrivateKey& key);
-    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key);
-    bool GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key);
     bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
     bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce);
 
@@ -256,6 +308,7 @@ public:
     bool TopUp(const unsigned int& size = 0);
     bool TopUpAccount(const int64_t& account, const unsigned int& size = 0);
     std::optional<wallet::WalletDestination> MarkUnusedSubAddress(const CTxOut& txout);
+    std::optional<wallet::WalletDestination> MarkUnusedSubAddress(const CTxOut& txout, const MclG1Point& expectedNonce);
     void ReserveSubAddressFromPool(const int64_t& account, int64_t& nIndex, SubAddressPool& keypool);
     void KeepSubAddress(const SubAddressIdentifier& id);
     void ReturnSubAddress(const SubAddressIdentifier& id);
@@ -266,6 +319,9 @@ public:
     bool OutputIsChange(const CTxOut& out) const;
 
     int64_t GetTimeFirstKey() const;
+
+    //! Load the persisted birthday record (if any) during wallet open.
+    void LoadWalletBirthday(int64_t birthday) { m_wallet_birthday = birthday; }
 
     /** Keypool has new keys */
     btcsignals::signal<void()>

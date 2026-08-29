@@ -24,7 +24,9 @@ void initialize_miner()
 {
     static const auto testing_setup = MakeNoLogFileContext<const TestingSetup>();
     g_setup = testing_setup.get();
-    for (uint32_t i = 0; i < uint32_t{100}; ++i) {
+    // Start at 1: navio's COutPoint::IsNull() checks only the hash, so an
+    // all-zero seed coin would make a 1-input tx look like a coinbase.
+    for (uint32_t i = 1; i <= uint32_t{100}; ++i) {
         g_available_coins.emplace_back(Txid::FromUint256(uint256(uint64_t{i})));
     }
 }
@@ -36,6 +38,8 @@ FUZZ_TARGET(mini_miner, .init = initialize_miner)
     CTxMemPool pool{CTxMemPool::Options{}};
     std::vector<COutPoint> outpoints;
     std::deque<COutPoint> available_coins = g_available_coins;
+    // COutPoint only stores the output hash, so keep outputs unique to avoid collisions.
+    CAmount next_output_value{100};
     LOCK2(::cs_main, pool.cs);
     // Cluster size cannot exceed 500
     LIMITED_WHILE(!available_coins.empty(), 500)
@@ -49,7 +53,7 @@ FUZZ_TARGET(mini_miner, .init = initialize_miner)
             available_coins.pop_front();
         }
         for (uint32_t n{0}; n < num_outputs; ++n) {
-            mtx.vout.emplace_back(100, P2WSH_OP_TRUE);
+            mtx.vout.emplace_back(next_output_value++, P2WSH_OP_TRUE);
         }
         CTransactionRef tx = MakeTransactionRef(mtx);
         TestMemPoolEntryHelper entry;
@@ -65,8 +69,12 @@ FUZZ_TARGET(mini_miner, .init = initialize_miner)
         }
 
         if (fuzzed_data_provider.ConsumeBool() && !tx->vout.empty()) {
-            // Add outpoint from this tx (may or not be spent by a later tx)
-            outpoints.emplace_back(tx->vout[(uint32_t)fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, tx->vout.size())].GetHash());
+            // Add outpoint from this tx (may or not be spent by a later tx).
+            // ConsumeIntegralInRange is inclusive on both ends, so the upper bound is size()-1.
+            const auto outpoint = COutPoint(tx->vout[fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, tx->vout.size() - 1)].GetHash());
+            if (std::find(outpoints.begin(), outpoints.end(), outpoint) == outpoints.end()) {
+                outpoints.push_back(outpoint);
+            }
         } else {
             // Add some random outpoint (will be interpreted as confirmed or not yet submitted
             // to mempool).

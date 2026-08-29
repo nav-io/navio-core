@@ -6,6 +6,7 @@
 #include <blsct/arith/elements.h>
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
+#include <crypto/common.h>
 #include <deque>
 #include <iterator>
 #include <random>
@@ -50,10 +51,17 @@ void _deterministic_shuffle(std::vector<T>& vec, XorShift32& rng)
 
 void uint256_to_seed_array(const uint256& value, uint64_t seed_data[4])
 {
-    const unsigned char* bytes = value.begin(); // Little-endian
+    const unsigned char* bytes = value.begin();
 
+    // Read each 64-bit lane as explicit little-endian rather than a raw memcpy
+    // reinterpret. A memcpy takes host byte order, so a big-endian node would
+    // fold a different seed in compress_seed(), shuffle the staked-commitment
+    // set differently, and build a different anonymity ring than the
+    // little-endian nodes that make up the network. ReadLE64 is identical to
+    // the memcpy on little-endian hosts, so the canonical form matches the
+    // live chain and only corrects big-endian builds.
     for (int i = 0; i < 4; ++i) {
-        std::memcpy(&seed_data[i], bytes + i * 8, sizeof(uint64_t));
+        seed_data[i] = ReadLE64(bytes + i * 8);
     }
 }
 
@@ -262,15 +270,20 @@ template MclScalar Elements<MclScalar>::Sum() const;
 template MclG1Point Elements<MclG1Point>::Sum() const;
 
 template <typename T>
-void Elements<T>::ConfirmIndexInsideRange(const uint32_t& index) const
+void Elements<T>::ConfirmIndexInsideRange(const size_t& index) const
 {
     if (index >= m_vec.size()) {
-        auto s = strprintf("index %d is out of range [0..%d]", index, m_vec.size() - 1ul);
+        // size() - 1 underflows on an empty container, reporting the range as
+        // [0..SIZE_MAX] -- which reads as "the index was in range" to whoever
+        // finds it in a crash log. Say what actually happened instead.
+        auto s = m_vec.empty()
+                     ? strprintf("index %d is out of range: the container is empty", index)
+                     : strprintf("index %d is out of range [0..%d]", index, m_vec.size() - 1ul);
         throw std::runtime_error(s);
     }
 }
-template void Elements<MclScalar>::ConfirmIndexInsideRange(const uint32_t&) const;
-template void Elements<MclG1Point>::ConfirmIndexInsideRange(const uint32_t&) const;
+template void Elements<MclScalar>::ConfirmIndexInsideRange(const size_t&) const;
+template void Elements<MclG1Point>::ConfirmIndexInsideRange(const size_t&) const;
 
 template <typename T>
 T& Elements<T>::operator[](const size_t& index)
@@ -495,6 +508,7 @@ Elements<T> Elements<T>::From(const size_t from_index) const
     }
 
     Elements<T> ret;
+    ret.m_vec.reserve(m_vec.size() - from_index);
     for (size_t i = from_index; i < m_vec.size(); ++i) {
         ret.m_vec.push_back(m_vec[i]);
     }
@@ -511,6 +525,7 @@ Elements<T> Elements<T>::To(const size_t to_index) const
     }
 
     Elements<T> ret;
+    ret.m_vec.reserve(to_index);
     for (size_t i = 0; i < to_index; ++i) {
         ret.m_vec.push_back(m_vec[i]);
     }

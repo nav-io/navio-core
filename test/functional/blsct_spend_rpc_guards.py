@@ -16,6 +16,19 @@ correct blsct RPC, instead of silently doing the wrong thing.
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_raises_rpc_error
 
+# A well-formed regtest BLSCT address whose view and spend keys are both the
+# identity (point at infinity). It decodes fine and validateaddress calls it
+# valid, but its outputs are anyone-can-spend, so the spend RPCs must reject
+# it rather than pay it.
+NULL_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwwvmtas"
+
+# The same, but with the identity in only one of the two key slots (the other
+# holds the BLS12-381 G1 generator). These pin both halves of the null-key
+# check: dropping either half of the test lets one of them through.
+NULL_VIEW_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp9l36wnnr97hjsnf2cuvf756cr7rdzxyl9m5hyz6zn368ut3htzcd327s0le0gdwl7e67q9dkgkxhvmdqls40d"
+NULL_SPEND_KEY_ADDRESS = "rnv1jlca8fe3jltegf54vwxyl2dvplpk3rz0ja6tjpdpfcar79cm43vxc40g8luh5xh0lva0qzkmytrthsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqma0f57ul"
+NULL_KEY_ADDRESSES = (NULL_KEY_ADDRESS, NULL_VIEW_KEY_ADDRESS, NULL_SPEND_KEY_ADDRESS)
+
 
 class BLSCTSpendRPCGuardsTest(BitcoinTestFramework):
     def add_options(self, parser):
@@ -108,6 +121,50 @@ class BLSCTSpendRPCGuardsTest(BitcoinTestFramework):
             -8, "sendtoblsctaddress",
             transparent_wallet.send, {blsct_addr: 1},
         )
+
+        self.log.info("sendtoblsctaddress rejects a destination that is not a BLSCT address")
+        assert_raises_rpc_error(
+            -5, "Invalid BLSCT address",
+            blsct_wallet.sendtoblsctaddress, transparent_addr, 1,
+        )
+
+        self.log.info("sendtoblsctaddress rejects a BLSCT address with identity keys")
+        assert_raises_rpc_error(
+            -5, "BLSCT address has null keys",
+            blsct_wallet.sendtoblsctaddress, NULL_KEY_ADDRESS, 1,
+        )
+
+        # generatetoblsctaddress builds the coinbase directly, so an identity
+        # key there mines the block reward into an anyone-can-spend output --
+        # claimable by whoever sees the block first.
+        self.log.info("generatetoblsctaddress rejects BLSCT addresses with identity keys")
+        for null_address in NULL_KEY_ADDRESSES:
+            assert_raises_rpc_error(
+                -5, "address has null keys",
+                self.nodes[0].rpc.generatetoblsctaddress, 1, null_address,
+            )
+
+        self.log.info("generatetoblsctaddress still rejects a non-BLSCT address")
+        assert_raises_rpc_error(
+            -5, "Invalid BLSCT address",
+            self.nodes[0].rpc.generatetoblsctaddress, 1, transparent_addr,
+        )
+
+        # delegatestake/redelegatestake take a reward_address that may
+        # legitimately be transparent, so they cannot use the BLSCT helper
+        # wholesale -- but a BLSCT one with an identity key would have the
+        # delegate pay block rewards into an anyone-can-spend output.
+        # delegate_pubkey is validated first, so pass a real G1 point: the
+        # BLS12-381 G1 generator, whose compressed encoding is fixed by the
+        # curve spec.
+        g1_generator = ("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c"
+                        "55e83ff97a1aeffb3af00adb22c6bb")
+        self.log.info("delegatestake rejects a reward_address with identity keys")
+        for null_address in NULL_KEY_ADDRESSES:
+            assert_raises_rpc_error(
+                -5, "reward_address has null keys",
+                blsct_wallet.delegatestake, 1, g1_generator, null_address,
+            )
 
 
 if __name__ == '__main__':

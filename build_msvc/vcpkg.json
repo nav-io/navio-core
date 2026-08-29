@@ -11,7 +11,7 @@
     "sqlite3",
     "zeromq"
   ],
-  "builtin-baseline": "67b207f199b5d2ee09f206d2e9e9171e7c7a3274",
+  "builtin-baseline": "c5a15727ee70fddf0296f0d8aafc3f58916fefac",
   "overrides": [
     {
       "name": "libevent",

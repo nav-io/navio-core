@@ -70,7 +70,9 @@ blsPublicKey PublicKey::ToBlsPublicKey() const
 std::vector<uint8_t> PublicKey::AugmentMessage(const Message& msg) const
 {
     auto pk_data = GetVch();
-    std::vector<uint8_t> aug_msg(pk_data);
+    std::vector<uint8_t> aug_msg;
+    aug_msg.reserve(pk_data.size() + msg.size());
+    aug_msg.insert(aug_msg.end(), pk_data.begin(), pk_data.end());
     aug_msg.insert(aug_msg.end(), msg.begin(), msg.end());
     return aug_msg;
 }

@@ -371,7 +371,7 @@ std::shared_ptr<CWallet> LoadWallet(WalletContext& context, const std::string& n
     return wallet;
 }
 
-std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string& name, const std::vector<unsigned char>& seed, const blsct::SeedType& type, std::optional<bool> load_on_start, DatabaseOptions& options, DatabaseStatus& status, bilingual_str& error, std::vector<bilingual_str>& warnings, const std::string& mnemonic_passphrase)
+std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string& name, const std::vector<unsigned char>& seed, const blsct::SeedType& type, std::optional<bool> load_on_start, DatabaseOptions& options, DatabaseStatus& status, bilingual_str& error, std::vector<bilingual_str>& warnings, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time)
 {
     uint64_t wallet_creation_flags = options.create_flags;
     const SecureString& passphrase = options.create_passphrase;
@@ -451,7 +451,7 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
                     auto blsct_man = wallet->GetBLSCTKeyMan();
 
                     if (blsct_man) {
-                        if (!blsct_man->SetupGeneration(seed, type, /*force=*/false, mnemonic_passphrase)) {
+                        if (!blsct_man->SetupGeneration(seed, type, /*force=*/false, mnemonic_passphrase, creation_time)) {
                             error = Untranslated("Unable to generate initial blsct keys");
                             status = DatabaseStatus::FAILED_CREATE;
                             return nullptr;
@@ -1362,24 +1362,6 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
 
     auto blsct_man = GetBLSCTKeyMan();
     if (wtx.tx->IsBLSCT()) {
-        // Warm the spending-key cache for owned outputs. Skip this on watch-only
-        // / view-key (audit key) wallets (no private spend key) and on locked
-        // encrypted wallets (spend key not decryptable): in both cases
-        // GetSpendingKeyForOutputWithCache would throw, uncaught, on the
-        // scheduler or init thread and take the node down mid-sync. The cached
-        // value is not used here in any case; spending keys are derived lazily
-        // when actually spending, with the wallet unlocked.
-        if (blsct_man && !IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS) && !IsLocked()) {
-            for (auto& out : wtx.tx->vout) {
-                if (blsct_man->IsMine(out)) {
-                    blsct::PrivateKey spending_key;
-                    if (!blsct_man->GetSpendingKeyForOutputWithCache(out, spending_key)) {
-                        continue;
-                    }
-                }
-            }
-        }
-
         if (blsct_man) {
             auto result = blsct_man->RecoverOutputs({wtx.tx->vout});
             if (result.is_completed) {
@@ -1565,14 +1547,26 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
 
                 bool fExisted = mapOutputs.contains(outpoint);
                 if (fExisted && !fUpdate) return false;
+                isminetype mine = ISMINE_NO;
                 if (blsct_man) {
-                    const auto learned_dest = blsct_man->MarkUnusedSubAddress(txout);
-                    if (learned_dest && learned_dest->internal.has_value() && !learned_dest->internal.value() &&
-                        !FindAddressBookEntry(learned_dest->dest, /* allow_change= */ false)) {
-                        SetAddressBook(learned_dest->dest, "", AddressPurpose::RECEIVE);
+                    // Derive the nonce (blindingKey * viewKey) once and share
+                    // it between the subaddress-recovery scan and the
+                    // ownership check below.
+                    const auto expectedNonce = blsct_man->GetExpectedNonce(txout);
+                    if (expectedNonce) {
+                        const auto learned_dest = blsct_man->MarkUnusedSubAddress(txout, *expectedNonce);
+                        if (learned_dest && learned_dest->internal.has_value() && !learned_dest->internal.value() &&
+                            !FindAddressBookEntry(learned_dest->dest, /* allow_change= */ false)) {
+                            SetAddressBook(learned_dest->dest, "", AddressPurpose::RECEIVE);
+                        }
                     }
+                    // Same as IsMine(txout), with the already-derived nonce.
+                    mine = txout.HasBLSCTKeys() ? blsct_man->IsMineMode(txout, expectedNonce)
+                                                : IsMine(txout);
+                } else {
+                    mine = IsMine(txout);
                 }
-                if (fExisted || IsMine(txout)) {
+                if (fExisted || mine) {
                     CWalletOutput* wout = AddToWallet(
                         outpoint,
                         MakeOutputRef<CTxOut>(std::move(txout)),

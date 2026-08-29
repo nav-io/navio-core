@@ -26,9 +26,11 @@ FUZZ_TARGET(mnemonic)
     }
 
     {
-        auto result = mnemonic::MnemonicToEntropy(random_string);
+        // Validate() accepts both the plain BIP-39 form and the 26-word
+        // birthday variant; compare against the shared decoder.
+        auto result = mnemonic::DecodeMnemonic(random_string);
         if (result.has_value()) {
-            std::string re_encoded = mnemonic::EntropyToMnemonic(result.value());
+            std::string re_encoded = mnemonic::EntropyToMnemonic(result->entropy);
             assert(!re_encoded.empty());
             assert(mnemonic::Validate(re_encoded));
         }

@@ -31,7 +31,7 @@ static void WalletToolReleaseWallet(CWallet* wallet)
     delete wallet;
 }
 
-static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flags, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase)
+static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flags, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time = std::nullopt)
 {
     LOCK(wallet_instance->cs_wallet);
     wallet_instance->SetMinVersion(FEATURE_LATEST);
@@ -48,7 +48,10 @@ static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flag
         auto blsct_man = wallet_instance->GetOrCreateBLSCTKeyMan();
 
         if (blsct_man) {
-            blsct_man->SetupGeneration(seed, type, /*force=*/false, mnemonic_passphrase);
+            blsct_man->SetupGeneration(seed, type, /*force=*/false, mnemonic_passphrase, creation_time);
+            if (creation_time.has_value()) {
+                blsct_man->WriteWalletBirthday(*creation_time);
+            }
         }
     }
 
@@ -56,7 +59,7 @@ static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flag
     wallet_instance->TopUpKeyPool();
 }
 
-static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::path& path, DatabaseOptions options, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase = "")
+static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::path& path, DatabaseOptions options, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt)
 {
     DatabaseStatus status;
     bilingual_str error;
@@ -101,7 +104,7 @@ static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::pa
         }
     }
 
-    if (options.require_create) WalletCreate(wallet_instance.get(), options.create_flags, seed, type, mnemonic_passphrase);
+    if (options.require_create) WalletCreate(wallet_instance.get(), options.create_flags, seed, type, mnemonic_passphrase, creation_time);
 
     return wallet_instance;
 }
@@ -215,22 +218,22 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             return false;
         }
 
-        // Parse mnemonic if provided
+        // Parse mnemonic if provided. Accepts plain 24-word BIP-39 or the
+        // 26-word birthday variant (the birthday then drives the rescan
+        // window).
+        std::optional<int64_t> mnemonic_birthday;
         if (!mnemonic_str.empty()) {
-            if (!mnemonic::Validate(mnemonic_str)) {
+            auto decoded = mnemonic::DecodeMnemonic(mnemonic_str);
+            if (!decoded) {
                 tfm::format(std::cerr, "Invalid mnemonic phrase\n");
                 return false;
             }
-            auto entropy_opt = mnemonic::MnemonicToEntropy(mnemonic_str);
-            if (!entropy_opt) {
-                tfm::format(std::cerr, "Failed to decode mnemonic\n");
+            if (decoded->entropy.size() != 32) {
+                tfm::format(std::cerr, "Only 24-word mnemonics (optionally with the two-word birthday suffix) are supported\n");
                 return false;
             }
-            if (entropy_opt.value().size() != 32) {
-                tfm::format(std::cerr, "Only 24-word mnemonics are supported\n");
-                return false;
-            }
-            seed = HexStr(entropy_opt.value());
+            seed = HexStr(decoded->entropy);
+            mnemonic_birthday = decoded->birthday;
         }
 
         // For new BLSCT wallets (no seed or mnemonic), generate entropy here
@@ -242,7 +245,14 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             GetStrongRandBytes(entropy);
             seed = HexStr(entropy);
             is_mnemonic_derived = true;
-            mnemonic_response = mnemonic::EntropyToMnemonic(entropy);
+            mnemonic_birthday = GetTime();
+            mnemonic_response = mnemonic::MnemonicWithBirthday(mnemonic::EntropyToMnemonic(entropy), *mnemonic_birthday);
+            if (mnemonic_response.empty()) {
+                // Clock outside the encodable range (mis-set RTC): fall back
+                // to the plain 24-word phrase and drop the birthday stamp.
+                mnemonic_birthday = std::nullopt;
+                mnemonic_response = mnemonic::EntropyToMnemonic(entropy);
+            }
             memory_cleanse(entropy.data(), entropy.size());
         }
 
@@ -257,7 +267,7 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             options.create_flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
         }
 
-        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type, mnemonic_passphrase);
+        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type, mnemonic_passphrase, mnemonic_birthday);
         // Cleanse seed hex now that MakeWallet has consumed it
         memory_cleanse(seed.data(), seed.size());
         if (wallet_instance) {

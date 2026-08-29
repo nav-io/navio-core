@@ -1,6 +1,10 @@
 package=gmp
 $(package)_version=6.3.0
-$(package)_download_path=https://mirrors.kernel.org/gnu/gmp/
+$(package)_download_path=https://ftp.gnu.org/gnu/gmp/
+# ftp.gnu.org has stalled for hours at a time and the depends fallback
+# mirror does not carry gmp, which takes every depends job down with it.
+# Both mirrors below serve the tarball matching the hash pinned here.
+$(package)_download_mirrors=https://mirrors.kernel.org/gnu/gmp/ https://mirror.csclub.uwaterloo.ca/gnu/gmp/
 $(package)_file_name=gmp-$($(package)_version).tar.xz
 $(package)_sha256_hash=a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
 

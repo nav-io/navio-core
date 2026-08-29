@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/wallet/hdchain.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
@@ -57,6 +58,101 @@ std::unique_ptr<wallet::CWallet> MakeBLSCTWallet(interfaces::Chain* chain)
     auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
     BOOST_REQUIRE(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
     return wallet;
+}
+
+std::string DrawDestination(blsct::KeyMan* km, const int64_t account)
+{
+    auto dest = km->GetNewDestination(account);
+    BOOST_REQUIRE(dest.has_value());
+    return blsct::SubAddress(std::get<blsct::DoublePublicKey>(dest.value())).GetString();
+}
+
+// A locked wallet must still be able to hand out its change and staking
+// destinations. Those accounts are pinned to sub-address index 0, which is pure
+// view-key derivation and needs no spending key -- but before the pool draw was
+// removed for them, a locked wallet with an emptied pool hit "Keypool ran out"
+// instead, which is what the unchecked GetNewDestination(CHANGE_ACCOUNT).value()
+// calls in txfactory and the RPCs would have thrown on.
+BOOST_FIXTURE_TEST_CASE(negative_accounts_are_available_while_locked, TestingSetup)
+{
+    auto wallet = MakeBLSCTWallet(m_node.chain.get());
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+
+    const auto before_lock = DrawDestination(km, blsct::CHANGE_ACCOUNT);
+
+    BOOST_REQUIRE(wallet->EncryptWallet("passphrase"));
+    BOOST_REQUIRE(wallet->Lock());
+    BOOST_REQUIRE(wallet->IsLocked());
+
+    // Empty the account's pool while locked: NewSubAddressPool erases the
+    // existing records and its top-up cannot refill them without the
+    // encryption key. This is the state that used to fail the draw.
+    BOOST_REQUIRE(!km->NewSubAddressPool(blsct::CHANGE_ACCOUNT));
+    BOOST_CHECK_EQUAL(km->GetSubAddressPoolSize(blsct::CHANGE_ACCOUNT), 0);
+
+    // The destination is still derivable, still index 0, and still the same one.
+    BOOST_CHECK_EQUAL(DrawDestination(km, blsct::CHANGE_ACCOUNT), before_lock);
+
+    // And it stays recognisable as ours -- index 0 was registered at wallet
+    // setup and nothing erases mapSubAddresses, which is what the locked-wallet
+    // guard in GetSubAddressFromPool checks before handing the address out.
+    BOOST_CHECK_EQUAL(DrawDestination(km, blsct::STAKING_ACCOUNT),
+                      DrawDestination(km, blsct::STAKING_ACCOUNT));
+
+    // The other side of that guard: an account SetupGeneration never registered
+    // has no index 0 in mapSubAddresses, and a locked wallet cannot add one
+    // (TopUpAccount needs the encryption key). Derivation still succeeds -- it
+    // is view-key only -- so without the guard the draw would hand out an
+    // address the wallet cannot recognise as its own. The assertions above pass
+    // with the guard deleted, because CHANGE_ACCOUNT and STAKING_ACCOUNT are
+    // both registered at setup; this one is what fails.
+    BOOST_CHECK(!km->GetNewDestination(int64_t{-5}).has_value());
+}
+
+// The negative accounts are single-destination by design: BLSCT outputs are
+// stealth-derived, so repeated payments to one sub-address are unlinkable on
+// chain, and a small sub-address set keeps wallet sync cheap. Receive accounts
+// must still advance. Either way the reserve pool must not leak an index per
+// draw.
+BOOST_FIXTURE_TEST_CASE(negative_accounts_are_single_destination, TestingSetup)
+{
+    auto wallet = MakeBLSCTWallet(m_node.chain.get());
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+
+    for (const int64_t account : {blsct::CHANGE_ACCOUNT, blsct::STAKING_ACCOUNT}) {
+        const auto first = DrawDestination(km, account);
+        for (int i = 0; i < 4; i++) {
+            BOOST_CHECK_EQUAL(DrawDestination(km, account), first);
+        }
+        // ...and the draws must not drain the pool: negative accounts never
+        // draw from it at all, so it stays at the top-up target instead of
+        // losing an index per call. That target is one entry, not
+        // m_keypool_size: nothing can consume a pooled index for an account
+        // pinned to index 0.
+        BOOST_CHECK_EQUAL(km->GetSubAddressPoolSize(account), 1);
+    }
+
+    // The one entry is index 0 itself -- the destination the account hands
+    // out. Without it GetNewDestination returns nothing, since it refuses to
+    // hand back a hashId that IsMine cannot see.
+    for (const int64_t account : {blsct::CHANGE_ACCOUNT, blsct::STAKING_ACCOUNT}) {
+        const CKeyID hash_id = km->GetSubAddress({account, 0}).GetKeys().GetID();
+        BOOST_CHECK(WITH_LOCK(km->cs_KeyStore, return km->HaveSubAddress(hash_id)));
+    }
+
+    // Receive accounts keep the full pool: they do draw from it, one index per
+    // destination.
+    BOOST_CHECK_EQUAL(km->GetSubAddressPoolSize(0), wallet->m_keypool_size);
+
+    // Receive addresses do advance -- reusing one of those would link payments
+    // made by different senders to the same wallet.
+    std::set<std::string> seen;
+    for (int i = 0; i < 5; i++) {
+        BOOST_CHECK(seen.insert(DrawDestination(km, 0)).second);
+    }
+    BOOST_CHECK_EQUAL(seen.size(), 5U);
 }
 
 // Mirror the branch-key derivation used by the createblsctrawtransaction /
@@ -185,14 +281,65 @@ BOOST_FIXTURE_TEST_CASE(locked_wallet_spending_key_unavailable_no_throw, Testing
     // ...but spending-key derivation reports unavailable rather than throwing.
     blsct::PrivateKey key_locked;
     BOOST_CHECK(!blsct_km->GetSpendingKeyForOutput(txout, key_locked));
-    BOOST_CHECK(!blsct_km->GetSpendingKeyForOutputWithCache(txout, key_locked));
 
     // Unlocked again: derivation recovers and matches the pre-encryption key.
     BOOST_REQUIRE(wallet->Unlock("passphrase"));
     blsct::PrivateKey key_after;
-    BOOST_REQUIRE(blsct_km->GetSpendingKeyForOutputWithCache(txout, key_after));
+    BOOST_REQUIRE(blsct_km->GetSpendingKeyForOutput(txout, key_after));
     BOOST_CHECK(key_after.IsValid());
     BOOST_CHECK(key_after.GetScalar() == key_before.GetScalar());
+}
+
+// The memoized ownership entry points (GetExpectedNonce + the nonce-taking
+// overloads of IsMineMode/MarkUnusedSubAddress) must agree with the
+// self-contained ones for every output kind the wallet scan can meet.
+BOOST_FIXTURE_TEST_CASE(memoized_ownership_checks_match, TestingSetup)
+{
+    auto wallet = MakeBLSCTWallet(m_node.chain.get());
+    auto other = MakeBLSCTWallet(m_node.chain.get());
+    LOCK2(wallet->cs_wallet, other->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    auto km_other = other->GetOrCreateBLSCTKeyMan();
+
+    const auto dest = std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value());
+    const auto dest_other = std::get<blsct::DoublePublicKey>(km_other->GetNewDestination(0).value());
+
+    const CTxOut owned = blsct::CreateOutput(dest, 42 * COIN, "").out;
+    const CTxOut foreign = blsct::CreateOutput(dest_other, 42 * COIN, "").out;
+
+    // Owned output: the nonce engages, the tag derived from it matches the
+    // output's, the hash id derived from it matches the view-key derivation,
+    // and the memoized path agrees with the self-contained one.
+    const auto nonce = km->GetExpectedNonce(owned);
+    BOOST_REQUIRE(nonce.has_value());
+    BOOST_CHECK_EQUAL(static_cast<uint16_t>(blsct::ViewTagFromNonce(*nonce)), owned.blsctData.viewTag);
+    BOOST_CHECK(blsct::CalculateHashId(*nonce, owned.blsctData.spendingKey) == km->GetHashId(owned));
+    BOOST_CHECK(km->GetHashId(owned, *nonce) == km->GetHashId(owned));
+    BOOST_CHECK(km->IsMineMode(owned) == km->IsMineMode(owned, nonce));
+    BOOST_CHECK(km->IsMineMode(owned, nonce) != wallet::ISMINE_NO);
+
+    // Foreign output: the nonce engages (it is a valid BLSCT output) but the
+    // tag mismatch makes both entry points report not-ours.
+    const auto nonce_foreign = km->GetExpectedNonce(foreign);
+    BOOST_REQUIRE(nonce_foreign.has_value());
+    BOOST_CHECK(km->IsMineMode(foreign) == km->IsMineMode(foreign, nonce_foreign));
+    BOOST_CHECK(km->IsMineMode(foreign, nonce_foreign) == wallet::ISMINE_NO);
+
+    // Zero blinding key: no nonce, and a nullopt nonce fails the BLSCT checks
+    // without EC work, exactly like the self-contained path.
+    CTxOut zero_blinding = owned;
+    zero_blinding.blsctData.blindingKey = MclG1Point();
+    BOOST_CHECK(!km->GetExpectedNonce(zero_blinding).has_value());
+    BOOST_CHECK(km->IsMineMode(zero_blinding) == km->IsMineMode(zero_blinding, std::nullopt));
+
+    // MarkUnusedSubAddress: memoized and self-contained variants find the same
+    // destination for an owned output and nothing for a foreign one.
+    const auto marked_direct = km->MarkUnusedSubAddress(owned);
+    const auto marked_nonce = km->MarkUnusedSubAddress(owned, *nonce);
+    BOOST_REQUIRE(marked_direct.has_value());
+    BOOST_REQUIRE(marked_nonce.has_value());
+    BOOST_CHECK(marked_direct->dest == marked_nonce->dest);
+    BOOST_CHECK(!km->MarkUnusedSubAddress(foreign).has_value());
 }
 
 // Locks down the one-time key derivation the deriveblsctonetimekey RPC exposes
@@ -239,6 +386,32 @@ BOOST_FIXTURE_TEST_CASE(external_destination_one_time_key_derivation, TestingSet
     BOOST_REQUIRE(recovered.is_completed);
     BOOST_REQUIRE(!recovered.amounts.empty());
     BOOST_CHECK_EQUAL(recovered.amounts[0].amount, 42 * COIN);
+}
+
+// A chain read back out of the wallet database has to equal the one that was
+// written, so equality may only look at fields SERIALIZE_METHODS writes.
+BOOST_FIXTURE_TEST_CASE(hdchain_survives_a_serialization_round_trip, BasicTestingSetup)
+{
+    const auto key_id = [](uint8_t byte) {
+        const std::vector<unsigned char> bytes(uint160::size(), byte);
+        return CKeyID(uint160(bytes));
+    };
+
+    blsct::HDChain chain;
+    chain.seed_id = key_id(1);
+    chain.spend_id = key_id(2);
+    chain.view_id = key_id(3);
+    chain.blinding_id = key_id(4);
+    chain.token_id = key_id(5);
+    chain.nSubAddressCounter[0] = 7;
+
+    DataStream st{};
+    st << chain;
+
+    blsct::HDChain reloaded;
+    st >> reloaded;
+
+    BOOST_CHECK(chain == reloaded);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

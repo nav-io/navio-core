@@ -23,7 +23,8 @@ Signature::Signature()
 Signature Signature::Aggregate(const std::vector<blsct::Signature>& sigs)
 {
     std::vector<blsSignature> bls_sigs;
-    std::transform(sigs.begin(), sigs.end(), std::back_inserter(bls_sigs), [](auto sig) {
+    bls_sigs.reserve(sigs.size());
+    std::transform(sigs.begin(), sigs.end(), std::back_inserter(bls_sigs), [](const auto& sig) {
         return sig.m_data;
     });
     blsct::Signature aggr_sig;

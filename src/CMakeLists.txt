@@ -70,6 +70,7 @@ set(BLSCT_SOURCES
   blsct/bech32_mod.cpp
   blsct/building_block/g_h_gi_hi_zero_verifier.cpp
   blsct/building_block/generator_deriver.cpp
+  blsct/building_block/fixed_base_window.cpp
   blsct/building_block/imp_inner_prod_arg.cpp
   blsct/building_block/lazy_point.cpp
   blsct/building_block/lazy_points.cpp
@@ -95,6 +96,7 @@ set(BLSCT_SOURCES
   blsct/range_proof/bulletproofs/range_proof_with_transcript.cpp
   blsct/range_proof/bulletproofs_plus/amount_recovery_request.cpp
   blsct/range_proof/bulletproofs_plus/amount_recovery_result.cpp
+  blsct/range_proof/bulletproofs_plus/fixed_base_cache.cpp
   blsct/range_proof/bulletproofs_plus/range_proof.cpp
   blsct/range_proof/bulletproofs_plus/range_proof_logic.cpp
   blsct/range_proof/bulletproofs_plus/range_proof_with_transcript.cpp
@@ -600,6 +602,7 @@ if(BUILD_LIBBLSCT_ONLY)
     blsct/bech32_mod.cpp
     blsct/building_block/g_h_gi_hi_zero_verifier.cpp
     blsct/building_block/generator_deriver.cpp
+    blsct/building_block/fixed_base_window.cpp
     blsct/building_block/imp_inner_prod_arg.cpp
     blsct/building_block/lazy_point.cpp
     blsct/building_block/lazy_points.cpp
@@ -619,6 +622,7 @@ if(BUILD_LIBBLSCT_ONLY)
     blsct/range_proof/bulletproofs/range_proof_with_transcript.cpp
     blsct/range_proof/bulletproofs_plus/amount_recovery_request.cpp
     blsct/range_proof/bulletproofs_plus/amount_recovery_result.cpp
+    blsct/range_proof/bulletproofs_plus/fixed_base_cache.cpp
     blsct/range_proof/bulletproofs_plus/range_proof_logic.cpp
     blsct/range_proof/bulletproofs_plus/range_proof_with_transcript.cpp
     blsct/range_proof/bulletproofs_plus/util.cpp

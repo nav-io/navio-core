@@ -112,6 +112,31 @@ BOOST_AUTO_TEST_CASE(blsct_keys)
     blsct::DoublePublicKey doubleKeyFromPoints(generator, pointR);
     BOOST_CHECK(doubleKeyFromPoints.IsValid());
 
+    // IsValid() only reports that both halves deserialized, so it accepts a key
+    // whose view or spend half is the point at infinity -- an output built for
+    // one of those has publicly derivable ownership keys. HasNonIdentityKeys()
+    // is what separates the two, and it must reject either half being identity,
+    // not just both.
+    const MclG1Point identity;
+    BOOST_CHECK(identity.IsZero());
+
+    BOOST_CHECK(doubleKeyFromPoints.HasNonIdentityKeys());
+
+    blsct::DoublePublicKey nullViewKey(identity, pointR);
+    BOOST_CHECK(nullViewKey.IsValid());
+    BOOST_CHECK(!nullViewKey.HasNonIdentityKeys());
+
+    blsct::DoublePublicKey nullSpendKey(generator, identity);
+    BOOST_CHECK(nullSpendKey.IsValid());
+    BOOST_CHECK(!nullSpendKey.HasNonIdentityKeys());
+
+    blsct::DoublePublicKey bothNull(identity, identity);
+    BOOST_CHECK(bothNull.IsValid());
+    BOOST_CHECK(!bothNull.HasNonIdentityKeys());
+
+    // An unparseable key is rejected by both.
+    BOOST_CHECK(!invalidDoublePublicKey.HasNonIdentityKeys());
+
     blsct::DoublePublicKey doubleKeyFromVectors(generator.GetVch(),
                                                 pointR.GetVch());
     BOOST_CHECK(doubleKeyFromVectors.IsValid());
@@ -190,13 +215,15 @@ BOOST_AUTO_TEST_CASE(blsct_keys)
                                            privateKeyFromVector.GetPoint());
     BOOST_CHECK(privateKeyFromAddition.GetPublicKey() == publicKeyFromAddition);
 
-    blsct::PublicKeys vecKeys(std::vector<blsct::PublicKey>{privateKeyFromScalar.GetPublicKey(), privateKeyFromVector.GetPublicKey()});
+    const std::vector<blsct::PublicKey> vec_keys_backing{privateKeyFromScalar.GetPublicKey(), privateKeyFromVector.GetPublicKey()};
+    blsct::PublicKeys vecKeys(vec_keys_backing);
     BOOST_CHECK(vecKeys.Aggregate() == publicKeyFromAddition);
 }
 
 BOOST_AUTO_TEST_CASE(aggretate_empty_public_keys)
 {
-    blsct::PublicKeys pks(std::vector<blsct::PublicKey>{});
+    const std::vector<blsct::PublicKey> empty_backing;
+    blsct::PublicKeys pks(empty_backing);
     BOOST_CHECK_THROW(pks.Aggregate(), std::runtime_error);
 }
 
