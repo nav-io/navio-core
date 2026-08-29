@@ -520,6 +520,7 @@ BOOST_AUTO_TEST_CASE(request_queue_claim_fifo)
     // the map by key at least one pair out of these five would come back out
     // of enqueue order.
     std::vector<std::vector<unsigned char>> in_order;
+    in_order.reserve(5);
     for (uint8_t i = 0; i < 5; ++i) {
         auto k = key(i + 1);
         BOOST_CHECK(q.Add(k, /*from_peer=*/i, 1000 + i));
@@ -532,6 +533,7 @@ BOOST_AUTO_TEST_CASE(request_queue_claim_fifo)
     BOOST_REQUIRE_EQUAL(first.size(), 2U);
     BOOST_REQUIRE_EQUAL(second.size(), 3U);
     std::vector<std::vector<unsigned char>> got;
+    got.reserve(first.size() + second.size());
     for (const auto& k : first) got.push_back(k.GetVch());
     for (const auto& k : second) got.push_back(k.GetVch());
     BOOST_CHECK(got == in_order);
