@@ -651,6 +651,11 @@ public:
         LOCK(m_node.mempool->cs);
         return m_node.mempool->exists(GenTxid::Txid(txid));
     }
+    bool hasStakedCommitment(const MclG1Point& commitment) override
+    {
+        LOCK(::cs_main);
+        return chainman().ActiveChainstate().CoinsTip().GetStakedCommitments().Exists(commitment);
+    }
     bool hasDescendantsInMempool(const uint256& txid) override
     {
         if (!m_node.mempool) return false;

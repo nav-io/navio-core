@@ -2,12 +2,16 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/private_key.h>
+#include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <primitives/transaction.h>
 #include <script/script.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
+#include <test/util/txmempool.h>
+#include <txmempool.h>
 #include <txdb.h>
 #include <wallet/receive.h>
 #include <wallet/test/util.h>
@@ -65,7 +69,7 @@ BOOST_FIXTURE_TEST_CASE(validation_test, TestingSetup)
     TxValidationState tx_state;
 
     BOOST_CHECK(finalTx.has_value());
-    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx.value()), coins_view_cache, tx_state));
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx->tx), coins_view_cache, tx_state));
 
     // M-2 negative tests: the BLSCT_PROOF_V2_MARKER must agree with the
     // activation height, both ways. finalTx was built under v1 (no marker).
@@ -75,7 +79,7 @@ BOOST_FIXTURE_TEST_CASE(validation_test, TestingSetup)
     // rule that keeps a v2-flagged tx from being consensus-valid below the gate
     // (which would let the miner build a mixed aggregate and stall the chain).
     {
-        CMutableTransaction flagged = finalTx.value();
+        CMutableTransaction flagged = finalTx->tx;
         flagged.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
         TxValidationState st;
         BOOST_CHECK(!blsct::VerifyTx(CTransaction(flagged), coins_view_cache, st,
@@ -86,7 +90,7 @@ BOOST_FIXTURE_TEST_CASE(validation_test, TestingSetup)
 
     // At or above the activation height, a flag-less BLSCT tx is rejected.
     {
-        CMutableTransaction unflagged = finalTx.value();
+        CMutableTransaction unflagged = finalTx->tx;
         unflagged.nVersion &= ~CTransaction::BLSCT_PROOF_V2_MARKER;
         TxValidationState st;
         BOOST_CHECK(!blsct::VerifyTx(CTransaction(unflagged), coins_view_cache, st,
@@ -152,7 +156,7 @@ BOOST_FIXTURE_TEST_CASE(validation_reserved_sequence_bits_test, TestingSetup)
 
     // Inject reserved bit 31 into the first input's nSequence.
     // 0x80000001 has bit 31 set and is != SEQUENCE_FINAL (0xFFFFFFFF).
-    CMutableTransaction mtx(finalTxOpt.value());
+    CMutableTransaction mtx(finalTxOpt->tx);
     BOOST_REQUIRE(!mtx.vin.empty());
     mtx.vin[0].nSequence = 0x80000001;
 
@@ -209,11 +213,11 @@ BOOST_FIXTURE_TEST_CASE(validation_min_fee_lowered_fee_rejected_test, TestingSet
     // Sanity: untampered tx verifies (it was built at exactly the minimum).
     {
         TxValidationState tx_state;
-        BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTxOpt.value()), coins_view_cache, tx_state));
+        BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTxOpt->tx), coins_view_cache, tx_state));
     }
 
     // Lower the fee output's nValue by 1 sat without touching tx weight.
-    CMutableTransaction mtx(finalTxOpt.value());
+    CMutableTransaction mtx(finalTxOpt->tx);
     bool found_fee = false;
     for (auto& vout : mtx.vout) {
         if (vout.scriptPubKey.IsFee()) {
@@ -284,8 +288,8 @@ BOOST_FIXTURE_TEST_CASE(validation_min_fee_phantom_output_rejected_test, Testing
     auto phantom = blsct::CreateOutput(attackerAddress, kStolen, "stolen");
 
     // Patch the tx: insert phantom, lower fee by `kStolen`.
-    CMutableTransaction mtx(finalTxOpt.value());
-    BOOST_REQUIRE(GetFeeValue(CTransaction(finalTxOpt.value())) > kStolen);
+    CMutableTransaction mtx(finalTxOpt->tx);
+    BOOST_REQUIRE(GetFeeValue(CTransaction(finalTxOpt->tx)) > kStolen);
     mtx.vout.push_back(phantom.out);
 
     bool found_fee = false;
@@ -355,14 +359,14 @@ BOOST_FIXTURE_TEST_CASE(validation_payfee_on_spendable_output_not_counted_test, 
     // Sanity: untampered tx verifies.
     {
         TxValidationState tx_state;
-        BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTxOpt.value()), coins_view_cache, tx_state));
+        BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTxOpt->tx), coins_view_cache, tx_state));
     }
 
     // Turn the unspendable OP_RETURN fee output into a spendable one while
     // keeping its PayFee predicate and value. With the fix, this output no
     // longer counts toward the fee (IsFee() is now required), so nFee drops to
     // 0 and the min-fee rule rejects the tx.
-    CMutableTransaction mtx(finalTxOpt.value());
+    CMutableTransaction mtx(finalTxOpt->tx);
     bool patched = false;
     for (auto& vout : mtx.vout) {
         if (vout.scriptPubKey.IsFee()) {
@@ -378,6 +382,95 @@ BOOST_FIXTURE_TEST_CASE(validation_payfee_on_spendable_output_not_counted_test, 
     TxValidationState tx_state;
     BOOST_CHECK(!blsct::VerifyTx(CTransaction(mtx), coins_view_cache, tx_state));
     BOOST_CHECK_EQUAL(tx_state.GetRejectReason(), "blsct-fee-below-min");
+}
+
+
+// CTxOut::IsFee() (and therefore Consensus::CheckTxInputs fee accounting,
+// mempool fee/priority/RBF logic and GetBLSCTFee()) must agree with the
+// consensus burn rule in VerifyTx: a PayFee predicate only counts on the
+// unspendable OP_RETURN burn output. A spendable output carrying a PayFee
+// predicate is not a fee: its value stays spendable, so counting it would let
+// a tx feign a fee it never burns.
+BOOST_FIXTURE_TEST_CASE(fee_output_definition_matches_consensus_test, TestingSetup)
+{
+    // Spendable script with a PayFee predicate: not a fee output.
+    CTxOut spendable_payfee;
+    spendable_payfee.nValue = 1000;
+    spendable_payfee.scriptPubKey = CScript() << OP_TRUE;
+    const auto fee_key = blsct::PrivateKey(MclScalar::Rand());
+    spendable_payfee.predicate = blsct::PayFeePredicate(fee_key.GetPublicKey()).GetVch();
+    BOOST_CHECK(!spendable_payfee.IsFee());
+
+    // Genuine burn output: OP_RETURN + PayFee predicate.
+    CTxOut burn_payfee;
+    burn_payfee.nValue = 1000;
+    burn_payfee.scriptPubKey = CScript(OP_RETURN);
+    burn_payfee.predicate = blsct::PayFeePredicate(fee_key.GetPublicKey()).GetVch();
+    BOOST_CHECK(burn_payfee.IsFee());
+
+    // Bare OP_RETURN without the predicate: not a fee output.
+    CTxOut bare_burn;
+    bare_burn.nValue = 1000;
+    bare_burn.scriptPubKey = CScript(OP_RETURN);
+    BOOST_CHECK(!bare_burn.IsFee());
+
+    // GetBLSCTFee counts only the genuine burn output.
+    CMutableTransaction mtx;
+    mtx.nVersion |= CTransaction::BLSCT_MARKER;
+    mtx.vout.push_back(spendable_payfee);
+    mtx.vout.push_back(burn_payfee);
+    mtx.vout.push_back(bare_burn);
+    BOOST_CHECK_EQUAL(CTransaction(mtx).GetBLSCTFee(), 1000);
+}
+
+// A mempool transaction adding a staked commitment that a connected block just
+// staked can never be mined (bad-txns-duplicate-staked-commitment). Until it
+// is evicted, block aggregation folds it into every template and the staker
+// cannot produce a single valid block -- the failure mode that halted mainnet.
+// removeForBlock must evict it the way it evicts input-spend conflicts.
+BOOST_FIXTURE_TEST_CASE(mempool_evicts_duplicate_staked_commitment, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    const blsct::DoublePublicKey dest(MclG1Point::Rand(), MclG1Point::Rand());
+
+    // One staked-commitment output, reused in the "block" tx and the mempool
+    // tx so both add the identical commitment point.
+    auto staked = blsct::CreateOutput(dest, 1000 * COIN, "stake", TokenId(), MclScalar(uint256(uint64_t{0xbeef})), blsct::CreateTransactionType::STAKED_COMMITMENT, 1000 * COIN);
+    BOOST_REQUIRE(staked.out.IsStakedCommitment());
+
+    // A different commitment for the control tx that must survive.
+    auto other = blsct::CreateOutput(dest, 500 * COIN, "stake2", TokenId(), MclScalar(uint256(uint64_t{0xcafe})), blsct::CreateTransactionType::STAKED_COMMITMENT, 500 * COIN);
+    BOOST_REQUIRE(other.out.IsStakedCommitment());
+    BOOST_REQUIRE(!(other.out.blsctData.rangeProof.Vs[0] == staked.out.blsctData.rangeProof.Vs[0]));
+
+    auto make_tx = [](const CTxOut& out, uint64_t salt) {
+        CMutableTransaction mtx;
+        mtx.nVersion = CTransaction::BLSCT_MARKER;
+        mtx.vin.resize(1);
+        mtx.vin[0].prevout = COutPoint(Txid::FromUint256(uint256(salt)));
+        mtx.vout.push_back(out);
+        return mtx;
+    };
+
+    const CMutableTransaction block_tx = make_tx(staked.out, 1);
+    const CMutableTransaction poisoned_tx = make_tx(staked.out, 2);
+    const CMutableTransaction control_tx = make_tx(other.out, 3);
+
+    CTxMemPool& pool = *Assert(m_node.mempool);
+    TestMemPoolEntryHelper entry;
+    {
+        LOCK2(cs_main, pool.cs);
+        pool.addUnchecked(entry.Fee(1000).FromTx(poisoned_tx));
+        pool.addUnchecked(entry.Fee(1000).FromTx(control_tx));
+        BOOST_REQUIRE_EQUAL(pool.size(), 2U);
+
+        // Connect a block staking the same commitment as poisoned_tx.
+        pool.removeForBlock({MakeTransactionRef(block_tx)}, 1);
+
+        BOOST_CHECK(!pool.exists(GenTxid::Txid(poisoned_tx.GetHash())));
+        BOOST_CHECK(pool.exists(GenTxid::Txid(control_tx.GetHash())));
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

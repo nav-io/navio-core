@@ -186,7 +186,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
 }
 
 
-std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct::SubAddress& destination, CAmount nReward, const std::vector<CMutableTransaction>& txns, const bool& fPos)
+std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct::SubAddress& destination, CAmount nReward, const std::vector<CMutableTransaction>& txns, const bool& fPos, const std::optional<std::pair<blsct::SubAddress, uint32_t>>& feeSplit)
 {
     const auto time_start{SteadyClock::now()};
 
@@ -267,6 +267,53 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
 
         nFees += txFees;
         pblock->vtx.push_back(MakeTransactionRef(tx));
+        // Keep the per-transaction template vectors in lockstep with vtx:
+        // getblocktemplate indexes them by the transaction's position in the
+        // block, so a vtx entry without them is an out-of-range read.
+        pblocktemplate->vTxFees.push_back(txFees);
+        pblocktemplate->vTxSigOpsCost.push_back(WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx.back()));
+    }
+
+    // Drop any selected transaction whose staked-commitment output collides
+    // with the chain's commitment set or with another selected transaction.
+    // Such a transaction makes the whole aggregated block invalid
+    // (bad-txns-duplicate-staked-commitment), and one poisoned entry must
+    // degrade the template, not halt block production entirely: this is
+    // exactly what stalled mainnet when a commitment was staked on-chain
+    // while an older transaction re-adding it was still in every mempool.
+    {
+        const auto existing_staked = m_chainstate.CoinsTip().GetStakedCommitments();
+        std::set<std::vector<unsigned char>> selected_points;
+        for (size_t i = 1; i < pblock->vtx.size();) {
+            bool drop = false;
+            std::vector<std::vector<unsigned char>> tx_points;
+            for (const auto& out : pblock->vtx[i]->vout) {
+                if (!out.IsStakedCommitment()) continue;
+                const MclG1Point& point = out.blsctData.rangeProof.Vs[0];
+                if (existing_staked.Exists(point) || selected_points.contains(point.GetVch())) {
+                    drop = true;
+                    break;
+                }
+                tx_points.push_back(point.GetVch());
+            }
+            if (drop) {
+                LogPrintf("%s: excluding tx %s from block template: duplicate staked commitment\n", __func__, pblock->vtx[i]->GetHash().ToString());
+                nFees -= pblocktemplate->vTxFees[i];
+                if (nBlockTx > 0) --nBlockTx;
+                // Clamped: entries from the txns parameter never incremented
+                // these counters, so blind subtraction could underflow.
+                const auto tx_weight = static_cast<uint64_t>(GetTransactionWeight(*pblock->vtx[i]));
+                nBlockWeight -= std::min<uint64_t>(nBlockWeight, tx_weight);
+                const auto tx_sigops = static_cast<uint64_t>(pblocktemplate->vTxSigOpsCost[i]);
+                nBlockSigOpsCost -= std::min<uint64_t>(nBlockSigOpsCost, tx_sigops);
+                pblock->vtx.erase(pblock->vtx.begin() + i);
+                pblocktemplate->vTxFees.erase(pblocktemplate->vTxFees.begin() + i);
+                pblocktemplate->vTxSigOpsCost.erase(pblocktemplate->vTxSigOpsCost.begin() + i);
+            } else {
+                selected_points.insert(tx_points.begin(), tx_points.end());
+                ++i;
+            }
+        }
     }
 
     const auto time_1{SteadyClock::now()};
@@ -279,6 +326,17 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
 
     std::vector<blsct::Signature> txSigs;
 
+    // Optional operator-fee share of the reward, paid to a second coinbase
+    // output. Consensus only binds the coinbase's total amount, so the split
+    // is builder policy.
+    CAmount feeAmount = 0;
+    if (feeSplit.has_value() && nReward > 0) {
+        const CAmount bps = std::min<uint32_t>(feeSplit->second, 10000);
+        // floor(nReward * bps / 10000) without the 64-bit overflow of the
+        // naive product (and without __int128, absent on 32-bit targets).
+        feeAmount = (nReward / 10000) * bps + (nReward % 10000) * bps / 10000;
+    }
+
     // Always build a full BLSCT coinbase output (range proof + keys), even for a
     // zero reward (heights 2..nLastPOWHeight under fOnlyFirstPoWBlockHasReward).
     // fAllowZeroValueRangeProof stops CreateOutput() from shortcutting a 0 amount
@@ -289,21 +347,31 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     // the verifier applies at this block's height, or the block fails its own
     // TestBlockValidity range-proof check at/above the activation height.
     const bool reward_transcript_v2 = nHeight >= chainparams.GetConsensus().nBLSCTProofV2Height;
-    auto out = blsct::CreateOutput(destination.GetKeys(), nReward, "Reward", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true, reward_transcript_v2);
+    auto out = blsct::CreateOutput(destination.GetKeys(), nReward - feeAmount, "Reward", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true, reward_transcript_v2);
 
     txSigs.push_back(blsct::PrivateKey(out.blindingKey).Sign(out.out.GetHash()));
-    txSigs.push_back(blsct::PrivateKey(out.gamma.Negate()).SignBalance());
+    Scalar gammaAcc = out.gamma;
 
     coinbaseTx.nVersion = CTransaction::BLSCT_MARKER;
     // Match the reward output's transcript: mark the coinbase v2 at/above the
-    // activation height so it passes the flag-enforcement check.
+    // activation height so it passes the flag-enforcement check. (The aggregate
+    // signature is built later, after the optional operator-fee output.)
     if (reward_transcript_v2)
         coinbaseTx.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
-    coinbaseTx.txSig = blsct::Signature::Aggregate(txSigs);
     coinbaseTx.vin.resize(1);
     coinbaseTx.vin[0].prevout.SetNull();
     coinbaseTx.vout.resize(1);
     coinbaseTx.vout[0] = out.out;
+
+    if (feeAmount > 0) {
+        auto feeOut = blsct::CreateOutput(feeSplit->first.GetKeys(), feeAmount, "Operator Fee", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true);
+        txSigs.push_back(blsct::PrivateKey(feeOut.blindingKey).Sign(feeOut.out.GetHash()));
+        gammaAcc = gammaAcc + feeOut.gamma;
+        coinbaseTx.vout.push_back(feeOut.out);
+    }
+
+    txSigs.push_back(blsct::PrivateKey(gammaAcc.Negate()).SignBalance());
+    coinbaseTx.txSig = blsct::Signature::Aggregate(txSigs);
     coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
     pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
     // Preserve the original txid when there is only a single non-coinbase tx.
@@ -313,6 +381,19 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
         auto aggregatedTx = blsct::AggregateTransactions(vToAggregate);
         pblock->vtx.resize(1);
         pblock->vtx.push_back(aggregatedTx);
+        // The merged transactions no longer exist in the block, so their
+        // per-transaction fee / sigop entries have to collapse onto the single
+        // aggregate as well. Left alone, getblocktemplate would index these
+        // vectors by block position and report the first merged transaction's
+        // figures as the aggregate's.
+        CAmount aggregated_fees = 0;
+        for (size_t idx = 1; idx < pblocktemplate->vTxFees.size(); ++idx) {
+            aggregated_fees += pblocktemplate->vTxFees[idx];
+        }
+        pblocktemplate->vTxFees.resize(1);
+        pblocktemplate->vTxFees.push_back(aggregated_fees);
+        pblocktemplate->vTxSigOpsCost.resize(1);
+        pblocktemplate->vTxSigOpsCost.push_back(WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*aggregatedTx));
     }
     Assert(pblock->vtx.size() <= 2);
 

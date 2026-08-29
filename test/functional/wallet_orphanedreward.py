@@ -56,6 +56,7 @@ class OrphanedBlockRewardTest(BitcoinTestFramework):
         assert_equal(self.nodes[1].getbalances()["mine"], {
           "trusted": 10,
           'staked_commitment_balance': 0,
+          'delegated_staked_commitment_balance': 0,
           'pending_staked_commitment_balance': 0,
           "untrusted_pending": 0,
           "immature": 0,

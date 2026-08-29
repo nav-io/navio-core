@@ -120,8 +120,10 @@ if (name == nullptr) { \
     fputs("Failed to allocate memory\n", stderr); \
     return nullptr; \
 }
+// NOTE: only for functions returning BlsctRetVal*. Functions returning other
+// Blsct*RetVal types must construct their own error return on malloc failure.
 #define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
-    if (name == nullptr) err(BLSCT_MEM_ALLOC_FAILED);
+    if (name == nullptr) return err(BLSCT_MEM_ALLOC_FAILED);
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
@@ -165,16 +167,21 @@ inline const char* SerializeToHex(
     return StrToAllocCStr(hex_str);
 }
 
+// Deserializes a fixed-size object from hex into freshly malloc'd memory.
+// Returns nullptr on any failure (bad hex, wrong size, OOM). Callers MUST
+// null-check: a previous version returned a BlsctRetVal* error object as
+// void*, which callers then wrapped in succ(), reporting success with a
+// garbage/short-lived pointer.
 inline void* DeserializeFromHex(const char* hex, const size_t obj_size)
 {
     std::vector<uint8_t> vec;
     if (!TryParseHexWrap(hex, vec)) {
-        return err(BLSCT_FAILURE);
+        return nullptr;
     }
 
     // check if the size is correct
     if (vec.size() != obj_size) {
-        return err(BLSCT_BAD_SIZE);
+        return nullptr;
     }
 
     void* blsct_obj = malloc(obj_size);
@@ -381,6 +388,17 @@ void delete_tx_out_vec(void* vp_tx_out_vec);
 BlsctCTxRetVal* build_ctx(
     const void* void_tx_ins,
     const void* void_tx_outs);
+
+/* Like build_ctx, but pays the change output (if any is needed) to
+ * `change_addr`. build_ctx has no change destination; it builds successfully
+ * only when the inputs exactly cover the outputs plus fee, and fails
+ * (BLSCT_FAILURE) whenever a change output would be required. Callers that
+ * cannot pre-compute exact inputs MUST use build_ctx_with_change with a
+ * self-owned change address instead. */
+BlsctCTxRetVal* build_ctx_with_change(
+    const void* void_tx_ins,
+    const void* void_tx_outs,
+    const BlsctSubAddr* change_addr);
 // using void* instead of const void* to avoid const_cast
 const char* get_ctx_id(void* vp_ctx);
 const void* get_ctx_ins(void* vp_ctx);
@@ -406,11 +424,27 @@ size_t get_ctx_ins_size(const void* blsct_ctx_ins);
 const void* get_ctx_in_at(const void* vp_ctx_ins, size_t i);
 
 // ctx in
+//
+// Script getters come in two forms. The BlsctScript form is a fixed-size ABI
+// buffer of SCRIPT_SIZE bytes, zero-padded on the right; it returns nullptr
+// when the data does not fit (as well as on bad input or OOM). The *_hex form
+// has no size limit: it returns the complete data as a malloc'd hex string
+// (free with free_obj), and is the way to read anything larger than
+// SCRIPT_SIZE — e.g. a staked-commitment scriptPubKey — or to learn the size
+// the fixed buffer would have needed.
+//
+// get_ctx_in_script_witness{,_hex} do NOT return flat script bytes: the
+// witness stack has no flat in-memory layout, so both return its wire
+// serialization (CompactSize-prefixed stack elements). Any non-empty stack
+// exceeds SCRIPT_SIZE serialized, making the fixed-size form return nullptr;
+// use the hex form for real witness data.
 bool are_ctx_in_equal(const void* vp_a, const void* vp_b);
 const BlsctCTxId* get_ctx_in_prev_out_hash(const void* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in);
+const char* get_ctx_in_script_sig_hex(const void* vp_ctx_in);
 uint32_t get_ctx_in_sequence(const void* vp_ctx_in);
 const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in);
+const char* get_ctx_in_script_witness_hex(const void* vp_ctx_in);
 
 // ctx_outs
 bool are_ctx_outs_equal(const void* vp_a, const void* vp_b);
@@ -421,6 +455,7 @@ const void* get_ctx_out_at(const void* vp_ctx_outs, size_t i);
 bool are_ctx_out_equal(const void* vp_a, const void* vp_b);
 uint64_t get_ctx_out_value(const void* vp_ctx_out);
 const BlsctScript* get_ctx_out_script_pub_key(const void* vp_ctx_out);
+const char* get_ctx_out_script_pub_key_hex(const void* vp_ctx_out);
 const BlsctTokenId* get_ctx_out_token_id(const void* vp_ctx_out);
 BlsctRetVal* get_ctx_out_vector_predicate(const void* vp_ctx_out);
 

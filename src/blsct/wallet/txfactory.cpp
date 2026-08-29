@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/tokens/predicate_parser.h>
+#include <blsct/wallet/helpers.h>
 #include <blsct/wallet/txfactory.h>
 #include <chainparams.h>
 #include <limits>
@@ -31,7 +32,7 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
 
     try {
         blsct::PrivateKey spending_key;
-        if (!km->GetSpendingKeyForOutputWithCache(coin.out, spending_key)) {
+        if (!km->GetSpendingKeyForOutput(coin.out, spending_key)) {
             return false;
         }
         vInputs[coin.out.tokenId].emplace_back(CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amounts[0].amount, recoveredInfo.amounts[0].gamma, spending_key, stakedCommitment);
@@ -83,7 +84,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 
     try {
         blsct::PrivateKey spending_key;
-        if (!km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+        if (!km->GetSpendingKeyForOutput(out, spending_key)) {
             return false;
         }
         vInputs[out.tokenId]
@@ -101,7 +102,7 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
     return true;
 }
 
-std::optional<CMutableTransaction>
+std::optional<BuiltTransaction>
 TxFactory::BuildTx()
 {
     return TxFactoryBase::BuildTx(
@@ -112,7 +113,7 @@ TxFactory::BuildTx()
         Params().GetConsensus().nBLSCTDefaultFee);
 }
 
-std::optional<CMutableTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)
+std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)
 {
     LOCK(wallet->cs_wallet);
 
@@ -191,12 +192,31 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
         }
         auto value = (out.HasBLSCTRangeProof() || wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) ? recoveredInfo.amount : out.nValue;
 
+        // Identify which delegation (if any) a staked commitment belongs to
+        // by recovering the owner section of its delegation payload with the
+        // output's nonce. Consolidation groups on this id. A payload we
+        // cannot recover gets a unique id so it is never folded into another
+        // stake (which would silently drop or change its delegation).
+        std::string delegationId;
+        if (isStakedCommitment && out.predicate.size() > 0) {
+            try {
+                const auto parsed = blsct::ParsePredicate(out.predicate);
+                if (parsed.IsDataPredicate() && delegation::IsDelegationData(parsed.GetData())) {
+                    const auto nonce = CalculateNonce(out.blsctData.blindingKey, blsct_km->GetPrivateViewKey().GetScalar());
+                    const auto request = delegation::RecoverOwnerInfo(parsed.GetData(), nonce);
+                    delegationId = request.has_value() ? request->GetId() : "unknown:" + output.outpoint.hash.GetHex();
+                }
+            } catch (const std::exception&) {
+                delegationId = "unknown:" + output.outpoint.hash.GetHex();
+            }
+        }
+
         try {
             blsct::PrivateKey spending_key;
-            if (!blsct_km->GetSpendingKeyForOutputWithCache(out, spending_key)) {
+            if (!blsct_km->GetSpendingKeyForOutput(out, spending_key)) {
                 continue;
             }
-            gathered.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment});
+            gathered.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment, delegationId});
         } catch (const std::exception& e) {
             LogPrintf("Error adding input: %s\n", e.what());
             continue;
@@ -281,7 +301,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     }
 }
 
-std::optional<CMutableTransaction> TxFactory::CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee)
+std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee)
 {
     AssertLockHeld(wallet->cs_wallet);
 

@@ -15,41 +15,14 @@
 namespace blsct {
 bool KeyMan::IsHDEnabled() const
 {
-    return !m_hd_chain.seed_id.IsNull();
+    LOCK(cs_KeyStore);
+    return HasHDSeed();
 }
 
 bool KeyMan::CanGenerateKeys() const
 {
     // A wallet can generate keys if it has an HD seed (IsHDEnabled)
     return IsHDEnabled();
-}
-
-bool KeyMan::AddKeyOutKeyInner(const PrivateKey& key, const uint256& outId)
-{
-    // Check if encryption keys exist first (doesn't require lock)
-    if (!m_storage.HasEncryptionKeys()) {
-        LOCK(cs_KeyStore);
-        return KeyRing::AddKeyOutKey(key, outId);
-    }
-
-    // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
-    // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
-    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
-    if (m_storage.IsLocked()) {
-        return false;
-    }
-
-    std::vector<unsigned char> vchCryptedSecret;
-    auto keyVch = key.GetScalar().GetVch();
-    wallet::CKeyingMaterial vchSecret(keyVch.begin(), keyVch.end());
-    if (!wallet::EncryptSecret(m_storage.GetEncryptionKey(), vchSecret, outId, vchCryptedSecret)) {
-        return false;
-    }
-
-    if (!AddCryptedOutKey(outId, key.GetPublicKey(), vchCryptedSecret)) {
-        return false;
-    }
-    return true;
 }
 
 bool KeyMan::AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey)
@@ -85,13 +58,6 @@ bool KeyMan::AddKeyPubKey(const PrivateKey& secret, const PublicKey& pubkey)
     LOCK(cs_KeyStore);
     wallet::WalletBatch batch(m_storage.GetDatabase());
     return KeyMan::AddKeyPubKeyWithDB(batch, secret, pubkey);
-}
-
-bool KeyMan::AddKeyOutKey(const PrivateKey& secret, const uint256& outId)
-{
-    LOCK(cs_KeyStore);
-    wallet::WalletBatch batch(m_storage.GetDatabase());
-    return KeyMan::AddKeyOutKeyWithDB(batch, secret, outId);
 }
 
 bool KeyMan::AddViewKey(const PrivateKey& secret, const PublicKey& pubkey)
@@ -145,27 +111,6 @@ bool KeyMan::AddKeyPubKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& se
     return true;
 }
 
-bool KeyMan::AddKeyOutKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& secret, const uint256& outId)
-{
-    AssertLockHeld(cs_KeyStore);
-
-    bool needsDB = !encrypted_batch;
-    if (needsDB) {
-        encrypted_batch = &batch;
-    }
-    if (!AddKeyOutKeyInner(secret, outId)) {
-        if (needsDB) encrypted_batch = nullptr;
-        return false;
-    }
-    if (needsDB) encrypted_batch = nullptr;
-
-    if (!m_storage.HasEncryptionKeys()) {
-        return batch.WriteOutKey(outId,
-                                 secret);
-    }
-    return true;
-}
-
 bool KeyMan::AddSubAddressPoolWithDB(wallet::WalletBatch& batch, const SubAddressIdentifier& id, const SubAddress& subAddress, const bool& fLock)
 {
     LOCK(cs_KeyStore);
@@ -194,31 +139,12 @@ bool KeyMan::LoadCryptedKey(const PublicKey& vchPubKey, const std::vector<unsign
     return AddCryptedKeyInner(vchPubKey, vchCryptedSecret);
 }
 
-bool KeyMan::LoadCryptedOutKey(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, bool checksum_valid)
-{
-    // Set fDecryptionThoroughlyChecked to false when the checksum is invalid
-    if (!checksum_valid) {
-        fDecryptionThoroughlyChecked = false;
-    }
-
-    return AddCryptedOutKeyInner(outId, vchPubKey, vchCryptedSecret);
-}
-
 bool KeyMan::AddCryptedKeyInner(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret)
 {
     LOCK(cs_KeyStore);
     assert(mapKeys.empty());
 
     mapCryptedKeys[vchPubKey.GetID()] = make_pair(vchPubKey, vchCryptedSecret);
-    return true;
-}
-
-bool KeyMan::AddCryptedOutKeyInner(const uint256& outId, const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret)
-{
-    LOCK(cs_KeyStore);
-    assert(mapOutKeys.empty());
-
-    mapCryptedOutKeys[outId] = make_pair(vchPubKey, vchCryptedSecret);
     return true;
 }
 
@@ -235,23 +161,6 @@ bool KeyMan::AddCryptedKey(const PublicKey& vchPubKey,
                                                     mapKeyMetadata[vchPubKey.GetID()]);
         else
             return wallet::WalletBatch(m_storage.GetDatabase()).WriteCryptedKey(vchPubKey, vchCryptedSecret, mapKeyMetadata[vchPubKey.GetID()]);
-    }
-}
-
-bool KeyMan::AddCryptedOutKey(const uint256& outId,
-                              const PublicKey& vchPubKey,
-                              const std::vector<unsigned char>& vchCryptedSecret)
-{
-    if (!AddCryptedOutKeyInner(outId, vchPubKey, vchCryptedSecret))
-        return false;
-    {
-        LOCK(cs_KeyStore);
-        if (encrypted_batch)
-            return encrypted_batch->WriteCryptedOutKey(outId,
-                                                       vchPubKey,
-                                                       vchCryptedSecret);
-        else
-            return wallet::WalletBatch(m_storage.GetDatabase()).WriteCryptedOutKey(outId, vchPubKey, vchCryptedSecret);
     }
 }
 
@@ -291,7 +200,7 @@ void KeyMan::AddInactiveHDChain(const blsct::HDChain& chain)
 }
 
 
-void KeyMan::SetHDSeed(const PrivateKey& key)
+void KeyMan::SetHDSeed(const PrivateKey& key, const std::optional<int64_t>& creation_time)
 {
     LOCK(cs_KeyStore);
     // store the keyid (hash160) together with
@@ -314,7 +223,13 @@ void KeyMan::SetHDSeed(const PrivateKey& key)
     newHdChain.token_id = tokenKey.GetPublicKey().GetID();
     newHdChain.blinding_id = blindingKey.GetPublicKey().GetID();
 
-    int64_t nCreationTime = GetTime();
+    int64_t nCreationTime = creation_time.value_or(GetTime());
+    if (creation_time.has_value()) {
+        // The wallet's birthday is genuinely known (fresh creation or a
+        // birthday-mnemonic restore): record it in-session too, so the birth
+        // time is right without waiting for the metadata reload at restart.
+        nTimeFirstKey = *creation_time;
+    }
 
     wallet::CKeyMetadata spendMetadata(nCreationTime);
     wallet::CKeyMetadata viewMetadata(nCreationTime);
@@ -367,7 +282,7 @@ void KeyMan::SetHDSeed(const PrivateKey& key)
     wallet::WalletBatch batch(m_storage.GetDatabase());
 }
 
-bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase)
+bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time)
 {
     auto masterKey = [&] {
         if (mnemonic_passphrase.empty()) {
@@ -382,10 +297,15 @@ bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy,
         memory_cleanse(seed.data(), seed.size());
         return key;
     }();
-    SetHDSeed(masterKey);
+    SetHDSeed(masterKey, creation_time);
     LoadMnemonicEntropy(entropy);
     wallet::WalletBatch batch(m_storage.GetDatabase());
     if (m_storage.HasEncryptionKeys()) {
+        // GetEncryptionKey() reads wallet state guarded by cs_wallet and the IV
+        // comes from m_hd_chain, so both locks are needed here. Acquire
+        // cs_wallet first, then cs_KeyStore, to maintain consistent lock
+        // ordering.
+        LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
         wallet::CKeyingMaterial plaintext(entropy.begin(), entropy.end());
         std::vector<unsigned char> crypted_entropy;
         uint256 iv = Hash(m_hd_chain.seed_id);
@@ -400,18 +320,18 @@ bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy,
     return true;
 }
 
-bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force, const std::string& mnemonic_passphrase)
+bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time)
 {
     if ((CanGenerateKeys() && !force) || m_storage.IsLocked()) {
         return false;
     }
 
     if (seed.size() == 32 && type == IMPORT_MNEMONIC) {
-        if (!SetupMnemonicFromEntropy(seed, mnemonic_passphrase)) return false;
+        if (!SetupMnemonicFromEntropy(seed, mnemonic_passphrase, creation_time)) return false;
     } else if (seed.size() == 32 && type == IMPORT_MASTER_KEY) {
         MclScalar scalarSeed;
         scalarSeed.SetVch(seed);
-        SetHDSeed(scalarSeed);
+        SetHDSeed(scalarSeed, creation_time);
     } else if (seed.size() == 80 && type == IMPORT_VIEW_KEY) {
         std::vector<unsigned char> viewVch(seed.begin(), seed.begin() + 32);
         std::vector<unsigned char> spendingVch(seed.begin() + 32, seed.end());
@@ -430,7 +350,7 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
     } else if (seed.empty()) {
         std::vector<unsigned char> entropy(32);
         GetStrongRandBytes(entropy);
-        if (!SetupMnemonicFromEntropy(entropy, mnemonic_passphrase)) return false;
+        if (!SetupMnemonicFromEntropy(entropy, mnemonic_passphrase, creation_time)) return false;
     } else {
         return false;
     }
@@ -507,11 +427,6 @@ bool KeyMan::LoadKey(const PrivateKey& key, const PublicKey& pubkey)
     return AddKeyPubKeyInner(key, pubkey);
 }
 
-bool KeyMan::LoadOutKey(const PrivateKey& key, const uint256& outId)
-{
-    return AddKeyOutKeyInner(key, outId);
-}
-
 bool KeyMan::LoadViewKey(const PrivateKey& key, const PublicKey& pubkey)
 {
     return KeyRing::AddViewKey(key, pubkey);
@@ -568,27 +483,6 @@ bool KeyMan::GetKey(const CKeyID& id, PrivateKey& keyOut) const
         const PublicKey& vchPubKey = (*mi).second.first;
         const std::vector<unsigned char>& vchCryptedSecret = (*mi).second.second;
         return wallet::DecryptKey(m_storage.GetEncryptionKey(), vchCryptedSecret, vchPubKey, keyOut);
-    }
-    return false;
-}
-
-bool KeyMan::GetOutKey(const uint256& id, PrivateKey& keyOut) const
-{
-    // Check if encryption keys exist first (doesn't require lock)
-    if (!m_storage.HasEncryptionKeys()) {
-        LOCK(cs_KeyStore);
-        return KeyRing::GetOutKey(id, keyOut);
-    }
-
-    // If encryption keys exist, we need cs_wallet to call GetEncryptionKey()
-    // Acquire cs_wallet first, then cs_KeyStore to maintain consistent lock ordering
-    LOCK2(m_storage.GetWalletMutex(), cs_KeyStore);
-    CryptedOutKeyMap::const_iterator mi = mapCryptedOutKeys.find(id);
-    if (mi != mapCryptedOutKeys.end()) {
-        const uint256& outId = (*mi).first;
-        const PublicKey& vchPubKey = (*mi).second.first;
-        const std::vector<unsigned char>& vchCryptedSecret = (*mi).second.second;
-        return wallet::DecryptKey(m_storage.GetEncryptionKey(), vchCryptedSecret, outId, vchPubKey, keyOut);
     }
     return false;
 }
@@ -677,10 +571,15 @@ CKeyID KeyMan::GetHashId(const blsct::PublicKey& blindingKey, const blsct::Publi
 
 blsct::PrivateKey KeyMan::GetMasterSeedKey() const
 {
-    if (!IsHDEnabled())
+    // One acquisition for both the HD check and the id: HasHDSeed() reads the
+    // same field, so checking it separately let a re-seed in between hand back
+    // an id belonging to a different chain than the one that was checked.
+    // Released before GetKey(), which takes cs_wallet -- cs_KeyStore must never
+    // be held while doing so.
+    const auto [hd_enabled, seedId] = WITH_LOCK(cs_KeyStore,
+        return std::make_pair(HasHDSeed(), m_hd_chain.seed_id));
+    if (!hd_enabled)
         throw std::runtime_error(strprintf("%s: the wallet has no HD enabled", __func__));
-
-    auto seedId = m_hd_chain.seed_id;
 
     PrivateKey ret;
 
@@ -692,10 +591,12 @@ blsct::PrivateKey KeyMan::GetMasterSeedKey() const
 
 blsct::PrivateKey KeyMan::GetMasterTokenKey() const
 {
-    if (!IsHDEnabled())
+    // See GetMasterSeedKey(): one acquisition, and the lock is dropped before
+    // GetKey().
+    const auto [hd_enabled, tokenKeyId] = WITH_LOCK(cs_KeyStore,
+        return std::make_pair(HasHDSeed(), m_hd_chain.token_id));
+    if (!hd_enabled)
         throw std::runtime_error(strprintf("%s: the wallet has no HD enabled", __func__));
-
-    auto tokenKeyId = m_hd_chain.token_id;
 
     PrivateKey ret;
 
@@ -723,7 +624,8 @@ blsct::PrivateKey KeyMan::GetSpendingKey() const
     if (!fSpendKeyDefined)
         throw std::runtime_error(strprintf("%s: the wallet has no spend key available", __func__));
 
-    auto spendingKeyId = m_hd_chain.spend_id;
+    // See GetMasterSeedKey(): cs_KeyStore is dropped before calling GetKey().
+    const CKeyID spendingKeyId = WITH_LOCK(cs_KeyStore, return m_hd_chain.spend_id);
 
     PrivateKey ret;
 
@@ -764,48 +666,6 @@ bool KeyMan::GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifi
     auto sk = GetSpendingKey();
 
     key = CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
-
-    return true;
-}
-
-bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, blsct::PrivateKey& key)
-{
-    auto hashId = GetHashId(out);
-
-    return GetSpendingKeyForOutput(out, hashId, key);
-}
-
-bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const CKeyID& hashId, blsct::PrivateKey& key)
-{
-    SubAddressIdentifier id;
-
-    if (!GetSubAddressId(hashId, id))
-        return false;
-
-    return GetSpendingKeyForOutput(out, id, key);
-}
-
-bool KeyMan::GetSpendingKeyForOutputWithCache(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key)
-{
-    if (!fViewKeyDefined || !viewKey.IsValid())
-        throw std::runtime_error(strprintf("%s: the wallet has no view key available", __func__));
-
-    // The cache id below is derived from the spend key scalar, so even a
-    // cache hit needs the decrypted spend key. Locked encrypted wallet:
-    // report unavailable rather than throw (see GetSpendingKeyForOutput).
-    if (m_storage.HasEncryptionKeys() && m_storage.IsLocked())
-        return false;
-
-    auto sk = GetSpendingKey();
-
-    auto outId = (HashWriter() << out.blsctData.blindingKey << viewKey.GetScalar() << sk.GetScalar() << id.account << id.address).GetHash();
-
-    if (GetOutKey(outId, key))
-        return true;
-
-    key = CalculatePrivateSpendingKey(out.blsctData.blindingKey, viewKey.GetScalar(), sk.GetScalar(), id.account, id.address);
-
-    AddKeyOutKey(key, outId);
 
     return true;
 }
@@ -930,6 +790,11 @@ bool KeyMan::IsMine(const CScript& script) const
 
 wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
 {
+    return IsMineMode(txout, GetExpectedNonce(txout));
+}
+
+wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<MclG1Point>& expectedNonce)
+{
     const auto spendable_kind = [&]() {
         return txout.IsStakedCommitment() ? wallet::ISMINE_STAKED_COMMITMENT_BLSCT
                                           : wallet::ISMINE_SPENDABLE_BLSCT;
@@ -943,7 +808,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
         // own the resulting subaddress, the output is fully spendable.
         blsct::PublicKey extractedSpendingKey;
         if (ExtractSpendingKeyFromScript(txout.scriptPubKey, extractedSpendingKey)) {
-            if (IsMine(txout.blsctData.blindingKey, extractedSpendingKey, txout.blsctData.viewTag)) {
+            if (IsMine(extractedSpendingKey, txout.blsctData.viewTag, expectedNonce)) {
                 return spendable_kind();
             }
         }
@@ -967,7 +832,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
         if (txout.scriptPubKey.size() != 50 &&
             ExtractAllSpendingKeysFromScript(txout.scriptPubKey, branchKeys)) {
             for (const auto& branchKey : branchKeys) {
-                if (IsMine(txout.blsctData.blindingKey, branchKey, txout.blsctData.viewTag)) {
+                if (IsMine(branchKey, txout.blsctData.viewTag, expectedNonce)) {
                     return wallet::ISMINE_WATCH_ONLY;
                 }
             }
@@ -975,7 +840,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
         return wallet::ISMINE_NO;
     }
 
-    if (IsMine(txout.blsctData.blindingKey, txout.blsctData.spendingKey, txout.blsctData.viewTag)) {
+    if (IsMine(txout.blsctData.spendingKey, txout.blsctData.viewTag, expectedNonce)) {
         return spendable_kind();
     }
     // Real BLSCT output that we don't own as a subaddress, but whose
@@ -986,14 +851,15 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
     return wallet::ISMINE_NO;
 }
 
-bool KeyMan::IsMine(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey, const uint16_t& viewTag)
+bool KeyMan::IsMine(const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<MclG1Point>& expectedNonce)
 {
-    if (!fViewKeyDefined || !viewKey.IsValid())
-        return false;
+    if (!expectedNonce) return false;
+    if (viewTag != static_cast<uint16_t>(ViewTagFromNonce(*expectedNonce))) return false;
 
-    if (viewTag != CalculateViewTag(blindingKey.GetG1Point(), viewKey.GetScalar())) return false;
-
-    auto hashId = GetHashId(blindingKey, spendingKey);
+    // The hash id comes from the cached nonce: no view key access, no second
+    // scalar multiplication, and no GetHashId throw path for callers without
+    // a view key.
+    const CKeyID hashId = CalculateHashId(*expectedNonce, spendingKey.GetG1Point());
 
     {
         LOCK(cs_KeyStore);
@@ -1064,13 +930,13 @@ bool KeyMan::HaveSubAddressStr(const SubAddress& subAddress) const
 
 SubAddress KeyMan::GenerateNewSubAddress(const int64_t& account, SubAddressIdentifier& id)
 {
-    if (!m_hd_chain.nSubAddressCounter.contains(account))
-        m_hd_chain.nSubAddressCounter.insert(std::make_pair(account, 0));
-
     SubAddress subAddress{DoublePublicKey{}};
 
     {
         LOCK(cs_KeyStore);
+        if (!m_hd_chain.nSubAddressCounter.contains(account))
+            m_hd_chain.nSubAddressCounter.insert(std::make_pair(account, 0));
+
         wallet::WalletBatch batch(m_storage.GetDatabase());
         do {
             id.account = account;
@@ -1151,7 +1017,15 @@ bool KeyMan::TopUpAccount(const int64_t& account, const unsigned int& size)
     } else {
         nTargetSize = m_keypool_size;
     }
-    int64_t target = std::max((int64_t)nTargetSize, int64_t{1});
+    // The negative accounts -- change (CHANGE_ACCOUNT) and staking
+    // (STAKING_ACCOUNT) -- are pinned to sub-address index 0 and never draw
+    // from the pool: GetNewDestination short-circuits ahead of
+    // ReserveSubAddressFromPool for them. A full-size pool there is therefore
+    // one derivation and one database record per entry that nothing can ever
+    // consume. One entry is all they need, and it still has to be generated:
+    // the counter starts at 0, so it is this call that creates index 0 on a
+    // fresh wallet.
+    int64_t target = account < 0 ? int64_t{1} : std::max((int64_t)nTargetSize, int64_t{1});
     int64_t missing = std::max(target - (int64_t)setSubAddressPool[account].size(), int64_t{0});
 
     SubAddressIdentifier id;
@@ -1226,7 +1100,7 @@ void KeyMan::ReturnSubAddress(const SubAddressIdentifier& id)
         setSubAddressReservePool[id.account].erase(id.address);
     }
     NotifyCanGetAddressesChanged();
-    WalletLogPrintf("KeyMan::ReturnSubAddress(): return %d/%d\n", id.account / id.address);
+    WalletLogPrintf("KeyMan::ReturnSubAddress(): return %d/%d\n", id.account, id.address);
 }
 
 bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAddressIdentifier& id)
@@ -1236,8 +1110,46 @@ bool KeyMan::GetSubAddressFromPool(const int64_t& account, CKeyID& result, SubAd
     int64_t nIndex = 0;
     SubAddressPool keypool;
 
+    // The negative accounts -- change (CHANGE_ACCOUNT) and staking
+    // (STAKING_ACCOUNT) -- are single-destination by design and stay on
+    // sub-address index 0. Reusing one index leaks nothing here because BLSCT
+    // outputs are stealth-derived: CreateOutput draws a fresh blinding key per
+    // output and derives the on-chain ephemeral/spending keys from it, so two
+    // payments to the same sub-address are unlinkable on chain. Keeping the set
+    // small also keeps wallet sync cheap, since every sub-address of every
+    // account has to be re-derived and matched against each output.
+    //
+    // They never advance through the pool, so never draw from it: reserving an
+    // index only to hand it straight back was pure churn, and routing them past
+    // the empty-pool fallback risked GenerateNewSubAddress overwriting `id`
+    // with the counter and breaking the pinned index. TopUpAccount is still
+    // called for its other side effects -- it registers the account in
+    // setSubAddressPool and keeps the lookahead fresh -- and it is what
+    // re-creates index 0 for a wallet whose pool for this account was never
+    // built (the counter starts at 0, so the first key generated is index 0).
+    if (account < 0) {
+        if (!m_storage.IsLocked()) TopUpAccount(account);
+        id = SubAddressIdentifier{account, 0};
+        result = GetSubAddress(id).GetKeys().GetID();
+        // Derivation always succeeds, but if the account was never topped up
+        // its index 0 is absent from mapSubAddresses, so an output paid to the
+        // destination we are about to hand out would not be recognised as ours
+        // until an unlock and rescan. Keep the pre-existing "keypool ran out"
+        // failure rather than returning a destination the wallet cannot see.
+        //
+        // Unconditional rather than gated on IsLocked(): unlocked, the
+        // TopUpAccount above has just registered index 0, so this is trivially
+        // true and costs one map lookup. Re-reading the lock state would
+        // instead take cs_wallet a second time from under cs_KeyStore, and the
+        // two reads can disagree if an unlock lands between them. It also means
+        // a top-up that silently failed to register the index fails the draw
+        // here instead of handing out an invisible destination.
+        if (!HaveSubAddress(result)) return false;
+        return true;
+    }
+
     ReserveSubAddressFromPool(account, nIndex, keypool);
-    id = SubAddressIdentifier{account, (account > -1 ? static_cast<uint64_t>(nIndex) : 0)};
+    id = SubAddressIdentifier{account, (nIndex > -1 ? static_cast<uint64_t>(nIndex) : 0)};
     if (nIndex <= -1) {
         if (m_storage.IsLocked()) return false;
         SubAddress subAddress = GenerateNewSubAddress(account, id);
@@ -1292,52 +1204,78 @@ util::Result<CTxDestination> KeyMan::GetNewDestination(const int64_t& account)
     return CTxDestination(GetSubAddress(id).GetKeys());
 }
 
+std::optional<MclG1Point> KeyMan::GetExpectedNonce(const CTxOut& txout) const
+{
+    try {
+        if (!fViewKeyDefined || !viewKey.IsValid()) return std::nullopt;
+        if (!txout.HasBLSCTKeys()) return std::nullopt;
+        if (txout.blsctData.blindingKey.IsZero()) return std::nullopt;
+        return CalculateNonce(txout.blsctData.blindingKey, viewKey.GetScalar());
+    } catch (const std::exception& e) {
+        // Callers run outside any handler (e.g. AddToWalletIfInvolvingMe);
+        // treat a malformed output as not-ours instead of letting the
+        // exception escape the scan.
+        WalletLogPrintf("%s: failed to derive nonce for output: %s\n", __func__, e.what());
+        return std::nullopt;
+    }
+}
+
 std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout)
+{
+    const auto nonce = GetExpectedNonce(txout);
+    if (!nonce) return std::nullopt;
+    return MarkUnusedSubAddress(txout, *nonce);
+}
+
+std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout, const MclG1Point& expectedNonce)
 {
     try {
         // Cheap prefilter: viewTag must match before we do any expensive work.
         // Without this, every non-wallet BLSCT output forces the
         // 3 × keypool × full subaddress derivation scan below, which dominates
-        // rescan cost (millions of BLS scalar multiplications per chain).
-        if (!fViewKeyDefined || !viewKey.IsValid()) return std::nullopt;
-        if (!txout.HasBLSCTKeys()) return std::nullopt;
-        if (txout.blsctData.blindingKey.IsZero()) return std::nullopt;
-        if (txout.blsctData.viewTag != CalculateViewTag(
-                txout.blsctData.blindingKey, viewKey.GetScalar())) {
+        // rescan cost (millions of BLS scalar multiplications per chain). The
+        // expensive part (the nonce, one G1 scalar mult) was already paid by
+        // the caller; deriving the tag from it is a hash.
+        if (txout.blsctData.viewTag != static_cast<uint16_t>(ViewTagFromNonce(expectedNonce))) {
             return std::nullopt;
         }
 
-        const CKeyID hash_id = GetHashId(txout);
+        const CKeyID hash_id = GetHashId(txout, expectedNonce);
         if (hash_id.IsNull()) return std::nullopt;
 
         std::optional<SubAddressIdentifier> matched_id;
         bool was_unused_pool_key = false;
         bool learned_beyond_lookahead = false;
 
-        {
-            LOCK(cs_KeyStore);
+        // Held across the whole computation below: the lookahead scan derives
+        // matched_id from m_hd_chain.nSubAddressCounter and setSubAddressPool,
+        // and the catch-up / pool-pruning steps that follow act on it. Dropping
+        // the lock in between would let another thread advance the counter or
+        // consume the pool entry under us. cs_KeyStore is recursive, so the
+        // GenerateNewSubAddress() and TopUpAccount() calls below can still take
+        // it themselves.
+        LOCK(cs_KeyStore);
 
-            const auto known_it = mapSubAddresses.find(hash_id);
-            if (known_it != mapSubAddresses.end()) {
-                matched_id = known_it->second;
-                if (const auto pool_it = setSubAddressPool.find(matched_id->account);
-                    pool_it != setSubAddressPool.end()) {
-                    was_unused_pool_key = pool_it->second.contains(matched_id->address);
+        const auto known_it = mapSubAddresses.find(hash_id);
+        if (known_it != mapSubAddresses.end()) {
+            matched_id = known_it->second;
+            if (const auto pool_it = setSubAddressPool.find(matched_id->account);
+                pool_it != setSubAddressPool.end()) {
+                was_unused_pool_key = pool_it->second.contains(matched_id->address);
+            }
+        } else {
+            const uint64_t lookahead = std::max<int64_t>(m_keypool_size, int64_t{1});
+            for (const int64_t account : {int64_t{0}, CHANGE_ACCOUNT, STAKING_ACCOUNT}) {
+                const uint64_t start = m_hd_chain.nSubAddressCounter.contains(account)
+                    ? m_hd_chain.nSubAddressCounter.at(account)
+                    : 0;
+                for (uint64_t index = start; index < start + lookahead; ++index) {
+                    if (GetSubAddress({account, index}).GetKeys().GetID() != hash_id) continue;
+                    matched_id = SubAddressIdentifier{account, index};
+                    learned_beyond_lookahead = true;
+                    break;
                 }
-            } else {
-                const uint64_t lookahead = std::max<int64_t>(m_keypool_size, int64_t{1});
-                for (const int64_t account : {int64_t{0}, CHANGE_ACCOUNT, STAKING_ACCOUNT}) {
-                    const uint64_t start = m_hd_chain.nSubAddressCounter.contains(account)
-                        ? m_hd_chain.nSubAddressCounter.at(account)
-                        : 0;
-                    for (uint64_t index = start; index < start + lookahead; ++index) {
-                        if (GetSubAddress({account, index}).GetKeys().GetID() != hash_id) continue;
-                        matched_id = SubAddressIdentifier{account, index};
-                        learned_beyond_lookahead = true;
-                        break;
-                    }
-                    if (matched_id) break;
-                }
+                if (matched_id) break;
             }
         }
 
@@ -1358,18 +1296,15 @@ std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxO
         }
 
         if (was_unused_pool_key) {
-            {
-                LOCK(cs_KeyStore);
-                wallet::WalletBatch batch(m_storage.GetDatabase());
-                auto& pool = setSubAddressPool[matched_id->account];
-                for (auto it = pool.begin(); it != pool.end() && *it <= matched_id->address;) {
-                    batch.EraseSubAddressPool({matched_id->account, *it});
-                    if (auto reserve_it = setSubAddressReservePool.find(matched_id->account);
-                        reserve_it != setSubAddressReservePool.end()) {
-                        reserve_it->second.erase(*it);
-                    }
-                    it = pool.erase(it);
+            wallet::WalletBatch batch(m_storage.GetDatabase());
+            auto& pool = setSubAddressPool[matched_id->account];
+            for (auto it = pool.begin(); it != pool.end() && *it <= matched_id->address;) {
+                batch.EraseSubAddressPool({matched_id->account, *it});
+                if (auto reserve_it = setSubAddressReservePool.find(matched_id->account);
+                    reserve_it != setSubAddressReservePool.end()) {
+                    reserve_it->second.erase(*it);
                 }
+                it = pool.erase(it);
             }
             WalletLogPrintf("%s: detected used BLSCT keypool entry %d/%d, topping up lookahead\n",
                             __func__,
@@ -1498,6 +1433,12 @@ bool KeyMan::AddWatchOnly(const CScript& script, const std::optional<blsct::Publ
     return true;
 }
 
+bool KeyMan::HaveWatchOnly() const
+{
+    LOCK(cs_KeyStore);
+    return !setWatchOnly.empty();
+}
+
 void KeyMan::LoadWatchOnly(const CScript& script)
 {
     LOCK(cs_KeyStore);
@@ -1518,5 +1459,16 @@ std::optional<blsct::PublicKey> KeyMan::GetWatchOnlyRecoveryNonce(const CScript&
         return std::nullopt;
     }
     return it->second;
+}
+} // namespace blsct
+
+namespace blsct {
+bool KeyMan::WriteWalletBirthday(int64_t birthday)
+{
+    if (birthday <= 0) return false;
+    wallet::WalletBatch batch(m_storage.GetDatabase());
+    if (!batch.WriteBLSCTBirthday(birthday)) return false;
+    m_wallet_birthday = birthday;
+    return true;
 }
 } // namespace blsct

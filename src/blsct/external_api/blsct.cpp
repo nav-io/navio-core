@@ -94,6 +94,7 @@ BlsctRetVal* err(
 
     p->result = result;
     p->value = nullptr;
+    p->value_size = 0;
     return p;
 }
 
@@ -361,6 +362,13 @@ void free_obj(void* x)
 
 void free_amounts_ret_val(BlsctAmountsRetVal* rv)
 {
+    if (rv == nullptr) return;
+    // Error paths of recover_amount leave rv->value null; only a successful
+    // call fills it with a heap-allocated result vector.
+    if (rv->value == nullptr) {
+        free(rv);
+        return;
+    }
     auto result_vec = static_cast<const std::vector<BlsctAmountRecoveryResult>*>(rv->value);
 
     for (auto res : *result_vec) {
@@ -379,6 +387,7 @@ BlsctRetVal* deserialize_raw_obj(const char* hex)
 {
     size_t ser_obj_size = std::strlen(hex) / 2;
     void* obj = DeserializeFromHex(hex, ser_obj_size);
+    if (obj == nullptr) return err(BLSCT_DESER_FAILED);
     return succ(obj, ser_obj_size);
 }
 
@@ -468,6 +477,9 @@ BlsctAmountsRetVal* recover_amount(
 ) {
     MALLOC_BYTES(BlsctAmountsRetVal, rv, sizeof(BlsctAmountsRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(rv);
+    // Initialise immediately: every error return below hands this struct to
+    // the caller, and free_amounts_ret_val dereferences ->value.
+    rv->value = nullptr;
     try {
         auto amt_recovery_req_vec =
             static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
@@ -534,7 +546,10 @@ BlsctAmountsRetVal* recover_amount(
 
         // the vector to return has the same size as the request vector
         auto result_vec = new (std::nothrow) std::vector<BlsctAmountRecoveryResult>;
-        RETURN_ERR_IF_MEM_ALLOC_FAILED(result_vec);
+        if (result_vec == nullptr) {
+            rv->result = BLSCT_MEM_ALLOC_FAILED;
+            return rv;
+        }
         result_vec->resize(amt_recovery_req_vec->size());
 
         // mark all the results as failed
@@ -627,6 +642,7 @@ bool get_amount_recovery_result_is_succ(
     RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, false);
 
     auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+    if (idx >= vec->size()) return false;
 
     return vec->at(idx).is_succ;
 }
@@ -638,6 +654,7 @@ uint64_t get_amount_recovery_result_amount(
     RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, -1);
 
     auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+    if (idx >= vec->size()) return 0;
 
     return vec->at(idx).amount;
 }
@@ -649,6 +666,7 @@ const char* get_amount_recovery_result_msg(
     RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, nullptr);
 
     auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+    if (idx >= vec->size()) return nullptr;
 
     return vec->at(idx).msg;
 }
@@ -660,6 +678,7 @@ const BlsctScalar* get_amount_recovery_result_gamma(
     RETURN_RET_VAL_IF_NULL(vp_amt_recovery_req_vec, nullptr);
 
     auto vec = static_cast<std::vector<BlsctAmountRecoveryResult>*>(vp_amt_recovery_req_vec);
+    if (idx >= vec->size()) return nullptr;
 
     return &vec->at(idx).gamma;
 }
@@ -701,18 +720,27 @@ void delete_tx_out_vec(void* vp_tx_out_vec)
     delete tx_out_vec;
 }
 
-BlsctCTxRetVal* build_ctx(
-    const void* void_tx_ins,
-    const void* void_tx_outs)
+namespace {
+// Shared implementation for build_ctx / build_ctx_with_change. Exceptions
+// from the C++ layer (oversized memo, too many inputs, invalid keys, OOM)
+// must never cross the extern "C" boundary — they would std::terminate the
+// host process — so everything runs inside the catch-all below.
+BlsctCTxRetVal* BuildCtxImpl(
+    const std::vector<BlsctTxIn>* tx_ins,
+    const std::vector<BlsctTxOut>* tx_outs,
+    const blsct::DoublePublicKey& change_dest)
 {
-    UNVOID(std::vector<BlsctTxIn>, tx_ins);
-    UNVOID(std::vector<BlsctTxOut>, tx_outs);
-
     blsct::TxFactoryBase psbt;
     MALLOC_BYTES(BlsctCTxRetVal, rv, sizeof(BlsctCTxRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(rv);
+    // Initialise all fields: every error return below hands rv to the caller.
+    rv->result = BLSCT_FAILURE;
+    rv->ctx = nullptr;
+    rv->in_amount_err_index = 0;
+    rv->out_amount_err_index = 0;
 
-    for (size_t i = 0; i < tx_ins->size(); ++i) {
+    try {
+        for (size_t i = 0; i < tx_ins->size(); ++i) {
         // unserialize tx_in fields and add to TxFactoryBase
         const BlsctTxIn& tx_in = tx_ins->at(i);
 
@@ -819,9 +847,17 @@ BlsctCTxRetVal* build_ctx(
         );
     }
 
-    // build ctx
-    blsct::DoublePublicKey change_amt_dest;
-    auto maybe_ctx = psbt.BuildTx(change_amt_dest);
+    // build ctx. If the selected inputs exceed outputs+fee, BuildTx creates
+    // a change output paid to `change_dest`. A null (all-zero / point at
+    // infinity) change destination would produce an anyone-can-spend output:
+    // the ownership keys collapse to publicly-derivable values. Callers who
+    // cannot guarantee exact inputs must use build_ctx_with_change; passing
+    // an invalid change destination here fails closed. The factory also
+    // reports some failures by throwing (an unsettled fee fixpoint, a
+    // consolidation that cannot be built); the enclosing try translates those
+    // into the failure code instead of letting them terminate at the
+    // extern "C" frame.
+    auto maybe_ctx = psbt.BuildTx(change_dest);
     if (!maybe_ctx.has_value()) {
         rv->result = BLSCT_FAILURE;
         return rv;
@@ -829,12 +865,61 @@ BlsctCTxRetVal* build_ctx(
 
     // move the ctx to newly created ctx in heap
     CMutableTransaction* ctx_in_heap = new (std::nothrow) CMutableTransaction;
-    *ctx_in_heap = std::move(maybe_ctx.value());
+    if (ctx_in_heap == nullptr) {
+        rv->result = BLSCT_MEM_ALLOC_FAILED;
+        return rv;
+    }
+    *ctx_in_heap = std::move(maybe_ctx->tx);
 
     rv->result = BLSCT_SUCCESS;
     rv->ctx = static_cast<void*>(ctx_in_heap);
 
     return rv;
+    } catch (const std::exception&) {
+        return rv; // rv->result already set to a failure code
+    } catch (...) {
+        return rv;
+    }
+}
+} // namespace
+
+BlsctCTxRetVal* build_ctx(
+    const void* void_tx_ins,
+    const void* void_tx_outs)
+{
+    UNVOID(std::vector<BlsctTxIn>, tx_ins);
+    UNVOID(std::vector<BlsctTxOut>, tx_outs);
+
+    // No caller-supplied change address: safe only when inputs exactly cover
+    // outputs+fee. If change is needed the build now fails instead of paying
+    // it to a zero-key destination (see BuildCtxImpl).
+    return BuildCtxImpl(tx_ins, tx_outs, blsct::DoublePublicKey{});
+}
+
+BlsctCTxRetVal* build_ctx_with_change(
+    const void* void_tx_ins,
+    const void* void_tx_outs,
+    const BlsctSubAddr* change_addr)
+{
+    UNVOID(std::vector<BlsctTxIn>, tx_ins);
+    UNVOID(std::vector<BlsctTxOut>, tx_outs);
+
+    if (change_addr == nullptr) return build_ctx(void_tx_ins, void_tx_outs);
+
+    blsct::SubAddress change_sub_addr;
+    try {
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(change_addr, SUB_ADDR_SIZE, change_sub_addr);
+    } catch (const std::exception&) {
+        MALLOC_BYTES(BlsctCTxRetVal, rv, sizeof(BlsctCTxRetVal));
+        RETURN_IF_MEM_ALLOC_FAILED(rv);
+        rv->result = BLSCT_FAILURE;
+        rv->ctx = nullptr;
+        rv->in_amount_err_index = 0;
+        rv->out_amount_err_index = 0;
+        return rv;
+    }
+
+    return BuildCtxImpl(tx_ins, tx_outs, change_sub_addr.GetKeys());
 }
 
 const char* get_ctx_id(void* vp_ctx)
@@ -880,17 +965,20 @@ const char* serialize_ctx(void* vp_ctx)
 
 BlsctRetVal* deserialize_ctx(const char* hex)
 {
-    CMutableTransaction* ctx = new CMutableTransaction();
-
-    std::string hex_str(hex);
-
-    std::vector<uint8_t> vec;
-    if (!TryParseHexWrap(hex_str, vec)) {
-        delete ctx;
-        return err(BLSCT_FAILURE);
-    }
+    if (hex == nullptr) return err(BLSCT_FAILURE);
+    CMutableTransaction* ctx = nullptr;
 
     try {
+        ctx = new CMutableTransaction();
+
+        std::string hex_str(hex);
+
+        std::vector<uint8_t> vec;
+        if (!TryParseHexWrap(hex_str, vec)) {
+            delete ctx;
+            return err(BLSCT_FAILURE);
+        }
+
         DataStream st;
         TransactionSerParams params{.allow_witness = true};
         ParamsStream ps{params, st};
@@ -915,6 +1003,7 @@ BlsctRetVal* deserialize_ctx_id(const char* hex)
 {
     BlsctCTxId* blsct_ctx_id = static_cast<BlsctCTxId*>(
         DeserializeFromHex(hex, CTX_ID_SIZE));
+    if (blsct_ctx_id == nullptr) return err(BLSCT_DESER_FAILED);
     return succ(blsct_ctx_id, CTX_ID_SIZE);
 }
 
@@ -994,7 +1083,8 @@ bool are_ctx_ins_equal(const void* vp_a, const void* vp_b)
 {
     auto* a = static_cast<const std::vector<CTxIn>*>(vp_a);
     auto* b = static_cast<const std::vector<CTxIn>*>(vp_b);
-    return a == b;
+    if (a == nullptr || b == nullptr) return false;
+    return *a == *b;
 }
 
 size_t get_ctx_ins_size(const void* vp_ctx_ins)
@@ -1006,6 +1096,7 @@ size_t get_ctx_ins_size(const void* vp_ctx_ins)
 const void* get_ctx_in_at(const void* vp_ctx_ins, const size_t i)
 {
     auto* ctx_ins = static_cast<const std::vector<CTxIn>*>(vp_ctx_ins);
+    if (ctx_ins == nullptr || i >= ctx_ins->size()) return nullptr;
     const CTxIn* ctx_in = &ctx_ins->at(i);
     return static_cast<const void*>(ctx_in);
 }
@@ -1026,12 +1117,39 @@ const BlsctCTxId* get_ctx_in_prev_out_hash(const void* vp_ctx_in)
     return copy;
 }
 
+namespace {
+// Copy the serialized bytes of a script into a fresh fixed-size BlsctScript
+// buffer. CScript is a prevector: memcpy'ing the OBJECT (the previous
+// implementation) copied internal pointers/size fields, not script bytes, and
+// for CScriptWitness read past the end of the enclosing CTxIn. Returns nullptr
+// when the script does not fit — BlsctScript is fixed-size by ABI, so callers
+// must be able to detect overflow instead of silently receiving garbage.
+const BlsctScript* CopyScriptBytes(const unsigned char* data, size_t size)
+{
+    if (data == nullptr || size > SCRIPT_SIZE) return nullptr;
+    auto* copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
+    if (copy == nullptr) return nullptr;
+    std::memset(copy, 0, SCRIPT_SIZE);
+    std::memcpy(copy, data, size);
+    return copy;
+}
+
+const BlsctScript* CopyScriptBytes(const std::vector<unsigned char>& script_bytes)
+{
+    return CopyScriptBytes(script_bytes.data(), script_bytes.size());
+}
+
+const BlsctScript* CopyScriptBytes(const CScript& script)
+{
+    return CopyScriptBytes(script.data(), script.size());
+}
+} // namespace
+
 const BlsctScript* get_ctx_in_script_sig(const void* vp_ctx_in)
 {
     auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
-    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &ctx_in->scriptSig, SCRIPT_SIZE);
-    return copy;
+    if (ctx_in == nullptr) return nullptr;
+    return CopyScriptBytes(ctx_in->scriptSig);
 }
 
 uint32_t get_ctx_in_sequence(const void* vp_ctx_in)
@@ -1043,9 +1161,30 @@ uint32_t get_ctx_in_sequence(const void* vp_ctx_in)
 const BlsctScript* get_ctx_in_script_witness(const void* vp_ctx_in)
 {
     auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
-    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &ctx_in->scriptWitness, SCRIPT_SIZE);
-    return copy;
+    if (ctx_in == nullptr) return nullptr;
+    // The witness stack has no flat in-memory layout; serialize it the same
+    // way it appears on the wire (CompactSize-prefixed stack elements).
+    DataStream st{};
+    st << ctx_in->scriptWitness.stack;
+    std::vector<unsigned char> bytes(st.size());
+    std::memcpy(bytes.data(), st.data(), st.size());
+    return CopyScriptBytes(bytes);
+}
+
+const char* get_ctx_in_script_sig_hex(const void* vp_ctx_in)
+{
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
+    if (ctx_in == nullptr) return nullptr;
+    return SerializeToHex(ctx_in->scriptSig.data(), ctx_in->scriptSig.size());
+}
+
+const char* get_ctx_in_script_witness_hex(const void* vp_ctx_in)
+{
+    auto* ctx_in = static_cast<const CTxIn*>(vp_ctx_in);
+    if (ctx_in == nullptr) return nullptr;
+    DataStream st{};
+    st << ctx_in->scriptWitness.stack;
+    return SerializeToHex(reinterpret_cast<const uint8_t*>(st.data()), st.size());
 }
 
 // ctx outs
@@ -1053,7 +1192,8 @@ bool are_ctx_outs_equal(const void* vp_a, const void* vp_b)
 {
     auto* a = static_cast<const std::vector<CTxOut>*>(vp_a);
     auto* b = static_cast<const std::vector<CTxOut>*>(vp_b);
-    return a == b;
+    if (a == nullptr || b == nullptr) return false;
+    return *a == *b;
 }
 
 size_t get_ctx_outs_size(const void* vp_ctx_outs)
@@ -1065,6 +1205,7 @@ size_t get_ctx_outs_size(const void* vp_ctx_outs)
 const void* get_ctx_out_at(const void* vp_ctx_outs, const size_t i)
 {
     auto* ctx_outs = static_cast<const std::vector<CTxOut>*>(vp_ctx_outs);
+    if (ctx_outs == nullptr || i >= ctx_outs->size()) return nullptr;
     const CTxOut* ctx_out = &ctx_outs->at(i);
     return static_cast<const void*>(ctx_out);
 }
@@ -1086,9 +1227,15 @@ uint64_t get_ctx_out_value(const void* vp_ctx_out)
 const BlsctScript* get_ctx_out_script_pub_key(const void* vp_ctx_out)
 {
     auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
-    auto copy = static_cast<BlsctScript*>(malloc(SCRIPT_SIZE));
-    std::memcpy(copy, &ctx_out->scriptPubKey, SCRIPT_SIZE);
-    return copy;
+    if (ctx_out == nullptr) return nullptr;
+    return CopyScriptBytes(ctx_out->scriptPubKey);
+}
+
+const char* get_ctx_out_script_pub_key_hex(const void* vp_ctx_out)
+{
+    auto* ctx_out = static_cast<const CTxOut*>(vp_ctx_out);
+    if (ctx_out == nullptr) return nullptr;
+    return SerializeToHex(ctx_out->scriptPubKey.data(), ctx_out->scriptPubKey.size());
 }
 
 const BlsctPoint* get_ctx_out_spending_key(const void* vp_ctx_out)
@@ -1264,6 +1411,7 @@ BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
     const int64_t account,
     const uint64_t address)
 {
+    try {
     Scalar view_key;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, SCALAR_SIZE, view_key);
 
@@ -1276,9 +1424,13 @@ BlsctDoublePubKey* gen_dpk_with_keys_acct_addr(
     auto dpk = std::get<blsct::DoublePublicKey>(sub_addr.GetDestination());
     BlsctDoublePubKey* blsct_dpk = static_cast<BlsctDoublePubKey*>(
         malloc(DOUBLE_PUBLIC_KEY_SIZE));
+    if (blsct_dpk == nullptr) return nullptr;
     SERIALIZE_AND_COPY_WITH_STREAM(dpk, blsct_dpk);
 
     return blsct_dpk;
+    } catch (const std::exception&) {
+        return nullptr;
+    }
 }
 
 const char* serialize_dpk(const BlsctDoublePubKey* blsct_dpk)
@@ -1290,6 +1442,7 @@ BlsctRetVal* deserialize_dpk(const char* hex)
 {
     BlsctDoublePubKey* blsct_dpk = static_cast<BlsctDoublePubKey*>(
         DeserializeFromHex(hex, DOUBLE_PUBLIC_KEY_SIZE));
+    if (blsct_dpk == nullptr) return err(BLSCT_DESER_FAILED);
     return succ(blsct_dpk, DOUBLE_PUBLIC_KEY_SIZE);
 }
 
@@ -1329,6 +1482,7 @@ BlsctRetVal* deserialize_key_id(const char* hex)
 {
     BlsctKeyId* blsct_key_id = static_cast<BlsctKeyId*>(
         DeserializeFromHex(hex, KEY_ID_SIZE));
+    if (blsct_key_id == nullptr) return err(BLSCT_DESER_FAILED);
     return succ(blsct_key_id, KEY_ID_SIZE);
 }
 
@@ -1336,10 +1490,17 @@ BlsctRetVal* deserialize_key_id(const char* hex)
 BlsctRetVal* gen_out_point(
     const char* ctx_id_c_str)
 {
+    if (ctx_id_c_str == nullptr) return err(BLSCT_FAILURE);
+    // Constructing std::string(ptr, CTX_ID_STR_LEN) would read 64 bytes
+    // unconditionally — past the end of a shorter caller string. Take the
+    // NUL-terminated length and require exactly one hex txid.
+    const std::string ctx_id_str(ctx_id_c_str);
+    if (ctx_id_str.size() != CTX_ID_STR_LEN || !IsHex(ctx_id_str)) {
+        return err(BLSCT_FAILURE);
+    }
+
     MALLOC_BYTES(BlsctOutPoint, blsct_out_point, OUT_POINT_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_out_point);
-
-    std::string ctx_id_str(ctx_id_c_str, CTX_ID_STR_LEN);
 
     auto ctx_id = TxidFromString(ctx_id_str);
     COutPoint out_point{ctx_id};
@@ -1359,6 +1520,7 @@ BlsctRetVal* deserialize_out_point(const char* hex)
 {
     BlsctOutPoint* blsct_out_point =
         static_cast<BlsctOutPoint*>(DeserializeFromHex(hex, OUT_POINT_SIZE));
+    if (blsct_out_point == nullptr) return err(BLSCT_DESER_FAILED);
     return succ(blsct_out_point, OUT_POINT_SIZE);
 }
 
@@ -1435,7 +1597,7 @@ BlsctPoint* scalar_muliply_point(
     Point sp = p * s;
 
     MALLOC_BYTES(BlsctPoint, blsct_sp, POINT_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_sp);
+    if (blsct_sp == nullptr) return nullptr;
     SERIALIZE_AND_COPY(sp, blsct_sp);
 
     return blsct_sp;
@@ -1457,7 +1619,7 @@ BlsctPoint* point_from_scalar(const BlsctScalar* blsct_scalar)
     Point point = g * scalar;
 
     MALLOC_BYTES(BlsctPoint, blsct_point, POINT_SIZE);
-    RETURN_ERR_IF_MEM_ALLOC_FAILED(blsct_point);
+    if (blsct_point == nullptr) return nullptr;
     SERIALIZE_AND_COPY(point, blsct_point);
 
     return blsct_point;
@@ -1653,12 +1815,17 @@ BlsctBoolRetVal* verify_range_proofs_with_transcript(
 #define DEFINE_RANGE_PROOF_POINT_GETTER(field)                                                                   \
     BlsctPoint* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
     {                                                                                                            \
-        bulletproofs_plus::RangeProof<Mcl> range_proof;                                                          \
-        UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof);                      \
-        auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));                                                \
-        auto org = range_proof.field.GetVch();                                                                   \
-        std::memcpy(copy, &org[0], POINT_SIZE);                                                                  \
-        return copy;                                                                                             \
+        try {                                                                                                    \
+            bulletproofs_plus::RangeProof<Mcl> range_proof;                                                      \
+            UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof);                  \
+            auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));                                            \
+            if (copy == nullptr) return nullptr;                                                                 \
+            auto org = range_proof.field.GetVch();                                                               \
+            std::memcpy(copy, &org[0], POINT_SIZE);                                                              \
+            return copy;                                                                                         \
+        } catch (const std::exception&) {                                                                        \
+            return nullptr;                                                                                      \
+        }                                                                                                        \
     }
 
 DEFINE_RANGE_PROOF_POINT_GETTER(A)
@@ -1670,12 +1837,17 @@ DEFINE_RANGE_PROOF_POINT_GETTER(B)
 #define DEFINE_RANGE_PROOF_SCALAR_GETTER(field)                                                                   \
     BlsctScalar* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
     {                                                                                                             \
-        bulletproofs_plus::RangeProof<Mcl> range_proof;                                                           \
-        UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof);                       \
-        auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));                                               \
-        auto org = range_proof.field.GetVch();                                                                    \
-        std::memcpy(copy, &org[0], SCALAR_SIZE);                                                                  \
-        return copy;                                                                                              \
+        try {                                                                                                     \
+            bulletproofs_plus::RangeProof<Mcl> range_proof;                                                       \
+            UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof);                   \
+            auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));                                           \
+            if (copy == nullptr) return nullptr;                                                                  \
+            auto org = range_proof.field.GetVch();                                                                \
+            std::memcpy(copy, &org[0], SCALAR_SIZE);                                                              \
+            return copy;                                                                                          \
+        } catch (const std::exception&) {                                                                         \
+            return nullptr;                                                                                       \
+        }                                                                                                         \
     }
 
 DEFINE_RANGE_PROOF_SCALAR_GETTER(r_prime)
@@ -1699,6 +1871,7 @@ BlsctRetVal* deserialize_range_proof(
 {
     BlsctRangeProof* blsct_range_proof =
         static_cast<BlsctRangeProof*>(DeserializeFromHex(hex, range_proof_size));
+    if (blsct_range_proof == nullptr) return err(BLSCT_DESER_FAILED);
     return succ(blsct_range_proof, range_proof_size);
 }
 
@@ -1714,18 +1887,24 @@ void add_to_range_proof_vec(
     const BlsctRangeProof* blsct_range_proof,
     size_t blsct_range_proof_size)
 {
-    auto range_proofs = static_cast<std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
-    // unserialize range proof
-    bulletproofs_plus::RangeProof<Mcl> range_proof;
+    try {
+        auto range_proofs = static_cast<std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+        if (range_proofs == nullptr || blsct_range_proof == nullptr) return;
+        // unserialize range proof; Unserialize throws ios_base::failure on
+        // truncated/malformed bytes — must not escape extern "C"
+        bulletproofs_plus::RangeProof<Mcl> range_proof;
 
-    DataStream st{};
-    for (size_t i = 0; i < blsct_range_proof_size; ++i) {
-        st << blsct_range_proof[i];
+        DataStream st{};
+        for (size_t i = 0; i < blsct_range_proof_size; ++i) {
+            st << blsct_range_proof[i];
+        }
+        range_proof.Unserialize(st);
+
+        // and move to the vector
+        range_proofs->push_back(std::move(range_proof));
+    } catch (const std::exception&) {
+        return;
     }
-    range_proof.Unserialize(st);
-
-    // and move to the vector
-    range_proofs->push_back(std::move(range_proof));
 }
 
 void delete_range_proof_vec(const void* vp_range_proofs)
@@ -1832,6 +2011,7 @@ BlsctRetVal* deserialize_script(const char* hex)
 {
     BlsctScript* blsct_script =
         static_cast<BlsctScript*>(DeserializeFromHex(hex, SCRIPT_SIZE));
+    if (blsct_script == nullptr) return err(BLSCT_DESER_FAILED);
     return succ(blsct_script, SCRIPT_SIZE);
 }
 
@@ -1844,6 +2024,7 @@ BlsctRetVal* deserialize_signature(const char* hex)
 {
     BlsctSignature* blsct_signature =
         static_cast<BlsctSignature*>(DeserializeFromHex(hex, SIGNATURE_SIZE));
+    if (blsct_signature == nullptr) return err(BLSCT_DESER_FAILED);
     return succ(blsct_signature, SIGNATURE_SIZE);
 }
 
@@ -1891,21 +2072,27 @@ BlsctSubAddr* derive_sub_address(
     const BlsctPubKey* blsct_spending_pub_key,
     const BlsctSubAddrId* blsct_sub_addr_id)
 {
-    Scalar view_key;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, SCALAR_SIZE, view_key);
+    // DeriveSubAddress throws on invalid (e.g. zero) keys — firewall it.
+    try {
+        Scalar view_key;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_view_key, SCALAR_SIZE, view_key);
 
-    blsct::PublicKey spending_pub_key;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_spending_pub_key, PUBLIC_KEY_SIZE, spending_pub_key);
+        blsct::PublicKey spending_pub_key;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_spending_pub_key, PUBLIC_KEY_SIZE, spending_pub_key);
 
-    blsct::SubAddressIdentifier sub_addr_id;
-    UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_sub_addr_id, SUB_ADDR_ID_SIZE, sub_addr_id);
+        blsct::SubAddressIdentifier sub_addr_id;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_sub_addr_id, SUB_ADDR_ID_SIZE, sub_addr_id);
 
-    auto sub_addr = blsct::DeriveSubAddress(view_key, spending_pub_key, sub_addr_id);
-    BlsctSubAddr* blsct_sub_addr = static_cast<BlsctSubAddr*>(
-        malloc(SUB_ADDR_SIZE));
-    SERIALIZE_AND_COPY_WITH_STREAM(sub_addr, blsct_sub_addr);
+        auto sub_addr = blsct::DeriveSubAddress(view_key, spending_pub_key, sub_addr_id);
+        BlsctSubAddr* blsct_sub_addr = static_cast<BlsctSubAddr*>(
+            malloc(SUB_ADDR_SIZE));
+        if (blsct_sub_addr == nullptr) return nullptr;
+        SERIALIZE_AND_COPY_WITH_STREAM(sub_addr, blsct_sub_addr);
 
-    return blsct_sub_addr;
+        return blsct_sub_addr;
+    } catch (const std::exception&) {
+        return nullptr;
+    }
 }
 
 const char* serialize_sub_addr(const BlsctSubAddr* blsct_sub_addr)
@@ -1917,6 +2104,7 @@ BlsctRetVal* deserialize_sub_addr(const char* hex)
 {
     BlsctSubAddr* blsct_sub_addr =
         static_cast<BlsctSubAddr*>(DeserializeFromHex(hex, SUB_ADDR_SIZE));
+    if (blsct_sub_addr == nullptr) return err(BLSCT_DESER_FAILED);
     return succ(blsct_sub_addr, SUB_ADDR_SIZE);
 }
 
@@ -1945,6 +2133,7 @@ BlsctRetVal* deserialize_sub_addr_id(const char* hex)
 {
     BlsctSubAddrId* blsct_sub_addr_id =
         static_cast<BlsctSubAddrId*>(DeserializeFromHex(hex, SUB_ADDR_ID_SIZE));
+    if (blsct_sub_addr_id == nullptr) return err(BLSCT_DESER_FAILED);
     return succ(blsct_sub_addr_id, SUB_ADDR_ID_SIZE);
 }
 
@@ -2030,6 +2219,12 @@ BlsctRetVal* deserialize_token_id(const char* hex)
     std::vector<uint8_t> vec;
     if (!TryParseHexWrap(hex, vec)) {
         return err(BLSCT_FAILURE);
+    }
+    // vec.size() is caller-controlled; without this check the memcpy below
+    // overflows the 40-byte heap buffer (long hex) or publishes uninitialized
+    // bytes (short hex).
+    if (vec.size() != TOKEN_ID_SIZE) {
+        return err(BLSCT_BAD_SIZE);
     }
     MALLOC_BYTES(BlsctTokenId, blsct_token_id, TOKEN_ID_SIZE);
     RETURN_IF_MEM_ALLOC_FAILED(blsct_token_id);

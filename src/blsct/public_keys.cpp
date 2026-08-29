@@ -30,7 +30,7 @@ PublicKey PublicKeys::Aggregate() const
 
 bool PublicKeys::VerifyBalanceBatch(const Signature& sig) const
 {
-    auto aggr_pk = PublicKeys(m_pks).Aggregate();
+    auto aggr_pk = Aggregate();
     return aggr_pk.CoreVerify(Common::BLSCTBALANCE, sig);
 }
 
@@ -39,6 +39,7 @@ bool PublicKeys::CoreAggregateVerify(const std::vector<PublicKey::Message>& msgs
     assert(m_pks.size() == msgs.size());
 
     std::vector<blsPublicKey> bls_pks;
+    bls_pks.reserve(m_pks.size());
     std::transform(m_pks.begin(), m_pks.end(), std::back_inserter(bls_pks), [](const auto& pk) {
         return pk.ToBlsPublicKey();
     });
@@ -49,12 +50,14 @@ bool PublicKeys::CoreAggregateVerify(const std::vector<PublicKey::Message>& msgs
                         })->size();
     const size_t n = m_pks.size();
 
-    // copy all msgs to a vector of message buffers of the largest message size
+    // copy all msgs to a vector of message buffers of the largest message size.
+    // The buffer is value-initialised to zero, so the padding tail after each
+    // message is already zero — no per-message memset needed, and msgs[i] is read
+    // by reference (no per-message copy).
     std::vector<uint8_t> bls_msgs(bls_msg_size * n);
     for (size_t i = 0; i < n; ++i) {
         uint8_t* msg_beg = &bls_msgs[i * bls_msg_size];
-        std::memset(msg_beg, 0, bls_msg_size);
-        auto msg = msgs[i];
+        const auto& msg = msgs[i];
         std::memcpy(msg_beg, &msg[0], msg.size());
     }
 
@@ -74,6 +77,7 @@ bool PublicKeys::VerifyBatch(const std::vector<PublicKey::Message>& msgs, const 
             "Expected the same positive numbers of public keys and messages, but got: %ld public keys and %ld messages", m_pks.size(), msgs.size()));
     }
     std::vector<std::vector<uint8_t>> aug_msgs;
+    aug_msgs.reserve(m_pks.size());
     auto msg = msgs.begin();
     for (auto pk = m_pks.begin(), end = m_pks.end(); pk != end; ++pk, ++msg) {
         if ((*msg == blsct::Common::BLSCTBALANCE || *msg == blsct::Common::BLSCTFEE) && fVerifyTx) {

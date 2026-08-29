@@ -2163,19 +2163,34 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
         // were never added to the UTXO set on connect, so SpendCoin must not
         // be called for them on disconnect — otherwise it returns false and
         // marks the disconnect UNCLEAN, which DisconnectTip treats as fatal.
+        // Same single-hash reuse as ConnectBlock/AddCoins: when the self-spent
+        // scan runs it already hashes every output, so keep those hashes for
+        // the SpendCoin loop below instead of hashing each output twice.
+        std::vector<uint256> out_hashes;
         std::set<uint256> self_spent;
         if (tx.IsBLSCT() && !is_coinbase) {
+            out_hashes.resize(tx.vout.size());
+            for (size_t o = 0; o < tx.vout.size(); o++) out_hashes[o] = tx.vout[o].GetHash();
             std::set<uint256> vin_prevouts;
             for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
-            for (const auto& out : tx.vout) {
-                const uint256 out_hash = out.GetHash();
-                if (vin_prevouts.contains(out_hash)) self_spent.insert(out_hash);
+            for (const auto& oh : out_hashes) {
+                if (vin_prevouts.contains(oh)) self_spent.insert(oh);
             }
         }
 
         // Check that all outputs are available and match the outputs in the block itself
         // exactly.
-        for (size_t o = 0; o < tx.vout.size(); o++) {
+        //
+        // Iterate outputs in reverse. Predicate side effects are applied in
+        // forward output order on connect (blsct::VerifyTxCore), and some are
+        // ordered dependencies within a single transaction: a CREATE_TOKEN
+        // output followed by a MINT output for the same token must be unwound
+        // MINT-first, or the mint revert's GetToken lookup fails against a
+        // token the create revert has already erased and the whole disconnect
+        // aborts (DISCONNECT_FAILED). Unwinding in reverse mirrors application
+        // order. Staked-commitment removal and the output/coin match below are
+        // per-output and order-independent, so reversing does not affect them.
+        for (int o = static_cast<int>(tx.vout.size()) - 1; o >= 0; o--) {
             if (tx.vout[o].IsStakedCommitment()) {
                 view.RemoveStakedCommitment(tx.vout[o].blsctData.rangeProof.Vs[0]);
             }
@@ -2186,7 +2201,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
                 }
             }
             if (!tx.vout[o].scriptPubKey.IsUnspendable()) {
-                COutPoint out(tx.vout[o].GetHash());
+                COutPoint out(out_hashes.empty() ? tx.vout[o].GetHash() : out_hashes[o]);
                 if (self_spent.contains(out.hash)) continue;
                 Coin coin;
                 bool is_spent = view.SpendCoin(out, &coin);
@@ -2574,6 +2589,23 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     std::future<blsct::TxSignatureBatchResult> blsct_sig_verify_future;
     bool blsct_sig_verify_dispatched = false;
 
+    // RAII join guard, function-scoped on purpose: the PoS task dispatched
+    // below captures block.posProof BY REFERENCE, so ConnectBlock must not
+    // return before the task has finished reading it. The success path
+    // .get()-joins the future, but the early `return state.Invalid(...)`
+    // exits between dispatch and join (bad-stake-modifier, duplicate
+    // staked-commitment, tx failures, range-proof/script failures) previously
+    // abandoned it — leaving the worker reading a CBlock the caller may
+    // already have freed (e.g. RPC-owned blocks in submitblock /
+    // TestBlockValidity), a use-after-free race. The guard .wait()s on those
+    // exits; wait() never throws and does not consume the stored result, and
+    // is a no-op while the future is still invalid (nothing dispatched).
+    struct PosVerifyJoinGuard {
+        std::future<std::pair<bool, std::string>>& f;
+        ~PosVerifyJoinGuard() { if (f.valid()) f.wait(); }
+    };
+    auto pos_verify_join_guard = PosVerifyJoinGuard{pos_verify_future};
+
     if (params.GetConsensus().fBLSCT && block.IsProofOfStake() && fCheckPosProof) {
         // V2: seed the staked-commitment ring from a non-grindable beacon
         // (stake modifier + deep ancestor) instead of the staker-controlled
@@ -2638,8 +2670,14 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                                  setmem_ok ? "Valid" : blsct::ProofOfStake::VerificationResultToString(blsct::ProofOfStake::SM_INVALID));
                     }
                     return {setmem_ok, setmem_ok ? "" : blsct::ProofOfStake::VerificationResultToString(blsct::ProofOfStake::SM_INVALID)};
-                } catch (const std::runtime_error& e) {
+                } catch (const std::exception& e) {
+                    // A verification failure of any kind is a block
+                    // rejection, never a process abort: this task runs on the
+                    // async-verifier thread and its result is .get()-read on
+                    // the validation thread holding cs_main.
                     return {false, std::string(e.what())};
+                } catch (...) {
+                    return {false, std::string("unknown exception during PoS proof verification")};
                 }
             });
         pos_verify_dispatched = true;
@@ -2711,18 +2749,28 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             // BLSCT aggregation can carry vouts that are spent by sibling vins
             // inside the same tx; those never enter the UTXO set (see
             // coins.cpp::AddCoins), so they cannot collide and are exempt.
+            // Hash each output's content once (a BLSCT output hash serializes the
+            // whole range proof + double-SHA256) and reuse it for the self-spent
+            // scan and the overwrite check below, rather than hashing twice.
+            // Gated on the self-spent scan actually running: that scan already
+            // hashed every output unconditionally, so the precompute is free
+            // there, while the ungated paths (non-BLSCT tx, coinbase) would pay
+            // a new hash for unspendable outputs the loop below skips before
+            // hashing.
+            std::vector<uint256> out_hashes;
             std::set<uint256> self_spent;
             if (is_blsct_noncoinbase) {
+                out_hashes.resize(tx->vout.size());
+                for (size_t o = 0; o < tx->vout.size(); o++) out_hashes[o] = tx->vout[o].GetHash();
                 std::set<uint256> vin_prevouts;
                 for (const auto& in : tx->vin) vin_prevouts.insert(in.prevout.hash);
-                for (const auto& out : tx->vout) {
-                    const uint256 oh = out.GetHash();
+                for (const auto& oh : out_hashes) {
                     if (vin_prevouts.contains(oh)) self_spent.insert(oh);
                 }
             }
             for (size_t o = 0; o < tx->vout.size(); o++) {
                 if (tx->vout[o].scriptPubKey.IsUnspendable()) continue; // not stored in UTXO set
-                const uint256 outid = tx->vout[o].GetHash();
+                const uint256 outid = out_hashes.empty() ? tx->vout[o].GetHash() : out_hashes[o];
                 if (self_spent.contains(outid)) continue;
                 if (view.HaveCoin(COutPoint(outid)) || !block_outids.insert(outid).second) {
                     LogPrintf("ERROR: ConnectBlock(): tried to overwrite transaction\n");
@@ -4369,7 +4417,7 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
 
     for (const auto& tx : block.vtx) {
         TxValidationState tx_state;
-        if (!CheckTransaction(*tx, tx_state, consensusParams.fBLSCT)) {
+        if (!CheckTransaction(*tx, tx_state)) {
             // CheckBlock() does context-free validation checks. The only
             // possible failures are consensus failures.
             assert(tx_state.GetResult() == TxValidationResult::TX_CONSENSUS);

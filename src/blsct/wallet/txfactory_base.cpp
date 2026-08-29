@@ -15,7 +15,22 @@ using Scalars = Elements<Scalar>;
 
 namespace blsct {
 
-void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey, const CAmount& nBLSCTDefaultFee)
+namespace {
+// Backstop for the fee fixpoint in BuildTx(). The loop terminates on its own:
+// the assumed fee never decreases and every non-accepting pass raises it
+// strictly (see the comment at the acceptance test), so it cannot cycle. This
+// cap only ensures that a future change breaking that argument fails loudly
+// instead of spinning forever inside the loop -- BuildTx runs under
+// cs_wallet, so a spin wedges the whole wallet until the process is killed.
+//
+// Sized off the input cap rather than picked round: a raised fee only forces
+// another pass by pulling in more inputs, of which there can be at most
+// MAX_TX_INPUT_COUNT, the change output can appear or disappear once at each
+// input count, and one further pass accepts.
+constexpr size_t MAX_FEE_FIXPOINT_PASSES = 2 * MAX_TX_INPUT_COUNT + 2;
+} // namespace
+
+void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey, const CAmount& nBLSCTDefaultFee, const std::optional<delegation::DelegationRequest>& stakeDelegation)
 {
     if (!nAmounts.contains(token_id))
         nAmounts[token_id] = {0, 0, 0};
@@ -30,6 +45,27 @@ void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmo
     }
 
     UnsignedOutput out = CreateOutput(destination.GetKeys(), nAmount, sMemo, token_id, blindingKey, type, minStake, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
+
+    if (stakeDelegation.has_value() && type == STAKED_COMMITMENT && token_id.IsNull()) {
+        // Attach the encrypted opening of the just-built commitment so the
+        // delegate can stake it. DATA predicates are consensus no-ops, and
+        // the predicate is set before BuildTx() computes the output
+        // signatures, so the payload is covered by the ownership signature.
+        // Delegated stakes never take the subtract-fee path above, so the
+        // committed value is exactly nAmount.
+        // The owner section is keyed on the output's BLSCT nonce, letting the
+        // owner wallet re-derive its delegations from the chain alone.
+        delegation::DelegationInfo info;
+        info.value = nAmount;
+        info.gamma = out.gamma;
+        info.rewardAddress = stakeDelegation->rewardAddress;
+        Point vk;
+        if (!destination.GetKeys().GetViewKey(vk)) {
+            throw std::runtime_error(std::string(__func__) + ": could not get view key from stake destination");
+        }
+        const Point nonce = vk * out.blindingKey;
+        out.out.predicate = DataPredicate(delegation::Encrypt(info, *stakeDelegation, nonce)).GetVch();
+    }
 
     nAmounts[token_id].nFromOutputs += nAmount;
 
@@ -86,7 +122,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
     vOutputs[token_id].push_back(out);
 }
 
-std::optional<CMutableTransaction>
+std::optional<BuiltTransaction>
 TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake, const CreateTransactionType& type, const bool& fSubtractedFee, const CAmount& nBLSCTDefaultFee)
 {
     this->tx = CMutableTransaction();
@@ -124,7 +160,13 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         });
     }
 
-    while (true) {
+    // What the ordinary (non-deferred) outputs of the deferred recipient's
+    // token contribute. The deferred output is re-materialized on every pass
+    // at a value that depends on the current fee estimate, so its token's
+    // total has to be rebuilt from this each time rather than accumulated.
+    const CAmount nFromPlainOutputs = subtractFeeOutput ? nAmounts[subtractFeeOutput->token_id].nFromOutputs : 0;
+
+    for (size_t pass = 0; pass < MAX_FEE_FIXPOINT_PASSES; ++pass) {
         CMutableTransaction tx = this->tx;
         tx.nVersion |= CTransaction::BLSCT_MARKER;
         // Stamp the proof-v2 marker when the outputs are built under the v2
@@ -149,13 +191,15 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         // the fixpoint still converges (typically in two passes). Setting
         // nFromOutputs to the reduced value makes input selection target the
         // original amount (reduced + fee), so the fee is routed out of the
-        // recipient output rather than out of change.
+        // recipient output rather than out of change. Any ordinary output of
+        // the same token is still owed in full, hence the sum rather than a
+        // plain assignment.
         std::optional<UnsignedOutput> sffaOut;
         if (subtractFeeOutput) {
             const CAmount fee = nAmounts[TokenId()].nFromFee;
             const CAmount reduced = subtractFeeOutput->amount - fee;
             if (reduced < 0) return std::nullopt; // fee exceeds the amount sent
-            nAmounts[subtractFeeOutput->token_id].nFromOutputs = reduced;
+            nAmounts[subtractFeeOutput->token_id].nFromOutputs = nFromPlainOutputs + reduced;
             sffaOut = CreateOutput(subtractFeeOutput->destination.GetKeys(), reduced,
                                    subtractFeeOutput->memo, subtractFeeOutput->token_id,
                                    subtractFeeOutput->blindingKey, subtractFeeOutput->type,
@@ -165,11 +209,19 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         }
 
         if (type == STAKED_COMMITMENT_UNSTAKE || type == STAKED_COMMITMENT) {
+            // Consume EVERY staked input the caller added: CreateTransaction
+            // already selected exactly which commitments this transaction
+            // spends and sized the staked output (new stake or unstake
+            // change) assuming all of them are consumed. Capping selection
+            // here (the previous `mapInputs > nFromOutputs` break) broke that
+            // assumption for multi-commitment stakes: a full unstake consumed
+            // only the first commitment, and a partial unstake backfilled the
+            // remainder of the staked change from spendable coins — silently
+            // re-staking funds the user never asked to stake.
             for (auto& in_ : vInputs) {
                 for (auto& in : in_.second) {
                     if (!in.is_staked_commitment) continue;
                     if (!mapInputs[in_.first]) mapInputs[in_.first] = 0;
-                    if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs) break;
 
                     tx.vin.push_back(in.in);
                     gammaAcc = gammaAcc + in.gamma;
@@ -213,6 +265,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
             mapChange[amounts.first] = nFromInputs - amounts.second.nFromOutputs - tokenFee;
         }
+        std::optional<uint256> firstChangeOutputHash;
         for (auto& change : mapChange) {
             if (change.second == 0) continue;
 
@@ -229,11 +282,34 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
             tx.vout.push_back(changeOutput.out);
             txSigs.push_back(PrivateKey(changeOutput.blindingKey).Sign(changeOutput.out.GetHash()));
+
+            if (!firstChangeOutputHash) firstChangeOutputHash = changeOutput.out.GetHash();
         }
         if (sffaOut) {
             tx.vout.push_back(sffaOut->out);
             txSigs.push_back(PrivateKey(sffaOut->blindingKey).Sign(sffaOut->out.GetHash()));
         }
+
+        // Which output pays the destination this transaction was built for.
+        // The vout order is randomised on the way out, so record it here while
+        // the build order is still known:
+        //  - a subtract-fee-from-amount send pays through sffaOut, which is
+        //    appended after the change output rather than first;
+        //  - otherwise it is the first output AddOutput queued, i.e. what
+        //    pre-shuffle vout[0] used to be;
+        //  - a full unstake queues no output at all -- the unlocked funds come
+        //    back as the "Stake Unlock" change output -- so fall back to the
+        //    first change output of this pass.
+        // The fee output is appended after all three and is never a candidate.
+        std::optional<uint256> recipientOutputHash;
+        if (sffaOut) {
+            recipientOutputHash = sffaOut->out.GetHash();
+        } else if (!this->tx.vout.empty()) {
+            recipientOutputHash = this->tx.vout[0].GetHash();
+        } else {
+            recipientOutputHash = firstChangeOutputHash;
+        }
+
         CTxOut fee_out{nAmounts[TokenId()].nFromFee, CScript(OP_RETURN)};
 
         auto feeKey = blsct::PrivateKey(MclScalar::Rand());
@@ -246,7 +322,31 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         tx.txSig = Signature::Aggregate(txSigs);
 
         const CAmount required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee;
-        if (nAmounts[TokenId()].nFromFee == required_fee) {
+        // The consensus rule is a floor, not an equality: VerifyTxCore rejects
+        // only `nFee < GetTransactionWeight(tx) * nBLSCTDefaultFee`, so a
+        // transaction paying more than the requirement is valid (and a higher
+        // fee only helps relay). Accepting on ">=" instead of "==" -- and
+        // never lowering the fee once raised -- makes the assumed fee strictly
+        // increasing across non-accepting passes, which is what makes this
+        // loop terminate.
+        //
+        // The exact-equality form could not terminate: dropping a change
+        // output that lands on zero (see the `change.second == 0` skip above)
+        // shrinks the transaction, so the fee required without change is lower
+        // than the fee required with it. When inputs - outputs equals the
+        // with-change fee exactly, the two fees chase each other forever and
+        // the wallet spins under cs_wallet until it is killed. In that corner
+        // this settles instead on the with-change fee while the emitted
+        // (change-less) transaction only requires the smaller one: it
+        // overpays by one change output's worth of weight. That trade is
+        // deliberate -- a few hundred navoshis in a corner case, against a
+        // wedged wallet.
+        if (nAmounts[TokenId()].nFromFee >= required_fee) {
+            // Every output was consumed by the fee, so there is no output to
+            // hand back as the payment. Nothing builds that shape today; fail
+            // rather than return a handle that points at the fee output.
+            if (!recipientOutputHash) return std::nullopt;
+
             // Randomise input and output ordering so the on-chain transaction
             // does not leak the wallet's coin-selection order (e.g. that earlier
             // inputs correspond to larger outputs, or the change position). The
@@ -259,12 +359,17 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             std::mt19937_64 rng(seed);
             std::shuffle(tx.vin.begin(), tx.vin.end(), rng);
             std::shuffle(tx.vout.begin(), tx.vout.end(), rng);
-            return tx;
+            return BuiltTransaction{tx, *recipientOutputHash};
         }
+        // Only reached with required_fee > nFromFee, so this raises the fee.
         nAmounts[TokenId()].nFromFee = required_fee;
     }
 
-    return std::nullopt;
+    throw std::runtime_error(strprintf(
+        "The transaction fee did not settle after %u passes. This is a bug in the "
+        "wallet's fee calculation; please report it along with the amount sent and "
+        "the number of inputs the wallet holds.",
+        MAX_FEE_FIXPOINT_PASSES));
 }
 
 bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, const PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)
@@ -282,19 +387,30 @@ bool TxFactoryBase::AddInput(const CAmount& amount, const MclScalar& gamma, cons
     return true;
 }
 
-std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData)
+std::optional<BuiltTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData)
 {
     auto tx = blsct::TxFactoryBase();
     tx.SetTranscriptV2(transactionData.transcript_v2);
 
     if (transactionData.type == STAKED_COMMITMENT) {
         CAmount inputFromStakedCommitments = 0;
+        // Consolidation only folds commitments that share this transaction's
+        // delegation identity: plain stakes merge with plain stakes, and a
+        // delegated stake only merges with stakes delegated to the same
+        // delegate and reward address. Folding across identities would either
+        // silently hand undelegated funds to a delegate or silently revoke an
+        // existing delegation.
+        const std::string delegationId = transactionData.stakeDelegation.has_value() ? transactionData.stakeDelegation->GetId() : "";
 
         for (const auto& output : inputCandidates) {
             if (output.is_staked_commitment) {
                 // With consolidation disabled, leave existing commitments
                 // untouched so this stakelock yields a separate commitment.
-                if (!transactionData.fConsolidateStakedCommitments)
+                // A redelegation additionally folds the commitments of the
+                // identities it is moving away from.
+                const bool matches = output.delegation == delegationId ||
+                                     transactionData.redelegateFromIds.contains(output.delegation);
+                if (!transactionData.fConsolidateStakedCommitments || !matches)
                     continue;
                 inputFromStakedCommitments += output.amount;
             }
@@ -308,7 +424,7 @@ std::optional<CMutableTransaction> TxFactoryBase::CreateTransaction(const std::v
 
         bool fSubtractFeeFromAmount = false; // nAmount == inAmount + inputFromStakedCommitments;
 
-        tx.AddOutput(transactionData.destination, transactionData.nAmount + inputFromStakedCommitments, transactionData.sMemo, transactionData.token_id, transactionData.type, transactionData.minStake, fSubtractFeeFromAmount);
+        tx.AddOutput(transactionData.destination, transactionData.nAmount + inputFromStakedCommitments, transactionData.sMemo, transactionData.token_id, transactionData.type, transactionData.minStake, fSubtractFeeFromAmount, Scalar::Rand(), transactionData.nBLSCTDefaultFee, transactionData.stakeDelegation);
     } else {
         CAmount inputFromStakedCommitments = 0;
 

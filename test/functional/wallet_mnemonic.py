@@ -49,7 +49,7 @@ class WalletMnemonicTest(BitcoinTestFramework):
         w = node.get_wallet_rpc("test_blsct")
         mnemonic = w.dumpmnemonic()
         words = mnemonic.split()
-        assert_equal(len(words), 24)
+        assert_equal(len(words), 26)
 
         self.log.info("Test restore from mnemonic produces same seed")
         seed_a = w.getblsctseed()
@@ -63,11 +63,13 @@ class WalletMnemonicTest(BitcoinTestFramework):
         w3 = node.get_wallet_rpc("test_descriptor")
         assert_raises_rpc_error(-4, None, w3.dumpmnemonic)
 
-        self.log.info("Test createwallet with blsct=true returns mnemonic in response")
+        self.log.info("Test createwallet with blsct=true returns the 26-word birthday mnemonic in response")
         result = node.createwallet(wallet_name="test_new_blsct", blsct=True)
         assert "mnemonic" in result
         words = result["mnemonic"].split()
-        assert_equal(len(words), 24)
+        assert_equal(len(words), 26)
+        # the fresh wallet recorded a genuine birthday
+        assert node.get_wallet_rpc("test_new_blsct").getwalletinfo()["birthtime"] > 0
 
         self.log.info("Test createwallet with mnemonic param restores correctly")
         w_new = node.get_wallet_rpc("test_new_blsct")
@@ -77,6 +79,17 @@ class WalletMnemonicTest(BitcoinTestFramework):
         w_from = node.get_wallet_rpc("test_from_mnemonic")
         seed_from = w_from.getblsctseed()
         assert_equal(seed_new, seed_from)
+
+        self.log.info("Test birthday survives: restore returns and re-dumps the 26-word phrase")
+        # dumpmnemonic on the source wallet rebuilds the birthday variant from
+        # the persisted birthday record, so the phrase is regenerable.
+        assert_equal(w_new.dumpmnemonic(), mnemonic_new)
+        restored_birthtime = w_from.getwalletinfo()["birthtime"]
+        assert restored_birthtime > 1767225600
+        # the two wallets' birthdays agree at weekly granularity (the encoding
+        # is week-floored)
+        assert_equal(w_from.dumpmnemonic(), mnemonic_new)
+        assert restored_birthtime <= w_new.getwalletinfo()["birthtime"] + 604799
 
         self.log.info("Test createwallet with both mnemonic and seed errors")
         assert_raises_rpc_error(-8, "Cannot specify both",
@@ -127,6 +140,8 @@ class WalletMnemonicTest(BitcoinTestFramework):
         w_reload = node.get_wallet_rpc("test_reload")
         mnemonic_before = w_reload.dumpmnemonic()
         seed_before = w_reload.getblsctseed()
+        birthtime_before = w_reload.getwalletinfo()["birthtime"]
+        assert birthtime_before > 0
         node.unloadwallet("test_reload")
         node.loadwallet("test_reload")
         w_reload2 = node.get_wallet_rpc("test_reload")
@@ -134,6 +149,17 @@ class WalletMnemonicTest(BitcoinTestFramework):
         seed_after = w_reload2.getblsctseed()
         assert_equal(mnemonic_before, mnemonic_after)
         assert_equal(seed_before, seed_after)
+        # the birthday record must restore m_birth_time, not just the
+        # keyman copy that feeds dumpmnemonic
+        assert_equal(w_reload2.getwalletinfo()["birthtime"], birthtime_before)
+
+        self.log.info("Test blank BLSCT wallet gets no mnemonic and no birthday stamp")
+        result_blank = node.createwallet(wallet_name="test_blank", blank=True, blsct=True)
+        # a blank wallet never imports the generated seed, so returning a
+        # mnemonic (or stamping "now" as its birthday) would be wrong: it
+        # exists to have an older seed imported later
+        assert "mnemonic" not in result_blank
+        assert_equal(node.get_wallet_rpc("test_blank").getwalletinfo().get("birthtime", 0), 0)
 
         self.log.info("Test encrypted wallet: dumpmnemonic works after encryption")
         node.createwallet(wallet_name="test_encrypted", blsct=True, passphrase="testpass")
@@ -141,7 +167,7 @@ class WalletMnemonicTest(BitcoinTestFramework):
         w_enc.walletpassphrase("testpass", 999999)
         mnemonic_enc = w_enc.dumpmnemonic()
         words_enc = mnemonic_enc.split()
-        assert_equal(len(words_enc), 24)
+        assert_equal(len(words_enc), 26)
         # Verify the seed matches what we'd expect from the mnemonic
         seed_enc = w_enc.getblsctseed()
         assert len(seed_enc) > 0
@@ -230,7 +256,7 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert_equal(len(mnemonic_line), 1)
         cli_mnemonic = mnemonic_line[0].replace('Mnemonic:', '').strip()
         cli_words = cli_mnemonic.split()
-        assert_equal(len(cli_words), 24)
+        assert_equal(len(cli_words), 26)
 
         self.log.info("Test CLI tool: navio-wallet create with -blsct -mnemonic restores")
         cli_restore_name = "test_cli_restored"
@@ -404,6 +430,18 @@ class WalletMnemonicTest(BitcoinTestFramework):
         w_cli2 = node.get_wallet_rpc(cli_roundtrip_restored)
         addr_cli2 = w_cli2.getnewaddress()
         assert_equal(addr_cli, addr_cli2)
+
+        self.log.info("Test birthtime and mnemonic survive a full node restart")
+        node.createwallet(wallet_name="test_restart", blsct=True)
+        w_restart = node.get_wallet_rpc("test_restart")
+        mnemonic_restart = w_restart.dumpmnemonic()
+        birthtime_restart = w_restart.getwalletinfo()["birthtime"]
+        assert birthtime_restart > 0
+        self.restart_node(0)
+        node.loadwallet("test_restart")
+        w_restart2 = node.get_wallet_rpc("test_restart")
+        assert_equal(w_restart2.getwalletinfo()["birthtime"], birthtime_restart)
+        assert_equal(w_restart2.dumpmnemonic(), mnemonic_restart)
 
 
 if __name__ == '__main__':

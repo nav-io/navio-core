@@ -12,10 +12,12 @@ reduced compared to transaction mode.
 
 import os
 from decimal import Decimal
+from test_framework.messages import COIN
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_greater_than,
+    assert_raises_rpc_error,
 )
 
 BLOCK_REWARD = Decimal("50.00000000")
@@ -136,10 +138,32 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
 
         # --- Scenario: incoming external (peer sends us) ---
         self.log.info("Scenario: incoming external receive")
-        wa.sendtoblsctaddress(ab, Decimal("25.00000000"))
+        recv_amount = Decimal("25.00000000")
+        wa.sendtoblsctaddress(ab, recv_amount)
         self.sync_mempools()
         self.generate_blsct_blocks(self.nodes[0], aa, 1)
         self.sync_all()
+
+        # B holds this output in mapOutputs only, so getblsctoutput must find it
+        # there. mapOutputs is keyed by COutPoint, which is the output hash
+        # itself, so the lookup is a direct find on that key.
+        #
+        # Take the hash from B's own view of the output rather than from what
+        # the sender's RPC returned: on this branch that return value is picked
+        # by vout position, which the tx factory shuffles, so it names one of
+        # the sender's own outputs about two thirds of the time.
+        self.log.info("getblsctoutput resolves an output-storage receive by its output hash")
+        recv_output_hash = next(
+            u["outid"] for u in wb.listblsctunspent(0, 9999999)
+            if u.get("address") == ab and Decimal(str(u["amount"])) == recv_amount)
+        received = wb.getblsctoutput(recv_output_hash)
+        assert_equal(received["outputHash"], recv_output_hash)
+        assert_equal(received["amount"], int(recv_amount * COIN))
+        assert_equal(received["spendable"], True)
+        assert_greater_than(received["confirmations"], 0)
+        assert_raises_rpc_error(-5, "Output not found",
+                                wb.getblsctoutput, "00" * 32)
+
         b_entries = wb.listtransactions("*", 100, 0, True)
         # B sees an external receive (mapOutputs only — B did not build the tx).
         recv = [e for e in b_entries if e.get("category") == "receive"]
@@ -389,7 +413,18 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         output_hash = self.wallet_a.sendtoblsctaddress(self_addr, send_amount)
         self.log.info(f"Self-send outputHash: {output_hash}")
 
+        # The returned hash must identify the output that pays the recipient.
+        # The tx factory randomises the vout order to hide the change position,
+        # so a hash taken by position lands on the change output (reporting the
+        # whole change value) or on the fee output (reporting 0) instead.
+        assert_equal(self.wallet_a.getblsctoutput(output_hash)["amount"],
+                     int(send_amount * COIN))
+
         self.generate_blsct_blocks(self.nodes[0], self.addr_a, 1)
+
+        # Same after confirmation.
+        assert_equal(self.wallet_a.getblsctoutput(output_hash)["amount"],
+                     int(send_amount * COIN))
 
         balance_after = self.wallet_a.getbalance()
         self.log.info(f"Balance after self-send: {balance_after}")

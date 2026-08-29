@@ -8,6 +8,8 @@
 
 #include <addrman.h>
 #include <banman.h>
+#include <blsct/private_key.h>
+#include <blsct/wallet/address.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <chainparams.h>
 #include <common/system.h>
@@ -300,6 +302,23 @@ TestBLSCTChain100Setup::TestBLSCTChain100Setup(
     : TestingSetup{ChainType::BLSCTREGTEST, extra_args, coins_db_in_memory, block_tree_db_in_memory}
 {
     coinbaseDest = coinbaseDest_;
+    // A default-constructed SubAddress carries the all-zero (point at
+    // infinity) double public key: outputs built for it have publicly
+    // derivable ownership keys (anyone-can-spend) and GenerateKeys rejects
+    // them outright. Substitute a deterministic, valid, test-only address so
+    // the fixture chain's coinbases remain constructible.
+    //
+    // Test for a zero key the same way GenerateKeys does, NOT via IsValid():
+    // DoublePublicKey() sets is_fully_built=true and the infinity point passes
+    // PublicKey::IsValid() (the identity is a valid group element), so a zero
+    // destination reports IsValid()==true and would slip past a plain check.
+    MclG1Point view_point;
+    const bool zero_dest = !coinbaseDest.GetKeys().GetViewKey(view_point) || view_point.IsZero();
+    if (zero_dest) {
+        blsct::PrivateKey view_key(MclScalar(1));
+        blsct::PrivateKey spend_key(MclScalar(2));
+        coinbaseDest = blsct::SubAddress(view_key, spend_key.GetPublicKey(), blsct::SubAddressIdentifier{0, 0});
+    }
     SetMockTime(1598887952);
 
     // Generate a 100-block chain:

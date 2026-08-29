@@ -14,10 +14,12 @@
 #include <blsct/building_block/lazy_points.h>
 #include <blsct/building_block/weighted_inner_prod_arg.h>
 #include <blsct/common.h>
+#include <blsct/range_proof/bulletproofs_plus/fixed_base_cache.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/msg_amt_cipher.h>
 #include <future>
+#include <type_traits>
 #include <tinyformat.h>
 
 // Bulletproofs+ implementation based on
@@ -454,8 +456,6 @@ bool RangeProofLogic<T>::VerifyProofs(
 
         range_proof::Generators<T> gens = m_common.Gf().GetInstance(pt.proof.seed);
 
-        auto gs = gens.GetGiSubset(pt.mn);
-        auto hs = gens.GetHiSubset(pt.mn);
         auto h = gens.H;
         auto g = gens.G;
 
@@ -530,14 +530,38 @@ bool RangeProofLogic<T>::VerifyProofs(
         lp.Add(h, h_exp);
         lp.Add(pt.proof.Ls, static_cast<const Scalars&>(e_squares));
         lp.Add(pt.proof.Rs, e_inv_squares);
-        lp.Add(gs, gs_exp);
-        lp.Add(hs, hs_exp);
+
+        // Fixed-base fast path: the Gi/Hi multi-scalar terms multiply against the
+        // process-wide immutable range-proof generators, so an optional
+        // precomputed window table can serve them faster than the generic MSM,
+        // which rebuilds its NAF tables on every proof. The windowed result is
+        // bit-identical to mulVecMT (EC addition is associative/commutative), so
+        // the consensus verdict is unchanged. Disabled unless NAVIO_BLSCT_FIXEDBASE=1
+        // and the proof's aggregated length fits the tabled generator prefix.
+        bool used_fixed_base = false;
+        Point fixed_base_sum; // identity
+        if constexpr (std::is_same_v<T, Mcl>) {
+            auto& fbc = FixedBaseCache::Get();
+            fbc.MaybeInit(gens);
+            if (fbc.Enabled() && pt.mn <= fbc.Prefix()) {
+                fixed_base_sum = fbc.Gi().MSM(gs_exp, pt.mn) + fbc.Hi().MSM(hs_exp, pt.mn);
+                used_fixed_base = true;
+            }
+        }
+        if (!used_fixed_base) {
+            // Materialized only on this path: the fast path never touches the
+            // subset copies.
+            lp.Add(gens.GetGiSubset(pt.mn), gs_exp);
+            lp.Add(gens.GetHiSubset(pt.mn), hs_exp);
+        }
 
         for (size_t i = 0; i < pt.proof.Vs.Size(); ++i) {
             lp.Add(LazyPoint<T>(pt.proof.Vs[i] - (gens.G * pt.proof.min_value), vs_exp[i]));
         }
 
-        if (!lp.Sum().IsZero()) {
+        Point total = lp.Sum();
+        if (used_fixed_base) total = total + fixed_base_sum;
+        if (!total.IsZero()) {
             abort_flag.store(true); // Signal abort if verification fails
             return false;
         }

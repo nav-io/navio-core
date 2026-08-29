@@ -31,6 +31,61 @@ BOOST_FIXTURE_TEST_SUITE(mcl_g1point_tests, BasicTestingSetup)
 
 #include <test/blsct/arith/shared_point_tests.h>
 
+
+BOOST_AUTO_TEST_CASE(test_unserialize_encoding_strictness)
+{
+    // A valid point round-trips.
+    Point g = Point::GetBasePoint();
+    DataStream st{};
+    st << g;
+    Point g2;
+    BOOST_CHECK_NO_THROW(g2.Unserialize(st));
+    BOOST_CHECK(g == g2);
+
+    // The 48 all-zero bytes are the legacy (pre-BLS_ETH) encoding of the
+    // point at infinity. They occur in binary-baked consensus parameters the
+    // node still has to load (the BLSCT genesis outputs), so the
+    // LegacyPointDecodeScope used when constructing chainparams accepts them
+    // as the identity. Everywhere else — network, mempool, wallet state —
+    // they are invalid like any other bad encoding.
+    std::vector<unsigned char> zero(Point::SERIALIZATION_SIZE, 0x00);
+
+    auto feed = [](const std::vector<unsigned char>& v, Point& out) {
+        DataStream ds{};
+        ds.write(MakeByteSpan(v));
+        out.Unserialize(ds);
+    };
+
+    Point p;
+    BOOST_CHECK_THROW(feed(zero, p), std::ios_base::failure);
+    {
+        MclG1Point::LegacyPointDecodeScope legacy_scope;
+        BOOST_CHECK_NO_THROW(feed(zero, p));
+        BOOST_CHECK(p.IsZero());
+    }
+
+    // A nonzero but undecodable encoding throws in both modes.
+    std::vector<unsigned char> bad(Point::SERIALIZATION_SIZE, 0x00);
+    bad[0] = 0x01; // no compression flag, not a valid compressed form
+    Point q;
+    BOOST_CHECK_THROW(feed(bad, q), std::ios_base::failure);
+    {
+        MclG1Point::LegacyPointDecodeScope legacy_scope;
+        BOOST_CHECK_NO_THROW(feed(bad, q));
+        BOOST_CHECK(q.IsZero()); // historical leniency
+    }
+
+    // 0xFF-filled garbage always throws (never a valid encoding anywhere).
+    std::vector<unsigned char> junk(Point::SERIALIZATION_SIZE, 0xFF);
+    Point r;
+    BOOST_CHECK_THROW(feed(junk, r), std::ios_base::failure);
+    {
+        MclG1Point::LegacyPointDecodeScope legacy_scope;
+        BOOST_CHECK_NO_THROW(feed(junk, r));
+        BOOST_CHECK(r.IsZero());
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_CASE(test_uint256_ctor)

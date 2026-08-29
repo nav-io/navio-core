@@ -102,8 +102,18 @@ Common<T>::Common()
     using Scalar = typename T::Scalar;
     using Scalars = Elements<Scalar>;
 
-    if (m_is_initialized) return;
+    // Take the lock before reading the flag, as GeneratorsFactory and
+    // SetMemProofSetup do. Checked outside, two threads could both see false,
+    // serialise here, and both run the initialisation below: the second set of
+    // `new`s replaces every static pointer while another thread may be
+    // dereferencing the first set, and the first set leaks. The unsynchronised
+    // read was also a plain data race against the store at the end: the flag is
+    // a non-atomic bool set as the last statement of this critical section, so
+    // an early return that never took the lock got no acquire against that
+    // release and could see it true while m_gf was still null - and Gf()
+    // dereferences that pointer without a lock.
     std::lock_guard<std::mutex> lock(Common<T>::m_init_mutex);
+    if (m_is_initialized) return;
 
     Common<T>::m_zero = new Scalar(0);
     Common<T>::m_one = new Scalar(1);

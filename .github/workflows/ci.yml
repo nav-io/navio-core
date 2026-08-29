@@ -66,37 +66,51 @@ jobs:
     env:
       MAX_COUNT: 6
     steps:
-      - name: Determine fetch depth
-        run:
-          echo "FETCH_DEPTH=$((${{ github.event.pull_request.commits }} + 2))"
-          >> "$GITHUB_ENV"
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: ${{ env.FETCH_DEPTH }}
+          # The range is measured against the merge base with the base branch,
+          # which sits at an unknown depth: a branch cut from an older master
+          # reaches back further than any fixed depth would. Fetch the full
+          # history rather than guess, which costs seconds against a job that
+          # builds the tree up to MAX_COUNT times.
+          fetch-depth: 0
       - name: Determine commit range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          # Checkout HEAD~ and find the test base commit
           # Checkout HEAD~ because it would be wasteful to rerun tests on the PR
           # head commit that are already run by other jobs.
-          git checkout HEAD~
-          # Figure out test base commit by listing ancestors of HEAD, excluding
-          # ancestors of the most recent merge commit, limiting the list to the
-          # newest MAX_COUNT ancestors, ordering it from oldest to newest, and
-          # taking the first one.
-          #
-          # If the branch contains up to MAX_COUNT ancestor commits after the
-          # most recent merge commit, all of those commits will be tested. If it
-          # contains more, only the most recent MAX_COUNT commits will be
-          # tested.
-          #
-          # In the command below, the ^@ suffix is used to refer to all parents
-          # of the merge commit as described in:
-          # https://git-scm.com/docs/git-rev-parse#_other_rev_parent_shorthand_notations
-          # and the ^ prefix is used to exclude these parents and all their
-          # ancestors from the rev-list output as described in:
-          # https://git-scm.com/docs/git-rev-list
-          echo "TEST_BASE=$(git rev-list -n$((${{ env.MAX_COUNT }} + 1)) --reverse HEAD ^$(git rev-list -n1 --merges HEAD)^@ | head -1)" >> "$GITHUB_ENV"
+          git checkout --quiet HEAD~
+          # base.sha is the base branch TIP, not the point this branch was cut
+          # from, so measure against the merge base instead. Being an ancestor
+          # of HEAD, it bounds the range to this branch's own commits however
+          # far master has moved since.
+          MERGE_BASE=$(git merge-base HEAD "${BASE_SHA}")
+          # --first-parent so a merge of the base branch (the "Update branch"
+          # button) counts as the one merge commit it is, rather than dragging
+          # in every commit it brought along.
+          TOTAL=$(git rev-list --first-parent --count "${MERGE_BASE}..HEAD")
+          if [ "${TOTAL}" -eq 0 ]; then
+            # e.g. a PR whose head is a merge: HEAD~ is then the base branch
+            # commit it was merged into, which other jobs already cover.
+            echo "HEAD~ is already on the base branch; nothing to test here."
+            echo "COMMITS_FILE=" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          COUNT="${TOTAL}"
+          if [ "${TOTAL}" -gt "${{ env.MAX_COUNT }}" ]; then
+            COUNT="${{ env.MAX_COUNT }}"
+            echo "::warning::${TOTAL} commits since the merge base, more than" \
+              "MAX_COUNT=${{ env.MAX_COUNT }}; only the newest ${COUNT} are tested."
+          fi
+          # -n limits the newest-first traversal and --reverse then flips what
+          # survived, so this is the newest COUNT commits, oldest first.
+          git rev-list --first-parent --reverse -n"${COUNT}" "${MERGE_BASE}..HEAD" \
+            > "${RUNNER_TEMP}/commits.txt"
+          echo "Testing ${COUNT} of ${TOTAL} commit(s) since ${MERGE_BASE}:"
+          git log --oneline --no-decorate --first-parent -n"${COUNT}" "${MERGE_BASE}..HEAD"
+          echo "COMMITS_FILE=${RUNNER_TEMP}/commits.txt" >> "$GITHUB_ENV"
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -108,22 +122,40 @@ jobs:
           CXX: clang++
           CCACHE_MAXSIZE: '2G'
         run: |
-          # Run tests on the commit checked out above (HEAD~). The
-          # git-rebase-per-commit iteration was previously commented out
-          # in this job; preserved as-is — migrate the build chain only.
-          # mempool_limit excluded because eviction timing fails under 2x
-          # parallelism here, same reason Win64 native excludes it.
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DWITH_ZMQ=ON \
-            -DWITH_USDT=ON
-          cmake --build build -j"$(nproc)"
-          ci/smoke_test_binaries.sh build
-          ctest --test-dir build -j"$(nproc)" --output-on-failure
-          build/test/functional/test_runner.py -j "$(( $(nproc) * 2 ))" \
-            --ci --quiet --tmpdirprefix="${RUNNER_TEMP}" \
-            --combinedlogslen=99999999 \
-            --exclude mempool_limit
+          if [ -z "${COMMITS_FILE}" ]; then
+            echo "No commits to test."
+            exit 0
+          fi
+          # Build and test every commit in the range, not just the newest one:
+          # a commit that is only green because a later commit fixes it has to
+          # fail here rather than under whoever bisects onto it later.
+          #
+          # Each commit is checked out as it actually is. Replaying them with
+          # `git rebase --exec` would instead drop merge commits and build
+          # trees that exist nowhere on the branch.
+          while read -r commit; do
+            echo "::group::$(git log -1 --oneline --no-decorate "${commit}")"
+            git checkout --quiet --detach "${commit}"
+            # Start each commit from a clean build tree: a CMake cache or an
+            # object file left by the previous commit is exactly how a commit
+            # that does not build on its own reaches green here. ccache lives
+            # outside build/, so unchanged sources are still served from it.
+            rm -rf build
+            # mempool_limit excluded because eviction timing fails under 2x
+            # parallelism here, same reason Win64 native excludes it.
+            cmake -B build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DWITH_ZMQ=ON \
+              -DWITH_USDT=ON
+            cmake --build build -j"$(nproc)"
+            ci/smoke_test_binaries.sh build
+            ctest --test-dir build -j"$(nproc)" --output-on-failure --stop-on-failure
+            build/test/functional/test_runner.py -j "$(( $(nproc) * 2 ))" \
+              --ci --quiet --tmpdirprefix="${RUNNER_TEMP}" \
+              --combinedlogslen=99999999 \
+              --exclude mempool_limit
+            echo "::endgroup::"
+          done < "${COMMITS_FILE}"
 
   macos-native-arm64:
     name: 'macOS 15 native, arm64, no depends, sqlite only (CMake)'
@@ -257,10 +289,17 @@ jobs:
 
       - name: Refresh vcpkg
         run: |
-          # Runner image's local C:\vcpkg clone lags master; fetch so the
-          # builtin-baseline commit pinned in build_msvc/vcpkg.json is reachable.
+          # Pin the whole vcpkg checkout (tool, scripts, version database) to
+          # the builtin-baseline commit from build_msvc/vcpkg.json. A bare
+          # fetch is not enough: the runner image's old vcpkg.exe and scripts
+          # can mismatch a newer baseline's registry ("no version database
+          # entry"), and its old scripts pin msys2 packages the mirrors have
+          # rotated away (404 on autoconf2.71-2.71-3).
+          $baseline = (Get-Content "$env:GITHUB_WORKSPACE\build_msvc\vcpkg.json" | ConvertFrom-Json).'builtin-baseline'
           Set-Location "$env:VCPKG_INSTALLATION_ROOT"
           git fetch --no-tags origin master
+          git checkout --force $baseline
+          .\bootstrap-vcpkg.bat -disableMetrics
           Add-Content -Path "triplets\x64-windows-static.cmake" -Value "set(VCPKG_BUILD_TYPE release)"
           Add-Content -Path "triplets\x64-windows-static.cmake" -Value "set(VCPKG_PLATFORM_TOOLSET_VERSION $env:VCToolsVersion)"
 

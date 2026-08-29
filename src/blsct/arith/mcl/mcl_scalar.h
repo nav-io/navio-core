@@ -25,6 +25,11 @@
 
 using namespace std::literals::string_literals;
 
+// Defined in mcl_g1point.cpp. True while MclG1Point::LegacyPointDecodeScope
+// is active on this thread; honoured when strict deserialization must stay
+// lenient for binary-baked consensus-parameter data (genesis blobs).
+bool MclLegacyPointDecodeActive();
+
 class MclScalar
 {
 public:
@@ -113,6 +118,17 @@ public:
         std::vector<unsigned char> vec(SERIALIZATION_SIZE);
         s.read(MakeWritableByteSpan(vec));
         SetVch(vec);
+        // Enforce the canonical encoding. SetVch reduces mod r, so a
+        // non-canonical input (v >= r) would silently deserialize to a
+        // DIFFERENT scalar than its byte string denotes; reject it instead.
+        // The legacy-decode scope (baked consensus parameters whose encoding
+        // predates the canonical serializer) keeps the lenient behaviour.
+        // Note GetVch() here must be the untrimmed 32-byte form; if its
+        // trim_preceeding_zeros default ever flips, this comparison would
+        // reject almost every scalar — the unit tests pin this.
+        if (!MclLegacyPointDecodeActive() && GetVch() != vec) {
+            throw std::ios_base::failure("MclScalar: non-canonical encoding");
+        }
     }
 
     static constexpr int SERIALIZATION_SIZE = 32;

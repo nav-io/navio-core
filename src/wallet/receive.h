@@ -65,6 +65,21 @@ struct Balance {
 Balance GetBalance(const CWallet& wallet, int min_depth = 0, bool avoid_reuse = true, const TokenId& token_id = TokenId());
 Balance GetBlsctBalance(const CWallet& wallet, int min_depth = 0, const TokenId& token_id = TokenId());
 
+/** Trusted, spendable credit backed by BLSCT outputs of the default token.
+ *
+ * GetBalance() and GetBlsctBalance() are two halves of one tally: the former
+ * walks mapWallet, the latter mapOutputs, and getbalance/getbalances/
+ * getwalletinfo add them up. This is the same tally restricted to BLSCT
+ * outputs, for getblsctbalance, whose contract is its name -- transparent
+ * credit that GetBalance() folds in alongside BLSCT credit is left out.
+ * Staked commitments are left out too: they cannot be spent until
+ * `stakeunlock` releases them, so they are not available balance. */
+struct BlsctTrustedBalance {
+    CAmount m_mine{0};
+    CAmount m_watchonly{0};
+};
+BlsctTrustedBalance GetBlsctTrustedBalance(const CWallet& wallet, int min_depth = 0) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+
 std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet, const TokenId& token_id = TokenId());
 std::set<std::set<CTxDestination>> GetAddressGroupings(const CWallet& wallet, const TokenId& token_id = TokenId()) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 

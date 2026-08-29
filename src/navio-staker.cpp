@@ -7,6 +7,9 @@
 #endif
 
 #include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/range_proof/generators.h>
+#include <blsct/tokens/predicate_parser.h>
+#include <blsct/wallet/delegation.h>
 #include <chainparamsbase.h>
 #include <clientversion.h>
 #include <common/args.h>
@@ -28,7 +31,9 @@
 #include <univalue.h>
 #include <util/chaintype.h>
 #include <util/exception.h>
+#include <util/fs.h>
 #include <util/strencodings.h>
+#include <util/string.h>
 #include <util/time.h>
 #include <util/translation.h>
 
@@ -36,7 +41,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -93,6 +100,14 @@ static void SetupCliArgs(ArgsManager& argsman)
     argsman.AddArg("-coinbasedest=<address>", "Specify the address to collect the staking rewards", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::OPTIONS);
     argsman.AddArg("-autoconsolidate", "Periodically merge the wallet's small outputs (e.g. accumulated staking rewards) into fewer larger ones, so they remain spendable in a single transaction (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-autoconsolidateinterval=<seconds>", "How often to run auto-consolidation when -autoconsolidate is enabled (default: 3600)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-delegated", "Run in delegated (cold-staking operator) mode: stake third-party delegations discovered on-chain instead of a local wallet's outputs. No wallet is needed on this machine (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-delegationkey=<hex>", "The operator's delegation private key as a 32-byte hex scalar. Required with -delegated (alternatively use -delegationkeyfile). Generate one with -gendelegationkey", ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::OPTIONS);
+    argsman.AddArg("-delegationkeyfile=<path>", "Read the operator's delegation private key from the first line of <path> instead of passing it with -delegationkey, which is visible to other users in the process list", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-statsfile=<path>", "In -delegated mode, write per-delegation accounting (blocks produced per delegation, last block, reward address) as JSON to <path> after every accepted block and delegation refresh", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-gendelegationkey", "Generate a new delegation key pair, print it and exit. Publish the public key so wallet owners can delegate to you with delegatestake", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-operatoraddress=<address>", "BLSCT address that receives the -operatorfee share of delegated block rewards", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-operatorfee=<bps>", "Operator fee taken from delegated block rewards, in basis points [0, 10000] (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-delegationrefresh=<seconds>", "How often to rescan the chain for stake delegations in -delegated mode (default: 300)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 }
 
 /** libevent event log callback */
@@ -454,6 +469,10 @@ static std::string walletPassphrase;
 static std::string coinbase_dest;
 static bool mustUnlockWallet = false;
 static arith_uint256 currentDifficulty;
+static bool fDelegated = false;
+static MclScalar delegationPrivKey;
+static std::string operatorAddress;
+static int64_t operatorFeeBps = 0;
 
 util::Result<void> SetLoggingCategories(const ArgsManager& args)
 {
@@ -525,8 +544,41 @@ void Setup()
 
     if (gArgs.IsArgSet("-wallet")) walletName = gArgs.GetArg("-wallet", {});
 
-    if (walletName == "")
+    fDelegated = gArgs.GetBoolArg("-delegated", false);
+
+    if (fDelegated) {
+        std::string keyHex = gArgs.GetArg("-delegationkey", "");
+        const std::string keyFile = gArgs.GetArg("-delegationkeyfile", "");
+        if (!keyHex.empty() && !keyFile.empty()) {
+            throw std::runtime_error("-delegationkey and -delegationkeyfile are mutually exclusive");
+        }
+        if (!keyFile.empty()) {
+            std::ifstream file{fs::PathFromString(keyFile)};
+            if (!file) {
+                throw std::runtime_error(strprintf("Could not open -delegationkeyfile %s", keyFile));
+            }
+            std::getline(file, keyHex);
+            keyHex = TrimString(keyHex);
+        }
+        if (!IsHex(keyHex) || keyHex.size() != 64) {
+            throw std::runtime_error("-delegated requires -delegationkey=<32-byte hex scalar> or -delegationkeyfile=<path> (generate a key with -gendelegationkey)");
+        }
+        delegationPrivKey.SetVch(ParseHex(keyHex));
+        if (delegationPrivKey.IsZero()) {
+            throw std::runtime_error("-delegationkey must be a non-zero scalar");
+        }
+
+        operatorFeeBps = gArgs.GetIntArg("-operatorfee", 0);
+        if (operatorFeeBps < 0 || operatorFeeBps > 10000) {
+            throw std::runtime_error("-operatorfee must be in [0, 10000] basis points");
+        }
+        operatorAddress = gArgs.GetArg("-operatoraddress", "");
+        if (operatorFeeBps > 0 && operatorAddress.empty()) {
+            throw std::runtime_error("-operatorfee requires -operatoraddress");
+        }
+    } else if (walletName == "") {
         throw std::runtime_error(strprintf("Please specify a wallet name with -wallet=<name>"));
+    }
 
     if (!LogInstance().StartLogging()) {
         throw std::runtime_error(strprintf("Could not open debug log file %s",
@@ -554,6 +606,16 @@ bool TestSetup()
         }
 
         LogPrintf("%s: [%s] Test connection to RPC: OK\n", __func__, walletName);
+
+        if (fDelegated) {
+            // Operator mode: no wallet needed. The delegation key was already
+            // validated in Setup(); the reward destinations come from the
+            // delegations themselves.
+            const auto delegationPubKey = MclG1Point::GetBasePoint() * delegationPrivKey;
+            LogPrintf("%s: Delegated staking mode. Delegation public key: %s%s\n", __func__, HexStr(delegationPubKey.GetVch()),
+                      operatorFeeBps > 0 ? strprintf(" (operator fee: %d bps to %s)", operatorFeeBps, operatorAddress) : "");
+            return true;
+        }
 
         reply = ConnectAndCallRPC(rh.get(), "loadwallet", /* args=*/{walletName});
         error = reply.find_value("error");
@@ -741,7 +803,157 @@ std::vector<StakedCommitment> GetStakedCommitments(const std::unique_ptr<BaseReq
     return UniValueArrayToStakedCommitmentsMine(result.get_array());
 }
 
-std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>& rh, const StakedCommitment& staked_commitment)
+struct DelegatedCommitment {
+    StakedCommitment staked;
+    std::string rewardAddress;
+    std::string outhash;
+    int confirmations{0};
+};
+
+//! Per-delegation block accounting, keyed by the staked output hash. Survives
+//! delegation refreshes (a delegation that disappears from the chain keeps its
+//! historical stats for the session) and is dumped to -statsfile as JSON so an
+//! operator can account which delegations produced which blocks.
+struct DelegationStats {
+    std::string commitment;
+    std::string rewardAddress;
+    CAmount value{0};
+    int64_t blocksAccepted{0};
+    int64_t blocksRejected{0};
+    std::string lastBlockHash;
+    int64_t lastBlockTime{0};
+};
+static std::map<std::string, DelegationStats> delegationStats;
+
+//! Atomically (write + rename) dump the per-delegation stats to -statsfile.
+static void WriteDelegationStats()
+{
+    const std::string path = gArgs.GetArg("-statsfile", "");
+    if (path.empty()) return;
+
+    UniValue root(UniValue::VOBJ);
+    root.pushKV("operator_fee_bps", operatorFeeBps);
+    if (!operatorAddress.empty()) root.pushKV("operator_address", operatorAddress);
+    UniValue arr(UniValue::VARR);
+    for (const auto& [outhash, s] : delegationStats) {
+        UniValue entry(UniValue::VOBJ);
+        entry.pushKV("outhash", outhash);
+        entry.pushKV("commitment", s.commitment);
+        entry.pushKV("reward_address", s.rewardAddress);
+        entry.pushKV("value", ValueFromAmount(s.value));
+        entry.pushKV("blocks_accepted", s.blocksAccepted);
+        entry.pushKV("blocks_rejected", s.blocksRejected);
+        if (!s.lastBlockHash.empty()) {
+            entry.pushKV("last_block_hash", s.lastBlockHash);
+            entry.pushKV("last_block_time", s.lastBlockTime);
+        }
+        arr.push_back(entry);
+    }
+    root.pushKV("delegations", arr);
+
+    const fs::path target = fs::PathFromString(path);
+    const fs::path tmp = fs::PathFromString(path + ".tmp");
+    std::ofstream file{tmp, std::ios::trunc};
+    if (!file) {
+        LogPrintf("%s: Could not open -statsfile %s for writing\n", __func__, path);
+        return;
+    }
+    file << root.write(2) << "\n";
+    file.close();
+    std::error_code ec;
+    fs::rename(tmp, target, ec);
+    if (ec) {
+        LogPrintf("%s: Could not rename %s into place: %s\n", __func__, fs::PathToString(tmp), ec.message());
+    }
+}
+
+//! Wallet endpoint to route RPCs through: none in delegated mode, where no
+//! wallet exists on this machine (node-level RPCs work on the base endpoint).
+static std::optional<std::string> RpcWallet()
+{
+    if (fDelegated) return std::nullopt;
+    return walletName;
+}
+
+//! Scan the chain's staked outputs for delegations addressed to our
+//! delegation key, decrypt their openings and sanity-check each opening
+//! against the on-chain commitment (so a bogus or mismatched blob cannot
+//! make us burn slots on unprovable stakes).
+std::vector<DelegatedCommitment> GetDelegatedCommitments(const std::unique_ptr<BaseRequestHandler>& rh)
+{
+    std::vector<DelegatedCommitment> ret;
+
+    const UniValue& response = ConnectAndCallRPC(rh.get(), "liststakedcommitmentsdata", /* args=*/{});
+    const UniValue& error = response.find_value("error");
+    const UniValue& result = response.find_value("result");
+
+    std::string strError;
+    auto nRet = 0;
+
+    if (!error.isNull()) {
+        ParseError(error, strError, nRet);
+        LogPrintf("%s: Could not load staked commitments data (%s)\n", __func__, strError);
+        return ret;
+    }
+
+    range_proof::GeneratorsFactory<Mcl> gf;
+    range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId());
+
+    for (const UniValue& elementobject : result.get_array().getValues()) {
+        try {
+            const UniValue& obj = elementobject.get_obj();
+            const auto predicateVch = ParseHex(obj.find_value("predicate").get_str());
+            if (predicateVch.empty()) continue;
+
+            // The DataPredicate wrapper is <op><serialized vector>; reuse the
+            // parser so framing changes cannot silently diverge.
+            const auto predicateBytes = MakeByteSpan(predicateVch);
+            const auto parsed = blsct::ParsePredicate(blsct::VectorPredicate(predicateBytes.begin(), predicateBytes.end()));
+            if (!parsed.IsDataPredicate()) continue;
+
+            const auto info = blsct::delegation::TryDecrypt(parsed.GetData(), delegationPrivKey);
+            if (!info.has_value()) continue;
+
+            MclG1Point point;
+            if (!point.SetVch(ParseHex(obj.find_value("commitment").get_str()))) continue;
+
+            if (info->value < 0) continue;
+            const MclScalar value{info->value};
+            const MclScalar gamma = info->gamma;
+            if (!((gen.G * value + gen.H * gamma) == point)) {
+                LogPrintf("%s: Delegation for commitment %s has an opening that does not match; skipping.\n", __func__, obj.find_value("commitment").get_str());
+                continue;
+            }
+
+            // height/confirmations were added to liststakedcommitmentsdata
+            // later; tolerate their absence so the staker still works against
+            // an older node.
+            const UniValue& conf_val = obj.find_value("confirmations");
+            const int confirmations = conf_val.isNum() ? conf_val.getInt<int>() : 0;
+            const std::string outhash = obj.find_value("outhash").get_str();
+
+            ret.push_back({StakedCommitment{point, value, gamma}, info->rewardAddress, outhash, confirmations});
+
+            auto& stats = delegationStats[outhash];
+            stats.commitment = obj.find_value("commitment").get_str();
+            stats.rewardAddress = info->rewardAddress;
+            stats.value = info->value;
+        } catch (const std::exception& e) {
+            LogPrintf("%s: Skipping malformed staked commitment entry: %s\n", __func__, e.what());
+        }
+    }
+
+    // Oldest (most confirmed) first: a just-created commitment may not be
+    // eligible for the current slot yet, so preferring seasoned commitments
+    // avoids burning the per-slot proposal attempt on fresh ones.
+    std::sort(ret.begin(), ret.end(), [](const DelegatedCommitment& a, const DelegatedCommitment& b) {
+        return a.confirmations > b.confirmations;
+    });
+
+    return ret;
+}
+
+std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>& rh, const StakedCommitment& staked_commitment, const std::string& coinbaseDest)
 {
     // Wrap the whole proposal flow so that any failure (malformed RPC reply,
     // mcl/G1 deserialisation throwing, range-proof construction asserting
@@ -757,7 +969,13 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
     try {
         CBlock proposal;
 
-        auto reply = ConnectAndCallRPC(rh.get(), "getblocktemplate", /* args=*/{"{\"rules\": [\"\"], \"coinbasedest\": \"" + coinbase_dest + "\"}"}, walletName);
+        std::string template_request = "{\"rules\": [\"\"], \"coinbasedest\": \"" + coinbaseDest + "\"";
+        if (fDelegated && operatorFeeBps > 0) {
+            template_request += ", \"coinbasefeedest\": \"" + operatorAddress + "\", \"coinbasefeebps\": " + ToString(operatorFeeBps);
+        }
+        template_request += "}";
+
+        auto reply = ConnectAndCallRPC(rh.get(), "getblocktemplate", /* args=*/{template_request}, RpcWallet());
         const UniValue& result = reply.find_value("result");
         const UniValue& error = reply.find_value("error");
 
@@ -903,12 +1121,18 @@ void Loop()
 
     // Optional: periodically merge the wallet's small outputs (staking rewards
     // accumulate one small output per block) so they stay spendable in a single
-    // transaction. Disabled by default.
-    const bool auto_consolidate = gArgs.GetBoolArg("-autoconsolidate", false);
+    // transaction. Disabled by default; not applicable in delegated mode.
+    const bool auto_consolidate = !fDelegated && gArgs.GetBoolArg("-autoconsolidate", false);
     const int64_t consolidate_interval = gArgs.GetIntArg("-autoconsolidateinterval", 3600);
     auto last_consolidate{SteadyClock::now()};
 
-    LogPrintf("%s: [%s] Starting staking...%s\n", __func__, walletName, auto_consolidate ? " (auto-consolidate enabled)" : "");
+    // Delegated mode: the set of delegations addressed to us, refreshed from
+    // the chain on an interval (and immediately on the first cycle).
+    std::vector<DelegatedCommitment> delegations;
+    const int64_t delegation_refresh_interval = std::max<int64_t>(1, gArgs.GetIntArg("-delegationrefresh", 300));
+    auto last_delegation_refresh{SteadyClock::now() - std::chrono::seconds(delegation_refresh_interval)};
+
+    LogPrintf("%s: [%s] Starting staking...%s%s\n", __func__, walletName, auto_consolidate ? " (auto-consolidate enabled)" : "", fDelegated ? " (delegated mode)" : "");
 
     while (true) {
         // Each loop iteration is best-effort: if anything throws (RPC
@@ -919,25 +1143,64 @@ void Loop()
         // typically a transient condition (node restarting mid-RPC,
         // wallet just-locked, single malformed reply, etc.).
         try {
-            auto staked_commitments = GetStakedCommitments(rh);
             CBlock proposal;
             CAmount nTotalMoney = 0;
             bool found = false;
+            // Which delegation produced the accepted proposal (delegated mode
+            // only); points into `delegations`, which is stable for the rest
+            // of this loop iteration.
+            const DelegatedCommitment* producing = nullptr;
 
-            for (auto& it : staked_commitments) {
-                nTotalMoney += it.value.GetUint64();
+            if (fDelegated) {
+                if (Ticks<std::chrono::seconds>(SteadyClock::now() - last_delegation_refresh) >= delegation_refresh_interval) {
+                    last_delegation_refresh = SteadyClock::now();
+                    delegations = GetDelegatedCommitments(rh);
+                    LogPrintf("%s: Tracking %d delegated commitment(s).\n", __func__, (int)delegations.size());
+                    // Drop stats entries whose delegation is gone from the
+                    // chain and that never produced a block: compounding
+                    // owners re-create their delegated output on every run,
+                    // so without pruning the map (and the stats file) grows
+                    // by one dead entry per compounding round.
+                    std::set<std::string> tracked;
+                    for (const auto& d : delegations)
+                        tracked.insert(d.outhash);
+                    std::erase_if(delegationStats, [&](const auto& item) {
+                        return !tracked.contains(item.first) && item.second.blocksAccepted == 0 && item.second.blocksRejected == 0;
+                    });
+                    WriteDelegationStats();
+                }
 
-                if (!found) {
-                    auto candidate = GetBlockProposal(rh, it);
+                for (auto& it : delegations) {
+                    nTotalMoney += it.staked.value.GetUint64();
 
-                    found = candidate.has_value();
-                    if (found)
-                        proposal = candidate.value();
+                    if (!found) {
+                        auto candidate = GetBlockProposal(rh, it.staked, it.rewardAddress);
+
+                        found = candidate.has_value();
+                        if (found) {
+                            proposal = candidate.value();
+                            producing = &it;
+                        }
+                    }
+                }
+            } else {
+                auto staked_commitments = GetStakedCommitments(rh);
+
+                for (auto& it : staked_commitments) {
+                    nTotalMoney += it.value.GetUint64();
+
+                    if (!found) {
+                        auto candidate = GetBlockProposal(rh, it, coinbase_dest);
+
+                        found = candidate.has_value();
+                        if (found)
+                            proposal = candidate.value();
+                    }
                 }
             }
 
             if (found) {
-                const UniValue& reply_submit = ConnectAndCallRPC(rh.get(), "submitblock", /* args=*/{EncodeHexBlock(proposal)}, walletName);
+                const UniValue& reply_submit = ConnectAndCallRPC(rh.get(), "submitblock", /* args=*/{EncodeHexBlock(proposal)}, RpcWallet());
 
                 const UniValue& result_submit = reply_submit.find_value("result");
                 const UniValue& error_submit = reply_submit.find_value("error");
@@ -948,6 +1211,19 @@ void Loop()
                         last_update = SteadyClock::now();
                     }
                     LogPrintf("%s: [%s] Found block %s (%s%s). Current difficulty: %s\n", __func__, walletName, proposal.GetHash().ToString(), result_submit.isNull() ? "ACCEPTED" : "REJECTED: ", result_submit.isNull() ? "" : reply_submit.write(0, 0), currentDifficulty.ToString());
+
+                    if (producing != nullptr) {
+                        auto& stats = delegationStats[producing->outhash];
+                        if (result_submit.isNull()) {
+                            stats.blocksAccepted++;
+                            stats.lastBlockHash = proposal.GetHash().ToString();
+                            stats.lastBlockTime = GetTime();
+                        } else {
+                            stats.blocksRejected++;
+                        }
+                        LogPrintf("%s: Block %s staked with delegation %s (reward address %s): %d block(s) accepted, %d rejected this session.\n", __func__, proposal.GetHash().ToString(), producing->outhash, producing->rewardAddress, (int)stats.blocksAccepted, (int)stats.blocksRejected);
+                        WriteDelegationStats();
+                    }
 
                     auto elapsed = Ticks<std::chrono::minutes>(SteadyClock::now() - start);
 
@@ -1014,11 +1290,32 @@ MAIN_FUNCTION
         return EXIT_FAILURE;
     }
 
-    Setup();
-    if (!TestSetup())
-        return EXIT_FAILURE;
+    if (gArgs.GetBoolArg("-gendelegationkey", false)) {
+        const MclScalar priv = MclScalar::Rand(/*exclude_zero=*/true);
+        const MclG1Point pub = MclG1Point::GetBasePoint() * priv;
+        tfm::format(std::cout, "delegation private key: %s\n", HexStr(priv.GetVch()));
+        tfm::format(std::cout, "delegation public key:  %s\n", HexStr(pub.GetVch()));
+        tfm::format(std::cout, "Keep the private key secret (pass it to navio-staker with -delegated -delegationkey=<hex>).\nPublish the public key so wallet owners can delegate to you with the delegatestake RPC.\n");
+        return EXIT_SUCCESS;
+    }
 
-    Loop();
+    // Setup() reports every argument error by throwing, so it needs a handler
+    // here: an exception escaping main aborts the process, and only libstdc++
+    // prints what() on the way out. The MSVC runtime prints nothing, which
+    // turns a misspelled option into a bare crash on Windows.
+    try {
+        Setup();
+        if (!TestSetup())
+            return EXIT_FAILURE;
+
+        Loop();
+    } catch (const std::exception& e) {
+        tfm::format(std::cerr, "Error: %s\n", e.what());
+        return EXIT_FAILURE;
+    } catch (...) {
+        PrintExceptionContinue(nullptr, "navio-staker");
+        return EXIT_FAILURE;
+    }
 
     return EXIT_SUCCESS;
 }

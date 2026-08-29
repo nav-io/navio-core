@@ -23,7 +23,8 @@ Signature::Signature()
 Signature Signature::Aggregate(const std::vector<blsct::Signature>& sigs)
 {
     std::vector<blsSignature> bls_sigs;
-    std::transform(sigs.begin(), sigs.end(), std::back_inserter(bls_sigs), [](auto sig) {
+    bls_sigs.reserve(sigs.size());
+    std::transform(sigs.begin(), sigs.end(), std::back_inserter(bls_sigs), [](const auto& sig) {
         return sig.m_data;
     });
     blsct::Signature aggr_sig;
@@ -45,15 +46,16 @@ std::vector<uint8_t> Signature::GetVch() const
     return buf;
 }
 
-void Signature::SetVch(const std::vector<uint8_t>& buf)
+bool Signature::SetVch(const std::vector<uint8_t>& buf)
 {
     size_t ser_size = mclBn_getFpByteSize() * 2;
     if (buf.size() != ser_size) {
-        return;
+        mclBnG2_clear(&m_data.v);
+        return false;
     }
     if (mclBnG2_deserialize(&m_data.v, &buf[0], ser_size) == 0) {
         mclBnG2_clear(&m_data.v);
-        return;
+        return false;
     }
     // Enforce prime-order subgroup membership on the deserialized signature.
     // BLS12-381 G2 has a large cofactor, so a point can be on the curve yet
@@ -67,7 +69,9 @@ void Signature::SetVch(const std::vector<uint8_t>& buf)
     // is trivial). Mirror the identical guard in MclG1Point::SetVch.
     if (mclBnG2_isValidOrder(&m_data.v) != 1) {
         mclBnG2_clear(&m_data.v);
+        return false;
     }
+    return true;
 }
 
 bool Signature::operator==(const Signature& b) const

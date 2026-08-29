@@ -212,6 +212,22 @@ CPubKey AddrToPubKey(const FillableSigningProvider& keystore, const std::string&
 }
 
 // Creates a multisig address from a given list of public keys, number of signatures required, and the address type
+blsct::DoublePublicKey EnsureBlsctDestination(const std::string& address, const std::string& context)
+{
+    const std::string where{context.empty() ? "" : " for " + context};
+
+    CTxDestination destination = DecodeDestination(address);
+    const auto* keys = std::get_if<blsct::DoublePublicKey>(&destination);
+    if (!keys) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("Invalid BLSCT address%s: %s", where, address));
+    }
+    if (!keys->HasNonIdentityKeys()) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("BLSCT address%s has null keys: %s", where, address));
+    }
+
+    return *keys;
+}
+
 CTxDestination AddAndGetMultisigDestination(const int required, const std::vector<CPubKey>& pubkeys, OutputType type, FillableSigningProvider& keystore, CScript& script_out)
 {
     // Gather public keys

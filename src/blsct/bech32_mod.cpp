@@ -216,7 +216,14 @@ DecodeResult Decode(const std::string& str) {
     std::vector<int> errors;
     if (!CheckCharacters(str, errors)) return {};
     size_t pos = str.rfind('1');
-    if (pos == std::string::npos) return {};
+    // Mirror upstream's guards (src/bech32.cpp Decode): no separator at all,
+    // or an empty hrp, is not a valid encoding. The third condition is sized
+    // for this variant's 8-character checksum -- a data part shorter than the
+    // checksum leaves fewer than 8 entries in `values` and makes the
+    // `values.end() - 8` below an out-of-range iterator. There is no
+    // 90-character cap here on purpose -- this variant encodes a double public
+    // key and its strings are longer than that.
+    if (pos == std::string::npos || pos == 0 || pos + 9 > str.size()) return {};
 
     data values(str.size() - 1 - pos);
     for (size_t i = 0; i < str.size() - 1 - pos; ++i) {

@@ -177,10 +177,13 @@ public:
     bool haveWatchOnly() override
     {
         auto spk_man = m_wallet->GetLegacyScriptPubKeyMan();
-        if (spk_man) {
-            return spk_man->HaveWatchOnly();
+        if (spk_man && spk_man->HaveWatchOnly()) {
+            return true;
         }
-        return false;
+        // BLSCT wallets have no legacy ScriptPubKeyMan; their watch-only
+        // scripts (importblsctscript) live in blsct::KeyMan.
+        auto blsct_km = m_wallet->GetBLSCTKeyMan();
+        return blsct_km && blsct_km->HaveWatchOnly();
     };
     bool setAddressBook(const CTxDestination& dest, const std::string& name, const std::optional<AddressPurpose>& purpose) override
     {

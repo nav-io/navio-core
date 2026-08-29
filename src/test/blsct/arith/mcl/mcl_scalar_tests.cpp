@@ -4,6 +4,8 @@
 
 #include <test/util/setup_common.h>
 
+#include <streams.h>
+
 #include <boost/test/unit_test.hpp>
 #include <uint256.h>
 
@@ -521,5 +523,44 @@ BOOST_AUTO_TEST_CASE(test_setvch)
     }
 }
 
+
+
+BOOST_AUTO_TEST_CASE(test_unserialize_rejects_noncanonical_encoding)
+{
+    // Small values and the largest canonical scalar round-trip: this pins
+    // that GetVch() round-trips byte-exactly (if its trim_preceeding_zeros
+    // default ever flipped, leading-zero scalars — almost all of them —
+    // would fail).
+    for (int64_t v : {0, 1, 2, 1000, 100000000}) {
+        Scalar a(v);
+        DataStream st{};
+        st << a;
+        Scalar b;
+        BOOST_CHECK_NO_THROW(b.Unserialize(st));
+        BOOST_CHECK(a == b);
+    }
+
+    CURVE_ORDER_MINUS_1_VEC(order_minus_1);
+    DataStream st1{};
+    st1.write(MakeByteSpan(order_minus_1));
+    Scalar a;
+    BOOST_CHECK_NO_THROW(a.Unserialize(st1));
+    CURVE_ORDER_MINUS_1_SCALAR(expected);
+    BOOST_CHECK(a == expected);
+
+    // The group order itself reduces to 0 mod r: non-canonical, must throw.
+    CURVE_ORDER_VEC(order);
+    DataStream st2{};
+    st2.write(MakeByteSpan(order));
+    Scalar c;
+    BOOST_CHECK_THROW(c.Unserialize(st2), std::ios_base::failure);
+
+    // 2^256-1 likewise.
+    std::vector<uint8_t> all_ones(32, 0xFF);
+    DataStream st3{};
+    st3.write(MakeByteSpan(all_ones));
+    Scalar d;
+    BOOST_CHECK_THROW(d.Unserialize(st3), std::ios_base::failure);
+}
 
 BOOST_AUTO_TEST_SUITE_END()

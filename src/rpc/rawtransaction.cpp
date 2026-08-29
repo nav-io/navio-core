@@ -44,6 +44,7 @@
 
 #include <numeric>
 #include <cstdint>
+#include <optional>
 
 #include <univalue.h>
 
@@ -464,7 +465,7 @@ static RPCHelpMan createrawtransaction()
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"},
         RPCExamples{
-            HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"address\\\":0.01}]\"") + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"") + HelpExampleRpc("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\", \"[{\\\"address\\\":0.01}]\"") + HelpExampleRpc("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\", \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
+            HelpExampleCli("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"address\\\":0.01}]\"") + HelpExampleCli("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"") + HelpExampleRpc("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\", \"[{\\\"address\\\":0.01}]\"") + HelpExampleRpc("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\", \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::optional<bool> rbf;
             if (!request.params[3].isNull()) {
@@ -1542,7 +1543,7 @@ static RPCHelpMan createpsbt()
         RPCResult{
             RPCResult::Type::STR, "", "The resulting raw transaction (base64-encoded string)"},
         RPCExamples{
-            HelpExampleCli("createpsbt", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
+            HelpExampleCli("createpsbt", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::optional<bool> rbf;
             if (!request.params[3].isNull()) {
@@ -1589,7 +1590,7 @@ static RPCHelpMan converttopsbt()
         RPCResult{
             RPCResult::Type::STR, "", "The resulting raw transaction (base64-encoded string)"},
         RPCExamples{
-            "\nCreate a transaction\n" + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"") +
+            "\nCreate a transaction\n" + HelpExampleCli("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"") +
             "\nConvert the transaction to a PSBT\n" + HelpExampleCli("converttopsbt", "\"rawtransaction\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             // parse hex string from parameter
@@ -1953,12 +1954,56 @@ RPCHelpMan descriptorprocesspsbt()
     };
 }
 
+//! Everything gettxfromoutputhash needs from a block index entry, copied out
+//! under cs_main so the block itself can be read from disk with the lock
+//! released.
+struct OutputHashBlockRef {
+    FlatFilePos pos;
+    uint256 hash;
+    int height;
+    const CBlockIndex* prev;
+};
+
+//! Copy out the block index fields the output-hash search needs. Throws if the
+//! block's data has been pruned: the output may well be in that block, and
+//! answering "not found" would be a wrong answer rather than a missing one.
+static OutputHashBlockRef GetOutputHashBlockRef(node::BlockManager& blockman, const CBlockIndex& index)
+{
+    LOCK(cs_main);
+    if (blockman.IsBlockPruned(index)) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Output hash not found in unpruned blocks (pruned data)");
+    }
+    return {index.GetBlockPos(), index.GetBlockHash(), index.nHeight, index.pprev};
+}
+
+//! Describe where output_hash sits in an already-read block, or nullopt if the
+//! block does not contain it.
+static std::optional<UniValue> FindOutputHashInBlock(const CBlock& block, const uint256& output_hash, const uint256& block_hash, int confirmations)
+{
+    for (const auto& tx : block.vtx) {
+        for (size_t i = 0; i < tx->vout.size(); i++) {
+            if (tx->vout[i].GetHash() == output_hash) {
+                UniValue result(UniValue::VOBJ);
+                result.pushKV("txid", tx->GetHash().GetHex());
+                result.pushKV("vout", (int)i);
+                result.pushKV("blockhash", block_hash.GetHex());
+                result.pushKV("confirmations", confirmations);
+                return result;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 static RPCHelpMan gettxfromoutputhash()
 {
     return RPCHelpMan{
         "gettxfromoutputhash",
         "\nReturns the transaction hash that contains the specified output hash.\n"
-        "\nThis command searches through the blockchain and mempool to find which transaction contains an output with the given hash.\n",
+        "\nThis command searches through the blockchain and mempool to find which transaction contains an output with the given hash.\n"
+        "\nAn output that is still unspent is answered from the UTXO set, which names its block directly. An output already spent in a\n"
+        "block is no longer in the UTXO set, so it is looked up by scanning the chain backwards from the tip, which is expensive.\n"
+        "\nOn a pruned node the scan fails once it reaches a block whose data was pruned, rather than reporting the output as missing.\n",
         {
             {"outputhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The hash of the output to search for"},
             {"include_mempool", RPCArg::Type::BOOL, RPCArg::Default{true}, "Include mempool transactions in the search"},
@@ -1983,9 +2028,6 @@ static RPCHelpMan gettxfromoutputhash()
                 g_txindex->BlockUntilSyncedToCurrentChain();
             }
 
-            LOCK(cs_main);
-            Chainstate& active_chainstate = chainman.ActiveChainstate();
-
             // First, search in mempool if requested
             if (include_mempool && node.mempool) {
                 LOCK(node.mempool->cs);
@@ -2003,26 +2045,50 @@ static RPCHelpMan gettxfromoutputhash()
                 }
             }
 
-            // Search in blockchain by iterating over blocks.
+            // An outpoint on this chain is the bare output hash, so the UTXO set
+            // can name the block that created any output not yet spent in a
+            // block: Coin::nHeight is that block's height. Reading just that one
+            // block answers the common lookup without touching the rest of the
+            // chain. An output spent only by a mempool transaction is still in
+            // CoinsTip, so it is covered here too.
+            const CBlockIndex* coin_block{nullptr};
+            const CBlockIndex* scan_tip{nullptr};
+            int tip_height{0};
+            {
+                LOCK(cs_main);
+                Chainstate& active_chainstate = chainman.ActiveChainstate();
+                scan_tip = active_chainstate.m_chain.Tip();
+                tip_height = active_chainstate.m_chain.Height();
+                Coin coin;
+                if (active_chainstate.CoinsTip().GetCoin(COutPoint(output_hash), coin)) {
+                    coin_block = active_chainstate.m_chain[coin.nHeight];
+                }
+            }
 
-            const CBlockIndex* pindex = active_chainstate.m_chain.Tip();
-            while (pindex) {
+            if (coin_block) {
+                const OutputHashBlockRef ref{GetOutputHashBlockRef(chainman.m_blockman, *coin_block)};
                 CBlock block;
-                if (chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
-                    for (const auto& tx : block.vtx) {
-                        for (size_t i = 0; i < tx->vout.size(); i++) {
-                            if (tx->vout[i].GetHash() == output_hash) {
-                                UniValue result(UniValue::VOBJ);
-                                result.pushKV("txid", tx->GetHash().GetHex());
-                                result.pushKV("vout", (int)i);
-                                result.pushKV("blockhash", pindex->GetBlockHash().GetHex());
-                                result.pushKV("confirmations", 1 + active_chainstate.m_chain.Height() - pindex->nHeight);
-                                return result;
-                            }
-                        }
+                if (chainman.m_blockman.ReadBlockFromDisk(block, ref.pos)) {
+                    if (auto result{FindOutputHashInBlock(block, output_hash, ref.hash, 1 + tip_height - ref.height)}) {
+                        return *result;
                     }
                 }
-                pindex = pindex->pprev;
+            }
+
+            // Otherwise the output was spent in a block and is gone from the UTXO
+            // set, so fall back to walking the chain backwards from the tip
+            // captured above. cs_main is taken per block to resolve that block's
+            // position on disk and dropped again before the read, so the scan
+            // never holds the lock across disk I/O.
+            for (const CBlockIndex* pindex = scan_tip; pindex != nullptr;) {
+                const OutputHashBlockRef ref{GetOutputHashBlockRef(chainman.m_blockman, *pindex)};
+                CBlock block;
+                if (chainman.m_blockman.ReadBlockFromDisk(block, ref.pos)) {
+                    if (auto result{FindOutputHashInBlock(block, output_hash, ref.hash, 1 + tip_height - ref.height)}) {
+                        return *result;
+                    }
+                }
+                pindex = ref.prev;
             }
 
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Output hash not found in blockchain or mempool");

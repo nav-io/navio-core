@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/wallet/rpc.h>
 #include <core_io.h>
 #include <hash.h>
 #include <key_io.h>
@@ -533,6 +534,7 @@ RPCHelpMan getbalances()
                                               {RPCResult::Type::OBJ, "mine", "balances from outputs that the wallet can sign", {
                                                                                                                                    {RPCResult::Type::STR_AMOUNT, "trusted", "trusted balance (outputs created by the wallet or confirmed outputs)"},
                                                                                                                                    {RPCResult::Type::STR_AMOUNT, "staked_commitment_balance", "staked commitment balance with at least one confirmation"},
+                                                                                                                                   {RPCResult::Type::STR_AMOUNT, "delegated_staked_commitment_balance", "portion of staked_commitment_balance whose block production is delegated to a third-party staker"},
                                                                                                                                    {RPCResult::Type::STR_AMOUNT, "pending_staked_commitment_balance", "trusted staked commitment from transactions that are in the mempool only"},
                                                                                                                                    {RPCResult::Type::STR_AMOUNT, "untrusted_pending", "untrusted pending balance (outputs created by others that are in the mempool)"},
                                                                                                                                    {RPCResult::Type::STR_AMOUNT, "immature", "balance from immature coinbase outputs"},
@@ -564,6 +566,7 @@ RPCHelpMan getbalances()
                 UniValue balances_mine{UniValue::VOBJ};
                 balances_mine.pushKV("trusted", ValueFromAmount(bal.m_mine_trusted + blsct_bal.m_mine_trusted));
                 balances_mine.pushKV("staked_commitment_balance", ValueFromAmount(bal.m_mine_staked_commitment + blsct_bal.m_mine_staked_commitment));
+                balances_mine.pushKV("delegated_staked_commitment_balance", ValueFromAmount(blsct::GetDelegatedStakedBalance(wallet)));
                 balances_mine.pushKV("pending_staked_commitment_balance", ValueFromAmount(bal.m_mine_pending_staked_commitment + blsct_bal.m_mine_pending_staked_commitment));
                 balances_mine.pushKV("untrusted_pending", ValueFromAmount(bal.m_mine_untrusted_pending + blsct_bal.m_mine_untrusted_pending));
                 balances_mine.pushKV("immature", ValueFromAmount(bal.m_mine_immature + blsct_bal.m_mine_immature));
@@ -575,12 +578,18 @@ RPCHelpMan getbalances()
                 }
                 balances.pushKV("mine", balances_mine);
             }
+            // Watch-only material comes in two flavours: legacy scripts held by
+            // the LegacyScriptPubKeyMan, and BLSCT scripts imported with
+            // importblsctscript, which a BLSCT wallet keeps in blsct::KeyMan
+            // (it has no legacy ScriptPubKeyMan at all). Either one earns the
+            // section, and the amounts are the sum of both.
             auto spk_man = wallet.GetLegacyScriptPubKeyMan();
-            if (spk_man && spk_man->HaveWatchOnly()) {
+            auto blsct_km = wallet.GetBLSCTKeyMan();
+            if ((spk_man && spk_man->HaveWatchOnly()) || (blsct_km && blsct_km->HaveWatchOnly())) {
                 UniValue balances_watchonly{UniValue::VOBJ};
-                balances_watchonly.pushKV("trusted", ValueFromAmount(bal.m_watchonly_trusted));
-                balances_watchonly.pushKV("untrusted_pending", ValueFromAmount(bal.m_watchonly_untrusted_pending));
-                balances_watchonly.pushKV("immature", ValueFromAmount(bal.m_watchonly_immature));
+                balances_watchonly.pushKV("trusted", ValueFromAmount(bal.m_watchonly_trusted + blsct_bal.m_watchonly_trusted));
+                balances_watchonly.pushKV("untrusted_pending", ValueFromAmount(bal.m_watchonly_untrusted_pending + blsct_bal.m_watchonly_untrusted_pending));
+                balances_watchonly.pushKV("immature", ValueFromAmount(bal.m_watchonly_immature + blsct_bal.m_watchonly_immature));
                 balances.pushKV("watchonly", balances_watchonly);
             }
 

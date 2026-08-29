@@ -80,6 +80,16 @@ bool DoublePublicKey::IsValid() const
     return is_fully_built && vk.IsValid() && sk.IsValid();
 }
 
+bool DoublePublicKey::HasNonIdentityKeys() const
+{
+    if (!IsValid()) return false;
+
+    Point view_key, spend_key;
+    if (!GetViewKey(view_key) || !GetSpendKey(spend_key)) return false;
+
+    return !view_key.IsZero() && !spend_key.IsZero();
+}
+
 std::vector<unsigned char> DoublePublicKey::GetVkVch() const
 {
     return vk.GetVch();

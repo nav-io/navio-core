@@ -47,6 +47,7 @@ add_executable(test_navio
   blsct/arith/mcl/mcl_integration_tests.cpp
   blsct/arith/mcl/mcl_scalar_tests.cpp
   blsct/bech32_mod_tests.cpp
+  blsct/building_block/fixed_base_window_tests.cpp
   blsct/building_block/generator_deriver_tests.cpp
   blsct/building_block/imp_inner_prod_arg_tests.cpp
   blsct/building_block/lazy_points_tests.cpp
@@ -73,6 +74,7 @@ add_executable(test_navio
   blsct/sign_verify_tests.cpp
   blsct/wallet/address_tests.cpp
   blsct/wallet/chain_tests.cpp
+  blsct/wallet/delegation_tests.cpp
   blsct/wallet/keyman_tests.cpp
   blsct/wallet/output_storage_tests.cpp
   blsct/wallet/txfactory_global_tests.cpp

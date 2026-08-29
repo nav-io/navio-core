@@ -7,6 +7,7 @@
 
 #include <blsct/public_key.h>
 
+#include <span>
 #include <vector>
 
 namespace blsct {
@@ -14,7 +15,20 @@ namespace blsct {
 class PublicKeys
 {
 public:
-    PublicKeys(const std::vector<PublicKey>& pks): m_pks(pks) {}
+    // Non-owning view over the caller's pubkey vector. PublicKeys is a transient
+    // verification helper; every use constructs it from a vector that outlives
+    // the call, so holding a span avoids copying the whole vector (hundreds of
+    // ~145-byte points) on the aggregate-verify hot path.
+    PublicKeys(std::span<const PublicKey> pks): m_pks(pks) {}
+    // Explicit lvalue-vector overload: libc++ 14 (the Ubuntu 22.04 kernel CI
+    // job) cannot use std::span's range constructor for the implicit
+    // vector -> span conversion, so spell the pointer+size form out here
+    // instead of at every call site.
+    PublicKeys(const std::vector<PublicKey>& pks): m_pks(pks.data(), pks.size()) {}
+    // A temporary vector would satisfy span's borrowed-range escape hatch
+    // (element_type is const) and compile into a silent use-after-free once
+    // the full-expression ends. Force callers to name the backing vector.
+    PublicKeys(std::vector<PublicKey>&&) = delete;
 
     PublicKey Aggregate() const;
 
@@ -28,7 +42,7 @@ private:
     // Core operations
     bool CoreAggregateVerify(const std::vector<PublicKey::Message>& msgs, const Signature& sig) const;
 
-    std::vector<PublicKey> m_pks;
+    std::span<const PublicKey> m_pks;
 };
 
 }

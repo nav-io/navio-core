@@ -9,12 +9,17 @@
 #include <thread>
 
 namespace blsct {
-uint64_t CalculateViewTag(const MclG1Point& blindingKey, const MclScalar& viewKey)
+uint64_t ViewTagFromNonce(const MclG1Point& nonce)
 {
     HashWriter hash{};
-    hash << (blindingKey * viewKey);
+    hash << nonce;
 
     return (hash.GetHash().GetUint64(0) & 0xFFFF);
+}
+
+uint64_t CalculateViewTag(const MclG1Point& blindingKey, const MclScalar& viewKey)
+{
+    return ViewTagFromNonce(blindingKey * viewKey);
 }
 
 std::vector<uint64_t> CalculateViewTagBatch(const std::vector<MclG1Point>& blindingKeys,
@@ -57,13 +62,17 @@ std::vector<uint64_t> CalculateViewTagBatch(const std::vector<MclG1Point>& blind
     return tags;
 }
 
-CKeyID CalculateHashId(const MclG1Point& blindingKey, const MclG1Point& spendingKey, const MclScalar& viewKey)
+CKeyID CalculateHashId(const MclG1Point& nonce, const MclG1Point& spendingKey)
 {
-    auto t = blindingKey * viewKey;
-    auto dh = MclG1Point::GetBasePoint() * t.GetHashWithSalt(0).Negate();
+    auto dh = MclG1Point::GetBasePoint() * nonce.GetHashWithSalt(0).Negate();
     auto D_prime = spendingKey + dh;
 
     return blsct::PublicKey(D_prime).GetID();
+}
+
+CKeyID CalculateHashId(const MclG1Point& blindingKey, const MclG1Point& spendingKey, const MclScalar& viewKey)
+{
+    return CalculateHashId(blindingKey * viewKey, spendingKey);
 }
 
 MclScalar CalculatePrivateSpendingKey(const MclG1Point& blindingKey, const MclScalar& viewKey, const MclScalar& spendingKey, const int64_t& account, const uint64_t& address)

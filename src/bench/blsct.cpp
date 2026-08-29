@@ -81,10 +81,11 @@ static void BLSCTAggregateSignVerify4(benchmark::Bench& bench)
         blsct::PrivateKey(67890),
         blsct::PrivateKey(424242),
     };
-    blsct::PublicKeys pks(std::vector<blsct::PublicKey>{
+    const std::vector<blsct::PublicKey> pks_backing{
         sks[0].GetPublicKey(), sks[1].GetPublicKey(),
         sks[2].GetPublicKey(), sks[3].GetPublicKey(),
-    });
+    };
+    blsct::PublicKeys pks(pks_backing);
     std::vector<std::vector<uint8_t>> msgs{
         {'m', 's', 'g', '1'}, {'m', 's', 'g', '2'},
         {'m', 's', 'g', '3'}, {'m', 's', 'g', '4'},

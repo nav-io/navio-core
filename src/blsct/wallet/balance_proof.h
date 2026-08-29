@@ -86,6 +86,15 @@ public:
             index++;
         }
 
+        // Signing with a default-constructed key would produce a signature
+        // under the zero scalar, which Verify() can never match against the
+        // output's spending key -- an unverifiable proof reported as a success.
+        // GetSpendingKeyForOutput returns false for a locked encrypted wallet
+        // and for an output the wallet cannot spend, so refuse instead.
+        if (!has_private_key) {
+            throw std::runtime_error("No spending key available for the given outpoints");
+        }
+
         // Create range proof under the v2 transcript and record the version.
         m_version = VERSION_V2;
         bulletproofs_plus::RangeProofLogic<Mcl> prover;

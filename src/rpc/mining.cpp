@@ -3,6 +3,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/double_public_key.h>
 #include <blsct/pos/pos.h>
 #include <chain.h>
 #include <chainparams.h>
@@ -219,10 +220,9 @@ static RPCHelpMan generatetoblsctaddress()
             const int num_blocks{request.params[0].getInt<int>()};
             const uint64_t max_tries{request.params[2].isNull() ? DEFAULT_MAX_TRIES : request.params[2].getInt<int>()};
 
-            CTxDestination destination = DecodeDestination(request.params[1].get_str());
-            if (!IsValidDestination(destination) || destination.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
-            }
+            // Identity keys decode fine but make the coinbase anyone-can-spend,
+            // so the block reward would be claimable by whoever sees it first.
+            const CTxDestination destination{EnsureBlsctDestination(request.params[1].get_str())};
 
             NodeContext& node = EnsureAnyNodeContext(request.context);
             const CTxMemPool& mempool = EnsureMemPool(node);
@@ -557,6 +557,9 @@ static RPCHelpMan getblocktemplate()
                                                                                             }},
                     {"longpollid", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "delay processing request until the result would vary significantly from the \"longpollid\" of a prior template"},
                     {"data", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "proposed block data to check, encoded in hexadecimal; valid only for mode=\"proposal\""},
+                    {"coinbasedest", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "BLSCT address the coinbase reward is paid to (BLSCT chains only)"},
+                    {"coinbasefeedest", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "BLSCT address paid the coinbasefeebps share of the reward, e.g. a delegated staker's operator fee (BLSCT chains only)"},
+                    {"coinbasefeebps", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "share of the reward paid to coinbasefeedest, in basis points [0, 10000]"},
                 },
             },
         },
@@ -630,6 +633,8 @@ static RPCHelpMan getblocktemplate()
             std::string strMode = "template";
             UniValue lpval = NullUniValue;
             UniValue coinbasedest = NullUniValue;
+            UniValue coinbasefeedest = NullUniValue;
+            UniValue coinbasefeebps = NullUniValue;
             std::set<std::string> setClientRules;
             Chainstate& active_chainstate = chainman.ActiveChainstate();
             CChain& active_chain = active_chainstate.m_chain;
@@ -644,6 +649,8 @@ static RPCHelpMan getblocktemplate()
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid mode");
                 lpval = oparam.find_value("longpollid");
                 coinbasedest = oparam.find_value("coinbasedest");
+                coinbasefeedest = oparam.find_value("coinbasefeedest");
+                coinbasefeebps = oparam.find_value("coinbasefeebps");
 
                 if (strMode == "proposal") {
                     const UniValue& dataval = oparam.find_value("data");
@@ -748,11 +755,22 @@ static RPCHelpMan getblocktemplate()
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "getblocktemplate must be called with the segwit rule set (call with {\"rules\": [\"segwit\"]})");
             }
 
+            // The coinbase layout requested by this caller. Part of the
+            // template cache key: delegated stakers rotate destinations per
+            // call, and serving a cached template built for another owner's
+            // reward address would misdirect the reward.
+            std::string coinbase_key;
+            if (!coinbasedest.isNull() && coinbasedest.isStr()) coinbase_key += coinbasedest.get_str();
+            if (!coinbasefeedest.isNull() && coinbasefeedest.isStr()) coinbase_key += "|" + coinbasefeedest.get_str();
+            if (!coinbasefeebps.isNull()) coinbase_key += "|" + coinbasefeebps.getValStr();
+
             // Update block
             static CBlockIndex* pindexPrev;
             static int64_t time_start;
             static std::unique_ptr<CBlockTemplate> pblocktemplate;
+            static std::string last_coinbase_key;
             if (pindexPrev != active_chain.Tip() ||
+                coinbase_key != last_coinbase_key ||
                 (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - time_start > 5)) {
                 // Clear pindexPrev so future calls make a new block, despite any failures from here on
                 pindexPrev = nullptr;
@@ -773,9 +791,22 @@ static RPCHelpMan getblocktemplate()
                             throw JSONRPCError(RPC_INVALID_PARAMETER, "invalid coinbase destination");
                     }
 
+                    std::optional<std::pair<blsct::SubAddress, uint32_t>> feeSplit;
+                    if (!coinbasefeedest.isNull() && coinbasefeedest.isStr()) {
+                        auto feeDest = blsct::SubAddress(coinbasefeedest.get_str());
+                        if (!feeDest.IsValid())
+                            throw JSONRPCError(RPC_INVALID_PARAMETER, "invalid coinbase fee destination");
+                        if (coinbasefeebps.isNull())
+                            throw JSONRPCError(RPC_INVALID_PARAMETER, "coinbasefeedest requires coinbasefeebps");
+                        const int64_t bps = coinbasefeebps.getInt<int64_t>();
+                        if (bps < 0 || bps > 10000)
+                            throw JSONRPCError(RPC_INVALID_PARAMETER, "coinbasefeebps must be in [0, 10000]");
+                        feeSplit = std::make_pair(feeDest, static_cast<uint32_t>(bps));
+                    }
+
                     auto blockReward = GetBLSCTBlockReward(pindexPrevNew->nHeight + 1, consensusParams, true);
 
-                    pblocktemplate = BlockAssembler{active_chainstate, &mempool}.CreateNewBLSCTBlock(dest, blockReward, {}, true);
+                    pblocktemplate = BlockAssembler{active_chainstate, &mempool}.CreateNewBLSCTBlock(dest, blockReward, {}, true, feeSplit);
                 } else {
                     CScript scriptDummy = CScript() << OP_TRUE;
                     pblocktemplate = BlockAssembler{active_chainstate, &mempool}.CreateNewBlock(scriptDummy);
@@ -786,6 +817,7 @@ static RPCHelpMan getblocktemplate()
 
                 // Need to update only after we know CreateNewBlock succeeded
                 pindexPrev = pindexPrevNew;
+                last_coinbase_key = coinbase_key;
             }
 
             if (chainman.IsInitialBlockDownload()) {
@@ -807,12 +839,19 @@ static RPCHelpMan getblocktemplate()
             aCaps.push_back("proposal");
 
             UniValue transactions(UniValue::VARR);
-            std::map<uint256, int64_t> setTxIndex;
+            // An outpoint on this chain names an output by its own hash, not by
+            // (txid, n), so a dependency is resolved by mapping every output
+            // hash produced so far back to the index of the transaction that
+            // produced it. Keying this by txid would never match a prevout.
+            std::map<uint256, int64_t> setOutputIndex;
             int i = 0;
             for (const auto& it : pblock->vtx) {
                 const CTransaction& tx = *it;
                 uint256 txHash = tx.GetHash();
-                setTxIndex[txHash] = i++;
+                for (const CTxOut& out : tx.vout) {
+                    setOutputIndex[out.GetHash()] = i;
+                }
+                ++i;
 
                 if (!consensusParams.fBLSCT && tx.IsCoinBase())
                     continue;
@@ -825,8 +864,9 @@ static RPCHelpMan getblocktemplate()
 
                 UniValue deps(UniValue::VARR);
                 for (const CTxIn& in : tx.vin) {
-                    if (setTxIndex.contains(in.prevout.hash))
-                        deps.push_back(setTxIndex[in.prevout.hash]);
+                    const auto dep = setOutputIndex.find(in.prevout.hash);
+                    if (dep != setOutputIndex.end())
+                        deps.push_back(dep->second);
                 }
                 entry.pushKV("depends", deps);
 

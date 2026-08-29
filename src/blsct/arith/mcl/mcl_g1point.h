@@ -12,7 +12,9 @@
 #include <blsct/arith/mcl/mcl_scalar.h>
 #include <uint256.h>
 
+#include <algorithm>
 #include <stddef.h>
+#include <stdexcept>
 #include <span>
 #include <string>
 #include <vector>
@@ -130,6 +132,26 @@ public:
     // Internal: non-zero depth means the SubgroupCheckSkipScope is active.
     static bool IsSubgroupCheckSkipped();
 
+    // RAII scope that restores the pre-hardening lenient decoding on the
+    // current thread: an undecodable encoding maps to the identity point
+    // instead of throwing. Use ONLY for data that is baked into the binary as
+    // consensus parameters (e.g. the BLSCT genesis output, whose committed
+    // encoding predates the canonical serializer and is never
+    // proof-verified) — never for network/peer-supplied data or wallet state.
+    class LegacyPointDecodeScope
+    {
+    public:
+        LegacyPointDecodeScope();
+        ~LegacyPointDecodeScope();
+        LegacyPointDecodeScope(const LegacyPointDecodeScope&) = delete;
+        LegacyPointDecodeScope& operator=(const LegacyPointDecodeScope&) = delete;
+
+    private:
+        int m_prev_depth;
+    };
+    // Internal: non-zero depth means LegacyPointDecodeScope is active.
+    static bool IsLegacyDecodeActive();
+
     std::string GetString(const uint8_t& radix = 16) const;
     void SetString(const std::string& hex);
 
@@ -147,19 +169,41 @@ public:
     {
         std::vector<unsigned char> vec(SERIALIZATION_SIZE);
         s.read(MakeWritableByteSpan(vec));
+        // Fail loudly on undecodable input. The previous behaviour silently
+        // substituted the identity point (SetVch/SetVchUnchecked clear on
+        // failure and their return value was ignored), so any malformed or
+        // non-canonical 48-byte field became a zero commitment/key instead of
+        // a deserialization error — a malleability and error-attribution
+        // hazard for every consensus structure containing a G1 point. The
+        // legacy-decode scope keeps the historical lenient behaviour for
+        // binary-baked consensus parameters ONLY (see chainparams.cpp).
+        const bool legacy = IsLegacyDecodeActive();
         if (IsSubgroupCheckSkipped()) {
-            SetVchUnchecked(vec);
+            if (!SetVchUnchecked(vec)) {
+                if (legacy) { SetZeroPoint(); return; }
+                throw std::ios_base::failure("MclG1Point: invalid encoding");
+            }
         } else if (auto* collector = CurrentDeferralCollector()) {
-            SetVchUnchecked(vec);
+            if (!SetVchUnchecked(vec)) {
+                if (legacy) { SetZeroPoint(); return; }
+                throw std::ios_base::failure("MclG1Point: invalid encoding");
+            }
             collector->push_back(*this);
         } else {
-            SetVch(vec);
+            if (!SetVch(vec)) {
+                if (legacy) { SetZeroPoint(); return; }
+                throw std::ios_base::failure("MclG1Point: invalid or off-subgroup encoding");
+            }
         }
     }
 
     Underlying m_point;
 
     static constexpr int SERIALIZATION_SIZE = 384 / 8;
+
+private:
+    // Set this point to the group identity (point at infinity).
+    void SetZeroPoint() { mclBnG1_clear(&m_point); }
 };
 
 #endif // NAVIO_BLSCT_ARITH_MCL_MCL_G1POINT_H

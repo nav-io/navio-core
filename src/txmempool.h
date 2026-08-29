@@ -485,6 +485,13 @@ public:
      * */
     void removeForReorg(CChain& chain, std::function<bool(txiter)> filter_final_and_mature) EXCLUSIVE_LOCKS_REQUIRED(cs, cs_main);
     void removeConflicts(const CTransaction& tx) EXCLUSIVE_LOCKS_REQUIRED(cs);
+    /** Evict mempool transactions whose staked-commitment outputs collide with
+     * a commitment `tx` (a transaction from a connected block) just added to
+     * the chain's commitment set. Such a transaction can never be mined --
+     * bad-txns-duplicate-staked-commitment -- and, left in the mempool, it
+     * poisons every block template built by aggregation. Analogous to
+     * removeConflicts() for spent inputs. */
+    void removeStakedCommitmentConflicts(const CTransaction& tx) EXCLUSIVE_LOCKS_REQUIRED(cs);
     void removeForBlock(const std::vector<CTransactionRef>& vtx, unsigned int nBlockHeight) EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     bool CompareDepthAndScore(const uint256& hasha, const uint256& hashb, bool wtxid=false);

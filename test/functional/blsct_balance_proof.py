@@ -107,6 +107,18 @@ class NavioBlsctBalanceProofTest(BitcoinTestFramework):
             # And an invalid proof must not echo the prover-chosen min_amount.
             assert_equal(r["min_amount"], 0)
         self.log.info("M-1: version floor rejects v1/unknown relabels; min_amount is 0 on invalid")
+        # A locked wallet cannot derive the spending key the proof is signed
+        # with, so it must refuse rather than return a proof signed with a
+        # default (zero) key, which could never verify.
+        self.log.info("Testing createblsctbalanceproof on a locked wallet")
+        wallet.encryptwallet("pass")
+        assert_raises_rpc_error(-13, "Please enter the wallet passphrase with walletpassphrase first",
+                                wallet.createblsctbalanceproof, 1)
+
+        wallet.walletpassphrase("pass", 60)
+        unlocked_proof = wallet.createblsctbalanceproof(1)
+        assert wallet_2.verifyblsctbalanceproof(unlocked_proof["proof"])["valid"], \
+            "proof from an unlocked wallet should verify"
 
 if __name__ == '__main__':
     NavioBlsctBalanceProofTest(__file__).main()

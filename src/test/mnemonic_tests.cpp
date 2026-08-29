@@ -660,4 +660,87 @@ BOOST_AUTO_TEST_CASE(different_mnemonics_different_keys)
     BOOST_CHECK(!(key1 == key2));
 }
 
+
+// ---------------------------------------------------------------------------
+// Navio birthday mnemonic (26 words)
+// ---------------------------------------------------------------------------
+
+BOOST_AUTO_TEST_CASE(birthday_mnemonic_cross_impl_vector)
+{
+    // Shared vector with navio-electrum and navio-sdk:
+    // entropy 000102...1f, creation time 1783000000 (floors to 1782950400)
+    auto entropy = ParseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    std::string base = mnemonic::EntropyToMnemonic(entropy);
+    std::string m = mnemonic::MnemonicWithBirthday(base, 1783000000);
+    BOOST_CHECK_EQUAL(m, base + " addict render");
+    auto decoded = mnemonic::DecodeMnemonic(m);
+    BOOST_REQUIRE(decoded.has_value());
+    BOOST_CHECK_EQUAL(HexStr(decoded->entropy), HexStr(entropy));
+    BOOST_REQUIRE(decoded->birthday.has_value());
+    BOOST_CHECK_EQUAL(*decoded->birthday, 1782950400);
+}
+
+BOOST_AUTO_TEST_CASE(birthday_mnemonic_roundtrip_and_validate)
+{
+    std::string m = mnemonic::GenerateWithBirthday(1783000000);
+    std::istringstream iss(m);
+    std::string w;
+    int count = 0;
+    while (iss >> w) count++;
+    BOOST_CHECK_EQUAL(count, 26);
+    BOOST_CHECK(mnemonic::Validate(m));
+    auto decoded = mnemonic::DecodeMnemonic(m);
+    BOOST_REQUIRE(decoded.has_value());
+    BOOST_CHECK(decoded->birthday.has_value());
+    BOOST_CHECK_EQUAL(decoded->entropy.size(), 32U);
+}
+
+BOOST_AUTO_TEST_CASE(birthday_mnemonic_plain_24_has_no_birthday)
+{
+    auto entropy = ParseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    auto decoded = mnemonic::DecodeMnemonic(mnemonic::EntropyToMnemonic(entropy));
+    BOOST_REQUIRE(decoded.has_value());
+    BOOST_CHECK(!decoded->birthday.has_value());
+}
+
+BOOST_AUTO_TEST_CASE(birthday_mnemonic_tamper_rejected)
+{
+    auto entropy = ParseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    std::string base = mnemonic::EntropyToMnemonic(entropy);
+    std::string m = mnemonic::MnemonicWithBirthday(base, 1783000000);
+    // corrupt the birthday word
+    BOOST_CHECK(!mnemonic::DecodeMnemonic(base + " zoo render").has_value());
+    // corrupt the check word
+    BOOST_CHECK(!mnemonic::DecodeMnemonic(base + " addict zoo").has_value());
+    // birthday words computed for a different seed are rejected
+    auto other = ParseHex("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+    std::string base2 = mnemonic::EntropyToMnemonic(other);
+    std::string m2 = mnemonic::MnemonicWithBirthday(base2, 1783000000);
+    // splice base's words with m2's two extra words
+    std::istringstream iss2(m2);
+    std::vector<std::string> w2;
+    std::string tok;
+    while (iss2 >> tok) w2.push_back(tok);
+    std::string mixed = base + " " + w2[24] + " " + w2[25];
+    if (mixed != m) {
+        BOOST_CHECK(!mnemonic::DecodeMnemonic(mixed).has_value());
+    }
+}
+
+BOOST_AUTO_TEST_CASE(birthday_mnemonic_out_of_range_time)
+{
+    auto entropy = ParseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    std::string base = mnemonic::EntropyToMnemonic(entropy);
+    // Pre-epoch rejects, including the two truncation corners that slipped
+    // past the previous (-1)/604800-style guard.
+    BOOST_CHECK_EQUAL(mnemonic::MnemonicWithBirthday(base, 1767225600 - 1), "");      // EPOCH - 1
+    BOOST_CHECK_EQUAL(mnemonic::MnemonicWithBirthday(base, 1767225600 - 604799), ""); // EPOCH - 1 week + 1
+    // Epoch itself and the last valid second are accepted.
+    BOOST_CHECK(!mnemonic::MnemonicWithBirthday(base, 1767225600).empty());           // EPOCH
+    BOOST_CHECK(!mnemonic::MnemonicWithBirthday(base, 1767225600 + 2047LL * 7 * 24 * 3600).empty());
+    BOOST_CHECK(!mnemonic::MnemonicWithBirthday(base, 1767225600 + 2048LL * 7 * 24 * 3600 - 1).empty()); // last valid
+    // Past the 2048-week range rejects.
+    BOOST_CHECK_EQUAL(mnemonic::MnemonicWithBirthday(base, 1767225600 + 2048LL * 7 * 24 * 3600), "");
+}
+
 BOOST_AUTO_TEST_SUITE_END()

@@ -16,6 +16,38 @@
 #include <univalue.h>
 
 namespace wallet {
+namespace {
+//! Whether this wallet only ever hands out BLSCT (confidential) addresses.
+bool IsBlsctWallet(const CWallet& wallet)
+{
+    return wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT);
+}
+
+//! Parse an optional address_type RPC argument, applying BLSCT-aware rules:
+//! on a BLSCT wallet the type defaults to (and, if explicit, must be) "blsct",
+//! since handing back a transparent address would silently break the
+//! confidentiality the wallet is supposed to provide.
+OutputType ParseAddressTypeArg(const CWallet& wallet, const UniValue& address_type_param, OutputType default_type)
+{
+    const bool is_blsct = IsBlsctWallet(wallet);
+    OutputType output_type = is_blsct ? OutputType::BLSCT : default_type;
+    if (!address_type_param.isNull()) {
+        std::optional<OutputType> parsed = ParseOutputType(address_type_param.get_str());
+        if (!parsed) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("Unknown address type '%s'", address_type_param.get_str()));
+        }
+        if (is_blsct && parsed.value() != OutputType::BLSCT) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("This is a BLSCT wallet; addresses must be of type \"blsct\" (requested '%s')", address_type_param.get_str()));
+        }
+        if (parsed.value() == OutputType::BECH32M && wallet.GetLegacyScriptPubKeyMan()) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Legacy wallets cannot provide bech32m addresses");
+        }
+        output_type = parsed.value();
+    }
+    return output_type;
+}
+} // namespace
+
 RPCHelpMan getnewaddress()
 {
     return RPCHelpMan{
@@ -44,16 +76,7 @@ RPCHelpMan getnewaddress()
             // Parse the label first so we don't generate a key if there's an error
             const std::string label{LabelFromValue(request.params[0])};
 
-            OutputType output_type = pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT) ? OutputType::BLSCT : pwallet->m_default_address_type;
-            if (!request.params[1].isNull()) {
-                std::optional<OutputType> parsed = ParseOutputType(request.params[1].get_str());
-                if (!parsed) {
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("Unknown address type '%s'", request.params[1].get_str()));
-                } else if (parsed.value() == OutputType::BECH32M && pwallet->GetLegacyScriptPubKeyMan()) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Legacy wallets cannot provide bech32m addresses");
-                }
-                output_type = parsed.value();
-            }
+            OutputType output_type = ParseAddressTypeArg(*pwallet, request.params[1], pwallet->m_default_address_type);
 
             auto op_dest = pwallet->GetNewDestination(output_type, label);
             if (!op_dest) {
@@ -72,7 +95,7 @@ RPCHelpMan getrawchangeaddress()
         "\nReturns a new Navio address, for receiving change.\n"
         "This is for use with raw transactions, NOT normal use.\n",
         {
-            {"address_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -changetype"}, "The address type to use. Options are \"legacy\", \"p2sh-segwit\", \"bech32\", and \"bech32m\"."},
+            {"address_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -changetype"}, "The address type to use. Options are \"blsct\", \"legacy\", \"p2sh-segwit\", \"bech32\", and \"bech32m\"."},
         },
         RPCResult{
             RPCResult::Type::STR, "address", "The address"},
@@ -84,22 +107,22 @@ RPCHelpMan getrawchangeaddress()
 
             LOCK(pwallet->cs_wallet);
 
-            if (!pwallet->CanGetAddresses(true)) {
+            const bool is_blsct = IsBlsctWallet(*pwallet);
+            if ((!is_blsct && !pwallet->CanGetAddresses(true)) || (is_blsct && !pwallet->GetOrCreateBLSCTKeyMan()->CanGenerateKeys())) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error: This wallet has no available keys");
             }
 
-            OutputType output_type = pwallet->m_default_change_type.value_or(pwallet->m_default_address_type);
-            if (!request.params[0].isNull()) {
-                std::optional<OutputType> parsed = ParseOutputType(request.params[0].get_str());
-                if (!parsed) {
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("Unknown address type '%s'", request.params[0].get_str()));
-                } else if (parsed.value() == OutputType::BECH32M && pwallet->GetLegacyScriptPubKeyMan()) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Legacy wallets cannot provide bech32m addresses");
-                }
-                output_type = parsed.value();
-            }
+            OutputType output_type = ParseAddressTypeArg(*pwallet, request.params[0], pwallet->m_default_change_type.value_or(pwallet->m_default_address_type));
 
-            auto op_dest = pwallet->GetNewChangeDestination(output_type);
+            // BLSCT wallets don't register a ScriptPubKeyMan for OutputType::BLSCT, so
+            // CWallet::GetNewChangeDestination (which only looks at legacy/descriptor
+            // ScriptPubKeyMans) can't serve them. Change addresses for BLSCT are derived
+            // from a dedicated account (blsct::CHANGE_ACCOUNT) on the BLSCT key manager,
+            // matching how change destinations are generated for real BLSCT sends (see
+            // blsct::TxFactory / blsct wallet rpc, which call
+            // GetOrCreateBLSCTKeyMan()->GetNewDestination(blsct::CHANGE_ACCOUNT)).
+            auto op_dest = is_blsct ? pwallet->GetOrCreateBLSCTKeyMan()->GetNewDestination(blsct::CHANGE_ACCOUNT)
+                                    : pwallet->GetNewChangeDestination(output_type);
             if (!op_dest) {
                 throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
             }

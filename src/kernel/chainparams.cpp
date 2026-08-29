@@ -7,6 +7,7 @@
 
 #include <arith_uint256.h>
 #include <limits>
+#include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <chainparamsseeds.h>
 #include <consensus/amount.h>
@@ -79,7 +80,17 @@ static CBlock CreateBLSCTGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t 
 {
     blsct::UnsignedOutput out;
     DataStream ss{ParseHex(outHex)};
-    ss >> out;
+    // The baked genesis output predates the canonical (BLS_ETH) point
+    // serializer: some of its 48-byte fields are not valid compressed
+    // BLS12-381 points under it. This output is a consensus parameter — its
+    // commitment is part of the genesis tx, which is never proof-verified —
+    // so decode it with the historical lenient semantics (undecodable point
+    // fields map to the identity point). Strict decoding remains in force
+    // for all network/chain/wallet data.
+    {
+        MclG1Point::LegacyPointDecodeScope legacy_scope;
+        ss >> out;
+    }
 
     return CreateBLSCTGenesisBlock(nTime, nNonce, nBits, nVersion, out);
 }

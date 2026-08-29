@@ -18,6 +18,7 @@ race into the same block as siblings.
 
 from decimal import Decimal
 
+from test_framework.messages import COIN
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
 
@@ -107,6 +108,21 @@ class BlsctSameBlockMultiSendTest(BitcoinTestFramework):
 
         self.sync_mempools()
         assert_equal(len(self.nodes[0].getrawmempool()), NUM_SENDS)
+
+        # The block assembler merges the sibling sends into a single block
+        # transaction. getblocktemplate indexes its per-transaction fee/sigop
+        # vectors by position in the block, so those vectors have to collapse
+        # onto the aggregate too: otherwise the entry reports whichever send
+        # was merged first (one fee) instead of the aggregate's.
+        self.log.info("getblocktemplate reports the aggregate's own fee")
+        template = self.nodes[0].getblocktemplate({"rules": [""], "coinbasedest": miner_addr})
+        mempool_fee_total = sum(int(e["fees"]["base"] * COIN)
+                                for e in self.nodes[0].getrawmempool(True).values())
+        # Coinbase plus the single aggregated transaction.
+        assert_equal(len(template["transactions"]), 2)
+        aggregate = template["transactions"][1]
+        assert "fee" not in template["transactions"][0]
+        assert_equal(aggregate["fee"], mempool_fee_total)
 
         # Drain mempool (BLSCT block aggregation may need >1 block).
         for _ in range(NUM_SENDS + 5):

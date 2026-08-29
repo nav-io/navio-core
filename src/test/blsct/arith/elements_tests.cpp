@@ -9,8 +9,13 @@
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/arith/mcl/mcl_scalar.h>
 #include <boost/test/unit_test.hpp>
+#include <cstdint>
+#include <limits>
 #include <set>
+#include <stdexcept>
 #include <streams.h>
+#include <string>
+#include <utility>
 
 BOOST_FIXTURE_TEST_SUITE(elements_tests, BasicTestingSetup)
 
@@ -542,6 +547,68 @@ BOOST_AUTO_TEST_CASE(test_get_via_index_operator)
     }
 }
 
+BOOST_AUTO_TEST_CASE(test_index_operator_rejects_index_wider_than_32_bits)
+{
+    // 2^32 truncates to 0 in a uint32_t, so a bounds check that narrows the
+    // index before comparing it lets the read through and indexes the vector
+    // out of bounds. Where size_t is 32 bits wide there is nothing to narrow.
+    if constexpr (sizeof(size_t) > sizeof(uint32_t)) {
+        // Compute the shift in uint64_t: `if constexpr` in a non-template
+        // function does not stop the discarded branch being compiled, so
+        // shifting a 32-bit size_t by 32 would be UB if it were ever
+        // evaluated. (No diagnostic is emitted today -- verified with gcc and
+        // clang at -m32 -Wall -Wextra -- but the branch should not contain a
+        // shift that is only well-defined on the platforms that run it.)
+        const size_t index = static_cast<size_t>(uint64_t{1} << std::numeric_limits<uint32_t>::digits);
+        {
+            Scalars xs(std::vector<Scalar> { Scalar{1}, Scalar{2} });
+            BOOST_CHECK_THROW(xs[index], std::runtime_error);
+            BOOST_CHECK_THROW(std::as_const(xs)[index], std::runtime_error);
+        }
+        {
+            auto g = Point::GetBasePoint();
+            Points xs(std::vector<Point> { g, g + g });
+            BOOST_CHECK_THROW(xs[index], std::runtime_error);
+            BOOST_CHECK_THROW(std::as_const(xs)[index], std::runtime_error);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_index_error_message_on_empty_container)
+{
+    // size() - 1 underflows when the container is empty, so the old message
+    // advertised a range of [0..18446744073709551615] -- the shape that turned
+    // up in a testnet staker crash log, where it reads as though the index was
+    // inside the range it is being rejected for.
+    // Assert on the wording rather than on the absence of SIZE_MAX's digits:
+    // the underflowed value differs between 32- and 64-bit size_t, and
+    // std::to_string is locale-dependent (test/lint/lint-locale-dependence.py).
+    const auto reports_empty = [](const std::runtime_error& e) {
+        return std::string(e.what()).find("the container is empty") != std::string::npos;
+    };
+
+    {
+        Scalars xs;
+        BOOST_REQUIRE_EQUAL(xs.Size(), 0);
+        BOOST_CHECK_EXCEPTION(xs[0], std::runtime_error, reports_empty);
+        BOOST_CHECK_EXCEPTION(std::as_const(xs)[0], std::runtime_error, reports_empty);
+    }
+    {
+        Points xs;
+        BOOST_REQUIRE_EQUAL(xs.Size(), 0);
+        BOOST_CHECK_EXCEPTION(xs[0], std::runtime_error, reports_empty);
+        BOOST_CHECK_EXCEPTION(std::as_const(xs)[0], std::runtime_error, reports_empty);
+    }
+
+    // A non-empty container still reports its real upper bound.
+    {
+        Scalars xs(std::vector<Scalar>{Scalar{1}, Scalar{2}});
+        BOOST_CHECK_EXCEPTION(xs[2], std::runtime_error, [](const std::runtime_error& e) {
+            return std::string(e.what()).find("[0..1]") != std::string::npos;
+        });
+    }
+}
+
 BOOST_AUTO_TEST_CASE(test_set_via_index_operator)
 {
     {
@@ -665,6 +732,36 @@ BOOST_AUTO_TEST_CASE(test_unserialize_rejects_oversized_length)
         OrderedPoints op;
         BOOST_CHECK_THROW(op.Unserialize(ss), std::ios_base::failure);
     }
+}
+
+// Pins the canonical deterministic-shuffle order (seed handling through
+// uint256_to_seed_array / compress_seed / XorShift32). The expected order is
+// what LP64 little-endian nodes produce -- the consensus-canonical form after
+// the explicit-LE read; a future endianness or width regression on any
+// platform turns this red instead of silently forking the anonymity ring.
+BOOST_AUTO_TEST_CASE(test_deterministic_shuffle_canonical_vector)
+{
+    OrderedElements<Point> set;
+    for (int i = 1; i <= 8; ++i) {
+        set.Add(Point::GetBasePoint() * Scalar(i));
+    }
+    uint256 seed;
+    seed.SetHex("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+
+    const auto shuffled = set.GetElements(seed, 8);
+    BOOST_REQUIRE_EQUAL(shuffled.Size(), 8);
+
+    // Scalar multiples of the base point serialize uniquely, so record which
+    // multiple landed at each position.
+    std::vector<int> got;
+    for (size_t i = 0; i < shuffled.Size(); ++i) {
+        for (int m = 1; m <= 8; ++m) {
+            if (shuffled[i] == Point::GetBasePoint() * Scalar(m)) { got.push_back(m); break; }
+        }
+    }
+    BOOST_REQUIRE_EQUAL(got.size(), 8U);
+    const std::vector<int> expected{4, 6, 8, 7, 5, 3, 1, 2};
+    BOOST_CHECK_EQUAL_COLLECTIONS(got.begin(), got.end(), expected.begin(), expected.end());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

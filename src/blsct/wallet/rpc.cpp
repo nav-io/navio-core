@@ -29,6 +29,7 @@
 #include <validation.h>
 #include <wallet/receive.h>
 #include <wallet/rpc/util.h>
+#include <wallet/spend.h>
 #include <wallet/wallet.h>
 #include <limits>
 #include <optional>
@@ -56,15 +57,31 @@ CScript BuildHTLCScript(
     return script;
 }
 
+//! Validate an explicitly-supplied delegation reward address and return its
+//! canonical encoding. A transparent reward address is legal here, so
+//! EnsureBlsctDestination cannot be dropped in wholesale -- but a BLSCT one
+//! encoding the identity for either key would have the delegate pay the block
+//! reward into an anyone-can-spend output. Canonicalising keeps later lookups
+//! (rewards tracking, delegation-identity grouping) comparing equal.
+static std::string EnsureRewardAddress(const std::string& reward_address)
+{
+    const CTxDestination reward_dest = DecodeDestination(reward_address);
+    if (!IsValidDestination(reward_dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid reward_address");
+    }
+    if (const auto* keys = std::get_if<blsct::DoublePublicKey>(&reward_dest);
+        keys && !keys->HasNonIdentityKeys()) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "reward_address has null keys");
+    }
+    return EncodeDestination(reward_dest);
+}
+
 static void ParseBLSCTRecipients(const UniValue& address_amounts, const UniValue& subtract_fee_outputs, const std::string& sMemo, std::vector<wallet::CBLSCTRecipient>& recipients)
 {
     std::set<CTxDestination> destinations;
     int i = 0;
     for (const std::string& address : address_amounts.getKeys()) {
-        CTxDestination dest = DecodeDestination(address);
-        if (!IsValidDestination(dest) || dest.index() != 8) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
-        }
+        const CTxDestination dest{EnsureBlsctDestination(address)};
 
         if (destinations.contains(dest)) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, duplicated address: ") + address);
@@ -114,13 +131,27 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
     }
 
-    const CTransactionRef& tx = MakeTransactionRef(res.value());
+    // Refuse to commit a transaction whose staked commitment already exists
+    // in the chain's commitment set. Consensus would reject it in a block
+    // (bad-txns-duplicate-staked-commitment) and mempool acceptance would
+    // reject it on broadcast -- but by then CommitTransaction has stored it
+    // in the wallet, where it lingers as forever-pending and keeps being
+    // rebroadcast. Fail the RPC with a clear error instead.
+    for (const auto& out : res->tx.vout) {
+        if (out.IsStakedCommitment() && wallet.chain().hasStakedCommitment(out.blsctData.rangeProof.Vs[0])) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "The resulting staked commitment already exists on chain; unstake the existing commitment first or stake a different amount");
+        }
+    }
+
+    const CTransactionRef& tx = MakeTransactionRef(res->tx);
 
     // Store any wallet-local comment/comment_to on the sender's CWalletTx so
     // listtransactions surfaces them (WalletTxToJSON emits every mapValue key).
     // This is separate from the on-chain BLSCT memo, which the recipient sees.
     wallet.CommitTransaction(tx, std::move(mapValue), /*orderForm=*/{});
-    std::string outputHash = tx->vout[0].GetHash().GetHex();
+    // The factory reports which output pays the destination: vout is shuffled
+    // for privacy, so the recipient is not at any fixed position.
+    std::string outputHash = res->recipientOutputHash.GetHex();
     if (verbose) {
         UniValue entry(UniValue::VOBJ);
         entry.pushKV("outputHash", outputHash);
@@ -170,8 +201,6 @@ UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request,
 
     if (tokens.contains(tokenId))
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Token already exists");
-
-    auto token = tokens[tokenId];
 
     tokenInfo.publicKey = blsct_km->GetTokenKey(tokenId).GetPublicKey();
 
@@ -278,6 +307,7 @@ RPCHelpMan minttoken()
 
             uint256 token_id(ParseHashV(request.params[0], "token_id"));
             const std::string address = request.params[1].get_str();
+            EnsureBlsctDestination(address);
             CAmount mint_amount = AmountFromValue(request.params[2]);
 
             std::map<uint256, blsct::TokenEntry> tokens;
@@ -357,6 +387,7 @@ static RPCHelpMan mintnft()
             uint256 token_id(ParseHashV(request.params[0], "token_id"));
             uint64_t nft_id = request.params[1].get_uint64();
             const std::string address = request.params[2].get_str();
+            EnsureBlsctDestination(address);
             std::map<std::string, UniValue> metadata;
             if (!request.params[3].isNull() && !request.params[3].get_obj().empty())
                 request.params[3].get_obj().getObjMap(metadata);
@@ -417,8 +448,8 @@ RPCHelpMan getblsctbalance()
             RPCResult::Type::STR_AMOUNT, "amount", "The total amount in " + CURRENCY_UNIT + " received for this wallet."},
         RPCExamples{
             "\nThe total amount in the wallet with 0 or more confirmations\n" + HelpExampleCli("getblsctbalance", "") +
-            "\nThe total amount in the wallet with at least 6 confirmations\n" + HelpExampleCli("getblsctbalance", "\"*\" 6") +
-            "\nAs a JSON-RPC call\n" + HelpExampleRpc("getblsctbalance", "\"*\", 6")},
+            "\nThe total amount in the wallet with at least 6 confirmations\n" + HelpExampleCli("getblsctbalance", "6") +
+            "\nAs a JSON-RPC call\n" + HelpExampleRpc("getblsctbalance", "6")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             const std::shared_ptr<const wallet::CWallet> pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -436,46 +467,13 @@ RPCHelpMan getblsctbalance()
 
             bool include_watchonly = ParseIncludeWatchonly(request.params[1], *pwallet);
 
-            // GetBlsctBalance only sees outputs stored in mapOutputs, which is
-            // populated only when WALLET_FLAG_BLSCT_OUTPUT_STORAGE is set. For
-            // legacy (e.g. bdb) BLSCT wallets the BLSCT outputs live in
-            // mapWallet, so we have to walk them directly to avoid the RPC
-            // reporting a confusing 0.
-            CAmount mine_trusted = 0;
-            CAmount watchonly_trusted = 0;
+            // BLSCT outputs live in mapWallet, in mapOutputs, or in both
+            // depending on WALLET_FLAG_BLSCT_OUTPUT_STORAGE; the helper walks
+            // both and deduplicates, so this RPC reports the same balance
+            // whichever way the wallet stores them.
+            const auto bal = wallet::GetBlsctTrustedBalance(*pwallet, min_depth);
 
-            if (pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
-                const auto bal = wallet::GetBlsctBalance(*pwallet, min_depth);
-                mine_trusted = bal.m_mine_trusted;
-                watchonly_trusted = bal.m_watchonly_trusted;
-            } else {
-                std::set<uint256> trusted_parents;
-                for (const auto& entry : pwallet->mapWallet) {
-                    const wallet::CWalletTx& wtx = entry.second;
-                    if (!wallet::CachedTxIsTrusted(*pwallet, wtx, trusted_parents)) continue;
-                    if (pwallet->IsTxImmatureCoinBase(wtx)) continue;
-                    const int depth = pwallet->GetTxDepthInMainChain(wtx);
-                    if (depth < min_depth) continue;
-                    for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
-                        const CTxOut& txout = wtx.tx->vout[i];
-                        if (!txout.HasBLSCTRangeProof()) continue;
-                        if (!txout.tokenId.IsNull()) continue;
-                        if (pwallet->IsSpent(COutPoint(txout.GetHash()))) continue;
-                        const wallet::isminetype mine = pwallet->IsMine(txout);
-                        const bool is_signable = (mine & (wallet::ISMINE_SPENDABLE_BLSCT | wallet::ISMINE_STAKED_COMMITMENT_BLSCT)) != 0;
-                        const bool is_watchonly = (mine & wallet::ISMINE_WATCH_ONLY) != 0;
-                        if (!is_signable && !is_watchonly) continue;
-                        const CAmount amount = wtx.GetBLSCTRecoveryData(i).amount;
-                        if (is_signable) {
-                            mine_trusted += amount;
-                        } else if (is_watchonly) {
-                            watchonly_trusted += amount;
-                        }
-                    }
-                }
-            }
-
-            return ValueFromAmount(mine_trusted + (include_watchonly ? watchonly_trusted : 0));
+            return ValueFromAmount(bal.m_mine + (include_watchonly ? bal.m_watchonly : 0));
         },
     };
 }
@@ -585,7 +583,7 @@ RPCHelpMan getbalanceforaddress()
             // Build the set of scriptPubKeys equivalent to the target address.
             // For BLSCT addresses we'll match via the recovered destination
             // since the on-chain script is masked.
-            const bool target_is_blsct = (target.index() == 8);
+            const bool target_is_blsct = std::holds_alternative<blsct::DoublePublicKey>(target);
             std::set<CScript> target_scripts;
             if (!target_is_blsct) {
                 target_scripts.insert(GetScriptForDestination(target));
@@ -925,12 +923,8 @@ RPCHelpMan sendtoblsctaddress()
             if (!request.params[2].isNull() && !request.params[2].get_str().empty())
                 sMemo = request.params[2].get_str();
 
-            CTxDestination destination = DecodeDestination(request.params[0].get_str());
-            if (!IsValidDestination(destination) || destination.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
-            }
-
             const std::string address = request.params[0].get_str();
+            EnsureBlsctDestination(address);
 
             const bool verbose{request.params[3].isNull() ? false : request.params[3].get_bool()};
             const bool subtract_fee{request.params[4].isNull() ? false : request.params[4].get_bool()};
@@ -1012,16 +1006,11 @@ RPCHelpMan sendtokentoblsctaddress()
             if (!request.params[3].isNull() && !request.params[3].get_str().empty())
                 sMemo = request.params[3].get_str();
 
-            CTxDestination destination = DecodeDestination(request.params[1].get_str());
-            if (!IsValidDestination(destination) || destination.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
-            }
-
             const std::string address = request.params[1].get_str();
+            EnsureBlsctDestination(address);
 
             const bool verbose{request.params[4].isNull() ? false : request.params[4].get_bool()};
 
-            blsct::SubAddress subAddress(std::get<blsct::DoublePublicKey>(destination));
             blsct::CreateTransactionData transactionData(address, AmountFromValue(request.params[2]), sMemo, TokenId(token_id), blsct::CreateTransactionType::NORMAL, 0);
 
             EnsureWalletIsUnlocked(*pwallet);
@@ -1090,16 +1079,11 @@ RPCHelpMan sendnfttoblsctaddress()
             if (!request.params[3].isNull() && !request.params[3].get_str().empty())
                 sMemo = request.params[3].get_str();
 
-            CTxDestination destination = DecodeDestination(request.params[2].get_str());
-            if (!IsValidDestination(destination) || destination.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
-            }
-
             const std::string address = request.params[2].get_str();
+            EnsureBlsctDestination(address);
 
             const bool verbose{request.params[4].isNull() ? false : request.params[4].get_bool()};
 
-            blsct::SubAddress subAddress(std::get<blsct::DoublePublicKey>(destination));
             blsct::CreateTransactionData transactionData(address, 1, sMemo, TokenId(token_id, nft_id), blsct::CreateTransactionType::NORMAL, 0);
 
             EnsureWalletIsUnlocked(*pwallet);
@@ -1166,6 +1150,88 @@ RPCHelpMan stakelock()
     };
 }
 
+RPCHelpMan delegatestake()
+{
+    return RPCHelpMan{
+        "delegatestake",
+        "\nLock an amount for staking and delegate block production to a third-party staker.\n"
+        "The staked output carries an encrypted copy of its commitment opening addressed to\n"
+        "the delegate, so the delegate can produce blocks with it but can never spend or\n"
+        "unstake it. Block rewards are requested to be paid to reward_address; note this is\n"
+        "advisory: a delegate controls its own coinbase, so choose delegates you trust to\n"
+        "honor it. Existing stakes delegated with the same delegate key and reward address\n"
+        "are consolidated into the new output; other stakes are left untouched. Revoke at\n"
+        "any time with stakeunlock." +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to stake. eg 0.1"},
+            {"delegate_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The delegate's 48-byte G1 delegation public key (hex), published by the staking operator."},
+            {"reward_address", RPCArg::Type::STR, RPCArg::Default{""}, "BLSCT address the delegate should pay block rewards to. Defaults to a new address of this wallet."},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false",
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+            RPCResult{
+                "if verbose is set to true",
+                RPCResult::Type::OBJ,
+                "",
+                "",
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+            },
+        },
+        RPCExamples{
+            "\nDelegate a 100 " + CURRENCY_UNIT + " stake\n" + HelpExampleCli("delegatestake", "100 \"<delegate_pubkey_hex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            MclG1Point delegateKey;
+            if (!IsHex(request.params[1].get_str()) || !delegateKey.SetVch(ParseHex(request.params[1].get_str())) || delegateKey.IsZero()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "delegate_pubkey is not a valid G1 point");
+            }
+
+            std::string rewardAddress = request.params[2].isNull() ? "" : request.params[2].get_str();
+            if (rewardAddress.empty()) {
+                auto op_reward = pwallet->GetNewDestination(OutputType::BLSCT, "Delegated Staking Rewards");
+                if (!op_reward) {
+                    throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_reward).original);
+                }
+                rewardAddress = EncodeDestination(*op_reward);
+            } else {
+                rewardAddress = blsct::EnsureRewardAddress(rewardAddress);
+            }
+
+            UniValue address_amounts(UniValue::VOBJ);
+            auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Delegated Stake");
+            if (!op_dest) {
+                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
+            }
+
+            address_amounts.pushKV(EncodeDestination(*op_dest), request.params[0]);
+
+            std::vector<wallet::CBLSCTRecipient> recipients;
+            blsct::ParseBLSCTRecipients(address_amounts, false, "", recipients);
+            const bool verbose{request.params[3].isNull() ? false : request.params[3].get_bool()};
+
+            blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
+            // Consolidation is delegation-aware: only commitments that share
+            // this exact delegation (same delegate key and reward address)
+            // are folded into the new output; plain stakes and stakes
+            // delegated elsewhere stay untouched.
+            transactionData.fConsolidateStakedCommitments = gArgs.GetBoolArg("-consolidatestakedcommitments", blsct::DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS);
+            transactionData.stakeDelegation = blsct::delegation::DelegationRequest{delegateKey, rewardAddress};
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
 
 RPCHelpMan stakeunlock()
 {
@@ -1189,7 +1255,8 @@ RPCHelpMan stakeunlock()
             },
         },
         RPCExamples{
-            "\nLock 0.1 " + CURRENCY_UNIT + "\n" + HelpExampleCli("stakelock", "0.1")},
+            "\nUnlock 0.1 " + CURRENCY_UNIT + "\n" + HelpExampleCli("stakeunlock", "0.1") +
+            "\nAs a JSON-RPC call\n" + HelpExampleRpc("stakeunlock", "0.1")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -1225,6 +1292,488 @@ RPCHelpMan stakeunlock()
             EnsureWalletIsUnlocked(*pwallet);
 
             return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
+
+//! One delegated staked output of this wallet, with the delegation parameters
+//! recovered from the on-chain payload's owner section.
+struct WalletDelegation {
+    uint256 outhash;
+    CAmount amount{0};
+    int depth{0};
+    blsct::delegation::DelegationRequest request;
+};
+
+//! Recover every delegated staked output of the wallet (unspent, any depth)
+//! together with its delegation parameters. Works purely from the chain data:
+//! the owner section of each delegation payload is decrypted with the same
+//! per-output nonce the wallet already uses to recover amounts, so this needs
+//! no wallet-side metadata and survives a restore from seed.
+//!
+//! Iterates the wallet's own output maps rather than going through
+//! AvailableCoins: the delegation view must describe the chain, so it must not
+//! inherit coin selection's spending policy (only_spendable would hide the
+//! list from a view-key-only auditing wallet, skip_locked would make it
+//! disagree with staked_commitment_balance, which is lock-unaware). This also
+//! keeps callers like getbalances at the cost of a map walk, the same class
+//! as the existing balance computations, instead of a coin-selection pass.
+static std::vector<WalletDelegation> GetWalletDelegations(const wallet::CWallet& wallet, blsct::KeyMan* blsct_km) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    std::vector<WalletDelegation> ret;
+
+    // A non-BLSCT wallet still has a KeyMan object but no view key; it cannot
+    // hold delegations either.
+    MclScalar viewKey;
+    try {
+        viewKey = blsct_km->GetPrivateViewKey().GetScalar();
+    } catch (const std::exception&) {
+        return ret;
+    }
+
+    const auto consider = [&](const uint256& outhash, const CTxOut& out, const CAmount amount, const int depth) {
+        if (out.predicate.empty()) return;
+        try {
+            const auto parsed = blsct::ParsePredicate(out.predicate);
+            if (!parsed.IsDataPredicate() || !blsct::delegation::IsDelegationData(parsed.GetData())) return;
+            const auto nonce = blsct::CalculateNonce(out.blsctData.blindingKey, viewKey);
+            auto request = blsct::delegation::RecoverOwnerInfo(parsed.GetData(), nonce);
+            if (!request.has_value()) return;
+            // Canonicalise the reward address: the payload stores whatever
+            // string the delegator passed, and downstream lookups (rewards
+            // maps, IsMine) compare encoded destinations. Any valid spelling
+            // of the same address must match.
+            const CTxDestination dest = DecodeDestination(request->rewardAddress);
+            if (IsValidDestination(dest)) request->rewardAddress = EncodeDestination(dest);
+            ret.push_back({outhash, amount, depth, *request});
+        } catch (const std::exception&) {
+        }
+    };
+
+    if (wallet.IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        for (const auto& [outpoint, wout] : wallet.mapOutputs) {
+            if (!wout.fStakedCommitment) continue;
+            if (wallet.IsSpent(outpoint) || wout.IsSpent()) continue;
+            if (!(wallet.IsMine(*wout.out) & wallet::ISMINE_STAKED_COMMITMENT_BLSCT)) continue;
+            const int depth = wallet.GetOutputDepthInMainChain(wout);
+            if (depth < 0) continue;
+            consider(outpoint.hash, *wout.out, wout.blsctRecoveryData.amount, depth);
+        }
+    } else {
+        for (const auto& [txid, wtx] : wallet.mapWallet) {
+            const int depth = wallet.GetTxDepthInMainChain(wtx);
+            if (depth < 0) continue;
+            for (uint32_t i = 0; i < wtx.tx->vout.size(); ++i) {
+                const CTxOut& out = wtx.tx->vout[i];
+                if (!out.IsStakedCommitment()) continue;
+                if (wallet.IsSpent(COutPoint(out.GetHash()))) continue;
+                if (!(wallet.IsMine(out) & wallet::ISMINE_STAKED_COMMITMENT_BLSCT)) continue;
+                consider(out.GetHash(), out, wtx.GetBLSCTRecoveryData(i).amount, depth);
+            }
+        }
+    }
+
+    return ret;
+}
+
+//! Per-address totals of the wallet's confirmed coinbase (staking reward)
+//! receipts.
+struct CoinbaseRewards {
+    CAmount amount{0};
+    int count{0};
+    int lastHeight{0};
+};
+
+static std::map<std::string, CoinbaseRewards> GetCoinbaseRewardsByAddress(const wallet::CWallet& wallet, blsct::KeyMan* blsct_km) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    std::map<std::string, CoinbaseRewards> ret;
+
+    const int tip_height = wallet.GetLastBlockHeight();
+    const auto add = [&](const CTxOut& out, const CAmount amount, const int depth) {
+        if (!out.HasBLSCTRangeProof()) return;
+        const CTxDestination dest = blsct_km->GetDestination(out);
+        if (std::holds_alternative<CNoDestination>(dest)) return;
+        auto& acc = ret[EncodeDestination(dest)];
+        acc.amount += amount;
+        acc.count += 1;
+        acc.lastHeight = std::max(acc.lastHeight, tip_height - depth + 1);
+    };
+
+    // Same ownership rule on both storage paths: every coinbase output the
+    // wallet recognises as its own counts, watch-only included, so a
+    // view-key-only auditing wallet sees the same totals as the full wallet.
+    if (wallet.IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        for (const auto& entry : wallet.mapOutputs) {
+            const wallet::CWalletOutput& wout = entry.second;
+            if (!wout.fCoinbase) continue;
+            if (wallet.IsMine(*wout.out) == wallet::ISMINE_NO) continue;
+            const int depth = wallet.GetOutputDepthInMainChain(wout);
+            if (depth < 1) continue;
+            add(*wout.out, wout.blsctRecoveryData.amount, depth);
+        }
+    } else {
+        for (const auto& entry : wallet.mapWallet) {
+            const wallet::CWalletTx& wtx = entry.second;
+            if (!wtx.IsCoinBase()) continue;
+            const int depth = wallet.GetTxDepthInMainChain(wtx);
+            if (depth < 1) continue;
+            for (uint32_t i = 0; i < wtx.tx->vout.size(); ++i) {
+                const CTxOut& out = wtx.tx->vout[i];
+                if (wallet.IsMine(out) == wallet::ISMINE_NO) continue;
+                add(out, wtx.GetBLSCTRecoveryData(i).amount, depth);
+            }
+        }
+    }
+
+    return ret;
+}
+
+CAmount blsct::GetDelegatedStakedBalance(const wallet::CWallet& wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    auto blsct_km = wallet.GetBLSCTKeyMan();
+    if (blsct_km == nullptr) return 0;
+    CAmount total{0};
+    for (const auto& d : GetWalletDelegations(wallet, blsct_km)) {
+        if (d.depth >= 1) total += d.amount;
+    }
+    return total;
+}
+
+RPCHelpMan listdelegations()
+{
+    return RPCHelpMan{
+        "listdelegations",
+        "\nList this wallet's active stake delegations: every unspent staked output that\n"
+        "carries a delegation payload, with the delegate key and reward address recovered\n"
+        "from the chain. When a delegation's reward address belongs to this wallet, the\n"
+        "coinbase rewards received on it are summed so the owner can check the delegate\n"
+        "is honoring the reward address.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::ARR,
+            "",
+            "",
+            {{RPCResult::Type::OBJ, "", "", {
+                 {RPCResult::Type::STR_HEX, "outhash", "The hash identifying the staked output."},
+                 {RPCResult::Type::STR_AMOUNT, "amount", "The delegated amount."},
+                 {RPCResult::Type::NUM, "confirmations", "The number of confirmations of the staked output."},
+                 {RPCResult::Type::STR_HEX, "delegate_pubkey", "The delegate's G1 delegation public key."},
+                 {RPCResult::Type::STR, "reward_address", "The address the delegate is asked to pay block rewards to."},
+                 {RPCResult::Type::BOOL, "reward_address_is_mine", "Whether the reward address belongs to this wallet."},
+                 {RPCResult::Type::STR_AMOUNT, "rewards_received", /*optional=*/true, "Total coinbase rewards received on the reward address (only when it belongs to this wallet)."},
+                 {RPCResult::Type::NUM, "rewards_count", /*optional=*/true, "Number of coinbase outputs received on the reward address (only when it belongs to this wallet)."},
+             }}},
+        },
+        RPCExamples{HelpExampleCli("listdelegations", "") + HelpExampleRpc("listdelegations", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetBLSCTKeyMan();
+            if (blsct_km == nullptr) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not have BLSCT keys");
+            }
+
+            const auto delegations = GetWalletDelegations(*pwallet, blsct_km);
+
+            // Sum the wallet's coinbase receipts per destination address once,
+            // then attribute them to any delegation whose reward address is
+            // ours. This is what lets an owner audit "is my operator actually
+            // paying the reward address it was given".
+            const auto coinbase_by_address = GetCoinbaseRewardsByAddress(*pwallet, blsct_km);
+
+            UniValue result(UniValue::VARR);
+            for (const auto& d : delegations) {
+                UniValue entry(UniValue::VOBJ);
+                entry.pushKV("outhash", d.outhash.GetHex());
+                entry.pushKV("amount", ValueFromAmount(d.amount));
+                entry.pushKV("confirmations", d.depth);
+                entry.pushKV("delegate_pubkey", HexStr(d.request.delegateKey.GetVch()));
+                entry.pushKV("reward_address", d.request.rewardAddress);
+                const auto rewards = coinbase_by_address.find(d.request.rewardAddress);
+                const bool reward_is_mine = pwallet->IsMine(DecodeDestination(d.request.rewardAddress)) != wallet::ISMINE_NO;
+                entry.pushKV("reward_address_is_mine", reward_is_mine);
+                if (reward_is_mine) {
+                    entry.pushKV("rewards_received", ValueFromAmount(rewards != coinbase_by_address.end() ? rewards->second.amount : 0));
+                    entry.pushKV("rewards_count", rewards != coinbase_by_address.end() ? rewards->second.count : 0);
+                }
+                result.push_back(entry);
+            }
+            return result;
+        },
+    };
+}
+
+RPCHelpMan liststakingrewards()
+{
+    return RPCHelpMan{
+        "liststakingrewards",
+        "\nList the coinbase (staking) rewards this wallet has received, grouped by the\n"
+        "address they were paid to. Entries whose address is the reward address of an\n"
+        "active delegation are flagged from_delegation; the remaining entries are the\n"
+        "wallet's own (non-delegated) staking rewards, e.g. from running navio-staker\n"
+        "with this wallet.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::ARR,
+            "",
+            "",
+            {{RPCResult::Type::OBJ, "", "", {
+                 {RPCResult::Type::STR, "address", "The address the rewards were paid to."},
+                 {RPCResult::Type::BOOL, "from_delegation", "Whether the address is the reward address of an active delegation."},
+                 {RPCResult::Type::STR_AMOUNT, "amount", "Total rewards received on the address."},
+                 {RPCResult::Type::NUM, "count", "Number of coinbase outputs received on the address."},
+                 {RPCResult::Type::NUM, "last_height", "Height of the most recent reward."},
+             }}},
+        },
+        RPCExamples{HelpExampleCli("liststakingrewards", "") + HelpExampleRpc("liststakingrewards", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetBLSCTKeyMan();
+            if (blsct_km == nullptr) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not have BLSCT keys");
+            }
+
+            std::set<std::string> delegation_reward_addresses;
+            for (const auto& d : GetWalletDelegations(*pwallet, blsct_km)) {
+                delegation_reward_addresses.insert(d.request.rewardAddress);
+            }
+
+            const auto coinbase_by_address = GetCoinbaseRewardsByAddress(*pwallet, blsct_km);
+
+            // Largest earner first.
+            std::vector<std::pair<std::string, CoinbaseRewards>> sorted{coinbase_by_address.begin(), coinbase_by_address.end()};
+            std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second.amount > b.second.amount; });
+
+            UniValue result(UniValue::VARR);
+            for (const auto& [address, rewards] : sorted) {
+                UniValue entry(UniValue::VOBJ);
+                entry.pushKV("address", address);
+                entry.pushKV("from_delegation", delegation_reward_addresses.contains(address));
+                entry.pushKV("amount", ValueFromAmount(rewards.amount));
+                entry.pushKV("count", rewards.count);
+                entry.pushKV("last_height", rewards.lastHeight);
+                result.push_back(entry);
+            }
+            return result;
+        },
+    };
+}
+
+RPCHelpMan redelegatestake()
+{
+    return RPCHelpMan{
+        "redelegatestake",
+        "\nMove existing stake delegations to a different delegate and/or reward address in a\n"
+        "single transaction. The delegated commitments stay staked the whole time: the old\n"
+        "delegated outputs are spent directly into a new staked output carrying the new\n"
+        "delegation payload, so there is no separate unlock/re-lock step and no gap in stake\n"
+        "continuity. Only delegations to from_delegate_pubkey are moved; other stakes are\n"
+        "left untouched.\n" +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"from_delegate_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The delegate key the stakes are currently delegated to."},
+            {"delegate_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The new delegate's 48-byte G1 delegation public key (hex). May equal from_delegate_pubkey to only change the reward address."},
+            {"reward_address", RPCArg::Type::STR, RPCArg::Default{""}, "BLSCT address the new delegate should pay block rewards to. Defaults to the reward address of the delegations being moved."},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false",
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+            RPCResult{
+                "if verbose is set to true",
+                RPCResult::Type::OBJ,
+                "",
+                "",
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+            },
+        },
+        RPCExamples{
+            "\nMove all stakes delegated to one operator to another\n" + HelpExampleCli("redelegatestake", "\"<old_pubkey_hex>\" \"<new_pubkey_hex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetBLSCTKeyMan();
+            if (blsct_km == nullptr) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not have BLSCT keys");
+            }
+
+            MclG1Point fromKey;
+            if (!IsHex(request.params[0].get_str()) || !fromKey.SetVch(ParseHex(request.params[0].get_str())) || fromKey.IsZero()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "from_delegate_pubkey is not a valid G1 point");
+            }
+            MclG1Point delegateKey;
+            if (!IsHex(request.params[1].get_str()) || !delegateKey.SetVch(ParseHex(request.params[1].get_str())) || delegateKey.IsZero()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "delegate_pubkey is not a valid G1 point");
+            }
+
+            // Collect the delegations being moved; their ids drive the input
+            // selection and their reward address is the default for the new
+            // delegation.
+            std::set<std::string> fromIds;
+            std::set<std::string> fromRewardAddresses;
+            CAmount movedAmount{0};
+            for (const auto& d : GetWalletDelegations(*pwallet, blsct_km)) {
+                if (!(d.request.delegateKey == fromKey)) continue;
+                fromIds.insert(d.request.GetId());
+                fromRewardAddresses.insert(d.request.rewardAddress);
+                movedAmount += d.amount;
+            }
+            if (fromIds.empty()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "No stakes are delegated to from_delegate_pubkey");
+            }
+            // The moved commitments are the sole funding of the new staked
+            // output; fail with a clear error instead of a generic factory
+            // failure if they cannot satisfy the consensus minimum.
+            if (movedAmount < Params().GetConsensus().nPePoSMinStakeAmount) {
+                throw JSONRPCError(RPC_WALLET_ERROR, strprintf("The delegated amount being moved (%s) is below the minimum stake of %s", FormatMoney(movedAmount), FormatMoney(Params().GetConsensus().nPePoSMinStakeAmount)));
+            }
+
+            std::string rewardAddress = request.params[2].isNull() ? "" : request.params[2].get_str();
+            if (rewardAddress.empty()) {
+                if (fromRewardAddresses.size() > 1) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "The delegations being moved use different reward addresses; pass reward_address explicitly");
+                }
+                rewardAddress = *fromRewardAddresses.begin();
+            } else {
+                rewardAddress = blsct::EnsureRewardAddress(rewardAddress);
+            }
+
+            auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Delegated Stake");
+            if (!op_dest) {
+                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
+            }
+
+            const bool verbose{request.params[3].isNull() ? false : request.params[3].get_bool()};
+
+            UniValue address_amounts(UniValue::VOBJ);
+            address_amounts.pushKV(EncodeDestination(*op_dest), ValueFromAmount(0));
+            std::vector<wallet::CBLSCTRecipient> recipients;
+            blsct::ParseBLSCTRecipients(address_amounts, false, "", recipients);
+
+            // nAmount 0: the whole staked value comes from folding the old
+            // delegated commitments in; no spendable coins are staked on top.
+            blsct::CreateTransactionData transactionData(recipients[0].destination, 0, "", TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
+            transactionData.fConsolidateStakedCommitments = true;
+            transactionData.stakeDelegation = blsct::delegation::DelegationRequest{delegateKey, rewardAddress};
+            transactionData.redelegateFromIds = fromIds;
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, verbose);
+        },
+    };
+}
+
+RPCHelpMan compounddelegations()
+{
+    return RPCHelpMan{
+        "compounddelegations",
+        "\nRe-delegate accumulated rewards: fold the wallet's spendable balance (minus a fee\n"
+        "margin) into an existing stake delegation. Block rewards paid to this wallet do not\n"
+        "auto-compound -- the spend key would need to be online for that -- so run this\n"
+        "periodically (e.g. from cron) to keep delegated stake growing.\n" +
+            wallet::HELP_REQUIRING_PASSPHRASE,
+        {
+            {"delegate_pubkey", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "The delegation to compound into. May be omitted when the wallet has exactly one delegation identity."},
+            {"min_amount", RPCArg::Type::AMOUNT, RPCArg::Default{1}, "Do nothing (return null) while the spendable balance is below this amount. Independently of it, 1 NAV of the spendable balance is always held back as a fee margin."},
+        },
+        {
+            RPCResult{"if there was something to compound",
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the compounding transaction."},
+            RPCResult{"if the spendable balance is below min_amount",
+                      RPCResult::Type::NONE, "", ""},
+        },
+        RPCExamples{HelpExampleCli("compounddelegations", "") + HelpExampleRpc("compounddelegations", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+
+            auto blsct_km = pwallet->GetBLSCTKeyMan();
+            if (blsct_km == nullptr) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not have BLSCT keys");
+            }
+
+            std::optional<MclG1Point> filterKey;
+            if (!request.params[0].isNull() && !request.params[0].get_str().empty()) {
+                MclG1Point key;
+                if (!IsHex(request.params[0].get_str()) || !key.SetVch(ParseHex(request.params[0].get_str())) || key.IsZero()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "delegate_pubkey is not a valid G1 point");
+                }
+                filterKey = key;
+            }
+
+            // Identify the delegation to compound into.
+            std::map<std::string, blsct::delegation::DelegationRequest> groups;
+            for (const auto& d : GetWalletDelegations(*pwallet, blsct_km)) {
+                if (filterKey.has_value() && !(d.request.delegateKey == *filterKey)) continue;
+                groups.emplace(d.request.GetId(), d.request);
+            }
+            if (groups.empty()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, filterKey.has_value() ? "No stakes are delegated to delegate_pubkey" : "This wallet has no stake delegations");
+            }
+            if (groups.size() > 1) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "This wallet has several delegation identities; pass delegate_pubkey (and use redelegatestake to unify reward addresses)");
+            }
+            const blsct::delegation::DelegationRequest target = groups.begin()->second;
+
+            const CAmount min_amount = request.params[1].isNull() ? COIN : AmountFromValue(request.params[1]);
+
+            // Held back from the compounded amount so the transaction fee can
+            // be paid from spendable coins: input selection gathers up to
+            // (amount + COMPOUND_FEE_MARGIN) to cover amount + fee.
+            constexpr CAmount COMPOUND_FEE_MARGIN{COIN};
+
+            // Sum both balance paths like getbalances does: in BLSCT
+            // output-storage mode outputs whose CWalletTx is alive are counted
+            // by GetBalance, the rest by GetBlsctBalance.
+            const CAmount spendable = wallet::GetBalance(*pwallet).m_mine_trusted + wallet::GetBlsctBalance(*pwallet).m_mine_trusted;
+            if (spendable < min_amount) return UniValue::VNULL;
+            const CAmount amount = spendable - COMPOUND_FEE_MARGIN;
+            if (amount <= 0) return UniValue::VNULL;
+
+            auto op_dest = pwallet->GetNewDestination(OutputType::BLSCT_STAKE, "Delegated Stake");
+            if (!op_dest) {
+                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
+            }
+
+            UniValue address_amounts(UniValue::VOBJ);
+            address_amounts.pushKV(EncodeDestination(*op_dest), ValueFromAmount(amount));
+            std::vector<wallet::CBLSCTRecipient> recipients;
+            blsct::ParseBLSCTRecipients(address_amounts, false, "", recipients);
+
+            blsct::CreateTransactionData transactionData(recipients[0].destination, recipients[0].nAmount, recipients[0].sMemo, TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, Params().GetConsensus().nPePoSMinStakeAmount);
+            // Fold into the existing delegated commitment so the wallet keeps
+            // one output per delegation instead of accumulating a new one per
+            // compounding run.
+            transactionData.fConsolidateStakedCommitments = true;
+            transactionData.stakeDelegation = target;
+
+            EnsureWalletIsUnlocked(*pwallet);
+
+            return blsct::SendTransaction(*pwallet, transactionData, false);
         },
     };
 }
@@ -1272,7 +1821,7 @@ RPCHelpMan consolidate()
                 auto res = blsct::TxFactory::CreateConsolidationTransaction(pwallet.get(), blsct_km, dest, max_inputs, fee_rate);
                 if (!res) break; // fewer than two small outputs remain to merge
 
-                const CTransactionRef tx = MakeTransactionRef(res.value());
+                const CTransactionRef tx = MakeTransactionRef(res->tx);
                 wallet::mapValue_t map_value;
                 pwallet->CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
                 txids.push_back(tx->GetHash().GetHex());
@@ -1315,6 +1864,7 @@ RPCHelpMan listblsctunspent()
                                                                                  {RPCResult::Type::BOOL, "spendable", "Whether the output may be selected for spending right now (depends on coin control / wallet state)"},
                                                                                  {RPCResult::Type::BOOL, "signable", "Whether the wallet can derive a non-zero spending key for this output. Outputs imported via importblsctscript (e.g. HTLCs) are reported as signable=false because the wallet only holds view material for them."},
                                                                                  {RPCResult::Type::BOOL, "watchonly", "Whether this output matches an imported watch-only scriptPubKey (e.g. an HTLC added via importblsctscript)"},
+                                                                                 {RPCResult::Type::STR, "scriptAddress", /*optional=*/true, "The decoded destination address for the output script, omitted when the script has no standard destination"},
                                                                                  {RPCResult::Type::STR_HEX, "scriptPubKey", "The scriptPubKey of the output"},
                                                                              }},
                                           }},
@@ -1553,6 +2103,11 @@ RPCHelpMan createblsctbalanceproof()
 
             LOCK(pwallet->cs_wallet);
 
+            // The proof is signed with the output's spending key, which a
+            // locked wallet cannot derive. Check under cs_wallet so a relock
+            // cannot slip in between here and the proof construction below.
+            EnsureWalletIsUnlocked(*pwallet);
+
             if (target_amount <= 0) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Amount must be positive");
             }
@@ -1659,10 +2214,10 @@ RPCHelpMan createblsctrawtransaction()
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"},
         RPCExamples{
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"value\\\":1000000,\\\"gamma\\\":\\\"1234567890abcdef\\\",\\\"spending_key\\\":\\\"abcdef1234567890\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000,\\\"memo\\\":\\\"memo\\\",\\\"token_id\\\":\\\"tokenid\\\"}]\"") +
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000}]\"") +
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000,\\\"script\\\":\\\"51\\\"}]\"") +
-            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\"}]\" \"[{\\\"type\\\":\\\"atomic_swap\\\",\\\"address_a\\\":\\\"blsctAddr1\\\",\\\"address_b\\\":\\\"blsctAddr2\\\",\\\"amount\\\":1000000,\\\"hash\\\":\\\"00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff\\\",\\\"locktime\\\":750000}]\"")},
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\",\\\"value\\\":1000000,\\\"gamma\\\":\\\"1234567890abcdef\\\",\\\"spending_key\\\":\\\"abcdef1234567890\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000,\\\"memo\\\":\\\"memo\\\",\\\"token_id\\\":\\\"tokenid\\\"}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"address\\\":\\\"address\\\",\\\"amount\\\":1000000,\\\"script\\\":\\\"51\\\"}]\"") +
+            HelpExampleCli("createblsctrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"type\\\":\\\"atomic_swap\\\",\\\"address_a\\\":\\\"blsctAddr1\\\",\\\"address_b\\\":\\\"blsctAddr2\\\",\\\"amount\\\":1000000,\\\"hash\\\":\\\"00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff\\\",\\\"locktime\\\":750000}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
@@ -1801,7 +2356,7 @@ RPCHelpMan createblsctrawtransaction()
                 if (!o.exists("spending_key")) {
                     blsct::PrivateKey spending_key;
                     const bool can_derive = !pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_DISABLE_PRIVATE_KEYS);
-                    if (!wallet_prevout.IsNull() && can_derive && blsct_km->GetSpendingKeyForOutputWithCache(wallet_prevout, spending_key) && spending_key.IsValid()) {
+                    if (!wallet_prevout.IsNull() && can_derive && blsct_km->GetSpendingKeyForOutput(wallet_prevout, spending_key) && spending_key.IsValid()) {
                         unsigned_input.sk = spending_key;
                     } else if (wallet_prevout.IsNull()) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf(
@@ -1902,20 +2457,12 @@ RPCHelpMan createblsctrawtransaction()
                 }
 
                 if (output_type == "atomic_swap") {
-                    auto parse_address = [&](const std::string& address, const std::string& field_name) -> blsct::DoublePublicKey {
-                        CTxDestination destination = DecodeDestination(address);
-                        if (!IsValidDestination(destination) || destination.index() != 8) {
-                            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address for ") + field_name + ": " + address);
-                        }
-                        return std::get<blsct::DoublePublicKey>(destination);
-                    };
-
                     if (!o.exists("address_a") || !o.exists("address_b")) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Atomic swap output requires address_a and address_b");
                     }
 
-                    blsct::DoublePublicKey address_a = parse_address(o["address_a"].get_str(), "address_a");
-                    blsct::DoublePublicKey address_b = parse_address(o["address_b"].get_str(), "address_b");
+                    blsct::DoublePublicKey address_a = EnsureBlsctDestination(o["address_a"].get_str());
+                    blsct::DoublePublicKey address_b = EnsureBlsctDestination(o["address_b"].get_str());
 
                     if (!o.exists("hash")) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Atomic swap output requires a 32-byte hash");
@@ -1989,12 +2536,7 @@ RPCHelpMan createblsctrawtransaction()
                 } else {
                     blsct::SubAddress subAddress;
                     if (o.exists("address")) {
-                        std::string address = o["address"].get_str();
-                        CTxDestination destination = DecodeDestination(address);
-                        if (!IsValidDestination(destination) || destination.index() != 8) {
-                            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid BLSCT address: ") + address);
-                        }
-                        subAddress = std::get<blsct::DoublePublicKey>(destination);
+                        subAddress = EnsureBlsctDestination(o["address"].get_str());
                     } else {
                         subAddress = blsct::DoublePublicKey(MclG1Point::GetBasePoint(), MclG1Point::GetBasePoint());
                     }
@@ -2181,10 +2723,7 @@ RPCHelpMan fundblsctrawtransaction()
                 // Get change address (needed for both cases)
                 CTxDestination change_dest;
                 if (!request.params[1].isNull()) {
-                    change_dest = DecodeDestination(request.params[1].get_str());
-                    if (!IsValidDestination(change_dest) || change_dest.index() != 8) {
-                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BLSCT change address");
-                    }
+                    change_dest = EnsureBlsctDestination(request.params[1].get_str());
                 } else {
                     change_dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(blsct::CHANGE_ACCOUNT).value());
                 }
@@ -2268,7 +2807,7 @@ RPCHelpMan fundblsctrawtransaction()
                                 // our sub-address pool, or custom scripts we do not
                                 // own) instead of force-including them and failing
                                 // the later sign with RPC_WALLET_ERROR.
-                                if (!blsct_km->GetSpendingKeyForOutputWithCache(output.txout, spending_key) || !spending_key.IsValid()) {
+                                if (!blsct_km->GetSpendingKeyForOutput(output.txout, spending_key) || !spending_key.IsValid()) {
                                     continue;
                                 }
                                 if (!output.txout.blsctData.spendingKey.IsZero()) {
@@ -2467,7 +3006,7 @@ RPCHelpMan signblsctrawtransaction()
                     }
 
                     blsct::PrivateKey spending_key;
-                    if (!blsct_km->GetSpendingKeyForOutputWithCache(prevout, spending_key) || !spending_key.IsValid()) {
+                    if (!blsct_km->GetSpendingKeyForOutput(prevout, spending_key) || !spending_key.IsValid()) {
                         throw JSONRPCError(RPC_WALLET_ERROR,
                             "Unable to derive the spending key for an input; this wallet may not own it, or its sub-address pool does not cover the address");
                     }
@@ -2571,7 +3110,7 @@ RPCHelpMan decodeblsctrawtransaction()
                     auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
 
                     blsct::PrivateKey spending_key;
-                    bool found = blsct_km->GetSpendingKeyForOutputWithCache(output.out, spending_key) && spending_key.IsValid();
+                    bool found = blsct_km->GetSpendingKeyForOutput(output.out, spending_key) && spending_key.IsValid();
 
                     if (!found) {
                         // For HTLC and other complex scripts, try all BLS public keys in the script
@@ -2579,7 +3118,7 @@ RPCHelpMan decodeblsctrawtransaction()
                         if (blsct_km->ExtractAllSpendingKeysFromScript(output.out.scriptPubKey, script_keys)) {
                             for (const auto& candidate_key : script_keys) {
                                 auto hashId = blsct_km->GetHashId(output.out.blsctData.blindingKey, candidate_key);
-                                if (!hashId.IsNull() && blsct_km->GetSpendingKeyForOutputWithCache(output.out, hashId, spending_key) && spending_key.IsValid()) {
+                                if (!hashId.IsNull() && blsct_km->GetSpendingKeyForOutput(output.out, hashId, spending_key) && spending_key.IsValid()) {
                                     found = true;
                                     break;
                                 }
@@ -2963,12 +3502,7 @@ RPCHelpMan deriveblsctnonce()
             }
             Scalar blindingKey(blinding_key_bytes);
 
-            std::string address_str = request.params[1].get_str();
-            CTxDestination dest = DecodeDestination(address_str);
-            if (!IsValidDestination(dest) || dest.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BLSCT address");
-            }
-            auto dpk = std::get<blsct::DoublePublicKey>(dest);
+            auto dpk = EnsureBlsctDestination(request.params[1].get_str());
 
             MclG1Point vk_point;
             if (!dpk.GetViewKey(vk_point)) {
@@ -3123,12 +3657,7 @@ RPCHelpMan deriveblsctspendingkey()
             }
             Scalar blindingKey(blinding_key_bytes);
 
-            std::string address_str = request.params[1].get_str();
-            CTxDestination dest = DecodeDestination(address_str);
-            if (!IsValidDestination(dest) || dest.index() != 8) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BLSCT address");
-            }
-            auto dpk = std::get<blsct::DoublePublicKey>(dest);
+            auto dpk = EnsureBlsctDestination(request.params[1].get_str());
 
             MclG1Point sk_point;
             if (!dpk.GetSpendKey(sk_point)) {
@@ -3145,11 +3674,91 @@ RPCHelpMan deriveblsctspendingkey()
             fakeOut.blsctData.blindingKey = sk_point * blindingKey;
 
             blsct::PrivateKey spendingKey;
-            if (!blsct_km->GetSpendingKeyForOutputWithCache(fakeOut, hashId, spendingKey) || !spendingKey.IsValid()) {
+            if (!blsct_km->GetSpendingKeyForOutput(fakeOut, hashId, spendingKey) || !spendingKey.IsValid()) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive spending key — address may not belong to this wallet");
             }
 
             return HexStr(spendingKey.GetScalar().GetVch());
+        },
+    };
+}
+
+RPCHelpMan deriveblsctonetimekey()
+{
+    return RPCHelpMan{
+        "deriveblsctonetimekey",
+        "\nStateless derivation of the one-time key material for a BLSCT output sent to an\n"
+        "externally constructed destination (view point V = view_key*G1, spend point S).\n"
+        "An output created for such a destination carries ephemeralKey = b*G1 (b = the\n"
+        "sender's blinding key) and one-time spending key S + H(b*V)*G1. Given the private\n"
+        "view scalar and the output's ephemeral key this returns the shared point\n"
+        "b*V (the recovery nonce for getblsctrecoverydatawithnonce), the derived scalar\n"
+        "tweak H(b*V) with its public point, and the expected view tag. If the private\n"
+        "spend scalar is also provided, the full one-time private spending key\n"
+        "spend_key + H(b*V) is returned, suitable for the spending_key input field of\n"
+        "createblsctrawtransaction.\n"
+        "Wallet keys are not consulted: intended for jointly derived destinations (e.g.\n"
+        "atomic-swap outputs locked to a combined key) that no wallet owns.\n",
+        {
+            {"view_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 32-byte private view scalar (hex) of the destination"},
+            {"ephemeral_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The 48-byte ephemeral key (hex) of the output (blsctData.ephemeralKey)"},
+            {"spend_key", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The 32-byte private spend scalar (hex) of the destination; when given, the full one-time private key is returned"},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                                              {RPCResult::Type::STR_HEX, "nonce", "The shared point b*V as a 48-byte public key (hex); recovery nonce for getblsctrecoverydatawithnonce"},
+                                              {RPCResult::Type::NUM, "view_tag", "The view tag matching this output"},
+                                              {RPCResult::Type::STR_HEX, "tweak", "The derived scalar H(b*V) (32-byte hex)"},
+                                              {RPCResult::Type::STR_HEX, "tweak_point", "H(b*V)*G1 (48-byte hex); the output's spending key must equal S + tweak_point"},
+                                              {RPCResult::Type::STR_HEX, "one_time_key", /*optional=*/true, "spend_key + H(b*V) (32-byte hex); only when spend_key was provided"},
+                                          }},
+        RPCExamples{
+            HelpExampleCli("deriveblsctonetimekey", "\"<view scalar hex>\" \"<ephemeral key hex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            auto view_key_bytes = ParseHex(request.params[0].get_str());
+            if (view_key_bytes.size() != 32) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "View key must be 32 bytes (64 hex characters)");
+            }
+            Scalar viewKey(view_key_bytes);
+            if (viewKey.IsZero()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "View key must not be zero");
+            }
+
+            auto ephemeral_key_bytes = ParseHex(request.params[1].get_str());
+            if (ephemeral_key_bytes.size() != blsct::PublicKey::SIZE) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Ephemeral key must be 48 bytes (96 hex characters)");
+            }
+            blsct::PublicKey ephemeral_pubkey(ephemeral_key_bytes);
+            if (!ephemeral_pubkey.IsValid()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid ephemeral public key");
+            }
+
+            // b*V, computed from the claimant's side: view_key * (b*G1)
+            MclG1Point nonce = ephemeral_pubkey.GetG1Point() * viewKey;
+            Scalar tweak(nonce.GetHashWithSalt(0));
+
+            HashWriter hash{};
+            hash << nonce;
+
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("nonce", HexStr(blsct::PublicKey(nonce).GetVch()));
+            result.pushKV("view_tag", hash.GetHash().GetUint64(0) & 0xFFFF);
+            result.pushKV("tweak", HexStr(tweak.GetVch()));
+            result.pushKV("tweak_point", HexStr(blsct::PrivateKey(tweak).GetPublicKey().GetVch()));
+
+            if (!request.params[2].isNull() && !request.params[2].get_str().empty()) {
+                auto spend_key_bytes = ParseHex(request.params[2].get_str());
+                if (spend_key_bytes.size() != 32) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Spend key must be 32 bytes (64 hex characters)");
+                }
+                Scalar spendKey(spend_key_bytes);
+                if (spendKey.IsZero()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Spend key must not be zero");
+                }
+                result.pushKV("one_time_key", HexStr((spendKey + tweak).GetVch()));
+            }
+
+            return result;
         },
     };
 }
@@ -3203,20 +3812,23 @@ RPCHelpMan getblsctoutput()
                 }
             }
 
-            // Try mapOutputs (output storage mode)
-            for (const auto& [outpoint, wout] : pwallet->mapOutputs) {
-                if (wout.out && wout.GetOutputHash() == output_hash) {
-                    const auto& tokenId = wout.out->tokenId;
+            // Try mapOutputs (output storage mode). It is keyed by COutPoint,
+            // which in this chain is the output hash itself — the same value
+            // CWalletOutput::GetOutputHash() reports — so this is a direct
+            // lookup rather than a scan.
+            const auto wout_it = pwallet->mapOutputs.find(COutPoint(output_hash));
+            if (wout_it != pwallet->mapOutputs.end() && wout_it->second.out) {
+                const wallet::CWalletOutput& wout = wout_it->second;
+                const auto& tokenId = wout.out->tokenId;
 
-                    UniValue result(UniValue::VOBJ);
-                    result.pushKV("outputHash", output_hash.GetHex());
-                    result.pushKV("amount", wout.blsctRecoveryData.amount);
-                    result.pushKV("memo", wout.blsctRecoveryData.message);
-                    result.pushKV("tokenId", tokenId.IsNull() ? "" : tokenId.ToString());
-                    result.pushKV("confirmations", pwallet->GetOutputDepthInMainChain(wout));
-                    result.pushKV("spendable", !wout.IsSpent());
-                    return result;
-                }
+                UniValue result(UniValue::VOBJ);
+                result.pushKV("outputHash", output_hash.GetHex());
+                result.pushKV("amount", wout.blsctRecoveryData.amount);
+                result.pushKV("memo", wout.blsctRecoveryData.message);
+                result.pushKV("tokenId", tokenId.IsNull() ? "" : tokenId.ToString());
+                result.pushKV("confirmations", pwallet->GetOutputDepthInMainChain(wout));
+                result.pushKV("spendable", !wout.IsSpent());
+                return result;
             }
 
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Output not found");
@@ -3240,7 +3852,12 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &sendnfttoblsctaddress},
         {"blsct", &sendtokentoblsctaddress},
         {"blsct", &stakelock},
+        {"blsct", &delegatestake},
         {"blsct", &stakeunlock},
+        {"blsct", &listdelegations},
+        {"blsct", &liststakingrewards},
+        {"blsct", &redelegatestake},
+        {"blsct", &compounddelegations},
         {"blsct", &consolidate},
         {"blsct", &setblsctseed},
         {"blsct", &createblsctbalanceproof},
@@ -3255,6 +3872,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &signblsmessage},
         {"blsct", &verifyblsmessage},
         {"blsct", &deriveblsctspendingkey},
+        {"blsct", &deriveblsctonetimekey},
         {"blsct", &getblsctoutput},
     };
     return commands;
