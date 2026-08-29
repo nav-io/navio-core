@@ -7,11 +7,18 @@
 
 #include <blsct/arith/blst/blst_g1point.h>
 #include <blsct/arith/blst/blst_scalar.h>
-#include <blsct/building_block/lazy_point.h>
 
 #include <atomic>
 #include <cstddef>
 #include <vector>
+
+// LazyPoint is forward-declared instead of included: lazy_point.cpp
+// instantiates the <Blst> templates via blst.h, so including
+// building_block/lazy_point.h here would close the include cycle
+// blst -> blst_util -> lazy_point -> blst. MultiplyLazyPoints is a template,
+// so its instantiation sites see the complete type.
+template <typename T>
+struct LazyPoint;
 
 struct BlstUtil {
     // Multi-scalar multiplication Σ scalars[i] * pts[i] via blst's Pippenger.

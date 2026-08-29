@@ -109,3 +109,29 @@ BlstG1Point BlstUtil::MSM(const BlstG1Point* pts, const BlstScalar* scalars, siz
     }
     return ret;
 }
+
+// Defined here rather than in blst_g1point.cpp: the batch subgroup check is
+// an MSM-powered utility, and keeping it with MSM avoids the include cycle
+// blst_g1point -> blst_util -> blst_g1point.
+bool BlstG1Point::BatchCheckSubgroup(std::span<const BlstG1Point> pts)
+{
+    if (pts.empty()) return true;
+    if (pts.size() == 1) {
+        if (pts[0].IsZero()) return true;
+        return blst_p1_in_g1(&pts[0].m_point);
+    }
+    std::vector<BlstG1Point> bases;
+    std::vector<BlstScalar> exps;
+    bases.reserve(pts.size());
+    exps.reserve(pts.size());
+    for (const auto& p : pts) {
+        if (p.IsZero()) continue;
+        bases.push_back(p);
+        exps.push_back(BlstScalar::Rand(false));
+    }
+    if (bases.empty()) return true;
+    BlstG1Point combined = BlstUtil::MSM(bases.data(), exps.data(), bases.size(), /*threads=*/1);
+    if (combined.IsZero()) return true;
+    return blst_p1_in_g1(&combined.m_point);
+}
+
