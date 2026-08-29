@@ -56,6 +56,8 @@ qrc_*.cpp
 # Mac specific
 .DS_Store
 build
+# vendored blst ships its pre-generated assembly under a directory named build
+!src/blst/build/
 
 # Previous releases
 releases
