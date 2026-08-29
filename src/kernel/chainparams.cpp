@@ -173,7 +173,15 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         // CreateChainParams logs the ignored-on-mainnet warning (this kernel
         // params object does not log).
         {
-            const int buried = std::numeric_limits<int>::max();
+            // Flag day: BLSCT range-proof v2 activates at height 42500, chosen
+            // to land at approximately 2026-09-02 21:00 Berlin (19:00 UTC).
+            // Derivation: anchored on the live mainnet tip height 39536 at time
+            // 1787991072 (2026-08-27 15:31 UTC), extrapolated over the ~4.45 day
+            // gap at the observed ~130s/block PoS spacing (~2964 blocks) ->
+            // ~42500. Block spacing drifts, so treat the date as approximate
+            // (~+/-25min). -blsctproofv2height may DEFER past this (stand down a
+            // flag day without a new binary) but never pull it earlier.
+            const int buried = 42500;
             consensus.nBLSCTProofV2Height =
                 (blsct_proof_v2_height && *blsct_proof_v2_height > buried)
                     ? *blsct_proof_v2_height
