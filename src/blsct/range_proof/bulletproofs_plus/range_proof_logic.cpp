@@ -18,7 +18,9 @@
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/msg_amt_cipher.h>
+#include <atomic>
 #include <future>
+#include <thread>
 #include <type_traits>
 #include <tinyformat.h>
 
@@ -597,10 +599,20 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
     using Scalar = typename T::Scalar;
     using Point = typename T::Point;
 
-    // will contain result of successful requests only
-    std::vector<range_proof::RecoveredData<T>> xs;
+    // Each request is recovered independently, so fan the loop out across a
+    // bounded worker pool (a wallet rescan can pass thousands of outputs, so we
+    // must NOT spawn one thread per request). Each request resolves to Fail
+    // (malformed sizes -> the whole batch fails, preserving the original
+    // early-return semantics), Skip (not a recoverable single-value proof), or
+    // Ok with the recovered data. Results are written to a per-index slot so
+    // the successful set is assembled in request order, deterministically.
+    enum class St { Ok, Skip, Fail };
+    struct One { St st{St::Skip}; range_proof::RecoveredData<T> data; };
+    const size_t n = reqs.size();
+    std::vector<One> results(n);
 
-    for (const AmountRecoveryRequest<T>& req: reqs) {
+    auto recover_one = [&](size_t req_idx) -> One {
+        const AmountRecoveryRequest<T>& req = reqs[req_idx];
         range_proof::Generators<T> gens = m_common.Gf().GetInstance(req.seed);
         Point g = gens.G;
         Point h = gens.H;
@@ -608,11 +620,11 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
         // failure if sizes of Ls and Rs differ or Vs is empty
         auto Ls_Rs_valid = req.Ls.Size() > 0 && req.Ls.Size() == req.Rs.Size();
         if (req.Vs.Size() == 0 || !Ls_Rs_valid) {
-            return AmountRecoveryResult<T>::failure();
+            return One{St::Fail, {}};
         }
         // recovery can only be done when the number of value commitment is 1
         if (req.Vs.Size() != 1) {
-            continue;
+            return One{St::Skip, {}};
         }
 
         Scalar gamma_vs0 = req.nonce.GetHashWithSalt(100); // gamma for vs[0]
@@ -660,7 +672,7 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
             req.Vs[0]
         );
         if (maybe_msg_amt == std::nullopt) {
-            continue;
+            return One{St::Skip, {}};
         }
         const auto& msg_amt = maybe_msg_amt.value();
 
@@ -670,10 +682,39 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
             req.nonce.GetHashWithSalt(100), // gamma for vs[0]
             msg_amt.msg
         );
-        xs.push_back(x);
-
         Scalar msg2_scalar = ((req.tau_x - (tau2 * req.y.Square()) - (req.z.Square() * gamma_vs0)) * req.y.Invert()) - tau1;
         std::vector<uint8_t> msg2 = msg2_scalar.GetVch(true);
+        (void)msg2;
+
+        return One{St::Ok, x};
+    };
+
+    size_t nthreads = std::thread::hardware_concurrency();
+    if (nthreads == 0) nthreads = 1;
+    nthreads = std::min(nthreads, n);
+    if (nthreads <= 1) {
+        for (size_t i = 0; i < n; ++i) results[i] = recover_one(i);
+    } else {
+        std::atomic<size_t> next{0};
+        auto worker = [&]() {
+            for (;;) {
+                const size_t i = next.fetch_add(1, std::memory_order_relaxed);
+                if (i >= n) return;
+                results[i] = recover_one(i);
+            }
+        };
+        std::vector<std::thread> pool;
+        pool.reserve(nthreads - 1);
+        for (size_t t = 1; t < nthreads; ++t) pool.emplace_back(worker);
+        worker();
+        for (auto& th : pool) th.join();
+    }
+
+    // Assemble in request order; any Fail fails the whole batch.
+    std::vector<range_proof::RecoveredData<T>> xs;
+    for (auto& r : results) {
+        if (r.st == St::Fail) return AmountRecoveryResult<T>::failure();
+        if (r.st == St::Ok) xs.push_back(std::move(r.data));
     }
     return {
         true,
