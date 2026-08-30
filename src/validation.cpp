@@ -2862,8 +2862,13 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (tx.IsBLSCT() && !tx.IsCoinBase()) {
             std::set<uint256> vin_prevouts;
             for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
-            for (const auto& out : tx.vout) {
-                const uint256 out_hash = out.GetHash();
+            // Reuse the output content hashes from the BIP30 / self-spent scan
+            // above (present for every BLSCT non-coinbase tx) instead of
+            // serializing every range proof a second time.
+            const std::vector<uint256>* pre = (i < block_out_hashes.size() && block_out_hashes[i].size() == tx.vout.size()) ? &block_out_hashes[i] : nullptr;
+            for (size_t o = 0; o < tx.vout.size(); ++o) {
+                const CTxOut& out = tx.vout[o];
+                const uint256 out_hash = pre ? (*pre)[o] : out.GetHash();
                 if (!vin_prevouts.contains(out_hash)) continue;
                 const COutPoint op{out_hash};
                 if (view.HaveCoin(op)) continue; // already on chain
