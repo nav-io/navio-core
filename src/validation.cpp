@@ -2737,26 +2737,43 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             const auto [tx_idx, o] = tasks[k];
             block_out_hashes[tx_idx][o] = block.vtx[tx_idx]->vout[o].GetHash();
         };
+        // One worker per kParallelHashMinOutputs outputs (integer division), so
+        // the fan-out only splits at >= 2*kParallelHashMinOutputs tasks and is
+        // serial below that -- small blocks aren't worth the thread setup.
+        // Honour -par: cap at the script-check pool's size (its workers + this
+        // thread) so a connect doesn't oversubscribe against the script and PoS
+        // checks already running. hardware_concurrency() ignored that config.
         static constexpr size_t kParallelHashMinOutputs = 64;
-        size_t threads = std::thread::hardware_concurrency();
-        if (threads == 0) threads = 1;
-        threads = std::min(threads, tasks.size() / kParallelHashMinOutputs);
+        const size_t par = m_chainman.GetCheckQueue().WorkerCount() + 1; // == -par
+        size_t threads = std::min<size_t>(par, tasks.size() / kParallelHashMinOutputs);
         if (threads <= 1) {
             for (size_t k = 0; k < tasks.size(); ++k) hash_task(k);
         } else {
             std::atomic<size_t> next{0};
-            auto worker = [&]() {
-                for (;;) {
-                    const size_t k = next.fetch_add(1, std::memory_order_relaxed);
-                    if (k >= tasks.size()) return;
-                    hash_task(k);
+            // GetHash() can throw (e.g. bad_alloc on a large aggregated block).
+            // An exception escaping a worker would std::terminate the node;
+            // capture per slot and rethrow after the join so the block fails
+            // validation instead of killing the process.
+            std::vector<std::exception_ptr> errs(threads);
+            auto worker = [&](size_t slot) {
+                try {
+                    for (;;) {
+                        const size_t k = next.fetch_add(1, std::memory_order_relaxed);
+                        if (k >= tasks.size()) return;
+                        hash_task(k);
+                    }
+                } catch (...) {
+                    errs[slot] = std::current_exception();
                 }
             };
             std::vector<std::thread> pool;
             pool.reserve(threads - 1);
-            for (size_t t = 1; t < threads; ++t) pool.emplace_back(worker);
-            worker();
+            for (size_t t = 1; t < threads; ++t) pool.emplace_back(worker, t);
+            worker(0);
             for (auto& th : pool) th.join();
+            for (auto& e : errs) {
+                if (e) std::rethrow_exception(e);
+            }
         }
     }
     {
@@ -2793,7 +2810,10 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             const std::vector<uint256>& out_hashes = block_out_hashes[tx_idx];
             std::set<uint256> self_spent;
             if (is_blsct_noncoinbase) {
-                assert(out_hashes.size() == tx->vout.size());
+                // Assume, not assert: a mismatch would key UTXOs under the wrong
+                // outpoints, and that must be caught in release too (NDEBUG),
+                // not only in debug builds.
+                Assume(out_hashes.size() == tx->vout.size());
                 std::set<uint256> vin_prevouts;
                 for (const auto& in : tx->vin) vin_prevouts.insert(in.prevout.hash);
                 for (const auto& oh : out_hashes) {
