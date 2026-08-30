@@ -36,6 +36,16 @@ class FixedBaseCache
 public:
     static FixedBaseCache& Get();
 
+    // Process-wide configuration, read once by MaybeInit. Defaults are ON so
+    // every consumer that never touches init.cpp's ArgsManager (libblsct.a,
+    // bench_navio, test_navio, navio-wallet) still gets the fast path; init.cpp
+    // only ever turns it OFF via -blsctfixedbase=0 or retunes prefix/window.
+    // Must be set before the first MaybeInit (i.e. before the first block
+    // verify), which init.cpp satisfies.
+    static void SetEnabled(bool on) { s_enabled = on; }
+    static void SetPrefix(size_t prefix) { s_prefix = prefix; }
+    static void SetWinSize(size_t win) { s_winSize = win; }
+
     // Build the tables from `gens` on first call (no-op afterwards / when off).
     void MaybeInit(const range_proof::Generators<Blst>& gens);
 
@@ -48,6 +58,12 @@ public:
 
 private:
     FixedBaseCache() = default;
+
+    // Config source (defaults ON); MaybeInit copies these into the resolved
+    // per-instance state below.
+    inline static bool s_enabled = true;
+    inline static size_t s_prefix = 128;
+    inline static size_t s_winSize = 8;
 
     bool m_enabled = false;
     size_t m_prefix = 0;
