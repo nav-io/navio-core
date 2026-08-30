@@ -197,7 +197,7 @@ void CCoinsViewCache::EmplaceCoinInternalDANGER(COutPoint&& outpoint, Coin&& coi
         std::forward_as_tuple(std::move(coin), CCoinsCacheEntry::DIRTY));
 }
 
-void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check_for_overwrite)
+void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check_for_overwrite, const std::vector<uint256>* precomputed_out_hashes)
 {
     bool fCoinbase = tx.IsCoinBase();
     // BLSCT block aggregation collapses a chain of dependent txs into one
@@ -215,9 +215,14 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool 
     // loop below instead of hashing twice; other paths keep hashing lazily in
     // the loop.
     std::vector<uint256> out_hashes;
+    if (precomputed_out_hashes && precomputed_out_hashes->size() == tx.vout.size()) {
+        out_hashes = *precomputed_out_hashes;
+    }
     if (tx.IsBLSCT() && !fCoinbase) {
-        out_hashes.resize(tx.vout.size());
-        for (size_t i = 0; i < tx.vout.size(); ++i) out_hashes[i] = tx.vout[i].GetHash();
+        if (out_hashes.empty()) {
+            out_hashes.resize(tx.vout.size());
+            for (size_t i = 0; i < tx.vout.size(); ++i) out_hashes[i] = tx.vout[i].GetHash();
+        }
         std::set<uint256> vin_prevouts;
         for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
         for (const auto& out_hash : out_hashes) {

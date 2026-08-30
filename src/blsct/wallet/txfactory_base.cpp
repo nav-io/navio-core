@@ -3,6 +3,8 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/wallet/txfactory_base.h>
+#include <consensus/amount.h>
+#include <tinyformat.h>
 #include <util/rbf.h>
 
 #include <random>
@@ -32,6 +34,13 @@ constexpr size_t MAX_FEE_FIXPOINT_PASSES = 2 * MAX_TX_INPUT_COUNT + 2;
 
 void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey, const CAmount& nBLSCTDefaultFee, const std::optional<delegation::DelegationRequest>& stakeDelegation)
 {
+    // Reject before touching nAmounts: a non-positive or out-of-range value
+    // would otherwise be folded into the per-token totals and surface only
+    // later as an unexplained consensus rejection of the built transaction.
+    if (nAmount <= 0 || !MoneyRange(nAmount)) {
+        throw std::runtime_error(strprintf("%s: amount must be positive and within the money range (got %d)", __func__, nAmount));
+    }
+
     if (!nAmounts.contains(token_id))
         nAmounts[token_id] = {0, 0, 0};
 
