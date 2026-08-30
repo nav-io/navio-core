@@ -89,7 +89,10 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         before = n0.getaggregationhint()["available"]
         res = w1.replycandidate(uniq[0])
         assert "candidate_txid" in res, res
-        self.wait_until(lambda: n0.getaggregationhint()["available"] > before, timeout=30)
+        # 60s to match the sibling waits above: under a saturated CI runner (the
+        # [commits] job runs the whole functional suite in parallel) the serve +
+        # p2pmsg decrypt + propagate cycle can exceed a tight 30s window.
+        self.wait_until(lambda: n0.getaggregationhint()["available"] > before, timeout=60)
         assert res["candidate_txid"] not in n0.getrawmempool()
         self.log.info("manual claim + replycandidate served OK")
 
