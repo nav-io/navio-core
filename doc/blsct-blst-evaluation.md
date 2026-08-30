@@ -348,17 +348,20 @@ reindex-chainstate to height 39645: 435.5s wall (10.98 ms/block)   [2nd run: 466
   PoS setmem (async worker CPU, summed)             144.1s     3.63 ms/blk
 ```
 
-Caveat on comparability: the mcl runs above were taken on an idle machine;
-by the time the blst node existed the same machine was carrying a desktop
-workload (load average 7–11 from unrelated applications). An mcl (no
-OpenMP) reindex repeated in that window took **1480 s** (37.3 ms/blk,
-range proofs 17.6 ms/blk), i.e. the load roughly halved single-thread
-throughput, and in the same window the migrated node's own micro-benchmarks
-(`BLSCTRPVerify_1` 4.9 ms) matched the two-backend build's blst figures
-measured at the same moment (`BLSCTCmp_RPVerify1_blst_ST` 4.95 ms) — the
-in-tree blst build is not slower than the evaluation one. So the honest
-range is: blst 435–467 s on a loaded machine vs mcl 571 s idle / 1480 s
-under the same load; a clean idle-vs-idle rerun is the number to quote.
+Repeated on the same machine once it was quiet again (load average ~3),
+mcl and blst back-to-back on the same datadir:
+
+| node | wall | ms/blk | range proofs | agg. sigs | PoS setmem (CPU) |
+|---|---:|---:|---:|---:|---:|
+| mcl (release config, no OpenMP) | 552 s | 13.9 | 6.9 | 3.0 | 2.5 |
+| **blst (this tree)** | **163 s** | **4.1** | 2.9 | 0.9 | 1.4 |
+
+i.e. **3.4× faster full sync**, tip hash identical. (Two earlier blst runs at
+435–467 s and an mcl run at 1480 s were taken while the machine carried an
+unrelated desktop workload; they are only comparable to each other.) The
+fixed-base generator precompute that follows this migration takes the blst
+figure to 151 s on this host.
+
 ## Migration assessment
 
 ### What a real migration touches
