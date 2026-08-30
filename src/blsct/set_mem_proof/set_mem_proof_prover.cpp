@@ -11,11 +11,6 @@
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <blsct/set_mem_proof/set_mem_proof_setup.h>
 
-// SetMemProof::MAX_ROUNDS is the deserialization bound on |Ls| / |Rs|; keep
-// it in lock-step with the setup's maximum ring size.
-static_assert((size_t{1} << SetMemProof<Mcl>::MAX_ROUNDS) == SetMemProofSetup<Mcl>::N,
-              "SetMemProof::MAX_ROUNDS must equal log2(SetMemProofSetup::N)");
-
 #include <crypto/common.h>
 #include <hash.h>
 #include <streams.h>
@@ -23,6 +18,11 @@ static_assert((size_t{1} << SetMemProof<Mcl>::MAX_ROUNDS) == SetMemProofSetup<Mc
 
 #include <cmath>
 #include <stdexcept>
+
+// SetMemProof::MAX_ROUNDS is the deserialization bound on |Ls| / |Rs|; keep
+// it in lock-step with the setup's maximum ring size.
+static_assert((size_t{1} << SetMemProof<Mcl>::MAX_ROUNDS) == SetMemProofSetup<Mcl>::N,
+              "SetMemProof::MAX_ROUNDS must equal log2(SetMemProofSetup::N)");
 
 template <typename T>
 const typename SetMemProofProver<T>::Scalar& SetMemProofProver<T>::One()
