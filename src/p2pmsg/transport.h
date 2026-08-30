@@ -30,10 +30,6 @@ namespace p2pmsg {
 //! disable with -p2pmsg=0.
 static constexpr bool DEFAULT_P2PMSG_ENABLE{true};
 
-//! Default inbox-key rotation interval (seconds). ~10 minutes matches the
-//! Dandelion++ epoch scale used for stem routing. 0 disables rotation.
-static constexpr int64_t DEFAULT_INBOX_ROTATION_SECS{600};
-
 //! Application identifier carried (opaque) by every message. p2pmsg is an
 //! APP-AGNOSTIC encrypted broadcast bus: nodes relay any well-formed message to
 //! their peers regardless of whether they understand or can decrypt this `kind`.
@@ -119,17 +115,23 @@ public:
         //! decrypt and handle messages addressed to us.
         uint32_t relay_tokens_per_sec{200};
         uint32_t relay_burst{400};
-        //! Inbox-key rotation. The node's inbox key is the static target peers
-        //! encrypt confidential messages to; left unrotated it makes every reply
-        //! received during a process's uptime linkable to one node, and an
-        //! in-memory key extraction would decrypt the whole session. Rotating it
-        //! every `inbox_rotation_secs` bounds both: linkage resets each epoch and
-        //! an extracted current key exposes at most one epoch (plus the grace
-        //! ring) of past traffic. `inbox_grace_keys` previous keys are retained
-        //! for trial-decryption so a message encrypted to the key we published
-        //! just before a rotation still decrypts. 0 disables rotation.
-        int64_t inbox_rotation_secs{DEFAULT_INBOX_ROTATION_SECS};
-        size_t inbox_grace_keys{1};
+        //! Encryption-prekey rotation. The node has a stable IDENTITY key (its
+        //! address, which signs prekeys) and a rotating PREKEY that peers
+        //! actually encrypt confidential messages to. Rotating the prekey bounds
+        //! two things without disturbing reachability: linkage of confidential
+        //! replies resets each epoch, and an in-memory prekey extraction exposes
+        //! at most one epoch (plus the grace ring) of past traffic rather than
+        //! the whole run. `prekey_grace_keys` previous prekeys are retained for
+        //! trial-decryption so a message encrypted to the prekey we published
+        //! just before a rotation still decrypts.
+        //!
+        //! Rotation is MANUAL by default (`prekey_rotation_secs == 0`): the inbox
+        //! prekey is a contact address, and rotating it on a timer would silently
+        //! break senders who cached it beyond the grace window. A user can force a
+        //! privacy reset with the `rotatep2pmsginbox` RPC, or opt into periodic
+        //! rotation by setting `prekey_rotation_secs > 0`.
+        int64_t prekey_rotation_secs{0};
+        size_t prekey_grace_keys{1};
     };
 
     //! Hard cap on simultaneously-registered session keys. Each open key is
@@ -142,25 +144,44 @@ public:
     Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay)
         : Transport(pool, std::move(broadcast), std::move(relay), Options{}) {}
 
-    //! Our current inbox key: peers encrypt to this; we decrypt inbound with it.
-    //! Returns a copy because the key rotates (see Options::inbox_rotation_secs),
-    //! so a caller must re-read it rather than cache a reference.
+    //! The node's stable IDENTITY key: its p2pmsg address. Signs the rotating
+    //! prekey so a sender can verify a fetched prekey belongs to this identity.
+    //! Ephemeral per run by default; persisted across runs when the operator
+    //! injects a saved key via SetIdentity (opt-in, see -p2pmsgpersistidentity).
+    blsct::PublicKey IdentityPubKey() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! The current inbox PREKEY: peers encrypt confidential messages to this.
+    //! Returns a copy because the prekey rotates, so a caller must re-read it
+    //! rather than cache a reference.
     blsct::PublicKey InboxPubKey() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
 
-    //! Rotate the inbox key now: the current private key moves into the grace
-    //! ring (trimmed to Options::inbox_grace_keys) and a fresh keypair becomes
-    //! current. Safe to call from any thread; normally driven by a scheduler.
-    void RotateInbox() EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+    //! The identity's signature over the current prekey (over prekey.GetVch()).
+    //! Published alongside IdentityPubKey()/InboxPubKey() as a prekey bundle so a
+    //! sender can authenticate the prekey before encrypting to it.
+    blsct::Signature PrekeySig() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
 
-    //! Rotate iff at least Options::inbox_rotation_secs have elapsed since the
-    //! last rotation (no-op when rotation is disabled). Cheap; call on a timer.
-    void MaybeRotateInbox() EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+    //! Replace the identity keypair (e.g. with a persisted one loaded at
+    //! startup) and re-sign the current prekey under it. Call before the node is
+    //! live. Safe to call from any thread.
+    void SetIdentity(const blsct::PrivateKey& priv) EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
 
-    //! Sign a 32-byte digest with this node's current inbox key. Prefer
-    //! SignEphemeral for anything that goes on the wire -- signing under the
-    //! inbox key links the signature to this node and, because the key rotates,
-    //! offers no stable identity anyway. Retained for completeness.
-    blsct::Signature SignWithInbox(const uint256& digest) const
+    //! Export the raw identity private scalar (for persistence). Empty span-safe;
+    //! the caller must treat the bytes as secret.
+    std::vector<unsigned char> IdentityPrivBytes() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! Rotate the inbox prekey now: the current prekey priv moves into the grace
+    //! ring (trimmed to Options::prekey_grace_keys), a fresh prekey becomes
+    //! current, and it is re-signed under the identity. Safe from any thread.
+    void RotatePrekey() EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! Rotate iff at least Options::prekey_rotation_secs have elapsed since the
+    //! last rotation (no-op when periodic rotation is disabled, the default).
+    void MaybeRotatePrekey() EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! Sign a 32-byte digest under this node's stable identity key. Prefer
+    //! SignEphemeral for anything that goes on the wire; identity signatures link
+    //! the signature to this node.
+    blsct::Signature SignWithIdentity(const uint256& digest) const
         EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
 
     //! Sign `digest` under a FRESH, single-use keypair and return the matching
@@ -169,7 +190,7 @@ public:
     //! inbox key instead makes all of a node's RFQ activity linkable to one
     //! pubkey (and, via getp2pmsginfo, to the node). A per-quote key gives the
     //! same tamper-resistance with no cross-quote linkage. Prefer this over
-    //! SignWithInbox for anything that goes on the wire.
+    //! SignWithIdentity for anything that goes on the wire.
     std::pair<blsct::PublicKey, blsct::Signature> SignEphemeral(const uint256& digest) const;
 
     //! Register a per-request session keypair so inbound messages encrypted to
@@ -227,16 +248,23 @@ private:
     RelayFn m_relay;
     Options m_opts;
 
-    //! Inbox key + grace ring. Guarded because RotateInbox (scheduler thread),
-    //! InboxPubKey (RPC/net) and HandleJob (workers) all touch it. Heavy BLS
-    //! decrypts snapshot the privs under the lock and run outside it.
+    //! Identity + inbox-prekey state, all under one lock because RotatePrekey /
+    //! SetIdentity (RPC/scheduler), the pubkey accessors (RPC/net) and HandleJob
+    //! (workers) all touch it. Heavy BLS decrypts snapshot the privs under the
+    //! lock and run outside it.
     mutable Mutex m_inbox_mutex;
+    //! Stable identity: the node's address, and the signer of the prekey.
+    blsct::PrivateKey m_identity_priv GUARDED_BY(m_inbox_mutex);
+    blsct::PublicKey m_identity_pub GUARDED_BY(m_inbox_mutex);
+    //! Current inbox prekey: the actual ECIES target for confidential messages.
     blsct::PrivateKey m_inbox_priv GUARDED_BY(m_inbox_mutex);
     blsct::PublicKey m_inbox_pub GUARDED_BY(m_inbox_mutex);
-    //! Recently-retired inbox privs, newest first, kept for a grace window so a
-    //! message encrypted to the key we just rotated out still decrypts. Bounded
-    //! by Options::inbox_grace_keys; entries drop (and their key material frees)
-    //! past that, which is what bounds the key-extraction decryption window.
+    //! Identity's signature over m_inbox_pub.GetVch(), published in the bundle.
+    blsct::Signature m_prekey_sig GUARDED_BY(m_inbox_mutex);
+    //! Recently-retired prekey privs, newest first, kept for a grace window so a
+    //! message encrypted to the prekey we just rotated out still decrypts.
+    //! Bounded by Options::prekey_grace_keys; entries drop (and their key
+    //! material frees) past that, bounding the key-extraction decryption window.
     std::deque<blsct::PrivateKey> m_inbox_prev GUARDED_BY(m_inbox_mutex);
     int64_t m_inbox_rotated_at GUARDED_BY(m_inbox_mutex){0};
 

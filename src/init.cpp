@@ -569,7 +569,8 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-candidatepullinterval=<n>", strprintf("Seconds between background candidate pull rounds (default: %d)", aggregation::PULL_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onionworkers=<n>", "Number of worker threads for p2p-messaging heavy crypto (0 = auto, default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
-    argsman.AddArg("-p2pmsginboxrotation=<secs>", strprintf("Rotate the p2p-messaging inbox encryption key every <secs> seconds so confidential replies are not linkable to one node for a whole run and a key extraction cannot decrypt past epochs; 0 disables rotation (default: %d)", p2pmsg::DEFAULT_INBOX_ROTATION_SECS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsginboxrotation=<secs>", "Opt into periodic rotation of the p2p-messaging inbox prekey every <secs> seconds (bounds linkability and a key-extraction window). 0 = manual only, rotate on demand with the rotatep2pmsginbox RPC (default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgpersistidentity", "Keep a stable p2p-messaging node identity across restarts by storing the identity key in <datadir>/p2pmsg_identity.dat. Default off: the identity is ephemeral per run (nothing at rest). Enabling it trades that for a durable, reachable address (default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bantime=<n>", strprintf("Default duration (in seconds) of manually configured bans (default: %u)", DEFAULT_MISBEHAVING_BANTIME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bind=<addr>[:<port>][=onion]", strprintf("Bind to given address and always listen on it (default: 0.0.0.0). Use [host]:port notation for IPv6. Append =onion to tag any incoming connections to that address and port as incoming Tor connections (default: 127.0.0.1:%u=onion, testnet: 127.0.0.1:%u=onion, signet: 127.0.0.1:%u=onion, regtest: 127.0.0.1:%u=onion, blsctregtest: 127.0.0.1:%u=onion)", defaultBaseParams->OnionServiceTargetPort(), testnetBaseParams->OnionServiceTargetPort(), signetBaseParams->OnionServiceTargetPort(), regtestBaseParams->OnionServiceTargetPort(), blsctRegtestBaseParams->OnionServiceTargetPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-cjdnsreachable", "If set, then this host is configured for CJDNS (connecting to fc00::/8 addresses would lead us to the CJDNS network, see doc/cjdns.md) (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -1680,8 +1681,10 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             const int64_t bits = args.GetIntArg("-p2pmsgpowbits", default_bits);
             tr_opts.pow_bits = static_cast<uint32_t>(std::clamp<int64_t>(bits, 1, 32));
         }
-        tr_opts.inbox_rotation_secs = std::max<int64_t>(
-            0, args.GetIntArg("-p2pmsginboxrotation", p2pmsg::DEFAULT_INBOX_ROTATION_SECS));
+        // Manual by default (0): rotate the inbox prekey via the
+        // rotatep2pmsginbox RPC. A positive value opts into periodic rotation.
+        tr_opts.prekey_rotation_secs =
+            std::max<int64_t>(0, args.GetIntArg("-p2pmsginboxrotation", 0));
 
         CConnman* connman = node.connman.get();
 
@@ -1780,16 +1783,43 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         node.p2pmsg_transport = std::make_unique<p2pmsg::Transport>(
             *node.p2pmsg_pool, std::move(broadcast), std::move(relay), tr_opts);
         node.p2pmsg_pool->Start();
+
+        // Optional persistent node identity. By default the identity key is
+        // ephemeral per run (nothing at rest); with -p2pmsgpersistidentity the
+        // node keeps a stable, reachable address across restarts by storing the
+        // identity scalar in <datadir>/p2pmsg_identity.dat. This trades the
+        // not-on-disk property for reachability, so it is strictly opt-in.
+        if (args.GetBoolArg("-p2pmsgpersistidentity", false)) {
+            const fs::path id_path = gArgs.GetDataDirNet() / "p2pmsg_identity.dat";
+            std::vector<unsigned char> raw;
+            if (fs::exists(id_path)) {
+                std::ifstream f(id_path, std::ios::binary);
+                raw.assign(std::istreambuf_iterator<char>(f), {});
+            }
+            if (raw.size() == blsct::PrivateKey::SIZE) {
+                MclScalar s;
+                s.SetVch(raw);
+                node.p2pmsg_transport->SetIdentity(blsct::PrivateKey(s));
+                LogPrintf("p2pmsg: loaded persistent identity from %s\n", fs::PathToString(id_path));
+            } else {
+                const std::vector<unsigned char> bytes = node.p2pmsg_transport->IdentityPrivBytes();
+                std::ofstream f(id_path, std::ios::binary | std::ios::trunc);
+                f.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                f.close();
+                fs::permissions(id_path, fs::perms::owner_read | fs::perms::owner_write);
+                LogPrintf("p2pmsg: wrote new persistent identity to %s\n", fs::PathToString(id_path));
+            }
+        }
         p2pmsg::SetActiveTransport(node.p2pmsg_transport.get());
 
-        // Rotate the inbox encryption key on a timer (Dandelion++-scale epoch)
-        // so confidential replies are not linkable to one node for a whole run
-        // and an in-memory key extraction cannot decrypt past epochs. The
-        // transport itself decides when enough time has elapsed; a frequent
-        // cheap tick keeps rotation close to the configured interval.
-        if (node.scheduler && tr_opts.inbox_rotation_secs > 0) {
+        // Inbox-prekey rotation is MANUAL by default (rotatep2pmsginbox RPC): the
+        // prekey is a contact address, so timer rotation would break senders who
+        // cached it. Only when the operator opts into a positive interval do we
+        // drive periodic rotation off the scheduler; the transport gates on the
+        // elapsed interval, so a cheap frequent tick suffices.
+        if (node.scheduler && tr_opts.prekey_rotation_secs > 0) {
             p2pmsg::Transport* tr = node.p2pmsg_transport.get();
-            node.scheduler->scheduleEvery([tr] { tr->MaybeRotateInbox(); },
+            node.scheduler->scheduleEvery([tr] { tr->MaybeRotatePrekey(); },
                                           std::chrono::seconds{30});
         }
 

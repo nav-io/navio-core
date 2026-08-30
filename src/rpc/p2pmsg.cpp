@@ -49,7 +49,9 @@ static RPCHelpMan getp2pmsginfo()
             RPCResult::Type::OBJ, "", "",
             {
                 {RPCResult::Type::BOOL, "enabled", "Whether the subsystem is active"},
-                {RPCResult::Type::STR_HEX, "inbox_pubkey", /*optional=*/true, "This node's inbound session pubkey (peers encrypt to it)"},
+                {RPCResult::Type::STR_HEX, "identity_pubkey", /*optional=*/true, "This node's stable identity pubkey (its address; signs the rotating prekey)"},
+                {RPCResult::Type::STR_HEX, "inbox_pubkey", /*optional=*/true, "The current inbox PREKEY peers encrypt confidential messages to (rotates; authenticate it with prekey_sig under identity_pubkey)"},
+                {RPCResult::Type::STR_HEX, "prekey_sig", /*optional=*/true, "identity_pubkey's signature over inbox_pubkey, so a fetched prekey can be verified as belonging to this identity"},
                 {RPCResult::Type::NUM, "pings_received", /*optional=*/true, "PING payloads decrypted and dispatched to us"},
                 {RPCResult::Type::NUM, "relay_capable_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG (can relay the overlay for us). Note this is a lower bound on network participation: capability rides ADDR gossip, so many more nodes may be reachable indirectly."},
             }},
@@ -62,7 +64,9 @@ static RPCHelpMan getp2pmsginfo()
                 return obj;
             }
             obj.pushKV("enabled", true);
+            obj.pushKV("identity_pubkey", HexStr(t->IdentityPubKey().GetVch()));
             obj.pushKV("inbox_pubkey", HexStr(t->InboxPubKey().GetVch()));
+            obj.pushKV("prekey_sig", HexStr(t->PrekeySig().GetVch()));
             obj.pushKV("pings_received", (uint64_t)t->PingsReceived());
             node::NodeContext& node = EnsureAnyNodeContext(request.context);
             if (node.connman) {
@@ -72,6 +76,32 @@ static RPCHelpMan getp2pmsginfo()
                 });
                 obj.pushKV("relay_capable_peers", capable);
             }
+            return obj;
+        },
+    };
+}
+
+static RPCHelpMan rotatep2pmsginbox()
+{
+    return RPCHelpMan{
+        "rotatep2pmsginbox",
+        "\nRotate the p2p-messaging inbox prekey now (manual privacy reset). The\n"
+        "stable node identity is unchanged; only the encryption prekey peers\n"
+        "target is replaced and re-signed. The previous prekey stays decryptable\n"
+        "for a short grace window so in-flight messages are not lost.\n",
+        {},
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "inbox_pubkey", "The new inbox prekey"},
+            {RPCResult::Type::STR_HEX, "prekey_sig", "identity's signature over the new prekey"},
+        }},
+        RPCExamples{HelpExampleCli("rotatep2pmsginbox", "") + HelpExampleRpc("rotatep2pmsginbox", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::Transport* t = p2pmsg::GetActiveTransport();
+            if (t == nullptr) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            t->RotatePrekey();
+            UniValue obj(UniValue::VOBJ);
+            obj.pushKV("inbox_pubkey", HexStr(t->InboxPubKey().GetVch()));
+            obj.pushKV("prekey_sig", HexStr(t->PrekeySig().GetVch()));
             return obj;
         },
     };
@@ -850,6 +880,7 @@ void RegisterP2PMsgRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
         {"hidden", &getp2pmsginfo},
+        {"hidden", &rotatep2pmsginbox},
         {"p2pmsg", &listpendingquoterequests},
         {"hidden", &sendp2pping},
         {"p2pmsg", &setswapintent},

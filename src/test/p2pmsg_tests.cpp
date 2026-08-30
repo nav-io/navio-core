@@ -407,14 +407,15 @@ BOOST_AUTO_TEST_CASE(transport_ping_loopback)
 
 BOOST_AUTO_TEST_CASE(transport_inbox_rotation)
 {
-    // Inbox-key rotation: the current key changes each epoch, a grace ring of
-    // one previous key keeps messages sent to the just-rotated key decryptable,
-    // and keys older than the grace window stop decrypting (which is what bounds
-    // a key-extraction's decryption window).
+    // Inbox-prekey rotation: the current prekey changes each epoch, a grace ring
+    // of one previous prekey keeps messages sent to the just-rotated prekey
+    // decryptable, and prekeys older than the grace window stop decrypting (which
+    // is what bounds a key-extraction's decryption window). The stable identity
+    // is unchanged by rotation, and the published prekey stays authenticated.
     Transport::Options opts;
     opts.pow_bits = 4;
-    opts.inbox_rotation_secs = 100;
-    opts.inbox_grace_keys = 1;
+    opts.prekey_rotation_secs = 100;
+    opts.prekey_grace_keys = 1;
     LoopbackTransport h(opts);
     h.t->now_override = 1000;
 
@@ -437,21 +438,30 @@ BOOST_AUTO_TEST_CASE(transport_inbox_rotation)
     };
 
     const blsct::PublicKey k0 = h.t->InboxPubKey();
+    const blsct::PublicKey id0 = h.t->IdentityPubKey();
+    // The identity is stable across rotations, and the published prekey signature
+    // authenticates the CURRENT prekey under that identity.
+    auto bundle_ok = [&] {
+        BOOST_CHECK(h.t->IdentityPubKey().GetVch() == id0.GetVch());
+        BOOST_CHECK(id0.Verify(h.t->InboxPubKey().GetVch(), h.t->PrekeySig()));
+    };
+    bundle_ok();
 
     // First tick baselines the rotation clock at t=1000 (no rotation yet).
-    h.t->MaybeRotateInbox();
+    h.t->MaybeRotatePrekey();
     BOOST_CHECK(h.t->InboxPubKey().GetVch() == k0.GetVch());
 
     // Not yet due -> no rotation.
     h.t->now_override = 1099;
-    h.t->MaybeRotateInbox();
+    h.t->MaybeRotatePrekey();
     BOOST_CHECK(h.t->InboxPubKey().GetVch() == k0.GetVch());
 
     // Interval elapsed -> rotate. k0 moves into the grace ring.
     h.t->now_override = 1100;
-    h.t->MaybeRotateInbox();
+    h.t->MaybeRotatePrekey();
     const blsct::PublicKey k1 = h.t->InboxPubKey();
     BOOST_CHECK(k1.GetVch() != k0.GetVch());
+    bundle_ok(); // identity unchanged; sig now covers k1
 
     // A message to the rotated-out k0 still decrypts (grace ring, depth 1).
     h.t->Send(k0, PayloadKind::PING, {1}, /*stem=*/false);
@@ -465,9 +475,10 @@ BOOST_AUTO_TEST_CASE(transport_inbox_rotation)
 
     // Rotate again: with grace depth 1, k0 falls out of the ring (only k1 kept).
     h.t->now_override = 1200;
-    h.t->MaybeRotateInbox();
+    h.t->MaybeRotatePrekey();
     const blsct::PublicKey k2 = h.t->InboxPubKey();
     BOOST_CHECK(k2.GetVch() != k1.GetVch());
+    bundle_ok(); // identity unchanged; sig now covers k2
 
     // k0 is now beyond the grace window: a message to it no longer decrypts.
     h.t->Send(k0, PayloadKind::PING, {3}, /*stem=*/false);

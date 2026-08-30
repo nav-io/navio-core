@@ -47,9 +47,14 @@ bool ParseEnvelope(std::span<const uint8_t> body, Envelope& out)
 Transport::Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay, Options opts)
     : m_pool(pool), m_broadcast(std::move(broadcast)), m_relay(std::move(relay)),
       m_opts(opts),
+      m_identity_priv(MclScalar::Rand(/*exclude_zero=*/true)),
+      m_identity_pub(m_identity_priv.GetPublicKey()),
       m_inbox_priv(MclScalar::Rand(/*exclude_zero=*/true)),
       m_inbox_pub(m_inbox_priv.GetPublicKey())
 {
+    // Sign the initial prekey under the identity so the published bundle is
+    // authenticated from the first message.
+    m_prekey_sig = m_identity_priv.Sign(m_inbox_pub.GetVch());
     m_replay.setup_bytes(m_opts.replay_cache_bytes);
     m_relay_tokens = static_cast<double>(m_opts.relay_burst); // start with a full burst
     // All decrypt work funnels through one worker handler keyed by JOB_KIND_DECRYPT.
@@ -254,39 +259,68 @@ void Transport::HandleJob(const Job& job)
     handler(msg);
 }
 
+blsct::PublicKey Transport::IdentityPubKey() const
+{
+    LOCK(m_inbox_mutex);
+    return m_identity_pub;
+}
+
 blsct::PublicKey Transport::InboxPubKey() const
 {
     LOCK(m_inbox_mutex);
     return m_inbox_pub;
 }
 
-blsct::Signature Transport::SignWithInbox(const uint256& digest) const
+blsct::Signature Transport::PrekeySig() const
 {
     LOCK(m_inbox_mutex);
-    return m_inbox_priv.Sign(digest);
+    return m_prekey_sig;
 }
 
-void Transport::RotateInbox()
+std::vector<unsigned char> Transport::IdentityPrivBytes() const
+{
+    LOCK(m_inbox_mutex);
+    return m_identity_priv.GetScalar().GetVch();
+}
+
+void Transport::SetIdentity(const blsct::PrivateKey& priv)
+{
+    LOCK(m_inbox_mutex);
+    m_identity_priv = priv;
+    m_identity_pub = priv.GetPublicKey();
+    // Re-sign the current prekey under the new identity so the bundle stays
+    // consistent.
+    m_prekey_sig = m_identity_priv.Sign(m_inbox_pub.GetVch());
+}
+
+blsct::Signature Transport::SignWithIdentity(const uint256& digest) const
+{
+    LOCK(m_inbox_mutex);
+    return m_identity_priv.Sign(digest);
+}
+
+void Transport::RotatePrekey()
 {
     blsct::PrivateKey fresh(MclScalar::Rand(/*exclude_zero=*/true));
     blsct::PublicKey fresh_pub(fresh.GetPublicKey());
     LOCK(m_inbox_mutex);
-    // Retire the current priv into the grace ring (newest first) so a message
-    // encrypted to the key we just published still decrypts for a window.
-    if (m_opts.inbox_grace_keys > 0) {
+    // Retire the current prekey into the grace ring (newest first) so a message
+    // encrypted to the prekey we just published still decrypts for a window.
+    if (m_opts.prekey_grace_keys > 0) {
         m_inbox_prev.push_front(m_inbox_priv);
-        while (m_inbox_prev.size() > m_opts.inbox_grace_keys) m_inbox_prev.pop_back();
+        while (m_inbox_prev.size() > m_opts.prekey_grace_keys) m_inbox_prev.pop_back();
     } else {
         m_inbox_prev.clear();
     }
     m_inbox_priv = fresh;
     m_inbox_pub = fresh_pub;
+    m_prekey_sig = m_identity_priv.Sign(m_inbox_pub.GetVch());
     m_inbox_rotated_at = Now();
 }
 
-void Transport::MaybeRotateInbox()
+void Transport::MaybeRotatePrekey()
 {
-    if (m_opts.inbox_rotation_secs <= 0) return;
+    if (m_opts.prekey_rotation_secs <= 0) return;
     {
         LOCK(m_inbox_mutex);
         // Baseline the rotation clock on the first tick rather than at
@@ -297,9 +331,9 @@ void Transport::MaybeRotateInbox()
             m_inbox_rotated_at = Now();
             return;
         }
-        if (Now() - m_inbox_rotated_at < m_opts.inbox_rotation_secs) return;
+        if (Now() - m_inbox_rotated_at < m_opts.prekey_rotation_secs) return;
     }
-    RotateInbox();
+    RotatePrekey();
 }
 
 std::pair<blsct::PublicKey, blsct::Signature> Transport::SignEphemeral(const uint256& digest) const

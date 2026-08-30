@@ -24,18 +24,30 @@ Two applications ship on the bus today:
 
 Kinds `7..255` are reserved for future applications.
 
-No identity key is written to disk, and every quote/order is signed under a
-**fresh, single-use** BLS keypair (`Transport::SignEphemeral`), so a maker's
-messages are not linkable to one another or to the node. The node's *inbox* key
-(the key peers encrypt confidential replies to, reported by `getp2pmsginfo`) is
-**rotated on a timer** (`-p2pmsginboxrotation`, default 600s; 0 disables). It is
-never written to disk, and a bounded grace ring of recent keys is retained so a
-reply encrypted to the key we published just before a rotation still decrypts.
-Rotation bounds two things: confidential replies are linkable to one node only
-within an epoch, not for the whole run; and an in-memory key extraction decrypts
-at most the current epoch plus the grace window, since retired keys are dropped.
-This extends the navcoin-core BLS-ECIES + Dandelion posture with key rotation and
-a Dandelion++ stem mapping (below).
+Every quote/order is signed under a **fresh, single-use** BLS keypair
+(`Transport::SignEphemeral`), so a maker's messages are not linkable to one
+another or to the node.
+
+The node's inbox is an **identity / prekey split**:
+
+- An **identity key** — the node's stable p2pmsg address. It signs prekeys and,
+  by default, is **ephemeral per run** (nothing at rest). With
+  `-p2pmsgpersistidentity` the identity scalar is stored in
+  `<datadir>/p2pmsg_identity.dat` so the address survives restarts — an explicit
+  opt-in that trades the not-on-disk property for durable reachability.
+- A rotating **inbox prekey** — the key peers actually encrypt confidential
+  messages to. `getp2pmsginfo` publishes the bundle `{identity_pubkey,
+  inbox_pubkey (= prekey), prekey_sig}`; a sender verifies `prekey_sig` under
+  `identity_pubkey` before encrypting, so a substituted prekey is rejected.
+
+Rotating the prekey bounds two things without disturbing reachability:
+confidential replies are linkable to one node only within an epoch, not for the
+whole run; and an in-memory prekey extraction decrypts at most the current epoch
+plus a bounded grace window (retired prekeys are dropped). Because the prekey is
+a contact address, rotation is **manual by default** — trigger a privacy reset
+with the `rotatep2pmsginbox` RPC — with opt-in periodic rotation via
+`-p2pmsginboxrotation=<secs>`. This extends the navcoin-core BLS-ECIES posture
+with the identity/prekey split and a Dandelion++ stem mapping (below).
 
 The subsystem is enabled by default and can be turned off with `-p2pmsg=0`.
 
@@ -312,18 +324,26 @@ with zero configuration.
 ## Security posture
 
 - **Unlinkability**: 1-layer ECIES + **Dandelion++ stem** (per-epoch stem
-  mapping, see below) + inbox-key rotation. Stronger than the plain-Dandelion
-  navcoin-core posture, still weaker than onion routing against a global passive
-  adversary; an optional Loopix-style mix layer is possible future work.
+  mapping, see below) + a rotating inbox prekey under an identity that is
+  ephemeral per run by default. Stronger than the plain-Dandelion navcoin-core
+  posture, still weaker than onion routing against a global passive adversary; an
+  optional Loopix-style mix layer is possible future work. Note
+  `-p2pmsgpersistidentity` deliberately makes the *identity* stable across runs
+  for reachability — a linkability trade the operator opts into.
 - **Forward secrecy**: each message uses a fresh ephemeral sender key
-  (ephemeral-static ECDH), so a sender's key never sits at rest. The *recipient*
-  inbox key is static within an epoch, so within-epoch confidential replies are
-  not individually forward-secret; inbox-key rotation bounds the exposure of a
-  key extraction to one epoch (+ grace) rather than the whole run. Full
-  per-message forward secrecy would need an ephemeral-ephemeral handshake (the
-  requester contributing an ephemeral prekey, X3DH-style) -- tracked as future
-  work; the session-key path (RFQ reply keys, aggregation reply keys) already
-  gets this today because those keys are per-request and dropped after use.
+  (ephemeral-static ECDH), so a sender's key never sits at rest. The recipient
+  *prekey* is static between rotations, so replies within one prekey epoch are
+  not individually forward-secret; prekey rotation (manual via
+  `rotatep2pmsginbox`, or periodic via `-p2pmsginboxrotation`) bounds a prekey
+  extraction to one epoch (+ grace) rather than the whole run. Full per-message
+  forward secrecy would need an ephemeral-ephemeral handshake (the requester
+  contributing an ephemeral prekey, X3DH-style); this is a poor fit for a
+  serverless flood overlay — one-time prekeys need a directory to distribute and
+  a way to prevent reuse — so it is tracked as future work. The **session-key
+  path** (RFQ reply keys, aggregation reply keys) already gets per-exchange
+  forward secrecy today because those keys are per-request and dropped after use;
+  any future direct flow that can do an initial round-trip (e.g. a chat session)
+  should ride a session key rather than the static prekey.
 - **DoS**: flat-target PoW on every message, a **global** relay token bucket
   (`relay_tokens_per_sec`) capping this node's amplification, DoS scoring for
   malformed/under-PoW messages (but NOT for merely stale timestamps), silent
