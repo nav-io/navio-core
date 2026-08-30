@@ -3,7 +3,6 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/arith/mcl/mcl_g1point.h>
-#include <random.h>
 #include <streams.h>
 
 #include <numeric>
@@ -326,53 +325,21 @@ void MclG1Point::BatchNormalize(std::span<MclG1Point* const> pts)
     }
 }
 
-// BatchCheckSubgroup pulls in OS randomness (GetRandBytes) which is not part
-// of the minimal libblsct.a or libnavioconsensus.la public API surface.
-// Compile it out of those reduced builds; it is only consumed by full-node
-// code paths (e.g. pos/proof.h::Unserialize) which always link random.cpp.
-// libnaviokernel.la also defines BUILD_BITCOIN_INTERNAL but pulls in the
-// blockstorage/validation/core_read TUs that instantiate the Unserialize
-// template, so it needs BatchCheckSubgroup; it links random.cpp, so it is
-// safe to compile in. We distinguish it via BUILD_BITCOIN_KERNEL_LIB.
-#if !defined(LIBBLSCT) && (!defined(BUILD_BITCOIN_INTERNAL) || defined(BUILD_BITCOIN_KERNEL_LIB))
+// Deterministic per-point subgroup check. A random-linear-combination test
+// (one multiexp Q = sum r_i * P_i, one order check on Q) is NOT sound here:
+// the G1 cofactor of BLS12-381 is divisible by 3, so a point carrying an
+// order-3 torsion component slips through whenever the combination's
+// coefficient on it is 0 mod 3 — with probability 1/3, freshly re-rolled on
+// every node that decodes the data. Consensus data must not be accepted by
+// a coin toss; check every point individually instead.
 bool MclG1Point::BatchCheckSubgroup(std::span<const MclG1Point> pts)
 {
-    if (pts.empty()) return true;
-
-    // Fast path: a single point — per-point check, avoids RNG + multiexp overhead.
-    if (pts.size() == 1) {
-        if (mclBnG1_isZero(&pts[0].m_point)) return true;
-        return mclBnG1_isValidOrder(&pts[0].m_point) == 1;
-    }
-
-    // Sample fresh 256-bit scalars r_i from OS randomness. Verification runs
-    // after the proof is committed on-chain, so the attacker cannot grind
-    // against the scalars.
-    std::vector<mclBnG1> bases;
-    std::vector<mclBnFr> exps;
-    bases.reserve(pts.size());
-    exps.reserve(pts.size());
     for (const auto& p : pts) {
         if (mclBnG1_isZero(&p.m_point)) continue;
-        bases.push_back(p.m_point);
-        uint256 r;
-        GetRandBytes(r);
-        mclBnFr scalar;
-        if (mclBnFr_setLittleEndianMod(&scalar, r.data(), r.size()) != 0) {
-            return false;
-        }
-        exps.push_back(scalar);
+        if (mclBnG1_isValidOrder(&p.m_point) != 1) return false;
     }
-
-    if (bases.empty()) return true;
-
-    mclBnG1 combined;
-    mclBnG1_mulVec(&combined, bases.data(), exps.data(), bases.size());
-
-    if (mclBnG1_isZero(&combined)) return true;
-    return mclBnG1_isValidOrder(&combined) == 1;
+    return true;
 }
-#endif // !LIBBLSCT && (!BUILD_BITCOIN_INTERNAL || BUILD_BITCOIN_KERNEL_LIB)
 
 std::string MclG1Point::GetString(const uint8_t& radix) const
 {

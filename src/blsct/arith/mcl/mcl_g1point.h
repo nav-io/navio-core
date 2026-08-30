@@ -69,11 +69,10 @@ public:
     // scalar-mul-by-r per point.
     bool SetVchUnchecked(const std::vector<uint8_t>& vec);
 
-    // Verify that every point in `pts` lies in the prime-order subgroup of G1.
-    // Uses a random linear combination Q = Σ r_i · P_i and a single
-    // mclBnG1_isValidOrder(&Q) check. Sound because the r_i are sampled from
-    // OS randomness after the points were committed (post-hoc verification).
-    // Probability that Q passes while any P_i is off-subgroup is ≤ 2^-256.
+    // Verify that every point in `pts` lies in the prime-order subgroup of G1
+    // (the identity is permitted). Deterministic per-point check — see the
+    // note in mcl_g1point.cpp on why a random linear combination is unsound
+    // for this curve (G1's cofactor is divisible by 3).
     static bool BatchCheckSubgroup(std::span<const MclG1Point> pts);
 
     // Canonicalise every point in `pts` to its affine (z=1) representation
