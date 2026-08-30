@@ -57,7 +57,7 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         assert Decimal(str(w1.getbalances()["mine"]["trusted"])) > 0
 
         # --- Built-in serving: node0's pool fills with NO orchestration. ---
-        self.wait_until(lambda: n0.getaggregationhint()["available"] >= 1, timeout=180)
+        self.wait_until(lambda: n0.getaggregationhint()["available"] >= 1, timeout=60)
         self.log.info("built-in serving filled the requester's pool automatically")
 
         # Producer never pools its own served candidates (they were encrypted
@@ -84,12 +84,12 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
             keys.extend(n1.listpendingcandidaterequests())
             return len(set(keys)) >= 2
 
-        self.wait_until(got_two, timeout=180)
+        self.wait_until(got_two, timeout=60)
         uniq = list(dict.fromkeys(keys))
         before = n0.getaggregationhint()["available"]
         res = w1.replycandidate(uniq[0])
         assert "candidate_txid" in res, res
-        self.wait_until(lambda: n0.getaggregationhint()["available"] > before, timeout=120)
+        self.wait_until(lambda: n0.getaggregationhint()["available"] > before, timeout=30)
         assert res["candidate_txid"] not in n0.getrawmempool()
         self.log.info("manual claim + replycandidate served OK")
 

@@ -60,10 +60,10 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
             keys.extend(producer_node.listpendingcandidaterequests())
             return len(keys) > 0
 
-        self.wait_until(got_one, timeout=180)
+        self.wait_until(got_one, timeout=30)
         before = requester_node.getaggregationhint()["available"]
         reply = producer_wallet.replycandidate(keys[0])
-        self.wait_until(lambda: requester_node.getaggregationhint()["available"] > before, timeout=120)
+        self.wait_until(lambda: requester_node.getaggregationhint()["available"] > before, timeout=30)
         return reply["inputs"]
 
     def run_test(self):
@@ -112,7 +112,7 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         assert txid not in n0.getrawmempool(), "aggregated send did not confirm"
         self.wait_until(
             lambda: Decimal(str(w1.getbalances()["mine"]["trusted"])) >= recv_before + Decimal("1.0") - Decimal("0.1"),
-            timeout=120)
+            timeout=30)
         self.log.info("default-aggregated plain send confirmed")
 
         # --- Node1 opted out (-aggregatesends=0): its pooled candidates stay. ---
