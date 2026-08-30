@@ -58,7 +58,6 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "broadcastorder", 1, "offer_amount" },
     { "broadcastorder", 3, "want_amount" },
     { "broadcastorder", 4, "expiry" },
-    { "addaggregationcandidate", 1, "peer" },
     { "sendcandidate", 2, "stem" },
     { "replycandidate", 1, "stem" },
     { "listpendingcandidaterequests", 0, "max" },
