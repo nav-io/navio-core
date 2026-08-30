@@ -469,11 +469,12 @@ private:
 // TODO: pass in a boolean to limit these possible overwrites to known
 // (pre-BIP34) cases.
 //! Utility function to add all of a transaction's outputs to a cache.
-//! When `out_hashes` is non-null it must hold tx.vout.size() entries with
-//! each output's content hash (CTxOut::GetHash()); they are used instead of
-//! re-hashing every output (a BLSCT output hash serializes its whole range
-//! proof), e.g. when ConnectBlock already computed them for its BIP30 scan.
-void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check = false, const std::vector<uint256>* out_hashes = nullptr);
+//! When `precomputed_out_hashes` is non-null it MUST hold exactly
+//! tx.vout.size() entries, each output's content hash (CTxOut::GetHash());
+//! they are used instead of re-hashing every output (a BLSCT output hash
+//! serializes its whole range proof), e.g. when ConnectBlock already computed
+//! them for its BIP30 scan. The size contract is Assume()d in the callee.
+void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check_for_overwrite = false, const std::vector<uint256>* precomputed_out_hashes = nullptr);
 
 //! Utility function to find any unspent output with a given txid.
 //! This function can be quite expensive because in the event of a transaction

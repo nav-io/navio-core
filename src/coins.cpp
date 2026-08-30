@@ -7,6 +7,7 @@
 #include <consensus/consensus.h>
 #include <logging.h>
 #include <random.h>
+#include <util/check.h>
 #include <util/strencodings.h>
 #include <util/trace.h>
 
@@ -214,23 +215,29 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool 
     // output, so compute each content hash once there and reuse it in the add
     // loop below instead of hashing twice; other paths keep hashing lazily in
     // the loop.
-    std::vector<uint256> out_hashes;
-    if (precomputed_out_hashes && precomputed_out_hashes->size() == tx.vout.size()) {
-        out_hashes = *precomputed_out_hashes;
-    }
+    // The caller supplies either a full set of content hashes or none: a
+    // partial or mismatched set would key coins under the wrong outpoints, so
+    // the contract is enforced here (release-safe Assume) rather than left to a
+    // silent size check that falls back to recomputation. Use the caller's
+    // vector directly -- copying it would defeat the point on the connect hot
+    // path -- and only compute our own when none was provided.
+    Assume(!precomputed_out_hashes || precomputed_out_hashes->size() == tx.vout.size());
+    std::vector<uint256> computed;
+    const std::vector<uint256>* out_hashes = precomputed_out_hashes;
     if (tx.IsBLSCT() && !fCoinbase) {
-        if (out_hashes.empty()) {
-            out_hashes.resize(tx.vout.size());
-            for (size_t i = 0; i < tx.vout.size(); ++i) out_hashes[i] = tx.vout[i].GetHash();
+        if (out_hashes == nullptr) {
+            computed.resize(tx.vout.size());
+            for (size_t i = 0; i < tx.vout.size(); ++i) computed[i] = tx.vout[i].GetHash();
+            out_hashes = &computed;
         }
         std::set<uint256> vin_prevouts;
         for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
-        for (const auto& out_hash : out_hashes) {
+        for (const auto& out_hash : *out_hashes) {
             if (vin_prevouts.contains(out_hash)) self_spent.insert(out_hash);
         }
     }
     for (size_t i = 0; i < tx.vout.size(); ++i) {
-        const uint256 outid = out_hashes.empty() ? tx.vout[i].GetHash() : out_hashes[i];
+        const uint256 outid = out_hashes ? (*out_hashes)[i] : tx.vout[i].GetHash();
         if (self_spent.contains(outid)) continue;
         bool overwrite = check_for_overwrite ? cache.HaveCoin(COutPoint(outid)) : fCoinbase;
         // Coinbase transactions can always be overwritten, in order to correctly
