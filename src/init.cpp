@@ -321,6 +321,11 @@ void Shutdown(NodeContext& node)
     rfq::SetActiveOrderCache(nullptr);
     aggregation::SetActivePool(nullptr);
     aggregation::SetActiveRequestQueue(nullptr);
+    // Interrupt any in-flight PoW grind first: the puller and candidate-serving
+    // threads (stopped just below) send through the transport, and a grind at
+    // the production difficulty would otherwise block their join for the length
+    // of the grind.
+    if (node.p2pmsg_transport) node.p2pmsg_transport->Interrupt();
     // Join the puller thread before the transport it sends through goes away.
     node.agg_puller.reset();
     // Likewise the wallet's candidate-serving thread: it also sends through
@@ -1790,23 +1795,43 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // identity scalar in <datadir>/p2pmsg_identity.dat. This trades the
         // not-on-disk property for reachability, so it is strictly opt-in.
         if (args.GetBoolArg("-p2pmsgpersistidentity", false)) {
-            const fs::path id_path = gArgs.GetDataDirNet() / "p2pmsg_identity.dat";
-            std::vector<unsigned char> raw;
+            const fs::path id_path = args.GetDataDirNet() / "p2pmsg_identity.dat";
             if (fs::exists(id_path)) {
-                std::ifstream f(id_path, std::ios::binary);
-                raw.assign(std::istreambuf_iterator<char>(f), {});
-            }
-            if (raw.size() == blsct::PrivateKey::SIZE) {
+                std::vector<unsigned char> raw;
+                {
+                    std::ifstream f(id_path, std::ios::binary);
+                    raw.assign(std::istreambuf_iterator<char>(f), {});
+                }
+                // A short/corrupt file is a hard error, not something to silently
+                // overwrite -- overwriting would discard the very identity this
+                // option exists to preserve.
+                if (raw.size() != blsct::PrivateKey::SIZE) {
+                    return InitError(strprintf(_("p2pmsg identity file %s is invalid (expected %d bytes, got %d). Move it aside to regenerate."),
+                                               fs::PathToString(id_path), blsct::PrivateKey::SIZE, raw.size()));
+                }
                 MclScalar s;
                 s.SetVch(raw);
+                if (s.IsZero()) {
+                    return InitError(strprintf(_("p2pmsg identity file %s holds an invalid (zero) key. Move it aside to regenerate."),
+                                               fs::PathToString(id_path)));
+                }
                 node.p2pmsg_transport->SetIdentity(blsct::PrivateKey(s));
                 LogPrintf("p2pmsg: loaded persistent identity from %s\n", fs::PathToString(id_path));
             } else {
                 const std::vector<unsigned char> bytes = node.p2pmsg_transport->IdentityPrivBytes();
+                // Narrow permissions to 0600 on the empty file BEFORE the secret
+                // bytes are written, so the key never exists on disk
+                // world-readable (std::ofstream would create at the umask
+                // default and only the later chmod would narrow it).
+                { std::ofstream create(id_path, std::ios::binary | std::ios::trunc); }
+                fs::permissions(id_path, fs::perms::owner_read | fs::perms::owner_write,
+                                fs::perm_options::replace);
                 std::ofstream f(id_path, std::ios::binary | std::ios::trunc);
                 f.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-                f.close();
-                fs::permissions(id_path, fs::perms::owner_read | fs::perms::owner_write);
+                f.flush();
+                if (!f.good()) {
+                    return InitError(strprintf(_("Failed to write p2pmsg identity file %s"), fs::PathToString(id_path)));
+                }
                 LogPrintf("p2pmsg: wrote new persistent identity to %s\n", fs::PathToString(id_path));
             }
         }

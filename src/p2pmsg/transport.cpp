@@ -361,7 +361,7 @@ void Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
     env.pow.session_eph = env.enc.eph;
     env.pow.payload_hash = env.enc.MsgHash();
     env.pow.nonce = 0;
-    Grind(env.pow, m_opts.pow_bits);
+    Grind(env.pow, m_opts.pow_bits, /*max_iters=*/0, &m_interrupt);
 
     m_broadcast(stem, env);
     (void)&SerializeEnvelope; // reserved for direct-send paths in later phases

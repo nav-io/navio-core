@@ -37,17 +37,36 @@ The node's inbox is an **identity / prekey split**:
   opt-in that trades the not-on-disk property for durable reachability.
 - A rotating **inbox prekey** — the key peers actually encrypt confidential
   messages to. `getp2pmsginfo` publishes the bundle `{identity_pubkey,
-  inbox_pubkey (= prekey), prekey_sig}`; a sender verifies `prekey_sig` under
-  `identity_pubkey` before encrypting, so a substituted prekey is rejected.
+  inbox_pubkey (= prekey), prekey_sig}`; a sender is expected to verify
+  `prekey_sig` under `identity_pubkey` before encrypting, so a substituted
+  prekey is rejected.
 
 Rotating the prekey bounds two things without disturbing reachability:
 confidential replies are linkable to one node only within an epoch, not for the
 whole run; and an in-memory prekey extraction decrypts at most the current epoch
 plus a bounded grace window (retired prekeys are dropped). Because the prekey is
-a contact address, rotation is **manual by default** — trigger a privacy reset
-with the `rotatep2pmsginbox` RPC — with opt-in periodic rotation via
-`-p2pmsginboxrotation=<secs>`. This extends the navcoin-core BLS-ECIES posture
-with the identity/prekey split and a Dandelion++ stem mapping (below).
+a contact address, rotation is **manual by default** (`prekey_rotation_secs = 0`)
+— trigger a privacy reset with the `rotatep2pmsginbox` RPC — with opt-in periodic
+rotation via `-p2pmsginboxrotation=<secs>`.
+
+> **Default posture, stated plainly.** With rotation off by default, a node that
+> never rotates uses one static prekey for its whole run, so the session-linkage
+> the rotation machinery addresses is **only mitigated when the operator opts
+> in** (the `rotatep2pmsginbox` RPC, or a positive `-p2pmsginboxrotation`). The
+> default is deliberate — auto-rotating a contact address breaks senders who
+> cached it — but it means the mitigation is opt-in, not automatic.
+>
+> **Consuming half is scaffolding today.** Nothing in the node yet publishes or
+> verifies a prekey bundle *over the bus*: `prekey_sig` is produced and exposed
+> by `getp2pmsginfo`, but the only in-tree verifier is a unit test, and a prekey
+> still reaches a sender out of band (fetched via RPC and verified by the
+> sender's own tooling). Automatic default rotation is safe only once the bundle
+> is published and verified on the bus, so that stays opt-in until that path
+> exists — the identity key and `prekey_sig` are the groundwork for it (and for a
+> future direct-message app, see the chat note under Forward secrecy).
+
+This extends the navcoin-core BLS-ECIES posture with the identity/prekey split
+and a Dandelion++ stem mapping (below).
 
 The subsystem is enabled by default and can be turned off with `-p2pmsg=0`.
 

@@ -10,6 +10,7 @@
 #include <serialize.h>
 #include <uint256.h>
 
+#include <atomic>
 #include <cstdint>
 #include <span>
 
@@ -68,8 +69,12 @@ bool CheckStamp(const PoWHeader& header, uint32_t bits, int64_t now);
 
 //! Grind `header.nonce` until CheckPoW passes. Mutates header.nonce. For honest
 //! producers and tests; returns the number of attempts. Stops at `max_iters`
-//! (0 = unbounded) returning 0 if exhausted.
-uint64_t Grind(PoWHeader& header, uint32_t bits, uint64_t max_iters = 0);
+//! (0 = unbounded) returning 0 if exhausted. `interrupt`, when non-null, is
+//! polled periodically and Grind returns 0 promptly once it is set -- without
+//! it a high-difficulty grind (e.g. the 23-bit mainnet default) on a
+//! serve/pull tick would block a shutdown join for the length of the grind.
+uint64_t Grind(PoWHeader& header, uint32_t bits, uint64_t max_iters = 0,
+               const std::atomic<bool>* interrupt = nullptr);
 
 } // namespace p2pmsg
 

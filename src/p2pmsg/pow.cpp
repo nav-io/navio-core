@@ -47,11 +47,19 @@ bool CheckStamp(const PoWHeader& header, uint32_t bits, int64_t now)
     return CheckTimestamp(header, now) && CheckPoW(header, bits);
 }
 
-uint64_t Grind(PoWHeader& header, uint32_t bits, uint64_t max_iters)
+uint64_t Grind(PoWHeader& header, uint32_t bits, uint64_t max_iters,
+               const std::atomic<bool>* interrupt)
 {
     const arith_uint256 target = TargetFromBits(bits);
     uint64_t attempts = 0;
     while (max_iters == 0 || attempts < max_iters) {
+        // Poll the interrupt every 1024 attempts -- often enough to abort a
+        // shutdown promptly, rare enough that the atomic load costs nothing
+        // against the hash it guards.
+        if (interrupt != nullptr && (attempts & 0x3ff) == 0 &&
+            interrupt->load(std::memory_order_relaxed)) {
+            return 0;
+        }
         ++attempts;
         if (UintToArith256(header.Hash()) <= target) return attempts;
         ++header.nonce;

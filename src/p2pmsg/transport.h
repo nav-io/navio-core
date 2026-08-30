@@ -224,6 +224,11 @@ public:
     void Send(const blsct::PublicKey& recipient, PayloadKind kind,
               std::vector<uint8_t> body, bool stem);
 
+    //! Signal that the node is shutting down so any in-flight PoW grind on a
+    //! worker aborts promptly instead of blocking the pool-stop join. Call
+    //! before stopping the worker pool. Idempotent, safe from any thread.
+    void Interrupt() { m_interrupt.store(true, std::memory_order_relaxed); }
+
     //! Total PING payloads decrypted+dispatched to us. Debug/observability.
     uint64_t PingsReceived() const { return m_pings_received.load(std::memory_order_relaxed); }
 
@@ -244,6 +249,9 @@ private:
     bool AllowRelay() EXCLUSIVE_LOCKS_REQUIRED(!m_relay_limit_mutex);
 
     WorkerPool& m_pool;
+    //! Set by Interrupt() at shutdown; polled by the PoW grind so a worker
+    //! mid-grind does not hold up the pool-stop join.
+    std::atomic<bool> m_interrupt{false};
     BroadcastFn m_broadcast;
     RelayFn m_relay;
     Options m_opts;
