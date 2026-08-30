@@ -99,6 +99,7 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         # runs win or lose -- so it cannot distinguish a merge from a plain
         # send; the outpoints can.)
         broadcast_prevouts = {vin["outid"] for vin in tx["vin"] if "outid" in vin}
+        assert cand_inputs, "replycandidate returned no inputs; the outpoint assertion below would be vacuous"
         for outpoint in cand_inputs:
             assert outpoint in broadcast_prevouts, (
                 "candidate input %s missing from broadcast tx inputs %r" % (outpoint, sorted(broadcast_prevouts)))

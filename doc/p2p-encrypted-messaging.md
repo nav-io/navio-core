@@ -315,14 +315,34 @@ with zero configuration.
   drop on MAC failure, and bounded queues/caches that drop rather than grow.
   Per-source caps additionally bound the aggregation candidate pool
   (`POOL_MAX_PER_PEER`). Note the relay limiter is global, not per-peer.
-- **Mixed networks**: p2pmsg capability is advertised via the `NODE_P2PMSG`
-  service bit, and `forward()` stems/broadcasts only to peers that set it. A
-  node that does not run p2pmsg silently drops these messages without relaying,
-  so routing to it would lose the message (a stem hop dead-ends, a fluff copy is
-  wasted); the service bit keeps the overlay on capable peers. Advertisements
-  are unauthenticated, so a peer may set the bit and not actually relay -- the
-  message is then just lost, as it would be with no path, so this is
-  best-effort but strictly better than routing blind.
+- **Mixed networks**: the `NODE_P2PMSG` service bit advertises a *relay*
+  capability -- that the node processes and forwards P2PMSG/DP2PMSG -- and
+  `forward()` stems/broadcasts only to peers that set it. It is a routing hint
+  only: it does **not** promise the node serves candidates (that is the separate
+  `-servecandidates` behaviour). A node that does not run p2pmsg silently drops
+  these messages without relaying, so routing to it would lose the message (a
+  stem hop dead-ends, a fluff copy is wasted); the bit keeps the overlay on
+  capable peers. Advertisements are unauthenticated, so a peer may set the bit
+  and not actually relay (the message is then just lost, as it would be with no
+  path) -- best-effort, but strictly better than routing blind.
+- **Participation is network-visible**: because `NODE_P2PMSG` is a service flag,
+  it rides ADDR gossip and appears in `getpeerinfo`/`getnodeaddresses`. Enabling
+  `-p2pmsg` therefore announces participation network-wide, not just to direct
+  peers -- an observer can enumerate the capable set without connecting to each
+  node. This is the standard service-bit trade-off (the same is true of
+  `NODE_COMPACT_FILTERS` etc.), but it means p2pmsg is not a covert-participation
+  feature: the fact that you relay the overlay is public, even though message
+  contents and your role in any given message are not. `getp2pmsginfo` reports
+  `relay_capable_peers`, the count of directly-connected peers advertising the
+  bit; treat it as a lower bound, since capability propagates via ADDR beyond
+  your own connections.
+- **Stem successor sees the previous hop**: Dandelion stem forwarding reveals the
+  immediate predecessor to each stem successor, as in Bitcoin's Dandelion++. A
+  malicious stem successor learns only that its predecessor *relayed* the
+  message, not whether that predecessor originated it -- the anonymity set is the
+  stem path, and a single hostile hop cannot distinguish origin from relay. A
+  colluding fraction of the stem graph degrades this the usual Dandelion way;
+  the ECIES layer still hides contents throughout.
 - **RFQ probing**: config-only matching means probing cannot binary-search a
   maker's balance; it can only enumerate advertised config.
 - **Candidate-serving probing**: a served candidate is a signed self-spend of

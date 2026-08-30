@@ -314,14 +314,18 @@ enum ServiceFlags : uint64_t {
     // NODE_P2P_V2 means the node supports BIP324 transport
     NODE_P2P_V2 = (1 << 11),
 
-    // NODE_P2PMSG means the node runs the p2pmsg encrypted-messaging overlay
-    // (aggregation candidates, RFQ) and will process AND relay P2PMSG/DP2PMSG.
-    // Used to route the overlay only through capable peers: a non-supporting
-    // node silently drops these messages without relaying, so a stem hop or
-    // broadcast to it is lost. Navio-specific; occupies a reserved-experiment
-    // bit. Advertisements are unauthenticated, so senders must tolerate a peer
-    // that sets it but does not actually relay (the message is simply lost, as
-    // it would be anyway).
+    // NODE_P2PMSG advertises that the node RELAYS the p2pmsg encrypted overlay
+    // (it processes and forwards P2PMSG/DP2PMSG). It is a routing capability
+    // only: it does NOT promise the node serves candidates (that is
+    // -servecandidates, a separate wallet behaviour). Senders use it to avoid
+    // stemming/broadcasting to a non-supporting node, which silently drops the
+    // message without relaying. Because service flags ride ADDR gossip and
+    // getpeerinfo/getnodeaddresses, advertising this makes p2pmsg participation
+    // network-wide visible, not just to direct peers -- see the security
+    // posture in doc/p2p-encrypted-messaging.md. Advertisements are
+    // unauthenticated: a peer may set the bit and not relay (the message is
+    // then lost as it would be with no path) or set it without serving.
+    // Navio-specific; occupies a reserved-experiment bit.
     NODE_P2PMSG = (1 << 24),
 
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that

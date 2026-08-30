@@ -13,8 +13,10 @@
 #include <consensus/amount.h>
 #include <core_io.h>
 #include <ctokens/tokenid.h>
+#include <net.h>
 #include <node/context.h>
 #include <node/transaction.h>
+#include <protocol.h>
 #include <policy/policy.h>
 #include <primitives/transaction.h>
 #include <util/transaction_identifier.h>
@@ -49,6 +51,7 @@ static RPCHelpMan getp2pmsginfo()
                 {RPCResult::Type::BOOL, "enabled", "Whether the subsystem is active"},
                 {RPCResult::Type::STR_HEX, "inbox_pubkey", /*optional=*/true, "This node's inbound session pubkey (peers encrypt to it)"},
                 {RPCResult::Type::NUM, "pings_received", /*optional=*/true, "PING payloads decrypted and dispatched to us"},
+                {RPCResult::Type::NUM, "relay_capable_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG (can relay the overlay for us). Note this is a lower bound on network participation: capability rides ADDR gossip, so many more nodes may be reachable indirectly."},
             }},
         RPCExamples{HelpExampleCli("getp2pmsginfo", "") + HelpExampleRpc("getp2pmsginfo", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -61,6 +64,14 @@ static RPCHelpMan getp2pmsginfo()
             obj.pushKV("enabled", true);
             obj.pushKV("inbox_pubkey", HexStr(t->InboxPubKey().GetVch()));
             obj.pushKV("pings_received", (uint64_t)t->PingsReceived());
+            node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            if (node.connman) {
+                uint64_t capable = 0;
+                node.connman->ForEachNode([&capable](CNode* pnode) {
+                    if ((pnode->m_their_services.load() & NODE_P2PMSG) != 0) ++capable;
+                });
+                obj.pushKV("relay_capable_peers", capable);
+            }
             return obj;
         },
     };
@@ -219,7 +230,6 @@ static RPCHelpMan addaggregationcandidate()
         "Normally candidates arrive encrypted over the network; this is for testing.\n",
         {
             {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The candidate half-transaction"},
-            {"peer", RPCArg::Type::NUM, RPCArg::Default{0}, "Source peer id for per-peer accounting"},
         },
         RPCResult{RPCResult::Type::BOOL, "", "Whether the candidate was accepted"},
         RPCExamples{HelpExampleCli("addaggregationcandidate", "\"<hex>\"")},
@@ -230,8 +240,7 @@ static RPCHelpMan addaggregationcandidate()
             if (!DecodeHexTx(mtx, request.params[0].get_str())) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
             }
-            const int64_t peer = request.params[1].isNull() ? 0 : request.params[1].getInt<int64_t>();
-            return node.agg_pool->AddCandidate(MakeTransactionRef(std::move(mtx)), peer);
+            return node.agg_pool->AddCandidate(MakeTransactionRef(std::move(mtx)));
         },
     };
 }

@@ -44,8 +44,8 @@ bool ParseEnvelope(std::span<const uint8_t> body, Envelope& out)
 }
 } // namespace
 
-Transport::Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, RelayFn relay, Options opts)
-    : m_pool(pool), m_send(std::move(send)), m_broadcast(std::move(broadcast)), m_relay(std::move(relay)),
+Transport::Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay, Options opts)
+    : m_pool(pool), m_broadcast(std::move(broadcast)), m_relay(std::move(relay)),
       m_opts(opts),
       m_inbox_priv(MclScalar::Rand(/*exclude_zero=*/true)),
       m_inbox_pub(m_inbox_priv.GetPublicKey())

@@ -49,6 +49,7 @@
 #include <limits>
 #include <numeric>
 #include <mutex>
+#include <algorithm>
 #include <optional>
 
 namespace blsct {
@@ -166,6 +167,7 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
             // send may still fit. (PickForAggregate does not remove from the
             // pool, so dropping the candidates here loses nothing.)
             if (!candidates.empty()) {
+                LogPrint(BCLog::NET, "p2pmsg: aggregated send fell back to plain (own half + %u cover halves over-funded the fee past the wallet balance)\n", (unsigned)candidates.size());
                 candidates.clear();
                 continue;
             }
@@ -207,6 +209,11 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
                 for (const CTxIn& in : c->vin) pool->EvictByInput(in.prevout);
             }
             if (!broadcast_ok) {
+                // Falls here on a combine/broadcast failure -- including the
+                // varint-boundary corner where an aggregate of >=237 combined
+                // inputs/outputs lands just under the consensus fee floor.
+                // Safe (a plain send follows) but log it so the skip is visible.
+                LogPrint(BCLog::NET, "p2pmsg: aggregated send fell back to plain (combine/broadcast failed: %s)\n", err_string);
                 candidates.clear();
                 continue;
             }
@@ -272,19 +279,25 @@ void ReleaseCandidateInput(const COutPoint& outpoint)
 //! saturates at SERVE_MAX_COINS_PER_WINDOW coins per window.
 std::vector<int64_t> g_candidates_served;
 
-bool TakeServeBudget(int64_t now)
+std::optional<int64_t> TakeServeBudget(int64_t now)
 {
     std::lock_guard<std::mutex> lock(g_candidate_inputs_mutex);
     std::erase_if(g_candidates_served, [now](int64_t t) { return t + aggregation::SERVE_WINDOW_SECONDS <= now; });
-    if (g_candidates_served.size() >= aggregation::SERVE_MAX_COINS_PER_WINDOW) return false;
+    if (g_candidates_served.size() >= aggregation::SERVE_MAX_COINS_PER_WINDOW) return std::nullopt;
     g_candidates_served.push_back(now);
-    return true;
+    return now;
 }
 
-void ReturnServeBudget()
+//! Release the slot TakeServeBudget granted, erasing the caller's OWN
+//! timestamp rather than pop_back's newest -- with candserve and replycandidate
+//! serving concurrently, pop_back would drop a still-succeeding call's entry
+//! (leaving the wrong expiry), whereas erasing the exact value returned to this
+//! caller is always its own.
+void ReturnServeBudget(int64_t slot)
 {
     std::lock_guard<std::mutex> lock(g_candidate_inputs_mutex);
-    if (!g_candidates_served.empty()) g_candidates_served.pop_back();
+    auto it = std::find(g_candidates_served.begin(), g_candidates_served.end(), slot);
+    if (it != g_candidates_served.end()) g_candidates_served.erase(it);
 }
 } // namespace
 
@@ -305,7 +318,8 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
     }
 
     const int64_t budget_now = GetTime<std::chrono::seconds>().count();
-    if (!TakeServeBudget(budget_now)) {
+    const auto budget_slot = TakeServeBudget(budget_now);
+    if (!budget_slot) {
         error = "candidate serving budget exhausted for this window";
         return std::nullopt;
     }
@@ -315,7 +329,7 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
         LOCK(wallet.cs_wallet);
         auto km = wallet.GetBLSCTKeyMan();
         if (!km) {
-            ReturnServeBudget();
+            ReturnServeBudget(*budget_slot);
             error = "no BLSCT key manager";
             return std::nullopt;
         }
@@ -354,7 +368,7 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
             }
         }
         if (!chosen) {
-            ReturnServeBudget();
+            ReturnServeBudget(*budget_slot);
             error = "No spendable NAV coin free to build a candidate from";
             return std::nullopt;
         }
@@ -373,7 +387,7 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
         auto dest_res = km->GetNewDestination(blsct::CHANGE_ACCOUNT);
         if (!dest_res) {
             ReleaseCandidateInput(COutPoint(c.outpoint.hash));
-            ReturnServeBudget();
+            ReturnServeBudget(*budget_slot);
             error = "could not derive a candidate destination";
             return std::nullopt;
         }
@@ -385,7 +399,7 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
             // Release the reservation: leaking it burns this coin's serving
             // eligibility for the full TTL per failure.
             ReleaseCandidateInput(COutPoint(c.outpoint.hash));
-            ReturnServeBudget();
+            ReturnServeBudget(*budget_slot);
             error = "failed to build candidate";
             return std::nullopt;
         }

@@ -65,9 +65,6 @@ struct Envelope {
     }
 };
 
-//! Sends a serialized envelope to one peer (fluff) or the stem successor.
-//! `stem` selects the Dandelion phase. Implemented by the net layer.
-using SendFn = std::function<void(int64_t to_peer, bool stem, const Envelope&)>;
 //! Broadcasts a fresh envelope to the stem successor (Dandelion) or, if no stem
 //! route exists, to all relay peers.
 using BroadcastFn = std::function<void(bool stem, const Envelope&)>;
@@ -125,9 +122,9 @@ public:
     //! bounded even if a caller opens many requests without dropping them.
     static constexpr size_t MAX_SESSION_KEYS = 256;
 
-    Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, RelayFn relay, Options opts);
-    Transport(WorkerPool& pool, SendFn send, BroadcastFn broadcast, RelayFn relay)
-        : Transport(pool, std::move(send), std::move(broadcast), std::move(relay), Options{}) {}
+    Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay, Options opts);
+    Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay)
+        : Transport(pool, std::move(broadcast), std::move(relay), Options{}) {}
 
     //! Our inbox key: peers encrypt to this; we decrypt inbound with it.
     const blsct::PublicKey& InboxPubKey() const { return m_inbox_pub; }
@@ -196,7 +193,6 @@ private:
     bool AllowRelay() EXCLUSIVE_LOCKS_REQUIRED(!m_relay_limit_mutex);
 
     WorkerPool& m_pool;
-    SendFn m_send;
     BroadcastFn m_broadcast;
     RelayFn m_relay;
     Options m_opts;

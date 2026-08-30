@@ -2,6 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <algorithm>
+
 #include <aggregation/combine.h>
 #include <aggregation/pool.h>
 #include <aggregation/pull.h>
@@ -177,16 +179,16 @@ BOOST_FIXTURE_TEST_CASE(pool_add_dedupe_evict, BasicTestingSetup)
     const uint256 h2 = InsecureRand256();
 
     BOOST_CHECK_EQUAL(pool.Size(), 0u);
-    BOOST_CHECK(pool.AddCandidate(FakeCandidate(h1), /*peer=*/1));
+    BOOST_CHECK(pool.AddCandidate(FakeCandidate(h1)));
     BOOST_CHECK_EQUAL(pool.Size(), 1u);
     BOOST_CHECK(pool.Contains(COutPoint(h1)));
 
     // Same input again -> dedupe rejected, even from a different peer.
-    BOOST_CHECK(!pool.AddCandidate(FakeCandidate(h1), /*peer=*/2));
+    BOOST_CHECK(!pool.AddCandidate(FakeCandidate(h1)));
     BOOST_CHECK_EQUAL(pool.Size(), 1u);
 
     // Distinct input accepted.
-    BOOST_CHECK(pool.AddCandidate(FakeCandidate(h2), /*peer=*/1));
+    BOOST_CHECK(pool.AddCandidate(FakeCandidate(h2)));
     BOOST_CHECK_EQUAL(pool.Size(), 2u);
 
     // Eviction by input.
@@ -203,7 +205,7 @@ BOOST_FIXTURE_TEST_CASE(pool_rejects_multi_input, BasicTestingSetup)
     CMutableTransaction mtx;
     mtx.vin.emplace_back(COutPoint(InsecureRand256()));
     mtx.vin.emplace_back(COutPoint(InsecureRand256()));
-    BOOST_CHECK(!pool.AddCandidate(MakeTransactionRef(mtx), 1));
+    BOOST_CHECK(!pool.AddCandidate(MakeTransactionRef(mtx)));
     BOOST_CHECK_EQUAL(pool.Size(), 0u);
 }
 
@@ -216,7 +218,7 @@ BOOST_FIXTURE_TEST_CASE(pool_no_per_peer_cap, BasicTestingSetup)
     aggregation::CandidatePool pool;
     size_t accepted = 0;
     for (size_t i = 0; i < 50; ++i) {
-        if (pool.AddCandidate(FakeCandidate(InsecureRand256()), /*peer=*/42)) ++accepted;
+        if (pool.AddCandidate(FakeCandidate(InsecureRand256()))) ++accepted;
     }
     BOOST_CHECK_EQUAL(accepted, 50U);
     BOOST_CHECK_EQUAL(pool.Size(), 50U);
@@ -226,7 +228,7 @@ BOOST_FIXTURE_TEST_CASE(pool_block_connected_evicts, BasicTestingSetup)
 {
     aggregation::CandidatePool pool;
     const uint256 h = InsecureRand256();
-    BOOST_CHECK(pool.AddCandidate(FakeCandidate(h), 1));
+    BOOST_CHECK(pool.AddCandidate(FakeCandidate(h)));
 
     // A block whose tx spends the candidate's input evicts it.
     auto block = std::make_shared<CBlock>();
@@ -257,8 +259,8 @@ BOOST_FIXTURE_TEST_CASE(pool_pick_combine_evict, TestingSetup)
     aggregation::CandidatePool pool;
     CTransactionRef c1 = BuildCandidate(km, cache, 300 * COIN, dest);
     CTransactionRef c2 = BuildCandidate(km, cache, 200 * COIN, dest);
-    BOOST_REQUIRE(pool.AddCandidate(c1, /*peer=*/1));
-    BOOST_REQUIRE(pool.AddCandidate(c2, /*peer=*/2));
+    BOOST_REQUIRE(pool.AddCandidate(c1));
+    BOOST_REQUIRE(pool.AddCandidate(c2));
     BOOST_CHECK_EQUAL(pool.Size(), 2u);
 
     // The "getp2pmsgaggregate" path: pick candidates, build own over-funding half,
@@ -324,7 +326,7 @@ BOOST_FIXTURE_TEST_CASE(candidate_wire_roundtrip, TestingSetup)
     BOOST_CHECK(recovered->GetHash() == candidate->GetHash());
 
     aggregation::CandidatePool pool;
-    BOOST_CHECK(pool.AddCandidate(recovered, /*peer=*/1));
+    BOOST_CHECK(pool.AddCandidate(recovered));
     BOOST_CHECK_EQUAL(pool.Size(), 1u);
 }
 
@@ -435,6 +437,28 @@ BOOST_FIXTURE_TEST_CASE(session_required_fee, TestingSetup)
     // An empty candidate set requires no extra fee.
     std::vector<CTransactionRef> empty;
     BOOST_CHECK_EQUAL(aggregation::RequiredCandidateFee(empty, BLSCT_DEFAULT_FEE), 0);
+
+    // The property that actually matters (not the tautological
+    // standalone-minus-overhead identity above): the fee the initiator funds
+    // must cover the Combined transaction's true consensus-floor fee. Model
+    // the initiator's own half with another 1-in/1-out candidate; funded fee =
+    // own weight * rate + RequiredCandidateFee(covers).
+    {
+        CTransactionRef own = BuildCandidate(km, cache, 400 * COIN, dest);
+        std::vector<CTransactionRef> halves{own, c1, c2};
+        auto combined = aggregation::CombineHalves(halves);
+        BOOST_REQUIRE(combined.has_value());
+        const CAmount funded =
+            static_cast<CAmount>(blsct::GetTransactionWeight(*own)) * BLSCT_DEFAULT_FEE
+            + aggregation::RequiredCandidateFee(cands, BLSCT_DEFAULT_FEE);
+        const CAmount floor =
+            static_cast<CAmount>(blsct::GetTransactionWeight(CTransaction(*combined))) * BLSCT_DEFAULT_FEE;
+        // Must clear the floor consensus enforces on the combined tx. (Holds so
+        // long as the aggregate's input/output count varints stay one byte;
+        // above ~237 combined in/out the varint grows and the initiator falls
+        // back to a plain send -- exercised at the RPC layer, not here.)
+        BOOST_CHECK_GE(funded, floor);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(request_queue_dedupe_cap_ttl)
@@ -537,6 +561,14 @@ BOOST_AUTO_TEST_CASE(request_queue_claim_fifo)
     for (const auto& k : first) got.push_back(k.GetVch());
     for (const auto& k : second) got.push_back(k.GetVch());
     BOOST_CHECK(got == in_order);
+
+    // Prove the test actually discriminates FIFO from key order: for these
+    // fixed seeds the map's key order is NOT the enqueue order, so a Claim
+    // that iterated by key would have returned a different sequence.
+    auto key_sorted = in_order;
+    std::sort(key_sorted.begin(), key_sorted.end());
+    BOOST_CHECK(in_order != key_sorted);
+    BOOST_CHECK(got != key_sorted);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

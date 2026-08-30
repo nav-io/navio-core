@@ -99,6 +99,7 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         # first coin and requesters' input-deduped pools reject the rest).
         res2 = w1.replycandidate(uniq[1])
         assert res2["candidate_txid"] != res["candidate_txid"]
+        assert res["inputs"] and res2["inputs"], "replycandidate returned no inputs; the disjoint check below would be vacuous"
         assert set(res["inputs"]).isdisjoint(set(res2["inputs"])), (
             "second candidate reused a reserved coin: %r vs %r" % (res["inputs"], res2["inputs"]))
         self.log.info("two live candidates spend distinct coins")

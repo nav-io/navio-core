@@ -417,6 +417,8 @@ class P2PInterface(P2PConnection):
 
     def on_addr(self, message): pass
     def on_addrv2(self, message): pass
+    def on_p2pmsg(self, message): pass
+    def on_dp2pmsg(self, message): pass
     def on_block(self, message): pass
     def on_blocktxn(self, message): pass
     def on_cfcheckpt(self, message): pass

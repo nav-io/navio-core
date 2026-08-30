@@ -43,7 +43,7 @@ bool CandidatePool::Contains(const COutPoint& input) const
     return m_shards[s].contains(input);
 }
 
-bool CandidatePool::AddCandidate(const CTransactionRef& candidate, int64_t /*peer*/)
+bool CandidatePool::AddCandidate(const CTransactionRef& candidate)
 {
     if (candidate == nullptr) return false;
     // Structural validation. Candidates arrive unauthenticated from the network

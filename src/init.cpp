@@ -1641,9 +1641,13 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
     // p2p encrypted-messaging subsystem (dark until features land; gated).
     if (args.GetBoolArg("-p2pmsg", p2pmsg::DEFAULT_P2PMSG_ENABLE)) {
-        // Advertise p2pmsg capability so other nodes route the overlay through
-        // us. Peers use this to avoid stemming/broadcasting P2PMSG to nodes
-        // that would silently drop it (see forward() below).
+        // Advertise the NODE_P2PMSG relay capability so peers route the overlay
+        // through us (avoids stemming/broadcasting P2PMSG to nodes that would
+        // silently drop it, see forward() below). Note this is a network-wide
+        // signal: it rides ADDR gossip, so enabling -p2pmsg makes participation
+        // visible beyond direct peers -- documented in
+        // doc/p2p-encrypted-messaging.md. The bit promises relay only, not that
+        // we serve candidates (that is the separate -servecandidates budget).
         nLocalServices = ServiceFlags(nLocalServices | NODE_P2PMSG);
         p2pmsg::WorkerPool::Options pool_opts;
         const int64_t workers = args.GetIntArg("-onionworkers", 0);
@@ -1721,14 +1725,6 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 if (pnode->GetId() == chosen) connman->PushMessage(pnode, NetMsg::Make(type, env));
             });
         };
-        // Send a fresh outbound envelope to a specific peer (used by SendFn).
-        auto push_to = [connman](int64_t peer_id, bool stem, const p2pmsg::Envelope& env) {
-            const char* type = stem ? NetMsgType::DP2PMSG : NetMsgType::P2PMSG;
-            connman->ForEachNode([&](CNode* pnode) {
-                if (pnode->GetId() != peer_id) return;
-                connman->PushMessage(pnode, NetMsg::Make(type, env));
-            });
-        };
         auto broadcast = [forward](bool stem, const p2pmsg::Envelope& env) {
             forward(stem, /*exclude_peer=*/-1, env);
         };
@@ -1740,7 +1736,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         };
 
         node.p2pmsg_transport = std::make_unique<p2pmsg::Transport>(
-            *node.p2pmsg_pool, std::move(push_to), std::move(broadcast), std::move(relay), tr_opts);
+            *node.p2pmsg_pool, std::move(broadcast), std::move(relay), tr_opts);
         node.p2pmsg_pool->Start();
         p2pmsg::SetActiveTransport(node.p2pmsg_transport.get());
 
@@ -1813,7 +1809,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         ParamsStream ps{TX_WITH_WITNESS, ss};
                         CTransactionRef tx;
                         ps >> tx;
-                        const bool added = pool->AddCandidate(tx, m.from_peer);
+                        const bool added = pool->AddCandidate(tx);
                         LogPrint(BCLog::NET, "p2pmsg: CANDIDATE_TX %s %s (peer=%d)\n",
                                  tx->GetHash().ToString(), added ? "pooled" : "rejected (duplicate input or cap)", m.from_peer);
                     } catch (const std::exception&) { /* drop malformed */ }
@@ -1832,7 +1828,11 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         // not the origin (Dandelion hides it). It feeds the
                         // queue's per-neighbour flood cap, which is local DoS
                         // protection rather than per-requester accounting.
-                        requests->Add(reply_key, m.from_peer, GetTime<std::chrono::seconds>().count());
+                        const bool queued = requests->Add(
+                            reply_key, m.from_peer, GetTime<std::chrono::seconds>().count());
+                        LogPrint(BCLog::NET, "p2pmsg: AGG_ANN request from peer=%d %s\n",
+                                 m.from_peer,
+                                 queued ? "queued" : "dropped (per-neighbour cap or duplicate)");
                     });
             }
 

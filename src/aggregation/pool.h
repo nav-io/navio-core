@@ -50,7 +50,7 @@ public:
     //! Insert a validated candidate from `peer`. Returns false (no insert) if:
     //! the candidate is not 1-input, its input is already pooled, the per-peer
     //! cap is hit, or the global cap is hit.
-    bool AddCandidate(const CTransactionRef& candidate, int64_t peer)
+    bool AddCandidate(const CTransactionRef& candidate)
        ;
 
     //! Pick up to `max_n` candidates for an aggregate (oldest-first within

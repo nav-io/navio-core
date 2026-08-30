@@ -353,7 +353,6 @@ struct LoopbackTransport {
         opts.pow_bits = bits;
         t = std::make_unique<Transport>(
             pool,
-            /*send=*/[](int64_t, bool, const Envelope&) {},
             /*broadcast=*/[this](bool stem, const Envelope& env) {
                 // Serialize, then feed back in as if received from peer 1.
                 DataStream ss;
@@ -574,7 +573,6 @@ BOOST_AUTO_TEST_CASE(transport_relays_to_other_peers)
     Transport::Options opts; opts.pow_bits = 4;
     Transport t(
         pool,
-        [](int64_t, bool, const Envelope&) {},
         [](bool, const Envelope&) {},
         [&](int64_t origin, bool, const Envelope&) { relay_origin = origin; relayed.fetch_add(1); },
         opts);
