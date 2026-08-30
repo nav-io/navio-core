@@ -60,6 +60,9 @@ build
 # Previous releases
 releases
 
+# cargo default target dir
+target/
+
 #lcov
 *.gcno
 *.gcda
