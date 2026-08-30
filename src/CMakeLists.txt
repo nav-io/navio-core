@@ -641,6 +641,11 @@ if(BUILD_LIBBLSCT_ONLY)
     blsct/wallet/unsigned_transaction.cpp
   )
   target_compile_definitions(blsct PRIVATE LIBBLSCT)
+  if(WIN32)
+    # BlstScalar::Rand draws OS entropy from BCryptGenRandom in the
+    # standalone library (random.cpp is not part of libblsct.a).
+    target_link_libraries(blsct PRIVATE bcrypt)
+  endif()
 
   # Conditional SIMD SHA-256 variants. Mirrors src/crypto/CMakeLists.txt and
   # autotools libblsct_a_CXXFLAGS / libblsct_a_CPPFLAGS gating (src/Makefile.am

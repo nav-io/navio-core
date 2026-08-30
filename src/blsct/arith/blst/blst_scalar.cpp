@@ -18,7 +18,11 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <bcrypt.h>
+#if defined(_MSC_VER)
+#pragma comment(lib, "bcrypt")
+#endif
 #else
+#include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
 #if defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__) || defined(__NetBSD__) || (defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 25)))
@@ -56,6 +60,7 @@ void RandBytes(unsigned char* buf, size_t n)
     size_t got = 0;
     while (got < n) {
         ssize_t r = read(fd, buf + got, n - got);
+        if (r < 0 && errno == EINTR) continue;
         if (r <= 0) { close(fd); throw std::runtime_error("BlstScalar::Rand: /dev/urandom read failed"); }
         got += static_cast<size_t>(r);
     }

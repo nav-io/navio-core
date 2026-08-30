@@ -24,7 +24,6 @@ thread_local int g_blst_g1_legacy_decode_depth = 0;
 blst_fp FpFromBigEndianMod(const uint8_t* be, size_t n)
 {
     blst_fp acc{};
-    std::memset(&acc, 0, sizeof(acc));
     if (n <= 48) {
         // Fast path: value < 2^384. blst_fp_from_bendian requires the input
         // to be < p; a 48-byte value may not be, so only take it for <= 47
