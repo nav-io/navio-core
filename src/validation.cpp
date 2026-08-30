@@ -5,6 +5,9 @@
 
 #include <validation.h>
 
+#include <atomic>
+#include <thread>
+
 #include <arith_uint256.h>
 #include <blsct/pos/pos.h>
 #include <blsct/pos/pos_async_verifier.h>
@@ -2715,6 +2718,48 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // UpdateCoins -> AddCoins in the connect loop.
     std::vector<std::vector<uint256>> block_out_hashes;
     {
+        // Hash every BLSCT non-coinbase output once, up front and in parallel.
+        // CTxOut::GetHash() on a BLSCT output serializes the whole range proof
+        // and double-SHA256s it (tens of microseconds each) and an aggregated
+        // block carries thousands of outputs; the hashes are pure functions of
+        // immutable outputs, so they fan out over a bounded worker pool. The
+        // serial scans below (BIP30 / self-spent, transient coins, AddCoins)
+        // then only look them up.
+        block_out_hashes.assign(block.vtx.size(), {});
+        std::vector<std::pair<size_t, size_t>> tasks; // (tx index, output index)
+        for (size_t tx_idx = 0; tx_idx < block.vtx.size(); ++tx_idx) {
+            const auto& tx = block.vtx[tx_idx];
+            if (!tx->IsBLSCT() || tx->IsCoinBase()) continue;
+            block_out_hashes[tx_idx].resize(tx->vout.size());
+            for (size_t o = 0; o < tx->vout.size(); ++o) tasks.emplace_back(tx_idx, o);
+        }
+        const auto hash_task = [&](size_t k) {
+            const auto [tx_idx, o] = tasks[k];
+            block_out_hashes[tx_idx][o] = block.vtx[tx_idx]->vout[o].GetHash();
+        };
+        static constexpr size_t kParallelHashMinOutputs = 64;
+        size_t threads = std::thread::hardware_concurrency();
+        if (threads == 0) threads = 1;
+        threads = std::min(threads, tasks.size() / kParallelHashMinOutputs);
+        if (threads <= 1) {
+            for (size_t k = 0; k < tasks.size(); ++k) hash_task(k);
+        } else {
+            std::atomic<size_t> next{0};
+            auto worker = [&]() {
+                for (;;) {
+                    const size_t k = next.fetch_add(1, std::memory_order_relaxed);
+                    if (k >= tasks.size()) return;
+                    hash_task(k);
+                }
+            };
+            std::vector<std::thread> pool;
+            pool.reserve(threads - 1);
+            for (size_t t = 1; t < threads; ++t) pool.emplace_back(worker);
+            worker();
+            for (auto& th : pool) th.join();
+        }
+    }
+    {
         std::set<uint256> block_outids;
         // Staked-commitment set is keyed by the commitment POINT (Vs[0]), not
         // by the output-content hash that keys the UTXO set, and carries a
@@ -2728,7 +2773,6 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         // is invalid if its Vs[0] is already unspent in the pre-block chain
         // state, or duplicates another staked output earlier in this block.
         std::set<std::vector<unsigned char>> block_staked_points;
-        block_out_hashes.assign(block.vtx.size(), {});
         for (size_t tx_idx = 0; tx_idx < block.vtx.size(); ++tx_idx) {
             const auto& tx = block.vtx[tx_idx];
             const bool is_blsct_noncoinbase = tx->IsBLSCT() && !tx->IsCoinBase();
@@ -2746,11 +2790,10 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             // Kept for the tx loop below, which hands them to AddCoins so the
             // same outputs are not hashed a third time when they enter the
             // UTXO set.
-            std::vector<uint256>& out_hashes = block_out_hashes[tx_idx];
+            const std::vector<uint256>& out_hashes = block_out_hashes[tx_idx];
             std::set<uint256> self_spent;
             if (is_blsct_noncoinbase) {
-                out_hashes.resize(tx->vout.size());
-                for (size_t o = 0; o < tx->vout.size(); o++) out_hashes[o] = tx->vout[o].GetHash();
+                assert(out_hashes.size() == tx->vout.size());
                 std::set<uint256> vin_prevouts;
                 for (const auto& in : tx->vin) vin_prevouts.insert(in.prevout.hash);
                 for (const auto& oh : out_hashes) {
