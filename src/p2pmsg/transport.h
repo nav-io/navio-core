@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -28,6 +29,10 @@ namespace p2pmsg {
 //! integration-tested end-to-end on a live chain, so it is on by default;
 //! disable with -p2pmsg=0.
 static constexpr bool DEFAULT_P2PMSG_ENABLE{true};
+
+//! Default inbox-key rotation interval (seconds). ~10 minutes matches the
+//! Dandelion++ epoch scale used for stem routing. 0 disables rotation.
+static constexpr int64_t DEFAULT_INBOX_ROTATION_SECS{600};
 
 //! Application identifier carried (opaque) by every message. p2pmsg is an
 //! APP-AGNOSTIC encrypted broadcast bus: nodes relay any well-formed message to
@@ -114,6 +119,17 @@ public:
         //! decrypt and handle messages addressed to us.
         uint32_t relay_tokens_per_sec{200};
         uint32_t relay_burst{400};
+        //! Inbox-key rotation. The node's inbox key is the static target peers
+        //! encrypt confidential messages to; left unrotated it makes every reply
+        //! received during a process's uptime linkable to one node, and an
+        //! in-memory key extraction would decrypt the whole session. Rotating it
+        //! every `inbox_rotation_secs` bounds both: linkage resets each epoch and
+        //! an extracted current key exposes at most one epoch (plus the grace
+        //! ring) of past traffic. `inbox_grace_keys` previous keys are retained
+        //! for trial-decryption so a message encrypted to the key we published
+        //! just before a rotation still decrypts. 0 disables rotation.
+        int64_t inbox_rotation_secs{DEFAULT_INBOX_ROTATION_SECS};
+        size_t inbox_grace_keys{1};
     };
 
     //! Hard cap on simultaneously-registered session keys. Each open key is
@@ -126,13 +142,26 @@ public:
     Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay)
         : Transport(pool, std::move(broadcast), std::move(relay), Options{}) {}
 
-    //! Our inbox key: peers encrypt to this; we decrypt inbound with it.
-    const blsct::PublicKey& InboxPubKey() const { return m_inbox_pub; }
+    //! Our current inbox key: peers encrypt to this; we decrypt inbound with it.
+    //! Returns a copy because the key rotates (see Options::inbox_rotation_secs),
+    //! so a caller must re-read it rather than cache a reference.
+    blsct::PublicKey InboxPubKey() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
 
-    //! Sign a 32-byte digest with this node's inbox key, authenticating outbound
-    //! RFQ quotes/orders under our session identity (InboxPubKey). Receivers
-    //! verify with RfqQuote::VerifySig().
-    blsct::Signature SignWithInbox(const uint256& digest) const { return m_inbox_priv.Sign(digest); }
+    //! Rotate the inbox key now: the current private key moves into the grace
+    //! ring (trimmed to Options::inbox_grace_keys) and a fresh keypair becomes
+    //! current. Safe to call from any thread; normally driven by a scheduler.
+    void RotateInbox() EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! Rotate iff at least Options::inbox_rotation_secs have elapsed since the
+    //! last rotation (no-op when rotation is disabled). Cheap; call on a timer.
+    void MaybeRotateInbox() EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! Sign a 32-byte digest with this node's current inbox key. Prefer
+    //! SignEphemeral for anything that goes on the wire -- signing under the
+    //! inbox key links the signature to this node and, because the key rotates,
+    //! offers no stable identity anyway. Retained for completeness.
+    blsct::Signature SignWithInbox(const uint256& digest) const
+        EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
 
     //! Sign `digest` under a FRESH, single-use keypair and return the matching
     //! pubkey to publish as the quote's `session_eph`. A self-signed quote only
@@ -184,7 +213,8 @@ public:
 private:
     //! Decrypt + dispatch one enqueued job. Runs on a worker thread; touches no
     //! shared state guarded by m_replay_mutex.
-    void HandleJob(const Job& job) EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
+    void HandleJob(const Job& job)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex, !m_inbox_mutex);
     int64_t Now() const;
 
     //! Token-bucket gate for relay fan-out. Returns true (and consumes a token)
@@ -197,8 +227,18 @@ private:
     RelayFn m_relay;
     Options m_opts;
 
-    blsct::PrivateKey m_inbox_priv;
-    blsct::PublicKey m_inbox_pub;
+    //! Inbox key + grace ring. Guarded because RotateInbox (scheduler thread),
+    //! InboxPubKey (RPC/net) and HandleJob (workers) all touch it. Heavy BLS
+    //! decrypts snapshot the privs under the lock and run outside it.
+    mutable Mutex m_inbox_mutex;
+    blsct::PrivateKey m_inbox_priv GUARDED_BY(m_inbox_mutex);
+    blsct::PublicKey m_inbox_pub GUARDED_BY(m_inbox_mutex);
+    //! Recently-retired inbox privs, newest first, kept for a grace window so a
+    //! message encrypted to the key we just rotated out still decrypts. Bounded
+    //! by Options::inbox_grace_keys; entries drop (and their key material frees)
+    //! past that, which is what bounds the key-extraction decryption window.
+    std::deque<blsct::PrivateKey> m_inbox_prev GUARDED_BY(m_inbox_mutex);
+    int64_t m_inbox_rotated_at GUARDED_BY(m_inbox_mutex){0};
 
     //! Per-request session keys (e.g. RFQ taker reply_keys) trial-decrypted in
     //! addition to the inbox key. Snapshotted under the lock, then used outside

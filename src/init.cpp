@@ -569,6 +569,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-candidatepullinterval=<n>", strprintf("Seconds between background candidate pull rounds (default: %d)", aggregation::PULL_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onionworkers=<n>", "Number of worker threads for p2p-messaging heavy crypto (0 = auto, default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsginboxrotation=<secs>", strprintf("Rotate the p2p-messaging inbox encryption key every <secs> seconds so confidential replies are not linkable to one node for a whole run and a key extraction cannot decrypt past epochs; 0 disables rotation (default: %d)", p2pmsg::DEFAULT_INBOX_ROTATION_SECS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bantime=<n>", strprintf("Default duration (in seconds) of manually configured bans (default: %u)", DEFAULT_MISBEHAVING_BANTIME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bind=<addr>[:<port>][=onion]", strprintf("Bind to given address and always listen on it (default: 0.0.0.0). Use [host]:port notation for IPv6. Append =onion to tag any incoming connections to that address and port as incoming Tor connections (default: 127.0.0.1:%u=onion, testnet: 127.0.0.1:%u=onion, signet: 127.0.0.1:%u=onion, regtest: 127.0.0.1:%u=onion, blsctregtest: 127.0.0.1:%u=onion)", defaultBaseParams->OnionServiceTargetPort(), testnetBaseParams->OnionServiceTargetPort(), signetBaseParams->OnionServiceTargetPort(), regtestBaseParams->OnionServiceTargetPort(), blsctRegtestBaseParams->OnionServiceTargetPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-cjdnsreachable", "If set, then this host is configured for CJDNS (connecting to fc00::/8 addresses would lead us to the CJDNS network, see doc/cjdns.md) (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -1679,17 +1680,38 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             const int64_t bits = args.GetIntArg("-p2pmsgpowbits", default_bits);
             tr_opts.pow_bits = static_cast<uint32_t>(std::clamp<int64_t>(bits, 1, 32));
         }
+        tr_opts.inbox_rotation_secs = std::max<int64_t>(
+            0, args.GetIntArg("-p2pmsginboxrotation", p2pmsg::DEFAULT_INBOX_ROTATION_SECS));
 
         CConnman* connman = node.connman.get();
+
+        // Dandelion++ stem mapping. Unlike plain Dandelion (a fresh random
+        // successor per message, which lets an adversary observing many of our
+        // stem messages fan out to different peers learn our stem graph and
+        // trace back), Dandelion++ PINS a single stem successor for the whole
+        // epoch: every stem message we relay in the epoch goes to the same peer,
+        // so an observer cannot distinguish our originated traffic from what we
+        // merely relay. The successor is re-rolled only when the epoch rolls
+        // over or the pinned peer becomes ineligible (disconnect / dropped the
+        // NODE_P2PMSG bit). The epoch phase is offset by a per-node random value
+        // so rotations are not globally synchronized (which would itself leak
+        // timing). Stem cadence is intentionally ~inbox-rotation scale.
+        struct StemGraph {
+            std::mutex mutex;
+            int64_t epoch{-1};
+            NodeId successor{-1};
+        };
+        auto stem_graph = std::make_shared<StemGraph>();
+        const int64_t stem_epoch_secs = 600; // Dandelion++ epoch (~10 min)
+        const int64_t stem_phase = static_cast<int64_t>(GetRand(stem_epoch_secs));
+
         // Forward an envelope. In the FLUFF phase (stem=false) flood every peer
-        // except `exclude_peer`. In the STEM phase (stem=true) forward to a
-        // SINGLE randomly chosen successor, not all peers: flooding stem traffic
-        // would both defeat the privacy intent of the stem phase and double the
-        // amplification. NOTE: this is simplified Dandelion — real Dandelion++
-        // pins the successor per epoch; here the successor is re-rolled per
-        // message, so the unlinkability is best-effort, not the full guarantee.
-        auto forward = [connman](bool stem, int64_t exclude_peer, const p2pmsg::Envelope& env) {
-            const char* type = stem ? NetMsgType::DP2PMSG : NetMsgType::P2PMSG;
+        // except `exclude_peer`. In the STEM phase (stem=true) forward to the
+        // epoch's single pinned Dandelion++ successor. If no eligible successor
+        // exists (or it would be the peer we received from), fall back to
+        // fluffing: privacy is preserved because this node is the one fluffing,
+        // and the message still propagates rather than dead-ending.
+        auto forward = [connman, stem_graph, stem_epoch_secs, stem_phase](bool stem, int64_t exclude_peer, const p2pmsg::Envelope& env) {
             // Never send p2pmsg traffic to block-relay-only connections: their
             // whole purpose is to carry blocks and nothing else, so pushing
             // application messages to them both wastes the connection and
@@ -1701,28 +1723,48 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // set the bit and still not relay -- the message is then simply
             // lost, exactly as if it had no path, so this is best-effort but
             // strictly better than routing blind.
-            const auto supports_p2pmsg = [](const CNode* pnode) {
-                return (pnode->m_their_services.load() & NODE_P2PMSG) != 0;
+            const auto eligible = [&](const CNode* pnode) {
+                return !pnode->IsBlockOnlyConn() && (pnode->m_their_services.load() & NODE_P2PMSG) != 0;
             };
-            if (!stem) {
+            // Fluff: flood every eligible peer except the origin.
+            const auto fluff = [&]() {
                 connman->ForEachNode([&](CNode* pnode) {
-                    if (pnode->GetId() == exclude_peer) return;
-                    if (pnode->IsBlockOnlyConn()) return;
-                    if (!supports_p2pmsg(pnode)) return;
-                    connman->PushMessage(pnode, NetMsg::Make(type, env));
+                    if (pnode->GetId() == exclude_peer || !eligible(pnode)) return;
+                    connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSG, env));
                 });
-                return;
+            };
+            if (!stem) { fluff(); return; }
+
+            // Stem: resolve the Dandelion++ epoch's pinned successor, re-rolling
+            // only when the epoch changes or the pinned peer is no longer
+            // eligible. Then verify the resolved successor is still connected and
+            // eligible at send time.
+            const int64_t epoch = (GetTime() + stem_phase) / stem_epoch_secs;
+            NodeId chosen = -1;
+            {
+                std::lock_guard<std::mutex> lk(stem_graph->mutex);
+                bool pinned_ok = false;
+                if (stem_graph->epoch == epoch && stem_graph->successor != -1) {
+                    connman->ForEachNode([&](CNode* pnode) {
+                        if (pnode->GetId() == stem_graph->successor && eligible(pnode)) pinned_ok = true;
+                    });
+                }
+                if (!pinned_ok) {
+                    std::vector<NodeId> ids;
+                    connman->ForEachNode([&](CNode* pnode) {
+                        if (eligible(pnode)) ids.push_back(pnode->GetId());
+                    });
+                    stem_graph->epoch = epoch;
+                    stem_graph->successor = ids.empty() ? -1 : ids[GetRand(ids.size())];
+                }
+                chosen = stem_graph->successor;
             }
-            // Stem: pick one eligible successor uniformly at random, among
-            // p2pmsg-capable peers only.
-            std::vector<NodeId> ids;
+            // No stem route, or the route is the very peer we received from
+            // (relaying back would loop): fluff instead -- still private, since
+            // we are the node doing the fluffing.
+            if (chosen == -1 || chosen == exclude_peer) { fluff(); return; }
             connman->ForEachNode([&](CNode* pnode) {
-                if (pnode->GetId() != exclude_peer && !pnode->IsBlockOnlyConn() && supports_p2pmsg(pnode)) ids.push_back(pnode->GetId());
-            });
-            if (ids.empty()) return;
-            const NodeId chosen = ids[GetRand(ids.size())];
-            connman->ForEachNode([&](CNode* pnode) {
-                if (pnode->GetId() == chosen) connman->PushMessage(pnode, NetMsg::Make(type, env));
+                if (pnode->GetId() == chosen) connman->PushMessage(pnode, NetMsg::Make(NetMsgType::DP2PMSG, env));
             });
         };
         auto broadcast = [forward](bool stem, const p2pmsg::Envelope& env) {
@@ -1739,6 +1781,17 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             *node.p2pmsg_pool, std::move(broadcast), std::move(relay), tr_opts);
         node.p2pmsg_pool->Start();
         p2pmsg::SetActiveTransport(node.p2pmsg_transport.get());
+
+        // Rotate the inbox encryption key on a timer (Dandelion++-scale epoch)
+        // so confidential replies are not linkable to one node for a whole run
+        // and an in-memory key extraction cannot decrypt past epochs. The
+        // transport itself decides when enough time has elapsed; a frequent
+        // cheap tick keeps rotation close to the configured interval.
+        if (node.scheduler && tr_opts.inbox_rotation_secs > 0) {
+            p2pmsg::Transport* tr = node.p2pmsg_transport.get();
+            node.scheduler->scheduleEvery([tr] { tr->MaybeRotateInbox(); },
+                                          std::chrono::seconds{30});
+        }
 
         // Cover-traffic candidate pool: evicts candidates whose inputs get spent.
         node.agg_pool = std::make_unique<aggregation::CandidatePool>();

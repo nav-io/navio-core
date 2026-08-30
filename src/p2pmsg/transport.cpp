@@ -194,10 +194,22 @@ void Transport::HandleJob(const Job& job)
     const uint8_t aad[1] = {env.kind};
     const std::span<const uint8_t> aad_span{aad, 1};
 
-    // Try our private inbox key first (confidential, addressed to us), then the
-    // well-known broadcast key (public announcements anyone can read).
+    // Try our inbox keys first (confidential, addressed to us): the current key
+    // and any still-live grace-ring keys from a recent rotation. Snapshot the
+    // privs under the lock, then run the heavy BLS decrypts outside it.
     RecipientKey recipient = RecipientKey::INBOX;
-    auto plain = Decrypt(m_inbox_priv, env.enc, aad_span);
+    std::vector<blsct::PrivateKey> inbox_privs;
+    {
+        LOCK(m_inbox_mutex);
+        inbox_privs.reserve(1 + m_inbox_prev.size());
+        inbox_privs.push_back(m_inbox_priv);
+        for (const auto& p : m_inbox_prev) inbox_privs.push_back(p);
+    }
+    std::optional<std::vector<uint8_t>> plain;
+    for (const auto& priv : inbox_privs) {
+        plain = Decrypt(priv, env.enc, aad_span);
+        if (plain) break;
+    }
     if (!plain) {
         plain = Decrypt(BroadcastPrivKey(), env.enc, aad_span);
         if (plain) recipient = RecipientKey::BROADCAST;
@@ -240,6 +252,54 @@ void Transport::HandleJob(const Job& job)
     msg.recipient = recipient;
     msg.body = std::move(*plain);
     handler(msg);
+}
+
+blsct::PublicKey Transport::InboxPubKey() const
+{
+    LOCK(m_inbox_mutex);
+    return m_inbox_pub;
+}
+
+blsct::Signature Transport::SignWithInbox(const uint256& digest) const
+{
+    LOCK(m_inbox_mutex);
+    return m_inbox_priv.Sign(digest);
+}
+
+void Transport::RotateInbox()
+{
+    blsct::PrivateKey fresh(MclScalar::Rand(/*exclude_zero=*/true));
+    blsct::PublicKey fresh_pub(fresh.GetPublicKey());
+    LOCK(m_inbox_mutex);
+    // Retire the current priv into the grace ring (newest first) so a message
+    // encrypted to the key we just published still decrypts for a window.
+    if (m_opts.inbox_grace_keys > 0) {
+        m_inbox_prev.push_front(m_inbox_priv);
+        while (m_inbox_prev.size() > m_opts.inbox_grace_keys) m_inbox_prev.pop_back();
+    } else {
+        m_inbox_prev.clear();
+    }
+    m_inbox_priv = fresh;
+    m_inbox_pub = fresh_pub;
+    m_inbox_rotated_at = Now();
+}
+
+void Transport::MaybeRotateInbox()
+{
+    if (m_opts.inbox_rotation_secs <= 0) return;
+    {
+        LOCK(m_inbox_mutex);
+        // Baseline the rotation clock on the first tick rather than at
+        // construction: Now() honours the test time override, which is set after
+        // the Transport is built, and in production this merely defers the first
+        // rotation by one scheduler tick.
+        if (m_inbox_rotated_at == 0) {
+            m_inbox_rotated_at = Now();
+            return;
+        }
+        if (Now() - m_inbox_rotated_at < m_opts.inbox_rotation_secs) return;
+    }
+    RotateInbox();
 }
 
 std::pair<blsct::PublicKey, blsct::Signature> Transport::SignEphemeral(const uint256& digest) const

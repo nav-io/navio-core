@@ -26,11 +26,16 @@ Kinds `7..255` are reserved for future applications.
 
 No identity key is written to disk, and every quote/order is signed under a
 **fresh, single-use** BLS keypair (`Transport::SignEphemeral`), so a maker's
-messages are not linkable to one another or to the node. Note the node's
-*inbox* key (the key peers encrypt confidential replies to, reported by
-`getp2pmsginfo`) is generated once per process run, not per message: it is a
-per-run identity, not written to disk but stable for the node's uptime. This is
-the navcoin-core BLS-ECIES + Dandelion posture.
+messages are not linkable to one another or to the node. The node's *inbox* key
+(the key peers encrypt confidential replies to, reported by `getp2pmsginfo`) is
+**rotated on a timer** (`-p2pmsginboxrotation`, default 600s; 0 disables). It is
+never written to disk, and a bounded grace ring of recent keys is retained so a
+reply encrypted to the key we published just before a rotation still decrypts.
+Rotation bounds two things: confidential replies are linkable to one node only
+within an epoch, not for the whole run; and an in-memory key extraction decrypts
+at most the current epoch plus the grace window, since retired keys are dropped.
+This extends the navcoin-core BLS-ECIES + Dandelion posture with key rotation and
+a Dandelion++ stem mapping (below).
 
 The subsystem is enabled by default and can be turned off with `-p2pmsg=0`.
 
@@ -306,9 +311,19 @@ with zero configuration.
 
 ## Security posture
 
-- **Unlinkability**: 1-layer ECIES + Dandelion stem. Matches legacy navcoin-core.
-  Weaker than onion routing against a global passive adversary; an optional
-  Loopix-style mix layer is possible future work.
+- **Unlinkability**: 1-layer ECIES + **Dandelion++ stem** (per-epoch stem
+  mapping, see below) + inbox-key rotation. Stronger than the plain-Dandelion
+  navcoin-core posture, still weaker than onion routing against a global passive
+  adversary; an optional Loopix-style mix layer is possible future work.
+- **Forward secrecy**: each message uses a fresh ephemeral sender key
+  (ephemeral-static ECDH), so a sender's key never sits at rest. The *recipient*
+  inbox key is static within an epoch, so within-epoch confidential replies are
+  not individually forward-secret; inbox-key rotation bounds the exposure of a
+  key extraction to one epoch (+ grace) rather than the whole run. Full
+  per-message forward secrecy would need an ephemeral-ephemeral handshake (the
+  requester contributing an ephemeral prekey, X3DH-style) -- tracked as future
+  work; the session-key path (RFQ reply keys, aggregation reply keys) already
+  gets this today because those keys are per-request and dropped after use.
 - **DoS**: flat-target PoW on every message, a **global** relay token bucket
   (`relay_tokens_per_sec`) capping this node's amplification, DoS scoring for
   malformed/under-PoW messages (but NOT for merely stale timestamps), silent
@@ -336,13 +351,26 @@ with zero configuration.
   `relay_capable_peers`, the count of directly-connected peers advertising the
   bit; treat it as a lower bound, since capability propagates via ADDR beyond
   your own connections.
-- **Stem successor sees the previous hop**: Dandelion stem forwarding reveals the
-  immediate predecessor to each stem successor, as in Bitcoin's Dandelion++. A
-  malicious stem successor learns only that its predecessor *relayed* the
-  message, not whether that predecessor originated it -- the anonymity set is the
-  stem path, and a single hostile hop cannot distinguish origin from relay. A
-  colluding fraction of the stem graph degrades this the usual Dandelion way;
-  the ECIES layer still hides contents throughout.
+- **Dandelion++ stem routing**: in the stem phase a node forwards to a **single
+  successor pinned for the whole epoch** (`stem_epoch_secs`, ~10 min, with a
+  per-node random phase offset so rotations are not globally synchronized), not a
+  fresh random successor per message. This is the defining Dandelion++
+  improvement over plain Dandelion: because every stem message a node relays in
+  an epoch exits through the same peer, an adversary observing that node's stem
+  traffic cannot use fan-out-to-different-peers to separate messages the node
+  *originated* from messages it merely *relayed*, nor learn the stem graph by
+  watching successor choices vary. The successor is re-rolled only when the epoch
+  rolls over or the pinned peer becomes ineligible (disconnect, or dropped the
+  `NODE_P2PMSG` bit). If no eligible successor exists, or the pinned successor is
+  the very peer a message arrived from (which would loop), the node **fluffs**
+  that message instead of dead-ending it -- privacy is preserved because the
+  fluffing node is the one broadcasting. A stem successor still learns its
+  immediate predecessor *relayed* the message, not that it *originated* it; a
+  colluding fraction of the stem graph degrades this the usual Dandelion++ way,
+  and the ECIES layer hides contents throughout. Remaining gap vs. the full
+  Dandelion++ paper: no explicit embargo timer to detect a black-holing stem
+  successor (a dropped stem message is recovered only when its origin re-sends);
+  tracked as future work.
 - **RFQ probing**: config-only matching means probing cannot binary-search a
   maker's balance; it can only enumerate advertised config.
 - **Candidate-serving probing**: a served candidate is a signed self-spend of

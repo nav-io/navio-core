@@ -346,11 +346,11 @@ struct LoopbackTransport {
     WorkerPool pool;
     std::unique_ptr<Transport> t;
 
-    explicit LoopbackTransport(uint32_t bits)
+    explicit LoopbackTransport(uint32_t bits) : LoopbackTransport(OptsWithBits(bits)) {}
+
+    explicit LoopbackTransport(Transport::Options opts)
         : pool(WorkerPool::Options{/*num_workers=*/2, /*ring_capacity=*/64})
     {
-        Transport::Options opts;
-        opts.pow_bits = bits;
         t = std::make_unique<Transport>(
             pool,
             /*broadcast=*/[this](bool stem, const Envelope& env) {
@@ -366,6 +366,13 @@ struct LoopbackTransport {
         pool.Start();
     }
     ~LoopbackTransport() { pool.Stop(); }
+
+    static Transport::Options OptsWithBits(uint32_t bits)
+    {
+        Transport::Options opts;
+        opts.pow_bits = bits;
+        return opts;
+    }
 };
 } // namespace
 
@@ -396,6 +403,80 @@ BOOST_AUTO_TEST_CASE(transport_ping_loopback)
     BOOST_CHECK_EQUAL(pings.load(), 1);
     std::lock_guard<std::mutex> lk(gm);
     BOOST_CHECK(got == payload);
+}
+
+BOOST_AUTO_TEST_CASE(transport_inbox_rotation)
+{
+    // Inbox-key rotation: the current key changes each epoch, a grace ring of
+    // one previous key keeps messages sent to the just-rotated key decryptable,
+    // and keys older than the grace window stop decrypting (which is what bounds
+    // a key-extraction's decryption window).
+    Transport::Options opts;
+    opts.pow_bits = 4;
+    opts.inbox_rotation_secs = 100;
+    opts.inbox_grace_keys = 1;
+    LoopbackTransport h(opts);
+    h.t->now_override = 1000;
+
+    std::atomic<int> pings{0};
+    h.t->RegisterHandler(PayloadKind::PING,
+                         [&](const InboundMessage&) { pings.fetch_add(1, std::memory_order_relaxed); });
+
+    auto wait_pings = [&](int want) {
+        using namespace std::chrono_literals;
+        auto deadline = std::chrono::steady_clock::now() + 5s;
+        while (pings.load() < want && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(1ms);
+        }
+    };
+    // Confirm a send did NOT decrypt: wait a beat, assert the counter is steady.
+    auto expect_no_ping = [&](int steady) {
+        using namespace std::chrono_literals;
+        std::this_thread::sleep_for(200ms);
+        BOOST_CHECK_EQUAL(pings.load(), steady);
+    };
+
+    const blsct::PublicKey k0 = h.t->InboxPubKey();
+
+    // First tick baselines the rotation clock at t=1000 (no rotation yet).
+    h.t->MaybeRotateInbox();
+    BOOST_CHECK(h.t->InboxPubKey().GetVch() == k0.GetVch());
+
+    // Not yet due -> no rotation.
+    h.t->now_override = 1099;
+    h.t->MaybeRotateInbox();
+    BOOST_CHECK(h.t->InboxPubKey().GetVch() == k0.GetVch());
+
+    // Interval elapsed -> rotate. k0 moves into the grace ring.
+    h.t->now_override = 1100;
+    h.t->MaybeRotateInbox();
+    const blsct::PublicKey k1 = h.t->InboxPubKey();
+    BOOST_CHECK(k1.GetVch() != k0.GetVch());
+
+    // A message to the rotated-out k0 still decrypts (grace ring, depth 1).
+    h.t->Send(k0, PayloadKind::PING, {1}, /*stem=*/false);
+    wait_pings(1);
+    BOOST_CHECK_EQUAL(pings.load(), 1);
+
+    // A message to the current key k1 decrypts.
+    h.t->Send(k1, PayloadKind::PING, {2}, /*stem=*/false);
+    wait_pings(2);
+    BOOST_CHECK_EQUAL(pings.load(), 2);
+
+    // Rotate again: with grace depth 1, k0 falls out of the ring (only k1 kept).
+    h.t->now_override = 1200;
+    h.t->MaybeRotateInbox();
+    const blsct::PublicKey k2 = h.t->InboxPubKey();
+    BOOST_CHECK(k2.GetVch() != k1.GetVch());
+
+    // k0 is now beyond the grace window: a message to it no longer decrypts.
+    h.t->Send(k0, PayloadKind::PING, {3}, /*stem=*/false);
+    expect_no_ping(2);
+
+    // The current key still works.
+    h.t->Send(k2, PayloadKind::PING, {4}, /*stem=*/false);
+    wait_pings(3);
+    BOOST_CHECK_EQUAL(pings.load(), 3);
 }
 
 BOOST_AUTO_TEST_CASE(transport_recipient_key_tagging)
