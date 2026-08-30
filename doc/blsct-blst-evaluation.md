@@ -356,7 +356,16 @@ mcl and blst back-to-back on the same datadir:
 | mcl (release config, no OpenMP) | 552 s | 13.9 | 6.9 | 3.0 | 2.5 |
 | **blst (this tree)** | **163 s** | **4.1** | 2.9 | 0.9 | 1.4 |
 
-i.e. **3.4× faster full sync**, tip hash identical. (Two earlier blst runs at
+i.e. **3.4× faster full sync**, tip hash identical.
+
+Independent second machine (mxaddict, #387 review): AMD Ryzen 9 9950X3D,
+mainnet at 40,419 blocks, three alternated `-reindex-chainstate` runs per
+backend — **mcl 256.0 s vs blst 126.7 s median (2.0×)**, both ending on the
+same tip. Its per-op single-thread ratios match the x86_64 picture in the
+architecture note: verification-heavy work wins (Msm2048 2.39×,
+SetMemVerify1024 2.41×, G1DeserializeSubgroup 2.67×, RPVerify1 1.43×,
+FrInv 1.84×) while mcl's JIT keeps the bare scalar-multiplication primitives
+ahead (G1Mul 0.85×, G1MulBase 0.84×, G1Add 0.85×). (Two earlier blst runs at
 435–467 s and an mcl run at 1480 s were taken while the machine carried an
 unrelated desktop workload; they are only comparable to each other.) The
 fixed-base generator precompute that follows this migration takes the blst
