@@ -536,8 +536,15 @@ BOOST_AUTO_TEST_CASE(test_verify_rejects_identity_commitments)
 {
     // Every prover commitment (phi, A1, A2, S1, S2, S3, T1, T2) carries a
     // fresh random term, so none of them is ever the identity in an honest
-    // proof. The verifier must reject an encoding that puts the identity in
-    // any of those slots instead of feeding it to the verifying equations.
+    // proof, and the verifier rejects an encoding that puts the identity in
+    // any of those slots.
+    //
+    // NOTE ON WHAT THIS COVERS: the verifying equations reject these inputs on
+    // their own -- including a fully degenerate proof with every commitment
+    // the identity and every scalar zero -- so this case still passes with the
+    // IsZero() guard in Verify removed. It documents the rejection; it is not
+    // regression coverage for the guard, which is defence in depth (skipping
+    // the transcript and MSM work) with no separately observable effect.
     auto y1 = Point::MapToPoint("y1", Endianness::Little);
     auto y2 = Point::MapToPoint("y2", Endianness::Little);
     auto y4 = Point::MapToPoint("y4", Endianness::Little);

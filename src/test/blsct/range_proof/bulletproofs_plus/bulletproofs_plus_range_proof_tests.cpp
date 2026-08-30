@@ -166,11 +166,20 @@ BOOST_AUTO_TEST_CASE(test_de_ser_rejects_oversized_or_mismatched_vectors)
         BOOST_CHECK_THROW(r.Unserialize(st), std::ios_base::failure);
     }
     {
-        // Oversized length prefix with nothing behind it: rejected up front.
+        // Oversized length prefix with nothing behind it. Two traps here:
+        // a count above MAX_SIZE is rejected by ReadCompactSize before this
+        // bound is consulted at all, and an exhausted stream raises the same
+        // exception type -- so a bare BOOST_CHECK_THROW on a huge prefix
+        // passes with or without the bound, for the wrong reason. Use a count
+        // that ReadCompactSize accepts but the protocol maximum does not, and
+        // assert the failure came from the length-prefix check.
         DataStream st{};
-        ::WriteCompactSize(st, static_cast<uint64_t>(1) << 30);
+        ::WriteCompactSize(st, uint64_t{1000});
         bulletproofs_plus::RangeProof<T> r;
-        BOOST_CHECK_THROW(r.Unserialize(st), std::ios_base::failure);
+        BOOST_CHECK_EXCEPTION(r.Unserialize(st), std::ios_base::failure,
+                              [](const std::ios_base::failure& e) {
+                                  return std::string(e.what()).find("exceeds protocol maximum") != std::string::npos;
+                              });
     }
 }
 

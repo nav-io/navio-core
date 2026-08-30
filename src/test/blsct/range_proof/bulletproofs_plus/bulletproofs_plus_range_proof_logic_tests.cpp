@@ -496,8 +496,15 @@ BOOST_AUTO_TEST_CASE(test_range_proof_get_num_leading_zeros)
 BOOST_AUTO_TEST_CASE(test_verify_rejects_identity_commitments)
 {
     // A, A_wip and B each carry a fresh random blinding term, so an honest
-    // proof never has the identity in those slots; the verifier rejects such
-    // encodings without evaluating the verification equation on them.
+    // proof never has the identity in those slots, and the verifier rejects
+    // such encodings up front.
+    //
+    // NOTE ON WHAT THIS COVERS: substituting the identity also breaks the
+    // verification equation, so this case still passes with the IsZero()
+    // guard in VerifyProofs removed -- it documents the rejection, it does
+    // not guard the early-out. The guard is defence in depth (it avoids the
+    // transcript and MSM work); nothing observable distinguishes it from the
+    // equation failing, so do not read this as regression coverage for it.
     auto nonce = GenNonce();
     auto msg = GenMsgPair();
     auto token_id = GenTokenId();
