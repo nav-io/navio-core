@@ -1931,7 +1931,7 @@ void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo &txund
         }
     }
     // add outputs
-    AddCoins(inputs, tx, nHeight, /*check_for_overwrite=*/false, out_hashes);
+    AddCoins(inputs, tx, nHeight, /*check=*/false, out_hashes);
 }
 
 void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo &txundo, int nHeight)
