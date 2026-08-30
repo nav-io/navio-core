@@ -9,6 +9,13 @@
 #include <blsct/building_block/lazy_points.h>
 #include <blsct/common.h>
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
+#include <blsct/set_mem_proof/set_mem_proof_setup.h>
+
+// SetMemProof::MAX_ROUNDS is the deserialization bound on |Ls| / |Rs|; keep
+// it in lock-step with the setup's maximum ring size.
+static_assert((size_t{1} << SetMemProof<Mcl>::MAX_ROUNDS) == SetMemProofSetup<Mcl>::N,
+              "SetMemProof::MAX_ROUNDS must equal log2(SetMemProofSetup::N)");
+
 #include <crypto/common.h>
 #include <hash.h>
 #include <streams.h>
@@ -245,6 +252,10 @@ retry: // retrying without generating fiat_shamir again to get different hashes
 
     // Challenge 2
     Scalar x = ComputeX(setup, omega, y, z, T1, T2);
+    // Mirror the verifier: a zero challenge is never accepted, so re-derive
+    // the transcript (astronomically unlikely, but keeps prover and verifier
+    // in lock-step on the rule).
+    if (x.IsZero()) goto retry;
 
     // Response
     Scalar tau_x = tau_1 * x + tau_2 * x.Square();
@@ -321,6 +332,16 @@ bool SetMemProofProver<T>::Verify(
     const size_t num_rounds = std::log2(n);
     if (proof.Ls.Size() != num_rounds) return false;
 
+    // Every prover-supplied commitment must be a proper group element: the
+    // identity contributes nothing to the verifying equations, so a proof
+    // that carries it in any of these slots was not produced by the prover
+    // algorithm and is rejected up front, before any transcript or MSM work.
+    if (proof.phi.IsZero() || proof.A1.IsZero() || proof.A2.IsZero() ||
+        proof.S1.IsZero() || proof.S2.IsZero() || proof.S3.IsZero() ||
+        proof.T1.IsZero() || proof.T2.IsZero()) {
+        return false;
+    }
+
     Points Ys = ExtendYs(setup, Ys_src, n);
 
     auto fiat_shamir = GenInitialFiatShamir(
@@ -355,6 +376,10 @@ retry:
     Scalars y_to_n = Scalars::FirstNPow(y, n);
     Scalar z_sq = z.Square();
     Scalar x = ComputeX(setup, omega, y, z, proof.T1, proof.T2);
+    // x is the challenge that separates the T1 / T2 terms in (18) and weights
+    // (19)-(21); a zero challenge collapses those equations. The prover never
+    // emits one (it retries), so treat it as invalid rather than proceed.
+    if (x.IsZero()) return false;
 
     G_H_Gi_Hi_ZeroVerifier<T> verifier(n);
 

@@ -125,4 +125,53 @@ BOOST_AUTO_TEST_CASE(test_de_ser)
     BOOST_CHECK(p == q);
 }
 
+
+BOOST_AUTO_TEST_CASE(test_de_ser_rejects_oversized_or_mismatched_vectors)
+{
+    // Vs is bounded by the maximum number of input values, Ls/Rs by the
+    // maximum number of inner-product rounds, and |Ls| == |Rs|. Each bound is
+    // enforced at the length prefix, before any element is decoded.
+    auto p = GenProof();
+    BOOST_REQUIRE(p.Vs.Size() > 0);
+    const Point g = Point::GetBasePoint();
+
+    {
+        auto q = p;
+        q.Ls.Add(g);
+        DataStream st{};
+        q.Serialize(st);
+        bulletproofs_plus::RangeProof<T> r;
+        BOOST_CHECK_THROW(r.Unserialize(st), std::ios_base::failure);
+    }
+    {
+        auto q = p;
+        q.Ls.Clear();
+        q.Rs.Clear();
+        for (uint64_t i = 0; i <= range_proof::ProofBase<T>::MAX_ROUNDS; ++i) {
+            q.Ls.Add(g);
+            q.Rs.Add(g);
+        }
+        DataStream st{};
+        q.Serialize(st);
+        bulletproofs_plus::RangeProof<T> r;
+        BOOST_CHECK_THROW(r.Unserialize(st), std::ios_base::failure);
+    }
+    {
+        auto q = p;
+        q.Vs.Clear();
+        for (uint64_t i = 0; i <= range_proof::ProofBase<T>::MAX_VS; ++i) q.Vs.Add(g);
+        DataStream st{};
+        q.Serialize(st);
+        bulletproofs_plus::RangeProof<T> r;
+        BOOST_CHECK_THROW(r.Unserialize(st), std::ios_base::failure);
+    }
+    {
+        // Oversized length prefix with nothing behind it: rejected up front.
+        DataStream st{};
+        ::WriteCompactSize(st, static_cast<uint64_t>(1) << 30);
+        bulletproofs_plus::RangeProof<T> r;
+        BOOST_CHECK_THROW(r.Unserialize(st), std::ios_base::failure);
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

@@ -152,4 +152,58 @@ BOOST_AUTO_TEST_CASE(test_de_ser)
     BOOST_CHECK(p  == q);
 }
 
+
+BOOST_AUTO_TEST_CASE(test_de_ser_rejects_malformed_ls_rs)
+{
+    // |Ls| must equal |Rs| and both are bounded by the maximum ring size
+    // (log2(N) rounds); a stream violating either is rejected at the length
+    // prefix, before any point is decoded.
+    Point g = Point::GetBasePoint();
+    auto make = [&](size_t n_ls, size_t n_rs) {
+        Points Ls, Rs;
+        for (size_t i = 0; i < n_ls; ++i) Ls.Add(g * static_cast<int64_t>(100 + i));
+        for (size_t i = 0; i < n_rs; ++i) Rs.Add(g * static_cast<int64_t>(200 + i));
+        return SetMemProof<Mcl>(g, g * 2, g * 3, g * 4, g * 5, g * 6, g * 7, g * 8,
+                                Scalar(1), Scalar(2), Scalar(3), Scalar(4), Scalar(5), Scalar(6),
+                                Ls, Rs, Scalar(7), Scalar(8), Scalar(9));
+    };
+    // Well-formed: round-trips.
+    {
+        auto p = make(3, 3);
+        DataStream st{};
+        p.Serialize(st);
+        SetMemProof<Mcl> q;
+        q.Unserialize(st);
+        BOOST_CHECK(p == q);
+    }
+    // Mismatched sizes.
+    {
+        auto p = make(3, 2);
+        DataStream st{};
+        p.Serialize(st);
+        SetMemProof<Mcl> q;
+        BOOST_CHECK_THROW(q.Unserialize(st), std::ios_base::failure);
+    }
+    // More rounds than the largest ring allows.
+    {
+        const size_t too_many = SetMemProof<Mcl>::MAX_ROUNDS + 1;
+        auto p = make(too_many, too_many);
+        DataStream st{};
+        p.Serialize(st);
+        SetMemProof<Mcl> q;
+        BOOST_CHECK_THROW(q.Unserialize(st), std::ios_base::failure);
+    }
+    // A length prefix far beyond the bound, with no element bytes behind it,
+    // is rejected without attempting to read (or allocate) anything.
+    {
+        DataStream st{};
+        SetMemProof<Mcl> hdr = make(0, 0);
+        st << hdr.phi << hdr.A1 << hdr.A2 << hdr.S1 << hdr.S2 << hdr.S3 << hdr.T1 << hdr.T2
+           << hdr.tau_x << hdr.mu << hdr.z_alpha << hdr.z_tau << hdr.z_beta << hdr.t;
+        ::WriteCompactSize(st, static_cast<uint64_t>(1) << 30);
+        SetMemProof<Mcl> q;
+        BOOST_CHECK_THROW(q.Unserialize(st), std::ios_base::failure);
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

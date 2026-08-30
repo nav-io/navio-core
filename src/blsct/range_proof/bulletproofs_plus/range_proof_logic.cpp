@@ -429,6 +429,13 @@ bool RangeProofLogic<T>::VerifyProofs(
         const RangeProofWithTranscript<T>& pt = proof_transcripts[idx];
         if (pt.proof.Ls.Size() != pt.proof.Rs.Size()) return false;
 
+        // The prover's commitments A, A_wip and B are never the identity for
+        // an honestly generated proof (each carries a fresh random blinding
+        // term); an identity point contributes nothing to the final
+        // multi-scalar check, so reject such encodings outright instead of
+        // running the verification equation on them.
+        if (pt.proof.A.IsZero() || pt.proof.A_wip.IsZero() || pt.proof.B.IsZero()) return false;
+
         range_proof::Generators<T> gens = m_common.Gf().GetInstance(pt.proof.seed);
 
         auto h = gens.H;
