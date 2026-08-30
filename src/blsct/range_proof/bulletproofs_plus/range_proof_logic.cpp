@@ -720,17 +720,18 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
         for (auto& th : pool) th.join();
     }
 
-    // Propagate the first worker exception (if any) on this thread, as the
-    // serial loop would have.
-    for (auto& e : errors) {
-        if (e) std::rethrow_exception(e);
-    }
-
-    // Assemble in request order; any Fail fails the whole batch.
+    // Assemble in request order, reproducing the serial loop's short-circuit:
+    // it processed requests in order and stopped at the FIRST that terminated
+    // it -- a thrown exception (propagated) or a Fail (returns failure()) --
+    // never consulting later requests. A single index-ordered pass keeps that
+    // contract; scanning all errors first (as an earlier version did) would let
+    // a later request's exception win over an earlier Fail, changing which
+    // outcome the caller sees.
     std::vector<range_proof::RecoveredData<T>> xs;
-    for (auto& r : results) {
-        if (r.st == St::Fail) return AmountRecoveryResult<T>::failure();
-        if (r.st == St::Ok) xs.push_back(std::move(r.data));
+    for (size_t i = 0; i < n; ++i) {
+        if (errors[i]) std::rethrow_exception(errors[i]);
+        if (results[i].st == St::Fail) return AmountRecoveryResult<T>::failure();
+        if (results[i].st == St::Ok) xs.push_back(std::move(results[i].data));
     }
     return {
         true,
