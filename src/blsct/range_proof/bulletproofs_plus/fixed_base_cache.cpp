@@ -28,6 +28,9 @@ void FixedBaseCache::MaybeInit(const range_proof::Generators<Blst>& gens)
 {
     static std::once_flag once;
     std::call_once(once, [&] {
+        // Latch: from here on the config statics are baked into the tables, so
+        // the setters must refuse further changes (they assert on !s_latched).
+        s_latched.store(true, std::memory_order_release);
         m_enabled = s_enabled;
         if (!m_enabled) return;
 
