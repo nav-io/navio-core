@@ -49,59 +49,6 @@ bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint
     return true;
 }
 
-bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)
-{
-    AssertLockHeld(wallet->cs_wallet);
-
-    CTxOut out;
-    range_proof::RecoveredData<Mcl> recoveredInfo;
-
-    if (wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
-        auto wout = wallet->GetWalletOutput(outpoint);
-
-        if (wout == nullptr)
-            return false;
-
-        out = *(wout->out);
-
-        recoveredInfo = wout->blsctRecoveryData;
-    } else {
-        auto tx = wallet->GetWalletTxFromOutpoint(outpoint);
-
-        if (tx == nullptr)
-            return false;
-
-        auto txout_iter = std::find_if(tx->tx->vout.begin(), tx->tx->vout.end(), [&](const CTxOut& out) { return out.GetHash() == outpoint.hash; });
-
-        if (txout_iter == tx->tx->vout.end())
-            return false;
-
-        recoveredInfo = tx->GetBLSCTRecoveryData(outpoint);
-    }
-
-    if (!vInputs.contains(out.tokenId))
-        vInputs[out.tokenId] = std::vector<UnsignedInput>();
-
-    try {
-        blsct::PrivateKey spending_key;
-        if (!km->GetSpendingKeyForOutput(out, spending_key)) {
-            return false;
-        }
-        vInputs[out.tokenId]
-            .emplace_back(CTxIn(outpoint, CScript(), rbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL), recoveredInfo.amount, recoveredInfo.gamma, spending_key, stakedCommitment);
-    } catch (const std::exception& e) {
-        LogPrintf("Error adding input: %s\n", e.what());
-        return false;
-    }
-
-    if (!nAmounts.contains(out.tokenId))
-        nAmounts[out.tokenId] = {0, 0, 0};
-
-    nAmounts[out.tokenId].nFromInputs += recoveredInfo.amount;
-
-    return true;
-}
-
 std::optional<BuiltTransaction>
 TxFactory::BuildTx()
 {
