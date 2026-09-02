@@ -95,6 +95,18 @@ class NavioBlsctBalanceProofTest(BitcoinTestFramework):
         assert verify_result["valid"], "Proof should be valid"
         assert_equal(verify_result["min_amount"], balance / 2)
 
+        # M-1: the leading version byte must not be a downgrade switch. A proof
+        # relabelled to v1 (or an unknown version) must be rejected -- otherwise
+        # an attacker who can forge under the legacy transcript just labels the
+        # proof v1 and it verifies. The version byte is serialized first.
+        assert_equal(proof_hex[:2], "02")  # VERSION_V2
+        for bad_ver in ("01", "03", "ff"):
+            relabelled = bad_ver + proof_hex[2:]
+            r = wallet_2.verifyblsctbalanceproof(relabelled)
+            assert not r["valid"], f"proof relabelled version 0x{bad_ver} must be rejected"
+            # And an invalid proof must not echo the prover-chosen min_amount.
+            assert_equal(r["min_amount"], 0)
+        self.log.info("M-1: version floor rejects v1/unknown relabels; min_amount is 0 on invalid")
         # A locked wallet cannot derive the spending key the proof is signed
         # with, so it must refuse rather than return a proof signed with a
         # default (zero) key, which could never verify.

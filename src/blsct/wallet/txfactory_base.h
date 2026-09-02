@@ -43,6 +43,10 @@ struct CreateTransactionData {
     // so wallet-built transactions match the consensus minimum-fee rule
     // enforced by `blsct::VerifyTx`.
     CAmount nBLSCTDefaultFee{::BLSCT_DEFAULT_FEE};
+    // Proof transcript version to build outputs under (rule A: set true when
+    // chain tip + 1 >= Consensus::nBLSCTProofV2Height). Production callers set
+    // it from the chain tip; defaults to the legacy transcript.
+    bool transcript_v2{false};
 
     // When true, the recipient bears the transaction fee: the output value is
     // reduced by the total fee instead of the fee being added on top and taken
@@ -170,8 +174,16 @@ protected:
     };
     std::optional<SubtractFeeOutput> subtractFeeOutput;
 
+    // Proof transcript version the outputs built by this factory should use.
+    // Set from the activation height of the block this tx targets (rule A:
+    // chain tip + 1 >= nBLSCTProofV2Height). Defaults to the legacy transcript
+    // so callers that do not set it are unaffected while the gate is dormant.
+    bool m_transcript_v2 = false;
+
 public:
     TxFactoryBase()= default;
+
+    void SetTranscriptV2(bool transcript_v2) { m_transcript_v2 = transcript_v2; }
 
     // Normal transfer
     void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false, const Scalar& blindingKey = Scalar::Rand(), const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const std::optional<delegation::DelegationRequest>& stakeDelegation = std::nullopt);

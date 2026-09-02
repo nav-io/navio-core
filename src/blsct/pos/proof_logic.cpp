@@ -31,6 +31,13 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
     LogPrint(BCLog::POPS, "Creating PoPS:\n    Eta fiat shamir: %s\n   Eta phi: %s\n   Next Target: %d\n   Staked Commitments:%s\n", HexStr(eta_fiat_shamir), HexStr(eta_phi), next_target, staked_commitments.GetString());
 
     const int height = pindexPrev->nHeight + 1;
+
+    // Rule A (hard cutover): produce v2 proof transcripts once the block being
+    // built lands at/above the activation height. Verification keys off the
+    // same block height, so a proof built here for height H is checked under
+    // the version active at H.
+    const bool transcript_v2 = height >= params.nBLSCTProofV2Height;
+
     if (height >= params.nPoPSKernelV2Height) {
         // V2: the kernel hash binds setMemProof.phi, which does not exist until
         // the set-membership proof is built. The V2 ctor computes phi first,
@@ -39,7 +46,7 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
         return ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f,
                             pindexPrev->nTime, pindexPrev->nStakeModifier,
                             pindexPrev->nChainWork, block.nTime, next_target,
-                            params.fPoPSHardened, /*bind_phi=*/true);
+                            params.fPoPSHardened, /*bind_phi=*/true, transcript_v2);
     }
 
     // V1: compute the kernel hash via the EXACT same path consensus
@@ -49,7 +56,7 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
     // rejected with `bad-blsct-pos-proof`.
     const uint256 kernel_hash = blsct::CalculateKernelHash(pindexPrev, block, params);
 
-    return ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f, kernel_hash, next_target);
+    return ProofOfStake(staked_commitments, eta_fiat_shamir, eta_phi, m, f, kernel_hash, next_target, transcript_v2);
 }
 
 bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
@@ -88,7 +95,19 @@ bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* 
 
     LogPrint(BCLog::POPS, "Verifying PoPS:\n   Prev block %s\n   Eta fiat shamir: %s\n   Eta phi: %s\n   Kernel Hash: %s\n   Next Target: %d\n   Staked Commitments:%s\n", pindexPrev->GetBlockHash().ToString(), HexStr(eta_fiat_shamir), HexStr(eta_phi), kernel_hash.ToString(), next_target, staked_commitments.GetString());
 
-    auto res = block.posProof.Verify(staked_commitments, eta_fiat_shamir, eta_phi, kernel_hash, next_target);
+    // The block's VERSION_BIT_BLSCT_PROOF_V2 must agree with the activation
+    // height, both ways: at and above nBLSCTProofV2Height it MUST be set, below
+    // it MUST be clear. This keeps the flag consistent with the height-derived
+    // transcript rather than an independent selector.
+    const int height = pindexPrev->nHeight + 1;
+    const bool require_v2 = height >= params.nBLSCTProofV2Height;
+    if (block.IsBLSCTProofV2() != require_v2) {
+        LogPrint(BCLog::POPS, "PoPS rejected: block at height %d has BLSCT proof-v2 flag=%d, expected %d\n",
+                 height, block.IsBLSCTProofV2() ? 1 : 0, require_v2 ? 1 : 0);
+        return false;
+    }
+    const bool transcript_v2 = block.IsBLSCTProofV2();
+    auto res = block.posProof.Verify(staked_commitments, eta_fiat_shamir, eta_phi, kernel_hash, next_target, /*stats=*/nullptr, transcript_v2);
 
     LogPrint(BCLog::POPS, "Result: %s\n", VerificationResultToString(res));
 

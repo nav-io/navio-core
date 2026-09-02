@@ -29,7 +29,8 @@ public:
         const Scalar& m,  // Message used for the commitment of the set member
         const Scalar& f,  // Mask f used for the commitment of the set member
         const Scalar& eta_fiat_shamir, // entropy for fiat shamir
-        const blsct::Message& eta_phi // entropy for building generators
+        const blsct::Message& eta_phi, // entropy for building generators
+        const bool transcript_v2 = false // bind x/T1/T2 into the transcript
     );
 
     static bool Verify(
@@ -37,7 +38,8 @@ public:
         const Points& Ys_src,
         const Scalar& eta_fiat_shamir,
         const blsct::Message& eta_phi,
-        const SetMemProof<T>& proof  // Output of Prove()
+        const SetMemProof<T>& proof,  // Output of Prove()
+        const bool transcript_v2 = false // bind x/T1/T2 into the transcript
     );
 
 #ifndef BOOST_UNIT_TEST

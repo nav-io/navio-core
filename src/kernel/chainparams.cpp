@@ -6,6 +6,7 @@
 #include <kernel/chainparams.h>
 
 #include <arith_uint256.h>
+#include <limits>
 #include <blsct/arith/mcl/mcl_g1point.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <chainparamsseeds.h>
@@ -139,7 +140,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
     class CMainParams : public CChainParams
     {
     public:
-        CMainParams()
+        explicit CMainParams(std::optional<int> blsct_proof_v2_height = std::nullopt)
         {
         m_chain_type = ChainType::MAIN;
         consensus.signet_blocks = false;
@@ -159,6 +160,33 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
+        // Dormant until an activation height is buried here in a release. Do NOT
+        // arm mainnet until wallet v2-output recovery is fixed and verified
+        // (KeyMan::RecoverOutputs and the C API recovery surface honor the gate);
+        // otherwise change/rewards above the gate become unrecoverable.
+        //
+        // -blsctproofv2height is honored on mainnet as a DEFER-ONLY escape hatch:
+        // it can push activation LATER than the buried height (to stand down a
+        // flag day without shipping a new binary) but can never pull it earlier
+        // or arm a dormant chain, so an operator cannot unilaterally fork mainnet.
+        // A value not strictly greater than the buried height is ignored;
+        // CreateChainParams logs the ignored-on-mainnet warning (this kernel
+        // params object does not log).
+        {
+            // Flag day: BLSCT range-proof v2 activates at height 42500, chosen
+            // to land at approximately 2026-09-02 21:00 Berlin (19:00 UTC).
+            // Derivation: anchored on the live mainnet tip height 39536 at time
+            // 1787991072 (2026-08-27 15:31 UTC), extrapolated over the ~4.45 day
+            // gap at the observed ~130s/block PoS spacing (~2964 blocks) ->
+            // ~42500. Block spacing drifts, so treat the date as approximate
+            // (~+/-25min). -blsctproofv2height may DEFER past this (stand down a
+            // flag day without a new binary) but never pull it earlier.
+            const int buried = 42500;
+            consensus.nBLSCTProofV2Height =
+                (blsct_proof_v2_height && *blsct_proof_v2_height > buried)
+                    ? *blsct_proof_v2_height
+                    : buried;
+        }
         // PoW->PoS boundary. Block 1 mints the whole supply but its coinbase only
         // matures at tip height 101 (COINBASE_MATURITY). Each wallet's stakelocks
         // accumulate into a single staked commitment, so the PoS set-membership
@@ -288,7 +316,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
     class CTestNetParams : public CChainParams
     {
     public:
-        CTestNetParams()
+        explicit CTestNetParams(std::optional<int> blsct_proof_v2_height = std::nullopt)
         {
         m_chain_type = ChainType::TESTNET;
         consensus.signet_blocks = false;
@@ -308,6 +336,11 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         consensus.nPePoSMinStakeAmount = 10000 * COIN;
         consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
         consensus.nStakedCommitmentLimit = 16;
+        // BLSCT proof transcript v2 flag-day, locked in at the height testnet
+        // actually crossed (block 70600, 2026-08-27). Buried/permanent so a
+        // fresh testnet sync reproduces v1-below / v2-at-and-above by height.
+        // Still overridable via -blsctproofv2height=N for regtest/local testing.
+        consensus.nBLSCTProofV2Height = blsct_proof_v2_height.value_or(70600);
         consensus.nLastPOWHeight = 1000;
         consensus.MinBIP9WarningHeight = 836640; // segwit activation height + miner confirmation window
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -458,6 +491,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
+            // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
+            consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
             consensus.nLastPOWHeight = 1000;
             consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
             consensus.nPowTargetSpacing = 10 * 60;
@@ -539,6 +574,8 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
+            // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
+            consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
             consensus.nLastPOWHeight = 1000;
             consensus.MinBIP9WarningHeight = 0;
             consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -681,6 +718,12 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.nPePoSMinStakeAmount = 100 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
+            // Active from genesis on blsctregtest so the whole functional suite
+            // exercises the v2 transcript by default (any wallet/tx path that is
+            // not gate-aware fails its test immediately). Overridable via
+            // -blsctproofv2height=N so the dedicated boundary test can still put
+            // the activation mid-chain and exercise the v1->v2 cutover.
+            consensus.nBLSCTProofV2Height = opts.blsct_proof_v2_height.value_or(0);
             consensus.nLastPOWHeight = 25000;
             consensus.MinBIP9WarningHeight = 0;
             consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -793,12 +836,12 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         return std::make_unique<const CBLSCTRegTestParams>(options);
     }
 
-    std::unique_ptr<const CChainParams> CChainParams::Main()
+    std::unique_ptr<const CChainParams> CChainParams::Main(std::optional<int> blsct_proof_v2_height)
     {
-        return std::make_unique<const CMainParams>();
+        return std::make_unique<const CMainParams>(blsct_proof_v2_height);
     }
 
-    std::unique_ptr<const CChainParams> CChainParams::TestNet()
+    std::unique_ptr<const CChainParams> CChainParams::TestNet(std::optional<int> blsct_proof_v2_height)
     {
-        return std::make_unique<const CTestNetParams>();
+        return std::make_unique<const CTestNetParams>(blsct_proof_v2_height);
     }

@@ -21,6 +21,26 @@
 #include <stdexcept>
 #include <vector>
 
+// Parse the optional -blsctproofv2height value. Its EFFECT is network-dependent
+// and applied by the per-network params: testnet/blsctregtest take it directly;
+// mainnet honors it defer-only (only a value greater than the buried height, to
+// stand a flag day down) and otherwise ignores it. This helper only parses and
+// range-checks; it does not know the buried height, so it does not claim the
+// value took effect -- the params log whether it was applied or ignored.
+// Returns nullopt when unset; throws on an out-of-range value.
+static std::optional<int> ReadBLSCTProofV2Height(const ArgsManager& args)
+{
+    if (!args.IsArgSet("-blsctproofv2height")) return std::nullopt;
+    const int64_t height = args.GetIntArg("-blsctproofv2height", std::numeric_limits<int>::max());
+    if (height < 0 || height > std::numeric_limits<int>::max()) {
+        throw std::runtime_error(strprintf("Invalid height (%d) for -blsctproofv2height.", height));
+    }
+    LogPrintf("-blsctproofv2height=%d requested. This is a consensus-forking parameter where it takes "
+              "effect: every node on the network MUST use the same effective activation height or nodes "
+              "will fork. Its effect is network-dependent (see the chain params).\n", static_cast<int>(height));
+    return static_cast<int>(height);
+}
+
 void ReadSigNetArgs(const ArgsManager& args, CChainParams::SigNetOptions& options)
 {
     if (args.IsArgSet("-signetseednode")) {
@@ -103,6 +123,8 @@ void ReadBLSCTRegTestArgs(const ArgsManager& args, CChainParams::BLSCTRegTestOpt
 {
     if (auto value = args.GetBoolArg("-fastprune")) options.fastprune = *value;
 
+    options.blsct_proof_v2_height = ReadBLSCTProofV2Height(args);
+
     for (const std::string& arg : args.GetArgs("-testactivationheight")) {
         const auto found{arg.find('@')};
         if (found == std::string::npos) {
@@ -169,10 +191,24 @@ const CChainParams &Params() {
 std::unique_ptr<const CChainParams> CreateChainParams(const ArgsManager& args, const ChainType chain)
 {
     switch (chain) {
-    case ChainType::MAIN:
-        return CChainParams::Main();
+    case ChainType::MAIN: {
+        // Honored defer-only on mainnet (see CMainParams): a value strictly
+        // greater than the buried activation height defers it; anything else is
+        // ignored. Warn only when the override was actually ignored -- compare
+        // the requested value against the effective one -- so the message stays
+        // correct after mainnet is armed at a real height (a legitimate deferring
+        // value then takes effect and is not warned about).
+        auto override_height = ReadBLSCTProofV2Height(args);
+        auto params = CChainParams::Main(override_height);
+        if (override_height && params->GetConsensus().nBLSCTProofV2Height != *override_height) {
+            LogPrintf("WARNING: -blsctproofv2height=%d IGNORED on mainnet: the override is defer-only (only a "
+                      "value greater than the buried activation height takes effect). It cannot arm a dormant "
+                      "chain or pull activation earlier.\n", *override_height);
+        }
+        return params;
+    }
     case ChainType::TESTNET:
-        return CChainParams::TestNet();
+        return CChainParams::TestNet(ReadBLSCTProofV2Height(args));
     case ChainType::SIGNET: {
         auto opts = CChainParams::SigNetOptions{};
         ReadSigNetArgs(args, opts);

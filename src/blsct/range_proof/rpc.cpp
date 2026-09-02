@@ -59,7 +59,10 @@ RPCHelpMan verifyblsctbalanceproof()
 
             UniValue result(UniValue::VOBJ);
             result.pushKV("valid", valid);
-            result.pushKV("min_amount", ValueFromAmount(proof.GetMinAmount()));
+            // Only report the proven minimum when the proof actually verified.
+            // On an invalid proof min_amount is a prover-chosen number; returning
+            // it invites a caller to read it without checking "valid".
+            result.pushKV("min_amount", ValueFromAmount(valid ? proof.GetMinAmount() : 0));
 
             return result;
         },

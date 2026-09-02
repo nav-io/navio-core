@@ -338,7 +338,9 @@ static std::optional<blsct::UnsignedOutput> UnsignedOutputFromC(const BlsctTxOut
         token_id,
         blinding_key,
         out_type,
-        min_stake);
+        min_stake,
+        /*fAllowZeroValueRangeProof=*/false,
+        tx_out.transcript_v2);
 }
 
 static BlsctRetVal* MallocAndCopyUint256(const uint256& value)
@@ -482,36 +484,64 @@ BlsctAmountsRetVal* recover_amount(
         auto amt_recovery_req_vec =
             static_cast<const std::vector<BlsctAmountRecoveryReq>*>(vp_amt_recovery_req_vec);
 
-        // construct AmountRecoveryRequest vector
-        std::vector<bulletproofs_plus::AmountRecoveryRequest<Mcl>> reqs;
-
+        // parse every request once (range proof, nonce, token id)
+        struct ParsedReq {
+            bulletproofs_plus::RangeProof<Mcl> range_proof;
+            Mcl::Point nonce;
+            TokenId token_id;
+        };
+        std::vector<ParsedReq> parsed;
+        parsed.reserve(amt_recovery_req_vec->size());
         for (size_t i = 0; i < amt_recovery_req_vec->size(); ++i) {
             const auto& ar_req = amt_recovery_req_vec->at(i);
-            bulletproofs_plus::RangeProof<Mcl> range_proof;
-            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.range_proof, ar_req.range_proof_size, range_proof);
- 
-            Mcl::Point nonce;
-            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.nonce, POINT_SIZE, nonce);
-
-            TokenId token_id;
-            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.token_id, TOKEN_ID_SIZE, token_id);
-
-            auto proof_w_seed = bulletproofs_plus::RangeProofWithSeed<Mcl>(range_proof, token_id);
-            auto req = bulletproofs_plus::AmountRecoveryRequest<Mcl>::of(
-                proof_w_seed,
-                nonce,
-                i);
-            reqs.push_back(req);
+            ParsedReq p;
+            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.range_proof, ar_req.range_proof_size, p.range_proof);
+            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.nonce, POINT_SIZE, p.nonce);
+            UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(ar_req.token_id, TOKEN_ID_SIZE, p.token_id);
+            parsed.push_back(std::move(p));
         }
+
+        // Recovery has no height context (the caller supplies raw proofs) and it
+        // fails closed, so try the legacy (v1) transcript first and retry only
+        // the requests that did not recover under the v2 transcript. Mirrors
+        // KeyMan::RecoverOutputs; every recovered amount is commitment-checked.
+        auto run = [&](const std::vector<size_t>& idxs, bool transcript_v2) {
+            std::vector<bulletproofs_plus::AmountRecoveryRequest<Mcl>> reqs;
+            reqs.reserve(idxs.size());
+            for (size_t i : idxs) {
+                bulletproofs_plus::RangeProofWithSeed<Mcl> proof_w_seed(parsed[i].range_proof, parsed[i].token_id);
+                proof_w_seed.transcript_v2 = transcript_v2;
+                reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Mcl>::of(proof_w_seed, parsed[i].nonce, i));
+            }
+            return g_rpl->RecoverAmounts(reqs);
+        };
+
+        std::vector<size_t> all_idx(parsed.size());
+        for (size_t i = 0; i < parsed.size(); ++i) all_idx[i] = i;
 
         // try recover amount for all requests
         // vector containing only the successful results is returned
-        auto recovery_results = g_rpl->RecoverAmounts(reqs);
+        auto recovery_results = run(all_idx, /*transcript_v2=*/false);
 
         // return error if it failed in the middle
         if (!recovery_results.is_completed) {
             rv->result = BLSCT_DID_NOT_RUN_TO_COMPLETION;
             return rv;
+        }
+
+        // retry the outputs that did not recover under v1 with the v2 transcript
+        {
+            std::vector<char> got(parsed.size(), 0);
+            for (const auto& a : recovery_results.amounts)
+                if (a.id < got.size()) got[a.id] = 1;
+            std::vector<size_t> misses;
+            for (size_t i = 0; i < parsed.size(); ++i)
+                if (!got[i]) misses.push_back(i);
+            if (!misses.empty()) {
+                auto v2 = run(misses, /*transcript_v2=*/true);
+                for (auto& a : v2.amounts)
+                    recovery_results.amounts.push_back(std::move(a));
+            }
         }
 
         // the vector to return has the same size as the request vector
@@ -748,6 +778,18 @@ BlsctCTxRetVal* BuildCtxImpl(
             out_point,
             tx_in.staked_commitment,
             tx_in.rbf);
+    }
+
+    // Wire the caller's transcript-v2 request through to the factory: if any
+    // output asks for v2, build the whole transaction under v2 (all outputs of a
+    // transaction share one transcript version, and BuildTx then stamps
+    // BLSCT_PROOF_V2_MARKER). Without this, a set_tx_out_transcript_v2 request
+    // would be silently dropped and the transaction rejected above the gate.
+    for (size_t i = 0; i < tx_outs->size(); ++i) {
+        if (tx_outs->at(i).transcript_v2) {
+            psbt.SetTranscriptV2(true);
+            break;
+        }
     }
 
     for (size_t i = 0; i < tx_outs->size(); ++i) {
@@ -1723,14 +1765,46 @@ BlsctBoolRetVal* verify_range_proofs(
     try {
         auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
 
-        std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> range_proof_w_seeds;
+        auto seeds_for = [&](bool transcript_v2) {
+            std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> seeds;
+            seeds.reserve(range_proofs->size());
+            for (const auto& rp : *range_proofs) {
+                bulletproofs_plus::RangeProofWithSeed<Mcl> s(rp);
+                s.transcript_v2 = transcript_v2;
+                seeds.push_back(s);
+            }
+            return seeds;
+        };
 
+        // v2 only. This entry point has no version context, so accepting a proof
+        // under whichever transcript happens to verify it would let a proof
+        // forged under the unsound legacy (v1) transcript verify true -- the same
+        // downgrade the balance-proof version floor closes. Refuse v1 here; a
+        // caller that wants to check a v1 proof deliberately must use
+        // verify_range_proofs_with_transcript(..., /*transcript_v2=*/false).
+        return succ_bool(g_rpl->Verify(seeds_for(/*transcript_v2=*/true)));
+
+    } catch (...) {
+    }
+
+    return err_bool(BLSCT_EXCEPTION);
+}
+
+BlsctBoolRetVal* verify_range_proofs_with_transcript(
+    const void* vp_range_proofs,
+    const bool transcript_v2)
+{
+    try {
+        auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+
+        std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> seeds;
+        seeds.reserve(range_proofs->size());
         for (const auto& rp : *range_proofs) {
-            auto rp_w_seed = bulletproofs_plus::RangeProofWithSeed<Mcl>(rp);
-            range_proof_w_seeds.push_back(rp_w_seed);
+            bulletproofs_plus::RangeProofWithSeed<Mcl> s(rp);
+            s.transcript_v2 = transcript_v2;
+            seeds.push_back(s);
         }
-        bool is_valid = g_rpl->Verify(range_proof_w_seeds);
-        return succ_bool(is_valid);
+        return succ_bool(g_rpl->Verify(seeds));
 
     } catch (...) {
     }
@@ -2417,6 +2491,10 @@ BlsctRetVal* build_tx_out(
     tx_out->min_stake = min_stake;
     tx_out->subtract_fee_from_amount = subtract_fee_from_amount;
     BLSCT_COPY(blsct_blinding_key, tx_out->blinding_key);
+    // Always initialise: the struct is malloc'd, and CreateOutput reads this
+    // field. The C API builds v1 (legacy transcript) outputs; constructing v2
+    // outputs above the activation height is not supported through this API.
+    tx_out->transcript_v2 = false;
 
     return succ(tx_out, sizeof(BlsctTxOut));
 }
@@ -2468,6 +2546,14 @@ const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out) {
     RETURN_IF_MEM_ALLOC_FAILED(blinding_key);
     BLSCT_COPY(tx_out->blinding_key, *blinding_key);
     return blinding_key;
+}
+
+void set_tx_out_transcript_v2(BlsctTxOut* tx_out, const bool transcript_v2) {
+    tx_out->transcript_v2 = transcript_v2;
+}
+
+bool get_tx_out_transcript_v2(const BlsctTxOut* tx_out) {
+    return tx_out->transcript_v2;
 }
 
 // unsigned input/output/transaction helpers

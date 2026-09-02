@@ -1038,15 +1038,32 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         const UniValue& prev_chainwork_val = result.find_value("prev_chainwork");
         const UniValue& pops_hardened_val = result.find_value("pops_hardened");
         const UniValue& pops_bind_phi_val = result.find_value("pops_bind_phi");
-        if (!prev_chainwork_val.isStr() || !pops_hardened_val.isBool() || !pops_bind_phi_val.isBool()) {
-            LogPrintf("%s: [%s] getblocktemplate is missing prev_chainwork / pops_hardened / pops_bind_phi. Upgrade naviod to a version that exposes them; otherwise produced blocks will be rejected on hardened chains.\n", __func__, walletName);
+        const UniValue& pops_transcript_v2_val = result.find_value("pops_transcript_v2");
+        if (!prev_chainwork_val.isStr() || !pops_hardened_val.isBool() || !pops_bind_phi_val.isBool() || !pops_transcript_v2_val.isBool()) {
+            LogPrintf("%s: [%s] getblocktemplate is missing prev_chainwork / pops_hardened / pops_bind_phi / pops_transcript_v2. Upgrade naviod to a version that exposes them; otherwise produced blocks will be rejected.\n", __func__, walletName);
             return std::nullopt;
         }
         const arith_uint256 prev_chainwork = UintToArith256(uint256S(prev_chainwork_val.get_str()));
         const bool hardened = pops_hardened_val.get_bool();
         const bool bind_phi = pops_bind_phi_val.get_bool();
+        const bool transcript_v2 = pops_transcript_v2_val.get_bool();
+
+        // The transcript-v2 gate (nBLSCTProofV2Height) is deployed at or after
+        // the V2-kernel gate (nPoPSKernelV2Height), so transcript_v2 => bind_phi.
+        // If the node ever reports the opposite, the two gates are misconfigured
+        // relative to each other; refuse to stake rather than build a proof that
+        // would be rejected, since the non-bind_phi kernel path has no v2 wiring.
+        if (transcript_v2 && !bind_phi) {
+            LogPrintf("%s: [%s] node reports pops_transcript_v2 without pops_bind_phi; gate misconfiguration (nBLSCTProofV2Height < nPoPSKernelV2Height). Refusing to stake.\n", __func__, walletName);
+            return std::nullopt;
+        }
 
         proposal.nVersion = result.find_value("version").get_real();
+        // Stamp the BLSCT proof-v2 flag to match the transcript the PoS proof
+        // and reward output below are built under, so the block passes the
+        // consensus flag-enforcement check at/above the activation height.
+        if (transcript_v2)
+            proposal.nVersion |= CBlockHeader::VERSION_BIT_BLSCT_PROOF_V2;
         proposal.nTime = result.find_value("curtime").get_real();
         proposal.nBits = next_target;
         proposal.hashPrevBlock = uint256S(result.find_value("previousblockhash").get_str());
@@ -1055,7 +1072,7 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         if (bind_phi) {
             // V2: the V2 ctor builds the set-membership proof first, then the
             // phi-bound kernel hash, then the range proof.
-            proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, prev_chainwork, proposal.nTime, next_target, hardened, /*bind_phi=*/true);
+            proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, prev_chainwork, proposal.nTime, next_target, hardened, /*bind_phi=*/true, transcript_v2);
         } else {
             proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, prev_chainwork, proposal.nTime, next_target, hardened);
         }
@@ -1070,7 +1087,7 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         } else {
             kernel_hash = blsct::CalculateKernelHashWithChainWork(prev_time, modifier, prev_chainwork, proposal.nTime, hardened);
         }
-        auto valid = blsct::ProofOfStake(proposal.posProof).Verify(staked_elements, eta_fiat_shamir, eta_phi, kernel_hash, next_target);
+        auto valid = blsct::ProofOfStake(proposal.posProof).Verify(staked_elements, eta_fiat_shamir, eta_phi, kernel_hash, next_target, /*stats=*/nullptr, transcript_v2);
 
         if (valid == blsct::ProofOfStake::VALID) return proposal;
 

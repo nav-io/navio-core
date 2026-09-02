@@ -510,6 +510,41 @@ BOOST_AUTO_TEST_CASE(test_pos_scenario)
     BOOST_CHECK_EQUAL(res, true);
 }
 
+BOOST_AUTO_TEST_CASE(test_prove_verify_transcript_v2_roundtrip)
+{
+    auto y1 = Point::MapToPoint("y1", Endianness::Little);
+    auto y2 = Point::MapToPoint("y2", Endianness::Little);
+    auto y4 = Point::MapToPoint("y4", Endianness::Little);
+
+    const auto& setup = SetMemProofSetup<Arith>::Get();
+    range_proof::Generators<Arith> gen = setup.Gf().GetInstance(TokenId());
+
+    Scalar m = Scalar::Rand();
+    Scalar f = Scalar::Rand();
+    auto sigma = gen.G * m + gen.H * f;
+
+    Points Ys;
+    Ys.Add(y1);
+    Ys.Add(y2);
+    Ys.Add(sigma);
+    Ys.Add(y4);
+
+    Scalar eta_fiat_shamir = Scalar::Rand();
+    blsct::Message eta_phi { 1, 2, 3 };
+
+    // v1 (legacy) prove + verify still round-trips: default path unchanged.
+    auto p_v1 = Prover::Prove(setup, Ys, sigma, m, f, eta_fiat_shamir, eta_phi, /*transcript_v2=*/false);
+    BOOST_CHECK(Prover::Verify(setup, Ys, eta_fiat_shamir, eta_phi, p_v1, /*transcript_v2=*/false));
+
+    // v2 prove + v2 verify round-trips.
+    auto p_v2 = Prover::Prove(setup, Ys, sigma, m, f, eta_fiat_shamir, eta_phi, /*transcript_v2=*/true);
+    BOOST_CHECK(Prover::Verify(setup, Ys, eta_fiat_shamir, eta_phi, p_v2, /*transcript_v2=*/true));
+
+    // The transcripts genuinely differ: cross-verifying either proof under the
+    // other rule fails, so the height gate is a real rule change.
+    BOOST_CHECK(!Prover::Verify(setup, Ys, eta_fiat_shamir, eta_phi, p_v1, /*transcript_v2=*/true));
+    BOOST_CHECK(!Prover::Verify(setup, Ys, eta_fiat_shamir, eta_phi, p_v2, /*transcript_v2=*/false));
+}
 // Pins the canonical padding-point encoding of ExtendYs: the index is a fixed
 // 8-byte little-endian integer, so the padding points (and every hash over the
 // extended set) are identical on all architectures. The vectors are what LP64
