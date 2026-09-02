@@ -1738,11 +1738,15 @@ BlsctRetVal* build_range_proof(
         UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id_u8, TOKEN_ID_SIZE, token_id);
 
         // range_proof to blsct_range_proof
+        // Build under the v2 transcript: verify_range_proofs is v2-only, so a
+        // v1 proof from this builder would never verify. (minValue stays 0.)
         auto range_proof = g_rpl->Prove(
             vs,
             nonce,
             msg_vec,
-            token_id);
+            token_id,
+            /*minValue=*/0,
+            /*transcript_v2=*/true);
         DataStream size_st{};
         range_proof.Serialize(size_st);
         size_t range_proof_size = size_st.size();
