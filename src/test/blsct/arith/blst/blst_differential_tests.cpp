@@ -37,6 +37,7 @@
 #include <boost/test/unit_test.hpp>
 
 #include <cstring>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -47,6 +48,25 @@ FastRandomContext& Rng()
     static FastRandomContext rng{uint256S("b157d1ffe2e7a1a55e01")};
     return rng;
 }
+
+// A second deterministic stream, routed into mcl via mclBn_setRandFunc so
+// that MclScalar::Rand / MclG1Point::Rand (mclBnFr_setByCSPRNG) are seeded
+// too. Without this the base proofs / points / signatures each run mutates
+// come from OS entropy, and the per-suite accept/reject *splits* vary
+// slightly between runs (the zero-disagreements property does not). With it
+// the whole harness is reproducible from the commit hash, byte for byte.
+unsigned int DeterministicMclRand(void*, void* buf, unsigned int bufSize)
+{
+    static FastRandomContext rng{uint256S("5eeded4mc1b157")};
+    auto bytes = rng.randbytes(bufSize);
+    std::memcpy(buf, bytes.data(), bufSize);
+    return bufSize;
+}
+
+struct SeedMclRng {
+    SeedMclRng() { mclBn_setRandFunc(nullptr, DeterministicMclRand); }
+    ~SeedMclRng() { mclBn_setRandFunc(nullptr, nullptr); }
+};
 
 std::vector<uint8_t> RandBytesVec(size_t n)
 {
@@ -74,7 +94,18 @@ bool MclSigDecode(const std::vector<uint8_t>& b)
 
 } // namespace
 
-BOOST_FIXTURE_TEST_SUITE(blst_differential_tests, BasicTestingSetup)
+struct DifferentialSetup : BasicTestingSetup {
+    // Order matters: MclInit must have run before mclBn_setRandFunc.
+    DifferentialSetup()
+    {
+        volatile MclInit init;
+        (void)init;
+        m_seed_mcl = std::make_unique<SeedMclRng>();
+    }
+    std::unique_ptr<SeedMclRng> m_seed_mcl;
+};
+
+BOOST_FIXTURE_TEST_SUITE(blst_differential_tests, DifferentialSetup)
 
 // G1 checked decode: identical accept/reject and identical decoded point on
 // random, flag-forced and bit-flipped-valid 48-byte encodings.
@@ -192,6 +223,7 @@ BOOST_AUTO_TEST_CASE(g2_signature_decode_differential)
         check_one(enc);
     }
     BOOST_TEST_MESSAGE(strprintf("g2 decode: %d accepted, %d rejected, 0 disagreements", accepted, rejected));
+    BOOST_CHECK(accepted > 0);
     BOOST_CHECK(rejected > 0);
 }
 
