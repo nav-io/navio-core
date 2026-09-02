@@ -2740,9 +2740,11 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         // One worker per kParallelHashMinOutputs outputs (integer division), so
         // the fan-out only splits at >= 2*kParallelHashMinOutputs tasks and is
         // serial below that -- small blocks aren't worth the thread setup.
-        // Honour -par: cap at the script-check pool's size (its workers + this
-        // thread) so a connect doesn't oversubscribe against the script and PoS
-        // checks already running. hardware_concurrency() ignored that config.
+        // Size from -par, the operator's parallelism budget, rather than
+        // hardware_concurrency() (which ignores that config): this hashing runs
+        // before the script-check queue is started below, so nothing else is
+        // in flight yet, but -par is still the right ceiling for how many
+        // threads a connect should ever spin.
         static constexpr size_t kParallelHashMinOutputs = 64;
         const size_t par = m_chainman.GetCheckQueue().WorkerCount() + 1; // == -par
         size_t threads = std::min<size_t>(par, tasks.size() / kParallelHashMinOutputs);
@@ -2810,10 +2812,12 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             const std::vector<uint256>& out_hashes = block_out_hashes[tx_idx];
             std::set<uint256> self_spent;
             if (is_blsct_noncoinbase) {
-                // Assume, not assert: a mismatch would key UTXOs under the wrong
-                // outpoints, and that must be caught in release too (NDEBUG),
-                // not only in debug builds.
-                Assume(out_hashes.size() == tx->vout.size());
+                // Hard check that fires in shipped builds: a mismatch would key
+                // UTXOs under the wrong outpoints. navio keeps assertions on in
+                // every configuration (ProcessConfigurations.cmake strips
+                // -DNDEBUG), so Assert() aborts in Release/RelWithDebInfo too --
+                // Assume() would only abort under Debug.
+                Assert(out_hashes.size() == tx->vout.size());
                 std::set<uint256> vin_prevouts;
                 for (const auto& in : tx->vin) vin_prevouts.insert(in.prevout.hash);
                 for (const auto& oh : out_hashes) {
@@ -2928,10 +2932,10 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             // Reuse the output content hashes from the BIP30 / self-spent scan
             // above (present for every BLSCT non-coinbase tx) instead of
             // serializing every range proof a second time.
-            // block_out_hashes[i] is either empty or exactly tx.vout.size()
-            // entries (filled only for BLSCT non-coinbase txs above), so a
-            // non-empty vector is a full set -- same predicate the UpdateCoins
-            // call below and AddCoins's Assume rely on.
+            // block_out_hashes[i] is empty or exactly tx.vout.size() entries by
+            // construction, so !empty() means a full set -- one spelling of the
+            // predicate, matching the UpdateCoins call below and AddCoins's
+            // Assert.
             const std::vector<uint256>* pre = (i < block_out_hashes.size() && !block_out_hashes[i].empty()) ? &block_out_hashes[i] : nullptr;
             for (size_t o = 0; o < tx.vout.size(); ++o) {
                 const CTxOut& out = tx.vout[o];
