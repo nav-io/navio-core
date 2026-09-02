@@ -84,7 +84,6 @@ set(BLSCT_SOURCES
   blsct/pos/helpers.cpp
   blsct/pos/pos.cpp
   blsct/pos/pos_async_verifier.cpp
-  blsct/pos/pos_check_queue.cpp
   blsct/pos/proof.cpp
   blsct/pos/proof_logic.cpp
   blsct/private_key.cpp
