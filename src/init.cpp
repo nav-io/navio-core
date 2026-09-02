@@ -1819,19 +1819,28 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 LogPrintf("p2pmsg: loaded persistent identity from %s\n", fs::PathToString(id_path));
             } else {
                 const std::vector<unsigned char> bytes = node.p2pmsg_transport->IdentityPrivBytes();
-                // Narrow permissions to 0600 on the empty file BEFORE the secret
-                // bytes are written, so the key never exists on disk
-                // world-readable (std::ofstream would create at the umask
-                // default and only the later chmod would narrow it).
-                { std::ofstream create(id_path, std::ios::binary | std::ios::trunc); }
+                // Create the file, narrow it to 0600 BEFORE the secret bytes are
+                // written (so the key never exists on disk world-readable), then
+                // write and fsync via FileCommit so a crash right after first
+                // start does not lose the identity this option exists to keep.
+                FILE* raw = fsbridge::fopen(id_path, "wb");
+                if (raw == nullptr) {
+                    return InitError(strprintf(_("Failed to create p2pmsg identity file %s"), fs::PathToString(id_path)));
+                }
+                std::error_code perm_ec;
                 fs::permissions(id_path, fs::perms::owner_read | fs::perms::owner_write,
-                                fs::perm_options::replace);
-                std::ofstream f(id_path, std::ios::binary | std::ios::trunc);
-                f.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-                f.flush();
-                if (!f.good()) {
+                                fs::perm_options::replace, perm_ec);
+                if (perm_ec) {
+                    fclose(raw);
+                    return InitError(strprintf(_("Failed to set permissions on p2pmsg identity file %s: %s"),
+                                               fs::PathToString(id_path), perm_ec.message()));
+                }
+                if (fwrite(bytes.data(), 1, bytes.size(), raw) != bytes.size()) {
+                    fclose(raw);
                     return InitError(strprintf(_("Failed to write p2pmsg identity file %s"), fs::PathToString(id_path)));
                 }
+                FileCommit(raw); // flush + fsync to the platter
+                fclose(raw);
                 LogPrintf("p2pmsg: wrote new persistent identity to %s\n", fs::PathToString(id_path));
             }
         }

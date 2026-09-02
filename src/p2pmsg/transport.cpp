@@ -361,7 +361,15 @@ void Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
     env.pow.session_eph = env.enc.eph;
     env.pow.payload_hash = env.enc.MsgHash();
     env.pow.nonce = 0;
-    Grind(env.pow, m_opts.pow_bits, /*max_iters=*/0, &m_interrupt);
+    // Grind returns 0 if it was interrupted (shutdown) before finding a valid
+    // nonce. Do NOT broadcast in that case: env.pow.nonce is wherever the loop
+    // stopped, so CheckPoW fails on it -- every peer would drop it, and on the
+    // stem path it would waste the epoch's single relay on an envelope that
+    // cannot survive. Abandon the send instead.
+    if (Grind(env.pow, m_opts.pow_bits, /*max_iters=*/0, &m_interrupt) == 0) {
+        LogPrint(BCLog::NET, "p2pmsg: send abandoned, PoW grind interrupted (shutdown)\n");
+        return;
+    }
 
     m_broadcast(stem, env);
     (void)&SerializeEnvelope; // reserved for direct-send paths in later phases
