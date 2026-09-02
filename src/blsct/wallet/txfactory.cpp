@@ -6,6 +6,9 @@
 #include <blsct/wallet/helpers.h>
 #include <blsct/wallet/txfactory.h>
 #include <chainparams.h>
+#include <logging.h>
+#include <util/result.h>
+
 #include <limits>
 
 using T = Mcl;
@@ -105,8 +108,17 @@ bool TxFactory::AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, con
 std::optional<BuiltTransaction>
 TxFactory::BuildTx()
 {
+    // GetNewDestination fails on a locked or keypool-exhausted wallet.
+    // util::Result::value() is an assert(), and navio keeps assertions on in
+    // every configuration, so dereferencing it unchecked aborts the node.
+    auto dest = km->GetNewDestination(-1);
+    if (!dest) {
+        LogPrintf("%s: %s\n", __func__, util::ErrorString(dest).original);
+        return std::nullopt;
+    }
+
     return TxFactoryBase::BuildTx(
-        std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value()),
+        std::get<blsct::DoublePublicKey>(*dest),
         /*minStake=*/0,
         /*type=*/NORMAL,
         /*fSubtractedFee=*/false,
@@ -127,7 +139,12 @@ std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wa
 
     auto changeType = transactionData.type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE ? STAKING_ACCOUNT : CHANGE_ACCOUNT;
 
-    transactionData.changeDestination = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(changeType).value());
+    auto change_dest = blsct_km->GetNewDestination(changeType);
+    if (!change_dest) {
+        LogPrintf("%s: %s\n", __func__, util::ErrorString(change_dest).original);
+        return std::nullopt;
+    }
+    transactionData.changeDestination = std::get<blsct::DoublePublicKey>(*change_dest);
 
     if (transactionData.type == TX_CREATE_TOKEN || transactionData.type == TX_MINT_TOKEN) {
         transactionData.tokenKey = blsct_km->GetTokenKey((HashWriter{} << transactionData.tokenInfo.mapMetadata << transactionData.tokenInfo.nTotalSupply).GetHash()).GetScalar();
