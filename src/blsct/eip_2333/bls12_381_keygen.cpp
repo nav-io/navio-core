@@ -43,7 +43,9 @@ std::array<uint8_t,L> BLS12_381_KeyGen::HKDF_Expand(const std::array<uint8_t,BLS
         size_t bytes2copy = i * DigestSize > L ? L - (i - 1) * DigestSize : DigestSize;
         std::copy_n(prev.cbegin(), bytes2copy, output_it);
 
-        std::advance(output_it, DigestSize);
+        // Advance by what was copied, not by DigestSize: on a final short
+        // pass the latter forms an iterator past the end of `output`.
+        std::advance(output_it, bytes2copy);
     }
     return output;
 }
