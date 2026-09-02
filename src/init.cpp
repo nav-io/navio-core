@@ -1827,19 +1827,28 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 if (raw == nullptr) {
                     return InitError(strprintf(_("Failed to create p2pmsg identity file %s"), fs::PathToString(id_path)));
                 }
+                // Any failure after the file exists removes the partial file, so
+                // a transient ENOSPC / chmod / fsync failure regenerates on the
+                // next start instead of leaving a short file that bricks startup.
+                const auto bail = [&](const bilingual_str& err) {
+                    fclose(raw);
+                    std::error_code rm_ec;
+                    fs::remove(id_path, rm_ec);
+                    return err;
+                };
                 std::error_code perm_ec;
                 fs::permissions(id_path, fs::perms::owner_read | fs::perms::owner_write,
                                 fs::perm_options::replace, perm_ec);
                 if (perm_ec) {
-                    fclose(raw);
-                    return InitError(strprintf(_("Failed to set permissions on p2pmsg identity file %s: %s"),
-                                               fs::PathToString(id_path), perm_ec.message()));
+                    return InitError(bail(strprintf(_("Failed to set permissions on p2pmsg identity file %s: %s"),
+                                                    fs::PathToString(id_path), perm_ec.message())));
                 }
                 if (fwrite(bytes.data(), 1, bytes.size(), raw) != bytes.size()) {
-                    fclose(raw);
-                    return InitError(strprintf(_("Failed to write p2pmsg identity file %s"), fs::PathToString(id_path)));
+                    return InitError(bail(strprintf(_("Failed to write p2pmsg identity file %s"), fs::PathToString(id_path))));
                 }
-                FileCommit(raw); // flush + fsync to the platter
+                if (!FileCommit(raw)) { // flush + fsync to the platter
+                    return InitError(bail(strprintf(_("Failed to flush p2pmsg identity file %s to disk"), fs::PathToString(id_path))));
+                }
                 fclose(raw);
                 LogPrintf("p2pmsg: wrote new persistent identity to %s\n", fs::PathToString(id_path));
             }
