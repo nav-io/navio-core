@@ -176,7 +176,10 @@ target_json_data_sources(test_navio
 )
 
 if(WITH_BLST)
-  target_sources(test_navio PRIVATE blsct/arith/blst/blst_equivalence_tests.cpp)
+  target_sources(test_navio PRIVATE
+    blsct/arith/blst/blst_differential_tests.cpp
+    blsct/arith/blst/blst_equivalence_tests.cpp
+  )
 endif()
 
 target_link_libraries(test_navio
