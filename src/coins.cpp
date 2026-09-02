@@ -216,12 +216,15 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool 
     // loop below instead of hashing twice; other paths keep hashing lazily in
     // the loop.
     // The caller supplies either a full set of content hashes or none: a
-    // partial or mismatched set would key coins under the wrong outpoints, so
-    // the contract is enforced here (release-safe Assume) rather than left to a
-    // silent size check that falls back to recomputation. Use the caller's
-    // vector directly -- copying it would defeat the point on the connect hot
-    // path -- and only compute our own when none was provided.
-    Assume(!precomputed_out_hashes || precomputed_out_hashes->size() == tx.vout.size());
+    // partial or mismatched set would index past the vector below (an
+    // out-of-bounds read on the connect path) and key coins under the wrong
+    // outpoints. Enforce the contract with a hard check that fires in shipped
+    // builds too -- navio keeps assertions on in every configuration
+    // (ProcessConfigurations.cmake strips -DNDEBUG), so Assert() aborts in
+    // Release/RelWithDebInfo, whereas Assume() would only abort under Debug.
+    // Use the caller's vector directly -- copying it would defeat the point on
+    // the connect hot path -- and only compute our own when none was provided.
+    Assert(!precomputed_out_hashes || precomputed_out_hashes->size() == tx.vout.size());
     std::vector<uint256> computed;
     const std::vector<uint256>* out_hashes = precomputed_out_hashes;
     if (tx.IsBLSCT() && !fCoinbase) {
