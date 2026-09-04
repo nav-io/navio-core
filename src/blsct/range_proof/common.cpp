@@ -1,4 +1,6 @@
 #include <blsct/arith/mcl/mcl.h>
+
+#include <bit>
 #include <blsct/common.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/setup.h>
@@ -140,11 +142,15 @@ template <typename T>
 size_t Common<T>::GetNumRoundsExclLast(
     const size_t& num_input_values
 ) {
+    // Both operands are exact powers of two, so log2 is bit_width - 1;
+    // integer arithmetic avoids the double round-trip of std::log2 (exact
+    // today, but a floating-point step has no place in a consensus count).
     auto num_input_values_pow2 =
         blsct::Common::GetFirstPowerOf2GreaterOrEqTo(num_input_values);
+    static_assert(std::has_single_bit(range_proof::Setup::num_input_value_bits));
     auto num_rounds =
-        static_cast<size_t>(std::log2(num_input_values_pow2)) +
-        static_cast<size_t>(std::log2(range_proof::Setup::num_input_value_bits));
+        static_cast<size_t>(std::bit_width(num_input_values_pow2) - 1) +
+        static_cast<size_t>(std::bit_width(range_proof::Setup::num_input_value_bits) - 1);
 
     return num_rounds;
 }

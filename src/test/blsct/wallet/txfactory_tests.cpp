@@ -719,4 +719,25 @@ BOOST_FIXTURE_TEST_CASE(fee_fixpoint_zero_change_terminates_test, TestingSetup)
     }
 }
 
+
+BOOST_FIXTURE_TEST_CASE(test_add_output_rejects_non_positive_amount, TestingSetup)
+{
+    // A non-positive (or out-of-range) amount must be rejected before it is
+    // folded into the factory's per-token totals; previously it produced an
+    // unspendable dust output plus wrong accounting and only failed later at
+    // consensus, with no actionable error for the caller.
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    auto tx = blsct::TxFactory(blsct_km);
+    BOOST_CHECK_THROW(tx.AddOutput(recvAddress, -1 * COIN, "negative"), std::runtime_error);
+    BOOST_CHECK_THROW(tx.AddOutput(recvAddress, 0, "zero"), std::runtime_error);
+    BOOST_CHECK_THROW(tx.AddOutput(recvAddress, MAX_MONEY + 1, "too-much"), std::runtime_error);
+    BOOST_CHECK_NO_THROW(tx.AddOutput(recvAddress, 1, "one-satoshi"));
+}
+
 BOOST_AUTO_TEST_SUITE_END()

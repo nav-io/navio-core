@@ -3,6 +3,10 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/pos/pos.h>
+#include <sync.h>
+
+#include <array>
+#include <mutex>
 #include <primitives/block.h>
 
 namespace blsct {
@@ -126,13 +130,44 @@ std::vector<unsigned char> CalculateSetMemProofRandomnessV2(const CBlockIndex* p
     // legacy eta_phi(vtx) generator seed provided — but here it feeds ONLY the
     // challenge, not phi / the kernel hash, so it grants no grinding leverage
     // over eligibility. Still binds pindexPrev so cross-height replay is blocked.
+    //
+    // Hashing TX_NO_WITNESS(block.vtx) re-serializes every input and output
+    // of the block — for a BLSCT block that is every range proof — and this
+    // is asked for several times per block (block assembly, template RPC,
+    // ProofOfStakeLogic::Verify, ConnectBlock). The no-witness serialization
+    // of a transaction is exactly what its txid commits to, so the tuple
+    // (prev block hash, txids) identifies the input uniquely; memoise on it.
+    // CTransaction caches its txid, so building the key is O(#txs) with no
+    // re-serialization.
+    if (!pindexPrev) throw std::runtime_error("CalculateSetMemProofRandomnessV2: pindexPrev is null");
+
+    HashWriter key_writer{};
+    key_writer << pindexPrev->GetBlockHash() << pindexPrev->nStakeModifier;
+    for (const auto& tx : block.vtx) key_writer << tx->GetHash();
+    const uint256 key = key_writer.GetHash();
+
+    struct Entry { uint256 key; std::vector<unsigned char> value; };
+    static Mutex s_mutex;
+    static std::array<Entry, 8> s_cache GUARDED_BY(s_mutex);
+    static size_t s_next GUARDED_BY(s_mutex) = 0;
+    {
+        LOCK(s_mutex);
+        for (const auto& e : s_cache) {
+            if (!e.value.empty() && e.key == key) return e.value;
+        }
+    }
+
     HashWriter ss{};
-
     ss << pindexPrev->GetBlockHash() << pindexPrev->nStakeModifier << TX_NO_WITNESS(block.vtx);
-
     auto hash = ss.GetHash();
+    std::vector<unsigned char> value(hash.begin(), hash.end());
 
-    return std::vector<unsigned char>(hash.begin(), hash.end());
+    {
+        LOCK(s_mutex);
+        s_cache[s_next] = Entry{key, value};
+        s_next = (s_next + 1) % s_cache.size();
+    }
+    return value;
 }
 
 std::vector<unsigned char> CalculateSetMemProofRandomness(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
@@ -146,6 +181,10 @@ std::vector<unsigned char> CalculateSetMemProofRandomness(const CBlockIndex* pin
 
 uint256 CalculateStakeRingSeed(const CBlockIndex* pindexPrev, const uint256& header_hash_fallback, const uint32_t& block_time, const Consensus::Params& params)
 {
+    // Unreachable from consensus (ConnectBlock always has a linked pprev),
+    // but every other pindexPrev consumer in this file dereferences it
+    // unconditionally too; fail loudly rather than on a null pprev walk.
+    if (!pindexPrev) throw std::runtime_error("CalculateStakeRingSeed: pindexPrev is null");
     const int height = pindexPrev->nHeight + 1;
     if (height < params.nPoPSKernelV2Height) {
         // Legacy: grindable header-hash seed (kept for pre-V2 blocks).

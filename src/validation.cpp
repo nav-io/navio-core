@@ -1919,7 +1919,7 @@ void Chainstate::InvalidBlockFound(CBlockIndex* pindex, const BlockValidationSta
     }
 }
 
-void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo &txundo, int nHeight)
+void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo &txundo, int nHeight, const std::vector<uint256>* out_hashes)
 {
     // mark inputs spent
     if (!tx.IsCoinBase()) {
@@ -1931,7 +1931,12 @@ void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo &txund
         }
     }
     // add outputs
-    AddCoins(inputs, tx, nHeight);
+    AddCoins(inputs, tx, nHeight, /*check_for_overwrite=*/false, out_hashes);
+}
+
+void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo &txundo, int nHeight)
+{
+    UpdateCoins(tx, inputs, txundo, nHeight, /*out_hashes=*/nullptr);
 }
 
 bool CScriptCheck::operator()() {
@@ -2590,13 +2595,20 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     };
     auto pos_verify_join_guard = PosVerifyJoinGuard{pos_verify_future};
 
+    // The pre-block staked-commitment set (LevelDB base + cache merge, an
+    // O(N log N) materialisation that grows with the number of stakes) is
+    // needed twice below — as the PoPS ring source and for the duplicate
+    // staked-commitment check. Materialise it once, before anything in this
+    // block touches the view.
+    const OrderedElements<MclG1Point> prev_staked = view.GetStakedCommitments();
+
     if (params.GetConsensus().fBLSCT && block.IsProofOfStake() && fCheckPosProof) {
         // V2: seed the staked-commitment ring from a non-grindable beacon
         // (stake modifier + deep ancestor) instead of the staker-controlled
         // block header hash. Must match ProofOfStakeLogic::Create / Verify
         // exactly.
         const uint256 ring_seed = blsct::CalculateStakeRingSeed(pindex->pprev, block.GetBlockHeader().GetHash(), block.nTime, params.GetConsensus());
-        auto staked_commitments_snapshot = view.GetStakedCommitments().GetElements(ring_seed, params.GetConsensus().nStakedCommitmentLimit);
+        auto staked_commitments_snapshot = prev_staked.GetElements(ring_seed, params.GetConsensus().nStakedCommitmentLimit);
 
         if (staked_commitments_snapshot.Size() < 2) {
             LogPrint(BCLog::POPS, "PoPS rejected. Staked commitments size is %d\n", staked_commitments_snapshot.Size());
@@ -2698,6 +2710,10 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // ConnectBlock and aborts the node. So we always reject duplicates: every
     // output in the block must be distinct both from the live UTXO set and
     // from the other outputs in the same block.
+    // Per-tx output content hashes computed by the BIP30 / self-spent scan
+    // below (BLSCT non-coinbase txs only; empty otherwise), reused by
+    // UpdateCoins -> AddCoins in the connect loop.
+    std::vector<std::vector<uint256>> block_out_hashes;
     {
         std::set<uint256> block_outids;
         // Staked-commitment set is keyed by the commitment POINT (Vs[0]), not
@@ -2711,9 +2727,10 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         // author controls it, so this is grindable. Forbid it: a staked output
         // is invalid if its Vs[0] is already unspent in the pre-block chain
         // state, or duplicates another staked output earlier in this block.
-        const OrderedElements<MclG1Point> prev_staked = view.GetStakedCommitments();
         std::set<std::vector<unsigned char>> block_staked_points;
-        for (const auto& tx : block.vtx) {
+        block_out_hashes.assign(block.vtx.size(), {});
+        for (size_t tx_idx = 0; tx_idx < block.vtx.size(); ++tx_idx) {
+            const auto& tx = block.vtx[tx_idx];
             const bool is_blsct_noncoinbase = tx->IsBLSCT() && !tx->IsCoinBase();
             // BLSCT aggregation can carry vouts that are spent by sibling vins
             // inside the same tx; those never enter the UTXO set (see
@@ -2726,7 +2743,10 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             // there, while the ungated paths (non-BLSCT tx, coinbase) would pay
             // a new hash for unspendable outputs the loop below skips before
             // hashing.
-            std::vector<uint256> out_hashes;
+            // Kept for the tx loop below, which hands them to AddCoins so the
+            // same outputs are not hashed a third time when they enter the
+            // UTXO set.
+            std::vector<uint256>& out_hashes = block_out_hashes[tx_idx];
             std::set<uint256> self_spent;
             if (is_blsct_noncoinbase) {
                 out_hashes.resize(tx->vout.size());
@@ -2842,8 +2862,17 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (tx.IsBLSCT() && !tx.IsCoinBase()) {
             std::set<uint256> vin_prevouts;
             for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
-            for (const auto& out : tx.vout) {
-                const uint256 out_hash = out.GetHash();
+            // Reuse the output content hashes from the BIP30 / self-spent scan
+            // above (present for every BLSCT non-coinbase tx) instead of
+            // serializing every range proof a second time.
+            // block_out_hashes[i] is either empty or exactly tx.vout.size()
+            // entries (filled only for BLSCT non-coinbase txs above), so a
+            // non-empty vector is a full set -- same predicate the UpdateCoins
+            // call below and AddCoins's Assume rely on.
+            const std::vector<uint256>* pre = (i < block_out_hashes.size() && !block_out_hashes[i].empty()) ? &block_out_hashes[i] : nullptr;
+            for (size_t o = 0; o < tx.vout.size(); ++o) {
+                const CTxOut& out = tx.vout[o];
+                const uint256 out_hash = pre ? (*pre)[o] : out.GetHash();
                 if (!vin_prevouts.contains(out_hash)) continue;
                 const COutPoint op{out_hash};
                 if (view.HaveCoin(op)) continue; // already on chain
@@ -2934,7 +2963,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (i > 0) {
             blockundo.vtxundo.emplace_back();
         }
-        UpdateCoins(tx, view, i == 0 ? undoDummy : blockundo.vtxundo.back(), pindex->nHeight);
+        UpdateCoins(tx, view, i == 0 ? undoDummy : blockundo.vtxundo.back(), pindex->nHeight,
+                    (i < block_out_hashes.size() && !block_out_hashes[i].empty()) ? &block_out_hashes[i] : nullptr);
     }
     const auto time_4{SteadyClock::now()};
     time_connect += time_4 - time_3;
