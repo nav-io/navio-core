@@ -128,6 +128,27 @@ public:
         }
     }
 
+    // Deserialize with an explicit upper bound on the element count. Every
+    // network-facing container of points/scalars has a small protocol maximum
+    // (proof round counts, value counts); enforcing it at the length prefix
+    // rejects oversized encodings before a single element is decoded or
+    // allocated, instead of relying on the stream running dry.
+    template <typename Stream>
+    void UnserializeBounded(Stream& s, uint64_t max_elements)
+    {
+        const uint64_t v_size = ::ReadCompactSize(s);
+        if (v_size > max_elements) {
+            throw std::ios_base::failure("Elements: element count exceeds protocol maximum");
+        }
+        Clear();
+        m_vec.reserve(static_cast<size_t>(v_size));
+        for (uint64_t i = 0; i < v_size; i++) {
+            T n;
+            ::Unserialize(s, n);
+            Add(n);
+        }
+    }
+
     template <typename Stream>
     void Unserialize(Stream& s)
     {

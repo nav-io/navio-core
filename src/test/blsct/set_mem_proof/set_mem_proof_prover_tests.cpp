@@ -13,6 +13,7 @@
 #include <blsct/set_mem_proof/set_mem_proof_prover.h>
 #include <blsct/set_mem_proof/set_mem_proof_setup.h>
 #include <boost/test/unit_test.hpp>
+#include <functional>
 #include <cstdio>
 #include <sstream>
 #include <test/util/setup_common.h>
@@ -527,6 +528,64 @@ BOOST_AUTO_TEST_CASE(test_extend_ys_canonical_vectors)
     };
     for (size_t i = 0; i < 3; ++i) {
         BOOST_CHECK_EQUAL(HexStr(ys2[i].GetVch()), expected[i]);
+    }
+}
+
+
+BOOST_AUTO_TEST_CASE(test_verify_rejects_identity_commitments)
+{
+    // Every prover commitment (phi, A1, A2, S1, S2, S3, T1, T2) carries a
+    // fresh random term, so none of them is ever the identity in an honest
+    // proof, and the verifier rejects an encoding that puts the identity in
+    // any of those slots.
+    //
+    // NOTE ON WHAT THIS COVERS: the verifying equations reject these inputs on
+    // their own -- including a fully degenerate proof with every commitment
+    // the identity and every scalar zero -- so this case still passes with the
+    // IsZero() guard in Verify removed. It documents the rejection; it is not
+    // regression coverage for the guard, which is defence in depth (skipping
+    // the transcript and MSM work) with no separately observable effect.
+    auto y1 = Point::MapToPoint("y1", Endianness::Little);
+    auto y2 = Point::MapToPoint("y2", Endianness::Little);
+    auto y4 = Point::MapToPoint("y4", Endianness::Little);
+
+    const auto& setup = SetMemProofSetup<Arith>::Get();
+    range_proof::Generators<Arith> gen = setup.Gf().GetInstance(TokenId());
+
+    Scalar m = Scalar::Rand();
+    Scalar f = Scalar::Rand();
+    auto sigma = gen.G * m + gen.H * f;
+
+    Points Ys;
+    Ys.Add(y1);
+    Ys.Add(y2);
+    Ys.Add(sigma);
+    Ys.Add(y4);
+
+    Scalar eta_fiat_shamir = Scalar::Rand();
+    blsct::Message eta_phi{1, 2, 3};
+    auto proof = Prover::Prove(setup, Ys, sigma, m, f, eta_fiat_shamir, eta_phi);
+    BOOST_REQUIRE(Prover::Verify(setup, Ys, eta_fiat_shamir, eta_phi, proof));
+
+    using Mutator = std::function<void(SetMemProof<Arith>&)>;
+    const std::vector<std::pair<std::string, Mutator>> slots = {
+        {"phi", [](auto& p) { p.phi = Point(); }},
+        {"A1", [](auto& p) { p.A1 = Point(); }},
+        {"A2", [](auto& p) { p.A2 = Point(); }},
+        {"S1", [](auto& p) { p.S1 = Point(); }},
+        {"S2", [](auto& p) { p.S2 = Point(); }},
+        {"S3", [](auto& p) { p.S3 = Point(); }},
+        {"T1", [](auto& p) { p.T1 = Point(); }},
+        {"T2", [](auto& p) { p.T2 = Point(); }},
+    };
+    for (const auto& [name, mutate] : slots) {
+        auto bad = proof;
+        mutate(bad);
+        BOOST_REQUIRE(bad.phi.IsZero() || bad.A1.IsZero() || bad.A2.IsZero() || bad.S1.IsZero() ||
+                      bad.S2.IsZero() || bad.S3.IsZero() || bad.T1.IsZero() || bad.T2.IsZero());
+        bool res = true;
+        BOOST_CHECK_NO_THROW(res = Prover::Verify(setup, Ys, eta_fiat_shamir, eta_phi, bad));
+        BOOST_CHECK_MESSAGE(!res, "identity " + name + " was accepted");
     }
 }
 

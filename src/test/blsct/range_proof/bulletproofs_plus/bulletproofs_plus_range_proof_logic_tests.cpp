@@ -11,6 +11,7 @@
 
 #include <tinyformat.h>
 #include <boost/test/unit_test.hpp>
+#include <functional>
 #include <util/strencodings.h>
 #include <limits>
 
@@ -488,6 +489,45 @@ BOOST_AUTO_TEST_CASE(test_range_proof_get_num_leading_zeros)
             BOOST_CHECK_EQUAL(num_zeros, i);
             n >>= 1;
         }
+    }
+}
+
+
+BOOST_AUTO_TEST_CASE(test_verify_rejects_identity_commitments)
+{
+    // A, A_wip and B each carry a fresh random blinding term, so an honest
+    // proof never has the identity in those slots, and the verifier rejects
+    // such encodings up front.
+    //
+    // NOTE ON WHAT THIS COVERS: substituting the identity also breaks the
+    // verification equation, so this case still passes with the IsZero()
+    // guard in VerifyProofs removed -- it documents the rejection, it does
+    // not guard the early-out. The guard is defence in depth (it avoids the
+    // transcript and MSM work); nothing observable distinguishes it from the
+    // equation failing, so do not read this as regression coverage for it.
+    auto nonce = GenNonce();
+    auto msg = GenMsgPair();
+    auto token_id = GenTokenId();
+
+    Scalars vs;
+    vs.Add(Scalar(2));
+
+    RangeProofLogic rpl;
+    auto p = rpl.Prove(vs, nonce, msg.second, token_id);
+    BOOST_REQUIRE(rpl.Verify({bulletproofs_plus::RangeProofWithSeed<T>(p, token_id)}));
+
+    using Mutator = std::function<void(bulletproofs_plus::RangeProof<T>&)>;
+    const std::vector<std::pair<std::string, Mutator>> slots = {
+        {"A", [](auto& q) { q.A = Point(); }},
+        {"A_wip", [](auto& q) { q.A_wip = Point(); }},
+        {"B", [](auto& q) { q.B = Point(); }},
+    };
+    for (const auto& [name, mutate] : slots) {
+        auto bad = p;
+        mutate(bad);
+        bool res = true;
+        BOOST_CHECK_NO_THROW(res = rpl.Verify({bulletproofs_plus::RangeProofWithSeed<T>(bad, token_id)}));
+        BOOST_CHECK_MESSAGE(!res, "identity " + name + " was accepted");
     }
 }
 

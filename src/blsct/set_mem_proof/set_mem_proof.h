@@ -98,10 +98,24 @@ struct SetMemProof {
            << omega;
     };
 
+    // The inner-product argument carries exactly log2(ring size) (L, R)
+    // pairs and the ring is at most SetMemProofSetup::N = 2^MAX_ROUNDS
+    // (pinned by a static_assert in set_mem_proof_prover.cpp). Enforce both
+    // the bound and |Ls| == |Rs| at the length prefixes so a malformed
+    // encoding is rejected before any point is decoded or any verification
+    // work is spent on it.
+    static constexpr uint64_t MAX_ROUNDS = 10;
+
     template <typename Stream>
     void Unserialize(Stream& st)
     {
-        st >> phi >> A1 >> A2 >> S1 >> S2 >> S3 >> T1 >> T2 >> tau_x >> mu >> z_alpha >> z_tau >> z_beta >> t >> Ls >> Rs >> a >> b >> omega;
+        st >> phi >> A1 >> A2 >> S1 >> S2 >> S3 >> T1 >> T2 >> tau_x >> mu >> z_alpha >> z_tau >> z_beta >> t;
+        Ls.UnserializeBounded(st, MAX_ROUNDS);
+        Rs.UnserializeBounded(st, MAX_ROUNDS);
+        if (Ls.Size() != Rs.Size()) {
+            throw std::ios_base::failure("SetMemProof: Ls/Rs size mismatch");
+        }
+        st >> a >> b >> omega;
     };
 };
 

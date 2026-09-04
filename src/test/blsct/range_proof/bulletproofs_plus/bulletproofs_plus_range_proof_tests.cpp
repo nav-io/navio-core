@@ -125,4 +125,62 @@ BOOST_AUTO_TEST_CASE(test_de_ser)
     BOOST_CHECK(p == q);
 }
 
+
+BOOST_AUTO_TEST_CASE(test_de_ser_rejects_oversized_or_mismatched_vectors)
+{
+    // Vs is bounded by the maximum number of input values, Ls/Rs by the
+    // maximum number of inner-product rounds, and |Ls| == |Rs|. Each bound is
+    // enforced at the length prefix, before any element is decoded.
+    auto p = GenProof();
+    BOOST_REQUIRE(p.Vs.Size() > 0);
+    const Point g = Point::GetBasePoint();
+
+    {
+        auto q = p;
+        q.Ls.Add(g);
+        DataStream st{};
+        q.Serialize(st);
+        bulletproofs_plus::RangeProof<T> r;
+        BOOST_CHECK_THROW(r.Unserialize(st), std::ios_base::failure);
+    }
+    {
+        auto q = p;
+        q.Ls.Clear();
+        q.Rs.Clear();
+        for (uint64_t i = 0; i <= range_proof::ProofBase<T>::MAX_ROUNDS; ++i) {
+            q.Ls.Add(g);
+            q.Rs.Add(g);
+        }
+        DataStream st{};
+        q.Serialize(st);
+        bulletproofs_plus::RangeProof<T> r;
+        BOOST_CHECK_THROW(r.Unserialize(st), std::ios_base::failure);
+    }
+    {
+        auto q = p;
+        q.Vs.Clear();
+        for (uint64_t i = 0; i <= range_proof::ProofBase<T>::MAX_VS; ++i) q.Vs.Add(g);
+        DataStream st{};
+        q.Serialize(st);
+        bulletproofs_plus::RangeProof<T> r;
+        BOOST_CHECK_THROW(r.Unserialize(st), std::ios_base::failure);
+    }
+    {
+        // Oversized length prefix with nothing behind it. Two traps here:
+        // a count above MAX_SIZE is rejected by ReadCompactSize before this
+        // bound is consulted at all, and an exhausted stream raises the same
+        // exception type -- so a bare BOOST_CHECK_THROW on a huge prefix
+        // passes with or without the bound, for the wrong reason. Use a count
+        // that ReadCompactSize accepts but the protocol maximum does not, and
+        // assert the failure came from the length-prefix check.
+        DataStream st{};
+        ::WriteCompactSize(st, uint64_t{1000});
+        bulletproofs_plus::RangeProof<T> r;
+        BOOST_CHECK_EXCEPTION(r.Unserialize(st), std::ios_base::failure,
+                              [](const std::ios_base::failure& e) {
+                                  return std::string(e.what()).find("exceeds protocol maximum") != std::string::npos;
+                              });
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

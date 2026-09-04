@@ -6,7 +6,10 @@
 #define NAVIO_BLSCT_RANGE_PROOF_PROOF_BASE_H
 
 #include <blsct/arith/elements.h>
+#include <blsct/range_proof/setup.h>
 #include <streams.h>
+
+#include <bit>
 
 namespace range_proof {
 
@@ -39,20 +42,47 @@ struct ProofBase {
         }
     }
 
+    // Protocol maxima, enforced at the length prefix so an oversized or
+    // inconsistent encoding is rejected before any point is decoded:
+    //   - at most max_input_values value commitments,
+    //   - Ls/Rs carry exactly one entry per inner-product round, of which
+    //     there are at most log2(max_input_value_vec_len), and |Ls| == |Rs|.
+    static constexpr uint64_t MAX_VS = range_proof::Setup::max_input_values;
+    static constexpr uint64_t MAX_ROUNDS = std::bit_width(range_proof::Setup::max_input_value_vec_len) - 1;
+
+    template <typename Stream>
+    static void UnserializeLsRs(Stream& s, Points& Ls, Points& Rs)
+    {
+        Ls.UnserializeBounded(s, MAX_ROUNDS);
+        Rs.UnserializeBounded(s, MAX_ROUNDS);
+        if (Ls.Size() != Rs.Size()) {
+            throw std::ios_base::failure("ProofBase: Ls/Rs size mismatch");
+        }
+    }
+
     template <typename Stream>
     void Unserialize(Stream& s)
     {
-        ::Unserialize(s, Vs);
+        Vs.UnserializeBounded(s, MAX_VS);
         if (Vs.Size() > 0) {
-            ::Unserialize(s, Ls);
-            ::Unserialize(s, Rs);
+            UnserializeLsRs(s, Ls, Rs);
         }
     }
 };
 
 template <typename T>
 struct ProofBaseWithoutVs {
-    FORMATTER_METHODS(ProofBase<T>, obj) { READWRITE(obj.Ls, obj.Rs); }
+    template <typename Stream>
+    void Ser(Stream& s, const ProofBase<T>& obj) const
+    {
+        ::Serialize(s, obj.Ls);
+        ::Serialize(s, obj.Rs);
+    }
+    template <typename Stream>
+    void Unser(Stream& s, ProofBase<T>& obj)
+    {
+        ProofBase<T>::UnserializeLsRs(s, obj.Ls, obj.Rs);
+    }
 };
 
 } // namespace range_proof
