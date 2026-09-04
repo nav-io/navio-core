@@ -382,6 +382,15 @@ BASE_SCRIPTS = [
     'blsct_subtractfee_comment.py',
     'bls_message_signing.py',
     'blsct_legacy_rpc_guards.py',
+    'p2pmsg_echo.py',
+    'p2pmsg_integration.py',
+    'p2pmsg_aggregate.py',
+    'p2pmsg_aggregate_e2e.py',
+    'p2pmsg_candidate.py',
+    'p2pmsg_default_aggregate.py',
+    'p2pmsg_identity.py',
+    'p2pmsg_swap_e2e.py',
+    'rfq_maker_match.py',
     # Don't append tests at the end to avoid merge conflicts
     # Put them in a random line within the section that fits their approximate run-time
 ]
@@ -786,7 +795,7 @@ class TestResult():
 def check_script_prefixes():
     """Check that test scripts start with one of the allowed name prefixes."""
 
-    good_prefixes_re = re.compile("^(example|feature|interface|mempool|mining|p2p|rpc|wallet|tool|blsct|bls)_")
+    good_prefixes_re = re.compile("^(example|feature|interface|mempool|mining|p2p|p2pmsg|rfq|rpc|wallet|tool|blsct|bls)_")
     bad_script_names = [script for script in ALL_SCRIPTS if good_prefixes_re.match(script) is None]
 
     if bad_script_names:

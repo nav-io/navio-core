@@ -33,6 +33,8 @@ from test_framework.messages import (
     CBlockHeader,
     MAX_HEADERS_RESULTS,
     msg_addr,
+    msg_p2pmsg,
+    msg_dp2pmsg,
     msg_addrv2,
     msg_block,
     MSG_BLOCK,
@@ -134,6 +136,8 @@ MESSAGEMAP = {
     b"mempool": msg_mempool,
     b"merkleblock": msg_merkleblock,
     b"notfound": msg_notfound,
+    b"p2pmsg": msg_p2pmsg,
+    b"dp2pmsg": msg_dp2pmsg,
     b"ping": msg_ping,
     b"pong": msg_pong,
     b"sendaddrv2": msg_sendaddrv2,
@@ -413,6 +417,8 @@ class P2PInterface(P2PConnection):
 
     def on_addr(self, message): pass
     def on_addrv2(self, message): pass
+    def on_p2pmsg(self, message): pass
+    def on_dp2pmsg(self, message): pass
     def on_block(self, message): pass
     def on_blocktxn(self, message): pass
     def on_cfcheckpt(self, message): pass

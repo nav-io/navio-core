@@ -4,6 +4,8 @@
 
 #include <wallet/context.h>
 
+#include <aggregation/pull.h>
+
 namespace wallet {
 WalletContext::WalletContext() = default;
 WalletContext::~WalletContext() = default;

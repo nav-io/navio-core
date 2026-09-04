@@ -1427,7 +1427,7 @@ jobs:
               --ci --quiet --tmpdirprefix=/tmp/navio_test_runner \
               --combinedlogslen=99999999 \
               --timeout-factor=80 \
-              --exclude mempool_limit
+              --exclude mempool_limit,p2pmsg_candidate,p2pmsg_default_aggregate
           '
 
       - name: Stop container

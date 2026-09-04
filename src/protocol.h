@@ -276,6 +276,15 @@ extern const char* SENDTXRCNCL;
  * that contain specific output hashes.
  */
 extern const char* GETOUTPUTDATA;
+/**
+ * The p2pmsg message carries an encrypted p2p-messaging payload (ECIES-wrapped
+ * over a fresh ephemeral BLS key). The fluff-phase carrier.
+ */
+extern const char* P2PMSG;
+/**
+ * The dp2pmsg message is the Dandelion++ stem-phase variant of p2pmsg.
+ */
+extern const char* DP2PMSG;
 }; // namespace NetMsgType
 
 /* Get a vector of all valid message types (see above) */
@@ -304,6 +313,20 @@ enum ServiceFlags : uint64_t {
 
     // NODE_P2P_V2 means the node supports BIP324 transport
     NODE_P2P_V2 = (1 << 11),
+
+    // NODE_P2PMSG advertises that the node RELAYS the p2pmsg encrypted overlay
+    // (it processes and forwards P2PMSG/DP2PMSG). It is a routing capability
+    // only: it does NOT promise the node serves candidates (that is
+    // -servecandidates, a separate wallet behaviour). Senders use it to avoid
+    // stemming/broadcasting to a non-supporting node, which silently drops the
+    // message without relaying. Because service flags ride ADDR gossip and
+    // getpeerinfo/getnodeaddresses, advertising this makes p2pmsg participation
+    // network-wide visible, not just to direct peers -- see the security
+    // posture in doc/p2p-encrypted-messaging.md. Advertisements are
+    // unauthenticated: a peer may set the bit and not relay (the message is
+    // then lost as it would be with no path) or set it without serving.
+    // Navio-specific; occupies a reserved-experiment bit.
+    NODE_P2PMSG = (1 << 24),
 
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the

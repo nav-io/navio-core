@@ -47,6 +47,16 @@
 #include <node/chainstate.h>
 #include <node/chainstatemanager_args.h>
 #include <node/context.h>
+#include <aggregation/pool.h>
+#include <aggregation/pull.h>
+#include <aggregation/session.h>
+#include <netmessagemaker.h>
+#include <p2pmsg/transport.h>
+#include <p2pmsg/worker_pool.h>
+#include <rfq/intent_store.h>
+#include <rfq/matcher.h>
+#include <rfq/order_cache.h>
+#include <rfq/quote.h>
 #include <node/interface_ui.h>
 #include <node/kernel_notifications.h>
 #include <node/mempool_args.h>
@@ -303,6 +313,48 @@ void Shutdown(NodeContext& node)
 
     // After the threads that potentially access these pointers have been stopped,
     // destruct and reset all to nullptr.
+    // Tear down p2pmsg before connman: the transport's broadcast callbacks
+    // capture the connman pointer. Clear the global hook first so no net path
+    // can reach it, then stop workers, then drop the objects.
+    p2pmsg::SetActiveTransport(nullptr);
+    rfq::SetActiveMatcher(nullptr);
+    rfq::SetActiveOrderCache(nullptr);
+    aggregation::SetActivePool(nullptr);
+    aggregation::SetActiveRequestQueue(nullptr);
+    // Interrupt any in-flight PoW grind first: the puller and candidate-serving
+    // threads (stopped just below) send through the transport, and a grind at
+    // the production difficulty would otherwise block their join for the length
+    // of the grind.
+    if (node.p2pmsg_transport) node.p2pmsg_transport->Interrupt();
+    // Join the puller thread before the transport it sends through goes away.
+    node.agg_puller.reset();
+    // Likewise the wallet's candidate-serving thread: it also sends through
+    // the transport, and the wallet client's stop() runs only after the
+    // teardown below (Stop is idempotent, so that later stop is a no-op).
+    if (aggregation::CandidateServer* server = aggregation::GetActiveCandidateServer()) {
+        server->Stop();
+    }
+    // Order matters: the worker pool's decrypt jobs dispatch to transport
+    // handlers that hold RAW pointers to rfq_matcher / rfq_intents / rfq_orders
+    // / agg_pool. Clearing the SetActive* globals does NOT reach those captured
+    // pointers, and connman->Stop() (above) only stops NEW inbound work -- jobs
+    // already in the ring keep draining until the pool is stopped. So STOP the
+    // workers (join threads, drain the ring) BEFORE freeing any object a handler
+    // references, or an in-flight job calls into freed memory.
+    if (node.p2pmsg_pool) node.p2pmsg_pool->Stop();
+    node.p2pmsg_transport.reset();
+    node.p2pmsg_pool.reset();
+    node.rfq_matcher.reset();
+    node.rfq_intents.reset();
+    if (node.rfq_orders) {
+        UnregisterValidationInterface(node.rfq_orders.get());
+        node.rfq_orders.reset();
+    }
+    if (node.agg_pool) {
+        UnregisterValidationInterface(node.agg_pool.get());
+        node.agg_pool.reset();
+    }
+    node.agg_requests.reset();
     node.peerman.reset();
     node.connman.reset();
     node.banman.reset();
@@ -515,6 +567,15 @@ void SetupServerArgs(ArgsManager& argsman)
 
     argsman.AddArg("-addnode=<ip>", strprintf("Add a node to connect to and attempt to keep the connection open (see the addnode RPC help for more info). This option can be specified multiple times to add multiple nodes; connections are limited to %u at a time and are counted separately from the -maxconnections limit.", MAX_ADDNODE_CONNECTIONS), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-asmap=<file>", strprintf("Specify asn mapping used for bucketing of the peers (default: %s). Relative paths will be prefixed by the net-specific datadir location.", DEFAULT_ASMAP_FILENAME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsg", strprintf("Enable the encrypted p2p messaging subsystem (default: %u)", p2pmsg::DEFAULT_P2PMSG_ENABLE), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-aggregatesends", strprintf("Merge fee-0 cover candidates from the p2pmsg pool into every wallet BLSCT send, hiding the wallet's inputs and outputs among cover traffic at the cost of a higher fee. Sends fall back to plain transactions when no candidates are available. (default: %u)", aggregation::DEFAULT_AGGREGATE_SENDS), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
+    argsman.AddArg("-servecandidates", strprintf("Answer p2pmsg candidate pull requests with fee-0 cover candidates built from loaded BLSCT wallets' coins, each encrypted 1:1 to its requester. Each served candidate proves this node owns one specific on-chain output to that requester, so serving trades some wallet-clustering resistance for the network's aggregation supply and is rate-limited per peer and by a rolling per-window coin budget; disable with -servecandidates=0 (default: %u)", aggregation::DEFAULT_SERVE_CANDIDATES), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
+    argsman.AddArg("-servecandidateinterval=<n>", strprintf("Seconds between built-in candidate serving ticks (default: %d)", aggregation::SERVE_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::WALLET);
+    argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-candidatepullinterval=<n>", strprintf("Seconds between background candidate pull rounds (default: %d)", aggregation::PULL_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-onionworkers=<n>", "Number of worker threads for p2p-messaging heavy crypto (0 = auto, default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsginboxrotation=<secs>", "Opt into periodic rotation of the p2p-messaging inbox prekey every <secs> seconds (bounds linkability and a key-extraction window). 0 = manual only, rotate on demand with the rotatep2pmsginbox RPC (default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgpersistidentity", "Keep a stable p2p-messaging node identity across restarts by storing the identity key in <datadir>/p2pmsg_identity.dat. Default off: the identity is ephemeral per run (nothing at rest). Enabling it trades that for a durable, reachable address (default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bantime=<n>", strprintf("Default duration (in seconds) of manually configured bans (default: %u)", DEFAULT_MISBEHAVING_BANTIME), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bind=<addr>[:<port>][=onion]", strprintf("Bind to given address and always listen on it (default: 0.0.0.0). Use [host]:port notation for IPv6. Append =onion to tag any incoming connections to that address and port as incoming Tor connections (default: 127.0.0.1:%u=onion, testnet: 127.0.0.1:%u=onion, signet: 127.0.0.1:%u=onion, regtest: 127.0.0.1:%u=onion, blsctregtest: 127.0.0.1:%u=onion)", defaultBaseParams->OnionServiceTargetPort(), testnetBaseParams->OnionServiceTargetPort(), signetBaseParams->OnionServiceTargetPort(), regtestBaseParams->OnionServiceTargetPort(), blsctRegtestBaseParams->OnionServiceTargetPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-cjdnsreachable", "If set, then this host is configured for CJDNS (connecting to fc00::/8 addresses would lead us to the CJDNS network, see doc/cjdns.md) (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -1584,6 +1645,371 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                                      node.banman.get(), chainman,
                                      *node.mempool, peerman_opts);
     RegisterValidationInterface(node.peerman.get());
+
+    // p2p encrypted-messaging subsystem (dark until features land; gated).
+    if (args.GetBoolArg("-p2pmsg", p2pmsg::DEFAULT_P2PMSG_ENABLE)) {
+        // Advertise the NODE_P2PMSG relay capability so peers route the overlay
+        // through us (avoids stemming/broadcasting P2PMSG to nodes that would
+        // silently drop it, see forward() below). Note this is a network-wide
+        // signal: it rides ADDR gossip, so enabling -p2pmsg makes participation
+        // visible beyond direct peers -- documented in
+        // doc/p2p-encrypted-messaging.md. The bit promises relay only, not that
+        // we serve candidates (that is the separate -servecandidates budget).
+        nLocalServices = ServiceFlags(nLocalServices | NODE_P2PMSG);
+        p2pmsg::WorkerPool::Options pool_opts;
+        const int64_t workers = args.GetIntArg("-onionworkers", 0);
+        // Clamp to a sane range: 0 keeps the default; an unbounded value would
+        // spawn arbitrarily many threads.
+        if (workers > 0) {
+            pool_opts.num_workers = static_cast<size_t>(std::min<int64_t>(workers, 64));
+        }
+        node.p2pmsg_pool = std::make_unique<p2pmsg::WorkerPool>(pool_opts);
+
+        p2pmsg::Transport::Options tr_opts;
+        // Clamp -p2pmsgpowbits to [1, 32]. Unclamped this is a foot-gun: a
+        // negative value casts to a huge uint32 (infinite Grind on the sending
+        // RPC thread), and a value >= ~60 makes TargetFromBits() ~0 so every
+        // inbound message fails the difficulty check -- which, before the
+        // timestamp/difficulty split, also got every honest relaying peer
+        // Misbehaving-scored. 32 bits is already far above any useful CPU cost.
+        {
+            // Regtest chains don't need production anti-spam PoW: at the 23-bit
+            // default a background serve/pull tick can be mid-grind when the
+            // node shuts down, and the shutdown join then waits on that grind,
+            // which repeatedly tripped the functional tests' 60s node-stop
+            // timeout. Default regtest to a trivial difficulty so grinds are
+            // instant; an explicit -p2pmsgpowbits still overrides on any chain.
+            const bool is_regtest =
+                Params().GetChainType() == ChainType::REGTEST ||
+                Params().GetChainType() == ChainType::BLSCTREGTEST;
+            const int64_t default_bits = is_regtest ? 8 : p2pmsg::DEFAULT_POW_BITS;
+            const int64_t bits = args.GetIntArg("-p2pmsgpowbits", default_bits);
+            tr_opts.pow_bits = static_cast<uint32_t>(std::clamp<int64_t>(bits, 1, 32));
+        }
+        // Manual by default (0): rotate the inbox prekey via the
+        // rotatep2pmsginbox RPC. A positive value opts into periodic rotation.
+        tr_opts.prekey_rotation_secs =
+            std::max<int64_t>(0, args.GetIntArg("-p2pmsginboxrotation", 0));
+
+        CConnman* connman = node.connman.get();
+
+        // Dandelion++ stem mapping. Unlike plain Dandelion (a fresh random
+        // successor per message, which lets an adversary observing many of our
+        // stem messages fan out to different peers learn our stem graph and
+        // trace back), Dandelion++ PINS a single stem successor for the whole
+        // epoch: every stem message we relay in the epoch goes to the same peer,
+        // so an observer cannot distinguish our originated traffic from what we
+        // merely relay. The successor is re-rolled only when the epoch rolls
+        // over or the pinned peer becomes ineligible (disconnect / dropped the
+        // NODE_P2PMSG bit). The epoch phase is offset by a per-node random value
+        // so rotations are not globally synchronized (which would itself leak
+        // timing). Stem cadence is intentionally ~inbox-rotation scale.
+        struct StemGraph {
+            std::mutex mutex;
+            int64_t epoch{-1};
+            NodeId successor{-1};
+        };
+        auto stem_graph = std::make_shared<StemGraph>();
+        const int64_t stem_epoch_secs = 600; // Dandelion++ epoch (~10 min)
+        const int64_t stem_phase = static_cast<int64_t>(GetRand(stem_epoch_secs));
+
+        // Forward an envelope. In the FLUFF phase (stem=false) flood every peer
+        // except `exclude_peer`. In the STEM phase (stem=true) forward to the
+        // epoch's single pinned Dandelion++ successor. If no eligible successor
+        // exists (or it would be the peer we received from), fall back to
+        // fluffing: privacy is preserved because this node is the one fluffing,
+        // and the message still propagates rather than dead-ending.
+        auto forward = [connman, stem_graph, stem_epoch_secs, stem_phase](bool stem, int64_t exclude_peer, const p2pmsg::Envelope& env) {
+            // Never send p2pmsg traffic to block-relay-only connections: their
+            // whole purpose is to carry blocks and nothing else, so pushing
+            // application messages to them both wastes the connection and
+            // fingerprints it as p2pmsg-carrying, weakening its privacy role.
+            // Only route to peers that advertised NODE_P2PMSG: a non-supporting
+            // node silently drops P2PMSG/DP2PMSG without relaying, so a fluff
+            // copy to it is wasted and a stem hop to it is LOST (the message
+            // never fluffs). Advertisements are unauthenticated, so a peer may
+            // set the bit and still not relay -- the message is then simply
+            // lost, exactly as if it had no path, so this is best-effort but
+            // strictly better than routing blind.
+            const auto eligible = [&](const CNode* pnode) {
+                return !pnode->IsBlockOnlyConn() && (pnode->m_their_services.load() & NODE_P2PMSG) != 0;
+            };
+            // Fluff: flood every eligible peer except the origin.
+            const auto fluff = [&]() {
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->GetId() == exclude_peer || !eligible(pnode)) return;
+                    connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSG, env));
+                });
+            };
+            if (!stem) { fluff(); return; }
+
+            // Stem: resolve the Dandelion++ epoch's pinned successor, re-rolling
+            // only when the epoch changes or the pinned peer is no longer
+            // eligible. Then verify the resolved successor is still connected and
+            // eligible at send time.
+            const int64_t epoch = (GetTime() + stem_phase) / stem_epoch_secs;
+            NodeId chosen = -1;
+            {
+                std::lock_guard<std::mutex> lk(stem_graph->mutex);
+                bool pinned_ok = false;
+                if (stem_graph->epoch == epoch && stem_graph->successor != -1) {
+                    connman->ForEachNode([&](CNode* pnode) {
+                        if (pnode->GetId() == stem_graph->successor && eligible(pnode)) pinned_ok = true;
+                    });
+                }
+                if (!pinned_ok) {
+                    std::vector<NodeId> ids;
+                    connman->ForEachNode([&](CNode* pnode) {
+                        if (eligible(pnode)) ids.push_back(pnode->GetId());
+                    });
+                    stem_graph->epoch = epoch;
+                    stem_graph->successor = ids.empty() ? -1 : ids[GetRand(ids.size())];
+                }
+                chosen = stem_graph->successor;
+            }
+            // No stem route, or the route is the very peer we received from
+            // (relaying back would loop): fluff instead -- still private, since
+            // we are the node doing the fluffing.
+            if (chosen == -1 || chosen == exclude_peer) { fluff(); return; }
+            connman->ForEachNode([&](CNode* pnode) {
+                if (pnode->GetId() == chosen) connman->PushMessage(pnode, NetMsg::Make(NetMsgType::DP2PMSG, env));
+            });
+        };
+        auto broadcast = [forward](bool stem, const p2pmsg::Envelope& env) {
+            forward(stem, /*exclude_peer=*/-1, env);
+        };
+        // App-agnostic relay: re-broadcast a received message (fluff = all peers
+        // except origin; stem = one successor). Kind-blind — carries apps this
+        // node may not implement, so future uses propagate with no upgrade.
+        auto relay = [forward](int64_t origin_peer, bool stem, const p2pmsg::Envelope& env) {
+            forward(stem, /*exclude_peer=*/origin_peer, env);
+        };
+
+        node.p2pmsg_transport = std::make_unique<p2pmsg::Transport>(
+            *node.p2pmsg_pool, std::move(broadcast), std::move(relay), tr_opts);
+        node.p2pmsg_pool->Start();
+
+        // Optional persistent node identity. By default the identity key is
+        // ephemeral per run (nothing at rest); with -p2pmsgpersistidentity the
+        // node keeps a stable, reachable address across restarts by storing the
+        // identity scalar in <datadir>/p2pmsg_identity.dat. This trades the
+        // not-on-disk property for reachability, so it is strictly opt-in.
+        if (args.GetBoolArg("-p2pmsgpersistidentity", false)) {
+            const fs::path id_path = args.GetDataDirNet() / "p2pmsg_identity.dat";
+            if (fs::exists(id_path)) {
+                std::vector<unsigned char> raw;
+                {
+                    std::ifstream f(id_path, std::ios::binary);
+                    raw.assign(std::istreambuf_iterator<char>(f), {});
+                }
+                // A short/corrupt file is a hard error, not something to silently
+                // overwrite -- overwriting would discard the very identity this
+                // option exists to preserve.
+                if (raw.size() != blsct::PrivateKey::SIZE) {
+                    return InitError(strprintf(_("p2pmsg identity file %s is invalid (expected %d bytes, got %d). Move it aside to regenerate."),
+                                               fs::PathToString(id_path), blsct::PrivateKey::SIZE, raw.size()));
+                }
+                MclScalar s;
+                s.SetVch(raw);
+                if (s.IsZero()) {
+                    return InitError(strprintf(_("p2pmsg identity file %s holds an invalid (zero) key. Move it aside to regenerate."),
+                                               fs::PathToString(id_path)));
+                }
+                node.p2pmsg_transport->SetIdentity(blsct::PrivateKey(s));
+                LogPrintf("p2pmsg: loaded persistent identity from %s\n", fs::PathToString(id_path));
+            } else {
+                const std::vector<unsigned char> bytes = node.p2pmsg_transport->IdentityPrivBytes();
+                // Create the file, narrow it to 0600 BEFORE the secret bytes are
+                // written (so the key never exists on disk world-readable), then
+                // write and fsync via FileCommit so a crash right after first
+                // start does not lose the identity this option exists to keep.
+                FILE* raw = fsbridge::fopen(id_path, "wb");
+                if (raw == nullptr) {
+                    return InitError(strprintf(_("Failed to create p2pmsg identity file %s"), fs::PathToString(id_path)));
+                }
+                // Any failure after the file exists removes the partial file, so
+                // a transient ENOSPC / chmod / fsync failure regenerates on the
+                // next start instead of leaving a short file that bricks startup.
+                const auto bail = [&](const bilingual_str& err) {
+                    fclose(raw);
+                    std::error_code rm_ec;
+                    fs::remove(id_path, rm_ec);
+                    return err;
+                };
+                std::error_code perm_ec;
+                fs::permissions(id_path, fs::perms::owner_read | fs::perms::owner_write,
+                                fs::perm_options::replace, perm_ec);
+                if (perm_ec) {
+                    return InitError(bail(strprintf(_("Failed to set permissions on p2pmsg identity file %s: %s"),
+                                                    fs::PathToString(id_path), perm_ec.message())));
+                }
+                if (fwrite(bytes.data(), 1, bytes.size(), raw) != bytes.size()) {
+                    return InitError(bail(strprintf(_("Failed to write p2pmsg identity file %s"), fs::PathToString(id_path))));
+                }
+                if (!FileCommit(raw)) { // flush + fsync to the platter
+                    return InitError(bail(strprintf(_("Failed to flush p2pmsg identity file %s to disk"), fs::PathToString(id_path))));
+                }
+                fclose(raw);
+                LogPrintf("p2pmsg: wrote new persistent identity to %s\n", fs::PathToString(id_path));
+            }
+        }
+        p2pmsg::SetActiveTransport(node.p2pmsg_transport.get());
+
+        // Inbox-prekey rotation is MANUAL by default (rotatep2pmsginbox RPC): the
+        // prekey is a contact address, so timer rotation would break senders who
+        // cached it. Only when the operator opts into a positive interval do we
+        // drive periodic rotation off the scheduler; the transport gates on the
+        // elapsed interval, so a cheap frequent tick suffices.
+        if (node.scheduler && tr_opts.prekey_rotation_secs > 0) {
+            p2pmsg::Transport* tr = node.p2pmsg_transport.get();
+            node.scheduler->scheduleEvery([tr] { tr->MaybeRotatePrekey(); },
+                                          std::chrono::seconds{30});
+        }
+
+        // Cover-traffic candidate pool: evicts candidates whose inputs get spent.
+        node.agg_pool = std::make_unique<aggregation::CandidatePool>();
+        RegisterValidationInterface(node.agg_pool.get());
+        aggregation::SetActivePool(node.agg_pool.get());
+
+        // Producer-side queue of candidate pull requests awaiting a wallet reply.
+        node.agg_requests = std::make_unique<aggregation::CandidateRequestQueue>();
+        aggregation::SetActiveRequestQueue(node.agg_requests.get());
+
+        // Maker-local RFQ swap intents.
+        node.rfq_intents = std::make_unique<rfq::IntentStore>();
+
+        // Standing-order cache; evicts on spent inputs like the candidate pool.
+        node.rfq_orders = std::make_unique<rfq::OrderCache>(GetTime<std::chrono::seconds>().count());
+        RegisterValidationInterface(node.rfq_orders.get());
+        rfq::SetActiveOrderCache(node.rfq_orders.get());
+
+        // Taker-side RFQ request/quote registry.
+        node.rfq_matcher = std::make_unique<rfq::MatcherRegistry>();
+        rfq::SetActiveMatcher(node.rfq_matcher.get());
+
+        // Route decrypted inbound payloads to the right subsystem. These run on
+        // a worker thread (after the net thread's PoW/replay gate + decrypt), so
+        // they only do cheap deserialize + in-memory bookkeeping.
+        {
+            aggregation::CandidatePool* pool = node.agg_pool.get();
+            rfq::MatcherRegistry* matcher = node.rfq_matcher.get();
+            rfq::OrderCache* orders = node.rfq_orders.get();
+            rfq::IntentStore* intents = node.rfq_intents.get();
+
+            // A public RFQ request: if we are a maker with a matching local
+            // intent, note the match. (Building + sending the encrypted quote
+            // half needs the wallet and is handled by the wallet-side flow.)
+            node.p2pmsg_transport->RegisterHandler(
+                p2pmsg::PayloadKind::RFQ_REQ,
+                [intents, matcher](const p2pmsg::InboundMessage& m) {
+                    try {
+                        DataStream ss{MakeByteSpan(m.body)};
+                        rfq::RfqRequest req;
+                        ss >> req;
+                        const int64_t now = GetTime<std::chrono::seconds>().count();
+                        if (auto match = intents->TryMatch(req, now)) {
+                            // Queue for the wallet to answer (it builds + signs the
+                            // quote half and replies, off the worker thread).
+                            matcher->AddPendingMatch(req, match->fill, match->sell_cost);
+                            LogPrint(BCLog::NET, "p2pmsg: RFQ_REQ matches local intent %d (fill=%d cost=%d)\n",
+                                     match->intent_id, match->fill, match->sell_cost);
+                        }
+                    } catch (const std::exception&) { /* drop malformed */ }
+                });
+
+            // A cover candidate answering one of OUR pull requests: add to the
+            // pool. Only accepted when it decrypted under a per-round pull
+            // session key — a candidate readable under the inbox or broadcast
+            // key was not solicited by us 1:1, and pooling publicly readable
+            // candidates would let any bus observer subtract the cover halves
+            // back out of a later aggregate (defeating the decoys entirely).
+            node.p2pmsg_transport->RegisterHandler(
+                p2pmsg::PayloadKind::CANDIDATE_TX,
+                [pool](const p2pmsg::InboundMessage& m) {
+                    if (m.recipient != p2pmsg::RecipientKey::SESSION) {
+                        LogPrint(BCLog::NET, "p2pmsg: dropping CANDIDATE_TX not addressed to a pull session key (recipient=%d)\n", (int)m.recipient);
+                        return;
+                    }
+                    try {
+                        DataStream ss{MakeByteSpan(m.body)};
+                        ParamsStream ps{TX_WITH_WITNESS, ss};
+                        CTransactionRef tx;
+                        ps >> tx;
+                        const bool added = pool->AddCandidate(tx);
+                        LogPrint(BCLog::NET, "p2pmsg: CANDIDATE_TX %s %s (peer=%d)\n",
+                                 tx->GetHash().ToString(), added ? "pooled" : "rejected (duplicate input or cap)", m.from_peer);
+                    } catch (const std::exception&) { /* drop malformed */ }
+                });
+
+            // A candidate pull request: queue the requester's reply key for
+            // the serving daemon to answer with a wallet-built candidate.
+            {
+                aggregation::CandidateRequestQueue* requests = node.agg_requests.get();
+                node.p2pmsg_transport->RegisterHandler(
+                    p2pmsg::PayloadKind::AGG_ANN,
+                    [requests](const p2pmsg::InboundMessage& m) {
+                        blsct::PublicKey reply_key;
+                        if (!reply_key.SetVch(m.body)) return; // drop malformed
+                        // m.from_peer is the relaying neighbour (pfrom.GetId()),
+                        // not the origin (Dandelion hides it). It feeds the
+                        // queue's per-neighbour flood cap, which is local DoS
+                        // protection rather than per-requester accounting.
+                        const bool queued = requests->Add(
+                            reply_key, m.from_peer, GetTime<std::chrono::seconds>().count());
+                        LogPrint(BCLog::NET, "p2pmsg: AGG_ANN request from peer=%d %s\n",
+                                 m.from_peer,
+                                 queued ? "queued" : "dropped (per-neighbour cap or duplicate)");
+                    });
+            }
+
+            // A maker quote for one of our open RFQs: record it.
+            node.p2pmsg_transport->RegisterHandler(
+                p2pmsg::PayloadKind::RFQ_QUOTE,
+                [matcher](const p2pmsg::InboundMessage& m) {
+                    try {
+                        DataStream ss{MakeByteSpan(m.body)};
+                        ParamsStream ps{TX_WITH_WITNESS, ss};
+                        rfq::RfqQuote q;
+                        ps >> q;
+                        // Authenticate before caching: an unsigned/forged quote
+                        // must not poison the taker's ranked quote set.
+                        if (!q.VerifySig()) return;
+                        matcher->AddQuote(q);
+                    } catch (const std::exception&) { /* drop malformed */ }
+                });
+
+            // A broadcast standing order: cache it.
+            node.p2pmsg_transport->RegisterHandler(
+                p2pmsg::PayloadKind::ORDER_ANN,
+                [orders](const p2pmsg::InboundMessage& m) {
+                    try {
+                        DataStream ss{MakeByteSpan(m.body)};
+                        ParamsStream ps{TX_WITH_WITNESS, ss};
+                        rfq::RfqQuote q;
+                        ps >> q;
+                        // Authenticate before caching the standing order.
+                        if (!q.VerifySig()) return;
+                        orders->StoreOrder(q, GetTime<std::chrono::seconds>().count());
+                    } catch (const std::exception&) { /* drop malformed */ }
+                });
+        }
+
+        // Background candidate puller: keeps the pool supplied via AGG_ANN
+        // pull rounds on a steady cadence, decoupled from any actual send (so
+        // pull traffic never signals that a send is imminent). Replies arrive
+        // 1:1-encrypted to a per-round key, keeping this node's pool contents
+        // private to it.
+        {
+            const int64_t interval = std::clamp<int64_t>(
+                args.GetIntArg("-candidatepullinterval", aggregation::PULL_INTERVAL_SECONDS), 1, 3600);
+            node.agg_puller = std::make_unique<aggregation::CandidatePuller>(
+                *node.p2pmsg_transport, *node.agg_pool, interval);
+            node.agg_puller->Start();
+        }
+
+        LogPrintf("p2pmsg: enabled (workers=%u, powbits=%u)\n",
+                  node.p2pmsg_pool->NumWorkers(), tr_opts.pow_bits);
+    }
 
     // ********************************************************* Step 8: start indexers
 

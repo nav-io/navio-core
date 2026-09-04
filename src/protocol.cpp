@@ -49,6 +49,8 @@ const char* CFCHECKPT = "cfcheckpt";
 const char* WTXIDRELAY = "wtxidrelay";
 const char* SENDTXRCNCL = "sendtxrcncl";
 const char* GETOUTPUTDATA = "getoutputdata";
+const char* P2PMSG = "p2pmsg";
+const char* DP2PMSG = "dp2pmsg";
 } // namespace NetMsgType
 
 /** All known message types. Keep this in the same order as the list of
@@ -92,6 +94,8 @@ const static std::vector<std::string> g_all_net_message_types{
     NetMsgType::WTXIDRELAY,
     NetMsgType::SENDTXRCNCL,
     NetMsgType::GETOUTPUTDATA,
+    NetMsgType::P2PMSG,
+    NetMsgType::DP2PMSG,
 };
 
 CMessageHeader::CMessageHeader(const MessageStartChars& pchMessageStartIn, const char* pszCommand, unsigned int nMessageSizeIn)
@@ -206,6 +210,7 @@ static std::string serviceFlagToStr(size_t bit)
     case NODE_COMPACT_FILTERS: return "COMPACT_FILTERS";
     case NODE_NETWORK_LIMITED: return "NETWORK_LIMITED";
     case NODE_P2P_V2:          return "P2P_V2";
+    case NODE_P2PMSG:          return "P2PMSG";
     // Not using default, so we get warned when a case is missing
     }
 

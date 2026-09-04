@@ -5,6 +5,8 @@
 
 #include <wallet/load.h>
 
+#include <aggregation/pull.h>
+#include <blsct/wallet/rpc.h>
 #include <common/args.h>
 #include <interfaces/chain.h>
 #include <scheduler.h>
@@ -19,6 +21,7 @@
 
 #include <univalue.h>
 
+#include <algorithm>
 #include <system_error>
 
 namespace wallet {
@@ -149,6 +152,28 @@ void StartWallets(WalletContext& context)
 
     // Schedule periodic tx rebroadcasts
     context.scheduler->scheduleEvery([&context] { MaybeResendWalletTxs(context); }, 1min);
+
+    // Built-in candidate serving (-servecandidates, default on): answer queued
+    // AGG_ANN pull requests with wallet-built cover candidates, so a naviod
+    // with a loaded BLSCT wallet can supply the network's aggregation pools
+    // without running navio-p2pmsg. Runs on its OWN thread, never the node
+    // scheduler's only one: each served candidate grinds Transport::Send
+    // proof-of-work, and the scheduler thread also carries wallet
+    // notifications and index work that must not queue behind
+    // attacker-triggered grinding. Work per tick is bounded
+    // (SERVE_MAX_PER_TICK) and by the rolling serve budget; wallets that
+    // cannot fund a candidate are skipped.
+    if (gArgs.GetBoolArg("-servecandidates", aggregation::DEFAULT_SERVE_CANDIDATES)) {
+        const auto interval = std::clamp<int64_t>(
+            gArgs.GetIntArg("-servecandidateinterval", aggregation::SERVE_INTERVAL_SECONDS), 1, 3600);
+        context.candidate_server = std::make_unique<aggregation::CandidateServer>(
+            [&context] { blsct::ServeCandidateRequests(GetWallets(context)); }, interval);
+        context.candidate_server->Start();
+        // Registered globally so node shutdown can join this thread BEFORE the
+        // p2pmsg transport it sends through is destroyed; the StopWallets join
+        // below is a backstop (Stop is idempotent).
+        aggregation::SetActiveCandidateServer(context.candidate_server.get());
+    }
 }
 
 void FlushWallets(WalletContext& context)
@@ -160,6 +185,14 @@ void FlushWallets(WalletContext& context)
 
 void StopWallets(WalletContext& context)
 {
+    // Join the candidate-serving thread before wallets flush: its tick takes
+    // shared_ptr copies of the loaded wallets and must not race unload.
+    if (context.candidate_server) {
+        aggregation::SetActiveCandidateServer(nullptr);
+        context.candidate_server->Stop();
+        context.candidate_server.reset();
+    }
+
     for (const std::shared_ptr<CWallet>& pwallet : GetWallets(context)) {
         pwallet->Close();
     }

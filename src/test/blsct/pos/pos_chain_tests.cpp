@@ -35,6 +35,7 @@ BOOST_FIXTURE_TEST_CASE(StakedCommitment, TestBLSCTChain100Setup)
 {
     range_proof::GeneratorsFactory<Mcl> gf;
     range_proof::Generators<Arith> gen = gf.GetInstance(TokenId());
+    (void)gen; // constructed for setup side effects; value unused
 
     SeedInsecureRand(SeedRand::ZEROS);
     CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};

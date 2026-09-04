@@ -29,7 +29,15 @@ public:
 
     bool AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
     bool AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false);
-    std::optional<BuiltTransaction> BuildTx();
+    //! `nBLSCTDefaultFee` overrides the per-byte fee rate (nullopt = consensus
+    //! default). `additionalFee` over-funds the fee output so an aggregation
+    //! initiator can cover the combined weight of its half + fee-0 candidates.
+    std::optional<BuiltTransaction> BuildTx(const std::optional<CAmount>& nBLSCTDefaultFee = std::nullopt, const CAmount& additionalFee = 0);
+    //! Build a fee-0 aggregation cover candidate (no fee output/signature) from
+    //! the inputs/outputs already queued. Used by the candidate producer and by
+    //! `sendcandidate`; the result is only valid inside a CombineHalves
+    //! aggregate, never standalone.
+    std::optional<BuiltTransaction> BuildCandidate();
     static std::optional<BuiltTransaction> CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData);
     // Build one transaction that merges up to `maxInputs` of the wallet's
     // smallest spendable outputs into a single output paid to `destination`

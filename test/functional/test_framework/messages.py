@@ -53,6 +53,7 @@ NODE_WITNESS = (1 << 3)
 NODE_COMPACT_FILTERS = (1 << 6)
 NODE_NETWORK_LIMITED = (1 << 10)
 NODE_P2P_V2 = (1 << 11)
+NODE_P2PMSG = (1 << 24)
 
 MSG_TX = 1
 MSG_BLOCK = 2
@@ -1864,6 +1865,36 @@ class msg_addrv2:
 
     def __repr__(self):
         return "msg_addrv2(addrs=%s)" % (repr(self.addrs))
+
+
+class msg_p2pmsg:
+    """Encrypted p2pmsg overlay message (candidate/RFQ). The framework does not
+    interpret its ciphertext; it captures the raw payload so a test can inspect
+    it, and otherwise ignores it so a stock node's default p2pmsg broadcast does
+    not crash a connected test node."""
+    __slots__ = ("payload",)
+    msgtype = b"p2pmsg"
+
+    def __init__(self, payload=b""):
+        self.payload = payload
+
+    def deserialize(self, f):
+        self.payload = f.read()
+
+    def serialize(self):
+        return self.payload
+
+    def __repr__(self):
+        return "msg_p2pmsg(%d bytes)" % len(self.payload)
+
+
+class msg_dp2pmsg(msg_p2pmsg):
+    """Dandelion stem variant of msg_p2pmsg."""
+    __slots__ = ()
+    msgtype = b"dp2pmsg"
+
+    def __repr__(self):
+        return "msg_dp2pmsg(%d bytes)" % len(self.payload)
 
 
 class msg_sendaddrv2:
