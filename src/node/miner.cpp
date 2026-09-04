@@ -364,7 +364,10 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     coinbaseTx.vout[0] = out.out;
 
     if (feeAmount > 0) {
-        auto feeOut = blsct::CreateOutput(feeSplit->first.GetKeys(), feeAmount, "Operator Fee", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true);
+        // Rule A applies to the operator-fee output too: its range proof must use
+        // the same transcript version as the reward output, or a block carrying a
+        // fee fails TestBlockValidity's range-proof check at/above activation.
+        auto feeOut = blsct::CreateOutput(feeSplit->first.GetKeys(), feeAmount, "Operator Fee", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true, reward_transcript_v2);
         txSigs.push_back(blsct::PrivateKey(feeOut.blindingKey).Sign(feeOut.out.GetHash()));
         gammaAcc = gammaAcc + feeOut.gamma;
         coinbaseTx.vout.push_back(feeOut.out);
