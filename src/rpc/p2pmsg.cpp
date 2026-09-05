@@ -6,7 +6,7 @@
 #include <aggregation/pool.h>
 #include <aggregation/pull.h>
 #include <aggregation/session.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
 #include <blsct/wallet/txfactory_global.h>
@@ -500,7 +500,7 @@ static RPCHelpMan requestquote()
             // private half with the transport so inbound RFQ_QUOTE messages
             // addressed to it are decrypted; it is auto-pruned at the request
             // expiry.
-            const blsct::PrivateKey reply_priv(MclScalar::Rand(/*exclude_zero=*/true));
+            const blsct::PrivateKey reply_priv(BlstScalar::Rand(/*exclude_zero=*/true));
             const blsct::PublicKey reply_key = reply_priv.GetPublicKey();
             rfq::RfqRequest r = ParseRequestArgs(request, uuid, reply_key);
             if (!node.rfq_matcher->OpenRequest(r)) throw JSONRPCError(RPC_MISC_ERROR, "uuid collision");

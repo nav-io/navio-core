@@ -5,7 +5,7 @@
 #ifndef NAVIO_BLSCT_WALLET_DELEGATION_H
 #define NAVIO_BLSCT_WALLET_DELEGATION_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <consensus/amount.h>
 
 #include <optional>
@@ -22,7 +22,7 @@ namespace delegation {
 //! principal safe.
 struct DelegationInfo {
     CAmount value{0};
-    MclScalar gamma;
+    BlstScalar gamma;
     std::string rewardAddress;
 };
 
@@ -32,7 +32,7 @@ struct DelegationInfo {
 //! owner section of the blob), so delegations survive a wallet restore and
 //! outputs sharing the same delegation can be identified and consolidated.
 struct DelegationRequest {
-    MclG1Point delegateKey;
+    BlstG1Point delegateKey;
     std::string rewardAddress;
 
     //! Stable identity of a delegation: same delegate and same reward
@@ -55,17 +55,17 @@ bool IsDelegationData(const std::vector<unsigned char>& data);
 //! output's BLSCT nonce — the same secret the owner already uses to recover
 //! the output's amount — so the owner wallet can re-derive the delegation
 //! from the chain alone.
-std::vector<unsigned char> Encrypt(const DelegationInfo& info, const DelegationRequest& request, const MclG1Point& nonce);
+std::vector<unsigned char> Encrypt(const DelegationInfo& info, const DelegationRequest& request, const BlstG1Point& nonce);
 
 //! Delegate side: attempt to decrypt the delegate section with the delegate's
 //! private key. Returns std::nullopt on any mismatch (wrong recipient,
 //! tampered data, unknown version).
-std::optional<DelegationInfo> TryDecrypt(const std::vector<unsigned char>& data, const MclScalar& delegatePrivKey);
+std::optional<DelegationInfo> TryDecrypt(const std::vector<unsigned char>& data, const BlstScalar& delegatePrivKey);
 
 //! Owner side: recover (delegateKey, rewardAddress) from the owner section
 //! using the output's BLSCT nonce. Returns std::nullopt if the payload is
 //! not a delegation or the nonce does not match.
-std::optional<DelegationRequest> RecoverOwnerInfo(const std::vector<unsigned char>& data, const MclG1Point& nonce);
+std::optional<DelegationRequest> RecoverOwnerInfo(const std::vector<unsigned char>& data, const BlstG1Point& nonce);
 
 } // namespace delegation
 } // namespace blsct

@@ -6,7 +6,7 @@
 
 #include <test/util/setup_common.h>
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/double_public_key.h>
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
@@ -16,8 +16,8 @@
 
 BOOST_FIXTURE_TEST_SUITE(keys_tests, BasicTestingSetup)
 
-using Point = MclG1Point;
-using Scalar = MclScalar;
+using Point = BlstG1Point;
+using Scalar = BlstScalar;
 
 BOOST_AUTO_TEST_CASE(blsct_keys)
 {
@@ -117,7 +117,7 @@ BOOST_AUTO_TEST_CASE(blsct_keys)
     // one of those has publicly derivable ownership keys. HasNonIdentityKeys()
     // is what separates the two, and it must reject either half being identity,
     // not just both.
-    const MclG1Point identity;
+    const BlstG1Point identity;
     BOOST_CHECK(identity.IsZero());
 
     BOOST_CHECK(doubleKeyFromPoints.HasNonIdentityKeys());
@@ -182,7 +182,7 @@ BOOST_AUTO_TEST_CASE(blsct_keys)
     // BOOST_CHECK_THROW(blsct::PrivateKey zeroPrivateKey(Scalar(0)), std::runtime_error);
 
     {
-        MclScalar n(123);
+        BlstScalar n(123);
         blsct::PrivateKey pk(n);
         BOOST_CHECK(pk.GetScalar() == n);
     }
@@ -237,7 +237,7 @@ BOOST_AUTO_TEST_CASE(double_public_key_with_bad_input_vector)
     }
     {
         // input vector of invalid shorter size
-        auto g = MclG1Point::GetBasePoint();
+        auto g = BlstG1Point::GetBasePoint();
         auto keys = g.GetVch();
 
         // drop the last element
@@ -248,7 +248,7 @@ BOOST_AUTO_TEST_CASE(double_public_key_with_bad_input_vector)
     }
     {
         // input vector of invalid larger size
-        auto g = MclG1Point::GetBasePoint();
+        auto g = BlstG1Point::GetBasePoint();
         auto keys = g.GetVch();
 
         // append an element
@@ -259,7 +259,7 @@ BOOST_AUTO_TEST_CASE(double_public_key_with_bad_input_vector)
     }
     {
         // input vector of valid size with bad content
-        auto g = MclG1Point::GetBasePoint();
+        auto g = BlstG1Point::GetBasePoint();
         auto keys = g.GetVch();
 
         // alter keys[0] from 151 to 152

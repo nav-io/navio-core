@@ -6,9 +6,9 @@
 #define NAVIO_BLSCT_RANGE_PROOF_BULLETPROOFS_RANGE_PROOF_H
 
 #include <blsct/arith/elements.h>
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <blsct/building_block/generator_deriver.h>
 #include <blsct/range_proof/proof_base.h>
 

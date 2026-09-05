@@ -37,7 +37,7 @@
 #include <string>
 
 static std::mutex g_init_mutex;
-static bulletproofs_plus::RangeProofLogic<Mcl>* g_rpl;
+static bulletproofs_plus::RangeProofLogic<Blst>* g_rpl;
 static bool g_is_little_endian;
 
 static bool is_little_endian()
@@ -49,11 +49,11 @@ static bool is_little_endian()
 
 void init() {
     std::lock_guard<std::mutex> lock(g_init_mutex);
-    Mcl::Init for_side_effect_only;
+    Blst::Init for_side_effect_only;
 
     set_chain(blsct::bech32_hrp::Mainnet);
     g_is_little_endian = is_little_endian();
-    g_rpl = new (std::nothrow) bulletproofs_plus::RangeProofLogic<Mcl>();
+    g_rpl = new (std::nothrow) bulletproofs_plus::RangeProofLogic<Blst>();
 }
 
 enum BlsctChain get_blsct_chain() {
@@ -486,8 +486,8 @@ BlsctAmountsRetVal* recover_amount(
 
         // parse every request once (range proof, nonce, token id)
         struct ParsedReq {
-            bulletproofs_plus::RangeProof<Mcl> range_proof;
-            Mcl::Point nonce;
+            bulletproofs_plus::RangeProof<Blst> range_proof;
+            Blst::Point nonce;
             TokenId token_id;
         };
         std::vector<ParsedReq> parsed;
@@ -506,12 +506,12 @@ BlsctAmountsRetVal* recover_amount(
         // the requests that did not recover under the v2 transcript. Mirrors
         // KeyMan::RecoverOutputs; every recovered amount is commitment-checked.
         auto run = [&](const std::vector<size_t>& idxs, bool transcript_v2) {
-            std::vector<bulletproofs_plus::AmountRecoveryRequest<Mcl>> reqs;
+            std::vector<bulletproofs_plus::AmountRecoveryRequest<Blst>> reqs;
             reqs.reserve(idxs.size());
             for (size_t i : idxs) {
-                bulletproofs_plus::RangeProofWithSeed<Mcl> proof_w_seed(parsed[i].range_proof, parsed[i].token_id);
+                bulletproofs_plus::RangeProofWithSeed<Blst> proof_w_seed(parsed[i].range_proof, parsed[i].token_id);
                 proof_w_seed.transcript_v2 = transcript_v2;
-                reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Mcl>::of(proof_w_seed, parsed[i].nonce, i));
+                reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Blst>::of(proof_w_seed, parsed[i].nonce, i));
             }
             return g_rpl->RecoverAmounts(reqs);
         };
@@ -1717,12 +1717,12 @@ BlsctRetVal* build_range_proof(
             if (v > INT64_MAX) {
                 return err(BLSCT_VALUE_OUTSIDE_THE_RANGE);
             }
-            Mcl::Scalar x(static_cast<int64_t>(v));
+            Blst::Scalar x(static_cast<int64_t>(v));
             vs.Add(x);
         }
 
         // blsct_nonce to nonce
-        Mcl::Point nonce = Mcl::Point::GetBasePoint();
+        Blst::Point nonce = Blst::Point::GetBasePoint();
         auto blsct_nonce_u8 = U8C(blsct_nonce);
         std::vector<uint8_t> ser_point(
             blsct_nonce_u8, blsct_nonce_u8 + POINT_SIZE);
@@ -1763,13 +1763,13 @@ BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs)
 {
     try {
-        auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+        auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Blst>>*>(vp_range_proofs);
 
         auto seeds_for = [&](bool transcript_v2) {
-            std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> seeds;
+            std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> seeds;
             seeds.reserve(range_proofs->size());
             for (const auto& rp : *range_proofs) {
-                bulletproofs_plus::RangeProofWithSeed<Mcl> s(rp);
+                bulletproofs_plus::RangeProofWithSeed<Blst> s(rp);
                 s.transcript_v2 = transcript_v2;
                 seeds.push_back(s);
             }
@@ -1795,12 +1795,12 @@ BlsctBoolRetVal* verify_range_proofs_with_transcript(
     const bool transcript_v2)
 {
     try {
-        auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+        auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Blst>>*>(vp_range_proofs);
 
-        std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> seeds;
+        std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> seeds;
         seeds.reserve(range_proofs->size());
         for (const auto& rp : *range_proofs) {
-            bulletproofs_plus::RangeProofWithSeed<Mcl> s(rp);
+            bulletproofs_plus::RangeProofWithSeed<Blst> s(rp);
             s.transcript_v2 = transcript_v2;
             seeds.push_back(s);
         }
@@ -1816,7 +1816,7 @@ BlsctBoolRetVal* verify_range_proofs_with_transcript(
     BlsctPoint* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
     {                                                                                                            \
         try {                                                                                                    \
-            bulletproofs_plus::RangeProof<Mcl> range_proof;                                                      \
+            bulletproofs_plus::RangeProof<Blst> range_proof;                                                      \
             UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof);                  \
             auto copy = static_cast<BlsctPoint*>(malloc(POINT_SIZE));                                            \
             if (copy == nullptr) return nullptr;                                                                 \
@@ -1838,7 +1838,7 @@ DEFINE_RANGE_PROOF_POINT_GETTER(B)
     BlsctScalar* get_range_proof_##field(const BlsctRangeProof* blsct_range_proof, const size_t range_proof_size) \
     {                                                                                                             \
         try {                                                                                                     \
-            bulletproofs_plus::RangeProof<Mcl> range_proof;                                                       \
+            bulletproofs_plus::RangeProof<Blst> range_proof;                                                       \
             UNSERIALIZE_AND_COPY_WITH_STREAM(blsct_range_proof, range_proof_size, range_proof);                   \
             auto copy = static_cast<BlsctScalar*>(malloc(SCALAR_SIZE));                                           \
             if (copy == nullptr) return nullptr;                                                                  \
@@ -1877,7 +1877,7 @@ BlsctRetVal* deserialize_range_proof(
 
 void* create_range_proof_vec()
 {
-    auto vec = new (std::nothrow) std::vector<bulletproofs_plus::RangeProof<Mcl>>;
+    auto vec = new (std::nothrow) std::vector<bulletproofs_plus::RangeProof<Blst>>;
     HANDLE_MEM_ALLOC_FAILURE(vec);
     return static_cast<void*>(vec);
 }
@@ -1888,11 +1888,11 @@ void add_to_range_proof_vec(
     size_t blsct_range_proof_size)
 {
     try {
-        auto range_proofs = static_cast<std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+        auto range_proofs = static_cast<std::vector<bulletproofs_plus::RangeProof<Blst>>*>(vp_range_proofs);
         if (range_proofs == nullptr || blsct_range_proof == nullptr) return;
         // unserialize range proof; Unserialize throws ios_base::failure on
         // truncated/malformed bytes — must not escape extern "C"
-        bulletproofs_plus::RangeProof<Mcl> range_proof;
+        bulletproofs_plus::RangeProof<Blst> range_proof;
 
         DataStream st{};
         for (size_t i = 0; i < blsct_range_proof_size; ++i) {
@@ -1910,7 +1910,7 @@ void add_to_range_proof_vec(
 void delete_range_proof_vec(const void* vp_range_proofs)
 {
     if (vp_range_proofs == nullptr) return;
-    auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Mcl>>*>(vp_range_proofs);
+    auto range_proofs = static_cast<const std::vector<bulletproofs_plus::RangeProof<Blst>>*>(vp_range_proofs);
     delete range_proofs;
 }
 

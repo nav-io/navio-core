@@ -11,14 +11,14 @@
 //   - a set of FIXED generators (Gi/Hi for range proofs, setup.hs for set
 //     membership) that are identical across every proof on the chain.
 //
-// The production path (mclBnG1_mulVecMT) rebuilds its per-point NAF tables on
+// The production path (BlstUtil::MSM, Pippenger) rebuilds its per-point buckets on
 // every call, re-deriving the fixed generators' tables millions of times over a
 // sync. FixedBaseWindow builds each fixed generator's window table once and
 // reuses it — the classic fixed-base window method.
 //
 // This bench isolates the fixed-base half of the MSM (mn generator points) and,
 // over R proofs sharing those generators, compares:
-//   MulVecMT  - the production path, one mclBnG1_mulVecMT(mn) per proof.
+//   MulVecMT  - the production path, one BlstUtil::MSM(mn) per proof.
 //   Naive     - per-point base*scalar + add through the C-API (fair per-op floor).
 //   Window<w> - FixedBaseWindow (the shared helper also used in verification),
 //               tables built once then reused each round.
@@ -27,16 +27,14 @@
 // construction (consensus determinism) -- a mismatch throws and fails the
 // bench run -- and each table's footprint is logged.
 //
-// FixedBaseWindow is built on navio's MclG1Point wrapper (routing through the
-// initialised C ABI), so every point op pays a C-API call. mcl's header-only
-// WindowMethod<G1> is unusable here: it would instantiate a second, uninitialised
-// copy of mcl's static curve state in this TU. The wrapper's per-op tax means a
-// win here is a lower bound on a properly inlined version.
+// FixedBaseWindow is built on navio's BlstG1Point wrapper, so every point op
+// pays a wrapper call; a win here is a lower bound on a properly inlined
+// version.
 
 #include <bench/bench.h>
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <blsct/building_block/fixed_base_window.h>
 
 #include <tinyformat.h>
@@ -47,8 +45,8 @@
 
 namespace {
 
-using Point = MclG1Point;
-using Scalar = MclScalar;
+using Point = BlstG1Point;
+using Scalar = BlstScalar;
 
 struct FixedBaseFixture {
     size_t n; // number of fixed generator points (== mn of the proof)
@@ -56,39 +54,28 @@ struct FixedBaseFixture {
 
     std::vector<Point> bases;
     std::vector<std::vector<Scalar>> exps;
-    // Flattened underlyings for the mulVecMT path.
-    std::vector<Point::Underlying> base_u;
-    std::vector<std::vector<Scalar::Underlying>> exp_u;
 
     FixedBaseFixture(size_t n_, size_t R_) : n(n_), R(R_)
     {
-        volatile MclInit mcl_init;
+        volatile BlstInit mcl_init;
         (void)mcl_init;
 
         bases.reserve(n);
-        base_u.reserve(n);
         for (size_t i = 0; i < n; ++i) {
             bases.emplace_back(Point::Rand());
-            base_u.push_back(bases.back().GetUnderlying());
         }
         exps.resize(R);
-        exp_u.resize(R);
         for (size_t r = 0; r < R; ++r) {
             exps[r].reserve(n);
-            exp_u[r].reserve(n);
             for (size_t i = 0; i < n; ++i) {
                 exps[r].emplace_back(Scalar::Rand(true));
-                exp_u[r].push_back(exps[r].back().GetUnderlying());
             }
         }
     }
 
     Point MulVecMT(size_t r) const
     {
-        Point::Underlying pv;
-        mclBnG1_mulVecMT(&pv, const_cast<Point::Underlying*>(base_u.data()),
-                         const_cast<Scalar::Underlying*>(exp_u[r].data()), n, 0);
-        return Point(pv);
+        return BlstUtil::MSM(bases.data(), exps[r].data(), n, 0);
     }
 
     Point Naive(size_t r) const

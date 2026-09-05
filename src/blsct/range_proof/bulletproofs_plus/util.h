@@ -6,8 +6,8 @@
 #define NAVIO_BLSCT_RANGE_PROOF_BULLETPROOFS_PLUS_UTIL_H
 
 #include <blsct/arith/elements.h>
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <blsct/building_block/fiat_shamir.h>
 #include <hash.h>
 

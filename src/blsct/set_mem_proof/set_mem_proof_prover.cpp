@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/building_block/fiat_shamir.h>
 #include <blsct/building_block/g_h_gi_hi_zero_verifier.h>
 #include <blsct/building_block/imp_inner_prod_arg.h>
@@ -21,7 +21,7 @@
 
 // SetMemProof::MAX_ROUNDS is the deserialization bound on |Ls| / |Rs|; keep
 // it in lock-step with the setup's maximum ring size.
-static_assert((size_t{1} << SetMemProof<Mcl>::MAX_ROUNDS) == SetMemProofSetup<Mcl>::N,
+static_assert((size_t{1} << SetMemProof<Blst>::MAX_ROUNDS) == SetMemProofSetup<Blst>::N,
               "SetMemProof::MAX_ROUNDS must equal log2(SetMemProofSetup::N)");
 
 template <typename T>
@@ -35,7 +35,7 @@ const typename SetMemProofProver<T>::Scalar& SetMemProofProver<T>::One()
     return *x;
 }
 template
-const typename SetMemProofProver<Mcl>::Scalar& SetMemProofProver<Mcl>::One();
+const typename SetMemProofProver<Blst>::Scalar& SetMemProofProver<Blst>::One();
 
 template <typename T>
 typename T::Scalar SetMemProofProver<T>::ComputeX(
@@ -53,8 +53,8 @@ typename T::Scalar SetMemProofProver<T>::ComputeX(
     return x;
 }
 template
-typename Mcl::Scalar SetMemProofProver<Mcl>::ComputeX(
-    const SetMemProofSetup<Mcl>& setup,
+typename Blst::Scalar SetMemProofProver<Blst>::ComputeX(
+    const SetMemProofSetup<Blst>& setup,
     const Scalar& omega,
     const Scalar& y,
     const Scalar& z,
@@ -79,7 +79,7 @@ HashWriter SetMemProofProver<T>::GenInitialFiatShamir(
     return fiat_shamir;
 }
 template
-HashWriter SetMemProofProver<Mcl>::GenInitialFiatShamir(
+HashWriter SetMemProofProver<Blst>::GenInitialFiatShamir(
     const Points& Ys,
     const Point& A1,
     const Point& A2,
@@ -121,8 +121,8 @@ typename SetMemProofProver<T>::Points SetMemProofProver<T>::ExtendYs(
     return Ys;
 }
 template
-typename SetMemProofProver<Mcl>::Points SetMemProofProver<Mcl>::ExtendYs(
-    const SetMemProofSetup<Mcl>& setup,
+typename SetMemProofProver<Blst>::Points SetMemProofProver<Blst>::ExtendYs(
+    const SetMemProofSetup<Blst>& setup,
     const Points& Ys_src,
     const size_t& new_size
 );
@@ -211,7 +211,7 @@ SetMemProof<T> SetMemProofProver<T>::Prove(
 
     // S2 originally did two independent O(n) naive scalar-mul-and-sum loops.
     // Combine them into a single 2n-element multi-scalar multiplication
-    // (Pippenger via mclBnG1_mulVecMT) which is several times faster.
+    // (Pippenger via BlstUtil::MSM) which is several times faster.
     LazyPoints<T> s2_terms;
     s2_terms.Add(h2, rho);
     s2_terms.Add(Ys, sL);
@@ -318,8 +318,8 @@ retry: // retrying without generating fiat_shamir again to get different hashes
     return proof;
 }
 template
-SetMemProof<Mcl> SetMemProofProver<Mcl>::Prove(
-    const SetMemProofSetup<Mcl>& setup,
+SetMemProof<Blst> SetMemProofProver<Blst>::Prove(
+    const SetMemProofSetup<Blst>& setup,
     const Points& Ys_src,
     const Point& sigma,
     const Scalar& m,
@@ -541,64 +541,12 @@ retry:
     return verifier.Verify(setup.g, setup.h, Ys, setup.hs.To(n));
 }
 template
-bool SetMemProofProver<Mcl>::Verify(
-    const SetMemProofSetup<Mcl>& setup,
-    const Points& Ys_src,
-    const Scalar& eta_fiat_shamir,
-    const blsct::Message& eta_phi,
-    const SetMemProof<Mcl>& proof,
-    const bool transcript_v2
-);
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-template
-const typename SetMemProofProver<Blst>::Scalar& SetMemProofProver<Blst>::One();
-template
-typename Blst::Scalar SetMemProofProver<Blst>::ComputeX(
-    const SetMemProofSetup<Blst>& setup,
-    const Scalar& omega,
-    const Scalar& y,
-    const Scalar& z,
-    const Point& T1,
-    const Point& T2
-);
-template
-HashWriter SetMemProofProver<Blst>::GenInitialFiatShamir(
-    const Points& Ys,
-    const Point& A1,
-    const Point& A2,
-    const Point& S1,
-    const Point& S2,
-    const Point& S3,
-    const Point& phi,
-    const Scalar& eta
-);
-template
-typename SetMemProofProver<Blst>::Points SetMemProofProver<Blst>::ExtendYs(
-    const SetMemProofSetup<Blst>& setup,
-    const Points& Ys_src,
-    const size_t& new_size
-);
-template
-SetMemProof<Blst> SetMemProofProver<Blst>::Prove(
-    const SetMemProofSetup<Blst>& setup,
-    const Points& Ys_src,
-    const Point& sigma,
-    const Scalar& m,
-    const Scalar& f,
-    const Scalar& eta_fiat_shamir,
-    const blsct::Message& eta_phi
-);
-template
 bool SetMemProofProver<Blst>::Verify(
     const SetMemProofSetup<Blst>& setup,
     const Points& Ys_src,
     const Scalar& eta_fiat_shamir,
     const blsct::Message& eta_phi,
-    const SetMemProof<Blst>& proof
+    const SetMemProof<Blst>& proof,
+    const bool transcript_v2
 );
-#endif // NAVIO_BLSCT_ARITH_BLST
+

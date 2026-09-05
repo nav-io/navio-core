@@ -110,28 +110,20 @@ BlstG1Point BlstUtil::MSM(const BlstG1Point* pts, const BlstScalar* scalars, siz
     return ret;
 }
 
-// Defined here rather than in blst_g1point.cpp: the batch subgroup check is
-// an MSM-powered utility, and keeping it with MSM avoids the include cycle
-// blst_g1point -> blst_util -> blst_g1point.
+// Defined here rather than in blst_g1point.cpp to keep the MSM-adjacent
+// utilities together (see the include-cycle note in blst_util.h).
+//
+// Every point is checked individually with blst_p1_in_g1 (an endomorphism
+// test, ~40 µs), NOT via a random linear combination: G1's cofactor has 3 as
+// its smallest prime factor, so a single random combination misses a point
+// with an order-3 component with probability 1/3 — and then whether a node
+// accepts it becomes a coin toss, which is not acceptable for consensus.
+// Per-point checks are deterministic and, with blst, cheap enough.
 bool BlstG1Point::BatchCheckSubgroup(std::span<const BlstG1Point> pts)
 {
-    if (pts.empty()) return true;
-    if (pts.size() == 1) {
-        if (pts[0].IsZero()) return true;
-        return blst_p1_in_g1(&pts[0].m_point);
-    }
-    std::vector<BlstG1Point> bases;
-    std::vector<BlstScalar> exps;
-    bases.reserve(pts.size());
-    exps.reserve(pts.size());
     for (const auto& p : pts) {
         if (p.IsZero()) continue;
-        bases.push_back(p);
-        exps.push_back(BlstScalar::Rand(false));
+        if (!blst_p1_in_g1(&p.m_point)) return false;
     }
-    if (bases.empty()) return true;
-    BlstG1Point combined = BlstUtil::MSM(bases.data(), exps.data(), bases.size(), /*threads=*/1);
-    if (combined.IsZero()) return true;
-    return blst_p1_in_g1(&combined.m_point);
+    return true;
 }
-

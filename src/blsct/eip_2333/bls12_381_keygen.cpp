@@ -50,7 +50,7 @@ std::array<uint8_t,L> BLS12_381_KeyGen::HKDF_Expand(const std::array<uint8_t,BLS
 template std::array<uint8_t,8160ul> BLS12_381_KeyGen::HKDF_Expand<8160ul>(const std::array<uint8_t,BLS12_381_KeyGen::DigestSize>& PRK, const std::vector<uint8_t>& info);
 template std::array<uint8_t,48ul> BLS12_381_KeyGen::HKDF_Expand<48ul>(const std::array<uint8_t,BLS12_381_KeyGen::DigestSize>& PRK, const std::vector<uint8_t>& info);
 
-std::vector<uint8_t> BLS12_381_KeyGen::I2OSP(const MclScalar& x, const size_t& xLen)
+std::vector<uint8_t> BLS12_381_KeyGen::I2OSP(const BlstScalar& x, const size_t& xLen)
 {
     if (xLen == 0) {
         throw std::runtime_error(std::string(__func__) + ": Output size cannot be zero");
@@ -69,10 +69,10 @@ std::vector<uint8_t> BLS12_381_KeyGen::I2OSP(const MclScalar& x, const size_t& x
     }
 }
 
-MclScalar BLS12_381_KeyGen::OS2IP(const std::array<uint8_t,48ul>& X)
+BlstScalar BLS12_381_KeyGen::OS2IP(const std::array<uint8_t,48ul>& X)
 {
     std::vector<uint8_t> vec(X.cbegin(), X.cend());
-    MclScalar s(vec);
+    BlstScalar s(vec);
     return s;
 }
 
@@ -95,16 +95,16 @@ BLS12_381_KeyGen::LamportChunks BLS12_381_KeyGen::bytes_split(const std::array<u
     return ret;
 }
 
-MclScalar BLS12_381_KeyGen::HKDF_mod_r(const std::vector<uint8_t>& IKM)
+BlstScalar BLS12_381_KeyGen::HKDF_mod_r(const std::vector<uint8_t>& IKM)
 {
     const auto L = 48;  // `ceil((3 * ceil(log2(r))) / 16)`, where `r` is the order of the BLS 12-381 curve
     const std::string salt_str = "BLS-SIG-KEYGEN-SALT-";
-    const MclScalar zero(0);
+    const BlstScalar zero(0);
 
     std::vector<uint8_t> salt(salt_str.cbegin(), salt_str.cend());
     CSHA256 sha256;
     std::array<uint8_t, DigestSize> hash;
-    MclScalar SK;
+    BlstScalar SK;
 
     while (true) {
         sha256.Write(&salt[0], salt.size());
@@ -139,7 +139,7 @@ BLS12_381_KeyGen::IKM_to_lamport_SK(const std::vector<uint8_t>& IKM, const std::
 }
 
 std::array<uint8_t,BLS12_381_KeyGen::DigestSize>
-BLS12_381_KeyGen::parent_SK_to_lamport_PK(const MclScalar& parent_SK, const uint32_t& index)
+BLS12_381_KeyGen::parent_SK_to_lamport_PK(const BlstScalar& parent_SK, const uint32_t& index)
 {
     auto salt = I2OSP(index, 4);
     auto IKM = I2OSP(parent_SK, 32);
@@ -167,7 +167,7 @@ BLS12_381_KeyGen::parent_SK_to_lamport_PK(const MclScalar& parent_SK, const uint
     return hash;
 }
 
-MclScalar BLS12_381_KeyGen::derive_master_SK(const std::vector<uint8_t>& seed)
+BlstScalar BLS12_381_KeyGen::derive_master_SK(const std::vector<uint8_t>& seed)
 {
     if (seed.size() < 32) {
         throw std::runtime_error(std::string(__func__) + ": Seed must be an 256-bit octet string or larger");
@@ -176,14 +176,14 @@ MclScalar BLS12_381_KeyGen::derive_master_SK(const std::vector<uint8_t>& seed)
     return SK;
 }
 
-MclScalar BLS12_381_KeyGen::derive_child_SK(const MclScalar& parent_SK, const uint32_t& index)
+BlstScalar BLS12_381_KeyGen::derive_child_SK(const BlstScalar& parent_SK, const uint32_t& index)
 {
     auto comp_PK = parent_SK_to_lamport_PK(parent_SK, index);
     auto SK = HKDF_mod_r(std::vector<uint8_t>(comp_PK.cbegin(), comp_PK.cend()));
     return SK;
 }
 
-MclScalar BLS12_381_KeyGen::derive_child_SK_hash(const MclScalar& parent_SK, const uint256& hash)
+BlstScalar BLS12_381_KeyGen::derive_child_SK_hash(const BlstScalar& parent_SK, const uint256& hash)
 {
     auto ret = parent_SK;
     for (auto i = 0; i < 8; i++) {

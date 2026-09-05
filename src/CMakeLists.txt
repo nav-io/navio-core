@@ -28,7 +28,6 @@ include(../cmake/minisketch.cmake)
 add_subdirectory(univalue)
 include(../cmake/secp256k1.cmake)
 add_secp256k1(secp256k1)
-include(../cmake/bls.cmake)
 include(../cmake/blst.cmake)
 
 # Set top-level target output locations.
@@ -66,8 +65,9 @@ add_subdirectory(util)
 # blsct sources shared across multiple libraries
 set(BLSCT_SOURCES
   blsct/arith/elements.cpp
-  blsct/arith/mcl/mcl_g1point.cpp
-  blsct/arith/mcl/mcl_scalar.cpp
+  blsct/arith/blst/blst_g1point.cpp
+  blsct/arith/blst/blst_scalar.cpp
+  blsct/arith/blst/blst_util.cpp
   blsct/bech32_mod.cpp
   blsct/building_block/g_h_gi_hi_zero_verifier.cpp
   blsct/building_block/generator_deriver.cpp
@@ -131,15 +131,6 @@ set(BLSCT_WALLET_SOURCES
   blsct/wallet/verification.cpp
 )
 
-if(WITH_BLST)
-  # Evaluation-only blst arith backend (cmake/blst.cmake).
-  list(APPEND BLSCT_SOURCES
-    blsct/arith/blst/blst_g1point.cpp
-    blsct/arith/blst/blst_scalar.cpp
-    blsct/arith/blst/blst_util.cpp
-  )
-endif()
-
 # Skip all node/wallet/consensus/common libs when only the standalone libblsct
 # is being built — they all reference Boost::headers which we don't pull in
 # under BUILD_LIBBLSCT_ONLY (see top-level CMakeLists.txt boost gate).
@@ -172,7 +163,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       univalue
       Boost::headers
     PUBLIC
-      bls_interface
+      blst_interface
   )
 
   add_library(navio_blsct_wallet STATIC EXCLUDE_FROM_ALL
@@ -193,7 +184,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       Boost::headers
       navio_blsct_core
     PUBLIC
-      bls_interface
+      blst_interface
   )
 
   add_library(navio_consensus STATIC EXCLUDE_FROM_ALL
@@ -217,7 +208,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       secp256k1
       navio_blsct_core
     PUBLIC
-      bls_interface
+      blst_interface
   )
 
   if(WITH_ZMQ)
@@ -288,7 +279,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       $<TARGET_NAME_IF_EXISTS:USDT::headers>
       $<$<PLATFORM_ID:Windows>:ws2_32>
     PUBLIC
-      bls_interface
+      blst_interface
   )
 
   include(InstallBinaryComponent)
@@ -444,7 +435,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       $<TARGET_NAME_IF_EXISTS:libevent::pthreads>
       $<TARGET_NAME_IF_EXISTS:USDT::headers>
     PUBLIC
-      bls_interface
+      blst_interface
   )
 
   # blsct wallet RPCs (blsct/wallet/rpc.cpp) call into aggregation/rfq/p2pmsg
@@ -512,7 +503,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       navio_consensus
       navio_util
       navio_crypto
-      bls_interface
+      blst_interface
       # libevent::core via INTERFACE chain on libevent::extra
       libevent::extra
     )
@@ -541,7 +532,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       navio_common
       navio_util
       univalue
-      bls_interface
+      blst_interface
     )
     install_binary_component(navio-tx HAS_MANPAGE)
   endif()
@@ -554,7 +545,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       core_interface
       navio_common
       navio_util
-      bls_interface
+      blst_interface
     )
     install_binary_component(navio-util HAS_MANPAGE)
   endif()
@@ -570,7 +561,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
         PRIVATE
           core_interface
           naviokernel
-          bls_interface
+          blst_interface
       )
       install_binary_component(navio-chainstate INTERNAL)
     endif()
@@ -607,8 +598,9 @@ if(BUILD_LIBBLSCT_ONLY)
     util/time.cpp
     # BLSCT_EXTERNAL_CPP
     blsct/arith/elements.cpp
-    blsct/arith/mcl/mcl_g1point.cpp
-    blsct/arith/mcl/mcl_scalar.cpp
+    blsct/arith/blst/blst_g1point.cpp
+    blsct/arith/blst/blst_scalar.cpp
+    blsct/arith/blst/blst_util.cpp
     blsct/bech32_mod.cpp
     blsct/building_block/g_h_gi_hi_zero_verifier.cpp
     blsct/building_block/generator_deriver.cpp
@@ -649,6 +641,11 @@ if(BUILD_LIBBLSCT_ONLY)
     blsct/wallet/unsigned_transaction.cpp
   )
   target_compile_definitions(blsct PRIVATE LIBBLSCT)
+  if(WIN32)
+    # BlstScalar::Rand draws OS entropy from BCryptGenRandom in the
+    # standalone library (random.cpp is not part of libblsct.a).
+    target_link_libraries(blsct PRIVATE bcrypt)
+  endif()
 
   # Conditional SIMD SHA-256 variants. Mirrors src/crypto/CMakeLists.txt and
   # autotools libblsct_a_CXXFLAGS / libblsct_a_CPPFLAGS gating (src/Makefile.am
@@ -688,7 +685,7 @@ if(BUILD_LIBBLSCT_ONLY)
       core_interface
       univalue
       secp256k1
-      bls_interface
+      blst_interface
   )
   set_target_properties(blsct PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()

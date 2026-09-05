@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <netaddress.h>
 #include <netbase.h>
 #include <test/fuzz/fuzz.h>
@@ -81,7 +81,7 @@ static const TypeTestOneInput* g_test_one_input{nullptr};
 
 void initialize()
 {
-    static volatile MclInit for_side_effect_only;
+    static volatile BlstInit for_side_effect_only;
 
     // Terminate immediately if a fuzzing harness ever tries to create a TCP socket.
     CreateSock = [](const CService&) -> std::unique_ptr<Sock> { std::terminate(); };

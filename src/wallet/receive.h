@@ -86,9 +86,9 @@ std::set<std::set<CTxDestination>> GetAddressGroupings(const CWallet& wallet, co
 struct StakedCommitmentInfo {
     Txid hashTx;
     size_t nout;
-    MclG1Point commitment;
-    MclScalar value;
-    MclScalar gamma;
+    BlstG1Point commitment;
+    BlstScalar value;
+    BlstScalar gamma;
 };
 
 std::vector<StakedCommitmentInfo>

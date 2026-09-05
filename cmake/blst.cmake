@@ -2,56 +2,93 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-# Optional supranational/blst backend for the BLSCT arithmetic layer
-# (evaluation of the mcl -> blst migration, see doc/blsct-blst-evaluation.md).
+# Build the vendored supranational/blst (src/blst, v0.3.17) that provides the
+# BLS12-381 arithmetic behind BLSCT. blst is one C translation unit plus one
+# assembly file with pre-generated x86_64 / ARM64 code for every ABI
+# (build/assembly.S picks the right flavour from the preprocessor), so it is
+# compiled directly here — no sub-make, no network, no in-source objects.
 #
-# OFF by default: nothing in the default build changes. With WITH_BLST=ON the
-# pinned blst release is fetched at configure time, built with its own
-# build.sh (C + assembly, no external deps), and exposed as `blst_interface`.
-# The blsct libraries then also compile the `Blst` arith backend and the
-# gated `template ... <Blst>` instantiations, and bench_navio gains the
-# BLSCT_BlstVsMcl_* benchmarks.
+# Architecture handling mirrors upstream build.sh:
+#   x86_64 / aarch64  -> assembly. BLST_PORTABLE (default ON on x86_64)
+#                        additionally compiles the non-ADX x86_64 paths next
+#                        to the ADX ones and selects at runtime via CPUID
+#                        (-D__BLST_PORTABLE__); required for binaries that are
+#                        distributed. OFF builds only the non-ADX path, which
+#                        is what build.sh does on a host without ADX.
+#   everything else   -> blst's portable C implementation (-D__BLST_NO_ASM__,
+#                        32-bit limbs). There is no C fallback on the two
+#                        64-bit assembly targets (vect.h), so this is not an
+#                        option there.
 
-option(WITH_BLST "Build the supranational/blst BLSCT arith backend + comparison benchmarks" OFF)
-set(BLST_GIT_TAG "v0.3.17" CACHE STRING "supranational/blst tag to fetch when WITH_BLST=ON")
+set(BLST_SRC_DIR ${PROJECT_SOURCE_DIR}/src/blst)
 
-if(WITH_BLST)
-  if(MSVC)
-    message(FATAL_ERROR "WITH_BLST is not wired for MSVC builds (blst ships build.bat; not integrated)")
-  endif()
-
-  include(FetchContent)
-  FetchContent_Declare(blst_src
-    GIT_REPOSITORY https://github.com/supranational/blst.git
-    GIT_TAG        ${BLST_GIT_TAG}
-    GIT_SHALLOW    TRUE
-  )
-  FetchContent_GetProperties(blst_src)
-  if(NOT blst_src_POPULATED)
-    FetchContent_Populate(blst_src)
-  endif()
-
-  set(BLST_LIB_PATH ${blst_src_BINARY_DIR}/libblst.a)
-  # blst's build.sh honours CC / CFLAGS from the environment. It drops the
-  # archive in the working directory, so run it from the binary dir.
-  add_custom_command(
-    OUTPUT ${BLST_LIB_PATH}
-    COMMAND ${CMAKE_COMMAND} -E env "CC=${CMAKE_C_COMPILER}" sh ${blst_src_SOURCE_DIR}/build.sh
-    WORKING_DIRECTORY ${blst_src_BINARY_DIR}
-    DEPENDS ${blst_src_SOURCE_DIR}/build.sh
-    COMMENT "Building supranational/blst ${BLST_GIT_TAG}"
-    VERBATIM
-  )
-  add_custom_target(blst_build DEPENDS ${BLST_LIB_PATH})
-
-  add_library(blst STATIC IMPORTED GLOBAL)
-  set_target_properties(blst PROPERTIES IMPORTED_LOCATION ${BLST_LIB_PATH})
-  add_dependencies(blst blst_build)
-
-  add_library(blst_interface INTERFACE)
-  target_include_directories(blst_interface INTERFACE ${blst_src_SOURCE_DIR}/bindings)
-  target_compile_definitions(blst_interface INTERFACE NAVIO_BLSCT_ARITH_BLST=1)
-  target_link_libraries(blst_interface INTERFACE blst)
-  # Every bls consumer gets the blst include path + NAVIO_BLSCT_ARITH_BLST.
-  target_link_libraries(bls_interface INTERFACE blst_interface)
+set(_blst_is_x86_64 FALSE)
+set(_blst_is_arm64 FALSE)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+  set(_blst_is_x86_64 TRUE)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+  set(_blst_is_arm64 TRUE)
 endif()
+if(_blst_is_x86_64 OR _blst_is_arm64)
+  set(_blst_use_asm TRUE)
+else()
+  set(_blst_use_asm FALSE)
+endif()
+
+option(BLST_PORTABLE "blst: build ADX and non-ADX x86_64 code paths with runtime dispatch" ${_blst_is_x86_64})
+
+if(NOT _blst_use_asm)
+  add_library(blst STATIC ${BLST_SRC_DIR}/src/server.c)
+  target_compile_definitions(blst PRIVATE __BLST_NO_ASM__)
+elseif(MSVC)
+  # Upstream build.bat's static library: server.c plus the MASM / armasm64
+  # translations in build/win64. dll.c (DllMain + local memcpy/memset) is
+  # only for the DLL build and must not go into a static library.
+  if(_blst_is_arm64)
+    enable_language(ASM_MARMASM)
+    file(GLOB _blst_asm ${BLST_SRC_DIR}/build/win64/*-armv8.asm)
+  else()
+    enable_language(ASM_MASM)
+    file(GLOB _blst_asm ${BLST_SRC_DIR}/build/win64/*-x86_64.asm)
+  endif()
+  add_library(blst STATIC ${BLST_SRC_DIR}/src/server.c ${_blst_asm})
+else()
+  # depends cross toolchains (e.g. darwin: "env -u ... clang --target=...")
+  # hand CMake a multi-token CC, which it splits into CMAKE_C_COMPILER plus
+  # CMAKE_C_COMPILER_ARG1. CMake derives the ASM compiler from the C one but
+  # drops ARG1, so the assembler would be invoked as bare `/bin/env`; carry
+  # the argument tail over before the language is enabled.
+  if(DEFINED CMAKE_C_COMPILER_ARG1 AND NOT DEFINED CMAKE_ASM_COMPILER_ARG1)
+    set(CMAKE_ASM_COMPILER_ARG1 "${CMAKE_C_COMPILER_ARG1}")
+  endif()
+  enable_language(ASM)
+  add_library(blst STATIC ${BLST_SRC_DIR}/src/server.c ${BLST_SRC_DIR}/build/assembly.S)
+  # Mirrors build.sh: -O2 -fno-builtin -fPIC; -mno-avx avoids costly AVX/SSE
+  # transitions around the SSE2 assembly. -O2 is deliberate (it overrides the
+  # configuration's -O3): see the performance note in doc/blsct-blst-evaluation.md.
+  target_compile_options(blst PRIVATE -O2 -fno-builtin)
+  if(_blst_is_x86_64)
+    target_compile_options(blst PRIVATE -mno-avx)
+  endif()
+endif()
+
+if(_blst_use_asm AND _blst_is_x86_64 AND BLST_PORTABLE)
+  target_compile_definitions(blst PRIVATE __BLST_PORTABLE__)
+endif()
+
+target_include_directories(blst PUBLIC ${BLST_SRC_DIR}/bindings)
+# The archive output directory is set by src/CMakeLists.txt after this file
+# is included and is captured at target creation, so pin it explicitly:
+# ci's libblsct symbol check reads build/lib/libblst.a.
+# Third-party code: keep it out of the compile database so clang-tidy / iwyu
+# do not analyse it (they would try to parse the assembly translation unit).
+set_target_properties(blst PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+  ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib
+  EXPORT_COMPILE_COMMANDS OFF
+)
+
+# Interface target for consumers.
+add_library(blst_interface INTERFACE)
+target_include_directories(blst_interface INTERFACE ${BLST_SRC_DIR}/bindings)
+target_link_libraries(blst_interface INTERFACE blst)

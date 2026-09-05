@@ -1,5 +1,5 @@
 #include <blsct/building_block/g_h_gi_hi_zero_verifier.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 
 template <typename T>
 using Scalar = typename G_H_Gi_Hi_ZeroVerifier<T>::Scalar;
@@ -16,7 +16,7 @@ void G_H_Gi_Hi_ZeroVerifier<T>::AddPoint(const LazyPoint<T>& p)
     m_points.Add(p);
 }
 template
-void G_H_Gi_Hi_ZeroVerifier<Mcl>::AddPoint(const LazyPoint<Mcl>& p);
+void G_H_Gi_Hi_ZeroVerifier<Blst>::AddPoint(const LazyPoint<Blst>& p);
 
 template <typename T>
 void G_H_Gi_Hi_ZeroVerifier<T>::AddPositiveG(const Scalar& exp)
@@ -24,7 +24,7 @@ void G_H_Gi_Hi_ZeroVerifier<T>::AddPositiveG(const Scalar& exp)
     m_g_pos_exp = m_g_pos_exp + exp;
 }
 template
-void G_H_Gi_Hi_ZeroVerifier<Mcl>::AddPositiveG(const Scalar& exp);
+void G_H_Gi_Hi_ZeroVerifier<Blst>::AddPositiveG(const Scalar& exp);
 
 template <typename T>
 void G_H_Gi_Hi_ZeroVerifier<T>::AddPositiveH(const Scalar& exp)
@@ -32,7 +32,7 @@ void G_H_Gi_Hi_ZeroVerifier<T>::AddPositiveH(const Scalar& exp)
     m_h_pos_exp = m_h_pos_exp + exp;
 }
 template
-void G_H_Gi_Hi_ZeroVerifier<Mcl>::AddPositiveH(const Scalar& exp);
+void G_H_Gi_Hi_ZeroVerifier<Blst>::AddPositiveH(const Scalar& exp);
 
 template <typename T>
 void G_H_Gi_Hi_ZeroVerifier<T>::AddNegativeG(const Scalar& exp)
@@ -40,7 +40,7 @@ void G_H_Gi_Hi_ZeroVerifier<T>::AddNegativeG(const Scalar& exp)
     m_g_neg_exp = m_g_neg_exp + exp;
 }
 template
-void G_H_Gi_Hi_ZeroVerifier<Mcl>::AddNegativeG(const Scalar& exp);
+void G_H_Gi_Hi_ZeroVerifier<Blst>::AddNegativeG(const Scalar& exp);
 
 template <typename T>
 void G_H_Gi_Hi_ZeroVerifier<T>::AddNegativeH(const Scalar& exp)
@@ -48,7 +48,7 @@ void G_H_Gi_Hi_ZeroVerifier<T>::AddNegativeH(const Scalar& exp)
     m_h_neg_exp = m_h_neg_exp + exp;
 }
 template
-void G_H_Gi_Hi_ZeroVerifier<Mcl>::AddNegativeH(const Scalar& exp);
+void G_H_Gi_Hi_ZeroVerifier<Blst>::AddNegativeH(const Scalar& exp);
 
 template <typename T>
 void G_H_Gi_Hi_ZeroVerifier<T>::SetGiExp(const size_t& i, const Scalar& s)
@@ -56,7 +56,7 @@ void G_H_Gi_Hi_ZeroVerifier<T>::SetGiExp(const size_t& i, const Scalar& s)
     m_gi_exps[i] = s;
 }
 template
-void G_H_Gi_Hi_ZeroVerifier<Mcl>::SetGiExp(const size_t& i, const Scalar& s);
+void G_H_Gi_Hi_ZeroVerifier<Blst>::SetGiExp(const size_t& i, const Scalar& s);
 
 template <typename T>
 void G_H_Gi_Hi_ZeroVerifier<T>::SetHiExp(const size_t& i, const Scalar& s)
@@ -64,7 +64,7 @@ void G_H_Gi_Hi_ZeroVerifier<T>::SetHiExp(const size_t& i, const Scalar& s)
     m_hi_exps[i] = s;
 }
 template
-void G_H_Gi_Hi_ZeroVerifier<Mcl>::SetHiExp(const size_t& i, const Scalar& s);
+void G_H_Gi_Hi_ZeroVerifier<Blst>::SetHiExp(const size_t& i, const Scalar& s);
 
 template <typename T>
 bool G_H_Gi_Hi_ZeroVerifier<T>::Verify(const Point& g, const Point&h, const Points& Gi, const Points& Hi)
@@ -81,27 +81,4 @@ bool G_H_Gi_Hi_ZeroVerifier<T>::Verify(const Point& g, const Point&h, const Poin
     return points.Sum().IsZero();
 }
 template
-bool G_H_Gi_Hi_ZeroVerifier<Mcl>::Verify(const Point& g, const Point&h, const Points& Gi, const Points& Hi);
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-template
-void G_H_Gi_Hi_ZeroVerifier<Blst>::AddPoint(const LazyPoint<Blst>& p);
-template
-void G_H_Gi_Hi_ZeroVerifier<Blst>::AddPositiveG(const Scalar& exp);
-template
-void G_H_Gi_Hi_ZeroVerifier<Blst>::AddPositiveH(const Scalar& exp);
-template
-void G_H_Gi_Hi_ZeroVerifier<Blst>::AddNegativeG(const Scalar& exp);
-template
-void G_H_Gi_Hi_ZeroVerifier<Blst>::AddNegativeH(const Scalar& exp);
-template
-void G_H_Gi_Hi_ZeroVerifier<Blst>::SetGiExp(const size_t& i, const Scalar& s);
-template
-void G_H_Gi_Hi_ZeroVerifier<Blst>::SetHiExp(const size_t& i, const Scalar& s);
-template
 bool G_H_Gi_Hi_ZeroVerifier<Blst>::Verify(const Point& g, const Point&h, const Points& Gi, const Points& Hi);
-#endif // NAVIO_BLSCT_ARITH_BLST

@@ -15,7 +15,7 @@ target_link_libraries(test_fuzz
     core_interface
     test_util
     navio_node
-    bls_interface
+    blst_interface
     Boost::headers
 )
 

@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blst.h>
 #include <blsct/private_key.h>
 
 namespace blsct {
@@ -55,10 +56,14 @@ void PrivateKey::SetToZero()
 
 Signature PrivateKey::CoreSign(const Message& msg) const
 {
-    blsSecretKey bls_sk { GetScalar().GetUnderlying() };
-
+    // sig = sk * H(msg), H = hash-to-G2 under the BLS "POP" DST.
+    blst_scalar sk{};
+    blst_scalar_from_fr(&sk, &GetScalar().GetUnderlying());
+    blst_p2 hash{};
+    blst_hash_to_g2(&hash, msg.data(), msg.size(),
+                    reinterpret_cast<const byte*>(BLS_SIG_G2_DST), BLS_SIG_G2_DST_LEN, nullptr, 0);
     Signature sig;
-    blsSign(&sig.m_data, &bls_sk, &msg[0], msg.size());
+    blst_sign_pk_in_g1(&sig.m_data, &hash, &sk);
     return sig;
 }
 

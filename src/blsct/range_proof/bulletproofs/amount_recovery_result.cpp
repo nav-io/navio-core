@@ -3,7 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/range_proof/bulletproofs/amount_recovery_result.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 
 namespace bulletproofs {
 
@@ -15,6 +15,6 @@ AmountRecoveryResult<T> AmountRecoveryResult<T>::failure()
         std::vector<range_proof::RecoveredData<T>>()
     };
 }
-template AmountRecoveryResult<Mcl> AmountRecoveryResult<Mcl>::failure();
+template AmountRecoveryResult<Blst> AmountRecoveryResult<Blst>::failure();
 
 } // namespace bulletproofs

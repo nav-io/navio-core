@@ -651,7 +651,7 @@ public:
         LOCK(m_node.mempool->cs);
         return m_node.mempool->exists(GenTxid::Txid(txid));
     }
-    bool hasStakedCommitment(const MclG1Point& commitment) override
+    bool hasStakedCommitment(const BlstG1Point& commitment) override
     {
         LOCK(::cs_main);
         return chainman().ActiveChainstate().CoinsTip().GetStakedCommitments().Exists(commitment);

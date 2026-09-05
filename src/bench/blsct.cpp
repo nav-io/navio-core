@@ -4,8 +4,8 @@
 
 #include <bench/bench.h>
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
 #include <blsct/public_keys.h>
@@ -17,7 +17,7 @@
 #include <cstdint>
 #include <vector>
 
-using T = Mcl;
+using T = Blst;
 using Point = T::Point;
 using Scalar = T::Scalar;
 using Scalars = Elements<Scalar>;
@@ -26,9 +26,9 @@ using RangeProofWithSeed = bulletproofs_plus::RangeProofWithSeed<T>;
 
 namespace {
 
-void EnsureMclInit()
+void EnsureBlstInit()
 {
-    static const MclInit init;
+    static const BlstInit init;
 }
 
 Point MakeNonce()
@@ -50,7 +50,7 @@ Scalars MakeValues(size_t n)
 
 static void BLSCTSign(benchmark::Bench& bench)
 {
-    EnsureMclInit();
+    EnsureBlstInit();
     blsct::PrivateKey sk(1);
     const std::vector<uint8_t> msg{'b', 'e', 'n', 'c', 'h'};
     bench.unit("sign").run([&] {
@@ -61,7 +61,7 @@ static void BLSCTSign(benchmark::Bench& bench)
 
 static void BLSCTVerify(benchmark::Bench& bench)
 {
-    EnsureMclInit();
+    EnsureBlstInit();
     blsct::PrivateKey sk(1);
     auto pk = sk.GetPublicKey();
     const std::vector<uint8_t> msg{'b', 'e', 'n', 'c', 'h'};
@@ -74,7 +74,7 @@ static void BLSCTVerify(benchmark::Bench& bench)
 
 static void BLSCTAggregateSignVerify4(benchmark::Bench& bench)
 {
-    EnsureMclInit();
+    EnsureBlstInit();
     std::vector<blsct::PrivateKey> sks{
         blsct::PrivateKey(1),
         blsct::PrivateKey(12345),
@@ -103,7 +103,7 @@ static void BLSCTAggregateSignVerify4(benchmark::Bench& bench)
 
 static void BLSCTRangeProofProve(benchmark::Bench& bench)
 {
-    EnsureMclInit();
+    EnsureBlstInit();
     auto nonce = MakeNonce();
     auto token_id = MakeTokenId();
     const std::vector<uint8_t> msg{'r', 'p'};
@@ -117,7 +117,7 @@ static void BLSCTRangeProofProve(benchmark::Bench& bench)
 
 static void BLSCTRangeProofVerify(benchmark::Bench& bench)
 {
-    EnsureMclInit();
+    EnsureBlstInit();
     auto nonce = MakeNonce();
     auto token_id = MakeTokenId();
     const std::vector<uint8_t> msg{'r', 'p'};
@@ -133,7 +133,7 @@ static void BLSCTRangeProofVerify(benchmark::Bench& bench)
 
 static void BLSCTRangeProofVerifyBatch4(benchmark::Bench& bench)
 {
-    EnsureMclInit();
+    EnsureBlstInit();
     auto nonce = MakeNonce();
     auto token_id = MakeTokenId();
     const std::vector<uint8_t> msg{'r', 'p'};
@@ -152,7 +152,7 @@ static void BLSCTRangeProofVerifyBatch4(benchmark::Bench& bench)
 
 static void BLSCTHashAndMapG1(benchmark::Bench& bench)
 {
-    EnsureMclInit();
+    EnsureBlstInit();
     std::vector<uint8_t> data(32, 0xab);
     bench.unit("hash").run([&] {
         // mutate so each iteration hashes a fresh input
@@ -164,7 +164,7 @@ static void BLSCTHashAndMapG1(benchmark::Bench& bench)
 
 static void BLSCTPointSerialize(benchmark::Bench& bench)
 {
-    EnsureMclInit();
+    EnsureBlstInit();
     std::vector<uint8_t> data(32, 0x77);
     auto p = Point::HashAndMap(data);
     bench.unit("serialize").run([&] {
@@ -175,7 +175,7 @@ static void BLSCTPointSerialize(benchmark::Bench& bench)
 
 static void BLSCTPointDeserialize(benchmark::Bench& bench)
 {
-    EnsureMclInit();
+    EnsureBlstInit();
     std::vector<uint8_t> data(32, 0x55);
     auto p = Point::HashAndMap(data);
     auto vch = p.GetVch();
@@ -189,7 +189,7 @@ static void BLSCTPointDeserialize(benchmark::Bench& bench)
 
 static void BLSCTScalarInvert(benchmark::Bench& bench)
 {
-    EnsureMclInit();
+    EnsureBlstInit();
     Scalar s(123456789);
     bench.unit("invert").run([&] {
         auto inv = s.Invert();

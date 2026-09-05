@@ -2590,7 +2590,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // verification and script work.
     std::future<std::pair<bool, std::string>> pos_verify_future;
     bool pos_verify_dispatched = false;
-    std::optional<bulletproofs_plus::RangeProofWithSeed<Mcl>> pos_kernel_range_proof;
+    std::optional<bulletproofs_plus::RangeProofWithSeed<Blst>> pos_kernel_range_proof;
     std::future<blsct::TxSignatureBatchResult> blsct_sig_verify_future;
     bool blsct_sig_verify_dispatched = false;
 
@@ -2616,7 +2616,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // needed twice below — as the PoPS ring source and for the duplicate
     // staked-commitment check. Materialise it once, before anything in this
     // block touches the view.
-    const OrderedElements<MclG1Point> prev_staked = view.GetStakedCommitments();
+    const OrderedElements<BlstG1Point> prev_staked = view.GetStakedCommitments();
 
     if (params.GetConsensus().fBLSCT && block.IsProofOfStake() && fCheckPosProof) {
         // V2: seed the staked-commitment ring from a non-grindable beacon
@@ -2797,7 +2797,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                     return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, strprintf("bad-txns-BIP30: %s", tx->ToString()));
                 }
                 if (tx->vout[o].IsStakedCommitment()) {
-                    const MclG1Point& point = tx->vout[o].blsctData.rangeProof.Vs[0];
+                    const BlstG1Point& point = tx->vout[o].blsctData.rangeProof.Vs[0];
                     if (prev_staked.Exists(point) || !block_staked_points.insert(point.GetVch()).second) {
                         LogPrintf("ERROR: ConnectBlock(): duplicate staked commitment point\n");
                         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-txns-duplicate-staked-commitment");
@@ -2869,7 +2869,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // the per-tx loop. Bulletproofs++ batch verify parallelises via std::async
     // per-proof, so a block-wide batch gives more proofs-in-flight and spreads
     // thread-spawn cost over more work.
-    std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> blockBLSCTProofs;
+    std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> blockBLSCTProofs;
     blockBLSCTProofs.reserve(block.vtx.size() * 4);
     std::vector<blsct::PreparedTxSignatureCheck> blockBLSCTSigChecks;
     blockBLSCTSigChecks.reserve(block.vtx.size());
@@ -3062,7 +3062,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         const auto t_rangeproof_start = SteadyClock::now();
         if (!blsct::VerifyCollectedRangeProofs(blockBLSCTProofs)) {
             if (pos_kernel_range_proof.has_value()) {
-                std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> pos_only_proof;
+                std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> pos_only_proof;
                 pos_only_proof.push_back(*pos_kernel_range_proof);
                 if (!blsct::VerifyCollectedRangeProofs(pos_only_proof)) {
                     if (blsct_sig_verify_dispatched) blsct_sig_verify_future.wait();

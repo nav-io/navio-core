@@ -222,7 +222,7 @@ public:
     }
 
     CTxOutRef out;
-    range_proof::RecoveredData<Mcl> blsctRecoveryData;
+    range_proof::RecoveredData<Blst> blsctRecoveryData;
     TxState m_state;
     SyncTxState m_state_spent;  //!< whether the output is spent or not
     uint256 m_spent_by;         //!< txid of the transaction that spent this output (null if unspent / unknown)
@@ -404,23 +404,23 @@ public:
     }
 
     CTransactionRef tx;
-    std::map<uint32_t, range_proof::RecoveredData<Mcl>> blsctRecoveryData;
+    std::map<uint32_t, range_proof::RecoveredData<Blst>> blsctRecoveryData;
     TxState m_state;
 
-    range_proof::RecoveredData<Mcl> GetBLSCTRecoveryData(const COutPoint& outpoint) const
+    range_proof::RecoveredData<Blst> GetBLSCTRecoveryData(const COutPoint& outpoint) const
     {
         for (size_t i = 0; i < tx->vout.size(); i++) {
             if (tx->vout[i].GetHash() == outpoint.hash) {
                 return GetBLSCTRecoveryData(i);
             }
         }
-        return range_proof::RecoveredData<Mcl>{0, 0, 0, ""};
+        return range_proof::RecoveredData<Blst>{0, 0, 0, ""};
     }
 
-    range_proof::RecoveredData<Mcl> GetBLSCTRecoveryData(const uint32_t& forOutput) const
+    range_proof::RecoveredData<Blst> GetBLSCTRecoveryData(const uint32_t& forOutput) const
     {
         if (!blsctRecoveryData.contains(forOutput)) {
-            return range_proof::RecoveredData<Mcl>{0, 0, 0, ""};
+            return range_proof::RecoveredData<Blst>{0, 0, 0, ""};
         }
         return blsctRecoveryData.at(forOutput);
     };

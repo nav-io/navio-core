@@ -4,7 +4,7 @@
 
 #define BOOST_UNIT_TEST
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/arith/elements.h>
 #include <blsct/set_mem_proof/set_mem_proof.h>
 #include <streams.h>
@@ -13,8 +13,8 @@
 
 #include <string>
 
-using Scalar = Mcl::Scalar;
-using Point = Mcl::Point;
+using Scalar = Blst::Scalar;
+using Point = Blst::Point;
 using Points = Elements<Point>;
 
 BOOST_FIXTURE_TEST_SUITE(set_mem_proof_tests, BasicTestingSetup)
@@ -47,7 +47,7 @@ BOOST_AUTO_TEST_CASE(test_equal)
     Scalar b(8);
     Scalar omega(9);
 
-    auto p = SetMemProof<Mcl>(
+    auto p = SetMemProof<Blst>(
         phi,
         A1,
         A2,
@@ -69,7 +69,7 @@ BOOST_AUTO_TEST_CASE(test_equal)
         omega
     );
 
-    auto q = SetMemProof<Mcl>(
+    auto q = SetMemProof<Blst>(
         phi,
         g,
         A2,
@@ -123,7 +123,7 @@ BOOST_AUTO_TEST_CASE(test_de_ser)
     Scalar b(8);
     Scalar omega(9);
 
-    auto p = SetMemProof<Mcl>(
+    auto p = SetMemProof<Blst>(
         phi,
         A1,
         A2,
@@ -148,7 +148,7 @@ BOOST_AUTO_TEST_CASE(test_de_ser)
     DataStream st{};
     p.Serialize(st);
 
-    SetMemProof<Mcl> q;
+    SetMemProof<Blst> q;
     q.Unserialize(st);
 
     BOOST_CHECK(p  == q);
@@ -165,7 +165,7 @@ BOOST_AUTO_TEST_CASE(test_de_ser_rejects_malformed_ls_rs)
         Points Ls, Rs;
         for (size_t i = 0; i < n_ls; ++i) Ls.Add(g * static_cast<int64_t>(100 + i));
         for (size_t i = 0; i < n_rs; ++i) Rs.Add(g * static_cast<int64_t>(200 + i));
-        return SetMemProof<Mcl>(g, g * 2, g * 3, g * 4, g * 5, g * 6, g * 7, g * 8,
+        return SetMemProof<Blst>(g, g * 2, g * 3, g * 4, g * 5, g * 6, g * 7, g * 8,
                                 Scalar(1), Scalar(2), Scalar(3), Scalar(4), Scalar(5), Scalar(6),
                                 Ls, Rs, Scalar(7), Scalar(8), Scalar(9));
     };
@@ -174,7 +174,7 @@ BOOST_AUTO_TEST_CASE(test_de_ser_rejects_malformed_ls_rs)
         auto p = make(3, 3);
         DataStream st{};
         p.Serialize(st);
-        SetMemProof<Mcl> q;
+        SetMemProof<Blst> q;
         q.Unserialize(st);
         BOOST_CHECK(p == q);
     }
@@ -183,16 +183,16 @@ BOOST_AUTO_TEST_CASE(test_de_ser_rejects_malformed_ls_rs)
         auto p = make(3, 2);
         DataStream st{};
         p.Serialize(st);
-        SetMemProof<Mcl> q;
+        SetMemProof<Blst> q;
         BOOST_CHECK_THROW(q.Unserialize(st), std::ios_base::failure);
     }
     // More rounds than the largest ring allows.
     {
-        const size_t too_many = SetMemProof<Mcl>::MAX_ROUNDS + 1;
+        const size_t too_many = SetMemProof<Blst>::MAX_ROUNDS + 1;
         auto p = make(too_many, too_many);
         DataStream st{};
         p.Serialize(st);
-        SetMemProof<Mcl> q;
+        SetMemProof<Blst> q;
         BOOST_CHECK_THROW(q.Unserialize(st), std::ios_base::failure);
     }
     // A length prefix beyond the bound, with no element bytes behind it, is
@@ -202,11 +202,11 @@ BOOST_AUTO_TEST_CASE(test_de_ser_rejects_malformed_ls_rs)
     // type -- so assert on the message, or the case passes either way.
     {
         DataStream st{};
-        SetMemProof<Mcl> hdr = make(0, 0);
+        SetMemProof<Blst> hdr = make(0, 0);
         st << hdr.phi << hdr.A1 << hdr.A2 << hdr.S1 << hdr.S2 << hdr.S3 << hdr.T1 << hdr.T2
            << hdr.tau_x << hdr.mu << hdr.z_alpha << hdr.z_tau << hdr.z_beta << hdr.t;
         ::WriteCompactSize(st, uint64_t{1000});
-        SetMemProof<Mcl> q;
+        SetMemProof<Blst> q;
         BOOST_CHECK_EXCEPTION(q.Unserialize(st), std::ios_base::failure,
                               [](const std::ios_base::failure& e) {
                                   return std::string(e.what()).find("exceeds protocol maximum") != std::string::npos;

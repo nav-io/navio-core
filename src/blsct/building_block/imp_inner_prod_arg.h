@@ -2,10 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef NAVIO_BLSCT_BULDING_BLOCK_IMP_INNER_PROD_ARG_H
-#define NAVIO_BLSCT_BULDING_BLOCK_IMP_INNER_PROD_ARG_H
+#ifndef NAVIO_BLSCT_BUILDING_BLOCK_IMP_INNER_PROD_ARG_H
+#define NAVIO_BLSCT_BUILDING_BLOCK_IMP_INNER_PROD_ARG_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/arith/elements.h>
 #include <hash.h>
 #include <vector>
@@ -62,4 +62,4 @@ struct ImpInnerProdArg {
     );
 };
 
-#endif  // NAVIO_BLSCT_BULDING_BLOCK_IMP_INNER_PROD_ARG_H
+#endif // NAVIO_BLSCT_BUILDING_BLOCK_IMP_INNER_PROD_ARG_H

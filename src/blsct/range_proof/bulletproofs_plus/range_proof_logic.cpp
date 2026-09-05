@@ -6,9 +6,9 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <blsct/building_block/fiat_shamir.h>
 #include <blsct/building_block/g_h_gi_hi_zero_verifier.h>
 #include <blsct/building_block/lazy_points.h>
@@ -18,7 +18,10 @@
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/msg_amt_cipher.h>
+#include <atomic>
+#include <exception>
 #include <future>
+#include <thread>
 #include <type_traits>
 #include <tinyformat.h>
 
@@ -26,16 +29,6 @@
 // - https://eprint.iacr.org/2020/735.pdf
 // - https://github.com/KyoohyungHan/BulletProofsPlus/tree/master
 
-namespace {
-bool UseOuterAsyncProofWorkers()
-{
-#if defined(HAVE_OPENMP)
-    return false;
-#else
-    return true;
-#endif
-}
-} // namespace
 
 namespace bulletproofs_plus {
 
@@ -56,10 +49,10 @@ Elements<typename T::Scalar> RangeProofLogic<T>::Compute_D(
     return d;
 }
 template
-Elements<Mcl::Scalar> RangeProofLogic<Mcl>::Compute_D(
-    const Elements<Mcl::Scalar>& z_asc_by_2_pows,
-    const Elements<Mcl::Scalar>& two_pows,
-    const Mcl::Scalar& z_sq,
+Elements<Blst::Scalar> RangeProofLogic<Blst>::Compute_D(
+    const Elements<Blst::Scalar>& z_asc_by_2_pows,
+    const Elements<Blst::Scalar>& two_pows,
+    const Blst::Scalar& z_sq,
     const size_t& m
 );
 
@@ -123,7 +116,7 @@ Elements<typename T::Scalar> RangeProofLogic<T>::ComputeZAscBy2Pows(
     return z_asc_by_2_pows;
 }
 template
-Elements<Mcl::Scalar> RangeProofLogic<Mcl>::ComputeZAscBy2Pows(
+Elements<Blst::Scalar> RangeProofLogic<Blst>::ComputeZAscBy2Pows(
     const Scalar& z,
     const size_t& m
 );
@@ -180,7 +173,7 @@ size_t RangeProofLogic<T>::GetNumLeadingZeros(const uint32_t& n) {
     return count;
 }
 template
-size_t RangeProofLogic<Mcl>::GetNumLeadingZeros(const uint32_t& n);
+size_t RangeProofLogic<Blst>::GetNumLeadingZeros(const uint32_t& n);
 
 template <typename T>
 std::tuple<
@@ -432,12 +425,12 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
     }
     return proof;
 }
-template RangeProof<Mcl> RangeProofLogic<Mcl>::Prove(
-    Elements<Mcl::Scalar>,
-    const range_proof::GammaSeed<Mcl>&,
+template RangeProof<Blst> RangeProofLogic<Blst>::Prove(
+    Elements<Blst::Scalar>,
+    const range_proof::GammaSeed<Blst>&,
     const std::vector<uint8_t>&,
     const Seed&,
-    const Mcl::Scalar&,
+    const Blst::Scalar&,
     const bool);
 
 template <typename T>
@@ -547,7 +540,7 @@ bool RangeProofLogic<T>::VerifyProofs(
         // and the proof's aggregated length fits the tabled generator prefix.
         bool used_fixed_base = false;
         Point fixed_base_sum; // identity
-        if constexpr (std::is_same_v<T, Mcl>) {
+        if constexpr (std::is_same_v<T, Blst>) {
             auto& fbc = FixedBaseCache::Get();
             fbc.MaybeInit(gens);
             if (fbc.Enabled() && pt.mn <= fbc.Prefix()) {
@@ -576,11 +569,11 @@ bool RangeProofLogic<T>::VerifyProofs(
         return true;
     };
 
-    // With HAVE_OPENMP, the dominant work inside lp.Sum() already fans out via
-    // MCL's multi-threaded MSM. Spawning a fresh std::async host thread per
-    // proof on top of that adds thread churn and makes Windows/OpenMP runtime
-    // interactions fragile without buying useful parallelism.
-    if (!UseOuterAsyncProofWorkers() || proof_transcripts.size() <= 1) {
+    // One worker per proof: each proof's MSM (lp.Sum) runs single-threaded on
+    // its own std::async thread, so a batch of n proofs uses up to n cores
+    // with no nested threading (BlstUtil::MSM's own tiling stays off unless
+    // BlstUtil::SetDefaultThreads is raised).
+    if (proof_transcripts.size() <= 1) {
         for (size_t idx = 0; idx < proof_transcripts.size(); ++idx) {
             if (!verify_one(idx)) return false;
         }
@@ -603,8 +596,8 @@ bool RangeProofLogic<T>::VerifyProofs(
 
     return true;
 }
-template bool RangeProofLogic<Mcl>::VerifyProofs(
-    const std::vector<RangeProofWithTranscript<Mcl>>&
+template bool RangeProofLogic<Blst>::VerifyProofs(
+    const std::vector<RangeProofWithTranscript<Blst>>&
 );
 
 template <typename T>
@@ -629,8 +622,8 @@ bool RangeProofLogic<T>::Verify(
     return VerifyProofs(
         proof_transcripts);
 }
-template bool RangeProofLogic<Mcl>::Verify(
-    const std::vector<RangeProofWithSeed<Mcl>>&);
+template bool RangeProofLogic<Blst>::Verify(
+    const std::vector<RangeProofWithSeed<Blst>>&);
 
 template <typename T>
 AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
@@ -639,10 +632,20 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
     using Scalar = typename T::Scalar;
     using Point = typename T::Point;
 
-    // will contain result of successful requests only
-    std::vector<range_proof::RecoveredData<T>> xs;
+    // Each request is recovered independently, so fan the loop out across a
+    // bounded worker pool (a wallet rescan can pass thousands of outputs, so we
+    // must NOT spawn one thread per request). Each request resolves to Fail
+    // (malformed sizes -> the whole batch fails, preserving the original
+    // early-return semantics), Skip (not a recoverable single-value proof), or
+    // Ok with the recovered data. Results are written to a per-index slot so
+    // the successful set is assembled in request order, deterministically.
+    enum class St { Ok, Skip, Fail };
+    struct One { St st{St::Skip}; range_proof::RecoveredData<T> data; };
+    const size_t n = reqs.size();
+    std::vector<One> results(n);
 
-    for (const AmountRecoveryRequest<T>& req: reqs) {
+    auto recover_one = [&](size_t req_idx) -> One {
+        const AmountRecoveryRequest<T>& req = reqs[req_idx];
         range_proof::Generators<T> gens = m_common.Gf().GetInstance(req.seed);
         Point g = gens.G;
         Point h = gens.H;
@@ -650,11 +653,11 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
         // failure if sizes of Ls and Rs differ or Vs is empty
         auto Ls_Rs_valid = req.Ls.Size() > 0 && req.Ls.Size() == req.Rs.Size();
         if (req.Vs.Size() == 0 || !Ls_Rs_valid) {
-            return AmountRecoveryResult<T>::failure();
+            return One{St::Fail, {}};
         }
         // recovery can only be done when the number of value commitment is 1
         if (req.Vs.Size() != 1) {
-            continue;
+            return One{St::Skip, {}};
         }
 
         Scalar gamma_vs0 = req.nonce.GetHashWithSalt(100); // gamma for vs[0]
@@ -702,7 +705,7 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
             req.Vs[0]
         );
         if (maybe_msg_amt == std::nullopt) {
-            continue;
+            return One{St::Skip, {}};
         }
         const auto& msg_amt = maybe_msg_amt.value();
 
@@ -712,55 +715,64 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
             req.nonce.GetHashWithSalt(100), // gamma for vs[0]
             msg_amt.msg
         );
-        xs.push_back(x);
+        return One{St::Ok, x};
+    };
 
-        Scalar msg2_scalar = ((req.tau_x - (tau2 * req.y.Square()) - (req.z.Square() * gamma_vs0)) * req.y.Invert()) - tau1;
-        std::vector<uint8_t> msg2 = msg2_scalar.GetVch(true);
+    // recover_one runs on worker threads; wallet-scan input is chain data, so
+    // an exception inside it (field inverse of zero, malformed decode,
+    // bad_alloc) must NOT reach std::terminate. Capture it per slot and rethrow
+    // the first after join, matching the serial loop's propagate-to-the-caller.
+    std::vector<std::exception_ptr> errors(n);
+    auto do_one = [&](size_t i) {
+        try {
+            results[i] = recover_one(i);
+        } catch (...) {
+            errors[i] = std::current_exception();
+        }
+    };
+
+    size_t nthreads = std::thread::hardware_concurrency();
+    if (nthreads == 0) nthreads = 1;
+    nthreads = std::min(nthreads, n);
+    if (nthreads <= 1) {
+        for (size_t i = 0; i < n; ++i) do_one(i);
+    } else {
+        std::atomic<size_t> next{0};
+        auto worker = [&]() {
+            for (;;) {
+                const size_t i = next.fetch_add(1, std::memory_order_relaxed);
+                if (i >= n) return;
+                do_one(i);
+            }
+        };
+        std::vector<std::thread> pool;
+        pool.reserve(nthreads - 1);
+        for (size_t t = 1; t < nthreads; ++t) pool.emplace_back(worker);
+        worker();
+        for (auto& th : pool) th.join();
+    }
+
+    // Assemble in request order, reproducing the serial loop's short-circuit:
+    // it processed requests in order and stopped at the FIRST that terminated
+    // it -- a thrown exception (propagated) or a Fail (returns failure()) --
+    // never consulting later requests. A single index-ordered pass keeps that
+    // contract; scanning all errors first (as an earlier version did) would let
+    // a later request's exception win over an earlier Fail, changing which
+    // outcome the caller sees.
+    std::vector<range_proof::RecoveredData<T>> xs;
+    for (size_t i = 0; i < n; ++i) {
+        if (errors[i]) std::rethrow_exception(errors[i]);
+        if (results[i].st == St::Fail) return AmountRecoveryResult<T>::failure();
+        if (results[i].st == St::Ok) xs.push_back(std::move(results[i].data));
     }
     return {
         true,
         xs
     };
 }
-template AmountRecoveryResult<Mcl> RangeProofLogic<Mcl>::RecoverAmounts(
-    const std::vector<AmountRecoveryRequest<Mcl>>&
-);
-
-} // namespace bulletproofs_plus
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-namespace bulletproofs_plus {
-template
-Elements<Blst::Scalar> RangeProofLogic<Blst>::Compute_D(
-    const Elements<Blst::Scalar>& z_asc_by_2_pows,
-    const Elements<Blst::Scalar>& two_pows,
-    const Blst::Scalar& z_sq,
-    const size_t& m
-);
-template
-Elements<Blst::Scalar> RangeProofLogic<Blst>::ComputeZAscBy2Pows(
-    const Scalar& z,
-    const size_t& m
-);
-template
-size_t RangeProofLogic<Blst>::GetNumLeadingZeros(const uint32_t& n);
-template RangeProof<Blst> RangeProofLogic<Blst>::Prove(
-    Elements<Blst::Scalar>,
-    const range_proof::GammaSeed<Blst>&,
-    const std::vector<uint8_t>&,
-    const Seed&,
-    const Blst::Scalar&);
-template bool RangeProofLogic<Blst>::VerifyProofs(
-    const std::vector<RangeProofWithTranscript<Blst>>&
-);
-template bool RangeProofLogic<Blst>::Verify(
-    const std::vector<RangeProofWithSeed<Blst>>&);
 template AmountRecoveryResult<Blst> RangeProofLogic<Blst>::RecoverAmounts(
     const std::vector<AmountRecoveryRequest<Blst>>&
 );
+
 } // namespace bulletproofs_plus
-#endif // NAVIO_BLSCT_ARITH_BLST
+

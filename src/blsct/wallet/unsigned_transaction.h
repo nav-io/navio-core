@@ -2,10 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BLSCT_UNSIGNED_TRANSACTION_H
-#define BLSCT_UNSIGNED_TRANSACTION_H
+#ifndef NAVIO_BLSCT_WALLET_UNSIGNED_TRANSACTION_H
+#define NAVIO_BLSCT_WALLET_UNSIGNED_TRANSACTION_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/tokens/info.h>
 #include <blsct/wallet/address.h>
 #include <blsct/wallet/txfactory_global.h>
@@ -64,4 +64,4 @@ public:
 
 } // namespace blsct
 
-#endif // BLSCT_UNSIGNED_TRANSACTION_H
+#endif // NAVIO_BLSCT_WALLET_UNSIGNED_TRANSACTION_H

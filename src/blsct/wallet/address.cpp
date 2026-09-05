@@ -48,11 +48,11 @@ SubAddress::SubAddress(const PrivateKey& viewKey, const PublicKey& spendKey, con
     // M = m*G
     // D = B + M
     // C = a*D
-    MclScalar m{string.GetHash()};
-    MclG1Point M = MclG1Point::GetBasePoint() * m;
-    MclG1Point B = spendKey.GetG1Point();
+    BlstScalar m{string.GetHash()};
+    BlstG1Point M = BlstG1Point::GetBasePoint() * m;
+    BlstG1Point B = spendKey.GetG1Point();
 
-    MclG1Point D = M + B;
+    BlstG1Point D = M + B;
     auto C = D * viewKey.GetScalar();
     pk = DoublePublicKey(C, D);
 }

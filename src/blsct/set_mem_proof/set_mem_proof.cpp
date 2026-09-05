@@ -3,7 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/set_mem_proof/set_mem_proof.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <streams.h>
 
 template <typename T>
@@ -35,12 +35,4 @@ bool SetMemProof<T>::operator!=(const SetMemProof& other) const
 {
     return !operator==(other);
 }
-template bool SetMemProof<Mcl>::operator!=(const SetMemProof<Mcl>& other) const;
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
 template bool SetMemProof<Blst>::operator!=(const SetMemProof<Blst>& other) const;
-#endif // NAVIO_BLSCT_ARITH_BLST
