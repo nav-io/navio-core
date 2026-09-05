@@ -2547,7 +2547,16 @@ RPCHelpMan consolidate()
 
             UniValue txids(UniValue::VARR);
             for (int i = 0; i < max_txs; ++i) {
-                auto dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+                // Drawing a fresh destination per iteration drains the pool by
+                // construction, so this is the loop most likely to exhaust it.
+                // util::Result::value() is an assert() and navio keeps
+                // assertions on in every configuration, so an unchecked
+                // dereference aborts the node instead of failing the call.
+                auto op_dest = blsct_km->GetNewDestination(0);
+                if (!op_dest) {
+                    throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
+                }
+                auto dest = std::get<blsct::DoublePublicKey>(*op_dest);
                 auto res = blsct::TxFactory::CreateConsolidationTransaction(pwallet.get(), blsct_km, dest, max_inputs, fee_rate);
                 if (!res) break; // fewer than two small outputs remain to merge
 
@@ -3445,7 +3454,11 @@ RPCHelpMan fundblsctrawtransaction()
                 if (!request.params[1].isNull()) {
                     change_dest = EnsureBlsctDestination(request.params[1].get_str());
                 } else {
-                    change_dest = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(blsct::CHANGE_ACCOUNT).value());
+                    auto op_change = blsct_km->GetNewDestination(blsct::CHANGE_ACCOUNT);
+                    if (!op_change) {
+                        throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_change).original);
+                    }
+                    change_dest = std::get<blsct::DoublePublicKey>(*op_change);
                 }
 
                 enum class FundingPath { ENOUGH_ALREADY, NEED_MORE_INPUTS } path{};
