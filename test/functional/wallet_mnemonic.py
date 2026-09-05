@@ -120,7 +120,9 @@ class WalletMnemonicTest(BitcoinTestFramework):
         self.log.info("Test dumpmnemonic on seed-imported BLSCT wallet errors")
         node.createwallet(wallet_name="test_seed_wallet", blsct=True, seed="00" * 32)
         w_seed = node.get_wallet_rpc("test_seed_wallet")
-        assert_raises_rpc_error(-4, "Wallet does not have a mnemonic", w_seed.dumpmnemonic)
+        assert_raises_rpc_error(-4, "no BIP-39 mnemonic to export", w_seed.dumpmnemonic)
+        # The seed is still a complete backup for a seed-imported wallet.
+        assert_equal(len(w_seed.getblsctseed()), 64)
 
         self.log.info("Test full lifecycle roundtrip: create -> dump -> restore -> verify same keys")
         node.createwallet(wallet_name="test_lifecycle", blsct=True)

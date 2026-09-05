@@ -858,6 +858,9 @@ RPCHelpMan dumpmnemonic()
         "dumpmnemonic",
         "\nDumps the BLSCT wallet mnemonic phrase (BIP-39), which can be used to reconstruct the wallet.\n"
         "The mnemonic can only be retrieved from wallets created with a BIP-39 mnemonic.\n"
+        "Wallets imported from a raw seed/master key, and wallets created before mnemonic backup\n"
+        "was stored, have no mnemonic to export: the mnemonic cannot be derived from the seed.\n"
+        "Use 'getblsctseed' to back up those wallets instead.\n"
         "If the wallet was created with a BIP-39 mnemonic passphrase, the passphrase is NOT included\n"
         "and must be supplied separately when restoring the wallet.\n"
         "Note: This command is only compatible with BLSCT wallets.\n",
@@ -877,7 +880,21 @@ RPCHelpMan dumpmnemonic()
             EnsureWalletIsUnlocked(wallet);
 
             if (!blsct_km.HasMnemonicEntropy()) {
-                throw JSONRPCError(RPC_WALLET_ERROR, "Wallet does not have a mnemonic");
+                if (blsct_km.IsHDEnabled()) {
+                    // The wallet has a seed but no stored BIP-39 entropy: it was
+                    // imported from a raw seed/master key, or created by a build
+                    // predating mnemonic-entropy storage. The mnemonic cannot be
+                    // recovered from the seed (the seed is a one-way function of
+                    // the mnemonic), but the seed itself is a complete backup.
+                    throw JSONRPCError(RPC_WALLET_ERROR,
+                        "This wallet has no BIP-39 mnemonic to export. It was imported from a raw "
+                        "seed/master key, or created by a build predating mnemonic backup storage. "
+                        "The mnemonic cannot be derived from the seed. Use 'getblsctseed' to back up "
+                        "this wallet's seed instead.");
+                }
+                throw JSONRPCError(RPC_WALLET_ERROR,
+                    "Wallet has no BLSCT seed (blank wallet); initialize it with 'setblsctseed', or "
+                    "restore from a mnemonic via 'createwallet'.");
             }
 
             auto entropy = blsct_km.GetMnemonicEntropy();
