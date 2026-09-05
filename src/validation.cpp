@@ -5,6 +5,9 @@
 
 #include <validation.h>
 
+#include <atomic>
+#include <thread>
+
 #include <arith_uint256.h>
 #include <blsct/pos/pos.h>
 #include <blsct/pos/pos_async_verifier.h>
@@ -2715,6 +2718,67 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // UpdateCoins -> AddCoins in the connect loop.
     std::vector<std::vector<uint256>> block_out_hashes;
     {
+        // Hash every BLSCT non-coinbase output once, up front and in parallel.
+        // CTxOut::GetHash() on a BLSCT output serializes the whole range proof
+        // and double-SHA256s it (tens of microseconds each) and an aggregated
+        // block carries thousands of outputs; the hashes are pure functions of
+        // immutable outputs, so they fan out over a bounded worker pool. The
+        // serial scans below (BIP30 / self-spent, transient coins, AddCoins)
+        // then only look them up.
+        block_out_hashes.assign(block.vtx.size(), {});
+        std::vector<std::pair<size_t, size_t>> tasks; // (tx index, output index)
+        for (size_t tx_idx = 0; tx_idx < block.vtx.size(); ++tx_idx) {
+            const auto& tx = block.vtx[tx_idx];
+            if (!tx->IsBLSCT() || tx->IsCoinBase()) continue;
+            block_out_hashes[tx_idx].resize(tx->vout.size());
+            for (size_t o = 0; o < tx->vout.size(); ++o) tasks.emplace_back(tx_idx, o);
+        }
+        const auto hash_task = [&](size_t k) {
+            const auto [tx_idx, o] = tasks[k];
+            block_out_hashes[tx_idx][o] = block.vtx[tx_idx]->vout[o].GetHash();
+        };
+        // One worker per kParallelHashMinOutputs outputs (integer division), so
+        // the fan-out only splits at >= 2*kParallelHashMinOutputs tasks and is
+        // serial below that -- small blocks aren't worth the thread setup.
+        // Size from -par, the operator's parallelism budget, rather than
+        // hardware_concurrency() (which ignores that config): this hashing runs
+        // before the script-check queue is started below, so nothing else is
+        // in flight yet, but -par is still the right ceiling for how many
+        // threads a connect should ever spin.
+        static constexpr size_t kParallelHashMinOutputs = 64;
+        const size_t par = m_chainman.GetCheckQueue().WorkerCount() + 1; // == -par
+        size_t threads = std::min<size_t>(par, tasks.size() / kParallelHashMinOutputs);
+        if (threads <= 1) {
+            for (size_t k = 0; k < tasks.size(); ++k) hash_task(k);
+        } else {
+            std::atomic<size_t> next{0};
+            // GetHash() can throw (e.g. bad_alloc on a large aggregated block).
+            // An exception escaping a worker would std::terminate the node;
+            // capture per slot and rethrow after the join so the block fails
+            // validation instead of killing the process.
+            std::vector<std::exception_ptr> errs(threads);
+            auto worker = [&](size_t slot) {
+                try {
+                    for (;;) {
+                        const size_t k = next.fetch_add(1, std::memory_order_relaxed);
+                        if (k >= tasks.size()) return;
+                        hash_task(k);
+                    }
+                } catch (...) {
+                    errs[slot] = std::current_exception();
+                }
+            };
+            std::vector<std::thread> pool;
+            pool.reserve(threads - 1);
+            for (size_t t = 1; t < threads; ++t) pool.emplace_back(worker, t);
+            worker(0);
+            for (auto& th : pool) th.join();
+            for (auto& e : errs) {
+                if (e) std::rethrow_exception(e);
+            }
+        }
+    }
+    {
         std::set<uint256> block_outids;
         // Staked-commitment set is keyed by the commitment POINT (Vs[0]), not
         // by the output-content hash that keys the UTXO set, and carries a
@@ -2728,7 +2792,6 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         // is invalid if its Vs[0] is already unspent in the pre-block chain
         // state, or duplicates another staked output earlier in this block.
         std::set<std::vector<unsigned char>> block_staked_points;
-        block_out_hashes.assign(block.vtx.size(), {});
         for (size_t tx_idx = 0; tx_idx < block.vtx.size(); ++tx_idx) {
             const auto& tx = block.vtx[tx_idx];
             const bool is_blsct_noncoinbase = tx->IsBLSCT() && !tx->IsCoinBase();
@@ -2746,11 +2809,15 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             // Kept for the tx loop below, which hands them to AddCoins so the
             // same outputs are not hashed a third time when they enter the
             // UTXO set.
-            std::vector<uint256>& out_hashes = block_out_hashes[tx_idx];
+            const std::vector<uint256>& out_hashes = block_out_hashes[tx_idx];
             std::set<uint256> self_spent;
             if (is_blsct_noncoinbase) {
-                out_hashes.resize(tx->vout.size());
-                for (size_t o = 0; o < tx->vout.size(); o++) out_hashes[o] = tx->vout[o].GetHash();
+                // Hard check that fires in shipped builds: a mismatch would key
+                // UTXOs under the wrong outpoints. navio keeps assertions on in
+                // every configuration (ProcessConfigurations.cmake strips
+                // -DNDEBUG), so Assert() aborts in Release/RelWithDebInfo too --
+                // Assume() would only abort under Debug.
+                Assert(out_hashes.size() == tx->vout.size());
                 std::set<uint256> vin_prevouts;
                 for (const auto& in : tx->vin) vin_prevouts.insert(in.prevout.hash);
                 for (const auto& oh : out_hashes) {
@@ -2865,10 +2932,10 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             // Reuse the output content hashes from the BIP30 / self-spent scan
             // above (present for every BLSCT non-coinbase tx) instead of
             // serializing every range proof a second time.
-            // block_out_hashes[i] is either empty or exactly tx.vout.size()
-            // entries (filled only for BLSCT non-coinbase txs above), so a
-            // non-empty vector is a full set -- same predicate the UpdateCoins
-            // call below and AddCoins's Assume rely on.
+            // block_out_hashes[i] is empty or exactly tx.vout.size() entries by
+            // construction, so !empty() means a full set -- one spelling of the
+            // predicate, matching the UpdateCoins call below and AddCoins's
+            // Assert.
             const std::vector<uint256>* pre = (i < block_out_hashes.size() && !block_out_hashes[i].empty()) ? &block_out_hashes[i] : nullptr;
             for (size_t o = 0; o < tx.vout.size(); ++o) {
                 const CTxOut& out = tx.vout[o];

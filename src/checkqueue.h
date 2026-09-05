@@ -182,6 +182,12 @@ public:
     }
 
     bool HasThreads() const { return !m_worker_threads.empty(); }
+
+    //! Number of worker threads backing the queue (i.e. -par minus the calling
+    //! thread). A connect-time fan-out that runs alongside the script checks can
+    //! size itself from this so it honours -par instead of spinning
+    //! hardware_concurrency() threads and oversubscribing the pool.
+    size_t WorkerCount() const { return m_worker_threads.size(); }
 };
 
 /**
