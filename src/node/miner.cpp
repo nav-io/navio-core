@@ -281,6 +281,23 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     // degrade the template, not halt block production entirely: this is
     // exactly what stalled mainnet when a commitment was staked on-chain
     // while an older transaction re-adding it was still in every mempool.
+    // Remove pblock->vtx[i] from the template, keeping the fee/weight/sigop
+    // accounting and the per-tx template vectors consistent.
+    const auto exclude_tx = [&](size_t i, const char* why) {
+        LogPrintf("%s: excluding tx %s from block template: %s\n", __func__, pblock->vtx[i]->GetHash().ToString(), why);
+        nFees -= pblocktemplate->vTxFees[i];
+        if (nBlockTx > 0) --nBlockTx;
+        // Clamped: entries from the txns parameter never incremented
+        // these counters, so blind subtraction could underflow.
+        const auto tx_weight = static_cast<uint64_t>(GetTransactionWeight(*pblock->vtx[i]));
+        nBlockWeight -= std::min<uint64_t>(nBlockWeight, tx_weight);
+        const auto tx_sigops = static_cast<uint64_t>(pblocktemplate->vTxSigOpsCost[i]);
+        nBlockSigOpsCost -= std::min<uint64_t>(nBlockSigOpsCost, tx_sigops);
+        pblock->vtx.erase(pblock->vtx.begin() + i);
+        pblocktemplate->vTxFees.erase(pblocktemplate->vTxFees.begin() + i);
+        pblocktemplate->vTxSigOpsCost.erase(pblocktemplate->vTxSigOpsCost.begin() + i);
+    };
+
     {
         const auto existing_staked = m_chainstate.CoinsTip().GetStakedCommitments();
         std::set<std::vector<unsigned char>> selected_points;
@@ -297,21 +314,58 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
                 tx_points.push_back(point.GetVch());
             }
             if (drop) {
-                LogPrintf("%s: excluding tx %s from block template: duplicate staked commitment\n", __func__, pblock->vtx[i]->GetHash().ToString());
-                nFees -= pblocktemplate->vTxFees[i];
-                if (nBlockTx > 0) --nBlockTx;
-                // Clamped: entries from the txns parameter never incremented
-                // these counters, so blind subtraction could underflow.
-                const auto tx_weight = static_cast<uint64_t>(GetTransactionWeight(*pblock->vtx[i]));
-                nBlockWeight -= std::min<uint64_t>(nBlockWeight, tx_weight);
-                const auto tx_sigops = static_cast<uint64_t>(pblocktemplate->vTxSigOpsCost[i]);
-                nBlockSigOpsCost -= std::min<uint64_t>(nBlockSigOpsCost, tx_sigops);
-                pblock->vtx.erase(pblock->vtx.begin() + i);
-                pblocktemplate->vTxFees.erase(pblocktemplate->vTxFees.begin() + i);
-                pblocktemplate->vTxSigOpsCost.erase(pblocktemplate->vTxSigOpsCost.begin() + i);
+                exclude_tx(i, "duplicate staked commitment");
             } else {
                 selected_points.insert(tx_points.begin(), tx_points.end());
                 ++i;
+            }
+        }
+    }
+
+    // Drop any selected transaction that spends a staked-commitment output
+    // created by another selected transaction, plus anything descending from
+    // it. Aggregation folds every selected transaction into one block
+    // transaction, so such a spend becomes a self-spend of that aggregate.
+    // ConnectBlock pre-seeds self-spent outputs into the coins view before
+    // VerifyTx runs, and a pre-seeded staked commitment lands in the view's
+    // staked set, so VerifyTx's duplicate check then rejects the very output
+    // that created it (bad-txns-duplicate-staked-commitment) and the whole
+    // template fails validity -- the check above cannot see this because
+    // neither point is in the chain set. The parent is valid on its own; the
+    // spender is mineable in the block after the parent confirms. Seen on
+    // mainnet at height 44316 when a wallet staked and re-staked in the same
+    // second and every v0.1.9 staker stalled on the pair.
+    {
+        std::set<uint256> staked_outs;
+        for (size_t i = 1; i < pblock->vtx.size(); ++i) {
+            for (const auto& out : pblock->vtx[i]->vout) {
+                if (out.IsStakedCommitment()) staked_outs.insert(out.GetHash());
+            }
+        }
+        if (!staked_outs.empty()) {
+            // Outputs of excluded transactions: their spenders must go too.
+            // Iterate to a fixpoint since vtx order need not be parent-first.
+            std::set<uint256> dropped_outs;
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (size_t i = 1; i < pblock->vtx.size();) {
+                    const CTransactionRef& tx = pblock->vtx[i];
+                    bool drop = false;
+                    for (const auto& in : tx->vin) {
+                        if (staked_outs.contains(in.prevout.hash) || dropped_outs.contains(in.prevout.hash)) {
+                            drop = true;
+                            break;
+                        }
+                    }
+                    if (drop) {
+                        for (const auto& out : tx->vout) dropped_outs.insert(out.GetHash());
+                        exclude_tx(i, "spends a staked commitment created in the same block");
+                        changed = true;
+                    } else {
+                        ++i;
+                    }
+                }
             }
         }
     }
