@@ -16,7 +16,7 @@
 #include <util/time.h>
 
 #include <chrono>
-
+#include <optional>
 
 namespace blsct {
 
@@ -113,8 +113,18 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
         balanceKey = (gen.G * MclScalar(blockReward));
     }
 
+    // A PublicKey embeds a 144-byte G1 point, so every geometric regrow memcpys
+    // the whole array; on a block-aggregated transaction that is hundreds of
+    // kilobytes of avoidable copying. Size the vectors for the pairs pushed per
+    // input (spending key) and per output (ephemeral key, predicate key) plus
+    // the balance key. This is an estimate, not a bound -- a script can
+    // contribute any number of key/message pairs -- so it only removes the
+    // regrows on the common shape.
+    const size_t expected_sig_pairs = 2 * tx.vin.size() + 2 * tx.vout.size() + 1;
     std::vector<Message> vMessages;
     std::vector<PublicKey> vPubKeys;
+    vMessages.reserve(expected_sig_pairs);
+    vPubKeys.reserve(expected_sig_pairs);
     auto t_init = Clock::now();
 
     if (!tx.IsCoinBase()) {
@@ -197,7 +207,13 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     // single spend evict an unrelated live stake from the PoPS ring. Mirrors
     // the consensus check in ConnectBlock; enforced here so such txs are also
     // rejected at mempool acceptance. (gamma is wallet-chosen, hence grindable.)
-    const OrderedElements<MclG1Point> existing_staked = view.GetStakedCommitments();
+    // Built on the first staked output rather than up front: the snapshot is a
+    // deep copy of the chain-wide set (CCoinsViewCache::GetStakedCommitments
+    // returns the memo by value), while it is read only inside the
+    // GetStakedCommitmentRangeProof branch below, which most transactions
+    // never enter. The mempool path pays it per accepted tx against a cold
+    // cache, so the copy there is the whole cost.
+    std::optional<OrderedElements<MclG1Point>> existing_staked;
     std::set<std::vector<unsigned char>> tx_staked_points;
 
     for (auto& out : tx.vout) {
@@ -245,7 +261,8 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
 
             if (out.GetStakedCommitmentRangeProof(stakedCommitmentRangeProof)) {
                 const MclG1Point& staked_point = out.blsctData.rangeProof.Vs[0];
-                if (existing_staked.Exists(staked_point) ||
+                if (!existing_staked) existing_staked = view.GetStakedCommitments();
+                if (existing_staked->Exists(staked_point) ||
                     !tx_staked_points.insert(staked_point.GetVch()).second) {
                     return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-duplicate-staked-commitment");
                 }

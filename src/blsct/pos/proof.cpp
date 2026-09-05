@@ -173,7 +173,7 @@ bool ProofOfStake::VerifySetMembership(const Points& staked_commitments, const S
         stats->padded_set_size = padded_set_size;
     }
 
-    auto setup = SetMemProofSetup<Arith>::Get();
+    const auto& setup = SetMemProofSetup<Arith>::Get();
     const bool setmemres = SetProver::Verify(setup, staked_commitments, eta_fiat_shamir, eta_phi, setMemProof);
 
     if (stats) {
