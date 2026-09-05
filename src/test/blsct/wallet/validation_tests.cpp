@@ -6,6 +6,7 @@
 #include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
+#include <node/miner.h>
 #include <primitives/transaction.h>
 #include <script/script.h>
 #include <test/util/random.h>
@@ -13,6 +14,7 @@
 #include <test/util/txmempool.h>
 #include <txmempool.h>
 #include <txdb.h>
+#include <validation.h>
 #include <wallet/receive.h>
 #include <wallet/test/util.h>
 #include <wallet/wallet.h>
@@ -471,6 +473,96 @@ BOOST_FIXTURE_TEST_CASE(mempool_evicts_duplicate_staked_commitment, TestingSetup
         BOOST_CHECK(!pool.exists(GenTxid::Txid(poisoned_tx.GetHash())));
         BOOST_CHECK(pool.exists(GenTxid::Txid(control_tx.GetHash())));
     }
+}
+
+// A mempool transaction spending a staked-commitment output that another
+// mempool transaction creates cannot be mined together with it: aggregation
+// folds both into one block transaction that spends its own output, and
+// ConnectBlock's self-spent pre-seed puts the parent's commitment point into
+// the view before VerifyTx runs, so the aggregate fails with
+// bad-txns-duplicate-staked-commitment. The template must keep the parent and
+// leave the spender (and its descendants) for the next block -- a template
+// that includes the pair fails validity on every slot, which is how mainnet
+// stalled at height 44316.
+BOOST_FIXTURE_TEST_CASE(template_defers_spend_of_inblock_staked_commitment, TestBLSCTChain100Setup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    const blsct::DoublePublicKey dest(MclG1Point::Rand(), MclG1Point::Rand());
+
+    auto staked_a = blsct::CreateOutput(dest, 1000 * COIN, "stake-a", TokenId(), MclScalar(uint256(uint64_t{0xa1})), blsct::CreateTransactionType::STAKED_COMMITMENT, 1000 * COIN);
+    auto staked_b = blsct::CreateOutput(dest, 1500 * COIN, "stake-b", TokenId(), MclScalar(uint256(uint64_t{0xb2})), blsct::CreateTransactionType::STAKED_COMMITMENT, 1500 * COIN);
+    auto staked_c = blsct::CreateOutput(dest, 700 * COIN, "stake-c", TokenId(), MclScalar(uint256(uint64_t{0xc3})), blsct::CreateTransactionType::STAKED_COMMITMENT, 700 * COIN);
+    BOOST_REQUIRE(staked_a.out.IsStakedCommitment());
+    BOOST_REQUIRE(staked_b.out.IsStakedCommitment());
+    BOOST_REQUIRE(staked_c.out.IsStakedCommitment());
+
+    // Each tx carries a real output signature and a PayFee output so that the
+    // survivors can be aggregated (AggregateTransactions aggregates txSigs and
+    // the fee predicates' public keys, and throws on an empty key set).
+    auto make_tx = [](const blsct::UnsignedOutput& staked, const COutPoint& prevout) {
+        CMutableTransaction mtx;
+        mtx.nVersion = CTransaction::BLSCT_MARKER;
+        mtx.vin.resize(1);
+        mtx.vin[0].prevout = prevout;
+        mtx.vout.push_back(staked.out);
+        CTxOut fee(1000, CScript{OP_RETURN});
+        fee.predicate = blsct::PayFeePredicate(blsct::PublicKey(MclG1Point::Rand())).GetVch();
+        mtx.vout.push_back(fee);
+        mtx.txSig = staked.GetSignature();
+        return mtx;
+    };
+
+    // parent: stakes A from some confirmed output.
+    // spender: re-stakes by spending parent's staked output (the mainnet case).
+    // grandchild: spends spender's output; must go with it.
+    // control: unrelated stake from a confirmed output; must stay.
+    const CMutableTransaction parent = make_tx(staked_a, COutPoint(Txid::FromUint256(uint256(uint64_t{1}))));
+    const CMutableTransaction spender = make_tx(staked_b, COutPoint(parent.vout[0].GetHash()));
+    const CMutableTransaction grandchild = make_tx(staked_c, COutPoint(spender.vout[0].GetHash()));
+    auto other = blsct::CreateOutput(dest, 300 * COIN, "stake-d", TokenId(), MclScalar(uint256(uint64_t{0xd4})), blsct::CreateTransactionType::STAKED_COMMITMENT, 300 * COIN);
+    const CMutableTransaction control = make_tx(other, COutPoint(Txid::FromUint256(uint256(uint64_t{2}))));
+
+    CTxMemPool& pool = *Assert(m_node.mempool);
+    TestMemPoolEntryHelper entry;
+    {
+        LOCK2(cs_main, pool.cs);
+        // Range-proof outputs make these several kB; pay enough to clear the
+        // assembler's block-min feerate so selection is not what drops them.
+        pool.addUnchecked(entry.Fee(COIN).FromTx(parent));
+        pool.addUnchecked(entry.Fee(COIN).FromTx(spender));
+        pool.addUnchecked(entry.Fee(COIN).FromTx(grandchild));
+        pool.addUnchecked(entry.Fee(COIN).FromTx(control));
+        BOOST_REQUIRE_EQUAL(pool.size(), 4U);
+    }
+
+    // The fabricated inputs do not exist in the UTXO set, so the template
+    // cannot be validity-tested; the exclusion logic under test runs before
+    // aggregation and does not need it.
+    node::BlockAssembler::Options options;
+    options.test_block_validity = false;
+    options.blockMinFeeRate = CFeeRate(0);
+    Chainstate& chainstate = m_node.chainman->ActiveChainstate();
+    const CAmount reward = GetBLSCTBlockReward(chainstate.m_chain.Tip()->nHeight + 1, m_node.chainman->GetConsensus(), false);
+
+    std::set<uint256> included;
+    {
+        LOCK(cs_main);
+        auto tmpl = node::BlockAssembler{chainstate, &pool, options}.CreateNewBLSCTBlock(coinbaseDest, reward, {});
+        BOOST_REQUIRE(tmpl);
+        // coinbase + one aggregate of the survivors.
+        BOOST_CHECK_EQUAL(tmpl->block.vtx.size(), 2U);
+        // parent + control survive and get aggregated into a single block tx;
+        // recover which mempool txs made it in from the aggregate's outputs.
+        for (size_t i = 1; i < tmpl->block.vtx.size(); ++i) {
+            for (const auto& out : tmpl->block.vtx[i]->vout) included.insert(out.GetHash());
+        }
+    }
+
+    BOOST_CHECK(included.contains(parent.vout[0].GetHash()));
+    BOOST_CHECK(included.contains(control.vout[0].GetHash()));
+    BOOST_CHECK(!included.contains(spender.vout[0].GetHash()));
+    BOOST_CHECK(!included.contains(grandchild.vout[0].GetHash()));
 }
 
 BOOST_AUTO_TEST_SUITE_END()
