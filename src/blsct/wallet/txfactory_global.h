@@ -41,6 +41,9 @@ struct UnsignedOutput {
     Scalar gamma;
     Scalar tokenKey;
     CreateTransactionType type{NORMAL};
+    // Transcript version the output's range proof was built under. Carried so a
+    // transaction assembled from this output can stamp BLSCT_PROOF_V2_MARKER.
+    bool transcript_v2{false};
 
     void
     GenerateKeys(Scalar blindingKey, DoublePublicKey destKeys);
@@ -57,6 +60,7 @@ struct UnsignedOutput {
         ::Serialize(s, tokenKey);
         int32_t typeInt = static_cast<int32_t>(type);
         ::Serialize(s, typeInt);
+        ::Serialize(s, transcript_v2);
     }
 
     template <typename Stream>
@@ -70,6 +74,7 @@ struct UnsignedOutput {
         int32_t typeInt;
         ::Unserialize(s, typeInt);
         type = static_cast<CreateTransactionType>(typeInt);
+        ::Unserialize(s, transcript_v2);
     }
 };
 
@@ -148,10 +153,10 @@ struct Amounts {
 CTransactionRef
 AggregateTransactions(const std::vector<CTransactionRef>& txs);
 UnsignedOutput CreateOutput(const Scalar& tokenKey, const blsct::TokenInfo& tokenInfo);
-UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey);
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey, const bool transcript_v2 = false);
 UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata);
-UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId = TokenId(), const Scalar& blindingKey = Scalar::Rand(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fAllowZeroValueRangeProof = false);
-UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId = TokenId(), const Scalar& blindingKey = Scalar::Rand(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0);
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId = TokenId(), const Scalar& blindingKey = Scalar::Rand(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fAllowZeroValueRangeProof = false, const bool transcript_v2 = false);
+UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId = TokenId(), const Scalar& blindingKey = Scalar::Rand(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool transcript_v2 = false);
 int32_t GetTransactionWeight(const CTransaction& tx);
 int32_t GetTransactioOutputWeight(const CTxOut& out);
 } // namespace blsct

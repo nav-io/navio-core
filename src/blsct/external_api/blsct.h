@@ -312,6 +312,15 @@ typedef struct {
     uint64_t min_stake;
     bool subtract_fee_from_amount;
     BlsctScalar blinding_key;
+    // BLSCT proof transcript version the output's range proof is built under.
+    // build_tx_out initialises this to false (v1). Set it true -- directly or via
+    // set_tx_out_transcript_v2 -- for an output built for a transaction at or
+    // above the network's transcript-v2 activation height. The output is then
+    // built under v2, and a transaction assembled from it via the unsigned-tx
+    // path carries BLSCT_PROOF_V2_MARKER automatically (any v2 output makes the
+    // transaction v2), so it is accepted by consensus above the activation
+    // height. A v1 output at/above the height (or v2 below it) is rejected.
+    bool transcript_v2;
 } BlsctTxOut;
 
 void free_obj(void* x);
@@ -520,6 +529,10 @@ BlsctRetVal* build_range_proof(
     const char* blsct_msg,
     const BlsctTokenId* blsct_token_id);
 
+// Verify range proofs under the v2 transcript ONLY. This has no version context,
+// so it refuses v1 rather than guessing: accepting whichever transcript verifies
+// would let a proof forged under the unsound v1 transcript pass. To check a v1
+// proof deliberately, use verify_range_proofs_with_transcript(..., false).
 BlsctBoolRetVal* verify_range_proofs(
     const void* vp_range_proofs);
 
@@ -688,6 +701,20 @@ TxOutputType get_tx_out_output_type(const BlsctTxOut* tx_out);
 uint64_t get_tx_out_min_stake(const BlsctTxOut* tx_out);
 bool get_tx_out_subtract_fee_from_amount(const BlsctTxOut* tx_out);
 const BlsctScalar* get_tx_out_blinding_key(const BlsctTxOut* tx_out);
+// Request the v2 transcript for this output's range proof. Set true when
+// building an output for a transaction at or above the network's transcript-v2
+// activation height; the assembled transaction then carries BLSCT_PROOF_V2_MARKER
+// automatically (any v2 output makes the transaction v2).
+void set_tx_out_transcript_v2(BlsctTxOut* tx_out, const bool transcript_v2);
+bool get_tx_out_transcript_v2(const BlsctTxOut* tx_out);
+
+// Verify range proofs under an explicit transcript version, for callers that
+// already know it (e.g. from the containing transaction's BLSCT_PROOF_V2_MARKER).
+// verify_range_proofs above has no version context and tries v1 then v2; this
+// avoids that guess and is deterministic.
+BlsctBoolRetVal* verify_range_proofs_with_transcript(
+    const void* vp_range_proofs,
+    const bool transcript_v2);
 
 // vector predicate
 int are_vector_predicate_equal(

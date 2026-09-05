@@ -574,6 +574,10 @@ public:
     // Default transaction version.
     static const int32_t CURRENT_VERSION = 2;
     static const int32_t BLSCT_MARKER = 1 << 5;
+    // Signals that this transaction's BLSCT output range proofs use the v2
+    // Fiat-Shamir transcript. Verifiers select the transcript from this bit;
+    // consensus enforces it set on BLSCT txs at and above nBLSCTProofV2Height.
+    static const int32_t BLSCT_PROOF_V2_MARKER = 1 << 6;
 
     // The local variables are made const to prevent unintended modification
     // without updating the cached hash value. However, CTransaction is not
@@ -643,6 +647,11 @@ public:
         return nVersion & BLSCT_MARKER;
     }
 
+    bool IsBLSCTProofV2() const
+    {
+        return nVersion & BLSCT_PROOF_V2_MARKER;
+    }
+
     friend bool operator==(const CTransaction& a, const CTransaction& b)
     {
         return a.hash == b.hash;
@@ -707,6 +716,11 @@ struct CMutableTransaction {
     bool IsBLSCT() const
     {
         return nVersion & CTransaction::BLSCT_MARKER;
+    }
+
+    bool IsBLSCTProofV2() const
+    {
+        return nVersion & CTransaction::BLSCT_PROOF_V2_MARKER;
     }
 };
 

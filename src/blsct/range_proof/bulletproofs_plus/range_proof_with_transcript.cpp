@@ -26,6 +26,15 @@ RangeProofWithTranscript<T> RangeProofWithTranscript<T>::Build(const RangeProofW
     HashWriter fiat_shamir{};
     Scalars es;
 
+    // v2 domain separation: mirror RangeProofLogic::Prove — a context tag as the
+    // first absorbed item, then the generator seed and min_value.
+    if (proof.transcript_v2) {
+        fiat_shamir << std::string("NAVIO_BULLETPROOFS_PLUS_V2");
+        fiat_shamir << static_cast<uint8_t>(proof.seed.index());
+        std::visit([&](const auto& s) { fiat_shamir << s; }, proof.seed);
+        fiat_shamir << proof.min_value;
+    }
+
     size_t m = blsct::Common::GetFirstPowerOf2GreaterOrEqTo(proof.Vs.Size());
     size_t n = range_proof::Setup::num_input_value_bits;
     size_t mn = m * n;
@@ -37,10 +46,20 @@ retry:
         fiat_shamir << proof.Vs[i];
     }
 
+    // v2 binds the A commitment into the transcript before the y/z challenges
+    // are drawn; the legacy ordering absorbs it afterwards. This must mirror the
+    // prover (RangeProofLogic::Prove) exactly. See RangeProofWithSeed::
+    // transcript_v2.
+    if (proof.transcript_v2) {
+        fiat_shamir << proof.A;
+    }
+
     GEN_FIAT_SHAMIR_VAR(y, fiat_shamir, retry);
     GEN_FIAT_SHAMIR_VAR(z, fiat_shamir, retry);
 
-    fiat_shamir << proof.A;
+    if (!proof.transcript_v2) {
+        fiat_shamir << proof.A;
+    }
 
     // to update hasher to expected state. generated values are not used
     static_cast<void>(Util<T>::GetYPows(y, mn, fiat_shamir));

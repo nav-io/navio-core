@@ -348,6 +348,22 @@ void Chainstate::MaybeUpdateMempoolForReorg(
         AssertLockHeld(::cs_main);
         const CTransaction& tx = it->GetTx();
 
+        // BLSCT proof transcript v2 flag rule: a BLSCT tx's BLSCT_PROOF_V2_MARKER
+        // must match the regime at the new tip (set iff tip+1 >= nBLSCTProofV2Height).
+        // A reorg across the activation height leaves a once-valid tx with a marker
+        // that now disagrees; it is a consensus violation that would stall block
+        // production (the miner's own TestBlockValidity rejects any template with
+        // it), so evict it here and let the wallet resubmit under the right
+        // transcript. This is the reorg (downward) counterpart of the forward
+        // eviction in ConnectTip.
+        if (tx.IsBLSCT()) {
+            const int v2_height = m_chainman.GetConsensus().nBLSCTProofV2Height;
+            if (v2_height != std::numeric_limits<int>::max()) {
+                const bool require_v2 = (Assert(m_chain.Tip())->nHeight + 1) >= v2_height;
+                if (tx.IsBLSCTProofV2() != require_v2) return true;
+            }
+        }
+
         // The transaction must be final.
         if (!CheckFinalTxAtTip(*Assert(m_chain.Tip()), tx)) return true;
 
@@ -1166,7 +1182,7 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
         const int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
         const int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
 
-        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee)) {
+        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee, args.m_chainparams.GetConsensus().nBLSCTProofV2Height)) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }
@@ -2631,16 +2647,31 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
         }
 
+        // PoS eligibility proofs (kernel range proof + set-membership proof) use
+        // the height-derived transcript, and the block's VERSION_BIT_BLSCT_PROOF_V2
+        // must agree with the activation height both ways: set at/above
+        // nBLSCTProofV2Height, clear below it. A mismatch is rejected so the flag
+        // cannot disagree with the height.
+        const bool pos_require_v2 = pindex->nHeight >= params.GetConsensus().nBLSCTProofV2Height;
+        if (block.IsBLSCTProofV2() != pos_require_v2) {
+            LogPrint(BCLog::POPS, "PoPS rejected: block at height %d has BLSCT proof-v2 flag=%d, expected %d\n",
+                     pindex->nHeight, block.IsBLSCTProofV2() ? 1 : 0, pos_require_v2 ? 1 : 0);
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
+        }
+        const bool pos_transcript_v2 = block.IsBLSCTProofV2();
+
         pos_kernel_range_proof.emplace(block.posProof.GetKernelRangeProof(min_value_u64, eta_phi));
+        pos_kernel_range_proof->transcript_v2 = pos_transcript_v2;
         pos_verify_future = blsct::GetPosAsyncVerifier().Submit(
             [staked_commitments = staked_commitments_snapshot,
              eta_fiat_shamir = std::move(eta_fiat_shamir),
              eta_phi = std::move(eta_phi),
+             pos_transcript_v2,
              &pos_proof = block.posProof]() -> std::pair<bool, std::string> {
                 try {
                     const bool bench_on = LogAcceptCategory(BCLog::BENCH, BCLog::Level::Debug);
                     blsct::ProofOfStake::VerificationStats pos_stats;
-                    const bool setmem_ok = pos_proof.VerifySetMembership(staked_commitments, eta_fiat_shamir, eta_phi, bench_on ? &pos_stats : nullptr);
+                    const bool setmem_ok = pos_proof.VerifySetMembership(staked_commitments, eta_fiat_shamir, eta_phi, bench_on ? &pos_stats : nullptr, pos_transcript_v2);
                     if (bench_on) {
                         LogPrint(BCLog::BENCH,
                                  "      - pos setmem: sample=%zu padded=%zu setmem=%.2fms total=%.2fms result=%s\n",
@@ -2942,7 +2973,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                 if (params.GetConsensus().fBLSCT) {
                     int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
                     blsct::PreparedTxSignatureCheck sig_check;
-                    if (!blsct::PrepareTxForDeferredVerification(tx, view, tx_state, blockBLSCTProofs, sig_check, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee)) {
+                    if (!blsct::PrepareTxForDeferredVerification(tx, view, tx_state, blockBLSCTProofs, sig_check, 0, params.GetConsensus().nPePoSMinStakeAmount, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee, params.GetConsensus().nBLSCTProofV2Height)) {
                         state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                                       tx_state.GetRejectReason(), tx_state.GetDebugMessage());
                         return error("ConnectBlock(): VerifyTx on transaction %s %s failed with %s",
@@ -2992,7 +3023,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         int64_t nMTP = pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0;
         const auto t_reward_verify_start = SteadyClock::now();
         blsct::PreparedTxSignatureCheck sig_check;
-        if (!blsct::PrepareTxForDeferredVerification(*block.vtx[0], view, tx_state, blockBLSCTProofs, sig_check, blockReward, 0, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee)) {
+        if (!blsct::PrepareTxForDeferredVerification(*block.vtx[0], view, tx_state, blockBLSCTProofs, sig_check, blockReward, 0, pindex->nHeight, nMTP, params.GetConsensus().nBLSCTDefaultFee, params.GetConsensus().nBLSCTProofV2Height)) {
             state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                           tx_state.GetRejectReason(), tx_state.GetDebugMessage());
             return error("ConnectBlock(): VerifyTx on coinbase of block %s failed (reward: %s)\n",
@@ -3626,6 +3657,41 @@ bool Chainstate::ConnectTip(BlockValidationState& state, CBlockIndex* pindexNew,
     if (m_mempool) {
         m_mempool->removeForBlock(blockConnecting.vtx, pindexNew->nHeight);
         disconnectpool.removeForBlock(blockConnecting.vtx);
+
+        // BLSCT proof transcript v2: a BLSCT tx's BLSCT_PROOF_V2_MARKER must match
+        // the regime at the tip (set iff tip+1 >= nBLSCTProofV2Height). Evict every
+        // mempool BLSCT tx whose marker now disagrees. Going forward across the
+        // gate a v1-flagged tx becomes unminable; the same rule on the reorg
+        // predicate (filter_final_and_mature -> removeForReorg) handles the
+        // downward case when the tip moves back below the gate. Without this the
+        // miner's own TestBlockValidity rejects any template carrying the tx and
+        // block production stalls for as long as it lingers. Wallets resubmit the
+        // tx rebuilt under the correct transcript.
+        const int v2_height = m_chainman.GetConsensus().nBLSCTProofV2Height;
+        // Only scan when connecting this block moves the next-block regime across
+        // the gate. A mempool tx accepted matching the old tip+1 regime stays
+        // consistent as the tip advances within the same regime, so away from the
+        // crossing block the scan would find nothing -- skip it entirely, so this
+        // costs nothing before or after the flag day. The downward (reorg) case is
+        // handled by the removeForReorg predicate.
+        const bool crossing = v2_height != std::numeric_limits<int>::max() &&
+                              ((pindexNew->nHeight + 1 >= v2_height) != (pindexNew->nHeight >= v2_height));
+        if (crossing) {
+            const bool require_v2 = (pindexNew->nHeight + 1) >= v2_height;
+            std::vector<CTransactionRef> stale;
+            for (const auto& entry : m_mempool->mapTx) {
+                const auto& t = entry.GetTx();
+                if (t.IsBLSCT() && t.IsBLSCTProofV2() != require_v2) stale.push_back(entry.GetSharedTx());
+            }
+            for (const auto& tx : stale) {
+                if (m_mempool->exists(GenTxid::Txid(tx->GetHash()))) {
+                    m_mempool->removeRecursive(*tx, MemPoolRemovalReason::REORG);
+                }
+            }
+            if (!stale.empty()) {
+                LogPrintf("BLSCT transcript v2: evicted %u mempool transaction(s) whose proof-v2 flag no longer matches the tip at height %d.\n", static_cast<unsigned>(stale.size()), pindexNew->nHeight);
+            }
+        }
     }
     // Update m_chain & related variables.
     m_chain.SetTip(*pindexNew);

@@ -135,7 +135,8 @@ SetMemProof<T> SetMemProofProver<T>::Prove(
     const Scalar& m,
     const Scalar& f,
     const Scalar& eta_fiat_shamir,
-    const blsct::Message& eta_phi
+    const blsct::Message& eta_phi,
+    const bool transcript_v2
 ) {
     size_t n = blsct::Common::GetFirstPowerOf2GreaterOrEqTo(Ys_src.Size());
     if (n > setup.N) {
@@ -227,6 +228,12 @@ SetMemProof<T> SetMemProofProver<T>::Prove(
         Ys, A1, A2, S1, S2, S3, phi, eta_fiat_shamir
     );
 
+    // v2 domain separation: a context tag so this transcript cannot collide
+    // with any other proof system or version. Mirror exactly in Verify.
+    if (transcript_v2) {
+        fiat_shamir << std::string("NAVIO_SETMEM_V2");
+    }
+
 retry: // retrying without generating fiat_shamir again to get different hashes
     GEN_FIAT_SHAMIR_VAR(y, fiat_shamir, retry);
     GEN_FIAT_SHAMIR_VAR(z, fiat_shamir, retry);
@@ -257,6 +264,14 @@ retry: // retrying without generating fiat_shamir again to get different hashes
     // in lock-step on the rule).
     if (x.IsZero()) goto retry;
 
+    // v2 binds x -- and thereby T1/T2, which x is computed over -- into the
+    // transcript before c_factor and the inner-product round challenges are
+    // drawn, so they can no longer be fixed independently of T1/T2. Legacy
+    // ordering leaves x out of the transcript. Must mirror Verify.
+    if (transcript_v2) {
+        fiat_shamir << x;
+    }
+
     // Response
     Scalar tau_x = tau_1 * x + tau_2 * x.Square();
     Scalar mu = alpha + beta * omega + rho * x;
@@ -267,6 +282,14 @@ retry: // retrying without generating fiat_shamir again to get different hashes
     Scalars l = l0 + l1 * x;
     Scalars r = r0 + r1 * x;
     Scalar t = (l * r).Sum();
+
+    // v2 also binds the prover's responses into the transcript before c_factor
+    // and the inner-product round challenges are drawn, so none of them can be
+    // chosen after the challenge is known. Must mirror Verify exactly: same
+    // values, same order.
+    if (transcript_v2) {
+        fiat_shamir << t << tau_x << mu << z_alpha << z_tau << z_beta;
+    }
 
     // Hi was already cached above (== setup.hs.To(n) and Ys.Size() == n).
 
@@ -302,7 +325,8 @@ SetMemProof<Mcl> SetMemProofProver<Mcl>::Prove(
     const Scalar& m,
     const Scalar& f,
     const Scalar& eta_fiat_shamir,
-    const blsct::Message& eta_phi
+    const blsct::Message& eta_phi,
+    const bool transcript_v2
 );
 
 template <typename T>
@@ -311,7 +335,8 @@ bool SetMemProofProver<T>::Verify(
     const Points& Ys_src,
     const Scalar& eta_fiat_shamir,
     const blsct::Message& eta_phi,
-    const SetMemProof<T>& proof
+    const SetMemProof<T>& proof,
+    const bool transcript_v2
 ) {
     using LazyPoint = LazyPoint<T>;
 
@@ -348,6 +373,13 @@ bool SetMemProofProver<T>::Verify(
         Ys, proof.A1, proof.A2, proof.S1,
         proof.S2, proof.S3, proof.phi, eta_fiat_shamir
     );
+
+    // v2 domain separation: mirror Prove — a context tag right after the
+    // initial transcript, before any challenge is drawn.
+    if (transcript_v2) {
+        fiat_shamir << std::string("NAVIO_SETMEM_V2");
+    }
+
     Point h2 = setup.H5(Ys.GetVch());
 
     auto gens = setup.Gf().GetInstance(eta_phi);
@@ -363,10 +395,10 @@ retry:
     GEN_FIAT_SHAMIR_VAR(omega, fiat_shamir, retry);
 
     // omega is a Fiat-Shamir challenge, not a prover-chosen response. It is
-    // carried in the serialized proof for convenience, but the verifier must
-    // reject any proof whose omega disagrees with the value derived from the
-    // transcript -- otherwise an attacker could supply an omega the transcript
-    // never authorized and break the soundness of the membership relation.
+    // carried in the serialized proof for convenience, but the verifier
+    // recomputes it from the transcript and rejects any proof whose carried
+    // omega disagrees with the derived value -- otherwise a prover-supplied
+    // omega would not be constrained by the transcript.
     if (proof.omega != omega) return false;
 
     // Note: y_inv / y_inv_to_n used to be precomputed here but were never
@@ -381,6 +413,43 @@ retry:
     // emits one (it retries), so treat it as invalid rather than proceed.
     if (x.IsZero()) return false;
 
+    // v2 binds x (and thereby T1/T2) and the prover's responses into the
+    // transcript before c_factor and the inner-product round challenges are
+    // drawn, so none can be chosen after the challenge is known. Must mirror
+    // Prove exactly: same values, same order (in Prove the responses are
+    // absorbed a few lines later, but nothing else touches the transcript in
+    // between, so absorbing them consecutively here is transcript-identical).
+    if (transcript_v2) {
+        fiat_shamir << x;
+        fiat_shamir << proof.t << proof.tau_x << proof.mu << proof.z_alpha << proof.z_tau << proof.z_beta;
+    }
+
+    // v2 batch-combination weights, one per verifying equation (18)-(21). The
+    // four equations are folded into a single multiscalar zero check; with a
+    // fixed coefficient of 1 on each, only the SUM of their generator exponents
+    // is constrained, so a scalar appearing in two equations on the same
+    // generator (mu in (19) and z_alpha in (20) both land on h2) is pinned only
+    // through that sum and a compensating (+d, -d) pair slips through. An
+    // independent weight per equation constrains each on its own. Gated with the
+    // transcript: under v1 the weight is 1 (unchanged), so no historical proof
+    // is invalidated; only at/above the activation height are the equations
+    // weighted. The weights come from a separate domain-separated hash over the
+    // whole proof, NOT the Fiat-Shamir transcript, so c_factor and the round
+    // challenges are unaffected.
+    auto equation_weight = [&](const uint8_t equation_index) -> Scalar {
+        HashWriter hw{};
+        hw << std::string("NAVIO_SET_MEM_EQ_WEIGHT_V2");
+        hw << proof;
+        hw << y << z << omega << x;
+        hw << equation_index;
+        Scalar w = hw.GetHash();
+        return w == 0 ? Scalar(1) : w; // a zero weight would drop its equation
+    };
+    const Scalar w18 = transcript_v2 ? equation_weight(18) : Scalar(1);
+    const Scalar w19 = transcript_v2 ? equation_weight(19) : Scalar(1);
+    const Scalar w20 = transcript_v2 ? equation_weight(20) : Scalar(1);
+    const Scalar w21 = transcript_v2 ? equation_weight(21) : Scalar(1);
+
     G_H_Gi_Hi_ZeroVerifier<T> verifier(n);
 
     //////// (18)
@@ -388,8 +457,8 @@ retry:
         // g^t * h^tau_x = g^(z^2 + omega * (z-z^2)<1^n,y^n> - z^3<1^n,1^n>) * T1^x * T2^(x^2)
         // g^(t - z^2 - omega * (z-z^2)<1^n,y^n> + z^3<1^n,1^n>) * h^tau_x = T1^x * T2^(x^2)
 
-        // LHS
-        verifier.AddNegativeH(proof.tau_x); // LHS (18)
+        // LHS (each term weighted by w18)
+        verifier.AddNegativeH(w18 * proof.tau_x); // LHS (18)
 
         // z^2 + omega * (z-z^2)<1^n,y^n> - z^3<1^n,1^n> = t0
         Scalar t0 =
@@ -398,19 +467,20 @@ retry:
             - z.Cube() * n; // n = <1^n, 1^n>
 
         // g part of LHS with t0 exp on RHS moved to LHS
-        verifier.AddNegativeG(proof.t - t0);
+        verifier.AddNegativeG(w18 * (proof.t - t0));
 
         // T1^x and T2^(x^2) in RHS
-        verifier.AddPoint(LazyPoint(proof.T1, x));          // T1^x
-        verifier.AddPoint(LazyPoint(proof.T2, x.Square())); // T2^(x^2)
+        verifier.AddPoint(LazyPoint(proof.T1, w18 * x));          // T1^x
+        verifier.AddPoint(LazyPoint(proof.T2, w18 * x.Square())); // T2^(x^2)
     }
 
     //////// (19): refer to ./verifying_equations.md for the details
     {
-        verifier.AddPoint(LazyPoint(proof.A1, One()));
-        verifier.AddPoint(LazyPoint(proof.A2, proof.omega));
-        verifier.AddPoint(LazyPoint(proof.S2, x));
-        verifier.AddPoint(LazyPoint(h2, proof.mu.Negate()));
+        // Each term weighted by w19.
+        verifier.AddPoint(LazyPoint(proof.A1, w19));
+        verifier.AddPoint(LazyPoint(proof.A2, w19 * proof.omega));
+        verifier.AddPoint(LazyPoint(proof.S2, w19 * x));
+        verifier.AddPoint(LazyPoint(h2, w19 * proof.mu.Negate()));
 
         GEN_FIAT_SHAMIR_VAR(c_factor, fiat_shamir, retry);
 
@@ -423,45 +493,49 @@ retry:
         auto x_invs = xs.Invert();
         auto gen_exps = ImpInnerProdArg::GenGeneratorExponents<T>(num_rounds, xs);
 
+        // Gi/Hi exponents are set (not accumulated) and only equation (19)
+        // touches them, so applying w19 to the set value weights this equation.
         ImpInnerProdArg::LoopWithYPows<T>(n, y,
             [&](const size_t& i, const Scalar& y_pow, const Scalar& y_inv_pow) {
-                verifier.SetGiExp(i, (proof.a * gen_exps[i]).Negate() - z);
-                verifier.SetHiExp(i,
+                verifier.SetGiExp(i, w19 * ((proof.a * gen_exps[i]).Negate() - z));
+                verifier.SetHiExp(i, w19 * (
                     (proof.b * y_inv_pow * gen_exps[n - 1 - i]).Negate()
                     + (proof.omega * z * y_pow + z_sq) * y_inv_pow
-                );
+                ));
             }
         );
 
         for (size_t i=0; i<num_rounds; ++i) {
-            verifier.AddPoint(LazyPoint(proof.Ls[i], xs[i].Square()));
-            verifier.AddPoint(LazyPoint(proof.Rs[i], x_invs[i].Square()));
+            verifier.AddPoint(LazyPoint(proof.Ls[i], w19 * xs[i].Square()));
+            verifier.AddPoint(LazyPoint(proof.Rs[i], w19 * x_invs[i].Square()));
         }
 
-        verifier.AddPositiveG((proof.t - proof.a * proof.b) * c_factor);
+        verifier.AddPositiveG(w19 * (proof.t - proof.a * proof.b) * c_factor);
     }
 
     //////// (20)
     {
+        // Each term weighted by w20.
         // LHS
-        verifier.AddPoint(LazyPoint(h2, proof.z_alpha.Negate()));
-        verifier.AddNegativeH(proof.z_beta);
-        verifier.AddNegativeG(proof.z_tau);
+        verifier.AddPoint(LazyPoint(h2, w20 * proof.z_alpha.Negate()));
+        verifier.AddNegativeH(w20 * proof.z_beta);
+        verifier.AddNegativeG(w20 * proof.z_tau);
 
         // RHS
-        verifier.AddPoint(LazyPoint(proof.S1, One()));
-        verifier.AddPoint(LazyPoint(proof.A1, x));
+        verifier.AddPoint(LazyPoint(proof.S1, w20));
+        verifier.AddPoint(LazyPoint(proof.A1, w20 * x));
     }
 
     //////// (21)
     {
+        // Each term weighted by w21.
         // LHS
-        verifier.AddPoint(LazyPoint(h3, proof.z_tau.Negate()));
-        verifier.AddPoint(LazyPoint(g2, proof.z_beta.Negate()));
+        verifier.AddPoint(LazyPoint(h3, w21 * proof.z_tau.Negate()));
+        verifier.AddPoint(LazyPoint(g2, w21 * proof.z_beta.Negate()));
 
         // RHS
-        verifier.AddPoint(LazyPoint(proof.S3, One()));
-        verifier.AddPoint(LazyPoint(proof.phi, x));
+        verifier.AddPoint(LazyPoint(proof.S3, w21));
+        verifier.AddPoint(LazyPoint(proof.phi, w21 * x));
     }
 
     return verifier.Verify(setup.g, setup.h, Ys, setup.hs.To(n));
@@ -472,7 +546,8 @@ bool SetMemProofProver<Mcl>::Verify(
     const Points& Ys_src,
     const Scalar& eta_fiat_shamir,
     const blsct::Message& eta_phi,
-    const SetMemProof<Mcl>& proof
+    const SetMemProof<Mcl>& proof,
+    const bool transcript_v2
 );
 
 // ---------------------------------------------------------------------------

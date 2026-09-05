@@ -59,11 +59,11 @@ UnsignedOutput CreateOutput(const Scalar& tokenKey, const blsct::TokenInfo& toke
     return ret;
 }
 
-UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey)
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, const Scalar& blindingKey, const Scalar& tokenKey, const blsct::PublicKey& tokenPublicKey, const bool transcript_v2)
 {
     TokenId tokenId{tokenPublicKey.GetHash()};
 
-    auto ret = CreateOutput(destKeys, nAmount, "", tokenId, blindingKey, TX_MINT_TOKEN);
+    auto ret = CreateOutput(destKeys, nAmount, "", tokenId, blindingKey, TX_MINT_TOKEN, 0, /*fAllowZeroValueRangeProof=*/false, transcript_v2);
 
     if (!tokenId.IsNFT()) {
         ret.out.predicate = MintTokenPredicate(tokenPublicKey, nAmount).GetVch();
@@ -87,12 +87,13 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const Scalar
     return ret;
 }
 
-UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId, const Scalar& blindingKey, const CreateTransactionType& type, const CAmount& minStake, const bool& fAllowZeroValueRangeProof)
+UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId, const Scalar& blindingKey, const CreateTransactionType& type, const CAmount& minStake, const bool& fAllowZeroValueRangeProof, const bool transcript_v2)
 {
     bulletproofs_plus::RangeProofLogic<T> rp;
     auto ret = UnsignedOutput();
 
     ret.type = type;
+    ret.transcript_v2 = transcript_v2;
 
     ret.out.nValue = 0;
     ret.out.tokenId = tokenId;
@@ -122,7 +123,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
         ret.out.scriptPubKey = CScript(OP_TRUE);
 
         if (type == STAKED_COMMITMENT && tokenId.IsNull()) {
-            auto stakeRp = rp.Prove(vs, nonce, {}, tokenId, minStake);
+            auto stakeRp = rp.Prove(vs, nonce, {}, tokenId, minStake, transcript_v2);
 
             stakeRp.Vs.Clear();
 
@@ -134,7 +135,7 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
         if (tokenId.IsNFT()) {
             ret.out.nValue = nAmount;
         } else {
-            auto p = rp.Prove(vs, nonce, memo, tokenId);
+            auto p = rp.Prove(vs, nonce, memo, tokenId, Scalar(0), transcript_v2);
             ret.out.blsctData.rangeProof = p;
         }
         ret.GenerateKeys(ret.blindingKey, destKeys);
@@ -149,12 +150,13 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const CAmoun
     return ret;
 }
 
-UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId, const Scalar& blindingKey, const CreateTransactionType& type, const CAmount& minStake)
+UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId, const Scalar& blindingKey, const CreateTransactionType& type, const CAmount& minStake, const bool transcript_v2)
 {
     bulletproofs_plus::RangeProofLogic<T> rp;
     auto ret = UnsignedOutput();
 
     ret.type = type;
+    ret.transcript_v2 = transcript_v2;
 
     ret.out.nValue = 0;
     ret.out.tokenId = tokenId;
@@ -183,7 +185,7 @@ UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& de
         ret.out.scriptPubKey = destination.second;
 
         if (type == STAKED_COMMITMENT && tokenId.IsNull()) {
-            auto stakeRp = rp.Prove(vs, nonce, {}, tokenId, minStake);
+            auto stakeRp = rp.Prove(vs, nonce, {}, tokenId, minStake, transcript_v2);
 
             stakeRp.Vs.Clear();
 
@@ -195,7 +197,7 @@ UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& de
         if (tokenId.IsNFT()) {
             ret.out.nValue = nAmount;
         } else {
-            auto p = rp.Prove(vs, nonce, memo, tokenId);
+            auto p = rp.Prove(vs, nonce, memo, tokenId, Scalar(0), transcript_v2);
             ret.out.blsctData.rangeProof = p;
         }
         ret.GenerateKeys(ret.blindingKey, destination.first);
@@ -247,6 +249,16 @@ CTransactionRef AggregateTransactions(const std::vector<CTransactionRef>& txs)
 
     ret.txSig = blsct::Signature::Aggregate(vSigs);
     ret.nVersion = CTransaction::BLSCT_MARKER;
+    // Preserve the proof-v2 marker: an aggregate carries v2 output proofs iff its
+    // constituent txs do (all are built at the same tip and share one transcript
+    // version). Without this the aggregate would be flagged v1 and rejected by
+    // the flag-enforcement check at/above the activation height.
+    for (const auto& tx : txs) {
+        if (tx->IsBLSCTProofV2()) {
+            ret.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
+            break;
+        }
+    }
 
     return MakeTransactionRef(ret);
 }

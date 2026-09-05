@@ -15,6 +15,7 @@
 #include <consensus/validation.h>
 
 #include <chrono>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -53,7 +54,7 @@ struct TxSignatureBatchResult {
 // on every non-coinbase BLSCT transaction. Block-validation callers MUST
 // pass `Consensus::Params::nBLSCTDefaultFee`; tests/helpers may rely on the
 // default (== `BLSCT_DEFAULT_FEE`).
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0, const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE);
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0, const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE, int nBLSCTProofV2Height = std::numeric_limits<int>::max());
 
 // Same collection semantics as VerifyTxCollectProofs, but also returns the
 // prepared aggregate-signature job so callers can defer BLS signature checking
@@ -67,7 +68,8 @@ bool PrepareTxForDeferredVerification(const CTransaction& tx,
                                       const CAmount& minStake,
                                       int nSpendHeight,
                                       int64_t nMedianTimePast,
-                                      const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE);
+                                      const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE,
+                                      int nBLSCTProofV2Height = std::numeric_limits<int>::max());
 
 // Same semantics as VerifyTx, but defers the final bulletproofs++ batch check
 // to the caller. On success, appends the tx's range proofs to `out_proofs` so
@@ -83,7 +85,8 @@ bool VerifyTxCollectProofs(const CTransaction& tx,
                            const CAmount& minStake,
                            int nSpendHeight,
                            int64_t nMedianTimePast,
-                           const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE);
+                           const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE,
+                           int nBLSCTProofV2Height = std::numeric_limits<int>::max());
 
 // Batch verify prepared aggregate-signature jobs collected by
 // PrepareTxForDeferredVerification.

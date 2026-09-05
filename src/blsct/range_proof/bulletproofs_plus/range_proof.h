@@ -103,6 +103,13 @@ struct RangeProofWithSeed : public RangeProof<T> {
 
     // min value for proof verification
     typename T::Scalar min_value;
+
+    // Transcript version to verify under. Runtime verification context only --
+    // never serialized and not part of proof identity. false selects the
+    // legacy challenge ordering; true selects the v2 ordering that binds the
+    // A commitment into the transcript before the y/z challenges are drawn.
+    // The caller sets it from the activation height of the block being checked.
+    bool transcript_v2 = false;
 };
 
 template <typename T>

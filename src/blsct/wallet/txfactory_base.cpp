@@ -53,7 +53,7 @@ void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmo
         return;
     }
 
-    UnsignedOutput out = CreateOutput(destination.GetKeys(), nAmount, sMemo, token_id, blindingKey, type, minStake);
+    UnsignedOutput out = CreateOutput(destination.GetKeys(), nAmount, sMemo, token_id, blindingKey, type, minStake, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
 
     if (stakeDelegation.has_value() && type == STAKED_COMMITMENT && token_id.IsNull()) {
         // Attach the encrypted opening of the just-built commitment so the
@@ -105,7 +105,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
 {
     UnsignedOutput out;
 
-    out = CreateOutput(destination.GetKeys(), mintAmount, Scalar::Rand(), tokenKey, tokenPublicKey);
+    out = CreateOutput(destination.GetKeys(), mintAmount, Scalar::Rand(), tokenKey, tokenPublicKey, m_transcript_v2);
 
     TokenId token_id{tokenPublicKey.GetHash()};
 
@@ -178,6 +178,11 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
     for (size_t pass = 0; pass < MAX_FEE_FIXPOINT_PASSES; ++pass) {
         CMutableTransaction tx = this->tx;
         tx.nVersion |= CTransaction::BLSCT_MARKER;
+        // Stamp the proof-v2 marker when the outputs are built under the v2
+        // transcript, so verifiers select v2 and the flag-enforcement check
+        // passes at/above the activation height.
+        if (m_transcript_v2)
+            tx.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
 
         Scalar gammaAcc = outputGammas;
         std::map<TokenId, CAmount> mapChange;
@@ -207,7 +212,8 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             sffaOut = CreateOutput(subtractFeeOutput->destination.GetKeys(), reduced,
                                    subtractFeeOutput->memo, subtractFeeOutput->token_id,
                                    subtractFeeOutput->blindingKey, subtractFeeOutput->type,
-                                   subtractFeeOutput->minStake);
+                                   subtractFeeOutput->minStake, /*fAllowZeroValueRangeProof=*/false,
+                                   m_transcript_v2);
             gammaAcc = gammaAcc - sffaOut->gamma;
         }
 
@@ -279,7 +285,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             const std::string change_memo = (type == STAKED_COMMITMENT_UNSTAKE)
                 ? std::string{"Stake Unlock"}
                 : std::string{"Change"};
-            auto changeOutput = CreateOutput(changeDestination, change.second, change_memo, change.first, MclScalar::Rand(), NORMAL, minStake);
+            auto changeOutput = CreateOutput(changeDestination, change.second, change_memo, change.first, MclScalar::Rand(), NORMAL, minStake, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
 
             gammaAcc = gammaAcc - changeOutput.gamma;
 
@@ -503,6 +509,7 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
 std::optional<BuiltTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData)
 {
     auto tx = blsct::TxFactoryBase();
+    tx.SetTranscriptV2(transactionData.transcript_v2);
 
     if (transactionData.type == STAKED_COMMITMENT) {
         CAmount inputFromStakedCommitments = 0;

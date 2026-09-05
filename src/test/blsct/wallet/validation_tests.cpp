@@ -70,6 +70,34 @@ BOOST_FIXTURE_TEST_CASE(validation_test, TestingSetup)
 
     BOOST_CHECK(finalTx.has_value());
     BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx->tx), coins_view_cache, tx_state));
+
+    // M-2 negative tests: the BLSCT_PROOF_V2_MARKER must agree with the
+    // activation height, both ways. finalTx was built under v1 (no marker).
+    const int activation = 1000;
+
+    // Below the activation height, a v2-flagged BLSCT tx is rejected. This is the
+    // rule that keeps a v2-flagged tx from being consensus-valid below the gate
+    // (which would let the miner build a mixed aggregate and stall the chain).
+    {
+        CMutableTransaction flagged = finalTx->tx;
+        flagged.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
+        TxValidationState st;
+        BOOST_CHECK(!blsct::VerifyTx(CTransaction(flagged), coins_view_cache, st,
+                                     0, 0, /*nSpendHeight=*/10, 0,
+                                     BLSCT_DEFAULT_FEE, /*nBLSCTProofV2Height=*/activation));
+        BOOST_CHECK_EQUAL(st.GetRejectReason(), "unexpected-blsct-proof-v2-flag");
+    }
+
+    // At or above the activation height, a flag-less BLSCT tx is rejected.
+    {
+        CMutableTransaction unflagged = finalTx->tx;
+        unflagged.nVersion &= ~CTransaction::BLSCT_PROOF_V2_MARKER;
+        TxValidationState st;
+        BOOST_CHECK(!blsct::VerifyTx(CTransaction(unflagged), coins_view_cache, st,
+                                     0, 0, /*nSpendHeight=*/2000, 0,
+                                     BLSCT_DEFAULT_FEE, /*nBLSCTProofV2Height=*/activation));
+        BOOST_CHECK_EQUAL(st.GetRejectReason(), "missing-blsct-proof-v2-flag");
+    }
 }
 
 BOOST_FIXTURE_TEST_CASE(validation_reward_test, TestingSetup)

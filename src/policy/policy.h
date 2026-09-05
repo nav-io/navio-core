@@ -131,7 +131,11 @@ bool IsStandard(const CScript& scriptPubKey, const std::optional<unsigned>& max_
 // Changing the default transaction version requires a two step process: first
 // adapting relay policy by bumping TX_MAX_STANDARD_VERSION, and then later
 // allowing the new transaction version in the wallet/RPC.
-static constexpr decltype(CTransaction::nVersion) TX_MAX_STANDARD_VERSION{1 << 6};
+//
+// Bumped to 1 << 7 to admit the BLSCT proof-v2 marker (BLSCT_PROOF_V2_MARKER =
+// 1 << 6): a v2 BLSCT tx carries nVersion = CURRENT_VERSION | BLSCT_MARKER |
+// BLSCT_PROOF_V2_MARKER, which exceeds the previous 1 << 6 cap.
+static constexpr decltype(CTransaction::nVersion) TX_MAX_STANDARD_VERSION{1 << 7};
 
 /**
 * Check for standard transaction types

@@ -14,6 +14,12 @@ void UnsignedTransaction::AddInput(const UnsignedInput& input)
 void UnsignedTransaction::AddOutput(const UnsignedOutput& output)
 {
     m_outputs.push_back(output);
+    // Any v2 output makes the whole transaction v2 (outputs of one transaction
+    // are built at the same tip and share a transcript version); Sign() then
+    // stamps BLSCT_PROOF_V2_MARKER so the finished tx is consensus-valid at or
+    // above the activation height.
+    if (output.transcript_v2)
+        m_transcript_v2 = true;
 }
 
 std::vector<unsigned char> UnsignedTransaction::Serialize() const
@@ -41,6 +47,8 @@ std::optional<CTransaction> UnsignedTransaction::Sign() const
         // Create a mutable transaction
         CMutableTransaction tx;
         tx.nVersion |= CTransaction::BLSCT_MARKER;
+        if (m_transcript_v2)
+            tx.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
 
         // Add inputs
         std::vector<Signature> txSigs;

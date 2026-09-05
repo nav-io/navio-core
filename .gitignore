@@ -106,3 +106,4 @@ compile_commands.json
 null.d
 
 /build*
+build-test/

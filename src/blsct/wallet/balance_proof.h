@@ -13,15 +13,25 @@ namespace blsct {
 
 class BalanceProof
 {
+public:
+    // Serialized transcript version of the range proof. v1 is the legacy
+    // Fiat-Shamir transcript the disclosure calls unsound; v2 binds A before the
+    // challenges. New proofs are always built as v2; the byte lets a verifier
+    // pick the matching transcript and lets the format evolve without a break.
+    static constexpr uint8_t VERSION_V1 = 1;
+    static constexpr uint8_t VERSION_V2 = 2;
+
 private:
     std::vector<COutPoint> m_outpoints;
     CAmount m_min_amount;
     bulletproofs_plus::RangeProof<Mcl> m_proof;
     blsct::Signature m_signature;
     uint16_t m_index;
+    uint8_t m_version{VERSION_V2};
 
 public:
     BalanceProof() = default;
+    uint8_t GetVersion() const { return m_version; }
     BalanceProof(const std::vector<COutPoint>& outpoints, CAmount min_amount, const bulletproofs_plus::RangeProof<Mcl>& proof, const blsct::Signature& signature)
         : m_outpoints(outpoints), m_min_amount(min_amount), m_proof(proof), m_signature(signature), m_index(0) {}
 
@@ -85,11 +95,12 @@ public:
             throw std::runtime_error("No spending key available for the given outpoints");
         }
 
-        // Create range proof
+        // Create range proof under the v2 transcript and record the version.
+        m_version = VERSION_V2;
         bulletproofs_plus::RangeProofLogic<Mcl> prover;
         range_proof::GammaSeed<Mcl> nonce(Elements<MclScalar>{1, gamma});
         std::vector<uint8_t> message;
-        m_proof = prover.Prove({1, value}, nonce, message, TokenId(), MclScalar(min_amount));
+        m_proof = prover.Prove({1, value}, nonce, message, TokenId(), MclScalar(min_amount), /*transcript_v2=*/true);
         m_signature = private_key.Sign(additional_commitment);
     }
 
@@ -99,6 +110,16 @@ public:
 
     bool Verify(const CCoinsViewCache& view, const blsct::Message& additional_commitment) const
     {
+        // The version byte is attacker-controlled (it comes from the proof blob
+        // supplied to verifyblsctbalanceproof). Accept ONLY the current version:
+        // a lower version would be verified under the legacy transcript the
+        // disclosure calls unsound (a downgrade switch), and an unknown higher
+        // version must not be silently treated as v2. There is no legacy corpus
+        // to support -- pre-release proofs are regenerated.
+        if (m_version != VERSION_V2) {
+            return false;
+        }
+
         // Sum up all commitments from the outputs
         MclG1Point sum_commitment;
         MclG1Point public_key;
@@ -121,8 +142,10 @@ public:
         const_cast<bulletproofs_plus::RangeProof<Mcl>&>(m_proof).Vs.Clear();
         const_cast<bulletproofs_plus::RangeProof<Mcl>&>(m_proof).Vs.Add(sum_commitment);
 
-        // Create a range proof with seed for verification
+        // Create a range proof with seed for verification, under the transcript
+        // the proof's version byte records.
         bulletproofs_plus::RangeProofWithSeed<Mcl> proof(m_proof, TokenId(), MclScalar(m_min_amount));
+        proof.transcript_v2 = (m_version >= VERSION_V2);
         std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> proofs;
         proofs.push_back(proof);
 
@@ -131,9 +154,12 @@ public:
         return prover.Verify(proofs) && blsct::PublicKey(public_key).Verify(additional_commitment, m_signature);
     }
 
+    // Version byte FIRST so a decoder can dispatch on it before reading the rest
+    // (a v1 reader that predates the byte cannot parse this; pre-release proofs
+    // must be regenerated -- balance proofs are ephemeral attestations).
     SERIALIZE_METHODS(BalanceProof, obj)
     {
-        READWRITE(obj.m_outpoints, obj.m_min_amount, obj.m_proof, obj.m_signature, obj.m_index);
+        READWRITE(obj.m_version, obj.m_outpoints, obj.m_min_amount, obj.m_proof, obj.m_signature, obj.m_index);
     }
 };
 

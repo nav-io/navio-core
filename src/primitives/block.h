@@ -25,6 +25,12 @@ class CBlockHeader
 public:
     static const int32_t VERSION_BIT_POS = 0x01000000UL;
     static const int32_t VERSION_BIT_BLSCT = 0x40000000UL;
+    // Signals that this block's BLSCT proofs (the PoS kernel range proof and
+    // set-membership proof) are built under the v2 Fiat-Shamir transcript.
+    // A dedicated flag bit like VERSION_BIT_POS -- it must never be assigned to
+    // a BIP9 signalling deployment. Verifiers select the transcript from this
+    // bit; consensus enforces it set at and above nBLSCTProofV2Height.
+    static const int32_t VERSION_BIT_BLSCT_PROOF_V2 = 0x02000000UL;
     // header
     int32_t nVersion;
     uint256 hashPrevBlock;
@@ -67,6 +73,11 @@ public:
     bool IsProofOfStake() const
     {
         return (nVersion & VERSION_BIT_POS);
+    }
+
+    bool IsBLSCTProofV2() const
+    {
+        return (nVersion & VERSION_BIT_BLSCT_PROOF_V2);
     }
 
     uint256 GetHash() const;

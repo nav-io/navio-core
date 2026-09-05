@@ -373,6 +373,7 @@ BASE_SCRIPTS = [
     'blsct_script_validation.py',
     'blsct_balance_proof.py',
     'blsct_pops_consensus.py',
+    'blsct_proof_transcript_v2.py',
     'blsct_output_storage.py',
     'blsct_block_rpc.py',
     'blsct_txoutset_amounts.py',

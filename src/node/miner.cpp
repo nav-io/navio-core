@@ -214,6 +214,13 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     if (fPos)
         pblock->nVersion |= CBlockHeader::VERSION_BIT_POS;
 
+    // Stamp the BLSCT proof-v2 flag once the block lands at or above the
+    // activation height, so verifiers select the v2 transcript and the consensus
+    // flag-enforcement check passes. The PoS proof and output range proofs are
+    // built under the matching transcript.
+    if (fPos && nHeight >= chainparams.GetConsensus().nBLSCTProofV2Height)
+        pblock->nVersion |= CBlockHeader::VERSION_BIT_BLSCT_PROOF_V2;
+
     // -regtest only: allow overriding block.nVersion with
     // -blockversion=N to test forking scenarios
     if (chainparams.MineBlocksOnDemand()) {
@@ -336,19 +343,31 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     // to an unspendable OP_RETURN with no range proof: the verifier skips such
     // outputs, but the coinbase still carries balance/output signatures, which
     // would then fail the aggregate signature check.
-    auto out = blsct::CreateOutput(destination.GetKeys(), nReward - feeAmount, "Reward", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true);
+    // Rule A: the reward output's range proof must use the transcript version
+    // the verifier applies at this block's height, or the block fails its own
+    // TestBlockValidity range-proof check at/above the activation height.
+    const bool reward_transcript_v2 = nHeight >= chainparams.GetConsensus().nBLSCTProofV2Height;
+    auto out = blsct::CreateOutput(destination.GetKeys(), nReward - feeAmount, "Reward", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true, reward_transcript_v2);
 
     txSigs.push_back(blsct::PrivateKey(out.blindingKey).Sign(out.out.GetHash()));
     Scalar gammaAcc = out.gamma;
 
     coinbaseTx.nVersion = CTransaction::BLSCT_MARKER;
+    // Match the reward output's transcript: mark the coinbase v2 at/above the
+    // activation height so it passes the flag-enforcement check. (The aggregate
+    // signature is built later, after the optional operator-fee output.)
+    if (reward_transcript_v2)
+        coinbaseTx.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
     coinbaseTx.vin.resize(1);
     coinbaseTx.vin[0].prevout.SetNull();
     coinbaseTx.vout.resize(1);
     coinbaseTx.vout[0] = out.out;
 
     if (feeAmount > 0) {
-        auto feeOut = blsct::CreateOutput(feeSplit->first.GetKeys(), feeAmount, "Operator Fee", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true);
+        // Rule A applies to the operator-fee output too: its range proof must use
+        // the same transcript version as the reward output, or a block carrying a
+        // fee fails TestBlockValidity's range-proof check at/above activation.
+        auto feeOut = blsct::CreateOutput(feeSplit->first.GetKeys(), feeAmount, "Operator Fee", TokenId(), Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true, reward_transcript_v2);
         txSigs.push_back(blsct::PrivateKey(feeOut.blindingKey).Sign(feeOut.out.GetHash()));
         gammaAcc = gammaAcc + feeOut.gamma;
         coinbaseTx.vout.push_back(feeOut.out);
