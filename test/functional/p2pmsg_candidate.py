@@ -57,7 +57,12 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         assert Decimal(str(w1.getbalances()["mine"]["trusted"])) > 0
 
         # --- Built-in serving: node0's pool fills with NO orchestration. ---
-        self.wait_until(lambda: n0.getaggregationhint()["available"] >= 1, timeout=60)
+        # 120s: these three waits depend on a background serve/pull tick +
+        # per-message PoW + p2p propagation, and the [commits] CI job rebuilds
+        # and runs the whole functional suite per commit on a saturated runner,
+        # where 60s intermittently isn't enough. CentOS (timeout-factor=80)
+        # excludes this test, so the larger base doesn't compound there.
+        self.wait_until(lambda: n0.getaggregationhint()["available"] >= 1, timeout=120)
         self.log.info("built-in serving filled the requester's pool automatically")
 
         # Producer never pools its own served candidates (they were encrypted
@@ -84,15 +89,12 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
             keys.extend(n1.listpendingcandidaterequests())
             return len(set(keys)) >= 2
 
-        self.wait_until(got_two, timeout=60)
+        self.wait_until(got_two, timeout=120)
         uniq = list(dict.fromkeys(keys))
         before = n0.getaggregationhint()["available"]
         res = w1.replycandidate(uniq[0])
         assert "candidate_txid" in res, res
-        # 60s to match the sibling waits above: under a saturated CI runner (the
-        # [commits] job runs the whole functional suite in parallel) the serve +
-        # p2pmsg decrypt + propagate cycle can exceed a tight 30s window.
-        self.wait_until(lambda: n0.getaggregationhint()["available"] > before, timeout=60)
+        self.wait_until(lambda: n0.getaggregationhint()["available"] > before, timeout=120)
         assert res["candidate_txid"] not in n0.getrawmempool()
         self.log.info("manual claim + replycandidate served OK")
 
