@@ -60,10 +60,12 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
             keys.extend(producer_node.listpendingcandidaterequests())
             return len(keys) > 0
 
-        self.wait_until(got_one, timeout=30)
+        # 120s (was 30): serve/propagation-dependent, flakes under the
+        # [commits] job's full-suite saturation; CentOS excludes this test.
+        self.wait_until(got_one, timeout=120)
         before = requester_node.getaggregationhint()["available"]
         reply = producer_wallet.replycandidate(keys[0])
-        self.wait_until(lambda: requester_node.getaggregationhint()["available"] > before, timeout=30)
+        self.wait_until(lambda: requester_node.getaggregationhint()["available"] > before, timeout=120)
         return reply["inputs"]
 
     def run_test(self):
@@ -89,7 +91,7 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         # --- A PLAIN send on node0 merges by default. ---
         dest = w1.getnewaddress(label="", address_type="blsct")
         w0.sendtoblsctaddress(dest, 1.0)
-        self.wait_until(lambda: len(n0.getrawmempool()) == 1, timeout=20)
+        self.wait_until(lambda: len(n0.getrawmempool()) == 1, timeout=60)
         txid = n0.getrawmempool()[0]
         tx = n0.getrawtransaction(txid, True)
         # Own half (>=1 input) + merged candidate (1 input each).
@@ -113,7 +115,7 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         assert txid not in n0.getrawmempool(), "aggregated send did not confirm"
         self.wait_until(
             lambda: Decimal(str(w1.getbalances()["mine"]["trusted"])) >= recv_before + Decimal("1.0") - Decimal("0.1"),
-            timeout=30)
+            timeout=120)
         self.log.info("default-aggregated plain send confirmed")
 
         # --- Node1 opted out (-aggregatesends=0): its pooled candidates stay. ---
@@ -121,7 +123,7 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         before = n1.getaggregationhint()["available"]
         assert before >= 1
         w1.sendtoblsctaddress(w0.getnewaddress(label="", address_type="blsct"), 1.0)
-        self.wait_until(lambda: len(n1.getrawmempool()) >= 1, timeout=20)
+        self.wait_until(lambda: len(n1.getrawmempool()) >= 1, timeout=60)
         assert_equal(n1.getaggregationhint()["available"], before)
         self.generatetoblsctaddress(n1, 1, miner1)
         self.sync_blocks()
