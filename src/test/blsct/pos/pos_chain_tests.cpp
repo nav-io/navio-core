@@ -96,9 +96,18 @@ BOOST_FIXTURE_TEST_CASE(StakedCommitment, TestBLSCTChain100Setup)
         index->phashBlock = &randomHash;
         CBlock block;
 
+        // Mirror the miner: stamp the BLSCT proof-v2 flag when the block lands
+        // at or above the activation height, so the flag-consistency check in
+        // ProofOfStakeLogic::Verify accepts the v2 proof Create builds here.
+        // Without it Verify rejects every grind and this loop never ends.
+        if (index->nHeight + 1 >= m_node.chainman->GetConsensus().nBLSCTProofV2Height)
+            block.nVersion |= CBlockHeader::VERSION_BIT_BLSCT_PROOF_V2;
+
         bool fStop = false;
+        int grinds = 0;
 
         while (!fStop) {
+            BOOST_REQUIRE_MESSAGE(++grinds <= 1000, "no valid PoS proof after 1000 grinds");
             block.posProof = blsct::ProofOfStakeLogic::Create(coins_view_cache, out3.value, out3.gamma, index, block, m_node.chainman->GetConsensus());
 
             if (blsct::ProofOfStakeLogic::Verify(coins_view_cache, index, block, m_node.chainman->GetConsensus()))

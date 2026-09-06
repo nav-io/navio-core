@@ -421,7 +421,7 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
     // Output the received token up front; its blinding/gamma are folded into the
     // balance accumulator so the half's signature covers it. There is no matching
     // input for recv_token here — the counterparty's half supplies it.
-    auto recvOutput = CreateOutput(recvDestination.GetKeys(), recv_amount, "swap-recv", recv_token);
+    auto recvOutput = CreateOutput(recvDestination.GetKeys(), recv_amount, "swap-recv", recv_token, Scalar::Rand(), NORMAL, 0, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
 
     std::vector<Signature> baseOutputSignatures;
     Scalar baseOutputGammas;
@@ -443,6 +443,11 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
     while (true) {
         CMutableTransaction tx;
         tx.nVersion |= CTransaction::BLSCT_MARKER;
+        // Stamp the proof-v2 marker when the outputs are built under the v2
+        // transcript (mirrors BuildTx): consensus enforces the flag against
+        // the activation height, and CombineHalves ORs it across halves.
+        if (m_transcript_v2)
+            tx.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
 
         Scalar gammaAcc = baseOutputGammas;
         std::vector<Signature> txSigs = baseOutputSignatures;
@@ -482,7 +487,7 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
 
         for (auto& change : mapChange) {
             if (change.second == 0) continue;
-            auto changeOutput = CreateOutput(changeDestination, change.second, "Change", change.first);
+            auto changeOutput = CreateOutput(changeDestination, change.second, "Change", change.first, Scalar::Rand(), NORMAL, 0, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
             gammaAcc = gammaAcc - changeOutput.gamma;
             tx.vout.push_back(changeOutput.out);
             txSigs.push_back(PrivateKey(changeOutput.blindingKey).Sign(changeOutput.out.GetHash()));
