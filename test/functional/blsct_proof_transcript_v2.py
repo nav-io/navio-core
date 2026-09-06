@@ -65,7 +65,7 @@ class BlsctProofTranscriptV2Test(BitcoinTestFramework):
         # distinguishes "gate fired correctly" from "gate plumbing silently
         # broke and both sides stayed on v1" -- without it, a broken gate passes
         # this test unnoticed.
-        gbt = node.getblocktemplate({"rules": ["segwit"]})
+        gbt = node.getblocktemplate({"rules": ["segwit"], "coinbasedest": addr})
         assert_equal(gbt.get("pops_transcript_v2"), False)
 
         # Mine across the boundary and well past it. Every block from
@@ -80,7 +80,7 @@ class BlsctProofTranscriptV2Test(BitcoinTestFramework):
         # Positive assertion: the gate IS active above the height -- confirms the
         # -blsctproofv2height plumbing actually fired, so the clean cross-boundary
         # mining above is real v2 verification, not two sides silently on v1.
-        gbt = node.getblocktemplate({"rules": ["segwit"]})
+        gbt = node.getblocktemplate({"rules": ["segwit"], "coinbasedest": addr})
         assert_equal(gbt.get("pops_transcript_v2"), True)
 
         # A confidential spend built above the gate carries v2 output range

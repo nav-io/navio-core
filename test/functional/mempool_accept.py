@@ -285,7 +285,7 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
 
         self.log.info('Some nonstandard transactions')
         tx = tx_from_hex(raw_tx_reference)
-        tx.nVersion = 1<<7  # A version currently non-standard
+        tx.nVersion = (1<<7) + 1  # A version currently non-standard (> TX_MAX_STANDARD_VERSION)
         self.check_mempool_result(
             result_expected=[{'txid': tx.rehash(), 'allowed': False, 'reject-reason': 'version'}],
             rawtxs=[tx.serialize().hex()],

@@ -375,6 +375,11 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
 
         const auto& c = *chosen;
         auto factory = blsct::TxFactory(km);
+        // Rule A (hard cutover): candidates must be range-proved and flagged
+        // under the transcript active at tip + 1, or the aggregate they end up
+        // in fails consensus verification above the gate.
+        const int tip_height = wallet.chain().getHeight().value_or(-1);
+        factory.SetTranscriptV2((tip_height + 1) >= Params().GetConsensus().nBLSCTProofV2Height);
         factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
         // Self-spend the whole value back to a fresh own CHANGE address:
         // input value == output value, zero fee (BuildCandidate emits no fee
@@ -641,6 +646,10 @@ static RPCHelpMan acceptquotewallet()
             blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
 
             auto factory = blsct::TxFactory(km);
+            // Rule A (hard cutover): the taker half must be range-proved and
+            // flagged under the transcript active at tip + 1 (see BuildTx).
+            const int tip_height = pwallet->chain().getHeight().value_or(-1);
+            factory.SetTranscriptV2((tip_height + 1) >= Params().GetConsensus().nBLSCTProofV2Height);
             CAmount gathered = 0;
             for (const auto& c : candidates) {
                 if (gathered >= quote.sell_cost) break;
@@ -730,6 +739,10 @@ static RPCHelpMan broadcastorder()
             blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
 
             auto factory = blsct::TxFactory(km);
+            // Rule A (hard cutover): the order half must be range-proved and
+            // flagged under the transcript active at tip + 1 (see BuildTx).
+            const int tip_height = pwallet->chain().getHeight().value_or(-1);
+            factory.SetTranscriptV2((tip_height + 1) >= Params().GetConsensus().nBLSCTProofV2Height);
             CAmount gathered = 0;
             for (const auto& c : candidates) {
                 if (gathered >= offer_amount) break;
@@ -833,6 +846,10 @@ static RPCHelpMan replyquote()
             blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
 
             auto factory = blsct::TxFactory(km);
+            // Rule A (hard cutover): the quote half must be range-proved and
+            // flagged under the transcript active at tip + 1 (see BuildTx).
+            const int tip_height = pwallet->chain().getHeight().value_or(-1);
+            factory.SetTranscriptV2((tip_height + 1) >= Params().GetConsensus().nBLSCTProofV2Height);
             CAmount gathered = 0;
             for (const auto& c : candidates) {
                 if (gathered >= pm->fill) break;

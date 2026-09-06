@@ -59,6 +59,12 @@ inline std::optional<CMutableTransaction> CombineHalves(std::span<const CTransac
         if (ref == nullptr) return std::nullopt;
         const CTransaction& tx = *ref;
 
+        // Preserve the proof-v2 marker: consensus requires it on every BLSCT
+        // tx at/above nBLSCTProofV2Height, and the halves were built (and
+        // range-proved) under that flag. OR across halves mirrors how the
+        // miner treats the marker for an aggregate.
+        out.nVersion |= (tx.nVersion & CTransaction::BLSCT_PROOF_V2_MARKER);
+
         for (const CTxIn& in : tx.vin) {
             if (!seen_inputs.insert(in.prevout).second) return std::nullopt;
             out.vin.push_back(in);
