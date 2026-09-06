@@ -144,8 +144,6 @@
 /* Define this symbol to build in assembly routines (CPU SIMD dispatch). */
 #cmakedefine USE_ASM 1
 
-/* BLS_ETH mode required for bls and mcl libs */
-#define BLS_ETH 1
 
 /* Autotools compat aliases — avoid redefining C++ identifiers */
 #define PACKAGE_NAME "@CLIENT_NAME@"

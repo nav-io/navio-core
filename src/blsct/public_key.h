@@ -5,7 +5,8 @@
 #ifndef NAVIO_BLSCT_PUBLIC_KEY_H
 #define NAVIO_BLSCT_PUBLIC_KEY_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blst.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/signature.h>
 #include <key.h>
 
@@ -13,7 +14,7 @@ namespace blsct {
 class PublicKey
 {
 public:
-    using Point = MclG1Point;
+    using Point = BlstG1Point;
     using Message = std::vector<uint8_t>;
 
 private:
@@ -63,7 +64,8 @@ public:
         return this->GetVch() < b.GetVch();
     };
 
-    blsPublicKey ToBlsPublicKey() const;
+    // Affine G1 form for blst's signature-verification API.
+    blst_p1_affine ToAffine() const;
     std::vector<uint8_t> AugmentMessage(const Message& msg) const;
 
     // Core operations

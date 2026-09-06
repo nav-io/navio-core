@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef NAVIO_BLSCT_KEYMAN_H
-#define NAVIO_BLSCT_KEYMAN_H
+#ifndef NAVIO_BLSCT_WALLET_KEYMAN_H
+#define NAVIO_BLSCT_WALLET_KEYMAN_H
 
 #include <blsct/double_public_key.h>
 #include <blsct/private_key.h>
@@ -239,15 +239,15 @@ public:
     //! Returns nullopt when the output cannot be ours (no view key / not a
     //! BLSCT output / zero blinding key) or when derivation throws (malformed
     //! blsctData), so callers outside a handler stay exception-safe.
-    std::optional<MclG1Point> GetExpectedNonce(const CTxOut& txout) const;
+    std::optional<BlstG1Point> GetExpectedNonce(const CTxOut& txout) const;
     //! IsMineMode / IsMine / MarkUnusedSubAddress variants that take the
     //! precomputed nonce instead of re-deriving it. A nullopt nonce (output
     //! cannot be a BLSCT output of ours) makes the BLSCT ownership checks
     //! fail without any EC work, falling through to the scriptPubKey
     //! watch-only path exactly as the original did. The hash id is computed
     //! from the nonce directly, so these need no view key access at all.
-    wallet::isminetype IsMineMode(const CTxOut& txout, const std::optional<MclG1Point>& expectedNonce);
-    bool IsMine(const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<MclG1Point>& expectedNonce);
+    wallet::isminetype IsMineMode(const CTxOut& txout, const std::optional<BlstG1Point>& expectedNonce);
+    bool IsMine(const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<BlstG1Point>& expectedNonce);
     CKeyID GetHashId(const CTxOut& txout) const
     {
         if (!txout.scriptPubKey.IsSpendable() && !txout.IsStakedCommitment()) {
@@ -265,7 +265,7 @@ public:
     //! Same key selection as GetHashId(txout), but derives the id from a
     //! precomputed nonce (blindingKey * viewKey), so it needs no view key and
     //! pays no extra scalar multiplication.
-    CKeyID GetHashId(const CTxOut& txout, const MclG1Point& expectedNonce) const
+    CKeyID GetHashId(const CTxOut& txout, const BlstG1Point& expectedNonce) const
     {
         if (!txout.scriptPubKey.IsSpendable() && !txout.IsStakedCommitment()) {
             return CKeyID();
@@ -289,8 +289,8 @@ public:
     bool GetSpendingKeyForOutput(const CTxOut& out, blsct::PrivateKey& key) const;
     bool GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key) const;
     bool GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key) const;
-    bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputs(const std::vector<CTxOut>& outs);
-    bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce);
+    bulletproofs_plus::AmountRecoveryResult<Blst> RecoverOutputs(const std::vector<CTxOut>& outs);
+    bulletproofs_plus::AmountRecoveryResult<Blst> RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce);
 
     blsct::PrivateKey GetTokenKey(const uint256& tokenId) const;
     blsct::PrivateKey GetTokenKey(const blsct::PublicKey& tokenPublicKey) const { return GetTokenKey(tokenPublicKey.GetHash()); };
@@ -308,7 +308,7 @@ public:
     bool TopUp(const unsigned int& size = 0);
     bool TopUpAccount(const int64_t& account, const unsigned int& size = 0);
     std::optional<wallet::WalletDestination> MarkUnusedSubAddress(const CTxOut& txout);
-    std::optional<wallet::WalletDestination> MarkUnusedSubAddress(const CTxOut& txout, const MclG1Point& expectedNonce);
+    std::optional<wallet::WalletDestination> MarkUnusedSubAddress(const CTxOut& txout, const BlstG1Point& expectedNonce);
     void ReserveSubAddressFromPool(const int64_t& account, int64_t& nIndex, SubAddressPool& keypool);
     void KeepSubAddress(const SubAddressIdentifier& id);
     void ReturnSubAddress(const SubAddressIdentifier& id);
@@ -353,4 +353,4 @@ public:
 };
 } // namespace blsct
 
-#endif // NAVIO_BLSCT_KEYMAN_H
+#endif // NAVIO_BLSCT_WALLET_KEYMAN_H

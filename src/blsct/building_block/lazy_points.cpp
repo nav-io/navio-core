@@ -2,11 +2,9 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#define BLS_ETH 1
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/building_block/lazy_points.h>
-#include <bls/bls384_256.h>
 
 template <typename T>
 LazyPoints<T>::LazyPoints(const Elements<typename T::Point>& bases, const Elements<typename T::Scalar>& exps) {
@@ -17,13 +15,13 @@ LazyPoints<T>::LazyPoints(const Elements<typename T::Point>& bases, const Elemen
         m_points.push_back(LazyPoint<T>(bases[i], exps[i]));
     }
 }
-template LazyPoints<Mcl>::LazyPoints(const Elements<Mcl::Point>& bases, const Elements<Mcl::Scalar>& exps);
+template LazyPoints<Blst>::LazyPoints(const Elements<Blst::Point>& bases, const Elements<Blst::Scalar>& exps);
 
 template <typename T>
 void LazyPoints<T>::Add(const LazyPoint<T>& point) {
     m_points.push_back(point);
 }
-template void LazyPoints<Mcl>::Add(const LazyPoint<Mcl>& point);
+template void LazyPoints<Blst>::Add(const LazyPoint<Blst>& point);
 
 template <typename T>
 void LazyPoints<T>::Add(const typename T::Point& p)
@@ -31,7 +29,7 @@ void LazyPoints<T>::Add(const typename T::Point& p)
     LazyPoint<T> lp(p, Scalar(1));
     Add(lp);
 }
-template void LazyPoints<Mcl>::Add(const Mcl::Point& p);
+template void LazyPoints<Blst>::Add(const Blst::Point& p);
 
 template <typename T>
 void LazyPoints<T>::Add(const typename T::Point& p, const typename T::Scalar& s)
@@ -39,7 +37,7 @@ void LazyPoints<T>::Add(const typename T::Point& p, const typename T::Scalar& s)
     LazyPoint<T> lp(p, s);
     Add(lp);
 }
-template void LazyPoints<Mcl>::Add(const Mcl::Point& p, const Mcl::Scalar& s);
+template void LazyPoints<Blst>::Add(const Blst::Point& p, const Blst::Scalar& s);
 
 template <typename T>
 void LazyPoints<T>::Add(const Elements<typename T::Point>& ps, const typename T::Scalar& s)
@@ -49,7 +47,7 @@ void LazyPoints<T>::Add(const Elements<typename T::Point>& ps, const typename T:
         Add(lp);
     }
 }
-template void LazyPoints<Mcl>::Add(const Elements<Mcl::Point>& ps, const Mcl::Scalar& s);
+template void LazyPoints<Blst>::Add(const Elements<Blst::Point>& ps, const Blst::Scalar& s);
 
 template <typename T>
 void LazyPoints<T>::Add(
@@ -65,16 +63,16 @@ void LazyPoints<T>::Add(
         Add(lp);
     }
 }
-template void LazyPoints<Mcl>::Add(
-    const Elements<Mcl::Point>& ps,
-    const Elements<Mcl::Scalar>& ss
+template void LazyPoints<Blst>::Add(
+    const Elements<Blst::Point>& ps,
+    const Elements<Blst::Scalar>& ss
 );
 
 template <typename T>
 typename T::Point LazyPoints<T>::Sum() const {
     return T::Util::template MultiplyLazyPoints<T>(m_points);
 }
-template Mcl::Point LazyPoints<Mcl>::Sum() const;
+template Blst::Point LazyPoints<Blst>::Sum() const;
 
 template <typename T>
 LazyPoints<T> LazyPoints<T>::operator+(const LazyPoints<T>& rhs) const {
@@ -92,7 +90,7 @@ LazyPoints<T> LazyPoints<T>::operator+(const LazyPoints<T>& rhs) const {
 
     return LazyPoints<T>(bases, exps);
 }
-template LazyPoints<Mcl> LazyPoints<Mcl>::operator+(const LazyPoints<Mcl>& rhs) const;
+template LazyPoints<Blst> LazyPoints<Blst>::operator+(const LazyPoints<Blst>& rhs) const;
 
 template <typename T>
 LazyPoints<T> LazyPoints<T>::operator+(const LazyPoint<T>& rhs) const {
@@ -108,23 +106,4 @@ LazyPoints<T> LazyPoints<T>::operator+(const LazyPoint<T>& rhs) const {
 
     return LazyPoints<T>(bases, exps);
 }
-template LazyPoints<Mcl> LazyPoints<Mcl>::operator+(const LazyPoint<Mcl>& rhs) const;
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-template LazyPoints<Blst>::LazyPoints(const Elements<Blst::Point>& bases, const Elements<Blst::Scalar>& exps);
-template void LazyPoints<Blst>::Add(const LazyPoint<Blst>& point);
-template void LazyPoints<Blst>::Add(const Blst::Point& p);
-template void LazyPoints<Blst>::Add(const Blst::Point& p, const Blst::Scalar& s);
-template void LazyPoints<Blst>::Add(const Elements<Blst::Point>& ps, const Blst::Scalar& s);
-template void LazyPoints<Blst>::Add(
-    const Elements<Blst::Point>& ps,
-    const Elements<Blst::Scalar>& ss
-);
-template Blst::Point LazyPoints<Blst>::Sum() const;
-template LazyPoints<Blst> LazyPoints<Blst>::operator+(const LazyPoints<Blst>& rhs) const;
 template LazyPoints<Blst> LazyPoints<Blst>::operator+(const LazyPoint<Blst>& rhs) const;
-#endif // NAVIO_BLSCT_ARITH_BLST

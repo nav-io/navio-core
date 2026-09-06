@@ -9,7 +9,7 @@
 
 #include <limits>
 
-using Arith = Mcl;
+using Arith = Blst;
 using Point = Arith::Point;
 using Scalar = Arith::Scalar;
 using Points = Elements<Point>;

@@ -4,8 +4,8 @@
 
 #include <algorithm>
 #include <blsct/arith/elements.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <crypto/common.h>
 #include <deque>
 #include <iterator>
@@ -20,7 +20,7 @@ OrderedElements<T>::OrderedElements(const std::set<T>& set)
 {
     m_set = set;
 };
-template OrderedElements<MclG1Point>::OrderedElements(const std::set<MclG1Point>& set);
+template OrderedElements<BlstG1Point>::OrderedElements(const std::set<BlstG1Point>& set);
 
 struct XorShift32 {
     uint32_t state;
@@ -109,15 +109,15 @@ Elements<T> OrderedElements<T>::GetElements(const uint256& seed, const size_t& m
 
     return Elements<T>(ret);
 }
-template Elements<MclG1Point> OrderedElements<MclG1Point>::GetElements() const;
-template Elements<MclG1Point> OrderedElements<MclG1Point>::GetElements(const uint256& seed, const size_t& max_size) const;
+template Elements<BlstG1Point> OrderedElements<BlstG1Point>::GetElements() const;
+template Elements<BlstG1Point> OrderedElements<BlstG1Point>::GetElements(const uint256& seed, const size_t& max_size) const;
 
 template <typename T>
 size_t OrderedElements<T>::Size() const
 {
     return m_set.size();
 }
-template size_t OrderedElements<MclG1Point>::Size() const;
+template size_t OrderedElements<BlstG1Point>::Size() const;
 
 template <typename T>
 void OrderedElements<T>::Add(const T& x)
@@ -126,7 +126,7 @@ void OrderedElements<T>::Add(const T& x)
         return;
     m_set.insert(x);
 }
-template void OrderedElements<MclG1Point>::Add(const MclG1Point&);
+template void OrderedElements<BlstG1Point>::Add(const BlstG1Point&);
 
 template <typename T>
 void OrderedElements<T>::Add(const OrderedElements<T>& x)
@@ -137,35 +137,35 @@ void OrderedElements<T>::Add(const OrderedElements<T>& x)
         Add(list[i]);
     }
 }
-template void OrderedElements<MclG1Point>::Add(const OrderedElements<MclG1Point>&);
+template void OrderedElements<BlstG1Point>::Add(const OrderedElements<BlstG1Point>&);
 
 template <typename T>
 bool OrderedElements<T>::Exists(const T& x) const
 {
     return m_set.count(x) > 0;
 }
-template bool OrderedElements<MclG1Point>::Exists(const MclG1Point&) const;
+template bool OrderedElements<BlstG1Point>::Exists(const BlstG1Point&) const;
 
 template <typename T>
 void OrderedElements<T>::Clear()
 {
     m_set.clear();
 }
-template void OrderedElements<MclG1Point>::Clear();
+template void OrderedElements<BlstG1Point>::Clear();
 
 template <typename T>
 bool OrderedElements<T>::Empty() const
 {
     return m_set.empty();
 }
-template bool OrderedElements<MclG1Point>::Empty() const;
+template bool OrderedElements<BlstG1Point>::Empty() const;
 
 template <typename T>
 bool OrderedElements<T>::Remove(const T& x)
 {
     return m_set.erase(x) > 0;
 }
-template bool OrderedElements<MclG1Point>::Remove(const MclG1Point& x);
+template bool OrderedElements<BlstG1Point>::Remove(const BlstG1Point& x);
 
 template <typename T>
 std::vector<uint8_t> OrderedElements<T>::GetVch() const
@@ -177,7 +177,7 @@ std::vector<uint8_t> OrderedElements<T>::GetVch() const
     }
     return aggr_vec;
 }
-template std::vector<uint8_t> OrderedElements<MclG1Point>::GetVch() const;
+template std::vector<uint8_t> OrderedElements<BlstG1Point>::GetVch() const;
 
 template <typename T>
 std::string OrderedElements<T>::GetString(const uint8_t& radix) const
@@ -195,7 +195,7 @@ std::string OrderedElements<T>::GetString(const uint8_t& radix) const
 
     return ss.str();
 }
-template std::string OrderedElements<MclG1Point>::GetString(const uint8_t& radix) const;
+template std::string OrderedElements<BlstG1Point>::GetString(const uint8_t& radix) const;
 
 
 // Elements
@@ -205,8 +205,8 @@ Elements<T>::Elements(const std::vector<T>& vec)
 {
     m_vec = vec;
 }
-template Elements<MclG1Point>::Elements(const std::vector<MclG1Point>& vec);
-template Elements<MclScalar>::Elements(const std::vector<MclScalar>& vec);
+template Elements<BlstG1Point>::Elements(const std::vector<BlstG1Point>& vec);
+template Elements<BlstScalar>::Elements(const std::vector<BlstScalar>& vec);
 
 template <typename T>
 Elements<T>::Elements(const size_t& size, const T& default_value)
@@ -214,24 +214,24 @@ Elements<T>::Elements(const size_t& size, const T& default_value)
     std::vector<T> vec(size, default_value);
     m_vec = vec;
 }
-template Elements<MclScalar>::Elements(const size_t&, const MclScalar&);
-template Elements<MclG1Point>::Elements(const size_t&, const MclG1Point&);
+template Elements<BlstScalar>::Elements(const size_t&, const BlstScalar&);
+template Elements<BlstG1Point>::Elements(const size_t&, const BlstG1Point&);
 
 template <typename T>
 Elements<T>::Elements(const Elements<T>& other)
 {
     m_vec = other.m_vec;
 }
-template Elements<MclScalar>::Elements(const Elements<MclScalar>& x);
-template Elements<MclG1Point>::Elements(const Elements<MclG1Point>& x);
+template Elements<BlstScalar>::Elements(const Elements<BlstScalar>& x);
+template Elements<BlstG1Point>::Elements(const Elements<BlstG1Point>& x);
 
 template <typename T>
 bool Elements<T>::Empty() const
 {
     return m_vec.empty();
 }
-template bool Elements<MclScalar>::Empty() const;
-template bool Elements<MclG1Point>::Empty() const;
+template bool Elements<BlstScalar>::Empty() const;
+template bool Elements<BlstG1Point>::Empty() const;
 
 template <typename T>
 bool Elements<T>::Find(const T& x) const
@@ -242,7 +242,7 @@ bool Elements<T>::Find(const T& x) const
     }
     return false;
 }
-template bool Elements<MclG1Point>::Find(const MclG1Point& x) const;
+template bool Elements<BlstG1Point>::Find(const BlstG1Point& x) const;
 
 template <typename T>
 std::vector<uint8_t> Elements<T>::GetVch() const
@@ -254,8 +254,8 @@ std::vector<uint8_t> Elements<T>::GetVch() const
     }
     return aggr_vec;
 }
-template std::vector<uint8_t> Elements<MclScalar>::GetVch() const;
-template std::vector<uint8_t> Elements<MclG1Point>::GetVch() const;
+template std::vector<uint8_t> Elements<BlstScalar>::GetVch() const;
+template std::vector<uint8_t> Elements<BlstG1Point>::GetVch() const;
 
 template <typename T>
 T Elements<T>::Sum() const
@@ -266,8 +266,8 @@ T Elements<T>::Sum() const
     }
     return ret;
 }
-template MclScalar Elements<MclScalar>::Sum() const;
-template MclG1Point Elements<MclG1Point>::Sum() const;
+template BlstScalar Elements<BlstScalar>::Sum() const;
+template BlstG1Point Elements<BlstG1Point>::Sum() const;
 
 template <typename T>
 void Elements<T>::ConfirmIndexInsideRange(const size_t& index) const
@@ -282,8 +282,8 @@ void Elements<T>::ConfirmIndexInsideRange(const size_t& index) const
         throw std::runtime_error(s);
     }
 }
-template void Elements<MclScalar>::ConfirmIndexInsideRange(const size_t&) const;
-template void Elements<MclG1Point>::ConfirmIndexInsideRange(const size_t&) const;
+template void Elements<BlstScalar>::ConfirmIndexInsideRange(const size_t&) const;
+template void Elements<BlstG1Point>::ConfirmIndexInsideRange(const size_t&) const;
 
 template <typename T>
 T& Elements<T>::operator[](const size_t& index)
@@ -291,8 +291,8 @@ T& Elements<T>::operator[](const size_t& index)
     ConfirmIndexInsideRange(index);
     return m_vec[index];
 }
-template MclScalar& Elements<MclScalar>::operator[](const size_t&);
-template MclG1Point& Elements<MclG1Point>::operator[](const size_t&);
+template BlstScalar& Elements<BlstScalar>::operator[](const size_t&);
+template BlstG1Point& Elements<BlstG1Point>::operator[](const size_t&);
 
 template <typename T>
 T Elements<T>::operator[](const size_t& index) const
@@ -300,32 +300,32 @@ T Elements<T>::operator[](const size_t& index) const
     ConfirmIndexInsideRange(index);
     return m_vec[index];
 }
-template MclScalar Elements<MclScalar>::operator[](const size_t&) const;
-template MclG1Point Elements<MclG1Point>::operator[](const size_t&) const;
+template BlstScalar Elements<BlstScalar>::operator[](const size_t&) const;
+template BlstG1Point Elements<BlstG1Point>::operator[](const size_t&) const;
 
 template <typename T>
 size_t Elements<T>::Size() const
 {
     return m_vec.size();
 }
-template size_t Elements<MclScalar>::Size() const;
-template size_t Elements<MclG1Point>::Size() const;
+template size_t Elements<BlstScalar>::Size() const;
+template size_t Elements<BlstG1Point>::Size() const;
 
 template <typename T>
 void Elements<T>::Add(const T& x)
 {
     m_vec.push_back(x);
 }
-template void Elements<MclScalar>::Add(const MclScalar&);
-template void Elements<MclG1Point>::Add(const MclG1Point&);
+template void Elements<BlstScalar>::Add(const BlstScalar&);
+template void Elements<BlstG1Point>::Add(const BlstG1Point&);
 
 template <typename T>
 void Elements<T>::Clear()
 {
     m_vec.clear();
 }
-template void Elements<MclScalar>::Clear();
-template void Elements<MclG1Point>::Clear();
+template void Elements<BlstScalar>::Clear();
+template void Elements<BlstG1Point>::Clear();
 
 template <typename T>
 inline void Elements<T>::ConfirmSizesMatch(const size_t& other_size) const
@@ -334,8 +334,8 @@ inline void Elements<T>::ConfirmSizesMatch(const size_t& other_size) const
         throw std::runtime_error(std::string(__func__) + ": Sizes of elements are expected to be the same, but different");
     }
 }
-template void Elements<MclScalar>::ConfirmSizesMatch(const size_t&) const;
-template void Elements<MclG1Point>::ConfirmSizesMatch(const size_t&) const;
+template void Elements<BlstScalar>::ConfirmSizesMatch(const size_t&) const;
+template void Elements<BlstG1Point>::ConfirmSizesMatch(const size_t&) const;
 
 template <typename T>
 Elements<T> Elements<T>::FirstNPow(const T& k, const size_t& n, const size_t& from_index)
@@ -350,7 +350,7 @@ Elements<T> Elements<T>::FirstNPow(const T& k, const size_t& n, const size_t& fr
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::FirstNPow(const MclScalar&, const size_t&, const size_t& from_index);
+template Elements<BlstScalar> Elements<BlstScalar>::FirstNPow(const BlstScalar&, const size_t&, const size_t& from_index);
 
 template <typename T>
 Elements<T> Elements<T>::RepeatN(const T& k, const size_t& n)
@@ -361,8 +361,8 @@ Elements<T> Elements<T>::RepeatN(const T& k, const size_t& n)
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::RepeatN(const MclScalar&, const size_t&);
-template Elements<MclG1Point> Elements<MclG1Point>::RepeatN(const MclG1Point&, const size_t&);
+template Elements<BlstScalar> Elements<BlstScalar>::RepeatN(const BlstScalar&, const size_t&);
+template Elements<BlstG1Point> Elements<BlstG1Point>::RepeatN(const BlstG1Point&, const size_t&);
 
 template <typename T>
 Elements<T> Elements<T>::RandVec(const size_t& n, const bool exclude_zero)
@@ -374,7 +374,7 @@ Elements<T> Elements<T>::RandVec(const size_t& n, const bool exclude_zero)
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::RandVec(const size_t&, const bool);
+template Elements<BlstScalar> Elements<BlstScalar>::RandVec(const size_t&, const bool);
 
 template <typename T>
 template <typename Scalar>
@@ -388,8 +388,8 @@ Elements<T> Elements<T>::operator*(const Elements<Scalar>& rhs) const
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::operator*(const Elements<MclScalar>&) const;
-template Elements<MclG1Point> Elements<MclG1Point>::operator*(const Elements<MclScalar>&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::operator*(const Elements<BlstScalar>&) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::operator*(const Elements<BlstScalar>&) const;
 
 template <typename T>
 template <typename Scalar>
@@ -401,8 +401,8 @@ Elements<T> Elements<T>::operator*(const Scalar& rhs) const
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::operator*(const MclScalar&) const;
-template Elements<MclG1Point> Elements<MclG1Point>::operator*(const MclScalar&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::operator*(const BlstScalar&) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::operator*(const BlstScalar&) const;
 
 template <typename T>
 Elements<T> Elements<T>::operator+(const Elements<T>& rhs) const
@@ -415,8 +415,8 @@ Elements<T> Elements<T>::operator+(const Elements<T>& rhs) const
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::operator+(const Elements<MclScalar>&) const;
-template Elements<MclG1Point> Elements<MclG1Point>::operator+(const Elements<MclG1Point>&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::operator+(const Elements<BlstScalar>&) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::operator+(const Elements<BlstG1Point>&) const;
 
 template <typename T>
 Elements<T> Elements<T>::operator-(const Elements<T>& rhs) const
@@ -429,8 +429,8 @@ Elements<T> Elements<T>::operator-(const Elements<T>& rhs) const
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::operator-(const Elements<MclScalar>&) const;
-template Elements<MclG1Point> Elements<MclG1Point>::operator-(const Elements<MclG1Point>&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::operator-(const Elements<BlstScalar>&) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::operator-(const Elements<BlstG1Point>&) const;
 
 template <typename T>
 Elements<T> Elements<T>::operator-(const T& rhs) const
@@ -441,8 +441,8 @@ Elements<T> Elements<T>::operator-(const T& rhs) const
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::operator-(const MclScalar&) const;
-template Elements<MclG1Point> Elements<MclG1Point>::operator-(const MclG1Point&) const;
+template Elements<BlstScalar> Elements<BlstScalar>::operator-(const BlstScalar&) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::operator-(const BlstG1Point&) const;
 
 template <typename T>
 bool Elements<T>::operator<=(const T& rhs) const
@@ -452,7 +452,7 @@ bool Elements<T>::operator<=(const T& rhs) const
     }
     return true;
 }
-template bool Elements<MclScalar>::operator<=(const MclScalar&) const;
+template bool Elements<BlstScalar>::operator<=(const BlstScalar&) const;
 
 template <typename T>
 bool Elements<T>::operator>=(const T& rhs) const
@@ -462,7 +462,7 @@ bool Elements<T>::operator>=(const T& rhs) const
     }
     return true;
 }
-template bool Elements<MclScalar>::operator>=(const MclScalar&) const;
+template bool Elements<BlstScalar>::operator>=(const BlstScalar&) const;
 
 template <typename T>
 void Elements<T>::operator=(const Elements<T>& rhs)
@@ -474,8 +474,8 @@ void Elements<T>::operator=(const Elements<T>& rhs)
         m_vec.push_back(copy);
     }
 }
-template void Elements<MclScalar>::operator=(const Elements<MclScalar>&);
-template void Elements<MclG1Point>::operator=(const Elements<MclG1Point>&);
+template void Elements<BlstScalar>::operator=(const Elements<BlstScalar>&);
+template void Elements<BlstG1Point>::operator=(const Elements<BlstG1Point>&);
 
 template <typename T>
 bool Elements<T>::operator==(const Elements<T>& rhs) const
@@ -489,16 +489,16 @@ bool Elements<T>::operator==(const Elements<T>& rhs) const
     }
     return true;
 }
-template bool Elements<MclScalar>::operator==(const Elements<MclScalar>&) const;
-template bool Elements<MclG1Point>::operator==(const Elements<MclG1Point>&) const;
+template bool Elements<BlstScalar>::operator==(const Elements<BlstScalar>&) const;
+template bool Elements<BlstG1Point>::operator==(const Elements<BlstG1Point>&) const;
 
 template <typename T>
 bool Elements<T>::operator!=(const Elements<T>& rhs) const
 {
     return !operator==(rhs);
 }
-template bool Elements<MclScalar>::operator!=(const Elements<MclScalar>&) const;
-template bool Elements<MclG1Point>::operator!=(const Elements<MclG1Point>&) const;
+template bool Elements<BlstScalar>::operator!=(const Elements<BlstScalar>&) const;
+template bool Elements<BlstG1Point>::operator!=(const Elements<BlstG1Point>&) const;
 
 template <typename T>
 Elements<T> Elements<T>::From(const size_t from_index) const
@@ -514,8 +514,8 @@ Elements<T> Elements<T>::From(const size_t from_index) const
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::From(const size_t from_index) const;
-template Elements<MclG1Point> Elements<MclG1Point>::From(const size_t from_index) const;
+template Elements<BlstScalar> Elements<BlstScalar>::From(const size_t from_index) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::From(const size_t from_index) const;
 
 template <typename T>
 Elements<T> Elements<T>::To(const size_t to_index) const
@@ -531,8 +531,8 @@ Elements<T> Elements<T>::To(const size_t to_index) const
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::To(const size_t to_index) const;
-template Elements<MclG1Point> Elements<MclG1Point>::To(const size_t to_index) const;
+template Elements<BlstScalar> Elements<BlstScalar>::To(const size_t to_index) const;
+template Elements<BlstG1Point> Elements<BlstG1Point>::To(const size_t to_index) const;
 
 template <typename T>
 Elements<T> Elements<T>::Negate() const
@@ -543,7 +543,7 @@ Elements<T> Elements<T>::Negate() const
     }
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::Negate() const;
+template Elements<BlstScalar> Elements<BlstScalar>::Negate() const;
 
 template <typename T>
 Elements<T> Elements<T>::Invert() const
@@ -580,7 +580,7 @@ Elements<T> Elements<T>::Invert() const
     Elements<T> ret({ q.begin(), q.end() });
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::Invert() const;
+template Elements<BlstScalar> Elements<BlstScalar>::Invert() const;
 
 template <typename T>
 Elements<T> Elements<T>::Reverse() const
@@ -589,7 +589,7 @@ Elements<T> Elements<T>::Reverse() const
     Elements<T> ret(rev_vec);
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::Reverse() const;
+template Elements<BlstScalar> Elements<BlstScalar>::Reverse() const;
 
 template <typename T>
 T Elements<T>::Product() const
@@ -603,7 +603,7 @@ T Elements<T>::Product() const
     }
     return ret;
 }
-template MclScalar Elements<MclScalar>::Product() const;
+template BlstScalar Elements<BlstScalar>::Product() const;
 
 template <typename T>
 Elements<T> Elements<T>::Square() const
@@ -614,7 +614,7 @@ Elements<T> Elements<T>::Square() const
     });
     return ret;
 }
-template Elements<MclScalar> Elements<MclScalar>::Square() const;
+template Elements<BlstScalar> Elements<BlstScalar>::Square() const;
 
 template <typename T>
 std::string Elements<T>::GetString(const uint8_t& radix) const
@@ -629,84 +629,5 @@ std::string Elements<T>::GetString(const uint8_t& radix) const
 
     return ss.str();
 }
-template std::string Elements<MclG1Point>::GetString(const uint8_t& radix) const;
-template std::string Elements<MclScalar>::GetString(const uint8_t& radix) const;
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-template OrderedElements<BlstG1Point>::OrderedElements(const std::set<BlstG1Point>& set);
-template Elements<BlstG1Point> OrderedElements<BlstG1Point>::GetElements() const;
-template Elements<BlstG1Point> OrderedElements<BlstG1Point>::GetElements(const uint256& seed, const size_t& max_size) const;
-template size_t OrderedElements<BlstG1Point>::Size() const;
-template void OrderedElements<BlstG1Point>::Add(const BlstG1Point&);
-template void OrderedElements<BlstG1Point>::Add(const OrderedElements<BlstG1Point>&);
-template bool OrderedElements<BlstG1Point>::Exists(const BlstG1Point&) const;
-template void OrderedElements<BlstG1Point>::Clear();
-template bool OrderedElements<BlstG1Point>::Empty() const;
-template bool OrderedElements<BlstG1Point>::Remove(const BlstG1Point& x);
-template std::vector<uint8_t> OrderedElements<BlstG1Point>::GetVch() const;
-template std::string OrderedElements<BlstG1Point>::GetString(const uint8_t& radix) const;
-template Elements<BlstG1Point>::Elements(const std::vector<BlstG1Point>& vec);
-template Elements<BlstScalar>::Elements(const std::vector<BlstScalar>& vec);
-template Elements<BlstScalar>::Elements(const size_t&, const BlstScalar&);
-template Elements<BlstG1Point>::Elements(const size_t&, const BlstG1Point&);
-template Elements<BlstScalar>::Elements(const Elements<BlstScalar>& x);
-template Elements<BlstG1Point>::Elements(const Elements<BlstG1Point>& x);
-template bool Elements<BlstScalar>::Empty() const;
-template bool Elements<BlstG1Point>::Empty() const;
-template bool Elements<BlstG1Point>::Find(const BlstG1Point& x) const;
-template std::vector<uint8_t> Elements<BlstScalar>::GetVch() const;
-template std::vector<uint8_t> Elements<BlstG1Point>::GetVch() const;
-template BlstScalar Elements<BlstScalar>::Sum() const;
-template BlstG1Point Elements<BlstG1Point>::Sum() const;
-template void Elements<BlstScalar>::ConfirmIndexInsideRange(const size_t&) const;
-template void Elements<BlstG1Point>::ConfirmIndexInsideRange(const size_t&) const;
-template BlstScalar& Elements<BlstScalar>::operator[](const size_t&);
-template BlstG1Point& Elements<BlstG1Point>::operator[](const size_t&);
-template BlstScalar Elements<BlstScalar>::operator[](const size_t&) const;
-template BlstG1Point Elements<BlstG1Point>::operator[](const size_t&) const;
-template size_t Elements<BlstScalar>::Size() const;
-template size_t Elements<BlstG1Point>::Size() const;
-template void Elements<BlstScalar>::Add(const BlstScalar&);
-template void Elements<BlstG1Point>::Add(const BlstG1Point&);
-template void Elements<BlstScalar>::Clear();
-template void Elements<BlstG1Point>::Clear();
-template void Elements<BlstScalar>::ConfirmSizesMatch(const size_t&) const;
-template void Elements<BlstG1Point>::ConfirmSizesMatch(const size_t&) const;
-template Elements<BlstScalar> Elements<BlstScalar>::FirstNPow(const BlstScalar&, const size_t&, const size_t& from_index);
-template Elements<BlstScalar> Elements<BlstScalar>::RepeatN(const BlstScalar&, const size_t&);
-template Elements<BlstG1Point> Elements<BlstG1Point>::RepeatN(const BlstG1Point&, const size_t&);
-template Elements<BlstScalar> Elements<BlstScalar>::RandVec(const size_t&, const bool);
-template Elements<BlstScalar> Elements<BlstScalar>::operator*(const Elements<BlstScalar>&) const;
-template Elements<BlstG1Point> Elements<BlstG1Point>::operator*(const Elements<BlstScalar>&) const;
-template Elements<BlstScalar> Elements<BlstScalar>::operator*(const BlstScalar&) const;
-template Elements<BlstG1Point> Elements<BlstG1Point>::operator*(const BlstScalar&) const;
-template Elements<BlstScalar> Elements<BlstScalar>::operator+(const Elements<BlstScalar>&) const;
-template Elements<BlstG1Point> Elements<BlstG1Point>::operator+(const Elements<BlstG1Point>&) const;
-template Elements<BlstScalar> Elements<BlstScalar>::operator-(const Elements<BlstScalar>&) const;
-template Elements<BlstG1Point> Elements<BlstG1Point>::operator-(const Elements<BlstG1Point>&) const;
-template Elements<BlstScalar> Elements<BlstScalar>::operator-(const BlstScalar&) const;
-template Elements<BlstG1Point> Elements<BlstG1Point>::operator-(const BlstG1Point&) const;
-template bool Elements<BlstScalar>::operator<=(const BlstScalar&) const;
-template bool Elements<BlstScalar>::operator>=(const BlstScalar&) const;
-template void Elements<BlstScalar>::operator=(const Elements<BlstScalar>&);
-template void Elements<BlstG1Point>::operator=(const Elements<BlstG1Point>&);
-template bool Elements<BlstScalar>::operator==(const Elements<BlstScalar>&) const;
-template bool Elements<BlstG1Point>::operator==(const Elements<BlstG1Point>&) const;
-template bool Elements<BlstScalar>::operator!=(const Elements<BlstScalar>&) const;
-template bool Elements<BlstG1Point>::operator!=(const Elements<BlstG1Point>&) const;
-template Elements<BlstScalar> Elements<BlstScalar>::From(const size_t from_index) const;
-template Elements<BlstG1Point> Elements<BlstG1Point>::From(const size_t from_index) const;
-template Elements<BlstScalar> Elements<BlstScalar>::To(const size_t to_index) const;
-template Elements<BlstG1Point> Elements<BlstG1Point>::To(const size_t to_index) const;
-template Elements<BlstScalar> Elements<BlstScalar>::Negate() const;
-template Elements<BlstScalar> Elements<BlstScalar>::Invert() const;
-template Elements<BlstScalar> Elements<BlstScalar>::Reverse() const;
-template BlstScalar Elements<BlstScalar>::Product() const;
-template Elements<BlstScalar> Elements<BlstScalar>::Square() const;
 template std::string Elements<BlstG1Point>::GetString(const uint8_t& radix) const;
 template std::string Elements<BlstScalar>::GetString(const uint8_t& radix) const;
-#endif // NAVIO_BLSCT_ARITH_BLST

@@ -10,9 +10,11 @@
 #include <blsct/arith/blst/blst_scalar.h>
 #include <blsct/arith/blst/blst_util.h>
 
-// Arith backend over supranational/blst. Drop-in for `Mcl` in the templated
-// proof code (RangeProofLogic<Blst>, SetMemProofProver<Blst>, ...). Built only
-// with -DWITH_BLST=ON; see cmake/blst.cmake and doc/blsct-blst-evaluation.md.
+/**
+ * BLS12-381 arithmetic backend over supranational/blst (src/blst): the type
+ * parameter of the templated BLSCT proof code (RangeProofLogic<Blst>,
+ * SetMemProofProver<Blst>, Elements<Blst::Scalar>, ...).
+ */
 struct Blst {
     using Scalar = BlstScalar;
     using Point = BlstG1Point;

@@ -5,23 +5,15 @@ PoS set-membership proofs, BLS signatures, wallet recovery) from
 [herumi/mcl](https://github.com/herumi/mcl) + [herumi/bls](https://github.com/herumi/bls)
 to [supranational/blst](https://github.com/supranational/blst).
 
-Everything in this document is reproducible from this tree:
-
-```sh
-cmake -S . -B build-blst -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCH=ON -DWITH_BLST=ON
-cmake --build build-blst --target bench_navio test_navio
-build-blst/bin/test_navio -t blst_equivalence_tests           # cross-backend equivalence
-build-blst/bin/bench_navio -filter='BLSCTCmp_.*' -min-time=500 # side-by-side benchmarks
-```
-
-`-DWITH_BLST=ON` (default OFF; nothing changes in a default build) fetches the
-pinned blst release (`BLST_GIT_TAG`, v0.3.17) at configure time, builds it
-with its own `build.sh`, compiles the `Blst` arith backend
-(`src/blsct/arith/blst/`), instantiates the templated proof code for it
-(`template ... <Blst>` blocks gated on `NAVIO_BLSCT_ARITH_BLST`, mirroring the
-`<Mcl>` ones 1:1) and adds the `BLSCTCmp_*` benchmarks plus the
-`blst_equivalence_tests` suite. `-DWITH_MCL_OPENMP=ON` on top gives the
-OpenMP-threaded mcl MSM for the multi-threaded comparison.
+> **Status.** This document is the evaluation that preceded the migration.
+> The numbers were measured with both libraries side by side on the
+> `eval/blst-arith-backend` branch (PR #386), whose `-DWITH_BLST=ON` build
+> carried a two-backend benchmark (`BLSCTCmp_*`) and equivalence test suite.
+> mcl has since been removed from the tree: blst is the only backend
+> (`src/blst`, `cmake/blst.cmake`), the wrappers live in
+> `src/blsct/arith/blst/`, and the historical "release config" numbers below
+> are what the mcl-based binaries did. The "Full chain sync" section carries
+> the measured (not projected) blst figure from the migrated node.
 
 ## TL;DR
 
@@ -144,6 +136,42 @@ per-proof / per-block parallelism that navio already has (`VerifyProofs`
 workers, `-par`, the PoS async verifier) without any library runtime.
 
 ## Results
+
+### x86_64 cross-check (AMD EPYC 9354) and an architecture note
+
+The original numbers below are Apple M2 Max (arm64). Re-running the same
+`BLSCTCmp_*` suite on an AMD EPYC 9354 (x86_64, ADX confirmed in `libblst.a`
+via `nm | grep mulx_384`; mcl built `WITH_GMP=OFF`) shows a very different
+single-threaded picture, while the multi-threaded/large-MSM story is
+unchanged:
+
+| operation | M2 (blst/mcl) | EPYC (blst/mcl) |
+|---|---:|---:|
+| MSM 2048 (MT) | ~3.4× | 21× |
+| MSM 8192 (MT) | — | 29× |
+| SetMemVerify 1024 (MT) | — | 8.3× |
+| Range-proof verify ×32 (ST) | — | 1.35× |
+| Sign | — | 1.17× |
+| **RecoverAmounts ×16 (ST)** | **~3.4×** | **0.62×** |
+| Range-proof prove (ST) | ~1.5× | 0.92× |
+| SetMemProve ring 4 (ST) | — | 0.80× |
+| MSM 16 (small, ST) | — | 0.72× |
+
+**Architecture note.** mcl carries an xbyak-JIT hand-tuned x86-64 assembly
+path for its `Fr` field arithmetic. On x86_64 that path is strong enough to
+beat blst's `Fr` single-threaded for scalar-heavy operations (amount
+recovery, range-proof prove, small-ring set-membership prove) *even with
+`WITH_GMP=OFF`* — hence the sign flip vs the arm64 numbers, where mcl has no
+comparable JIT path and blst wins those same ops. The point/MSM/pairing side
+still favours blst on both architectures (and blst's threaded MSM dominates
+at scale). So on x86_64 the migration's wins concentrate in the MSM- and
+pairing-bound paths, and the scalar-bound paths need help to not regress:
+this is exactly why the fixed-base generator precompute (removes the fixed
+Gi/Hi/hs points from the per-call MSM) and the threaded amount recovery
+matter more on x86_64 than the arm64 headline suggested. Measured on this
+EPYC: full mainnet `-reindex-chainstate` is 258s baseline vs 227s with the
+fixed-base precompute (~12%).
+
 
 Host: Apple M2 Max (12 cores), macOS, clang, `-O2`/Release; mcl built by its
 GNU Makefile (`MCL_USE_LLVM=0`, no GMP, arm64), blst v0.3.17 with its arm64
@@ -336,10 +364,48 @@ measured.
 | mcl (release config, no OpenMP) → blst, MSM tiled over threads | 14.41 | 6.69 → 1.79 (3.74×) | 3.05 → 0.95 (3.22×) | 2.48 → 0.47 (5.30×) | **7.41** (1.95× faster, 571 s → 294 s) |
 | mcl + OpenMP → blst, MSM tiled over threads | 11.28 | 2.69 → 1.15 (2.34×) | 3.66 → 1.14 (3.22×) | 1.77 → 0.46 (3.84×) | **7.22** (1.56× faster, 447 s → 286 s) |
 
-In short: ~1.7–2× faster full sync in the release configuration (571 s →
-~300 s for today's mainnet), and still ~1.5× faster than an OpenMP mcl build.
-The remaining ~5 ms/blk is non-crypto block connection work, which then
-dominates.
+In short (projection): ~1.7–2× faster full sync in the release
+configuration, and still ~1.5× faster than an OpenMP mcl build.
+
+#### Measured after the migration
+
+With mcl removed and the node running on blst (same host, same datadir,
+`contrib/devtools/blsct-sync-bench.sh build/bin/naviod build/bin/navio-cli
+<datadir>`), the reindex reproduces the mcl tip hash
+(`9e0ab3878d39106c3753c2b51b97d3961f2d4a5cd799ee05826a414c0e0d7e1f` at
+39,645) and measures:
+
+```
+reindex-chainstate to height 39645: 435.5s wall (10.98 ms/block)   [2nd run: 466.7s]
+  Connect block                                     429.8s    10.84 ms/blk
+  Verify block proofs/scripts                       324.0s     8.17 ms/blk
+  BLSCT aggregate signatures                        105.2s     2.65 ms/blk
+  BLSCT block rangeproof batch (all sizes)          305.4s     7.70 ms/blk
+  PoS setmem (async worker CPU, summed)             144.1s     3.63 ms/blk
+```
+
+Repeated on the same machine once it was quiet again (load average ~3),
+mcl and blst back-to-back on the same datadir:
+
+| node | wall | ms/blk | range proofs | agg. sigs | PoS setmem (CPU) |
+|---|---:|---:|---:|---:|---:|
+| mcl (release config, no OpenMP) | 552 s | 13.9 | 6.9 | 3.0 | 2.5 |
+| **blst (this tree)** | **163 s** | **4.1** | 2.9 | 0.9 | 1.4 |
+
+i.e. **3.4× faster full sync**, tip hash identical.
+
+Independent second machine (mxaddict, #387 review): AMD Ryzen 9 9950X3D,
+mainnet at 40,419 blocks, three alternated `-reindex-chainstate` runs per
+backend — **mcl 256.0 s vs blst 126.7 s median (2.0×)**, both ending on the
+same tip. Its per-op single-thread ratios match the x86_64 picture in the
+architecture note: verification-heavy work wins (Msm2048 2.39×,
+SetMemVerify1024 2.41×, G1DeserializeSubgroup 2.67×, RPVerify1 1.43×,
+FrInv 1.84×) while mcl's JIT keeps the bare scalar-multiplication primitives
+ahead (G1Mul 0.85×, G1MulBase 0.84×, G1Add 0.85×). (Two earlier blst runs at
+435–467 s and an mcl run at 1480 s were taken while the machine carried an
+unrelated desktop workload; they are only comparable to each other.) The
+fixed-base generator precompute that follows this migration takes the blst
+figure to 151 s on this host.
 
 ## Migration assessment
 
@@ -354,7 +420,7 @@ dominates.
 | EIP-2333 keygen, `Elements`, `GeneratorDeriver`, Fiat–Shamir | 0 | Already generic (instantiated and cross-checked here). |
 | Build | `cmake/blst.cmake` (FetchContent, evaluation only) | For release/guix builds vendor the pinned source (one `server.c` + one pre-generated `assembly.S` per platform; no perl needed at build time) as a `depends` package or `src/blst/` and compile it from CMake directly; MSVC has `build/win64/*.asm` (`build.bat`). Drops the mcl+bls GNU-Makefile `ExternalProject`, the `MCL_USE_LLVM`/`LLVM_OPT_VERSION` workarounds, the OpenMP option and libomp. |
 | Platforms | — | x86_64 (ADX and non-ADX paths selected at runtime via `cpuid`, so one guix binary serves both), arm64 assembly, portable C (`-D__BLST_PORTABLE__` / `__BLST_NO_ASM__`) for everything else incl. 32-bit — the i686 CI job must be validated. |
-| Differential testing | `blst_equivalence_tests` + bench cross-checks | Before flipping the default: a fuzz target that feeds both backends the same encodings / proofs and asserts identical accept/reject (the only place two correct libraries can legitimately differ is *which malformed inputs they reject*), a full testnet sync and a mainnet `-reindex-chainstate` under each backend with identical tip hash. |
+| Differential testing | `blst_equivalence_tests` + bench cross-checks + the `eval/blst-differential-evidence` branch | The precondition for flipping the default was a differential harness feeding both backends the same encodings / proofs and asserting identical accept/reject (the only place two correct libraries can legitimately differ is *which malformed inputs they reject*), plus reindexes with identical tips. Both are done: `blst_differential_tests` on the `eval/blst-differential-evidence` branch (pinned to the last both-backend commit, deterministic seed) ran 120k G1 encodings, 100k+boundary scalars, 45k G2 encodings and 4k byte-flipped proofs through both backends' checked decode and full verification with **zero disagreements**; mainnet reindexes on three machines end on identical tips. Note that a blst-assembly-vs-blst-portable-C differential is only possible on a 32-bit or wasm target: on x86_64 / aarch64 `vect.h` always takes the 64-bit-limb assembly branch and there is no C build. |
 
 ### Risks / trade-offs
 

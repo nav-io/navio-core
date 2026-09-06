@@ -55,7 +55,7 @@ CTransactionRef BuildCandidate(blsct::KeyMan* km, CCoinsViewCache& cache,
     auto outpoint = FundCoin(km, cache, amount);
     auto f = blsct::TxFactory(km);
     BOOST_REQUIRE(f.AddInput(cache, outpoint));
-    f.AddOutput(dest, amount, "candidate", TokenId(), blsct::NORMAL, 0, false, MclScalar::Rand(), /*nBLSCTDefaultFee=*/0);
+    f.AddOutput(dest, amount, "candidate", TokenId(), blsct::NORMAL, 0, false, BlstScalar::Rand(), /*nBLSCTDefaultFee=*/0);
     // A candidate carries NO fee output (emitFeeOutput=false); the combined tx
     // gets its single fee output from the initiator's half.
     auto built = f.BuildCandidate();
@@ -124,7 +124,7 @@ BOOST_FIXTURE_TEST_CASE(combine_two_halves_verifies, TestingSetup)
     // Privacy: inputs/outputs are shuffled, so the halves are not left grouped
     // in submission order. Check the vin order is not the plain concatenation
     // [own || c1 || c2]. (Probabilistic: with 3 inputs the identity permutation
-    // is 1/6; seeded from MclScalar::Rand so a fixed seed cannot make it flaky
+    // is 1/6; seeded from BlstScalar::Rand so a fixed seed cannot make it flaky
     // in aggregate — retried mentally, acceptable for a privacy smoke check.)
     std::vector<COutPoint> concat_order;
     for (const auto& h : halves)
@@ -467,7 +467,7 @@ BOOST_AUTO_TEST_CASE(request_queue_dedupe_cap_ttl)
     const int64_t t0 = 1000;
 
     auto key = [](uint8_t seed) {
-        blsct::PrivateKey priv(MclScalar(std::vector<uint8_t>{seed, 1}));
+        blsct::PrivateKey priv(BlstScalar(std::vector<uint8_t>{seed, 1}));
         return priv.GetPublicKey();
     };
 
@@ -507,7 +507,7 @@ BOOST_AUTO_TEST_CASE(request_queue_per_peer_cap)
     const int64_t t0 = 1000;
 
     auto key = [](uint8_t seed) {
-        blsct::PrivateKey priv(MclScalar(std::vector<uint8_t>{seed, 2}));
+        blsct::PrivateKey priv(BlstScalar(std::vector<uint8_t>{seed, 2}));
         return priv.GetPublicKey();
     };
 
@@ -535,7 +535,7 @@ BOOST_AUTO_TEST_CASE(request_queue_claim_fifo)
     aggregation::CandidateRequestQueue q;
 
     auto key = [](uint8_t seed) {
-        blsct::PrivateKey priv(MclScalar(std::vector<uint8_t>{seed, 3}));
+        blsct::PrivateKey priv(BlstScalar(std::vector<uint8_t>{seed, 3}));
         return priv.GetPublicKey();
     };
 

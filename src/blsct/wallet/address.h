@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef NAVIO_BLSCT_ADDRESS_H
-#define NAVIO_BLSCT_ADDRESS_H
+#ifndef NAVIO_BLSCT_WALLET_ADDRESS_H
+#define NAVIO_BLSCT_WALLET_ADDRESS_H
 
 #include <addresstype.h>
 #include <blsct/double_public_key.h>
@@ -70,4 +70,4 @@ public:
 };
 } // namespace blsct
 
-#endif // NAVIO_BLSCT_ADDRESS_H
+#endif // NAVIO_BLSCT_WALLET_ADDRESS_H

@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef NAVIO_BLSCT_RANGE_PROOF_RANGE_PROOF_MSG_AMT_CIPHER_H
-#define NAVIO_BLSCT_RANGE_PROOF_RANGE_PROOF_MSG_AMT_CIPHER_H
+#ifndef NAVIO_BLSCT_RANGE_PROOF_MSG_AMT_CIPHER_H
+#define NAVIO_BLSCT_RANGE_PROOF_MSG_AMT_CIPHER_H
 
 #include <blsct/arith/elements.h>
 
@@ -68,4 +68,4 @@ struct MsgAmtCipher
 
 } // namespace range_proof
 
-#endif // NAVIO_BLSCT_RANGE_PROOF_RANGE_PROOF_MSG_AMT_CIPHER_H
+#endif // NAVIO_BLSCT_RANGE_PROOF_MSG_AMT_CIPHER_H

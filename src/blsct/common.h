@@ -50,4 +50,4 @@ public:
 };
 }
 
-#endif  // NAVIO_BLSCT_COMMON_H
+#endif // NAVIO_BLSCT_COMMON_H

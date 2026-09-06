@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef NAVIO_BLSCT_ARITH_RANGE_PROOF_RECOVERED_DATA_H
-#define NAVIO_BLSCT_ARITH_RANGE_PROOF_RECOVERED_DATA_H
+#ifndef NAVIO_BLSCT_RANGE_PROOF_RECOVERED_DATA_H
+#define NAVIO_BLSCT_RANGE_PROOF_RECOVERED_DATA_H
 
 #include <consensus/amount.h>
 #include <serialize.h>
@@ -40,4 +40,4 @@ struct RecoveredData
 
 } // namespace range_proof
 
-#endif // NAVIO_BLSCT_ARITH_RANGE_PROOF_RECOVERED_DATA_H
+#endif // NAVIO_BLSCT_RANGE_PROOF_RECOVERED_DATA_H

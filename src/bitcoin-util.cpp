@@ -7,7 +7,7 @@
 #endif
 
 #include <arith_uint256.h>
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <chainparamsbase.h>
@@ -151,7 +151,7 @@ static int Grind(const std::vector<std::string>& args, std::string& strPrint)
 
 MAIN_FUNCTION
 {
-    static volatile MclInit for_side_effect_only;
+    static volatile BlstInit for_side_effect_only;
 
     ArgsManager& args = gArgs;
     SetupEnvironment();

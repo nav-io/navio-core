@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/double_public_key.h>
 #include <blsct/wallet/address.h>
 #include <test/util/setup_common.h>
@@ -12,7 +12,7 @@
 
 BOOST_AUTO_TEST_SUITE(blsct_address_tests)
 
-using Scalar = MclScalar;
+using Scalar = BlstScalar;
 
 BOOST_FIXTURE_TEST_CASE(address_test, BasicTestingSetup)
 {

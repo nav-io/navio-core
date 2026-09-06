@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_BLSCT_WALLET_RPC_H
-#define BITCOIN_BLSCT_WALLET_RPC_H
+#ifndef NAVIO_BLSCT_WALLET_RPC_H
+#define NAVIO_BLSCT_WALLET_RPC_H
 
 #include <blsct/public_key.h>
 #include <blsct/wallet/txfactory.h>
@@ -48,4 +48,4 @@ RPCHelpMan sendtoblsctaddress();
 RPCHelpMan getblsctoutput();
 RPCHelpMan getbalanceforaddress();
 
-#endif // BITCOIN_BLSCT_WALLET_RPC_H
+#endif // NAVIO_BLSCT_WALLET_RPC_H

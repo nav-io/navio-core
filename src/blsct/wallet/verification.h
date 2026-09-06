@@ -2,10 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BLSCT_VERIFICATION_H
-#define BLSCT_VERIFICATION_H
+#ifndef NAVIO_BLSCT_WALLET_VERIFICATION_H
+#define NAVIO_BLSCT_WALLET_VERIFICATION_H
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/public_key.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
 #include <blsct/tokens/predicate_exec.h>
@@ -62,7 +62,7 @@ bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& 
 bool PrepareTxForDeferredVerification(const CTransaction& tx,
                                       CCoinsViewCache& view,
                                       TxValidationState& state,
-                                      std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
+                                      std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& out_proofs,
                                       PreparedTxSignatureCheck& out_sig_check,
                                       const CAmount& blockReward,
                                       const CAmount& minStake,
@@ -80,7 +80,7 @@ bool PrepareTxForDeferredVerification(const CTransaction& tx,
 bool VerifyTxCollectProofs(const CTransaction& tx,
                            CCoinsViewCache& view,
                            TxValidationState& state,
-                           std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
+                           std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& out_proofs,
                            const CAmount& blockReward,
                            const CAmount& minStake,
                            int nSpendHeight,
@@ -94,6 +94,6 @@ TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSi
 
 // Batch verify collected range proofs. Call once per block after all
 // VerifyTxCollectProofs calls succeed.
-bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& proofs);
+bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& proofs);
 }
-#endif // BLSCT_VERIFICATION_H
+#endif // NAVIO_BLSCT_WALLET_VERIFICATION_H

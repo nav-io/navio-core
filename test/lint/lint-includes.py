@@ -17,7 +17,7 @@ from subprocess import check_output, CalledProcessError
 
 EXCLUDED_DIRS = ["contrib/devtools/bitcoin-tidy/",
                  "src/leveldb/",
-                 "src/bls/",
+                 "src/blst/",
                  "src/crc32c/",
                  "src/secp256k1/",
                  "src/minisketch/",

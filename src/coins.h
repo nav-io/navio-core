@@ -204,7 +204,7 @@ public:
     virtual void Next() = 0;
 };
 
-using CStakedCommitmentsMap = std::map<MclG1Point, char>;
+using CStakedCommitmentsMap = std::map<BlstG1Point, char>;
 
 /** Cursor for iterating over CoinsView state */
 class CCoinsViewCursor
@@ -247,7 +247,7 @@ public:
     virtual uint256 GetBestBlock() const;
 
     //! Retrieve the set of staked outputs
-    virtual OrderedElements<MclG1Point> GetStakedCommitments() const;
+    virtual OrderedElements<BlstG1Point> GetStakedCommitments() const;
 
     //! Retrieve the range of blocks that may have been only partially written.
     //! If the database is in a consistent state, the result is the empty vector.
@@ -285,7 +285,7 @@ public:
     bool GetAllTokens(TokensMap& tokensMap) const override;
     bool HaveToken(const uint256& tokenId) const override;
     uint256 GetBestBlock() const override;
-    OrderedElements<MclG1Point> GetStakedCommitments() const override;
+    OrderedElements<BlstG1Point> GetStakedCommitments() const override;
     std::vector<uint256> GetHeadBlocks() const override;
     void SetBackend(CCoinsView &viewIn);
     bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true) override;
@@ -315,7 +315,7 @@ protected:
 
     // Memoized result of GetStakedCommitments(). Reset by any mutation of
     // cacheStakedCommitments or when the base view may have changed (Flush/Sync).
-    mutable std::optional<OrderedElements<MclG1Point>> m_memo_staked_commitments;
+    mutable std::optional<OrderedElements<BlstG1Point>> m_memo_staked_commitments;
 
     /* Cached dynamic memory usage for the inner Coin objects. */
     mutable size_t cachedCoinsUsage{0};
@@ -334,7 +334,7 @@ public:
     uint256 GetBestBlock() const override;
     bool GetToken(const uint256& tokenId, blsct::TokenEntry& token) const override;
     bool HaveToken(const uint256& tokenId) const override;
-    OrderedElements<MclG1Point> GetStakedCommitments() const override;
+    OrderedElements<BlstG1Point> GetStakedCommitments() const override;
     void SetBestBlock(const uint256 &hashBlock);
     bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CStakedCommitmentsMap& stakedCommitments, TokensMap& tokensMap, bool erase = true) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override {
@@ -346,7 +346,7 @@ public:
     }
     bool GetAllTokens(TokensMap& tokensMap) const override;
 
-    void RemoveStakedCommitment(const MclG1Point& commitment);
+    void RemoveStakedCommitment(const BlstG1Point& commitment);
 
     // Invalidate the memoized staked-commitments set. Must be called by any
     // code that mutates cacheStakedCommitments or the underlying base view.

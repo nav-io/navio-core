@@ -108,7 +108,7 @@ BOOST_FIXTURE_TEST_CASE(validation_reward_test, TestingSetup)
     CMutableTransaction tx;
     TxValidationState tx_state;
 
-    auto out = blsct::CreateOutput(blsct::DoublePublicKey(MclG1Point::Rand(), MclG1Point::Rand()), 900 * COIN, " Reward ");
+    auto out = blsct::CreateOutput(blsct::DoublePublicKey(BlstG1Point::Rand(), BlstG1Point::Rand()), 900 * COIN, " Reward ");
     tx.vout.push_back(out.out);
     tx.txSig = out.GetSignature();
 
@@ -397,7 +397,7 @@ BOOST_FIXTURE_TEST_CASE(fee_output_definition_matches_consensus_test, TestingSet
     CTxOut spendable_payfee;
     spendable_payfee.nValue = 1000;
     spendable_payfee.scriptPubKey = CScript() << OP_TRUE;
-    const auto fee_key = blsct::PrivateKey(MclScalar::Rand());
+    const auto fee_key = blsct::PrivateKey(BlstScalar::Rand());
     spendable_payfee.predicate = blsct::PayFeePredicate(fee_key.GetPublicKey()).GetVch();
     BOOST_CHECK(!spendable_payfee.IsFee());
 
@@ -432,15 +432,15 @@ BOOST_FIXTURE_TEST_CASE(mempool_evicts_duplicate_staked_commitment, TestingSetup
 {
     SeedInsecureRand(SeedRand::ZEROS);
 
-    const blsct::DoublePublicKey dest(MclG1Point::Rand(), MclG1Point::Rand());
+    const blsct::DoublePublicKey dest(BlstG1Point::Rand(), BlstG1Point::Rand());
 
     // One staked-commitment output, reused in the "block" tx and the mempool
     // tx so both add the identical commitment point.
-    auto staked = blsct::CreateOutput(dest, 1000 * COIN, "stake", TokenId(), MclScalar(uint256(uint64_t{0xbeef})), blsct::CreateTransactionType::STAKED_COMMITMENT, 1000 * COIN);
+    auto staked = blsct::CreateOutput(dest, 1000 * COIN, "stake", TokenId(), BlstScalar(uint256(uint64_t{0xbeef})), blsct::CreateTransactionType::STAKED_COMMITMENT, 1000 * COIN);
     BOOST_REQUIRE(staked.out.IsStakedCommitment());
 
     // A different commitment for the control tx that must survive.
-    auto other = blsct::CreateOutput(dest, 500 * COIN, "stake2", TokenId(), MclScalar(uint256(uint64_t{0xcafe})), blsct::CreateTransactionType::STAKED_COMMITMENT, 500 * COIN);
+    auto other = blsct::CreateOutput(dest, 500 * COIN, "stake2", TokenId(), BlstScalar(uint256(uint64_t{0xcafe})), blsct::CreateTransactionType::STAKED_COMMITMENT, 500 * COIN);
     BOOST_REQUIRE(other.out.IsStakedCommitment());
     BOOST_REQUIRE(!(other.out.blsctData.rangeProof.Vs[0] == staked.out.blsctData.rangeProof.Vs[0]));
 

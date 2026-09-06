@@ -13,8 +13,8 @@
 #include <boost/test/unit_test.hpp>
 
 #include <arith_uint256.h>
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_g1point.h>
 #include <blsct/pos/helpers.h>
 #include <blsct/pos/pos.h>
 #include <blsct/pos/proof.h>
@@ -101,8 +101,8 @@ BOOST_AUTO_TEST_CASE(kernel_hash_binds_phi)
     const uint32_t time = 1000060;
     const arith_uint256 work = UintToArith256(uint256S("0a"));
 
-    MclG1Point phiA = MclG1Point::Rand();
-    MclG1Point phiB = MclG1Point::Rand();
+    BlstG1Point phiA = BlstG1Point::Rand();
+    BlstG1Point phiB = BlstG1Point::Rand();
 
     uint256 hA = blsct::CalculateKernelHashWithChainWork(prevTime, modifier, work, time, phiA);
     uint256 hB = blsct::CalculateKernelHashWithChainWork(prevTime, modifier, work, time, phiB);
@@ -126,7 +126,7 @@ BOOST_AUTO_TEST_CASE(kernel_hash_phi_legacy_ignores_phi)
     const uint64_t modifier = 7;
     const uint32_t time = 1000060;
     const arith_uint256 work = UintToArith256(uint256S("0a"));
-    MclG1Point phi = MclG1Point::Rand();
+    BlstG1Point phi = BlstG1Point::Rand();
 
     uint256 legacy = blsct::CalculateKernelHash(prevTime, modifier, time, /*hardened=*/false);
     uint256 phi_unhardened = blsct::CalculateKernelHashWithChainWork(prevTime, modifier, work, time, phi, /*hardened=*/false);
@@ -291,7 +291,7 @@ namespace {
 // distinct phi point.
 struct Coin {
     uint64_t value;
-    MclG1Point phi;
+    BlstG1Point phi;
 };
 struct Node {
     std::string name;
@@ -346,16 +346,16 @@ bool CoinEligible(const Coin& c, uint32_t prevTime, uint64_t modifier,
 uint64_t SlotModifier(int s) { return 0x9e3779b97f4a7c15ULL * static_cast<uint64_t>(s + 1); }
 
 // Deterministic, distinct G1 points for the value-proportionality simulations.
-// MclG1Point::Rand() draws its scalar from the OS CSPRNG (mclBnFr_setByCSPRNG),
+// BlstG1Point::Rand() draws its scalar from the OS CSPRNG (GetRandBytes),
 // which made the win-share statistics non-reproducible: a single unlucky draw
 // could push a node's win-share outside the tolerance, so the tests failed
 // intermittently across platforms. Fixed points make every simulation fully
 // deterministic. The phi value only selects WHICH slots a coin wins (eligibility
 // probability is value/D regardless of phi), so any distinct points are valid.
-MclG1Point DetPoint()
+BlstG1Point DetPoint()
 {
     static int64_t ctr = 0;
-    return MclG1Point::GetBasePoint() * MclScalar(++ctr);
+    return BlstG1Point::GetBasePoint() * BlstScalar(++ctr);
 }
 } // namespace
 
@@ -600,25 +600,25 @@ BOOST_AUTO_TEST_CASE(staking_v2_proportional_with_dynamic_stakes)
 
 BOOST_AUTO_TEST_CASE(g1_subgroup_check_accepts_generator)
 {
-    MclG1Point g = MclG1Point::GetBasePoint();
+    BlstG1Point g = BlstG1Point::GetBasePoint();
     auto bytes = g.GetVch();
-    MclG1Point parsed;
+    BlstG1Point parsed;
     BOOST_CHECK(parsed.SetVch(bytes));
 }
 
 BOOST_AUTO_TEST_CASE(g1_subgroup_check_accepts_identity)
 {
     // All-zero serialization with the compressed-infinity flag should round-trip.
-    MclG1Point identity;  // default-constructed is identity
+    BlstG1Point identity;  // default-constructed is identity
     auto bytes = identity.GetVch();
-    MclG1Point parsed;
+    BlstG1Point parsed;
     BOOST_CHECK(parsed.SetVch(bytes));
 }
 
 BOOST_AUTO_TEST_CASE(g1_subgroup_check_rejects_garbage)
 {
-    std::vector<uint8_t> garbage(MclG1Point::SERIALIZATION_SIZE, 0x42);
-    MclG1Point p;
+    std::vector<uint8_t> garbage(BlstG1Point::SERIALIZATION_SIZE, 0x42);
+    BlstG1Point p;
     BOOST_CHECK(!p.SetVch(garbage));
 }
 

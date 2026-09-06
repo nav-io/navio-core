@@ -3,7 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 
 namespace bulletproofs_plus {
 
@@ -23,7 +23,7 @@ bool RangeProof<T>::operator==(const RangeProof<T>& other) const
         ;
 }
 template
-bool RangeProof<Mcl>::operator==(const RangeProof<Mcl>& other) const;
+bool RangeProof<Blst>::operator==(const RangeProof<Blst>& other) const;
 
 template <typename T>
 bool RangeProof<T>::operator!=(const RangeProof<T>& other) const
@@ -31,7 +31,7 @@ bool RangeProof<T>::operator!=(const RangeProof<T>& other) const
     return !operator==(other);
 }
 template
-bool RangeProof<Mcl>::operator!=(const RangeProof<Mcl>& other) const;
+bool RangeProof<Blst>::operator!=(const RangeProof<Blst>& other) const;
 
 template <typename T>
 bool RangeProofWithSeed<T>::operator==(const RangeProofWithSeed<T>& other) const
@@ -43,28 +43,13 @@ bool RangeProofWithSeed<T>::operator==(const RangeProofWithSeed<T>& other) const
     return this_parent == other_parent &&
            seed == other.seed;
 }
-template bool RangeProofWithSeed<Mcl>::operator==(const RangeProofWithSeed<Mcl>& other) const;
+template bool RangeProofWithSeed<Blst>::operator==(const RangeProofWithSeed<Blst>& other) const;
 
 template <typename T>
 bool RangeProofWithSeed<T>::operator!=(const RangeProofWithSeed<T>& other) const
 {
     return !operator==(other);
 }
-template bool RangeProofWithSeed<Mcl>::operator!=(const RangeProofWithSeed<Mcl>& other) const;
-
-} // namespace bulletproofs_plus
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-namespace bulletproofs_plus {
-template
-bool RangeProof<Blst>::operator==(const RangeProof<Blst>& other) const;
-template
-bool RangeProof<Blst>::operator!=(const RangeProof<Blst>& other) const;
-template bool RangeProofWithSeed<Blst>::operator==(const RangeProofWithSeed<Blst>& other) const;
 template bool RangeProofWithSeed<Blst>::operator!=(const RangeProofWithSeed<Blst>& other) const;
+
 } // namespace bulletproofs_plus
-#endif // NAVIO_BLSCT_ARITH_BLST

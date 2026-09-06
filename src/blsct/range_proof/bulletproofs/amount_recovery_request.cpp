@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/range_proof/bulletproofs/amount_recovery_request.h>
 #include <blsct/range_proof/bulletproofs/range_proof_with_transcript.h>
 #include <blsct/range_proof/bulletproofs/range_proof.h>
@@ -31,7 +31,6 @@ AmountRecoveryRequest<T> AmountRecoveryRequest<T>::of(const RangeProofWithSeed<T
         0};
     return req;
 }
-template AmountRecoveryRequest<Mcl> AmountRecoveryRequest<Mcl>::of(const RangeProofWithSeed<Mcl>&, const range_proof::GammaSeed<Mcl>&, const size_t&);
+template AmountRecoveryRequest<Blst> AmountRecoveryRequest<Blst>::of(const RangeProofWithSeed<Blst>&, const range_proof::GammaSeed<Blst>&, const size_t&);
 
 } // namespace bulletproofs
-

@@ -329,17 +329,17 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
     if (seed.size() == 32 && type == IMPORT_MNEMONIC) {
         if (!SetupMnemonicFromEntropy(seed, mnemonic_passphrase, creation_time)) return false;
     } else if (seed.size() == 32 && type == IMPORT_MASTER_KEY) {
-        MclScalar scalarSeed;
+        BlstScalar scalarSeed;
         scalarSeed.SetVch(seed);
         SetHDSeed(scalarSeed, creation_time);
     } else if (seed.size() == 80 && type == IMPORT_VIEW_KEY) {
         std::vector<unsigned char> viewVch(seed.begin(), seed.begin() + 32);
         std::vector<unsigned char> spendingVch(seed.begin() + 32, seed.end());
 
-        MclScalar scalarView;
+        BlstScalar scalarView;
         scalarView.SetVch(viewVch);
 
-        MclG1Point pointSpending;
+        BlstG1Point pointSpending;
         pointSpending.SetVch(spendingVch);
 
         if (!AddViewKey(scalarView, PrivateKey(scalarView).GetPublicKey()))
@@ -677,7 +677,7 @@ blsct::PrivateKey KeyMan::GetTokenKey(const uint256& tokenId) const
     return BLS12_381_KeyGen::derive_child_SK_hash(masterTokenKey.GetScalar(), tokenId);
 }
 
-using Arith = Mcl;
+using Arith = Blst;
 
 namespace {
 // Recover amounts trying the legacy (v1) Fiat-Shamir transcript first, then
@@ -691,19 +691,19 @@ namespace {
 // amount is commitment-authenticated a wrong-transcript attempt cannot yield a
 // false positive. Without this, a v2 output is silently dropped (its amount is
 // never recovered) and disappears from the wallet balance.
-bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverWithTranscriptFallback(
-    bulletproofs_plus::RangeProofLogic<Mcl>& rp,
+bulletproofs_plus::AmountRecoveryResult<Blst> RecoverWithTranscriptFallback(
+    bulletproofs_plus::RangeProofLogic<Blst>& rp,
     const std::vector<CTxOut>& outs,
-    const std::vector<std::pair<size_t, MclG1Point>>& candidates)
+    const std::vector<std::pair<size_t, BlstG1Point>>& candidates)
 {
-    auto run = [&](const std::vector<std::pair<size_t, MclG1Point>>& cands, bool transcript_v2) {
-        std::vector<bulletproofs_plus::AmountRecoveryRequest<Mcl>> reqs;
+    auto run = [&](const std::vector<std::pair<size_t, BlstG1Point>>& cands, bool transcript_v2) {
+        std::vector<bulletproofs_plus::AmountRecoveryRequest<Blst>> reqs;
         reqs.reserve(cands.size());
         for (const auto& [i, nonce] : cands) {
             const CTxOut& out = outs[i];
-            bulletproofs_plus::RangeProofWithSeed<Mcl> proof = {out.blsctData.rangeProof, out.tokenId};
+            bulletproofs_plus::RangeProofWithSeed<Blst> proof = {out.blsctData.rangeProof, out.tokenId};
             proof.transcript_v2 = transcript_v2;
-            reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Mcl>::of(proof, nonce, i));
+            reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Blst>::of(proof, nonce, i));
         }
         return rp.RecoverAmounts(reqs);
     };
@@ -715,7 +715,7 @@ bulletproofs_plus::AmountRecoveryResult<Mcl> RecoverWithTranscriptFallback(
     for (const auto& x : result.amounts) {
         if (x.id < recovered.size()) recovered[x.id] = 1;
     }
-    std::vector<std::pair<size_t, MclG1Point>> misses;
+    std::vector<std::pair<size_t, BlstG1Point>> misses;
     for (const auto& c : candidates) {
         if (!recovered[c.first]) misses.push_back(c);
     }
@@ -738,7 +738,7 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
     // We only do the v·R scalar mult for outputs that are structurally BLSCT;
     // per-output scalar mult is the hot cost, so batching amortises thread overhead.
     std::vector<size_t> candidateIdx;
-    std::vector<MclG1Point> candidateBlindingKeys;
+    std::vector<BlstG1Point> candidateBlindingKeys;
     candidateIdx.reserve(outs.size());
     candidateBlindingKeys.reserve(outs.size());
 
@@ -752,7 +752,7 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
     auto tags = CalculateViewTagBatch(candidateBlindingKeys, viewKey.GetScalar());
 
     // (output index, recovery nonce) for every view-tag match.
-    std::vector<std::pair<size_t, MclG1Point>> candidates;
+    std::vector<std::pair<size_t, BlstG1Point>> candidates;
     for (size_t k = 0; k < candidateIdx.size(); ++k) {
         size_t i = candidateIdx[k];
         const CTxOut& out = outs[i];
@@ -771,7 +771,7 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputsWithNonce(c
     // script's recovery hint).  The viewKey is not consulted and may be absent.
     bulletproofs_plus::RangeProofLogic<Arith> rp;
 
-    std::vector<std::pair<size_t, MclG1Point>> candidates;
+    std::vector<std::pair<size_t, BlstG1Point>> candidates;
     for (size_t i = 0; i < outs.size(); i++) {
         const CTxOut& out = outs[i];
         if (!out.HasBLSCTKeys() || !out.HasBLSCTRangeProof()) continue;
@@ -793,7 +793,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout)
     return IsMineMode(txout, GetExpectedNonce(txout));
 }
 
-wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<MclG1Point>& expectedNonce)
+wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<BlstG1Point>& expectedNonce)
 {
     const auto spendable_kind = [&]() {
         return txout.IsStakedCommitment() ? wallet::ISMINE_STAKED_COMMITMENT_BLSCT
@@ -851,7 +851,7 @@ wallet::isminetype KeyMan::IsMineMode(const CTxOut& txout, const std::optional<M
     return wallet::ISMINE_NO;
 }
 
-bool KeyMan::IsMine(const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<MclG1Point>& expectedNonce)
+bool KeyMan::IsMine(const blsct::PublicKey& spendingKey, const uint16_t& viewTag, const std::optional<BlstG1Point>& expectedNonce)
 {
     if (!expectedNonce) return false;
     if (viewTag != static_cast<uint16_t>(ViewTagFromNonce(*expectedNonce))) return false;
@@ -1204,7 +1204,7 @@ util::Result<CTxDestination> KeyMan::GetNewDestination(const int64_t& account)
     return CTxDestination(GetSubAddress(id).GetKeys());
 }
 
-std::optional<MclG1Point> KeyMan::GetExpectedNonce(const CTxOut& txout) const
+std::optional<BlstG1Point> KeyMan::GetExpectedNonce(const CTxOut& txout) const
 {
     try {
         if (!fViewKeyDefined || !viewKey.IsValid()) return std::nullopt;
@@ -1227,7 +1227,7 @@ std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxO
     return MarkUnusedSubAddress(txout, *nonce);
 }
 
-std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout, const MclG1Point& expectedNonce)
+std::optional<wallet::WalletDestination> KeyMan::MarkUnusedSubAddress(const CTxOut& txout, const BlstG1Point& expectedNonce)
 {
     try {
         // Cheap prefilter: viewTag must match before we do any expensive work.

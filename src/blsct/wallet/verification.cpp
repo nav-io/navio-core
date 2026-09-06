@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/pos/pos.h>
 #include <blsct/public_keys.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof.h>
@@ -68,15 +68,15 @@ namespace {
 //
 // NOTE: we intentionally take addresses-of rather than references so callers
 // that want to hoist use the same instances.
-range_proof::GeneratorsFactory<Mcl>& GetSharedGenFactory()
+range_proof::GeneratorsFactory<Blst>& GetSharedGenFactory()
 {
-    static range_proof::GeneratorsFactory<Mcl> gf;
+    static range_proof::GeneratorsFactory<Blst> gf;
     return gf;
 }
 
-bulletproofs_plus::RangeProofLogic<Mcl>& GetSharedRPLogic()
+bulletproofs_plus::RangeProofLogic<Blst>& GetSharedRPLogic()
 {
-    static bulletproofs_plus::RangeProofLogic<Mcl> rp;
+    static bulletproofs_plus::RangeProofLogic<Blst> rp;
     return rp;
 }
 
@@ -87,7 +87,7 @@ bulletproofs_plus::RangeProofLogic<Mcl>& GetSharedRPLogic()
 bool VerifyTxCoreImpl(const CTransaction& tx,
                   CCoinsViewCache& view,
                   TxValidationState& state,
-                  std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
+                  std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& out_proofs,
                   const CAmount& blockReward,
                   const CAmount& minStake,
                   int nSpendHeight,
@@ -125,11 +125,11 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
 
     auto& gf = GetSharedGenFactory();
 
-    MclG1Point balanceKey;
+    BlstG1Point balanceKey;
 
     if (blockReward > 0) {
-        range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId());
-        balanceKey = (gen.G * MclScalar(blockReward));
+        range_proof::Generators<Blst> gen = gf.GetInstance(TokenId());
+        balanceKey = (gen.G * BlstScalar(blockReward));
     }
 
     std::vector<Message> vMessages;
@@ -198,8 +198,8 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
             if (coins[i].out.HasBLSCTRangeProof()) {
                 balanceKey = balanceKey + coins[i].out.blsctData.rangeProof.Vs[0];
             } else {
-                range_proof::Generators<Mcl> gen = gf.GetInstance(coins[i].out.tokenId);
-                balanceKey = balanceKey + (gen.G * MclScalar(coins[i].out.nValue));
+                range_proof::Generators<Blst> gen = gf.GetInstance(coins[i].out.tokenId);
+                balanceKey = balanceKey + (gen.G * BlstScalar(coins[i].out.nValue));
             }
         }
     }
@@ -207,7 +207,7 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     const size_t pubkey_count_after_inputs = vPubKeys.size();
 
     CAmount nFee = 0;
-    bulletproofs_plus::RangeProofWithSeed<Mcl> stakedCommitmentRangeProof;
+    bulletproofs_plus::RangeProofWithSeed<Blst> stakedCommitmentRangeProof;
 
     // Reject staked outputs whose commitment point (Vs[0]) is already unspent
     // in the chain state, or duplicated within this tx. The staked-commitment
@@ -216,7 +216,7 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     // single spend evict an unrelated live stake from the PoPS ring. Mirrors
     // the consensus check in ConnectBlock; enforced here so such txs are also
     // rejected at mempool acceptance. (gamma is wallet-chosen, hence grindable.)
-    const OrderedElements<MclG1Point> existing_staked = view.GetStakedCommitments();
+    const OrderedElements<BlstG1Point> existing_staked = view.GetStakedCommitments();
     std::set<std::vector<unsigned char>> tx_staked_points;
 
     for (auto& out : tx.vout) {
@@ -233,16 +233,16 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
             if (parsedPredicate.IsMintTokenPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
                 vMessages.emplace_back(out_hash.begin(), out_hash.end());
-                range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash()));
-                balanceKey = balanceKey + (gen.G * MclScalar(parsedPredicate.GetAmount()));
+                range_proof::Generators<Blst> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash()));
+                balanceKey = balanceKey + (gen.G * BlstScalar(parsedPredicate.GetAmount()));
             } else if (parsedPredicate.IsCreateTokenPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
                 vMessages.emplace_back(out_hash.begin(), out_hash.end());
             } else if (parsedPredicate.IsMintNftPredicate()) {
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
                 vMessages.emplace_back(out_hash.begin(), out_hash.end());
-                range_proof::Generators<Mcl> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash(), parsedPredicate.GetNftId()));
-                balanceKey = balanceKey + (gen.G * MclScalar(1));
+                range_proof::Generators<Blst> gen = gf.GetInstance(TokenId(parsedPredicate.GetPublicKey().GetHash(), parsedPredicate.GetNftId()));
+                balanceKey = balanceKey + (gen.G * BlstScalar(1));
             } else if (out.scriptPubKey.IsFee() && parsedPredicate.IsPayFeePredicate()) {
                 vMessages.emplace_back(blsct::Common::BLSCTFEE);
                 vPubKeys.emplace_back(parsedPredicate.GetPublicKey());
@@ -258,13 +258,13 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
         }
 
         if (out.HasBLSCTRangeProof()) {
-            bulletproofs_plus::RangeProofWithSeed<Mcl> proof{out.blsctData.rangeProof, out.tokenId};
+            bulletproofs_plus::RangeProofWithSeed<Blst> proof{out.blsctData.rangeProof, out.tokenId};
             proof.transcript_v2 = rp_transcript_v2;
             out_proofs.emplace_back(proof);
             balanceKey = balanceKey - out.blsctData.rangeProof.Vs[0];
 
             if (out.GetStakedCommitmentRangeProof(stakedCommitmentRangeProof)) {
-                const MclG1Point& staked_point = out.blsctData.rangeProof.Vs[0];
+                const BlstG1Point& staked_point = out.blsctData.rangeProof.Vs[0];
                 if (existing_staked.Exists(staked_point) ||
                     !tx_staked_points.insert(staked_point.GetVch()).second) {
                     return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-duplicate-staked-commitment");
@@ -273,7 +273,7 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                 stakedCommitmentRangeProof.Vs.Clear();
                 stakedCommitmentRangeProof.Vs.Add(out.blsctData.rangeProof.Vs[0]);
 
-                proof = bulletproofs_plus::RangeProofWithSeed<Mcl>{stakedCommitmentRangeProof, TokenId(), minStake};
+                proof = bulletproofs_plus::RangeProofWithSeed<Blst>{stakedCommitmentRangeProof, TokenId(), minStake};
                 proof.transcript_v2 = rp_transcript_v2;
 
                 out_proofs.push_back(proof);
@@ -296,8 +296,8 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                 }
                 nFee = out.nValue;
             }
-            range_proof::Generators<Mcl> gen = gf.GetInstance(out.tokenId);
-            balanceKey = balanceKey - (gen.G * MclScalar(out.nValue));
+            range_proof::Generators<Blst> gen = gf.GetInstance(out.tokenId);
+            balanceKey = balanceKey - (gen.G * BlstScalar(out.nValue));
         }
     }
 
@@ -395,15 +395,15 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
 }
 
 // Exception firewall around the core verifier. Malformed BLSCT data on an
-// attacker-supplied tx/block (bad mcl point deserialisation, inconsistent
+// attacker-supplied tx/block (bad G1 point deserialisation, inconsistent
 // range-proof dimensions, degenerate inputs) can make the verification path
-// throw std::runtime_error deep inside mcl / the bulletproofs+ logic. Uncaught
+// throw std::runtime_error deep inside the arithmetic wrappers / the bulletproofs+ logic. Uncaught
 // on the validation or mempool thread that would abort() the node. Convert any
 // such throw into a clean consensus rejection.
 bool VerifyTxCore(const CTransaction& tx,
                   CCoinsViewCache& view,
                   TxValidationState& state,
-                  std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
+                  std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& out_proofs,
                   const CAmount& blockReward,
                   const CAmount& minStake,
                   int nSpendHeight,
@@ -427,14 +427,14 @@ bool VerifyTxCore(const CTransaction& tx,
 
 bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, int nBLSCTProofV2Height)
 {
-    std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>> proofs;
+    std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> proofs;
     return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nBLSCTProofV2Height);
 }
 
 bool PrepareTxForDeferredVerification(const CTransaction& tx,
                                       CCoinsViewCache& view,
                                       TxValidationState& state,
-                                      std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
+                                      std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& out_proofs,
                                       PreparedTxSignatureCheck& out_sig_check,
                                       const CAmount& blockReward,
                                       const CAmount& minStake,
@@ -449,7 +449,7 @@ bool PrepareTxForDeferredVerification(const CTransaction& tx,
 bool VerifyTxCollectProofs(const CTransaction& tx,
                            CCoinsViewCache& view,
                            TxValidationState& state,
-                           std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& out_proofs,
+                           std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& out_proofs,
                            const CAmount& blockReward,
                            const CAmount& minStake,
                            int nSpendHeight,
@@ -514,7 +514,7 @@ TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSi
     return result;
 }
 
-bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofWithSeed<Mcl>>& proofs)
+bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& proofs)
 {
     if (proofs.empty()) return true;
     auto& rp = GetSharedRPLogic();

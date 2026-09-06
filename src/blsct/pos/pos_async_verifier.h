@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BLSCT_POS_POS_ASYNC_VERIFIER_H
-#define BLSCT_POS_POS_ASYNC_VERIFIER_H
+#ifndef NAVIO_BLSCT_POS_POS_ASYNC_VERIFIER_H
+#define NAVIO_BLSCT_POS_POS_ASYNC_VERIFIER_H
 
 #include <condition_variable>
 #include <deque>
@@ -22,32 +22,16 @@ namespace blsct {
 // dispatched from ConnectBlock.
 //
 // Why a dedicated persistent worker (instead of per-block std::async)?
-// ----------------------------------------------------------------------
-// The MCL verifier internally uses OpenMP (mclBn{G1_mulVecMT,_millerLoopVecMT})
-// when compiled with MCL_USE_OMP=1. libomp lazily initialises a per-thread
-// allocator/state the first time any host thread enters an OMP parallel
-// region, and tears that state down via pthread-key destructors when the
-// host thread exits.
 //
-// std::async(std::launch::async, ...) on macOS/Linux glibc typically spawns a
-// fresh pthread per call, so each block we'd:
-//   1. spawn a new pthread,
-//   2. enter MCL's OMP region from that pthread (libomp registers + inits
-//      its per-thread allocator),
-//   3. exit the pthread once the future is consumed (libomp tears down).
-// Concurrently the main thread is also driving its own OMP regions through
-// the per-tx VerifyBatch path. The cross-thread interleaving of "new host
-// thread initialising libomp TLS" with "existing host thread allocating in
-// libomp" was observed to corrupt the allocator state and trip an internal
-// assertion in kmp_alloc.cpp (OMP: Error #13: Assertion failure ...) after
-// O(40) blocks.
-//
-// Pinning async verification work to long-lived worker threads:
-//   - libomp initialises that thread's TLS exactly once,
-//   - no teardown happens in steady state,
-//   - the only other host thread regularly entering OMP is the validation
-//     main thread; two stable hosts is a configuration libomp handles
-//     reliably.
+// Historically the verifier ran on OpenMP (mcl's mulVecMT), whose runtime
+// corrupted its allocator state when short-lived std::async host threads
+// entered and left OMP regions concurrently with the validation thread. The
+// arithmetic is now blst with explicit std::thread fan-out (no library-level
+// runtime), so that hazard is gone; the persistent worker is kept because it
+// is still the cheaper and more predictable shape:
+//   - no per-block thread spawn/teardown on the block-connect path,
+//   - one long-lived host for the verifier's own MSM worker pool,
+//   - FIFO draining keeps proof verification ordered with block arrival.
 //
 // CONCURRENCY MODEL: ConnectBlock holds cs_main, so at most one task is
 // in-flight at a time. We still queue (deque) so that hypothetically nested
@@ -101,4 +85,4 @@ AsyncVerifyExecutor& GetAggSigAsyncVerifier();
 
 } // namespace blsct
 
-#endif // BLSCT_POS_POS_ASYNC_VERIFIER_H
+#endif // NAVIO_BLSCT_POS_POS_ASYNC_VERIFIER_H

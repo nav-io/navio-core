@@ -289,7 +289,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
             std::vector<std::vector<unsigned char>> tx_points;
             for (const auto& out : pblock->vtx[i]->vout) {
                 if (!out.IsStakedCommitment()) continue;
-                const MclG1Point& point = out.blsctData.rangeProof.Vs[0];
+                const BlstG1Point& point = out.blsctData.rangeProof.Vs[0];
                 if (existing_staked.Exists(point) || selected_points.contains(point.GetVch())) {
                     drop = true;
                     break;

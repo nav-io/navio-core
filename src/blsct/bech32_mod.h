@@ -11,8 +11,8 @@
 //
 // For more information, see BIP 173 and BIP 350.
 
-#ifndef BITCOIN_BECH32_MOD_H
-#define BITCOIN_BECH32_MOD_H
+#ifndef NAVIO_BLSCT_BECH32_MOD_H
+#define NAVIO_BLSCT_BECH32_MOD_H
 
 #include <chainparams.h>
 #include <optional>
@@ -52,4 +52,4 @@ constexpr size_t DOUBLE_PUBKEY_DATA_ENC_SIZE = 154;
 
 } // namespace bech32_mod
 
-#endif // BITCOIN_BECH32_MOD_H
+#endif // NAVIO_BLSCT_BECH32_MOD_H

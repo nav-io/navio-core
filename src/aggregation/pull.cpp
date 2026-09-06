@@ -5,7 +5,7 @@
 #include <aggregation/pull.h>
 
 #include <aggregation/pool.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/private_key.h>
 #include <logging.h>
 #include <p2pmsg/crypto.h>
@@ -97,7 +97,7 @@ void CandidatePuller::PullOnce()
 
     // Fresh keypair per round: replies are encrypted 1:1 to it, and nothing
     // links one round's key to another's (or to this node's inbox identity).
-    blsct::PrivateKey priv(MclScalar::Rand(/*exclude_zero=*/true));
+    blsct::PrivateKey priv(BlstScalar::Rand(/*exclude_zero=*/true));
     blsct::PublicKey pub = priv.GetPublicKey();
     const int64_t expiry = GetTime<std::chrono::seconds>().count() + PULL_KEY_TTL_SECONDS;
     m_transport.AddSessionKey(pub, priv, expiry);

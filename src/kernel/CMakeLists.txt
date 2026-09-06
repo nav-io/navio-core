@@ -17,8 +17,9 @@ add_library(naviokernel
   mempool_removal_reason.cpp
   ../arith_uint256.cpp
   ../blsct/arith/elements.cpp
-  ../blsct/arith/mcl/mcl_g1point.cpp
-  ../blsct/arith/mcl/mcl_scalar.cpp
+  ../blsct/arith/blst/blst_g1point.cpp
+  ../blsct/arith/blst/blst_scalar.cpp
+  ../blsct/arith/blst/blst_util.cpp
   ../blsct/building_block/g_h_gi_hi_zero_verifier.cpp
   ../blsct/building_block/generator_deriver.cpp
   ../blsct/building_block/fixed_base_window.cpp
@@ -158,7 +159,7 @@ target_link_libraries(naviokernel
   PRIVATE
     leveldb
     secp256k1
-    bls_interface
+    blst_interface
     Boost::headers
 )
 

@@ -2,11 +2,11 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef NAVCOIN_BLSCT_EXTERNAL_API_BLSCT_H
-#define NAVCOIN_BLSCT_EXTERNAL_API_BLSCT_H
+#ifndef NAVIO_BLSCT_EXTERNAL_API_BLSCT_H
+#define NAVIO_BLSCT_EXTERNAL_API_BLSCT_H
 
 #include <blsct/arith/elements.h>
-#include <blsct/arith/mcl/mcl.h>
+#include <blsct/arith/blst/blst.h>
 #include <blsct/chain.h>
 #include <blsct/double_public_key.h>
 #include <blsct/private_key.h>
@@ -72,15 +72,15 @@ BlsctRetVal* err(
 } // extern "C"
 #endif
 
-#define TRY_DEFINE_MCL_POINT_FROM(src, dest)         \
+#define TRY_DEFINE_POINT_FROM(src, dest)         \
     Point dest;                                      \
-    if (!from_blsct_point_to_mcl_point(src, dest)) { \
+    if (!from_blsct_point_to_blst_point(src, dest)) { \
         return BLSCT_FAILURE;                        \
     }
 
-#define TRY_DEFINE_MCL_SCALAR_FROM(src, dest) \
+#define TRY_DEFINE_SCALAR_FROM(src, dest) \
     Scalar dest;                              \
-    from_blsct_scalar_to_mcl_scalar(src, dest)
+    from_blsct_scalar_to_blst_scalar(src, dest)
 
 #define SERIALIZE_AND_COPY(src, dest)                   \
     {                                                   \
@@ -229,8 +229,8 @@ enum BlsctPredicateType {
     BlsctInvalidPredicateType = 255
 };
 
-using Point = Mcl::Point;
-using Scalar = Mcl::Scalar;
+using Point = Blst::Point;
+using Scalar = Blst::Scalar;
 using Scalars = Elements<Scalar>;
 
 typedef uint8_t BlsctCTxId[CTX_ID_SIZE];
@@ -885,4 +885,4 @@ void delete_uint64_vec(const void* vp_vec);
 
 } // extern "C"
 
-#endif // NAVCOIN_BLSCT_EXTERNAL_API_BLSCT_H
+#endif // NAVIO_BLSCT_EXTERNAL_API_BLSCT_H

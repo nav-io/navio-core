@@ -177,7 +177,7 @@ bool WalletBatch::WriteViewKey(const blsct::PublicKey& pubKey, const blsct::Priv
     if (!pubKey.IsValid())
         return false;
 
-    MclG1Point pointPubKey = pubKey.GetG1Point();
+    BlstG1Point pointPubKey = pubKey.GetG1Point();
 
     auto vchPubKey = pointPubKey.GetVch();
     auto vchPrivKey = privKey.GetScalar().GetVch();

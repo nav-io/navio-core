@@ -5,32 +5,18 @@
 #include <blsct/range_proof/bulletproofs_plus/fixed_base_cache.h>
 #include <blsct/range_proof/setup.h>
 
+#include <blsct/common.h>
+
+#ifndef LIBBLSCT
+#include <logging.h>
+#include <util/time.h>
+#endif
+
 #include <cassert>
-#include <cstdlib>
 #include <mutex>
-#include <string>
 #include <vector>
 
 namespace bulletproofs_plus {
-
-namespace {
-// Locale-independent decimal parse of an env var (avoids strtoull, which the
-// locale-dependence lint bans). Returns `def` on empty/non-numeric input.
-size_t EnvSize(const char* name, size_t def)
-{
-    const char* v = std::getenv(name);
-    if (!v || !*v) return def;
-    size_t n = 0;
-    for (const char* p = v; *p; ++p) {
-        if (*p < '0' || *p > '9') return def;
-        // Reject rather than wrap on absurd input; both consumers clamp to
-        // small ranges anyway.
-        if (n > 1000000) return def;
-        n = n * 10 + static_cast<size_t>(*p - '0');
-    }
-    return n;
-}
-} // namespace
 
 FixedBaseCache& FixedBaseCache::Get()
 {
@@ -38,20 +24,22 @@ FixedBaseCache& FixedBaseCache::Get()
     return instance;
 }
 
-void FixedBaseCache::MaybeInit(const range_proof::Generators<Mcl>& gens)
+void FixedBaseCache::MaybeInit(const range_proof::Generators<Blst>& gens)
 {
     static std::once_flag once;
     std::call_once(once, [&] {
-        const char* on = std::getenv("NAVIO_BLSCT_FIXEDBASE");
-        m_enabled = on && std::string(on) == "1";
+        // Latch: from here on the config statics are baked into the tables, so
+        // the setters must refuse further changes (they assert on !s_latched).
+        s_latched.store(true, std::memory_order_release);
+        m_enabled = s_enabled;
         if (!m_enabled) return;
 
-        m_winSize = EnvSize("NAVIO_BLSCT_FIXEDBASE_WIN", 8);
-        if (m_winSize < 1 || m_winSize > 12) m_winSize = 8;
+        m_winSize = s_winSize;
+        if (m_winSize < 2 || m_winSize > 12) m_winSize = 8;
 
         // Clamp the prefix to the generator pool actually available.
         const size_t pool = range_proof::Setup::max_input_value_vec_len;
-        size_t prefix = EnvSize("NAVIO_BLSCT_FIXEDBASE_PREFIX", 128);
+        size_t prefix = s_prefix;
         if (prefix > pool) prefix = pool;
         if (prefix > gens.Gi->Size()) prefix = gens.Gi->Size();
         if (prefix > gens.Hi->Size()) prefix = gens.Hi->Size();
@@ -63,8 +51,11 @@ void FixedBaseCache::MaybeInit(const range_proof::Generators<Mcl>& gens)
         // make every subsequent proof retry the same oversized allocation from
         // inside block validation. Failing closed disables the fast path once
         // and keeps the generic MSM.
+#ifndef LIBBLSCT
+        const auto build_start = SteadyClock::now();
+#endif
         try {
-            std::vector<MclG1Point> gi, hi;
+            std::vector<BlstG1Point> gi, hi;
             gi.reserve(m_prefix);
             hi.reserve(m_prefix);
             for (size_t i = 0; i < m_prefix; ++i) {
@@ -74,6 +65,15 @@ void FixedBaseCache::MaybeInit(const range_proof::Generators<Mcl>& gens)
             m_gi = FixedBaseWindow(gi, m_winSize);
             m_hi = FixedBaseWindow(hi, m_winSize);
             m_gi_base0 = (*gens.Gi)[0];
+#ifndef LIBBLSCT
+            // Log the one-time lazy precompute so its cost shows up as itself
+            // in the [bench] breakdown rather than a mystery spike on the first
+            // block verified after startup. Skipped in the standalone libblsct
+            // build, which does not link the node's logging (LogInstance).
+            LogPrint(BCLog::BENCH, "blsct: fixed-base precompute prefix=%u win=%u in %.2fms\n",
+                     (unsigned)m_prefix, (unsigned)m_winSize,
+                     Ticks<std::chrono::duration<double, std::milli>>(SteadyClock::now() - build_start));
+#endif
         } catch (const std::exception&) {
             m_enabled = false;
             m_prefix = 0;

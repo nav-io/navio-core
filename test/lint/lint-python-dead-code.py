@@ -11,7 +11,7 @@ Find dead Python code.
 from subprocess import check_output, STDOUT, CalledProcessError
 
 FILES_ARGS = ['git', 'ls-files', '--', '*.py']
-EXCLUDED_DIRS = ["src/bls/"]
+EXCLUDED_DIRS = ["src/blst/"]
 
 
 def check_vulture_install():

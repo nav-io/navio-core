@@ -8,7 +8,7 @@
 #include <p2pmsg/worker_pool.h>
 
 #include <blsct/private_key.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
@@ -183,7 +183,7 @@ BOOST_AUTO_TEST_CASE(unregistered_kind_is_counted_complete)
 
 BOOST_AUTO_TEST_CASE(ecies_roundtrip)
 {
-    blsct::PrivateKey sk(MclScalar::Rand(true));
+    blsct::PrivateKey sk(BlstScalar::Rand(true));
     blsct::PublicKey pk = sk.GetPublicKey();
 
     std::vector<uint8_t> pt{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
@@ -196,7 +196,7 @@ BOOST_AUTO_TEST_CASE(ecies_roundtrip)
 
 BOOST_AUTO_TEST_CASE(ecies_empty_plaintext)
 {
-    blsct::PrivateKey sk(MclScalar::Rand(true));
+    blsct::PrivateKey sk(BlstScalar::Rand(true));
     EciesPacket pkt = Encrypt(sk.GetPublicKey(), {});
     auto out = Decrypt(sk, pkt);
     BOOST_REQUIRE(out.has_value());
@@ -209,7 +209,7 @@ BOOST_AUTO_TEST_CASE(ecies_aad_mismatch_rejected)
     // under one kind must not authenticate under a different kind: this is what
     // stops an attacker flipping the cleartext kind to route the same ciphertext
     // to a different handler.
-    blsct::PrivateKey sk(MclScalar::Rand(true));
+    blsct::PrivateKey sk(BlstScalar::Rand(true));
     const std::vector<uint8_t> pt{9, 8, 7};
     const uint8_t kindA[1] = {3};
     const uint8_t kindB[1] = {4};
@@ -223,7 +223,7 @@ BOOST_AUTO_TEST_CASE(ecies_padding_hides_length)
     // Two payloads of different lengths that fall in the same padding bucket
     // must produce ciphertexts of identical length, so the wire size does not
     // reveal the exact application payload size.
-    blsct::PrivateKey sk(MclScalar::Rand(true));
+    blsct::PrivateKey sk(BlstScalar::Rand(true));
     EciesPacket a = Encrypt(sk.GetPublicKey(), std::vector<uint8_t>(5, 0xaa));
     EciesPacket b = Encrypt(sk.GetPublicKey(), std::vector<uint8_t>(40, 0xbb));
     BOOST_CHECK_EQUAL(a.ciphertext.size(), b.ciphertext.size());
@@ -237,8 +237,8 @@ BOOST_AUTO_TEST_CASE(ecies_padding_hides_length)
 
 BOOST_AUTO_TEST_CASE(ecies_wrong_key_fails)
 {
-    blsct::PrivateKey sk(MclScalar::Rand(true));
-    blsct::PrivateKey other(MclScalar::Rand(true));
+    blsct::PrivateKey sk(BlstScalar::Rand(true));
+    blsct::PrivateKey other(BlstScalar::Rand(true));
     std::vector<uint8_t> pt{42, 42, 42};
     EciesPacket pkt = Encrypt(sk.GetPublicKey(), pt);
 
@@ -247,7 +247,7 @@ BOOST_AUTO_TEST_CASE(ecies_wrong_key_fails)
 
 BOOST_AUTO_TEST_CASE(ecies_tag_flip_rejected)
 {
-    blsct::PrivateKey sk(MclScalar::Rand(true));
+    blsct::PrivateKey sk(BlstScalar::Rand(true));
     std::vector<uint8_t> pt{9, 8, 7, 6};
     EciesPacket pkt = Encrypt(sk.GetPublicKey(), pt);
     pkt.tag[0] ^= 0x01;
@@ -256,7 +256,7 @@ BOOST_AUTO_TEST_CASE(ecies_tag_flip_rejected)
 
 BOOST_AUTO_TEST_CASE(ecies_ciphertext_flip_rejected)
 {
-    blsct::PrivateKey sk(MclScalar::Rand(true));
+    blsct::PrivateKey sk(BlstScalar::Rand(true));
     std::vector<uint8_t> pt{5, 5, 5, 5, 5};
     EciesPacket pkt = Encrypt(sk.GetPublicKey(), pt);
     pkt.ciphertext[0] ^= 0x80;
@@ -292,7 +292,7 @@ BOOST_AUTO_TEST_CASE(ecies_infinity_eph_rejected)
     pkt.eph = infinity; // forge the ephemeral key to the point at infinity
 
     // Any unrelated recipient key would otherwise recover the same constant key.
-    blsct::PrivateKey victim(MclScalar::Rand(true));
+    blsct::PrivateKey victim(BlstScalar::Rand(true));
     BOOST_CHECK(!Decrypt(victim, pkt).has_value());
     BOOST_CHECK(!Decrypt(BroadcastPrivKey(), pkt).has_value());
 }
@@ -523,7 +523,7 @@ BOOST_AUTO_TEST_CASE(transport_recipient_key_tagging)
     h.t->Send(BroadcastPubKey(), PayloadKind::PING, {2}, /*stem=*/false);
     wait_for(2);
     // Encrypted to a registered session key -> SESSION.
-    blsct::PrivateKey sess_priv(MclScalar::Rand(/*exclude_zero=*/true));
+    blsct::PrivateKey sess_priv(BlstScalar::Rand(/*exclude_zero=*/true));
     blsct::PublicKey sess_pub = sess_priv.GetPublicKey();
     h.t->AddSessionKey(sess_pub, sess_priv, /*expiry=*/0);
     h.t->Send(sess_pub, PayloadKind::PING, {3}, /*stem=*/false);
@@ -609,7 +609,7 @@ BOOST_AUTO_TEST_CASE(transport_session_key_decrypts)
     });
 
     // A fresh per-request session keypair, distinct from the node inbox key.
-    blsct::PrivateKey reply_priv(MclScalar::Rand(true));
+    blsct::PrivateKey reply_priv(BlstScalar::Rand(true));
     blsct::PublicKey reply_key = reply_priv.GetPublicKey();
 
     // Registered and live: a message encrypted to it decrypts and dispatches.

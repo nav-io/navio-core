@@ -6,8 +6,8 @@
 
 #include <algorithm>
 #include <blsct/arith/elements.h>
-#include <blsct/arith/mcl/mcl_g1point.h>
-#include <blsct/arith/mcl/mcl_scalar.h>
+#include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/arith/blst/blst_scalar.h>
 #include <boost/test/unit_test.hpp>
 #include <cstdint>
 #include <limits>
@@ -19,8 +19,8 @@
 
 BOOST_FIXTURE_TEST_SUITE(elements_tests, BasicTestingSetup)
 
-using Point = MclG1Point;
-using Scalar = MclScalar;
+using Point = BlstG1Point;
+using Scalar = BlstScalar;
 using Points = Elements<Point>;
 using OrderedPoints = OrderedElements<Point>;
 using Scalars = Elements<Scalar>;

@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef KEYRING_H
-#define KEYRING_H
+#ifndef NAVIO_BLSCT_WALLET_KEYRING_H
+#define NAVIO_BLSCT_WALLET_KEYRING_H
 
 #include <blsct/double_public_key.h>
 #include <blsct/private_key.h>
@@ -43,4 +43,4 @@ public:
 };
 } // namespace blsct
 
-#endif // KEYRING_H
+#endif // NAVIO_BLSCT_WALLET_KEYRING_H

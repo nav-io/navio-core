@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blsct/arith/mcl/mcl.h>
-#include <blsct/arith/mcl/mcl_init.h>
+#include <blsct/arith/blst/blst.h>
+#include <blsct/arith/blst/blst_init.h>
 #include <blsct/building_block/generator_deriver.h>
 #include <blsct/range_proof/generators.h>
 #include <blsct/range_proof/setup.h>
@@ -17,14 +17,14 @@ Elements<typename T::Point> range_proof::Generators<T>::GetGiSubset(const size_t
 {
     return Gi->To(size);
 }
-template Elements<Mcl::Point> range_proof::Generators<Mcl>::GetGiSubset(const size_t&) const;
+template Elements<Blst::Point> range_proof::Generators<Blst>::GetGiSubset(const size_t&) const;
 
 template <typename T>
 Elements<typename T::Point> range_proof::Generators<T>::GetHiSubset(const size_t& size) const
 {
     return Hi->To(size);
 }
-template Elements<Mcl::Point> range_proof::Generators<Mcl>::GetHiSubset(const size_t&) const;
+template Elements<Blst::Point> range_proof::Generators<Blst>::GetHiSubset(const size_t&) const;
 
 template <typename T>
 range_proof::GeneratorsFactory<T>::GeneratorsFactory()
@@ -34,7 +34,7 @@ range_proof::GeneratorsFactory<T>::GeneratorsFactory()
     std::lock_guard<std::mutex> lock(GeneratorsFactory<T>::m_init_mutex);
     if (GeneratorsFactory<T>::m_is_initialized) return;
 
-    MclInit x;
+    BlstInit x;
 
     // H needs to be the nase point in order for the verification process to work
     m_H = Point::GetBasePoint();
@@ -57,7 +57,7 @@ range_proof::GeneratorsFactory<T>::GeneratorsFactory()
 
     m_is_initialized = true;
 }
-template range_proof::GeneratorsFactory<Mcl>::GeneratorsFactory();
+template range_proof::GeneratorsFactory<Blst>::GeneratorsFactory();
 
 template <typename T>
 range_proof::Generators<T> range_proof::GeneratorsFactory<T>::GetInstance(const Seed& seed) const
@@ -96,16 +96,4 @@ range_proof::Generators<T> range_proof::GeneratorsFactory<T>::GetInstance(const 
     Generators<T> gens(G, m_H, &m_Gi, &m_Hi);
     return gens;
 }
-template range_proof::Generators<Mcl> range_proof::GeneratorsFactory<Mcl>::GetInstance(const Seed&) const;
-
-
-// ---------------------------------------------------------------------------
-// Optional supranational/blst arith backend (cmake -DWITH_BLST=ON). Mirrors
-// the Mcl instantiations above 1:1; compiled out of default builds.
-#ifdef NAVIO_BLSCT_ARITH_BLST
-#include <blsct/arith/blst/blst.h>
-template Elements<Blst::Point> range_proof::Generators<Blst>::GetGiSubset(const size_t&) const;
-template Elements<Blst::Point> range_proof::Generators<Blst>::GetHiSubset(const size_t&) const;
-template range_proof::GeneratorsFactory<Blst>::GeneratorsFactory();
 template range_proof::Generators<Blst> range_proof::GeneratorsFactory<Blst>::GetInstance(const Seed&) const;
-#endif // NAVIO_BLSCT_ARITH_BLST

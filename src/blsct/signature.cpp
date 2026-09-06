@@ -2,81 +2,72 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#define BLS_ETH 1
-
 #include <blsct/signature.h>
-#include <bls/bls384_256.h>
-#include <iterator>
 #include <streams.h>
 #include <tinyformat.h>
 
 #include <algorithm>
+#include <cstring>
 
 namespace blsct {
 
 Signature::Signature()
 {
-    // Replacement of mclBnG2_clear to avoid segfault in static context
-    std::memset(&m_data.v, 0, sizeof(mclBnG2));
+    std::memset(&m_data, 0, sizeof(m_data));
 }
 
 Signature Signature::Aggregate(const std::vector<blsct::Signature>& sigs)
 {
-    std::vector<blsSignature> bls_sigs;
-    bls_sigs.reserve(sigs.size());
-    std::transform(sigs.begin(), sigs.end(), std::back_inserter(bls_sigs), [](const auto& sig) {
-        return sig.m_data;
-    });
     blsct::Signature aggr_sig;
-    blsAggregateSignature(&aggr_sig.m_data, &bls_sigs[0], bls_sigs.size());
+    for (const auto& sig : sigs) {
+        blst_p2_add_or_double(&aggr_sig.m_data, &aggr_sig.m_data, &sig.m_data);
+    }
     return aggr_sig;
 }
 
-// NOLINTNEXTLINE(misc-no-recursion)
+bool Signature::IsZero() const
+{
+    return blst_p2_is_inf(&m_data);
+}
+
 std::vector<uint8_t> Signature::GetVch() const
 {
-    size_t ser_size = mclBn_getFpByteSize() * 2;
-    std::vector<uint8_t> buf(ser_size);
-    size_t n = mclBnG2_serialize(&buf[0], ser_size, &m_data.v);
-    if (n != ser_size) {
-        blsct::Signature ret;
-        mclBnG2_clear(&ret.m_data.v);
-        return ret.GetVch();
-    }
+    std::vector<uint8_t> buf(SERIALIZATION_SIZE);
+    blst_p2_compress(buf.data(), &m_data);
     return buf;
 }
 
 bool Signature::SetVch(const std::vector<uint8_t>& buf)
 {
-    size_t ser_size = mclBn_getFpByteSize() * 2;
-    if (buf.size() != ser_size) {
-        mclBnG2_clear(&m_data.v);
+    if (buf.size() != SERIALIZATION_SIZE) {
+        *this = Signature();
         return false;
     }
-    if (mclBnG2_deserialize(&m_data.v, &buf[0], ser_size) == 0) {
-        mclBnG2_clear(&m_data.v);
+    blst_p2_affine aff{};
+    // blst_p2_uncompress validates the encoding and the curve equation.
+    if (blst_p2_uncompress(&aff, buf.data()) != BLST_SUCCESS) {
+        *this = Signature();
         return false;
     }
     // Enforce prime-order subgroup membership on the deserialized signature.
     // BLS12-381 G2 has a large cofactor, so a point can be on the curve yet
-    // outside the order-r subgroup. mcl's bn256 init calls verifyOrderG2(false)
-    // (see mcl/bn.hpp), so mclBnG2_deserialize validates the curve equation
-    // but NOT the subgroup, and the verification path uses
-    // blsAggregateVerifyNoCheck which also skips the order check. Without this
-    // guard an attacker could submit a txSig with a small-order component added
-    // (signature malleability: distinct serialized signatures accepted for the
-    // same message set, and forgeries whenever the off-subgroup pairing factor
-    // is trivial). Mirror the identical guard in MclG1Point::SetVch.
-    if (mclBnG2_isValidOrder(&m_data.v) != 1) {
-        mclBnG2_clear(&m_data.v);
+    // outside the order-r subgroup; the aggregate-verify path does not check
+    // it again. Without this guard an attacker could submit a txSig with a
+    // small-order component added (signature malleability: distinct
+    // serialized signatures accepted for the same message set, and forgeries
+    // whenever the off-subgroup pairing factor is trivial). Mirrors the guard
+    // in BlstG1Point::SetVch. The identity is permitted.
+    if (!blst_p2_affine_is_inf(&aff) && !blst_p2_affine_in_g2(&aff)) {
+        *this = Signature();
         return false;
     }
+    blst_p2_from_affine(&m_data, &aff);
     return true;
 }
 
 bool Signature::operator==(const Signature& b) const
 {
-    return mclBnG2_isEqual(&m_data.v, &b.m_data.v);
+    return blst_p2_is_equal(&m_data, &b.m_data);
 }
 
 } // namespace blsct

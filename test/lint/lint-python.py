@@ -20,7 +20,7 @@ cache_dir = Path(__file__).parent.parent / ".mypy_cache"
 os.environ["MYPY_CACHE_DIR"] = str(cache_dir)
 
 DEPS = ['flake8', 'lief', 'mypy', 'pyzmq']
-EXCLUDED_DIRS = ["src/bls/"]
+EXCLUDED_DIRS = ["src/blst/"]
 
 # All .py files, except those in src/ (to exclude subtrees there)
 FLAKE_FILES_ARGS = ['git', 'ls-files', '*.py', ':!:src/*.py']
