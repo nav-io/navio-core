@@ -454,4 +454,67 @@ BOOST_FIXTURE_TEST_CASE(getblsctoutput_output_storage_spent_flag, TestingSetup)
     BOOST_CHECK(found->second.IsSpent());
 }
 
+// Token outputs must be ingested and credited by the output-storage path just
+// like NAV outputs. This is the default wallet mode (createwallet defaults
+// storage_output=true for BLSCT wallets), and until this test existed only the
+// CWalletTx path was covered: minted tokens were invisible in default wallets.
+BOOST_FIXTURE_TEST_CASE(output_storage_token_outputs, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    // GetBlsctBalance walks depth via GetLastBlockHeight; give the wallet a tip.
+    wallet->SetLastBlockProcessed(1, InsecureRand256());
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    const auto tokenKey = blsct_km->GetTokenKey(uint256(uint64_t{0x70b}));
+    const blsct::PublicKey tokenPublicKey = tokenKey.GetPublicKey();
+    const TokenId token_id{tokenPublicKey.GetHash()};
+
+    // A mint output (amount carried in the MintTokenPredicate) and a plain
+    // token transfer output (the swap-recv shape).
+    auto mintResult = blsct::CreateOutput(recvAddress, 5 * COIN, tokenKey.GetScalar(), tokenKey.GetScalar(), tokenPublicKey, /*transcript_v2=*/true);
+    auto transferResult = blsct::CreateOutput(recvAddress, 3 * COIN, "token-transfer", token_id, BlstScalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/false, /*transcript_v2=*/true);
+
+    for (const auto& [label, res, amount] : {
+             std::tuple<const char*, const blsct::UnsignedOutput&, CAmount>{"mint", mintResult, 5 * COIN},
+             std::tuple<const char*, const blsct::UnsignedOutput&, CAmount>{"transfer", transferResult, 3 * COIN}}) {
+        const CTxOut& txout = res.out;
+        BOOST_TEST_CONTEXT(label)
+        {
+            BOOST_CHECK(txout.HasBLSCTRangeProof());
+            BOOST_CHECK(txout.HasBLSCTKeys());
+            BOOST_CHECK(txout.tokenId == token_id);
+
+            // Ingestion gate used by AddToWalletIfInvolvingMe's output loop.
+            BOOST_CHECK(blsct_km->IsMineMode(txout) != ISMINE_NO);
+
+            const uint256 originalHash = txout.GetHash();
+            COutPoint outpoint(originalHash);
+            auto outRef = std::make_shared<const CTxOut>(txout);
+            auto* result = wallet->AddToWallet(outpoint, outRef, TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false);
+            BOOST_REQUIRE(result != nullptr);
+            BOOST_REQUIRE(wallet->mapOutputs.contains(outpoint));
+
+            const CWalletOutput& wout = wallet->mapOutputs.at(outpoint);
+            BOOST_CHECK_EQUAL(wout.fBLSCTOutput, true);
+            BOOST_CHECK_EQUAL(wout.blsctRecoveryData.amount, amount);
+
+            // The balance path must credit it under its token id and not
+            // under NAV.
+            BOOST_CHECK_EQUAL(OutputGetCredit(*wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id), amount);
+            BOOST_CHECK_EQUAL(OutputGetCredit(*wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, TokenId()), 0);
+        }
+    }
+
+    const auto bal = GetBlsctBalance(*wallet, 0, token_id);
+    BOOST_CHECK_EQUAL(bal.m_mine_trusted, 8 * COIN);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

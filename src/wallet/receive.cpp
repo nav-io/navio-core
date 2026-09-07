@@ -255,7 +255,10 @@ CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, 
     AssertLockHeld(wallet.cs_wallet);
 
     // Avoid caching ismine for NO or ALL cases (could remove this check and simplify in the future).
-    bool allow_cache = (filter & ISMINE_ALL) && (filter & ISMINE_ALL) != ISMINE_ALL;
+    // The cache is keyed by filter only, so a token-scoped query must bypass it:
+    // otherwise the NAV total gets served for a token query (and vice versa),
+    // whichever ran first (see GetCachableAmount for the same rule).
+    bool allow_cache = (filter & ISMINE_ALL) && (filter & ISMINE_ALL) != ISMINE_ALL && token_id.IsNull();
 
     // Must wait until coinbase is safely deep enough in the chain before valuing it
     if (wallet.IsTxImmatureCoinBase(wtx))

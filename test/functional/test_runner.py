@@ -375,6 +375,7 @@ BASE_SCRIPTS = [
     'blsct_pops_consensus.py',
     'blsct_proof_transcript_v2.py',
     'blsct_output_storage.py',
+    'blsct_token_output_storage.py',
     'blsct_block_rpc.py',
     'blsct_txoutset_amounts.py',
     'blsct_rawtransaction.py',
