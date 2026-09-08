@@ -127,6 +127,35 @@ static std::string FormatRecoveredGamma(const Scalar& gamma)
     return gamma.IsZero() ? "" : HexStr(gamma.GetVch());
 }
 
+
+//! Count how many of `own`'s inputs spend coinbase (block-reward) outputs.
+//! Whether a prev-out was a block reward is public chain data.
+static size_t CountRewardInputs(wallet::CWallet& wallet, const CMutableTransaction& own)
+{
+    std::map<COutPoint, Coin> coins;
+    for (const CTxIn& in : own.vin) coins[in.prevout];
+    wallet.chain().findCoins(coins);
+    size_t reward{0};
+    for (const auto& [outpoint, coin] : coins) {
+        if (!coin.IsSpent() && coin.IsCoinBase()) ++reward;
+    }
+    return reward;
+}
+
+//! Re-pick the cover set so its input types mirror the wallet's own half.
+//! Cover is only cover if it blends: reward-ness of a prev-out is public, so
+//! covers of the wrong type partition cleanly away from the own inputs under a
+//! type heuristic. Same count as `current` (so RequiredCandidateFee usually
+//! doesn't move); the pool falls back across types when one side is short.
+static std::vector<CTransactionRef> RefineCoverSelection(wallet::CWallet& wallet, const CMutableTransaction& own, aggregation::CandidatePool& pool, const std::vector<CTransactionRef>& current)
+{
+    if (current.empty() || own.vin.empty()) return current;
+    const size_t reward_in = CountRewardInputs(wallet, own);
+    // Mirror the own-input mix, rounding up: ceil(count * reward_in / vin).
+    const size_t prefer_reward = (current.size() * reward_in + own.vin.size() - 1) / own.vin.size();
+    return pool.PickForAggregate(current.size(), prefer_reward);
+}
+
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose, wallet::mapValue_t mapValue)
 {
     // This should always try to sign, if we don't have private keys, don't try to do anything here.
@@ -156,6 +185,7 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         candidates = pool->PickForAggregate(aggregation::POOL_MAX_COMBINED);
     }
 
+    bool cover_refined = false;
     for (;;) {
         blsct::CreateTransactionData attempt = txData;
         if (!candidates.empty()) {
@@ -184,6 +214,21 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         for (const auto& out : res->tx.vout) {
             if (out.IsStakedCommitment() && wallet.chain().hasStakedCommitment(out.blsctData.rangeProof.Vs[0])) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "The resulting staked commitment already exists on chain; unstake the existing commitment first or stake a different amount");
+            }
+        }
+
+        // One-shot cover refinement: now that the own half's inputs are
+        // known, re-pick covers whose prev-out types mirror them. If the
+        // refined set's weight moves the required fee, rebuild the half with
+        // the matching additionalFee (the guard keeps this to one extra pass).
+        if (!candidates.empty() && !cover_refined) {
+            cover_refined = true;
+            auto refined = RefineCoverSelection(wallet, res->tx, *pool, candidates);
+            if (!refined.empty()) {
+                const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, attempt.nBLSCTDefaultFee);
+                const bool fee_changed = refined_extra != attempt.additionalFee;
+                candidates = std::move(refined);
+                if (fee_changed) continue;
             }
         }
 
@@ -475,7 +520,7 @@ static RPCHelpMan aggregatesend()
             // Pull cover candidates first so we know how much extra fee to fund.
             std::vector<CTransactionRef> candidates = pool->PickForAggregate(max_k);
             const CAmount rate = Params().GetConsensus().nBLSCTDefaultFee;
-            const CAmount extra = aggregation::RequiredCandidateFee(candidates, rate);
+            CAmount extra = aggregation::RequiredCandidateFee(candidates, rate);
 
             // Build (do not commit) the wallet's own half, over-funding the fee.
             blsct::SubAddress sub_dest(std::get<blsct::DoublePublicKey>(dest));
@@ -484,6 +529,24 @@ static RPCHelpMan aggregatesend()
             txData.additionalFee = extra;
             auto own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
             if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+
+            // Now that the own half's inputs are known, re-pick covers whose
+            // prev-out types mirror them (reward-ness is public; mismatched
+            // covers partition away under a type heuristic). Rebuild once if
+            // the refined set moves the required fee.
+            if (!candidates.empty()) {
+                auto refined = blsct::RefineCoverSelection(*pwallet, own->tx, *pool, candidates);
+                if (!refined.empty()) {
+                    const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, rate);
+                    candidates = std::move(refined);
+                    if (refined_extra != extra) {
+                        extra = refined_extra;
+                        txData.additionalFee = extra;
+                        own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
+                        if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+                    }
+                }
+            }
 
             std::vector<CTransactionRef> halves;
             halves.push_back(MakeTransactionRef(own->tx));

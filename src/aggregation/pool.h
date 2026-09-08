@@ -49,13 +49,28 @@ public:
 
     //! Insert a validated candidate from `peer`. Returns false (no insert) if:
     //! the candidate is not 1-input, its input is already pooled, the per-peer
-    //! cap is hit, or the global cap is hit.
-    bool AddCandidate(const CTransactionRef& candidate)
+    //! cap is hit, or the global cap is hit. `reward_input` records whether the
+    //! candidate's prev-out was created by a coinbase (block-reward) tx -- that
+    //! is public chain data, and matching it against the initiator's own input
+    //! types is what makes the cover blend (see PickForAggregate).
+    bool AddCandidate(const CTransactionRef& candidate, bool reward_input = false)
        ;
 
-    //! Pick up to `max_n` candidates for an aggregate (oldest-first within
-    //! shards is not guaranteed; selection is arbitrary but distinct inputs).
+    //! Pick up to `max_n` candidates for an aggregate (random subset so a
+    //! poison candidate is not re-picked forever; distinct inputs).
     std::vector<CTransactionRef> PickForAggregate(size_t max_n) const
+       ;
+
+    //! Type-aware pick: up to `max_n` candidates, preferring `prefer_reward`
+    //! of them to be backed by coinbase (block-reward) prev-outs and the rest
+    //! by ordinary transfers. Whether a prev-out was a block reward is PUBLIC
+    //! chain data, so covers whose input type does not match the initiator's
+    //! own inputs partition cleanly away from them under a type heuristic --
+    //! an aggregate spending 25 reward outputs plus 4 transfer-backed covers
+    //! protects nothing. Falls back across types when one side runs short:
+    //! mismatched cover still beats fewer covers. Random within each type
+    //! class for the same poison-resistance as the untyped overload.
+    std::vector<CTransactionRef> PickForAggregate(size_t max_n, size_t prefer_reward) const
        ;
 
     //! Drop the candidate holding `input`, if any. Returns true if one was removed.
@@ -73,6 +88,7 @@ public:
 private:
     struct Entry {
         CTransactionRef tx;
+        bool reward_input{false}; //!< prev-out was a coinbase (block-reward) output
     };
 
     static size_t ShardFor(const COutPoint& input);

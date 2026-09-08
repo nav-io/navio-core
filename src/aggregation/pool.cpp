@@ -43,7 +43,7 @@ bool CandidatePool::Contains(const COutPoint& input) const
     return m_shards[s].contains(input);
 }
 
-bool CandidatePool::AddCandidate(const CTransactionRef& candidate)
+bool CandidatePool::AddCandidate(const CTransactionRef& candidate, bool reward_input)
 {
     if (candidate == nullptr) return false;
     // Structural validation. Candidates arrive unauthenticated from the network
@@ -77,7 +77,7 @@ bool CandidatePool::AddCandidate(const CTransactionRef& candidate)
     bool inserted = false;
     {
         LOCK(m_shard_mutex[s]);
-        inserted = m_shards[s].emplace(input, Entry{candidate}).second;
+        inserted = m_shards[s].emplace(input, Entry{candidate, reward_input}).second;
     }
     return inserted;
 }
@@ -103,6 +103,37 @@ std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n) const
     std::shuffle(all.begin(), all.end(), rng);
     all.resize(max_n);
     return all;
+}
+
+std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n, size_t prefer_reward) const
+{
+    if (max_n > POOL_MAX_COMBINED) max_n = POOL_MAX_COMBINED;
+    if (prefer_reward > max_n) prefer_reward = max_n;
+
+    std::vector<CTransactionRef> reward, other;
+    for (size_t i = 0; i < POOL_SHARDS; ++i) {
+        LOCK(m_shard_mutex[i]);
+        for (const auto& [outpoint, entry] : m_shards[i]) {
+            (entry.reward_input ? reward : other).push_back(entry.tx);
+        }
+    }
+    FastRandomContext rng;
+    std::shuffle(reward.begin(), reward.end(), rng);
+    std::shuffle(other.begin(), other.end(), rng);
+
+    // Fill the preferred type quota first, the complementary type next, then
+    // top up from whatever remains: a type-mismatched cover still beats
+    // returning fewer covers than asked for.
+    std::vector<CTransactionRef> out;
+    const size_t take_reward = std::min(prefer_reward, reward.size());
+    out.insert(out.end(), reward.begin(), reward.begin() + take_reward);
+    const size_t take_other = std::min(max_n - out.size(), other.size());
+    out.insert(out.end(), other.begin(), other.begin() + take_other);
+    if (out.size() < max_n && take_reward < reward.size()) {
+        const size_t top_up = std::min(max_n - out.size(), reward.size() - take_reward);
+        out.insert(out.end(), reward.begin() + take_reward, reward.begin() + take_reward + top_up);
+    }
+    return out;
 }
 
 bool CandidatePool::EvictByInput(const COutPoint& input)

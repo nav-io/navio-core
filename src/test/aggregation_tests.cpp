@@ -15,6 +15,7 @@
 #include <coins.h>
 #include <primitives/transaction.h>
 #include <serialize.h>
+#include <set>
 #include <streams.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
@@ -197,6 +198,59 @@ BOOST_FIXTURE_TEST_CASE(pool_add_dedupe_evict, BasicTestingSetup)
     BOOST_CHECK(!pool.Contains(COutPoint(h1)));
     // Evicting a missing input is a no-op false.
     BOOST_CHECK(!pool.EvictByInput(COutPoint(h1)));
+}
+
+BOOST_FIXTURE_TEST_CASE(pool_type_aware_pick, BasicTestingSetup)
+{
+    aggregation::CandidatePool pool;
+    std::set<uint256> reward_inputs, other_inputs;
+    for (int i = 0; i < 6; ++i) {
+        const uint256 h = InsecureRand256();
+        reward_inputs.insert(h);
+        BOOST_REQUIRE(pool.AddCandidate(FakeCandidate(h), /*reward_input=*/true));
+    }
+    for (int i = 0; i < 6; ++i) {
+        const uint256 h = InsecureRand256();
+        other_inputs.insert(h);
+        BOOST_REQUIRE(pool.AddCandidate(FakeCandidate(h), /*reward_input=*/false));
+    }
+    const auto count_types = [&](const std::vector<CTransactionRef>& picked) {
+        size_t reward = 0, other = 0;
+        for (const auto& c : picked) {
+            const uint256& h = c->vin[0].prevout.hash;
+            if (reward_inputs.count(h)) ++reward;
+            else if (other_inputs.count(h)) ++other;
+            else BOOST_FAIL("picked candidate not in pool");
+        }
+        return std::make_pair(reward, other);
+    };
+
+    // Quota honoured exactly when both sides have enough.
+    auto [r1, o1] = count_types(pool.PickForAggregate(4, 2));
+    BOOST_CHECK_EQUAL(r1, 2u);
+    BOOST_CHECK_EQUAL(o1, 2u);
+
+    // All-reward preference.
+    auto [r2, o2] = count_types(pool.PickForAggregate(4, 4));
+    BOOST_CHECK_EQUAL(r2, 4u);
+    BOOST_CHECK_EQUAL(o2, 0u);
+
+    // prefer_reward beyond the reward supply: tops up with transfers rather
+    // than returning short.
+    auto [r3, o3] = count_types(pool.PickForAggregate(10, 10));
+    BOOST_CHECK_EQUAL(r3, 6u);
+    BOOST_CHECK_EQUAL(o3, 4u);
+
+    // Zero preference with a short transfer side: tops up with rewards.
+    auto [r4, o4] = count_types(pool.PickForAggregate(10, 0));
+    BOOST_CHECK_EQUAL(o4, 6u);
+    BOOST_CHECK_EQUAL(r4, 4u);
+
+    // Distinct inputs across a picked set.
+    auto picked = pool.PickForAggregate(12, 6);
+    std::set<uint256> seen;
+    for (const auto& c : picked) BOOST_CHECK(seen.insert(c->vin[0].prevout.hash).second);
+    BOOST_CHECK_EQUAL(picked.size(), 12u);
 }
 
 BOOST_FIXTURE_TEST_CASE(pool_rejects_multi_input, BasicTestingSetup)
