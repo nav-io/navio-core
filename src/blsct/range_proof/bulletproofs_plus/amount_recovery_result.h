@@ -7,7 +7,6 @@
 
 #include <vector>
 
-#include <blsct/range_proof/bulletproofs_plus/amount_recovery_result.h>
 #include <blsct/range_proof/recovered_data.h>
 
 namespace bulletproofs_plus {
