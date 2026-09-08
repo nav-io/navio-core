@@ -63,8 +63,6 @@ public:
         const std::vector<P>& proofs
     );
 
-    const Scalar& GetUint64Max() const;
-
     range_proof::GeneratorsFactory<T>& Gf() const;
     const Scalar& Zero() const;
     const Scalar& One() const;

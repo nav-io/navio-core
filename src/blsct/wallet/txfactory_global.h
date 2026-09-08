@@ -158,7 +158,6 @@ UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destKeys, const Scalar
 UnsignedOutput CreateOutput(const blsct::DoublePublicKey& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId = TokenId(), const Scalar& blindingKey = Scalar::Rand(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fAllowZeroValueRangeProof = false, const bool transcript_v2 = false);
 UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& destination, const CAmount& nAmount, std::string sMemo, const TokenId& tokenId = TokenId(), const Scalar& blindingKey = Scalar::Rand(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool transcript_v2 = false);
 int32_t GetTransactionWeight(const CTransaction& tx);
-int32_t GetTransactioOutputWeight(const CTxOut& out);
 } // namespace blsct
 
 #endif // NAVIO_BLSCT_WALLET_TXFACTORY_GLOBAL_H

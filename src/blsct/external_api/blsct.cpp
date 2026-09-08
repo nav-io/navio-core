@@ -120,19 +120,6 @@ BlsctBoolRetVal* err_bool(
     return p;
 }
 
-// TODO: need to investigate why this was not being used
-[[maybe_unused]] static inline DataStream set_up_data_stream_with_hex(const char* hex)
-{
-    // set up a stream with the given hex
-    DataStream st{};
-    std::vector<uint8_t> hex_vec;
-    if (!TryParseHexWrap(hex, hex_vec)) {
-        return st;
-    }
-    st << hex_vec;
-    return st;
-}
-
 static blsct::PrivateKey blsct_scalar_to_priv_key(
     const BlsctScalar* blsct_scalar)
 {
@@ -145,31 +132,6 @@ static blsct::PrivateKey blsct_scalar_to_priv_key(
     // build private key from the scalar
     blsct::PrivateKey priv_key(scalar);
     return priv_key;
-}
-
-// TODO: need to investigate why this was not being used
-[[maybe_unused]] static inline const char* data_stream_to_malloced_hex(DataStream& st)
-{
-    // TODO: need to investigate why this was not being used
-    [[maybe_unused]] auto data = reinterpret_cast<uint8_t*>(st.data());
-    MALLOC_BYTES(uint8_t, buf, st.size());
-    return buf == nullptr ? nullptr : SerializeToHex(buf, st.size());
-}
-
-// TODO: need to investigate why this was not being used
-[[maybe_unused]] static inline void UnserializeCMutableTx(
-    CMutableTransaction& ctx,
-    const uint8_t* ser_ctx,
-    const size_t ser_ctx_size)
-{
-    DataStream st{};
-    TransactionSerParams params{.allow_witness = true};
-    ParamsStream ps{params, st};
-
-    for (size_t i = 0; i < ser_ctx_size; ++i) {
-        ps << ser_ctx[i];
-    }
-    ctx.Unserialize(ps);
 }
 
 static inline bool AmountFromUint64Checked(

@@ -25,19 +25,6 @@ static_assert((size_t{1} << SetMemProof<Blst>::MAX_ROUNDS) == SetMemProofSetup<B
               "SetMemProof::MAX_ROUNDS must equal log2(SetMemProofSetup::N)");
 
 template <typename T>
-const typename SetMemProofProver<T>::Scalar& SetMemProofProver<T>::One()
-{
-    using Scalar = typename T::Scalar;
-    static Scalar* x = nullptr;
-    if (x == nullptr) {
-        x = new Scalar(1);
-    }
-    return *x;
-}
-template
-const typename SetMemProofProver<Blst>::Scalar& SetMemProofProver<Blst>::One();
-
-template <typename T>
 typename T::Scalar SetMemProofProver<T>::ComputeX(
     const SetMemProofSetup<T>& setup,
     const Scalar& omega,

@@ -10,7 +10,6 @@
 class CRPCCommand;
 
 namespace blsct {
-Span<const CRPCCommand> GetTokenRPCCommands();
 } // namespace blsct
 
 #endif // NAVIO_BLSCT_TOKENS_RPC_H

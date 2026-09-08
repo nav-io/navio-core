@@ -70,8 +70,6 @@ private:
         const Points& Ys_src,
         const size_t& new_size
     );
-
-    static const Scalar& One();
 };
 
 #endif // NAVIO_BLSCT_SET_MEM_PROOF_SET_MEM_PROOF_PROVER_H
