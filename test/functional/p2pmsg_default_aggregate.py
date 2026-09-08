@@ -129,6 +129,32 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         self.sync_blocks()
         self.log.info("opt-out plain send left the pool untouched")
 
+        # --- consolidate merges pooled cover candidates by default, too. ---
+        # A consolidation is the most linkable tx a wallet broadcasts (every
+        # input and the single output are its own), so it takes the same
+        # aggregation path as a plain send.
+        cand_inputs = self.serve_candidate(n0, n1, w1)
+        txids = w0.consolidate(1)
+        assert_equal(len(txids), 1)
+        self.wait_until(lambda: txids[0] in n0.getrawmempool(), timeout=60)
+        tx = n0.getrawtransaction(txids[0], True)
+        broadcast_prevouts = {vin["outid"] for vin in tx["vin"] if "outid" in vin}
+        assert cand_inputs, "replycandidate returned no inputs; the outpoint assertion below would be vacuous"
+        for outpoint in cand_inputs:
+            assert outpoint in broadcast_prevouts, (
+                "candidate input %s missing from consolidation tx inputs %r" % (outpoint, sorted(broadcast_prevouts)))
+        # Merging the candidate means the returned txid is the COMBINED tx's
+        # id (own inputs + cover input, own output + cover output), and the
+        # candidate was evicted from the pool.
+        assert len(tx["vin"]) >= 3, "consolidation did not merge >=2 own inputs + the cover input: %r" % tx["vin"]
+        assert len(tx["vout"]) >= 2, "combined tx lost the cover candidate's output: %r" % len(tx["vout"])
+        assert_equal(n0.getaggregationhint()["available"], 0)
+        # Confirm; the merged small outputs must be spendable as one afterwards.
+        self.generatetoblsctaddress(n0, 1, miner0)
+        self.sync_blocks()
+        assert txids[0] not in n0.getrawmempool(), "aggregated consolidation did not confirm"
+        self.log.info("default-aggregated consolidation confirmed")
+
 
 if __name__ == "__main__":
     P2PMsgDefaultAggregateTest(__file__).main()
