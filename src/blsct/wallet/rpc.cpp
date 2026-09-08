@@ -2573,9 +2573,19 @@ RPCHelpMan consolidate()
             auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
 
             const int max_txs = request.params[0].isNull() ? 1 : request.params[0].getInt<int>();
-            size_t max_inputs = request.params[1].isNull() ? blsct::MAX_TX_INPUT_COUNT : static_cast<size_t>(request.params[1].getInt<int>());
             if (max_txs < 1) throw JSONRPCError(RPC_INVALID_PARAMETER, "max_txs must be at least 1");
-            if (max_inputs < 2) throw JSONRPCError(RPC_INVALID_PARAMETER, "max_inputs must be at least 2");
+
+            size_t max_inputs;
+            if (request.params[1].isNull()) {
+                max_inputs = blsct::MAX_TX_INPUT_COUNT;
+            } else {
+                // Check the signed value before widening to size_t, otherwise a
+                // negative max_inputs becomes a huge unsigned value and is
+                // silently clamped to the hard cap instead of being rejected.
+                const int max_inputs_in = request.params[1].getInt<int>();
+                if (max_inputs_in < 2) throw JSONRPCError(RPC_INVALID_PARAMETER, "max_inputs must be at least 2");
+                max_inputs = static_cast<size_t>(max_inputs_in);
+            }
             max_inputs = std::min(max_inputs, blsct::MAX_TX_INPUT_COUNT);
 
             EnsureWalletIsUnlocked(*pwallet);
