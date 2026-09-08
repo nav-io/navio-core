@@ -61,7 +61,14 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         token = maker.createtoken({"name": "SWAPTOK"}, 1000)
         tid = token["tokenId"]
         self.gb(maker_n, maker_addr, 1)
-        maker.minttoken(tid, maker_addr, 5)
+        # Mint in two separate transactions so the maker's token balance is
+        # SPLIT across two coins (3 + 2). The maker half must then gather more
+        # than one input to fund a 5-token quote: input gathering that stops
+        # after a single candidate (the nAmountLimit=0 bug) fails here with
+        # "Not enough of the pay token".
+        maker.minttoken(tid, maker_addr, 3)
+        self.gb(maker_n, maker_addr, 1)
+        maker.minttoken(tid, maker_addr, 2)
         self.gb(maker_n, maker_addr, 2)
         self.sync_all()
         assert maker.gettokenbalance(tid) >= 5, maker.gettokenbalance(tid)
@@ -71,8 +78,9 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         # Maker offers the token for NAV (price 0.1 NAV/token), sizes 1..5 tokens.
         maker.setswapintent(tid, "", one, 5 * one, 10000000, 1893456000)
 
-        # Taker asks to buy 1 token paying NAV. Broadcast over the bus.
-        res = taker.requestquote(tid, "", one, 1893456000)
+        # Taker asks to buy 5 tokens paying NAV — the full split balance, so
+        # the maker's quote half must combine both minted coins.
+        res = taker.requestquote(tid, "", 5 * one, 1893456000)
         uuid = res["uuid"]
 
         # Maker's node matches the inbound request; build + send the quote.
