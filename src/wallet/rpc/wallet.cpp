@@ -484,6 +484,15 @@ static RPCHelpMan createwallet()
                 if (has_seed_param) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot specify both 'seed' and 'mnemonic_passphrase'");
                 }
+                // MnemonicToSeed derives the seed from raw UTF-8 without BIP-39
+                // NFKD normalization (see mnemonic.h), so a non-ASCII passphrase
+                // would select a different wallet than a conforming BIP-39
+                // wallet. Enforce ASCII to avoid silently stranding funds.
+                for (unsigned char c : mnemonic_passphrase) {
+                    if (c >= 0x80) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "The 'mnemonic_passphrase' must be ASCII");
+                    }
+                }
             }
 
             // Validate mutual exclusivity
