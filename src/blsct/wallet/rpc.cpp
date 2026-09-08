@@ -643,7 +643,11 @@ static RPCHelpMan acceptquotewallet()
             params.only_blsct = true;
             params.token_id = quote.sell;
             params.min_amount = 1;
-            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
+            // Gather up to the amount we must pay: nAmountLimit=0 would stop
+            // the selection after a single candidate (the loop pushes, then
+            // breaks once the total exceeds the limit), so a balance split
+            // across several coins could never fund the swap.
+            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/quote.sell_cost);
 
             auto factory = blsct::TxFactory(km);
             // Rule A (hard cutover): the taker half must be range-proved and
@@ -736,7 +740,9 @@ static RPCHelpMan broadcastorder()
             params.only_blsct = true;
             params.token_id = offer_token;
             params.min_amount = 1;
-            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
+            // See acceptquotewallet: 0 here means "one candidate", which fails
+            // any offer whose balance is split across coins.
+            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/offer_amount);
 
             auto factory = blsct::TxFactory(km);
             // Rule A (hard cutover): the order half must be range-proved and
@@ -756,7 +762,10 @@ static RPCHelpMan broadcastorder()
             if (!(offer_token == TokenId())) {
                 std::vector<blsct::InputCandidates> nav;
                 wallet::CoinFilterParams np; np.only_blsct = true; np.token_id = TokenId(); np.min_amount = 1;
-                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, nav, /*nAmountLimit=*/0);
+                // MAX_MONEY: only one coin is used (front(), the largest), but
+                // a 0 limit is the "one arbitrary candidate" footgun; make the
+                // full set available so front() really is the largest NAV coin.
+                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, nav, /*nAmountLimit=*/MAX_MONEY);
                 if (nav.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No NAV to fund the order fee");
                 const auto& c = nav.front();
                 factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
@@ -843,7 +852,9 @@ static RPCHelpMan replyquote()
             params.only_blsct = true;
             params.token_id = pay_token;
             params.min_amount = 1;
-            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/0);
+            // See acceptquotewallet: 0 here means "one candidate", which fails
+            // any fill whose balance is split across coins.
+            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/pm->fill);
 
             auto factory = blsct::TxFactory(km);
             // Rule A (hard cutover): the quote half must be range-proved and
@@ -862,7 +873,8 @@ static RPCHelpMan replyquote()
             if (!(pay_token == TokenId())) {
                 std::vector<blsct::InputCandidates> nav;
                 wallet::CoinFilterParams np; np.only_blsct = true; np.token_id = TokenId(); np.min_amount = 1;
-                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, nav, /*nAmountLimit=*/0);
+                // MAX_MONEY: see the order-fee leg above.
+                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, nav, /*nAmountLimit=*/MAX_MONEY);
                 if (nav.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No NAV to fund the quote fee");
                 const auto& c = nav.front();
                 factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
