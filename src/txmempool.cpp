@@ -559,9 +559,17 @@ void CTxMemPool::addUnchecked(const CTxMemPoolEntry &entry, setEntries &setAnces
         }
     }
 
+    // Compute each output's content hash once (a BLSCT output hash serializes
+    // the whole range proof and double-SHA256s it), then reuse it for both maps.
+    std::vector<uint256> output_hashes;
+    output_hashes.reserve(tx.vout.size());
+    for (const CTxOut& out : tx.vout) {
+        output_hashes.emplace_back(out.GetHash());
+    }
+
     // Add output hash to transaction hash mapping for parent-child tracking
     for (unsigned int i = 0; i < tx.vout.size(); i++) {
-        mapOutputToTx[tx.vout[i].GetHash()] = tx.GetHash();
+        mapOutputToTx[output_hashes[i]] = tx.GetHash();
     }
     // Don't bother worrying about child transactions of this one.
     // Normal case of a new transaction arriving is that there can't be any
@@ -577,7 +585,7 @@ void CTxMemPool::addUnchecked(const CTxMemPoolEntry &entry, setEntries &setAnces
 
     // Also update children of existing transactions that spend our outputs
     for (unsigned int i = 0; i < tx.vout.size(); i++) {
-        uint256 outputHash = tx.vout[i].GetHash();
+        const uint256& outputHash = output_hashes[i];
         // Find any existing transactions that spend this output
         auto output_iter = mapNextTx.find(COutPoint(outputHash));
         if (output_iter != mapNextTx.end()) {
