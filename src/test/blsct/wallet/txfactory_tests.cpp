@@ -740,4 +740,14 @@ BOOST_FIXTURE_TEST_CASE(test_add_output_rejects_non_positive_amount, TestingSetu
     BOOST_CHECK_NO_THROW(tx.AddOutput(recvAddress, 1, "one-satoshi"));
 }
 
+BOOST_AUTO_TEST_CASE(generate_keys_rejects_base_point_destination)
+{
+    // A destination of the group base point (G, G) makes the derived spending
+    // key (1 + H(ephemeralKey))·G publicly computable, so such outputs would be
+    // spendable by anyone. GenerateKeys must reject it.
+    blsct::UnsignedOutput uo;
+    blsct::DoublePublicKey dest(BlstG1Point::GetBasePoint(), BlstG1Point::GetBasePoint());
+    BOOST_CHECK_THROW(uo.GenerateKeys(BlstScalar::Rand(), dest), std::runtime_error);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
