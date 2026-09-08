@@ -2473,6 +2473,13 @@ BlsctRetVal* build_tx_out(
     const bool subtract_fee_from_amount,
     const BlsctScalar* blsct_blinding_key
 ) {
+    // Validate the memo length before allocating tx_out, so a rejected call
+    // does not leak the BlsctTxOut allocation (err() returns a separate object).
+    size_t memo_c_str_len = std::strlen(memo_c_str);
+    if (memo_c_str_len > MAX_MEMO_LEN) {
+        return err(BLSCT_MEMO_TOO_LONG);
+    }
+
     MALLOC_BYTES(BlsctTxOut, tx_out, sizeof(BlsctTxOut));
     RETURN_IF_MEM_ALLOC_FAILED(tx_out);
 
@@ -2480,10 +2487,6 @@ BlsctRetVal* build_tx_out(
     tx_out->amount = amount;
 
     // copy memo to tx_out
-    size_t memo_c_str_len = std::strlen(memo_c_str);
-    if (memo_c_str_len > MAX_MEMO_LEN) {
-        return err(BLSCT_MEMO_TOO_LONG);
-    }
     std::memcpy(tx_out->memo_c_str, memo_c_str, memo_c_str_len + 1);
 
     BLSCT_COPY(blsct_token_id, tx_out->token_id);
