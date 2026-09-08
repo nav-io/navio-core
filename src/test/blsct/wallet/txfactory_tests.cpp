@@ -740,4 +740,64 @@ BOOST_FIXTURE_TEST_CASE(test_add_output_rejects_non_positive_amount, TestingSetu
     BOOST_CHECK_NO_THROW(tx.AddOutput(recvAddress, 1, "one-satoshi"));
 }
 
+// Pin the AddAvailableCoins truncation semantics the swap/RFQ sites rely on:
+// the loop pushes a candidate and THEN breaks once the running total exceeds
+// nAmountLimit, so a limit of 0 yields exactly one candidate (the historical
+// footgun) while a limit equal to the requirement yields enough coins to cover
+// it. Guards all five p2pmsg call sites at once without depending on emergent
+// wallet behaviour (see PR #411 review).
+BOOST_FIXTURE_TEST_CASE(add_available_coins_amount_limit, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT | wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    wallet->SetLastBlockProcessed(1, InsecureRand256());
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    const auto tokenKey = blsct_km->GetTokenKey(uint256(uint64_t{0x5e1}));
+    const blsct::PublicKey tokenPublicKey = tokenKey.GetPublicKey();
+    const TokenId token_id{tokenPublicKey.GetHash()};
+
+    // Two token coins: 3 + 2 (a split balance).
+    for (const CAmount amount : {3 * COIN, 2 * COIN}) {
+        auto res = blsct::CreateOutput(recvAddress, amount, "split", token_id, BlstScalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/false, /*transcript_v2=*/true);
+        COutPoint outpoint(res.out.GetHash());
+        auto outRef = std::make_shared<const CTxOut>(res.out);
+        BOOST_REQUIRE(wallet->AddToWallet(outpoint, outRef, wallet::TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, wallet::TxStateInactive{}, false) != nullptr);
+    }
+
+    wallet::CoinFilterParams params;
+    params.only_blsct = true;
+    params.token_id = token_id;
+    params.min_amount = 1;
+
+    const auto gather = [&](CAmount limit) {
+        std::vector<blsct::InputCandidates> out;
+        blsct::TxFactory::AddAvailableCoins(wallet.get(), blsct_km, params, out, limit);
+        return out;
+    };
+
+    // 0 limit: one candidate only — the shape that broke the swap RPCs.
+    BOOST_CHECK_EQUAL(gather(0).size(), 1U);
+
+    // A limit equal to the full requirement returns both coins.
+    const auto both = gather(5 * COIN);
+    BOOST_CHECK_EQUAL(both.size(), 2U);
+    CAmount total = 0;
+    for (const auto& c : both) total += c.amount;
+    BOOST_CHECK_EQUAL(total, 5 * COIN);
+
+    // A requirement covered by the first (largest) coin alone stays at one.
+    BOOST_CHECK_EQUAL(gather(2 * COIN).size(), 1U);
+
+    // MAX_MONEY returns everything.
+    BOOST_CHECK_EQUAL(gather(MAX_MONEY).size(), 2U);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

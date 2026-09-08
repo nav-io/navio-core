@@ -1994,6 +1994,11 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         // Authenticate before caching: an unsigned/forged quote
                         // must not poison the taker's ranked quote set.
                         if (!q.VerifySig()) return;
+                        // Range-check the advertised amounts like the RPC
+                        // ingest paths do (rpc/p2pmsg.cpp): a quote with a
+                        // zero/negative/out-of-range fill or cost can never
+                        // build a valid half and only wastes cache slots.
+                        if (q.fill <= 0 || !MoneyRange(q.fill) || q.sell_cost <= 0 || !MoneyRange(q.sell_cost)) return;
                         matcher->AddQuote(q);
                     } catch (const std::exception&) { /* drop malformed */ }
                 });
@@ -2009,6 +2014,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         ps >> q;
                         // Authenticate before caching the standing order.
                         if (!q.VerifySig()) return;
+                        // Same amount range check as the RFQ_QUOTE handler.
+                        if (q.fill <= 0 || !MoneyRange(q.fill) || q.sell_cost <= 0 || !MoneyRange(q.sell_cost)) return;
                         orders->StoreOrder(q, GetTime<std::chrono::seconds>().count());
                     } catch (const std::exception&) { /* drop malformed */ }
                 });
