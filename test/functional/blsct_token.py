@@ -116,8 +116,16 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
 
         self.log.info(f"Minted 1 token")
 
+        # Cache-poisoning regression check for non-storage wallets (the mode
+        # this suite runs in): the available-credit cache is keyed by ismine
+        # filter only, so a token-scoped query must not overwrite the NAV
+        # total. The NAV reading has to precede the wallet's first token query
+        # or the comparison reads the poisoned slot on both sides.
+        nav_pre = wallet.getbalance()
+
         token_balance = wallet.gettokenbalance(token['tokenId'])
         token_balance_2 = wallet_2.gettokenbalance(token['tokenId'])
+        assert wallet.getbalance() == nav_pre, "gettokenbalance poisoned the NAV balance cache"
 
         self.log.info(f"Balance in NODE 1: {token_balance}")
         self.log.info(f"Balance in NODE 2: {token_balance_2}")

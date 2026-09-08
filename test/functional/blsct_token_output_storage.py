@@ -43,7 +43,6 @@ class BlsctTokenOutputStorageTest(BitcoinTestFramework):
 
     def run_test(self):
         n0, n1 = self.nodes
-        self.connect_nodes(0, 1)
 
         # storage_output=True: the default real users get.
         n0.createwallet(wallet_name="w0", blsct=True, storage_output=True)
@@ -65,18 +64,18 @@ class BlsctTokenOutputStorageTest(BitcoinTestFramework):
         w0.minttoken(tid, a0, 5)
         self.gb(n0, a0, 1)
         self.sync_all()
-        assert_equal(w0.gettokenbalance(tid), 5)
 
         self.log.info("NAV and token balances do not poison each other's cache")
-        # Interleave queries in both orders on the same wallet.
-        nav_a = w0.getbalance()
-        tok_a = w0.gettokenbalance(tid)
-        tok_b = w0.gettokenbalance(tid)
-        nav_b = w0.getbalance()
-        assert_equal(tok_a, 5)
-        assert_equal(tok_b, 5)
-        assert_equal(nav_a, nav_b)
-        assert nav_a > Decimal(0)
+        # Order matters for this to be a real regression test: the NAV reading
+        # must come BEFORE the wallet's first token-scoped query, because that
+        # query is what writes token totals into m_amounts[AVAILABLE_CREDIT]
+        # when the cache bypass is missing. Comparing two post-token readings
+        # would read the same poisoned slot twice and never fail.
+        nav_pre = w0.getbalance()
+        assert nav_pre > Decimal(0)
+        assert_equal(w0.gettokenbalance(tid), 5)
+        assert_equal(w0.getbalance(), nav_pre)
+        assert_equal(w0.gettokenbalance(tid), 5)
 
         self.log.info("Token transfer received by another storage wallet is visible")
         w0.sendtokentoblsctaddress(tid, a1, 2)

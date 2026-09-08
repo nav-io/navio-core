@@ -456,8 +456,10 @@ BOOST_FIXTURE_TEST_CASE(getblsctoutput_output_storage_spent_flag, TestingSetup)
 
 // Token outputs must be ingested and credited by the output-storage path just
 // like NAV outputs. This is the default wallet mode (createwallet defaults
-// storage_output=true for BLSCT wallets), and until this test existed only the
-// CWalletTx path was covered: minted tokens were invisible in default wallets.
+// storage_output=true for BLSCT wallets). Coverage, not a regression test:
+// the token-invisibility bug lived in the gettokenbalance RPC (one-half
+// tally), which this test does not reach — blsct_token_output_storage.py is
+// the regression test for that.
 BOOST_FIXTURE_TEST_CASE(output_storage_token_outputs, TestingSetup)
 {
     SeedInsecureRand(SeedRand::ZEROS);
