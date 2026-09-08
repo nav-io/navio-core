@@ -128,6 +128,33 @@ static std::string FormatRecoveredGamma(const Scalar& gamma)
 }
 
 
+
+//! Bring the cover set up to the input-derived target, pulling on demand.
+//! Triggers one immediate AGG_ANN pull round and polls the pool for up to
+//! `wait_seconds`, then returns the best available pick (type refinement runs
+//! separately). Never fails the send: on timeout the caller proceeds with
+//! whatever cover exists.
+static std::vector<CTransactionRef> WaitForCoverTarget(aggregation::CandidatePool& pool, size_t own_inputs, std::vector<CTransactionRef> current, int64_t wait_seconds)
+{
+    const size_t target = aggregation::TargetCoverCount(own_inputs);
+    if (wait_seconds <= 0 || own_inputs < aggregation::COVER_WAIT_MIN_INPUTS || current.size() >= target) return current;
+
+    aggregation::CandidatePuller* puller = aggregation::GetActivePuller();
+    if (puller) puller->PullOnce();
+    LogPrint(BCLog::NET, "p2pmsg: cover below target (have %u, target %u, own inputs %u) -- %s waiting up to %ds\n",
+             (unsigned)current.size(), (unsigned)target, (unsigned)own_inputs, puller ? "pulled and" : "", (int)wait_seconds);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(wait_seconds);
+    while (pool.Size() < target && std::chrono::steady_clock::now() < deadline) {
+        UninterruptibleSleep(std::chrono::milliseconds(250));
+    }
+    auto picked = pool.PickForAggregate(std::max(target, current.size()));
+    LogPrint(BCLog::NET, "p2pmsg: cover wait ended with %u candidates\n", (unsigned)picked.size());
+    // Keep the larger set; the pool cannot shrink our existing picks (they are
+    // still pooled -- PickForAggregate does not remove), so this only grows.
+    return picked.size() >= current.size() ? picked : current;
+}
+
 //! Count how many of `own`'s inputs spend coinbase (block-reward) outputs.
 //! Whether a prev-out was a block reward is public chain data.
 static size_t CountRewardInputs(wallet::CWallet& wallet, const CMutableTransaction& own)
@@ -181,11 +208,13 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
     // succeed.
     std::vector<CTransactionRef> candidates;
     aggregation::CandidatePool* pool = aggregation::GetActivePool();
-    if (pool && gArgs.GetBoolArg("-aggregatesends", aggregation::DEFAULT_AGGREGATE_SENDS)) {
+    const bool aggregate_sends = pool && gArgs.GetBoolArg("-aggregatesends", aggregation::DEFAULT_AGGREGATE_SENDS);
+    if (aggregate_sends) {
         candidates = pool->PickForAggregate(aggregation::POOL_MAX_COMBINED);
     }
 
     bool cover_refined = false;
+    bool cover_waited = false;
     for (;;) {
         blsct::CreateTransactionData attempt = txData;
         if (!candidates.empty()) {
@@ -214,6 +243,21 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         for (const auto& out : res->tx.vout) {
             if (out.IsStakedCommitment() && wallet.chain().hasStakedCommitment(out.blsctData.rangeProof.Vs[0])) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "The resulting staked commitment already exists on chain; unstake the existing commitment first or stake a different amount");
+            }
+        }
+
+        // One-shot cover-target wait: a many-input half is the linkable case,
+        // so when the pool is short of one cover per COVER_INPUT_RATIO own
+        // inputs, kick an immediate pull round and wait briefly for the pool
+        // to fill before merging. Growing the set changes the required fee,
+        // so rebuild through the loop.
+        if (aggregate_sends && !cover_waited) {
+            cover_waited = true;
+            auto grown = WaitForCoverTarget(*pool, res->tx.vin.size(), candidates,
+                                            gArgs.GetIntArg("-aggregatecoverwait", aggregation::DEFAULT_COVER_WAIT_SECONDS));
+            if (grown.size() != candidates.size()) {
+                candidates = std::move(grown);
+                continue;
             }
         }
 
@@ -538,6 +582,23 @@ static RPCHelpMan aggregatesend()
             txData.additionalFee = extra;
             auto own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
             if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+
+            // Explicit aggregate intent: when the pool is short of the
+            // input-derived cover target, pull on demand and wait briefly,
+            // then rebuild if the grown set moves the required fee.
+            {
+                auto grown = blsct::WaitForCoverTarget(*pool, own->tx.vin.size(), candidates,
+                                                gArgs.GetIntArg("-aggregatecoverwait", aggregation::DEFAULT_COVER_WAIT_SECONDS));
+                if (grown.size() > max_k) grown.resize(max_k);
+                const CAmount grown_extra = aggregation::RequiredCandidateFee(grown, rate);
+                candidates = std::move(grown);
+                if (grown_extra != extra) {
+                    extra = grown_extra;
+                    txData.additionalFee = extra;
+                    own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
+                    if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+                }
+            }
 
             // Now that the own half's inputs are known, re-pick covers whose
             // prev-out types mirror them (reward-ness is public; mismatched

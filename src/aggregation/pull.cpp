@@ -174,4 +174,11 @@ void CandidateServer::Stop()
     if (m_thread.joinable()) m_thread.join();
 }
 
+namespace {
+std::atomic<CandidatePuller*> g_active_puller{nullptr};
+} // namespace
+
+void SetActivePuller(CandidatePuller* puller) { g_active_puller.store(puller, std::memory_order_release); }
+CandidatePuller* GetActivePuller() { return g_active_puller.load(std::memory_order_acquire); }
+
 } // namespace aggregation
