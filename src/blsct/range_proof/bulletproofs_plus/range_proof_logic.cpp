@@ -569,29 +569,49 @@ bool RangeProofLogic<T>::VerifyProofs(
         return true;
     };
 
-    // One worker per proof: each proof's MSM (lp.Sum) runs single-threaded on
-    // its own std::async thread, so a batch of n proofs uses up to n cores
-    // with no nested threading (BlstUtil::MSM's own tiling stays off unless
-    // BlstUtil::SetDefaultThreads is raised).
-    if (proof_transcripts.size() <= 1) {
-        for (size_t idx = 0; idx < proof_transcripts.size(); ++idx) {
-            if (!verify_one(idx)) return false;
+    // Bounded worker pool: one thread per proof would spawn thousands of OS
+    // threads on an aggregated block and oversubscribe the host. Cap the pool
+    // at hardware_concurrency() and pull work indices off an atomic counter,
+    // mirroring RecoverAmounts below. Exceptions are captured per slot and
+    // rethrown after the join so a bad_alloc / inversion error propagates to
+    // the caller instead of reaching std::terminate.
+    const size_t n = proof_transcripts.size();
+    std::vector<bool> results(n, false);
+    std::vector<std::exception_ptr> errors(n);
+    auto do_one = [&](size_t idx) {
+        try {
+            results[idx] = verify_one(idx);
+        } catch (...) {
+            errors[idx] = std::current_exception();
         }
-        return true;
+    };
+
+    size_t nthreads = std::thread::hardware_concurrency();
+    if (nthreads == 0) nthreads = 1;
+    nthreads = std::min(nthreads, n);
+    if (nthreads <= 1) {
+        for (size_t idx = 0; idx < n; ++idx) do_one(idx);
+    } else {
+        std::atomic<size_t> next{0};
+        auto worker = [&]() {
+            for (;;) {
+                const size_t idx = next.fetch_add(1, std::memory_order_relaxed);
+                if (idx >= n) return;
+                do_one(idx);
+            }
+        };
+        std::vector<std::thread> pool;
+        pool.reserve(nthreads - 1);
+        for (size_t t = 1; t < nthreads; ++t) pool.emplace_back(worker);
+        worker();
+        for (auto& th : pool) th.join();
     }
 
-    std::vector<std::future<bool>> futures;
-    futures.reserve(proof_transcripts.size());
-
-    for (size_t idx = 0; idx < proof_transcripts.size(); ++idx) {
-        futures.emplace_back(std::async(std::launch::async, [&verify_one, idx]() -> bool {
-            return verify_one(idx);
-        }));
+    for (auto& e : errors) {
+        if (e) std::rethrow_exception(e);
     }
-
-    // Wait for all threads to finish and collect results
-    for (auto& fut : futures) {
-        if (!fut.get()) return false;
+    for (bool ok : results) {
+        if (!ok) return false;
     }
 
     return true;
