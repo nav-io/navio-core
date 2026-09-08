@@ -811,8 +811,10 @@ RPCHelpMan listtransactions()
 
             if (nFrom > (int)entries.size())
                 nFrom = entries.size();
-            if ((nFrom + nCount) > (int)entries.size())
-                nCount = entries.size() - nFrom;
+            // Clamp nCount to the entries remaining after nFrom so the slice
+            // bounds below never overflow int (nFrom and nCount are
+            // attacker-controlled ints).
+            nCount = std::min(nCount, (int)entries.size() - nFrom);
 
             UniValue result{UniValue::VARR};
             // Slice [nFrom, nFrom+nCount) from the newest-first sequence, emit oldest-to-newest.
@@ -915,8 +917,10 @@ RPCHelpMan listpendingtransactions()
 
             if (nFrom > (int)entries.size())
                 nFrom = entries.size();
-            if ((nFrom + nCount) > (int)entries.size())
-                nCount = entries.size() - nFrom;
+            // Clamp nCount to the entries remaining after nFrom so the slice
+            // bounds below never overflow int (nFrom and nCount are
+            // attacker-controlled ints).
+            nCount = std::min(nCount, (int)entries.size() - nFrom);
 
             UniValue result{UniValue::VARR};
             for (int i = nFrom + nCount - 1; i >= nFrom; --i) {
