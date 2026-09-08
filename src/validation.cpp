@@ -2809,6 +2809,29 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             }
         }
     }
+
+    // Prefetch the output content-hash outpoints so the BIP30 HaveCoin checks
+    // below hit cache instead of paying a serial LevelDB read per output (the
+    // inputs get the same treatment further down in ConnectBlock).
+    {
+        std::vector<COutPoint> prefetch_output_outpoints;
+        size_t est_outputs = 0;
+        for (const auto& tx_ref : block.vtx) est_outputs += tx_ref->vout.size();
+        prefetch_output_outpoints.reserve(est_outputs);
+        for (size_t tx_idx = 0; tx_idx < block.vtx.size(); ++tx_idx) {
+            const auto& tx = block.vtx[tx_idx];
+            const std::vector<uint256>& out_hashes = block_out_hashes[tx_idx];
+            for (size_t o = 0; o < tx->vout.size(); ++o) {
+                if (tx->vout[o].scriptPubKey.IsUnspendable()) continue;
+                const uint256 outid = out_hashes.empty() ? tx->vout[o].GetHash() : out_hashes[o];
+                prefetch_output_outpoints.emplace_back(outid);
+            }
+        }
+        if (!prefetch_output_outpoints.empty()) {
+            view.BatchPrefetch(prefetch_output_outpoints);
+        }
+    }
+
     {
         std::set<uint256> block_outids;
         // Staked-commitment set is keyed by the commitment POINT (Vs[0]), not
