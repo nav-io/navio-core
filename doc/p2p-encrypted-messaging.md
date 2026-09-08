@@ -256,7 +256,11 @@ Maker / debug surface (hidden or `p2pmsg` category):
 - `setswapintent token_in token_out min_size max_size price_min expiry`
 - `clearswapintent intent_id`
 - `listswapintents`
-- `listorders` — standing-order cache state
+- `listorders [verbose]` — standing-order cache state; with `verbose=true`
+  also lists every live cached order (quote_id, buy/sell token, fill,
+  sell_cost, price, declared and effective expiry, receive time, maker
+  session pubkey, half-tx hash and spent inputs — all wire-public
+  `ORDER_ANN` fields), sorted by effective expiry ascending
 - `getp2pmsginfo` — inbox pubkey + PING counter
 - `sendp2pping inbox_pubkey [stem]` — debug echo
 

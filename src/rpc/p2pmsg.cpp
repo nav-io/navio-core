@@ -232,21 +232,71 @@ static RPCHelpMan listorders()
 {
     return RPCHelpMan{
         "listorders",
-        "\nReport the standing-order cache state (debug).\n",
-        {},
+        "\nReport the standing-order cache state, optionally listing the cached orders.\n"
+        "Every field of an order is exactly what the maker broadcast to all peers in\n"
+        "its ORDER_ANN (plus this node's receive time), so nothing private to this\n"
+        "node is exposed. Orders are sorted by effective expiry ascending.\n",
+        {
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "Also list the cached orders"},
+        },
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::BOOL, "enabled", "Whether the cache exists"},
-            {RPCResult::Type::NUM, "count", /*optional=*/true, "Cached standing orders"},
+            {RPCResult::Type::NUM, "count", /*optional=*/true, "Cached standing orders (raw cache size; may include expired entries awaiting prune)"},
             {RPCResult::Type::NUM, "bytes", /*optional=*/true, "Approximate cache footprint"},
+            {RPCResult::Type::ARR, "orders", /*optional=*/true, "Live cached orders (verbose only), sorted by effective_expiry ascending", {{RPCResult::Type::OBJ, "", "", {
+                {RPCResult::Type::STR_HEX, "quote_id", "Standing-order identifier"},
+                {RPCResult::Type::STR, "buy", "Token the maker delivers to the taker (token id; all-zero hex is NAV)"},
+                {RPCResult::Type::STR, "sell", "Token the maker charges the taker (token id; all-zero hex is NAV)"},
+                {RPCResult::Type::NUM, "fill", "Units of buy token offered (base units, scaled 1e8)"},
+                {RPCResult::Type::NUM, "sell_cost", "Units of sell token charged (base units, scaled 1e8)"},
+                {RPCResult::Type::NUM, "price", "sell_cost / fill (sell units per buy unit)"},
+                {RPCResult::Type::NUM_TIME, "order_expiry", "Expiry declared by the maker (unix time)"},
+                {RPCResult::Type::NUM_TIME, "effective_expiry", "When this node drops the order: min(order_expiry, received + 14 days) (unix time)"},
+                {RPCResult::Type::NUM_TIME, "received", "When this node cached the order (unix time)"},
+                {RPCResult::Type::STR_HEX, "maker_pubkey", "Maker's single-use session pubkey that signed the order"},
+                {RPCResult::Type::STR_HEX, "half_txid", "Hash of the maker's pre-signed half-transaction"},
+                {RPCResult::Type::ARR, "inputs", "Outputs the half-transaction spends (order is evicted once any is spent)", {
+                    {RPCResult::Type::STR_HEX, "", "Output hash"},
+                }},
+            }}}},
         }},
-        RPCExamples{HelpExampleCli("listorders", "")},
+        RPCExamples{HelpExampleCli("listorders", "") + HelpExampleCli("listorders", "true") + HelpExampleRpc("listorders", "true")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             node::NodeContext& node = EnsureAnyNodeContext(request.context);
+            const bool verbose = request.params[0].isNull() ? false : request.params[0].get_bool();
             UniValue o(UniValue::VOBJ);
             if (!node.rfq_orders) { o.pushKV("enabled", false); return o; }
             o.pushKV("enabled", true);
             o.pushKV("count", (uint64_t)node.rfq_orders->Size());
             o.pushKV("bytes", (uint64_t)node.rfq_orders->Bytes());
+            if (!verbose) return o;
+
+            const int64_t now = GetTime<std::chrono::seconds>().count();
+            UniValue arr(UniValue::VARR);
+            for (const rfq::OrderCache::OrderView& v : node.rfq_orders->Snapshot(now)) {
+                const rfq::RfqQuote& q = v.quote;
+                UniValue e(UniValue::VOBJ);
+                e.pushKV("quote_id", q.quote_id.GetHex());
+                e.pushKV("buy", q.buy.ToString());
+                e.pushKV("sell", q.sell.ToString());
+                e.pushKV("fill", q.fill);
+                e.pushKV("sell_cost", q.sell_cost);
+                e.pushKV("price", q.Price());
+                e.pushKV("order_expiry", q.order_expiry);
+                e.pushKV("effective_expiry", v.effective_expiry);
+                e.pushKV("received", v.received);
+                e.pushKV("maker_pubkey", HexStr(q.session_eph.GetVch()));
+                UniValue inputs(UniValue::VARR);
+                if (q.half_tx) {
+                    e.pushKV("half_txid", q.half_tx->GetHash().GetHex());
+                    for (const CTxIn& in : q.half_tx->vin) inputs.push_back(in.prevout.hash.GetHex());
+                } else {
+                    e.pushKV("half_txid", "");
+                }
+                e.pushKV("inputs", std::move(inputs));
+                arr.push_back(std::move(e));
+            }
+            o.pushKV("orders", std::move(arr));
             return o;
         },
     };

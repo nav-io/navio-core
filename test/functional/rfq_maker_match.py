@@ -11,6 +11,8 @@ replyquote. We assert the pending request surfaces on the maker with the right
 fill / sell_cost / reply_key.
 """
 
+from decimal import Decimal
+
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
@@ -79,11 +81,38 @@ class RfqMakerMatchTest(BitcoinTestFramework):
         order_half = CTransaction()
         order_half.vin.append(CTxIn(COutPoint(2)))
         order_half.vout.append(CTxOut(0, b""))
-        maker.sendorder(order_half.serialize().hex(), TOKA, 500, "", 50, 1893456000)
+        order_id = maker.sendorder(order_half.serialize().hex(), TOKA, 500, "", 50, 1893456000)
 
         assert_equal(maker.listorders()["count"], 1)
+        # Non-verbose output is unchanged (no order list).
+        assert "orders" not in maker.listorders()
         # Peers cache the broadcast order too.
         self.wait_until(lambda: taker.listorders()["count"] >= 1, timeout=20)
+
+        # Verbose listing on the receiving peer exposes exactly the public
+        # ORDER_ANN fields of the cached order.
+        listed = taker.listorders(True)
+        assert_equal(listed["count"], 1)
+        assert_equal(len(listed["orders"]), 1)
+        o = listed["orders"][0]
+        assert_equal(o["quote_id"], order_id)
+        assert_equal(o["buy"], TOKA)
+        assert_equal(o["sell"], "00" * 32)
+        assert_equal(o["fill"], 500)
+        assert_equal(o["sell_cost"], 50)
+        assert_equal(o["price"], Decimal("0.1"))
+        assert_equal(o["order_expiry"], 1893456000)
+        assert o["received"] <= o["effective_expiry"] <= 1893456000
+        assert_equal(o["half_txid"], order_half.rehash())
+        assert_equal(o["inputs"], ["%064x" % 2])
+        assert_equal(len(o["maker_pubkey"]), 96)
+        # The maker's own cache shows the same wire fields; only the local
+        # receive time (and hence the effective expiry) may differ.
+        local = dict(maker.listorders(True)["orders"][0])
+        wire = dict(o)
+        for k in ("received", "effective_expiry"):
+            del local[k], wire[k]
+        assert_equal(local, wire)
 
         self.log.info("light-maker sendorder over the wire OK")
 

@@ -68,6 +68,8 @@ class P2PMsgIntegrationTest(BitcoinTestFramework):
         orders = b.listorders()
         assert_equal(orders["enabled"], True)
         assert_equal(orders["count"], 0)
+        assert "orders" not in orders
+        assert_equal(b.listorders(True)["orders"], [])
 
         # --- Both nodes still connected after all the valid traffic (valid
         # p2pmsg must not trigger a DoS disconnect). ---
