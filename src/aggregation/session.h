@@ -5,11 +5,13 @@
 #ifndef BITCOIN_AGGREGATION_SESSION_H
 #define BITCOIN_AGGREGATION_SESSION_H
 
+#include <aggregation/pool.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <consensus/amount.h>
 #include <primitives/transaction.h>
 #include <util/overflow.h>
 
+#include <algorithm>
 #include <span>
 #include <vector>
 
@@ -19,6 +21,20 @@ namespace aggregation {
 //! cover candidates from the node's pool when any are available (falling back
 //! to a plain send when none are, or when the merge fails).
 static constexpr bool DEFAULT_AGGREGATE_SENDS{true};
+
+//! Cover-ratio policy: one cover candidate per this many own-half inputs.
+//! Cover is measured in INPUTS, not candidates -- an aggregate spending 25
+//! own inputs with 4 covers attributes the bulk to one wallet under a count
+//! heuristic. The count derived from this ratio CAPS the cover an initiator
+//! draws from the steady-cadence pool (no on-demand pull), so a small send
+//! does not vacuum the whole pool as cover; it never fails or delays a send.
+static constexpr size_t COVER_INPUT_RATIO = 4;
+//! The cover-candidate cap for an own half with `own_inputs` inputs.
+inline size_t TargetCoverCount(size_t own_inputs)
+{
+    const size_t target = (own_inputs + COVER_INPUT_RATIO - 1) / COVER_INPUT_RATIO;
+    return std::min(target, POOL_MAX_COMBINED);
+}
 
 //! Per-byte weight of a 1-in-1-out fee-0 BLSCT candidate, used to size the
 //! initiator's over-funded fee. Measured empirically; refined by bench. A
