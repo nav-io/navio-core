@@ -1533,11 +1533,16 @@ RPCHelpMan gettokenbalance()
 
             bool include_watchonly = ParseIncludeWatchonly(request.params[3], *pwallet);
 
-            const auto bal = pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)
-                ? GetBlsctBalance(*pwallet, min_depth, token_id)
-                : GetBalance(*pwallet, min_depth, false, token_id);
+            // Sum both halves like getbalance() does: in output-storage mode
+            // GetBlsctBalance skips any output whose CWalletTx is confirmed or
+            // in the mempool (self-created txs, e.g. our own mint), delegating
+            // it to the CWalletTx-driven GetBalance path. Taking only one half
+            // made self-minted tokens invisible in default BLSCT wallets.
+            const auto bal = GetBalance(*pwallet, min_depth, false, token_id);
+            const auto blsct_bal = GetBlsctBalance(*pwallet, min_depth, token_id);
 
-            return ValueFromAmount(bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0));
+            return ValueFromAmount(bal.m_mine_trusted + blsct_bal.m_mine_trusted +
+                                   (include_watchonly ? bal.m_watchonly_trusted + blsct_bal.m_watchonly_trusted : 0));
         },
     };
 }
@@ -1600,11 +1605,14 @@ RPCHelpMan getnftbalance()
             UniValue ret(UniValue::VARR);
 
             for (auto& it : token.mapMintedNft) {
-                const auto bal = pwallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE)
-                    ? GetBlsctBalance(*pwallet, min_depth, TokenId(token_id, it.first))
-                    : GetBalance(*pwallet, min_depth, false, TokenId(token_id, it.first));
+                // Sum both halves like getbalance()/gettokenbalance(): the
+                // output-storage path delegates self-created confirmed txs to
+                // the CWalletTx path, so either half alone under-reports.
+                const auto bal = GetBalance(*pwallet, min_depth, false, TokenId(token_id, it.first));
+                const auto blsct_bal = GetBlsctBalance(*pwallet, min_depth, TokenId(token_id, it.first));
 
-                if ((bal.m_mine_trusted + (include_watchonly ? bal.m_watchonly_trusted : 0)) > 0) {
+                if ((bal.m_mine_trusted + blsct_bal.m_mine_trusted +
+                     (include_watchonly ? bal.m_watchonly_trusted + blsct_bal.m_watchonly_trusted : 0)) > 0) {
                     UniValue retObj(UniValue::VOBJ);
 
                     UniValue metadata(UniValue::VARR);
