@@ -64,6 +64,9 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         self.test_custom_op_true_no_blschecksig()
         self.test_custom_unspendable_op_return()
 
+        # Group C: malformed hex rejection
+        self.test_malformed_hex_rejected()
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -336,6 +339,27 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         assert_raises_rpc_error(-26, "failed-script-check",
                                 self.nodes[0].sendrawtransaction, signed)
         self.log.info("=== B4 PASSED ===")
+
+    def test_malformed_hex_rejected(self):
+        """Malformed (non-hex) script and scriptSig are rejected at create time."""
+        self.log.info("=== C1: malformed output script hex ===")
+        assert_raises_rpc_error(-8, "Invalid script hex string",
+                                self.w1.createblsctrawtransaction,
+                                [], [{"address": self.addr1, "amount": 100000000, "script": "zz"}])
+
+        self.log.info("=== C2: malformed scriptSig hex ===")
+        bk = "c2" * 32
+        secret_hash = hashlib.sha256(bytes([0xCC] * 32)).digest()
+        script_hex = "a8" + "20" + secret_hash.hex() + "88" + "51"
+        signed_tx = self._create_custom_script_output(script_hex, bk)
+        oh, amt, gamma = self._recover_output(self.w1, signed_tx, COIN)
+        sk = self.w1.deriveblsctspendingkey(bk, self.addr1)
+        inputs = [{"outid": oh, "value": amt, "gamma": gamma,
+                   "spending_key": sk, "scriptSig": "zz"}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
+        assert_raises_rpc_error(-8, "Invalid scriptSig hex string",
+                                self.w1.createblsctrawtransaction, inputs, outputs)
+        self.log.info("=== C PASSED ===")
 
 
 if __name__ == '__main__':
