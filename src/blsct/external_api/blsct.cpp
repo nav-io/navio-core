@@ -2638,6 +2638,18 @@ BlsctRetVal* build_unsigned_mint_token_output(
     const BlsctScalar* blsct_token_key,
     const BlsctPubKey* blsct_token_public_key)
 {
+    return build_unsigned_mint_token_output_with_transcript(
+        blsct_dest, amount, blsct_blinding_key, blsct_token_key, blsct_token_public_key, /*transcript_v2=*/false);
+}
+
+BlsctRetVal* build_unsigned_mint_token_output_with_transcript(
+    const BlsctSubAddr* blsct_dest,
+    const uint64_t amount,
+    const BlsctScalar* blsct_blinding_key,
+    const BlsctScalar* blsct_token_key,
+    const BlsctPubKey* blsct_token_public_key,
+    const bool transcript_v2)
+{
     RETURN_RET_VAL_IF_NULL(blsct_dest, err(BLSCT_FAILURE));
     RETURN_RET_VAL_IF_NULL(blsct_blinding_key, err(BLSCT_FAILURE));
     RETURN_RET_VAL_IF_NULL(blsct_token_key, err(BLSCT_FAILURE));
@@ -2661,7 +2673,7 @@ BlsctRetVal* build_unsigned_mint_token_output(
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_public_key, PUBLIC_KEY_SIZE, token_public_key);
 
     auto* unsigned_output = new (std::nothrow) blsct::UnsignedOutput(
-        blsct::CreateOutput(destination.GetKeys(), mint_amount, blinding_key, token_key, token_public_key));
+        blsct::CreateOutput(destination.GetKeys(), mint_amount, blinding_key, token_key, token_public_key, transcript_v2));
     if (unsigned_output == nullptr) {
         return err(BLSCT_MEM_ALLOC_FAILED);
     }

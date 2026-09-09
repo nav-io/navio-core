@@ -413,6 +413,31 @@ BOOST_AUTO_TEST_CASE(test_token_info_predicates_and_unsigned_outputs)
         BOOST_CHECK_EQUAL(parsed.GetAmount(), 25);
     }
 
+    // The plain builder emits a v1 (pre-activation) output; the transcript-aware
+    // builder must honour the requested proof transcript so a mint output can
+    // be placed in a BLSCT_PROOF_V2_MARKER transaction.
+    {
+        DataStream st{ParseHex(mint_output_hex)};
+        blsct::UnsignedOutput output;
+        st >> output;
+        BOOST_CHECK(!output.transcript_v2);
+    }
+    for (const bool transcript_v2 : {false, true}) {
+        auto* rv = build_unsigned_mint_token_output_with_transcript(dest, 25, static_cast<const BlsctScalar*>(blinding_key_rv->value), token_key, token_public_key, transcript_v2);
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
+        const char* hex = serialize_unsigned_output(rv->value);
+        BOOST_REQUIRE(hex != nullptr);
+        DataStream st{ParseHex(hex)};
+        blsct::UnsignedOutput output;
+        st >> output;
+        BOOST_CHECK_EQUAL(output.transcript_v2, transcript_v2);
+        BOOST_CHECK(blsct::ParsePredicate(output.out.predicate).IsMintTokenPredicate());
+        free_obj((void*)hex);
+        delete_unsigned_output(rv->value);
+        free(rv);
+    }
+
     auto* mint_nft_output_rv = build_unsigned_mint_nft_output(dest, static_cast<const BlsctScalar*>(blinding_key_rv->value), token_key, token_public_key, 7, nft_metadata);
     BOOST_REQUIRE(mint_nft_output_rv != nullptr);
     BOOST_REQUIRE_EQUAL(mint_nft_output_rv->result, BLSCT_SUCCESS);

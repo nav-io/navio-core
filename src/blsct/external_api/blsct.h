@@ -774,6 +774,21 @@ BlsctRetVal* build_unsigned_mint_token_output(
     const BlsctScalar* blsct_blinding_key,
     const BlsctScalar* blsct_token_key,
     const BlsctPubKey* blsct_token_public_key);
+/* Same as build_unsigned_mint_token_output, but builds the output's range
+ * proof under the requested BLSCT proof transcript. Pass transcript_v2=true
+ * for a transaction at or above the network's transcript-v2 activation height
+ * (see BlsctTxOut::transcript_v2); the transaction assembled from it then
+ * carries BLSCT_PROOF_V2_MARKER. A fungible mint output carries a range proof
+ * (its amount is committed, not transparent), so a v1 mint output in a v2
+ * transaction -- or any v1 output at/above the activation height -- is
+ * rejected by consensus with failed-rangeproof-check. */
+BlsctRetVal* build_unsigned_mint_token_output_with_transcript(
+    const BlsctSubAddr* blsct_dest,
+    uint64_t amount,
+    const BlsctScalar* blsct_blinding_key,
+    const BlsctScalar* blsct_token_key,
+    const BlsctPubKey* blsct_token_public_key,
+    const bool transcript_v2);
 BlsctRetVal* build_unsigned_mint_nft_output(
     const BlsctSubAddr* blsct_dest,
     const BlsctScalar* blsct_blinding_key,
