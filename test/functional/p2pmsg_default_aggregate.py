@@ -118,6 +118,22 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
             timeout=120)
         self.log.info("default-aggregated plain send confirmed")
 
+        # --- The producer's wallet must not report its cover half as a send. ---
+        # w1's coin was spent and returned in full as change while the
+        # initiator (w0) funded the aggregate's whole fee, so the tx's net
+        # effect on w1 is the genuine 1.0 payment it received -- nothing else.
+        # A regression here surfaces served candidates as spontaneous
+        # "send -fee / fee" entries in the producer's transaction list.
+        entries = [e for e in w1.listtransactions("*", 1000) if e["txid"] == txid]
+        assert entries, "producer wallet does not know the aggregate tx"
+        categories = [e["category"] for e in entries]
+        assert "send" not in categories, \
+            "cover half surfaced as a send in the producer's wallet: %r" % entries
+        received = [e for e in entries if e["category"] == "receive"]
+        assert_equal(len(received), 1)
+        assert_equal(Decimal(str(received[0]["amount"])), Decimal("1.0"))
+        self.log.info("producer wallet reports only the received payment")
+
         # --- Node1 opted out (-aggregatesends=0): its pooled candidates stay. ---
         self.serve_candidate(n1, n0, w0)
         before = n1.getaggregationhint()["available"]
