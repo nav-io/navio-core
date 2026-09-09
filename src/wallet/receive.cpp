@@ -398,11 +398,24 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
         // individual outputs. Emit one synthetic send that represents the actual
         // balance debit net of our own change. Fee is reported separately so the
         // consumer-side invariant (amount + fee per txid) matches getbalance.
-        const CAmount blsct_fee = wtx.tx->GetBLSCTFee();
-        const CAmount sent_to_others = nDebit - nChange - blsct_fee;
-        nFee = blsct_fee;
-        COutputEntry output = {CNoDestination(), sent_to_others, -1, {}};
-        listSent.push_back(output);
+        //
+        // Exception: when every debited amount came back to us as change, this
+        // wallet's half of the transaction is a value-balanced self-spend -- an
+        // aggregation cover candidate merged into another wallet's aggregate.
+        // The initiator over-funds the single fee output for the candidates'
+        // weight (see aggregation::RequiredCandidateFee), so this wallet paid
+        // neither a recipient nor any part of the fee. Attributing the
+        // aggregate's fee here made served candidates surface as spontaneous
+        // "send -fee / fee" entries. Emit no send entry and no fee: the tx's
+        // net effect on this wallet is zero (any genuine payment to us in the
+        // same aggregate is already in listReceived).
+        if (nDebit != nChange) {
+            const CAmount blsct_fee = wtx.tx->GetBLSCTFee();
+            const CAmount sent_to_others = nDebit - nChange - blsct_fee;
+            nFee = blsct_fee;
+            COutputEntry output = {CNoDestination(), sent_to_others, -1, {}};
+            listSent.push_back(output);
+        }
     }
 }
 
