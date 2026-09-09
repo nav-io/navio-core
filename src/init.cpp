@@ -328,6 +328,7 @@ void Shutdown(NodeContext& node)
     // of the grind.
     if (node.p2pmsg_transport) node.p2pmsg_transport->Interrupt();
     // Join the puller thread before the transport it sends through goes away.
+    aggregation::SetActivePuller(nullptr);
     node.agg_puller.reset();
     // Likewise the wallet's candidate-serving thread: it also sends through
     // the transport, and the wallet client's stop() runs only after the
@@ -574,6 +575,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-servecandidates", strprintf("Answer p2pmsg candidate pull requests with fee-0 cover candidates built from loaded BLSCT wallets' coins, each encrypted 1:1 to its requester. Each served candidate proves this node owns one specific on-chain output to that requester, so serving trades some wallet-clustering resistance for the network's aggregation supply and is rate-limited per peer and by a rolling per-window coin budget; disable with -servecandidates=0 (default: %u)", aggregation::DEFAULT_SERVE_CANDIDATES), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-servecandidateinterval=<n>", strprintf("Seconds between built-in candidate serving ticks (default: %d)", aggregation::SERVE_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::WALLET);
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-aggregatecoverwait=<n>", strprintf("Maximum seconds a send with many inputs waits for the candidate pool to reach its cover target (one cover per %u own inputs) before broadcasting with whatever cover is available. Triggers an immediate pull round; only sends with at least %u inputs wait. 0 disables waiting (default: %u)", aggregation::COVER_INPUT_RATIO, aggregation::COVER_WAIT_MIN_INPUTS, aggregation::DEFAULT_COVER_WAIT_SECONDS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-candidatepullinterval=<n>", strprintf("Seconds between background candidate pull rounds (default: %d)", aggregation::PULL_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onionworkers=<n>", "Number of worker threads for p2p-messaging heavy crypto (0 = auto, default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsginboxrotation=<secs>", "Opt into periodic rotation of the p2p-messaging inbox prekey every <secs> seconds (bounds linkability and a key-extraction window). 0 = manual only, rotate on demand with the rotatep2pmsginbox RPC (default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
@@ -2046,6 +2048,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             node.agg_puller = std::make_unique<aggregation::CandidatePuller>(
                 *node.p2pmsg_transport, *node.agg_pool, interval);
             node.agg_puller->Start();
+            aggregation::SetActivePuller(node.agg_puller.get());
         }
 
         LogPrintf("p2pmsg: enabled (workers=%u, powbits=%u)\n",

@@ -161,6 +161,12 @@ private:
     bool m_stopping{false};
 };
 
+//! Process-global handle to the active puller (set at init, cleared at
+//! shutdown), mirroring SetActivePool: lets the wallet module trigger an
+//! on-demand pull round when a send's cover target exceeds the pool.
+void SetActivePuller(CandidatePuller* puller);
+CandidatePuller* GetActivePuller();
+
 /**
  * Owns the thread the built-in candidate server runs on. Serving grinds
  * proof-of-work per reply (Transport::Send), which must not run on the node's

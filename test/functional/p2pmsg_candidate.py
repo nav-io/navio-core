@@ -18,7 +18,7 @@ from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
 
 # Fast pull/serve cadence so the test does not wait a minute per round.
-FAST = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2", "-servecandidateinterval=2"]
+FAST = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2", "-servecandidateinterval=2", "-debug=net"]
 
 
 class P2PMsgCandidateTest(BitcoinTestFramework):
@@ -73,6 +73,47 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         # Fee-0 candidates must never stand alone in a mempool.
         assert n0.getrawmempool() == []
         assert n1.getrawmempool() == []
+
+        # --- Cover-ratio wait: a many-input send pulls on demand and waits
+        # for the pool to approach its input-derived cover target before
+        # merging (one cover per 4 own inputs, sends with >= 8 inputs only).
+        # The sender wallet is created only NOW so the built-in-serving
+        # assertions above still see a wallet-less node0 (whose pulls n1
+        # cannot get served back).
+        n0.createwallet(wallet_name="w0", blsct=True, storage_output=True)
+        w0 = n0.get_wallet_rpc("w0")
+        miner0 = w0.getnewaddress(label="", address_type="blsct")
+        self.generate_blsct_blocks(n0, miner0, 110)
+        self.sync_blocks()
+        # Restart node0 with the background puller effectively off: its
+        # in-memory pool comes back EMPTY and stays empty, so the send below
+        # is what triggers the pull (the on-demand path under test), not the
+        # background cadence.
+        self.restart_node(0, extra_args=[a for a in FAST if not a.startswith("-candidatepullinterval")] + ["-candidatepullinterval=3600"])
+        self.connect_nodes(0, 1)
+        n0.loadwallet("w0")
+        w0 = n0.get_wallet_rpc("w0")
+        assert n0.getaggregationhint()["available"] == 0
+        bal = Decimal(str(w0.getbalances()["mine"]["trusted"]))
+        assert bal > 0
+        dest = w1.getnewaddress(label="", address_type="blsct")
+        # Spending ~90% of a wallet whose coins are all similar-size staking
+        # rewards forces a many-input own half (>= the wait threshold).
+        with n0.assert_debug_log(expected_msgs=["cover below target", "cover wait ended"], timeout=90):
+            w0.sendtoblsctaddress(dest, float(bal * Decimal("0.90")))
+        self.wait_until(lambda: len(n0.getrawmempool()) == 1, timeout=60)
+        tx = n0.getrawtransaction(n0.getrawmempool()[0], True)
+        # Own half needed many inputs; at least one pooled cover was merged on
+        # top (auto-serving keeps supplying during the wait).
+        assert len(tx["vin"]) >= 9, "expected a many-input aggregated send: %d" % len(tx["vin"])
+        self.generatetoblsctaddress(n1, 1, miner)
+        self.sync_blocks()
+        self.log.info("cover-ratio wait pulled on demand and merged")
+
+        # Restore the fast background pull for the manual-serving section
+        # below, which waits for node0's puller to queue requests on node1.
+        self.restart_node(0, extra_args=FAST)
+        self.connect_nodes(0, 1)
 
         # --- Manual serving path (daemon flow): claim + replycandidate. ---
         self.restart_node(1, extra_args=FAST + ["-servecandidates=0"])
