@@ -349,7 +349,7 @@ std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet
     AddAvailableCoins(wallet, blsct_km, TokenId(), CreateTransactionType::NORMAL, candidates, MAX_MONEY);
 
     std::erase_if(candidates, [&](const InputCandidates& c) {
-        return c.is_staked_commitment || !c.token_id.IsNull() || excludedInputs.count(c.outpoint) > 0;
+        return c.is_staked_commitment || !c.token_id.IsNull() || excludedInputs.contains(c.outpoint);
     });
     std::sort(candidates.begin(), candidates.end(), [](const InputCandidates& a, const InputCandidates& b) {
         return a.amount < b.amount;
