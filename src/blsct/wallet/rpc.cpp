@@ -3093,6 +3093,11 @@ RPCHelpMan createblsctrawtransaction()
                 // Parse optional scriptSig field
                 if (o.exists("scriptSig")) {
                     std::string scriptSig_hex = o["scriptSig"].get_str();
+                    // An empty scriptSig is valid (means "no script signature
+                    // data"); only reject a non-empty but malformed hex value.
+                    if (!scriptSig_hex.empty() && !IsHex(scriptSig_hex)) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid scriptSig hex string");
+                    }
                     auto scriptSig = ParseHex(scriptSig_hex);
                     unsigned_input.in.scriptSig = CScript(scriptSig.begin(), scriptSig.end());
                 }
@@ -3320,6 +3325,9 @@ RPCHelpMan createblsctrawtransaction()
                     // Check if script is provided
                     if (o.exists("script") && !o["script"].get_str().empty()) {
                         std::string script_hex = o["script"].get_str();
+                        if (!IsHex(script_hex)) {
+                            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid script hex string");
+                        }
                         try {
                             std::vector<unsigned char> script_bytes = ParseHex(script_hex);
                             CScript script(script_bytes.begin(), script_bytes.end());
