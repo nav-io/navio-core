@@ -233,9 +233,13 @@ static RPCHelpMan listorders()
     return RPCHelpMan{
         "listorders",
         "\nReport the standing-order cache state, optionally listing the cached orders.\n"
-        "Every field of an order is exactly what the maker broadcast to all peers in\n"
-        "its ORDER_ANN (plus this node's receive time), so nothing private to this\n"
-        "node is exposed. Orders are sorted by effective expiry ascending.\n",
+        "Most fields are exactly what the maker broadcast to all peers in its\n"
+        "ORDER_ANN, but received and effective_expiry are THIS NODE's local\n"
+        "bookkeeping: the cache is memory-only with no backfill, so the set of\n"
+        "receive times maps this node's uptime since its last restart, and\n"
+        "effective_expiry reveals the receive time whenever the 14-day cap binds.\n"
+        "Strip both before republishing this output on a public endpoint.\n"
+        "Orders are sorted by effective expiry ascending.\n",
         {
             {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "Also list the cached orders"},
         },
@@ -255,8 +259,8 @@ static RPCHelpMan listorders()
                 {RPCResult::Type::NUM_TIME, "received", "When this node cached the order (unix time)"},
                 {RPCResult::Type::STR_HEX, "maker_pubkey", "Maker's single-use session pubkey that signed the order"},
                 {RPCResult::Type::STR_HEX, "half_txid", "Hash of the maker's pre-signed half-transaction"},
-                {RPCResult::Type::ARR, "inputs", "Outputs the half-transaction spends (order is evicted once any is spent)", {
-                    {RPCResult::Type::STR_HEX, "", "Output hash"},
+                {RPCResult::Type::ARR, "inputs", "Outpoints the half-transaction spends (order is evicted once any is spent)", {
+                    {RPCResult::Type::STR_HEX, "", "Full outpoint of the spent output. In Navio an outpoint IS the spent output's hash (COutPoint has no index component; every output is hash-addressed), so this is directly checkable against the UTXO set"},
                 }},
             }}}},
         }},

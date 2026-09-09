@@ -258,9 +258,14 @@ Maker / debug surface (hidden or `p2pmsg` category):
 - `listswapintents`
 - `listorders [verbose]` — standing-order cache state; with `verbose=true`
   also lists every live cached order (quote_id, buy/sell token, fill,
-  sell_cost, price, declared and effective expiry, receive time, maker
-  session pubkey, half-tx hash and spent inputs — all wire-public
-  `ORDER_ANN` fields), sorted by effective expiry ascending
+  sell_cost, price, declared expiry, maker session pubkey, half-tx hash
+  and spent inputs — wire-public `ORDER_ANN` fields — plus two pieces of
+  THIS NODE's local bookkeeping: `received` (when this node cached the
+  order; the set of receive times maps the node's uptime since its last
+  restart) and `effective_expiry` (`min(order_expiry, received + 14d)`,
+  which leaks `received` whenever the cap binds). Fine over a private
+  RPC connection; strip those two fields before republishing the output
+  on a public endpoint. Sorted by effective expiry ascending
 - `getp2pmsginfo` — inbox pubkey + PING counter
 - `sendp2pping inbox_pubkey [stem]` — debug echo
 
