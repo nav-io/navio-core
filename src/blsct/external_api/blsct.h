@@ -65,7 +65,14 @@ typedef struct {
     size_t value_size;
 } BlsctRetVal;
 
-BlsctRetVal* err(
+/* Result constructors used by every entry point below. Prefixed on purpose:
+ * they used to be called err()/succ(), and `err` is also a glibc function
+ * (err(int eval, const char* fmt, ...) prints a message and EXITS). A shared
+ * object built from this library — e.g. a Node addon — resolves its own
+ * default-visibility global `err` through the dynamic linker, where libc's
+ * definition comes first, so on Linux every error path terminated the host
+ * process with the BLSCT_RESULT as exit code instead of returning it. */
+BlsctRetVal* blsct_err(
     BLSCT_RESULT result);
 
 #ifdef __cplusplus
@@ -123,7 +130,7 @@ if (name == nullptr) { \
 // NOTE: only for functions returning BlsctRetVal*. Functions returning other
 // Blsct*RetVal types must construct their own error return on malloc failure.
 #define RETURN_ERR_IF_MEM_ALLOC_FAILED(name) \
-    if (name == nullptr) return err(BLSCT_MEM_ALLOC_FAILED);
+    if (name == nullptr) return blsct_err(BLSCT_MEM_ALLOC_FAILED);
 
 #define U8C(name) reinterpret_cast<const uint8_t*>(name)
 
@@ -170,7 +177,7 @@ inline const char* SerializeToHex(
 // Deserializes a fixed-size object from hex into freshly malloc'd memory.
 // Returns nullptr on any failure (bad hex, wrong size, OOM). Callers MUST
 // null-check: a previous version returned a BlsctRetVal* error object as
-// void*, which callers then wrapped in succ(), reporting success with a
+// void*, which callers then wrapped in blsct_succ(), reporting success with a
 // garbage/short-lived pointer.
 inline void* DeserializeFromHex(const char* hex, const size_t obj_size)
 {
@@ -269,14 +276,14 @@ typedef struct {
     size_t out_amount_err_index; // holds the first index of the tx_out whose amount exceeds the maximum
 } BlsctCTxRetVal;
 
-BlsctRetVal* succ(
+BlsctRetVal* blsct_succ(
     void* value,
     size_t value_size);
 
-BlsctBoolRetVal* succ_bool(
+BlsctBoolRetVal* blsct_succ_bool(
     bool value);
 
-BlsctBoolRetVal* err_bool(
+BlsctBoolRetVal* blsct_err_bool(
     BLSCT_RESULT result);
 
 typedef struct {
