@@ -218,17 +218,26 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         }
 
         // One-shot cover refinement: now that the own half's inputs are
-        // known, re-pick covers whose prev-out types mirror them. If the
-        // refined set's weight moves the required fee, rebuild the half with
-        // the matching additionalFee (the guard keeps this to one extra pass).
+        // known, re-pick covers whose prev-out types mirror them. Applied
+        // ONLY when the refined set's weight leaves the required fee
+        // unchanged: a moved fee would force a rebuild of the own half at a
+        // different additionalFee, which changes coin selection (largest-first
+        // input accumulation appends inputs for a higher target) and thereby
+        // invalidates the very input mix the refinement matched -- in the
+        // worst case manufacturing the exact partition this feature removes.
+        // Honest candidates are uniform 1-in/1-out self-spends, so equal
+        // count implies equal fee in practice; when it does not hold, keep
+        // the known-good pre-refinement pick (type-blind but weight-true).
         if (!candidates.empty() && !cover_refined) {
             cover_refined = true;
             auto refined = RefineCoverSelection(wallet, res->tx, *pool, candidates);
             if (!refined.empty()) {
                 const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, attempt.nBLSCTDefaultFee);
-                const bool fee_changed = refined_extra != attempt.additionalFee;
-                candidates = std::move(refined);
-                if (fee_changed) continue;
+                if (refined_extra == attempt.additionalFee) {
+                    candidates = std::move(refined);
+                } else {
+                    LogPrint(BCLog::NET, "p2pmsg: cover refinement skipped (refined set moves the required fee %d -> %d)\n", attempt.additionalFee, refined_extra);
+                }
             }
         }
 
@@ -532,18 +541,22 @@ static RPCHelpMan aggregatesend()
 
             // Now that the own half's inputs are known, re-pick covers whose
             // prev-out types mirror them (reward-ness is public; mismatched
-            // covers partition away under a type heuristic). Rebuild once if
-            // the refined set moves the required fee.
+            // covers partition away under a type heuristic). Applied ONLY
+            // when the refined set leaves the required fee unchanged: a
+            // rebuild at a different additionalFee changes the own half's
+            // coin selection and invalidates the mix the refinement matched
+            // (and destroying the known-good half to then fail on
+            // insufficient funds turns a working send into an error). Equal
+            // candidate count implies equal fee for honest uniform
+            // candidates; otherwise keep the pre-refinement pick.
             if (!candidates.empty()) {
                 auto refined = blsct::RefineCoverSelection(*pwallet, own->tx, *pool, candidates);
                 if (!refined.empty()) {
                     const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, rate);
-                    candidates = std::move(refined);
-                    if (refined_extra != extra) {
-                        extra = refined_extra;
-                        txData.additionalFee = extra;
-                        own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
-                        if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+                    if (refined_extra == extra) {
+                        candidates = std::move(refined);
+                    } else {
+                        LogPrint(BCLog::NET, "p2pmsg: cover refinement skipped (refined set moves the required fee %d -> %d)\n", extra, refined_extra);
                     }
                 }
             }

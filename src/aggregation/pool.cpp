@@ -4,6 +4,8 @@
 
 #include <aggregation/pool.h>
 
+#include <logging.h>
+
 #include <consensus/validation.h>
 #include <kernel/mempool_entry.h>
 #include <primitives/block.h>
@@ -126,6 +128,12 @@ std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n, size_
     // returning fewer covers than asked for.
     std::vector<CTransactionRef> out;
     const size_t take_reward = std::min(prefer_reward, reward.size());
+    if (take_reward < prefer_reward) {
+        // This selection is a privacy mitigation, and a silent shortfall
+        // no-ops it exactly in its motivating case (initiator spending mostly
+        // reward outputs against a transfer-heavy pool). Make that visible.
+        LogPrint(BCLog::NET, "p2pmsg: type-aware cover pick short on reward-backed candidates (wanted %u, pool has %u)\n", (unsigned)prefer_reward, (unsigned)reward.size());
+    }
     out.insert(out.end(), reward.begin(), reward.begin() + take_reward);
     const size_t take_other = std::min(max_n - out.size(), other.size());
     out.insert(out.end(), other.begin(), other.begin() + take_other);
@@ -134,6 +142,14 @@ std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n, size_
         out.insert(out.end(), reward.begin() + take_reward, reward.begin() + take_reward + top_up);
     }
     return out;
+}
+
+void CandidatePool::MarkRewardInput(const COutPoint& input)
+{
+    const size_t s = ShardFor(input);
+    LOCK(m_shard_mutex[s]);
+    auto it = m_shards[s].find(input);
+    if (it != m_shards[s].end()) it->second.reward_input = true;
 }
 
 bool CandidatePool::EvictByInput(const COutPoint& input)

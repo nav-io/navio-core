@@ -1956,19 +1956,27 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         ParamsStream ps{TX_WITH_WITNESS, ss};
                         CTransactionRef tx;
                         ps >> tx;
-                        // Record whether the candidate's prev-out is a coinbase
-                        // (block-reward) output -- public chain data the
-                        // initiator matches against its own input types so the
-                        // cover does not partition away under a type heuristic
-                        // (see CandidatePool::PickForAggregate). An unknown
-                        // coin (unconfirmed or spent) classifies as transfer.
+                        // Admit first, classify after: the chainstate lookup
+                        // takes cs_main on a p2pmsg worker thread (of which
+                        // there are only one or two), and the reply key that
+                        // reaches this handler is publicly broadcast, so any
+                        // bus observer can drive it. Classifying only pooled
+                        // candidates means a message rejected by the
+                        // structural checks or the caps costs no coin lookup,
+                        // no tip-cache growth, and no cs_main wait.
+                        const bool added = pool->AddCandidate(tx);
                         bool reward_input{false};
-                        if (cover_chainman && !tx->vin.empty()) {
+                        if (added && !tx->vin.empty()) {
+                            // Reward-ness of the prev-out is public chain
+                            // data the initiator matches against its own
+                            // input types (see PickForAggregate). An unknown
+                            // coin (unconfirmed or spent) stays classified
+                            // as transfer.
                             LOCK(cs_main);
                             const Coin& coin = cover_chainman->ActiveChainstate().CoinsTip().AccessCoin(tx->vin[0].prevout);
                             reward_input = !coin.IsSpent() && coin.IsCoinBase();
+                            if (reward_input) pool->MarkRewardInput(tx->vin[0].prevout);
                         }
-                        const bool added = pool->AddCandidate(tx, reward_input);
                         LogPrint(BCLog::NET, "p2pmsg: CANDIDATE_TX %s %s (peer=%d reward_input=%d)\n",
                                  tx->GetHash().ToString(), added ? "pooled" : "rejected (duplicate input or cap)", m.from_peer, reward_input);
                     } catch (const std::exception&) { /* drop malformed */ }

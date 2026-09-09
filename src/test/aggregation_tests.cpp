@@ -251,6 +251,25 @@ BOOST_FIXTURE_TEST_CASE(pool_type_aware_pick, BasicTestingSetup)
     std::set<uint256> seen;
     for (const auto& c : picked) BOOST_CHECK(seen.insert(c->vin[0].prevout.hash).second);
     BOOST_CHECK_EQUAL(picked.size(), 12u);
+
+    // The case that exercises the reward TOP-UP branch with take_reward > 0:
+    // max_n=10, prefer_reward=2 takes 2 rewards, all 6 transfers, then must
+    // top up with 2 MORE rewards starting AT OFFSET take_reward. An
+    // off-by-take_reward mutation (topping up from reward.begin()) re-picks
+    // the same two reward candidates and produces duplicates; every other
+    // case in this test passes under that mutation (verified by running the
+    // mutated function), so this is the assertion that keeps the offset
+    // honest. Duplicates matter: CombineHalves rejects them, which would
+    // turn every subsequent aggregated send into a fallback.
+    auto topped = pool.PickForAggregate(10, 2);
+    BOOST_CHECK_EQUAL(topped.size(), 10u);
+    std::set<uint256> topped_seen;
+    for (const auto& c : topped) {
+        BOOST_CHECK_MESSAGE(topped_seen.insert(c->vin[0].prevout.hash).second, "duplicate candidate in typed pick");
+    }
+    auto [r5, o5] = count_types(topped);
+    BOOST_CHECK_EQUAL(r5, 4u); // 2 preferred + 2 topped up
+    BOOST_CHECK_EQUAL(o5, 6u);
 }
 
 BOOST_FIXTURE_TEST_CASE(pool_rejects_multi_input, BasicTestingSetup)
