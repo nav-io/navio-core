@@ -44,6 +44,10 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         self.num_nodes = 1
         self.chain = 'blsctregtest'
         self.setup_clean_chain = True
+        # This test exercises delegation-aware CONSOLIDATION grouping (plain
+        # folds only with plain, delegated only with its identity), so opt
+        # into stake consolidation, which is off by default.
+        self.extra_args = [["-consolidatestakedcommitments=1"]]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()

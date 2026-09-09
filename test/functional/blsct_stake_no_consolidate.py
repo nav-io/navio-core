@@ -51,46 +51,44 @@ class BlsctStakeNoConsolidateTest(BitcoinTestFramework):
         self.generate_blsct_blocks(node, addr, 101)
         assert wallet.getbalance() > self.min_stake * 4
 
-        self.log.info("Default: consolidation ON -> stakelocks merge into one commitment")
+        self.log.info("Default: consolidation OFF -> each stakelock is its own commitment")
         wallet.stakelock(self.min_stake)
         self.generate_blsct_blocks(node, addr, 1)
         amounts = self.commitment_amounts(wallet)
         assert_equal(len(amounts), 1)
         assert_equal(amounts[0], Decimal(self.min_stake))
 
+        wallet.stakelock(self.min_stake)
+        self.generate_blsct_blocks(node, addr, 1)
+        amounts = sorted(self.commitment_amounts(wallet))
+        # Additive: two distinct commitments, nothing rewritten.
+        assert_equal(amounts, [Decimal(self.min_stake), Decimal(self.min_stake)])
+
+        self.log.info("A single wallet can present a ring of >=2 commitments by default")
+        assert len(self.commitment_amounts(wallet)) >= 2
+
+        self.log.info("Default: stakeunlock consumes only the commitment(s) needed")
+        wallet.stakeunlock(self.min_stake)
+        self.generate_blsct_blocks(node, addr, 1)
+        amounts = self.commitment_amounts(wallet)
+        # One commitment spent; the other stays intact.
+        assert_equal(amounts, [Decimal(self.min_stake)])
+
+        self.log.info("Restart with -consolidatestakedcommitments=1 (opt-in folding)")
+        self.restart_node(0, extra_args=["-consolidatestakedcommitments=1"])
+        node.loadwallet("w")
+        wallet = node.get_wallet_rpc("w")
+        addr = wallet.getnewaddress(label="", address_type="blsct")
+
+        self.log.info("Flag ON: a new stakelock folds the existing commitment in")
+        before = self.commitment_amounts(wallet)
+        assert_equal(len(before), 1)  # the remaining 100 from before persists
         wallet.stakelock(self.min_stake)
         self.generate_blsct_blocks(node, addr, 1)
         amounts = self.commitment_amounts(wallet)
         # Folded into a single commitment of 2 * min_stake.
         assert_equal(len(amounts), 1)
         assert_equal(amounts[0], Decimal(self.min_stake * 2))
-
-        self.log.info("Restart with -consolidatestakedcommitments=0")
-        self.restart_node(0, extra_args=["-consolidatestakedcommitments=0"])
-        node.loadwallet("w")
-        wallet = node.get_wallet_rpc("w")
-        addr = wallet.getnewaddress(label="", address_type="blsct")
-
-        self.log.info("Flag OFF: a new stakelock yields a separate commitment")
-        before = self.commitment_amounts(wallet)
-        assert_equal(len(before), 1)  # the consolidated 200 from before persists
-        wallet.stakelock(self.min_stake)
-        self.generate_blsct_blocks(node, addr, 1)
-        amounts = sorted(self.commitment_amounts(wallet))
-        # Now two distinct commitments: the untouched 200 and a fresh 100.
-        assert_equal(len(amounts), 2)
-        assert_equal(amounts[0], Decimal(self.min_stake))
-        assert_equal(amounts[1], Decimal(self.min_stake * 2))
-
-        self.log.info("A single wallet can now present a ring of >=2 commitments")
-        assert len(self.commitment_amounts(wallet)) >= 2
-
-        self.log.info("Flag OFF: stakeunlock consumes only the commitment(s) needed")
-        wallet.stakeunlock(self.min_stake)
-        self.generate_blsct_blocks(node, addr, 1)
-        amounts = sorted(self.commitment_amounts(wallet))
-        # The 100 commitment is spent; the 200 stays intact and separate.
-        assert_equal(amounts, [Decimal(self.min_stake * 2)])
 
 
 if __name__ == '__main__':

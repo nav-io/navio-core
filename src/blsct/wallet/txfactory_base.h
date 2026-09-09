@@ -27,7 +27,14 @@ static constexpr size_t MAX_TX_INPUT_COUNT = 1000;
 // operations fold a wallet's existing staked commitments into the new
 // commitment so the wallet holds a single consolidated stake. Set false to keep
 // each stakelock as its own commitment.
-static constexpr bool DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS{true};
+//! Off by default: folding every stakelock into one commitment silently
+//! rewrites the wallet's existing stakes (surprising when a user expects the
+//! new lock to be additive), and a single consolidated commitment cannot form
+//! the >=2-member ring PoS set-membership wants from one wallet. Explicit
+//! -consolidatestakedcommitments=1 restores the old behavior; delegated
+//! compounding and redelegation still fold unconditionally (that folding IS
+//! their semantic).
+static constexpr bool DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS{false};
 
 struct CreateTransactionData {
     CreateTransactionType type;
