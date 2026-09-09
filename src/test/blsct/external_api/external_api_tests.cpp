@@ -910,6 +910,48 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
 // under the legacy (v1) transcript must be refused, so a proof forged under the
 // unsound transcript cannot verify true out of band. The explicit
 // version-aware entry point still checks each proof under a stated version.
+BOOST_AUTO_TEST_CASE(test_build_range_proof_verifies_under_default_verifier)
+{
+    init();
+
+    // A proof built through the C API must pass the C API's own (v2-only)
+    // verifier: the two are the pair every binding uses together.
+    std::vector<uint64_t> amounts{123};
+    auto nonce = Blst::Point::Rand();
+    auto nonce_vch = nonce.GetVch();
+    TokenId token_id;
+    DataStream token_st{};
+    token_st << token_id;
+    std::vector<uint8_t> token_vch = ParseHex(HexStr(token_st));
+
+    auto* rp_rv = build_range_proof(&amounts, reinterpret_cast<const BlsctPoint*>(nonce_vch.data()), "navio", reinterpret_cast<const BlsctTokenId*>(token_vch.data()));
+    BOOST_REQUIRE(rp_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(rp_rv->result, BLSCT_SUCCESS);
+
+    bulletproofs_plus::RangeProof<Blst> proof;
+    {
+        const auto* bytes = static_cast<const uint8_t*>(rp_rv->value);
+        DataStream st{std::span<const uint8_t>(bytes, rp_rv->value_size)};
+        st >> proof;
+    }
+    std::vector<bulletproofs_plus::RangeProof<Blst>> vec{proof};
+
+    auto* ok = verify_range_proofs(&vec);
+    BOOST_REQUIRE(ok != nullptr);
+    BOOST_REQUIRE_EQUAL(ok->result, BLSCT_SUCCESS);
+    BOOST_CHECK(ok->value);
+    auto* v2 = verify_range_proofs_with_transcript(&vec, /*transcript_v2=*/true);
+    BOOST_CHECK(v2->result == BLSCT_SUCCESS && v2->value);
+    auto* v1 = verify_range_proofs_with_transcript(&vec, /*transcript_v2=*/false);
+    BOOST_CHECK(v1->result == BLSCT_SUCCESS && !v1->value);
+
+    free(v1);
+    free(v2);
+    free(ok);
+    free_obj(rp_rv->value);
+    free(rp_rv);
+}
+
 BOOST_AUTO_TEST_CASE(test_verify_range_proofs_is_v2_only)
 {
     init();

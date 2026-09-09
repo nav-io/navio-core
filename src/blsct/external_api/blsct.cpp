@@ -1738,11 +1738,18 @@ BlsctRetVal* build_range_proof(
         UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_token_id_u8, TOKEN_ID_SIZE, token_id);
 
         // range_proof to blsct_range_proof
+        // Emit the v2 transcript: verify_range_proofs is v2-only (a proof
+        // under the unsound legacy transcript is refused there), and every
+        // network is at/above its transcript-v2 activation height. The blst
+        // migration (74e2a36d2f) dropped these two arguments, which made every
+        // proof built through this entry point fail its own verifier.
         auto range_proof = g_rpl->Prove(
             vs,
             nonce,
             msg_vec,
-            token_id);
+            token_id,
+            /*minValue=*/0,
+            /*transcript_v2=*/true);
         DataStream size_st{};
         range_proof.Serialize(size_st);
         size_t range_proof_size = size_st.size();
