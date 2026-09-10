@@ -289,28 +289,17 @@ jobs:
         run: |
           set -euo pipefail
           cd /tmp
-          # Fetch guix-install.sh with per-mirror retries + fallback. A `push`/
-          # tag fires all matrix jobs at once; a single source (savannah cgit)
-          # intermittently returns 502/503 under that concurrent load, which
-          # would fail every job. Try savannah, then the codeberg mirror of the
-          # same repo. (The github guix-mirror is stale and its raw endpoint
-          # 404s, so it is not used here.)
-          INSTALLER_URLS=(
-            "https://git.savannah.gnu.org/cgit/guix.git/plain/etc/guix-install.sh"
-            "https://codeberg.org/guix/guix/raw/branch/master/etc/guix-install.sh"
-          )
-          fetched=0
-          for url in "${INSTALLER_URLS[@]}"; do
-            echo "Fetching guix-install.sh from ${url}"
-            if wget -nv --tries=3 --waitretry=10 \
-                 --retry-on-http-error=429,500,502,503,504 \
-                 -O guix-install.sh "${url}"; then
-              fetched=1
-              break
-            fi
-            echo "Fetch from ${url} failed; trying next mirror..."
-          done
-          [ "${fetched}" -eq 1 ] || { echo "Could not fetch guix-install.sh from any mirror"; exit 1; }
+          # Use the VENDORED guix-install.sh (contrib/guix/guix-install.sh,
+          # provenance in its header comment there). Both network sources have
+          # proven unreliable: savannah cgit now 404s the path outright (the
+          # repo moved to codeberg after guix's forge migration) and
+          # codeberg's raw endpoint truncates the file mid-transfer under
+          # load (HTTP/2 stream errors) — the v0.2.1 release run lost the
+          # powerpc64 and mingw builds to exactly this. The installer only
+          # unpacks the pinned GUIX_BOOTSTRAP_VERSION tarball below, so a
+          # vendored copy is deterministic and has nothing to go stale
+          # against; bump it deliberately when bumping the bootstrap version.
+          cp "${GITHUB_WORKSPACE}/contrib/guix/guix-install.sh" guix-install.sh
           chmod +x guix-install.sh
 
           # guix-install.sh would otherwise download the guix binary release
