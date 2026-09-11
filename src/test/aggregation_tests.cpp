@@ -218,8 +218,8 @@ BOOST_FIXTURE_TEST_CASE(pool_type_aware_pick, BasicTestingSetup)
         size_t reward = 0, other = 0;
         for (const auto& c : picked) {
             const uint256& h = c->vin[0].prevout.hash;
-            if (reward_inputs.count(h)) ++reward;
-            else if (other_inputs.count(h)) ++other;
+            if (reward_inputs.contains(h)) ++reward;
+            else if (other_inputs.contains(h)) ++other;
             else BOOST_FAIL("picked candidate not in pool");
         }
         return std::make_pair(reward, other);
