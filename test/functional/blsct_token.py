@@ -91,6 +91,27 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         assert tokens[0]['maxSupply'] == 100000000000, "incorrect max supply"
         assert tokens[0]['currentSupply'] == 0, "incorrect current supply"
 
+        self.log.info("Wallet-scoped token ownership (listwallettokens/getwallettoken)")
+        self.sync_blocks()
+        # Creator wallet: ismine true; a read-only key-derivation check, no
+        # broadcast (the point of the RPC -- previously ownership was only
+        # observable by attempting a real mint).
+        mine = wallet.listwallettokens()
+        assert_equal(len(mine), 1)
+        assert_equal(mine[0]['tokenId'], token['tokenId'])
+        assert_equal(mine[0]['ismine'], True)
+        assert_equal(mine[0]['metadata'], [{'key': 'name', 'value': 'Test'}])
+        assert_equal(wallet.getwallettoken(token['tokenId'])['ismine'], True)
+        # mine_only filters to created tokens.
+        assert_equal([t['tokenId'] for t in wallet.listwallettokens(True)], [token['tokenId']])
+        # A different wallet sees the token but does not own it.
+        other = wallet_2.listwallettokens()
+        assert_equal(len(other), 1)
+        assert_equal(other[0]['ismine'], False)
+        assert_equal(wallet_2.listwallettokens(True), [])
+        assert_equal(wallet_2.getwallettoken(token['tokenId'])['ismine'], False)
+        assert_raises_rpc_error(-5, "Unknown token", wallet.getwallettoken, "00" * 32)
+
         # A destination that is not a BLSCT address must be rejected: it would
         # otherwise mint into an output whose ownership keys are publicly
         # derivable constants, i.e. spendable by anyone.
