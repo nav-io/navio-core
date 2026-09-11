@@ -56,6 +56,7 @@ Transport::Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay, Opt
     // authenticated from the first message.
     m_prekey_sig = m_identity_priv.Sign(m_inbox_pub.GetVch());
     m_replay.setup_bytes(m_opts.replay_cache_bytes);
+    m_fluff_relayed.setup_bytes(m_opts.replay_cache_bytes);
     m_relay_tokens = static_cast<double>(m_opts.relay_burst); // start with a full burst
     // All decrypt work funnels through one worker handler keyed by JOB_KIND_DECRYPT.
     // Replay was already recorded on the net thread in OnWire(); HandleJob does
@@ -157,13 +158,43 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
     HashWriter hw;
     hw << env.kind << env.enc.MsgHash();
     const uint256 msg_hash = hw.GetSHA256();
+    // Loop-tolerant relay policy. The stem successor graph has no loop
+    // freedom (with few peers A->B->A is common), and a plain seen-once
+    // replay cache makes a stem loop fatal: every node in the loop consumes
+    // its single relay on the stem pass, so the message dies inside the loop
+    // and never reaches its recipient — this transport has no Dandelion
+    // embargo timer to save it. Instead each node may relay a message at
+    // most TWICE: once in stem mode (first arrival) and once as fluff (first
+    // duplicate). A duplicate proves the stem looped; the fluff copy floods
+    // outward, and a node that only ever stem-relayed still forwards the
+    // fluff when it arrives, so the flood escapes the loop. Amplification is
+    // bounded at one extra flood per node per message.
+    bool fluff_rescue = false;
     {
         LOCK(m_replay_mutex);
-        if (m_replay.contains(msg_hash, /*erase=*/false)) return WireResult::RejectReplay;
-        m_replay.insert(msg_hash);
+        const bool seen = m_replay.contains(msg_hash, /*erase=*/false);
+        const bool fluffed = m_fluff_relayed.contains(msg_hash, /*erase=*/false);
+        if (!seen) {
+            m_replay.insert(msg_hash);
+            if (!stem) m_fluff_relayed.insert(msg_hash);
+        } else if (!fluffed) {
+            m_fluff_relayed.insert(msg_hash);
+            fluff_rescue = true;
+        } else {
+            return WireResult::RejectReplay;
+        }
     }
-
-    // App-agnostic flood: relay this new, valid message to every other peer,
+    if (fluff_rescue) {
+        // First arrival already went through decrypt/dispatch; only the relay
+        // happens here, in fluff mode. The rescue goes through the same
+        // AllowRelay() token bucket as every other relay: the duplicate
+        // reuses the original PoW, so an unmetered second fan-out would let
+        // one grind double network-wide relay for free. A rescue skipped
+        // under pressure just leaves the message where a plain replay drop
+        // would have -- the bucket bounds aggregate rate either way.
+        if (m_relay && AllowRelay()) m_relay(from_peer, /*stem=*/false, env);
+        return WireResult::Dropped;
+    }    // App-agnostic flood: relay this new, valid message to every other peer,
     // whether or not we understand `kind` or can decrypt it. This is what lets
     // a future application propagate network-wide with no node upgrade. The
     // token bucket caps how fast this node will amplify, since a single ground

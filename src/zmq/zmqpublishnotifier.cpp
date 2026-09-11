@@ -45,6 +45,7 @@ static const char *MSG_HASHTX    = "hashtx";
 static const char *MSG_RAWBLOCK  = "rawblock";
 static const char *MSG_RAWTX     = "rawtx";
 static const char *MSG_SEQUENCE  = "sequence";
+static const char *MSG_P2PMSG    = "p2pmsg";
 
 // Internal function to send multipart message
 static int zmq_send_multipart(void *sock, const void* data, size_t size, ...)
@@ -262,6 +263,14 @@ bool CZMQPublishRawTransactionNotifier::NotifyTransaction(const CTransaction &tr
     DataStream ss;
     ss << TX_WITH_WITNESS(transaction);
     return SendZmqMessage(MSG_RAWTX, &(*ss.begin()), ss.size());
+}
+
+bool CZMQPublishP2PMsgNotifier::NotifyP2PMsg(const p2pmsg::UserInbox::Entry& entry)
+{
+    LogPrint(BCLog::ZMQ, "Publish p2pmsg id=%d topic=%s\n", entry.id, entry.topic);
+    DataStream ss;
+    ss << entry;
+    return SendZmqMessage(MSG_P2PMSG, ss.data(), ss.size());
 }
 
 // Helper function to send a 'sequence' topic message with the following structure:

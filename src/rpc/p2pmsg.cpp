@@ -20,7 +20,9 @@
 #include <policy/policy.h>
 #include <primitives/transaction.h>
 #include <util/transaction_identifier.h>
+#include <p2pmsg/crypto.h>
 #include <p2pmsg/transport.h>
+#include <p2pmsg/user_inbox.h>
 #include <rfq/intent_store.h>
 #include <rfq/matcher.h>
 #include <rfq/order_cache.h>
@@ -131,6 +133,247 @@ static RPCHelpMan sendp2pping()
 
             t->Send(recipient, p2pmsg::PayloadKind::PING, /*body=*/{0x70, 0x69, 0x6e, 0x67}, stem);
             return true;
+        },
+    };
+}
+
+static p2pmsg::UserInbox& EnsureUserInbox(const JSONRPCRequest& request)
+{
+    node::NodeContext& node = EnsureAnyNodeContext(request.context);
+    if (!node.p2pmsg_user_inbox) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+    return *node.p2pmsg_user_inbox;
+}
+
+static RPCHelpMan sendp2pmsg()
+{
+    return RPCHelpMan{
+        "sendp2pmsg",
+        "\nEncrypt an application message to a recipient key and broadcast it over the p2pmsg bus.\n"
+        "`recipient` selects the delivery mode:\n"
+        " - an inbox (prekey) pubkey hex: confidential 1:1 delivery. Obtain it from the recipient's\n"
+        "   getp2pmsginfo and verify its prekey_sig against their stable identity_pubkey.\n"
+        " - a reply pubkey minted with mintp2pmsgreplykey on the other side: 1:1 delivery to that\n"
+        "   one-shot session key (the RFQ reply pattern; does not expose the recipient's inbox).\n"
+        " - the literal string \"broadcast\": public pub/sub — every node can read it, and nodes\n"
+        "   SUBSCRIBED to `topic` (subscribep2pmsgtopic) store it.\n"
+        "With stem propagation (default) observers cannot tell where a message entered the network.\n"
+        "\nThe node interprets only `topic` (the pub/sub routing key). Everything else an application\n"
+        "needs — sender identity, a reply key, threading, content type — must be framed inside the\n"
+        "payload by the application; the transport deliberately adds no sender information.\n",
+        {
+            {"recipient", RPCArg::Type::STR, RPCArg::Optional::NO, "Recipient pubkey hex (inbox prekey or minted reply key), or \"broadcast\""},
+            {"topic", RPCArg::Type::STR, RPCArg::Optional::NO, strprintf("Topic string, 1-%d bytes. Routing key for broadcast subscriptions and the store's filter column", p2pmsg::MAX_USER_MSG_TOPIC_BYTES)},
+            {"payload", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, strprintf("Payload hex; topic and payload together must serialize to at most %d bytes. Applications needing more chunk and reassemble", p2pmsg::MAX_USER_MSG_BYTES)},
+            {"stem", RPCArg::Type::BOOL, RPCArg::Default{true}, "Send via the Dandelion stem variant (hides the entry point)"},
+        },
+        RPCResult{RPCResult::Type::BOOL, "", "Whether the message was queued for broadcast"},
+        RPCExamples{HelpExampleCli("sendp2pmsg", "\"<inboxhex>\" \"chat\" \"<payloadhex>\"") +
+                    HelpExampleCli("sendp2pmsg", "\"broadcast\" \"my-app-announce\" \"<payloadhex>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::Transport* t = p2pmsg::GetActiveTransport();
+            if (t == nullptr) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            const std::string recipient_str = request.params[0].get_str();
+            blsct::PublicKey recipient;
+            if (recipient_str == "broadcast") {
+                recipient = p2pmsg::BroadcastPubKey();
+            } else if (!recipient.SetVch(ParseHex(recipient_str))) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "invalid recipient (pubkey hex or \"broadcast\")");
+            }
+
+            p2pmsg::UserMsgFrame frame;
+            frame.topic = request.params[1].get_str();
+            if (frame.topic.empty() || frame.topic.size() > p2pmsg::MAX_USER_MSG_TOPIC_BYTES) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   strprintf("topic must be 1-%d bytes", p2pmsg::MAX_USER_MSG_TOPIC_BYTES));
+            }
+            const auto body_hex = TryParseHex<uint8_t>(request.params[2].get_str());
+            if (!body_hex) throw JSONRPCError(RPC_INVALID_PARAMETER, "payload is not valid hex");
+            frame.body = *body_hex;
+            if (frame.body.empty()) throw JSONRPCError(RPC_INVALID_PARAMETER, "payload must not be empty");
+
+            DataStream ss;
+            ss << frame;
+            if (ss.size() > p2pmsg::MAX_USER_MSG_BYTES) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   strprintf("topic + payload serialize to %d bytes, max %d", ss.size(), p2pmsg::MAX_USER_MSG_BYTES));
+            }
+            const bool stem = request.params[3].isNull() ? true : request.params[3].get_bool();
+
+            auto bytes = MakeUCharSpan(ss);
+            t->Send(recipient, p2pmsg::PayloadKind::USER_DATA,
+                    std::vector<uint8_t>(bytes.begin(), bytes.end()), stem);
+            return true;
+        },
+    };
+}
+
+static RPCHelpMan mintp2pmsgreplykey()
+{
+    return RPCHelpMan{
+        "mintp2pmsgreplykey",
+        "\nMint a fresh one-shot session keypair and register it with the transport so USER_DATA\n"
+        "messages encrypted to it are decrypted and stored (scope \"session\"). Hand the returned\n"
+        "pubkey to a counterparty (e.g. framed inside a broadcast) to receive 1:1 replies without\n"
+        "exposing this node's inbox prekey — the RFQ reply pattern, for applications.\n"
+        "The key expires after `ttl` seconds and is then pruned; messages already stored remain.\n",
+        {
+            {"ttl", RPCArg::Type::NUM, RPCArg::Default{3600}, "Seconds the key stays registered (1-86400)"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "reply_pubkey", "The minted session pubkey counterparties encrypt to"},
+            {RPCResult::Type::NUM_TIME, "expiry", "Unix time the key is pruned"},
+        }},
+        RPCExamples{HelpExampleCli("mintp2pmsgreplykey", "600")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::Transport* t = p2pmsg::GetActiveTransport();
+            if (t == nullptr) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+
+            const int64_t ttl = request.params[0].isNull() ? 3600 : request.params[0].getInt<int64_t>();
+            if (ttl < 1 || ttl > 86400) throw JSONRPCError(RPC_INVALID_PARAMETER, "ttl must be 1-86400 seconds");
+
+            const blsct::PrivateKey priv(BlstScalar::Rand(/*exclude_zero=*/true));
+            const blsct::PublicKey pub = priv.GetPublicKey();
+            const int64_t expiry = GetTime<std::chrono::seconds>().count() + ttl;
+            t->AddSessionKey(pub, priv, expiry);
+
+            UniValue o(UniValue::VOBJ);
+            o.pushKV("reply_pubkey", HexStr(pub.GetVch()));
+            o.pushKV("expiry", expiry);
+            return o;
+        },
+    };
+}
+
+static RPCHelpMan subscribep2pmsgtopic()
+{
+    return RPCHelpMan{
+        "subscribep2pmsgtopic",
+        "\nSubscribe to a broadcast topic: broadcast USER_DATA messages carrying this topic are\n"
+        "stored in the inbox (they are relayed either way). 1:1 inbox and session-keyed messages\n"
+        "are always stored regardless of subscriptions. Persisted across restarts; seed at startup\n"
+        "with -p2pmsgtopic=<topic>.\n",
+        {
+            {"topic", RPCArg::Type::STR, RPCArg::Optional::NO, strprintf("Topic string, 1-%d bytes", p2pmsg::MAX_USER_MSG_TOPIC_BYTES)},
+        },
+        RPCResult{RPCResult::Type::BOOL, "", "True if newly subscribed, false if already subscribed"},
+        RPCExamples{HelpExampleCli("subscribep2pmsgtopic", "\"my-app-announce\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::UserInbox& inbox = EnsureUserInbox(request);
+            const std::string topic = request.params[0].get_str();
+            if (topic.empty() || topic.size() > p2pmsg::MAX_USER_MSG_TOPIC_BYTES) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   strprintf("topic must be 1-%d bytes", p2pmsg::MAX_USER_MSG_TOPIC_BYTES));
+            }
+            return inbox.Subscribe(topic);
+        },
+    };
+}
+
+static RPCHelpMan unsubscribep2pmsgtopic()
+{
+    return RPCHelpMan{
+        "unsubscribep2pmsgtopic",
+        "\nUnsubscribe from a broadcast topic. Messages already stored remain until cleared or pruned.\n",
+        {
+            {"topic", RPCArg::Type::STR, RPCArg::Optional::NO, "Topic string"},
+        },
+        RPCResult{RPCResult::Type::BOOL, "", "True if removed, false if it was not subscribed"},
+        RPCExamples{HelpExampleCli("unsubscribep2pmsgtopic", "\"my-app-announce\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::UserInbox& inbox = EnsureUserInbox(request);
+            return inbox.Unsubscribe(request.params[0].get_str());
+        },
+    };
+}
+
+static RPCHelpMan listp2pmsgtopics()
+{
+    return RPCHelpMan{
+        "listp2pmsgtopics",
+        "\nList the broadcast topics this node is subscribed to.\n",
+        {},
+        RPCResult{RPCResult::Type::ARR, "", "", {{RPCResult::Type::STR, "topic", "A subscribed topic"}}},
+        RPCExamples{HelpExampleCli("listp2pmsgtopics", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::UserInbox& inbox = EnsureUserInbox(request);
+            UniValue ret(UniValue::VARR);
+            for (const auto& t : inbox.Topics()) ret.push_back(t);
+            return ret;
+        },
+    };
+}
+
+static RPCHelpMan listp2pmsgs()
+{
+    return RPCHelpMan{
+        "listp2pmsgs",
+        "\nList stored USER_DATA messages, oldest first.\n"
+        "Ids increase monotonically and never repeat, so a client can poll with the last id it has\n"
+        "seen. The store is on disk and survives restarts; it is bounded by -p2pmsgstoresize (oldest\n"
+        "pruned first) and -p2pmsgstoreexpiry. Multiple applications can read concurrently with their\n"
+        "own cursors; clearp2pmsgs is optional early compaction, not an ack.\n",
+        {
+            {"since_id", RPCArg::Type::NUM, RPCArg::Default{0}, "Only return messages with id greater than this"},
+            {"max_count", RPCArg::Type::NUM, RPCArg::Default{100}, "Maximum messages to return (0 = all)"},
+            {"topic", RPCArg::Type::STR, RPCArg::Default{""}, "Only return messages with this topic (\"\" = all topics)"},
+        },
+        RPCResult{RPCResult::Type::ARR, "", "", {
+            {RPCResult::Type::OBJ, "", "", {
+                {RPCResult::Type::NUM, "id", "Monotonic message id (poll cursor)"},
+                {RPCResult::Type::NUM_TIME, "received_at", "Local unix time the message was decrypted"},
+                {RPCResult::Type::STR, "scope", "How the message reached us: \"inbox\" (1:1 to our prekey), \"broadcast\" (subscribed topic), or \"session\" (a minted reply key)"},
+                {RPCResult::Type::STR, "topic", "The frame's topic"},
+                {RPCResult::Type::STR_HEX, "sender_session", "The envelope's per-message ephemeral pubkey. Fresh every message by design; NOT a reply address — a reply key must be framed inside the payload"},
+                {RPCResult::Type::STR_HEX, "payload", "The opaque payload body"},
+            }},
+        }},
+        RPCExamples{HelpExampleCli("listp2pmsgs", "0 50") + HelpExampleCli("listp2pmsgs", "0 50 \"chat\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::UserInbox& inbox = EnsureUserInbox(request);
+            const int64_t since_raw = request.params[0].isNull() ? 0 : request.params[0].getInt<int64_t>();
+            if (since_raw < 0) throw JSONRPCError(RPC_INVALID_PARAMETER, "since_id must be >= 0");
+            const uint64_t since_id = static_cast<uint64_t>(since_raw);
+            const int64_t max_raw = request.params[1].isNull() ? 100 : request.params[1].getInt<int64_t>();
+            if (max_raw < 0) throw JSONRPCError(RPC_INVALID_PARAMETER, "max_count must be >= 0");
+            const std::string topic = request.params[2].isNull() ? "" : request.params[2].get_str();
+
+            UniValue ret(UniValue::VARR);
+            for (const auto& e : inbox.List(since_id, static_cast<size_t>(max_raw), topic)) {
+                UniValue o(UniValue::VOBJ);
+                o.pushKV("id", e.id);
+                o.pushKV("received_at", e.received_at);
+                switch (static_cast<p2pmsg::MsgScope>(e.scope)) {
+                case p2pmsg::MsgScope::BROADCAST: o.pushKV("scope", "broadcast"); break;
+                case p2pmsg::MsgScope::SESSION: o.pushKV("scope", "session"); break;
+                default: o.pushKV("scope", "inbox"); break;
+                }
+                o.pushKV("topic", e.topic);
+                o.pushKV("sender_session", HexStr(e.sender_session));
+                o.pushKV("payload", HexStr(e.payload));
+                ret.push_back(o);
+            }
+            return ret;
+        },
+    };
+}
+
+static RPCHelpMan clearp2pmsgs()
+{
+    return RPCHelpMan{
+        "clearp2pmsgs",
+        "\nDrop stored USER_DATA messages up to a cursor. Optional early compaction — the store\n"
+        "also prunes itself by -p2pmsgstoresize/-p2pmsgstoreexpiry.\n",
+        {
+            {"up_to_id", RPCArg::Type::NUM, RPCArg::Default{0}, "Drop messages with id up to and including this (0 = drop all)"},
+        },
+        RPCResult{RPCResult::Type::NUM, "removed", "How many messages were dropped"},
+        RPCExamples{HelpExampleCli("clearp2pmsgs", "42")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::UserInbox& inbox = EnsureUserInbox(request);
+            const int64_t up_raw = request.params[0].isNull() ? 0 : request.params[0].getInt<int64_t>();
+            if (up_raw < 0) throw JSONRPCError(RPC_INVALID_PARAMETER, "up_to_id must be >= 0");
+            return static_cast<uint64_t>(inbox.Clear(static_cast<uint64_t>(up_raw)));
         },
     };
 }
@@ -883,6 +1126,13 @@ void RegisterP2PMsgRPCCommands(CRPCTable& t)
         {"hidden", &rotatep2pmsginbox},
         {"p2pmsg", &listpendingquoterequests},
         {"hidden", &sendp2pping},
+        {"p2pmsg", &sendp2pmsg},
+        {"p2pmsg", &listp2pmsgs},
+        {"p2pmsg", &clearp2pmsgs},
+        {"p2pmsg", &mintp2pmsgreplykey},
+        {"p2pmsg", &subscribep2pmsgtopic},
+        {"p2pmsg", &unsubscribep2pmsgtopic},
+        {"p2pmsg", &listp2pmsgtopics},
         {"p2pmsg", &setswapintent},
         {"p2pmsg", &clearswapintent},
         {"p2pmsg", &listswapintents},
