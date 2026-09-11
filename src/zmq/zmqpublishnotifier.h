@@ -63,6 +63,12 @@ public:
     bool NotifyTransaction(const CTransaction &transaction) override;
 };
 
+class CZMQPublishP2PMsgNotifier : public CZMQAbstractPublishNotifier
+{
+public:
+    bool NotifyP2PMsg(const p2pmsg::UserInbox::Entry& entry) override;
+};
+
 class CZMQPublishSequenceNotifier : public CZMQAbstractPublishNotifier
 {
 public:

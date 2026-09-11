@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+
+#include <p2pmsg/user_inbox.h>
 #include <string>
 
 class CBlockIndex;
@@ -56,6 +58,8 @@ public:
     virtual bool NotifyTransactionRemoval(const CTransaction &transaction, uint64_t mempool_sequence);
     // Notifies of transactions added to mempool or appearing in blocks
     virtual bool NotifyTransaction(const CTransaction &transaction);
+    //! A USER_DATA message stored in the p2pmsg user inbox
+    virtual bool NotifyP2PMsg(const p2pmsg::UserInbox::Entry& entry);
 
 protected:
     void* psocket{nullptr};

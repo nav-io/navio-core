@@ -47,6 +47,8 @@ Transport::Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay, Opt
     // authenticated from the first message.
     m_prekey_sig = m_identity_priv.Sign(m_inbox_pub.GetVch());
     m_replay.setup_bytes(m_opts.replay_cache_bytes);
+    m_fluff_relayed.setup_bytes(m_opts.replay_cache_bytes);
+    m_sent.setup_bytes(m_opts.replay_cache_bytes / 4);
     m_relay_tokens = static_cast<double>(m_opts.relay_burst); // start with a full burst
     // All decrypt work funnels through one worker handler keyed by JOB_KIND_DECRYPT.
     // Replay was already recorded on the net thread in OnWire(); HandleJob does
@@ -93,7 +95,7 @@ void Transport::RegisterHandler(PayloadKind kind, MessageHandler handler)
     m_handlers[static_cast<uint8_t>(kind)] = std::move(handler);
 }
 
-void Transport::AddSessionKey(const blsct::PublicKey& pub, const blsct::PrivateKey& priv, int64_t expiry)
+bool Transport::AddSessionKey(const blsct::PublicKey& pub, const blsct::PrivateKey& priv, int64_t expiry, SessionPurpose purpose)
 {
     const int64_t now = Now();
     LOCK(m_session_mutex);
@@ -104,13 +106,27 @@ void Transport::AddSessionKey(const blsct::PublicKey& pub, const blsct::PrivateK
     // Replace any existing entry for the same pubkey.
     const auto vch = pub.GetVch();
     std::erase_if(m_session_keys, [&vch](const auto& e) { return e.first.GetVch() == vch; });
-    // Bound the trial-decrypt set: if full, evict the oldest key (front) so a
-    // caller that opens many requests without dropping them cannot grow the
-    // per-message decrypt cost without limit.
-    while (m_session_keys.size() >= MAX_SESSION_KEYS) {
-        m_session_keys.erase(m_session_keys.begin());
+    // Per-purpose bounds: a chat app minting one USER_REPLY key per
+    // conversation must not evict in-flight INTERNAL (RFQ/pull) keys, and a
+    // burst of internal requests must not silently kill live minted keys.
+    // USER_REPLY refuses when full (the RPC surfaces the error); INTERNAL
+    // keeps the old evict-own-oldest behavior.
+    const auto count_purpose = [&](SessionPurpose p) {
+        return std::count_if(m_session_keys.begin(), m_session_keys.end(),
+                             [p](const auto& e) { return e.second.purpose == p; });
+    };
+    if (purpose == SessionPurpose::USER_REPLY) {
+        if (static_cast<size_t>(count_purpose(SessionPurpose::USER_REPLY)) >= MAX_USER_REPLY_KEYS) return false;
+    } else {
+        while (static_cast<size_t>(count_purpose(SessionPurpose::INTERNAL)) >= MAX_SESSION_KEYS - MAX_USER_REPLY_KEYS) {
+            auto it = std::find_if(m_session_keys.begin(), m_session_keys.end(),
+                                   [](const auto& e) { return e.second.purpose == SessionPurpose::INTERNAL; });
+            if (it == m_session_keys.end()) break;
+            m_session_keys.erase(it);
+        }
     }
-    m_session_keys.emplace_back(pub, SessionKey{priv, expiry});
+    m_session_keys.emplace_back(pub, SessionKey{priv, expiry, purpose});
+    return true;
 }
 
 void Transport::DropSessionKey(const blsct::PublicKey& pub)
@@ -148,10 +164,59 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
     HashWriter hw;
     hw << env.kind << env.enc.MsgHash();
     const uint256 msg_hash = hw.GetSHA256();
+    // Loop-tolerant relay policy. The stem successor graph has no loop
+    // freedom (with few peers A->B->A is common), and a plain seen-once
+    // replay cache makes a stem loop fatal: every node in the loop consumes
+    // its single relay on the stem pass, so the message dies inside the loop
+    // and never reaches its recipient — this transport has no Dandelion
+    // embargo timer to save it. Instead each node may relay a message at
+    // most TWICE: once in stem mode (first arrival) and once as fluff (first
+    // duplicate). A duplicate proves the stem looped; the fluff copy floods
+    // outward, and a node that only ever stem-relayed still forwards the
+    // fluff when it arrives, so the flood escapes the loop. Amplification is
+    // bounded at one extra flood per node per message.
+    bool fluff_rescue = false;
+    bool self_echo_deliver = false;
     {
         LOCK(m_replay_mutex);
-        if (m_replay.contains(msg_hash, /*erase=*/false)) return WireResult::RejectReplay;
-        m_replay.insert(msg_hash);
+        const bool seen = m_replay.contains(msg_hash, /*erase=*/false);
+        const bool fluffed = m_fluff_relayed.contains(msg_hash, /*erase=*/false);
+        const bool sent_by_us = m_sent.contains(msg_hash, /*erase=*/false);
+        if (!seen) {
+            m_replay.insert(msg_hash);
+            if (sent_by_us) {
+                // The echo of our OWN message. Relay it exactly like any
+                // other node's first duplicate (one metered fluff below) so
+                // the originator is indistinguishable on the wire -- but
+                // still decrypt/dispatch it once, so a message sent to our
+                // own inbox is delivered locally.
+                if (!fluffed) {
+                    m_fluff_relayed.insert(msg_hash);
+                    fluff_rescue = true;
+                    self_echo_deliver = true;
+                }
+            } else if (!stem) {
+                m_fluff_relayed.insert(msg_hash);
+            }
+        } else if (!fluffed) {
+            m_fluff_relayed.insert(msg_hash);
+            fluff_rescue = true;
+        } else {
+            return WireResult::RejectReplay;
+        }
+    }
+    if (fluff_rescue) {
+        // Relay in fluff mode through the same AllowRelay() token bucket as
+        // every other relay: the duplicate reuses the original PoW, so an
+        // unmetered second fan-out would let one grind double network-wide
+        // relay for free. A rescue skipped under pressure just leaves the
+        // message where a plain replay drop would have -- the bucket bounds
+        // aggregate rate either way.
+        if (m_relay && AllowRelay()) m_relay(from_peer, /*stem=*/false, env);
+        // A true duplicate was already decrypted on first arrival; our own
+        // echo has not been -- fall through to the decrypt enqueue for it.
+        if (!self_echo_deliver) return WireResult::Dropped;
+        goto enqueue_decrypt; // rescue already relayed; the normal relay below must NOT also fire
     }
 
     // App-agnostic flood: relay this new, valid message to every other peer,
@@ -161,6 +226,8 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
     // PoW is otherwise reusable to make us fan out to every peer. Over budget,
     // we skip the relay but still decrypt anything addressed to us below.
     if (m_relay && AllowRelay()) m_relay(from_peer, stem, env);
+
+enqueue_decrypt:
 
     // Enqueue the raw bytes for our own decryption on a worker; net thread done.
     Job job;
@@ -194,6 +261,8 @@ void Transport::HandleJob(const Job& job)
     // and any still-live grace-ring keys from a recent rotation. Snapshot the
     // privs under the lock, then run the heavy BLS decrypts outside it.
     RecipientKey recipient = RecipientKey::INBOX;
+    blsct::PublicKey matched_session;
+    bool matched_user_reply = false;
     std::vector<blsct::PrivateKey> inbox_privs;
     {
         LOCK(m_inbox_mutex);
@@ -214,19 +283,26 @@ void Transport::HandleJob(const Job& job)
         // Finally, any open per-request session keys (e.g. RFQ reply_keys). Take
         // a snapshot of the still-live privs under the lock, then decrypt outside
         // it — BLS decrypts are heavy and must not run while the mutex is held.
-        std::vector<blsct::PrivateKey> session_privs;
+        struct SessionCandidate {
+            blsct::PublicKey pub;
+            blsct::PrivateKey priv;
+            SessionPurpose purpose;
+        };
+        std::vector<SessionCandidate> session_candidates;
         {
             const int64_t now = Now();
             LOCK(m_session_mutex);
-            session_privs.reserve(m_session_keys.size());
+            session_candidates.reserve(m_session_keys.size());
             for (const auto& [pub, sk] : m_session_keys) {
-                if (sk.expiry == 0 || sk.expiry > now) session_privs.push_back(sk.priv);
+                if (sk.expiry == 0 || sk.expiry > now) session_candidates.push_back({pub, sk.priv, sk.purpose});
             }
         }
-        for (const auto& priv : session_privs) {
-            plain = Decrypt(priv, env.enc, aad_span);
+        for (const auto& cand : session_candidates) {
+            plain = Decrypt(cand.priv, env.enc, aad_span);
             if (plain) {
                 recipient = RecipientKey::SESSION;
+                matched_session = cand.pub;
+                matched_user_reply = (cand.purpose == SessionPurpose::USER_REPLY);
                 break;
             }
         }
@@ -246,6 +322,8 @@ void Transport::HandleJob(const Job& job)
     msg.from_peer = job.peer;
     msg.sender_session = env.enc.eph;
     msg.recipient = recipient;
+    msg.recipient_session = matched_session;
+    msg.recipient_user_reply = matched_user_reply;
     msg.body = std::move(*plain);
     handler(msg);
 }
@@ -333,9 +411,21 @@ std::pair<blsct::PublicKey, blsct::Signature> Transport::SignEphemeral(const uin
     return {k.GetPublicKey(), k.Sign(digest)};
 }
 
-void Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
+bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
                      std::vector<uint8_t> body, bool stem)
 {
+    // Guard the OUTBOUND recipient key (mirrors Decrypt's inbound eph guard):
+    // identity/invalid forces the ECDH secret to a public constant, key+nonce
+    // reuse under ZERO_NONCE. Reply keys come from the network, so a peer can
+    // reach this -- return false, never throw (a throw on the candserve thread
+    // reaches TraceThread and terminates the node).
+    {
+        const BlstG1Point rp = recipient.GetG1Point();
+        if (rp.IsZero() || !rp.IsValid()) {
+            LogPrint(BCLog::NET, "p2pmsg: refusing to send to identity/invalid recipient key\n");
+            return false;
+        }
+    }
     Envelope env;
     env.kind = static_cast<uint8_t>(kind);
     // Authenticate the (cleartext) kind byte under the AEAD so it cannot be
@@ -359,10 +449,23 @@ void Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
     // cannot survive. Abandon the send instead.
     if (Grind(env.pow, m_opts.pow_bits, /*max_iters=*/0, &m_interrupt) == 0) {
         LogPrint(BCLog::NET, "p2pmsg: send abandoned, PoW grind interrupted (shutdown)\n");
-        return;
+        return false;
     }
 
+    // Record our own message in the replay/fluff caches BEFORE broadcasting:
+    // otherwise, when the network echoes it back, the originator treats it as
+    // brand new (relaying again) while every other node replay-drops or
+    // single-rescues it -- an observable asymmetry that identifies the
+    // originator across two probes, contradicting the stem's purpose.
+    {
+        HashWriter hw;
+        hw << env.kind << env.enc.MsgHash();
+        const uint256 msg_hash = hw.GetSHA256();
+        LOCK(m_replay_mutex);
+        m_sent.insert(msg_hash);
+    }
     m_broadcast(stem, env);
+    return true;
 }
 
 namespace {

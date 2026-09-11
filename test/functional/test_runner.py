@@ -392,6 +392,8 @@ BASE_SCRIPTS = [
     'p2pmsg_default_aggregate.py',
     'p2pmsg_identity.py',
     'p2pmsg_swap_e2e.py',
+    'p2pmsg_user_messaging.py',
+    'p2pmsg_zmq.py',
     'rfq_maker_match.py',
     # Don't append tests at the end to avoid merge conflicts
     # Put them in a random line within the section that fits their approximate run-time
