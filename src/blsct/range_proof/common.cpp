@@ -34,13 +34,6 @@ template <typename T>
 range_proof::GeneratorsFactory<T>* Common<T>::m_gf = nullptr;
 
 template <typename T>
-const typename T::Scalar& Common<T>::GetUint64Max() const
-{
-    return *m_uint64_max;
-}
-template const Blst::Scalar& Common<Blst>::GetUint64Max() const;
-
-template <typename T>
 range_proof::GeneratorsFactory<T>& Common<T>::Gf() const
 {
     return *m_gf;

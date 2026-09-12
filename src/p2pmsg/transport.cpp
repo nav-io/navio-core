@@ -18,15 +18,6 @@ namespace {
 //! Reserved Job::kind used to route every p2pmsg decrypt through one handler.
 constexpr uint8_t JOB_KIND_DECRYPT = 200;
 
-//! Serialize an envelope to a byte vector.
-std::vector<uint8_t> SerializeEnvelope(const Envelope& env)
-{
-    DataStream ss;
-    ss << env;
-    auto bytes = MakeUCharSpan(ss);
-    return std::vector<uint8_t>(bytes.begin(), bytes.end());
-}
-
 //! Try to parse an envelope from raw bytes. Returns false on malformed input.
 bool ParseEnvelope(std::span<const uint8_t> body, Envelope& out)
 {
@@ -372,7 +363,6 @@ void Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
     }
 
     m_broadcast(stem, env);
-    (void)&SerializeEnvelope; // reserved for direct-send paths in later phases
 }
 
 namespace {
