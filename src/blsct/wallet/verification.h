@@ -93,7 +93,8 @@ bool VerifyTxCollectProofs(const CTransaction& tx,
 TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSignatureCheck>& sig_checks);
 
 // Batch verify collected range proofs. Call once per block after all
-// VerifyTxCollectProofs calls succeed.
-bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& proofs);
+// VerifyTxCollectProofs calls succeed. `threads` caps the verification worker
+// pool; 0 means std::thread::hardware_concurrency().
+bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& proofs, size_t threads = 0);
 }
 #endif // NAVIO_BLSCT_WALLET_VERIFICATION_H
