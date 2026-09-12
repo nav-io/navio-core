@@ -5,7 +5,6 @@
 #include <blsct/common.h>
 #include <blsct/pos/proof.h>
 #include <blsct/range_proof/generators.h>
-#include <util/strencodings.h>
 
 #include <chrono>
 #include <limits>
@@ -140,13 +139,6 @@ ProofOfStake::VerificationResult ProofOfStake::Verify(const Points& staked_commi
     using Clock = std::chrono::steady_clock;
     const auto t_after_setmem = stats ? Clock::now() : Clock::time_point{};
 
-    // std::cout << __func__ << ": Verifying Setmem proof with"
-    //           << "\n\t staked_commitments=" << staked_commitments.GetString()
-    //           << "\n\t eta_fiat_shamir=" << eta_fiat_shamir.GetString()
-    //           << "\n\t eta_phi=" << HexStr(eta_phi)
-    //           << "\n\t setmemres=" << setmemres
-    //           << "\n\n";
-
     auto kernelhashres = ProofOfStake::VerifyKernelHash(rangeProof, kernel_hash, next_target, eta_phi, setMemProof.phi, transcript_v2);
     const auto t_end = stats ? Clock::now() : Clock::time_point{};
     if (stats) {
@@ -201,13 +193,6 @@ bool ProofOfStake::VerifyKernelHash(const RangeProof& range_proof, const uint256
     uint64_t min_value_u64 = SaturateToU64(min_value);
 
     auto ret = VerifyKernelHash(range_proof, min_value_u64, eta_phi, phi, transcript_v2);
-
-    // std::cout << __func__ << ": Verifying Range proof with"
-    //           << "\n\t kernel_hash=" << kernel_hash.ToString()
-    //           << "\n\t next_target=" << next_target
-    //           << "\n\t kernelhashres=" << ret
-    //           << "\n\t min_value=" << min_value_u64
-    //           << "\n\n";
 
     return ret;
 }

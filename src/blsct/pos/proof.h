@@ -96,13 +96,10 @@ public:
         switch (res) {
         case VALID:
             return "Valid";
-            break;
         case RP_INVALID:
             return "Invalid Range Proof";
-            break;
         case SM_INVALID:
             return "Invalid Set Membership Proof";
-            break;
         default:
             return "None";
         }
