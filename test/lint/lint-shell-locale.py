@@ -43,6 +43,9 @@ def main():
     for file_path in shell_files:
         if re.search('src/(bls|secp256k1|minisketch)/', file_path):
             continue
+        # vendored upstream installer, kept byte-identical
+        if file_path == 'contrib/guix/guix-install.sh':
+            continue
 
         with open(file_path, 'r', encoding='utf-8') as file_obj:
             contents = file_obj.read()
