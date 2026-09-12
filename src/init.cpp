@@ -1943,9 +1943,10 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // key was not solicited by us 1:1, and pooling publicly readable
             // candidates would let any bus observer subtract the cover halves
             // back out of a later aggregate (defeating the decoys entirely).
+            ChainstateManager* cover_chainman = node.chainman.get();
             node.p2pmsg_transport->RegisterHandler(
                 p2pmsg::PayloadKind::CANDIDATE_TX,
-                [pool](const p2pmsg::InboundMessage& m) {
+                [pool, cover_chainman](const p2pmsg::InboundMessage& m) {
                     if (m.recipient != p2pmsg::RecipientKey::SESSION) {
                         LogPrint(BCLog::NET, "p2pmsg: dropping CANDIDATE_TX not addressed to a pull session key (recipient=%d)\n", (int)m.recipient);
                         return;
@@ -1955,9 +1956,29 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         ParamsStream ps{TX_WITH_WITNESS, ss};
                         CTransactionRef tx;
                         ps >> tx;
+                        // Admit first, classify after: the chainstate lookup
+                        // takes cs_main on a p2pmsg worker thread (of which
+                        // there are only one or two), and the reply key that
+                        // reaches this handler is publicly broadcast, so any
+                        // bus observer can drive it. Classifying only pooled
+                        // candidates means a message rejected by the
+                        // structural checks or the caps costs no coin lookup,
+                        // no tip-cache growth, and no cs_main wait.
                         const bool added = pool->AddCandidate(tx);
-                        LogPrint(BCLog::NET, "p2pmsg: CANDIDATE_TX %s %s (peer=%d)\n",
-                                 tx->GetHash().ToString(), added ? "pooled" : "rejected (duplicate input or cap)", m.from_peer);
+                        bool reward_input{false};
+                        if (added && !tx->vin.empty()) {
+                            // Reward-ness of the prev-out is public chain
+                            // data the initiator matches against its own
+                            // input types (see PickForAggregate). An unknown
+                            // coin (unconfirmed or spent) stays classified
+                            // as transfer.
+                            LOCK(cs_main);
+                            const Coin& coin = cover_chainman->ActiveChainstate().CoinsTip().AccessCoin(tx->vin[0].prevout);
+                            reward_input = !coin.IsSpent() && coin.IsCoinBase();
+                            if (reward_input) pool->MarkRewardInput(tx->vin[0].prevout);
+                        }
+                        LogPrint(BCLog::NET, "p2pmsg: CANDIDATE_TX %s %s (peer=%d reward_input=%d)\n",
+                                 tx->GetHash().ToString(), added ? "pooled" : "rejected (duplicate input or cap)", m.from_peer, reward_input);
                     } catch (const std::exception&) { /* drop malformed */ }
                 });
 

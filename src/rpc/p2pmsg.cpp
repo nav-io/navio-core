@@ -15,6 +15,7 @@
 #include <ctokens/tokenid.h>
 #include <net.h>
 #include <node/context.h>
+#include <validation.h>
 #include <node/transaction.h>
 #include <protocol.h>
 #include <policy/policy.h>
@@ -260,6 +261,7 @@ static RPCHelpMan addaggregationcandidate()
         "Normally candidates arrive encrypted over the network; this is for testing.\n",
         {
             {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The candidate half-transaction"},
+            {"reward_input", RPCArg::Type::BOOL, RPCArg::Default{false}, "Classify the candidate as spending a coinbase (block-reward) output, as the network ingest path would after a chainstate lookup. Without it a test can never populate the reward class"},
         },
         RPCResult{RPCResult::Type::BOOL, "", "Whether the candidate was accepted"},
         RPCExamples{HelpExampleCli("addaggregationcandidate", "\"<hex>\"")},
@@ -270,7 +272,8 @@ static RPCHelpMan addaggregationcandidate()
             if (!DecodeHexTx(mtx, request.params[0].get_str())) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
             }
-            return node.agg_pool->AddCandidate(MakeTransactionRef(std::move(mtx)));
+            const bool reward_input = request.params[1].isNull() ? false : request.params[1].get_bool();
+            return node.agg_pool->AddCandidate(MakeTransactionRef(std::move(mtx)), reward_input);
         },
     };
 }
@@ -408,9 +411,25 @@ static RPCHelpMan getp2pmsgaggregate()
                                                       : request.params[1].getInt<int64_t>();
             if (max_k > aggregation::POOL_MAX_COMBINED) max_k = aggregation::POOL_MAX_COMBINED;
 
+            // Classify the caller's own inputs against the chainstate so the
+            // typed pick can mirror them -- an external wallet cannot reach
+            // the typed overload any other way, and an untyped pick here
+            // reopens the cover-partition leak the wallet paths close.
+            // Reward-ness of a prev-out is public chain data.
+            size_t reward_in{0};
+            if (!own.vin.empty()) {
+                LOCK(cs_main);
+                const auto& coins = node.chainman->ActiveChainstate().CoinsTip();
+                for (const CTxIn& in : own.vin) {
+                    const Coin& coin = coins.AccessCoin(in.prevout);
+                    if (!coin.IsSpent() && coin.IsCoinBase()) ++reward_in;
+                }
+            }
+            const size_t prefer_reward = own.vin.empty() ? 0 : (max_k * reward_in + own.vin.size() - 1) / own.vin.size();
+
             std::vector<CTransactionRef> halves;
             halves.push_back(MakeTransactionRef(own));
-            for (const auto& c : node.agg_pool->PickForAggregate(max_k)) halves.push_back(c);
+            for (const auto& c : node.agg_pool->PickForAggregate(max_k, prefer_reward)) halves.push_back(c);
 
             // Evict picked candidates whether the aggregate succeeds or not, so
             // a malformed/stale candidate cannot be re-picked on every call

@@ -49,14 +49,46 @@ public:
 
     //! Insert a validated candidate from `peer`. Returns false (no insert) if:
     //! the candidate is not 1-input, its input is already pooled, the per-peer
-    //! cap is hit, or the global cap is hit.
-    bool AddCandidate(const CTransactionRef& candidate)
+    //! cap is hit, or the global cap is hit. `reward_input` records whether the
+    //! candidate's prev-out was created by a coinbase (block-reward) tx -- that
+    //! is public chain data, and matching it against the initiator's own input
+    //! types is what makes the cover blend (see PickForAggregate).
+    bool AddCandidate(const CTransactionRef& candidate, bool reward_input = false)
        ;
 
-    //! Pick up to `max_n` candidates for an aggregate (oldest-first within
-    //! shards is not guaranteed; selection is arbitrary but distinct inputs).
+    //! Pick up to `max_n` candidates for an aggregate (random subset so a
+    //! poison candidate is not re-picked forever; distinct inputs).
     std::vector<CTransactionRef> PickForAggregate(size_t max_n) const
        ;
+
+    //! Type-aware pick: up to `max_n` candidates, preferring `prefer_reward`
+    //! of them to be backed by coinbase (block-reward) prev-outs and the rest
+    //! by ordinary transfers. Whether a prev-out was a block reward is PUBLIC
+    //! chain data, so covers whose input type does not match the initiator's
+    //! own inputs partition cleanly away from them under a type heuristic --
+    //! an aggregate spending 25 reward outputs plus 4 transfer-backed covers
+    //! protects nothing. Falls back across types when one side runs short:
+    //! mismatched cover still beats fewer covers. Random within each type
+    //! class for the same poison-resistance as the untyped overload.
+    //!
+    //! Trade-off, stated rather than silent: unlike the untyped pick, the
+    //! result is no longer independent of the initiator's own half -- an
+    //! observer who seeded the pool with candidates it can recognise on
+    //! chain reads prefer_reward (= ceil(k*r/n)) from the picked mix, and
+    //! r == 0 is a one-shot deterministic distinguisher. Much of r is
+    //! already inferable from the public input types, so the marginal leak
+    //! is bounded, but the independence property is deliberately spent here
+    //! to buy type blending.
+    std::vector<CTransactionRef> PickForAggregate(size_t max_n, size_t prefer_reward) const
+       ;
+
+    //! Flag the pooled candidate holding `input` as reward-backed. Split from
+    //! AddCandidate so the (cs_main-holding) chainstate classification runs
+    //! only for candidates that actually entered the pool -- a message
+    //! rejected by the structural checks or the caps must not pay for a coin
+    //! lookup, grow the tip coins cache, or block a p2pmsg worker. No-op if
+    //! the entry is gone (already evicted).
+    void MarkRewardInput(const COutPoint& input);
 
     //! Drop the candidate holding `input`, if any. Returns true if one was removed.
     bool EvictByInput(const COutPoint& input);
@@ -73,6 +105,10 @@ public:
 private:
     struct Entry {
         CTransactionRef tx;
+        //! Prev-out was a coinbase (block-reward) output. One-shot snapshot
+        //! taken at pool admission: a prev-out whose block is not yet
+        //! connected classifies as transfer permanently (no re-check).
+        bool reward_input{false};
     };
 
     static size_t ShardFor(const COutPoint& input);
