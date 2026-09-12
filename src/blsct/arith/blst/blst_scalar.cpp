@@ -355,7 +355,12 @@ BlstScalar BlstScalar::Rand(bool exclude_zero)
         unsigned char buf[32];
         RandBytes(buf, sizeof(buf));
         blst_scalar s{};
-        blst_scalar_from_le_bytes(&s, buf, sizeof(buf));
+        // Rejection sampling: copy the raw 256-bit value WITHOUT reduction and
+        // reject it when it is >= r. Reducing a 256-bit sample mod r leaves a
+        // ~7.5% statistical distance from uniform (2^256 ≈ 2.208·r); rejecting
+        // values >= r makes the output uniform over the field.
+        blst_scalar_from_lendian(&s, buf);
+        if (blst_sk_check(&s)) continue;
         temp.FromScalar(s);
         if (!exclude_zero || !temp.IsZero()) break;
     }
