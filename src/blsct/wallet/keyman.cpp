@@ -279,7 +279,6 @@ void KeyMan::SetHDSeed(const PrivateKey& key, const std::optional<int64_t>& crea
 
     AddHDChain(newHdChain);
     NotifyCanGetAddressesChanged();
-    wallet::WalletBatch batch(m_storage.GetDatabase());
 }
 
 bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time)

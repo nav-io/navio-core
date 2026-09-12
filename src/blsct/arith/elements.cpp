@@ -171,7 +171,7 @@ template <typename T>
 std::vector<uint8_t> OrderedElements<T>::GetVch() const
 {
     std::vector<uint8_t> aggr_vec;
-    for (T x : m_set) {
+    for (const T& x : m_set) {
         auto vec = x.GetVch();
         aggr_vec.insert(aggr_vec.end(), vec.begin(), vec.end());
     }
@@ -248,7 +248,7 @@ template <typename T>
 std::vector<uint8_t> Elements<T>::GetVch() const
 {
     std::vector<uint8_t> aggr_vec;
-    for (T x: m_vec) {
+    for (const T& x: m_vec) {
         auto vec = x.GetVch();
         aggr_vec.insert(aggr_vec.end(), vec.begin(), vec.end());
     }
@@ -261,7 +261,7 @@ template <typename T>
 T Elements<T>::Sum() const
 {
     T ret;
-    for (T s : m_vec) {
+    for (const T& s : m_vec) {
         ret = ret + s;
     }
     return ret;

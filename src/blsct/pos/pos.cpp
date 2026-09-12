@@ -217,7 +217,7 @@ uint256 CalculateStakeRingSeed(const CBlockIndex* pindexPrev, const uint256& hea
         anchor = anchor->pprev;
     }
 
-    const uint32_t bucketed_time = block_time - (block_time % POPS_TIME_GRANULARITY_SECONDS);
+    const uint32_t bucketed_time = BucketTime(block_time);
 
     HashWriter ss{};
     ss << pindexPrev->nStakeModifier
