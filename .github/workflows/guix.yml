@@ -106,9 +106,21 @@ jobs:
     env:
       # Pinned guix bootstrap binary (what guix-install.sh installs). The
       # bootstrap guix only runs `guix time-machine`, which pins the real build
-      # guix, so its version is immaterial — pinning makes the tarball
+      # guix, so its VERSION is immaterial — pinning makes the tarball
       # cacheable and lets the install bypass the flaky ftpmirror redirector.
+      # Its BYTES are not immaterial: it runs as root and drives the
+      # time-machine that produces every release artifact. Handing the tarball
+      # to guix-install.sh via GUIX_BINARY_FILE_NAME skips the installer's own
+      # signature check, so the sha256 below stands in for it and is checked on
+      # every download and every cache restore.
+      #
+      # To bump: fetch guix-binary-<ver>.x86_64-linux.tar.xz and its .sig from
+      # https://ftp.gnu.org/gnu/guix/, run `gpg --verify` against one of the
+      # release-signing fingerprints in guix's etc/guix-install.sh
+      # (GPG_SIGNING_KEYS), then record the tarball's sha256 here. 1.5.0 is
+      # signed by A28BF40C3E551372662D14F741AAE7DCCA3D8351.
       GUIX_BOOTSTRAP_VERSION: '1.5.0'
+      GUIX_BOOTSTRAP_SHA256: 'aa41025489c5061543e9c48873eaa829b900b2da75d40f9648913622f5f47817'
 
     strategy:
       fail-fast: false
@@ -268,12 +280,14 @@ jobs:
           test -d "${SDK_NAME}" || { echo "SDK extract produced no ${SDK_NAME} dir"; ls -la; exit 1; }
 
       - name: Cache guix bootstrap binary
-        # Cache the guix bootstrap tarball (keyed on the pinned version) so the
+        # Cache the guix bootstrap tarball (keyed on the pinned version and hash) so the
         # install never re-downloads it from the flaky ftpmirror redirector.
         uses: actions/cache@v5
         with:
           path: ~/guix-bootstrap
-          key: guix-binary-${{ env.GUIX_BOOTSTRAP_VERSION }}-x86_64-linux
+          # The hash is part of the key so re-pinning never restores an entry
+          # saved under the old pin.
+          key: guix-binary-${{ env.GUIX_BOOTSTRAP_VERSION }}-${{ env.GUIX_BOOTSTRAP_SHA256 }}-x86_64-linux
 
       - name: Install guix
         # Install guix directly on the runner (not inside a container) via the
@@ -319,12 +333,18 @@ jobs:
           # concurrent load of all matrix jobs. Instead pre-fetch a pinned
           # bootstrap tarball ourselves (restored from cache on hits) and hand
           # it to the installer via GUIX_BINARY_FILE_NAME, which makes it skip
-          # the download (and the gpg-key fetches) entirely.
+          # the download (and the gpg-key fetches and signature check) entirely.
+          # The pinned GUIX_BOOTSTRAP_SHA256 replaces that check: a mirror or a
+          # cache entry serving any other bytes is rejected before the
+          # root-run installer ever sees them.
           boot_dir="${HOME}/guix-bootstrap"
           tarball="guix-binary-${GUIX_BOOTSTRAP_VERSION}.x86_64-linux.tar.xz"
+          bootstrap_ok() {
+            echo "${GUIX_BOOTSTRAP_SHA256}  ${boot_dir}/${tarball}" | sha256sum --check --status
+          }
           mkdir -p "${boot_dir}"
-          if [ -f "${boot_dir}/${tarball}" ] && xz -t "${boot_dir}/${tarball}" 2>/dev/null; then
-            echo "Using cached ${tarball}"
+          if [ -f "${boot_dir}/${tarball}" ] && bootstrap_ok; then
+            echo "Using cached ${tarball} (sha256 verified)"
           else
             rm -f "${boot_dir}/${tarball}"
             BIN_URLS=(
@@ -337,13 +357,18 @@ jobs:
               if wget -nv --tries=5 --waitretry=15 \
                    --retry-on-http-error=429,500,502,503,504 \
                    -O "${boot_dir}/${tarball}" "${url}"; then
-                got=1
-                break
+                if bootstrap_ok; then
+                  got=1
+                  break
+                fi
+                # Truncated transfer or different bytes: never install it.
+                echo "Fetched ${tarball} from ${url} does not match GUIX_BOOTSTRAP_SHA256; trying next mirror..."
+                rm -f "${boot_dir}/${tarball}"
+                continue
               fi
               echo "Fetch from ${url} failed; trying next mirror..."
             done
-            [ "${got}" -eq 1 ] || { rm -f "${boot_dir}/${tarball}"; echo "Could not fetch ${tarball}"; exit 1; }
-            xz -t "${boot_dir}/${tarball}" || { rm -f "${boot_dir}/${tarball}"; echo "Fetched ${tarball} is corrupt"; exit 1; }
+            [ "${got}" -eq 1 ] || { rm -f "${boot_dir}/${tarball}"; echo "Could not fetch a ${tarball} matching GUIX_BOOTSTRAP_SHA256"; exit 1; }
           fi
 
           # Non-interactive: feed newlines to auto-accept the prompts. The
