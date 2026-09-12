@@ -19,6 +19,7 @@
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/msg_amt_cipher.h>
 #include <atomic>
+#include <bit>
 #include <exception>
 #include <future>
 #include <thread>
@@ -194,7 +195,10 @@ std::tuple<
     Scalars inv_e_squares = es.Invert().Square();
 
     // s_vec
-    uint32_t log_mn = std::log2(mn);
+    // mn is m * n with both factors powers of two, so log2 is bit_width - 1.
+    // Integer arithmetic, as in range_proof::Common::GetNumRoundsExclLast: a
+    // floating-point step has no place in a consensus-path index.
+    const uint32_t log_mn = static_cast<uint32_t>(std::bit_width(mn) - 1);
 
     Scalars s_vec;
     s_vec.Add(inv_es_prod);
