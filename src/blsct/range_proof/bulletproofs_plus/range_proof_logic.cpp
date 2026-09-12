@@ -37,7 +37,6 @@ template <typename T>
 Elements<typename T::Scalar> RangeProofLogic<T>::Compute_D(
     const Scalars& z_asc_by_2_pows,
     const Scalars& two_pows,
-    const Scalar& z_sq,
     const size_t& m
 ) {
     Scalars d;
@@ -53,7 +52,6 @@ template
 Elements<Blst::Scalar> RangeProofLogic<Blst>::Compute_D(
     const Elements<Blst::Scalar>& z_asc_by_2_pows,
     const Elements<Blst::Scalar>& two_pows,
-    const Blst::Scalar& z_sq,
     const size_t& m
 );
 
@@ -358,7 +356,6 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
     Scalars d = Compute_D(
         z_asc_by_2_pows,
         two_pows,
-        z_sq,
         m
     );
 
