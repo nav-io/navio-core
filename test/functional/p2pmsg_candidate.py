@@ -62,7 +62,7 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         # and runs the whole functional suite per commit on a saturated runner,
         # where 60s intermittently isn't enough. CentOS (timeout-factor=80)
         # excludes this test, so the larger base doesn't compound there.
-        self.wait_until(lambda: n0.getaggregationhint()["available"] >= 1, timeout=120)
+        self.wait_until(lambda: n0.getaggregationhint()["available"] >= 1, timeout=240)
         self.log.info("built-in serving filled the requester's pool automatically")
 
         # Producer never pools its own served candidates (they were encrypted
@@ -89,12 +89,12 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
             keys.extend(n1.listpendingcandidaterequests())
             return len(set(keys)) >= 2
 
-        self.wait_until(got_two, timeout=120)
+        self.wait_until(got_two, timeout=240)
         uniq = list(dict.fromkeys(keys))
         before = n0.getaggregationhint()["available"]
         res = w1.replycandidate(uniq[0])
         assert "candidate_txid" in res, res
-        self.wait_until(lambda: n0.getaggregationhint()["available"] > before, timeout=120)
+        self.wait_until(lambda: n0.getaggregationhint()["available"] > before, timeout=240)
         assert res["candidate_txid"] not in n0.getrawmempool()
         self.log.info("manual claim + replycandidate served OK")
 
