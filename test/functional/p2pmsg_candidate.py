@@ -16,6 +16,7 @@ listpendingcandidaterequests and answered via replycandidate.
 
 from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
+from test_framework.util import assert_equal
 
 # Fast pull/serve cadence so the test does not wait a minute per round.
 FAST = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2", "-servecandidateinterval=2"]
@@ -75,10 +76,21 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         assert n1.getrawmempool() == []
 
         # --- Manual serving path (daemon flow): claim + replycandidate. ---
+        # Restart node0 as well: its pool still holds the auto-served
+        # candidate from above, and node1's restart wipes the in-memory
+        # per-input reservation ledger — so the manual replycandidate below
+        # picks a coin uniformly at random and can (roughly 1-in-mature-coins
+        # per run) rebuild a candidate spending the SAME coin the pooled one
+        # already spends. Node0's input-outpoint dedupe then rejects it and
+        # the `available > before` wait times out. An empty requester pool
+        # makes the assertion deterministic: no pooled input exists to
+        # collide with.
+        self.restart_node(0, extra_args=FAST)
         self.restart_node(1, extra_args=FAST + ["-servecandidates=0"])
         self.connect_nodes(0, 1)
         n1.loadwallet("w1")
         w1 = n1.get_wallet_rpc("w1")
+        assert_equal(n0.getaggregationhint()["available"], 0)
         keys = []
 
         def got_one():
