@@ -17,6 +17,8 @@
 #include <wallet/spend.h>
 #include <wallet/wallet.h>
 
+#include <set>
+
 namespace blsct {
 
 class TxFactory : public TxFactoryBase
@@ -42,9 +44,15 @@ public:
     // Build one transaction that merges up to `maxInputs` of the wallet's
     // smallest spendable outputs into a single output paid to `destination`
     // (fee taken from the consolidated amount). Returns std::nullopt when there
-    // are fewer than two small outputs to merge. Used by the `consolidate` RPC
-    // and the staker's optional auto-consolidation.
-    static std::optional<BuiltTransaction> CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
+    // are fewer than two small outputs to merge, or when the merged amount
+    // cannot fund the fee. Used by the `consolidate` RPC and the staker's
+    // optional auto-consolidation. `additionalFee` over-funds the fee output
+    // (also out of the merged amount) so an aggregation initiator can cover
+    // the combined weight of its half + fee-0 cover candidates.
+    // `excludedInputs` are skipped during selection: the aggregated path
+    // broadcasts a combined tx with no CWalletTx to commit, so the caller must
+    // exclude inputs its earlier aggregates already spend.
+    static std::optional<BuiltTransaction> CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee = 0, const std::set<COutPoint>& excludedInputs = {}) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
     static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
     static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const bool& consolidateStakedCommitments = true) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
 };

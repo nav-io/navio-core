@@ -347,6 +347,74 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_sendmax_test, TestingSetup
     BOOST_CHECK(foundRecipient);
 }
 
+// `additionalFee` on the subtract-fee path: the aggregated `consolidate` RPC
+// over-funds the fee output (out of the merged amount) to cover the weight of
+// fee-0 cover candidates. Two identical single-output subtract-fee builds must
+// differ in fee output by exactly the additionalFee, with the recipient output
+// reduced by the same amount.
+BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_additionalfee_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test_sffa_extra", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    wallet::CWallet* wallet(new wallet::CWallet(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase()));
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    const auto txid = Txid::FromUint256(InsecureRand256());
+    COutPoint outpoint{txid};
+
+    Coin coin;
+    auto out = blsct::CreateOutput(recvAddress, 1000 * COIN, "test");
+    coin.nHeight = 1;
+    coin.out = out.out;
+
+    {
+        CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+        coins_view_cache.SetBestBlock(InsecureRand256());
+        coins_view_cache.AddCoin(outpoint, std::move(coin), true);
+        BOOST_CHECK(coins_view_cache.Flush());
+    }
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+
+    const CAmount extra = 1234567;
+    CAmount fee_plain = 0, fee_extra = 0, amount_plain = 0, amount_extra = 0;
+    for (const CAmount additional : {CAmount{0}, extra}) {
+        auto tx = blsct::TxFactory(blsct_km);
+        BOOST_CHECK(tx.AddInput(coins_view_cache, outpoint));
+        tx.AddOutput(recvAddress, 1000 * COIN, "test", TokenId(), blsct::NORMAL, 0, /*fSubtractFeeFromAmount=*/true);
+
+        auto finalTx = tx.BuildTx(/*nBLSCTDefaultFee=*/std::nullopt, additional);
+        BOOST_REQUIRE(finalTx.has_value());
+        TxValidationState tx_state;
+        BOOST_CHECK(blsct::VerifyTx(CTransaction(finalTx->tx), coins_view_cache, tx_state));
+
+        const CAmount fee = GetFeeValue(CTransaction(finalTx->tx));
+        auto result = blsct_km->RecoverOutputs(finalTx->tx.vout);
+        CAmount recipient = 0;
+        for (auto& res : result.amounts) {
+            if (res.message == "test") recipient = res.amount;
+        }
+        BOOST_REQUIRE(recipient > 0);
+        if (additional == 0) {
+            fee_plain = fee;
+            amount_plain = recipient;
+        } else {
+            fee_extra = fee;
+            amount_extra = recipient;
+        }
+    }
+    // Both builds have identical shape (1-in/1-out + fee output), so the whole
+    // additionalFee lands in the fee output and comes out of the recipient.
+    BOOST_CHECK_EQUAL(fee_extra, fee_plain + extra);
+    BOOST_CHECK_EQUAL(amount_extra, amount_plain - extra);
+}
+
 // BuildTx randomises vout order, so the recipient output sits at no fixed
 // position. The factory must say which output pays the destination: callers
 // hand that hash out as the payment handle, and pointing it at the change --

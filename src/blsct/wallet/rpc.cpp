@@ -2629,13 +2629,15 @@ RPCHelpMan consolidate()
         "Wallets that accumulate many small outputs (e.g. PoS staking rewards) cannot spend them all\n"
         "in a single transaction once they exceed the per-transaction input limit. Run this to combine\n"
         "the smallest outputs; each consolidation transaction merges up to the per-transaction input\n"
-        "cap.\n" +
+        "cap. Like plain sends, each consolidation is aggregated with fee-0 cover candidates from the\n"
+        "node's p2pmsg pool when any are available (disable with -aggregatesends=0), so the broadcast\n"
+        "transaction does not reveal which merged inputs are this wallet's.\n" +
             wallet::HELP_REQUIRING_PASSPHRASE,
         {
             {"max_txs", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Maximum number of consolidation transactions to create this call (default 1)."},
             {"max_inputs", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Maximum outputs to merge per transaction (default and hard cap: the per-transaction input limit)."},
         },
-        RPCResult{RPCResult::Type::ARR, "", "The ids of the consolidation transactions created (empty if nothing to consolidate).", {{RPCResult::Type::STR_HEX, "txid", "The consolidation transaction id."}}},
+        RPCResult{RPCResult::Type::ARR, "", "The ids of the consolidation transactions created (empty if nothing to consolidate).", {{RPCResult::Type::STR_HEX, "txid", "The consolidation transaction id (the combined transaction's id when cover candidates were aggregated in)."}}},
         RPCExamples{
             HelpExampleCli("consolidate", "5") + HelpExampleRpc("consolidate", "5")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -2668,7 +2670,23 @@ RPCHelpMan consolidate()
 
             const CAmount fee_rate = Params().GetConsensus().nBLSCTDefaultFee;
 
+            // Same default as SendTransaction: merge each consolidation with
+            // fee-0 cover candidates from the p2pmsg pool when any are pooled.
+            // A consolidation is the single most linkable transaction a wallet
+            // broadcasts (every input and the one output are its own), so it
+            // benefits from cover at least as much as a send does. Any
+            // aggregation failure falls back to a plain consolidation.
+            aggregation::CandidatePool* pool = aggregation::GetActivePool();
+            const bool aggregate_sends = pool && gArgs.GetBoolArg("-aggregatesends", aggregation::DEFAULT_AGGREGATE_SENDS);
+
             UniValue txids(UniValue::VARR);
+            // Inputs already consumed by an AGGREGATED consolidation broadcast
+            // this call. The combined tx's hash differs from the wallet's own
+            // half, so there is no CWalletTx to commit (the wallet recovers the
+            // spend by scanning, as on the aggregated send path) — and until
+            // that scan lands, coin selection would hand the next iteration the
+            // same smallest coins, building a conflicting double-spend half.
+            std::set<COutPoint> used_inputs;
             for (int i = 0; i < max_txs; ++i) {
                 // Drawing a fresh destination per iteration drains the pool by
                 // construction, so this is the loop most likely to exhaust it.
@@ -2680,13 +2698,67 @@ RPCHelpMan consolidate()
                     throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
                 }
                 auto dest = std::get<blsct::DoublePublicKey>(*op_dest);
-                auto res = blsct::TxFactory::CreateConsolidationTransaction(pwallet.get(), blsct_km, dest, max_inputs, fee_rate);
-                if (!res) break; // fewer than two small outputs remain to merge
 
-                const CTransactionRef tx = MakeTransactionRef(res->tx);
-                wallet::mapValue_t map_value;
-                pwallet->CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
-                txids.push_back(tx->GetHash().GetHex());
+                std::vector<CTransactionRef> candidates;
+                if (aggregate_sends) candidates = pool->PickForAggregate(aggregation::POOL_MAX_COMBINED);
+
+                bool exhausted = false;
+                for (;;) {
+                    // The cover weight's fee comes out of the merged amount
+                    // (consolidation subtracts its fee), so an over-funded
+                    // attempt can fail on a sum a plain one still clears.
+                    const CAmount extra = candidates.empty() ? 0 : aggregation::RequiredCandidateFee(candidates, fee_rate);
+                    auto res = blsct::TxFactory::CreateConsolidationTransaction(pwallet.get(), blsct_km, dest, max_inputs, fee_rate, extra, used_inputs);
+                    if (!res) {
+                        if (!candidates.empty()) {
+                            // (PickForAggregate does not remove from the pool,
+                            // so dropping the candidates here loses nothing.)
+                            LogPrint(BCLog::NET, "p2pmsg: aggregated consolidation fell back to plain (merged amount cannot fund the cover fee)\n");
+                            candidates.clear();
+                            continue;
+                        }
+                        exhausted = true; // fewer than two small outputs remain to merge
+                        break;
+                    }
+
+                    const CTransactionRef own = MakeTransactionRef(res->tx);
+                    if (!candidates.empty()) {
+                        std::vector<CTransactionRef> halves;
+                        halves.reserve(candidates.size() + 1);
+                        halves.push_back(own);
+                        halves.insert(halves.end(), candidates.begin(), candidates.end());
+
+                        auto combined = aggregation::CombineHalves(halves);
+                        CTransactionRef agg_tx;
+                        bool broadcast_ok = false;
+                        std::string err_string;
+                        if (combined) {
+                            agg_tx = MakeTransactionRef(std::move(*combined));
+                            broadcast_ok = pwallet->chain().broadcastTransaction(agg_tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string);
+                        }
+                        // Evict the picked candidates whether or not the
+                        // aggregate went through: a broadcast one must not be
+                        // merged into a second aggregate, and a malformed/stale
+                        // one must not be re-picked and poison every subsequent
+                        // consolidation.
+                        for (const auto& c : candidates) {
+                            for (const CTxIn& in : c->vin) pool->EvictByInput(in.prevout);
+                        }
+                        if (!broadcast_ok) {
+                            LogPrint(BCLog::NET, "p2pmsg: aggregated consolidation fell back to plain (combine/broadcast failed: %s)\n", err_string);
+                            candidates.clear();
+                            continue;
+                        }
+                        for (const CTxIn& in : own->vin) used_inputs.insert(in.prevout);
+                        txids.push_back(agg_tx->GetHash().GetHex());
+                    } else {
+                        wallet::mapValue_t map_value;
+                        pwallet->CommitTransaction(own, std::move(map_value), /*orderForm=*/{});
+                        txids.push_back(own->GetHash().GetHex());
+                    }
+                    break;
+                }
+                if (exhausted) break;
             }
 
             return txids;

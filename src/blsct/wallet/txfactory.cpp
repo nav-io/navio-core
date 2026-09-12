@@ -339,7 +339,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     }
 }
 
-std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee)
+std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee, const std::set<COutPoint>& excludedInputs)
 {
     AssertLockHeld(wallet->cs_wallet);
 
@@ -348,8 +348,8 @@ std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet
     std::vector<InputCandidates> candidates;
     AddAvailableCoins(wallet, blsct_km, TokenId(), CreateTransactionType::NORMAL, candidates, MAX_MONEY);
 
-    std::erase_if(candidates, [](const InputCandidates& c) {
-        return c.is_staked_commitment || !c.token_id.IsNull();
+    std::erase_if(candidates, [&](const InputCandidates& c) {
+        return c.is_staked_commitment || !c.token_id.IsNull() || excludedInputs.contains(c.outpoint);
     });
     std::sort(candidates.begin(), candidates.end(), [](const InputCandidates& a, const InputCandidates& b) {
         return a.amount < b.amount;
@@ -376,7 +376,7 @@ std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet
     // One output back to `destination`; the fee is taken from the merged amount.
     factory.AddOutput(SubAddress(destination), nSum, "Consolidate", TokenId(), NORMAL, 0, /*fSubtractFeeFromAmount=*/true, BlstScalar::Rand(), nBLSCTDefaultFee);
 
-    return factory.BuildTx(destination, /*minStake=*/0, NORMAL, /*fSubtractedFee=*/true, nBLSCTDefaultFee);
+    return factory.BuildTx(destination, /*minStake=*/0, NORMAL, /*fSubtractedFee=*/true, nBLSCTDefaultFee, additionalFee);
 }
 
 } // namespace blsct
