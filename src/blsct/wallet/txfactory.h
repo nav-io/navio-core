@@ -27,7 +27,6 @@ private:
 public:
     TxFactory(KeyMan* km) : km(km){};
 
-    bool AddInput(wallet::CWallet* wallet, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
     bool AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false);
     //! `nBLSCTDefaultFee` overrides the per-byte fee rate (nullopt = consensus
     //! default). `additionalFee` over-funds the fee output so an aggregation
