@@ -21,6 +21,7 @@
 #include <atomic>
 #include <exception>
 #include <future>
+#include <system_error>
 #include <thread>
 #include <type_traits>
 #include <tinyformat.h>
@@ -435,7 +436,8 @@ template RangeProof<Blst> RangeProofLogic<Blst>::Prove(
 
 template <typename T>
 bool RangeProofLogic<T>::VerifyProofs(
-    const std::vector<RangeProofWithTranscript<T>>& proof_transcripts)
+    const std::vector<RangeProofWithTranscript<T>>& proof_transcripts,
+    size_t threads)
 {
     using Scalar = typename T::Scalar;
     using Scalars = Elements<Scalar>;
@@ -571,12 +573,16 @@ bool RangeProofLogic<T>::VerifyProofs(
 
     // Bounded worker pool: one thread per proof would spawn thousands of OS
     // threads on an aggregated block and oversubscribe the host. Cap the pool
-    // at hardware_concurrency() and pull work indices off an atomic counter,
-    // mirroring RecoverAmounts below. Exceptions are captured per slot and
-    // rethrown after the join so a bad_alloc / inversion error propagates to
-    // the caller instead of reaching std::terminate.
+    // at `threads` (the caller's parallelism budget, e.g. -par on the connect
+    // path; 0 means hardware_concurrency()) and pull work indices off an
+    // atomic counter, mirroring RecoverAmounts below. Exceptions are captured
+    // per slot and rethrown after the join so a bad_alloc / inversion error
+    // propagates to the caller instead of reaching std::terminate.
     const size_t n = proof_transcripts.size();
-    std::vector<bool> results(n, false);
+    // uint8_t, not bool: workers write distinct slots concurrently, and
+    // std::vector<bool> packs several slots into one byte, so those writes
+    // would be racing read-modify-writes on shared storage.
+    std::vector<uint8_t> results(n, 0);
     std::vector<std::exception_ptr> errors(n);
     auto do_one = [&](size_t idx) {
         try {
@@ -586,7 +592,7 @@ bool RangeProofLogic<T>::VerifyProofs(
         }
     };
 
-    size_t nthreads = std::thread::hardware_concurrency();
+    size_t nthreads = threads != 0 ? threads : std::thread::hardware_concurrency();
     if (nthreads == 0) nthreads = 1;
     nthreads = std::min(nthreads, n);
     if (nthreads <= 1) {
@@ -602,7 +608,17 @@ bool RangeProofLogic<T>::VerifyProofs(
         };
         std::vector<std::thread> pool;
         pool.reserve(nthreads - 1);
-        for (size_t t = 1; t < nthreads; ++t) pool.emplace_back(worker);
+        for (size_t t = 1; t < nthreads; ++t) {
+            // Spawning can fail under resource pressure (std::system_error).
+            // Letting it escape would destroy `pool` with joinable threads and
+            // std::terminate; instead run with the workers we did get -- the
+            // shared counter means this thread and those drain every index.
+            try {
+                pool.emplace_back(worker);
+            } catch (const std::system_error&) {
+                break;
+            }
+        }
         worker();
         for (auto& th : pool) th.join();
     }
@@ -610,19 +626,21 @@ bool RangeProofLogic<T>::VerifyProofs(
     for (auto& e : errors) {
         if (e) std::rethrow_exception(e);
     }
-    for (bool ok : results) {
+    for (uint8_t ok : results) {
         if (!ok) return false;
     }
 
     return true;
 }
 template bool RangeProofLogic<Blst>::VerifyProofs(
-    const std::vector<RangeProofWithTranscript<Blst>>&
+    const std::vector<RangeProofWithTranscript<Blst>>&,
+    size_t
 );
 
 template <typename T>
 bool RangeProofLogic<T>::Verify(
-    const std::vector<RangeProofWithSeed<T>>& proofs)
+    const std::vector<RangeProofWithSeed<T>>& proofs,
+    size_t threads)
 {
     range_proof::Common<T>::ValidateProofsBySizes(proofs);
 
@@ -640,10 +658,10 @@ bool RangeProofLogic<T>::Verify(
 
 
     return VerifyProofs(
-        proof_transcripts);
+        proof_transcripts, threads);
 }
 template bool RangeProofLogic<Blst>::Verify(
-    const std::vector<RangeProofWithSeed<Blst>>&);
+    const std::vector<RangeProofWithSeed<Blst>>&, size_t);
 
 template <typename T>
 AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(

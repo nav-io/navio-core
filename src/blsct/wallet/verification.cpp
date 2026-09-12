@@ -514,7 +514,7 @@ TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSi
     return result;
 }
 
-bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& proofs)
+bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>>& proofs, size_t threads)
 {
     if (proofs.empty()) return true;
     auto& rp = GetSharedRPLogic();
@@ -525,7 +525,7 @@ bool VerifyCollectedRangeProofs(const std::vector<bulletproofs_plus::RangeProofW
     // would abort() the whole node on an attacker-supplied block. Treat any
     // such throw as a failed verification (the block/tx is simply invalid).
     try {
-        return rp.Verify(proofs);
+        return rp.Verify(proofs, threads);
     } catch (const std::exception& e) {
         LogPrint(BCLog::VALIDATION, "BLSCT range-proof verify threw: %s\n", e.what());
         return false;

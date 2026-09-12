@@ -3125,13 +3125,15 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
 
         // Single batched Bulletproofs++ verify across every BLSCT tx in the
         // block plus the PoS kernel range proof. Amortises transcript/setup
-        // overhead and lets the internal parallelism saturate available cores.
+        // overhead; the worker pool is sized from -par, the operator's
+        // parallelism budget, rather than every core on the host.
+        const size_t rangeproof_threads = m_chainman.GetCheckQueue().WorkerCount() + 1; // == -par
         const auto t_rangeproof_start = SteadyClock::now();
-        if (!blsct::VerifyCollectedRangeProofs(blockBLSCTProofs)) {
+        if (!blsct::VerifyCollectedRangeProofs(blockBLSCTProofs, rangeproof_threads)) {
             if (pos_kernel_range_proof.has_value()) {
                 std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> pos_only_proof;
                 pos_only_proof.push_back(*pos_kernel_range_proof);
-                if (!blsct::VerifyCollectedRangeProofs(pos_only_proof)) {
+                if (!blsct::VerifyCollectedRangeProofs(pos_only_proof, rangeproof_threads)) {
                     if (blsct_sig_verify_dispatched) blsct_sig_verify_future.wait();
                     return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
                 }
