@@ -45,7 +45,10 @@ enum class PayloadKind : uint8_t {
     RFQ_REQ = 4,
     RFQ_QUOTE = 5,
     ORDER_ANN = 6,
-    // 7..255 reserved for future applications. The relay layer never inspects
+    //! Opaque application payload addressed 1:1 to a node's inbox, delivered
+    //! to the user via listp2pmsgs. The node never interprets the body.
+    USER_DATA = 7,
+    // 8..255 reserved for future applications. The relay layer never inspects
     // this value beyond keying handler dispatch on the receiving node.
 };
 
@@ -292,6 +295,12 @@ private:
 
     Mutex m_replay_mutex;
     CuckooCache::cache<uint256, SignatureCacheHasher> m_replay GUARDED_BY(m_replay_mutex);
+    //! Messages this node has already relayed in FLUFF mode (see OnWire's
+    //! loop-tolerant relay policy). Together with m_replay this gives each
+    //! message a per-node relay budget of one stem pass plus one flood pass,
+    //! which is what lets a message escape a stem loop instead of dying in
+    //! the loop members' replay caches.
+    CuckooCache::cache<uint256, SignatureCacheHasher> m_fluff_relayed GUARDED_BY(m_replay_mutex);
 
     Mutex m_relay_limit_mutex;
     double m_relay_tokens GUARDED_BY(m_relay_limit_mutex){0.0};

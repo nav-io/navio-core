@@ -18,6 +18,7 @@
 #include <rfq/order_cache.h>
 #include <node/kernel_notifications.h>
 #include <p2pmsg/transport.h>
+#include <p2pmsg/user_inbox.h>
 #include <p2pmsg/worker_pool.h>
 #include <policy/fees.h>
 #include <scheduler.h>

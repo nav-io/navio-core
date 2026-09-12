@@ -53,6 +53,7 @@
 #include <blsct/range_proof/bulletproofs_plus/fixed_base_cache.h>
 #include <netmessagemaker.h>
 #include <p2pmsg/transport.h>
+#include <p2pmsg/user_inbox.h>
 #include <p2pmsg/worker_pool.h>
 #include <rfq/intent_store.h>
 #include <rfq/matcher.h>
@@ -574,6 +575,12 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-servecandidates", strprintf("Answer p2pmsg candidate pull requests with fee-0 cover candidates built from loaded BLSCT wallets' coins, each encrypted 1:1 to its requester. Each served candidate proves this node owns one specific on-chain output to that requester, so serving trades some wallet-clustering resistance for the network's aggregation supply and is rate-limited per peer and by a rolling per-window coin budget; disable with -servecandidates=0 (default: %u)", aggregation::DEFAULT_SERVE_CANDIDATES), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-servecandidateinterval=<n>", strprintf("Seconds between built-in candidate serving ticks (default: %d)", aggregation::SERVE_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::WALLET);
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgstoresize=<n>", strprintf("Maximum total size of the on-disk p2pmsg user-message store in MiB; oldest messages are pruned first when exceeded (default: %u)", p2pmsg::DEFAULT_USER_STORE_MB), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgstoreexpiry=<n>", strprintf("Days a stored p2pmsg user message is retained before being pruned; 0 = no age limit (default: %u)", p2pmsg::DEFAULT_USER_STORE_EXPIRY_DAYS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgtopic=<topic>", "Subscribe to a p2pmsg broadcast topic at startup (can be set multiple times). Broadcast USER_DATA on subscribed topics is stored for listp2pmsgs; also manageable at runtime with subscribep2pmsgtopic", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+#if HAVE_SYSTEM
+    argsman.AddArg("-p2pmsgnotify=<cmd>", "Execute command when a p2pmsg user message is stored (%s in cmd is replaced by the message id; fetch it with listp2pmsgs)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+#endif
     argsman.AddArg("-candidatepullinterval=<n>", strprintf("Seconds between background candidate pull rounds (default: %d)", aggregation::PULL_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onionworkers=<n>", "Number of worker threads for p2p-messaging heavy crypto (0 = auto, default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsginboxrotation=<secs>", "Opt into periodic rotation of the p2p-messaging inbox prekey every <secs> seconds (bounds linkability and a key-extraction window). 0 = manual only, rotate on demand with the rotatep2pmsginbox RPC (default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
@@ -631,6 +638,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-zmqpubrawblock=<address>", "Enable publish raw block in <address>", ArgsManager::ALLOW_ANY, OptionsCategory::ZMQ);
     argsman.AddArg("-zmqpubrawtx=<address>", "Enable publish raw transaction in <address>", ArgsManager::ALLOW_ANY, OptionsCategory::ZMQ);
     argsman.AddArg("-zmqpubsequence=<address>", "Enable publish hash block and tx sequence in <address>", ArgsManager::ALLOW_ANY, OptionsCategory::ZMQ);
+    argsman.AddArg("-zmqpubp2pmsg=<address>", "Enable publish of stored p2pmsg user messages (serialized entry) in <address>", ArgsManager::ALLOW_ANY, OptionsCategory::ZMQ);
     argsman.AddArg("-zmqpubhashblockhwm=<n>", strprintf("Set publish hash block outbound message high water mark (default: %d)", CZMQAbstractNotifier::DEFAULT_ZMQ_SNDHWM), ArgsManager::ALLOW_ANY, OptionsCategory::ZMQ);
     argsman.AddArg("-zmqpubhashtxhwm=<n>", strprintf("Set publish hash transaction outbound message high water mark (default: %d)", CZMQAbstractNotifier::DEFAULT_ZMQ_SNDHWM), ArgsManager::ALLOW_ANY, OptionsCategory::ZMQ);
     argsman.AddArg("-zmqpubrawblockhwm=<n>", strprintf("Set publish raw block outbound message high water mark (default: %d)", CZMQAbstractNotifier::DEFAULT_ZMQ_SNDHWM), ArgsManager::ALLOW_ANY, OptionsCategory::ZMQ);
@@ -1907,6 +1915,29 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         node.rfq_matcher = std::make_unique<rfq::MatcherRegistry>();
         rfq::SetActiveMatcher(node.rfq_matcher.get());
 
+        // Inbound USER_DATA store, drained via listp2pmsgs (chat and other
+        // applications built on the bus). On disk so infrequently-polling
+        // applications and restarts do not lose messages; bounded by
+        // -p2pmsgstoresize (oldest pruned first) and -p2pmsgstoreexpiry.
+        {
+            p2pmsg::UserInbox::Options inbox_opts;
+            inbox_opts.path = args.GetDataDirNet() / "p2pmsg_inbox";
+            int64_t store_mb = args.GetIntArg("-p2pmsgstoresize", p2pmsg::DEFAULT_USER_STORE_MB);
+            // Clamp before the MiB shift: on a 32-bit size_t, store_mb >= 4096
+            // would wrap the shift and silently disable the cap.
+            const int64_t max_mb = static_cast<int64_t>(std::numeric_limits<size_t>::max() >> 20);
+            if (store_mb > max_mb) store_mb = max_mb;
+            inbox_opts.max_total_bytes = store_mb > 0 ? static_cast<size_t>(store_mb) << 20 : 0;
+            const int64_t expiry_days = args.GetIntArg("-p2pmsgstoreexpiry", p2pmsg::DEFAULT_USER_STORE_EXPIRY_DAYS);
+            inbox_opts.expiry_seconds = expiry_days > 0 ? expiry_days * int64_t{24 * 3600} : 0;
+            node.p2pmsg_user_inbox = std::make_unique<p2pmsg::UserInbox>(std::move(inbox_opts));
+            for (const std::string& topic : args.GetArgs("-p2pmsgtopic")) {
+                if (!topic.empty() && topic.size() <= p2pmsg::MAX_USER_MSG_TOPIC_BYTES) {
+                    node.p2pmsg_user_inbox->Subscribe(topic);
+                }
+            }
+        }
+
         // Route decrypted inbound payloads to the right subsystem. These run on
         // a worker thread (after the net thread's PoW/replay gate + decrypt), so
         // they only do cheap deserialize + in-memory bookkeeping.
@@ -1979,6 +2010,71 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         LogPrint(BCLog::NET, "p2pmsg: AGG_ANN request from peer=%d %s\n",
                                  m.from_peer,
                                  queued ? "queued" : "dropped (per-neighbour cap or duplicate)");
+                    });
+            }
+
+            // An application message. The node parses only the frame's topic;
+            // the body is stored untouched. Delivery rules by decrypting key:
+            //  - our rotating inbox prekey: always stored (scope "inbox"),
+            //  - a session key (mintp2pmsgreplykey): always stored ("session")
+            //    — the key was minted deliberately to receive exactly this,
+            //  - the well-known broadcast key: public pub/sub; stored only
+            //    when the topic is subscribed ("broadcast"), so every public
+            //    app's traffic does not accumulate on every node.
+            {
+                p2pmsg::UserInbox* inbox = node.p2pmsg_user_inbox.get();
+#if HAVE_SYSTEM
+                const std::string msg_notify = args.GetArg("-p2pmsgnotify", "");
+#else
+                const std::string msg_notify;
+#endif
+                node.p2pmsg_transport->RegisterHandler(
+                    p2pmsg::PayloadKind::USER_DATA,
+                    [inbox, msg_notify](const p2pmsg::InboundMessage& m) {
+                        if (m.body.empty() || m.body.size() > p2pmsg::MAX_USER_MSG_BYTES) return;
+                        p2pmsg::UserMsgFrame frame;
+                        try {
+                            DataStream ss{MakeByteSpan(m.body)};
+                            ss >> frame;
+                            if (!ss.empty()) return; // trailing bytes: malformed
+                        } catch (const std::exception&) {
+                            return;
+                        }
+                        if (frame.topic.empty() || frame.topic.size() > p2pmsg::MAX_USER_MSG_TOPIC_BYTES) return;
+                        if (frame.body.empty()) return;
+
+                        p2pmsg::MsgScope scope{p2pmsg::MsgScope::INBOX};
+                        switch (m.recipient) {
+                        case p2pmsg::RecipientKey::INBOX: scope = p2pmsg::MsgScope::INBOX; break;
+                        case p2pmsg::RecipientKey::SESSION: scope = p2pmsg::MsgScope::SESSION; break;
+                        case p2pmsg::RecipientKey::BROADCAST:
+                            if (!inbox->IsSubscribed(frame.topic)) return;
+                            scope = p2pmsg::MsgScope::BROADCAST;
+                            break;
+                        }
+
+                        auto stored = inbox->Add(GetTime<std::chrono::seconds>().count(), scope,
+                                                 frame.topic, m.sender_session, std::move(frame.body));
+                        if (!stored) return;
+
+#if ENABLE_ZMQ
+                        // Push notifiers run on the validation-interface queue so
+                        // zmq sends are serialized with the validation-driven ones
+                        // (this handler runs on a p2pmsg worker thread).
+                        if (g_zmq_notification_interface) {
+                            CallFunctionInValidationInterfaceQueue([entry = *stored] {
+                                if (g_zmq_notification_interface) g_zmq_notification_interface->NotifyP2PMsg(entry);
+                            });
+                        }
+#endif
+#if HAVE_SYSTEM
+                        if (!msg_notify.empty()) {
+                            std::string command = msg_notify;
+                            ReplaceAll(command, "%s", strprintf("%d", stored->id));
+                            std::thread t(runCommand, command);
+                            t.detach(); // thread runs free
+                        }
+#endif
                     });
             }
 

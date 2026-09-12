@@ -6,6 +6,7 @@
 #define BITCOIN_ZMQ_ZMQNOTIFICATIONINTERFACE_H
 
 #include <primitives/transaction.h>
+#include <p2pmsg/user_inbox.h>
 #include <validationinterface.h>
 
 #include <cstdint>
@@ -24,6 +25,12 @@ public:
     ~CZMQNotificationInterface();
 
     std::list<const CZMQAbstractNotifier*> GetActiveNotifiers() const;
+
+    //! Publish a stored p2pmsg user message. NOT a CValidationInterface hook:
+    //! callers must invoke it on the validation-interface queue
+    //! (CallFunctionInValidationInterfaceQueue) so it is serialized with the
+    //! validation-driven notifications onto the same background thread.
+    void NotifyP2PMsg(const p2pmsg::UserInbox::Entry& entry);
 
     static std::unique_ptr<CZMQNotificationInterface> Create(std::function<bool(CBlock&, const CBlockIndex&)> get_block_by_index);
 

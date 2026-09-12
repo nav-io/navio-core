@@ -377,6 +377,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     p2pmsg/crypto.cpp
     p2pmsg/pow.cpp
     p2pmsg/transport.cpp
+    p2pmsg/user_inbox.cpp
     p2pmsg/worker_pool.cpp
     rfq/intent_store.cpp
     rfq/matcher.cpp
