@@ -188,6 +188,13 @@ void Common<T>::ValidateProofsBySizes(
             throw std::runtime_error(strprintf("%s: number of input values exceeds the maximum %ld",
                                                __func__, range_proof::Setup::max_input_values));
 
+        // The prover pads Vs to a power of two; the verifier folds only
+        // Vs.Size() value-commitment terms against m = next_pow2(Vs.Size()),
+        // so a non-power-of-two count would leave the trailing terms unbound.
+        if (blsct::Common::GetFirstPowerOf2GreaterOrEqTo(proof.Vs.Size()) != proof.Vs.Size())
+            throw std::runtime_error(strprintf("%s: number of input values must be a power of two (%ld)",
+                                               __func__, proof.Vs.Size()));
+
         // L,R keep track of aggregation history and the size should equal to # of rounds
         size_t num_rounds = range_proof::Common<T>::GetNumRoundsExclLast(proof.Vs.Size());
         if (proof.Ls.Size() != num_rounds)
