@@ -99,12 +99,44 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
 
         # Confirm on-chain.
         self.wait_until(lambda: txid in taker_n.getrawmempool(), timeout=20)
+
+        # Pin the split: the maker half must have combined BOTH token coins
+        # (plus a NAV fee coin), the taker at least one NAV coin — so the
+        # combined swap carries >= 4 inputs. Without this, coin-selection
+        # changes (e.g. minttoken merging its own change) could quietly turn
+        # the split-balance setup above into a single-coin swap that covers
+        # nothing.
+        swap_vin = len(taker_n.getrawtransaction(txid, True)["vin"])
+        assert swap_vin >= 4, f"expected a multi-input swap, got {swap_vin} inputs"
+
         blocks = self.generatetoblsctaddress(taker_n, 1, taker_addr)
         self.sync_all()
         blk = taker_n.getblock(blocks[0])
         assert txid in blk["tx"], "swap not in the mined block"
 
         self.log.info("two-node RFQ atomic swap confirmed on-chain OK")
+
+        # NAV-pay fee headroom: an offer of (almost) a whole NAV coin must
+        # still build — the fee comes on top of pay_amount from the same
+        # token, so the maker needs a second coin for it. 6 NAV split 5 + 1,
+        # offering 5, failed with "failed to build order half" when input
+        # gathering stopped at the bare requirement.
+        maker2_n = maker_n
+        maker2_n.createwallet(wallet_name="maker2", blsct=True)
+        maker2 = maker2_n.get_wallet_rpc("maker2")
+        maker2_addr = maker2.getnewaddress(label="", address_type="blsct")
+        maker.sendtoblsctaddress(maker2_addr, 5)
+        self.gb(maker_n, maker_addr, 1)
+        maker.sendtoblsctaddress(maker2_addr, 1)
+        self.gb(maker_n, maker_addr, 2)
+        self.sync_all()
+        assert_equal(maker2.getbalance(), 6)
+
+        # NB: broadcastorder amounts are RPCArg::Type::AMOUNT (decimal), not
+        # raw base units like requestquote's size.
+        res = maker2.broadcastorder("", 5.0, tid, 1, 1893456000)
+        assert res, "NAV-pay order across a 5+1 split failed to build"
+        self.log.info("NAV-pay order with fee headroom across split coins OK")
 
 
 if __name__ == "__main__":

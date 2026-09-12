@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <functional>
 #include <addresstype.h>
 #include <common/args.h>
 #include <blsct/wallet/balance_proof.h>
@@ -722,7 +723,9 @@ static RPCHelpMan acceptquotewallet()
             // Gather up to the amount we must pay: nAmountLimit=0 would stop
             // the selection after a single candidate (the loop pushes, then
             // breaks once the total exceeds the limit), so a balance split
-            // across several coins could never fund the swap.
+            // across several coins could never fund the swap. The bare
+            // requirement is enough here: the taker half is built with
+            // rate 0 / additionalFee 0, so no fee headroom is needed.
             blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/quote.sell_cost);
 
             auto factory = blsct::TxFactory(km);
@@ -767,6 +770,28 @@ static RPCHelpMan acceptquotewallet()
             return tx->GetHash().GetHex();
         },
     };
+}
+
+// Feed spare NAV coins into `factory` one at a time and rebuild until the
+// unbalanced half builds or the spares run out. BuildUnbalancedHalf returns
+// nullopt exactly when some input token cannot cover its outgo plus (for NAV)
+// the fee, and the required fee is a moving target — it depends on the final
+// transaction weight — so no up-front gathering limit can guarantee coverage.
+// Adding one more coin and rebuilding converges instead, and also lets the
+// fee be paid from several small NAV coins rather than one.
+static std::optional<CMutableTransaction> BuildHalfAddingSpares(
+    blsct::TxFactory& factory,
+    const std::vector<blsct::InputCandidates>& spares,
+    size_t first_spare,
+    const std::function<std::optional<CMutableTransaction>()>& build)
+{
+    auto half = build();
+    for (size_t i = first_spare; !half && i < spares.size(); ++i) {
+        const auto& c = spares[i];
+        factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+        half = build();
+    }
+    return half;
 }
 
 static RPCHelpMan broadcastorder()
@@ -816,9 +841,11 @@ static RPCHelpMan broadcastorder()
             params.only_blsct = true;
             params.token_id = offer_token;
             params.min_amount = 1;
-            // See acceptquotewallet: 0 here means "one candidate", which fails
-            // any offer whose balance is split across coins.
-            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/offer_amount);
+            // Gather with MAX_MONEY so coins beyond the bare offer remain
+            // available as fee spares: when the offer token IS NAV the same
+            // coins must also cover the fee, whose exact size is only known
+            // once the half is built (see BuildHalfAddingSpares).
+            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/MAX_MONEY);
 
             auto factory = blsct::TxFactory(km);
             // Rule A (hard cutover): the order half must be range-proved and
@@ -826,25 +853,32 @@ static RPCHelpMan broadcastorder()
             const int tip_height = pwallet->chain().getHeight().value_or(-1);
             factory.SetTranscriptV2((tip_height + 1) >= Params().GetConsensus().nBLSCTProofV2Height);
             CAmount gathered = 0;
-            for (const auto& c : candidates) {
-                if (gathered >= offer_amount) break;
+            size_t used = 0;
+            for (; used < candidates.size() && gathered < offer_amount; ++used) {
+                const auto& c = candidates[used];
                 factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
                 gathered += c.amount;
             }
             if (gathered < offer_amount) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough of the offer token");
 
-            // If the offer token is not NAV, also add a NAV coin for the fee.
+            // Fee spares: unused NAV coins the retry loop can add if the half
+            // cannot cover its (weight-dependent) fee. For a NAV offer these
+            // are the remaining candidates; for a token offer, the wallet's
+            // NAV coins, the first of which is seeded up front so the initial
+            // build attempt is not guaranteed to fail for lack of any NAV.
             const CAmount rate = Params().GetConsensus().nBLSCTDefaultFee;
-            if (!(offer_token == TokenId())) {
-                std::vector<blsct::InputCandidates> nav;
+            std::vector<blsct::InputCandidates> fee_spares;
+            size_t first_spare = 0;
+            if (offer_token == TokenId()) {
+                fee_spares = candidates;
+                first_spare = used;
+            } else {
                 wallet::CoinFilterParams np; np.only_blsct = true; np.token_id = TokenId(); np.min_amount = 1;
-                // MAX_MONEY: only one coin is used (front(), the largest), but
-                // a 0 limit is the "one arbitrary candidate" footgun; make the
-                // full set available so front() really is the largest NAV coin.
-                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, nav, /*nAmountLimit=*/MAX_MONEY);
-                if (nav.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No NAV to fund the order fee");
-                const auto& c = nav.front();
+                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, fee_spares, /*nAmountLimit=*/MAX_MONEY);
+                if (fee_spares.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No NAV to fund the order fee");
+                const auto& c = fee_spares.front();
                 factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+                first_spare = 1;
             }
 
             blsct::SubAddress maker_recv(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
@@ -853,11 +887,13 @@ static RPCHelpMan broadcastorder()
             // Over-fund the fee for a generous taker-half allowance so the
             // combined swap clears the consensus minimum.
             const CAmount extra = static_cast<CAmount>(aggregation::CANDIDATE_WEIGHT_ESTIMATE) * rate;
-            auto half = factory.BuildUnbalancedHalf(
-                change, maker_recv,
-                /*pay_token=*/offer_token, /*pay_amount=*/offer_amount,
-                /*recv_token=*/want_token, /*recv_amount=*/want_amount,
-                rate, /*additionalFee=*/extra);
+            auto half = BuildHalfAddingSpares(factory, fee_spares, first_spare, [&] {
+                return factory.BuildUnbalancedHalf(
+                    change, maker_recv,
+                    /*pay_token=*/offer_token, /*pay_amount=*/offer_amount,
+                    /*recv_token=*/want_token, /*recv_amount=*/want_amount,
+                    rate, /*additionalFee=*/extra);
+            });
             if (!half) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build order half");
 
             rfq::RfqQuote q;
@@ -928,9 +964,9 @@ static RPCHelpMan replyquote()
             params.only_blsct = true;
             params.token_id = pay_token;
             params.min_amount = 1;
-            // See acceptquotewallet: 0 here means "one candidate", which fails
-            // any fill whose balance is split across coins.
-            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/pm->fill);
+            // MAX_MONEY: leftovers double as fee spares when the pay token is
+            // NAV (see broadcastorder).
+            blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/MAX_MONEY);
 
             auto factory = blsct::TxFactory(km);
             // Rule A (hard cutover): the quote half must be range-proved and
@@ -938,33 +974,40 @@ static RPCHelpMan replyquote()
             const int tip_height = pwallet->chain().getHeight().value_or(-1);
             factory.SetTranscriptV2((tip_height + 1) >= Params().GetConsensus().nBLSCTProofV2Height);
             CAmount gathered = 0;
-            for (const auto& c : candidates) {
-                if (gathered >= pm->fill) break;
+            size_t used = 0;
+            for (; used < candidates.size() && gathered < pm->fill; ++used) {
+                const auto& c = candidates[used];
                 factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
                 gathered += c.amount;
             }
             if (gathered < pm->fill) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough of the pay token");
 
             const CAmount rate = Params().GetConsensus().nBLSCTDefaultFee;
-            if (!(pay_token == TokenId())) {
-                std::vector<blsct::InputCandidates> nav;
+            std::vector<blsct::InputCandidates> fee_spares;
+            size_t first_spare = 0;
+            if (pay_token == TokenId()) {
+                fee_spares = candidates;
+                first_spare = used;
+            } else {
                 wallet::CoinFilterParams np; np.only_blsct = true; np.token_id = TokenId(); np.min_amount = 1;
-                // MAX_MONEY: see the order-fee leg above.
-                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, nav, /*nAmountLimit=*/MAX_MONEY);
-                if (nav.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No NAV to fund the quote fee");
-                const auto& c = nav.front();
+                blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, np, fee_spares, /*nAmountLimit=*/MAX_MONEY);
+                if (fee_spares.empty()) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No NAV to fund the quote fee");
+                const auto& c = fee_spares.front();
                 factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+                first_spare = 1;
             }
 
             blsct::SubAddress maker_recv(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
             blsct::DoublePublicKey change = std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value());
 
             const CAmount extra = static_cast<CAmount>(aggregation::CANDIDATE_WEIGHT_ESTIMATE) * rate;
-            auto half = factory.BuildUnbalancedHalf(
-                change, maker_recv,
-                /*pay_token=*/pay_token, /*pay_amount=*/pm->fill,
-                /*recv_token=*/recv_token, /*recv_amount=*/pm->sell_cost,
-                rate, /*additionalFee=*/extra);
+            auto half = BuildHalfAddingSpares(factory, fee_spares, first_spare, [&] {
+                return factory.BuildUnbalancedHalf(
+                    change, maker_recv,
+                    /*pay_token=*/pay_token, /*pay_amount=*/pm->fill,
+                    /*recv_token=*/recv_token, /*recv_amount=*/pm->sell_cost,
+                    rate, /*additionalFee=*/extra);
+            });
             if (!half) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build quote half");
 
             rfq::RfqQuote q;
