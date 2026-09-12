@@ -19,6 +19,7 @@
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/msg_amt_cipher.h>
 #include <atomic>
+#include <bit>
 #include <exception>
 #include <future>
 #include <thread>
@@ -36,7 +37,6 @@ template <typename T>
 Elements<typename T::Scalar> RangeProofLogic<T>::Compute_D(
     const Scalars& z_asc_by_2_pows,
     const Scalars& two_pows,
-    const Scalar& z_sq,
     const size_t& m
 ) {
     Scalars d;
@@ -52,7 +52,6 @@ template
 Elements<Blst::Scalar> RangeProofLogic<Blst>::Compute_D(
     const Elements<Blst::Scalar>& z_asc_by_2_pows,
     const Elements<Blst::Scalar>& two_pows,
-    const Blst::Scalar& z_sq,
     const size_t& m
 );
 
@@ -160,17 +159,9 @@ std::tuple<
 
 template <typename T>
 size_t RangeProofLogic<T>::GetNumLeadingZeros(const uint32_t& n) {
-    size_t count = 0;
-    uint32_t mask = 1U << 31;
-
-    if (n == 0) return 0;
-
-    while (mask != 0) {
-        if ((n & mask) != 0) return count;
-        mask >>= 1;
-        ++count;
-    }
-    return count;
+    // 0 maps to 0, not 32: kept from the hand-written loop this replaced and
+    // pinned by test_range_proof_get_num_leading_zeros. Callers pass n >= 1.
+    return n == 0 ? 0 : static_cast<size_t>(std::countl_zero(n));
 }
 template
 size_t RangeProofLogic<Blst>::GetNumLeadingZeros(const uint32_t& n);
@@ -365,7 +356,6 @@ retry: // hasher is not cleared so that different hash will be obtained upon ret
     Scalars d = Compute_D(
         z_asc_by_2_pows,
         two_pows,
-        z_sq,
         m
     );
 

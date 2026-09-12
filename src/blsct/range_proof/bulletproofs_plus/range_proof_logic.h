@@ -55,7 +55,6 @@ private:
     static Scalars Compute_D(
         const Scalars& z_asc_by_2_pows,
         const Scalars& two_pows,
-        const Scalar& z_sq,
         const size_t& m
     );
 

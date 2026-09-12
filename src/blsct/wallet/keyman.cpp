@@ -111,7 +111,7 @@ bool KeyMan::AddKeyPubKeyWithDB(wallet::WalletBatch& batch, const PrivateKey& se
     return true;
 }
 
-bool KeyMan::AddSubAddressPoolWithDB(wallet::WalletBatch& batch, const SubAddressIdentifier& id, const SubAddress& subAddress, const bool& fLock)
+bool KeyMan::AddSubAddressPoolWithDB(wallet::WalletBatch& batch, const SubAddressIdentifier& id, const SubAddress& subAddress)
 {
     LOCK(cs_KeyStore);
 
@@ -120,7 +120,7 @@ bool KeyMan::AddSubAddressPoolWithDB(wallet::WalletBatch& batch, const SubAddres
     return batch.WriteSubAddressPool(id, SubAddressPool(subAddress.GetKeys().GetID()));
 }
 
-bool KeyMan::AddSubAddressPoolInner(const SubAddressIdentifier& id, const bool& fLock)
+bool KeyMan::AddSubAddressPoolInner(const SubAddressIdentifier& id)
 {
     LOCK(cs_KeyStore);
 
@@ -1033,7 +1033,7 @@ bool KeyMan::TopUpAccount(const int64_t& account, const unsigned int& size)
     wallet::WalletBatch batch(m_storage.GetDatabase());
     for (int64_t i = missing; i--;) {
         auto sa = GenerateNewSubAddress(account, id);
-        AddSubAddressPoolWithDB(batch, id, sa, false);
+        AddSubAddressPoolWithDB(batch, id, sa);
     }
 
     if (missing > 0)
