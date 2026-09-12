@@ -16,7 +16,7 @@
 #include <streams.h>
 #include <util/strencodings.h>
 
-#include <cmath>
+#include <bit>
 #include <stdexcept>
 
 // SetMemProof::MAX_ROUNDS is the deserialization bound on |Ls| / |Rs|; keep
@@ -341,7 +341,10 @@ bool SetMemProofProver<T>::Verify(
     // afterwards -- so appended pairs enter no equation, and a padded proof
     // would verify exactly like the proof it was padded from. The range proof
     // enforces the same invariant in range_proof::Common::ValidateProofsBySizes.
-    const size_t num_rounds = std::log2(n);
+    // n is a power of two (GetFirstPowerOf2GreaterOrEqTo), so log2 is
+    // bit_width - 1; integer arithmetic keeps a floating-point step out of a
+    // consensus count.
+    const size_t num_rounds = static_cast<size_t>(std::bit_width(n) - 1);
     if (proof.Ls.Size() != num_rounds) return false;
 
     // Every prover-supplied commitment must be a proper group element: the
