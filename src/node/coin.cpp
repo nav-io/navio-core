@@ -42,4 +42,16 @@ void FindTokens(const NodeContext& node, std::map<uint256, blsct::TokenEntry>& t
         };
     }
 }
+
+void ListAllTokens(const NodeContext& node, std::map<uint256, blsct::TokenEntry>& tokens)
+{
+    assert(node.chainman);
+    tokens.clear();
+    LOCK(cs_main);
+    TokensMap all;
+    node.chainman->ActiveChainstate().CoinsTip().GetAllTokens(all);
+    for (auto& it : all) {
+        tokens.emplace(it.first, it.second.token);
+    }
+}
 } // namespace node

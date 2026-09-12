@@ -13,6 +13,7 @@
 #include <blsct/public_key.h>
 #include <blsct/public_keys.h>
 #include <blsct/tokens/predicate_parser.h>
+#include <blsct/tokens/rpc.h>
 #include <coins.h>
 #include <core_io.h>
 #include <key_io.h>
@@ -1026,6 +1027,116 @@ RPCHelpMan createtoken()
         RPCExamples{HelpExampleRpc("createtoken", "{\"name\":\"Token\"} 1000")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             return CreateTokenOrNft(self, request, blsct::TOKEN);
+        },
+    };
+}
+
+
+//! Read-only wallet ownership check for a token/NFT collection: the token's
+//! creator key is derived from the wallet's master token key and the hash of
+//! the token's immutable fields, so re-deriving and comparing the public key
+//! answers "did this wallet create it" without touching the chain or
+//! broadcasting anything (the same check minttoken/mintnft perform before
+//! spending).
+//! tokenInfoResult with "ismine" spliced in after tokenId, matching the
+//! output order of the wallet-aware token RPCs.
+static std::vector<RPCResult> WalletTokenInfoResult()
+{
+    // RPCResult is not copy-assignable (const members), so build with
+    // push_back copies only.
+    std::vector<RPCResult> res;
+    res.reserve(tokenInfoResult.size() + 1);
+    bool first = true;
+    for (const auto& r : tokenInfoResult) {
+        res.push_back(r);
+        if (first) {
+            res.emplace_back(RPCResult::Type::BOOL, "ismine", "whether this wallet created the token (holds its minting key)");
+            first = false;
+        }
+    }
+    return res;
+}
+
+static bool TokenIsMine(blsct::KeyMan& blsct_km, const blsct::TokenEntry& token)
+{
+    const auto seed = (HashWriter{} << token.info.mapMetadata << token.info.nTotalSupply).GetHash();
+    return blsct_km.GetTokenKey(seed).GetPublicKey() == token.info.publicKey;
+}
+
+static RPCHelpMan listwallettokens()
+{
+    return RPCHelpMan{
+        "listwallettokens",
+        "\nLike listtokens, but wallet-aware: every token/NFT collection is reported with an\n"
+        "\"ismine\" flag saying whether THIS wallet created it (and can therefore mint it).\n"
+        "The check is read-only key derivation; nothing is broadcast.\n",
+        {
+            {"mine_only", RPCArg::Type::BOOL, RPCArg::Default{false}, "Only return tokens created by this wallet"},
+        },
+        RPCResult{RPCResult::Type::ARR, "", "", {
+            {RPCResult::Type::OBJ, "", "", WalletTokenInfoResult()},
+        }},
+        RPCExamples{HelpExampleCli("listwallettokens", "") + HelpExampleCli("listwallettokens", "true") + HelpExampleRpc("listwallettokens", "true")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+            auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+            const bool mine_only = request.params[0].isNull() ? false : request.params[0].get_bool();
+
+            std::map<uint256, blsct::TokenEntry> tokens;
+            pwallet->chain().listAllTokens(tokens);
+
+            UniValue ret{UniValue::VARR};
+            for (auto& it : tokens) {
+                const bool ismine = TokenIsMine(*blsct_km, it.second);
+                if (mine_only && !ismine) continue;
+                UniValue obj{UniValue::VOBJ};
+                obj.pushKV("tokenId", it.first.ToString());
+                obj.pushKV("ismine", ismine);
+                TokenToUniValue(obj, it.second);
+                ret.push_back(obj);
+            }
+            return ret;
+        },
+    };
+}
+
+static RPCHelpMan getwallettoken()
+{
+    return RPCHelpMan{
+        "getwallettoken",
+        "\nLike gettoken, but wallet-aware: the token is reported with an \"ismine\" flag saying\n"
+        "whether THIS wallet created it (and can therefore mint it). Read-only; nothing is broadcast.\n",
+        {
+            {"token_id", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The token id"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", WalletTokenInfoResult()},
+        RPCExamples{HelpExampleCli("getwallettoken", "ba12afc43322f204fe6236b11a0f85b5d9edcb09f446176c73fe4abe99a17edd")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            LOCK(pwallet->cs_wallet);
+            auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
+
+            uint256 token_id(ParseHashV(request.params[0], "token_id"));
+            std::map<uint256, blsct::TokenEntry> tokens;
+            tokens[token_id];
+            pwallet->chain().findTokens(tokens);
+            if (!tokens.contains(token_id))
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token");
+
+            UniValue obj{UniValue::VOBJ};
+            obj.pushKV("tokenId", token_id.ToString());
+            obj.pushKV("ismine", TokenIsMine(*blsct_km, tokens[token_id]));
+            TokenToUniValue(obj, tokens[token_id]);
+            return obj;
         },
     };
 }
@@ -4640,6 +4751,8 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &createnft},
         {"blsct", &createtoken},
         {"blsct", &minttoken},
+        {"blsct", &listwallettokens},
+        {"blsct", &getwallettoken},
         {"blsct", &mintnft},
         {"blsct", &getblsctbalance},
         {"blsct", &getbalanceforaddress},
