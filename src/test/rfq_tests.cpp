@@ -252,6 +252,43 @@ BOOST_AUTO_TEST_CASE(order_ann_wire_roundtrip)
     BOOST_CHECK_EQUAL(cache.Size(), 1u);
 }
 
+BOOST_AUTO_TEST_CASE(order_snapshot_sorted_and_live_only)
+{
+    OrderCache cache(0);
+    const uint256 late = uint256::ONE;
+    const uint256 early = InsecureRand256();
+    const uint256 soon_expired = InsecureRand256();
+    BOOST_CHECK(cache.StoreOrder(MakeOrder(late, InsecureRand256(), 1000, 100, /*order_expiry=*/9000), /*now=*/100));
+    BOOST_CHECK(cache.StoreOrder(MakeOrder(early, InsecureRand256(), 2000, 300, /*order_expiry=*/5000), /*now=*/200));
+    BOOST_CHECK(cache.StoreOrder(MakeOrder(soon_expired, InsecureRand256(), 10, 1, /*order_expiry=*/1000), /*now=*/300));
+    BOOST_CHECK_EQUAL(cache.Size(), 3u);
+
+    // All three live: sorted by effective expiry ascending.
+    auto snap = cache.Snapshot(/*now=*/500);
+    BOOST_REQUIRE_EQUAL(snap.size(), 3u);
+    BOOST_CHECK(snap[0].quote.quote_id == soon_expired);
+    BOOST_CHECK(snap[1].quote.quote_id == early);
+    BOOST_CHECK(snap[2].quote.quote_id == late);
+    BOOST_CHECK_EQUAL(snap[1].received, 200);
+    BOOST_CHECK_EQUAL(snap[1].effective_expiry, 5000);
+    BOOST_CHECK_EQUAL(snap[1].quote.fill, 2000);
+    BOOST_CHECK_EQUAL(snap[1].quote.sell_cost, 300);
+    BOOST_REQUIRE(snap[1].quote.half_tx != nullptr);
+
+    // Expired-but-unpruned entries are excluded; the snapshot does not prune.
+    snap = cache.Snapshot(/*now=*/1000);
+    BOOST_REQUIRE_EQUAL(snap.size(), 2u);
+    BOOST_CHECK(snap[0].quote.quote_id == early);
+    BOOST_CHECK_EQUAL(cache.Size(), 3u);
+
+    // The 14-day cap shows up as the effective expiry.
+    OrderCache capped(0);
+    BOOST_CHECK(capped.StoreOrder(MakeOrder(uint256::ONE, InsecureRand256(), 1, 1, /*order_expiry=*/100 * MAX_ORDER_TTL_SECONDS), /*now=*/7));
+    auto csnap = capped.Snapshot(/*now=*/8);
+    BOOST_REQUIRE_EQUAL(csnap.size(), 1u);
+    BOOST_CHECK_EQUAL(csnap[0].effective_expiry, 7 + MAX_ORDER_TTL_SECONDS);
+}
+
 BOOST_AUTO_TEST_CASE(order_spent_input_evicts)
 {
     OrderCache cache(0);

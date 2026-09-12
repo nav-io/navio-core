@@ -9,6 +9,7 @@
 #include <primitives/block.h>
 #include <streams.h>
 
+#include <algorithm>
 #include <atomic>
 
 namespace rfq {
@@ -89,6 +90,7 @@ bool OrderCache::StoreOrder(const RfqQuote& q, int64_t now)
 
     Entry e;
     e.quote = q;
+    e.received = now;
     e.effective_expiry = std::min<int64_t>(q.order_expiry, now + MAX_ORDER_TTL_SECONDS);
     e.bytes = QuoteBytes(q);
 
@@ -147,6 +149,25 @@ size_t OrderCache::PruneExpired(int64_t now)
 size_t OrderCache::Size() const { LOCK(m_mutex); return m_orders.size(); }
 size_t OrderCache::Bytes() const { LOCK(m_mutex); return m_bytes; }
 bool OrderCache::Contains(const uint256& quote_id) const { LOCK(m_mutex); return m_orders.contains(quote_id); }
+
+std::vector<OrderCache::OrderView> OrderCache::Snapshot(int64_t now) const
+{
+    std::vector<OrderView> out;
+    {
+        LOCK(m_mutex);
+        out.reserve(m_orders.size());
+        for (const auto& kv : m_orders) {
+            const Entry& e = kv.second;
+            if (e.effective_expiry <= now) continue; // expired, awaiting prune
+            out.push_back(OrderView{e.quote, e.received, e.effective_expiry});
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const OrderView& a, const OrderView& b) {
+        if (a.effective_expiry != b.effective_expiry) return a.effective_expiry < b.effective_expiry;
+        return a.quote.quote_id < b.quote.quote_id;
+    });
+    return out;
+}
 
 void OrderCache::EvictSpentBy(const CTransaction& tx)
 {

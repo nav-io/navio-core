@@ -59,6 +59,20 @@ public:
     size_t Bytes() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
     bool Contains(const uint256& quote_id) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
+    //! Read-only view of one cached standing order. `quote` is exactly the
+    //! ORDER_ANN payload as it arrived on the wire (public to every peer);
+    //! `received` / `effective_expiry` are this node's local bookkeeping.
+    struct OrderView {
+        RfqQuote quote;
+        int64_t received;         //!< unix time this node stored the order
+        int64_t effective_expiry; //!< min(quote.order_expiry, received + MAX_ORDER_TTL_SECONDS)
+    };
+
+    //! Copies of every order still live at `now` (effective_expiry > now),
+    //! sorted by effective expiry ascending, then quote_id. Does not touch the
+    //! LRU order and does not prune. Intended for inspection (RPC).
+    std::vector<OrderView> Snapshot(int64_t now) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+
     void TransactionAddedToMempool(const NewMempoolTransactionInfo& tx, uint64_t) override
         EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
     void BlockConnected(ChainstateRole, const std::shared_ptr<const CBlock>& block, const CBlockIndex*) override
@@ -67,6 +81,7 @@ public:
 private:
     struct Entry {
         RfqQuote quote;
+        int64_t received;
         int64_t effective_expiry;
         size_t bytes;
     };
