@@ -682,10 +682,16 @@ bool get_tx_in_staked_commitment(const BlsctTxIn* tx_in);
 bool get_tx_in_rbf(const BlsctTxIn* tx_in);
 
 // tx out
+// `memo` points at `memo_len` bytes; no NUL terminator is required and the
+// buffer is never read past `memo_len`. `memo` may be NULL when `memo_len` is 0.
+// Fails with BLSCT_MEMO_TOO_LONG when `memo_len` exceeds MAX_MEMO_LEN, and with
+// BLSCT_FAILURE when `memo` is NULL with a non-zero length or the memo contains
+// a NUL byte (memos are stored and returned as C strings).
 BlsctRetVal* build_tx_out(
     const BlsctSubAddr* blsct_dest,
     uint64_t amount,
-    const char* memo_c_str,
+    const char* memo,
+    size_t memo_len,
     const BlsctTokenId* blsct_token_id,
     TxOutputType output_type,
     uint64_t min_stake,

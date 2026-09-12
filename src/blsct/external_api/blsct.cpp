@@ -2435,18 +2435,27 @@ bool get_tx_in_rbf(const BlsctTxIn* tx_in)
 BlsctRetVal* build_tx_out(
     const BlsctSubAddr* blsct_dest,
     const uint64_t amount,
-    const char* memo_c_str,
+    const char* memo,
+    const size_t memo_len,
     const BlsctTokenId* blsct_token_id,
     const TxOutputType output_type,
     const uint64_t min_stake,
     const bool subtract_fee_from_amount,
     const BlsctScalar* blsct_blinding_key
 ) {
-    // Validate the memo length before allocating tx_out, so a rejected call
-    // does not leak the BlsctTxOut allocation (err() returns a separate object).
-    size_t memo_c_str_len = std::strlen(memo_c_str);
-    if (memo_c_str_len > MAX_MEMO_LEN) {
+    // Validate the memo before allocating tx_out, so a rejected call does not
+    // leak the BlsctTxOut allocation (err() returns a separate object). The
+    // length is the caller's: the buffer is never scanned for a terminator.
+    if (memo_len > MAX_MEMO_LEN) {
         return err(BLSCT_MEMO_TOO_LONG);
+    }
+    if (memo == nullptr && memo_len != 0) {
+        return err(BLSCT_FAILURE);
+    }
+    // The memo is stored, read back and built into the output as a C string,
+    // so an embedded NUL would silently truncate it. Reject it instead.
+    if (memo_len != 0 && std::memchr(memo, '\0', memo_len) != nullptr) {
+        return err(BLSCT_FAILURE);
     }
 
     MALLOC_BYTES(BlsctTxOut, tx_out, sizeof(BlsctTxOut));
@@ -2455,8 +2464,9 @@ BlsctRetVal* build_tx_out(
     BLSCT_COPY(blsct_dest, tx_out->dest);
     tx_out->amount = amount;
 
-    // copy memo to tx_out
-    std::memcpy(tx_out->memo_c_str, memo_c_str, memo_c_str_len + 1);
+    // copy memo to tx_out; memo_len <= MAX_MEMO_LEN leaves room for the NUL
+    if (memo_len != 0) std::memcpy(tx_out->memo_c_str, memo, memo_len);
+    tx_out->memo_c_str[memo_len] = '\0';
 
     BLSCT_COPY(blsct_token_id, tx_out->token_id);
     tx_out->output_type = output_type;
