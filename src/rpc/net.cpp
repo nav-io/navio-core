@@ -186,6 +186,7 @@ static RPCHelpMan getpeerinfo()
                                                               "best capture connection behaviors."},
                     {RPCResult::Type::STR, "transport_protocol_type", "Type of transport protocol: \n" + Join(TRANSPORT_TYPE_DOC, ",\n") + ".\n"},
                     {RPCResult::Type::STR, "session_id", "The session ID for this connection, or \"\" if there is none (\"v2\" transport protocol only).\n"},
+                    {RPCResult::Type::BOOL, "websocket", "Whether the peer connected through a WebSocket listener (-p2pwsbind)"},
                 }},
             }},
         },
@@ -292,6 +293,7 @@ static RPCHelpMan getpeerinfo()
         obj.pushKV("connection_type", ConnectionTypeAsString(stats.m_conn_type));
         obj.pushKV("transport_protocol_type", TransportTypeAsString(stats.m_transport_type));
         obj.pushKV("session_id", stats.m_session_id);
+        obj.pushKV("websocket", stats.m_websocket);
 
         ret.push_back(obj);
     }

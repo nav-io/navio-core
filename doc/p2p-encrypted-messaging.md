@@ -270,6 +270,47 @@ Maker / debug surface (hidden or `p2pmsg` category):
 - `getp2pmsginfo` — inbox pubkey + PING counter
 - `sendp2pping inbox_pubkey [stem]` — debug echo
 
+## WebSocket listener
+
+Standalone SDK clients — above all code running in a browser, which has no raw
+TCP sockets — can take part in the P2P network (and therefore in the p2pmsg
+bus) through an optional **WebSocket listener**:
+
+```
+-p2pwsbind=<addr>[:<port>]
+```
+
+The option is off by default, can be given several times and takes the same
+`addr:port` syntax as `-bind` (`[host]:port` for IPv6). Each address becomes an
+additional listening socket, alongside the ordinary `-bind`/`-port` ones.
+
+- **Framing.** A WebSocket connection carries the *normal v1 P2P byte stream*
+  (24-byte message headers, checksums, `version`/`verack`, ...). Binary frames
+  are merely chunks of that stream and frame boundaries carry no meaning; the
+  receiver concatenates payloads, so a client may fragment freely and a single
+  P2P message may straddle frames. Text frames are a protocol error and close
+  the connection. `ping` is answered with `pong`, `pong` is ignored, `close` is
+  answered with `close`. Client frames must be masked (RFC 6455 §5.1); server
+  frames never are. No extension is ever negotiated (`permessage-deflate` is
+  ignored) and no subprotocol is required.
+- **Handshake.** A standard HTTP/1.1 `GET` upgrade with `Upgrade: websocket`,
+  `Connection: Upgrade`, `Sec-WebSocket-Version: 13` and `Sec-WebSocket-Key`;
+  the node answers `101 Switching Protocols` with the RFC 6455
+  `Sec-WebSocket-Accept`. A malformed request gets `400 Bad Request` and the
+  connection is closed.
+- **Same peer, same rules.** A WebSocket peer is an ordinary `inbound` peer:
+  it counts against `-maxconnections`, gets `NetPermissionFlags::None` unless
+  whitelisted, and is subject to the same DoS scoring, eviction and ban logic.
+  It always uses the v1 transport (BIP324 is not attempted). `getpeerinfo`
+  reports `"websocket": true` for such peers. Limits: the upgrade request is
+  capped at 8 KiB and a single frame payload at 4 MiB.
+- **No TLS.** `naviod` speaks plain `ws://` only. For `wss://` (which browsers
+  require from `https://` pages) terminate TLS in a reverse proxy such as nginx
+  or Caddy and forward the upgraded connection to the `-p2pwsbind` address,
+  e.g. with Caddy: `reverse_proxy /p2p 127.0.0.1:8355` under a `https://`
+  site block. Bind the listener to loopback or a private interface when it is
+  fronted this way.
+
 ## Status / what is wired
 
 Built, wired into the node, and tested:

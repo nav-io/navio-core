@@ -31,6 +31,7 @@
 #include <scheduler.h>
 #include <util/fs.h>
 #include <util/sock.h>
+#include <util/sock_ws.h>
 #include <util/strencodings.h>
 #include <util/thread.h>
 #include <util/threadinterrupt.h>
@@ -98,6 +99,8 @@ enum BindFlags {
      * Tor connections, to prevent gossiping them over the network.
      */
     BF_DONT_ADVERTISE = (1U << 1),
+    /** Accepted connections are wrapped in a WebSocket framing layer (-p2pwsbind). */
+    BF_WEBSOCKET = (1U << 2),
 };
 
 // The set of sockets cannot be modified while waiting
@@ -633,6 +636,7 @@ void CNode::CopyStats(CNodeStats& stats)
         if (info.session_id) stats.m_session_id = HexStr(*info.session_id);
     }
     X(m_permission_flags);
+    X(m_websocket);
 
     X(m_last_ping_time);
     X(m_min_ping_time);
@@ -1720,13 +1724,20 @@ void CConnman::AcceptConnection(const ListenSocket& hListenSocket) {
     NetPermissionFlags permission_flags = NetPermissionFlags::None;
     hListenSocket.AddSocketPermissionFlags(permission_flags);
 
-    CreateNodeFromAcceptedSocket(std::move(sock), permission_flags, addr_bind, addr);
+    if (hListenSocket.websocket) {
+        // Wrap the TCP socket so that everything downstream sees the plain
+        // P2P byte stream of an ordinary inbound peer.
+        sock = std::make_unique<WebSocketSock>(std::move(sock));
+    }
+
+    CreateNodeFromAcceptedSocket(std::move(sock), permission_flags, addr_bind, addr, hListenSocket.websocket);
 }
 
 void CConnman::CreateNodeFromAcceptedSocket(std::unique_ptr<Sock>&& sock,
                                             NetPermissionFlags permission_flags,
                                             const CAddress& addr_bind,
-                                            const CAddress& addr)
+                                            const CAddress& addr,
+                                            bool websocket)
 {
     int nInbound = 0;
 
@@ -1799,8 +1810,8 @@ void CConnman::CreateNodeFromAcceptedSocket(std::unique_ptr<Sock>&& sock,
 
     const bool inbound_onion = std::find(m_onion_binds.begin(), m_onion_binds.end(), addr_bind) != m_onion_binds.end();
     // The V2Transport transparently falls back to V1 behavior when an incoming V1 connection is
-    // detected, so use it whenever we signal NODE_P2P_V2.
-    const bool use_v2transport(nodeServices & NODE_P2P_V2);
+    // detected, so use it whenever we signal NODE_P2P_V2. WebSocket peers always use v1.
+    const bool use_v2transport{!websocket && (nodeServices & NODE_P2P_V2)};
 
     CNode* pnode = new CNode(id,
                              std::move(sock),
@@ -1816,11 +1827,12 @@ void CConnman::CreateNodeFromAcceptedSocket(std::unique_ptr<Sock>&& sock,
                                  .prefer_evict = discouraged,
                                  .recv_flood_size = nReceiveFloodSize,
                                  .use_v2transport = use_v2transport,
+                                 .websocket = websocket,
                              });
     pnode->AddRef();
     m_msgproc->InitializeNode(*pnode, nodeServices);
 
-    LogPrint(BCLog::NET, "connection from %s accepted\n", addr.ToStringAddrPort());
+    LogPrint(BCLog::NET, "connection from %s accepted%s\n", addr.ToStringAddrPort(), websocket ? " (websocket)" : "");
 
     {
         LOCK(m_nodes_mutex);
@@ -2992,7 +3004,7 @@ void CConnman::ThreadI2PAcceptIncoming()
     }
 }
 
-bool CConnman::BindListenPort(const CService& addrBind, bilingual_str& strError, NetPermissionFlags permissions)
+bool CConnman::BindListenPort(const CService& addrBind, bilingual_str& strError, NetPermissionFlags permissions, bool websocket)
 {
     int nOne = 1;
 
@@ -3047,7 +3059,7 @@ bool CConnman::BindListenPort(const CService& addrBind, bilingual_str& strError,
         LogPrintLevel(BCLog::NET, BCLog::Level::Error, "%s\n", strError.original);
         return false;
     }
-    LogPrintf("Bound to %s\n", addrBind.ToStringAddrPort());
+    LogPrintf("Bound to %s%s\n", addrBind.ToStringAddrPort(), websocket ? " (websocket)" : "");
 
     // Listen for incoming connections
     if (sock->Listen(SOMAXCONN) == SOCKET_ERROR)
@@ -3057,7 +3069,7 @@ bool CConnman::BindListenPort(const CService& addrBind, bilingual_str& strError,
         return false;
     }
 
-    vhListenSocket.emplace_back(std::move(sock), permissions);
+    vhListenSocket.emplace_back(std::move(sock), permissions, websocket);
     return true;
 }
 
@@ -3160,7 +3172,7 @@ bool CConnman::Bind(const CService& addr_, unsigned int flags, NetPermissionFlag
     const CService addr{MaybeFlipIPv6toCJDNS(addr_)};
 
     bilingual_str strError;
-    if (!BindListenPort(addr, strError, permissions)) {
+    if (!BindListenPort(addr, strError, permissions, /*websocket=*/(flags & BF_WEBSOCKET) != 0)) {
         if ((flags & BF_REPORT_ERROR) && m_client_interface) {
             m_client_interface->ThreadSafeMessageBox(strError, "", CClientUIInterface::MSG_ERROR);
         }
@@ -3185,6 +3197,13 @@ bool CConnman::InitBinds(const Options& options)
     }
     for (const auto& addr_bind : options.onion_binds) {
         fBound |= Bind(addr_bind, BF_DONT_ADVERTISE, NetPermissionFlags::None);
+    }
+    for (const auto& addr_bind : options.vWsBinds) {
+        // A WebSocket listener is never a valid address for regular peers to
+        // connect to, so it must not be advertised. It also does not count as
+        // "bound" for the purpose of -listen: a node with only -p2pwsbind and
+        // no -bind still binds on any address for plain TCP.
+        Bind(addr_bind, BF_REPORT_ERROR | BF_DONT_ADVERTISE | BF_WEBSOCKET, NetPermissionFlags::None);
     }
     if (options.bind_on_any) {
         struct in_addr inaddr_any;
@@ -3704,6 +3723,7 @@ CNode::CNode(NodeId idIn,
       m_addr_name{addrNameIn.empty() ? addr.ToStringAddrPort() : addrNameIn},
       m_dest(addrNameIn),
       m_inbound_onion{inbound_onion},
+      m_websocket{node_opts.websocket},
       m_prefer_evict{node_opts.prefer_evict},
       nKeyedNetGroup{nKeyedNetGroupIn},
       m_conn_type{conn_type_in},
