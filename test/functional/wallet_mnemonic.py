@@ -366,6 +366,26 @@ class WalletMnemonicTest(BitcoinTestFramework):
         w_mp_new3 = node.get_wallet_rpc("test_mp_new_nopass")
         assert w_mp_new3.getblsctseed() != w_mp_new.getblsctseed()
 
+        self.log.info("Test non-ASCII mnemonic_passphrase is rejected for a new wallet")
+        assert_raises_rpc_error(-8, "must be ASCII when creating a new wallet",
+            node.createwallet, wallet_name="test_mp_nonascii_new",
+            blsct=True, mnemonic_passphrase="h\u00fcnter2")
+
+        self.log.info("Test non-ASCII mnemonic_passphrase is accepted with a warning on restore")
+        res_na = node.createwallet(wallet_name="test_mp_nonascii_restore", blsct=True,
+                                   mnemonic=mnemonic_mp, mnemonic_passphrase="h\u00fcnter2")
+        assert any("non-ASCII" in w for w in res_na["warnings"]), res_na
+        seed_na = node.get_wallet_rpc("test_mp_nonascii_restore").getblsctseed()
+        assert seed_na != seed_plain
+        assert seed_na != seed_pass
+        node.createwallet(wallet_name="test_mp_nonascii_restore2", blsct=True,
+                          mnemonic=mnemonic_mp, mnemonic_passphrase="h\u00fcnter2")
+        assert_equal(node.get_wallet_rpc("test_mp_nonascii_restore2").getblsctseed(), seed_na)
+        # An ASCII passphrase restore carries no such warning.
+        assert not any("non-ASCII" in w for w in node.createwallet(
+            wallet_name="test_mp_ascii_restore", blsct=True, mnemonic=mnemonic_mp,
+            mnemonic_passphrase="hunter2").get("warnings", []))
+
         self.log.info("Test mnemonic_passphrase without blsct errors")
         assert_raises_rpc_error(-8, "requires blsct=true",
             node.createwallet, wallet_name="test_mp_no_blsct",

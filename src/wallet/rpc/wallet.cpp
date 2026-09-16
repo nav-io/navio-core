@@ -19,6 +19,7 @@
 #include <random.h>
 #include <support/cleanse.h>
 
+#include <algorithm>
 #include <optional>
 
 #include <univalue.h>
@@ -365,7 +366,7 @@ static RPCHelpMan createwallet()
             {"storage_output", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for BLSCT wallets, otherwise false"}, "Store outputs instead of full transactions. BLSCT wallets enable this by default; pass false to keep full transactions."},
             {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the BLSCT wallet from the specified seed (can be a master seed or an audit key). Requires blsct=true."},
             {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words, or 26 with the Navio birthday suffix encoding the wallet creation time) to restore a BLSCT wallet from. Requires blsct=true. Mutually exclusive with 'seed'."},
-            {"mnemonic_passphrase", RPCArg::Type::STR, RPCArg::Default{""}, "Optional BIP-39 passphrase used to extend the mnemonic when deriving the wallet keys. Requires blsct=true. Cannot be combined with 'seed'. The same passphrase must be provided again to restore the wallet from its mnemonic. Use ASCII characters to stay interoperable with other BIP-39 wallets (no NFKD normalization is applied)."},
+            {"mnemonic_passphrase", RPCArg::Type::STR, RPCArg::Default{""}, "Optional BIP-39 passphrase used to extend the mnemonic when deriving the wallet keys. Requires blsct=true. Cannot be combined with 'seed'. The same passphrase must be provided again to restore the wallet from its mnemonic. Must be ASCII when creating a new wallet, since no NFKD normalization is applied and a non-ASCII passphrase would not be interoperable with other BIP-39 wallets. A non-ASCII passphrase is still accepted, with a warning, when restoring from 'mnemonic', so wallets created that way remain recoverable."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -483,6 +484,23 @@ static RPCHelpMan createwallet()
                 }
                 if (has_seed_param) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot specify both 'seed' and 'mnemonic_passphrase'");
+                }
+                // MnemonicToSeed derives the seed from raw UTF-8 without BIP-39
+                // NFKD normalization (see mnemonic.h), so a non-ASCII passphrase
+                // selects a different wallet than a conforming BIP-39 wallet.
+                // Refuse to create a new wallet that way. A restore must still
+                // accept it: a wallet already created with a non-ASCII
+                // passphrase is only recoverable from those exact bytes.
+                const bool non_ascii = std::any_of(mnemonic_passphrase.begin(), mnemonic_passphrase.end(),
+                                                   [](unsigned char c) { return c >= 0x80; });
+                if (non_ascii) {
+                    if (!has_mnemonic_param) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "The 'mnemonic_passphrase' must be ASCII when creating a new wallet");
+                    }
+                    warnings.emplace_back(Untranslated(
+                        "The 'mnemonic_passphrase' contains non-ASCII characters. It is used as raw UTF-8 without "
+                        "BIP-39 normalization, so this restore only matches a wallet created from the exact same bytes, "
+                        "and may not match other BIP-39 wallets."));
                 }
             }
 
