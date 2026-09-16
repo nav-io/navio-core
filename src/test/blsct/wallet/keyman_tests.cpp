@@ -446,8 +446,7 @@ BOOST_FIXTURE_TEST_CASE(hdchain_survives_a_serialization_round_trip, BasicTestin
     chain.seed_id = key_id(1);
     chain.spend_id = key_id(2);
     chain.view_id = key_id(3);
-    chain.blinding_id = key_id(4);
-    chain.token_id = key_id(5);
+    chain.token_id = key_id(4);
     chain.nSubAddressCounter[0] = 7;
 
     DataStream st{};

@@ -212,6 +212,7 @@ void KeyMan::SetHDSeed(const PrivateKey& key, const std::optional<int64_t>& crea
     auto childKey = FromSeedToChildKey(key.GetScalar());
     auto transactionKey = FromChildToTransactionKey(childKey);
     auto blindingKey = PrivateKey(FromChildToBlindingKey(childKey));
+    const CKeyID blinding_id = blindingKey.GetPublicKey().GetID();
     auto tokenKey = PrivateKey(FromChildToTokenKey(childKey));
     auto viewKey = PrivateKey(FromTransactionToViewKey(transactionKey));
     auto spendKey = PrivateKey(FromTransactionToSpendKey(transactionKey));
@@ -221,7 +222,6 @@ void KeyMan::SetHDSeed(const PrivateKey& key, const std::optional<int64_t>& crea
     newHdChain.spend_id = spendKey.GetPublicKey().GetID();
     newHdChain.view_id = viewKey.GetPublicKey().GetID();
     newHdChain.token_id = tokenKey.GetPublicKey().GetID();
-    newHdChain.blinding_id = blindingKey.GetPublicKey().GetID();
 
     int64_t nCreationTime = creation_time.value_or(GetTime());
     if (creation_time.has_value()) {
@@ -246,7 +246,7 @@ void KeyMan::SetHDSeed(const PrivateKey& key, const std::optional<int64_t>& crea
 
     blindingMetadata.hdKeypath = "blinding";
     blindingMetadata.has_key_origin = false;
-    blindingMetadata.hd_seed_id = newHdChain.blinding_id;
+    blindingMetadata.hd_seed_id = blinding_id;
 
     tokenMetadata.hdKeypath = "token";
     tokenMetadata.has_key_origin = false;
@@ -255,7 +255,7 @@ void KeyMan::SetHDSeed(const PrivateKey& key, const std::optional<int64_t>& crea
     // mem store the metadata
     mapKeyMetadata[newHdChain.spend_id] = spendMetadata;
     mapKeyMetadata[newHdChain.view_id] = viewMetadata;
-    mapKeyMetadata[newHdChain.blinding_id] = blindingMetadata;
+    mapKeyMetadata[blinding_id] = blindingMetadata;
     mapKeyMetadata[newHdChain.token_id] = tokenMetadata;
 
     // write the keys to the database
