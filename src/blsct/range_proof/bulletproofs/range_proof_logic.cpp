@@ -378,7 +378,7 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
     std::vector<range_proof::RecoveredData<T>> xs;
 
     for (size_t i = 0; i < reqs.size(); ++i) {
-        auto req = reqs[i];
+        const auto& req = reqs[i];
         const range_proof::Generators<T> gens = m_common.Gf().GetInstance(req.seed);
         Point G = gens.G;
         Point H = gens.H;

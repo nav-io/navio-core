@@ -67,6 +67,18 @@ std::string EntropyToMnemonic(Span<const unsigned char> entropy)
     return result;
 }
 
+namespace {
+//! Index of `w` in the sorted BIP-39 English word list, or nullopt if absent.
+//! Compares through string_view so the binary search allocates nothing.
+std::optional<uint16_t> WordIndex(std::string_view w)
+{
+    auto it = std::lower_bound(wordlist_en.begin(), wordlist_en.end(), w,
+                               [](std::string_view a, std::string_view b) { return a < b; });
+    if (it == wordlist_en.end() || std::string_view{*it} != w) return std::nullopt;
+    return static_cast<uint16_t>(std::distance(wordlist_en.begin(), it));
+}
+} // namespace
+
 std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& words_str)
 {
     std::vector<std::string> words;
@@ -83,12 +95,9 @@ std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& w
 
     std::vector<uint16_t> indices;
     for (const auto& w : words) {
-        auto it = std::lower_bound(wordlist_en.begin(), wordlist_en.end(), w,
-                                   [](const char* a, const std::string& b) { return std::string(a) < b; });
-        if (it == wordlist_en.end() || std::string(*it) != w) {
-            return std::nullopt;
-        }
-        indices.push_back(static_cast<uint16_t>(std::distance(wordlist_en.begin(), it)));
+        const auto index = WordIndex(w);
+        if (!index) return std::nullopt;
+        indices.push_back(*index);
     }
 
     size_t total_bits = words.size() * 11;
@@ -168,14 +177,6 @@ uint16_t BirthdayCheckIndex(Span<const unsigned char> entropy, uint16_t week)
     unsigned char mac[CHMAC_SHA256::OUTPUT_SIZE];
     CHMAC_SHA256(entropy.data(), entropy.size()).Write(msg, sizeof(msg)).Finalize(mac);
     return static_cast<uint16_t>(((mac[0] << 8) | mac[1]) >> 5);
-}
-
-std::optional<uint16_t> WordIndex(const std::string& w)
-{
-    auto it = std::lower_bound(wordlist_en.begin(), wordlist_en.end(), w,
-                               [](const char* a, const std::string& b) { return std::string(a) < b; });
-    if (it == wordlist_en.end() || std::string(*it) != w) return std::nullopt;
-    return static_cast<uint16_t>(std::distance(wordlist_en.begin(), it));
 }
 
 } // namespace

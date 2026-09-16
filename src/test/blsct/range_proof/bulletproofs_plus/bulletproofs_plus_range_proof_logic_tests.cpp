@@ -458,10 +458,9 @@ BOOST_AUTO_TEST_CASE(test_range_proof_compute_d)
     Scalar z(3);
 
     Scalars two_pows = Scalars::FirstNPow(two, n);
-    Scalar z_sq = z.Square();
     Scalars z_asc_by_2_pows = RangeProofLogic::ComputeZAscBy2Pows(z, m);
 
-    Scalars d = RangeProofLogic::Compute_D(z_asc_by_2_pows, two_pows, z_sq, m);
+    Scalars d = RangeProofLogic::Compute_D(z_asc_by_2_pows, two_pows, m);
 
     BOOST_CHECK_EQUAL(d.Size(), 12);
     BOOST_CHECK_EQUAL(d[0].GetUint64(), 1 * 3*3);

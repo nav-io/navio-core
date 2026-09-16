@@ -218,14 +218,6 @@ template Elements<BlstScalar>::Elements(const size_t&, const BlstScalar&);
 template Elements<BlstG1Point>::Elements(const size_t&, const BlstG1Point&);
 
 template <typename T>
-Elements<T>::Elements(const Elements<T>& other)
-{
-    m_vec = other.m_vec;
-}
-template Elements<BlstScalar>::Elements(const Elements<BlstScalar>& x);
-template Elements<BlstG1Point>::Elements(const Elements<BlstG1Point>& x);
-
-template <typename T>
 bool Elements<T>::Empty() const
 {
     return m_vec.empty();
@@ -463,19 +455,6 @@ bool Elements<T>::operator>=(const T& rhs) const
     return true;
 }
 template bool Elements<BlstScalar>::operator>=(const BlstScalar&) const;
-
-template <typename T>
-void Elements<T>::operator=(const Elements<T>& rhs)
-{
-    if (this == &rhs) return;
-    m_vec.clear();
-    for (size_t i = 0; i < rhs.m_vec.size(); ++i) {
-        auto copy = T(rhs.m_vec[i]);
-        m_vec.push_back(copy);
-    }
-}
-template void Elements<BlstScalar>::operator=(const Elements<BlstScalar>&);
-template void Elements<BlstG1Point>::operator=(const Elements<BlstG1Point>&);
 
 template <typename T>
 bool Elements<T>::operator==(const Elements<T>& rhs) const

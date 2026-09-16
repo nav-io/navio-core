@@ -27,7 +27,7 @@ public:
     Elements() = default;
     Elements(const std::vector<T>& vec);
     Elements(const size_t& size, const T& default_value);
-    Elements(const Elements& other);
+    Elements(const Elements& other) = default;
 
     T Sum() const;
     T& operator[](const size_t& index);
@@ -88,7 +88,7 @@ public:
      */
     Elements<T> operator-(const T& rhs) const;
 
-    void operator=(const Elements<T>& rhs);
+    Elements& operator=(const Elements& rhs) = default;
 
     bool operator==(const Elements<T>& rhs) const;
 
