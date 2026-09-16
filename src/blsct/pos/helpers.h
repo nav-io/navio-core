@@ -37,6 +37,9 @@ static constexpr int64_t POPS_MAX_FUTURE_BLOCK_TIME = 6 * POPS_TIME_GRANULARITY_
 static constexpr int POPS_RING_SEED_LOOKBACK = 128;
 
 namespace blsct {
+// Bucket a block time into POPS_TIME_GRANULARITY_SECONDS intervals.
+uint32_t BucketTime(const uint32_t& time);
+
 // `hardened` controls PoPS anti-grinding: when true, `time` is bucketed into
 // POPS_TIME_GRANULARITY_SECONDS before hashing. When false, raw `time` is
 // hashed (legacy pre-hardening behaviour). The flag comes from

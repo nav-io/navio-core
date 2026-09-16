@@ -5,14 +5,13 @@
 #include <blsct/pos/helpers.h>
 #include <hash.h>
 
-#include <iostream>
 #include <util/strencodings.h>
 
 namespace blsct {
 // Bucket the staker-chosen time into POPS_TIME_GRANULARITY_SECONDS intervals.
 // Restricts the effective grinding surface per slot to
 // (slot_length / granularity) attempts.
-static uint32_t BucketTime(const uint32_t& time)
+uint32_t BucketTime(const uint32_t& time)
 {
     return time - (time % POPS_TIME_GRANULARITY_SECONDS);
 }
