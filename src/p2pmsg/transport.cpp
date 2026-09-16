@@ -411,6 +411,12 @@ std::pair<blsct::PublicKey, blsct::Signature> Transport::SignEphemeral(const uin
     return {k.GetPublicKey(), k.Sign(digest)};
 }
 
+bool Transport::IsValidRecipient(const blsct::PublicKey& recipient)
+{
+    const BlstG1Point rp = recipient.GetG1Point();
+    return !rp.IsZero() && rp.IsValid();
+}
+
 bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
                      std::vector<uint8_t> body, bool stem)
 {
@@ -419,12 +425,9 @@ bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
     // reuse under ZERO_NONCE. Reply keys come from the network, so a peer can
     // reach this -- return false, never throw (a throw on the candserve thread
     // reaches TraceThread and terminates the node).
-    {
-        const BlstG1Point rp = recipient.GetG1Point();
-        if (rp.IsZero() || !rp.IsValid()) {
-            LogPrint(BCLog::NET, "p2pmsg: refusing to send to identity/invalid recipient key\n");
-            return false;
-        }
+    if (!IsValidRecipient(recipient)) {
+        LogPrint(BCLog::NET, "p2pmsg: refusing to send to identity/invalid recipient key\n");
+        return false;
     }
     Envelope env;
     env.kind = static_cast<uint8_t>(kind);

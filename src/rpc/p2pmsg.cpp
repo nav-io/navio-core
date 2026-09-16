@@ -132,8 +132,7 @@ static RPCHelpMan sendp2pping()
             }
             const bool stem = request.params[1].isNull() ? true : request.params[1].get_bool();
 
-            t->Send(recipient, p2pmsg::PayloadKind::PING, /*body=*/{0x70, 0x69, 0x6e, 0x67}, stem);
-            return true;
+            return t->Send(recipient, p2pmsg::PayloadKind::PING, /*body=*/{0x70, 0x69, 0x6e, 0x67}, stem);
         },
     };
 }
@@ -205,9 +204,8 @@ static RPCHelpMan sendp2pmsg()
             const bool stem = request.params[3].isNull() ? true : request.params[3].get_bool();
 
             auto bytes = MakeUCharSpan(ss);
-            t->Send(recipient, p2pmsg::PayloadKind::USER_DATA,
-                    std::vector<uint8_t>(bytes.begin(), bytes.end()), stem);
-            return true;
+            return t->Send(recipient, p2pmsg::PayloadKind::USER_DATA,
+                           std::vector<uint8_t>(bytes.begin(), bytes.end()), stem);
         },
     };
 }
@@ -657,8 +655,7 @@ static RPCHelpMan sendcandidate()
             auto bytes = MakeUCharSpan(ss);
             std::vector<uint8_t> body(bytes.begin(), bytes.end());
 
-            t->Send(recipient, p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
-            return true;
+            return t->Send(recipient, p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
         },
     };
 }
@@ -843,8 +840,10 @@ static RPCHelpMan requestquote()
             ss << r;
             auto bytes = MakeUCharSpan(ss);
             std::vector<uint8_t> body(bytes.begin(), bytes.end());
-            node.p2pmsg_transport->Send(p2pmsg::BroadcastPubKey(),
-                                        p2pmsg::PayloadKind::RFQ_REQ, std::move(body), /*stem=*/false);
+            if (!node.p2pmsg_transport->Send(p2pmsg::BroadcastPubKey(),
+                                             p2pmsg::PayloadKind::RFQ_REQ, std::move(body), /*stem=*/false)) {
+                throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg send failed (shutting down)");
+            }
 
             UniValue o(UniValue::VOBJ);
             o.pushKV("uuid", uuid.GetHex());
@@ -1130,7 +1129,9 @@ static RPCHelpMan sendquote()
             ps << q;
             auto bytes = MakeUCharSpan(ss);
             std::vector<uint8_t> body(bytes.begin(), bytes.end());
-            transport->Send(reply_key, p2pmsg::PayloadKind::RFQ_QUOTE, std::move(body), /*stem=*/false);
+            if (!transport->Send(reply_key, p2pmsg::PayloadKind::RFQ_QUOTE, std::move(body), /*stem=*/false)) {
+                throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg send failed (invalid reply_key, or shutting down)");
+            }
 
             return q.quote_id.GetHex();
         },
@@ -1198,8 +1199,10 @@ static RPCHelpMan sendorder()
             ps << q;
             auto bytes = MakeUCharSpan(ss);
             std::vector<uint8_t> body(bytes.begin(), bytes.end());
-            transport->Send(p2pmsg::BroadcastPubKey(), p2pmsg::PayloadKind::ORDER_ANN,
-                            std::move(body), /*stem=*/false);
+            if (!transport->Send(p2pmsg::BroadcastPubKey(), p2pmsg::PayloadKind::ORDER_ANN,
+                                 std::move(body), /*stem=*/false)) {
+                throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg send failed (shutting down)");
+            }
 
             return q.quote_id.GetHex();
         },

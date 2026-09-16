@@ -16,7 +16,11 @@ listpendingcandidaterequests and answered via replycandidate.
 
 from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal
+from test_framework.util import assert_equal, assert_raises_rpc_error
+
+# Compressed encoding of the G1 identity. It parses as a pubkey, but no
+# message can be safely encrypted to it, so a send to it must be refused.
+IDENTITY_PUBKEY = "c0" + "00" * 47
 
 # Fast pull/serve cadence so the test does not wait a minute per round.
 FAST = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2", "-servecandidateinterval=2"]
@@ -91,6 +95,11 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         n1.loadwallet("w1")
         w1 = n1.get_wallet_rpc("w1")
         assert_equal(n0.getaggregationhint()["available"], 0)
+
+        # An unusable reply key is refused before a candidate is built, rather
+        # than building one, spending budget on it and reporting it as served.
+        assert_raises_rpc_error(-4, "invalid reply key", w1.replycandidate, IDENTITY_PUBKEY)
+
         keys = []
 
         def got_one():

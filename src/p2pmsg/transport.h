@@ -241,16 +241,21 @@ public:
     WireResult OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
         EXCLUSIVE_LOCKS_REQUIRED(!m_replay_mutex, !m_relay_limit_mutex);
 
+    //! Whether `recipient` can be encrypted to: false for the identity or an
+    //! invalid point. A network-supplied reply key can be exactly that, and
+    //! encrypting to it would derive the AEAD key from a public constant with
+    //! ZERO_NONCE reuse.
+    static bool IsValidRecipient(const blsct::PublicKey& recipient);
+
     //! Build + encrypt + PoW-stamp + broadcast an outbound message to
     //! `recipient`'s session key. PoW is always applied. Heavy; call off the net
     //! thread.
-    //! Returns false without sending when `recipient` is the identity/an
-    //! invalid point (a network-supplied reply key can be exactly that, and
-    //! encrypting to it would derive the AEAD key from a public constant with
-    //! ZERO_NONCE reuse). Callers on a background thread MUST check the result
-    //! -- a throw would reach TraceThread and terminate the node.
-    bool Send(const blsct::PublicKey& recipient, PayloadKind kind,
-              std::vector<uint8_t> body, bool stem);
+    //! Returns false without sending when `recipient` fails IsValidRecipient
+    //! or the PoW grind is interrupted by shutdown. It never throws, so it is
+    //! safe on a background thread, where a throw would reach TraceThread and
+    //! terminate the node.
+    [[nodiscard]] bool Send(const blsct::PublicKey& recipient, PayloadKind kind,
+                            std::vector<uint8_t> body, bool stem);
 
     //! Signal that the node is shutting down so any in-flight PoW grind on a
     //! worker aborts promptly instead of blocking the pool-stop join. Call
