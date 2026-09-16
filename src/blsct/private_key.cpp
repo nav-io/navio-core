@@ -14,12 +14,6 @@ PrivateKey::PrivateKey(Scalar k_)
     memcpy(k.data(), &v.front(), k.size());
 }
 
-PrivateKey::PrivateKey(CPrivKey k_)
-{
-    k.resize(PrivateKey::SIZE);
-    memcpy(k.data(), &k_.front(), k.size());
-}
-
 bool PrivateKey::operator==(const PrivateKey& rhs) const
 {
     return k == rhs.k;

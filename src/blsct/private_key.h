@@ -25,7 +25,6 @@ public:
 
     PrivateKey() { k.resize(SIZE); }
     PrivateKey(Scalar k_);
-    PrivateKey(CPrivKey k_);
 
     template <typename Stream>
     void Serialize(Stream& s) const
