@@ -45,7 +45,10 @@ enum class PayloadKind : uint8_t {
     RFQ_REQ = 4,
     RFQ_QUOTE = 5,
     ORDER_ANN = 6,
-    // 7..255 reserved for future applications. The relay layer never inspects
+    //! Opaque application payload addressed 1:1 to a node's inbox, delivered
+    //! to the user via listp2pmsgs. The node never interprets the body.
+    USER_DATA = 7,
+    // 8..255 reserved for future applications. The relay layer never inspects
     // this value beyond keying handler dispatch on the receiving node.
 };
 
@@ -91,6 +94,15 @@ struct InboundMessage {
     int64_t from_peer;
     blsct::PublicKey sender_session; //!< the envelope's ephemeral pubkey
     RecipientKey recipient{RecipientKey::INBOX}; //!< which local key decrypted it
+    //! For RecipientKey::SESSION: the session PUBKEY that decrypted the
+    //! message, and whether it was minted for the user (mintp2pmsgreplykey)
+    //! rather than opened by an internal subsystem (RFQ reply, candidate
+    //! pull). Internal session keys are broadcast on the bus, so anyone can
+    //! encrypt to them -- a handler that stores "session-scoped" user data
+    //! must gate on user_reply or an observer can inject entries that look
+    //! like replies to the app's own minted keys.
+    blsct::PublicKey recipient_session;
+    bool recipient_user_reply{false};
     std::vector<uint8_t> body;       //!< decrypted terminal payload
 };
 using MessageHandler = std::function<void(const InboundMessage&)>;
@@ -134,11 +146,19 @@ public:
         size_t prekey_grace_keys{1};
     };
 
+    //! What a session key was opened for. USER_REPLY keys (mintp2pmsgreplykey)
+    //! get their own registration bound and never evict INTERNAL keys (RFQ
+    //! replies, candidate pulls) or vice versa: a chat app minting one key
+    //! per conversation must not silently kill in-flight swap/pull traffic.
+    enum class SessionPurpose : uint8_t { INTERNAL, USER_REPLY };
+
     //! Hard cap on simultaneously-registered session keys. Each open key is
     //! trial-decrypted against every inbound message that misses the inbox and
     //! broadcast keys (O(keys) heavy BLS ops per message), so the set must stay
     //! bounded even if a caller opens many requests without dropping them.
     static constexpr size_t MAX_SESSION_KEYS = 256;
+    //! Separate bound for user-minted reply keys within the table above.
+    static constexpr size_t MAX_USER_REPLY_KEYS = 64;
 
     Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay, Options opts);
     Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay)
@@ -199,8 +219,11 @@ public:
     //! pruned (0 = no expiry; caller must DropSessionKey explicitly). Cheap; safe
     //! to call from any thread. Trial-decrypt cost is O(open session keys), so
     //! callers should drop keys once their request window closes.
-    void AddSessionKey(const blsct::PublicKey& pub, const blsct::PrivateKey& priv,
-                       int64_t expiry) EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
+    //! Returns false only for USER_REPLY keys when MAX_USER_REPLY_KEYS live
+    //! keys already exist (INTERNAL keys evict their own oldest instead).
+    bool AddSessionKey(const blsct::PublicKey& pub, const blsct::PrivateKey& priv,
+                       int64_t expiry, SessionPurpose purpose = SessionPurpose::INTERNAL)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
 
     //! Forget a previously registered session key. No-op if absent.
     void DropSessionKey(const blsct::PublicKey& pub)
@@ -221,7 +244,12 @@ public:
     //! Build + encrypt + PoW-stamp + broadcast an outbound message to
     //! `recipient`'s session key. PoW is always applied. Heavy; call off the net
     //! thread.
-    void Send(const blsct::PublicKey& recipient, PayloadKind kind,
+    //! Returns false without sending when `recipient` is the identity/an
+    //! invalid point (a network-supplied reply key can be exactly that, and
+    //! encrypting to it would derive the AEAD key from a public constant with
+    //! ZERO_NONCE reuse). Callers on a background thread MUST check the result
+    //! -- a throw would reach TraceThread and terminate the node.
+    bool Send(const blsct::PublicKey& recipient, PayloadKind kind,
               std::vector<uint8_t> body, bool stem);
 
     //! Signal that the node is shutting down so any in-flight PoW grind on a
@@ -282,6 +310,7 @@ private:
     struct SessionKey {
         blsct::PrivateKey priv;
         int64_t expiry; //!< unix seconds; 0 = no auto-expiry
+        SessionPurpose purpose{SessionPurpose::INTERNAL};
     };
     Mutex m_session_mutex;
     std::vector<std::pair<blsct::PublicKey, SessionKey>> m_session_keys GUARDED_BY(m_session_mutex);
@@ -292,6 +321,18 @@ private:
 
     Mutex m_replay_mutex;
     CuckooCache::cache<uint256, SignatureCacheHasher> m_replay GUARDED_BY(m_replay_mutex);
+    //! Messages this node has already relayed in FLUFF mode (see OnWire's
+    //! loop-tolerant relay policy). Together with m_replay this gives each
+    //! message a per-node relay budget of one stem pass plus one flood pass,
+    //! which is what lets a message escape a stem loop instead of dying in
+    //! the loop members' replay caches.
+    CuckooCache::cache<uint256, SignatureCacheHasher> m_fluff_relayed GUARDED_BY(m_replay_mutex);
+    //! Hashes of messages THIS node originated (inserted by Send). The echo
+    //! of our own message must relay exactly like any other node's duplicate
+    //! (one metered fluff, then drops) or the originator is distinguishable
+    //! on the wire -- but unlike a true duplicate it still gets one local
+    //! decrypt/dispatch, so sending to one's own inbox keeps working.
+    CuckooCache::cache<uint256, SignatureCacheHasher> m_sent GUARDED_BY(m_replay_mutex);
 
     Mutex m_relay_limit_mutex;
     double m_relay_tokens GUARDED_BY(m_relay_limit_mutex){0.0};

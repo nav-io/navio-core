@@ -29,6 +29,7 @@ class PeerManager;
 namespace p2pmsg {
 class WorkerPool;
 class Transport;
+class UserInbox;
 } // namespace p2pmsg
 namespace aggregation {
 class CandidatePool;
@@ -86,6 +87,10 @@ struct NodeContext {
     std::unique_ptr<rfq::OrderCache> rfq_orders;
     //! Taker-side registry of outstanding RFQ requests and collected quotes.
     std::unique_ptr<rfq::MatcherRegistry> rfq_matcher;
+    //! Store of inbound USER_DATA payloads, drained over RPC (chat and other
+    //! applications built on the bus). Declared BEFORE p2pmsg_transport for the
+    //! same destruction-order reason as agg_pool / rfq_* below.
+    std::unique_ptr<p2pmsg::UserInbox> p2pmsg_user_inbox;
     //! p2p encrypted-messaging subsystem (only set when -p2pmsg is enabled).
     //! Declared AFTER agg_pool / rfq_* on purpose: the worker pool's decrypt
     //! jobs dispatch to transport handlers that capture raw pointers to those

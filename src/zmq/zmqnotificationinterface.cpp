@@ -50,6 +50,7 @@ std::unique_ptr<CZMQNotificationInterface> CZMQNotificationInterface::Create(std
     };
     factories["pubrawtx"] = CZMQAbstractNotifier::Create<CZMQPublishRawTransactionNotifier>;
     factories["pubsequence"] = CZMQAbstractNotifier::Create<CZMQPublishSequenceNotifier>;
+    factories["pubp2pmsg"] = CZMQAbstractNotifier::Create<CZMQPublishP2PMsgNotifier>;
 
     std::list<std::unique_ptr<CZMQAbstractNotifier>> notifiers;
     for (const auto& entry : factories)
@@ -149,6 +150,13 @@ void CZMQNotificationInterface::UpdatedBlockTip(const CBlockIndex *pindexNew, co
 
     TryForEachAndRemoveFailed(notifiers, [pindexNew](CZMQAbstractNotifier* notifier) {
         return notifier->NotifyBlock(pindexNew);
+    });
+}
+
+void CZMQNotificationInterface::NotifyP2PMsg(const p2pmsg::UserInbox::Entry& entry)
+{
+    TryForEachAndRemoveFailed(notifiers, [&entry](CZMQAbstractNotifier* notifier) {
+        return notifier->NotifyP2PMsg(entry);
     });
 }
 

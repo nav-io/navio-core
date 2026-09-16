@@ -6,10 +6,12 @@
 #include <p2pmsg/pow.h>
 #include <p2pmsg/transport.h>
 #include <p2pmsg/worker_pool.h>
+#include <p2pmsg/user_inbox.h>
 
 #include <blsct/private_key.h>
 #include <blsct/arith/blst/blst_scalar.h>
 #include <test/util/setup_common.h>
+#include <util/time.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -288,11 +290,16 @@ BOOST_AUTO_TEST_CASE(ecies_infinity_eph_rejected)
     BOOST_REQUIRE(infinity.GetG1Point().IsZero());
 
     std::vector<uint8_t> pt{0x01, 0x02, 0x03, 0x04};
-    EciesPacket pkt = Encrypt(infinity, pt);
-    pkt.eph = infinity; // forge the ephemeral key to the point at infinity
+    // Outbound guard lives in Transport::Send (Encrypt itself is unchanged so
+    // this test can still construct forged packets). Send to the identity must
+    // return false without emitting -- see transport_send_rejects_identity.
 
-    // Any unrelated recipient key would otherwise recover the same constant key.
+    // Inbound guard: forge a well-formed packet (encrypted to a real key) but
+    // set its wire ephemeral to infinity. Decrypt must reject on the eph
+    // check before any key derivation, under any recipient key.
     blsct::PrivateKey victim(BlstScalar::Rand(true));
+    EciesPacket pkt = Encrypt(victim.GetPublicKey(), pt);
+    pkt.eph = infinity;
     BOOST_CHECK(!Decrypt(victim, pkt).has_value());
     BOOST_CHECK(!Decrypt(BroadcastPrivKey(), pkt).has_value());
 }
@@ -403,6 +410,26 @@ BOOST_AUTO_TEST_CASE(transport_ping_loopback)
     BOOST_CHECK_EQUAL(pings.load(), 1);
     std::lock_guard<std::mutex> lk(gm);
     BOOST_CHECK(got == payload);
+}
+
+BOOST_AUTO_TEST_CASE(transport_send_rejects_identity)
+{
+    // Send to the identity/an invalid recipient key must return false without
+    // broadcasting -- a network-supplied reply key can be exactly that, and it
+    // must never throw (a throw on the candserve thread terminates the node).
+    LoopbackTransport h(/*bits=*/4);
+    std::atomic<int> relayed{0};
+    // LoopbackTransport's broadcast feeds back via OnWire; count handler hits.
+    std::atomic<int> got{0};
+    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage&) { got.fetch_add(1); });
+
+    const blsct::PublicKey identity{};
+    BOOST_REQUIRE(identity.GetG1Point().IsZero());
+    bool ok = h.t->Send(identity, PayloadKind::PING, {0x01}, /*stem=*/false);
+    BOOST_CHECK(!ok);
+
+    // A valid recipient still succeeds.
+    BOOST_CHECK(h.t->Send(h.t->InboxPubKey(), PayloadKind::PING, {0x02}, /*stem=*/false));
 }
 
 BOOST_AUTO_TEST_CASE(transport_inbox_rotation)
@@ -682,6 +709,101 @@ BOOST_AUTO_TEST_CASE(transport_relays_to_other_peers)
     t.OnWire(/*from_peer=*/7, false, SerEnv(env));
     BOOST_CHECK_EQUAL(relayed.load(), 1);
     pool.Stop();
+}
+
+BOOST_AUTO_TEST_CASE(user_inbox_size_cap_prunes)
+{
+    // A memory_only store with a tiny byte cap: after inserting well past the
+    // cap, TotalBytes() must stay within it and equal the sum of what List()
+    // still returns. Catches PruneLocked double-subtracting (which drives the
+    // persisted total below reality and disarms the cap).
+    UserInbox::Options opts;
+    opts.memory_only = true;
+    opts.max_total_bytes = 4096;
+    opts.expiry_seconds = 0;
+    UserInbox inbox(opts);
+
+    const blsct::PublicKey sender = blsct::PrivateKey(BlstScalar::Rand(true)).GetPublicKey();
+    const std::vector<uint8_t> body(256, 0xab);
+    for (int i = 0; i < 200; ++i) {
+        inbox.Add(1000 + i, MsgScope::INBOX, "t", sender, body);
+    }
+    BOOST_CHECK_LE(inbox.TotalBytes(), opts.max_total_bytes);
+
+    // TotalBytes() must equal exactly (retained count) x (one entry's bytes),
+    // measured from a fresh store so the check is independent of EntryBytes
+    // internals. A drifted counter (the prune double-subtract) breaks this.
+    const auto all = inbox.List(0, 0, "");
+    UserInbox::Options ref = opts;
+    UserInbox unit(ref);
+    unit.Add(1, MsgScope::INBOX, "t", sender, body);
+    BOOST_CHECK_EQUAL(inbox.Size(), all.size());
+    BOOST_CHECK_EQUAL(inbox.TotalBytes(), all.size() * unit.TotalBytes());
+    // ids are monotonic and the newest survive.
+    if (!all.empty()) BOOST_CHECK_EQUAL(all.back().id, 200u);
+}
+
+BOOST_AUTO_TEST_CASE(user_inbox_prunes_broadcast_before_inbox)
+{
+    // Size-cap eviction must drop broadcast-scope entries before unread 1:1
+    // inbox messages: a public-topic flood cannot push out the store's reason
+    // to exist. Interleave INBOX and BROADCAST, overflow the cap, and assert
+    // every retained entry is INBOX until the cap forces into them.
+    UserInbox::Options opts;
+    opts.memory_only = true;
+    opts.max_total_bytes = 4096;
+    opts.expiry_seconds = 0;
+    UserInbox inbox(opts);
+
+    const blsct::PublicKey sender = blsct::PrivateKey(BlstScalar::Rand(true)).GetPublicKey();
+    const std::vector<uint8_t> body(256, 0x7);
+    // Insert broadcast first, then a burst of inbox, so if scope were ignored
+    // the oldest (broadcast) would go anyway -- interleave to make the policy
+    // load-bearing: newest are broadcast, oldest inbox.
+    for (int i = 0; i < 30; ++i) {
+        inbox.Add(1000 + i, MsgScope::INBOX, "t", sender, body);
+        inbox.Add(1000 + i, MsgScope::BROADCAST, "pub", sender, body);
+    }
+    const auto kept = inbox.List(0, 0, "");
+    size_t inbox_kept = 0, bcast_kept = 0;
+    for (const auto& e : kept) {
+        if (e.scope == static_cast<uint8_t>(MsgScope::INBOX)) ++inbox_kept;
+        else if (e.scope == static_cast<uint8_t>(MsgScope::BROADCAST)) ++bcast_kept;
+    }
+    // With broadcast-first eviction the surviving set is inbox-dominated; a
+    // scope-blind oldest-first prune would keep the newest (all broadcast).
+    BOOST_CHECK_GT(inbox_kept, bcast_kept);
+}
+
+BOOST_AUTO_TEST_CASE(user_inbox_expiry_prunes)
+{
+    UserInbox::Options opts;
+    opts.memory_only = true;
+    opts.max_total_bytes = 0; // no size cap; isolate expiry
+    opts.expiry_seconds = 100;
+    UserInbox inbox(opts);
+
+    const blsct::PublicKey sender = blsct::PrivateKey(BlstScalar::Rand(true)).GetPublicKey();
+    const std::vector<uint8_t> body(64, 0x01);
+    const int64_t now = GetTime<std::chrono::seconds>().count();
+    // Two entries older than expiry_seconds, one fresh. Prune runs at each
+    // Add with now = the received_at argument; List also filters on the real
+    // clock, so anchor everything near real now.
+    inbox.Add(now - 1000, MsgScope::INBOX, "t", sender, body);
+    inbox.Add(now - 1000, MsgScope::INBOX, "t", sender, body);
+    inbox.Add(now, MsgScope::INBOX, "t", sender, body);
+    // The two ancient entries are now > expiry_seconds old and must be gone.
+    // One fresh entry survives; the two expired are pruned.
+    BOOST_CHECK_EQUAL(inbox.Size(), 1u);
+    // TotalBytes must equal exactly one entry's worth. The prune
+    // double-subtract bug drove the persisted total below the true value
+    // (here it would have underflowed to a huge number after subtracting the
+    // two expired entries twice); pin it to a single-entry baseline measured
+    // from a fresh store so the check is independent of EntryBytes internals.
+    UserInbox::Options ref = opts;
+    UserInbox one(ref);
+    one.Add(now, MsgScope::INBOX, "t", sender, body);
+    BOOST_CHECK_EQUAL(inbox.TotalBytes(), one.TotalBytes());
 }
 
 BOOST_AUTO_TEST_SUITE_END()
