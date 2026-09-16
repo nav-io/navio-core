@@ -272,6 +272,32 @@ BOOST_FIXTURE_TEST_CASE(pool_type_aware_pick, BasicTestingSetup)
     BOOST_CHECK_EQUAL(o5, 6u);
 }
 
+BOOST_FIXTURE_TEST_CASE(pool_mark_reward_input, BasicTestingSetup)
+{
+    aggregation::CandidatePool pool;
+    const uint256 marked = InsecureRand256();
+    const uint256 unmarked = InsecureRand256();
+    BOOST_REQUIRE(pool.AddCandidate(FakeCandidate(marked)));
+    BOOST_REQUIRE(pool.AddCandidate(FakeCandidate(unmarked)));
+    pool.MarkRewardInput(COutPoint(marked));
+
+    // Admitted as transfers; only the marked one now fills a reward quota,
+    // and only the unmarked one a transfer quota. Repeat, since each type
+    // class is shuffled.
+    for (int i = 0; i < 16; ++i) {
+        const auto reward_pick = pool.PickForAggregate(1, 1);
+        BOOST_REQUIRE_EQUAL(reward_pick.size(), 1u);
+        BOOST_CHECK(reward_pick[0]->vin[0].prevout.hash == marked);
+        const auto other_pick = pool.PickForAggregate(1, 0);
+        BOOST_REQUIRE_EQUAL(other_pick.size(), 1u);
+        BOOST_CHECK(other_pick[0]->vin[0].prevout.hash == unmarked);
+    }
+
+    // Marking an input that is not pooled is a no-op.
+    pool.MarkRewardInput(COutPoint(InsecureRand256()));
+    BOOST_CHECK_EQUAL(pool.Size(), 2u);
+}
+
 BOOST_FIXTURE_TEST_CASE(pool_rejects_multi_input, BasicTestingSetup)
 {
     aggregation::CandidatePool pool;
@@ -659,6 +685,21 @@ BOOST_AUTO_TEST_CASE(target_cover_count_ceil_and_clamp)
     BOOST_CHECK_EQUAL(TargetCoverCount(9), 3u);
     // clamped at POOL_MAX_COMBINED
     BOOST_CHECK_EQUAL(TargetCoverCount(POOL_MAX_COMBINED * 4 + 100), POOL_MAX_COMBINED);
+}
+
+BOOST_AUTO_TEST_CASE(prefer_reward_count_mirrors_input_mix)
+{
+    using aggregation::PreferRewardCount;
+    // No own inputs: nothing to mirror.
+    BOOST_CHECK_EQUAL(PreferRewardCount(4, 0, 0), 0u);
+    // All-reward and all-transfer halves.
+    BOOST_CHECK_EQUAL(PreferRewardCount(4, 3, 3), 4u);
+    BOOST_CHECK_EQUAL(PreferRewardCount(4, 0, 3), 0u);
+    // Mixed halves round UP: ceil(max_n * reward / inputs).
+    BOOST_CHECK_EQUAL(PreferRewardCount(4, 1, 2), 2u);
+    BOOST_CHECK_EQUAL(PreferRewardCount(3, 1, 2), 2u);
+    BOOST_CHECK_EQUAL(PreferRewardCount(1, 1, 5), 1u);
+    BOOST_CHECK_EQUAL(PreferRewardCount(5, 1, 3), 2u);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

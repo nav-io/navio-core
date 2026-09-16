@@ -736,7 +736,7 @@ static RPCHelpMan getp2pmsgaggregate()
                     if (!coin.IsSpent() && coin.IsCoinBase()) ++reward_in;
                 }
             }
-            const size_t prefer_reward = own.vin.empty() ? 0 : (max_k * reward_in + own.vin.size() - 1) / own.vin.size();
+            const size_t prefer_reward = aggregation::PreferRewardCount(max_k, reward_in, own.vin.size());
 
             std::vector<CTransactionRef> halves;
             halves.push_back(MakeTransactionRef(own));
