@@ -615,6 +615,7 @@ public:
     }
     void findCoins(std::map<COutPoint, Coin>& coins) override { return FindCoins(m_node, coins); }
     void findTokens(std::map<uint256, blsct::TokenEntry>& tokens) override { return FindTokens(m_node, tokens); };
+    void listAllTokens(std::map<uint256, blsct::TokenEntry>& tokens) override { return ListAllTokens(m_node, tokens); };
     double guessVerificationProgress(const uint256& block_hash) override
     {
         LOCK(::cs_main);

@@ -446,7 +446,22 @@ if(NOT BUILD_LIBBLSCT_ONLY)
   # (GNU ld, lld, mingw) scan navio_node before navio_blsct_wallet and fail to
   # resolve p2pmsg::/rfq::/aggregation:: symbols (LNK is fine on MSVC, which
   # rescans). navio_node is fully defined by this point.
-  target_link_libraries(navio_blsct_wallet PRIVATE navio_node)
+  # navio_common must be part of the same strongly-connected component as
+  # navio_node/navio_blsct_wallet: the late navio_node re-scan (from the
+  # back-edge above) pulls objects like validation.cpp.o whose
+  # CBlockIndex::GetAncestor / GetBlockProof live in navio_common's
+  # chain.cpp, and a single-pass linker needs a navio_common occurrence
+  # AFTER that scan. navio_common -> navio_blsct_wallet already exists;
+  # declaring the reverse edge closes common into the cycle so CMake
+  # repeats all three archives together.
+  target_link_libraries(navio_blsct_wallet PRIVATE navio_node navio_common)
+  # CMake repeats cycle members only twice by default; the second navio_node
+  # scan still pulls fresh objects (validation.cpp.o via the wallet RPCs)
+  # whose chain symbols need one more navio_common pass. Three rounds
+  # converge. (LINK_GROUP:RESCAN would express this better but needs
+  # CMake >= 3.24; the project floor is 3.22.)
+  set_target_properties(navio_blsct_wallet navio_node navio_common
+                        PROPERTIES LINK_INTERFACE_MULTIPLICITY 3)
 
   if(BUILD_WALLET_TOOL AND ENABLE_WALLET)
     target_link_libraries(navio-wallet PRIVATE navio_node)

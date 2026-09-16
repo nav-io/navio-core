@@ -28,6 +28,12 @@ struct NodeContext;
  */
 void FindCoins(const node::NodeContext& node, std::map<COutPoint, Coin>& coins);
 void FindTokens(const NodeContext& node, std::map<uint256, blsct::TokenEntry>& tokens);
+
+/**
+ * Enumerate every token/NFT collection known to the active chainstate.
+ * Overwrites `tokens` with the full id -> entry map.
+ */
+void ListAllTokens(const NodeContext& node, std::map<uint256, blsct::TokenEntry>& tokens);
 } // namespace node
 
 #endif // BITCOIN_NODE_COIN_H

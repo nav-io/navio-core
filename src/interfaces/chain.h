@@ -194,6 +194,10 @@ public:
     virtual void findCoins(std::map<COutPoint, Coin>& coins) = 0;
     virtual void findTokens(std::map<uint256, blsct::TokenEntry>& tokens) = 0;
 
+    //! Enumerate every token/NFT collection known to the active chainstate
+    //! (overwrites `tokens` with the full id -> entry map).
+    virtual void listAllTokens(std::map<uint256, blsct::TokenEntry>& tokens) = 0;
+
     //! Estimate fraction of total transactions verified if blocks up to
     //! the specified block hash are verified.
     virtual double guessVerificationProgress(const uint256& block_hash) = 0;
