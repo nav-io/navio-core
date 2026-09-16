@@ -30,6 +30,14 @@ namespace {
 // MAX_TX_INPUT_COUNT, the change output can appear or disappear once at each
 // input count, and one further pass accepts.
 constexpr size_t MAX_FEE_FIXPOINT_PASSES = 2 * MAX_TX_INPUT_COUNT + 2;
+
+std::runtime_error TooManyInputsError()
+{
+    return std::runtime_error(strprintf(
+        "This transaction would need more than %u inputs (too many small outputs to spend at once). "
+        "Consolidate small outputs first with the 'consolidate' RPC, then retry.",
+        MAX_TX_INPUT_COUNT));
+}
 } // namespace
 
 void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const Scalar& blindingKey, const CAmount& nBLSCTDefaultFee, const std::optional<delegation::DelegationRequest>& stakeDelegation)
@@ -264,10 +272,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
 
             if (nFromInputs < amounts.second.nFromOutputs + tokenFee) {
                 if (hitInputCap) {
-                    throw std::runtime_error(strprintf(
-                        "This transaction would need more than %u inputs (too many small outputs to spend at once). "
-                        "Consolidate small outputs first with the 'consolidate' RPC, then retry.",
-                        MAX_TX_INPUT_COUNT));
+                    throw TooManyInputsError();
                 }
                 return std::nullopt;
             }
@@ -408,13 +413,25 @@ bool TxFactoryBase::AddInput(const CAmount& amount, const BlstScalar& gamma, con
     return true;
 }
 
+size_t TxFactoryBase::InputCount() const
+{
+    size_t n = 0;
+    for (const auto& [token_id, inputs] : vInputs) n += inputs.size();
+    return n;
+}
+
 std::optional<CMutableTransaction> TxFactoryBase::BuildHalfAddingSpares(
     const std::vector<InputCandidates>& spares,
     size_t first_spare,
     const std::function<std::optional<CMutableTransaction>()>& build)
 {
+    // A half spends every input this factory holds (BuildUnbalancedHalf has no
+    // cap of its own), so enforce MAX_TX_INPUT_COUNT here: refuse a factory
+    // already past it, and fail rather than add a spare that would pass it.
+    if (InputCount() > MAX_TX_INPUT_COUNT) throw TooManyInputsError();
     auto half = build();
     for (size_t i = first_spare; !half && i < spares.size(); ++i) {
+        if (InputCount() >= MAX_TX_INPUT_COUNT) throw TooManyInputsError();
         const auto& c = spares[i];
         AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
         half = build();

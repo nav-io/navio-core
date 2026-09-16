@@ -138,6 +138,17 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         assert res, "NAV-pay order across a 5+1 split failed to build"
         self.log.info("NAV-pay order with fee headroom across split coins OK")
 
+        # Same headroom on replyquote's NAV-pay path. Paying a 5 NAV fill, the
+        # 5 NAV coin covers the fill exactly, so the quote half only builds
+        # once the retry loop adds the 1 NAV coin as a fee spare. (The order
+        # above built its half without spending anything.)
+        maker2.setswapintent("", tid, one, 5 * one, 10000000, 1893456000)
+        uuid2 = taker.requestquote("", tid, 5 * one, 1893456000)["uuid"]
+        self.wait_until(lambda: uuid2 in [p["uuid"] for p in maker2.listpendingquoterequests()], timeout=30)
+        quote_id = maker2.replyquote(uuid2)
+        self.wait_until(lambda: quote_id in [q["quote_id"] for q in taker.listquotes(uuid2)], timeout=30)
+        self.log.info("NAV-pay quote with fee headroom across split coins OK")
+
 
 if __name__ == "__main__":
     P2PMsgSwapE2ETest(__file__).main()
