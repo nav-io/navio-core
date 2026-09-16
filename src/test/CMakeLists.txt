@@ -206,6 +206,18 @@ if(ENABLE_WALLET)
   target_link_libraries(test_navio navio_wallet)
 endif()
 
+# Wall-clock cap for one Boost test suite. Without it a suite that never
+# returns -- a producer/verifier disagreement inside a grind loop, a deadlock --
+# runs until the CI job's own timeout-minutes fires. GitHub renders that as
+# "cancelled" rather than as a failure, and the log ends with no indication of
+# which suite stopped, so the run reads as inconclusive instead of red. With a
+# per-suite cap ctest fails the run and names the suite.
+#
+# Sized well above the slowest suite seen across the CI matrix rather than
+# close to it: overshooting costs slower feedback on a hang, undershooting
+# costs a false failure on a loaded runner.
+set(TEST_SUITE_TIMEOUT_SECONDS 1800)
+
 function(add_boost_test source_file)
   if(NOT EXISTS ${source_file})
     return()
@@ -230,6 +242,9 @@ function(add_boost_test source_file)
       SKIP_REGULAR_EXPRESSION
         "no test cases matching filter"
         "skipping script_assets_test"
+    )
+    set_property(TEST ${test_suite_name} PROPERTY
+      TIMEOUT ${TEST_SUITE_TIMEOUT_SECONDS}
     )
   endforeach()
 endfunction()
