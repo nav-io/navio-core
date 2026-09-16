@@ -491,9 +491,7 @@ static RPCHelpMan createwallet()
                 // Refuse to create a new wallet that way. A restore must still
                 // accept it: a wallet already created with a non-ASCII
                 // passphrase is only recoverable from those exact bytes.
-                const bool non_ascii = std::any_of(mnemonic_passphrase.begin(), mnemonic_passphrase.end(),
-                                                   [](unsigned char c) { return c >= 0x80; });
-                if (non_ascii) {
+                if (!mnemonic::IsAsciiPassphrase(mnemonic_passphrase)) {
                     if (!has_mnemonic_param) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "The 'mnemonic_passphrase' must be ASCII when creating a new wallet");
                     }

@@ -404,6 +404,23 @@ class WalletMnemonicTest(BitcoinTestFramework):
         w_cli_mp = node.get_wallet_rpc("test_cli_mp")
         assert_equal(w_cli_mp.getblsctseed(), seed_pass)
 
+        self.log.info("Test CLI tool: non-ASCII -mnemonicpassphrase is rejected for a new wallet")
+        rc_na, stdout_na, stderr_na = self.navio_wallet_create(
+            "test_cli_mp_nonascii_new", mnemonic_passphrase="h\u00fcnter2")
+        assert_equal(rc_na, 1)
+        assert "must be ASCII when creating a new wallet" in stderr_na
+        assert "Mnemonic:" not in stdout_na
+
+        self.log.info("Test CLI tool: non-ASCII -mnemonicpassphrase restore warns and matches RPC")
+        rc_na2, stdout_na2, stderr_na2 = self.navio_wallet_create(
+            "test_cli_mp_nonascii_restore", mnemonic=mnemonic_mp, mnemonic_passphrase="h\u00fcnter2")
+        assert_equal(rc_na2, 0)
+        assert "non-ASCII" in stderr_na2
+        node.loadwallet("test_cli_mp_nonascii_restore")
+        assert_equal(node.get_wallet_rpc("test_cli_mp_nonascii_restore").getblsctseed(), seed_na)
+        # The ASCII restore above carries no such warning.
+        assert "non-ASCII" not in stderr_mp
+
         self.log.info("Test CLI tool: -mnemonicpassphrase with -seed errors")
         rc_mp2, stdout_mp2, stderr_mp2 = self.navio_wallet_create(
             "test_cli_mp_seed", seed="00" * 32, mnemonic_passphrase="pass")

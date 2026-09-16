@@ -35,6 +35,11 @@ std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& w
 // Does not validate the mnemonic; use Validate() for that.
 std::vector<unsigned char> MnemonicToSeed(const std::string& words, const std::string& passphrase = "");
 
+// Whether `passphrase` is pure ASCII. MnemonicToSeed skips NFKD, so only an
+// ASCII passphrase is guaranteed to derive the same seed as other BIP-39
+// wallets; new wallets must refuse anything else.
+bool IsAsciiPassphrase(const std::string& passphrase);
+
 // Validate mnemonic (word count, word membership, checksum).
 // Accepts standard BIP-39 lengths and the 26-word birthday variant.
 bool Validate(const std::string& words);
