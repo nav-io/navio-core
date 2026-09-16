@@ -42,8 +42,11 @@ public:
         const typename T::Scalar& minValue = 0,
         const bool transcript_v2 = false);
 
+    // `threads` caps the verification worker pool; 0 means
+    // std::thread::hardware_concurrency().
     bool Verify(
-        const std::vector<RangeProofWithSeed<T>>& proofs);
+        const std::vector<RangeProofWithSeed<T>>& proofs,
+        size_t threads = 0);
 
     AmountRecoveryResult<T> RecoverAmounts(
         const std::vector<AmountRecoveryRequest<T>>& reqs
@@ -103,7 +106,8 @@ private:
     static size_t GetNumLeadingZeros(const uint32_t& n);
 
     bool VerifyProofs(
-        const std::vector<RangeProofWithTranscript<T>>& proof_transcripts);
+        const std::vector<RangeProofWithTranscript<T>>& proof_transcripts,
+        size_t threads);
 
     range_proof::Common<T> m_common;
 };

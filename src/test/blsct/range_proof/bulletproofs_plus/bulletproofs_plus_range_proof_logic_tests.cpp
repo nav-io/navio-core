@@ -530,6 +530,37 @@ BOOST_AUTO_TEST_CASE(test_verify_rejects_identity_commitments)
     }
 }
 
+BOOST_AUTO_TEST_CASE(test_verify_batch_verdict_independent_of_thread_cap)
+{
+    // The batch verdict must not depend on how the worker pool is sized: one
+    // bad proof at any position fails the batch under every thread cap, and
+    // an all-valid batch passes under every cap. Guards the index hand-off
+    // between workers (a skipped or double-claimed slot flips a verdict);
+    // it does not observe how many threads actually ran.
+    auto nonce = GenNonce();
+    auto msg = GenMsgPair();
+    auto token_id = GenTokenId();
+
+    RangeProofLogic rpl;
+    std::vector<bulletproofs_plus::RangeProofWithSeed<T>> batch;
+    for (int i = 0; i < 5; ++i) {
+        Scalars vs;
+        vs.Add(Scalar(i + 1));
+        batch.emplace_back(rpl.Prove(vs, nonce, msg.second, token_id), token_id);
+    }
+
+    for (size_t cap : {size_t{0}, size_t{1}, size_t{2}, size_t{3}, size_t{64}}) {
+        BOOST_CHECK_MESSAGE(rpl.Verify(batch, cap), "valid batch rejected with cap " << cap);
+        for (size_t bad = 0; bad < batch.size(); ++bad) {
+            auto tampered = batch;
+            // A proof checked under the other transcript fails verification.
+            tampered[bad].transcript_v2 = !tampered[bad].transcript_v2;
+            BOOST_CHECK_MESSAGE(!rpl.Verify(tampered, cap),
+                                "bad proof at " << bad << " accepted with cap " << cap);
+        }
+    }
+}
+
 BOOST_AUTO_TEST_CASE(test_range_proof_transcript_v2_roundtrip)
 {
     auto nonce = GenNonce();
