@@ -644,4 +644,21 @@ BOOST_AUTO_TEST_CASE(request_queue_claim_fifo)
     BOOST_CHECK(got != key_sorted);
 }
 
+BOOST_AUTO_TEST_CASE(target_cover_count_ceil_and_clamp)
+{
+    using aggregation::TargetCoverCount;
+    using aggregation::COVER_INPUT_RATIO;
+    using aggregation::POOL_MAX_COMBINED;
+    static_assert(COVER_INPUT_RATIO == 4);
+    // ceil(n / RATIO)
+    BOOST_CHECK_EQUAL(TargetCoverCount(0), 0u);
+    BOOST_CHECK_EQUAL(TargetCoverCount(1), 1u);
+    BOOST_CHECK_EQUAL(TargetCoverCount(4), 1u);
+    BOOST_CHECK_EQUAL(TargetCoverCount(5), 2u);
+    BOOST_CHECK_EQUAL(TargetCoverCount(8), 2u);
+    BOOST_CHECK_EQUAL(TargetCoverCount(9), 3u);
+    // clamped at POOL_MAX_COMBINED
+    BOOST_CHECK_EQUAL(TargetCoverCount(POOL_MAX_COMBINED * 4 + 100), POOL_MAX_COMBINED);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

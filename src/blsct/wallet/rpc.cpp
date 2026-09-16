@@ -130,6 +130,7 @@ static std::string FormatRecoveredGamma(const Scalar& gamma)
 }
 
 
+
 //! Count how many of `own`'s inputs spend coinbase (block-reward) outputs.
 //! Whether a prev-out was a block reward is public chain data.
 static size_t CountRewardInputs(wallet::CWallet& wallet, const CMutableTransaction& own)
@@ -183,11 +184,13 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
     // succeed.
     std::vector<CTransactionRef> candidates;
     aggregation::CandidatePool* pool = aggregation::GetActivePool();
-    if (pool && gArgs.GetBoolArg("-aggregatesends", aggregation::DEFAULT_AGGREGATE_SENDS)) {
+    const bool aggregate_sends = pool && gArgs.GetBoolArg("-aggregatesends", aggregation::DEFAULT_AGGREGATE_SENDS);
+    if (aggregate_sends) {
         candidates = pool->PickForAggregate(aggregation::POOL_MAX_COMBINED);
     }
 
     bool cover_refined = false;
+    bool cover_sized = false;
     for (;;) {
         blsct::CreateTransactionData attempt = txData;
         if (!candidates.empty()) {
@@ -216,6 +219,28 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         for (const auto& out : res->tx.vout) {
             if (out.IsStakedCommitment() && wallet.chain().hasStakedCommitment(out.blsctData.rangeProof.Vs[0])) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "The resulting staked commitment already exists on chain; unstake the existing commitment first or stake a different amount");
+            }
+        }
+
+        // Input-derived cover sizing (steady-cadence pool only; no on-demand
+        // pull -- pulling on the send path would make AGG_ANN a "send
+        // imminent" signal, defeating the decoupling the cover model relies
+        // on). Once the own half's input count is known, cap the cover at one
+        // candidate per COVER_INPUT_RATIO inputs from whatever the background
+        // puller has already accumulated, so a small send does not vacuum the
+        // whole pool as cover. Fewer candidates always LOWER the required fee,
+        // so the rebuild is strictly easier to fund than the one that already
+        // succeeded -- it cannot strand the half. Re-fee and rebuild through
+        // the loop (which already falls back on a failed rebuild).
+        if (aggregate_sends && !cover_sized && !candidates.empty()) {
+            cover_sized = true;
+            const size_t target = aggregation::TargetCoverCount(res->tx.vin.size());
+            if (target < candidates.size()) {
+                auto sized = pool->PickForAggregate(target);
+                if (!sized.empty()) {
+                    candidates = std::move(sized);
+                    continue;
+                }
             }
         }
 
@@ -540,6 +565,28 @@ static RPCHelpMan aggregatesend()
             txData.additionalFee = extra;
             auto own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
             if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+
+            // Input-derived cover sizing, steady-cadence pool only (no
+            // on-demand pull/wait; see SendTransaction). Cap the cover at the
+            // input-derived target AND the caller's max_candidates, drawn from
+            // what the background puller already holds. Rebuild only if the
+            // sized set moves the fee, and keep the known-good (own,candidates)
+            // pair if that rebuild fails rather than erroring a working send.
+            {
+                const size_t target = std::min(aggregation::TargetCoverCount(own->tx.vin.size()), max_k);
+                auto sized = pool->PickForAggregate(target);
+                if (target < candidates.size() && !sized.empty()) {
+                    const CAmount sized_extra = aggregation::RequiredCandidateFee(sized, rate);
+                    if (sized_extra == extra) {
+                        candidates = std::move(sized);
+                    } else {
+                        txData.additionalFee = sized_extra;
+                        auto resized = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
+                        if (resized) { own = resized; extra = sized_extra; candidates = std::move(sized); }
+                        else { txData.additionalFee = extra; } // keep the known-good half + candidates
+                    }
+                }
+            }
 
             // Now that the own half's inputs are known, re-pick covers whose
             // prev-out types mirror them (reward-ness is public; mismatched
