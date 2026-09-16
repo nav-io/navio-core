@@ -408,6 +408,20 @@ bool TxFactoryBase::AddInput(const CAmount& amount, const BlstScalar& gamma, con
     return true;
 }
 
+std::optional<CMutableTransaction> TxFactoryBase::BuildHalfAddingSpares(
+    const std::vector<InputCandidates>& spares,
+    size_t first_spare,
+    const std::function<std::optional<CMutableTransaction>()>& build)
+{
+    auto half = build();
+    for (size_t i = first_spare; !half && i < spares.size(); ++i) {
+        const auto& c = spares[i];
+        AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
+        half = build();
+    }
+    return half;
+}
+
 std::optional<CMutableTransaction>
 TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestination,
                                    const SubAddress& recvDestination,

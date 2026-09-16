@@ -2,7 +2,6 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <functional>
 #include <addresstype.h>
 #include <common/args.h>
 #include <blsct/wallet/balance_proof.h>
@@ -820,28 +819,6 @@ static RPCHelpMan acceptquotewallet()
     };
 }
 
-// Feed spare NAV coins into `factory` one at a time and rebuild until the
-// unbalanced half builds or the spares run out. BuildUnbalancedHalf returns
-// nullopt exactly when some input token cannot cover its outgo plus (for NAV)
-// the fee, and the required fee is a moving target — it depends on the final
-// transaction weight — so no up-front gathering limit can guarantee coverage.
-// Adding one more coin and rebuilding converges instead, and also lets the
-// fee be paid from several small NAV coins rather than one.
-static std::optional<CMutableTransaction> BuildHalfAddingSpares(
-    blsct::TxFactory& factory,
-    const std::vector<blsct::InputCandidates>& spares,
-    size_t first_spare,
-    const std::function<std::optional<CMutableTransaction>()>& build)
-{
-    auto half = build();
-    for (size_t i = first_spare; !half && i < spares.size(); ++i) {
-        const auto& c = spares[i];
-        factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
-        half = build();
-    }
-    return half;
-}
-
 static RPCHelpMan broadcastorder()
 {
     return RPCHelpMan{
@@ -892,7 +869,7 @@ static RPCHelpMan broadcastorder()
             // Gather with MAX_MONEY so coins beyond the bare offer remain
             // available as fee spares: when the offer token IS NAV the same
             // coins must also cover the fee, whose exact size is only known
-            // once the half is built (see BuildHalfAddingSpares).
+            // once the half is built (see TxFactoryBase::BuildHalfAddingSpares).
             blsct::TxFactory::AddAvailableCoins(pwallet.get(), km, params, candidates, /*nAmountLimit=*/MAX_MONEY);
 
             auto factory = blsct::TxFactory(km);
@@ -935,7 +912,7 @@ static RPCHelpMan broadcastorder()
             // Over-fund the fee for a generous taker-half allowance so the
             // combined swap clears the consensus minimum.
             const CAmount extra = static_cast<CAmount>(aggregation::CANDIDATE_WEIGHT_ESTIMATE) * rate;
-            auto half = BuildHalfAddingSpares(factory, fee_spares, first_spare, [&] {
+            auto half = factory.BuildHalfAddingSpares(fee_spares, first_spare, [&] {
                 return factory.BuildUnbalancedHalf(
                     change, maker_recv,
                     /*pay_token=*/offer_token, /*pay_amount=*/offer_amount,
@@ -1049,7 +1026,7 @@ static RPCHelpMan replyquote()
             blsct::DoublePublicKey change = std::get<blsct::DoublePublicKey>(km->GetNewDestination(-1).value());
 
             const CAmount extra = static_cast<CAmount>(aggregation::CANDIDATE_WEIGHT_ESTIMATE) * rate;
-            auto half = BuildHalfAddingSpares(factory, fee_spares, first_spare, [&] {
+            auto half = factory.BuildHalfAddingSpares(fee_spares, first_spare, [&] {
                 return factory.BuildUnbalancedHalf(
                     change, maker_recv,
                     /*pay_token=*/pay_token, /*pay_amount=*/pm->fill,

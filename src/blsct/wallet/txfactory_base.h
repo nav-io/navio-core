@@ -11,6 +11,7 @@
 #include <blsct/wallet/txfactory_global.h>
 #include <primitives/transaction.h>
 
+#include <functional>
 #include <optional>
 #include <set>
 
@@ -246,6 +247,19 @@ public:
         const CAmount& recv_amount,
         const CAmount& nBLSCTDefaultFee,
         const CAmount& additionalFee = 0);
+
+    //! Feed spare NAV coins into this factory one at a time and rebuild until
+    //! the unbalanced half builds or the spares run out. BuildUnbalancedHalf
+    //! returns nullopt exactly when some input token cannot cover its outgo
+    //! plus (for NAV) the fee, and the required fee is a moving target — it
+    //! depends on the final transaction weight — so no up-front gathering
+    //! limit can guarantee coverage. Adding one more coin and rebuilding
+    //! converges instead, and also lets the fee be paid from several small NAV
+    //! coins rather than one.
+    std::optional<CMutableTransaction> BuildHalfAddingSpares(
+        const std::vector<InputCandidates>& spares,
+        size_t first_spare,
+        const std::function<std::optional<CMutableTransaction>()>& build);
 };
 
 } // namespace blsct
