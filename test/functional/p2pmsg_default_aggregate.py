@@ -171,6 +171,28 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         assert txids[0] not in n0.getrawmempool(), "aggregated consolidation did not confirm"
         self.log.info("default-aggregated consolidation confirmed")
 
+        # --- Input-derived cover sizing: a small send leaves covers pooled. ---
+        # The cover cap is one candidate per COVER_INPUT_RATIO own inputs, so a
+        # send with at most that many inputs takes one cover even though the
+        # pool holds two. The arithmetic alone is pinned by
+        # target_cover_count_ceil_and_clamp; this checks the send path uses it.
+        COVER_INPUT_RATIO = 4
+        self.serve_candidate(n0, n1, w1)
+        self.serve_candidate(n0, n1, w1)
+        pooled = n0.getaggregationhint()["available"]
+        assert_equal(pooled, 2)
+        res = w0.aggregatesend(w1.getnewaddress(label="", address_type="blsct"), 1.0, 16)
+        tx = n0.getrawtransaction(res["txid"], True)
+        own_inputs = len(tx["vin"]) - res["candidates_merged"]
+        expected = -(-own_inputs // COVER_INPUT_RATIO)
+        assert expected < pooled, "own half has %d inputs; the cap would not bind" % own_inputs
+        assert_equal(res["candidates_merged"], expected)
+        assert_equal(n0.getaggregationhint()["available"], pooled - expected)
+        self.generatetoblsctaddress(n0, 1, miner0)
+        self.sync_blocks()
+        assert res["txid"] not in n0.getrawmempool(), "cover-sized aggregatesend did not confirm"
+        self.log.info("small aggregatesend merged %d of %d pooled covers" % (expected, pooled))
+
 
 if __name__ == "__main__":
     P2PMsgDefaultAggregateTest(__file__).main()
