@@ -812,8 +812,68 @@ BOOST_FIXTURE_TEST_CASE(test_add_output_rejects_non_positive_amount, TestingSetu
 // the loop pushes a candidate and THEN breaks once the running total exceeds
 // nAmountLimit, so a limit of 0 yields exactly one candidate (the historical
 // footgun) while a limit equal to the requirement yields enough coins to cover
-// it. Guards all five p2pmsg call sites at once without depending on emergent
-// wallet behaviour (see PR #411 review).
+// it. It pins only these AddAvailableCoins semantics, which the p2pmsg call
+// sites rely on; it does not exercise the call sites themselves (see PR #411
+// review).
+BOOST_FIXTURE_TEST_CASE(build_half_adding_spares, BasicTestingSetup)
+{
+    const auto spare = [](uint32_t n) {
+        return blsct::InputCandidates{1, BlstScalar(), blsct::PrivateKey(), TokenId(), COutPoint(uint256(uint64_t{n})), false};
+    };
+    std::vector<blsct::InputCandidates> spares;
+    for (uint32_t n = 0; n < blsct::MAX_TX_INPUT_COUNT + 10; ++n) spares.push_back(spare(n));
+
+    // Spares are added one per failed build, from first_spare on, until the
+    // build succeeds.
+    {
+        blsct::TxFactoryBase factory;
+        size_t builds = 0;
+        const auto half = factory.BuildHalfAddingSpares(spares, /*first_spare=*/2, [&]() -> std::optional<CMutableTransaction> {
+            ++builds;
+            if (factory.InputCount() < 3) return std::nullopt;
+            return CMutableTransaction{};
+        });
+        BOOST_CHECK(half.has_value());
+        BOOST_CHECK_EQUAL(factory.InputCount(), 3u);
+        BOOST_CHECK_EQUAL(builds, 4u);
+    }
+
+    // A half that never builds stops at MAX_TX_INPUT_COUNT inputs and throws,
+    // instead of spending more inputs than a transaction may carry.
+    {
+        blsct::TxFactoryBase factory;
+        size_t builds = 0;
+        BOOST_CHECK_THROW(factory.BuildHalfAddingSpares(spares, /*first_spare=*/0, [&]() -> std::optional<CMutableTransaction> {
+            ++builds;
+            return std::nullopt;
+        }),
+                          std::runtime_error);
+        BOOST_CHECK_EQUAL(factory.InputCount(), blsct::MAX_TX_INPUT_COUNT);
+        BOOST_CHECK_EQUAL(builds, blsct::MAX_TX_INPUT_COUNT + 1);
+    }
+
+    // Running out of spares below the cap is a plain failure, not the cap error.
+    {
+        blsct::TxFactoryBase factory;
+        const std::vector<blsct::InputCandidates> few(spares.begin(), spares.begin() + 3);
+        BOOST_CHECK(!factory.BuildHalfAddingSpares(few, /*first_spare=*/0, [] { return std::optional<CMutableTransaction>{}; }));
+        BOOST_CHECK_EQUAL(factory.InputCount(), 3u);
+    }
+
+    // A factory already past the cap is refused before building.
+    {
+        blsct::TxFactoryBase factory;
+        for (const auto& c : spares) factory.AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, c.outpoint);
+        size_t builds = 0;
+        BOOST_CHECK_THROW(factory.BuildHalfAddingSpares({}, /*first_spare=*/0, [&]() -> std::optional<CMutableTransaction> {
+            ++builds;
+            return CMutableTransaction{};
+        }),
+                          std::runtime_error);
+        BOOST_CHECK_EQUAL(builds, 0u);
+    }
+}
+
 BOOST_FIXTURE_TEST_CASE(add_available_coins_amount_limit, TestingSetup)
 {
     SeedInsecureRand(SeedRand::ZEROS);

@@ -11,6 +11,7 @@
 #include <blsct/wallet/txfactory_global.h>
 #include <primitives/transaction.h>
 
+#include <functional>
 #include <optional>
 #include <set>
 
@@ -201,6 +202,8 @@ public:
     // Mint NFT
     void AddOutput(const Scalar& tokenKey, const SubAddress& destination, const blsct::PublicKey& tokenPublicKey, const uint64_t& nftId, const std::map<std::string, std::string>& nftMetadata);
     bool AddInput(const CAmount& amount, const BlstScalar& gamma, const blsct::PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false);
+    //! Number of inputs added so far, across all tokens.
+    size_t InputCount() const;
     //! `additionalFee` lets an aggregation initiator over-fund the fee output so
     //! the combined transaction (own half + K fee-0 candidate halves) meets the
     //! consensus min-fee for the COMBINED weight. Defaults to 0 (normal txs).
@@ -246,6 +249,21 @@ public:
         const CAmount& recv_amount,
         const CAmount& nBLSCTDefaultFee,
         const CAmount& additionalFee = 0);
+
+    //! Feed spare NAV coins into this factory one at a time and rebuild until
+    //! the unbalanced half builds or the spares run out. BuildUnbalancedHalf
+    //! returns nullopt exactly when some input token cannot cover its outgo
+    //! plus (for NAV) the fee, and the required fee is a moving target — it
+    //! depends on the final transaction weight — so no up-front gathering
+    //! limit can guarantee coverage. Adding one more coin and rebuilding
+    //! converges instead, and also lets the fee be paid from several small NAV
+    //! coins rather than one.
+    //! Throws std::runtime_error if the half would need more than
+    //! MAX_TX_INPUT_COUNT inputs.
+    std::optional<CMutableTransaction> BuildHalfAddingSpares(
+        const std::vector<InputCandidates>& spares,
+        size_t first_spare,
+        const std::function<std::optional<CMutableTransaction>()>& build);
 };
 
 } // namespace blsct
