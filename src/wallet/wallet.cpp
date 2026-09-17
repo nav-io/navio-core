@@ -2099,7 +2099,16 @@ isminetype CWallet::IsMine(const COutPoint& outpoint) const
 
 bool CWallet::IsFromMe(const CTransaction& tx) const
 {
-    return (GetDebit(tx, ISMINE_ALL) > 0);
+    LOCK(cs_wallet);
+    for (const CTxIn& txin : tx.vin) {
+        if (IsMine(txin.prevout)) {
+            return true;
+        }
+        if (IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) && mapOutputs.contains(txin.prevout)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 CAmount CWallet::GetDebit(const CTransaction& tx, const isminefilter& filter, const TokenId& token_id) const
