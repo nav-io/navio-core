@@ -2247,7 +2247,7 @@ static RPCHelpMan scantxoutset()
                         {RPCResult::Type::STR_HEX, "outid", "The output id"},
                         {RPCResult::Type::STR_HEX, "scriptPubKey", "The script key"},
                         {RPCResult::Type::STR, "desc", "A specialized descriptor for the matched scriptPubKey"},
-                        {RPCResult::Type::STR_AMOUNT, "amount", "The total amount in " + CURRENCY_UNIT + " of the unspent output"},
+                        {RPCResult::Type::STR_AMOUNT, "amount", /*optional=*/true, "The total amount in " + CURRENCY_UNIT + " of the unspent output (omitted on a confidential chain, where the output value is a Pedersen commitment rather than a plain amount)"},
                         {RPCResult::Type::BOOL, "coinbase", "Whether this is a coinbase output"},
                         {RPCResult::Type::NUM, "height", "Height of the unspent transaction output"},
                     }},
@@ -2334,6 +2334,11 @@ static RPCHelpMan scantxoutset()
         result.pushKV("height", tip->nHeight);
         result.pushKV("bestblock", tip->GetBlockHash().GetHex());
 
+        // On a confidential chain an output carries a Pedersen commitment rather
+        // than a plain nValue, so neither the amount of a scanned output nor the
+        // total of all of them is known. Omit both instead of reporting a number
+        // that is not the amount found.
+        const bool confidential{chainman.GetConsensus().fBLSCT};
         for (const auto& it : coins) {
             const COutPoint& outpoint = it.first;
             const Coin& coin = it.second;
@@ -2345,17 +2350,16 @@ static RPCHelpMan scantxoutset()
             unspent.pushKV("outid", outpoint.hash.GetHex());
             unspent.pushKV("scriptPubKey", HexStr(txo.scriptPubKey));
             unspent.pushKV("desc", descriptors[txo.scriptPubKey]);
-            unspent.pushKV("amount", ValueFromAmount(txo.nValue));
+            if (!confidential) {
+                unspent.pushKV("amount", ValueFromAmount(txo.nValue));
+            }
             unspent.pushKV("coinbase", coin.IsCoinBase());
             unspent.pushKV("height", (int32_t)coin.nHeight);
 
             unspents.push_back(unspent);
         }
         result.pushKV("unspents", unspents);
-        // On a confidential chain an output carries a Pedersen commitment rather
-        // than a plain nValue, so the scanned outputs cannot be totalled. Omit
-        // the total instead of reporting a number that is not the amount found.
-        if (!chainman.GetConsensus().fBLSCT) {
+        if (!confidential) {
             result.pushKV("total_amount", ValueFromAmount(total_in));
         }
     } else {
