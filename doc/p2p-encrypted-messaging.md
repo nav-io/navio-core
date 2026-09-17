@@ -389,6 +389,19 @@ with zero configuration.
   capable peers. Advertisements are unauthenticated, so a peer may set the bit
   and not actually relay (the message is then just lost, as it would be with no
   path) -- best-effort, but strictly better than routing blind.
+- **Leaves (`NODE_P2PMSG_LEAF`)**: a second bit for clients that want to
+  *receive* bus traffic but cannot relay it -- standalone SDK clients (browser,
+  mobile) that hold one or two connections to full nodes and have no peers of
+  their own to forward to. A relay fluffs `P2PMSG` to a leaf exactly as to a
+  `NODE_P2PMSG` peer, so the leaf sees everything that fluffs past its node, but
+  a leaf is **never** chosen as a Dandelion++ stem successor: a stem hop is a
+  single unicast, and handing it to a non-relaying peer would black-hole the
+  message before it ever fluffs. If a node's only p2pmsg-capable peers are
+  leaves it has no stem route and fluffs instead (see below). A leaf may still
+  *send* `p2pmsg`/`dp2pmsg` like any peer, under the same PoW/DoS gates.
+  `getp2pmsginfo` reports `leaf_peers` (LEAF without P2PMSG) next to
+  `relay_capable_peers`. A node that relays should set `NODE_P2PMSG`, not this
+  bit; the leaf bit only widens delivery, never the stem set.
 - **Participation is network-visible**: because `NODE_P2PMSG` is a service flag,
   it rides ADDR gossip and appears in `getpeerinfo`/`getnodeaddresses`. Enabling
   `-p2pmsg` therefore announces participation network-wide, not just to direct
@@ -410,7 +423,8 @@ with zero configuration.
   *originated* from messages it merely *relayed*, nor learn the stem graph by
   watching successor choices vary. The successor is re-rolled only when the epoch
   rolls over or the pinned peer becomes ineligible (disconnect, or dropped the
-  `NODE_P2PMSG` bit). If no eligible successor exists, or the pinned successor is
+  `NODE_P2PMSG` bit; `NODE_P2PMSG_LEAF` peers are never eligible). If no
+  eligible successor exists, or the pinned successor is
   the very peer a message arrived from (which would loop), the node **fluffs**
   that message instead of dead-ending it -- privacy is preserved because the
   fluffing node is the one broadcasting. A stem successor still learns its

@@ -328,6 +328,18 @@ enum ServiceFlags : uint64_t {
     // Navio-specific; occupies a reserved-experiment bit.
     NODE_P2PMSG = (1 << 24),
 
+    // NODE_P2PMSG_LEAF advertises a p2pmsg "leaf": a client that wants to
+    // RECEIVE the encrypted overlay's fluff traffic but never relays it (it has
+    // no peers of its own to forward to -- think a standalone SDK client in a
+    // browser or on mobile that only speaks to one or two full nodes). Relays
+    // fluff P2PMSG to leaves exactly as to NODE_P2PMSG peers, but never pick a
+    // leaf as a Dandelion++ stem successor: a stem hop to a non-relaying peer
+    // would black-hole the message before it ever fluffs. A leaf may still
+    // SEND P2PMSG/DP2PMSG like any peer, under the same PoW/DoS checks. A node
+    // that relays should set NODE_P2PMSG (which already implies delivery), not
+    // this bit. Navio-specific; occupies a reserved-experiment bit.
+    NODE_P2PMSG_LEAF = (1 << 25),
+
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the
     // bitcoin-development mailing list. Remember that service bits are just

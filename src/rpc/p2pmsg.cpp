@@ -57,6 +57,7 @@ static RPCHelpMan getp2pmsginfo()
                 {RPCResult::Type::STR_HEX, "prekey_sig", /*optional=*/true, "identity_pubkey's signature over inbox_pubkey, so a fetched prekey can be verified as belonging to this identity"},
                 {RPCResult::Type::NUM, "pings_received", /*optional=*/true, "PING payloads decrypted and dispatched to us"},
                 {RPCResult::Type::NUM, "relay_capable_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG (can relay the overlay for us). Note this is a lower bound on network participation: capability rides ADDR gossip, so many more nodes may be reachable indirectly."},
+                {RPCResult::Type::NUM, "leaf_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_LEAF but not NODE_P2PMSG: receive-only bus clients that get our fluff traffic but are never chosen as a Dandelion++ stem successor."},
             }},
         RPCExamples{HelpExampleCli("getp2pmsginfo", "") + HelpExampleRpc("getp2pmsginfo", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -74,10 +75,17 @@ static RPCHelpMan getp2pmsginfo()
             node::NodeContext& node = EnsureAnyNodeContext(request.context);
             if (node.connman) {
                 uint64_t capable = 0;
-                node.connman->ForEachNode([&capable](CNode* pnode) {
-                    if ((pnode->m_their_services.load() & NODE_P2PMSG) != 0) ++capable;
+                uint64_t leaves = 0;
+                node.connman->ForEachNode([&capable, &leaves](CNode* pnode) {
+                    const uint64_t their = pnode->m_their_services.load();
+                    if ((their & NODE_P2PMSG) != 0) {
+                        ++capable;
+                    } else if ((their & NODE_P2PMSG_LEAF) != 0) {
+                        ++leaves;
+                    }
                 });
                 obj.pushKV("relay_capable_peers", capable);
+                obj.pushKV("leaf_peers", leaves);
             }
             return obj;
         },

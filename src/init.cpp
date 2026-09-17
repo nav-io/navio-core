@@ -1752,20 +1752,34 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // whole purpose is to carry blocks and nothing else, so pushing
             // application messages to them both wastes the connection and
             // fingerprints it as p2pmsg-carrying, weakening its privacy role.
-            // Only route to peers that advertised NODE_P2PMSG: a non-supporting
-            // node silently drops P2PMSG/DP2PMSG without relaying, so a fluff
-            // copy to it is wasted and a stem hop to it is LOST (the message
-            // never fluffs). Advertisements are unauthenticated, so a peer may
-            // set the bit and still not relay -- the message is then simply
-            // lost, exactly as if it had no path, so this is best-effort but
-            // strictly better than routing blind.
-            const auto eligible = [&](const CNode* pnode) {
+            // Only route to peers that advertised a p2pmsg service bit: a
+            // non-supporting node silently drops P2PMSG/DP2PMSG without
+            // relaying, so a fluff copy to it is wasted and a stem hop to it is
+            // LOST (the message never fluffs). Advertisements are
+            // unauthenticated, so a peer may set a bit and still not relay --
+            // the message is then simply lost, exactly as if it had no path, so
+            // this is best-effort but strictly better than routing blind.
+            //
+            // Two bits, two eligibility sets:
+            //  - NODE_P2PMSG: a relay. Gets fluff copies AND may be pinned as
+            //    the Dandelion++ stem successor.
+            //  - NODE_P2PMSG_LEAF: a receive-only client (standalone SDK in a
+            //    browser/mobile) with no peers to forward to. Gets fluff copies
+            //    so it sees bus traffic, but is NEVER a stem successor: a stem
+            //    hop is a single unicast, and a leaf would black-hole it before
+            //    it ever fluffs.
+            const auto fluff_eligible = [&](const CNode* pnode) {
+                return !pnode->IsBlockOnlyConn() &&
+                       (pnode->m_their_services.load() & (NODE_P2PMSG | NODE_P2PMSG_LEAF)) != 0;
+            };
+            const auto stem_eligible = [&](const CNode* pnode) {
                 return !pnode->IsBlockOnlyConn() && (pnode->m_their_services.load() & NODE_P2PMSG) != 0;
             };
-            // Fluff: flood every eligible peer except the origin.
+            // Fluff: flood every fluff-eligible peer (relays and leaves) except
+            // the origin.
             const auto fluff = [&]() {
                 connman->ForEachNode([&](CNode* pnode) {
-                    if (pnode->GetId() == exclude_peer || !eligible(pnode)) return;
+                    if (pnode->GetId() == exclude_peer || !fluff_eligible(pnode)) return;
                     connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSG, env));
                 });
             };
@@ -1773,8 +1787,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
             // Stem: resolve the Dandelion++ epoch's pinned successor, re-rolling
             // only when the epoch changes or the pinned peer is no longer
-            // eligible. Then verify the resolved successor is still connected and
-            // eligible at send time.
+            // stem-eligible (relays only, never leaves). Then verify the
+            // resolved successor is still connected and eligible at send time.
             const int64_t epoch = (GetTime() + stem_phase) / stem_epoch_secs;
             NodeId chosen = -1;
             {
@@ -1782,20 +1796,21 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 bool pinned_ok = false;
                 if (stem_graph->epoch == epoch && stem_graph->successor != -1) {
                     connman->ForEachNode([&](CNode* pnode) {
-                        if (pnode->GetId() == stem_graph->successor && eligible(pnode)) pinned_ok = true;
+                        if (pnode->GetId() == stem_graph->successor && stem_eligible(pnode)) pinned_ok = true;
                     });
                 }
                 if (!pinned_ok) {
                     std::vector<NodeId> ids;
                     connman->ForEachNode([&](CNode* pnode) {
-                        if (eligible(pnode)) ids.push_back(pnode->GetId());
+                        if (stem_eligible(pnode)) ids.push_back(pnode->GetId());
                     });
                     stem_graph->epoch = epoch;
                     stem_graph->successor = ids.empty() ? -1 : ids[GetRand(ids.size())];
                 }
                 chosen = stem_graph->successor;
             }
-            // No stem route, or the route is the very peer we received from
+            // No stem route (no relay-capable peer -- e.g. only leaves are
+            // connected), or the route is the very peer we received from
             // (relaying back would loop): fluff instead -- still private, since
             // we are the node doing the fluffing.
             if (chosen == -1 || chosen == exclude_peer) { fluff(); return; }
