@@ -153,6 +153,7 @@ class NetTest(BitcoinTestFramework):
                 "timeoffset": 0,
                 "transport_protocol_type": "v1" if not self.options.v2transport else "detecting",
                 "version": 0,
+                "websocket": False,
             },
         )
         no_version_peer.peer_disconnect()

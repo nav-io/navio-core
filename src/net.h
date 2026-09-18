@@ -228,6 +228,8 @@ public:
     TransportProtocolType m_transport_type;
     /** BIP324 session id string in hex, if any. */
     std::string m_session_id;
+    /** Whether the peer connected through a WebSocket listener (-p2pwsbind). */
+    bool m_websocket;
 };
 
 
@@ -671,6 +673,8 @@ struct CNodeOptions
     bool prefer_evict = false;
     size_t recv_flood_size{DEFAULT_MAXRECEIVEBUFFER * 1000};
     bool use_v2transport = false;
+    /** Whether the peer connected through a WebSocket listener (-p2pwsbind). */
+    bool websocket = false;
 };
 
 /** Information about a peer */
@@ -719,6 +723,9 @@ public:
     const std::string m_dest;
     //! Whether this peer is an inbound onion, i.e. connected via our Tor onion service.
     const bool m_inbound_onion;
+
+    /** Whether this peer connected through a WebSocket listener (-p2pwsbind). */
+    const bool m_websocket;
     std::atomic<int> nVersion{0};
     Mutex m_subver_mutex;
     /**
@@ -1065,6 +1072,8 @@ public:
         std::vector<NetWhitebindPermissions> vWhiteBinds;
         std::vector<CService> vBinds;
         std::vector<CService> onion_binds;
+        /// Addresses to listen on for WebSocket-wrapped P2P connections (-p2pwsbind).
+        std::vector<CService> vWsBinds;
         /// True if the user did not specify -bind= or -whitebind= and thus
         /// we should bind on `0.0.0.0` (IPv4) and `::` (IPv6).
         bool bind_on_any;
@@ -1258,9 +1267,11 @@ private:
     struct ListenSocket {
     public:
         std::shared_ptr<Sock> sock;
+        /** Accepted connections are WebSocket-wrapped (-p2pwsbind). */
+        bool websocket;
         inline void AddSocketPermissionFlags(NetPermissionFlags& flags) const { NetPermissions::AddFlag(flags, m_permissions); }
-        ListenSocket(std::shared_ptr<Sock> sock_, NetPermissionFlags permissions_)
-            : sock{sock_}, m_permissions{permissions_}
+        ListenSocket(std::shared_ptr<Sock> sock_, NetPermissionFlags permissions_, bool websocket_ = false)
+            : sock{sock_}, websocket{websocket_}, m_permissions{permissions_}
         {
         }
 
@@ -1272,7 +1283,7 @@ private:
     //! in case of no limit, it will always return 0
     std::chrono::seconds GetMaxOutboundTimeLeftInCycle_() const EXCLUSIVE_LOCKS_REQUIRED(m_total_bytes_sent_mutex);
 
-    bool BindListenPort(const CService& bindAddr, bilingual_str& strError, NetPermissionFlags permissions);
+    bool BindListenPort(const CService& bindAddr, bilingual_str& strError, NetPermissionFlags permissions, bool websocket = false);
     bool Bind(const CService& addr, unsigned int flags, NetPermissionFlags permissions);
     bool InitBinds(const Options& options);
 
@@ -1291,11 +1302,13 @@ private:
      * @param[in] permission_flags The peer's permissions.
      * @param[in] addr_bind The address and port at our side of the connection.
      * @param[in] addr The address and port at the peer's side of the connection.
+     * @param[in] websocket Whether the connection came through a WebSocket listener.
      */
     void CreateNodeFromAcceptedSocket(std::unique_ptr<Sock>&& sock,
                                       NetPermissionFlags permission_flags,
                                       const CAddress& addr_bind,
-                                      const CAddress& addr);
+                                      const CAddress& addr,
+                                      bool websocket = false);
 
     void DisconnectNodes() EXCLUSIVE_LOCKS_REQUIRED(!m_reconnections_mutex, !m_nodes_mutex);
     void NotifyNumConnectionsChanged();

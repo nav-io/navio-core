@@ -203,6 +203,7 @@ BASE_SCRIPTS = [
     'p2p_compactblocks_hb.py --v2transport',
     'p2p_disconnect_ban.py',
     'p2p_disconnect_ban.py --v2transport',
+    'p2p_websocket.py',
     'feature_posix_fs_permissions.py',
     'rpc_decodescript.py',
     'rpc_blockchain.py',
