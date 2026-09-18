@@ -263,7 +263,7 @@ BOOST_AUTO_TEST_CASE(order_snapshot_sorted_and_live_only)
     BOOST_CHECK(cache.StoreOrder(MakeOrder(soon_expired, InsecureRand256(), 10, 1, /*order_expiry=*/1000), /*now=*/300));
     BOOST_CHECK_EQUAL(cache.Size(), 3u);
 
-    // All three live: sorted by effective expiry ascending.
+    // All three live, and the TTL cap binds none of them: sorted by expiry.
     auto snap = cache.Snapshot(/*now=*/500);
     BOOST_REQUIRE_EQUAL(snap.size(), 3u);
     BOOST_CHECK(snap[0].quote.quote_id == soon_expired);
@@ -287,6 +287,23 @@ BOOST_AUTO_TEST_CASE(order_snapshot_sorted_and_live_only)
     auto csnap = capped.Snapshot(/*now=*/8);
     BOOST_REQUIRE_EQUAL(csnap.size(), 1u);
     BOOST_CHECK_EQUAL(csnap[0].effective_expiry, 7 + MAX_ORDER_TTL_SECONDS);
+
+    // Where the cap binds, the two expiries disagree on order, and the
+    // snapshot follows the maker-declared one. Sorting on effective_expiry
+    // would put receive times into the array order, which is what Snapshot
+    // must not leak.
+    OrderCache mixed(0);
+    const uint256 declared_later = InsecureRand256();
+    const uint256 declared_sooner = InsecureRand256();
+    BOOST_CHECK(mixed.StoreOrder(MakeOrder(declared_later, InsecureRand256(), 1, 1, /*order_expiry=*/100 * MAX_ORDER_TTL_SECONDS), /*now=*/0));
+    BOOST_CHECK(mixed.StoreOrder(MakeOrder(declared_sooner, InsecureRand256(), 1, 1, /*order_expiry=*/50 * MAX_ORDER_TTL_SECONDS), /*now=*/1000));
+    auto msnap = mixed.Snapshot(/*now=*/1);
+    BOOST_REQUIRE_EQUAL(msnap.size(), 2u);
+    BOOST_CHECK(msnap[0].quote.quote_id == declared_sooner);
+    BOOST_CHECK(msnap[1].quote.quote_id == declared_later);
+    // The cap reversed the effective order, so the case can tell the keys apart.
+    BOOST_CHECK_EQUAL(msnap[0].effective_expiry, 1000 + MAX_ORDER_TTL_SECONDS);
+    BOOST_CHECK_EQUAL(msnap[1].effective_expiry, MAX_ORDER_TTL_SECONDS);
 }
 
 BOOST_AUTO_TEST_CASE(order_spent_input_evicts)
