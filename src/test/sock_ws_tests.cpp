@@ -17,6 +17,23 @@
 
 namespace {
 
+/** Set the last socket error the way the wrapper reports it (WSA on Windows). */
+void SetLastNetError(int err)
+{
+#ifdef WIN32
+    WSASetLastError(err);
+#else
+    errno = err;
+#endif
+}
+
+/** The error `WebSocketSock` reports for protocol violations. */
+#ifdef WIN32
+constexpr int ERR_PROTO{WSAECONNABORTED};
+#else
+constexpr int ERR_PROTO{EPROTO};
+#endif
+
 /**
  * A `WebSocketSock` whose raw transport is an in-memory buffer: whatever the
  * test puts in `m_input` is what the "client" sent, and everything the wrapper
@@ -52,7 +69,7 @@ protected:
     {
         const size_t n{std::min(len, m_send_budget)};
         if (n == 0) {
-            errno = EAGAIN;
+            SetLastNetError(WSAEWOULDBLOCK);
             return -1;
         }
         m_output.append(static_cast<const char*>(data), n);
@@ -65,7 +82,7 @@ protected:
         const size_t available{m_input.size() - m_consumed};
         if (available == 0) {
             if (m_eof) return 0;
-            errno = EAGAIN;
+            SetLastNetError(WSAEWOULDBLOCK);
             return -1;
         }
         const size_t n{std::min({len, available, m_max_recv})};
@@ -143,7 +160,7 @@ std::pair<std::string, ssize_t> RecvAll(const MockWsSock& sock, size_t len = 655
         }
         // EAGAIN with more bytes still on the "wire" just means the wrapper
         // consumed a partial handshake/header; poll again like CConnman would.
-        if (r == -1 && errno == EAGAIN && (sock.HasInput() || sock.m_eof)) continue;
+        if (r == -1 && WSAGetLastError() == WSAEWOULDBLOCK && (sock.HasInput() || sock.m_eof)) continue;
         return {out, r};
     }
 }
@@ -169,7 +186,7 @@ BOOST_AUTO_TEST_CASE(handshake_ok)
     BOOST_CHECK(!sock.HandshakeComplete());
     const auto [data, r] = RecvAll(sock);
     BOOST_CHECK_EQUAL(r, -1);
-    BOOST_CHECK_EQUAL(errno, EAGAIN);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
     BOOST_CHECK(data.empty());
     BOOST_CHECK(sock.HandshakeComplete());
     BOOST_CHECK_EQUAL(sock.m_output,
@@ -189,7 +206,7 @@ BOOST_AUTO_TEST_CASE(handshake_split_across_reads)
     const auto [data, r] = RecvAll(sock);
     BOOST_CHECK_EQUAL(data, "abc");
     BOOST_CHECK_EQUAL(r, -1);
-    BOOST_CHECK_EQUAL(errno, EAGAIN);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
     BOOST_CHECK(StartsWith(sock.m_output, "HTTP/1.1 101"));
 }
 
@@ -215,14 +232,14 @@ BOOST_AUTO_TEST_CASE(handshake_bad)
         MockWsSock sock{request};
         const auto [data, r] = RecvAll(sock);
         BOOST_CHECK_EQUAL(r, -1);
-        BOOST_CHECK_EQUAL(errno, EPROTO);
+        BOOST_CHECK_EQUAL(WSAGetLastError(), ERR_PROTO);
         BOOST_CHECK(data.empty());
         BOOST_CHECK(!sock.HandshakeComplete());
         BOOST_CHECK(StartsWith(sock.m_output, "HTTP/1.1 400 Bad Request\r\n"));
         // The error is sticky.
         char c;
         BOOST_CHECK_EQUAL(sock.Recv(&c, 1, 0), -1);
-        BOOST_CHECK_EQUAL(errno, EPROTO);
+        BOOST_CHECK_EQUAL(WSAGetLastError(), ERR_PROTO);
     }
 }
 
@@ -231,7 +248,7 @@ BOOST_AUTO_TEST_CASE(handshake_too_large)
     MockWsSock sock{"GET /p2p HTTP/1.1\r\nX-Padding: " + std::string(WebSocketSock::MAX_HANDSHAKE_BYTES, 'a') + "\r\n"};
     const auto [data, r] = RecvAll(sock);
     BOOST_CHECK_EQUAL(r, -1);
-    BOOST_CHECK_EQUAL(errno, EPROTO);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), ERR_PROTO);
     BOOST_CHECK(StartsWith(sock.m_output, "HTTP/1.1 400"));
 }
 
@@ -250,7 +267,7 @@ BOOST_AUTO_TEST_CASE(binary_frames_are_a_byte_stream)
     const auto [data, r] = RecvAll(sock);
     BOOST_CHECK_EQUAL(data, "hello world");
     BOOST_CHECK_EQUAL(r, -1);
-    BOOST_CHECK_EQUAL(errno, EAGAIN);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
 
     // More data arriving later is decoded as well.
     sock.Feed(BinaryFrame("!"));
@@ -266,7 +283,7 @@ BOOST_AUTO_TEST_CASE(small_caller_buffer)
     const auto [data, r] = RecvAll(sock, /*len=*/3);
     BOOST_CHECK_EQUAL(data, "0123456789abcdef");
     BOOST_CHECK_EQUAL(r, -1);
-    BOOST_CHECK_EQUAL(errno, EAGAIN);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
 }
 
 BOOST_AUTO_TEST_CASE(fragmented_message)
@@ -339,10 +356,10 @@ BOOST_AUTO_TEST_CASE(protocol_errors)
         const auto [data, r] = RecvAll(sock);
         BOOST_CHECK_MESSAGE(data == "ok", name);
         BOOST_CHECK_MESSAGE(r == -1, name);
-        BOOST_CHECK_MESSAGE(errno == EPROTO, name);
+        BOOST_CHECK_MESSAGE(WSAGetLastError() == ERR_PROTO, name);
         char c;
         BOOST_CHECK_MESSAGE(sock.Recv(&c, 1, 0) == -1, name);
-        BOOST_CHECK_MESSAGE(errno == EPROTO, name);
+        BOOST_CHECK_MESSAGE(WSAGetLastError() == ERR_PROTO, name);
     }
 }
 
@@ -359,7 +376,7 @@ BOOST_AUTO_TEST_CASE(oversized_frame_rejected_from_header)
     const auto [data, r] = RecvAll(sock);
     BOOST_CHECK(data.empty());
     BOOST_CHECK_EQUAL(r, -1);
-    BOOST_CHECK_EQUAL(errno, EPROTO);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), ERR_PROTO);
 
     // Exactly the maximum is accepted (header only, payload pending).
     std::string ok_hdr;
@@ -372,7 +389,7 @@ BOOST_AUTO_TEST_CASE(oversized_frame_rejected_from_header)
     const auto [data2, r2] = RecvAll(sock2);
     BOOST_CHECK(data2.empty());
     BOOST_CHECK_EQUAL(r2, -1);
-    BOOST_CHECK_EQUAL(errno, EAGAIN);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
 }
 
 BOOST_AUTO_TEST_CASE(send_frames)
@@ -381,7 +398,7 @@ BOOST_AUTO_TEST_CASE(send_frames)
 
     // Nothing may be sent before the handshake completed.
     BOOST_CHECK_EQUAL(sock.Send("x", 1, 0), -1);
-    BOOST_CHECK_EQUAL(errno, EAGAIN);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
     BOOST_CHECK(sock.m_output.empty());
 
     (void)RecvAll(sock);
@@ -420,7 +437,7 @@ BOOST_AUTO_TEST_CASE(send_partial_writes)
     // Only one byte of the header goes out: nothing is reported as sent.
     sock.m_send_budget = 1;
     BOOST_CHECK_EQUAL(sock.Send(msg.data(), msg.size(), 0), -1);
-    BOOST_CHECK_EQUAL(errno, EAGAIN);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
     BOOST_CHECK_EQUAL(sock.m_output.size(), 1U);
 
     // Rest of the header plus 4 payload bytes.
@@ -431,7 +448,7 @@ BOOST_AUTO_TEST_CASE(send_partial_writes)
     BOOST_CHECK_EQUAL(sock.Send(msg.data() + 4, msg.size() - 4, 0), 3);
     sock.m_send_budget = 0;
     BOOST_CHECK_EQUAL(sock.Send(msg.data() + 7, msg.size() - 7, 0), -1);
-    BOOST_CHECK_EQUAL(errno, EAGAIN);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
     sock.m_send_budget = std::numeric_limits<size_t>::max();
     BOOST_CHECK_EQUAL(sock.Send(msg.data() + 7, msg.size() - 7, 0), 3);
     BOOST_CHECK_EQUAL(sock.m_output, ServerFrame(0x2, msg));
