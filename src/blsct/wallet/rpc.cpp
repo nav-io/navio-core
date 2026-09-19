@@ -396,6 +396,13 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
         error = "wallet is locked";
         return std::nullopt;
     }
+    // Reject an unusable reply key before taking anything: Send would refuse
+    // it anyway, after a serve-budget slot, an input reservation and a change
+    // address had been spent on a candidate nobody receives.
+    if (!p2pmsg::Transport::IsValidRecipient(reply_key)) {
+        error = "invalid reply key";
+        return std::nullopt;
+    }
 
     const int64_t budget_now = GetTime<std::chrono::seconds>().count();
     const auto budget_slot = TakeServeBudget(budget_now);
@@ -405,6 +412,7 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
     }
 
     CTransactionRef cand;
+    COutPoint reserved_input;
     {
         LOCK(wallet.cs_wallet);
         auto km = wallet.GetBLSCTKeyMan();
@@ -489,6 +497,7 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
             return std::nullopt;
         }
         cand = MakeTransactionRef(built->tx);
+        reserved_input = COutPoint(c.outpoint.hash);
     }
 
     // Encrypt + PoW-grind + send OUTSIDE cs_wallet: none of it touches wallet
@@ -498,7 +507,14 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
     ps << cand;
     auto bytes = MakeUCharSpan(ss);
     std::vector<uint8_t> body(bytes.begin(), bytes.end());
-    transport->Send(reply_key, p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem);
+    if (!transport->Send(reply_key, p2pmsg::PayloadKind::CANDIDATE_TX, std::move(body), stem)) {
+        // Only shutdown gets here (the key was checked above). Give back the
+        // reservation and the budget slot; the change address stays burned.
+        ReleaseCandidateInput(reserved_input);
+        ReturnServeBudget(*budget_slot);
+        error = "p2pmsg send failed (shutting down)";
+        return std::nullopt;
+    }
     return cand;
 }
 
@@ -942,8 +958,10 @@ static RPCHelpMan broadcastorder()
             ps << q;
             auto bytes = MakeUCharSpan(ss);
             std::vector<uint8_t> body(bytes.begin(), bytes.end());
-            transport->Send(p2pmsg::BroadcastPubKey(),
-                            p2pmsg::PayloadKind::ORDER_ANN, std::move(body), /*stem=*/false);
+            if (!transport->Send(p2pmsg::BroadcastPubKey(),
+                                 p2pmsg::PayloadKind::ORDER_ANN, std::move(body), /*stem=*/false)) {
+                throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg send failed (shutting down)");
+            }
 
             return q.quote_id.GetHex();
         },
@@ -1056,8 +1074,10 @@ static RPCHelpMan replyquote()
             auto bytes = MakeUCharSpan(ss);
             std::vector<uint8_t> body(bytes.begin(), bytes.end());
             // Encrypt the quote to the requester's reply key (confidential).
-            transport->Send(pm->req.reply_key, p2pmsg::PayloadKind::RFQ_QUOTE,
-                            std::move(body), /*stem=*/false);
+            if (!transport->Send(pm->req.reply_key, p2pmsg::PayloadKind::RFQ_QUOTE,
+                                 std::move(body), /*stem=*/false)) {
+                throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg send failed (invalid reply key, or shutting down)");
+            }
 
             return q.quote_id.GetHex();
         },

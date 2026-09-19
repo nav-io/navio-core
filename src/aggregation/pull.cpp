@@ -105,8 +105,13 @@ void CandidatePuller::PullOnce()
     // The request body is only the reply pubkey. The request itself is a
     // public broadcast (anyone may answer); the privacy property lives in the
     // 1:1-encrypted replies, not in hiding that some node is pulling.
-    m_transport.Send(p2pmsg::BroadcastPubKey(), p2pmsg::PayloadKind::AGG_ANN,
-                     pub.GetVch(), /*stem=*/true);
+    if (!m_transport.Send(p2pmsg::BroadcastPubKey(), p2pmsg::PayloadKind::AGG_ANN,
+                          pub.GetVch(), /*stem=*/true)) {
+        // Only an interrupted PoW grind (shutdown) fails a broadcast send.
+        m_transport.DropSessionKey(pub);
+        LogPrint(BCLog::NET, "p2pmsg: candidate pull round abandoned (send failed)\n");
+        return;
+    }
     LogPrint(BCLog::NET, "p2pmsg: candidate pull round (pool=%u)\n", (unsigned)m_pool.Size());
 }
 

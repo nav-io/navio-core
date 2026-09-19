@@ -14,6 +14,10 @@ the test does not burn CPU.
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
 
+# Compressed encoding of the G1 identity. It parses as a pubkey, but no
+# message can be safely encrypted to it, so a send to it must be refused.
+IDENTITY_PUBKEY = "c0" + "00" * 47
+
 
 class P2PMsgEchoTest(BitcoinTestFramework):
     def set_test_params(self):
@@ -47,6 +51,9 @@ class P2PMsgEchoTest(BitcoinTestFramework):
         before = b.getp2pmsginfo()["pings_received"]
         assert_equal(a.sendp2pping(b_inbox, True), True)
         self.wait_until(lambda: b.getp2pmsginfo()["pings_received"] >= before + 1, timeout=20)
+
+        self.log.info("PING to the identity key is refused, not reported as sent")
+        assert_equal(a.sendp2pping(IDENTITY_PUBKEY, False), False)
 
         # A PING encrypted to A's own key, broadcast to peers, reaches B but B
         # cannot decrypt it -> B's counter must stay flat. (Broadcast goes to

@@ -21,6 +21,9 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
 ARGS = ["-p2pmsg=1", "-p2pmsgpowbits=1"]
+# Compressed encoding of the G1 identity. It parses as a pubkey, but no
+# message can be safely encrypted to it, so a send to it must be refused.
+IDENTITY_PUBKEY = "c0" + "00" * 47
 
 
 class P2PMsgUserMessagingTest(BitcoinTestFramework):
@@ -48,6 +51,9 @@ class P2PMsgUserMessagingTest(BitcoinTestFramework):
         msgs = n2.listp2pmsgs()
         assert_equal(len(msgs), 1)
         assert_equal(msgs[0]["payload"], payload)
+
+        self.log.info("A message to the identity key is refused, not reported as sent")
+        assert_equal(n0.sendp2pmsg(IDENTITY_PUBKEY, "chat", payload), False)
         assert_equal(msgs[0]["topic"], "chat")
         assert_equal(msgs[0]["scope"], "inbox")
         assert_equal(msgs[0]["id"], 1)

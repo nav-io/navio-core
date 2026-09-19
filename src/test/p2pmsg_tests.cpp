@@ -352,6 +352,8 @@ namespace {
 struct LoopbackTransport {
     WorkerPool pool;
     std::unique_ptr<Transport> t;
+    //! Envelopes handed to the broadcast callback.
+    std::atomic<int> broadcasts{0};
 
     explicit LoopbackTransport(uint32_t bits) : LoopbackTransport(OptsWithBits(bits)) {}
 
@@ -361,6 +363,7 @@ struct LoopbackTransport {
         t = std::make_unique<Transport>(
             pool,
             /*broadcast=*/[this](bool stem, const Envelope& env) {
+                broadcasts.fetch_add(1);
                 // Serialize, then feed back in as if received from peer 1.
                 DataStream ss;
                 ss << env;
@@ -400,7 +403,7 @@ BOOST_AUTO_TEST_CASE(transport_ping_loopback)
 
     std::vector<uint8_t> payload{0xde, 0xad, 0xbe, 0xef};
     // Send to our own inbox key (non-PoW kind), broadcast loops it back in.
-    h.t->Send(h.t->InboxPubKey(), PayloadKind::PING, payload, /*stem=*/false);
+    BOOST_REQUIRE(h.t->Send(h.t->InboxPubKey(), PayloadKind::PING, payload, /*stem=*/false));
 
     using namespace std::chrono_literals;
     auto deadline = std::chrono::steady_clock::now() + 5s;
@@ -418,18 +421,17 @@ BOOST_AUTO_TEST_CASE(transport_send_rejects_identity)
     // broadcasting -- a network-supplied reply key can be exactly that, and it
     // must never throw (a throw on the candserve thread terminates the node).
     LoopbackTransport h(/*bits=*/4);
-    std::atomic<int> relayed{0};
-    // LoopbackTransport's broadcast feeds back via OnWire; count handler hits.
-    std::atomic<int> got{0};
-    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage&) { got.fetch_add(1); });
 
     const blsct::PublicKey identity{};
     BOOST_REQUIRE(identity.GetG1Point().IsZero());
-    bool ok = h.t->Send(identity, PayloadKind::PING, {0x01}, /*stem=*/false);
-    BOOST_CHECK(!ok);
+    BOOST_CHECK(!Transport::IsValidRecipient(identity));
+    BOOST_CHECK(!h.t->Send(identity, PayloadKind::PING, {0x01}, /*stem=*/false));
+    BOOST_CHECK_EQUAL(h.broadcasts.load(), 0);
 
-    // A valid recipient still succeeds.
+    // A valid recipient still succeeds, and is broadcast exactly once.
+    BOOST_CHECK(Transport::IsValidRecipient(h.t->InboxPubKey()));
     BOOST_CHECK(h.t->Send(h.t->InboxPubKey(), PayloadKind::PING, {0x02}, /*stem=*/false));
+    BOOST_CHECK_EQUAL(h.broadcasts.load(), 1);
 }
 
 BOOST_AUTO_TEST_CASE(transport_inbox_rotation)
@@ -491,12 +493,12 @@ BOOST_AUTO_TEST_CASE(transport_inbox_rotation)
     bundle_ok(); // identity unchanged; sig now covers k1
 
     // A message to the rotated-out k0 still decrypts (grace ring, depth 1).
-    h.t->Send(k0, PayloadKind::PING, {1}, /*stem=*/false);
+    BOOST_REQUIRE(h.t->Send(k0, PayloadKind::PING, {1}, /*stem=*/false));
     wait_pings(1);
     BOOST_CHECK_EQUAL(pings.load(), 1);
 
     // A message to the current key k1 decrypts.
-    h.t->Send(k1, PayloadKind::PING, {2}, /*stem=*/false);
+    BOOST_REQUIRE(h.t->Send(k1, PayloadKind::PING, {2}, /*stem=*/false));
     wait_pings(2);
     BOOST_CHECK_EQUAL(pings.load(), 2);
 
@@ -508,11 +510,11 @@ BOOST_AUTO_TEST_CASE(transport_inbox_rotation)
     bundle_ok(); // identity unchanged; sig now covers k2
 
     // k0 is now beyond the grace window: a message to it no longer decrypts.
-    h.t->Send(k0, PayloadKind::PING, {3}, /*stem=*/false);
+    BOOST_REQUIRE(h.t->Send(k0, PayloadKind::PING, {3}, /*stem=*/false));
     expect_no_ping(2);
 
     // The current key still works.
-    h.t->Send(k2, PayloadKind::PING, {4}, /*stem=*/false);
+    BOOST_REQUIRE(h.t->Send(k2, PayloadKind::PING, {4}, /*stem=*/false));
     wait_pings(3);
     BOOST_CHECK_EQUAL(pings.load(), 3);
 }
@@ -544,16 +546,16 @@ BOOST_AUTO_TEST_CASE(transport_recipient_key_tagging)
     };
 
     // Inbox-encrypted -> INBOX.
-    h.t->Send(h.t->InboxPubKey(), PayloadKind::PING, {1}, /*stem=*/false);
+    BOOST_REQUIRE(h.t->Send(h.t->InboxPubKey(), PayloadKind::PING, {1}, /*stem=*/false));
     wait_for(1);
     // Broadcast-encrypted -> BROADCAST.
-    h.t->Send(BroadcastPubKey(), PayloadKind::PING, {2}, /*stem=*/false);
+    BOOST_REQUIRE(h.t->Send(BroadcastPubKey(), PayloadKind::PING, {2}, /*stem=*/false));
     wait_for(2);
     // Encrypted to a registered session key -> SESSION.
     blsct::PrivateKey sess_priv(BlstScalar::Rand(/*exclude_zero=*/true));
     blsct::PublicKey sess_pub = sess_priv.GetPublicKey();
     h.t->AddSessionKey(sess_pub, sess_priv, /*expiry=*/0);
-    h.t->Send(sess_pub, PayloadKind::PING, {3}, /*stem=*/false);
+    BOOST_REQUIRE(h.t->Send(sess_pub, PayloadKind::PING, {3}, /*stem=*/false));
     wait_for(3);
 
     std::lock_guard<std::mutex> lk(gm);
@@ -572,7 +574,7 @@ BOOST_AUTO_TEST_CASE(transport_pow_kind_loopback)
         reqs.fetch_add(1, std::memory_order_relaxed);
     });
 
-    h.t->Send(h.t->InboxPubKey(), PayloadKind::RFQ_REQ, {1, 2, 3}, /*stem=*/true);
+    BOOST_REQUIRE(h.t->Send(h.t->InboxPubKey(), PayloadKind::RFQ_REQ, {1, 2, 3}, /*stem=*/true));
 
     using namespace std::chrono_literals;
     auto deadline = std::chrono::steady_clock::now() + 10s;
