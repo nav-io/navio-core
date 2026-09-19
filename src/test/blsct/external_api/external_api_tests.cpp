@@ -18,8 +18,10 @@
 #include <wallet/receive.h>
 #include <wallet/test/util.h>
 #include <wallet/wallet.h>
+#include <array>
 #include <cstring>
 #include <iostream>
+#include <string>
 
 #include <boost/test/unit_test.hpp>
 
@@ -546,6 +548,7 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
         dest,
         500,
         "memo",
+        4,
         static_cast<const BlsctTokenId*>(default_token_id_rv->value),
         TxOutputType::Normal,
         0,
@@ -655,6 +658,7 @@ BOOST_AUTO_TEST_CASE(test_unsigned_output_gamma_and_data_predicate)
         dest,
         1000,
         "",
+        0,
         static_cast<const BlsctTokenId*>(default_token_id_rv->value),
         TxOutputType::StakedCommitment,
         1000,
@@ -822,6 +826,7 @@ BOOST_AUTO_TEST_CASE(test_aggregate_transactions)
             dest,
             output_amount,
             "aggregate",
+            9,
             static_cast<const BlsctTokenId*>(default_token_id_rv->value),
             TxOutputType::Normal,
             0,
@@ -1093,6 +1098,7 @@ BOOST_AUTO_TEST_CASE(test_ffi_hardening_regressions)
         dest,
         1000,
         "",
+        0,
         static_cast<const BlsctTokenId*>(default_token_id_rv->value),
         TxOutputType::Normal,
         0,
@@ -1151,6 +1157,7 @@ BOOST_AUTO_TEST_CASE(test_ffi_hardening_regressions)
             dest,
             99000,
             "",
+            0,
             static_cast<const BlsctTokenId*>(default_token_id_rv->value),
             TxOutputType::StakedCommitment,
             99000,
@@ -1208,6 +1215,104 @@ BOOST_AUTO_TEST_CASE(test_ffi_hardening_regressions)
     free_obj(out_point_rv->value); free(out_point_rv);
     free_obj(tx_in_rv->value); free(tx_in_rv);
     free_obj(tx_out_rv->value); free(tx_out_rv);
+}
+
+BOOST_AUTO_TEST_CASE(test_build_tx_out_memo_length)
+{
+    init();
+
+    auto* view_key_rv = gen_scalar(31);
+    auto* spend_key_rv = gen_scalar(32);
+    auto* blinding_key_rv = gen_scalar(33);
+    auto* default_token_id_rv = gen_default_token_id();
+    BOOST_REQUIRE(view_key_rv != nullptr);
+    BOOST_REQUIRE(spend_key_rv != nullptr);
+    BOOST_REQUIRE(blinding_key_rv != nullptr);
+    BOOST_REQUIRE(default_token_id_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(default_token_id_rv->result, BLSCT_SUCCESS);
+
+    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+    BOOST_REQUIRE(spend_pub_key != nullptr);
+    auto* sub_addr_id = gen_sub_addr_id(0, 1);
+    BOOST_REQUIRE(sub_addr_id != nullptr);
+    auto* dest = derive_sub_address(static_cast<const BlsctScalar*>(view_key_rv->value), spend_pub_key, sub_addr_id);
+    BOOST_REQUIRE(dest != nullptr);
+
+    const auto build = [&](const char* memo, size_t memo_len) {
+        return build_tx_out(
+            dest,
+            1000,
+            memo,
+            memo_len,
+            static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+            TxOutputType::Normal,
+            0,
+            false,
+            static_cast<const BlsctScalar*>(blinding_key_rv->value));
+    };
+    // Builds, then returns the stored memo (or "<failed>") and frees both.
+    const auto stored_memo = [&](const char* memo, size_t memo_len) -> std::string {
+        auto* rv = build(memo, memo_len);
+        BOOST_REQUIRE(rv != nullptr);
+        if (rv->result != BLSCT_SUCCESS) {
+            free(rv);
+            return "<failed>";
+        }
+        const char* out = get_tx_out_memo(static_cast<const BlsctTxOut*>(rv->value));
+        BOOST_REQUIRE(out != nullptr);
+        std::string ret{out};
+        free_obj((void*)out);
+        free_obj(rv->value);
+        free(rv);
+        return ret;
+    };
+
+    // Only memo_len bytes are taken: the buffer continues past them with no
+    // terminator in sight, and none of those bytes may end up in the memo.
+    const std::array<char, 8> unterminated{'a', 'b', 'c', 'X', 'X', 'X', 'X', 'X'};
+    BOOST_CHECK_EQUAL(stored_memo(unterminated.data(), 3), "abc");
+
+    // Exactly MAX_MEMO_LEN bytes fits; one more is rejected with the memo code.
+    const std::string at_cap(MAX_MEMO_LEN, 'm');
+    BOOST_CHECK_EQUAL(stored_memo(at_cap.data(), at_cap.size()), at_cap);
+    const std::string over_cap(MAX_MEMO_LEN + 1, 'm');
+    {
+        auto* rv = build(over_cap.data(), over_cap.size());
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK_EQUAL(rv->result, BLSCT_MEMO_TOO_LONG);
+        free(rv);
+    }
+
+    // An empty memo may be passed as NULL; a NULL buffer with a length may not.
+    BOOST_CHECK_EQUAL(stored_memo(nullptr, 0), "");
+    {
+        auto* rv = build(nullptr, 5);
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK_EQUAL(rv->result, BLSCT_FAILURE);
+        free(rv);
+    }
+
+    // A NUL inside the memo would truncate it on every read, so it is
+    // rejected rather than stored as a shorter memo.
+    {
+        const std::array<char, 5> embedded_nul{'a', 'b', '\0', 'c', 'd'};
+        auto* rv = build(embedded_nul.data(), embedded_nul.size());
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK_EQUAL(rv->result, BLSCT_FAILURE);
+        free(rv);
+    }
+
+    free_obj((void*)dest);
+    free_obj((void*)sub_addr_id);
+    free_obj((void*)spend_pub_key);
+    free_obj(default_token_id_rv->value);
+    free(default_token_id_rv);
+    free_obj(blinding_key_rv->value);
+    free(blinding_key_rv);
+    free_obj(spend_key_rv->value);
+    free(spend_key_rv);
+    free_obj(view_key_rv->value);
+    free(view_key_rv);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
