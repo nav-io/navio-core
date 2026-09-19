@@ -110,12 +110,15 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         assert_equal(other[0]['ismine'], False)
         assert_equal(wallet_2.listwallettokens(True), [])
 
-        self.log.info("Locked wallet: listwallettokens errors -13; unlock restores")
+        self.log.info("Locked wallet: listwallettokens and getwallettoken error -13; unlock restores")
         wallet_2.encryptwallet("pass")
         assert_raises_rpc_error(-13, "walletpassphrase",
                                 wallet_2.listwallettokens)
+        assert_raises_rpc_error(-13, "walletpassphrase",
+                                wallet_2.getwallettoken, token['tokenId'])
         wallet_2.walletpassphrase("pass", 120)
         assert_equal(wallet_2.listwallettokens(True), [])
+        assert_equal(wallet_2.getwallettoken(token['tokenId'])['ismine'], False)
 
         self.log.info("No-HD-seed wallet: ismine=false for all, no error, even locked-later")
         self.nodes[1].createwallet(wallet_name="noseed", blsct=True, blank=True)

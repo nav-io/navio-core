@@ -1229,9 +1229,7 @@ static bool TokenIsMine(const wallet::CWallet& wallet, blsct::KeyMan& blsct_km, 
     // A locked encrypted wallet CAN own the token but cannot derive the key
     // to prove it — deriving would throw an opaque -1 from GetMasterTokenKey.
     // Surface the standard unlock error instead.
-    if (wallet.IsLocked()) {
-        throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Error: Please enter the wallet passphrase with walletpassphrase first.");
-    }
+    EnsureWalletIsUnlocked(wallet);
     const auto seed = (HashWriter{} << token.info.mapMetadata << token.info.nTotalSupply).GetHash();
     return blsct_km.GetTokenKey(seed).GetPublicKey() == token.info.publicKey;
 }
@@ -1285,7 +1283,9 @@ static RPCHelpMan getwallettoken()
     return RPCHelpMan{
         "getwallettoken",
         "\nLike gettoken, but wallet-aware: the token is reported with an \"ismine\" flag saying\n"
-        "whether THIS wallet created it (and can therefore mint it). Read-only; nothing is broadcast.\n",
+        "whether THIS wallet created it (and can therefore mint it). The check is read-only key\n"
+        "derivation; nothing is broadcast. Requires the wallet to be unlocked; a wallet without an\n"
+        "HD seed (e.g. imported from a view key) reports ismine=false.\n",
         {
             {"token_id", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The token id"},
         },
