@@ -928,4 +928,14 @@ BOOST_FIXTURE_TEST_CASE(add_available_coins_amount_limit, TestingSetup)
     BOOST_CHECK_EQUAL(gather(MAX_MONEY).size(), 2U);
 }
 
+BOOST_AUTO_TEST_CASE(generate_keys_rejects_base_point_destination)
+{
+    // A destination of the group base point (G, G) makes the derived spending
+    // key (1 + H(ephemeralKey))·G publicly computable, so such outputs would be
+    // spendable by anyone. GenerateKeys must reject it.
+    blsct::UnsignedOutput uo;
+    blsct::DoublePublicKey dest(BlstG1Point::GetBasePoint(), BlstG1Point::GetBasePoint());
+    BOOST_CHECK_THROW(uo.GenerateKeys(BlstScalar::Rand(), dest), std::runtime_error);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
