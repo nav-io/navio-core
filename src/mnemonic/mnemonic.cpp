@@ -131,6 +131,11 @@ std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& w
     return entropy;
 }
 
+bool IsAsciiPassphrase(const std::string& passphrase)
+{
+    return std::all_of(passphrase.begin(), passphrase.end(), [](unsigned char c) { return c < 0x80; });
+}
+
 std::vector<unsigned char> MnemonicToSeed(const std::string& words, const std::string& passphrase)
 {
     // BIP-39 sentences are single-space separated; normalize so callers that

@@ -218,6 +218,19 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             return false;
         }
 
+        // Same rule as createwallet: no NFKD is applied, so a new wallet must
+        // not be created from a non-ASCII passphrase, but a restore must still
+        // accept one -- such a wallet is only recoverable from those bytes.
+        if (!mnemonic::IsAsciiPassphrase(mnemonic_passphrase)) {
+            if (mnemonic_str.empty()) {
+                tfm::format(std::cerr, "The -mnemonicpassphrase must be ASCII when creating a new wallet\n");
+                return false;
+            }
+            tfm::format(std::cerr, "Warning: -mnemonicpassphrase contains non-ASCII characters. It is used as raw UTF-8 "
+                                   "without BIP-39 normalization, so this restore only matches a wallet created from "
+                                   "the exact same bytes, and may not match other BIP-39 wallets.\n");
+        }
+
         // Parse mnemonic if provided. Accepts plain 24-word BIP-39 or the
         // 26-word birthday variant (the birthday then drives the rescan
         // window).

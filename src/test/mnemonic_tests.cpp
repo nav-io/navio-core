@@ -743,4 +743,13 @@ BOOST_AUTO_TEST_CASE(birthday_mnemonic_out_of_range_time)
     BOOST_CHECK_EQUAL(mnemonic::MnemonicWithBirthday(base, 1767225600 + 2048LL * 7 * 24 * 3600), "");
 }
 
+BOOST_AUTO_TEST_CASE(ascii_passphrase_check)
+{
+    BOOST_CHECK(mnemonic::IsAsciiPassphrase(""));
+    BOOST_CHECK(mnemonic::IsAsciiPassphrase("hunter2"));
+    BOOST_CHECK(mnemonic::IsAsciiPassphrase(std::string("\x7f", 1)));
+    BOOST_CHECK(!mnemonic::IsAsciiPassphrase("h\xc3\xbcnter2")); // UTF-8 u-umlaut
+    BOOST_CHECK(!mnemonic::IsAsciiPassphrase(std::string("\x80", 1)));
+}
+
 BOOST_AUTO_TEST_SUITE_END()
