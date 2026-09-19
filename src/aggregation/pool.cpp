@@ -135,7 +135,13 @@ std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n, size_
         LogPrint(BCLog::NET, "p2pmsg: type-aware cover pick short on reward-backed candidates (wanted %u, pool has %u)\n", (unsigned)prefer_reward, (unsigned)reward.size());
     }
     out.insert(out.end(), reward.begin(), reward.begin() + take_reward);
-    const size_t take_other = std::min(max_n - out.size(), other.size());
+    const size_t want_other = max_n - out.size();
+    const size_t take_other = std::min(want_other, other.size());
+    if (take_other < want_other) {
+        // The mirror case: an initiator spending mostly transfers against a
+        // reward-heavy pool gets reward-backed top-ups instead.
+        LogPrint(BCLog::NET, "p2pmsg: type-aware cover pick short on transfer-backed candidates (wanted %u, pool has %u)\n", (unsigned)want_other, (unsigned)other.size());
+    }
     out.insert(out.end(), other.begin(), other.begin() + take_other);
     if (out.size() < max_n && take_reward < reward.size()) {
         const size_t top_up = std::min(max_n - out.size(), reward.size() - take_reward);

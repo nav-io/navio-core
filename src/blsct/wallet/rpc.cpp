@@ -152,9 +152,7 @@ static size_t CountRewardInputs(wallet::CWallet& wallet, const CMutableTransacti
 static std::vector<CTransactionRef> RefineCoverSelection(wallet::CWallet& wallet, const CMutableTransaction& own, aggregation::CandidatePool& pool, const std::vector<CTransactionRef>& current)
 {
     if (current.empty() || own.vin.empty()) return current;
-    const size_t reward_in = CountRewardInputs(wallet, own);
-    // Mirror the own-input mix, rounding up: ceil(count * reward_in / vin).
-    const size_t prefer_reward = (current.size() * reward_in + own.vin.size() - 1) / own.vin.size();
+    const size_t prefer_reward = aggregation::PreferRewardCount(current.size(), CountRewardInputs(wallet, own), own.vin.size());
     return pool.PickForAggregate(current.size(), prefer_reward);
 }
 

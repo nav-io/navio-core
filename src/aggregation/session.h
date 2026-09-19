@@ -36,6 +36,16 @@ inline size_t TargetCoverCount(size_t own_inputs)
     return std::min(target, POOL_MAX_COMBINED);
 }
 
+//! How many of `max_n` covers to prefer reward-backed, so the cover mirrors an
+//! own half in which `reward_inputs` of `own_inputs` inputs spend block
+//! rewards: ceil(max_n * reward_inputs / own_inputs), and 0 with no inputs.
+//! Feeds CandidatePool::PickForAggregate's typed overload.
+inline size_t PreferRewardCount(size_t max_n, size_t reward_inputs, size_t own_inputs)
+{
+    if (own_inputs == 0) return 0;
+    return (max_n * reward_inputs + own_inputs - 1) / own_inputs;
+}
+
 //! Per-byte weight of a 1-in-1-out fee-0 BLSCT candidate, used to size the
 //! initiator's over-funded fee. Measured empirically; refined by bench. A
 //! conservative over-estimate only costs the initiator a little extra fee.
