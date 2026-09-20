@@ -411,6 +411,44 @@ std::pair<blsct::PublicKey, blsct::Signature> Transport::SignEphemeral(const uin
     return {k.GetPublicKey(), k.Sign(digest)};
 }
 
+uint64_t Transport::TakeSendTicket(const StreamKey& key)
+{
+    LOCK(m_send_order_mutex);
+    SendStream& s = m_send_streams[key];
+    ++s.holders;
+    return s.next_ticket++;
+}
+
+bool Transport::AwaitSendTurn(const StreamKey& key, uint64_t ticket)
+{
+    WAIT_LOCK(m_send_order_mutex, lock);
+    m_send_order_cv.wait(lock, [&]() EXCLUSIVE_LOCKS_REQUIRED(m_send_order_mutex) {
+        AssertLockHeld(m_send_order_mutex);
+        if (m_interrupt.load(std::memory_order_relaxed)) return true;
+        const auto it = m_send_streams.find(key);
+        // `>=`, not `==`: a holder that abandoned its send out of turn moves
+        // now_serving past its own ticket, and an earlier ticket must then run
+        // immediately rather than wait for a turn that already went by.
+        return it == m_send_streams.end() || it->second.now_serving >= ticket;
+    });
+    return !m_interrupt.load(std::memory_order_relaxed);
+}
+
+void Transport::ReleaseSendTurn(const StreamKey& key, uint64_t ticket)
+{
+    {
+        LOCK(m_send_order_mutex);
+        const auto it = m_send_streams.find(key);
+        if (it == m_send_streams.end()) return;
+        SendStream& s = it->second;
+        if (s.now_serving <= ticket) s.now_serving = ticket + 1;
+        // Last holder out drops the stream, so the map only ever holds streams
+        // with a send in flight.
+        if (--s.holders == 0) m_send_streams.erase(it);
+    }
+    m_send_order_cv.notify_all();
+}
+
 bool Transport::IsValidRecipient(const blsct::PublicKey& recipient)
 {
     const BlstG1Point rp = recipient.GetG1Point();
@@ -429,6 +467,19 @@ bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
         LogPrint(BCLog::NET, "p2pmsg: refusing to send to identity/invalid recipient key\n");
         return false;
     }
+
+    // Claim this stream's place in the emission order NOW, before the heavy
+    // encrypt+grind, so the wire order is the order the application called us
+    // in rather than the order the grinds happened to land. See SendStream.
+    const StreamKey stream{static_cast<uint8_t>(kind), recipient.GetVch()};
+    const uint64_t ticket = TakeSendTicket(stream);
+    struct TurnGuard {
+        Transport& self;
+        const StreamKey& key;
+        uint64_t ticket;
+        ~TurnGuard() { self.ReleaseSendTurn(key, ticket); }
+    } turn_guard{*this, stream, ticket};
+
     Envelope env;
     env.kind = static_cast<uint8_t>(kind);
     // Authenticate the (cleartext) kind byte under the AEAD so it cannot be
@@ -452,6 +503,13 @@ bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
     // cannot survive. Abandon the send instead.
     if (Grind(env.pow, m_opts.pow_bits, /*max_iters=*/0, &m_interrupt) == 0) {
         LogPrint(BCLog::NET, "p2pmsg: send abandoned, PoW grind interrupted (shutdown)\n");
+        return false;
+    }
+
+    // Grind done; now wait for the earlier messages on this stream to go out.
+    // A predecessor is at most one grind away, and shutdown releases everyone.
+    if (!AwaitSendTurn(stream, ticket)) {
+        LogPrint(BCLog::NET, "p2pmsg: send abandoned, shutting down while waiting to broadcast\n");
         return false;
     }
 
