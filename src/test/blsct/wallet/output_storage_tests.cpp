@@ -519,4 +519,59 @@ BOOST_FIXTURE_TEST_CASE(output_storage_token_outputs, TestingSetup)
     BOOST_CHECK_EQUAL(bal.m_mine_trusted, 8 * COIN);
 }
 
+// A transaction is "from me" when it spends an output the wallet knows, even if
+// that output does not add to the wallet's NAV debit (here: a token output).
+BOOST_FIXTURE_TEST_CASE(is_from_me_token_input, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    CMutableTransaction prev;
+    prev.vout.push_back(blsct::CreateOutput(recvAddress, 5 * COIN, "token", TokenId{uint256::ONE}).out);
+    BOOST_REQUIRE(wallet->AddToWallet(MakeTransactionRef(prev), TxStateConfirmed{InsecureRand256(), 1, 0}));
+
+    CMutableTransaction spend;
+    spend.vin.emplace_back(COutPoint{prev.vout[0].GetHash()});
+    const CTransaction spend_tx{spend};
+
+    // The input carries no NAV value, so the old "debit > 0" rule missed it.
+    BOOST_CHECK_EQUAL(wallet->GetDebit(spend_tx, ISMINE_ALL), 0);
+    BOOST_CHECK(wallet->IsFromMe(spend_tx));
+
+    CMutableTransaction unrelated;
+    unrelated.vin.emplace_back(COutPoint{InsecureRand256()});
+    BOOST_CHECK(!wallet->IsFromMe(CTransaction{unrelated}));
+}
+
+// With output storage the wallet knows its outputs through mapOutputs rather
+// than through the transactions that created them.
+BOOST_FIXTURE_TEST_CASE(is_from_me_output_storage_input, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    CTxOut txout = blsct::CreateOutput(recvAddress, 5 * COIN, "stored").out;
+    COutPoint outpoint{txout.GetHash()};
+    BOOST_REQUIRE(wallet->AddToWallet(outpoint, std::make_shared<const CTxOut>(txout), TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false));
+    BOOST_REQUIRE(wallet->GetWalletTxFromOutpoint(outpoint) == nullptr);
+
+    CMutableTransaction spend;
+    spend.vin.emplace_back(outpoint);
+    BOOST_CHECK(wallet->IsFromMe(CTransaction{spend}));
+}
+
 BOOST_AUTO_TEST_SUITE_END()
