@@ -7,9 +7,9 @@
 
 On a BLSCT chain an output's value is a Pedersen commitment, so the plain
 nValue the coin statistics sum over is not the amount. gettxoutsetinfo and
-scantxoutset must therefore leave their amount fields out entirely rather than
-report a number that is not the coin supply. Everything else they report is
-still meaningful and must survive.
+scantxoutset must therefore leave their amount fields out entirely, per output
+as well as in total, rather than report a number that is not the amount.
+Everything else they report is still meaningful and must survive.
 """
 
 from test_framework.test_framework import BitcoinTestFramework
@@ -80,7 +80,7 @@ class BLSCTTxoutsetAmountsTest(BitcoinTestFramework):
         self.log.info("gettxoutsetinfo omits amounts for the 'none' hash type")
         self.assert_no_amounts(node.gettxoutsetinfo("none"))
 
-        self.log.info("scantxoutset omits total_amount")
+        self.log.info("scantxoutset omits total_amount and each output's amount")
         # Confidential outputs pay to a bare OP_TRUE (0x51) script, so a raw
         # descriptor for it matches the coinbase outputs generated above.
         descriptor = node.getdescriptorinfo("raw(51)")["descriptor"]
@@ -91,6 +91,7 @@ class BLSCTTxoutsetAmountsTest(BitcoinTestFramework):
         assert_equal(scan["bestblock"], node.getbestblockhash())
         assert_greater_than(len(scan["unspents"]), 0)
         for unspent in scan["unspents"]:
+            assert "amount" not in unspent, f"amount must be absent on a confidential chain, got {unspent.get('amount')!r}"
             assert_greater_than(unspent["height"], 0)
 
 
