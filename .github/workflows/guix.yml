@@ -113,11 +113,12 @@ jobs:
       # its detached .sig from ftp.gnu.org (Good signature from the 1.5.0
       # release manager, Efraim Flashner, A28BF40C3E551372662D14F741AAE7DCCA3D8351).
       # Pinning the BYTES, not just the version: the tarball is fetched from
-      # the ftpmirror redirector and restored from an unhashed cache key, and
-      # the installer's own gpg path never runs when GUIX_BINARY_FILE_NAME is
-      # set (its pinned keys don't even include the 1.5.0 signer). Without
+      # the ftpmirror redirector and restored from cache, and the installer's
+      # own gpg check never runs when GUIX_BINARY_FILE_NAME is set. Without
       # this, a bad mirror or poisoned cache serves a valid-xz trojan that
-      # runs as root and builds the release artifacts.
+      # runs as root and builds the release artifacts. To bump: verify the new
+      # tarball's .sig against a key in contrib/guix/guix-install.sh's
+      # GPG_SIGNING_KEYS, then record its sha256 here.
       GUIX_BOOTSTRAP_SHA256: 'aa41025489c5061543e9c48873eaa829b900b2da75d40f9648913622f5f47817'
 
     strategy:
@@ -278,12 +279,14 @@ jobs:
           test -d "${SDK_NAME}" || { echo "SDK extract produced no ${SDK_NAME} dir"; ls -la; exit 1; }
 
       - name: Cache guix bootstrap binary
-        # Cache the guix bootstrap tarball (keyed on the pinned version) so the
-        # install never re-downloads it from the flaky ftpmirror redirector.
+        # Cache the guix bootstrap tarball (keyed on the pinned version and
+        # sha256) so the install never re-downloads it from the flaky ftpmirror
+        # redirector. With the hash in the key, a re-pin misses and saves a
+        # fresh entry; actions/cache never replaces an exact-hit entry.
         uses: actions/cache@v5
         with:
           path: ~/guix-bootstrap
-          key: guix-binary-${{ env.GUIX_BOOTSTRAP_VERSION }}-x86_64-linux
+          key: guix-binary-${{ env.GUIX_BOOTSTRAP_VERSION }}-${{ env.GUIX_BOOTSTRAP_SHA256 }}-x86_64-linux
 
       - name: Install guix
         # Install guix directly on the runner (not inside a container) via the
@@ -339,13 +342,19 @@ jobs:
               if wget -nv --tries=5 --waitretry=15 \
                    --retry-on-http-error=429,500,502,503,504 \
                    -O "${boot_dir}/${tarball}" "${url}"; then
-                got=1
-                break
+                if check_tarball; then
+                  got=1
+                  break
+                fi
+                # Truncated transfer or different bytes: never install it, but
+                # another mirror may still serve the pinned tarball.
+                echo "Fetched ${tarball} from ${url} does not match the pinned sha256; trying next mirror..."
+                rm -f "${boot_dir}/${tarball}"
+                continue
               fi
               echo "Fetch from ${url} failed; trying next mirror..."
             done
-            [ "${got}" -eq 1 ] || { rm -f "${boot_dir}/${tarball}"; echo "Could not fetch ${tarball}"; exit 1; }
-            check_tarball || { rm -f "${boot_dir}/${tarball}"; echo "Fetched ${tarball} does not match the pinned sha256"; exit 1; }
+            [ "${got}" -eq 1 ] || { rm -f "${boot_dir}/${tarball}"; echo "Could not fetch a ${tarball} matching the pinned sha256"; exit 1; }
           fi
 
           # Non-interactive: feed newlines to auto-accept the prompts. The
