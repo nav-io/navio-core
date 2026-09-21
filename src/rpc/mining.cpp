@@ -342,22 +342,19 @@ static RPCHelpMan generateblock()
     ChainstateManager& chainman = EnsureChainman(node);
     {
         LOCK(cs_main);
-
-        std::unique_ptr<CBlockTemplate> blocktemplate(BlockAssembler{chainman.ActiveChainstate(), nullptr}.CreateNewBlock(coinbase_script));
-        if (!blocktemplate) {
-            throw JSONRPCError(RPC_INTERNAL_ERROR, "Couldn't create new block");
+        {
+            std::unique_ptr<CBlockTemplate> blocktemplate(BlockAssembler{chainman.ActiveChainstate(), nullptr}.CreateNewBlock(coinbase_script));
+            if (!blocktemplate) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR, "Couldn't create new block");
+            }
+            block = blocktemplate->block;
         }
-        block = blocktemplate->block;
-    }
 
-    CHECK_NONFATAL(block.vtx.size() == 1);
+        CHECK_NONFATAL(block.vtx.size() == 1);
 
-    // Add transactions
-    block.vtx.insert(block.vtx.end(), txs.begin(), txs.end());
-    RegenerateCommitments(block, chainman);
-
-    {
-        LOCK(cs_main);
+        // Add transactions
+        block.vtx.insert(block.vtx.end(), txs.begin(), txs.end());
+        RegenerateCommitments(block, chainman);
 
         BlockValidationState state;
         if (!TestBlockValidity(state, chainman.GetParams(), chainman.ActiveChainstate(), block, chainman.m_blockman.LookupBlockIndex(block.hashPrevBlock), GetAdjustedTime, false, false)) {

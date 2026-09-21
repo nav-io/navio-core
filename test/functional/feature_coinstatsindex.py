@@ -10,6 +10,7 @@ the index.
 """
 
 from decimal import Decimal
+import platform
 
 from test_framework.blocktools import (
     COINBASE_MATURITY,
@@ -318,6 +319,26 @@ class CoinStatsIndexTest(BitcoinTestFramework):
         self.sync_index_node()
         res1 = index_node.gettxoutsetinfo(hash_type='muhash', hash_or_height=None, use_index=True)
         assert_equal(res["muhash"], res1["muhash"])
+
+        self.log.info("Test index with an unclean restart after a reorg")
+        self.restart_node(1, extra_args=self.extra_args[1])
+        committed_height = index_node.getblockcount()
+        self.generate(index_node, 2, sync_fun=self.no_op)
+        self.sync_index_node()
+        block2 = index_node.getbestblockhash()
+        index_node.invalidateblock(block2)
+        self.generatetoaddress(index_node, 1, getnewdestination()[2], sync_fun=self.no_op)
+        self.sync_index_node()
+        # 'synced' is already true, so sync_index_node() does not wait for the index
+        # to handle the reorg. Drain the validation queue (without flushing the
+        # chainstate) so the index has rewound before the node is killed.
+        index_node.syncwithvalidationinterfacequeue()
+        index_node.process.kill()
+        index_node.wait_until(lambda: index_node.is_node_stopped(expected_ret_code=1 if platform.system() == "Windows" else -9))
+        self.start_node(1, extra_args=self.extra_args[1])
+        self.sync_index_node()
+        # Because of the unclean shutdown above, indexes reset to the point we last committed them to disk.
+        assert_equal(index_node.getindexinfo()['coinstatsindex']['best_block_height'], committed_height)
 
 
 if __name__ == '__main__':

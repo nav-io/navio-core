@@ -164,9 +164,9 @@ void BaseIndex::ThreadSync()
                 const CBlockIndex* pindex_next = NextSyncBlock(pindex, m_chainstate->m_chain);
                 if (!pindex_next) {
                     SetBestBlockIndex(pindex);
-                    m_synced = true;
                     // No need to handle errors in Commit. See rationale above.
                     Commit();
+                    m_synced = true;
                     break;
                 }
                 if (pindex_next->pprev != pindex && !Rewind(pindex, pindex_next->pprev)) {
@@ -242,18 +242,13 @@ bool BaseIndex::Rewind(const CBlockIndex* current_tip, const CBlockIndex* new_ti
         return false;
     }
 
-    // In the case of a reorg, ensure persisted block locator is not stale.
+    // Don't commit here - the committed index state must never be ahead of the
+    // flushed chainstate, otherwise unclean restarts would lead to index corruption.
     // Pruning has a minimum of 288 blocks-to-keep and getting the index
     // out of sync may be possible but a users fault.
     // In case we reorg beyond the pruned depth, ReadBlockFromDisk would
     // throw and lead to a graceful shutdown
     SetBestBlockIndex(new_tip);
-    if (!Commit()) {
-        // If commit fails, revert the best block index to avoid corruption.
-        SetBestBlockIndex(current_tip);
-        return false;
-    }
-
     return true;
 }
 
