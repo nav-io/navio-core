@@ -812,6 +812,26 @@ void CWallet::SyncMetaData(std::pair<TxSpends::iterator, TxSpends::iterator> ran
  */
 bool CWallet::IsSpent(const COutPoint& outpoint) const
 {
+    // Two independent records witness a spend, and either can be the only one
+    // that saw it:
+    //
+    //  - mapTxSpends, populated when the spending transaction gets a CWalletTx
+    //    (a locally-created send, or one recognised as ours during sync);
+    //  - the per-output flag in mapOutputs, populated when the spend is
+    //    observed on the wire by an output-storage BLSCT wallet, which does
+    //    NOT always add a CWalletTx for the spender (see
+    //    AddToWalletIfInvolvingMe: a spend already tracked under another txid
+    //    -- the pre-aggregation sibling of a staker-aggregated tx -- is
+    //    deliberately not given a second CWalletTx).
+    //
+    // Consulting only one of them reports an output as unspent that the other
+    // record knows is gone: that is how a consumed staked commitment kept
+    // showing up in staked_commitment_balance while liststakedcommitments
+    // (which has always checked both) listed only the live one.
+    if (const auto it = mapOutputs.find(outpoint); it != mapOutputs.end() && it->second.IsSpent()) {
+        return true;
+    }
+
     std::pair<TxSpends::const_iterator, TxSpends::const_iterator> range;
     range = mapTxSpends.equal_range(outpoint);
 
@@ -1173,17 +1193,28 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
         // otherwise un-spend the output, double the balance and cause
         // bad-txns-inputs-missingorspent -- while still correctly un-spending
         // the output when its actual spending tx is disconnected in a reorg.
-        // A null spent_by (legacy DB rows, non-spend callers) is treated
-        // permissively so behaviour matches the old code until a rescan
-        // repopulates the spender.
+        //
+        // A downgrade therefore requires a named spender. Every path that
+        // genuinely un-spends an output names one (it walks the vins of the
+        // disconnected or evicted transaction), whereas the RECEIVE side
+        // re-adds the output itself with no spend information at all: the vout
+        // loop of AddToWalletIfInvolvingMe and CommitTransaction's mirroring
+        // both pass an unspent state and a null spender. Letting those clear
+        // the flag meant re-scanning the block that CREATED an output marked
+        // it unspent again -- which is how an upgrade rescan resurrected a
+        // staked commitment a later stake had already consumed, leaving it in
+        // staked_commitment_balance for good (issue #470). An output whose
+        // recorded spender is null (a row written before m_spent_by existed)
+        // still accepts a downgrade from a named spender, so a rescan repairs
+        // legacy rows rather than freezing them.
         auto spent_rank = [](const SyncTxState& s) -> int {
             if (std::holds_alternative<TxStateConfirmed>(s)) return 2;
             if (std::holds_alternative<TxStateInMempool>(s)) return 1;
             return 0;
         };
         const bool is_downgrade = spent_rank(state_spent) < spent_rank(wout.m_state_spent);
-        const bool spender_mismatch = !spent_by.IsNull() && !wout.m_spent_by.IsNull() && wout.m_spent_by != spent_by;
-        if (!(is_downgrade && spender_mismatch) && TxStateString(state_spent) != TxStateString(wout.m_state_spent)) {
+        const bool downgrade_allowed = !spent_by.IsNull() && (wout.m_spent_by.IsNull() || wout.m_spent_by == spent_by);
+        if ((!is_downgrade || downgrade_allowed) && TxStateString(state_spent) != TxStateString(wout.m_state_spent)) {
             wout.m_state_spent = state_spent;
             wout.m_spent_by = (spent_rank(state_spent) > 0) ? spent_by : uint256();
             fUpdated = true;
@@ -2859,7 +2890,14 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
             // immediately, but output-storage wallets populate mapOutputs for
             // the same tx via the later sync callback. Mark parents spent now
             // so interim balance RPCs do not count both parent and child.
+            //
+            // Record the spender too: AddToWallet() only keeps a spend against
+            // an out-of-turn Inactive re-sync when it knows which transaction
+            // claimed it, so leaving this null lets any superseded sibling --
+            // e.g. our own tx after the staker replaced it with an aggregate
+            // under a different txid -- clear a spend it did not make.
             spent_output.m_state_spent = TxStateInMempool{};
+            spent_output.m_spent_by = tx->GetHash();
             if (!batch.WriteOutput(txin.prevout, spent_output)) {
                 throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to update spent BLSCT output state");
             }
