@@ -1209,6 +1209,15 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     },
                                   std::chrono::minutes{1});
 
+    if (args.GetBoolArg("-logratelimit", BCLog::DEFAULT_LOGRATELIMIT)) {
+        LogInstance().SetRateLimiting(BCLog::LogRateLimiter::Create(
+            [&scheduler = *node.scheduler](auto func, auto window) { scheduler.scheduleEvery(std::move(func), window); },
+            BCLog::RATELIMIT_MAX_BYTES,
+            BCLog::RATELIMIT_WINDOW));
+    } else {
+        LogInfo("Log rate limiting disabled\n");
+    }
+
     // Check disk space every 5 minutes to avoid db corruption.
     node.scheduler->scheduleEvery([&args, &node]{
         constexpr uint64_t min_disk_space = 50 << 20; // 50 MB
