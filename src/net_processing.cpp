@@ -3434,7 +3434,11 @@ void PeerManagerImpl::ProcessCompactBlockTxns(CNode& pfrom, Peer& peer, const Bl
         }
 
         PartiallyDownloadedBlock& partialBlock = *range_flight.first->second.second->partialBlock;
-        ReadStatus status = partialBlock.FillBlock(*pblock, block_transactions.txn);
+
+        // We should not have gotten this far in compact block processing unless it's attached to a known header
+        const CBlockIndex* prev_block{Assume(m_chainman.m_blockman.LookupBlockIndex(partialBlock.header.hashPrevBlock))};
+        ReadStatus status = partialBlock.FillBlock(*pblock, block_transactions.txn,
+                                                   /*segwit_active=*/DeploymentActiveAfter(prev_block, m_chainman, Consensus::DEPLOYMENT_SEGWIT));
         if (status == READ_STATUS_INVALID) {
             RemoveBlockRequest(block_transactions.blockhash, pfrom.GetId()); // Reset in-flight state in case Misbehaving does not result in a disconnect
             Misbehaving(peer, 100, "invalid compact block/non-matching block transactions");
@@ -3451,23 +3455,7 @@ void PeerManagerImpl::ProcessCompactBlockTxns(CNode& pfrom, Peer& peer, const Bl
                 return;
             }
         } else {
-            // Block is either okay, or possibly we received
-            // READ_STATUS_CHECKBLOCK_FAILED.
-            // Note that CheckBlock can only fail for one of a few reasons:
-            // 1. bad-proof-of-work (impossible here, because we've already
-            //    accepted the header)
-            // 2. merkleroot doesn't match the transactions given (already
-            //    caught in FillBlock with READ_STATUS_FAILED, so
-            //    impossible here)
-            // 3. the block is otherwise invalid (eg invalid coinbase,
-            //    block is too big, too many legacy sigops, etc).
-            // So if CheckBlock failed, #3 is the only possibility.
-            // Under BIP 152, we don't discourage the peer unless proof of work is
-            // invalid (we don't require all the stateless checks to have
-            // been run).  This is handled below, so just treat this as
-            // though the block was successfully read, and rely on the
-            // handling in ProcessNewBlock to ensure the block index is
-            // updated, etc.
+            // Block is okay for further processing
             RemoveBlockRequest(block_transactions.blockhash, pfrom.GetId()); // it is now an empty pointer
             fBlockRead = true;
             // mapBlockSource is used for potentially punishing peers and
@@ -4754,7 +4742,9 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                     return;
                 }
                 std::vector<CTransactionRef> dummy;
-                status = tempBlock.FillBlock(*pblock, dummy);
+                const CBlockIndex* prev_block{Assume(m_chainman.m_blockman.LookupBlockIndex(cmpctblock.header.hashPrevBlock))};
+                status = tempBlock.FillBlock(*pblock, dummy,
+                                             /*segwit_active=*/DeploymentActiveAfter(prev_block, m_chainman, Consensus::DEPLOYMENT_SEGWIT));
                 if (status == READ_STATUS_OK) {
                     fBlockReconstructed = true;
                 }
@@ -4889,6 +4879,16 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
         LogPrint(BCLog::NET, "received block %s peer=%d\n", pblock->GetHash().ToString(), pfrom.GetId());
 
+        const CBlockIndex* prev_block{WITH_LOCK(m_chainman.GetMutex(), return m_chainman.m_blockman.LookupBlockIndex(pblock->hashPrevBlock))};
+
+        if (IsBlockMutated(/*block=*/*pblock,
+                           /*check_witness_root=*/DeploymentActiveAfter(prev_block, m_chainman, Consensus::DEPLOYMENT_SEGWIT))) {
+            LogDebug(BCLog::NET, "Received mutated block from peer=%d\n", peer->m_id);
+            Misbehaving(*peer, 100, "mutated block");
+            WITH_LOCK(cs_main, RemoveBlockRequest(pblock->GetHash(), peer->m_id));
+            return;
+        }
+
         bool forceProcessing = false;
         const uint256 hash(pblock->GetHash());
         bool min_pow_checked = false;
@@ -4904,7 +4904,6 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             mapBlockSource.emplace(hash, std::make_pair(pfrom.GetId(), true));
 
             // Check work on this block against our anti-dos thresholds.
-            const CBlockIndex* prev_block = m_chainman.m_blockman.LookupBlockIndex(pblock->hashPrevBlock);
             if (prev_block && prev_block->nChainWork + CalculateHeadersWork({pblock->GetBlockHeader()}) >= GetAntiDoSWorkThreshold()) {
                 min_pow_checked = true;
             }
