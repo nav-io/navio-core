@@ -936,6 +936,46 @@ BOOST_FIXTURE_TEST_CASE(ZapSelectTx, TestChain100Setup)
     TestUnloadWallet(std::move(wallet));
 }
 
+// Zapping one of two wallet transactions that spend the same output must only
+// drop that transaction's own spend entry; the other spend has to survive.
+BOOST_FIXTURE_TEST_CASE(ZapSelectTx_keeps_conflicting_spend, TestChain100Setup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    auto wallet = TestLoadWallet(context);
+    CKey key = GenerateRandomKey();
+    AddKey(*wallet, key);
+
+    m_coinbase_txns.push_back(CreateAndProcessBlock({}, GetScriptForRawPubKey(coinbaseKey.GetPubKey())).vtx[0]);
+    auto block_tx = TestSimpleSpend(*m_coinbase_txns[0], 0, coinbaseKey, GetScriptForRawPubKey(key.GetPubKey()));
+    CreateAndProcessBlock({block_tx}, GetScriptForRawPubKey(coinbaseKey.GetPubKey()));
+
+    SyncWithValidationInterfaceQueue();
+
+    {
+        const auto prev_tx = m_coinbase_txns[0];
+        // Same input as block_tx, different output, so a different txid.
+        const auto conflicting_tx = TestSimpleSpend(*prev_tx, 0, coinbaseKey, GetScriptForRawPubKey(coinbaseKey.GetPubKey()));
+        BOOST_REQUIRE(conflicting_tx.GetHash() != block_tx.GetHash());
+
+        LOCK(wallet->cs_wallet);
+        BOOST_REQUIRE(wallet->AddToWallet(MakeTransactionRef(conflicting_tx), TxStateInactive{}));
+        BOOST_CHECK_EQUAL(wallet->mapWallet.count(block_tx.GetHash()), 1u);
+        BOOST_CHECK_EQUAL(wallet->mapWallet.count(conflicting_tx.GetHash()), 1u);
+
+        std::vector<uint256> vHashIn{conflicting_tx.GetHash()}, vHashOut;
+        BOOST_CHECK_EQUAL(wallet->ZapSelectTx(vHashIn, vHashOut), DBErrors::LOAD_OK);
+        BOOST_CHECK_EQUAL(wallet->mapWallet.count(conflicting_tx.GetHash()), 0u);
+
+        // block_tx is confirmed and still spends the coinbase output.
+        BOOST_CHECK(wallet->HasWalletSpend(prev_tx));
+    }
+
+    TestUnloadWallet(std::move(wallet));
+}
+
 /**
  * Checks a wallet invalid state where the inputs (prev-txs) of a new arriving transaction are not marked dirty,
  * while the transaction that spends them exist inside the in-memory wallet tx map (not stored on db due a db write failure).
