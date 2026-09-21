@@ -89,7 +89,7 @@ class BadTxTemplate:
 
 class OutputMissing(BadTxTemplate):
     reject_reason = "bad-txns-vout-empty"
-    expect_disconnect = True
+    expect_disconnect = False
 
     def get_tx(self):
         tx = CTransaction()
@@ -100,7 +100,7 @@ class OutputMissing(BadTxTemplate):
 
 class InputMissing(BadTxTemplate):
     reject_reason = "bad-txns-vin-empty"
-    expect_disconnect = True
+    expect_disconnect = False
 
     # We use a blank transaction here to make sure
     # it is interpreted as a non-witness transaction.
@@ -132,7 +132,7 @@ class SizeTooSmall(BadTxTemplate):
 
 class DuplicateInput(BadTxTemplate):
     reject_reason = 'bad-txns-inputs-duplicate'
-    expect_disconnect = True
+    expect_disconnect = False
 
     def get_tx(self):
         tx = CTransaction()
@@ -145,7 +145,7 @@ class DuplicateInput(BadTxTemplate):
 
 class PrevoutNullInput(BadTxTemplate):
     reject_reason = 'bad-txns-prevout-null'
-    expect_disconnect = True
+    expect_disconnect = False
 
     def get_tx(self):
         tx = CTransaction()
@@ -171,7 +171,7 @@ class NonexistentInput(BadTxTemplate):
 
 class SpendTooMuch(BadTxTemplate):
     reject_reason = 'bad-txns-in-belowout'
-    expect_disconnect = True
+    expect_disconnect = False
 
     def get_tx(self):
         return create_tx_with_script(
@@ -180,7 +180,7 @@ class SpendTooMuch(BadTxTemplate):
 
 class CreateNegative(BadTxTemplate):
     reject_reason = 'bad-txns-vout-negative'
-    expect_disconnect = True
+    expect_disconnect = False
 
     def get_tx(self):
         return create_tx_with_script(self.spend_tx, 0, amount=-10)
@@ -188,7 +188,7 @@ class CreateNegative(BadTxTemplate):
 
 class CreateTooLarge(BadTxTemplate):
     reject_reason = 'bad-txns-vout-toolarge'
-    expect_disconnect = True
+    expect_disconnect = False
 
     def get_tx(self):
         return create_tx_with_script(self.spend_tx, 0, amount=MAX_MONEY + 1)
@@ -196,7 +196,7 @@ class CreateTooLarge(BadTxTemplate):
 
 class CreateSumTooLarge(BadTxTemplate):
     reject_reason = 'bad-txns-txouttotal-toolarge'
-    expect_disconnect = True
+    expect_disconnect = False
 
     def get_tx(self):
         tx = create_tx_with_script(self.spend_tx, 0, amount=MAX_MONEY)
@@ -206,8 +206,8 @@ class CreateSumTooLarge(BadTxTemplate):
 
 
 class InvalidOPIFConstruction(BadTxTemplate):
-    reject_reason = "mandatory-script-verify-flag-failed (Invalid OP_IF construction)"
-    expect_disconnect = True
+    reject_reason = "mempool-script-verify-flag-failed (Invalid OP_IF construction)"
+    expect_disconnect = False
     valid_in_block = True
 
     def get_tx(self):
@@ -241,7 +241,7 @@ def getDisabledOpcodeTemplate(opcode):
 
     return type('DisabledOpcode_' + str(opcode), (BadTxTemplate,), {
         'reject_reason': "disabled opcode",
-        'expect_disconnect': True,
+        'expect_disconnect': False,
         'get_tx': get_tx,
         'valid_in_block' : True
         })

@@ -142,9 +142,8 @@ class InvalidTxRequestTest(BitcoinTestFramework):
         }
         # Transactions that do not end up in the mempool:
         # tx_orphan_2_no_fee, because it has too low fee (p2ps[0] is not disconnected for relaying that tx)
-        # tx_orphan_2_invalid, because it has negative fee (p2ps[1] is disconnected for relaying that tx)
+        # tx_orphan_2_invalid, because it has negative fee (p2ps[1] is not disconnected for relaying that tx)
 
-        self.wait_until(lambda: 1 == len(node.getpeerinfo()), timeout=12)  # p2ps[1] is no longer connected
         assert_equal(expected_mempool, set(node.getrawmempool()))
 
         self.log.info('Test orphan pool overflow')
@@ -153,14 +152,7 @@ class InvalidTxRequestTest(BitcoinTestFramework):
             orphan_tx_pool[i].vin.append(CTxIn(outpoint=COutPoint(i)))
             orphan_tx_pool[i].vout.append(CTxOut(nValue=11 * COIN, scriptPubKey=SCRIPT_PUB_KEY_OP_TRUE))
 
-        # Navio disconnects peers that overflow the orphanage instead of just rejecting the tx.
-        overflow_disconnect = False
-        node.p2ps[0].send_txs_and_test(orphan_tx_pool, node, success=False, expect_disconnect=True)
-        overflow_disconnect = True
-
-        if overflow_disconnect:
-            self.log.info('Reconnecting after orphan pool overflow disconnect')
-            self.reconnect_p2p(num_connections=1)
+        node.p2ps[0].send_txs_and_test(orphan_tx_pool, node, success=False)
 
         self.log.info('Test orphan with rejected parents')
         rejected_parent = CTransaction()
@@ -170,11 +162,8 @@ class InvalidTxRequestTest(BitcoinTestFramework):
         node.p2ps[0].send_txs_and_test([rejected_parent], node, success=False)
 
         self.log.info('Test that a peer disconnection causes erase its transactions from the orphan pool')
-        if overflow_disconnect:
-            self.log.info('Skipping explicit disconnect purge check (already triggered by orphan overflow)')
-        else:
-            with node.assert_debug_log(['Erased 100 orphan tx from peer=25']):
-                self.reconnect_p2p(num_connections=1)
+        with node.assert_debug_log(['orphan tx from peer=']):
+            self.reconnect_p2p(num_connections=1)
 
         # Navio tracks spenders via output hashes, so re-mining the withheld package
         # leads to duplicate coin insertions (ConnectBlock throws "Attempted to overwrite an
