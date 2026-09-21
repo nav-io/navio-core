@@ -608,7 +608,8 @@ std::optional<std::vector<unsigned char>> KeyMan::GetBlindingSeed() const
     }
 }
 
-std::optional<BlstScalar> KeyMan::RecoverOutputBlindingKey(const std::vector<CTxIn>& vin, const CTxOut& out) const
+std::optional<BlstScalar> KeyMan::RecoverOutputBlindingKey(const std::vector<CTxIn>& vin, const CTxOut& out,
+                                                           const std::vector<COutPoint>& ownInputs) const
 {
     // The point that equals k*G is `ephemeralKey`, NOT `blsctData.blindingKey`
     // -- the latter is `destinationSpendKey * k`, a recipient-bound point with
@@ -621,7 +622,10 @@ std::optional<BlstScalar> KeyMan::RecoverOutputBlindingKey(const std::vector<CTx
     const auto seed = GetBlindingSeed();
     if (!seed) return std::nullopt;
 
-    return RecoverBlindingKey(*seed, vin, out.blsctData.ephemeralKey);
+    // The canonical anchor over our own inputs is the fast path; the scan
+    // over every input of `vin` is the fallback that keeps recovery working
+    // when ownership could not be established.
+    return RecoverBlindingKey(*seed, vin, out.blsctData.ephemeralKey, CanonicalAnchor(ownInputs));
 }
 
 blsct::PrivateKey KeyMan::GetMasterTokenKey() const

@@ -241,15 +241,21 @@ protected:
     //! when there is one, else the seed derivation, else a random scalar.
     Scalar BlindingKeyFor(const std::optional<Scalar>& pinned, uint32_t ordinal, const std::optional<Outid>& anchor) const;
 
-    //! The prevout of the first input BuildTx's selection loops will push for
-    //! a transaction of this type, i.e. the one input guaranteed to be in the
-    //! result. Must be called after the inputs are sorted. std::nullopt when
-    //! no input qualifies.
-    std::optional<Outid> AnchorInput(const CreateTransactionType& type) const;
+    //! The canonical anchor over a selected input set: the lexicographically
+    //! smallest outid among them (blsct::CanonicalAnchor).
+    //!
+    //! Canonical rather than positional because no position survives to
+    //! recovery time -- BuildTx shuffles vin, and block aggregation splices in
+    //! other senders' inputs. It must still be an input that SURVIVES into the
+    //! built transaction, which is why it is computed from the set coin
+    //! selection actually chose rather than from everything the factory holds:
+    //! deriving from an input that selection then drops would leave the output
+    //! unrecoverable.
+    static std::optional<Outid> CanonicalAnchorOf(const std::vector<const UnsignedInput*>& selected);
 
-    //! The prevout of the first input, for builders (BuildUnbalancedHalf) that
-    //! include every input unconditionally.
-    std::optional<Outid> FirstInput() const;
+    //! The canonical anchor over every input the factory holds, for builders
+    //! (BuildUnbalancedHalf) that spend all of them unconditionally.
+    std::optional<Outid> CanonicalAnchorOfAllInputs() const;
 
     //! Build a queued output, assigning its blinding scalar from `anchor`.
     UnsignedOutput MaterializeOutput(const PendingOutput& pending, const std::optional<Outid>& anchor) const;

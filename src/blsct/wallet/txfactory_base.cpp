@@ -55,36 +55,21 @@ Scalar TxFactoryBase::BlindingKeyFor(const std::optional<Scalar>& pinned, const 
     return DeriveBlindingKey(*m_blinding_seed, *anchor, ordinal);
 }
 
-std::optional<Outid> TxFactoryBase::AnchorInput(const CreateTransactionType& type) const
+std::optional<Outid> TxFactoryBase::CanonicalAnchorOf(const std::vector<const UnsignedInput*>& selected)
 {
-    // Mirrors BuildTx's two selection loops. Both push their first candidate
-    // unconditionally -- the running input total starts at 0 and the
-    // "already covered" break tests `> nFromOutputs + nFromFee`, which is
-    // never negative -- so whatever this returns is guaranteed to be in the
-    // built transaction. That guarantee is the whole point: derive from an
-    // input that gets dropped by coin selection and the output becomes
-    // unrecoverable.
-    if (type == STAKED_COMMITMENT_UNSTAKE || type == STAKED_COMMITMENT) {
-        for (const auto& in_ : vInputs) {
-            for (const auto& in : in_.second) {
-                if (in.is_staked_commitment) return in.in.prevout.hash;
-            }
-        }
-    }
-    for (const auto& in_ : vInputs) {
-        for (const auto& in : in_.second) {
-            if (!in.is_staked_commitment) return in.in.prevout.hash;
-        }
-    }
-    return std::nullopt;
+    std::vector<COutPoint> outpoints;
+    outpoints.reserve(selected.size());
+    for (const UnsignedInput* in : selected) outpoints.push_back(in->in.prevout);
+    return CanonicalAnchor(outpoints);
 }
 
-std::optional<Outid> TxFactoryBase::FirstInput() const
+std::optional<Outid> TxFactoryBase::CanonicalAnchorOfAllInputs() const
 {
+    std::vector<COutPoint> outpoints;
     for (const auto& in_ : vInputs) {
-        for (const auto& in : in_.second) return in.in.prevout.hash;
+        for (const auto& in : in_.second) outpoints.push_back(in.in.prevout);
     }
-    return std::nullopt;
+    return CanonicalAnchor(outpoints);
 }
 
 void TxFactoryBase::AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id, const CreateTransactionType& type, const CAmount& minStake, const bool& fSubtractFeeFromAmount, const std::optional<Scalar>& blindingKey, const CAmount& nBLSCTDefaultFee, const std::optional<delegation::DelegationRequest>& stakeDelegation)
@@ -215,7 +200,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
     //
     // This runs BEFORE the outputs are materialized, which is the opposite of
     // the pre-recoverable-blinding-key order: the blinding scalar of every
-    // output is derived from an input outpoint, so which input will lead the
+    // output is derived from the transaction's anchor input, so coin
     // selection has to be settled first. Sorting has no dependency on the
     // outputs, so moving it up is order-neutral for everything else.
     for (auto& in_ : vInputs) {
@@ -224,43 +209,70 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         });
     }
 
-    // The input every derived blinding scalar in this transaction is keyed on.
-    const std::optional<Outid> anchor = AnchorInput(type);
-
     // Blinding scalars of the outputs built here, keyed by output hash, for
     // the wallet to persist as the fast path of `signblsctoutput`. Change and
     // subtract-fee outputs are added per pass below, since they are rebuilt
     // as the fee moves.
     std::map<uint256, Scalar> baseBlindingKeys;
 
-    // Materialize the queued transfer outputs now that the anchor is known,
-    // then append any token create/mint outputs, which carry no destination
-    // blinding key of ours and are built eagerly by their AddOutput overloads.
-    std::vector<UnsignedOutput> builtOutputs;
-    builtOutputs.reserve(vPendingOutputs.size());
-    for (const auto& pending : vPendingOutputs) {
-        builtOutputs.push_back(MaterializeOutput(pending, anchor));
-    }
-    for (auto& out_ : vOutputs) {
-        for (auto& out : out_.second) builtOutputs.push_back(out);
-    }
+    // Deferred, anchor-dependent output materialization.
+    //
+    // Each pass selects its inputs first, takes the canonical anchor over
+    // them, and only then builds the outputs. Materialization is memoized on
+    // that anchor because range proofs dominate the cost of a build and the
+    // anchor is stable across the fixpoint in every ordinary case, so the
+    // common path pays for them exactly once.
+    //
+    // Rebuilding is safe when the anchor does move: BLSCT output size is
+    // independent of both the value and the blinding key, so the transaction
+    // weight -- and therefore the required fee the fixpoint is chasing -- does
+    // not change.
+    std::optional<Outid> builtAnchor;
+    bool materialized = false;
 
-    for (auto& out : builtOutputs) {
-        this->tx.vout.push_back(out.out);
-        auto outHash = out.out.GetHash();
+    auto materialize = [&](const std::optional<Outid>& anchor) {
+        this->tx.vout.clear();
+        outputSignatures.clear();
+        outputGammas = Scalar();
+        baseBlindingKeys.clear();
 
-        if (out.out.HasBLSCTRangeProof()) {
-            outputGammas = outputGammas - out.gamma;
+        // The queued transfer outputs, then any token create/mint outputs,
+        // which carry no destination blinding key of ours and are built
+        // eagerly by their AddOutput overloads.
+        std::vector<UnsignedOutput> builtOutputs;
+        builtOutputs.reserve(vPendingOutputs.size());
+        for (const auto& pending : vPendingOutputs) {
+            builtOutputs.push_back(MaterializeOutput(pending, anchor));
         }
-        if (out.out.HasBLSCTKeys()) {
-            outputSignatures.push_back(PrivateKey(out.blindingKey).Sign(outHash));
-            baseBlindingKeys[outHash] = out.blindingKey;
+        for (auto& out_ : vOutputs) {
+            for (auto& out : out_.second) builtOutputs.push_back(out);
         }
 
-        if (out.type == TX_CREATE_TOKEN || out.type == TX_MINT_TOKEN) {
-            outputSignatures.push_back(PrivateKey(out.tokenKey).Sign(outHash));
+        for (auto& out : builtOutputs) {
+            this->tx.vout.push_back(out.out);
+            auto outHash = out.out.GetHash();
+
+            if (out.out.HasBLSCTRangeProof()) {
+                outputGammas = outputGammas - out.gamma;
+            }
+            if (out.out.HasBLSCTKeys()) {
+                outputSignatures.push_back(PrivateKey(out.blindingKey).Sign(outHash));
+                baseBlindingKeys[outHash] = out.blindingKey;
+            }
+
+            if (out.type == TX_CREATE_TOKEN || out.type == TX_MINT_TOKEN) {
+                outputSignatures.push_back(PrivateKey(out.tokenKey).Sign(outHash));
+            }
         }
-    }
+
+        builtAnchor = anchor;
+        materialized = true;
+    };
+
+    const auto same_anchor = [](const std::optional<Outid>& a, const std::optional<Outid>& b) {
+        if (a.has_value() != b.has_value()) return false;
+        return !a.has_value() || a->ToUint256() == b->ToUint256();
+    };
 
     // What the ordinary (non-deferred) outputs of the deferred recipient's
     // token contribute. The deferred output is re-materialized on every pass
@@ -269,26 +281,15 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
     const CAmount nFromPlainOutputs = subtractFeeOutput ? nAmounts[subtractFeeOutput->token_id].nFromOutputs : 0;
 
     for (size_t pass = 0; pass < MAX_FEE_FIXPOINT_PASSES; ++pass) {
-        CMutableTransaction tx = this->tx;
-        tx.nVersion |= CTransaction::BLSCT_MARKER;
-        // Stamp the proof-v2 marker when the outputs are built under the v2
-        // transcript, so verifiers select v2 and the flag-enforcement check
-        // passes at/above the activation height.
-        if (m_transcript_v2)
-            tx.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
-
-        Scalar gammaAcc = outputGammas;
         std::map<TokenId, CAmount> mapChange;
         std::map<TokenId, CAmount> mapInputs;
-        std::vector<Signature> txSigs = outputSignatures;
-        std::map<uint256, Scalar> blindingKeys = baseBlindingKeys;
         // Set if selection stops because the per-tx input cap is reached while
         // funds remain unselected -- i.e. the amount needs more inputs than fit
         // in one transaction. Distinguishes "consolidate first" from genuine
         // insufficient funds below.
         bool hitInputCap = false;
 
-        // Materialize the deferred subtract-fee-from-amount recipient at
+        // Settle the deferred subtract-fee-from-amount recipient's VALUE at
         // (amount - current fee estimate). BLSCT output size is
         // value-independent, so lowering the value does not change the fee and
         // the fixpoint still converges (typically in two passes). Setting
@@ -297,23 +298,24 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         // recipient output rather than out of change. Any ordinary output of
         // the same token is still owed in full, hence the sum rather than a
         // plain assignment.
-        std::optional<UnsignedOutput> sffaOut;
+        //
+        // Only the value is settled here; the output itself is built further
+        // down, once the anchor its blinding key derives from is known.
+        std::optional<CAmount> sffaReduced;
         if (subtractFeeOutput) {
             const CAmount fee = nAmounts[TokenId()].nFromFee;
             const CAmount reduced = subtractFeeOutput->amount - fee;
             if (reduced < 0) return std::nullopt; // fee exceeds the amount sent
             nAmounts[subtractFeeOutput->token_id].nFromOutputs = nFromPlainOutputs + reduced;
-            // The ordinal is fixed at AddOutput time, so the derived key is
-            // the same on every pass even though the output is rebuilt.
-            const Scalar sffaBlindingKey = BlindingKeyFor(subtractFeeOutput->blindingKey, subtractFeeOutput->ordinal, anchor);
-            sffaOut = CreateOutput(subtractFeeOutput->destination.GetKeys(), reduced,
-                                   subtractFeeOutput->memo, subtractFeeOutput->token_id,
-                                   sffaBlindingKey, subtractFeeOutput->type,
-                                   subtractFeeOutput->minStake, /*fAllowZeroValueRangeProof=*/false,
-                                   m_transcript_v2);
-            gammaAcc = gammaAcc - sffaOut->gamma;
+            sffaReduced = reduced;
         }
 
+        // Coin selection. It reads only the per-token amount totals, which
+        // AddOutput accumulated, so it has no dependency on the outputs and
+        // can run before they exist. The chosen inputs are collected rather
+        // than pushed straight into a transaction because the anchor -- and
+        // through it every output -- is a function of this set.
+        std::vector<const UnsignedInput*> selected;
         if (type == STAKED_COMMITMENT_UNSTAKE || type == STAKED_COMMITMENT) {
             // Consume EVERY staked input the caller added: CreateTransaction
             // already selected exactly which commitments this transaction
@@ -329,10 +331,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
                     if (!in.is_staked_commitment) continue;
                     if (!mapInputs[in_.first]) mapInputs[in_.first] = 0;
 
-                    tx.vin.push_back(in.in);
-                    gammaAcc = gammaAcc + in.gamma;
-                    txSigs.push_back(in.sk.Sign(in.in.GetHash()));
-
+                    selected.push_back(&in);
                     mapInputs[in_.first] += in.value.GetUint64();
                 }
             }
@@ -342,18 +341,63 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
                 if (in.is_staked_commitment) continue;
                 if (!mapInputs[in_.first]) mapInputs[in_.first] = 0;
                 if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs + nAmounts[in_.first].nFromFee) break;
-                if (tx.vin.size() >= MAX_TX_INPUT_COUNT) {
+                if (selected.size() >= MAX_TX_INPUT_COUNT) {
                     hitInputCap = true;
                     break;
                 }
 
-                tx.vin.push_back(in.in);
-                gammaAcc = gammaAcc + in.gamma;
-                txSigs.push_back(in.sk.Sign(in.in.GetHash()));
+                selected.push_back(&in);
                 mapInputs[in_.first] += in.value.GetUint64();
             }
             if (hitInputCap) break;
         }
+
+        // The anchor every blinding scalar in this transaction derives from:
+        // the canonically smallest outid among the inputs just selected.
+        //
+        // Taken from the SELECTED set, not from everything the factory holds,
+        // so the anchor is guaranteed to survive into the built transaction --
+        // deriving from an input coin selection then drops would leave the
+        // outputs unrecoverable. It is also stable once chosen: raising the
+        // fee only ever lengthens the prefix of the value-sorted inputs that
+        // selection takes (and for a subtract-fee send the target
+        // `reduced + fee` is constant), so the selected set grows
+        // monotonically across passes and an earlier anchor stays in it.
+        const std::optional<Outid> anchor = CanonicalAnchorOf(selected);
+        if (!materialized || !same_anchor(builtAnchor, anchor)) materialize(anchor);
+
+        CMutableTransaction tx = this->tx;
+        tx.nVersion |= CTransaction::BLSCT_MARKER;
+        // Stamp the proof-v2 marker when the outputs are built under the v2
+        // transcript, so verifiers select v2 and the flag-enforcement check
+        // passes at/above the activation height.
+        if (m_transcript_v2)
+            tx.nVersion |= CTransaction::BLSCT_PROOF_V2_MARKER;
+
+        Scalar gammaAcc = outputGammas;
+        std::vector<Signature> txSigs = outputSignatures;
+        std::map<uint256, Scalar> blindingKeys = baseBlindingKeys;
+
+        for (const UnsignedInput* in : selected) {
+            tx.vin.push_back(in->in);
+            gammaAcc = gammaAcc + in->gamma;
+            txSigs.push_back(in->sk.Sign(in->in.GetHash()));
+        }
+
+        std::optional<UnsignedOutput> sffaOut;
+        if (sffaReduced) {
+            // The ordinal is fixed at AddOutput time and the anchor is stable,
+            // so the derived key is the same on every pass even though the
+            // output is rebuilt at a new value.
+            const Scalar sffaBlindingKey = BlindingKeyFor(subtractFeeOutput->blindingKey, subtractFeeOutput->ordinal, anchor);
+            sffaOut = CreateOutput(subtractFeeOutput->destination.GetKeys(), *sffaReduced,
+                                   subtractFeeOutput->memo, subtractFeeOutput->token_id,
+                                   sffaBlindingKey, subtractFeeOutput->type,
+                                   subtractFeeOutput->minStake, /*fAllowZeroValueRangeProof=*/false,
+                                   m_transcript_v2);
+            gammaAcc = gammaAcc - sffaOut->gamma;
+        }
+
         for (auto& amounts : nAmounts) {
             auto tokenFee = nAmounts[amounts.first].nFromFee;
 
@@ -482,11 +526,12 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             std::mt19937_64 rng(seed);
             std::shuffle(tx.vin.begin(), tx.vin.end(), rng);
             std::shuffle(tx.vout.begin(), tx.vout.end(), rng);
-            // The shuffle is also why recovery cannot simply read vin[0]: the
-            // input the blinding keys were derived from is no longer at a
-            // known position here, let alone after block aggregation merges
-            // this vin with every other transaction's in the block. See
-            // blsct::RecoverBlindingKey.
+            // The shuffle is why the anchor is canonical rather than
+            // positional: the input the blinding keys were derived from is no
+            // longer at a known position here, let alone after block
+            // aggregation merges this vin with every other transaction's in
+            // the block. Its identity as the smallest outid of the sender's
+            // own input set survives both. See blsct::CanonicalAnchor.
             return BuiltTransaction{tx, *recipientOutputHash, std::move(blindingKeys)};
         }
         // Only reached with required_fee > nFromFee, so this raises the fee.
@@ -557,9 +602,9 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
     // input for recv_token here — the counterparty's half supplies it.
     auto recvOutput = CreateOutput(recvDestination.GetKeys(), recv_amount, "swap-recv", recv_token, Scalar::Rand(), NORMAL, 0, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
 
-    // A half spends every input it holds unconditionally, so any of them is a
-    // valid derivation anchor; take the first.
-    const std::optional<Outid> anchor = FirstInput();
+    // A half spends every input it holds unconditionally, so the canonical
+    // anchor over all of them is guaranteed to be in the result.
+    const std::optional<Outid> anchor = CanonicalAnchorOfAllInputs();
 
     std::vector<UnsignedOutput> payOutputs;
     payOutputs.reserve(vPendingOutputs.size());

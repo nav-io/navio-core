@@ -80,6 +80,22 @@ inline constexpr uint32_t MAX_OUTPUT_SEARCH{16};
 //! retry path that can never be exercised.
 BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid, uint32_t counter);
 
+//! The canonical anchor of a transaction: the lexicographically smallest
+//! outid among `outpoints`, comparing the 32 bytes in INTERNAL order (which
+//! is what uint256's memcmp-based ordering does). std::nullopt for an empty
+//! set.
+//!
+//! Callers pass the outpoints of the inputs the SENDER ITSELF contributed --
+//! at build time the ones coin selection chose, at recovery time the ones the
+//! wallet recognises as spending its own outputs.
+//!
+//! Canonical rather than positional because no position survives: BuildTx
+//! shuffles vin before broadcast to hide coin-selection order, and block
+//! aggregation then splices other senders' inputs into the same vin, so the
+//! input at index 0 may belong to a stranger. A canonical choice over the
+//! sender's own input *set* is invariant under both.
+std::optional<Outid> CanonicalAnchor(const std::vector<COutPoint>& outpoints);
+
 //! Recover the blinding scalar of an output whose public blinding point is
 //! `publicBlindingKey`, given the inputs of the transaction that contains it.
 //! Returns std::nullopt when no candidate matches, i.e. the output was not
@@ -89,20 +105,22 @@ BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid,
 //! point k*G -- see RecoverOutputBlindingKey() below, and the note there about
 //! blsctData.blindingKey being a different point entirely.
 //!
-//! Every input of `vin` is tried as the anchor, not just vin[0]. Two things
-//! make the sender's anchor unidentifiable by position at recovery time:
-//! TxFactoryBase::BuildTx shuffles vin before returning (so the built order is
-//! already gone), and block aggregation merges the inputs of every transaction
-//! in the block into one vin (so a sibling sender's input can sit at index 0).
-//! The check against the public point is what makes the wider search safe: a
-//! wrong anchor simply never matches.
+//! `canonicalAnchor`, when known, is tried first and normally hits on the
+//! first ordinal, which costs 16 scalar multiplications. The search then falls
+//! back to trying EVERY input of `vin` as the anchor. That fallback is
+//! deliberate and must stay: the check against the public point is
+//! self-verifying, so a wrong anchor can only cost time, never yield a false
+//! key -- whereas a purely canonical scheme fails silently whenever the
+//! wallet's notion of "my own inputs" differs between building and recovering,
+//! a partial rescan being the obvious way that happens.
 //!
-//! Cost is |vin| * MAX_OUTPUT_SEARCH scalar multiplications. That is nothing
-//! for a wallet-built transaction and still sub-second for a fully aggregated
-//! block, and it is only paid on the explicit recovery path.
+//! Worst-case cost is |vin| * MAX_OUTPUT_SEARCH scalar multiplications, well
+//! under a second even for a fully aggregated block, and only paid on the
+//! explicit recovery path.
 std::optional<BlstScalar> RecoverBlindingKey(Span<const unsigned char> seed,
                                              const std::vector<CTxIn>& vin,
-                                             const BlstG1Point& publicBlindingKey);
+                                             const BlstG1Point& publicBlindingKey,
+                                             const std::optional<Outid>& canonicalAnchor = std::nullopt);
 
 } // namespace blsct
 

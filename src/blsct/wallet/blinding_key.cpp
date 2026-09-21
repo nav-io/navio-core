@@ -63,9 +63,42 @@ BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid,
     return k;
 }
 
+std::optional<Outid> CanonicalAnchor(const std::vector<COutPoint>& outpoints)
+{
+    std::optional<Outid> anchor;
+    for (const COutPoint& outpoint : outpoints) {
+        // transaction_identifier::operator< forwards to base_blob::Compare,
+        // which is a memcmp over the internal byte array -- exactly the
+        // "smallest of the 32 bytes in internal order" the derivation
+        // specifies, and NOT the reversed display ordering.
+        if (!anchor || outpoint.hash < *anchor) anchor = outpoint.hash;
+    }
+    return anchor;
+}
+
+namespace {
+//! Try every ordinal below MAX_OUTPUT_SEARCH for one anchor.
+std::optional<BlstScalar> TryAnchor(Span<const unsigned char> seed, const Outid& anchor, const BlstG1Point& publicBlindingKey)
+{
+    for (uint32_t counter = 0; counter < MAX_OUTPUT_SEARCH; ++counter) {
+        BlstScalar k;
+        try {
+            k = DeriveBlindingKey(seed, anchor, counter);
+        } catch (const std::exception&) {
+            // Only the (untestable) zero-scalar case gets here; skip that
+            // ordinal rather than abandoning the whole search.
+            continue;
+        }
+        if (PrivateKey(k).GetPoint() == publicBlindingKey) return k;
+    }
+    return std::nullopt;
+}
+} // namespace
+
 std::optional<BlstScalar> RecoverBlindingKey(Span<const unsigned char> seed,
                                              const std::vector<CTxIn>& vin,
-                                             const BlstG1Point& publicBlindingKey)
+                                             const BlstG1Point& publicBlindingKey,
+                                             const std::optional<Outid>& canonicalAnchor)
 {
     if (seed.size() != BLINDING_KEY_SEED_SIZE) return std::nullopt;
     // The identity is never a legitimate k*G (DeriveBlindingKey refuses to
@@ -73,18 +106,20 @@ std::optional<BlstScalar> RecoverBlindingKey(Span<const unsigned char> seed,
     // false positive on a malformed output.
     if (publicBlindingKey.IsZero()) return std::nullopt;
 
+    // Fast path: the anchor the builder would have chosen. Normally hits on
+    // the first ordinal.
+    if (canonicalAnchor) {
+        if (auto k = TryAnchor(seed, *canonicalAnchor, publicBlindingKey)) return k;
+    }
+
+    // Fallback: every input, in case the caller could not identify its own
+    // inputs (a partial rescan, say) or identified a different set than the
+    // build did. Kept deliberately -- the match against publicBlindingKey is
+    // self-verifying, so a wrong anchor costs time and nothing else, while
+    // relying on the canonical anchor alone would fail silently.
     for (const CTxIn& in : vin) {
-        for (uint32_t counter = 0; counter < MAX_OUTPUT_SEARCH; ++counter) {
-            BlstScalar k;
-            try {
-                k = DeriveBlindingKey(seed, in.prevout.hash, counter);
-            } catch (const std::exception&) {
-                // Only the (untestable) zero-scalar case gets here; skip that
-                // ordinal rather than abandoning the whole search.
-                continue;
-            }
-            if (PrivateKey(k).GetPoint() == publicBlindingKey) return k;
-        }
+        if (canonicalAnchor && in.prevout.hash == *canonicalAnchor) continue; // just tried
+        if (auto k = TryAnchor(seed, in.prevout.hash, publicBlindingKey)) return k;
     }
 
     return std::nullopt;

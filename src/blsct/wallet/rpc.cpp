@@ -5112,7 +5112,21 @@ RPCHelpMan signblsctoutput()
                 if (!blsct_km) {
                     throw JSONRPCError(RPC_WALLET_ERROR, "This wallet has no BLSCT key manager");
                 }
-                blindingKey = blsct_km->RecoverOutputBlindingKey(tx->vin, out);
+                // Which inputs are OURS gives the canonical anchor and with
+                // it the fast path. The same two lookups `getblsctoutput`
+                // uses, covering both wallet storage modes; an input we
+                // cannot place is simply left out, and recovery falls back to
+                // scanning every input.
+                std::vector<COutPoint> ownInputs;
+                for (const CTxIn& in : tx->vin) {
+                    const uint256& prev = in.prevout.hash.ToUint256();
+                    if (pwallet->mapOutputs.contains(in.prevout) ||
+                        pwallet->mapOutpointHashToWalletTx.contains(prev)) {
+                        ownInputs.push_back(in.prevout);
+                    }
+                }
+
+                blindingKey = blsct_km->RecoverOutputBlindingKey(tx->vin, out, ownInputs);
             }
 
             if (!blindingKey) {

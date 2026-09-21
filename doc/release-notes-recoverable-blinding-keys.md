@@ -31,6 +31,21 @@ moment the transaction was built; nothing about it is stored anywhere or
 derivable from the seed. `signblsctoutput` fails cleanly on them. Recovery
 applies only to outputs created by a wallet running this version or later.
 
+### Anchor
+
+The derivation is keyed on the transaction's *anchor* input: the lexicographically smallest
+output hash among the inputs the sender itself contributed, comparing the 32 bytes in internal
+order. It is canonical rather than positional because no position survives — `BuildTx` shuffles
+`vin` before broadcast, and block aggregation then merges other senders' inputs into the same
+transaction, so `vin[0]` may belong to a stranger.
+
+Recovery tries the canonical anchor first (16 scalar multiplications) and then falls back to
+scanning every input of the containing transaction. The fallback is deliberate: the search is
+self-verifying against the output's ephemeral key, so a wrong anchor can only cost time, never
+yield a false key — whereas relying on the canonical anchor alone would fail silently whenever a
+wallet's notion of "my own inputs" differs between building and recovering, for instance after a
+partial rescan.
+
 ### Notes
 
 - The scalar is a secret of the sender. It is never logged, and a signature

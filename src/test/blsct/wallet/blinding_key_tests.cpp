@@ -153,10 +153,48 @@ BOOST_AUTO_TEST_CASE(recovery_matches_only_the_right_seed)
     BOOST_CHECK(!blsct::RecoverBlindingKey(seed, vin, blsct::PrivateKey(beyond).GetPoint()).has_value());
 }
 
-// The anchor input is not identifiable by position at recovery time -- BuildTx
-// shuffles vin, and block aggregation merges every transaction's inputs into
-// one vin -- so recovery tries them all. Put the real anchor last behind a
-// crowd of strangers and it must still be found.
+// The anchor is the lexicographically smallest outid of the sender's own
+// inputs, comparing the 32 bytes in INTERNAL order -- not the reversed order
+// GetHex() displays, and not any position, since BuildTx shuffles vin and
+// aggregation splices in strangers' inputs.
+BOOST_AUTO_TEST_CASE(canonical_anchor_is_order_independent)
+{
+    const Outid low = OutidOfRepeatedByte(0x02);
+    const Outid mid = OutidOfRepeatedByte(0x77);
+    const Outid high = OutidOfRepeatedByte(0xfe);
+
+    const std::vector<COutPoint> ascending{COutPoint(low), COutPoint(mid), COutPoint(high)};
+    const std::vector<COutPoint> descending{COutPoint(high), COutPoint(mid), COutPoint(low)};
+    const std::vector<COutPoint> jumbled{COutPoint(mid), COutPoint(high), COutPoint(low)};
+
+    for (const auto& set : {ascending, descending, jumbled}) {
+        const auto anchor = blsct::CanonicalAnchor(set);
+        BOOST_REQUIRE(anchor.has_value());
+        BOOST_CHECK(anchor->ToUint256() == low.ToUint256());
+    }
+
+    // Empty set, no anchor.
+    BOOST_CHECK(!blsct::CanonicalAnchor({}).has_value());
+
+    // Internal order, not display order. These two differ in the first and
+    // last internal byte, so the two orderings disagree about which is
+    // smaller; the internal one must win.
+    uint256 a_bytes, b_bytes;
+    std::fill(a_bytes.begin(), a_bytes.end(), 0x40);
+    std::fill(b_bytes.begin(), b_bytes.end(), 0x40);
+    a_bytes.begin()[0] = 0x01;  // smaller internally, and internally FIRST
+    b_bytes.begin()[31] = 0x00; // smaller in display order (reversed -> leads)
+    const auto anchor = blsct::CanonicalAnchor(
+        {COutPoint(Outid::FromUint256(a_bytes)), COutPoint(Outid::FromUint256(b_bytes))});
+    BOOST_REQUIRE(anchor.has_value());
+    BOOST_CHECK(anchor->ToUint256() == a_bytes);
+}
+
+// The canonical anchor is the fast path, but the scan over every input is the
+// fallback that must stay: a caller that cannot say which inputs are its own
+// (a partial rescan, say) still recovers, just more slowly. Put the real
+// anchor last behind a crowd of strangers, give no canonical hint, and it must
+// still be found.
 BOOST_AUTO_TEST_CASE(recovery_finds_a_non_leading_anchor)
 {
     const auto seed = RepeatedByte(0x41);
@@ -167,9 +205,29 @@ BOOST_AUTO_TEST_CASE(recovery_finds_a_non_leading_anchor)
     vin.emplace_back(COutPoint(anchor));
 
     const auto k = blsct::DeriveBlindingKey(seed, anchor, 5);
-    const auto recovered = blsct::RecoverBlindingKey(seed, vin, blsct::PrivateKey(k).GetPoint());
+    const BlstG1Point P = blsct::PrivateKey(k).GetPoint();
+
+    // No hint: the fallback scan finds it.
+    const auto recovered = blsct::RecoverBlindingKey(seed, vin, P);
     BOOST_REQUIRE(recovered.has_value());
     BOOST_CHECK(*recovered == k);
+
+    // Correct hint: same answer, reached on the fast path.
+    const auto hinted = blsct::RecoverBlindingKey(seed, vin, P, anchor);
+    BOOST_REQUIRE(hinted.has_value());
+    BOOST_CHECK(*hinted == k);
+
+    // WRONG hint: must not break recovery. This is the whole reason the
+    // fallback is kept -- a bad anchor costs time and nothing else, because
+    // the match is against P.
+    const auto misled = blsct::RecoverBlindingKey(seed, vin, P, OutidOfRepeatedByte(0x99));
+    BOOST_REQUIRE(misled.has_value());
+    BOOST_CHECK(*misled == k);
+
+    // A hint for an input that is not in vin at all, and whose ordinals do not
+    // match either, still ends in a clean refusal rather than a false key.
+    const auto other = blsct::DeriveBlindingKey(seed, OutidOfRepeatedByte(0x7f), 0);
+    BOOST_CHECK(!blsct::RecoverBlindingKey(seed, vin, blsct::PrivateKey(other).GetPoint(), anchor).has_value());
 }
 
 namespace {
@@ -244,6 +302,29 @@ BOOST_FIXTURE_TEST_CASE(recovery_after_seed_only_restore, TestingSetup)
     // Recipient plus change.
     BOOST_CHECK_GE(blsct_outputs, 2U);
 
+    // The builder keyed every one of them on the CANONICAL anchor: the
+    // smallest outid among the inputs the transaction actually spends. Check
+    // it directly against the derivation rather than trusting the search --
+    // the search would also succeed on a non-canonical anchor via its
+    // fallback, so only this pins the rule the two implementations share.
+    {
+        std::vector<COutPoint> own;
+        for (const auto& in : built->tx.vin) own.push_back(in.prevout);
+        const auto canonical = blsct::CanonicalAnchor(own);
+        BOOST_REQUIRE(canonical.has_value());
+
+        const auto seed = sender.km->GetBlindingSeed();
+        BOOST_REQUIRE(seed.has_value());
+
+        for (const auto& [output_hash, k] : built->blindingKeys) {
+            bool matched = false;
+            for (uint32_t counter = 0; counter < blsct::MAX_OUTPUT_SEARCH && !matched; ++counter) {
+                if (blsct::DeriveBlindingKey(*seed, *canonical, counter) == k) matched = true;
+            }
+            BOOST_CHECK_MESSAGE(matched, "output " + output_hash.ToString() + " was not derived from the canonical anchor");
+        }
+    }
+
     // Now throw the wallet away and rebuild it from the seed alone.
     auto restored = MakeWallet(m_node.chain.get(), entropy);
     LOCK(restored.wallet->cs_wallet);
@@ -254,16 +335,26 @@ BOOST_FIXTURE_TEST_CASE(recovery_after_seed_only_restore, TestingSetup)
     CMutableTransaction aggregated;
     aggregated.vin.emplace_back(COutPoint(OutidOfRepeatedByte(0xee)));
     aggregated.vin.insert(aggregated.vin.end(), built->tx.vin.begin(), built->tx.vin.end());
-    aggregated.vout.push_back(CTxOut(1, CScript(OP_RETURN)));
+    aggregated.vout.emplace_back(1, CScript(OP_RETURN));
     aggregated.vout.insert(aggregated.vout.end(), built->tx.vout.begin(), built->tx.vout.end());
     std::reverse(aggregated.vout.begin(), aggregated.vout.end());
 
     size_t recovered_count = 0;
     for (const auto& out : aggregated.vout) {
         if (!out.HasBLSCTKeys()) continue;
+        // No own-input hint: the fallback scan has to cope with a
+        // stranger's input sitting at index 0.
         const auto recovered = restored.km->RecoverOutputBlindingKey(aggregated.vin, out);
         BOOST_REQUIRE(recovered.has_value());
         ++recovered_count;
+
+        // With the own-input set -- what the RPC passes -- the canonical
+        // anchor takes the fast path to the same scalar.
+        std::vector<COutPoint> own;
+        for (const auto& in : built->tx.vin) own.push_back(in.prevout);
+        const auto fast = restored.km->RecoverOutputBlindingKey(aggregated.vin, out, own);
+        BOOST_REQUIRE(fast.has_value());
+        BOOST_CHECK(*fast == *recovered);
 
         // Same scalar the builder used.
         BOOST_CHECK(*recovered == built->blindingKeys.at(out.GetHash()));

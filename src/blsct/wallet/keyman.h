@@ -303,7 +303,15 @@ public:
     //! Self-verifying: a returned scalar k satisfies k*G ==
     //! out.blsctData.ephemeralKey, so a result is proof of authorship rather
     //! than an assumption.
-    std::optional<BlstScalar> RecoverOutputBlindingKey(const std::vector<CTxIn>& vin, const CTxOut& out) const;
+    //!
+    //! `ownInputs` are the outpoints of the inputs this wallet recognises as
+    //! spending its own outputs. They give the canonical anchor, which is
+    //! tried first and normally hits immediately. Leaving them out is safe --
+    //! recovery then scans every input of `vin`, which is slower but reaches
+    //! the same answer -- and is the right thing to do when ownership cannot
+    //! be established, e.g. after a partial rescan.
+    std::optional<BlstScalar> RecoverOutputBlindingKey(const std::vector<CTxIn>& vin, const CTxOut& out,
+                                                       const std::vector<COutPoint>& ownInputs = {}) const;
     blsct::PrivateKey GetPrivateViewKey() const;
     blsct::PublicKey GetPublicSpendingKey() const;
     blsct::PrivateKey GetMasterTokenKey() const;
