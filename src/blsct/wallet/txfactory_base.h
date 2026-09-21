@@ -7,13 +7,16 @@
 
 #include <blsct/arith/blst/blst.h>
 #include <blsct/wallet/address.h>
+#include <blsct/wallet/blinding_key.h>
 #include <blsct/wallet/delegation.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <primitives/transaction.h>
 
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
+#include <vector>
 
 namespace blsct {
 // Maximum number of inputs the factory will put in a single transaction. Each
@@ -138,6 +141,11 @@ struct CreateTransactionData {
 struct BuiltTransaction {
     CMutableTransaction tx;
     uint256 recipientOutputHash;
+    // Blinding scalars of the outputs this factory built, keyed by output
+    // hash. These are secrets; the wallet persists them as the FAST PATH for
+    // `signblsctoutput`, with blsct::DeriveBlindingKey as the seed-restore
+    // fallback. Callers that do not need them can ignore the field.
+    std::map<uint256, Scalar> blindingKeys;
 };
 
 struct InputCandidates {
@@ -164,6 +172,35 @@ protected:
     std::map<TokenId, Amounts>
         nAmounts;
 
+    // An ordinary transfer output queued by AddOutput, not yet materialized.
+    //
+    // Materialization is deferred to BuildTx because a recoverable blinding
+    // scalar is derived from an INPUT outpoint (see blinding_key.h), and which
+    // inputs a transaction ends up spending is only settled by BuildTx's coin
+    // selection. Before this, AddOutput built the CTxOut immediately, which
+    // fixed the blinding key -- and therefore the whole output, since the key
+    // seeds the ephemeral key, the shared nonce and the range proof -- before
+    // any input was known.
+    struct PendingOutput {
+        SubAddress destination;
+        CAmount amount;
+        std::string memo;
+        TokenId token_id;
+        CreateTransactionType type;
+        CAmount minStake;
+        // The caller's explicitly pinned blinding scalar (the Scalar::Rand()
+        // opt-out). std::nullopt means "derive it".
+        std::optional<Scalar> blindingKey;
+        std::optional<delegation::DelegationRequest> stakeDelegation;
+        // The ordinal this output was queued with: the `counter` the
+        // derivation is keyed on. Assigned once at AddOutput time so it stays
+        // stable across BuildTx's fee-fixpoint passes, and deliberately
+        // unrelated to where the output finally lands in vout (BuildTx
+        // shuffles, and block aggregation renumbers).
+        uint32_t ordinal;
+    };
+    std::vector<PendingOutput> vPendingOutputs;
+
     // A pending subtract-fee-from-amount recipient. Its final value is
     // (amount - total transaction fee), and the total fee is only known once
     // BuildTx's fee fixpoint converges. Because BLSCT input/output serialized
@@ -178,7 +215,8 @@ protected:
         TokenId token_id;
         CreateTransactionType type;
         CAmount minStake;
-        Scalar blindingKey;
+        std::optional<Scalar> blindingKey;
+        uint32_t ordinal;
     };
     std::optional<SubtractFeeOutput> subtractFeeOutput;
 
@@ -188,13 +226,50 @@ protected:
     // so callers that do not set it are unaffected while the gate is dormant.
     bool m_transcript_v2 = false;
 
+    // 32-byte HD-seed material the output blinding scalars are derived from.
+    // Unset for factories with no wallet behind them (raw/offline builders and
+    // most unit tests), in which case blinding keys fall back to
+    // Scalar::Rand() and the resulting outputs are simply not recoverable --
+    // exactly the behaviour every output had before this change.
+    std::optional<std::vector<unsigned char>> m_blinding_seed;
+
+    // Next sender-assigned output ordinal. Change outputs continue the
+    // sequence after everything AddOutput queued.
+    uint32_t m_next_output_ordinal{0};
+
+    //! The blinding scalar to build an output with: the caller's pinned key
+    //! when there is one, else the seed derivation, else a random scalar.
+    Scalar BlindingKeyFor(const std::optional<Scalar>& pinned, uint32_t ordinal, const std::optional<Outid>& anchor) const;
+
+    //! The prevout of the first input BuildTx's selection loops will push for
+    //! a transaction of this type, i.e. the one input guaranteed to be in the
+    //! result. Must be called after the inputs are sorted. std::nullopt when
+    //! no input qualifies.
+    std::optional<Outid> AnchorInput(const CreateTransactionType& type) const;
+
+    //! The prevout of the first input, for builders (BuildUnbalancedHalf) that
+    //! include every input unconditionally.
+    std::optional<Outid> FirstInput() const;
+
+    //! Build a queued output, assigning its blinding scalar from `anchor`.
+    UnsignedOutput MaterializeOutput(const PendingOutput& pending, const std::optional<Outid>& anchor) const;
+
 public:
     TxFactoryBase()= default;
 
     void SetTranscriptV2(bool transcript_v2) { m_transcript_v2 = transcript_v2; }
 
-    // Normal transfer
-    void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false, const Scalar& blindingKey = Scalar::Rand(), const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const std::optional<delegation::DelegationRequest>& stakeDelegation = std::nullopt);
+    //! Enable recoverable blinding keys for every output this factory builds
+    //! (including change). `seed` must be 32 bytes; see blinding_key.h.
+    void SetBlindingSeed(const std::vector<unsigned char>& seed) { m_blinding_seed = seed; }
+
+    // Normal transfer.
+    //
+    // `blindingKey` defaults to std::nullopt, meaning "derive a recoverable
+    // scalar from the factory's blinding seed". Passing Scalar::Rand()
+    // explicitly is the opt-out for callers that genuinely want an
+    // unrecoverable random key.
+    void AddOutput(const SubAddress& destination, const CAmount& nAmount, std::string sMemo, const TokenId& token_id = TokenId(), const CreateTransactionType& type = NORMAL, const CAmount& minStake = 0, const bool& fSubtractFeeFromAmount = false, const std::optional<Scalar>& blindingKey = std::nullopt, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const std::optional<delegation::DelegationRequest>& stakeDelegation = std::nullopt);
     // Create Token
     void AddOutput(const Scalar& tokenKey, const blsct::TokenInfo& tokenInfo);
     // Mint Token
@@ -214,7 +289,11 @@ public:
     //! initiator's single fee output. The caller must pass a value-balanced set
     //! of inputs/outputs (a self-spend), since no fee is charged.
     std::optional<BuiltTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const CAmount& additionalFee = 0, const bool& emitFeeOutput = true);
-    static std::optional<BuiltTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData);
+    //! `blindingSeed`, when supplied, makes every output of the built
+    //! transaction carry a blinding scalar recoverable from that seed. Pass
+    //! blsct::KeyMan::GetBlindingSeed(); std::nullopt keeps the old random
+    //! (unrecoverable) keys.
+    static std::optional<BuiltTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData, const std::optional<std::vector<unsigned char>>& blindingSeed = std::nullopt);
 
     //! Build a deliberately UNBALANCED half-transaction for an atomic swap.
     //!

@@ -46,6 +46,7 @@ class RPCHelpMan;
 Span<const CRPCCommand> GetBLSCTWalletRPCCommands();
 RPCHelpMan sendtoblsctaddress();
 RPCHelpMan getblsctoutput();
+RPCHelpMan signblsctoutput();
 RPCHelpMan getbalanceforaddress();
 
 #endif // NAVIO_BLSCT_WALLET_RPC_H

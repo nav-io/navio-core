@@ -118,6 +118,7 @@ set(BLSCT_WALLET_SOURCES
   blsct/external_api/blsct.cpp
   blsct/wallet/address.cpp
   blsct/wallet/balance_proof.cpp
+  blsct/wallet/blinding_key.cpp
   blsct/wallet/delegation.cpp
   blsct/wallet/helpers.cpp
   blsct/wallet/keyman.cpp
@@ -649,6 +650,7 @@ if(BUILD_LIBBLSCT_ONLY)
     blsct/signature.cpp
     blsct/tokens/predicate_parser.cpp
     blsct/wallet/address.cpp
+    blsct/wallet/blinding_key.cpp
     blsct/wallet/delegation.cpp
     blsct/wallet/helpers.cpp
     blsct/wallet/txfactory_base.cpp

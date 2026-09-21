@@ -74,6 +74,7 @@ add_executable(test_navio
   blsct/tokens/predicate_exec_tests.cpp
   blsct/sign_verify_tests.cpp
   blsct/wallet/address_tests.cpp
+  blsct/wallet/blinding_key_tests.cpp
   blsct/wallet/chain_tests.cpp
   blsct/wallet/delegation_tests.cpp
   blsct/wallet/keyman_tests.cpp

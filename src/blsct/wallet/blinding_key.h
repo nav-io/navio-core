@@ -1,0 +1,109 @@
+// Copyright (c) 2026 The Navio developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+// Recoverable output blinding keys.
+//
+// Every BLSCT output is built with a secret blinding scalar k. The wallet used
+// to draw it from Scalar::Rand() and throw it away, which left the sender of a
+// confidential output with no way to prove, after the fact, that they created
+// it -- the only thing on chain that is bound to k is a public point, and
+// nobody could produce a signature under it any more.
+//
+// This derives k deterministically from the wallet's HD seed instead, so a
+// wallet restored from nothing but its mnemonic can recompute the scalar for
+// any output it created and sign an arbitrary message with it.
+//
+// The derivation is NORMATIVE and shared with navio-sdk (see the bridge's
+// docs/BLINDING-KEY-RECOVERY.md). Its byte layout must not change: a
+// divergence between the two implementations would not fail loudly, it would
+// surface years later as permanently unrecoverable outputs. The normative test
+// vector in blinding_key_tests.cpp is what pins it.
+
+#ifndef NAVIO_BLSCT_WALLET_BLINDING_KEY_H
+#define NAVIO_BLSCT_WALLET_BLINDING_KEY_H
+
+#include <blsct/arith/blst/blst.h>
+#include <primitives/transaction.h>
+#include <span.h>
+
+#include <cstdint>
+#include <optional>
+#include <string_view>
+#include <vector>
+
+namespace blsct {
+
+//! ASCII domain separator. Exactly 23 bytes, hashed WITHOUT a NUL terminator.
+inline constexpr std::string_view BLINDING_KEY_DOMAIN{"navio-blsct-blinding/v1"};
+
+//! The HD seed scalar is hashed as 32 bytes, big-endian, zero-padded.
+inline constexpr size_t BLINDING_KEY_SEED_SIZE{32};
+
+//! Total hashed length: 23 (domain) + 32 (seed) + 32 (outid) + 4 (counter).
+inline constexpr size_t BLINDING_KEY_MATERIAL_SIZE{
+    BLINDING_KEY_DOMAIN.size() + BLINDING_KEY_SEED_SIZE + 32 + 4};
+
+//! How many sender-assigned output ordinals RecoverBlindingKey tries per
+//! candidate anchor input.
+//!
+//! The ordinal a derivation is keyed on is the one the SENDER assigned while
+//! building its transaction, which is not the index the output ends up at:
+//! Navio merges every non-coinbase transaction of a block into one
+//! (validation.cpp's vtx<=2 rule), so positions shift. Recovery therefore does
+//! not trust the on-chain index at all -- it tries every ordinal and checks
+//! each candidate against the output's public point, which makes a match a
+//! proof rather than an assumption.
+//!
+//! 16 is ample: it bounds the number of outputs one wallet-built transaction
+//! pays (recipient + subtract-fee recipient + one change output per token),
+//! and the whole search is a handful of scalar multiplications.
+inline constexpr uint32_t MAX_OUTPUT_SEARCH{16};
+
+//! The deterministic blinding scalar for the `counter`-th output of a
+//! transaction anchored on the outpoint `outid`.
+//!
+//!   material = "navio-blsct-blinding/v1"          // 23 bytes ASCII, no NUL
+//!            || seed                              // 32 bytes, big-endian, zero-padded
+//!            || outid                             // 32 bytes, INTERNAL byte order
+//!            || counter                           // uint32, big-endian
+//!   k        = sha256(material) read big-endian and reduced mod r
+//!
+//! `outid` is `tx.vin[0].prevout.hash`. Note it is NOT a txid: Navio's
+//! COutPoint is a bare 32-byte hash of a serialized CTxOut (the class comment
+//! in primitives/transaction.h still describes Bitcoin's txid:n form and is
+//! stale). There is no output index to hash, and none is invented here.
+//!
+//! Throws std::runtime_error on a seed of the wrong length, and on the
+//! ~2^-255 event that the reduction lands on zero -- a zero scalar would make
+//! the output anyone-can-spend, so it fails loudly rather than carrying a
+//! retry path that can never be exercised.
+BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid, uint32_t counter);
+
+//! Recover the blinding scalar of an output whose public blinding point is
+//! `publicBlindingKey`, given the inputs of the transaction that contains it.
+//! Returns std::nullopt when no candidate matches, i.e. the output was not
+//! created by this seed (or predates this feature).
+//!
+//! `publicBlindingKey` is the output's `blsctData.ephemeralKey`, which is the
+//! point k*G -- see RecoverOutputBlindingKey() below, and the note there about
+//! blsctData.blindingKey being a different point entirely.
+//!
+//! Every input of `vin` is tried as the anchor, not just vin[0]. Two things
+//! make the sender's anchor unidentifiable by position at recovery time:
+//! TxFactoryBase::BuildTx shuffles vin before returning (so the built order is
+//! already gone), and block aggregation merges the inputs of every transaction
+//! in the block into one vin (so a sibling sender's input can sit at index 0).
+//! The check against the public point is what makes the wider search safe: a
+//! wrong anchor simply never matches.
+//!
+//! Cost is |vin| * MAX_OUTPUT_SEARCH scalar multiplications. That is nothing
+//! for a wallet-built transaction and still sub-second for a fully aggregated
+//! block, and it is only paid on the explicit recovery path.
+std::optional<BlstScalar> RecoverBlindingKey(Span<const unsigned char> seed,
+                                             const std::vector<CTxIn>& vin,
+                                             const BlstG1Point& publicBlindingKey);
+
+} // namespace blsct
+
+#endif // NAVIO_BLSCT_WALLET_BLINDING_KEY_H

@@ -123,6 +123,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "getblsctbalance", 1, "include_watchonly" },
     { "getblsctbalance", 2, "avoid_reuse" },
     { "getblsctrecoverydatawithnonce", 2, "vout" },
+    { "signblsctoutput", 1, "vout" },
     { "getnftbalance", 2, "minconf" },
     { "getnftbalance", 3, "include_watchonly" },
     { "getnftbalance", 4, "avoid_reuse" },

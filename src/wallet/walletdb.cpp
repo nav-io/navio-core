@@ -74,8 +74,9 @@ const std::string WATCHS{"watchs"};
 const std::string BLSCTWATCHMETA{"blsctwatchmeta"};
 const std::string BLSCTWATCHS{"blsctwatchs"};
 const std::string BLSCTWATCHNONCE{"blsctwatchnonce"};
+const std::string BLSCTBLINDINGKEY{"blsctblindingkey"};
 const std::unordered_set<std::string> LEGACY_TYPES{CRYPTED_KEY, CSCRIPT, DEFAULTKEY, HDCHAIN, KEYMETA, KEY, OLD_KEY, POOL, WATCHMETA, WATCHS};
-const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTWATCHMETA, BLSCTWATCHS, BLSCTMNEMONIC, CRYPTED_BLSCTMNEMONIC};
+const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTWATCHMETA, BLSCTWATCHS, BLSCTMNEMONIC, CRYPTED_BLSCTMNEMONIC, BLSCTBLINDINGKEY};
 const std::unordered_set<std::string> BLSCTKEY_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY};
 } // namespace DBKeys
 
@@ -324,6 +325,16 @@ bool WalletBatch::WriteBLSCTWatchOnlyNonce(const CScript& dest, const blsct::Pub
 bool WalletBatch::EraseBLSCTWatchOnlyNonce(const CScript& dest)
 {
     return EraseIC(std::make_pair(DBKeys::BLSCTWATCHNONCE, dest));
+}
+
+bool WalletBatch::WriteBLSCTBlindingKey(const uint256& output_hash, const BlstScalar& blinding_key)
+{
+    return WriteIC(std::make_pair(DBKeys::BLSCTBLINDINGKEY, output_hash), blinding_key);
+}
+
+bool WalletBatch::EraseBLSCTBlindingKey(const uint256& output_hash)
+{
+    return EraseIC(std::make_pair(DBKeys::BLSCTBLINDINGKEY, output_hash));
 }
 
 bool WalletBatch::WriteBestBlock(const CBlockLocator& locator)
@@ -1239,6 +1250,18 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
         return DBErrors::LOAD_OK;
     });
     result = std::max(result, blsct_watch_nonce_res.m_result);
+
+    LoadResult blsct_blinding_key_res = LoadRecords(pwallet, batch, DBKeys::BLSCTBLINDINGKEY,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        uint256 output_hash;
+        key >> output_hash;
+        BlstScalar blinding_key;
+        value >> blinding_key;
+        LOCK(pwallet->cs_wallet);
+        pwallet->LoadBLSCTBlindingKey(output_hash, blinding_key);
+        return DBErrors::LOAD_OK;
+    });
+    result = std::max(result, blsct_blinding_key_res.m_result);
 
     // Load keypool
     LoadResult pool_res = LoadRecords(pwallet, batch, DBKeys::POOL,

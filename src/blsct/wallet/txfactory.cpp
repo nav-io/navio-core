@@ -125,7 +125,9 @@ std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wa
         transactionData.tokenKey = blsct_km->GetTokenKey((HashWriter{} << transactionData.tokenInfo.mapMetadata << transactionData.tokenInfo.nTotalSupply).GetHash()).GetScalar();
     }
 
-    return TxFactoryBase::CreateTransaction(inputCandidates, transactionData);
+    // Derive every output's blinding scalar from the wallet seed, so the
+    // sender can prove later that it created them (see blinding_key.h).
+    return TxFactoryBase::CreateTransaction(inputCandidates, transactionData, blsct_km->GetBlindingSeed());
 }
 
 void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit)
@@ -307,6 +309,7 @@ std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet
     if (n < 2) return std::nullopt;
 
     TxFactoryBase factory;
+    if (auto seed = blsct_km->GetBlindingSeed()) factory.SetBlindingSeed(*seed);
     // Rule A (hard cutover): build v2 proof transcripts once the next block
     // would be at/above the activation height, matching the standard send path.
     // Must be set before AddOutput, which builds the range proof under this flag.
@@ -321,7 +324,7 @@ std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet
     }
 
     // One output back to `destination`; the fee is taken from the merged amount.
-    factory.AddOutput(SubAddress(destination), nSum, "Consolidate", TokenId(), NORMAL, 0, /*fSubtractFeeFromAmount=*/true, BlstScalar::Rand(), nBLSCTDefaultFee);
+    factory.AddOutput(SubAddress(destination), nSum, "Consolidate", TokenId(), NORMAL, 0, /*fSubtractFeeFromAmount=*/true, /*blindingKey=*/std::nullopt, nBLSCTDefaultFee);
 
     return factory.BuildTx(destination, /*minStake=*/0, NORMAL, /*fSubtractedFee=*/true, nBLSCTDefaultFee, additionalFee);
 }

@@ -588,6 +588,42 @@ blsct::PrivateKey KeyMan::GetMasterSeedKey() const
     return ret;
 }
 
+std::optional<std::vector<unsigned char>> KeyMan::GetBlindingSeed() const
+{
+    // An encrypted-and-locked wallet cannot reach its seed. Check first:
+    // GetMasterSeedKey() would throw, and this is called on the ordinary send
+    // path, where a throw would turn "cannot make outputs recoverable" into
+    // "cannot send".
+    if (m_storage.HasEncryptionKeys() && m_storage.IsLocked()) return std::nullopt;
+
+    try {
+        // GetVch() untrimmed is exactly the 32-byte big-endian zero-padded
+        // form the derivation specifies.
+        auto seed = GetMasterSeedKey().GetScalar().GetVch();
+        if (seed.size() != BLINDING_KEY_SEED_SIZE) return std::nullopt;
+        return seed;
+    } catch (const std::exception&) {
+        // No HD chain, or the seed key is not in the store.
+        return std::nullopt;
+    }
+}
+
+std::optional<BlstScalar> KeyMan::RecoverOutputBlindingKey(const std::vector<CTxIn>& vin, const CTxOut& out) const
+{
+    // The point that equals k*G is `ephemeralKey`, NOT `blsctData.blindingKey`
+    // -- the latter is `destinationSpendKey * k`, a recipient-bound point with
+    // no usable discrete log for the sender. `ephemeralKey` is also the key
+    // consensus verifies an output's ownership signature against
+    // (blsct/wallet/verification.cpp), so matching it is what makes a
+    // recovered scalar able to produce a signature anyone can check.
+    if (!out.HasBLSCTKeys()) return std::nullopt;
+
+    const auto seed = GetBlindingSeed();
+    if (!seed) return std::nullopt;
+
+    return RecoverBlindingKey(*seed, vin, out.blsctData.ephemeralKey);
+}
+
 blsct::PrivateKey KeyMan::GetMasterTokenKey() const
 {
     // See GetMasterSeedKey(): one acquisition, and the lock is dropped before

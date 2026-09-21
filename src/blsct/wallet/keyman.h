@@ -12,6 +12,7 @@
 #include <blsct/range_proof/bulletproofs_plus/amount_recovery_result.h>
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <blsct/wallet/address.h>
+#include <blsct/wallet/blinding_key.h>
 #include <blsct/wallet/hdchain.h>
 #include <blsct/wallet/helpers.h>
 #include <blsct/wallet/import_wallet_type.h>
@@ -282,6 +283,27 @@ public:
     CKeyID GetHashId(const blsct::PublicKey& blindingKey, const blsct::PublicKey& spendingKey) const;
     CTxDestination GetDestination(const CTxOut& txout) const;
     blsct::PrivateKey GetMasterSeedKey() const;
+
+    //! The 32-byte seed material recoverable output blinding keys are derived
+    //! from: the master seed key's scalar, big-endian and zero-padded (see
+    //! blsct/wallet/blinding_key.h).
+    //!
+    //! Returns std::nullopt rather than throwing when the seed is not
+    //! reachable -- no HD chain, or an encrypted wallet that is locked -- so
+    //! the transaction factory can fall back to random blinding keys instead
+    //! of failing the send.
+    std::optional<std::vector<unsigned char>> GetBlindingSeed() const;
+
+    //! Recover the blinding scalar of `out`, given the inputs of the
+    //! transaction that contains it. std::nullopt when this wallet's seed did
+    //! not create the output -- including every output created before
+    //! recoverable blinding keys existed, which used a discarded random
+    //! scalar and is permanently unrecoverable.
+    //!
+    //! Self-verifying: a returned scalar k satisfies k*G ==
+    //! out.blsctData.ephemeralKey, so a result is proof of authorship rather
+    //! than an assumption.
+    std::optional<BlstScalar> RecoverOutputBlindingKey(const std::vector<CTxIn>& vin, const CTxOut& out) const;
     blsct::PrivateKey GetPrivateViewKey() const;
     blsct::PublicKey GetPublicSpendingKey() const;
     blsct::PrivateKey GetMasterTokenKey() const;
