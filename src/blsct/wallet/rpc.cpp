@@ -228,7 +228,10 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         // whole pool as cover. Fewer candidates always LOWER the required fee,
         // so the rebuild is strictly easier to fund than the one that already
         // succeeded -- it cannot strand the half. Re-fee and rebuild through
-        // the loop (which already falls back on a failed rebuild).
+        // the loop (which already falls back on a failed rebuild). The target
+        // comes from this first build's input count and is deliberately not
+        // recomputed from the rebuilt half, so sizing runs once and cannot
+        // keep the loop rebuilding.
         if (aggregate_sends && !cover_sized && !candidates.empty()) {
             cover_sized = true;
             const size_t target = aggregation::TargetCoverCount(res->tx.vin.size());
@@ -587,8 +590,8 @@ static RPCHelpMan aggregatesend()
             // pair if that rebuild fails rather than erroring a working send.
             {
                 const size_t target = std::min(aggregation::TargetCoverCount(own->tx.vin.size()), max_k);
-                auto sized = pool->PickForAggregate(target);
-                if (target < candidates.size() && !sized.empty()) {
+                auto sized = target < candidates.size() ? pool->PickForAggregate(target) : std::vector<CTransactionRef>{};
+                if (!sized.empty()) {
                     const CAmount sized_extra = aggregation::RequiredCandidateFee(sized, rate);
                     if (sized_extra == extra) {
                         candidates = std::move(sized);
