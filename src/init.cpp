@@ -1799,10 +1799,33 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 return !pnode->IsBlockOnlyConn() && (pnode->m_their_services.load() & NODE_P2PMSG) != 0;
             };
             // Fluff: flood every fluff-eligible peer (relays and leaves) except
-            // the origin.
+            // the origin -- then make sure the flood actually left this node.
+            //
+            // It has not if no RELAYING peer got a copy: leaves forward
+            // nothing, so fluffing to them alone is a dead end, and the
+            // envelope would vanish here in silence. That is not a corner
+            // case. Every line topology ends in a node whose only relaying
+            // peer is the one it just heard from, and a stem hop is a single
+            // unicast, so each message routed to such an end was simply lost
+            // -- as was every message converted from stem to fluff there.
+            //
+            // Hand it back to the origin as a fluff copy instead. If the
+            // origin had only stem-relayed it, its duplicate-rescue path
+            // floods it onward and the message escapes; if the origin had
+            // already fluffed it, its replay cache drops the copy. Privacy is
+            // unchanged -- the origin is the one peer that already knows we
+            // hold this envelope -- and the exchange cannot ping-pong, because
+            // each node relays a given envelope at most twice.
             const auto fluff = [&]() {
+                int relays = 0;
                 connman->ForEachNode([&](CNode* pnode) {
                     if (pnode->GetId() == exclude_peer || !fluff_eligible(pnode)) return;
+                    connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSG, env));
+                    if (stem_eligible(pnode)) ++relays;
+                });
+                if (relays > 0 || exclude_peer == -1) return;
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->GetId() != exclude_peer || !fluff_eligible(pnode)) return;
                     connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSG, env));
                 });
             };
