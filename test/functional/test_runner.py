@@ -394,6 +394,7 @@ BASE_SCRIPTS = [
     'p2pmsg_default_aggregate.py',
     'p2pmsg_cover_types.py',
     'p2pmsg_identity.py',
+    'p2pmsg_archive.py',
     'p2pmsg_fmd.py',
     'p2pmsg_leaf.py',
     'p2pmsg_stem_deadend.py',

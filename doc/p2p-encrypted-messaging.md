@@ -282,9 +282,80 @@ key rotates with the inbox prekey (`rotatep2pmsginbox`, or
 Senders must verify `fmd_sig` under `identity_pubkey` before flagging: flagging
 to a substituted clue key hands the retrieval side to whoever substituted it.
 
-Retrieval from a node that stores flagged envelopes is a separate change and is
-not part of this one. This change produces, relays and verifies flags, and
-exposes the keys.
+### Envelope archive
+
+An archiving node keeps the flagged envelopes it relays and serves them back on
+request, so a peer that was offline can pick up what it missed. Opt-in
+(`-p2pmsgarchive`), advertised as `NODE_P2PMSG_ARCHIVE` (bit 26).
+
+It stores only envelopes carrying a flag: nothing else is retrievable, so
+nothing else is worth the disk. What it holds is ciphertext it cannot read, in
+a LevelDB store bounded by `-p2pmsgarchivesize` (MiB) and
+`-p2pmsgarchiveexpiry` (days), pruned oldest-first. Ids are monotonic and never
+repeat, so a requester polls with a cursor and misses nothing that was not
+pruned.
+
+Two net messages carry it. Both fit `COMMAND_SIZE` (12) -- a longer name is
+silently dead on the wire, as `getoutputdata` (13 characters) demonstrates.
+
+```
+getp2pmsgs:
+  u8            version = 1
+  ArchiveStamp  stamp        // u8 version, i64 timestamp, u256 query_hash, u64 nonce
+  u64           cursor       // return entries with id > cursor
+  u16           limit
+  u8            precision    // n, so detection_key is n*32 bytes
+  vector<u8>    detection_key
+  i64           not_before   // 0 = no lower bound on received_at
+
+p2pmsgs:
+  u8            version = 1
+  u64           next_cursor  // highest id SCANNED, not highest returned
+  u8            complete     // 1 = window scanned to the end
+  vector<Item>  items        // { u64 id, i64 received_at, vector<u8> envelope }
+```
+
+`next_cursor` is the highest id **scanned**, so a requester advances past ground
+already covered even when nothing matched. `complete` distinguishes "you have
+everything" from "I stopped at a cap and there is more" -- conflating the two
+would silently lose messages. An entry that matched but did not fit in the
+response is never skipped by the returned cursor.
+
+**Cost and abuse.** A scan costs `(entries scanned) x (precision + 2)` group
+multiplications: linear in exactly the two numbers the requester chooses, so
+the requester pays for both.
+
+- The query carries its own proof of work, at
+  `ArchiveStampBits(base, limit, precision)` -- a base (default: the bus's own
+  difficulty, `-p2pmsgarchivepowbits`) plus a term that doubles with the work
+  requested, capped at base+8. The requester buys node CPU with its own CPU,
+  the same bargain relay already strikes. The stamp commits to every query
+  field, so a peer cannot pay for a cheap scan and then ask for an expensive
+  one, and it is verified against the *capped* limit.
+- Hard caps regardless of the stamp: 500 entries returned, 50 000 scanned,
+  2 MiB per response.
+- Queries are metered per peer (3 burst, 6/minute) on top of the stamp: the
+  stamp prices the size of one query, the bucket bounds how often. Over budget
+  the query is dropped silently rather than penalised -- a client syncing a
+  long window legitimately issues back-to-back queries and should back off, not
+  be disconnected.
+
+**What the archive learns.** The detection key it is given, and therefore the
+ability to test future flags at that precision until the clue key rotates; the
+set matching it, which is the requester's messages plus `2^-n` of everyone
+else's with no way to tell them apart; and the requester's address and sync
+timing. Choosing a high precision for bandwidth tells the node almost exactly
+which messages are yours. The choice is the requester's, which is the property
+the scheme exists to provide.
+
+The query travels in the clear on a v1 link, so an on-path observer sees the
+detection key too. Clients should require an encrypted transport (BIP324, or
+TLS in front of a WebSocket listener) before sending one.
+
+**Not included:** this node never *sends* `getp2pmsgs`. Retrieval belongs to
+the client that owns the detection key -- a full node reaches its own messages
+through the local inbox, which is already storing them. A light client driving
+this is the intended consumer.
 
 ## Aggregation
 
@@ -359,6 +430,10 @@ Maker / debug surface (hidden or `p2pmsg` category):
 - `sendp2pmsg recipient topic payload [stem] [cluekey]` — `cluekey` attaches a
   detection flag
 - `sendp2pping inbox_pubkey [stem]` — debug echo
+
+`getp2pmsginfo` also reports `archive_peers` (connected peers advertising
+`NODE_P2PMSG_ARCHIVE`) and, when this node archives, an `archive` object with
+entry count, bytes, id range, retention and the query base difficulty.
 
 ## WebSocket listener
 

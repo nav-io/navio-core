@@ -30,6 +30,7 @@ namespace p2pmsg {
 class WorkerPool;
 class Transport;
 class UserInbox;
+class EnvelopeArchive;
 } // namespace p2pmsg
 namespace aggregation {
 class CandidatePool;
@@ -91,6 +92,11 @@ struct NodeContext {
     //! applications built on the bus). Declared BEFORE p2pmsg_transport for the
     //! same destruction-order reason as agg_pool / rfq_* below.
     std::unique_ptr<p2pmsg::UserInbox> p2pmsg_user_inbox;
+    //! Retention of FLAGGED envelopes this node merely relayed, so a peer that
+    //! was offline can retrieve them (-p2pmsgarchive). Holds ciphertext only.
+    //! Declared BEFORE p2pmsg_transport for the same destruction-order reason:
+    //! the transport's archive sink holds a raw pointer to it.
+    std::unique_ptr<p2pmsg::EnvelopeArchive> p2pmsg_archive;
     //! p2p encrypted-messaging subsystem (only set when -p2pmsg is enabled).
     //! Declared AFTER agg_pool / rfq_* on purpose: the worker pool's decrypt
     //! jobs dispatch to transport handlers that capture raw pointers to those

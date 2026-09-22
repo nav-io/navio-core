@@ -24,6 +24,7 @@
 #include <netmessagemaker.h>
 #include <node/blockstorage.h>
 #include <node/txreconciliation.h>
+#include <p2pmsg/archive.h>
 #include <p2pmsg/transport.h>
 #include <policy/fees.h>
 #include <policy/policy.h>
@@ -362,6 +363,15 @@ struct Peer {
     double m_addr_token_bucket GUARDED_BY(NetEventsInterface::g_msgproc_mutex){1.0};
     /** When m_addr_token_bucket was last updated */
     std::chrono::microseconds m_addr_token_timestamp GUARDED_BY(NetEventsInterface::g_msgproc_mutex){GetTime<std::chrono::microseconds>()};
+    /** Archive queries this peer may still make. An archive scan costs real
+     *  CPU on our side, so it is metered per peer on top of the proof of work
+     *  the requester attaches -- the stamp prices the SIZE of one query, this
+     *  bounds how often they can be asked for. */
+    double m_archive_token_bucket GUARDED_BY(NetEventsInterface::g_msgproc_mutex){
+        static_cast<double>(p2pmsg::ARCHIVE_QUERY_BURST)};
+    /** When m_archive_token_bucket was last updated */
+    std::chrono::seconds m_archive_token_timestamp GUARDED_BY(NetEventsInterface::g_msgproc_mutex){
+        GetTime<std::chrono::seconds>()};
     /** Total number of addresses that were dropped due to rate limiting. */
     std::atomic<uint64_t> m_addr_rate_limited{0};
     /** Total number of addresses that were processed (excludes rate-limited ones). */
@@ -5164,6 +5174,94 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             // capacity limit. Penalizing any of these would let normal
             // propagation delay discourage honest peers. No penalty.
         }
+        return;
+    }
+
+    if (msg_type == NetMsgType::GETP2PMSGS) {
+        p2pmsg::EnvelopeArchive* archive = p2pmsg::GetActiveArchive();
+        if (archive == nullptr) {
+            // We do not archive. Ignore without penalty: the peer read our
+            // service bits optimistically, or we stopped archiving since.
+            return;
+        }
+
+        p2pmsg::ArchiveRequest req;
+        vRecv >> req;
+        if (req.version != 1) return; // future version: ignore, do not penalize
+
+        // Refill the per-peer bucket before spending from it.
+        {
+            const auto now = GetTime<std::chrono::seconds>();
+            const auto delta = now - peer->m_archive_token_timestamp;
+            peer->m_archive_token_timestamp = now;
+            peer->m_archive_token_bucket = std::min<double>(
+                peer->m_archive_token_bucket +
+                    static_cast<double>(p2pmsg::ARCHIVE_QUERIES_PER_MINUTE) * count_seconds(delta) / 60.0,
+                static_cast<double>(p2pmsg::ARCHIVE_QUERY_BURST));
+            if (peer->m_archive_token_bucket < 1.0) {
+                // Over budget. Drop silently rather than ban: a client that
+                // syncs a long window legitimately issues back-to-back queries
+                // and should back off, not be disconnected.
+                LogPrint(BCLog::NET, "p2pmsg: archive query rate-limited peer=%d\n", pfrom.GetId());
+                return;
+            }
+            peer->m_archive_token_bucket -= 1.0;
+        }
+
+        // The detection key's length IS the precision, so they must agree or we
+        // would scan at a different cost than the stamp paid for.
+        if (req.precision == 0 || req.precision > p2pmsg::FMD_GAMMA ||
+            req.detection_key.size() != size_t{req.precision} * p2pmsg::FMD_SCALAR_SIZE) {
+            Misbehaving(*peer, 10, "invalid getp2pmsgs precision");
+            return;
+        }
+        if (req.limit == 0) return;
+        const uint16_t limit = std::min<uint16_t>(req.limit, p2pmsg::MAX_ARCHIVE_LIMIT);
+
+        // Proof of work, priced on the work actually requested. Verified against
+        // the CAPPED limit: a requester that asks for more than we serve pays
+        // for what we serve, not for what we discard.
+        const int64_t now = GetTime<std::chrono::seconds>().count();
+        const uint32_t want_bits = p2pmsg::ArchiveStampBits(archive->StampBaseBits(), limit, req.precision);
+        if (req.stamp.query_hash != req.QueryHash()) {
+            Misbehaving(*peer, 10, "getp2pmsgs stamp does not commit to the query");
+            return;
+        }
+        if (req.stamp.timestamp > now + p2pmsg::POW_TIMESTAMP_TOLERANCE_SECONDS ||
+            req.stamp.timestamp < now - p2pmsg::POW_TIMESTAMP_TOLERANCE_SECONDS) {
+            // Stale stamp. Not necessarily malice (clock skew, slow link), so
+            // no penalty -- same reasoning as an aged envelope.
+            return;
+        }
+        if (UintToArith256(req.stamp.Hash()) > p2pmsg::TargetFromBits(want_bits)) {
+            Misbehaving(*peer, 10, "insufficient getp2pmsgs proof of work");
+            return;
+        }
+
+        const auto scan = archive->Scan(req.cursor,
+                                        std::span<const uint8_t>{req.detection_key.data(), req.detection_key.size()},
+                                        p2pmsg::MAX_ARCHIVE_SCAN_ENTRIES, limit,
+                                        p2pmsg::MAX_ARCHIVE_RESPONSE_BYTES, req.not_before);
+
+        p2pmsg::ArchiveResponse resp;
+        resp.next_cursor = scan.next_cursor;
+        resp.complete = scan.complete ? 1 : 0;
+        resp.items.reserve(scan.matches.size());
+        for (auto& m : scan.matches) {
+            resp.items.push_back({m.id, m.received_at, std::move(m.envelope)});
+        }
+        LogPrint(BCLog::NET, "p2pmsg: served %d archived envelopes (scanned %d, complete=%d) peer=%d\n",
+                 resp.items.size(), scan.scanned, resp.complete, pfrom.GetId());
+        MakeAndPushMessage(pfrom, NetMsgType::P2PMSGS, resp);
+        return;
+    }
+
+    if (msg_type == NetMsgType::P2PMSGS) {
+        // A response we did not ask for: this build never sends getp2pmsgs.
+        // Retrieval belongs to the light client that owns the detection key;
+        // a full node reaches its own messages through the local inbox.
+        // Ignore without penalty so the message type stays usable by clients
+        // sharing this codebase.
         return;
     }
 

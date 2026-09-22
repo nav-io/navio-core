@@ -55,6 +55,7 @@ NODE_NETWORK_LIMITED = (1 << 10)
 NODE_P2P_V2 = (1 << 11)
 NODE_P2PMSG = (1 << 24)
 NODE_P2PMSG_LEAF = (1 << 25)
+NODE_P2PMSG_ARCHIVE = (1 << 26)
 
 MSG_TX = 1
 MSG_BLOCK = 2
@@ -1896,6 +1897,25 @@ class msg_dp2pmsg(msg_p2pmsg):
 
     def __repr__(self):
         return "msg_dp2pmsg(%d bytes)" % len(self.payload)
+
+
+class msg_getp2pmsgs(msg_p2pmsg):
+    """Request flagged envelopes from an archiving peer. Raw passthrough: the
+    test builds the request body itself (see p2pmsg_archive.py)."""
+    __slots__ = ()
+    msgtype = b"getp2pmsgs"
+
+    def __repr__(self):
+        return "msg_getp2pmsgs(%d bytes)" % len(self.payload)
+
+
+class msg_p2pmsgs(msg_p2pmsg):
+    """Response to getp2pmsgs."""
+    __slots__ = ()
+    msgtype = b"p2pmsgs"
+
+    def __repr__(self):
+        return "msg_p2pmsgs(%d bytes)" % len(self.payload)
 
 
 class msg_sendaddrv2:

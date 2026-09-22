@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 The Navio Core developers
+# Distributed under the MIT software license, see the accompanying
+# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+"""Offline retrieval of p2pmsg envelopes from an archiving node.
+
+The bus carries no recipient field, so a node cannot hold messages for an
+offline peer: there is nothing to index on. An archiving node instead keeps the
+FLAGGED envelopes it relayed and hands back the subset matching a fuzzy
+detection key the requester supplies -- the requester's messages plus a
+2^-precision fraction of everyone else's, with no way to tell them apart.
+
+The scenario here is the real one: a recipient that is NOT connected to the
+network at all misses a message entirely, and then retrieves it afterwards from
+a node that merely relayed it and cannot read it.
+
+Covered: the service bit, storage of flagged envelopes only, retrieval by
+detection key, decoys at low precision, cursor and completeness semantics, the
+query proof of work, and the caps that keep a scan from being a denial of
+service.
+"""
+
+import struct
+import time
+
+from test_framework.messages import (
+    NODE_P2PMSG,
+    NODE_P2PMSG_ARCHIVE,
+    msg_getp2pmsgs,
+    sha256,
+    ser_compact_size,
+)
+from test_framework.p2p import P2PInterface
+from test_framework.test_framework import BitcoinTestFramework
+from test_framework.util import assert_equal, assert_greater_than
+
+# Mirrors ARCHIVE_QUERY_BURST in p2pmsg/archive.h.
+ARCHIVE_QUERY_BURST = 3
+
+POW_BITS = 2
+ARCHIVE_ARGS = ["-p2pmsg=1", f"-p2pmsgpowbits={POW_BITS}", "-p2pmsgarchive=1"]
+PLAIN_ARGS = ["-p2pmsg=1", f"-p2pmsgpowbits={POW_BITS}"]
+
+FMD_SCALAR_SIZE = 32
+POW_HEADER_SIZE = 1 + 8 + 1 + 48 + 32 + 8
+
+
+def ser_bytes(b):
+    return ser_compact_size(len(b)) + b
+
+
+def query_hash(cursor, limit, precision, detection_key, not_before):
+    """SHA256 over the query fields, exactly as ArchiveRequest::QueryHash()."""
+    body = struct.pack("<B", 1)
+    body += struct.pack("<Q", cursor)
+    body += struct.pack("<H", limit)
+    body += struct.pack("<B", precision)
+    body += ser_bytes(detection_key)
+    body += struct.pack("<q", not_before)
+    return sha256(body)
+
+
+def stamp_bits(base, limit, precision):
+    """Mirror of ArchiveStampBits(): base plus a term that grows with the work
+    requested, capped at base+8."""
+    units = max(limit, 1) * max(precision, 1)
+    free_allowance = 100 * 4
+    extra = 0
+    while units > free_allowance and extra < 8:
+        units >>= 1
+        extra += 1
+    return base + extra
+
+
+def grind_stamp(qhash, timestamp, bits):
+    """Find a nonce whose stamp hash meets `bits`.
+
+    UintToArith256 reads the digest LITTLE-endian, so the leading zero bits land
+    in the LAST bytes -- the same convention the envelope PoW uses.
+    """
+    target = ((1 << 256) - 1) >> bits
+    prefix = struct.pack("<B", 1) + struct.pack("<q", timestamp) + qhash
+    for nonce in range(1 << 24):
+        h = sha256(prefix + struct.pack("<Q", nonce))
+        if int.from_bytes(h, "little") <= target:
+            return prefix + struct.pack("<Q", nonce)
+    raise AssertionError("could not grind an archive query stamp")
+
+
+def build_request(detection_key, precision, cursor=0, limit=100, not_before=0,
+                  base_bits=POW_BITS, break_pow=False):
+    qh = query_hash(cursor, limit, precision, detection_key, not_before)
+    bits = stamp_bits(base_bits, limit, precision)
+    if break_pow:
+        # A stamp that commits correctly but was never ground.
+        stamp = struct.pack("<B", 1) + struct.pack("<q", int(time.time())) + qh + struct.pack("<Q", 0)
+    else:
+        stamp = grind_stamp(qh, int(time.time()), bits)
+    body = struct.pack("<B", 1)
+    body += stamp
+    body += struct.pack("<Q", cursor)
+    body += struct.pack("<H", limit)
+    body += struct.pack("<B", precision)
+    body += ser_bytes(detection_key)
+    body += struct.pack("<q", not_before)
+    return body
+
+
+def parse_response(payload):
+    pos = 0
+    version = payload[pos]; pos += 1
+    next_cursor = struct.unpack_from("<Q", payload, pos)[0]; pos += 8
+    complete = payload[pos]; pos += 1
+    count, pos = read_compact_size(payload, pos)
+    items = []
+    for _ in range(count):
+        item_id = struct.unpack_from("<Q", payload, pos)[0]; pos += 8
+        received_at = struct.unpack_from("<q", payload, pos)[0]; pos += 8
+        elen, pos = read_compact_size(payload, pos)
+        items.append({"id": item_id, "received_at": received_at,
+                      "envelope": payload[pos:pos + elen]})
+        pos += elen
+    return {"version": version, "next_cursor": next_cursor,
+            "complete": complete, "items": items}
+
+
+def read_compact_size(buf, pos):
+    n = buf[pos]; pos += 1
+    if n < 253:
+        return n, pos
+    if n == 253:
+        return struct.unpack_from("<H", buf, pos)[0], pos + 2
+    if n == 254:
+        return struct.unpack_from("<I", buf, pos)[0], pos + 4
+    return struct.unpack_from("<Q", buf, pos)[0], pos + 8
+
+
+class ArchiveClient(P2PInterface):
+    def __init__(self):
+        super().__init__()
+        self.responses = []
+
+    def on_p2pmsgs(self, message):
+        self.responses.append(parse_response(message.payload))
+
+    def send_query(self, **kwargs):
+        self.send_message(msg_getp2pmsgs(build_request(**kwargs)))
+
+
+class P2PMsgArchiveTest(BitcoinTestFramework):
+    def set_test_params(self):
+        self.num_nodes = 3
+        self.setup_clean_chain = True
+        # n0 sends, n1 archives and relays, n2 is the RECIPIENT and is never
+        # connected to either -- it must miss the message entirely.
+        self.extra_args = [PLAIN_ARGS, ARCHIVE_ARGS, PLAIN_ARGS]
+
+    def setup_network(self):
+        self.setup_nodes()
+        self.connect_nodes(0, 1)
+
+    def query(self, node, **kwargs):
+        """One query on a FRESH connection.
+
+        Archive queries are metered per peer (ARCHIVE_QUERY_BURST tokens,
+        refilled at ARCHIVE_QUERIES_PER_MINUTE), which a test firing them
+        back-to-back would otherwise trip. Reconnecting keeps each check
+        independent of the others; the limiter itself is asserted separately
+        below.
+        """
+        peer = node.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        try:
+            peer.send_query(**kwargs)
+            peer.wait_until(lambda: len(peer.responses) >= 1, timeout=30)
+            return peer.responses[-1]
+        finally:
+            node.disconnect_p2ps()
+
+    def run_test(self):
+        n0, n1, n2 = self.nodes
+
+        self.log.info("The archiving node advertises NODE_P2PMSG_ARCHIVE")
+        info1 = n1.getp2pmsginfo()
+        assert "archive" in info1
+        assert_equal(info1["archive"]["entries"], 0)
+        assert_equal(info1["archive"]["retention_days"], 14)
+        # n0 does not archive, and says so by omission.
+        assert "archive" not in n0.getp2pmsginfo()
+        assert_equal(n0.getp2pmsginfo()["archive_peers"], 1)
+        assert_equal(n1.getp2pmsginfo()["archive_peers"], 0)
+
+        self.log.info("Unflagged traffic is not archived")
+        recipient = n2.getp2pmsginfo()
+        assert_equal(n0.sendp2pmsg(recipient["inbox_pubkey"], "plain", "01", False), True)
+        self.wait_for_relay(n1)
+        assert_equal(n1.getp2pmsginfo()["archive"]["entries"], 0)
+
+        self.log.info("A flagged message is archived by the relay that cannot read it")
+        assert_equal(
+            n0.sendp2pmsg(recipient["inbox_pubkey"], "chat", "48656c6c6f", False,
+                          recipient["fmd_clue_key"]),
+            True,
+        )
+        self.wait_until(lambda: n1.getp2pmsginfo()["archive"]["entries"] >= 1, timeout=30)
+        arch = n1.getp2pmsginfo()["archive"]
+        assert_equal(arch["entries"], 1)
+        assert_equal(arch["oldest_id"], 1)
+        assert_equal(arch["newest_id"], 1)
+        assert_greater_than(arch["bytes"], 0)
+
+        # The recipient never saw it: it is not connected to anything.
+        assert_equal(n2.listp2pmsgs(), [])
+
+        self.log.info("The recipient retrieves it afterwards with its detection key")
+        dk = n2.getp2pmsgdetectionkey(24)["detection_key"]
+        resp = self.query(n1, detection_key=bytes.fromhex(dk), precision=24)
+        assert_equal(resp["complete"], 1)
+        assert_equal(resp["next_cursor"], 1)
+        assert_equal(len(resp["items"]), 1)
+        # The returned bytes are the complete envelope as relayed, so the
+        # recipient runs it through exactly the same inbound path as a live one.
+        envelope = resp["items"][0]["envelope"]
+        assert_greater_than(len(envelope), POW_HEADER_SIZE)
+        assert_equal(envelope[1 + POW_HEADER_SIZE - 98], 2)  # PoW header version 2
+
+        self.log.info("A stranger's key at full precision matches nothing")
+        stranger = n0.getp2pmsgdetectionkey(24)["detection_key"]
+        resp = self.query(n1, detection_key=bytes.fromhex(stranger), precision=24)
+        assert_equal(len(resp["items"]), 0)
+        assert_equal(resp["complete"], 1)
+        # It still scanned, so the cursor advances and the requester does not
+        # re-walk the same ground next time.
+        assert_equal(resp["next_cursor"], 1)
+
+        self.log.info("Resuming from the returned cursor finds nothing new")
+        resp = self.query(n1, detection_key=bytes.fromhex(dk), precision=24, cursor=1)
+        assert_equal(len(resp["items"]), 0)
+        assert_equal(resp["complete"], 1)
+
+        self.log.info("Low precision returns decoys alongside the real message")
+        for i in range(40):
+            assert_equal(
+                n0.sendp2pmsg(n0.getp2pmsginfo()["inbox_pubkey"], "decoy", f"{i:02x}", False,
+                              n0.getp2pmsginfo()["fmd_clue_key"]),
+                True,
+            )
+        self.wait_until(lambda: n1.getp2pmsginfo()["archive"]["entries"] >= 41, timeout=60)
+        # At 2^-1 roughly half of the 40 messages that are NOT ours come back
+        # too, and ours is always among them. That indistinguishability is the
+        # entire privacy property.
+        resp = self.query(n1, detection_key=bytes.fromhex(n2.getp2pmsgdetectionkey(1)["detection_key"]),
+                          precision=1, limit=500)
+        assert_greater_than(len(resp["items"]), 5)
+        assert 1 in [item["id"] for item in resp["items"]]
+
+        self.log.info("The response is capped and says when it stopped early")
+        resp = self.query(n1, detection_key=bytes.fromhex(n2.getp2pmsgdetectionkey(1)["detection_key"]),
+                          precision=1, limit=2)
+        assert_equal(len(resp["items"]), 2)
+        assert_equal(resp["complete"], 0)
+        # "I stopped early" must never be confusable with "you have everything",
+        # or a requester silently loses messages.
+        assert_greater_than(resp["next_cursor"], 0)
+
+        self.log.info("An unground query stamp is rejected")
+        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer.send_query(detection_key=bytes.fromhex(dk), precision=24, limit=500, break_pow=True)
+        peer.sync_with_ping()
+        assert_equal(len(peer.responses), 0)
+        n1.disconnect_p2ps()
+
+        self.log.info("Queries are metered per peer")
+        # A scan costs the serving node real CPU. The stamp prices the SIZE of
+        # one query; this bounds how OFTEN they can be asked for. A burst is
+        # allowed, then the peer is throttled -- dropped silently rather than
+        # banned, because a client syncing a long window legitimately issues
+        # back-to-back queries and should back off, not be disconnected.
+        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        attempts = ARCHIVE_QUERY_BURST + 2
+        for _ in range(attempts):
+            peer.send_query(detection_key=bytes.fromhex(dk), precision=24)
+        peer.sync_with_ping()
+        assert_greater_than(attempts, len(peer.responses))
+        assert_greater_than(len(peer.responses), 0)
+        assert peer.is_connected
+        n1.disconnect_p2ps()
+
+        self.log.info("A node without -p2pmsgarchive ignores the query")
+        plain = n0.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        plain.send_message(msg_getp2pmsgs(build_request(detection_key=bytes.fromhex(dk), precision=24)))
+        plain.sync_with_ping()
+        assert_equal(len(plain.responses), 0)
+
+    def wait_for_relay(self, node):
+        """Give the relay a moment to process and (not) archive."""
+        self.wait_until(lambda: node.getpeerinfo()[0]["bytesrecv"] > 0, timeout=30)
+        node.syncwithvalidationinterfacequeue()
+        time.sleep(1)
+
+
+if __name__ == '__main__':
+    P2PMsgArchiveTest(__file__).main()

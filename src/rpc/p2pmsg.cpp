@@ -22,6 +22,7 @@
 #include <primitives/transaction.h>
 #include <util/transaction_identifier.h>
 #include <cmath>
+#include <p2pmsg/archive.h>
 #include <p2pmsg/crypto.h>
 #include <p2pmsg/fmd.h>
 #include <p2pmsg/transport.h>
@@ -63,6 +64,16 @@ static RPCHelpMan getp2pmsginfo()
                 {RPCResult::Type::NUM, "pings_received", /*optional=*/true, "PING payloads decrypted and dispatched to us"},
                 {RPCResult::Type::NUM, "relay_capable_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG (can relay the overlay for us). Note this is a lower bound on network participation: capability rides ADDR gossip, so many more nodes may be reachable indirectly."},
                 {RPCResult::Type::NUM, "leaf_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_LEAF but not NODE_P2PMSG: receive-only bus clients that get our fluff traffic but are never chosen as a Dandelion++ stem successor."},
+                {RPCResult::Type::NUM, "archive_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_ARCHIVE: peers that retain flagged envelopes and will serve them back, so a client that was offline can catch up through them."},
+                {RPCResult::Type::OBJ, "archive", /*optional=*/true, "This node's own envelope archive (-p2pmsgarchive)", {
+                    {RPCResult::Type::NUM, "entries", "Archived envelopes"},
+                    {RPCResult::Type::NUM, "bytes", "Bytes they occupy"},
+                    {RPCResult::Type::NUM, "oldest_id", "Lowest surviving entry id, 0 if empty. Anything below it was pruned and is gone"},
+                    {RPCResult::Type::NUM, "newest_id", "Highest assigned entry id, 0 if empty"},
+                    {RPCResult::Type::NUM, "retention_days", "Age cap in days, 0 = no age limit"},
+                    {RPCResult::Type::NUM, "max_bytes", "Size cap"},
+                    {RPCResult::Type::NUM, "query_base_bits", "Base proof-of-work difficulty a query must pay, before the term that scales with the size of the scan"},
+                }},
             }},
         RPCExamples{HelpExampleCli("getp2pmsginfo", "") + HelpExampleRpc("getp2pmsginfo", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -84,16 +95,32 @@ static RPCHelpMan getp2pmsginfo()
             if (node.connman) {
                 uint64_t capable = 0;
                 uint64_t leaves = 0;
-                node.connman->ForEachNode([&capable, &leaves](CNode* pnode) {
+                uint64_t archives = 0;
+                node.connman->ForEachNode([&capable, &leaves, &archives](CNode* pnode) {
                     const uint64_t their = pnode->m_their_services.load();
                     if ((their & NODE_P2PMSG) != 0) {
                         ++capable;
                     } else if ((their & NODE_P2PMSG_LEAF) != 0) {
                         ++leaves;
                     }
+                    // Archiving is orthogonal to relaying, so count it separately
+                    // rather than as another branch of the same chain.
+                    if ((their & NODE_P2PMSG_ARCHIVE) != 0) ++archives;
                 });
                 obj.pushKV("relay_capable_peers", capable);
                 obj.pushKV("leaf_peers", leaves);
+                obj.pushKV("archive_peers", archives);
+            }
+            if (p2pmsg::EnvelopeArchive* archive = p2pmsg::GetActiveArchive()) {
+                UniValue a(UniValue::VOBJ);
+                a.pushKV("entries", archive->Count());
+                a.pushKV("bytes", archive->TotalBytes());
+                a.pushKV("oldest_id", archive->OldestId());
+                a.pushKV("newest_id", archive->NewestId());
+                a.pushKV("retention_days", archive->RetentionSeconds() / (24 * 3600));
+                a.pushKV("max_bytes", archive->MaxTotalBytes());
+                a.pushKV("query_base_bits", (uint64_t)archive->StampBaseBits());
+                obj.pushKV("archive", a);
             }
             return obj;
         },

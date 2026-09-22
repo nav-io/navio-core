@@ -112,6 +112,7 @@ add_executable(test_navio
   multisig_tests.cpp
   net_tests.cpp
   netbase_tests.cpp
+  p2pmsg_archive_tests.cpp
   p2pmsg_fmd_tests.cpp
   p2pmsg_tests.cpp
   pmt_tests.cpp

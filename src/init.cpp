@@ -52,6 +52,7 @@
 #include <aggregation/session.h>
 #include <blsct/range_proof/bulletproofs_plus/fixed_base_cache.h>
 #include <netmessagemaker.h>
+#include <p2pmsg/archive.h>
 #include <p2pmsg/transport.h>
 #include <p2pmsg/user_inbox.h>
 #include <p2pmsg/worker_pool.h>
@@ -320,6 +321,7 @@ void Shutdown(NodeContext& node)
     // capture the connman pointer. Clear the global hook first so no net path
     // can reach it, then stop workers, then drop the objects.
     p2pmsg::SetActiveTransport(nullptr);
+    p2pmsg::SetActiveArchive(nullptr);
     rfq::SetActiveMatcher(nullptr);
     rfq::SetActiveOrderCache(nullptr);
     aggregation::SetActivePool(nullptr);
@@ -347,6 +349,7 @@ void Shutdown(NodeContext& node)
     if (node.p2pmsg_pool) node.p2pmsg_pool->Stop();
     node.p2pmsg_transport.reset();
     node.p2pmsg_pool.reset();
+    node.p2pmsg_archive.reset();
     node.rfq_matcher.reset();
     node.rfq_intents.reset();
     if (node.rfq_orders) {
@@ -578,6 +581,10 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsgstoresize=<n>", strprintf("Maximum total size of the on-disk p2pmsg user-message store in MiB; when exceeded, broadcast-topic messages are pruned first, then oldest-first. 0 disables the store entirely (no messages retained; listp2pmsgs unavailable) (default: %u)", p2pmsg::DEFAULT_USER_STORE_MB), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsgstoreexpiry=<n>", strprintf("Days a stored p2pmsg user message is retained before being pruned; 0 = no age limit (default: %u)", p2pmsg::DEFAULT_USER_STORE_EXPIRY_DAYS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgarchive", strprintf("Retain the FLAGGED p2pmsg envelopes this node relays and serve them back to peers that ask, so a peer which was offline can pick up what it missed. Advertises NODE_P2PMSG_ARCHIVE. The node stores ciphertext it cannot read, and learns who an envelope is for only as precisely as a requester's detection key allows (see doc/p2p-encrypted-messaging.md). Costs disk and CPU: strictly opt-in (default: %u)", p2pmsg::DEFAULT_ARCHIVE_ENABLE), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgarchivesize=<n>", strprintf("Maximum total size of the p2pmsg envelope archive in MiB, pruned oldest-first (default: %u)", p2pmsg::DEFAULT_ARCHIVE_MB), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgarchiveexpiry=<n>", strprintf("Days an archived p2pmsg envelope is retained before being pruned; 0 = no age limit. This is the window in which an offline peer can still catch up (default: %u)", p2pmsg::DEFAULT_ARCHIVE_EXPIRY_DAYS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgarchivepowbits=<n>", "Base proof-of-work difficulty an archive QUERY must pay, before the term that scales with the size of the scan requested. Defaults to -p2pmsgpowbits, so asking for messages costs about what sending one costs", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsgtopic=<topic>", "Subscribe to a p2pmsg broadcast topic at startup (can be set multiple times). Broadcast USER_DATA on subscribed topics is stored for listp2pmsgs; also manageable at runtime with subscribep2pmsgtopic", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
 #if HAVE_SYSTEM
     argsman.AddArg("-p2pmsgnotify=<cmd>", "Execute command when a p2pmsg user message is stored (%s in cmd is replaced by the message id; fetch it with listp2pmsgs)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -2003,6 +2010,48 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                     LogPrintf("p2pmsg: ignoring -p2pmsgtopic=%s (must be 1-%d printable-ASCII bytes)\n", SanitizeString(topic), p2pmsg::MAX_USER_MSG_TOPIC_BYTES);
                 }
             }
+        }
+
+        // Envelope archive: retain the FLAGGED envelopes we relay so a peer
+        // that was offline can retrieve them later. Strictly opt-in -- it costs
+        // disk, it makes this node a service other peers depend on, and it is
+        // the one part of the subsystem that keeps other people's traffic.
+        //
+        // Only flagged envelopes are kept: an unflagged one can never be
+        // retrieved, so storing it would be pure cost. The node holds
+        // ciphertext it cannot read; it learns who an envelope is for only as
+        // precisely as a requester's detection key allows, which is
+        // deliberately fuzzy. See doc/p2p-encrypted-messaging.md.
+        if (args.GetBoolArg("-p2pmsgarchive", p2pmsg::DEFAULT_ARCHIVE_ENABLE)) {
+            p2pmsg::EnvelopeArchive::Options arch_opts;
+            arch_opts.path = args.GetDataDirNet() / "p2pmsg_archive";
+            int64_t arch_mb = args.GetIntArg("-p2pmsgarchivesize", p2pmsg::DEFAULT_ARCHIVE_MB);
+            if (arch_mb < 0) arch_mb = 0;
+            // Clamp before the MiB shift, as with the user store: on a 32-bit
+            // size_t a large value would wrap and silently disable the cap.
+            const int64_t arch_max_mb = static_cast<int64_t>(std::numeric_limits<size_t>::max() >> 20);
+            if (arch_mb > arch_max_mb) arch_mb = arch_max_mb;
+            arch_opts.max_total_bytes = static_cast<size_t>(arch_mb) << 20;
+            const int64_t arch_days = args.GetIntArg("-p2pmsgarchiveexpiry", p2pmsg::DEFAULT_ARCHIVE_EXPIRY_DAYS);
+            arch_opts.expiry_seconds = arch_days > 0 ? arch_days * int64_t{24 * 3600} : 0;
+            // Asking for messages costs about what sending one costs, before
+            // the term that scales with the size of the scan requested.
+            arch_opts.stamp_base_bits = static_cast<uint32_t>(
+                std::clamp<int64_t>(args.GetIntArg("-p2pmsgarchivepowbits", tr_opts.pow_bits), 1, 32));
+
+            node.p2pmsg_archive = std::make_unique<p2pmsg::EnvelopeArchive>(std::move(arch_opts));
+            p2pmsg::EnvelopeArchive* archive = node.p2pmsg_archive.get();
+            node.p2pmsg_transport->SetArchiveSink(
+                [archive](int64_t received_at, uint8_t kind,
+                          std::span<const uint8_t> flag, std::span<const uint8_t> envelope) {
+                    archive->Add(received_at, kind, flag, envelope);
+                });
+            p2pmsg::SetActiveArchive(archive);
+            // Advertise it so a client can find an archiving node through ADDR
+            // gossip. Like NODE_P2PMSG this is a network-wide signal.
+            nLocalServices = ServiceFlags(nLocalServices | NODE_P2PMSG_ARCHIVE);
+            LogPrintf("p2pmsg: envelope archive enabled (%d MiB, %d day expiry, query base %d bits)\n",
+                      arch_mb, arch_days, node.p2pmsg_archive->StampBaseBits());
         }
 
         // Route decrypted inbound payloads to the right subsystem. These run on
