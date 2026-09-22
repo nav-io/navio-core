@@ -6,6 +6,7 @@
 #define BITCOIN_P2PMSG_TRANSPORT_H
 
 #include <p2pmsg/crypto.h>
+#include <p2pmsg/fmd.h>
 #include <p2pmsg/pow.h>
 #include <p2pmsg/worker_pool.h>
 
@@ -22,6 +23,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -55,20 +57,43 @@ enum class PayloadKind : uint8_t {
     // this value beyond keying handler dispatch on the receiving node.
 };
 
+//! Upper bound on the detection flag. A flag of exactly FMD_FLAG_SIZE is an
+//! FMD2 flag this build can test; other non-empty sizes are RESERVED -- relayed
+//! and stored unchanged (kind-blind relay applies to flags too, so a future
+//! gamma propagates without a node upgrade) but never matched. The bound keeps
+//! envelope overhead predictable.
+static constexpr size_t MAX_FLAG_BYTES = 128;
+
 //! The wire envelope for a `p2pmsg`/`dp2pmsg` net message:
-//!   u8 kind || PoWHeader || EciesPacket
+//!   u8 kind || PoWHeader || CompactSize flen || u8[flen] flag || EciesPacket
 //! PoW is MANDATORY on every message: it is the universal admission gate that
 //! makes kind-blind relay safe (no free amplification). The header's
-//! payload_hash binds the ciphertext, so the cheap net-thread PoW check vouches
-//! for the body before any worker decrypts or any peer relays it.
+//! payload_hash binds the ciphertext AND the flag, so the cheap net-thread PoW
+//! check vouches for both before any worker decrypts or any peer relays it.
+//!
+//! `flag` is optional (empty is normal and is the only thing the bus's own
+//! aggregation/RFQ kinds ever send). It exists so a recipient who was OFFLINE
+//! can later retrieve the message from an archiving node without the envelope
+//! ever carrying a recipient identifier -- see p2pmsg/fmd.h.
 struct Envelope {
     uint8_t kind{0};
     PoWHeader pow;
+    std::vector<uint8_t> flag;
     EciesPacket enc;
 
     SERIALIZE_METHODS(Envelope, obj)
     {
-        READWRITE(obj.kind, obj.pow, obj.enc);
+        READWRITE(obj.kind, obj.pow, obj.flag, obj.enc);
+    }
+
+    //! What pow.payload_hash must equal for this envelope.
+    uint256 ExpectedPayloadHash() const
+    {
+        // Constructed explicitly: libc++ 14 (the Ubuntu 22.04 CI compiler)
+        // ships no std::span range constructor, so a const vector does not
+        // convert on its own.
+        return p2pmsg::PayloadHash(pow.version, enc.MsgHash(),
+                                   std::span<const uint8_t>{flag.data(), flag.size()});
     }
 };
 
@@ -192,6 +217,22 @@ public:
     //! the caller must treat the bytes as secret.
     std::vector<unsigned char> IdentityPrivBytes() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
 
+    //! The node's FMD clue key (FMD_CLUE_KEY_SIZE bytes): what a sender needs
+    //! in order to flag a message so this node can retrieve it from an archive
+    //! after being offline. Rotates with the inbox prekey -- a detection key
+    //! keeps working on future flags, so its lifetime is bounded by the epoch.
+    std::vector<uint8_t> FmdClueKeyBytes() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! The identity's signature over the clue key bytes, published in the
+    //! bundle so a sender can authenticate a fetched clue key. Flagging to an
+    //! attacker-substituted clue key hands them the retrieval side.
+    blsct::Signature FmdSig() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! Detection key at false-positive rate 2^-precision. SECRET: whoever holds
+    //! it can test every future flag at that precision until the next rotation.
+    //! Empty when precision is 0 or above FMD_GAMMA.
+    std::vector<uint8_t> FmdDetectionKey(size_t precision) const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
     //! Rotate the inbox prekey now: the current prekey priv moves into the grace
     //! ring (trimmed to Options::prekey_grace_keys), a fresh prekey becomes
     //! current, and it is re-signed under the identity. Safe from any thread.
@@ -260,8 +301,13 @@ public:
     //!
     //! Concurrent calls for the same (kind, recipient) leave in the order they
     //! entered Send(), not in PoW-grind completion order — see SendStream.
+    //!
+    //! `flag`, when non-empty, is an FMD detection flag (see p2pmsg/fmd.h)
+    //! produced from the RECIPIENT's clue key. It is bound by the proof of
+    //! work. Callers that do not care about offline retrieval pass nothing.
     [[nodiscard]] bool Send(const blsct::PublicKey& recipient, PayloadKind kind,
-                            std::vector<uint8_t> body, bool stem)
+                            std::vector<uint8_t> body, bool stem,
+                            std::vector<uint8_t> flag = {})
         EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex, !m_replay_mutex);
 
     //! Signal that the node is shutting down so any in-flight PoW grind on a
@@ -352,6 +398,11 @@ private:
     blsct::PublicKey m_inbox_pub GUARDED_BY(m_inbox_mutex);
     //! Identity's signature over m_inbox_pub.GetVch(), published in the bundle.
     blsct::Signature m_prekey_sig GUARDED_BY(m_inbox_mutex);
+    //! FMD root secret and the identity's signature over the derived clue key.
+    //! Rotated with the prekey, for the same reason: both are contact material
+    //! whose compromise window should be bounded by the epoch.
+    FmdSecretKey m_fmd_key GUARDED_BY(m_inbox_mutex);
+    blsct::Signature m_fmd_sig GUARDED_BY(m_inbox_mutex);
     //! Recently-retired prekey privs, newest first, kept for a grace window so a
     //! message encrypted to the prekey we just rotated out still decrypts.
     //! Bounded by Options::prekey_grace_keys; entries drop (and their key

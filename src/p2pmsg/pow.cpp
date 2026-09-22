@@ -17,6 +17,17 @@ uint256 PoWHeader::Hash() const
     return hw.GetSHA256();
 }
 
+uint256 PayloadHash(uint8_t version, const uint256& msg_hash, std::span<const uint8_t> flag)
+{
+    // v1 bound the ciphertext alone. Keep it computable so the distinction is
+    // explicit rather than implied, even though v1 is rejected on the wire.
+    if (version == POW_VERSION_LEGACY) return msg_hash;
+    HashWriter hw;
+    hw.write(MakeByteSpan(msg_hash));
+    hw.write(MakeByteSpan(flag));
+    return hw.GetSHA256();
+}
+
 arith_uint256 TargetFromBits(uint32_t bits)
 {
     arith_uint256 target = ~arith_uint256(0); // 2^256 - 1

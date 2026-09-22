@@ -374,6 +374,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     aggregation/pull.cpp
     aggregation/session.cpp
     p2pmsg/crypto.cpp
+    p2pmsg/fmd.cpp
     p2pmsg/pow.cpp
     p2pmsg/transport.cpp
     p2pmsg/user_inbox.cpp
