@@ -448,6 +448,17 @@ BOOST_AUTO_TEST_CASE(test_range_proof_validate_proofs_by_sizes)
         std::vector<bulletproofs_plus::RangeProofWithSeed<T>> proofs{p};
         BOOST_CHECK_THROW(range_proof::Common<T>::ValidateProofsBySizes(proofs), std::runtime_error);
     }
+    {
+        // non-power-of-two number of value commitments, with Ls/Rs sized for
+        // the padded round count so only the power-of-two check can reject it
+        auto p = gen_valid_proof_wo_value_commitments(3);
+        bulletproofs_plus::RangeProofWithSeed<T> q;
+        for (size_t i=0; i<3; ++i) q.Vs.Add(p.Vs[i]);
+        q.Ls = p.Ls;
+        q.Rs = p.Rs;
+        std::vector<bulletproofs_plus::RangeProofWithSeed<T>> proofs{q};
+        BOOST_CHECK_THROW(range_proof::Common<T>::ValidateProofsBySizes(proofs), std::runtime_error);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(test_range_proof_compute_d)
