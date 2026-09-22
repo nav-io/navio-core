@@ -9,6 +9,7 @@
 #include <streams.h>
 #include <util/time.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 
@@ -138,7 +139,17 @@ void Transport::DropSessionKey(const blsct::PublicKey& pub)
     std::erase_if(m_session_keys, [&vch](const auto& e) { return e.first.GetVch() == vch; });
 }
 
-Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
+bool Transport::HasSessionKey(const blsct::PublicKey& pub) const
+{
+    const auto vch = pub.GetVch();
+    const int64_t now = Now();
+    LOCK(m_session_mutex);
+    return std::any_of(m_session_keys.begin(), m_session_keys.end(), [&](const auto& e) {
+        return e.first.GetVch() == vch && (e.second.expiry == 0 || e.second.expiry > now);
+    });
+}
+
+Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, bool wire_stem, std::span<const uint8_t> body)
 {
     if (body.size() > MAX_JOB_BYTES) return WireResult::RejectInvalid;
 
@@ -221,7 +232,10 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
         // relay for free. A rescue skipped under pressure just leaves the
         // message where a plain replay drop would have -- the bucket bounds
         // aggregate rate either way.
-        if (m_relay && AllowRelay()) m_relay(from_peer, /*stem=*/false, env);
+        // wire_stem=false: a duplicate is one the origin already holds, so
+        // there is nothing to hand back to it even if we turn out to be a
+        // dead end.
+        if (m_relay && AllowRelay()) m_relay(from_peer, /*stem=*/false, /*wire_stem=*/false, env);
         // A true duplicate was already decrypted on first arrival; our own
         // echo has not been -- fall through to the decrypt enqueue for it.
         if (!self_echo_deliver) return WireResult::Dropped;
@@ -234,7 +248,7 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
     // token bucket caps how fast this node will amplify, since a single ground
     // PoW is otherwise reusable to make us fan out to every peer. Over budget,
     // we skip the relay but still decrypt anything addressed to us below.
-    if (m_relay && AllowRelay()) m_relay(from_peer, stem, env);
+    if (m_relay && AllowRelay()) m_relay(from_peer, stem, wire_stem, env);
 
 enqueue_decrypt:
 

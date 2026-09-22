@@ -1770,7 +1770,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // exists (or it would be the peer we received from), fall back to
         // fluffing: privacy is preserved because this node is the one fluffing,
         // and the message still propagates rather than dead-ending.
-        auto forward = [connman, stem_graph, stem_epoch_secs, stem_phase](bool stem, int64_t exclude_peer, const p2pmsg::Envelope& env) {
+        auto forward = [connman, stem_graph, stem_epoch_secs, stem_phase](bool stem, bool wire_stem, int64_t exclude_peer, const p2pmsg::Envelope& env) {
             // Never send p2pmsg traffic to block-relay-only connections: their
             // whole purpose is to carry blocks and nothing else, so pushing
             // application messages to them both wastes the connection and
@@ -1799,10 +1799,36 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 return !pnode->IsBlockOnlyConn() && (pnode->m_their_services.load() & NODE_P2PMSG) != 0;
             };
             // Fluff: flood every fluff-eligible peer (relays and leaves) except
-            // the origin.
+            // the origin -- then make sure the flood actually left this node.
+            //
+            // It has not if no RELAYING peer got a copy: leaves forward
+            // nothing, so fluffing to them alone is a dead end, and the
+            // envelope would vanish here in silence. That is not a corner
+            // case. Every line topology ends in a node whose only relaying
+            // peer is the one it just heard from, and a stem hop is a single
+            // unicast, so each message routed to such an end was simply lost.
+            //
+            // Hand it back to the origin as a fluff copy instead. The origin
+            // has so far only stem-relayed it, so its duplicate-rescue path
+            // floods it onward and the message escapes. Privacy is unchanged
+            // -- the origin is the one peer that already knows we hold this
+            // envelope -- and the exchange cannot ping-pong, because each node
+            // relays a given envelope at most twice.
+            //
+            // Only for an envelope that ARRIVED as a stem unicast, including
+            // one we then rolled over into fluff. One that arrived as a flood
+            // was already flooded by its sender, so reflecting it is a
+            // guaranteed replay drop there and a wasted envelope here.
             const auto fluff = [&]() {
+                int relays = 0;
                 connman->ForEachNode([&](CNode* pnode) {
                     if (pnode->GetId() == exclude_peer || !fluff_eligible(pnode)) return;
+                    connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSG, env));
+                    if (stem_eligible(pnode)) ++relays;
+                });
+                if (relays > 0 || exclude_peer == -1 || !wire_stem) return;
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->GetId() != exclude_peer || !fluff_eligible(pnode)) return;
                     connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSG, env));
                 });
             };
@@ -1842,13 +1868,13 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             });
         };
         auto broadcast = [forward](bool stem, const p2pmsg::Envelope& env) {
-            forward(stem, /*exclude_peer=*/-1, env);
+            forward(stem, /*wire_stem=*/false, /*exclude_peer=*/-1, env);
         };
         // App-agnostic relay: re-broadcast a received message (fluff = all peers
         // except origin; stem = one successor). Kind-blind — carries apps this
         // node may not implement, so future uses propagate with no upgrade.
-        auto relay = [forward](int64_t origin_peer, bool stem, const p2pmsg::Envelope& env) {
-            forward(stem, /*exclude_peer=*/origin_peer, env);
+        auto relay = [forward](int64_t origin_peer, bool stem, bool wire_stem, const p2pmsg::Envelope& env) {
+            forward(stem, wire_stem, /*exclude_peer=*/origin_peer, env);
         };
 
         node.p2pmsg_transport = std::make_unique<p2pmsg::Transport>(
@@ -2063,9 +2089,14 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 aggregation::CandidateRequestQueue* requests = node.agg_requests.get();
                 node.p2pmsg_transport->RegisterHandler(
                     p2pmsg::PayloadKind::AGG_ANN,
-                    [requests](const p2pmsg::InboundMessage& m) {
+                    [requests, transport = node.p2pmsg_transport.get()](const p2pmsg::InboundMessage& m) {
                         blsct::PublicKey reply_key;
                         if (!reply_key.SetVch(m.body)) return; // drop malformed
+                        // Our own pull request, handed back by a dead-end peer
+                        // and delivered locally as a self-echo. Serving it
+                        // would pool a candidate built from our own coins --
+                        // cover that hides nothing.
+                        if (transport->HasSessionKey(reply_key)) return;
                         // m.from_peer is the relaying neighbour (pfrom.GetId()),
                         // not the origin (Dandelion hides it). It feeds the
                         // queue's per-neighbour flood cap, which is local DoS

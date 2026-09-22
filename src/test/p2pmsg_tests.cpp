@@ -388,7 +388,7 @@ struct LoopbackTransport {
                 std::vector<uint8_t> v(bytes.begin(), bytes.end());
                 t->OnWire(/*from_peer=*/1, stem, v);
             },
-            /*relay=*/[](int64_t, bool, const Envelope&) {},
+            /*relay=*/[](int64_t, bool, bool, const Envelope&) {},
             opts);
         pool.Start();
     }
@@ -487,7 +487,7 @@ BOOST_AUTO_TEST_CASE(transport_send_preserves_submission_order)
             std::lock_guard<std::mutex> lk(emitted_mutex);
             emitted.push_back(index);
         },
-        /*relay=*/[](int64_t, bool, const Envelope&) {}, opts);
+        /*relay=*/[](int64_t, bool, bool, const Envelope&) {}, opts);
 
     std::mutex gate_mutex;
     std::condition_variable gate_cv;
@@ -804,7 +804,7 @@ BOOST_AUTO_TEST_CASE(transport_relays_to_other_peers)
     Transport t(
         pool,
         [](bool, const Envelope&) {},
-        [&](int64_t origin, bool, const Envelope&) { relay_origin = origin; relayed.fetch_add(1); },
+        [&](int64_t origin, bool, bool, const Envelope&) { relay_origin = origin; relayed.fetch_add(1); },
         opts);
     t.now_override = 1000;
     pool.Start();
@@ -928,7 +928,7 @@ BOOST_AUTO_TEST_CASE(envelope_v2_carries_and_binds_a_detection_flag)
     std::atomic<int> relays{0};
     auto t = std::make_unique<Transport>(
         pool, [](bool, const Envelope&) {},
-        [&](int64_t, bool, const Envelope& e) {
+        [&](int64_t, bool, bool, const Envelope& e) {
             relayed_flag = e.flag;
             relays.fetch_add(1, std::memory_order_relaxed);
         },

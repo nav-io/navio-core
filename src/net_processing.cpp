@@ -5148,6 +5148,7 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         const auto res = transport->OnWire(
             pfrom.GetId(),
             is_stem,
+            /*wire_stem=*/msg_type == NetMsgType::DP2PMSG,
             std::span<const uint8_t>{body.data(), body.size()});
         if (res == p2pmsg::Transport::WireResult::RejectInvalid ||
             res == p2pmsg::Transport::WireResult::RejectPoW) {

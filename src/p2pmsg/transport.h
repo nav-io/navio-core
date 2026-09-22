@@ -103,7 +103,13 @@ using BroadcastFn = std::function<void(bool stem, const Envelope&)>;
 //! Relay an already-received envelope to all peers EXCEPT its origin, so it
 //! floods the network. Kind-blind: called for every new valid message whether
 //! or not this node understands or can decrypt it.
-using RelayFn = std::function<void(int64_t origin_peer, bool stem, const Envelope&)>;
+//!
+//! `wire_stem` is how the envelope ARRIVED (dp2pmsg or p2pmsg), which is not
+//! the same as `stem`: a received stem packet is rolled over into fluff with
+//! some probability, and a duplicate is always re-flooded. The router needs
+//! the wire fact, because an envelope that arrived as a flood was already
+//! flooded by its sender and must not be reflected back at it.
+using RelayFn = std::function<void(int64_t origin_peer, bool stem, bool wire_stem, const Envelope&)>;
 
 //! Decrypted, authenticated inbound message handed to a feature module.
 //! Which local key class decrypted an inbound message. Handlers use this to
@@ -273,6 +279,12 @@ public:
     void DropSessionKey(const blsct::PublicKey& pub)
         EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
 
+    //! True if `pub` is a live session key this node registered. Lets a handler
+    //! recognise its own request when the network hands it back (see OnWire's
+    //! self-echo delivery).
+    bool HasSessionKey(const blsct::PublicKey& pub) const
+        EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
+
     //! Register the handler for an application kind. Call before the net is live.
     void RegisterHandler(PayloadKind kind, MessageHandler handler);
 
@@ -282,8 +294,16 @@ public:
     //! the bus carries apps this node does not implement) and a decrypt job is
     //! enqueued for our own handlers. Returns the disposition.
     enum class WireResult { Enqueued, RejectInvalid, RejectPoW, RejectStale, RejectReplay, Dropped };
-    WireResult OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
+    //! `wire_stem` is whether the envelope arrived as dp2pmsg, which the caller
+    //! may have already rolled over into fluff in `stem`. The overload without
+    //! it is for callers that did no rollover, where the two are the same.
+    WireResult OnWire(int64_t from_peer, bool stem, bool wire_stem, std::span<const uint8_t> body)
         EXCLUSIVE_LOCKS_REQUIRED(!m_replay_mutex, !m_relay_limit_mutex);
+    WireResult OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_replay_mutex, !m_relay_limit_mutex)
+    {
+        return OnWire(from_peer, stem, /*wire_stem=*/stem, body);
+    }
 
     //! Whether `recipient` can be encrypted to: false for the identity or an
     //! invalid point. A network-supplied reply key can be exactly that, and
@@ -431,7 +451,7 @@ private:
         int64_t expiry; //!< unix seconds; 0 = no auto-expiry
         SessionPurpose purpose{SessionPurpose::INTERNAL};
     };
-    Mutex m_session_mutex;
+    mutable Mutex m_session_mutex;
     std::vector<std::pair<blsct::PublicKey, SessionKey>> m_session_keys GUARDED_BY(m_session_mutex);
 
     std::array<MessageHandler, 256> m_handlers{};
