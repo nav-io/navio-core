@@ -235,10 +235,15 @@ BOOST_AUTO_TEST_CASE(archive_query_stamp_commits_and_costs)
     BOOST_CHECK(UintToArith256(req.stamp.Hash()) <= TargetFromBits(bits));
 
     // Difficulty rises with the work requested and is clamped so a large
-    // legitimate query stays feasible.
+    // legitimate query stays feasible. These exact values are mirrored in the
+    // TypeScript SDK (src/archive/protocol.test.ts): the two must agree or
+    // every query the SDK sends is rejected here as underpowered.
+    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 1, 1), 4U);
+    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 100, 4), 4U); // exactly the free allowance
+    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 200, 4), 5U);
+    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 100, 8), 5U);
     BOOST_CHECK_GE(ArchiveStampBits(4, 500, FMD_GAMMA), ArchiveStampBits(4, 100, 4));
     BOOST_CHECK_LE(ArchiveStampBits(4, 500, FMD_GAMMA), 4U + 8U);
-    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 1, 1), 4U);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
