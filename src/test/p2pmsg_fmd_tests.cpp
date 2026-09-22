@@ -4,7 +4,9 @@
 
 #include <p2pmsg/fmd.h>
 
+#include <crypto/sha256.h>
 #include <test/util/setup_common.h>
+#include <util/strencodings.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -204,6 +206,52 @@ BOOST_AUTO_TEST_CASE(fmd_seed_derivation_is_deterministic_and_separated)
     }
 
     BOOST_CHECK(FmdTest(a.Extract(FMD_GAMMA), FmdFlag(b.GetClueKey())));
+}
+
+BOOST_AUTO_TEST_CASE(fmd_cross_implementation_vectors)
+{
+    // Fixed vectors shared with the TypeScript SDK (navio-p2pmsg,
+    // src/bus/fmd.test.ts). They pin the two things an independent
+    // implementation has to get byte-identical or the two sides silently stop
+    // detecting each other's messages:
+    //
+    //   1. seed -> secret -> clue key derivation, including the hash inputs
+    //      and the big-endian reduction mod r;
+    //   2. the flag itself -- a flag produced by the SDK must Test() here.
+    //
+    // The reverse direction (a flag produced here, tested by the SDK) is
+    // pinned by the matching vector in that file.
+    const std::vector<uint8_t> seed(32, 0x11);
+    const auto sk = FmdSecretKey::FromSeed(seed, 0);
+    const auto ck = sk.GetClueKey().ToBytes();
+    BOOST_REQUIRE_EQUAL(ck.size(), FMD_CLUE_KEY_SIZE);
+
+    uint8_t digest[CSHA256::OUTPUT_SIZE];
+    CSHA256().Write(ck.data(), ck.size()).Finalize(digest);
+    BOOST_CHECK_EQUAL(HexStr(digest),
+                      "777166863266f3322a494e3d0c1a2373c5b44e8ba87c3adb97055be9061e46f4");
+
+    BOOST_CHECK_EQUAL(
+        HexStr(sk.Extract(4)),
+        "204afaea8370e9197fd34c5aea2d5b555137bc9798b1c3a1acc66cd1721a41d4"
+        "3b56bf844020b0b217303b899d55bf74adb03697107e51ac646997ee6fbd4b4c"
+        "5c813e4193da749037945776684208ce0f238e9ebd4548eafac165457fde05b9"
+        "6fdefda48d8c821baa6d0cfd690f727e6840001d852d1c7f3da6609263d43ca3");
+
+    // A flag produced by the SDK for this clue key.
+    const auto sdk_flag = ParseHex(
+        "83dd79430a5c23931404f099ffd1a1c58216515582eadb6bae1848b8b950ef22"
+        "c4f34eb17436a0d96cb0d29cd44b29d3665963fe3d868c9250b021ff5d115ce1"
+        "e743d0c85320d55a7c170f4edb49bb97b53ffc");
+    BOOST_REQUIRE_EQUAL(sdk_flag.size(), FMD_FLAG_SIZE);
+    BOOST_CHECK(FmdTest(sk.Extract(FMD_GAMMA), sdk_flag));
+    // And it is genuinely discriminating, not matching everything.
+    BOOST_CHECK(!FmdTest(FmdSecretKey::Random().Extract(FMD_GAMMA), sdk_flag));
+
+    // A flag produced HERE, for this same clue key, is pinned on the SDK side.
+    // To regenerate that pair after a scheme change, print HexStr(FmdFlag(...))
+    // and paste it into src/bus/fmd.test.ts.
+    BOOST_CHECK(FmdTest(sk.Extract(FMD_GAMMA), FmdFlag(sk.GetClueKey())));
 }
 
 BOOST_AUTO_TEST_SUITE_END()
