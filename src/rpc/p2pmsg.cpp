@@ -21,7 +21,9 @@
 #include <policy/policy.h>
 #include <primitives/transaction.h>
 #include <util/transaction_identifier.h>
+#include <cmath>
 #include <p2pmsg/crypto.h>
+#include <p2pmsg/fmd.h>
 #include <p2pmsg/transport.h>
 #include <p2pmsg/user_inbox.h>
 #include <rfq/intent_store.h>
@@ -55,6 +57,9 @@ static RPCHelpMan getp2pmsginfo()
                 {RPCResult::Type::STR_HEX, "identity_pubkey", /*optional=*/true, "This node's stable identity pubkey (its address; signs the rotating prekey)"},
                 {RPCResult::Type::STR_HEX, "inbox_pubkey", /*optional=*/true, "The current inbox PREKEY peers encrypt confidential messages to (rotates; authenticate it with prekey_sig under identity_pubkey)"},
                 {RPCResult::Type::STR_HEX, "prekey_sig", /*optional=*/true, "identity_pubkey's signature over inbox_pubkey, so a fetched prekey can be verified as belonging to this identity"},
+                {RPCResult::Type::STR_HEX, "fmd_clue_key", /*optional=*/true, "This node's fuzzy-message-detection clue key: what a SENDER needs in order to flag a message so this node can retrieve it from an archiving node after being offline. Rotates with the prekey. Verify fmd_sig before using it"},
+                {RPCResult::Type::STR_HEX, "fmd_sig", /*optional=*/true, "identity_pubkey's signature over fmd_clue_key"},
+                {RPCResult::Type::NUM, "fmd_gamma", /*optional=*/true, "Number of flag bits, i.e. the maximum detection precision this build supports (2^-gamma)"},
                 {RPCResult::Type::NUM, "pings_received", /*optional=*/true, "PING payloads decrypted and dispatched to us"},
                 {RPCResult::Type::NUM, "relay_capable_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG (can relay the overlay for us). Note this is a lower bound on network participation: capability rides ADDR gossip, so many more nodes may be reachable indirectly."},
                 {RPCResult::Type::NUM, "leaf_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_LEAF but not NODE_P2PMSG: receive-only bus clients that get our fluff traffic but are never chosen as a Dandelion++ stem successor."},
@@ -71,6 +76,9 @@ static RPCHelpMan getp2pmsginfo()
             obj.pushKV("identity_pubkey", HexStr(t->IdentityPubKey().GetVch()));
             obj.pushKV("inbox_pubkey", HexStr(t->InboxPubKey().GetVch()));
             obj.pushKV("prekey_sig", HexStr(t->PrekeySig().GetVch()));
+            obj.pushKV("fmd_clue_key", HexStr(t->FmdClueKeyBytes()));
+            obj.pushKV("fmd_sig", HexStr(t->FmdSig().GetVch()));
+            obj.pushKV("fmd_gamma", (uint64_t)p2pmsg::FMD_GAMMA);
             obj.pushKV("pings_received", (uint64_t)t->PingsReceived());
             node::NodeContext& node = EnsureAnyNodeContext(request.context);
             if (node.connman) {
@@ -104,6 +112,9 @@ static RPCHelpMan rotatep2pmsginbox()
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "inbox_pubkey", "The new inbox prekey"},
             {RPCResult::Type::STR_HEX, "prekey_sig", "identity's signature over the new prekey"},
+            {RPCResult::Type::STR_HEX, "fmd_clue_key", "The new detection clue key. Rotated with the prekey, so detection keys issued under the previous one stop matching"},
+            {RPCResult::Type::STR_HEX, "fmd_sig", "identity's signature over the new clue key"},
+            {RPCResult::Type::NUM, "fmd_gamma", "Maximum detection precision (2^-gamma)"},
         }},
         RPCExamples{HelpExampleCli("rotatep2pmsginbox", "") + HelpExampleRpc("rotatep2pmsginbox", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -113,6 +124,51 @@ static RPCHelpMan rotatep2pmsginbox()
             UniValue obj(UniValue::VOBJ);
             obj.pushKV("inbox_pubkey", HexStr(t->InboxPubKey().GetVch()));
             obj.pushKV("prekey_sig", HexStr(t->PrekeySig().GetVch()));
+            obj.pushKV("fmd_clue_key", HexStr(t->FmdClueKeyBytes()));
+            obj.pushKV("fmd_sig", HexStr(t->FmdSig().GetVch()));
+            obj.pushKV("fmd_gamma", (uint64_t)p2pmsg::FMD_GAMMA);
+            return obj;
+        },
+    };
+}
+
+static RPCHelpMan getp2pmsgdetectionkey()
+{
+    return RPCHelpMan{
+        "getp2pmsgdetectionkey",
+        "\nDerive a fuzzy-message-detection key for this node's inbox at a chosen\n"
+        "false-positive rate.\n"
+        "\nThis is what you hand an ARCHIVING node so it can pick out the messages you\n"
+        "missed while offline. It matches your messages plus a 2^-precision fraction of\n"
+        "everyone else's, and the holder cannot tell the two apart.\n"
+        "\nSECRET, and long-lived: whoever holds it can test every FUTURE flag at this\n"
+        "precision until the clue key rotates (rotatep2pmsginbox). Lower precision means\n"
+        "more decoys, more bandwidth, and a larger anonymity set; higher precision means\n"
+        "the opposite. Choosing the maximum tells the holder exactly which messages are\n"
+        "yours.\n",
+        {
+            {"precision", RPCArg::Type::NUM, RPCArg::Optional::NO, strprintf("False-positive exponent n (rate 2^-n), 1-%d", p2pmsg::FMD_GAMMA)},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "detection_key", "The detection key"},
+            {RPCResult::Type::NUM, "precision", "The n it was derived for"},
+            {RPCResult::Type::STR, "false_positive_rate", "2^-n as a decimal, for sanity-checking the choice"},
+        }},
+        RPCExamples{HelpExampleCli("getp2pmsgdetectionkey", "8") + HelpExampleRpc("getp2pmsgdetectionkey", "8")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            p2pmsg::Transport* t = p2pmsg::GetActiveTransport();
+            if (t == nullptr) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
+            const int precision = request.params[0].getInt<int>();
+            if (precision < 1 || precision > (int)p2pmsg::FMD_GAMMA) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   strprintf("precision must be 1-%d", p2pmsg::FMD_GAMMA));
+            }
+            const auto dk = t->FmdDetectionKey((size_t)precision);
+            if (dk.empty()) throw JSONRPCError(RPC_MISC_ERROR, "detection key derivation failed");
+            UniValue obj(UniValue::VOBJ);
+            obj.pushKV("detection_key", HexStr(dk));
+            obj.pushKV("precision", precision);
+            obj.pushKV("false_positive_rate", strprintf("%.12g", std::ldexp(1.0, -precision)));
             return obj;
         },
     };
@@ -178,6 +234,7 @@ static RPCHelpMan sendp2pmsg()
             {"topic", RPCArg::Type::STR, RPCArg::Optional::NO, strprintf("Topic string, 1-%d bytes. Routing key for broadcast subscriptions and the store's filter column", p2pmsg::MAX_USER_MSG_TOPIC_BYTES)},
             {"payload", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, strprintf("Payload hex; topic and payload together must serialize to at most %d bytes. Applications needing more chunk and reassemble", p2pmsg::MAX_USER_MSG_BYTES)},
             {"stem", RPCArg::Type::BOOL, RPCArg::Default{true}, "Send via the Dandelion stem variant (hides the entry point)"},
+            {"cluekey", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The recipient's fmd_clue_key (from their getp2pmsginfo, verified against their identity via fmd_sig). Attaches a detection flag so the recipient can retrieve this message from an archiving node if they were offline. The flag carries NO recipient identifier: only someone holding the matching detection key can test it"},
         },
         RPCResult{RPCResult::Type::BOOL, "", "Whether the message was queued for broadcast"},
         RPCExamples{HelpExampleCli("sendp2pmsg", "\"<inboxhex>\" \"chat\" \"<payloadhex>\"") +
@@ -216,9 +273,21 @@ static RPCHelpMan sendp2pmsg()
             }
             const bool stem = request.params[3].isNull() ? true : request.params[3].get_bool();
 
+            std::vector<uint8_t> flag;
+            if (!request.params[4].isNull()) {
+                const auto ck_hex = TryParseHex<uint8_t>(request.params[4].get_str());
+                if (!ck_hex) throw JSONRPCError(RPC_INVALID_PARAMETER, "cluekey is not valid hex");
+                const auto ck = p2pmsg::FmdClueKey::FromBytes(std::span<const uint8_t>{ck_hex->data(), ck_hex->size()});
+                if (!ck) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                                       strprintf("cluekey must be %d bytes of valid G1 points", p2pmsg::FMD_CLUE_KEY_SIZE));
+                }
+                flag = p2pmsg::FmdFlag(*ck);
+            }
+
             auto bytes = MakeUCharSpan(ss);
             return t->Send(recipient, p2pmsg::PayloadKind::USER_DATA,
-                           std::vector<uint8_t>(bytes.begin(), bytes.end()), stem);
+                           std::vector<uint8_t>(bytes.begin(), bytes.end()), stem, std::move(flag));
         },
     };
 }
@@ -1227,6 +1296,7 @@ void RegisterP2PMsgRPCCommands(CRPCTable& t)
     static const CRPCCommand commands[]{
         {"hidden", &getp2pmsginfo},
         {"hidden", &rotatep2pmsginbox},
+        {"p2pmsg", &getp2pmsgdetectionkey},
         {"p2pmsg", &listpendingquoterequests},
         {"hidden", &sendp2pping},
         {"p2pmsg", &sendp2pmsg},

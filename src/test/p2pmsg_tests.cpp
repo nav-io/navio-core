@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <p2pmsg/crypto.h>
+#include <p2pmsg/fmd.h>
 #include <p2pmsg/pow.h>
 #include <p2pmsg/transport.h>
 #include <p2pmsg/worker_pool.h>
@@ -693,18 +694,20 @@ BOOST_AUTO_TEST_CASE(transport_pow_kind_loopback)
 namespace {
 //! Build a properly PoW-stamped envelope (every message carries one now).
 Envelope StampedEnvelope(const blsct::PublicKey& inbox, PayloadKind kind,
-                         std::vector<uint8_t> payload, uint32_t bits, int64_t now)
+                         std::vector<uint8_t> payload, uint32_t bits, int64_t now,
+                         std::vector<uint8_t> flag = {})
 {
     Envelope env;
     env.kind = static_cast<uint8_t>(kind);
     // Bind the kind byte as AEAD associated data, matching Transport::Send.
     const uint8_t aad[1] = {env.kind};
     env.enc = Encrypt(inbox, payload, std::span<const uint8_t>{aad, 1});
-    env.pow.version = 1;
+    env.flag = std::move(flag);
+    env.pow.version = POW_VERSION_CURRENT;
     env.pow.timestamp = now;
     env.pow.kind = env.kind;
     env.pow.session_eph = env.enc.eph;
-    env.pow.payload_hash = env.enc.MsgHash();
+    env.pow.payload_hash = env.ExpectedPayloadHash();
     Grind(env.pow, bits);
     return env;
 }
@@ -784,7 +787,7 @@ BOOST_AUTO_TEST_CASE(transport_bad_pow_rejected)
     const int64_t now_ov = h.t->now_override.load();
     env.pow.timestamp = now_ov ? now_ov : 1;
     env.pow.session_eph = env.enc.eph;
-    env.pow.payload_hash = env.enc.MsgHash();
+    env.pow.payload_hash = env.ExpectedPayloadHash();
     env.pow.nonce = 0; // not ground
 
     BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env)) == Transport::WireResult::RejectPoW);
@@ -912,6 +915,158 @@ BOOST_AUTO_TEST_CASE(user_inbox_expiry_prunes)
     UserInbox one(ref);
     one.Add(now, MsgScope::INBOX, "t", sender, body);
     BOOST_CHECK_EQUAL(inbox.TotalBytes(), one.TotalBytes());
+}
+
+BOOST_AUTO_TEST_CASE(envelope_v2_carries_and_binds_a_detection_flag)
+{
+    // A flagged envelope is accepted, relayed with the flag INTACT (a relay
+    // that dropped it would silently deny the recipient offline delivery), and
+    // the flag still tests against the recipient's detection key after the
+    // round trip through serialization and relay.
+    WorkerPool pool{WorkerPool::Options{/*num_workers=*/1, /*ring_capacity=*/16}};
+    std::vector<uint8_t> relayed_flag;
+    std::atomic<int> relays{0};
+    auto t = std::make_unique<Transport>(
+        pool, [](bool, const Envelope&) {},
+        [&](int64_t, bool, const Envelope& e) {
+            relayed_flag = e.flag;
+            relays.fetch_add(1, std::memory_order_relaxed);
+        },
+        LoopbackTransport::OptsWithBits(4));
+    t->now_override = 1000;
+
+    const auto sk = FmdSecretKey::Random();
+    const auto flag = FmdFlag(sk.GetClueKey());
+    auto env = StampedEnvelope(t->InboxPubKey(), PayloadKind::PING, {1}, /*bits=*/4,
+                               /*now=*/1000, flag);
+    BOOST_CHECK_EQUAL(env.flag.size(), FMD_FLAG_SIZE);
+    BOOST_CHECK(t->OnWire(1, false, SerEnv(env)) == Transport::WireResult::Enqueued);
+    BOOST_CHECK_EQUAL(relays.load(), 1);
+    BOOST_CHECK(relayed_flag == flag);
+    BOOST_CHECK(FmdTest(sk.Extract(FMD_GAMMA), relayed_flag));
+}
+
+BOOST_AUTO_TEST_CASE(envelope_v2_flag_is_bound_by_the_proof_of_work)
+{
+    // The whole point of folding the flag into payload_hash: a relay cannot
+    // strip the flag (denying offline delivery) or rewrite it into someone
+    // else's detection bucket while reusing the original grind.
+    LoopbackTransport h(/*bits=*/4);
+    h.t->now_override = 1000;
+
+    const auto sk = FmdSecretKey::Random();
+    auto env = StampedEnvelope(h.t->InboxPubKey(), PayloadKind::PING, {1}, /*bits=*/4,
+                               /*now=*/1000, FmdFlag(sk.GetClueKey()));
+
+    auto stripped = env;
+    stripped.flag.clear();
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(stripped)) == Transport::WireResult::RejectPoW);
+
+    auto swapped = env;
+    swapped.flag = FmdFlag(FmdSecretKey::Random().GetClueKey());
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(swapped)) == Transport::WireResult::RejectPoW);
+
+    auto tweaked = env;
+    tweaked.flag[0] ^= 0x01;
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(tweaked)) == Transport::WireResult::RejectPoW);
+
+    // The untouched original is still fine.
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env)) == Transport::WireResult::Enqueued);
+}
+
+BOOST_AUTO_TEST_CASE(envelope_v2_rejects_legacy_pow_version)
+{
+    // v1 bound the ciphertext alone. Accepting both versions would let a v1
+    // stamp be reused for a v2 envelope carrying an attacker's flag.
+    LoopbackTransport h(/*bits=*/4);
+    h.t->now_override = 1000;
+
+    Envelope env;
+    env.kind = static_cast<uint8_t>(PayloadKind::PING);
+    const uint8_t aad[1] = {env.kind};
+    env.enc = Encrypt(h.t->InboxPubKey(), std::vector<uint8_t>{1}, std::span<const uint8_t>{aad, 1});
+    env.pow.version = POW_VERSION_LEGACY;
+    env.pow.timestamp = 1000;
+    env.pow.kind = env.kind;
+    env.pow.session_eph = env.enc.eph;
+    env.pow.payload_hash = PayloadHash(POW_VERSION_LEGACY, env.enc.MsgHash(), {});
+    Grind(env.pow, /*bits=*/4);
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env)) == Transport::WireResult::RejectInvalid);
+
+    // And the two payload hashes genuinely differ for an empty flag, so the
+    // versions cannot collide.
+    BOOST_CHECK(PayloadHash(POW_VERSION_LEGACY, env.enc.MsgHash(), {}) !=
+                PayloadHash(POW_VERSION_FLAGGED, env.enc.MsgHash(), {}));
+}
+
+BOOST_AUTO_TEST_CASE(envelope_v2_bounds_the_flag_size)
+{
+    // Unknown flag sizes are reserved and relayed unchanged (kind-blind relay
+    // applies to flags too, so a future gamma propagates without a node
+    // upgrade) but the size is bounded so envelope overhead stays predictable.
+    LoopbackTransport h(/*bits=*/4);
+    h.t->now_override = 1000;
+
+    auto reserved = StampedEnvelope(h.t->InboxPubKey(), PayloadKind::PING, {1}, /*bits=*/4,
+                                    /*now=*/1000, std::vector<uint8_t>(16, 0xab));
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(reserved)) == Transport::WireResult::Enqueued);
+
+    auto oversized = StampedEnvelope(h.t->InboxPubKey(), PayloadKind::PING, {2}, /*bits=*/4,
+                                     /*now=*/1000, std::vector<uint8_t>(MAX_FLAG_BYTES + 1, 0xab));
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(oversized)) == Transport::WireResult::RejectInvalid);
+}
+
+BOOST_AUTO_TEST_CASE(envelope_v2_replay_key_covers_the_flag)
+{
+    // Same ciphertext, two different flags = two distinct messages, both
+    // relayed. Deliberate: it lets a sender re-flag a retransmission for a
+    // recipient whose clue key rotated. Each variant costs a fresh grind, so
+    // the amplification is bounded by the PoW that gates everything else.
+    LoopbackTransport h(/*bits=*/4);
+    h.t->now_override = 1000;
+
+    const auto a = FmdSecretKey::Random();
+    const auto b = FmdSecretKey::Random();
+    auto env_a = StampedEnvelope(h.t->InboxPubKey(), PayloadKind::PING, {9}, /*bits=*/4,
+                                 /*now=*/1000, FmdFlag(a.GetClueKey()));
+    // Reuse the SAME ciphertext with a different flag and a fresh grind.
+    auto env_b = env_a;
+    env_b.flag = FmdFlag(b.GetClueKey());
+    env_b.pow.payload_hash = env_b.ExpectedPayloadHash();
+    env_b.pow.nonce = 0;
+    Grind(env_b.pow, /*bits=*/4);
+
+    BOOST_CHECK(env_a.enc.MsgHash() == env_b.enc.MsgHash());
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env_a)) == Transport::WireResult::Enqueued);
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env_b)) == Transport::WireResult::Enqueued);
+    // The identical envelope is still a replay.
+    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env_a)) != Transport::WireResult::Enqueued);
+}
+
+BOOST_AUTO_TEST_CASE(transport_publishes_a_signed_clue_key_that_rotates)
+{
+    LoopbackTransport h(/*bits=*/4);
+    const auto ck = h.t->FmdClueKeyBytes();
+    BOOST_CHECK_EQUAL(ck.size(), FMD_CLUE_KEY_SIZE);
+    BOOST_REQUIRE(FmdClueKey::FromBytes(ck).has_value());
+    // A sender must be able to authenticate a fetched clue key before flagging
+    // to it; flagging to a substituted key hands the retrieval side away.
+    BOOST_CHECK(h.t->IdentityPubKey().Verify(ck, h.t->FmdSig()));
+
+    // The node can detect a message flagged to its own published clue key.
+    const auto flag = FmdFlag(*FmdClueKey::FromBytes(ck));
+    BOOST_CHECK(FmdTest(h.t->FmdDetectionKey(FMD_GAMMA), flag));
+
+    // Rotating the prekey rotates the clue key with it, so detection keys
+    // handed out under the old one stop matching -- that bounds their lifetime.
+    h.t->RotatePrekey();
+    const auto ck2 = h.t->FmdClueKeyBytes();
+    BOOST_CHECK(ck2 != ck);
+    BOOST_CHECK(h.t->IdentityPubKey().Verify(ck2, h.t->FmdSig()));
+    BOOST_CHECK(!FmdTest(h.t->FmdDetectionKey(FMD_GAMMA), flag));
+
+    BOOST_CHECK(h.t->FmdDetectionKey(0).empty());
+    BOOST_CHECK(h.t->FmdDetectionKey(FMD_GAMMA + 1).empty());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

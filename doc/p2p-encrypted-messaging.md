@@ -117,17 +117,32 @@ The `dp2pmsg` variant reuses the existing Dandelion stem routing
 (`m_send_stem`, `ShuffleStemRoutes`) and fluffs with the same probability as
 `DTX`.
 
-Envelope:
+Envelope (**version 2**):
 
 ```
-u8          kind        // opaque application id; relay never inspects it
-PoWHeader   pow         // mandatory on every message
-EciesPacket enc
+u8            kind        // opaque application id; relay never inspects it
+PoWHeader     pow         // mandatory on every message, version 2
+CompactSize   flen        // 0 = no detection flag
+u8[flen]      flag        // fuzzy message detection flag, 83 bytes when present
+EciesPacket   enc
 ```
 
 `kind` is a `PayloadKind` (`PING, PONG, AGG_ANN, CANDIDATE_TX, RFQ_REQ,
-RFQ_QUOTE, ORDER_ANN`, plus `7..255` reserved). The wire field is a plain `u8`;
-a node that does not recognize a kind still relays the message.
+RFQ_QUOTE, ORDER_ANN, USER_DATA`, plus `8..255` reserved). The wire field is a
+plain `u8`; a node that does not recognize a kind still relays the message.
+
+`flag` is optional and empty for everything except messages a recipient may
+want to retrieve after being offline — see **Fuzzy message detection** below.
+A flag of exactly 83 bytes is one this build can test; other non-empty sizes
+are reserved, relayed and stored unchanged but never matched, so a future
+parameter change propagates without a node upgrade. Sizes above 128 bytes are
+rejected.
+
+> **Wire break.** Envelope v1 had no `flen` field and its `PoWHeader` was
+> version 1. `ParseEnvelope` rejects trailing bytes, so there was no
+> backward-compatible place to put the flag; v1 envelopes are rejected outright
+> rather than accepted alongside, because a v1 stamp bound only the ciphertext
+> and could otherwise be replayed with an attacker's flag attached.
 
 ### Relay (app-agnostic flood)
 
@@ -181,13 +196,31 @@ kind-blind relay safe (no free amplification), not an app-specific choice. The h
 binds the ciphertext via `payload_hash`, so the cheap net-thread PoW check also
 vouches for the body before a worker slot is spent decrypting it.
 
+`payload_hash` is version-dependent, and that is the only difference between the
+two header versions — the header stays exactly 98 bytes, so the grinder and the
+target arithmetic are untouched:
+
+| version | `payload_hash` |
+|---|---|
+| 1 | `enc.MsgHash()` |
+| 2 | `SHA256(enc.MsgHash() \|\| flag)`, with `flag` empty when `flen == 0` |
+
+Folding the flag in means a relay can neither **strip** it (silently denying the
+recipient any chance of offline retrieval) nor **rewrite** it into a third
+party's detection bucket, without redoing the work. The two hashes differ even
+for an empty flag, so a v1 header can never be replayed as a v2 envelope.
+
 `bits` is runtime-tunable via `-p2pmsgpowbits=N` (DEBUG_ONLY) so regtest and
 functional tests run at trivial difficulty. If CPU drift ever makes the flat
 target too cheap, a `P2PMSG_POW_TARGET_V2` can be activated at a scheduled
 height via the existing version-bits machinery.
 
 The single replay cache is a `CuckooCache<uint256>` keyed by
-`SHA256(kind || encrypted-packet-hash)`. The packet hash alone does not cover
+`SHA256(kind || payload_hash)`, so it covers the flag as well as the ciphertext.
+Two envelopes with identical ciphertext but different flags are distinct
+messages and both relay — deliberate, since it lets a sender re-flag a
+retransmission for a recipient whose clue key rotated, and each variant costs a
+fresh grind. The packet hash alone does not cover
 the `kind` byte, so keying on it would let an attacker pre-broadcast a
 kind-flipped copy that arrives first and suppresses the genuine message as a
 "replay"; including `kind` gives each `(kind, ciphertext)` its own slot while
@@ -201,6 +234,57 @@ The net thread separates the two PoW rejection reasons: an under-difficulty
 stamp is the sending peer's fault (DoS-scored), but a timestamp outside the
 ±120 s window is not — an honest message can age past it during multi-hop
 propagation, so the relaying peer is not penalized for forwarding it.
+
+### Fuzzy message detection
+
+The bus deliberately carries no recipient field, which is exactly why a node
+cannot hold messages for an offline peer: a store has nothing to index on. The
+node's `UserInbox` only stores what the node itself decrypted with its own
+prekey, so it does nothing for a light client.
+
+FMD closes that without reintroducing a recipient identifier. The recipient
+publishes a **clue key**; a sender uses it to attach an 83-byte **flag**; the
+recipient later derives a **detection key** at a false-positive rate of its own
+choosing and hands it to a node that stores envelopes, which returns the
+recipient's messages plus a `2^-n` fraction of everyone else's and cannot tell
+the two apart.
+
+The property that makes this worth 83 bytes per envelope: holding someone's
+public clue key does **not** let you test whether a flag is theirs. Testing
+needs the detection key. A plain tag such as `H(pubkey || epoch)` fails exactly
+here — anyone who knows the address computes the tag — which is why one is not
+used.
+
+Scheme: FMD2 from Beck, Len, Miers and Green, *Fuzzy Message Detection*
+(ePrint 2021/089, Figure 3), instantiated over BLS12-381 G1. Only the group, the
+hash instantiations and the seed-derived key generation are ours.
+
+```
+gamma = 24                          // flag bits = maximum precision
+clue key       = (h_1 .. h_gamma),  h_i = g^{x_i}       1152 bytes
+detection key  = (x_1 .. x_n),      n <= gamma            n*32 bytes
+flag           = (u, y, c_1..c_gamma)                       83 bytes
+```
+
+Flagging costs the sender `gamma + 2` group multiplications — negligible beside
+the proof of work. Testing costs `n + 2` per flag, which is the per-envelope
+cost of a scan and the reason retrieval has to be rate-limited and priced.
+
+The `x_i` are **independent**. A compact variant exists that derives them from a
+single scalar (`x_i = x + H(X||i)`, 48-byte clue key), and it is deliberately
+not used: `H(X||i)` is public, so a detector handed a precision-`n` key recovers
+`x` and can then test at full precision. Precision would stop being the
+recipient's choice and become the detector's. The 1152 bytes buy that guarantee.
+
+A detection key cannot be revoked and keeps matching future flags, so the clue
+key rotates with the inbox prekey (`rotatep2pmsginbox`, or
+`-p2pmsginboxrotation`) and a detection key's reach is bounded by the epoch.
+Senders must verify `fmd_sig` under `identity_pubkey` before flagging: flagging
+to a substituted clue key hands the retrieval side to whoever substituted it.
+
+Retrieval from a node that stores flagged envelopes is a separate change and is
+not part of this one. This change produces, relays and verifies flags, and
+exposes the keys.
 
 ## Aggregation
 
@@ -267,7 +351,13 @@ Maker / debug surface (hidden or `p2pmsg` category):
   RPC connection; strip those two fields before republishing the output
   on a public endpoint; the array is sorted by the wire-public declared
   `order_expiry` (quote_id tie-break), so its order reveals nothing node-local
-- `getp2pmsginfo` — inbox pubkey + PING counter
+- `getp2pmsginfo` — identity, inbox prekey, `prekey_sig`, FMD clue key +
+  `fmd_sig` + `fmd_gamma`, PING counter, peer counts
+- `getp2pmsgdetectionkey precision` — derive a detection key at false-positive
+  rate `2^-precision` (see below; the result is secret and long-lived)
+- `rotatep2pmsginbox` — rotate the inbox prekey **and** the clue key
+- `sendp2pmsg recipient topic payload [stem] [cluekey]` — `cluekey` attaches a
+  detection flag
 - `sendp2pping inbox_pubkey [stem]` — debug echo
 
 ## WebSocket listener

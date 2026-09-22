@@ -208,6 +208,7 @@ const std::vector<std::string> RPC_COMMANDS_SAFE_FOR_FUZZING{
     "importblsctscript",
     "getp2pmsginfo",
     "rotatep2pmsginbox",
+    "getp2pmsgdetectionkey",
     "sendp2pping",
     "sendp2pmsg",
     "listp2pmsgs",

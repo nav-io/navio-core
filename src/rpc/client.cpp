@@ -372,6 +372,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "addaggregationcandidate", 1, "reward_input"},
     { "listwallettokens", 0, "mine_only"},
     { "mintp2pmsgreplykey", 0, "ttl"},
+    { "getp2pmsgdetectionkey", 0, "precision"},
     { "sendp2pmsg", 3, "stem"},
     { "listp2pmsgs", 0, "since_id"},
     { "listp2pmsgs", 1, "max_count"},
