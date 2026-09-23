@@ -488,30 +488,6 @@ public:
     /** Index from output hash to wallet transaction for O(1) lookup in GetWalletTxFromOutpoint */
     std::unordered_map<uint256, const CWalletTx*, SaltedTxidHasher> mapOutpointHashToWalletTx GUARDED_BY(cs_wallet);
 
-    /** Blinding scalars of BLSCT outputs this wallet created, keyed by output
-     * hash. Recorded when a transaction is built, and the FAST PATH for
-     * `signblsctoutput`: the authoritative source is the deterministic
-     * derivation in blsct/wallet/blinding_key.h, which is what still works
-     * after a seed-only restore (and for a wallet file that predates the
-     * output). These are secrets, and are stored exactly as secret as the
-     * per-output `gamma` already in blsctRecoveryData. */
-    std::map<uint256, BlstScalar> m_blsct_blinding_keys GUARDED_BY(cs_wallet);
-
-    //! Record the blinding scalar of an output this wallet just created.
-    void AddBLSCTBlindingKey(const uint256& output_hash, const BlstScalar& blinding_key);
-    //! Load a persisted blinding scalar (wallet open; does not write back).
-    void LoadBLSCTBlindingKey(const uint256& output_hash, const BlstScalar& blinding_key) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet)
-    {
-        m_blsct_blinding_keys[output_hash] = blinding_key;
-    }
-    //! The persisted blinding scalar for an output, if this wallet stored one.
-    std::optional<BlstScalar> GetBLSCTBlindingKey(const uint256& output_hash) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet)
-    {
-        auto it = m_blsct_blinding_keys.find(output_hash);
-        if (it == m_blsct_blinding_keys.end()) return std::nullopt;
-        return it->second;
-    }
-
     typedef std::multimap<int64_t, CWalletTx*> TxItems;
     TxItems wtxOrdered;
 

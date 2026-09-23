@@ -63,6 +63,17 @@ BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid,
     return k;
 }
 
+uint256 OutputAuthDigest(const std::string_view message)
+{
+    CSHA256 h;
+    h.Write(reinterpret_cast<const unsigned char*>(OUTPUT_AUTH_DOMAIN.data()), OUTPUT_AUTH_DOMAIN.size());
+    h.Write(reinterpret_cast<const unsigned char*>(message.data()), message.size());
+
+    uint256 digest;
+    h.Finalize(digest.begin());
+    return digest;
+}
+
 std::optional<Outid> CanonicalAnchor(const std::vector<COutPoint>& outpoints)
 {
     std::optional<Outid> anchor;

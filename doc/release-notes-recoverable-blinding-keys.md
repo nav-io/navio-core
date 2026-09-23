@@ -15,9 +15,27 @@ confidential output to whoever created it.
 ```
 
 `blindingkey` is the output's ephemeral key, the point `k*G`, which is also the
-key consensus verifies that output's ownership signature against. The message
-is signed exactly as given — no length prefix and no hashing beyond what the
-BLS scheme does — so it verifies with a plain BLS verify against `blindingkey`.
+key consensus verifies that output's ownership signature against.
+
+What is signed is **not** the message itself but
+
+```
+digest = sha256("navio-blsct-output-auth/v1" || message)
+```
+
+with the 26-byte domain taken as raw ASCII and no NUL terminator. A verifier
+recomputes that digest and does a plain BLS verify of `signature` against
+`blindingkey`. The layout is normative and shared with navio-sdk; it is pinned
+by `output_auth_digest_vector` in `src/test/blsct/wallet/blinding_key_tests.cpp`.
+
+The domain prefix is not decoration. Consensus verifies a signature under an
+output's `ephemeralKey` — the same point this RPC signs with — over that
+output's 32-byte hash. Signing caller-chosen bytes would therefore turn the RPC
+into a signing oracle for a consensus key: a caller could pass a 32-byte
+"message" that is really an output hash and get back a consensus-valid output
+signature. Hashing with a domain prefix means the signed value is always a
+sha256 output, so producing a signature over a *chosen* output hash needs a
+sha256 preimage.
 
 The RPC refuses on a locked wallet, on an output the wallet did not create, and
 on a transaction the wallet does not have (recovery needs the transaction's
@@ -48,8 +66,15 @@ partial rescan.
 
 ### Notes
 
-- The scalar is a secret of the sender. It is never logged, and a signature
-  under it proves only who *created* the output, not who owns the funds now.
+- The scalar is a secret of the sender. It is never logged, never stored, and a
+  signature under it proves only who *created* the output, not who owns the
+  funds now. `signblsctoutput` re-derives it from the seed on every call: an
+  earlier revision of this feature kept a persisted copy as a fast path, but
+  the wallet database writes such records in the clear even in an encrypted
+  wallet, which would have put the signing authority for every output the
+  wallet ever made into a stolen `wallet.dat`. Deriving instead costs at most
+  16 scalar multiplications. Wallets written by that earlier revision have the
+  plaintext records deleted on first open by this version.
 - Outputs built with an explicitly supplied blinding key keep that key and stay
   unrecoverable. Aggregation cover candidates deliberately take this path: the
   scalars of one wallet's derived outputs share a derivation path, so making

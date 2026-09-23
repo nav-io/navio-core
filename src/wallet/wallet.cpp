@@ -2209,20 +2209,6 @@ bool CWallet::CanGetAddresses(bool internal) const
     return false;
 }
 
-void CWallet::AddBLSCTBlindingKey(const uint256& output_hash, const BlstScalar& blinding_key)
-{
-    LOCK(cs_wallet);
-    // Never log the scalar itself: it is the secret that proves authorship of
-    // the output.
-    m_blsct_blinding_keys[output_hash] = blinding_key;
-    if (!WalletBatch(GetDatabase()).WriteBLSCTBlindingKey(output_hash, blinding_key)) {
-        // Not fatal: the scalar is only the fast path, and
-        // blsct::DeriveBlindingKey recomputes it from the seed. Keep the
-        // in-memory copy and warn rather than failing the send.
-        WalletLogPrintf("%s: failed to persist the blinding key of output %s; recovery will fall back to the seed derivation\n", __func__, output_hash.ToString());
-    }
-}
-
 void CWallet::SetWalletFlag(uint64_t flags)
 {
     LOCK(cs_wallet);

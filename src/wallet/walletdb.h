@@ -284,8 +284,6 @@ public:
     //! The blinding scalar of a BLSCT output this wallet created, keyed by
     //! output hash. Fast path for `signblsctoutput`; the derivation in
     //! blsct/wallet/blinding_key.h is the seed-restore fallback.
-    bool WriteBLSCTBlindingKey(const uint256& output_hash, const BlstScalar& blinding_key);
-    bool EraseBLSCTBlindingKey(const uint256& output_hash);
 
     bool WriteBestBlock(const CBlockLocator& locator);
     bool ReadBestBlock(CBlockLocator& locator);

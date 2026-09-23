@@ -206,14 +206,6 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
             throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
         }
 
-        // Persist the blinding scalars of the outputs just built, so
-        // `signblsctoutput` has a fast path that does not need to re-derive.
-        // Done before any broadcast attempt: the outputs exist either way, and
-        // the derivation fallback covers whatever fails to store.
-        for (const auto& [output_hash, blinding_key] : res->blindingKeys) {
-            wallet.AddBLSCTBlindingKey(output_hash, blinding_key);
-        }
-
         // Refuse to commit a transaction whose staked commitment already exists
         // in the chain's commitment set. Consensus would reject it in a block
         // (bad-txns-duplicate-staked-commitment) and mempool acceptance would
@@ -5032,8 +5024,10 @@ RPCHelpMan signblsctoutput()
         "exactly what a refund claim needs: the person who paid is the person entitled to the reversal.\n"
         "\nOnly outputs created by a wallet running this feature can be signed for. Outputs created\n"
         "earlier used a random blinding scalar that was discarded and is gone for good.\n"
-        "\nThe message is signed exactly as given: no length prefix and no hashing beyond what the BLS\n"
-        "scheme does, so it verifies with a plain BLS verify against the returned blindingkey.\n",
+        "\nWhat is signed is sha256(\"navio-blsct-output-auth/v1\" || message), NOT the message itself.\n"
+        "The domain prefix is what keeps this from being a signing oracle for a consensus key: every\n"
+        "BLSCT output carries a signature under this same key over its 32-byte output hash, so signing\n"
+        "caller-chosen bytes would let a caller obtain one. Verifiers must hash the same way.\n",
         {
             {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The id of the transaction holding the output."},
             {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The index of the output within that transaction."},
@@ -5091,23 +5085,17 @@ RPCHelpMan signblsctoutput()
 
             std::optional<BlstScalar> blindingKey;
 
-            // Fast path: the scalar this wallet stored when it built the
-            // output. Verified against the on-chain point before use, so a
-            // stale or mismatched record falls through instead of producing a
-            // signature that verifies against nothing.
-            if (auto stored = pwallet->GetBLSCTBlindingKey(out.GetHash())) {
-                if (blsct::PrivateKey(*stored).GetPoint() == publicBlindingKey) {
-                    blindingKey = stored;
-                }
-            }
-
-            // Fallback: re-derive from the wallet seed. This is the path that
-            // survives a seed-only restore, and the one that tolerates the
-            // output having moved: block aggregation merges every non-coinbase
-            // transaction of a block into one, so neither the output's index
-            // nor the position of the input it was derived from is the one the
-            // sender assigned.
-            if (!blindingKey) {
+            // Always re-derived from the wallet seed. An earlier revision kept
+            // a persisted copy as a fast path, but the scalar is the authority
+            // that signs for the output and the wallet database stores it in
+            // the clear, so the record was dropped: deriving costs at most
+            // MAX_OUTPUT_SEARCH scalar multiplications when the canonical
+            // anchor hits. This is also the path that survives a seed-only
+            // restore, and the one that tolerates the output having moved:
+            // block aggregation merges every non-coinbase transaction of a
+            // block into one, so neither the output's index nor the position
+            // of the input it was derived from is the one the sender assigned.
+            {
                 blsct::KeyMan* blsct_km = pwallet->GetBLSCTKeyMan();
                 if (!blsct_km) {
                     throw JSONRPCError(RPC_WALLET_ERROR, "This wallet has no BLSCT key manager");
@@ -5137,7 +5125,11 @@ RPCHelpMan signblsctoutput()
             }
 
             const blsct::PrivateKey key{*blindingKey};
-            const blsct::Message msg(message.begin(), message.end());
+            // Domain-separated and hashed: see blsct::OutputAuthDigest for why
+            // signing the caller's bytes directly would hand out consensus
+            // signatures.
+            const uint256 digest{blsct::OutputAuthDigest(message)};
+            const blsct::Message msg(digest.begin(), digest.end());
 
             UniValue result(UniValue::VOBJ);
             result.pushKV("signature", HexStr(key.Sign(msg).GetVch()));

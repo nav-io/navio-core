@@ -142,9 +142,14 @@ struct BuiltTransaction {
     CMutableTransaction tx;
     uint256 recipientOutputHash;
     // Blinding scalars of the outputs this factory built, keyed by output
-    // hash. These are secrets; the wallet persists them as the FAST PATH for
-    // `signblsctoutput`, with blsct::DeriveBlindingKey as the seed-restore
-    // fallback. Callers that do not need them can ignore the field.
+    // hash. TEST-ONLY: no production caller reads this. The wallet
+    // deliberately does not persist the scalars -- they are the authority that
+    // signs for an output, and the wallet database stores records in the clear
+    // -- so `signblsctoutput` always re-derives through
+    // blsct::DeriveBlindingKey. What this field is for is letting a test
+    // assert that what was BUILT matches what the derivation RECOVERS, which
+    // is the property the whole scheme rests on. These are secrets: do not
+    // log them and do not write them anywhere.
     std::map<uint256, Scalar> blindingKeys;
 };
 

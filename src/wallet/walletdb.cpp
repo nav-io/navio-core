@@ -327,15 +327,14 @@ bool WalletBatch::EraseBLSCTWatchOnlyNonce(const CScript& dest)
     return EraseIC(std::make_pair(DBKeys::BLSCTWATCHNONCE, dest));
 }
 
-bool WalletBatch::WriteBLSCTBlindingKey(const uint256& output_hash, const BlstScalar& blinding_key)
-{
-    return WriteIC(std::make_pair(DBKeys::BLSCTBLINDINGKEY, output_hash), blinding_key);
-}
-
-bool WalletBatch::EraseBLSCTBlindingKey(const uint256& output_hash)
-{
-    return EraseIC(std::make_pair(DBKeys::BLSCTBLINDINGKEY, output_hash));
-}
+// There is deliberately no WriteBLSCTBlindingKey(), and no eraser either: the
+// blinding scalar is the authority that signs for an output, and WriteIC()
+// stores it in the clear even in an encrypted wallet, so a stolen wallet.dat
+// would hand over the signing key for every output this wallet ever made. It
+// is derivable from the seed at a cost of at most MAX_OUTPUT_SEARCH scalar
+// multiplications, which is not worth a plaintext secret at rest. Rows written
+// by earlier builds of this feature are deleted during load (see
+// LoadLegacyWalletRecords), which is the only place that key is touched now.
 
 bool WalletBatch::WriteBestBlock(const CBlockLocator& locator)
 {
@@ -1251,17 +1250,34 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
     });
     result = std::max(result, blsct_watch_nonce_res.m_result);
 
+    // Pre-release builds of recoverable blinding keys persisted the scalar in
+    // the clear. Collect any such rows and delete them below: leaving them in
+    // place would keep the secret at rest in an otherwise encrypted wallet.
+    std::vector<uint256> legacy_blinding_keys;
     LoadResult blsct_blinding_key_res = LoadRecords(pwallet, batch, DBKeys::BLSCTBLINDINGKEY,
-        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        [&legacy_blinding_keys] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
         uint256 output_hash;
         key >> output_hash;
-        BlstScalar blinding_key;
-        value >> blinding_key;
-        LOCK(pwallet->cs_wallet);
-        pwallet->LoadBLSCTBlindingKey(output_hash, blinding_key);
+        legacy_blinding_keys.push_back(output_hash);
         return DBErrors::LOAD_OK;
     });
     result = std::max(result, blsct_blinding_key_res.m_result);
+    if (!legacy_blinding_keys.empty()) {
+        pwallet->WalletLogPrintf("Removing %u plaintext BLSCT blinding key record(s) written by an earlier build; "
+                                 "the scalars remain derivable from the wallet seed\n",
+                                 (unsigned)legacy_blinding_keys.size());
+        for (const uint256& output_hash : legacy_blinding_keys) {
+            // A failure here leaves a stale secret in the file, which is worth
+            // a warning -- but not worth refusing to open the wallet over, so
+            // no DBErrors escalation: the rows only exist in wallets written
+            // by a pre-release build of this feature.
+            if (!batch.Erase(std::make_pair(DBKeys::BLSCTBLINDINGKEY, output_hash))) {
+                pwallet->WalletLogPrintf("Warning: failed to remove a plaintext BLSCT blinding key record; "
+                                         "it will be retried on the next open\n");
+                break;
+            }
+        }
+    }
 
     // Load keypool
     LoadResult pool_res = LoadRecords(pwallet, batch, DBKeys::POOL,

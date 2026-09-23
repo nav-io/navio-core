@@ -5,6 +5,7 @@
 #include <blsct/wallet/blinding_key.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
+#include <crypto/sha256.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <txdb.h>
@@ -76,6 +77,53 @@ BOOST_AUTO_TEST_CASE(normative_test_vector)
     BOOST_CHECK_EQUAL(
         HexStr(blsct::DeriveBlindingKey(seed, outid, 1).GetVch()),
         "41d3910421dc8f3b19079bdd9d9f8769e3ed691fabe978dc6dd2aa0f4448e2c1");
+}
+
+// signblsctoutput signs this digest, never the caller's bytes. The layout is
+// normative and shared with navio-sdk, so it is pinned the same way the
+// derivation is.
+BOOST_AUTO_TEST_CASE(output_auth_digest_vector)
+{
+    BOOST_CHECK_EQUAL(blsct::OUTPUT_AUTH_DOMAIN.size(), 26U);
+
+    // Single sha256 over the domain followed by the raw message bytes -- the
+    // same construction the key derivation uses, not Bitcoin's sha256d.
+    const auto sha256_of = [](const std::string& in) {
+        uint256 out;
+        CSHA256().Write(reinterpret_cast<const unsigned char*>(in.data()), in.size()).Finalize(out.begin());
+        return out;
+    };
+    const std::string domain{blsct::OUTPUT_AUTH_DOMAIN};
+    BOOST_CHECK_EQUAL(blsct::OutputAuthDigest("").GetHex(), sha256_of(domain).GetHex());
+    BOOST_CHECK_EQUAL(blsct::OutputAuthDigest("navio-hl-refund/v1|abc|0|note").GetHex(),
+                      sha256_of(domain + "navio-hl-refund/v1|abc|0|note").GetHex());
+
+    // Distinct messages give distinct digests, and the domain is really part
+    // of the preimage: a message that spells the domain out itself does not
+    // collide with the empty message.
+    BOOST_CHECK(blsct::OutputAuthDigest("a") != blsct::OutputAuthDigest("b"));
+    BOOST_CHECK(blsct::OutputAuthDigest(std::string{blsct::OUTPUT_AUTH_DOMAIN}) !=
+                blsct::OutputAuthDigest(""));
+}
+
+// The reason the digest exists: consensus verifies a signature under an
+// output's ephemeralKey -- the same point signblsctoutput signs with -- over
+// that output's 32-byte hash. If the RPC signed caller-chosen bytes, a caller
+// could pass an out_hash as the "message" and get a consensus-valid output
+// signature back. Hashing means the signed value is always a sha256 output, so
+// hitting a chosen out_hash needs a preimage.
+BOOST_AUTO_TEST_CASE(output_auth_digest_is_not_a_chosen_hash)
+{
+    const uint256 target = OutidOfRepeatedByte(0xcd).ToUint256();
+
+    // The obvious oracle attempt: hand the RPC the 32 raw bytes of the hash it
+    // wants signed. What gets signed is not those bytes.
+    const std::string as_message(reinterpret_cast<const char*>(target.begin()), target.size());
+    BOOST_CHECK(blsct::OutputAuthDigest(as_message) != target);
+
+    // And the digest is 32 bytes, so it is the same shape as an out_hash --
+    // the separation is preimage resistance, not a length mismatch.
+    BOOST_CHECK_EQUAL(blsct::OutputAuthDigest(as_message).size(), target.size());
 }
 
 // The scalar is the sha256 digest read big-endian and reduced mod the group

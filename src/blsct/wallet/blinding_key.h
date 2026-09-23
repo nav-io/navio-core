@@ -26,6 +26,7 @@
 #include <blsct/arith/blst/blst.h>
 #include <primitives/transaction.h>
 #include <span.h>
+#include <uint256.h>
 
 #include <cstdint>
 #include <optional>
@@ -36,6 +37,10 @@ namespace blsct {
 
 //! ASCII domain separator. Exactly 23 bytes, hashed WITHOUT a NUL terminator.
 inline constexpr std::string_view BLINDING_KEY_DOMAIN{"navio-blsct-blinding/v1"};
+
+//! ASCII domain separator for authorship signatures (`signblsctoutput`).
+//! Exactly 26 bytes, hashed WITHOUT a NUL terminator.
+inline constexpr std::string_view OUTPUT_AUTH_DOMAIN{"navio-blsct-output-auth/v1"};
 
 //! The HD seed scalar is hashed as 32 bytes, big-endian, zero-padded.
 inline constexpr size_t BLINDING_KEY_SEED_SIZE{32};
@@ -79,6 +84,27 @@ inline constexpr uint32_t MAX_OUTPUT_SEARCH{16};
 //! the output anyone-can-spend, so it fails loudly rather than carrying a
 //! retry path that can never be exercised.
 BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid, uint32_t counter);
+
+//! The digest `signblsctoutput` signs for `message`:
+//!
+//!   digest = sha256("navio-blsct-output-auth/v1" || message)
+//!
+//! Signing the caller's bytes directly would make the RPC a signing oracle for
+//! a CONSENSUS key. Every BLSCT output commits to a signature under its own
+//! `ephemeralKey` -- the very point k*G this signs with -- over the 32-byte
+//! `out_hash` (verification.cpp aggregates the pair). A caller who could pick
+//! the signed bytes could therefore ask for a valid output signature by
+//! handing over a 32-byte "message" that is really an out_hash.
+//!
+//! Hashing with a domain prefix closes that: the signed value is always
+//! sha256 output, so producing a signature over a CHOSEN out_hash needs a
+//! sha256 preimage. A bare prefix would not be enough on its own -- it only
+//! makes the collision improbable rather than preimage-hard -- and a
+//! fixed-length digest also keeps the signed value independent of the
+//! message's length.
+//!
+//! NORMATIVE and shared with navio-sdk: the byte layout must not change.
+uint256 OutputAuthDigest(std::string_view message);
 
 //! The canonical anchor of a transaction: the lexicographically smallest
 //! outid among `outpoints`, comparing the 32 bytes in INTERNAL order (which

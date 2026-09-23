@@ -600,10 +600,19 @@ std::optional<std::vector<unsigned char>> KeyMan::GetBlindingSeed() const
         // GetVch() untrimmed is exactly the 32-byte big-endian zero-padded
         // form the derivation specifies.
         auto seed = GetMasterSeedKey().GetScalar().GetVch();
-        if (seed.size() != BLINDING_KEY_SEED_SIZE) return std::nullopt;
+        if (seed.size() != BLINDING_KEY_SEED_SIZE) {
+            // Returning nullopt here makes the caller fall back to a random,
+            // permanently unrecoverable blinding key, so say so rather than
+            // failing silently.
+            LogPrintf("blsct: blinding seed is %u bytes, expected %u; outputs built now will NOT be recoverable\n",
+                      (unsigned)seed.size(), (unsigned)BLINDING_KEY_SEED_SIZE);
+            return std::nullopt;
+        }
         return seed;
-    } catch (const std::exception&) {
-        // No HD chain, or the seed key is not in the store.
+    } catch (const std::exception& e) {
+        // No HD chain, or the seed key is not in the store. Same consequence:
+        // the outputs built now cannot be recovered later.
+        LogPrintf("blsct: no blinding seed available (%s); outputs built now will NOT be recoverable\n", e.what());
         return std::nullopt;
     }
 }
