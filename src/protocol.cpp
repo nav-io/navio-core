@@ -51,6 +51,13 @@ const char* SENDTXRCNCL = "sendtxrcncl";
 const char* GETOUTPUTDATA = "getoutputdata";
 const char* P2PMSG = "p2pmsg";
 const char* DP2PMSG = "dp2pmsg";
+// Both fit CMessageHeader::COMMAND_SIZE (12). A longer name is silently dead on
+// the wire -- as GETOUTPUTDATA above (13 chars) demonstrates.
+static_assert(sizeof("getp2pmsgs") - 1 <= 12, "net message type exceeds COMMAND_SIZE");
+static_assert(sizeof("p2pmsgs") - 1 <= 12, "net message type exceeds COMMAND_SIZE");
+const char* P2PMSGCHAL = "p2pmsgchal";
+const char* GETP2PMSGS = "getp2pmsgs";
+const char* P2PMSGS = "p2pmsgs";
 } // namespace NetMsgType
 
 /** All known message types. Keep this in the same order as the list of
@@ -96,6 +103,9 @@ const static std::vector<std::string> g_all_net_message_types{
     NetMsgType::GETOUTPUTDATA,
     NetMsgType::P2PMSG,
     NetMsgType::DP2PMSG,
+    NetMsgType::P2PMSGCHAL,
+    NetMsgType::GETP2PMSGS,
+    NetMsgType::P2PMSGS,
 };
 
 CMessageHeader::CMessageHeader(const MessageStartChars& pchMessageStartIn, const char* pszCommand, unsigned int nMessageSizeIn)
@@ -212,6 +222,7 @@ static std::string serviceFlagToStr(size_t bit)
     case NODE_P2P_V2:          return "P2P_V2";
     case NODE_P2PMSG:          return "P2PMSG";
     case NODE_P2PMSG_LEAF:     return "P2PMSG_LEAF";
+    case NODE_P2PMSG_ARCHIVE:  return "P2PMSG_ARCHIVE";
     // Not using default, so we get warned when a case is missing
     }
 

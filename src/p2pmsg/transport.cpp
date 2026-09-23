@@ -270,10 +270,35 @@ enqueue_decrypt:
     return WireResult::Enqueued;
 }
 
+void Transport::SetArchiveSink(ArchiveFn fn)
+{
+    LOCK(m_archive_mutex);
+    m_has_archive.store(static_cast<bool>(fn), std::memory_order_release);
+    m_archive = std::move(fn);
+}
+
 void Transport::HandleJob(const Job& job)
 {
     Envelope env;
     if (!ParseEnvelope({job.buf.data(), job.len}, env)) return;
+
+    // Archive the flagged envelope before doing anything with its contents. It
+    // is retained whether or not WE can decrypt it -- the whole point is to
+    // hold ciphertext for somebody else. This runs here, on a worker, rather
+    // than in OnWire: the net thread must never block on a disk write. A
+    // message dropped because the worker ring was full is therefore not
+    // archived, which is correct -- it was not relayed either.
+    if (!env.flag.empty() && m_has_archive.load(std::memory_order_acquire)) {
+        LOCK(m_archive_mutex);
+        if (m_archive) {
+            // Both spans built explicitly: libc++ 14 (the Ubuntu 22.04 CI
+            // compiler) ships no std::span range constructor, so env.flag,
+            // being a std::vector, does not convert on its own.
+            m_archive(Now(), env.kind,
+                      std::span<const uint8_t>{env.flag.data(), env.flag.size()},
+                      std::span<const uint8_t>{job.buf.data(), job.len});
+        }
+    }
 
     // The kind byte is bound as AEAD associated data, so decryption also
     // verifies the kind was not altered in flight.

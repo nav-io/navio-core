@@ -141,6 +141,15 @@ struct InboundMessage {
 };
 using MessageHandler = std::function<void(const InboundMessage&)>;
 
+//! Sink for FLAGGED envelopes this node relayed, so a peer that was offline can
+//! retrieve them later (see p2pmsg/archive.h). Receives the envelope exactly as
+//! it arrived on the wire -- ciphertext, undecrypted, and undecryptable by this
+//! node in the general case. Called on a WORKER thread, never the net thread,
+//! because it writes to disk.
+using ArchiveFn = std::function<void(int64_t received_at, uint8_t kind,
+                                     std::span<const uint8_t> flag,
+                                     std::span<const uint8_t> envelope)>;
+
 /**
  * Owns the node's inbound session key, the worker pool feeding heavy crypto,
  * the replay cache, and the per-kind feature handlers. The net thread calls
@@ -238,6 +247,10 @@ public:
     //! it can test every future flag at that precision until the next rotation.
     //! Empty when precision is 0 or above FMD_GAMMA.
     std::vector<uint8_t> FmdDetectionKey(size_t precision) const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! Install a sink for flagged envelopes. Call before the node is live.
+    //! Without one, flags are still relayed and verified but nothing is kept.
+    void SetArchiveSink(ArchiveFn fn) EXCLUSIVE_LOCKS_REQUIRED(!m_archive_mutex);
 
     //! Rotate the inbox prekey now: the current prekey priv moves into the grace
     //! ring (trimmed to Options::prekey_grace_keys), a fresh prekey becomes
@@ -431,6 +444,12 @@ private:
     blsct::PublicKey m_inbox_pub GUARDED_BY(m_inbox_mutex);
     //! Identity's signature over m_inbox_pub.GetVch(), published in the bundle.
     blsct::Signature m_prekey_sig GUARDED_BY(m_inbox_mutex);
+    //! Sink for flagged envelopes, if this node archives. The atomic lets the
+    //! common case (no archive, or an unflagged envelope) skip the lock.
+    mutable Mutex m_archive_mutex;
+    ArchiveFn m_archive GUARDED_BY(m_archive_mutex);
+    std::atomic<bool> m_has_archive{false};
+
     //! FMD root secret and the identity's signature over the derived clue key.
     //! Rotated with the prekey, for the same reason: both are contact material
     //! whose compromise window should be bounded by the epoch.

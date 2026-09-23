@@ -285,6 +285,25 @@ extern const char* P2PMSG;
  * The dp2pmsg message is the Dandelion++ stem-phase variant of p2pmsg.
  */
 extern const char* DP2PMSG;
+/**
+ * p2pmsgchal carries a random per-connection value an archiving node
+ * issues unsolicited after the version handshake. A getp2pmsgs stamp has to
+ * commit to it, which is what stops one grind from being replayed on every
+ * connection and at every archive node for the length of its validity window.
+ */
+extern const char* P2PMSGCHAL;
+/**
+ * getp2pmsgs asks an archiving peer for the flagged p2pmsg envelopes it
+ * relayed, filtered by a fuzzy-message-detection key the requester supplies.
+ * Carries its own proof of work, because the scan it asks for costs the
+ * serving node real CPU.
+ */
+extern const char* GETP2PMSGS;
+/**
+ * p2pmsgs is the response to getp2pmsgs: the matching envelopes, plus a cursor
+ * and whether the requested window was scanned to the end.
+ */
+extern const char* P2PMSGS;
 }; // namespace NetMsgType
 
 /* Get a vector of all valid message types (see above) */
@@ -339,6 +358,15 @@ enum ServiceFlags : uint64_t {
     // that relays should set NODE_P2PMSG (which already implies delivery), not
     // this bit. Navio-specific; occupies a reserved-experiment bit.
     NODE_P2PMSG_LEAF = (1 << 25),
+
+    // NODE_P2PMSG_ARCHIVE advertises that the node RETAINS the flagged p2pmsg
+    // envelopes it relays and will serve them back on getp2pmsgs, so a peer
+    // that was offline can pick up what it missed. It says nothing about relay
+    // (an archiving node will normally also set NODE_P2PMSG). The node keeps
+    // ciphertext only and learns who an envelope is for only to the extent a
+    // requester's detection key reveals it -- which is deliberately fuzzy, see
+    // p2pmsg/fmd.h. Navio-specific; occupies a reserved-experiment bit.
+    NODE_P2PMSG_ARCHIVE = (1 << 26),
 
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the
