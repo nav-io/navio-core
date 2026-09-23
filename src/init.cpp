@@ -623,6 +623,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-torcontrol=<ip>:<port>", strprintf("Tor control host and port to use if onion listening enabled (default: %s). If no port is specified, the default port of %i will be used.", DEFAULT_TOR_CONTROL, DEFAULT_TOR_CONTROL_PORT), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-torpassword=<pass>", "Tor control port password (default: empty)", ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::CONNECTION);
     argsman.AddArg("-natpmp", strprintf("Use NAT-PMP to map the listening port (default: %s)", DEFAULT_NATPMP ? "1 when listening and no -proxy" : "0"), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pwsbind=<addr>[:<port>]", "Additionally listen on the given address for P2P connections carried over WebSocket (RFC 6455), so that browser-based clients can connect as ordinary inbound peers. Use [host]:port notation for IPv6. The listener speaks plain ws:// only; front it with a TLS-terminating reverse proxy for wss://. Can be specified multiple times (default: none)", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-whitebind=<[permissions@]addr>", "Bind to the given address and add permission flags to the peers connecting to it. "
         "Use [host]:port notation for IPv6. Allowed permissions: " + Join(NET_PERMISSIONS_DOC, ", ") + ". "
         "Specify multiple permissions separated by commas (default: download,noban,mempool,relay). Can be specified multiple times.", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -796,6 +797,10 @@ void InitParameterInteraction(ArgsManager& args)
     if (args.IsArgSet("-whitebind")) {
         if (args.SoftSetBoolArg("-listen", true))
             LogPrintf("%s: parameter interaction: -whitebind set -> setting -listen=1\n", __func__);
+    }
+    if (args.IsArgSet("-p2pwsbind")) {
+        if (args.SoftSetBoolArg("-listen", true))
+            LogPrintf("%s: parameter interaction: -p2pwsbind set -> setting -listen=1\n", __func__);
     }
 
     if (args.IsArgSet("-connect") || args.GetIntArg("-maxconnections", DEFAULT_MAX_PEER_CONNECTIONS) <= 0) {
@@ -1019,8 +1024,8 @@ bool AppInitParameterInteraction(const ArgsManager& args)
         return InitError(_("Cannot set -forcednsseed to true when setting -dnsseed to false."));
     }
 
-    // -bind and -whitebind can't be set when not listening
-    size_t nUserBind = args.GetArgs("-bind").size() + args.GetArgs("-whitebind").size();
+    // -bind, -whitebind and -p2pwsbind can't be set when not listening
+    size_t nUserBind = args.GetArgs("-bind").size() + args.GetArgs("-whitebind").size() + args.GetArgs("-p2pwsbind").size();
     if (nUserBind != 0 && !args.GetBoolArg("-listen", DEFAULT_LISTEN)) {
         return InitError(Untranslated("Cannot set -bind or -whitebind together with -listen=0"));
     }
@@ -1381,6 +1386,14 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         std::string bind_socket_addr = socket_addr.substr(0, socket_addr.rfind('='));
         if (!SplitHostPort(bind_socket_addr, port_out, host_out)) {
             return InitError(InvalidPortErrMsg("-bind", socket_addr));
+        }
+    }
+
+    for (const std::string& socket_addr : args.GetArgs("-p2pwsbind")) {
+        std::string host_out;
+        uint16_t port_out{0};
+        if (!SplitHostPort(socket_addr, port_out, host_out)) {
+            return InitError(InvalidPortErrMsg("-p2pwsbind", socket_addr));
         }
     }
 
@@ -2477,6 +2490,14 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         bilingual_str error;
         if (!NetWhitebindPermissions::TryParse(strBind, whitebind, error)) return InitError(error);
         connOptions.vWhiteBinds.push_back(whitebind);
+    }
+
+    for (const std::string& bind_arg : args.GetArgs("-p2pwsbind")) {
+        const std::optional<CService> bind_addr{Lookup(bind_arg, default_bind_port, /*fAllowLookup=*/false)};
+        if (!bind_addr.has_value()) {
+            return InitError(ResolveErrMsg("p2pwsbind", bind_arg));
+        }
+        connOptions.vWsBinds.push_back(bind_addr.value());
     }
 
     // If the user did not specify -bind= or -whitebind= then we bind

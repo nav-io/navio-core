@@ -137,6 +137,7 @@ add_executable(test_navio
   sigopcount_tests.cpp
   skiplist_tests.cpp
   sock_tests.cpp
+  sock_ws_tests.cpp
   span_tests.cpp
   streams_tests.cpp
   sync_tests.cpp

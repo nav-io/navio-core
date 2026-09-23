@@ -22,6 +22,7 @@ add_library(navio_util STATIC EXCLUDE_FROM_ALL
   serfloat.cpp
   signalinterrupt.cpp
   sock.cpp
+  sock_ws.cpp
   spanparsing.cpp
   strencodings.cpp
   string.cpp
