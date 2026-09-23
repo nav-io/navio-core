@@ -49,6 +49,38 @@ moment the transaction was built; nothing about it is stored anywhere or
 derivable from the seed. `signblsctoutput` fails cleanly on them. Recovery
 applies only to outputs created by a wallet running this version or later.
 
+### Generation
+
+The derivation is otherwise a pure function of `(seed, anchor, ordinal)`, and a
+wallet that rebuilds a transaction over the same inputs — abandon or evict and
+resend, with coin selection being deterministic — would derive the **same** `k`
+for a **different** amount. `k` seeds `nonce = vk * k`, from which the range
+proof takes gamma and every blinding scalar, so two such published proofs would
+reuse the prover's entire randomness and leak the committed values.
+
+Each build therefore also commits to a **generation**: a per-anchor counter the
+building wallet keeps and bumps on every build that reuses an anchor. It is
+persisted (`blsctblindinggen`) and claimed once per build, before the outputs
+are materialised, so a crash burns a generation rather than repeating one. The
+counter is not a secret — it reveals nothing about any key — so unlike the
+scalar it is stored in the clear.
+
+Recovery cannot read that counter after a seed-only restore, so it searches:
+generations `0..31` for each candidate anchor and ordinal. The common case is
+still a single multiplication, since an output built by a wallet that never
+rebuilt is generation 0, ordinal 0 on the canonical anchor.
+
+**What this does and does not cover.** It covers one wallet rebuilding over one
+input set, which is the case that occurs in normal operation. It does **not**
+cover two wallets restored from the same seed: they share no counter, both
+start at generation 0, and spending the same inputs from both derives the same
+`k`. Do not run two wallets on one seed and spend from both.
+
+If the counter cannot be persisted, the wallet falls back to a **random,
+unrecoverable** blinding key for that output and logs it, rather than deriving
+one it cannot prove is fresh. Losing recoverability is a lost fast path; reusing
+a scalar would lose the amount.
+
 ### Anchor
 
 The derivation is keyed on the transaction's *anchor* input: the lexicographically smallest

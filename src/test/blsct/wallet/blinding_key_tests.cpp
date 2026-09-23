@@ -14,6 +14,7 @@
 #include <wallet/wallet.h>
 
 #include <algorithm>
+#include <set>
 #include <boost/test/unit_test.hpp>
 
 BOOST_AUTO_TEST_SUITE(blsct_blinding_key_tests)
@@ -56,7 +57,8 @@ SeededWallet MakeWallet(interfaces::Chain* chain, const std::vector<unsigned cha
 // The normative vector from the shared specification
 // (navio-hl-bridge docs/BLINDING-KEY-RECOVERY.md). navio-sdk tests the same
 // two values. It pins the exact byte layout of the hashed material -- domain
-// separator, seed, outid, big-endian counter, 91 bytes and nothing else -- and
+// separator, seed, outid, big-endian ordinal, big-endian generation, 95 bytes
+// and nothing else -- and
 // it is the only thing standing between the two implementations and a silent
 // divergence that would surface years later as unrecoverable outputs.
 //
@@ -69,14 +71,69 @@ BOOST_AUTO_TEST_CASE(normative_test_vector)
     const Outid outid = OutidOfRepeatedByte(0xab);
 
     BOOST_CHECK_EQUAL(blsct::BLINDING_KEY_DOMAIN.size(), 23U);
-    BOOST_CHECK_EQUAL(blsct::BLINDING_KEY_MATERIAL_SIZE, 91U);
+    BOOST_CHECK_EQUAL(blsct::BLINDING_KEY_MATERIAL_SIZE, 95U);
 
     BOOST_CHECK_EQUAL(
-        HexStr(blsct::DeriveBlindingKey(seed, outid, 0).GetVch()),
-        "6f57f45d6d6ceb748b859f3f7b16b08ee720cc91f947aab1ba4b3d825a5cb281");
+        HexStr(blsct::DeriveBlindingKey(seed, outid, 0, /*generation=*/0).GetVch()),
+        "70ea97ae2ad8845dcf73f86bd510dc7aa4cd3e6cbeddf71e5101708866a074fa");
     BOOST_CHECK_EQUAL(
-        HexStr(blsct::DeriveBlindingKey(seed, outid, 1).GetVch()),
-        "41d3910421dc8f3b19079bdd9d9f8769e3ed691fabe978dc6dd2aa0f4448e2c1");
+        HexStr(blsct::DeriveBlindingKey(seed, outid, 1, /*generation=*/0).GetVch()),
+        "4b385dd6567923dab38680aa9120ed854bfc58a4d502f7a9113741c0aa4f6b91");
+    // The generation is part of the preimage, not an afterthought appended to
+    // a hash: a different generation is a different derivation.
+    BOOST_CHECK_EQUAL(
+        HexStr(blsct::DeriveBlindingKey(seed, outid, 0, /*generation=*/1).GetVch()),
+        "63fd46abd3afbc6a1454d278fe175a1cbe186853ae3dc98c411d7a18116151ff");
+}
+
+// The reason the generation exists. k seeds `nonce = vk * k`, from which the
+// range proof takes gamma and every blinding scalar, so deriving the same k
+// for two DIFFERENT amounts reuses the prover's entire randomness and leaks
+// the committed values. The derivation is otherwise a pure function of
+// (seed, anchor, ordinal), and a wallet that rebuilds over the same inputs --
+// abandon or evict and resend, coin selection being deterministic -- hits
+// exactly that. The generation is what makes the second build differ.
+BOOST_AUTO_TEST_CASE(generation_separates_rebuilds_of_one_anchor)
+{
+    const auto seed = RepeatedByte(0x21);
+    const Outid anchor = OutidOfRepeatedByte(0x22);
+
+    // Same anchor and ordinal, successive generations: all distinct.
+    std::set<std::string> seen;
+    for (uint32_t generation = 0; generation < blsct::MAX_GENERATION_SEARCH; ++generation) {
+        const auto k = blsct::DeriveBlindingKey(seed, anchor, /*ordinal=*/0, generation);
+        BOOST_CHECK_MESSAGE(seen.insert(HexStr(k.GetVch())).second,
+                            "generation " << generation << " repeated an earlier scalar");
+    }
+    BOOST_CHECK_EQUAL(seen.size(), blsct::MAX_GENERATION_SEARCH);
+
+    // And the generation does not merely permute the ordinals: (ordinal 1,
+    // generation 0) and (ordinal 0, generation 1) are different derivations.
+    BOOST_CHECK(blsct::DeriveBlindingKey(seed, anchor, 1, 0) !=
+                blsct::DeriveBlindingKey(seed, anchor, 0, 1));
+}
+
+// Recovery has no access to the builder's counter after a seed-only restore,
+// so it searches. Every generation inside the bound is found; the first one
+// beyond it is not, which is the documented cost of the bound rather than a
+// wrong key -- a miss, never a false match.
+BOOST_AUTO_TEST_CASE(recovery_searches_generations)
+{
+    const auto seed = RepeatedByte(0x31);
+    const Outid anchor = OutidOfRepeatedByte(0x32);
+
+    CMutableTransaction tx;
+    tx.vin.emplace_back(COutPoint(anchor));
+
+    for (const uint32_t generation : {0u, 1u, 7u, blsct::MAX_GENERATION_SEARCH - 1}) {
+        const auto k = blsct::DeriveBlindingKey(seed, anchor, /*ordinal=*/2, generation);
+        const auto recovered = blsct::RecoverBlindingKey(seed, tx.vin, blsct::PrivateKey(k).GetPoint(), anchor);
+        BOOST_REQUIRE_MESSAGE(recovered.has_value(), "generation " << generation << " was not recovered");
+        BOOST_CHECK(*recovered == k);
+    }
+
+    const auto beyond = blsct::DeriveBlindingKey(seed, anchor, 2, blsct::MAX_GENERATION_SEARCH);
+    BOOST_CHECK(!blsct::RecoverBlindingKey(seed, tx.vin, blsct::PrivateKey(beyond).GetPoint(), anchor).has_value());
 }
 
 // signblsctoutput signs this digest, never the caller's bytes. The layout is
@@ -153,23 +210,23 @@ BOOST_AUTO_TEST_CASE(derivation_is_deterministic_and_separated)
     const Outid outid = OutidOfRepeatedByte(0x11);
     const Outid other_outid = OutidOfRepeatedByte(0x12);
 
-    const auto k = blsct::DeriveBlindingKey(seed, outid, 3);
+    const auto k = blsct::DeriveBlindingKey(seed, outid, 3, /*generation=*/0);
 
     // Same inputs, same scalar -- every time.
-    BOOST_CHECK(blsct::DeriveBlindingKey(seed, outid, 3) == k);
-    BOOST_CHECK(blsct::DeriveBlindingKey(seed, outid, 3) == k);
+    BOOST_CHECK(blsct::DeriveBlindingKey(seed, outid, 3, /*generation=*/0) == k);
+    BOOST_CHECK(blsct::DeriveBlindingKey(seed, outid, 3, /*generation=*/0) == k);
 
     // Each of the three components separates the derivation.
-    BOOST_CHECK(blsct::DeriveBlindingKey(seed, outid, 4) != k);
-    BOOST_CHECK(blsct::DeriveBlindingKey(seed, other_outid, 3) != k);
-    BOOST_CHECK(blsct::DeriveBlindingKey(other_seed, outid, 3) != k);
+    BOOST_CHECK(blsct::DeriveBlindingKey(seed, outid, 4, /*generation=*/0) != k);
+    BOOST_CHECK(blsct::DeriveBlindingKey(seed, other_outid, 3, /*generation=*/0) != k);
+    BOOST_CHECK(blsct::DeriveBlindingKey(other_seed, outid, 3, /*generation=*/0) != k);
 
     // A seed of the wrong length is a programming error and fails loudly
     // rather than hashing something shorter into a valid-looking scalar. This
     // is the same "fail loudly" posture the (untestable, ~2^-255) zero-scalar
     // case gets inside DeriveBlindingKey.
-    BOOST_CHECK_THROW(blsct::DeriveBlindingKey(std::vector<unsigned char>(31, 0x01), outid, 0), std::runtime_error);
-    BOOST_CHECK_THROW(blsct::DeriveBlindingKey(std::vector<unsigned char>{}, outid, 0), std::runtime_error);
+    BOOST_CHECK_THROW(blsct::DeriveBlindingKey(std::vector<unsigned char>(31, 0x01), outid, 0, /*generation=*/0), std::runtime_error);
+    BOOST_CHECK_THROW(blsct::DeriveBlindingKey(std::vector<unsigned char>{}, outid, 0, /*generation=*/0), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_CASE(recovery_matches_only_the_right_seed)
@@ -180,7 +237,7 @@ BOOST_AUTO_TEST_CASE(recovery_matches_only_the_right_seed)
 
     std::vector<CTxIn> vin{CTxIn(COutPoint(outid))};
 
-    const auto k = blsct::DeriveBlindingKey(seed, outid, 2);
+    const auto k = blsct::DeriveBlindingKey(seed, outid, 2, /*generation=*/0);
     const BlstG1Point P = blsct::PrivateKey(k).GetPoint();
 
     const auto recovered = blsct::RecoverBlindingKey(seed, vin, P);
@@ -197,7 +254,7 @@ BOOST_AUTO_TEST_CASE(recovery_matches_only_the_right_seed)
 
     // An ordinal past the search bound is out of reach by design; document
     // the bound by testing it.
-    const auto beyond = blsct::DeriveBlindingKey(seed, outid, blsct::MAX_OUTPUT_SEARCH);
+    const auto beyond = blsct::DeriveBlindingKey(seed, outid, blsct::MAX_OUTPUT_SEARCH, /*generation=*/0);
     BOOST_CHECK(!blsct::RecoverBlindingKey(seed, vin, blsct::PrivateKey(beyond).GetPoint()).has_value());
 }
 
@@ -252,7 +309,7 @@ BOOST_AUTO_TEST_CASE(recovery_finds_a_non_leading_anchor)
     for (unsigned char b = 0x60; b < 0x68; ++b) vin.emplace_back(COutPoint(OutidOfRepeatedByte(b)));
     vin.emplace_back(COutPoint(anchor));
 
-    const auto k = blsct::DeriveBlindingKey(seed, anchor, 5);
+    const auto k = blsct::DeriveBlindingKey(seed, anchor, 5, /*generation=*/0);
     const BlstG1Point P = blsct::PrivateKey(k).GetPoint();
 
     // No hint: the fallback scan finds it.
@@ -274,7 +331,7 @@ BOOST_AUTO_TEST_CASE(recovery_finds_a_non_leading_anchor)
 
     // A hint for an input that is not in vin at all, and whose ordinals do not
     // match either, still ends in a clean refusal rather than a false key.
-    const auto other = blsct::DeriveBlindingKey(seed, OutidOfRepeatedByte(0x7f), 0);
+    const auto other = blsct::DeriveBlindingKey(seed, OutidOfRepeatedByte(0x7f), 0, /*generation=*/0);
     BOOST_CHECK(!blsct::RecoverBlindingKey(seed, vin, blsct::PrivateKey(other).GetPoint(), anchor).has_value());
 }
 
@@ -367,7 +424,7 @@ BOOST_FIXTURE_TEST_CASE(recovery_after_seed_only_restore, TestingSetup)
         for (const auto& [output_hash, k] : built->blindingKeys) {
             bool matched = false;
             for (uint32_t counter = 0; counter < blsct::MAX_OUTPUT_SEARCH && !matched; ++counter) {
-                if (blsct::DeriveBlindingKey(*seed, *canonical, counter) == k) matched = true;
+                if (blsct::DeriveBlindingKey(*seed, *canonical, counter, /*generation=*/0) == k) matched = true;
             }
             BOOST_CHECK_MESSAGE(matched, "output " + output_hash.ToString() + " was not derived from the canonical anchor");
         }
@@ -440,6 +497,48 @@ BOOST_FIXTURE_TEST_CASE(recovery_after_seed_only_restore, TestingSetup)
 // An explicitly supplied blinding key is the documented opt-out: the factory
 // must use it verbatim rather than deriving, and such an output is then NOT
 // recoverable -- which is also what every pre-existing output looks like.
+// The wallet-level half of the rebuild defence: the counter the derivation is
+// keyed on is claimed once per build, never repeats for an anchor, and is
+// independent per anchor.
+BOOST_FIXTURE_TEST_CASE(blinding_generation_is_claimed_once_and_never_repeats, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    auto w = MakeWallet(m_node.chain.get(), std::vector<unsigned char>(32, 0x41));
+    LOCK(w.wallet->cs_wallet);
+
+    const Outid anchor = OutidOfRepeatedByte(0x42);
+    const Outid other = OutidOfRepeatedByte(0x43);
+
+    // Successive claims on one anchor hand out successive generations. This is
+    // what makes an abandon-and-resend over the same inputs derive a different
+    // scalar instead of reusing the first build's.
+    std::set<uint32_t> claimed;
+    for (int i = 0; i < 8; ++i) {
+        const auto generation = w.km->ReserveBlindingGeneration(anchor);
+        BOOST_REQUIRE(generation.has_value());
+        BOOST_CHECK_MESSAGE(claimed.insert(*generation).second,
+                            "generation " << *generation << " was handed out twice");
+    }
+    BOOST_CHECK_EQUAL(claimed.size(), 8U);
+    BOOST_CHECK_EQUAL(*claimed.begin(), 0U);
+
+    // Anchors are counted independently: a fresh input set starts at 0 rather
+    // than inheriting another anchor's count.
+    const auto first_other = w.km->ReserveBlindingGeneration(other);
+    BOOST_REQUIRE(first_other.has_value());
+    BOOST_CHECK_EQUAL(*first_other, 0U);
+
+    // And the scalars those generations produce really are distinct, which is
+    // the property the whole mechanism exists for.
+    const auto seed = w.km->GetBlindingSeed();
+    BOOST_REQUIRE(seed.has_value());
+    std::set<std::string> scalars;
+    for (const uint32_t generation : claimed) {
+        scalars.insert(HexStr(blsct::DeriveBlindingKey(*seed, anchor, /*ordinal=*/0, generation).GetVch()));
+    }
+    BOOST_CHECK_EQUAL(scalars.size(), claimed.size());
+}
+
 BOOST_FIXTURE_TEST_CASE(explicit_blinding_key_opts_out_of_recovery, TestingSetup)
 {
     SeedInsecureRand(SeedRand::ZEROS);

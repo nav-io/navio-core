@@ -52,7 +52,22 @@ Scalar TxFactoryBase::BlindingKeyFor(const std::optional<Scalar>& pinned, const 
     // behaviour: a random, unrecoverable key.
     if (!m_blinding_seed || !anchor) return Scalar::Rand();
 
-    return DeriveBlindingKey(*m_blinding_seed, *anchor, ordinal);
+    // The generation makes repeated builds over the same input set derive
+    // different scalars. Without a source for it there is no way to know
+    // whether this anchor has been built on before, and deriving anyway would
+    // risk reusing a scalar for a different amount -- which reuses the range
+    // proof's entire randomness. A random key loses recoverability; a reused
+    // one loses the amount. Take the random one.
+    if (!m_blinding_generation_fn) return Scalar::Rand();
+
+    auto claimed = m_claimed_generations.find(*anchor);
+    if (claimed == m_claimed_generations.end()) {
+        const auto generation = m_blinding_generation_fn(*anchor);
+        if (!generation) return Scalar::Rand();
+        claimed = m_claimed_generations.emplace(*anchor, *generation).first;
+    }
+
+    return DeriveBlindingKey(*m_blinding_seed, *anchor, ordinal, claimed->second);
 }
 
 std::optional<Outid> TxFactoryBase::CanonicalAnchorOf(const std::vector<const UnsignedInput*>& selected)
@@ -700,11 +715,12 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
     return std::nullopt;
 }
 
-std::optional<BuiltTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData, const std::optional<std::vector<unsigned char>>& blindingSeed)
+std::optional<BuiltTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData, const std::optional<std::vector<unsigned char>>& blindingSeed, BlindingGenerationFn generationFn)
 {
     auto tx = blsct::TxFactoryBase();
     tx.SetTranscriptV2(transactionData.transcript_v2);
     if (blindingSeed) tx.SetBlindingSeed(*blindingSeed);
+    if (generationFn) tx.SetBlindingGenerationFn(std::move(generationFn));
 
     if (transactionData.type == STAKED_COMMITMENT) {
         CAmount inputFromStakedCommitments = 0;

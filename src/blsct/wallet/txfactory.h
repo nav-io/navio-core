@@ -35,7 +35,10 @@ public:
     TxFactory(KeyMan* km) : km(km)
     {
         if (km) {
-            if (auto seed = km->GetBlindingSeed()) SetBlindingSeed(*seed);
+            if (auto seed = km->GetBlindingSeed()) {
+                SetBlindingSeed(*seed);
+                SetBlindingGenerationFn([km](const Outid& anchor) { return km->ReserveBlindingGeneration(anchor); });
+            }
         }
     };
 

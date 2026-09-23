@@ -138,6 +138,12 @@ struct CreateTransactionData {
 // pays the destination it was built for. BuildTx randomises output order before
 // returning, so the recipient cannot be recovered positionally by the caller;
 // it is recorded here while the build order is still known.
+//! Claims the next build generation for an anchor, persisting the bump.
+//! nullopt = could not reserve, in which case the factory falls back to a
+//! random scalar rather than reusing a derived one. See
+//! blsct::KeyMan::ReserveBlindingGeneration.
+using BlindingGenerationFn = std::function<std::optional<uint32_t>(const Outid& anchor)>;
+
 struct BuiltTransaction {
     CMutableTransaction tx;
     uint256 recipientOutputHash;
@@ -237,6 +243,16 @@ protected:
     // Scalar::Rand() and the resulting outputs are simply not recoverable --
     // exactly the behaviour every output had before this change.
     std::optional<std::vector<unsigned char>> m_blinding_seed;
+    BlindingGenerationFn m_blinding_generation_fn;
+    //! Generation claimed for each anchor during THIS build.
+    //!
+    //! The fee fixpoint materializes the same outputs repeatedly (up to
+    //! MAX_FEE_FIXPOINT_PASSES times) and coin selection may revisit an anchor
+    //! across passes. Claiming per call would burn a generation per pass and,
+    //! worse, make the built outputs disagree about which generation they used.
+    //! One claim per anchor per factory: the outputs that survive the fixpoint
+    //! are the ones the generation was claimed for.
+    mutable std::map<Outid, uint32_t> m_claimed_generations;
 
     // Next sender-assigned output ordinal. Change outputs continue the
     // sequence after everything AddOutput queued.
@@ -274,6 +290,8 @@ public:
     //! (including change). `seed` must be 32 bytes; see blinding_key.h.
     void SetBlindingSeed(const std::vector<unsigned char>& seed) { m_blinding_seed = seed; }
 
+    void SetBlindingGenerationFn(BlindingGenerationFn fn) { m_blinding_generation_fn = std::move(fn); }
+
     // Normal transfer.
     //
     // `blindingKey` defaults to std::nullopt, meaning "derive a recoverable
@@ -304,7 +322,12 @@ public:
     //! transaction carry a blinding scalar recoverable from that seed. Pass
     //! blsct::KeyMan::GetBlindingSeed(); std::nullopt keeps the old random
     //! (unrecoverable) keys.
-    static std::optional<BuiltTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData, const std::optional<std::vector<unsigned char>>& blindingSeed = std::nullopt);
+    //!
+    //! `generationFn` must accompany a seed for the outputs to actually be
+    //! derived: without it the factory falls back to random keys rather than
+    //! risk deriving the same scalar twice over one input set. Pass
+    //! blsct::KeyMan::ReserveBlindingGeneration().
+    static std::optional<BuiltTransaction> CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData, const std::optional<std::vector<unsigned char>>& blindingSeed = std::nullopt, BlindingGenerationFn generationFn = {});
 
     //! Build a deliberately UNBALANCED half-transaction for an atomic swap.
     //!

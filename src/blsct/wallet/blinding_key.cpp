@@ -14,7 +14,8 @@
 
 namespace blsct {
 
-BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid, const uint32_t counter)
+BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid, const uint32_t ordinal,
+                             const uint32_t generation)
 {
     if (seed.size() != BLINDING_KEY_SEED_SIZE) {
         throw std::runtime_error(strprintf("%s: the blinding seed must be %u bytes (got %u)",
@@ -38,10 +39,14 @@ BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid,
     std::memcpy(material + pos, outid_bytes.begin(), outid_bytes.size());
     pos += outid_bytes.size();
 
-    material[pos++] = static_cast<unsigned char>((counter >> 24) & 0xff);
-    material[pos++] = static_cast<unsigned char>((counter >> 16) & 0xff);
-    material[pos++] = static_cast<unsigned char>((counter >> 8) & 0xff);
-    material[pos++] = static_cast<unsigned char>(counter & 0xff);
+    const auto put_be32 = [&](const uint32_t v) {
+        material[pos++] = static_cast<unsigned char>((v >> 24) & 0xff);
+        material[pos++] = static_cast<unsigned char>((v >> 16) & 0xff);
+        material[pos++] = static_cast<unsigned char>((v >> 8) & 0xff);
+        material[pos++] = static_cast<unsigned char>(v & 0xff);
+    };
+    put_be32(ordinal);
+    put_be32(generation);
 
     assert(pos == BLINDING_KEY_MATERIAL_SIZE);
 
@@ -88,19 +93,25 @@ std::optional<Outid> CanonicalAnchor(const std::vector<COutPoint>& outpoints)
 }
 
 namespace {
-//! Try every ordinal below MAX_OUTPUT_SEARCH for one anchor.
+//! Try every (generation, ordinal) pair below the search bounds for one anchor.
+//!
+//! Generation is the OUTER loop so the overwhelmingly common case -- a wallet
+//! that never rebuilt on this input set, generation 0 -- is found in the first
+//! MAX_OUTPUT_SEARCH attempts rather than after a full sweep.
 std::optional<BlstScalar> TryAnchor(Span<const unsigned char> seed, const Outid& anchor, const BlstG1Point& publicBlindingKey)
 {
-    for (uint32_t counter = 0; counter < MAX_OUTPUT_SEARCH; ++counter) {
-        BlstScalar k;
-        try {
-            k = DeriveBlindingKey(seed, anchor, counter);
-        } catch (const std::exception&) {
-            // Only the (untestable) zero-scalar case gets here; skip that
-            // ordinal rather than abandoning the whole search.
-            continue;
+    for (uint32_t generation = 0; generation < MAX_GENERATION_SEARCH; ++generation) {
+        for (uint32_t ordinal = 0; ordinal < MAX_OUTPUT_SEARCH; ++ordinal) {
+            BlstScalar k;
+            try {
+                k = DeriveBlindingKey(seed, anchor, ordinal, generation);
+            } catch (const std::exception&) {
+                // Only the (untestable) zero-scalar case gets here; skip that
+                // candidate rather than abandoning the whole search.
+                continue;
+            }
+            if (PrivateKey(k).GetPoint() == publicBlindingKey) return k;
         }
-        if (PrivateKey(k).GetPoint() == publicBlindingKey) return k;
     }
     return std::nullopt;
 }
@@ -118,7 +129,7 @@ std::optional<BlstScalar> RecoverBlindingKey(Span<const unsigned char> seed,
     if (publicBlindingKey.IsZero()) return std::nullopt;
 
     // Fast path: the anchor the builder would have chosen. Normally hits on
-    // the first ordinal.
+    // the first ordinal of generation 0.
     if (canonicalAnchor) {
         if (auto k = TryAnchor(seed, *canonicalAnchor, publicBlindingKey)) return k;
     }

@@ -75,8 +75,9 @@ const std::string BLSCTWATCHMETA{"blsctwatchmeta"};
 const std::string BLSCTWATCHS{"blsctwatchs"};
 const std::string BLSCTWATCHNONCE{"blsctwatchnonce"};
 const std::string BLSCTBLINDINGKEY{"blsctblindingkey"};
+const std::string BLSCTBLINDINGGEN{"blsctblindinggen"};
 const std::unordered_set<std::string> LEGACY_TYPES{CRYPTED_KEY, CSCRIPT, DEFAULTKEY, HDCHAIN, KEYMETA, KEY, OLD_KEY, POOL, WATCHMETA, WATCHS};
-const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTWATCHMETA, BLSCTWATCHS, BLSCTMNEMONIC, CRYPTED_BLSCTMNEMONIC, BLSCTBLINDINGKEY};
+const std::unordered_set<std::string> BLSCT_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY, VIEWKEY, SPENDKEY, BLSCTKEYMETA, BLSCTWATCHMETA, BLSCTWATCHS, BLSCTMNEMONIC, CRYPTED_BLSCTMNEMONIC, BLSCTBLINDINGKEY, BLSCTBLINDINGGEN};
 const std::unordered_set<std::string> BLSCTKEY_TYPES{CRYPTED_BLSCTKEY, BLSCTKEY};
 } // namespace DBKeys
 
@@ -325,6 +326,15 @@ bool WalletBatch::WriteBLSCTWatchOnlyNonce(const CScript& dest, const blsct::Pub
 bool WalletBatch::EraseBLSCTWatchOnlyNonce(const CScript& dest)
 {
     return EraseIC(std::make_pair(DBKeys::BLSCTWATCHNONCE, dest));
+}
+
+bool WalletBatch::WriteBLSCTBlindingGeneration(const uint256& anchor, uint32_t generation)
+{
+    // Unlike the blinding scalar below, this is NOT a secret -- it is a build
+    // counter, and knowing it reveals nothing about any key. Storing it in the
+    // clear is therefore fine, and it has to be durable: a generation that is
+    // lost is a generation that gets reused.
+    return WriteIC(std::make_pair(DBKeys::BLSCTBLINDINGGEN, anchor), generation);
 }
 
 // There is deliberately no WriteBLSCTBlindingKey(), and no eraser either: the
@@ -1249,6 +1259,19 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
         return DBErrors::LOAD_OK;
     });
     result = std::max(result, blsct_watch_nonce_res.m_result);
+
+    LoadResult blsct_blinding_gen_res = LoadRecords(pwallet, batch, DBKeys::BLSCTBLINDINGGEN,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        uint256 anchor;
+        key >> anchor;
+        uint32_t generation;
+        value >> generation;
+        LOCK(pwallet->cs_wallet);
+        auto* blsct_km = pwallet->GetBLSCTKeyMan();
+        if (blsct_km) blsct_km->LoadBlindingGeneration(anchor, generation);
+        return DBErrors::LOAD_OK;
+    });
+    result = std::max(result, blsct_blinding_gen_res.m_result);
 
     // Pre-release builds of recoverable blinding keys persisted the scalar in
     // the clear. Collect any such rows and delete them below: leaving them in

@@ -617,6 +617,34 @@ std::optional<std::vector<unsigned char>> KeyMan::GetBlindingSeed() const
     }
 }
 
+std::optional<uint32_t> KeyMan::ReserveBlindingGeneration(const Outid& anchor)
+{
+    const uint256& key = anchor.ToUint256();
+
+    uint32_t generation;
+    {
+        LOCK(cs_KeyStore);
+        auto it = m_blinding_generations.find(key);
+        generation = (it == m_blinding_generations.end()) ? 0 : it->second;
+    }
+
+    // Persist the NEXT generation before handing this one out. Writing first
+    // means a crash between here and the broadcast burns a generation, which
+    // costs nothing; writing afterwards could hand the same generation out
+    // twice, which is the whole failure this guards against.
+    if (!wallet::WalletBatch(m_storage.GetDatabase()).WriteBLSCTBlindingGeneration(key, generation + 1)) {
+        LogPrintf("blsct: could not persist the blinding generation for anchor %s; "
+                  "this output will use a random, unrecoverable blinding key\n", key.ToString());
+        return std::nullopt;
+    }
+
+    {
+        LOCK(cs_KeyStore);
+        m_blinding_generations[key] = generation + 1;
+    }
+    return generation;
+}
+
 std::optional<BlstScalar> KeyMan::RecoverOutputBlindingKey(const std::vector<CTxIn>& vin, const CTxOut& out,
                                                            const std::vector<COutPoint>& ownInputs) const
 {

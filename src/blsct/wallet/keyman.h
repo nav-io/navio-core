@@ -56,6 +56,10 @@ private:
     SecureBytes m_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::vector<unsigned char> m_crypted_mnemonic_entropy GUARDED_BY(cs_KeyStore);
     std::unordered_map<CKeyID, blsct::HDChain, SaltedSipHasher> m_inactive_hd_chains GUARDED_BY(cs_KeyStore);
+    //! Per-anchor build counter for recoverable blinding keys; see
+    //! ReserveBlindingGeneration(). Not secret -- it is a counter, and it
+    //! reveals nothing about any key.
+    std::map<uint256, uint32_t> m_blinding_generations GUARDED_BY(cs_KeyStore);
     std::optional<int64_t> m_wallet_birthday;
 
     bool AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey);
@@ -293,6 +297,29 @@ public:
     //! the transaction factory can fall back to random blinding keys instead
     //! of failing the send.
     std::optional<std::vector<unsigned char>> GetBlindingSeed() const;
+
+    //! Claim the next build generation for `anchor`, persisting the bump.
+    //!
+    //! The derivation is a pure function of (seed, anchor, ordinal), so a
+    //! wallet that rebuilds over the same inputs -- abandon or evict and
+    //! resend, coin selection being deterministic -- would otherwise derive
+    //! the SAME blinding scalar for a DIFFERENT amount, and two such published
+    //! range proofs reuse the prover's whole randomness. The generation is
+    //! what makes each build distinct, so it must be claimed exactly once per
+    //! build and must survive a restart: a generation that is forgotten is a
+    //! generation that gets reused.
+    //!
+    //! Returns std::nullopt when the bump could not be persisted. The caller
+    //! must then fall back to a RANDOM scalar -- never to a derived one, which
+    //! would be the reuse this exists to prevent.
+    std::optional<uint32_t> ReserveBlindingGeneration(const Outid& anchor);
+
+    //! Wallet open; does not write back.
+    void LoadBlindingGeneration(const uint256& anchor, uint32_t generation)
+    {
+        LOCK(cs_KeyStore);
+        m_blinding_generations[anchor] = generation;
+    }
 
     //! Recover the blinding scalar of `out`, given the inputs of the
     //! transaction that contains it. std::nullopt when this wallet's seed did

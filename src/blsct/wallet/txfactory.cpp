@@ -127,7 +127,9 @@ std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wa
 
     // Derive every output's blinding scalar from the wallet seed, so the
     // sender can prove later that it created them (see blinding_key.h).
-    return TxFactoryBase::CreateTransaction(inputCandidates, transactionData, blsct_km->GetBlindingSeed());
+    return TxFactoryBase::CreateTransaction(
+        inputCandidates, transactionData, blsct_km->GetBlindingSeed(),
+        [blsct_km](const Outid& anchor) { return blsct_km->ReserveBlindingGeneration(anchor); });
 }
 
 void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit)
@@ -309,7 +311,11 @@ std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet
     if (n < 2) return std::nullopt;
 
     TxFactoryBase factory;
-    if (auto seed = blsct_km->GetBlindingSeed()) factory.SetBlindingSeed(*seed);
+    if (auto seed = blsct_km->GetBlindingSeed()) {
+        factory.SetBlindingSeed(*seed);
+        factory.SetBlindingGenerationFn(
+            [blsct_km](const Outid& anchor) { return blsct_km->ReserveBlindingGeneration(anchor); });
+    }
     // Rule A (hard cutover): build v2 proof transcripts once the next block
     // would be at/above the activation height, matching the standard send path.
     // Must be set before AddOutput, which builds the range proof under this flag.

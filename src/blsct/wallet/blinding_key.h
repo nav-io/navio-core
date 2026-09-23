@@ -45,9 +45,34 @@ inline constexpr std::string_view OUTPUT_AUTH_DOMAIN{"navio-blsct-output-auth/v1
 //! The HD seed scalar is hashed as 32 bytes, big-endian, zero-padded.
 inline constexpr size_t BLINDING_KEY_SEED_SIZE{32};
 
-//! Total hashed length: 23 (domain) + 32 (seed) + 32 (outid) + 4 (counter).
+//! Total hashed length: 23 (domain) + 32 (seed) + 32 (outid) + 4 (ordinal)
+//! + 4 (generation).
 inline constexpr size_t BLINDING_KEY_MATERIAL_SIZE{
-    BLINDING_KEY_DOMAIN.size() + BLINDING_KEY_SEED_SIZE + 32 + 4};
+    BLINDING_KEY_DOMAIN.size() + BLINDING_KEY_SEED_SIZE + 32 + 4 + 4};
+
+//! How many generations RecoverBlindingKey tries per (anchor, ordinal).
+//!
+//! The generation exists because the derivation is otherwise a pure function
+//! of (seed, anchor, ordinal), and a wallet that rebuilds a transaction from
+//! the same inputs -- abandon or evict and resend, with coin selection being
+//! deterministic -- would derive the SAME k for a DIFFERENT amount. k seeds
+//! `nonce = vk * k`, from which the range proof takes gamma and every blinding
+//! scalar, so two such published proofs would reuse the prover's entire
+//! randomness and leak the committed values. The building wallet therefore
+//! keeps a per-anchor counter and bumps it on every build that reuses an
+//! anchor (KeyMan::ReserveBlindingGeneration).
+//!
+//! Recovery cannot read that counter after a seed-only restore, so it searches
+//! instead. 32 bounds how many times one wallet can sensibly rebuild on one
+//! input set; beyond that the output is not recoverable, which is a lost fast
+//! path and never a wrong key, since every candidate is checked against the
+//! output's public point.
+//!
+//! LIMIT, stated plainly: this covers one wallet rebuilding. It does NOT cover
+//! two wallets restored from the same seed, which share no counter, both start
+//! at generation 0 and will derive the same k from the same inputs. Do not
+//! run two wallets on one seed and spend from both.
+inline constexpr uint32_t MAX_GENERATION_SEARCH{32};
 
 //! How many sender-assigned output ordinals RecoverBlindingKey tries per
 //! candidate anchor input.
@@ -65,14 +90,18 @@ inline constexpr size_t BLINDING_KEY_MATERIAL_SIZE{
 //! and the whole search is a handful of scalar multiplications.
 inline constexpr uint32_t MAX_OUTPUT_SEARCH{16};
 
-//! The deterministic blinding scalar for the `counter`-th output of a
-//! transaction anchored on the outpoint `outid`.
+//! The deterministic blinding scalar for the `ordinal`-th output of a
+//! transaction anchored on the outpoint `outid`, on build `generation`.
 //!
 //!   material = "navio-blsct-blinding/v1"          // 23 bytes ASCII, no NUL
 //!            || seed                              // 32 bytes, big-endian, zero-padded
 //!            || outid                             // 32 bytes, INTERNAL byte order
-//!            || counter                           // uint32, big-endian
+//!            || ordinal                           // uint32, big-endian
+//!            || generation                        // uint32, big-endian
 //!   k        = sha256(material) read big-endian and reduced mod r
+//!
+//! `generation` distinguishes repeated builds over the same input set; see
+//! MAX_GENERATION_SEARCH for why it has to exist.
 //!
 //! `outid` is `tx.vin[0].prevout.hash`. Note it is NOT a txid: Navio's
 //! COutPoint is a bare 32-byte hash of a serialized CTxOut (the class comment
@@ -83,7 +112,8 @@ inline constexpr uint32_t MAX_OUTPUT_SEARCH{16};
 //! ~2^-255 event that the reduction lands on zero -- a zero scalar would make
 //! the output anyone-can-spend, so it fails loudly rather than carrying a
 //! retry path that can never be exercised.
-BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid, uint32_t counter);
+BlstScalar DeriveBlindingKey(Span<const unsigned char> seed, const Outid& outid, uint32_t ordinal,
+                             uint32_t generation);
 
 //! The digest `signblsctoutput` signs for `message`:
 //!
@@ -140,9 +170,10 @@ std::optional<Outid> CanonicalAnchor(const std::vector<COutPoint>& outpoints);
 //! wallet's notion of "my own inputs" differs between building and recovering,
 //! a partial rescan being the obvious way that happens.
 //!
-//! Worst-case cost is |vin| * MAX_OUTPUT_SEARCH scalar multiplications, well
-//! under a second even for a fully aggregated block, and only paid on the
-//! explicit recovery path.
+//! Worst-case cost is |vin| * MAX_OUTPUT_SEARCH * MAX_GENERATION_SEARCH scalar
+//! multiplications, and only paid on the explicit recovery path. The common
+//! case is far cheaper: the canonical anchor and generation 0 hit first, so an
+//! output built by a wallet that never rebuilt costs a single multiplication.
 std::optional<BlstScalar> RecoverBlindingKey(Span<const unsigned char> seed,
                                              const std::vector<CTxIn>& vin,
                                              const BlstG1Point& publicBlindingKey,
