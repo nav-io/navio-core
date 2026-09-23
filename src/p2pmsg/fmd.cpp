@@ -211,7 +211,14 @@ bool FmdTest(std::span<const uint8_t> detection_key, std::span<const uint8_t> fl
     // would match every recipient -- free targeted spam into every bucket.
     if (u.IsZero() || !u.IsValid()) return false;
 
-    const BlstScalar y = ScalarFromBytes(flag.subspan(FMD_POINT_SIZE, FMD_SCALAR_SIZE));
+    // Reject a non-canonical y. SetVch() reduces mod r, so y and y + r parse
+    // to the same scalar and the flag's encoding would otherwise be malleable:
+    // a relay could rewrite those 32 bytes and the flag would still match its
+    // recipient. Re-serialising and comparing tests canonicality without
+    // hardcoding r -- GetVch() always returns the reduced form.
+    const auto y_bytes = flag.subspan(FMD_POINT_SIZE, FMD_SCALAR_SIZE);
+    const BlstScalar y = ScalarFromBytes(y_bytes);
+    if (y.GetVch() != std::vector<uint8_t>(y_bytes.begin(), y_bytes.end())) return false;
     const auto bits = flag.subspan(FMD_POINT_SIZE + FMD_SCALAR_SIZE, FMD_BITS_SIZE);
 
     const BlstG1Point g = BlstG1Point::GetBasePoint();

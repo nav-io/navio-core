@@ -262,6 +262,14 @@ BOOST_AUTO_TEST_CASE(archive_query_stamp_commits_and_costs)
     // the entire window. Pricing the budget makes the expensive query the
     // expensive one.
     BOOST_CHECK_EQUAL(ArchiveStampBits(4, 1, 24), 4U);
+
+    // The per-entry constant is priced, not just the precision product. Every
+    // entry costs a decompress and a subgroup check on top of its
+    // multiplications, so a low-precision scan is not as cheap as the bare
+    // product suggests. Pricing (precision + 2) is what this pins: on the old
+    // scan_budget x precision curve this query was 3000 units against a 4000
+    // allowance and cost the base; it now costs a bit more.
+    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 3000, 1), 5U);
     BOOST_CHECK_GT(ArchiveStampBits(4, MAX_ARCHIVE_SCAN_ENTRIES, 24),
                    ArchiveStampBits(4, 1, 24));
 }

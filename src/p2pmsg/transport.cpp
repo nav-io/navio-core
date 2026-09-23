@@ -181,8 +181,17 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, bool wire_
     // (kind, ciphertext) its own slot while staying nonce-independent, so
     // re-grinding the PoW nonce still cannot bypass the replay cache (no relay
     // amplification). Also the relay loop-breaker: relayed at most once/node.
+    //
+    // Keyed on the CIPHERTEXT hash, deliberately, and not on payload_hash:
+    // since envelope v2 the payload hash also commits to the detection flag,
+    // so keying on it would make the cache flag-dependent. Anyone could then
+    // take a valid envelope, alter or attach a flag, pay the PoW once, and
+    // have the same ciphertext relayed and re-dispatched as a brand new
+    // message -- the very amplification the nonce-independence above exists to
+    // prevent. The flag is a retrieval hint; it must not be able to mint a
+    // fresh identity for a message.
     HashWriter hw;
-    hw << env.kind << env.pow.payload_hash;
+    hw << env.kind << env.enc.MsgHash();
     const uint256 msg_hash = hw.GetSHA256();
     // Loop-tolerant relay policy. The stem successor graph has no loop
     // freedom (with few peers A->B->A is common), and a plain seen-once
@@ -604,8 +613,10 @@ bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
     // single-rescues it -- an observable asymmetry that identifies the
     // originator across two probes, contradicting the stem's purpose.
     {
+        // Same key OnWire() uses -- ciphertext hash, not payload_hash -- or
+        // the echo of our own message would not match what we recorded here.
         HashWriter hw;
-        hw << env.kind << env.pow.payload_hash;
+        hw << env.kind << env.enc.MsgHash();
         const uint256 msg_hash = hw.GetSHA256();
         LOCK(m_replay_mutex);
         m_sent.insert(msg_hash);

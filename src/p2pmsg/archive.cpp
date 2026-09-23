@@ -54,8 +54,17 @@ uint32_t ArchiveStampBits(uint32_t base_bits, uint32_t scan_budget, uint8_t prec
     //
     // scan_budget rather than limit: limit bounds matches, and a query that
     // matches nothing is the most expensive one there is.
-    const uint64_t units = uint64_t{std::max<uint32_t>(scan_budget, 1)} * std::max<uint8_t>(precision, 1);
-    const uint64_t free_allowance = 1000 * 4;
+    //
+    // (precision + 2), not precision: every entry costs a point decompress and
+    // a subgroup check on top of its precision multiplications, so a
+    // low-precision scan is not as cheap as a bare product suggests. At
+    // precision 1 the real cost is about three multiplications plus that fixed
+    // work, and pricing it as one unit underpriced exactly the query an
+    // attacker would pick.
+    const uint64_t units = uint64_t{std::max<uint32_t>(scan_budget, 1)} * (uint64_t{precision} + 2);
+    // Scaled with the unit change above so an ordinary query -- the default
+    // 1000-entry budget at precision 4 -- still costs only the base.
+    const uint64_t free_allowance = 1000 * 6;
     uint32_t extra = 0;
     for (uint64_t u = units; u > free_allowance && extra < 8; u >>= 1) ++extra;
     return base_bits + extra;

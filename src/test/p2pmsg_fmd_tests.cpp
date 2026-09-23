@@ -208,6 +208,41 @@ BOOST_AUTO_TEST_CASE(fmd_seed_derivation_is_deterministic_and_separated)
     BOOST_CHECK(FmdTest(a.Extract(FMD_GAMMA), FmdFlag(b.GetClueKey())));
 }
 
+// A flag's y component must be canonically encoded. SetVch() reduces mod r,
+// so y and y + r parse to the same scalar; without a canonicality check a
+// relay could rewrite those 32 bytes in flight and the flag would still match
+// its recipient, which makes the encoding malleable.
+BOOST_AUTO_TEST_CASE(fmd_rejects_non_canonical_y)
+{
+    const auto sk = FmdSecretKey::Random();
+    const auto dk = sk.Extract(FMD_GAMMA);
+    auto flag = FmdFlag(sk.GetClueKey());
+    BOOST_REQUIRE(FmdTest(dk, flag));
+
+    // y sits after the point, and is 32 bytes big-endian. Add the group order
+    // to it: same scalar once reduced, different bytes on the wire.
+    const auto r = ParseHex("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
+    std::vector<uint8_t> y(flag.begin() + FMD_POINT_SIZE,
+                           flag.begin() + FMD_POINT_SIZE + FMD_SCALAR_SIZE);
+
+    unsigned carry = 0;
+    std::vector<uint8_t> y_plus_r(FMD_SCALAR_SIZE);
+    for (int i = FMD_SCALAR_SIZE - 1; i >= 0; --i) {
+        const unsigned sum = unsigned{y[i]} + unsigned{r[i]} + carry;
+        y_plus_r[i] = static_cast<uint8_t>(sum & 0xff);
+        carry = sum >> 8;
+    }
+    // Only meaningful when it did not overflow 32 bytes; y is random, so this
+    // holds unless y is very large, in which case there is nothing to test.
+    if (carry == 0) {
+        auto malleated = flag;
+        std::copy(y_plus_r.begin(), y_plus_r.end(), malleated.begin() + FMD_POINT_SIZE);
+        BOOST_CHECK(malleated != flag);
+        BOOST_CHECK_MESSAGE(!FmdTest(dk, malleated),
+                            "a non-canonical y was accepted, so the flag encoding is malleable");
+    }
+}
+
 BOOST_AUTO_TEST_CASE(fmd_cross_implementation_vectors)
 {
     // Fixed vectors shared with the TypeScript SDK (navio-p2pmsg,

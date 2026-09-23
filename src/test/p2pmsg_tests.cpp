@@ -1016,12 +1016,21 @@ BOOST_AUTO_TEST_CASE(envelope_v2_bounds_the_flag_size)
     BOOST_CHECK(h.t->OnWire(1, false, SerEnv(oversized)) == Transport::WireResult::RejectInvalid);
 }
 
-BOOST_AUTO_TEST_CASE(envelope_v2_replay_key_covers_the_flag)
+BOOST_AUTO_TEST_CASE(envelope_v2_replay_key_ignores_the_flag)
 {
-    // Same ciphertext, two different flags = two distinct messages, both
-    // relayed. Deliberate: it lets a sender re-flag a retransmission for a
-    // recipient whose clue key rotated. Each variant costs a fresh grind, so
-    // the amplification is bounded by the PoW that gates everything else.
+    // Same ciphertext, different flag = still a replay, and dropped.
+    //
+    // This used to be allowed, on the grounds that it lets a sender re-flag a
+    // retransmission for a recipient whose clue key rotated, and that each
+    // variant costs a fresh grind. The cost is on the wrong party: the grind
+    // is paid once, by anyone, over a ciphertext they did not create, and buys
+    // a full relay flood plus a second delivery into the recipient's inbox.
+    // The replay cache exists precisely to stop one message being re-minted
+    // into many, and a retrieval hint must not be able to defeat it.
+    //
+    // A sender that genuinely needs to re-flag after a rotation re-encrypts,
+    // which is a new ciphertext and a new message -- the honest path, and the
+    // one that keeps the cost with whoever is creating the traffic.
     LoopbackTransport h(/*bits=*/4);
     h.t->now_override = 1000;
 
@@ -1038,8 +1047,10 @@ BOOST_AUTO_TEST_CASE(envelope_v2_replay_key_covers_the_flag)
 
     BOOST_CHECK(env_a.enc.MsgHash() == env_b.enc.MsgHash());
     BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env_a)) == Transport::WireResult::Enqueued);
-    BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env_b)) == Transport::WireResult::Enqueued);
-    // The identical envelope is still a replay.
+    // Re-flagged and re-ground, but the same ciphertext: not a new message.
+    BOOST_CHECK_MESSAGE(h.t->OnWire(1, false, SerEnv(env_b)) != Transport::WireResult::Enqueued,
+                        "a re-flagged copy of an existing ciphertext was accepted as new");
+    // And the identical envelope is still a replay.
     BOOST_CHECK(h.t->OnWire(1, false, SerEnv(env_a)) != Transport::WireResult::Enqueued);
 }
 

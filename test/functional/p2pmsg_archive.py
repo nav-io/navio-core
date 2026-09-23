@@ -68,9 +68,10 @@ def stamp_bits(base, scan_budget, precision):
     requested, capped at base+8.
 
     Priced on the SCAN BUDGET, not on limit: limit bounds matches, and a query
-    that matches nothing still walks the whole window."""
-    units = max(scan_budget, 1) * max(precision, 1)
-    free_allowance = 1000 * 4
+    that matches nothing still walks the whole window. (precision + 2) because
+    each entry also costs a decompress and a subgroup check."""
+    units = max(scan_budget, 1) * (precision + 2)
+    free_allowance = 1000 * 6
     extra = 0
     while units > free_allowance and extra < 8:
         units >>= 1
