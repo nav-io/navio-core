@@ -31,6 +31,7 @@ class WorkerPool;
 class Transport;
 class UserInbox;
 class EnvelopeArchive;
+class ArchiveScanner;
 } // namespace p2pmsg
 namespace aggregation {
 class CandidatePool;
@@ -97,6 +98,9 @@ struct NodeContext {
     //! Declared BEFORE p2pmsg_transport for the same destruction-order reason:
     //! the transport's archive sink holds a raw pointer to it.
     std::unique_ptr<p2pmsg::EnvelopeArchive> p2pmsg_archive;
+    //! Runs archive scans off the message-handling thread. Destroyed before
+    //! connman, whose pointer its send callback captures.
+    std::unique_ptr<p2pmsg::ArchiveScanner> p2pmsg_archive_scanner;
     //! p2p encrypted-messaging subsystem (only set when -p2pmsg is enabled).
     //! Declared AFTER agg_pool / rfq_* on purpose: the worker pool's decrypt
     //! jobs dispatch to transport handlers that capture raw pointers to those

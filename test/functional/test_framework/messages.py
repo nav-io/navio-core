@@ -1899,6 +1899,16 @@ class msg_dp2pmsg(msg_p2pmsg):
         return "msg_dp2pmsg(%d bytes)" % len(self.payload)
 
 
+class msg_p2pmsgchal(msg_p2pmsg):
+    """Per-connection challenge an archiving node issues after verack; a
+    getp2pmsgs stamp has to commit to it."""
+    __slots__ = ()
+    msgtype = b"p2pmsgchal"
+
+    def __repr__(self):
+        return "msg_p2pmsgchal(%d bytes)" % len(self.payload)
+
+
 class msg_getp2pmsgs(msg_p2pmsg):
     """Request flagged envelopes from an archiving peer. Raw passthrough: the
     test builds the request body itself (see p2pmsg_archive.py)."""

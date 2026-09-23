@@ -49,22 +49,28 @@ def ser_bytes(b):
     return ser_compact_size(len(b)) + b
 
 
-def query_hash(cursor, limit, precision, detection_key, not_before):
+def query_hash(cursor, limit, precision, scan_budget, challenge, detection_key,
+               not_before):
     """SHA256 over the query fields, exactly as ArchiveRequest::QueryHash()."""
     body = struct.pack("<B", 1)
     body += struct.pack("<Q", cursor)
     body += struct.pack("<H", limit)
     body += struct.pack("<B", precision)
+    body += struct.pack("<I", scan_budget)
+    body += challenge
     body += ser_bytes(detection_key)
     body += struct.pack("<q", not_before)
     return sha256(body)
 
 
-def stamp_bits(base, limit, precision):
+def stamp_bits(base, scan_budget, precision):
     """Mirror of ArchiveStampBits(): base plus a term that grows with the work
-    requested, capped at base+8."""
-    units = max(limit, 1) * max(precision, 1)
-    free_allowance = 100 * 4
+    requested, capped at base+8.
+
+    Priced on the SCAN BUDGET, not on limit: limit bounds matches, and a query
+    that matches nothing still walks the whole window."""
+    units = max(scan_budget, 1) * max(precision, 1)
+    free_allowance = 1000 * 4
     extra = 0
     while units > free_allowance and extra < 8:
         units >>= 1
@@ -87,11 +93,15 @@ def grind_stamp(qhash, timestamp, bits):
     raise AssertionError("could not grind an archive query stamp")
 
 
-def build_request(detection_key, precision, cursor=0, limit=100, not_before=0,
-                  base_bits=POW_BITS, break_pow=False):
-    qh = query_hash(cursor, limit, precision, detection_key, not_before)
-    bits = stamp_bits(base_bits, limit, precision)
-    if break_pow:
+def build_request(detection_key, precision, challenge, cursor=0, limit=100,
+                  not_before=0, scan_budget=1000, base_bits=POW_BITS,
+                  break_pow=False, stamp=None):
+    qh = query_hash(cursor, limit, precision, scan_budget, challenge,
+                    detection_key, not_before)
+    bits = stamp_bits(base_bits, scan_budget, precision)
+    if stamp is not None:
+        pass  # caller is replaying one it already has
+    elif break_pow:
         # A stamp that commits correctly but was never ground.
         stamp = struct.pack("<B", 1) + struct.pack("<q", int(time.time())) + qh + struct.pack("<Q", 0)
     else:
@@ -101,6 +111,8 @@ def build_request(detection_key, precision, cursor=0, limit=100, not_before=0,
     body += struct.pack("<Q", cursor)
     body += struct.pack("<H", limit)
     body += struct.pack("<B", precision)
+    body += struct.pack("<I", scan_budget)
+    body += challenge
     body += ser_bytes(detection_key)
     body += struct.pack("<q", not_before)
     return body
@@ -139,12 +151,20 @@ class ArchiveClient(P2PInterface):
     def __init__(self):
         super().__init__()
         self.responses = []
+        # The challenge the node issues unsolicited right after verack. A
+        # query's stamp has to commit to it.
+        self.challenge = None
+
+    def on_p2pmsgchal(self, message):
+        self.challenge = message.payload[:32]
 
     def on_p2pmsgs(self, message):
         self.responses.append(parse_response(message.payload))
 
     def send_query(self, **kwargs):
+        kwargs.setdefault("challenge", self.challenge)
         self.send_message(msg_getp2pmsgs(build_request(**kwargs)))
+        return kwargs
 
 
 class P2PMsgArchiveTest(BitcoinTestFramework):
@@ -170,6 +190,9 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
         """
         peer = node.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
         try:
+            # The node issues its challenge unsolicited right after verack; a
+            # stamp that does not commit to it buys nothing.
+            peer.wait_until(lambda: peer.challenge is not None, timeout=30)
             peer.send_query(**kwargs)
             peer.wait_until(lambda: len(peer.responses) >= 1, timeout=30)
             return peer.responses[-1]
@@ -264,7 +287,61 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
 
         self.log.info("An unground query stamp is rejected")
         peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer.wait_until(lambda: peer.challenge is not None, timeout=30)
         peer.send_query(detection_key=bytes.fromhex(dk), precision=24, limit=500, break_pow=True)
+        peer.sync_with_ping()
+        assert_equal(len(peer.responses), 0)
+        n1.disconnect_p2ps()
+
+        self.log.info("A stamp is bound to the connection it was issued for")
+        # Without this, one grind is spendable for its whole validity window on
+        # every connection and at every archive node, and the per-peer bucket
+        # does not help because a new connection brings a new bucket.
+        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer.wait_until(lambda: peer.challenge is not None, timeout=30)
+        first_challenge = peer.challenge
+        sent = peer.send_query(detection_key=bytes.fromhex(dk), precision=24)
+        peer.wait_until(lambda: len(peer.responses) >= 1, timeout=30)
+        replayed = build_request(**sent)
+        n1.disconnect_p2ps()
+
+        # The very same bytes on a new connection: the challenge has changed,
+        # so the stamp commits to the wrong query and buys nothing.
+        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer.wait_until(lambda: peer.challenge is not None, timeout=30)
+        assert peer.challenge != first_challenge, "challenge must be per-connection"
+        peer.send_message(msg_getp2pmsgs(replayed))
+        peer.sync_with_ping()
+        assert_equal(len(peer.responses), 0)
+        assert peer.is_connected
+        n1.disconnect_p2ps()
+
+        self.log.info("A stamp cannot be spent twice on the connection it IS valid on")
+        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer.wait_until(lambda: peer.challenge is not None, timeout=30)
+        sent = peer.send_query(detection_key=bytes.fromhex(dk), precision=24)
+        peer.wait_until(lambda: len(peer.responses) >= 1, timeout=30)
+        peer.send_message(msg_getp2pmsgs(build_request(**sent)))
+        peer.sync_with_ping()
+        assert_equal(len(peer.responses), 1)
+        assert peer.is_connected
+        n1.disconnect_p2ps()
+
+        self.log.info("A big scan costs more proof of work than a small one")
+        # The hole this closes: limit bounds MATCHES, so a high-precision key
+        # that matches nothing used to return cheaply while walking the entire
+        # window. The budget is now what is priced, and a stamp ground for a
+        # small budget does not pay for a large one.
+        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer.wait_until(lambda: peer.challenge is not None, timeout=30)
+        assert_greater_than(stamp_bits(POW_BITS, 50000, 24), stamp_bits(POW_BITS, 1, 24))
+        cheap = build_request(detection_key=bytes.fromhex(dk), precision=24,
+                              challenge=peer.challenge, scan_budget=1)
+        # Re-label that stamp as buying the largest scan there is.
+        expensive = build_request(detection_key=bytes.fromhex(dk), precision=24,
+                                  challenge=peer.challenge, scan_budget=50000,
+                                  stamp=cheap[1:1 + 1 + 8 + 32 + 8])
+        peer.send_message(msg_getp2pmsgs(expensive))
         peer.sync_with_ping()
         assert_equal(len(peer.responses), 0)
         n1.disconnect_p2ps()
@@ -276,9 +353,12 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
         # banned, because a client syncing a long window legitimately issues
         # back-to-back queries and should back off, not be disconnected.
         peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer.wait_until(lambda: peer.challenge is not None, timeout=30)
         attempts = ARCHIVE_QUERY_BURST + 2
-        for _ in range(attempts):
-            peer.send_query(detection_key=bytes.fromhex(dk), precision=24)
+        for i in range(attempts):
+            # Distinct cursors, so each query carries its own stamp and the
+            # spent-stamp check does not stand in for the rate limiter.
+            peer.send_query(detection_key=bytes.fromhex(dk), precision=24, cursor=i)
         peer.sync_with_ping()
         assert_greater_than(attempts, len(peer.responses))
         assert_greater_than(len(peer.responses), 0)
@@ -287,7 +367,11 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
 
         self.log.info("A node without -p2pmsgarchive ignores the query")
         plain = n0.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
-        plain.send_message(msg_getp2pmsgs(build_request(detection_key=bytes.fromhex(dk), precision=24)))
+        # It issues no challenge either, since it has no archive to protect.
+        plain.sync_with_ping()
+        assert plain.challenge is None
+        plain.send_message(msg_getp2pmsgs(build_request(
+            detection_key=bytes.fromhex(dk), precision=24, challenge=bytes(32))))
         plain.sync_with_ping()
         assert_equal(len(plain.responses), 0)
 

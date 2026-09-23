@@ -286,6 +286,13 @@ extern const char* P2PMSG;
  */
 extern const char* DP2PMSG;
 /**
+ * p2pmsgchal carries a random per-connection value an archiving node
+ * issues unsolicited after the version handshake. A getp2pmsgs stamp has to
+ * commit to it, which is what stops one grind from being replayed on every
+ * connection and at every archive node for the length of its validity window.
+ */
+extern const char* P2PMSGCHAL;
+/**
  * getp2pmsgs asks an archiving peer for the flagged p2pmsg envelopes it
  * relayed, filtered by a fuzzy-message-detection key the requester supplies.
  * Carries its own proof of work, because the scan it asks for costs the

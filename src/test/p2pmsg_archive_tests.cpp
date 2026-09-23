@@ -205,6 +205,8 @@ BOOST_AUTO_TEST_CASE(archive_query_stamp_commits_and_costs)
     req.cursor = 42;
     req.limit = 100;
     req.precision = 4;
+    req.scan_budget = 1000;
+    req.challenge = uint256::ONE;
     req.detection_key = std::vector<uint8_t>(4 * FMD_SCALAR_SIZE, 0x7);
     req.not_before = 1234;
 
@@ -226,10 +228,20 @@ BOOST_AUTO_TEST_CASE(archive_query_stamp_commits_and_costs)
     other = req;
     other.detection_key[0] ^= 1;
     BOOST_CHECK(other.QueryHash() != h);
+    // The budget is what the stamp is PRICED on, so it has to be committed to
+    // or a cheap grind would buy the largest scan there is.
+    other = req;
+    other.scan_budget = 50000;
+    BOOST_CHECK(other.QueryHash() != h);
+    // ...and so does the server's challenge, or the same grind is spendable on
+    // every connection and at every archive node.
+    other = req;
+    other.challenge = uint256::ZERO;
+    BOOST_CHECK(other.QueryHash() != h);
 
     req.stamp.timestamp = 1000;
     req.stamp.query_hash = h;
-    const uint32_t bits = ArchiveStampBits(4, req.limit, req.precision);
+    const uint32_t bits = ArchiveStampBits(4, req.scan_budget, req.precision);
     BOOST_CHECK_GE(bits, 4U);
     BOOST_CHECK(GrindArchiveStamp(req.stamp, bits, 1 << 22) > 0);
     BOOST_CHECK(UintToArith256(req.stamp.Hash()) <= TargetFromBits(bits));
@@ -239,11 +251,66 @@ BOOST_AUTO_TEST_CASE(archive_query_stamp_commits_and_costs)
     // TypeScript SDK (src/archive/protocol.test.ts): the two must agree or
     // every query the SDK sends is rejected here as underpowered.
     BOOST_CHECK_EQUAL(ArchiveStampBits(4, 1, 1), 4U);
-    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 100, 4), 4U); // exactly the free allowance
-    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 200, 4), 5U);
-    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 100, 8), 5U);
-    BOOST_CHECK_GE(ArchiveStampBits(4, 500, FMD_GAMMA), ArchiveStampBits(4, 100, 4));
-    BOOST_CHECK_LE(ArchiveStampBits(4, 500, FMD_GAMMA), 4U + 8U);
+    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 1000, 4), 4U); // exactly the free allowance
+    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 2000, 4), 5U);
+    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 1000, 8), 5U);
+    BOOST_CHECK_GE(ArchiveStampBits(4, 50000, FMD_GAMMA), ArchiveStampBits(4, 1000, 4));
+    BOOST_CHECK_LE(ArchiveStampBits(4, 50000, FMD_GAMMA), 4U + 8U);
+
+    // The case the old curve mispriced: `limit` bounds MATCHES, so a
+    // high-precision key that matches nothing returned cheaply while walking
+    // the entire window. Pricing the budget makes the expensive query the
+    // expensive one.
+    BOOST_CHECK_EQUAL(ArchiveStampBits(4, 1, 24), 4U);
+    BOOST_CHECK_GT(ArchiveStampBits(4, MAX_ARCHIVE_SCAN_ENTRIES, 24),
+                   ArchiveStampBits(4, 1, 24));
+}
+
+// A scan must not run on the message-handling thread: it can walk
+// MAX_ARCHIVE_SCAN_ENTRIES flags while holding the archive mutex that the
+// decrypt workers need. ArchiveScanner is where that work goes.
+BOOST_AUTO_TEST_CASE(archive_scanner_defers_and_bounds_work)
+{
+    EnvelopeArchive archive{MemOpts()};
+
+    FmdSecretKey mine = FmdSecretKey::Random();
+    for (int i = 0; i < 6; ++i) {
+        const auto flag = FmdFlag(mine.GetClueKey());
+        archive.Add(1000 + i, /*kind=*/1, flag, FakeEnvelope(uint8_t(i)));
+    }
+
+    std::vector<std::pair<PeerId, ArchiveResponse>> sent;
+    ArchiveScanner scanner{archive, [&sent](PeerId peer, ArchiveResponse&& resp, size_t) {
+                               sent.emplace_back(peer, std::move(resp));
+                           },
+                           /*queue_capacity=*/2};
+
+    const auto key = mine.Extract(FMD_GAMMA);
+    const std::vector<uint8_t> key_bytes(key.begin(), key.end());
+
+    // Enqueue returns immediately and nothing has been scanned yet: that is
+    // the whole point.
+    BOOST_REQUIRE(scanner.Enqueue(7, 0, key_bytes, /*scan_budget=*/1000, /*limit=*/100, 0));
+    BOOST_CHECK_EQUAL(scanner.QueueDepth(), 1U);
+    BOOST_CHECK(sent.empty());
+
+    // The queue is bounded, and a full one refuses rather than growing.
+    BOOST_REQUIRE(scanner.Enqueue(7, 0, key_bytes, 1000, 100, 0));
+    BOOST_CHECK(!scanner.Enqueue(7, 0, key_bytes, 1000, 100, 0));
+
+    BOOST_CHECK_EQUAL(scanner.DrainForTest(), 2U);
+    BOOST_REQUIRE_EQUAL(sent.size(), 2U);
+    BOOST_CHECK_EQUAL(sent[0].first, 7);
+    BOOST_CHECK_EQUAL(sent[0].second.items.size(), 6U);
+
+    // The budget bounds the walk, and a scan cut short says so rather than
+    // claiming it reached the end.
+    sent.clear();
+    BOOST_REQUIRE(scanner.Enqueue(9, 0, key_bytes, /*scan_budget=*/2, /*limit=*/100, 0));
+    BOOST_CHECK_EQUAL(scanner.DrainForTest(), 1U);
+    BOOST_REQUIRE_EQUAL(sent.size(), 1U);
+    BOOST_CHECK_EQUAL(sent[0].second.items.size(), 2U);
+    BOOST_CHECK_EQUAL(sent[0].second.complete, 0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

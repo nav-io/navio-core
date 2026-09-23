@@ -321,6 +321,7 @@ void Shutdown(NodeContext& node)
     // capture the connman pointer. Clear the global hook first so no net path
     // can reach it, then stop workers, then drop the objects.
     p2pmsg::SetActiveTransport(nullptr);
+    p2pmsg::SetActiveArchiveScanner(nullptr);
     p2pmsg::SetActiveArchive(nullptr);
     rfq::SetActiveMatcher(nullptr);
     rfq::SetActiveOrderCache(nullptr);
@@ -349,6 +350,8 @@ void Shutdown(NodeContext& node)
     if (node.p2pmsg_pool) node.p2pmsg_pool->Stop();
     node.p2pmsg_transport.reset();
     node.p2pmsg_pool.reset();
+    // Before connman: the scanner's send callback captures it.
+    node.p2pmsg_archive_scanner.reset();
     node.p2pmsg_archive.reset();
     node.rfq_matcher.reset();
     node.rfq_intents.reset();
@@ -2047,6 +2050,29 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                     archive->Add(received_at, kind, flag, envelope);
                 });
             p2pmsg::SetActiveArchive(archive);
+
+            // Scans run here, off the message-handling thread: one of them can
+            // walk MAX_ARCHIVE_SCAN_ENTRIES flags, and it holds the archive
+            // mutex the decrypt workers also need.
+            CConnman* arch_connman = node.connman.get();
+            node.p2pmsg_archive_scanner = std::make_unique<p2pmsg::ArchiveScanner>(
+                *archive,
+                [arch_connman](p2pmsg::PeerId peer, p2pmsg::ArchiveResponse&& resp, size_t scanned) {
+                    const size_t items = resp.items.size();
+                    const bool complete = resp.complete != 0;
+                    // The peer may be gone by the time the scan finishes; that
+                    // is the normal cost of answering asynchronously and the
+                    // requester simply retries.
+                    arch_connman->ForNode(peer, [&](CNode* pnode) {
+                        arch_connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSGS, resp));
+                        return true;
+                    });
+                    LogPrint(BCLog::NET, "p2pmsg: served %d archived envelopes (scanned %d, complete=%d) peer=%d\n",
+                             items, scanned, complete, peer);
+                });
+            node.p2pmsg_archive_scanner->Start();
+            p2pmsg::SetActiveArchiveScanner(node.p2pmsg_archive_scanner.get());
+
             // Advertise it so a client can find an archiving node through ADDR
             // gossip. Like NODE_P2PMSG this is a network-wide signal.
             nLocalServices = ServiceFlags(nLocalServices | NODE_P2PMSG_ARCHIVE);

@@ -295,16 +295,23 @@ a LevelDB store bounded by `-p2pmsgarchivesize` (MiB) and
 repeat, so a requester polls with a cursor and misses nothing that was not
 pruned.
 
-Two net messages carry it. Both fit `COMMAND_SIZE` (12) -- a longer name is
-silently dead on the wire, as `getoutputdata` (13 characters) demonstrates.
+Three net messages carry it. All fit `COMMAND_SIZE` (12) -- a longer name is
+not merely ignored, it trips an assertion in `CMessageHeader` and takes the
+node down, as `p2pmsgchallenge` (15 characters) demonstrated before it became
+`p2pmsgchal`.
 
 ```
+p2pmsgchal:                  // unsolicited, right after verack, if we archive
+  u256          challenge    // per-connection; a stamp must commit to it
+
 getp2pmsgs:
   u8            version = 1
   ArchiveStamp  stamp        // u8 version, i64 timestamp, u256 query_hash, u64 nonce
   u64           cursor       // return entries with id > cursor
-  u16           limit
+  u16           limit        // bounds MATCHES returned
   u8            precision    // n, so detection_key is n*32 bytes
+  u32           scan_budget  // bounds entries WALKED; what the stamp pays for
+  u256          challenge    // the p2pmsgchal this server issued
   vector<u8>    detection_key
   i64           not_before   // 0 = no lower bound on received_at
 
@@ -321,17 +328,27 @@ everything" from "I stopped at a cap and there is more" -- conflating the two
 would silently lose messages. An entry that matched but did not fit in the
 response is never skipped by the returned cursor.
 
-**Cost and abuse.** A scan costs `(entries scanned) x (precision + 2)` group
-multiplications: linear in exactly the two numbers the requester chooses, so
-the requester pays for both.
+**Cost and abuse.** A scan costs `(entries WALKED) x (precision + 2)` group
+multiplications, plus a decompress and a subgroup check per flag.
+
+Note *walked*, not *returned*. `limit` bounds matches, and the two diverge
+completely for a high-precision key: a 24-bit key almost never matches, so
+`limit=1, precision=24` returns nothing while walking the entire window. That
+is why the requester commits to a **scan budget** and why the budget, not the
+limit, is what the stamp is priced on.
 
 - The query carries its own proof of work, at
-  `ArchiveStampBits(base, limit, precision)` -- a base (default: the bus's own
-  difficulty, `-p2pmsgarchivepowbits`) plus a term that doubles with the work
-  requested, capped at base+8. The requester buys node CPU with its own CPU,
-  the same bargain relay already strikes. The stamp commits to every query
-  field, so a peer cannot pay for a cheap scan and then ask for an expensive
-  one, and it is verified against the *capped* limit.
+  `ArchiveStampBits(base, scan_budget, precision)` -- a base (default: the
+  bus's own difficulty, `-p2pmsgarchivepowbits`) plus a term that doubles with
+  the work requested, capped at base+8. The requester buys node CPU with its
+  own CPU, the same bargain relay already strikes. The stamp commits to every
+  query field, so a peer cannot pay for a cheap scan and then ask for an
+  expensive one, and it is verified against the *capped* budget.
+- The stamp also commits to the `p2pmsgchal` value this node issued for this
+  connection, and each stamp is accepted once per connection. Without that
+  binding a single grind is spendable for its whole 120 s validity window on
+  every connection and at every archive node -- and the per-peer bucket is no
+  help, because a fresh connection brings a fresh bucket.
 - Hard caps regardless of the stamp: 500 entries returned, 50 000 scanned,
   2 MiB per response.
 - Queries are metered per peer (3 burst, 6/minute) on top of the stamp: the
@@ -339,6 +356,11 @@ the requester pays for both.
   the query is dropped silently rather than penalised -- a client syncing a
   long window legitimately issues back-to-back queries and should back off, not
   be disconnected.
+- The scan itself runs on a dedicated thread, never on the message handler. It
+  is the one genuinely expensive thing a peer can ask for, and it holds the
+  archive mutex that the decrypt workers take whenever a flagged envelope
+  arrives -- so running it inline would stall both msghand and the bus. The
+  queue is bounded and drops on overflow, exactly as the token bucket does.
 
 **What the archive learns.** The detection key it is given, and therefore the
 ability to test future flags at that precision until the clue key rotates; the

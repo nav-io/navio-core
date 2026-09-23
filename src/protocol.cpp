@@ -55,6 +55,7 @@ const char* DP2PMSG = "dp2pmsg";
 // the wire -- as GETOUTPUTDATA above (13 chars) demonstrates.
 static_assert(sizeof("getp2pmsgs") - 1 <= 12, "net message type exceeds COMMAND_SIZE");
 static_assert(sizeof("p2pmsgs") - 1 <= 12, "net message type exceeds COMMAND_SIZE");
+const char* P2PMSGCHAL = "p2pmsgchal";
 const char* GETP2PMSGS = "getp2pmsgs";
 const char* P2PMSGS = "p2pmsgs";
 } // namespace NetMsgType
@@ -102,6 +103,7 @@ const static std::vector<std::string> g_all_net_message_types{
     NetMsgType::GETOUTPUTDATA,
     NetMsgType::P2PMSG,
     NetMsgType::DP2PMSG,
+    NetMsgType::P2PMSGCHAL,
     NetMsgType::GETP2PMSGS,
     NetMsgType::P2PMSGS,
 };

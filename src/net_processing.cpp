@@ -52,6 +52,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <set>
 #include <typeinfo>
 #include <utility>
 
@@ -163,6 +164,10 @@ static constexpr auto AVG_FEEFILTER_BROADCAST_INTERVAL{10min};
 static constexpr auto MAX_FEEFILTER_CHANGE_DELAY{5min};
 /** Maximum number of compact filters that may be requested with one getcfilters. See BIP 157. */
 static constexpr uint32_t MAX_GETCFILTERS_SIZE = 1000;
+/** Archive stamps remembered per connection, to catch a stamp spent twice.
+ *  The per-peer token bucket makes reaching this take hours; a peer that does
+ *  is simply asked to grind again. */
+static constexpr size_t MAX_ARCHIVE_SPENT_STAMPS = 512;
 /** Maximum number of cf hashes that may be requested with one getcfheaders. See BIP 157. */
 static constexpr uint32_t MAX_GETCFHEADERS_SIZE = 2000;
 /** the maximum percentage of addresses from our addrman to return in response to a getaddr message. */
@@ -372,6 +377,16 @@ struct Peer {
     /** When m_archive_token_bucket was last updated */
     std::chrono::seconds m_archive_token_timestamp GUARDED_BY(NetEventsInterface::g_msgproc_mutex){
         GetTime<std::chrono::seconds>()};
+    /** The archive challenge we issued this peer, or null if we issued none
+     *  (we are not archiving). A getp2pmsgs stamp must commit to it, which
+     *  binds a grind to this node AND this connection: the same stamp replayed
+     *  on a new connection, or at another archive node, commits to the wrong
+     *  challenge and buys nothing. */
+    uint256 m_archive_challenge GUARDED_BY(NetEventsInterface::g_msgproc_mutex);
+    /** Stamps already spent on this connection. The challenge stops a stamp
+     *  from travelling; this stops it from being replayed where it IS valid.
+     *  Bounded, and the whole set dies with the connection. */
+    std::set<uint256> m_archive_spent_stamps GUARDED_BY(NetEventsInterface::g_msgproc_mutex);
     /** Total number of addresses that were dropped due to rate limiting. */
     std::atomic<uint64_t> m_addr_rate_limited{0};
     /** Total number of addresses that were processed (excludes rate-limited ones). */
@@ -3741,7 +3756,25 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                        tx_relay->m_next_inv_send_time == 0s));
         }
 
+        // If we archive, hand this peer the challenge its getp2pmsgs stamps
+        // have to commit to. Unsolicited and 32 bytes: cheaper than the extra
+        // round trip a challenge-on-demand would cost every querying client,
+        // and it means a stamp can never be ground before we have spoken.
+        if (p2pmsg::GetActiveArchive() != nullptr) {
+            peer->m_archive_challenge = GetRandHash();
+            MakeAndPushMessage(pfrom, NetMsgType::P2PMSGCHAL, peer->m_archive_challenge);
+        }
+
         pfrom.fSuccessfullyConnected = true;
+        return;
+    }
+
+    if (msg_type == NetMsgType::P2PMSGCHAL) {
+        // A challenge from an archiving peer. This build never sends
+        // getp2pmsgs -- retrieval belongs to the light client that owns the
+        // detection key -- so there is nothing to remember. Accept without
+        // penalty so the message type stays usable by clients sharing this
+        // codebase.
         return;
     }
 
@@ -5217,12 +5250,28 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         }
         if (req.limit == 0) return;
         const uint16_t limit = std::min<uint16_t>(req.limit, p2pmsg::MAX_ARCHIVE_LIMIT);
+        // The budget is what we charge for and what we stop at, so cap it
+        // before both. A requester that asks for more than we serve pays for
+        // what we serve, not for what we discard.
+        const uint32_t scan_budget = std::min<uint32_t>(
+            std::max<uint32_t>(req.scan_budget, 1), p2pmsg::MAX_ARCHIVE_SCAN_ENTRIES);
 
-        // Proof of work, priced on the work actually requested. Verified against
-        // the CAPPED limit: a requester that asks for more than we serve pays
-        // for what we serve, not for what we discard.
+        // The stamp has to commit to the challenge we issued on THIS
+        // connection. Without it a single grind is valid for its whole
+        // validity window on every connection and at every archive node, and
+        // the per-peer bucket does not help because a fresh connection brings
+        // a fresh bucket.
+        if (peer->m_archive_challenge.IsNull() || req.challenge != peer->m_archive_challenge) {
+            // No penalty: a client that reconnected, or spoke before our
+            // challenge arrived, is wrong but not hostile. It learns the
+            // current challenge from the p2pmsgchal we already sent.
+            LogPrint(BCLog::NET, "p2pmsg: archive query with a stale or absent challenge peer=%d\n", pfrom.GetId());
+            return;
+        }
+
+        // Proof of work, priced on the entries we may WALK.
         const int64_t now = GetTime<std::chrono::seconds>().count();
-        const uint32_t want_bits = p2pmsg::ArchiveStampBits(archive->StampBaseBits(), limit, req.precision);
+        const uint32_t want_bits = p2pmsg::ArchiveStampBits(archive->StampBaseBits(), scan_budget, req.precision);
         if (req.stamp.query_hash != req.QueryHash()) {
             Misbehaving(*peer, 10, "getp2pmsgs stamp does not commit to the query");
             return;
@@ -5237,22 +5286,35 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             Misbehaving(*peer, 10, "insufficient getp2pmsgs proof of work");
             return;
         }
-
-        const auto scan = archive->Scan(req.cursor,
-                                        std::span<const uint8_t>{req.detection_key.data(), req.detection_key.size()},
-                                        p2pmsg::MAX_ARCHIVE_SCAN_ENTRIES, limit,
-                                        p2pmsg::MAX_ARCHIVE_RESPONSE_BYTES, req.not_before);
-
-        p2pmsg::ArchiveResponse resp;
-        resp.next_cursor = scan.next_cursor;
-        resp.complete = scan.complete ? 1 : 0;
-        resp.items.reserve(scan.matches.size());
-        for (auto& m : scan.matches) {
-            resp.items.push_back({m.id, m.received_at, std::move(m.envelope)});
+        // One query per grind. The challenge keeps a stamp on this connection;
+        // this stops it being spent twice here. The set is bounded by the
+        // per-peer token bucket over the connection's life, and a peer that
+        // manages to fill it anyway is simply asked to grind again.
+        {
+            const uint256 stamp_id = req.stamp.Hash();
+            if (peer->m_archive_spent_stamps.size() >= MAX_ARCHIVE_SPENT_STAMPS) {
+                peer->m_archive_spent_stamps.clear();
+            }
+            if (!peer->m_archive_spent_stamps.insert(stamp_id).second) {
+                LogPrint(BCLog::NET, "p2pmsg: archive query replayed a spent stamp peer=%d\n", pfrom.GetId());
+                return;
+            }
         }
-        LogPrint(BCLog::NET, "p2pmsg: served %d archived envelopes (scanned %d, complete=%d) peer=%d\n",
-                 resp.items.size(), scan.scanned, resp.complete, pfrom.GetId());
-        MakeAndPushMessage(pfrom, NetMsgType::P2PMSGS, resp);
+
+        // Hand the scan to a worker. It is the one genuinely expensive thing
+        // this handler can be asked for -- up to MAX_ARCHIVE_SCAN_ENTRIES flag
+        // tests, each a decompress, a subgroup check and (precision + 2) group
+        // multiplications -- and running it here would block msghand for every
+        // peer, and, through the archive mutex, every decrypt worker that
+        // reaches a flagged envelope.
+        p2pmsg::ArchiveScanner* scanner = p2pmsg::GetActiveArchiveScanner();
+        if (scanner == nullptr || !scanner->Enqueue(
+                pfrom.GetId(), req.cursor, req.detection_key, scan_budget, limit, req.not_before)) {
+            // Pool saturated (or absent): drop silently, exactly as the bucket
+            // does. The requester retries with the same cursor and loses
+            // nothing but the grind.
+            LogPrint(BCLog::NET, "p2pmsg: archive scan not queued (busy) peer=%d\n", pfrom.GetId());
+        }
         return;
     }
 

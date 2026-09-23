@@ -9,6 +9,7 @@
 #include <hash.h>
 #include <logging.h>
 #include <streams.h>
+#include <util/thread.h>
 
 #include <algorithm>
 #include <limits>
@@ -45,13 +46,16 @@ uint256 ArchiveStamp::Hash() const
     return hw.GetSHA256();
 }
 
-uint32_t ArchiveStampBits(uint32_t base_bits, uint16_t limit, uint8_t precision)
+uint32_t ArchiveStampBits(uint32_t base_bits, uint32_t scan_budget, uint8_t precision)
 {
-    // Work asked for is (entries scanned) x (precision + 2). Charge a doubling
+    // Work asked for is (entries WALKED) x (precision + 2). Charge a doubling
     // of difficulty per doubling of that product over a small free allowance,
     // capped so a legitimate large query stays feasible on a phone.
-    const uint64_t units = uint64_t{std::max<uint16_t>(limit, 1)} * std::max<uint8_t>(precision, 1);
-    const uint64_t free_allowance = 100 * 4;
+    //
+    // scan_budget rather than limit: limit bounds matches, and a query that
+    // matches nothing is the most expensive one there is.
+    const uint64_t units = uint64_t{std::max<uint32_t>(scan_budget, 1)} * std::max<uint8_t>(precision, 1);
+    const uint64_t free_allowance = 1000 * 4;
     uint32_t extra = 0;
     for (uint64_t u = units; u > free_allowance && extra < 8; u >>= 1) ++extra;
     return base_bits + extra;
@@ -70,7 +74,8 @@ uint64_t GrindArchiveStamp(ArchiveStamp& stamp, uint32_t bits, uint64_t max_iter
 uint256 ArchiveRequest::QueryHash() const
 {
     HashWriter hw;
-    hw << version << cursor << limit << precision << detection_key << not_before;
+    hw << version << cursor << limit << precision << scan_budget << challenge
+       << detection_key << not_before;
     return hw.GetSHA256();
 }
 
@@ -246,9 +251,108 @@ uint64_t EnvelopeArchive::OldestId() const
     return 0;
 }
 
+ArchiveScanner::ArchiveScanner(EnvelopeArchive& archive, SendFn send, size_t queue_capacity)
+    : m_archive(archive), m_send(std::move(send)),
+      m_capacity(queue_capacity == 0 ? DEFAULT_SCAN_QUEUE : queue_capacity)
+{
+}
+
+ArchiveScanner::~ArchiveScanner()
+{
+    Stop();
+}
+
+void ArchiveScanner::Start()
+{
+    assert(!m_thread.joinable());
+    m_thread = std::thread(&util::TraceThread, "p2pmsgscan", [this] { ThreadLoop(); });
+}
+
+void ArchiveScanner::Stop()
+{
+    {
+        LOCK(m_mutex);
+        if (m_stopping) return;
+        m_stopping = true;
+        m_queue.clear();
+    }
+    m_cv.notify_all();
+    if (m_thread.joinable()) m_thread.join();
+}
+
+bool ArchiveScanner::Enqueue(PeerId peer, uint64_t cursor, std::vector<uint8_t> detection_key,
+                             uint32_t scan_budget, uint16_t limit, int64_t not_before)
+{
+    {
+        LOCK(m_mutex);
+        if (m_stopping || m_queue.size() >= m_capacity) return false;
+        m_queue.push_back(ScanJob{peer, cursor, std::move(detection_key), scan_budget, limit, not_before});
+    }
+    m_cv.notify_one();
+    return true;
+}
+
+size_t ArchiveScanner::QueueDepth() const
+{
+    LOCK(m_mutex);
+    return m_queue.size();
+}
+
+size_t ArchiveScanner::DrainForTest()
+{
+    size_t ran = 0;
+    while (true) {
+        ScanJob job;
+        {
+            LOCK(m_mutex);
+            if (m_queue.empty()) break;
+            job = std::move(m_queue.front());
+            m_queue.pop_front();
+        }
+        RunJob(job);
+        ++ran;
+    }
+    return ran;
+}
+
+void ArchiveScanner::ThreadLoop()
+{
+    while (true) {
+        ScanJob job;
+        {
+            WAIT_LOCK(m_mutex, lock);
+            m_cv.wait(lock, [this]() EXCLUSIVE_LOCKS_REQUIRED(m_mutex) {
+                return m_stopping || !m_queue.empty();
+            });
+            if (m_stopping) return;
+            job = std::move(m_queue.front());
+            m_queue.pop_front();
+        }
+        RunJob(job);
+    }
+}
+
+void ArchiveScanner::RunJob(const ScanJob& job)
+{
+    const auto scan = m_archive.Scan(
+        job.cursor,
+        std::span<const uint8_t>{job.detection_key.data(), job.detection_key.size()},
+        job.scan_budget, job.limit, MAX_ARCHIVE_RESPONSE_BYTES, job.not_before);
+
+    ArchiveResponse resp;
+    resp.next_cursor = scan.next_cursor;
+    resp.complete = scan.complete ? 1 : 0;
+    resp.items.reserve(scan.matches.size());
+    for (const auto& m : scan.matches) {
+        resp.items.push_back({m.id, m.received_at, m.envelope});
+    }
+    if (m_send) m_send(job.peer, std::move(resp), scan.scanned);
+}
+
 namespace {
 //! Plain atomic pointer; lifetime owned by NodeContext. Net thread only reads.
 std::atomic<EnvelopeArchive*> g_active_archive{nullptr};
+std::atomic<ArchiveScanner*> g_active_archive_scanner{nullptr};
 } // namespace
 
 void SetActiveArchive(EnvelopeArchive* archive)
@@ -259,6 +363,16 @@ void SetActiveArchive(EnvelopeArchive* archive)
 EnvelopeArchive* GetActiveArchive()
 {
     return g_active_archive.load(std::memory_order_acquire);
+}
+
+void SetActiveArchiveScanner(ArchiveScanner* scanner)
+{
+    g_active_archive_scanner.store(scanner, std::memory_order_release);
+}
+
+ArchiveScanner* GetActiveArchiveScanner()
+{
+    return g_active_archive_scanner.load(std::memory_order_acquire);
 }
 
 } // namespace p2pmsg
