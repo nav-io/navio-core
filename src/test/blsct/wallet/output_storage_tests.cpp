@@ -574,4 +574,177 @@ BOOST_FIXTURE_TEST_CASE(is_from_me_output_storage_input, TestingSetup)
     BOOST_CHECK(wallet->IsFromMe(CTransaction{spend}));
 }
 
+// Regression for issue #470: getwalletinfo reported a staked_commitment_balance
+// that still contained a commitment already consumed by a newer stake, so it
+// disagreed with liststakedcommitments (which listed only the live one).
+//
+// A spend reaches the wallet through two independent records: mapTxSpends
+// (populated when the spending transaction gets a CWalletTx) and the
+// per-output flag in mapOutputs (populated when the spend is observed during
+// sync). Either one can be the only witness to a spend. The staked-commitment
+// listing has always consulted both; the balance consulted one per path, so a
+// commitment recorded as spent in only one of them was excluded from the list
+// and still counted in the balance.
+BOOST_FIXTURE_TEST_CASE(output_storage_staked_balance_matches_listing, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    wallet->SetLastBlockProcessed(2, InsecureRand256());
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    // Two staked commitments: an old one that a later stake consumed, and the
+    // live one that replaced it.
+    const CAmount old_amount{31944 * COIN};
+    const CAmount live_amount{32088 * COIN};
+    const auto add_commitment = [&](CAmount amount, const char* memo, int height) {
+        auto res = blsct::CreateOutput(recvAddress, amount, memo, TokenId(), BlstScalar::Rand(),
+                                       blsct::STAKED_COMMITMENT, /*minStake=*/amount);
+        BOOST_REQUIRE(res.out.IsStakedCommitment());
+        COutPoint outpoint(res.out.GetHash());
+        auto* wout = wallet->AddToWallet(outpoint, std::make_shared<const CTxOut>(res.out),
+                                         TxStateConfirmed{InsecureRand256(), height, 0}, nullptr,
+                                         /*fFlushOnClose=*/true, /*rescanning_old_block=*/false,
+                                         TxStateInactive{}, /*fCoinbase=*/false);
+        BOOST_REQUIRE(wout != nullptr);
+        BOOST_REQUIRE_EQUAL(wallet->IsMine(*wout->out), ISMINE_STAKED_COMMITMENT_BLSCT);
+        return outpoint;
+    };
+
+    const COutPoint old_commitment{add_commitment(old_amount, "old-stake", 1)};
+    add_commitment(live_amount, "live-stake", 2);
+
+    BOOST_CHECK_EQUAL(GetBlsctBalance(*wallet).m_mine_staked_commitment, old_amount + live_amount);
+    BOOST_CHECK_EQUAL(GetStakedCommitmentInfo(*wallet).size(), 2U);
+
+    // The newer stake consumes the old commitment. Record that spend in
+    // mapTxSpends only -- the state a wallet ends up in when the spending
+    // transaction is known as a CWalletTx but the per-output flag was never
+    // set (or was cleared again, e.g. by a superseded sibling re-sync).
+    CMutableTransaction spender;
+    spender.vin.emplace_back(old_commitment);
+    spender.vout.emplace_back();
+    const CWalletTx* spender_wtx = wallet->AddToWallet(MakeTransactionRef(spender),
+                                                       TxStateConfirmed{InsecureRand256(), 2, 1});
+    BOOST_REQUIRE(spender_wtx != nullptr);
+    BOOST_REQUIRE(wallet->IsSpent(old_commitment));
+    BOOST_REQUIRE(!wallet->GetWalletOutput(old_commitment)->IsSpent());
+
+    // The listing drops the consumed commitment...
+    BOOST_CHECK_EQUAL(GetStakedCommitmentInfo(*wallet).size(), 1U);
+    // ...and the balance must agree with it.
+    BOOST_CHECK_EQUAL(GetBlsctBalance(*wallet).m_mine_staked_commitment, live_amount);
+}
+
+// The mirror image of the case above: the spend is recorded on the output
+// (the wallet saw it during sync) but the spending transaction has no
+// CWalletTx, so mapTxSpends knows nothing about it. The mapWallet accounting
+// pass must not go on crediting the commitment its creating transaction
+// produced.
+BOOST_FIXTURE_TEST_CASE(output_storage_staked_balance_honours_output_spend_flag, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    wallet->SetLastBlockProcessed(2, InsecureRand256());
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+    const CAmount amount{31944 * COIN};
+    auto res = blsct::CreateOutput(recvAddress, amount, "old-stake", TokenId(), BlstScalar::Rand(),
+                                   blsct::STAKED_COMMITMENT, /*minStake=*/amount);
+    BOOST_REQUIRE(res.out.IsStakedCommitment());
+    const COutPoint outpoint{res.out.GetHash()};
+
+    // The transaction that created the commitment is in mapWallet, and the
+    // commitment itself in mapOutputs, as for any locally-created stake.
+    CMutableTransaction creator;
+    creator.vout.push_back(res.out);
+    const CWalletTx* creator_wtx = wallet->AddToWallet(MakeTransactionRef(creator),
+                                                       TxStateConfirmed{InsecureRand256(), 1, 0});
+    BOOST_REQUIRE(creator_wtx != nullptr);
+    BOOST_REQUIRE(wallet->AddToWallet(outpoint, std::make_shared<const CTxOut>(res.out),
+                                      TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr,
+                                      /*fFlushOnClose=*/true, /*rescanning_old_block=*/false,
+                                      TxStateInactive{}, /*fCoinbase=*/false) != nullptr);
+    BOOST_CHECK_EQUAL(GetBalance(*wallet).m_mine_staked_commitment, amount);
+
+    // A newer stake consumes it; only the output flag records the spend.
+    BOOST_REQUIRE(wallet->AddToWallet(outpoint, nullptr, TxStateConfirmed{InsecureRand256(), 2, 0},
+                                      nullptr, /*fFlushOnClose=*/true, /*rescanning_old_block=*/false,
+                                      TxStateConfirmed{InsecureRand256(), 2, 0}, /*fCoinbase=*/false,
+                                      /*spent_by=*/InsecureRand256()) != nullptr);
+    BOOST_REQUIRE(wallet->GetWalletOutput(outpoint)->IsSpent());
+    // SyncTransaction() does this for a spend that arrives over the wire; the
+    // test drives AddToWallet() directly, so drop the cached credits by hand.
+    wallet->MarkDirty();
+
+    BOOST_CHECK_EQUAL(GetStakedCommitmentInfo(*wallet).size(), 0U);
+    BOOST_CHECK_EQUAL(GetBalance(*wallet).m_mine_staked_commitment, 0);
+    BOOST_CHECK_EQUAL(GetBlsctBalance(*wallet).m_mine_staked_commitment, 0);
+}
+
+
+// Regression for issue #470: re-scanning the block that CREATED an output
+// must not un-spend it. The receive side re-adds the output with no spend
+// information (an unspent state and a null spender), and treating that as an
+// assertion that the output is unspent wiped a spend the chain had already
+// confirmed -- so an upgrade rescan brought a consumed staked commitment back
+// into staked_commitment_balance permanently.
+BOOST_FIXTURE_TEST_CASE(output_storage_rescan_keeps_confirmed_spend, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+    auto res = blsct::CreateOutput(recvAddress, 100 * COIN, "rescan-spend");
+    const COutPoint outpoint{res.out.GetHash()};
+    auto outRef = std::make_shared<const CTxOut>(res.out);
+    const TxStateConfirmed created{InsecureRand256(), 1, 0};
+
+    BOOST_REQUIRE(wallet->AddToWallet(outpoint, outRef, created, nullptr, /*fFlushOnClose=*/true,
+                                      /*rescanning_old_block=*/false, TxStateInactive{},
+                                      /*fCoinbase=*/false) != nullptr);
+
+    // A later transaction spends it, as the vin loop records the spend.
+    const uint256 spender{InsecureRand256()};
+    BOOST_REQUIRE(wallet->AddToWallet(outpoint, nullptr, TxStateConfirmed{InsecureRand256(), 2, 0}, nullptr,
+                                      /*fFlushOnClose=*/true, /*rescanning_old_block=*/false,
+                                      TxStateConfirmed{InsecureRand256(), 2, 0}, /*fCoinbase=*/false,
+                                      /*spent_by=*/spender) != nullptr);
+    BOOST_REQUIRE(wallet->GetWalletOutput(outpoint)->IsSpent());
+
+    // Re-scanning the CREATING block hands the output back with no spend
+    // information; the confirmed spend must survive.
+    BOOST_REQUIRE(wallet->AddToWallet(outpoint, outRef, created, nullptr, /*fFlushOnClose=*/true,
+                                      /*rescanning_old_block=*/true, TxStateInactive{},
+                                      /*fCoinbase=*/false) != nullptr);
+    BOOST_CHECK_MESSAGE(wallet->GetWalletOutput(outpoint)->IsSpent(),
+                        "re-scanning the creating block cleared a confirmed spend");
+
+    // The spending transaction being disconnected still un-spends it.
+    BOOST_REQUIRE(wallet->AddToWallet(outpoint, nullptr, TxStateInactive{}, nullptr,
+                                      /*fFlushOnClose=*/true, /*rescanning_old_block=*/false,
+                                      TxStateInactive{}, /*fCoinbase=*/false,
+                                      /*spent_by=*/spender) != nullptr);
+    BOOST_CHECK_MESSAGE(!wallet->GetWalletOutput(outpoint)->IsSpent(),
+                        "a reorg of the spending tx should un-spend the output");
+}
+
 BOOST_AUTO_TEST_SUITE_END()

@@ -580,7 +580,10 @@ Balance GetBlsctBalance(const CWallet& wallet, const int min_depth, const TokenI
                 }
             }
             const CWalletOutput& wout = entry.second;
-            if (wout.IsSpent()) continue;
+            // Both spend records, same rule as GetStakedCommitmentInfo(): the
+            // spending tx may be known only as a CWalletTx (mapTxSpends) and
+            // never have reached this output's own flag.
+            if (wout.IsSpent() || wallet.IsSpent(entry.first)) continue;
             const bool is_trusted{IsOutputTrusted(wallet, wout)};
             const int out_depth{wallet.GetOutputDepthInMainChain(wout)};
             const CAmount tx_credit_mine{OutputGetCredit(wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id)};
@@ -653,7 +656,7 @@ BlsctTrustedBalance GetBlsctTrustedBalance(const CWallet& wallet, const int min_
         if (wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool())) continue;
         if (!wout.fBLSCTOutput) continue;
         if (!wout.out->tokenId.IsNull()) continue;
-        if (wout.IsSpent()) continue;
+        if (wout.IsSpent() || wallet.IsSpent(outpoint)) continue;
         if (!IsOutputTrusted(wallet, wout)) continue;
         if (wallet.IsOutputImmatureCoinBase(wout)) continue;
         if (wallet.GetOutputDepthInMainChain(wout) < min_depth) continue;

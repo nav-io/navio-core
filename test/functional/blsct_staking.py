@@ -5,8 +5,11 @@
 
 """Test the stakelock and stakeunlock RPC commands."""
 
+from decimal import Decimal
+
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
+    assert_equal,
     assert_greater_than,
     assert_raises_rpc_error,
 )
@@ -71,6 +74,20 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
         assert len(stake_txid2) == 64, "Transaction ID should be 64 characters"
         self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
 
+    def check_staked_balance_matches_commitments(self, wallet, tag):
+        """staked_commitment_balance must equal the commitments the wallet lists.
+
+        The two come from different accounting passes, and a commitment that
+        only one of the wallet's spend records knows about used to be dropped
+        from the list while still being counted in the balance (issue #470:
+        a consumed stake kept inflating staked_commitment_balance).
+        """
+        listed = sum(Decimal(str(c["amount"])) for c in wallet.liststakedcommitments())
+        for reported in (Decimal(str(wallet.getwalletinfo()["staked_commitment_balance"])),
+                         Decimal(str(wallet.getbalances()["mine"]["staked_commitment_balance"]))):
+            assert_equal(reported, listed)
+        self.log.info(f"{tag}: staked balance {listed} matches the listed commitments")
+
     def test_basic_staking(self):
         self.log.info("Testing basic staking operations")
 
@@ -89,6 +106,10 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
             stake_txid = wallet.stakelock(amount)
             assert len(stake_txid) == 64, f"Stake txid should be valid for {amount} NAV"
             self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
+            # Each stakelock consolidates the previous commitment, so this is
+            # exactly the spend-and-replace flow that used to leave the old
+            # commitment in the reported balance.
+            self.check_staked_balance_matches_commitments(wallet, f"after staking {amount}")
 
         # Test unstaking - try to unstake a specific amount
         self.log.info("Testing unstaking")
@@ -97,6 +118,7 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
             assert len(unstake_txid) == 64, "Unstake txid should be valid"
             self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
             self.log.info("Unstaking succeeded")
+            self.check_staked_balance_matches_commitments(wallet, "after unstaking")
         except Exception as e:
             self.log.info(f"Unstaking failed (expected due to txfactory constraints): {e}")
 
