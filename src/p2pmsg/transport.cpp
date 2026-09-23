@@ -416,6 +416,7 @@ uint64_t Transport::TakeSendTicket(const StreamKey& key)
     LOCK(m_send_order_mutex);
     SendStream& s = m_send_streams[key];
     ++s.holders;
+    m_send_tickets_issued.fetch_add(1, std::memory_order_release);
     return s.next_ticket++;
 }
 

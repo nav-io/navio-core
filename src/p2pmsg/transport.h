@@ -324,6 +324,19 @@ private:
     //! Take this stream's next ticket. Pair with exactly one ReleaseSendTurn.
     uint64_t TakeSendTicket(const StreamKey& key)
         EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex);
+
+public:
+    //! Tickets issued across all streams since startup.
+    //!
+    //! Exists for tests. Submission order is only defined once a caller has
+    //! actually CLAIMED its ticket, and a test that submits concurrently has no
+    //! other way to observe that moment: the claim happens inside Send(), after
+    //! the argument checks, so "the thread is about to call Send()" is a
+    //! different event. Waiting on this instead of sleeping across that gap is
+    //! what makes such a test deterministic.
+    uint64_t SendTicketsIssued() const { return m_send_tickets_issued.load(std::memory_order_acquire); }
+
+private:
     //! Block until `ticket` may broadcast. False = shutting down, abandon.
     bool AwaitSendTurn(const StreamKey& key, uint64_t ticket)
         EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex);
@@ -396,6 +409,8 @@ private:
     //! Live send streams. Only streams with a send in flight are present, so
     //! the map is bounded by concurrent senders, not by peers or keys ever seen.
     Mutex m_send_order_mutex;
+    //! Monotonic count of tickets handed out; see SendTicketsIssued().
+    std::atomic<uint64_t> m_send_tickets_issued{0};
     std::map<StreamKey, SendStream> m_send_streams GUARDED_BY(m_send_order_mutex);
     std::condition_variable m_send_order_cv;
 };

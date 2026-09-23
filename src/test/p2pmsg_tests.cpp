@@ -39,6 +39,21 @@ Job MakeJob(uint8_t kind, uint32_t len = 0)
     }
     return j;
 }
+
+//! Spin until `pred` holds, up to a generous ceiling. Returns false on timeout,
+//! so a genuine hang fails the test rather than hanging the suite. The ceiling
+//! is only reached when something is actually broken, so it can be generous
+//! without slowing a passing run down.
+template <typename Pred>
+bool WaitFor(Pred pred, std::chrono::milliseconds timeout = std::chrono::seconds{30})
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!pred()) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
 } // namespace
 
 BOOST_AUTO_TEST_CASE(worker_defaults)
@@ -495,8 +510,8 @@ BOOST_AUTO_TEST_CASE(transport_send_preserves_submission_order)
                           : 0;
         });
     }
-    // Submit one at a time, waiting for each sender to reach Send() before
-    // releasing the next, so the submission order is exactly 0..MESSAGES-1.
+    // Submit one at a time, waiting for each sender to have claimed its ticket
+    // before releasing the next, so the submission order really is 0..N-1.
     for (int i = 0; i < MESSAGES; ++i) {
         {
             std::lock_guard<std::mutex> lk(gate_mutex);
@@ -507,9 +522,15 @@ BOOST_AUTO_TEST_CASE(transport_send_preserves_submission_order)
             std::unique_lock<std::mutex> lk(gate_mutex);
             gate_cv.wait(lk, [&] { return entered >= i; });
         }
-        // The acknowledging thread only needs a few microseconds more to claim
-        // its ticket; give it a wide margin before the next one starts.
-        UninterruptibleSleep(std::chrono::milliseconds{2});
+        // Wait for the sender to have actually CLAIMED its ticket, not merely
+        // to be about to call Send(): the claim happens inside Send(), behind
+        // IsValidRecipient(). The previous version bridged that gap with a 2 ms
+        // sleep, which made the test a race rather than a check -- a thread
+        // descheduled across those 2 ms claims late, two sends swap places, and
+        // the compare fails. That is how this failed on the 32-bit ARM runner.
+        const uint64_t want = static_cast<uint64_t>(i) + 1;
+        BOOST_REQUIRE_MESSAGE(WaitFor([&] { return t.SendTicketsIssued() >= want; }),
+                              "sender " << i << " never claimed its send ticket");
     }
     for (auto& th : senders) th.join();
 
