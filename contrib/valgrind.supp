@@ -16,12 +16,6 @@
 # * aarch64 (Debian Bookworm system libs, clang, without gui)
 # * x86_64  (Debian Bookworm system libs, clang, without gui)
 {
-   Suppress uninitialized bytes warning in compat code
-   Memcheck:Param
-   ioctl(TCSET{S,SW,SF})
-   fun:tcsetattr
-}
-{
    Suppress leaks on shutdown
    Memcheck:Leak
    ...

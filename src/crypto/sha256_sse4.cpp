@@ -12,6 +12,22 @@
 
 namespace sha256_sse4
 {
+/*
+Both Clang and GCC fail with ASan on this inline assembly:
+- Clang: compile failure with -O0 or -O2 + -fcf-protection under ASan.
+  See https://github.com/llvm/llvm-project/issues/92182
+  and https://github.com/bitcoin/bitcoin/issues/31913.
+- GCC: runtime SEGV during SHA256AutoDetect()'s self-test under ASan,
+  regardless of optimization level.
+  See https://github.com/bitcoin/bitcoin/issues/34881.
+*/
+#if defined(__SANITIZE_ADDRESS__)
+  __attribute__((no_sanitize("address")))
+#elif defined(__clang__)
+#if __has_feature(address_sanitizer) // fallback can be removed once support for Clang 21 is dropped
+  __attribute__((no_sanitize("address")))
+#endif
+#endif
 void Transform(uint32_t* s, const unsigned char* chunk, size_t blocks)
 {
     static const uint32_t K256 alignas(16) [] = {

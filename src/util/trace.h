@@ -11,6 +11,13 @@
 
 #ifdef ENABLE_TRACING
 
+// Workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=103395
+// systemtap 4.6 on 32-bit ARM triggers internal compiler error
+// (this workaround is included in systemtap 4.7+)
+#if defined(__arm__)
+#  define STAP_SDT_ARG_CONSTRAINT g
+#endif
+
 #include <sys/sdt.h>
 
 #define TRACE(context, event) DTRACE_PROBE(context, event)
