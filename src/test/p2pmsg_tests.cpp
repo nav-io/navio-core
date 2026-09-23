@@ -19,6 +19,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <numeric>
 #include <thread>
 
 using namespace p2pmsg;
@@ -432,6 +433,90 @@ BOOST_AUTO_TEST_CASE(transport_send_rejects_identity)
     BOOST_CHECK(Transport::IsValidRecipient(h.t->InboxPubKey()));
     BOOST_CHECK(h.t->Send(h.t->InboxPubKey(), PayloadKind::PING, {0x02}, /*stem=*/false));
     BOOST_CHECK_EQUAL(h.broadcasts.load(), 1);
+}
+
+BOOST_AUTO_TEST_CASE(transport_send_preserves_submission_order)
+{
+    // A burst of sends to one recipient -- e.g. a chat app turning several
+    // typed lines into several sendp2pmsg calls -- must reach the wire in the
+    // order it submitted them. Each Send() grinds the mandatory PoW on its own
+    // thread, and a grind is a geometric search whose spread is as large as its
+    // mean, so without the send-order gate the emission order is unrelated to
+    // the submission order and the recipient stores the burst scrambled. The
+    // difficulty here is low for test speed but still far longer than the 2ms
+    // submission spacing below, so the grinds overlap and finish out of
+    // order; the ordering must hold anyway.
+    constexpr uint32_t BITS{15};
+    constexpr int MESSAGES{8};
+
+    WorkerPool pool{WorkerPool::Options{/*num_workers=*/1, /*ring_capacity=*/8}};
+    Transport::Options opts;
+    opts.pow_bits = BITS;
+
+    // Own the recipient key so the broadcast callback can recover which message
+    // each envelope carries (its one-byte body is the submission index).
+    const blsct::PrivateKey recipient_priv(BlstScalar::Rand(/*exclude_zero=*/true));
+    const blsct::PublicKey recipient(recipient_priv.GetPublicKey());
+
+    std::mutex emitted_mutex;
+    std::vector<int> emitted;
+    Transport t(
+        pool,
+        /*broadcast=*/[&](bool, const Envelope& env) {
+            const uint8_t aad[1] = {env.kind};
+            const auto plain = Decrypt(recipient_priv, env.enc, std::span<const uint8_t>{aad, 1});
+            // Checked on the main thread below: Boost.Test assertions are not
+            // safe to run from these sender threads.
+            const int index = (plain && plain->size() == 1) ? static_cast<int>((*plain)[0]) : -1;
+            std::lock_guard<std::mutex> lk(emitted_mutex);
+            emitted.push_back(index);
+        },
+        /*relay=*/[](int64_t, bool, const Envelope&) {}, opts);
+
+    std::mutex gate_mutex;
+    std::condition_variable gate_cv;
+    int released{-1}; //!< highest index allowed to call Send()
+    int entered{-1};  //!< highest index that is about to call Send()
+    std::vector<uint8_t> sent(MESSAGES, 0);
+
+    std::vector<std::thread> senders;
+    senders.reserve(MESSAGES);
+    for (int i = 0; i < MESSAGES; ++i) {
+        senders.emplace_back([&, i] {
+            {
+                std::unique_lock<std::mutex> lk(gate_mutex);
+                gate_cv.wait(lk, [&] { return released >= i; });
+                entered = i;
+            }
+            gate_cv.notify_all();
+            sent[i] = t.Send(recipient, PayloadKind::USER_DATA,
+                             {static_cast<uint8_t>(i)}, /*stem=*/false)
+                          ? 1
+                          : 0;
+        });
+    }
+    // Submit one at a time, waiting for each sender to reach Send() before
+    // releasing the next, so the submission order is exactly 0..MESSAGES-1.
+    for (int i = 0; i < MESSAGES; ++i) {
+        {
+            std::lock_guard<std::mutex> lk(gate_mutex);
+            released = i;
+        }
+        gate_cv.notify_all();
+        {
+            std::unique_lock<std::mutex> lk(gate_mutex);
+            gate_cv.wait(lk, [&] { return entered >= i; });
+        }
+        // The acknowledging thread only needs a few microseconds more to claim
+        // its ticket; give it a wide margin before the next one starts.
+        UninterruptibleSleep(std::chrono::milliseconds{2});
+    }
+    for (auto& th : senders) th.join();
+
+    std::vector<int> expected(MESSAGES);
+    std::iota(expected.begin(), expected.end(), 0);
+    BOOST_CHECK_EQUAL_COLLECTIONS(emitted.begin(), emitted.end(), expected.begin(), expected.end());
+    for (int i = 0; i < MESSAGES; ++i) BOOST_CHECK_MESSAGE(sent[i] == 1, "send " << i << " failed");
 }
 
 BOOST_AUTO_TEST_CASE(transport_inbox_rotation)

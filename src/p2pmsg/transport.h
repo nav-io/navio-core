@@ -16,10 +16,13 @@
 #include <util/hasher.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace p2pmsg {
@@ -254,13 +257,23 @@ public:
     //! or the PoW grind is interrupted by shutdown. It never throws, so it is
     //! safe on a background thread, where a throw would reach TraceThread and
     //! terminate the node.
+    //!
+    //! Concurrent calls for the same (kind, recipient) leave in the order they
+    //! entered Send(), not in PoW-grind completion order — see SendStream.
     [[nodiscard]] bool Send(const blsct::PublicKey& recipient, PayloadKind kind,
-                            std::vector<uint8_t> body, bool stem);
+                            std::vector<uint8_t> body, bool stem)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex, !m_replay_mutex);
 
     //! Signal that the node is shutting down so any in-flight PoW grind on a
     //! worker aborts promptly instead of blocking the pool-stop join. Call
     //! before stopping the worker pool. Idempotent, safe from any thread.
-    void Interrupt() { m_interrupt.store(true, std::memory_order_relaxed); }
+    void Interrupt()
+    {
+        m_interrupt.store(true, std::memory_order_relaxed);
+        // Wake senders parked on the send-order gate so they abandon promptly
+        // instead of waiting out a predecessor's (also aborting) grind.
+        m_send_order_cv.notify_all();
+    }
 
     //! Total PING payloads decrypted+dispatched to us. Debug/observability.
     uint64_t PingsReceived() const { return m_pings_received.load(std::memory_order_relaxed); }
@@ -280,6 +293,43 @@ private:
     //! if this node may relay another message now; false when the budget is
     //! spent. See Options::relay_tokens_per_sec.
     bool AllowRelay() EXCLUSIVE_LOCKS_REQUIRED(!m_relay_limit_mutex);
+
+    //! FIFO gate that makes outbound order match SUBMISSION order.
+    //!
+    //! Send() grinds the mandatory PoW on the caller's thread, and a grind is a
+    //! geometric search: its duration has the same order of magnitude as its
+    //! mean (~2^pow_bits hashes), so two messages handed to Send() a few
+    //! milliseconds apart routinely finish grinding in the opposite order. With
+    //! each sender broadcasting the moment its own grind lands, an application
+    //! that sends a burst (a few chat lines typed in a row, one RPC each) puts
+    //! them on the wire in an order unrelated to the order it asked for, and
+    //! the recipient stores them that way.
+    //!
+    //! So a sender takes a ticket when it ENTERS Send(), grinds in parallel
+    //! with everyone else, and only then waits for its turn to broadcast. The
+    //! CPU work stays concurrent; just the emission is serialized.
+    //!
+    //! Tickets are per (kind, recipient) — one conversation, one queue — so a
+    //! slow grind delays only the stream it belongs to, never RFQ/aggregation
+    //! traffic to other keys. This orders what THIS node emits; multi-hop
+    //! propagation can still deliver out of order, so an application that
+    //! needs a total order must carry its own sequence in the payload.
+    struct SendStream {
+        uint64_t next_ticket{0}; //!< handed to the next caller
+        uint64_t now_serving{0}; //!< ticket currently allowed to broadcast
+        size_t holders{0};       //!< live tickets; the entry dies at 0
+    };
+    using StreamKey = std::pair<uint8_t, std::vector<unsigned char>>;
+
+    //! Take this stream's next ticket. Pair with exactly one ReleaseSendTurn.
+    uint64_t TakeSendTicket(const StreamKey& key)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex);
+    //! Block until `ticket` may broadcast. False = shutting down, abandon.
+    bool AwaitSendTurn(const StreamKey& key, uint64_t ticket)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex);
+    //! Hand the stream to the next ticket. Must run on every exit path.
+    void ReleaseSendTurn(const StreamKey& key, uint64_t ticket)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex);
 
     WorkerPool& m_pool;
     //! Set by Interrupt() at shutdown; polled by the PoW grind so a worker
@@ -342,6 +392,12 @@ private:
     Mutex m_relay_limit_mutex;
     double m_relay_tokens GUARDED_BY(m_relay_limit_mutex){0.0};
     int64_t m_relay_last_refill GUARDED_BY(m_relay_limit_mutex){0};
+
+    //! Live send streams. Only streams with a send in flight are present, so
+    //! the map is bounded by concurrent senders, not by peers or keys ever seen.
+    Mutex m_send_order_mutex;
+    std::map<StreamKey, SendStream> m_send_streams GUARDED_BY(m_send_order_mutex);
+    std::condition_variable m_send_order_cv;
 };
 
 //! Process-wide active transport, set by init when -p2pmsg is enabled and

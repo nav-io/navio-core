@@ -167,7 +167,12 @@ static RPCHelpMan sendp2pmsg()
         "With stem propagation (default) observers cannot tell where a message entered the network.\n"
         "\nThe node interprets only `topic` (the pub/sub routing key). Everything else an application\n"
         "needs — sender identity, a reply key, threading, content type — must be framed inside the\n"
-        "payload by the application; the transport deliberately adds no sender information.\n",
+        "payload by the application; the transport deliberately adds no sender information.\n"
+        "\nCalls to this RPC for the same recipient go out in the order they are received, even when\n"
+        "issued concurrently (each send grinds proof-of-work for a variable time before it can be\n"
+        "broadcast). That orders only what THIS node emits: messages still travel the bus over\n"
+        "independent paths, so an application that needs a guaranteed order must carry its own\n"
+        "sequence number in the payload.\n",
         {
             {"recipient", RPCArg::Type::STR, RPCArg::Optional::NO, "Recipient pubkey hex (inbox prekey or minted reply key), or \"broadcast\""},
             {"topic", RPCArg::Type::STR, RPCArg::Optional::NO, strprintf("Topic string, 1-%d bytes. Routing key for broadcast subscriptions and the store's filter column", p2pmsg::MAX_USER_MSG_TOPIC_BYTES)},
