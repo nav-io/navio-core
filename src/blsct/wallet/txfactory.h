@@ -27,7 +27,20 @@ private:
     KeyMan* km;
 
 public:
-    TxFactory(KeyMan* km) : km(km){};
+    //! The factory derives every output's blinding scalar from the wallet's
+    //! HD seed, so the sender can prove afterwards that it created them (see
+    //! blsct/wallet/blinding_key.h). A wallet that cannot hand out its seed
+    //! (locked, or no HD chain) silently falls back to random, unrecoverable
+    //! keys -- the behaviour every output had before this change.
+    TxFactory(KeyMan* km) : km(km)
+    {
+        if (km) {
+            if (auto seed = km->GetBlindingSeed()) {
+                SetBlindingSeed(*seed);
+                SetBlindingGenerationFn([km](const Outid& anchor) { return km->ReserveBlindingGeneration(anchor); });
+            }
+        }
+    };
 
     bool AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint, const bool& stakedCommitment = false, const bool& rbf = false);
     //! `nBLSCTDefaultFee` overrides the per-byte fee rate (nullopt = consensus

@@ -105,6 +105,8 @@ extern const std::string WATCHS;
 extern const std::string BLSCTWATCHMETA;
 extern const std::string BLSCTWATCHS;
 extern const std::string BLSCTWATCHNONCE;
+extern const std::string BLSCTBLINDINGGEN;
+extern const std::string BLSCTBLINDINGKEY;
 
 // Keys in this set pertain only to the legacy wallet (LegacyScriptPubKeyMan) and are removed during migration from legacy to descriptors.
 extern const std::unordered_set<std::string> LEGACY_TYPES;
@@ -279,6 +281,11 @@ public:
     bool EraseBLSCTWatchOnly(const CScript& script);
     bool WriteBLSCTWatchOnlyNonce(const CScript& script, const blsct::PublicKey& nonce);
     bool EraseBLSCTWatchOnlyNonce(const CScript& script);
+    bool WriteBLSCTBlindingGeneration(const uint256& anchor, uint32_t generation);
+
+    //! The blinding scalar of a BLSCT output this wallet created, keyed by
+    //! output hash. Fast path for `signblsctoutput`; the derivation in
+    //! blsct/wallet/blinding_key.h is the seed-restore fallback.
 
     bool WriteBestBlock(const CBlockLocator& locator);
     bool ReadBestBlock(CBlockLocator& locator);

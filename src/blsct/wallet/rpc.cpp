@@ -486,6 +486,11 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
             return std::nullopt;
         }
         blsct::SubAddress self_dest(std::get<blsct::DoublePublicKey>(dest_res.value()));
+        // Deliberately a RANDOM blinding key rather than the seed-derived
+        // recoverable one. A cover candidate exists to be unlinkable: the
+        // scalars of a derived set all share one derivation path, so anyone
+        // who learned this wallet's seed could pick its cover halves out of
+        // every aggregate it ever contributed to.
         factory.AddOutput(self_dest, c.amount, "candidate", TokenId(), blsct::NORMAL, /*minStake=*/0,
                           /*fSubtractFeeFromAmount=*/false, BlstScalar::Rand(), /*nBLSCTDefaultFee=*/0);
         auto built = factory.BuildCandidate();
@@ -5009,6 +5014,131 @@ RPCHelpMan getblsctoutput()
     };
 }
 
+RPCHelpMan signblsctoutput()
+{
+    return RPCHelpMan{
+        "signblsctoutput",
+        "\nSign an arbitrary message with the blinding key of a BLSCT output this wallet created.\n"
+        "\nThe signature proves that this wallet built the output -- nothing else on chain identifies\n"
+        "the sender of a confidential payment. It says nothing about who owns the funds now, which is\n"
+        "exactly what a refund claim needs: the person who paid is the person entitled to the reversal.\n"
+        "\nOnly outputs created by a wallet running this feature can be signed for. Outputs created\n"
+        "earlier used a random blinding scalar that was discarded and is gone for good.\n"
+        "\nWhat is signed is sha256(\"navio-blsct-output-auth/v1\" || message), NOT the message itself.\n"
+        "The domain prefix is what keeps this from being a signing oracle for a consensus key: every\n"
+        "BLSCT output carries a signature under this same key over its 32-byte output hash, so signing\n"
+        "caller-chosen bytes would let a caller obtain one. Verifiers must hash the same way.\n",
+        {
+            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The id of the transaction holding the output."},
+            {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The index of the output within that transaction."},
+            {"message", RPCArg::Type::STR, RPCArg::Optional::NO, "The message to sign."},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                {RPCResult::Type::STR_HEX, "signature", "The 96-byte BLS signature"},
+                {RPCResult::Type::STR_HEX, "blindingkey", "The 48-byte public blinding key the signature verifies against (the output's ephemeral key, i.e. k*G)"},
+            }},
+        RPCExamples{
+            HelpExampleCli("signblsctoutput", "\"a685e520f85d111a6c55bd2b8226f6b916a3bcdd3b549c75e0abddc55df70951\" 0 \"navio-hl-refund/v1|<txid>|<vout>|<note>\"") +
+            HelpExampleRpc("signblsctoutput", "\"a685e520f85d111a6c55bd2b8226f6b916a3bcdd3b549c75e0abddc55df70951\", 0, \"navio-hl-refund/v1|<txid>|<vout>|<note>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
+            if (!pwallet) return UniValue::VNULL;
+
+            // The blinding scalar is a secret of the sender, so this refuses
+            // on a locked wallet even when the persisted fast path would have
+            // answered without touching the seed.
+            EnsureWalletIsUnlocked(*pwallet);
+
+            pwallet->BlockUntilSyncedToCurrentChain();
+
+            const uint256 txid(ParseHashV(request.params[0], "txid"));
+            const int vout_index{request.params[1].getInt<int>()};
+            if (vout_index < 0) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "vout must not be negative");
+            }
+            const std::string message{request.params[2].get_str()};
+
+            LOCK(pwallet->cs_wallet);
+
+            // The transaction has to come from the wallet rather than the
+            // chain, because recovery needs its INPUTS: the derivation is
+            // keyed on an input outpoint.
+            const auto wtx_it = pwallet->mapWallet.find(txid);
+            if (wtx_it == pwallet->mapWallet.end()) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "No such transaction in the wallet");
+            }
+            const CTransactionRef& tx = wtx_it->second.tx;
+
+            if (static_cast<size_t>(vout_index) >= tx->vout.size()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("vout out of range (the transaction has %u outputs)", (unsigned)tx->vout.size()));
+            }
+            const CTxOut& out = tx->vout[vout_index];
+            if (!out.HasBLSCTKeys()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "That output is not a BLSCT output and has no blinding key");
+            }
+
+            // The point k*G is `ephemeralKey`. `blsctData.blindingKey` is a
+            // DIFFERENT point (the destination's spend key times k), bound to
+            // the recipient and with no discrete log the sender can sign with.
+            const BlstG1Point publicBlindingKey = out.blsctData.ephemeralKey;
+
+            std::optional<BlstScalar> blindingKey;
+
+            // Always re-derived from the wallet seed. An earlier revision kept
+            // a persisted copy as a fast path, but the scalar is the authority
+            // that signs for the output and the wallet database stores it in
+            // the clear, so the record was dropped: deriving costs at most
+            // MAX_OUTPUT_SEARCH scalar multiplications when the canonical
+            // anchor hits. This is also the path that survives a seed-only
+            // restore, and the one that tolerates the output having moved:
+            // block aggregation merges every non-coinbase transaction of a
+            // block into one, so neither the output's index nor the position
+            // of the input it was derived from is the one the sender assigned.
+            {
+                blsct::KeyMan* blsct_km = pwallet->GetBLSCTKeyMan();
+                if (!blsct_km) {
+                    throw JSONRPCError(RPC_WALLET_ERROR, "This wallet has no BLSCT key manager");
+                }
+                // Which inputs are OURS gives the canonical anchor and with
+                // it the fast path. The same two lookups `getblsctoutput`
+                // uses, covering both wallet storage modes; an input we
+                // cannot place is simply left out, and recovery falls back to
+                // scanning every input.
+                std::vector<COutPoint> ownInputs;
+                for (const CTxIn& in : tx->vin) {
+                    const uint256& prev = in.prevout.hash.ToUint256();
+                    if (pwallet->mapOutputs.contains(in.prevout) ||
+                        pwallet->mapOutpointHashToWalletTx.contains(prev)) {
+                        ownInputs.push_back(in.prevout);
+                    }
+                }
+
+                blindingKey = blsct_km->RecoverOutputBlindingKey(tx->vin, out, ownInputs);
+            }
+
+            if (!blindingKey) {
+                throw JSONRPCError(RPC_WALLET_ERROR,
+                                   "Could not recover the blinding key for that output. Either this wallet did not "
+                                   "create it, or it was created before recoverable blinding keys, in which case the "
+                                   "scalar was random and discarded and cannot be recovered.");
+            }
+
+            const blsct::PrivateKey key{*blindingKey};
+            // Domain-separated and hashed: see blsct::OutputAuthDigest for why
+            // signing the caller's bytes directly would hand out consensus
+            // signatures.
+            const uint256 digest{blsct::OutputAuthDigest(message)};
+            const blsct::Message msg(digest.begin(), digest.end());
+
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("signature", HexStr(key.Sign(msg).GetVch()));
+            result.pushKV("blindingkey", HexStr(blsct::PublicKey(publicBlindingKey).GetVch()));
+            return result;
+        },
+    };
+}
+
 Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
 {
     static const CRPCCommand commands[]{
@@ -5054,6 +5184,7 @@ Span<const CRPCCommand> GetBLSCTWalletRPCCommands()
         {"blsct", &deriveblsctspendingkey},
         {"blsct", &deriveblsctonetimekey},
         {"blsct", &getblsctoutput},
+        {"blsct", &signblsctoutput},
     };
     return commands;
 }
