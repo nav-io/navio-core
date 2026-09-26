@@ -28,7 +28,7 @@ with a receive-only leaf watching each. A's only relay peer is B.
 PoW difficulty is 1 bit so the test does not burn CPU.
 """
 
-from test_framework.messages import NODE_P2PMSG_LEAF
+from test_framework.messages import NODE_P2PMSG_LEAF, NODE_P2PMSG_V2
 from test_framework.p2p import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
@@ -48,8 +48,8 @@ class P2PMsgStemDeadEndTest(BitcoinTestFramework):
         # Leaves only: they receive fluff and are never stem successors, so B's
         # single stem-eligible peer is A and the stem hop is deterministic.
         self.log.info("Attach a receive-only leaf to each node")
-        leaf_b = node_b.add_p2p_connection(P2PInterface(), services=NODE_P2PMSG_LEAF)
-        leaf_a = node_a.add_p2p_connection(P2PInterface(), services=NODE_P2PMSG_LEAF)
+        leaf_b = node_b.add_p2p_connection(P2PInterface(), services=NODE_P2PMSG_LEAF | NODE_P2PMSG_V2)
+        leaf_a = node_a.add_p2p_connection(P2PInterface(), services=NODE_P2PMSG_LEAF | NODE_P2PMSG_V2)
         leaf_b.sync_with_ping()
         leaf_a.sync_with_ping()
 

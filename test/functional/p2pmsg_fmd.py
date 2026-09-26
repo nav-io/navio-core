@@ -20,7 +20,7 @@ This test covers the node-side surface of that mechanism:
 PoW difficulty is 1 bit so the test does not burn CPU.
 """
 
-from test_framework.messages import NODE_P2PMSG
+from test_framework.messages import NODE_P2PMSG_V2
 from test_framework.p2p import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_greater_than, assert_raises_rpc_error
@@ -151,7 +151,7 @@ class P2PMsgFmdTest(BitcoinTestFramework):
     def check_flag_on_the_wire(self, sender, recipient):
         self.log.info("The flag rides the envelope at the documented size")
         info = recipient.getp2pmsginfo()
-        peer = sender.add_p2p_connection(P2PMsgCollector(), services=NODE_P2PMSG)
+        peer = sender.add_p2p_connection(P2PMsgCollector(), services=NODE_P2PMSG_V2)
         peer.sync_with_ping()
         seen = set()
 

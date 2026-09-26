@@ -62,7 +62,7 @@ static RPCHelpMan getp2pmsginfo()
                 {RPCResult::Type::STR_HEX, "fmd_sig", /*optional=*/true, "identity_pubkey's signature over fmd_clue_key"},
                 {RPCResult::Type::NUM, "fmd_gamma", /*optional=*/true, "Number of flag bits, i.e. the maximum detection precision this build supports (2^-gamma)"},
                 {RPCResult::Type::NUM, "pings_received", /*optional=*/true, "PING payloads decrypted and dispatched to us"},
-                {RPCResult::Type::NUM, "relay_capable_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG (can relay the overlay for us). Note this is a lower bound on network participation: capability rides ADDR gossip, so many more nodes may be reachable indirectly."},
+                {RPCResult::Type::NUM, "relay_capable_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_V2 (can relay this envelope format for us). Note this is a lower bound on network participation: capability rides ADDR gossip, so many more nodes may be reachable indirectly."},
                 {RPCResult::Type::NUM, "leaf_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_LEAF but not NODE_P2PMSG: receive-only bus clients that get our fluff traffic but are never chosen as a Dandelion++ stem successor."},
                 {RPCResult::Type::NUM, "archive_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_ARCHIVE: peers that retain flagged envelopes and will serve them back, so a client that was offline can catch up through them."},
                 {RPCResult::Type::OBJ, "archive", /*optional=*/true, "This node's own envelope archive (-p2pmsgarchive)", {
@@ -98,10 +98,12 @@ static RPCHelpMan getp2pmsginfo()
                 uint64_t archives = 0;
                 node.connman->ForEachNode([&capable, &leaves, &archives](CNode* pnode) {
                     const uint64_t their = pnode->m_their_services.load();
-                    if ((their & NODE_P2PMSG) != 0) {
-                        ++capable;
-                    } else if ((their & NODE_P2PMSG_LEAF) != 0) {
-                        ++leaves;
+                    // The format bit says the peer speaks v2 at all; the leaf
+                    // bit says not to stem to it. A peer claiming neither is
+                    // not part of this overlay.
+                    if ((their & NODE_P2PMSG_V2) != 0) {
+                        if ((their & NODE_P2PMSG_LEAF) != 0) ++leaves;
+                        else ++capable;
                     }
                     // Archiving is orthogonal to relaying, so count it separately
                     // rather than as another branch of the same chain.

@@ -1709,14 +1709,20 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
     // p2p encrypted-messaging subsystem (dark until features land; gated).
     if (args.GetBoolArg("-p2pmsg", p2pmsg::DEFAULT_P2PMSG_ENABLE)) {
-        // Advertise the NODE_P2PMSG relay capability so peers route the overlay
-        // through us (avoids stemming/broadcasting P2PMSG to nodes that would
-        // silently drop it, see forward() below). Note this is a network-wide
-        // signal: it rides ADDR gossip, so enabling -p2pmsg makes participation
-        // visible beyond direct peers -- documented in
+        // Advertise the NODE_P2PMSG_V2 relay capability so peers route the
+        // overlay through us (avoids stemming/broadcasting P2PMSG to nodes
+        // that would silently drop it, see forward() below). Note this is a
+        // network-wide signal: it rides ADDR gossip, so enabling -p2pmsg makes
+        // participation visible beyond direct peers -- documented in
         // doc/p2p-encrypted-messaging.md. The bit promises relay only, not that
         // we serve candidates (that is the separate -servecandidates budget).
-        nLocalServices = ServiceFlags(nLocalServices | NODE_P2PMSG);
+        //
+        // NOT NODE_P2PMSG, which means envelope v1. This build rejects a v1
+        // header outright, so advertising v1 would invite traffic we answer
+        // with discouragement points, and would invite v1 nodes to charge us
+        // the same for the v2 traffic we sent them. Until the network has
+        // moved, the two overlays stay disjoint.
+        nLocalServices = ServiceFlags(nLocalServices | NODE_P2PMSG_V2);
         p2pmsg::WorkerPool::Options pool_opts;
         const int64_t workers = args.GetIntArg("-onionworkers", 0);
         // Clamp to a sane range: 0 keeps the default; an unbounded value would
@@ -1794,19 +1800,27 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // this is best-effort but strictly better than routing blind.
             //
             // Two bits, two eligibility sets:
-            //  - NODE_P2PMSG: a relay. Gets fluff copies AND may be pinned as
-            //    the Dandelion++ stem successor.
+            //  - NODE_P2PMSG_V2: a relay that speaks this envelope format. Gets
+            //    fluff copies AND may be pinned as the Dandelion++ stem
+            //    successor. A peer advertising only NODE_P2PMSG speaks v1 and
+            //    is not eligible for either: it cannot parse what we would
+            //    send, and it would charge us for sending it.
             //  - NODE_P2PMSG_LEAF: a receive-only client (standalone SDK in a
             //    browser/mobile) with no peers to forward to. Gets fluff copies
             //    so it sees bus traffic, but is NEVER a stem successor: a stem
             //    hop is a single unicast, and a leaf would black-hole it before
             //    it ever fluffs.
-            const auto fluff_eligible = [&](const CNode* pnode) {
-                return !pnode->IsBlockOnlyConn() &&
-                       (pnode->m_their_services.load() & (NODE_P2PMSG | NODE_P2PMSG_LEAF)) != 0;
+            // NODE_P2PMSG_V2 says "I speak this envelope format"; a leaf says
+            // "and do not stem to me". Both are needed, and a leaf that
+            // advertises only NODE_P2PMSG_LEAF has not said which format it
+            // wants -- it may be a v1 client, which would receive bytes it
+            // cannot parse.
+            const auto speaks_v2 = [&](const CNode* pnode) {
+                return !pnode->IsBlockOnlyConn() && (pnode->m_their_services.load() & NODE_P2PMSG_V2) != 0;
             };
+            const auto fluff_eligible = [&](const CNode* pnode) { return speaks_v2(pnode); };
             const auto stem_eligible = [&](const CNode* pnode) {
-                return !pnode->IsBlockOnlyConn() && (pnode->m_their_services.load() & NODE_P2PMSG) != 0;
+                return speaks_v2(pnode) && (pnode->m_their_services.load() & NODE_P2PMSG_LEAF) == 0;
             };
             // Fluff: flood every fluff-eligible peer (relays and leaves) except
             // the origin -- then make sure the flood actually left this node.
