@@ -398,6 +398,7 @@ BASE_SCRIPTS = [
     'p2pmsg_fmd.py',
     'p2pmsg_leaf.py',
     'p2pmsg_stem_deadend.py',
+    'p2pmsg_v2_bit.py',
     'p2pmsg_swap_e2e.py',
     'p2pmsg_user_messaging.py',
     'p2pmsg_zmq.py',

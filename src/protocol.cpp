@@ -221,6 +221,7 @@ static std::string serviceFlagToStr(size_t bit)
     case NODE_NETWORK_LIMITED: return "NETWORK_LIMITED";
     case NODE_P2P_V2:          return "P2P_V2";
     case NODE_P2PMSG:          return "P2PMSG";
+    case NODE_P2PMSG_V2:       return "P2PMSG_V2";
     case NODE_P2PMSG_LEAF:     return "P2PMSG_LEAF";
     case NODE_P2PMSG_ARCHIVE:  return "P2PMSG_ARCHIVE";
     // Not using default, so we get warned when a case is missing

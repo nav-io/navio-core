@@ -4,7 +4,8 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Encrypted p2p messaging: NODE_P2PMSG_LEAF receive-only peers.
 
-A leaf (NODE_P2PMSG_LEAF, no NODE_P2PMSG) is a bus client that wants fluff
+A leaf (NODE_P2PMSG_LEAF, plus the envelope format bit but not the relay bit)
+is a bus client that wants fluff
 traffic delivered but never relays. The node must:
 
   * fluff P2PMSG to it like any relay-capable peer;
@@ -18,7 +19,7 @@ traffic delivered but never relays. The node must:
 PoW difficulty is set to 1 bit so the test does not burn CPU.
 """
 
-from test_framework.messages import NODE_P2PMSG, NODE_P2PMSG_LEAF
+from test_framework.messages import NODE_P2PMSG_LEAF, NODE_P2PMSG_V2
 from test_framework.p2p import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
@@ -38,10 +39,10 @@ class P2PMsgLeafTest(BitcoinTestFramework):
         assert_equal(info["relay_capable_peers"], 0)
         assert_equal(info["leaf_peers"], 0)
 
-        # A leaf advertises only NODE_P2PMSG_LEAF: it is not a full node and it
-        # does not relay the overlay.
-        self.log.info("Connect a leaf peer (NODE_P2PMSG_LEAF only)")
-        leaf = node.add_p2p_connection(P2PInterface(), services=NODE_P2PMSG_LEAF)
+        # A leaf advertises NODE_P2PMSG_LEAF and the envelope format it reads:
+        # it is not a full node and it does not relay the overlay.
+        self.log.info("Connect a leaf peer (leaf bit, no relay bit)")
+        leaf = node.add_p2p_connection(P2PInterface(), services=NODE_P2PMSG_LEAF | NODE_P2PMSG_V2)
         # Make sure the node has processed our verack (so ForEachNode sees the
         # peer as fully connected) before it originates anything.
         leaf.sync_with_ping()
@@ -66,8 +67,8 @@ class P2PMsgLeafTest(BitcoinTestFramework):
         # Now add a relay-capable peer. It becomes the only stem-eligible
         # successor, so a stem send goes to it as `dp2pmsg` and the leaf sees
         # nothing new (a stem hop is a single unicast).
-        self.log.info("Connect a relay peer (NODE_P2PMSG); stem goes to it, not the leaf")
-        relay = node.add_p2p_connection(P2PInterface(), services=NODE_P2PMSG)
+        self.log.info("Connect a relay peer; stem goes to it, not the leaf")
+        relay = node.add_p2p_connection(P2PInterface(), services=NODE_P2PMSG_V2)
         relay.sync_with_ping()
         info = node.getp2pmsginfo()
         assert_equal(info["relay_capable_peers"], 1)
