@@ -768,6 +768,15 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
     if (tx.IsCoinBase())
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "coinbase");
 
+    // On a BLSCT chain ConnectBlock rejects every non-coinbase transparent
+    // transaction, so the mempool must never admit one. Say so here, before
+    // any script or BLS work, rather than relying on a later check happening
+    // to fail for an unrelated reason. Mirror of the "blsct-tx-not-allowed"
+    // gate in PolicyScriptChecks for the opposite case.
+    if (args.m_chainparams.GetConsensus().fBLSCT && !tx.IsBLSCT()) {
+        return state.Invalid(TxValidationResult::TX_CONSENSUS, "non-blsct-tx-not-allowed");
+    }
+
     // Rather not work on nonstandard transactions (unless -testnet/-regtest)
     std::string reason;
     if (m_pool.m_require_standard && !IsStandardTx(tx, m_pool.m_max_datacarrier_bytes, m_pool.m_permit_bare_multisig, m_pool.m_dust_relay_feerate, reason)) {

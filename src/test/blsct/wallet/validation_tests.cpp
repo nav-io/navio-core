@@ -565,4 +565,72 @@ BOOST_FIXTURE_TEST_CASE(template_defers_spend_of_inblock_staked_commitment, Test
     BOOST_CHECK(!included.contains(grandchild.vout[0].GetHash()));
 }
 
+// ConnectBlock rejects every non-coinbase transparent transaction on a BLSCT
+// chain, so the mempool must reject one too, and for that reason. Later checks
+// also reject this one, but only incidentally (the BLSCT fee rule), which is
+// not a guarantee that holds for every transparent transaction.
+BOOST_FIXTURE_TEST_CASE(mempool_rejects_non_blsct_tx, TestBLSCTChain100Setup)
+{
+    // Mature the first coinbase.
+    mineBlocks(1);
+
+    const CTransactionRef& coinbase = m_coinbase_txns.front();
+    std::optional<COutPoint> prevout;
+    for (const auto& out : coinbase->vout) {
+        if (out.HasBLSCTRangeProof()) prevout = COutPoint(out.GetHash());
+    }
+    BOOST_REQUIRE(prevout);
+
+    // A plain transparent spend: no BLSCT marker, empty scriptSig (BLSCT
+    // outputs carry scriptPubKey OP_TRUE), one standard nulldata output.
+    CMutableTransaction mtx;
+    mtx.vin.emplace_back(*prevout);
+    mtx.vout.emplace_back(0, CScript() << OP_RETURN << std::vector<unsigned char>(32, 0x42));
+    const CTransactionRef tx = MakeTransactionRef(mtx);
+    BOOST_REQUIRE(!tx->IsBLSCT());
+
+    // Pay its way on paper, so a missing fee is not what rejects it.
+    m_node.mempool->PrioritiseTransaction(tx->GetHash(), COIN);
+
+    const auto res = WITH_LOCK(cs_main, return m_node.chainman->ProcessTransaction(tx, /*test_accept=*/true));
+    BOOST_CHECK(res.m_result_type == MempoolAcceptResult::ResultType::INVALID);
+    BOOST_CHECK_EQUAL(res.m_state.GetRejectReason(), "non-blsct-tx-not-allowed");
+}
+
+// A genuine BLSCT transaction with only its BLSCT marker cleared is, to
+// ConnectBlock, a transparent transaction, so it can never be mined. Anyone
+// can make that copy of a transaction they have seen, so the mempool must
+// reject it outright (today it is only caught incidentally, by the
+// transparent in >= out rule).
+BOOST_FIXTURE_TEST_CASE(mempool_rejects_blsct_tx_with_marker_stripped, TestBLSCTChain100Setup)
+{
+    auto wallet = wallet::CreateBLSCTWallet(*m_node.chain, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain()));
+    auto blsct_km = wallet->GetBLSCTKeyMan();
+    const auto dest = blsct::SubAddress(std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value()));
+
+    for (int i = 0; i <= COINBASE_MATURITY; i++) {
+        CreateAndProcessBlock({}, dest);
+    }
+    BOOST_REQUIRE(wallet::SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+
+    const auto built = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, blsct::CreateTransactionData{dest, 1 * COIN, "test"});
+    BOOST_REQUIRE(built);
+
+    const auto accept = [&](const CMutableTransaction& mtx) {
+        return WITH_LOCK(cs_main, return m_node.chainman->ProcessTransaction(MakeTransactionRef(mtx), /*test_accept=*/true));
+    };
+
+    // The genuine transaction is acceptable...
+    const auto genuine = accept(built->tx);
+    BOOST_REQUIRE_MESSAGE(genuine.m_result_type == MempoolAcceptResult::ResultType::VALID, genuine.m_state.ToString());
+
+    // ...and the same transaction with the marker cleared is not.
+    CMutableTransaction stripped{built->tx};
+    stripped.nVersion &= ~CTransaction::BLSCT_MARKER;
+    BOOST_REQUIRE(!CTransaction(stripped).IsBLSCT());
+    const auto res = accept(stripped);
+    BOOST_CHECK(res.m_result_type == MempoolAcceptResult::ResultType::INVALID);
+    BOOST_CHECK_EQUAL(res.m_state.GetRejectReason(), "non-blsct-tx-not-allowed");
+}
+
 BOOST_AUTO_TEST_SUITE_END()
