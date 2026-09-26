@@ -285,6 +285,25 @@ extern const char* P2PMSG;
  * The dp2pmsg message is the Dandelion++ stem-phase variant of p2pmsg.
  */
 extern const char* DP2PMSG;
+/**
+ * p2pmsgchal carries a random per-connection value an archiving node
+ * issues unsolicited after the version handshake. A getp2pmsgs stamp has to
+ * commit to it, which is what stops one grind from being replayed on every
+ * connection and at every archive node for the length of its validity window.
+ */
+extern const char* P2PMSGCHAL;
+/**
+ * getp2pmsgs asks an archiving peer for the flagged p2pmsg envelopes it
+ * relayed, filtered by a fuzzy-message-detection key the requester supplies.
+ * Carries its own proof of work, because the scan it asks for costs the
+ * serving node real CPU.
+ */
+extern const char* GETP2PMSGS;
+/**
+ * p2pmsgs is the response to getp2pmsgs: the matching envelopes, plus a cursor
+ * and whether the requested window was scanned to the end.
+ */
+extern const char* P2PMSGS;
 }; // namespace NetMsgType
 
 /* Get a vector of all valid message types (see above) */
@@ -326,6 +345,9 @@ enum ServiceFlags : uint64_t {
     // unauthenticated: a peer may set the bit and not relay (the message is
     // then lost as it would be with no path) or set it without serving.
     // Navio-specific; occupies a reserved-experiment bit.
+    // Envelope v1 only. This build no longer speaks v1 -- OnWire() rejects a
+    // v1 PoW header outright -- so it does NOT advertise this bit, and it does
+    // not route to peers that advertise only this. See NODE_P2PMSG_V2.
     NODE_P2PMSG = (1 << 24),
 
     // NODE_P2PMSG_LEAF advertises a p2pmsg "leaf": a client that wants to
@@ -336,9 +358,44 @@ enum ServiceFlags : uint64_t {
     // leaf as a Dandelion++ stem successor: a stem hop to a non-relaying peer
     // would black-hole the message before it ever fluffs. A leaf may still
     // SEND P2PMSG/DP2PMSG like any peer, under the same PoW/DoS checks. A node
-    // that relays should set NODE_P2PMSG (which already implies delivery), not
-    // this bit. Navio-specific; occupies a reserved-experiment bit.
+    // that relays should set the format bit alone (which already implies
+    // delivery), not this bit.
+    //
+    // A leaf must ALSO advertise the envelope format it wants
+    // (NODE_P2PMSG_V2): this bit says only "do not stem to me", and a leaf
+    // that names no format would be sent bytes it may not be able to parse.
+    // Navio-specific; occupies a reserved-experiment bit.
     NODE_P2PMSG_LEAF = (1 << 25),
+
+    // NODE_P2PMSG_ARCHIVE advertises that the node RETAINS the flagged p2pmsg
+    // envelopes it relays and will serve them back on getp2pmsgs, so a peer
+    // that was offline can pick up what it missed. It says nothing about relay
+    // (an archiving node will normally also set NODE_P2PMSG). The node keeps
+    // ciphertext only and learns who an envelope is for only to the extent a
+    // requester's detection key reveals it -- which is deliberately fuzzy, see
+    // p2pmsg/fmd.h. Navio-specific; occupies a reserved-experiment bit.
+    NODE_P2PMSG_ARCHIVE = (1 << 26),
+
+    // NODE_P2PMSG_V2 advertises the same relay capability as NODE_P2PMSG, for
+    // envelope v2 -- the format that carries a detection flag and binds it
+    // into the proof of work (p2pmsg/transport.h).
+    //
+    // It is a separate bit because the two formats cannot be told apart from
+    // the old one, and routing blind between them is not merely wasteful, it
+    // is hostile in both directions. A v1 node handed a v2 envelope fails to
+    // parse it and charges the sender 10 discouragement points; ten envelopes
+    // and it disconnects, at which point a reconnecting peer starts the same
+    // cycle. So an upgraded node flooding the overlay would be discouraged
+    // across the whole un-upgraded network, and an upgraded client would be
+    // kicked by every old node it happened to dial.
+    //
+    // With a bit of its own the two overlays are simply disjoint until the
+    // network has moved, which is the honest outcome: each is internally
+    // healthy and neither degrades the other. A v2 node sends P2PMSG/DP2PMSG
+    // only to peers advertising this (or NODE_P2PMSG_LEAF, for a v2 leaf), and
+    // a v1 node never sees it advertise NODE_P2PMSG, so it never sends v1
+    // traffic here either. Navio-specific; occupies a reserved-experiment bit.
+    NODE_P2PMSG_V2 = (1 << 27),
 
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the

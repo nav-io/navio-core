@@ -52,6 +52,7 @@
 #include <aggregation/session.h>
 #include <blsct/range_proof/bulletproofs_plus/fixed_base_cache.h>
 #include <netmessagemaker.h>
+#include <p2pmsg/archive.h>
 #include <p2pmsg/transport.h>
 #include <p2pmsg/user_inbox.h>
 #include <p2pmsg/worker_pool.h>
@@ -320,6 +321,8 @@ void Shutdown(NodeContext& node)
     // capture the connman pointer. Clear the global hook first so no net path
     // can reach it, then stop workers, then drop the objects.
     p2pmsg::SetActiveTransport(nullptr);
+    p2pmsg::SetActiveArchiveScanner(nullptr);
+    p2pmsg::SetActiveArchive(nullptr);
     rfq::SetActiveMatcher(nullptr);
     rfq::SetActiveOrderCache(nullptr);
     aggregation::SetActivePool(nullptr);
@@ -347,6 +350,9 @@ void Shutdown(NodeContext& node)
     if (node.p2pmsg_pool) node.p2pmsg_pool->Stop();
     node.p2pmsg_transport.reset();
     node.p2pmsg_pool.reset();
+    // Before connman: the scanner's send callback captures it.
+    node.p2pmsg_archive_scanner.reset();
+    node.p2pmsg_archive.reset();
     node.rfq_matcher.reset();
     node.rfq_intents.reset();
     if (node.rfq_orders) {
@@ -578,6 +584,10 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsgstoresize=<n>", strprintf("Maximum total size of the on-disk p2pmsg user-message store in MiB; when exceeded, broadcast-topic messages are pruned first, then oldest-first. 0 disables the store entirely (no messages retained; listp2pmsgs unavailable) (default: %u)", p2pmsg::DEFAULT_USER_STORE_MB), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsgstoreexpiry=<n>", strprintf("Days a stored p2pmsg user message is retained before being pruned; 0 = no age limit (default: %u)", p2pmsg::DEFAULT_USER_STORE_EXPIRY_DAYS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgarchive", strprintf("Retain the FLAGGED p2pmsg envelopes this node relays and serve them back to peers that ask, so a peer which was offline can pick up what it missed. Advertises NODE_P2PMSG_ARCHIVE. The node stores ciphertext it cannot read, and learns who an envelope is for only as precisely as a requester's detection key allows (see doc/p2p-encrypted-messaging.md). Costs disk and CPU: strictly opt-in (default: %u)", p2pmsg::DEFAULT_ARCHIVE_ENABLE), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgarchivesize=<n>", strprintf("Maximum total size of the p2pmsg envelope archive in MiB, pruned oldest-first (default: %u)", p2pmsg::DEFAULT_ARCHIVE_MB), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgarchiveexpiry=<n>", strprintf("Days an archived p2pmsg envelope is retained before being pruned; 0 = no age limit. This is the window in which an offline peer can still catch up (default: %u)", p2pmsg::DEFAULT_ARCHIVE_EXPIRY_DAYS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgarchivepowbits=<n>", "Base proof-of-work difficulty an archive QUERY must pay, before the term that scales with the size of the scan requested. Defaults to -p2pmsgpowbits, so asking for messages costs about what sending one costs", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsgtopic=<topic>", "Subscribe to a p2pmsg broadcast topic at startup (can be set multiple times). Broadcast USER_DATA on subscribed topics is stored for listp2pmsgs; also manageable at runtime with subscribep2pmsgtopic", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
 #if HAVE_SYSTEM
     argsman.AddArg("-p2pmsgnotify=<cmd>", "Execute command when a p2pmsg user message is stored (%s in cmd is replaced by the message id; fetch it with listp2pmsgs)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -1699,14 +1709,20 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
     // p2p encrypted-messaging subsystem (dark until features land; gated).
     if (args.GetBoolArg("-p2pmsg", p2pmsg::DEFAULT_P2PMSG_ENABLE)) {
-        // Advertise the NODE_P2PMSG relay capability so peers route the overlay
-        // through us (avoids stemming/broadcasting P2PMSG to nodes that would
-        // silently drop it, see forward() below). Note this is a network-wide
-        // signal: it rides ADDR gossip, so enabling -p2pmsg makes participation
-        // visible beyond direct peers -- documented in
+        // Advertise the NODE_P2PMSG_V2 relay capability so peers route the
+        // overlay through us (avoids stemming/broadcasting P2PMSG to nodes
+        // that would silently drop it, see forward() below). Note this is a
+        // network-wide signal: it rides ADDR gossip, so enabling -p2pmsg makes
+        // participation visible beyond direct peers -- documented in
         // doc/p2p-encrypted-messaging.md. The bit promises relay only, not that
         // we serve candidates (that is the separate -servecandidates budget).
-        nLocalServices = ServiceFlags(nLocalServices | NODE_P2PMSG);
+        //
+        // NOT NODE_P2PMSG, which means envelope v1. This build rejects a v1
+        // header outright, so advertising v1 would invite traffic we answer
+        // with discouragement points, and would invite v1 nodes to charge us
+        // the same for the v2 traffic we sent them. Until the network has
+        // moved, the two overlays stay disjoint.
+        nLocalServices = ServiceFlags(nLocalServices | NODE_P2PMSG_V2);
         p2pmsg::WorkerPool::Options pool_opts;
         const int64_t workers = args.GetIntArg("-onionworkers", 0);
         // Clamp to a sane range: 0 keeps the default; an unbounded value would
@@ -1770,7 +1786,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // exists (or it would be the peer we received from), fall back to
         // fluffing: privacy is preserved because this node is the one fluffing,
         // and the message still propagates rather than dead-ending.
-        auto forward = [connman, stem_graph, stem_epoch_secs, stem_phase](bool stem, int64_t exclude_peer, const p2pmsg::Envelope& env) {
+        auto forward = [connman, stem_graph, stem_epoch_secs, stem_phase](bool stem, bool wire_stem, int64_t exclude_peer, const p2pmsg::Envelope& env) {
             // Never send p2pmsg traffic to block-relay-only connections: their
             // whole purpose is to carry blocks and nothing else, so pushing
             // application messages to them both wastes the connection and
@@ -1784,25 +1800,59 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // this is best-effort but strictly better than routing blind.
             //
             // Two bits, two eligibility sets:
-            //  - NODE_P2PMSG: a relay. Gets fluff copies AND may be pinned as
-            //    the Dandelion++ stem successor.
+            //  - NODE_P2PMSG_V2: a relay that speaks this envelope format. Gets
+            //    fluff copies AND may be pinned as the Dandelion++ stem
+            //    successor. A peer advertising only NODE_P2PMSG speaks v1 and
+            //    is not eligible for either: it cannot parse what we would
+            //    send, and it would charge us for sending it.
             //  - NODE_P2PMSG_LEAF: a receive-only client (standalone SDK in a
             //    browser/mobile) with no peers to forward to. Gets fluff copies
             //    so it sees bus traffic, but is NEVER a stem successor: a stem
             //    hop is a single unicast, and a leaf would black-hole it before
             //    it ever fluffs.
-            const auto fluff_eligible = [&](const CNode* pnode) {
-                return !pnode->IsBlockOnlyConn() &&
-                       (pnode->m_their_services.load() & (NODE_P2PMSG | NODE_P2PMSG_LEAF)) != 0;
+            // NODE_P2PMSG_V2 says "I speak this envelope format"; a leaf says
+            // "and do not stem to me". Both are needed, and a leaf that
+            // advertises only NODE_P2PMSG_LEAF has not said which format it
+            // wants -- it may be a v1 client, which would receive bytes it
+            // cannot parse.
+            const auto speaks_v2 = [&](const CNode* pnode) {
+                return !pnode->IsBlockOnlyConn() && (pnode->m_their_services.load() & NODE_P2PMSG_V2) != 0;
             };
+            const auto fluff_eligible = [&](const CNode* pnode) { return speaks_v2(pnode); };
             const auto stem_eligible = [&](const CNode* pnode) {
-                return !pnode->IsBlockOnlyConn() && (pnode->m_their_services.load() & NODE_P2PMSG) != 0;
+                return speaks_v2(pnode) && (pnode->m_their_services.load() & NODE_P2PMSG_LEAF) == 0;
             };
             // Fluff: flood every fluff-eligible peer (relays and leaves) except
-            // the origin.
+            // the origin -- then make sure the flood actually left this node.
+            //
+            // It has not if no RELAYING peer got a copy: leaves forward
+            // nothing, so fluffing to them alone is a dead end, and the
+            // envelope would vanish here in silence. That is not a corner
+            // case. Every line topology ends in a node whose only relaying
+            // peer is the one it just heard from, and a stem hop is a single
+            // unicast, so each message routed to such an end was simply lost.
+            //
+            // Hand it back to the origin as a fluff copy instead. The origin
+            // has so far only stem-relayed it, so its duplicate-rescue path
+            // floods it onward and the message escapes. Privacy is unchanged
+            // -- the origin is the one peer that already knows we hold this
+            // envelope -- and the exchange cannot ping-pong, because each node
+            // relays a given envelope at most twice.
+            //
+            // Only for an envelope that ARRIVED as a stem unicast, including
+            // one we then rolled over into fluff. One that arrived as a flood
+            // was already flooded by its sender, so reflecting it is a
+            // guaranteed replay drop there and a wasted envelope here.
             const auto fluff = [&]() {
+                int relays = 0;
                 connman->ForEachNode([&](CNode* pnode) {
                     if (pnode->GetId() == exclude_peer || !fluff_eligible(pnode)) return;
+                    connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSG, env));
+                    if (stem_eligible(pnode)) ++relays;
+                });
+                if (relays > 0 || exclude_peer == -1 || !wire_stem) return;
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->GetId() != exclude_peer || !fluff_eligible(pnode)) return;
                     connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSG, env));
                 });
             };
@@ -1842,13 +1892,13 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             });
         };
         auto broadcast = [forward](bool stem, const p2pmsg::Envelope& env) {
-            forward(stem, /*exclude_peer=*/-1, env);
+            forward(stem, /*wire_stem=*/false, /*exclude_peer=*/-1, env);
         };
         // App-agnostic relay: re-broadcast a received message (fluff = all peers
         // except origin; stem = one successor). Kind-blind — carries apps this
         // node may not implement, so future uses propagate with no upgrade.
-        auto relay = [forward](int64_t origin_peer, bool stem, const p2pmsg::Envelope& env) {
-            forward(stem, /*exclude_peer=*/origin_peer, env);
+        auto relay = [forward](int64_t origin_peer, bool stem, bool wire_stem, const p2pmsg::Envelope& env) {
+            forward(stem, wire_stem, /*exclude_peer=*/origin_peer, env);
         };
 
         node.p2pmsg_transport = std::make_unique<p2pmsg::Transport>(
@@ -1982,6 +2032,71 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             }
         }
 
+        // Envelope archive: retain the FLAGGED envelopes we relay so a peer
+        // that was offline can retrieve them later. Strictly opt-in -- it costs
+        // disk, it makes this node a service other peers depend on, and it is
+        // the one part of the subsystem that keeps other people's traffic.
+        //
+        // Only flagged envelopes are kept: an unflagged one can never be
+        // retrieved, so storing it would be pure cost. The node holds
+        // ciphertext it cannot read; it learns who an envelope is for only as
+        // precisely as a requester's detection key allows, which is
+        // deliberately fuzzy. See doc/p2p-encrypted-messaging.md.
+        if (args.GetBoolArg("-p2pmsgarchive", p2pmsg::DEFAULT_ARCHIVE_ENABLE)) {
+            p2pmsg::EnvelopeArchive::Options arch_opts;
+            arch_opts.path = args.GetDataDirNet() / "p2pmsg_archive";
+            int64_t arch_mb = args.GetIntArg("-p2pmsgarchivesize", p2pmsg::DEFAULT_ARCHIVE_MB);
+            if (arch_mb < 0) arch_mb = 0;
+            // Clamp before the MiB shift, as with the user store: on a 32-bit
+            // size_t a large value would wrap and silently disable the cap.
+            const int64_t arch_max_mb = static_cast<int64_t>(std::numeric_limits<size_t>::max() >> 20);
+            if (arch_mb > arch_max_mb) arch_mb = arch_max_mb;
+            arch_opts.max_total_bytes = static_cast<uint64_t>(arch_mb) << 20;
+            const int64_t arch_days = args.GetIntArg("-p2pmsgarchiveexpiry", p2pmsg::DEFAULT_ARCHIVE_EXPIRY_DAYS);
+            arch_opts.expiry_seconds = arch_days > 0 ? arch_days * int64_t{24 * 3600} : 0;
+            // Asking for messages costs about what sending one costs, before
+            // the term that scales with the size of the scan requested.
+            arch_opts.stamp_base_bits = static_cast<uint32_t>(
+                std::clamp<int64_t>(args.GetIntArg("-p2pmsgarchivepowbits", tr_opts.pow_bits), 1, 32));
+
+            node.p2pmsg_archive = std::make_unique<p2pmsg::EnvelopeArchive>(std::move(arch_opts));
+            p2pmsg::EnvelopeArchive* archive = node.p2pmsg_archive.get();
+            node.p2pmsg_transport->SetArchiveSink(
+                [archive](int64_t received_at, uint8_t kind,
+                          std::span<const uint8_t> flag, std::span<const uint8_t> envelope) {
+                    archive->Add(received_at, kind, flag, envelope);
+                });
+            p2pmsg::SetActiveArchive(archive);
+
+            // Scans run here, off the message-handling thread: one of them can
+            // walk MAX_ARCHIVE_SCAN_ENTRIES flags, and it holds the archive
+            // mutex the decrypt workers also need.
+            CConnman* arch_connman = node.connman.get();
+            node.p2pmsg_archive_scanner = std::make_unique<p2pmsg::ArchiveScanner>(
+                *archive,
+                [arch_connman](p2pmsg::PeerId peer, p2pmsg::ArchiveResponse&& resp, size_t scanned) {
+                    const size_t items = resp.items.size();
+                    const bool complete = resp.complete != 0;
+                    // The peer may be gone by the time the scan finishes; that
+                    // is the normal cost of answering asynchronously and the
+                    // requester simply retries.
+                    arch_connman->ForNode(peer, [&](CNode* pnode) {
+                        arch_connman->PushMessage(pnode, NetMsg::Make(NetMsgType::P2PMSGS, resp));
+                        return true;
+                    });
+                    LogPrint(BCLog::NET, "p2pmsg: served %d archived envelopes (scanned %d, complete=%d) peer=%d\n",
+                             items, scanned, complete, peer);
+                });
+            node.p2pmsg_archive_scanner->Start();
+            p2pmsg::SetActiveArchiveScanner(node.p2pmsg_archive_scanner.get());
+
+            // Advertise it so a client can find an archiving node through ADDR
+            // gossip. Like NODE_P2PMSG this is a network-wide signal.
+            nLocalServices = ServiceFlags(nLocalServices | NODE_P2PMSG_ARCHIVE);
+            LogPrintf("p2pmsg: envelope archive enabled (%d MiB, %d day expiry, query base %d bits)\n",
+                      arch_mb, arch_days, node.p2pmsg_archive->StampBaseBits());
+        }
+
         // Route decrypted inbound payloads to the right subsystem. These run on
         // a worker thread (after the net thread's PoW/replay gate + decrypt), so
         // they only do cheap deserialize + in-memory bookkeeping.
@@ -2063,9 +2178,14 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 aggregation::CandidateRequestQueue* requests = node.agg_requests.get();
                 node.p2pmsg_transport->RegisterHandler(
                     p2pmsg::PayloadKind::AGG_ANN,
-                    [requests](const p2pmsg::InboundMessage& m) {
+                    [requests, transport = node.p2pmsg_transport.get()](const p2pmsg::InboundMessage& m) {
                         blsct::PublicKey reply_key;
                         if (!reply_key.SetVch(m.body)) return; // drop malformed
+                        // Our own pull request, handed back by a dead-end peer
+                        // and delivered locally as a self-echo. Serving it
+                        // would pool a candidate built from our own coins --
+                        // cover that hides nothing.
+                        if (transport->HasSessionKey(reply_key)) return;
                         // m.from_peer is the relaying neighbour (pfrom.GetId()),
                         // not the origin (Dandelion hides it). It feeds the
                         // queue's per-neighbour flood cap, which is local DoS
