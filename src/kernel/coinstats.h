@@ -73,6 +73,10 @@ struct CCoinsStats {
 
 uint64_t GetBogoSize(const CScript& script_pub_key);
 
+//! Add or remove one coin from a MuHash UTXO-set commitment. The coin is
+//! hashed in its canonical form (outpoint = the coin's key, BLSCT data without
+//! the range-proof body), so a coin built from a block output and the same
+//! coin read back from undo data contribute identically.
 void ApplyCoinHash(MuHash3072& muhash, const COutPoint& outpoint, const Coin& coin);
 void RemoveCoinHash(MuHash3072& muhash, const COutPoint& outpoint, const Coin& coin);
 
