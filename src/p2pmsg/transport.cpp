@@ -9,6 +9,7 @@
 #include <streams.h>
 #include <util/time.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 
@@ -46,6 +47,8 @@ Transport::Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay, Opt
     // Sign the initial prekey under the identity so the published bundle is
     // authenticated from the first message.
     m_prekey_sig = m_identity_priv.Sign(m_inbox_pub.GetVch());
+    m_fmd_key = FmdSecretKey::Random();
+    m_fmd_sig = m_identity_priv.Sign(m_fmd_key.GetClueKey().ToBytes());
     m_replay.setup_bytes(m_opts.replay_cache_bytes);
     m_fluff_relayed.setup_bytes(m_opts.replay_cache_bytes);
     m_sent.setup_bytes(m_opts.replay_cache_bytes / 4);
@@ -136,7 +139,17 @@ void Transport::DropSessionKey(const blsct::PublicKey& pub)
     std::erase_if(m_session_keys, [&vch](const auto& e) { return e.first.GetVch() == vch; });
 }
 
-Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
+bool Transport::HasSessionKey(const blsct::PublicKey& pub) const
+{
+    const auto vch = pub.GetVch();
+    const int64_t now = Now();
+    LOCK(m_session_mutex);
+    return std::any_of(m_session_keys.begin(), m_session_keys.end(), [&](const auto& e) {
+        return e.first.GetVch() == vch && (e.second.expiry == 0 || e.second.expiry > now);
+    });
+}
+
+Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, bool wire_stem, std::span<const uint8_t> body)
 {
     if (body.size() > MAX_JOB_BYTES) return WireResult::RejectInvalid;
 
@@ -144,10 +157,17 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
     if (!ParseEnvelope(body, env)) return WireResult::RejectInvalid;
 
     // Mandatory PoW gate — the universal admission check that makes kind-blind
-    // relay safe. The header binds the ciphertext via payload_hash, so a valid
-    // PoW vouches for the body before we relay it or spend a worker decrypting.
+    // relay safe. The header binds the ciphertext AND the flag via payload_hash,
+    // so a valid PoW vouches for both before we relay or spend a worker
+    // decrypting.
+    // Envelope v2 only. v1 headers bound the ciphertext alone, so accepting
+    // both would let a v1 stamp be replayed as a v2 envelope with an attacker's
+    // flag attached. The hashes differ even for an empty flag, so rejecting the
+    // version outright is the clean separation.
+    if (env.pow.version != POW_VERSION_CURRENT) return WireResult::RejectInvalid;
+    if (env.flag.size() > MAX_FLAG_BYTES) return WireResult::RejectInvalid;
     if (env.pow.kind != env.kind) return WireResult::RejectPoW;
-    if (env.pow.payload_hash != env.enc.MsgHash()) return WireResult::RejectPoW;
+    if (env.pow.payload_hash != env.ExpectedPayloadHash()) return WireResult::RejectPoW;
     // Distinguish a stale/clock-skewed timestamp from a genuinely bad-difficulty
     // stamp: an honest message can age past the tolerance window during
     // multi-hop propagation, and the relaying peer is not at fault for that.
@@ -161,6 +181,15 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
     // (kind, ciphertext) its own slot while staying nonce-independent, so
     // re-grinding the PoW nonce still cannot bypass the replay cache (no relay
     // amplification). Also the relay loop-breaker: relayed at most once/node.
+    //
+    // Keyed on the CIPHERTEXT hash, deliberately, and not on payload_hash:
+    // since envelope v2 the payload hash also commits to the detection flag,
+    // so keying on it would make the cache flag-dependent. Anyone could then
+    // take a valid envelope, alter or attach a flag, pay the PoW once, and
+    // have the same ciphertext relayed and re-dispatched as a brand new
+    // message -- the very amplification the nonce-independence above exists to
+    // prevent. The flag is a retrieval hint; it must not be able to mint a
+    // fresh identity for a message.
     HashWriter hw;
     hw << env.kind << env.enc.MsgHash();
     const uint256 msg_hash = hw.GetSHA256();
@@ -212,7 +241,10 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
         // relay for free. A rescue skipped under pressure just leaves the
         // message where a plain replay drop would have -- the bucket bounds
         // aggregate rate either way.
-        if (m_relay && AllowRelay()) m_relay(from_peer, /*stem=*/false, env);
+        // wire_stem=false: a duplicate is one the origin already holds, so
+        // there is nothing to hand back to it even if we turn out to be a
+        // dead end.
+        if (m_relay && AllowRelay()) m_relay(from_peer, /*stem=*/false, /*wire_stem=*/false, env);
         // A true duplicate was already decrypted on first arrival; our own
         // echo has not been -- fall through to the decrypt enqueue for it.
         if (!self_echo_deliver) return WireResult::Dropped;
@@ -225,7 +257,7 @@ Transport::WireResult Transport::OnWire(int64_t from_peer, bool stem, std::span<
     // token bucket caps how fast this node will amplify, since a single ground
     // PoW is otherwise reusable to make us fan out to every peer. Over budget,
     // we skip the relay but still decrypt anything addressed to us below.
-    if (m_relay && AllowRelay()) m_relay(from_peer, stem, env);
+    if (m_relay && AllowRelay()) m_relay(from_peer, stem, wire_stem, env);
 
 enqueue_decrypt:
 
@@ -247,10 +279,35 @@ enqueue_decrypt:
     return WireResult::Enqueued;
 }
 
+void Transport::SetArchiveSink(ArchiveFn fn)
+{
+    LOCK(m_archive_mutex);
+    m_has_archive.store(static_cast<bool>(fn), std::memory_order_release);
+    m_archive = std::move(fn);
+}
+
 void Transport::HandleJob(const Job& job)
 {
     Envelope env;
     if (!ParseEnvelope({job.buf.data(), job.len}, env)) return;
+
+    // Archive the flagged envelope before doing anything with its contents. It
+    // is retained whether or not WE can decrypt it -- the whole point is to
+    // hold ciphertext for somebody else. This runs here, on a worker, rather
+    // than in OnWire: the net thread must never block on a disk write. A
+    // message dropped because the worker ring was full is therefore not
+    // archived, which is correct -- it was not relayed either.
+    if (!env.flag.empty() && m_has_archive.load(std::memory_order_acquire)) {
+        LOCK(m_archive_mutex);
+        if (m_archive) {
+            // Both spans built explicitly: libc++ 14 (the Ubuntu 22.04 CI
+            // compiler) ships no std::span range constructor, so env.flag,
+            // being a std::vector, does not convert on its own.
+            m_archive(Now(), env.kind,
+                      std::span<const uint8_t>{env.flag.data(), env.flag.size()},
+                      std::span<const uint8_t>{job.buf.data(), job.len});
+        }
+    }
 
     // The kind byte is bound as AEAD associated data, so decryption also
     // verifies the kind was not altered in flight.
@@ -357,9 +414,28 @@ void Transport::SetIdentity(const blsct::PrivateKey& priv)
     LOCK(m_inbox_mutex);
     m_identity_priv = priv;
     m_identity_pub = priv.GetPublicKey();
-    // Re-sign the current prekey under the new identity so the bundle stays
-    // consistent.
+    // Re-sign the current prekey AND the clue key under the new identity so the
+    // whole published bundle stays consistent.
     m_prekey_sig = m_identity_priv.Sign(m_inbox_pub.GetVch());
+    m_fmd_sig = m_identity_priv.Sign(m_fmd_key.GetClueKey().ToBytes());
+}
+
+std::vector<uint8_t> Transport::FmdClueKeyBytes() const
+{
+    LOCK(m_inbox_mutex);
+    return m_fmd_key.GetClueKey().ToBytes();
+}
+
+blsct::Signature Transport::FmdSig() const
+{
+    LOCK(m_inbox_mutex);
+    return m_fmd_sig;
+}
+
+std::vector<uint8_t> Transport::FmdDetectionKey(size_t precision) const
+{
+    LOCK(m_inbox_mutex);
+    return m_fmd_key.Extract(precision);
 }
 
 blsct::Signature Transport::SignWithIdentity(const uint256& digest) const
@@ -384,6 +460,13 @@ void Transport::RotatePrekey()
     m_inbox_priv = fresh;
     m_inbox_pub = fresh_pub;
     m_prekey_sig = m_identity_priv.Sign(m_inbox_pub.GetVch());
+    // Rotate the FMD key with it. Detection keys handed out under the previous
+    // clue key stop matching, which is the point: a detection key is otherwise
+    // valid forever. Retired FMD keys are NOT kept in a grace ring -- a flag is
+    // only a retrieval hint, so an unmatched flag from a stale sender costs the
+    // message nothing on the live bus, it just will not be archivable.
+    m_fmd_key = FmdSecretKey::Random();
+    m_fmd_sig = m_identity_priv.Sign(m_fmd_key.GetClueKey().ToBytes());
     m_inbox_rotated_at = Now();
 }
 
@@ -416,6 +499,7 @@ uint64_t Transport::TakeSendTicket(const StreamKey& key)
     LOCK(m_send_order_mutex);
     SendStream& s = m_send_streams[key];
     ++s.holders;
+    m_send_tickets_issued.fetch_add(1, std::memory_order_release);
     return s.next_ticket++;
 }
 
@@ -456,7 +540,8 @@ bool Transport::IsValidRecipient(const blsct::PublicKey& recipient)
 }
 
 bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
-                     std::vector<uint8_t> body, bool stem)
+                     std::vector<uint8_t> body, bool stem,
+                     std::vector<uint8_t> flag)
 {
     // Guard the OUTBOUND recipient key (mirrors Decrypt's inbound eph guard):
     // identity/invalid forces the ECDH secret to a public constant, key+nonce
@@ -467,10 +552,16 @@ bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
         LogPrint(BCLog::NET, "p2pmsg: refusing to send to identity/invalid recipient key\n");
         return false;
     }
+    if (flag.size() > MAX_FLAG_BYTES) {
+        LogPrint(BCLog::NET, "p2pmsg: refusing to send, detection flag too large\n");
+        return false;
+    }
 
     // Claim this stream's place in the emission order NOW, before the heavy
     // encrypt+grind, so the wire order is the order the application called us
     // in rather than the order the grinds happened to land. See SendStream.
+    // After the cheap argument checks above: a request we are going to reject
+    // should not take a turn that a valid one is waiting for.
     const StreamKey stream{static_cast<uint8_t>(kind), recipient.GetVch()};
     const uint64_t ticket = TakeSendTicket(stream);
     struct TurnGuard {
@@ -482,6 +573,7 @@ bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
 
     Envelope env;
     env.kind = static_cast<uint8_t>(kind);
+    env.flag = std::move(flag);
     // Authenticate the (cleartext) kind byte under the AEAD so it cannot be
     // flipped in flight to route the same ciphertext to a different handler.
     const uint8_t aad[1] = {env.kind};
@@ -490,11 +582,13 @@ bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
 
     // PoW is mandatory on every message — it is the bus's universal admission
     // gate, applied regardless of `kind`.
-    env.pow.version = 1;
+    env.pow.version = POW_VERSION_CURRENT;
     env.pow.timestamp = Now();
     env.pow.kind = env.kind;
     env.pow.session_eph = env.enc.eph;
-    env.pow.payload_hash = env.enc.MsgHash();
+    // v2: commits to the flag as well, so the work cannot be reused with a
+    // different (or stripped) flag.
+    env.pow.payload_hash = env.ExpectedPayloadHash();
     env.pow.nonce = 0;
     // Grind returns 0 if it was interrupted (shutdown) before finding a valid
     // nonce. Do NOT broadcast in that case: env.pow.nonce is wherever the loop
@@ -519,6 +613,8 @@ bool Transport::Send(const blsct::PublicKey& recipient, PayloadKind kind,
     // single-rescues it -- an observable asymmetry that identifies the
     // originator across two probes, contradicting the stem's purpose.
     {
+        // Same key OnWire() uses -- ciphertext hash, not payload_hash -- or
+        // the echo of our own message would not match what we recorded here.
         HashWriter hw;
         hw << env.kind << env.enc.MsgHash();
         const uint256 msg_hash = hw.GetSHA256();

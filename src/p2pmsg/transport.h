@@ -6,6 +6,7 @@
 #define BITCOIN_P2PMSG_TRANSPORT_H
 
 #include <p2pmsg/crypto.h>
+#include <p2pmsg/fmd.h>
 #include <p2pmsg/pow.h>
 #include <p2pmsg/worker_pool.h>
 
@@ -22,6 +23,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -55,20 +57,43 @@ enum class PayloadKind : uint8_t {
     // this value beyond keying handler dispatch on the receiving node.
 };
 
+//! Upper bound on the detection flag. A flag of exactly FMD_FLAG_SIZE is an
+//! FMD2 flag this build can test; other non-empty sizes are RESERVED -- relayed
+//! and stored unchanged (kind-blind relay applies to flags too, so a future
+//! gamma propagates without a node upgrade) but never matched. The bound keeps
+//! envelope overhead predictable.
+static constexpr size_t MAX_FLAG_BYTES = 128;
+
 //! The wire envelope for a `p2pmsg`/`dp2pmsg` net message:
-//!   u8 kind || PoWHeader || EciesPacket
+//!   u8 kind || PoWHeader || CompactSize flen || u8[flen] flag || EciesPacket
 //! PoW is MANDATORY on every message: it is the universal admission gate that
 //! makes kind-blind relay safe (no free amplification). The header's
-//! payload_hash binds the ciphertext, so the cheap net-thread PoW check vouches
-//! for the body before any worker decrypts or any peer relays it.
+//! payload_hash binds the ciphertext AND the flag, so the cheap net-thread PoW
+//! check vouches for both before any worker decrypts or any peer relays it.
+//!
+//! `flag` is optional (empty is normal and is the only thing the bus's own
+//! aggregation/RFQ kinds ever send). It exists so a recipient who was OFFLINE
+//! can later retrieve the message from an archiving node without the envelope
+//! ever carrying a recipient identifier -- see p2pmsg/fmd.h.
 struct Envelope {
     uint8_t kind{0};
     PoWHeader pow;
+    std::vector<uint8_t> flag;
     EciesPacket enc;
 
     SERIALIZE_METHODS(Envelope, obj)
     {
-        READWRITE(obj.kind, obj.pow, obj.enc);
+        READWRITE(obj.kind, obj.pow, obj.flag, obj.enc);
+    }
+
+    //! What pow.payload_hash must equal for this envelope.
+    uint256 ExpectedPayloadHash() const
+    {
+        // Constructed explicitly: libc++ 14 (the Ubuntu 22.04 CI compiler)
+        // ships no std::span range constructor, so a const vector does not
+        // convert on its own.
+        return p2pmsg::PayloadHash(pow.version, enc.MsgHash(),
+                                   std::span<const uint8_t>{flag.data(), flag.size()});
     }
 };
 
@@ -78,7 +103,13 @@ using BroadcastFn = std::function<void(bool stem, const Envelope&)>;
 //! Relay an already-received envelope to all peers EXCEPT its origin, so it
 //! floods the network. Kind-blind: called for every new valid message whether
 //! or not this node understands or can decrypt it.
-using RelayFn = std::function<void(int64_t origin_peer, bool stem, const Envelope&)>;
+//!
+//! `wire_stem` is how the envelope ARRIVED (dp2pmsg or p2pmsg), which is not
+//! the same as `stem`: a received stem packet is rolled over into fluff with
+//! some probability, and a duplicate is always re-flooded. The router needs
+//! the wire fact, because an envelope that arrived as a flood was already
+//! flooded by its sender and must not be reflected back at it.
+using RelayFn = std::function<void(int64_t origin_peer, bool stem, bool wire_stem, const Envelope&)>;
 
 //! Decrypted, authenticated inbound message handed to a feature module.
 //! Which local key class decrypted an inbound message. Handlers use this to
@@ -109,6 +140,15 @@ struct InboundMessage {
     std::vector<uint8_t> body;       //!< decrypted terminal payload
 };
 using MessageHandler = std::function<void(const InboundMessage&)>;
+
+//! Sink for FLAGGED envelopes this node relayed, so a peer that was offline can
+//! retrieve them later (see p2pmsg/archive.h). Receives the envelope exactly as
+//! it arrived on the wire -- ciphertext, undecrypted, and undecryptable by this
+//! node in the general case. Called on a WORKER thread, never the net thread,
+//! because it writes to disk.
+using ArchiveFn = std::function<void(int64_t received_at, uint8_t kind,
+                                     std::span<const uint8_t> flag,
+                                     std::span<const uint8_t> envelope)>;
 
 /**
  * Owns the node's inbound session key, the worker pool feeding heavy crypto,
@@ -192,6 +232,26 @@ public:
     //! the caller must treat the bytes as secret.
     std::vector<unsigned char> IdentityPrivBytes() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
 
+    //! The node's FMD clue key (FMD_CLUE_KEY_SIZE bytes): what a sender needs
+    //! in order to flag a message so this node can retrieve it from an archive
+    //! after being offline. Rotates with the inbox prekey -- a detection key
+    //! keeps working on future flags, so its lifetime is bounded by the epoch.
+    std::vector<uint8_t> FmdClueKeyBytes() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! The identity's signature over the clue key bytes, published in the
+    //! bundle so a sender can authenticate a fetched clue key. Flagging to an
+    //! attacker-substituted clue key hands them the retrieval side.
+    blsct::Signature FmdSig() const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! Detection key at false-positive rate 2^-precision. SECRET: whoever holds
+    //! it can test every future flag at that precision until the next rotation.
+    //! Empty when precision is 0 or above FMD_GAMMA.
+    std::vector<uint8_t> FmdDetectionKey(size_t precision) const EXCLUSIVE_LOCKS_REQUIRED(!m_inbox_mutex);
+
+    //! Install a sink for flagged envelopes. Call before the node is live.
+    //! Without one, flags are still relayed and verified but nothing is kept.
+    void SetArchiveSink(ArchiveFn fn) EXCLUSIVE_LOCKS_REQUIRED(!m_archive_mutex);
+
     //! Rotate the inbox prekey now: the current prekey priv moves into the grace
     //! ring (trimmed to Options::prekey_grace_keys), a fresh prekey becomes
     //! current, and it is re-signed under the identity. Safe from any thread.
@@ -232,6 +292,12 @@ public:
     void DropSessionKey(const blsct::PublicKey& pub)
         EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
 
+    //! True if `pub` is a live session key this node registered. Lets a handler
+    //! recognise its own request when the network hands it back (see OnWire's
+    //! self-echo delivery).
+    bool HasSessionKey(const blsct::PublicKey& pub) const
+        EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
+
     //! Register the handler for an application kind. Call before the net is live.
     void RegisterHandler(PayloadKind kind, MessageHandler handler);
 
@@ -241,8 +307,16 @@ public:
     //! the bus carries apps this node does not implement) and a decrypt job is
     //! enqueued for our own handlers. Returns the disposition.
     enum class WireResult { Enqueued, RejectInvalid, RejectPoW, RejectStale, RejectReplay, Dropped };
-    WireResult OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
+    //! `wire_stem` is whether the envelope arrived as dp2pmsg, which the caller
+    //! may have already rolled over into fluff in `stem`. The overload without
+    //! it is for callers that did no rollover, where the two are the same.
+    WireResult OnWire(int64_t from_peer, bool stem, bool wire_stem, std::span<const uint8_t> body)
         EXCLUSIVE_LOCKS_REQUIRED(!m_replay_mutex, !m_relay_limit_mutex);
+    WireResult OnWire(int64_t from_peer, bool stem, std::span<const uint8_t> body)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_replay_mutex, !m_relay_limit_mutex)
+    {
+        return OnWire(from_peer, stem, /*wire_stem=*/stem, body);
+    }
 
     //! Whether `recipient` can be encrypted to: false for the identity or an
     //! invalid point. A network-supplied reply key can be exactly that, and
@@ -260,8 +334,13 @@ public:
     //!
     //! Concurrent calls for the same (kind, recipient) leave in the order they
     //! entered Send(), not in PoW-grind completion order — see SendStream.
+    //!
+    //! `flag`, when non-empty, is an FMD detection flag (see p2pmsg/fmd.h)
+    //! produced from the RECIPIENT's clue key. It is bound by the proof of
+    //! work. Callers that do not care about offline retrieval pass nothing.
     [[nodiscard]] bool Send(const blsct::PublicKey& recipient, PayloadKind kind,
-                            std::vector<uint8_t> body, bool stem)
+                            std::vector<uint8_t> body, bool stem,
+                            std::vector<uint8_t> flag = {})
         EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex, !m_replay_mutex);
 
     //! Signal that the node is shutting down so any in-flight PoW grind on a
@@ -324,6 +403,19 @@ private:
     //! Take this stream's next ticket. Pair with exactly one ReleaseSendTurn.
     uint64_t TakeSendTicket(const StreamKey& key)
         EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex);
+
+public:
+    //! Tickets issued across all streams since startup.
+    //!
+    //! Exists for tests. Submission order is only defined once a caller has
+    //! actually CLAIMED its ticket, and a test that submits concurrently has no
+    //! other way to observe that moment: the claim happens inside Send(), after
+    //! the argument checks, so "the thread is about to call Send()" is a
+    //! different event. Waiting on this instead of sleeping across that gap is
+    //! what makes such a test deterministic.
+    uint64_t SendTicketsIssued() const { return m_send_tickets_issued.load(std::memory_order_acquire); }
+
+private:
     //! Block until `ticket` may broadcast. False = shutting down, abandon.
     bool AwaitSendTurn(const StreamKey& key, uint64_t ticket)
         EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex);
@@ -352,6 +444,17 @@ private:
     blsct::PublicKey m_inbox_pub GUARDED_BY(m_inbox_mutex);
     //! Identity's signature over m_inbox_pub.GetVch(), published in the bundle.
     blsct::Signature m_prekey_sig GUARDED_BY(m_inbox_mutex);
+    //! Sink for flagged envelopes, if this node archives. The atomic lets the
+    //! common case (no archive, or an unflagged envelope) skip the lock.
+    mutable Mutex m_archive_mutex;
+    ArchiveFn m_archive GUARDED_BY(m_archive_mutex);
+    std::atomic<bool> m_has_archive{false};
+
+    //! FMD root secret and the identity's signature over the derived clue key.
+    //! Rotated with the prekey, for the same reason: both are contact material
+    //! whose compromise window should be bounded by the epoch.
+    FmdSecretKey m_fmd_key GUARDED_BY(m_inbox_mutex);
+    blsct::Signature m_fmd_sig GUARDED_BY(m_inbox_mutex);
     //! Recently-retired prekey privs, newest first, kept for a grace window so a
     //! message encrypted to the prekey we just rotated out still decrypts.
     //! Bounded by Options::prekey_grace_keys; entries drop (and their key
@@ -367,7 +470,7 @@ private:
         int64_t expiry; //!< unix seconds; 0 = no auto-expiry
         SessionPurpose purpose{SessionPurpose::INTERNAL};
     };
-    Mutex m_session_mutex;
+    mutable Mutex m_session_mutex;
     std::vector<std::pair<blsct::PublicKey, SessionKey>> m_session_keys GUARDED_BY(m_session_mutex);
 
     std::array<MessageHandler, 256> m_handlers{};
@@ -396,6 +499,8 @@ private:
     //! Live send streams. Only streams with a send in flight are present, so
     //! the map is bounded by concurrent senders, not by peers or keys ever seen.
     Mutex m_send_order_mutex;
+    //! Monotonic count of tickets handed out; see SendTicketsIssued().
+    std::atomic<uint64_t> m_send_tickets_issued{0};
     std::map<StreamKey, SendStream> m_send_streams GUARDED_BY(m_send_order_mutex);
     std::condition_variable m_send_order_cv;
 };

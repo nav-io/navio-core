@@ -413,6 +413,15 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         output_hash = self.wallet_a.sendtoblsctaddress(self_addr, send_amount)
         self.log.info(f"Self-send outputHash: {output_hash}")
 
+        # The output reaches the wallet through the validation interface, which
+        # sendtoblsctaddress only ENQUEUES: it returns as soon as the tx is in
+        # the mempool, so a query issued immediately afterwards can beat
+        # TransactionAddedToMempool to the wallet and get "Output not found".
+        # Every other send in this file happens to be followed by a
+        # sync_mempools() or a generate(), which drains the queue as a side
+        # effect; this one is not, so it says so explicitly.
+        self.nodes[0].syncwithvalidationinterfacequeue()
+
         # The returned hash must identify the output that pays the recipient.
         # The tx factory randomises the vout order to hide the change position,
         # so a hash taken by position lands on the change output (reporting the

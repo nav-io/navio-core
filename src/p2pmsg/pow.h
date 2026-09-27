@@ -30,13 +30,29 @@ static constexpr uint32_t DEFAULT_POW_BITS = 23;
 //! Accept stamps whose timestamp is within this skew of local clock.
 static constexpr int64_t POW_TIMESTAMP_TOLERANCE_SECONDS = 120;
 
+//! PoW header versions.
+//!
+//! v1 committed to the ciphertext alone. v2 commits to the ciphertext AND the
+//! envelope's detection flag, without changing the header's size or layout --
+//! only the meaning of payload_hash. See PayloadHash() below. v1 is not
+//! accepted on the wire; the two hashes differ even for an empty flag, so a v1
+//! header can never be replayed as v2.
+static constexpr uint8_t POW_VERSION_LEGACY = 1;
+static constexpr uint8_t POW_VERSION_FLAGGED = 2;
+//! What this build produces and accepts.
+static constexpr uint8_t POW_VERSION_CURRENT = POW_VERSION_FLAGGED;
+
 //! The fields a producer must commit to and grind a nonce against.
 struct PoWHeader {
-    uint8_t version{1};
+    uint8_t version{POW_VERSION_CURRENT};
     int64_t timestamp{0};        //!< unix seconds
     uint8_t kind{0};             //!< PayloadKind being stamped
     blsct::PublicKey session_eph;//!< session ephemeral pubkey
-    uint256 payload_hash;        //!< SHA256 of the payload body
+    //! Binds the body. v1: EciesPacket::MsgHash(). v2: SHA256(MsgHash || flag),
+    //! so the detection flag is covered by the proof of work and a relay can
+    //! neither strip it (silently denying the recipient offline delivery) nor
+    //! rewrite it into a third party's detection bucket.
+    uint256 payload_hash;
     uint64_t nonce{0};
 
     SERIALIZE_METHODS(PoWHeader, obj)
@@ -49,6 +65,10 @@ struct PoWHeader {
     //! packet's EciesPacket::MsgHash(), not this hash.)
     uint256 Hash() const;
 };
+
+//! The value payload_hash must carry for a given version, ciphertext hash and
+//! flag. `flag` is the raw wire bytes and may be empty.
+uint256 PayloadHash(uint8_t version, const uint256& msg_hash, std::span<const uint8_t> flag);
 
 //! target = (2^256 - 1) >> bits. A hash is valid iff `hash < target`, i.e. it
 //! has at least `bits` leading zero bits.

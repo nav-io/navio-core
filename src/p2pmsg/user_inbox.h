@@ -23,9 +23,10 @@ class CDBBatch;
 namespace p2pmsg {
 
 //! Ceiling on a serialized USER_DATA frame (topic + body) accepted for send.
-//! The whole wire envelope (kind byte + PoW header + ECIES packet) must fit
-//! the worker-pool job buffer (MAX_JOB_BYTES = 4096); the fixed envelope
-//! overhead is ~170 bytes, so this leaves comfortable headroom. Applications
+//! The whole wire envelope (kind byte + PoW header + detection flag + ECIES
+//! packet) must fit the worker-pool job buffer (MAX_JOB_BYTES = 4096); the
+//! fixed overhead is ~170 bytes, plus 84 more when a detection flag is
+//! attached, so this leaves comfortable headroom either way. Applications
 //! needing more chunk at the application layer and reassemble on receive.
 static constexpr size_t MAX_USER_MSG_BYTES = 3584;
 
