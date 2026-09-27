@@ -264,6 +264,14 @@ public:
                             std::vector<uint8_t> body, bool stem)
         EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex, !m_replay_mutex);
 
+    //! Total send tickets handed out so far, across all streams. A Send() has
+    //! fixed its place in the emission order once this counts it, which lets a
+    //! caller (in practice, a test) know that without guessing at timing.
+    uint64_t SendTicketsIssued() const
+    {
+        return m_send_tickets_issued.load(std::memory_order_acquire);
+    }
+
     //! Signal that the node is shutting down so any in-flight PoW grind on a
     //! worker aborts promptly instead of blocking the pool-stop join. Call
     //! before stopping the worker pool. Idempotent, safe from any thread.
@@ -398,6 +406,8 @@ private:
     Mutex m_send_order_mutex;
     std::map<StreamKey, SendStream> m_send_streams GUARDED_BY(m_send_order_mutex);
     std::condition_variable m_send_order_cv;
+    //! See SendTicketsIssued().
+    std::atomic<uint64_t> m_send_tickets_issued{0};
 };
 
 //! Process-wide active transport, set by init when -p2pmsg is enabled and

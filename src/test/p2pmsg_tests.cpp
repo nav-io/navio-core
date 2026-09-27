@@ -507,9 +507,12 @@ BOOST_AUTO_TEST_CASE(transport_send_preserves_submission_order)
             std::unique_lock<std::mutex> lk(gate_mutex);
             gate_cv.wait(lk, [&] { return entered >= i; });
         }
-        // The acknowledging thread only needs a few microseconds more to claim
-        // its ticket; give it a wide margin before the next one starts.
-        UninterruptibleSleep(std::chrono::milliseconds{2});
+        // Wait until sender i has actually claimed its ticket before the next
+        // one may start. A fixed sleep here was not enough on slow (emulated
+        // 32-bit) runners, where the next sender could overtake it.
+        while (t.SendTicketsIssued() < static_cast<uint64_t>(i + 1)) {
+            UninterruptibleSleep(std::chrono::microseconds{100});
+        }
     }
     for (auto& th : senders) th.join();
 
