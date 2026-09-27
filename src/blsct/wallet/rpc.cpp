@@ -171,6 +171,7 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
     if (txData.nBLSCTDefaultFee == ::BLSCT_DEFAULT_FEE) {
         txData.nBLSCTDefaultFee = Params().GetConsensus().nBLSCTDefaultFee;
     }
+    txData.fPadOutputs = gArgs.GetBoolArg("-blsctpadoutputs", blsct::DEFAULT_BLSCT_PAD_OUTPUTS);
 
     // By default every wallet send is aggregated with fee-0 cover candidates
     // from the node's p2pmsg pool (same merge `aggregatesend` performs), hiding
@@ -584,6 +585,7 @@ static RPCHelpMan aggregatesend()
             blsct::CreateTransactionData txData{sub_dest, amount, "aggregatesend"};
             txData.nBLSCTDefaultFee = rate;
             txData.additionalFee = extra;
+            txData.fPadOutputs = gArgs.GetBoolArg("-blsctpadoutputs", blsct::DEFAULT_BLSCT_PAD_OUTPUTS);
             auto own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
             if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
 
