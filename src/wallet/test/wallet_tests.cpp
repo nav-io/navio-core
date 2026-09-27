@@ -976,6 +976,63 @@ BOOST_FIXTURE_TEST_CASE(ZapSelectTx_keeps_conflicting_spend, TestChain100Setup)
     TestUnloadWallet(std::move(wallet));
 }
 
+// Removing a wallet transaction must also drop the output-index entries that
+// refer to it, while leaving entries owned by another transaction that carries
+// the same output untouched.
+BOOST_FIXTURE_TEST_CASE(ZapSelectTx_updates_output_index, TestChain100Setup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    auto wallet = TestLoadWallet(context);
+    CKey key = GenerateRandomKey();
+    AddKey(*wallet, key);
+
+    m_coinbase_txns.push_back(CreateAndProcessBlock({}, GetScriptForRawPubKey(coinbaseKey.GetPubKey())).vtx[0]);
+    auto block_tx = TestSimpleSpend(*m_coinbase_txns[0], 0, coinbaseKey, GetScriptForRawPubKey(key.GetPubKey()));
+    CreateAndProcessBlock({block_tx}, GetScriptForRawPubKey(coinbaseKey.GetPubKey()));
+
+    SyncWithValidationInterfaceQueue();
+
+    {
+        LOCK(wallet->cs_wallet);
+        const COutPoint block_out{block_tx.vout[0].GetHash()};
+        BOOST_CHECK_EQUAL(wallet->GetWalletTxFromOutpoint(block_out), wallet->GetWalletTx(block_tx.GetHash()));
+
+        // A second wallet transaction carrying an identical output; being
+        // added last, it now owns the index entry for that output.
+        CMutableTransaction dup_mtx;
+        dup_mtx.vin.emplace_back(Txid::FromUint256(InsecureRand256()));
+        dup_mtx.vout.push_back(block_tx.vout[0]);
+        const CTransaction dup_tx{dup_mtx};
+        BOOST_REQUIRE(dup_tx.GetHash() != block_tx.GetHash());
+        BOOST_REQUIRE(dup_tx.vout[0].GetHash() == block_out.hash);
+        BOOST_REQUIRE(wallet->AddToWallet(MakeTransactionRef(dup_tx), TxStateInactive{}));
+        const CWalletTx* dup_wtx = wallet->GetWalletTx(dup_tx.GetHash());
+        BOOST_CHECK_EQUAL(wallet->GetWalletTxFromOutpoint(block_out), dup_wtx);
+
+        // Removing the transaction the entry does not refer to leaves it in place.
+        {
+            std::vector<uint256> vHashIn{block_tx.GetHash()}, vHashOut;
+            BOOST_CHECK_EQUAL(wallet->ZapSelectTx(vHashIn, vHashOut), DBErrors::LOAD_OK);
+            BOOST_CHECK_EQUAL(wallet->mapWallet.count(block_tx.GetHash()), 0u);
+            BOOST_CHECK_EQUAL(wallet->GetWalletTxFromOutpoint(block_out), dup_wtx);
+        }
+
+        // Removing the transaction it refers to erases it.
+        {
+            std::vector<uint256> vHashIn{dup_tx.GetHash()}, vHashOut;
+            BOOST_CHECK_EQUAL(wallet->ZapSelectTx(vHashIn, vHashOut), DBErrors::LOAD_OK);
+            BOOST_CHECK_EQUAL(wallet->mapWallet.count(dup_tx.GetHash()), 0u);
+            BOOST_CHECK(wallet->GetWalletTxFromOutpoint(block_out) == nullptr);
+            BOOST_CHECK(!wallet->mapOutpointHashToWalletTx.contains(block_out.hash));
+        }
+    }
+
+    TestUnloadWallet(std::move(wallet));
+}
+
 /**
  * Checks a wallet invalid state where the inputs (prev-txs) of a new arriving transaction are not marked dirty,
  * while the transaction that spends them exist inside the in-memory wallet tx map (not stored on db due a db write failure).

@@ -2969,6 +2969,19 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
                 }
             }
         }
+        // Drop this transaction's output-index entries before the CWalletTx
+        // they point at goes away. Several wallet transactions can carry the
+        // same output (e.g. a local send and the block transaction it was
+        // aggregated into); the index holds whichever was added last, so only
+        // erase entries that still refer to the transaction being removed. A
+        // remaining holder of the output is not re-pointed here; it is indexed
+        // again when the wallet is next loaded.
+        for (const auto& txout : it->second.tx->vout) {
+            const auto idx = mapOutpointHashToWalletTx.find(txout.GetHash());
+            if (idx != mapOutpointHashToWalletTx.end() && idx->second == &it->second) {
+                mapOutpointHashToWalletTx.erase(idx);
+            }
+        }
         mapWallet.erase(it);
         NotifyTransactionChanged(hash, CT_DELETED);
     }
