@@ -3,6 +3,9 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blockencodings.h>
+#include <blsct/private_key.h>
+#include <blsct/tokens/predicate_parser.h>
+#include <blsct/wallet/txfactory_global.h>
 #include <chainparams.h>
 #include <consensus/merkle.h>
 #include <pow.h>
@@ -367,6 +370,163 @@ BOOST_AUTO_TEST_CASE(TransactionsRequestDeserializationOverflowTest) {
         // deserialize should fail
         BOOST_CHECK(true); // Needed to suppress "Test case [...] did not check any assertions"
     }
+}
+
+// A BLSCT transaction with the shape AggregateTransactions cares about: some
+// inputs, a regular output, a PayFee output and a signature.
+static CTransactionRef MakeComponentTx(size_t num_inputs, CAmount fee, bool with_fee_output = true)
+{
+    CMutableTransaction tx;
+    tx.nVersion = CTransaction::BLSCT_MARKER;
+    tx.vin.resize(num_inputs);
+    for (auto& in : tx.vin) in.prevout = COutPoint{InsecureRand256()};
+    tx.vout.emplace_back(0, CScript() << OP_TRUE);
+    if (with_fee_output) {
+        CTxOut fee_out{fee, CScript{OP_RETURN}};
+        fee_out.predicate = blsct::PayFeePredicate(blsct::PrivateKey(BlstScalar::Rand()).GetPublicKey()).GetVch();
+        tx.vout.push_back(fee_out);
+    }
+    tx.txSig = blsct::PrivateKey(BlstScalar::Rand()).Sign(InsecureRand256());
+    return MakeTransactionRef(tx);
+}
+
+// [coinbase, AggregateTransactions(components)], as the block assembler builds it.
+static CBlock BuildAggregateBlock(const std::vector<CTransactionRef>& components)
+{
+    CBlock block;
+    CMutableTransaction coinbase;
+    coinbase.nVersion = CTransaction::BLSCT_MARKER;
+    coinbase.vin.resize(1);
+    coinbase.vin[0].scriptSig = CScript() << InsecureRand32() << OP_0;
+    coinbase.vout.emplace_back(0, CScript() << OP_TRUE);
+    block.vtx.push_back(MakeTransactionRef(coinbase));
+    block.vtx.push_back(blsct::AggregateTransactions(components));
+    block.nVersion = 42;
+    block.hashPrevBlock = InsecureRand256();
+    block.nBits = 0x207fffff;
+    bool mutated;
+    block.hashMerkleRoot = BlockMerkleRoot(block, &mutated);
+    assert(!mutated);
+    while (!CheckProofOfWork(block.GetHash(), block.nBits, Params().GetConsensus())) ++block.nNonce;
+    return block;
+}
+
+BOOST_AUTO_TEST_CASE(AggregateComponentsRoundTripTest)
+{
+    CTxMemPool& pool = *Assert(m_node.mempool);
+    TestMemPoolEntryHelper entry;
+    const std::vector<CTransactionRef> components{MakeComponentTx(1, 100), MakeComponentTx(3, 200), MakeComponentTx(2, 300)};
+    const CBlock block{BuildAggregateBlock(components)};
+    const std::vector<CTransactionRef> component_list{block.vtx[0], components[0], components[1], components[2]};
+
+    BOOST_CHECK(ComponentListMatchesBlock(block, component_list));
+    // Aggregation depends on the order of the components.
+    BOOST_CHECK(!ComponentListMatchesBlock(block, {block.vtx[0], components[1], components[0], components[2]}));
+
+    LOCK2(cs_main, pool.cs);
+
+    // The sender recovers the components from its mempool, and only when it has all of them.
+    pool.addUnchecked(entry.FromTx(components[0]));
+    pool.addUnchecked(entry.FromTx(components[2]));
+    BOOST_CHECK(!FindAggregateComponents(block, pool));
+    pool.addUnchecked(entry.FromTx(components[1]));
+    const auto found{FindAggregateComponents(block, pool)};
+    BOOST_REQUIRE(found);
+    BOOST_REQUIRE_EQUAL(found->size(), component_list.size());
+    for (size_t i = 0; i < found->size(); ++i) {
+        BOOST_CHECK((*found)[i]->GetWitnessHash() == component_list[i]->GetWitnessHash());
+    }
+
+    CBlockHeaderAndComponentIDs cmpct{block, component_list};
+    BOOST_CHECK(cmpct.IsAggregateComponents());
+    BOOST_CHECK_EQUAL(cmpct.BlockTxCount(), component_list.size());
+
+    DataStream stream{};
+    stream << cmpct;
+    // Same layout as a cmpctblock; the message type decides the meaning.
+    const DataStream stream_copy{stream};
+    CBlockHeaderAndComponentIDs cmpct2;
+    stream >> cmpct2;
+    BOOST_CHECK(cmpct2.IsAggregateComponents());
+    BOOST_CHECK_EQUAL(cmpct2.BlockTxCount(), component_list.size());
+    BOOST_CHECK_EQUAL(cmpct2.header.GetHash(), block.GetHash());
+    BOOST_CHECK_EQUAL(cmpct2.GetShortID(components[1]->GetWitnessHash()), cmpct.GetShortID(components[1]->GetWitnessHash()));
+    DataStream reserialized{};
+    reserialized << cmpct2;
+    BOOST_CHECK(reserialized.str() == stream_copy.str());
+
+    // The receiver is missing the middle component.
+    pool.removeRecursive(*components[1], MemPoolRemovalReason::REPLACED);
+
+    PartiallyDownloadedBlock partial(&pool);
+    BOOST_CHECK(partial.InitData(cmpct2, extra_txn) == READ_STATUS_OK);
+    BOOST_CHECK(partial.IsAggregateComponents());
+    BOOST_CHECK(partial.IsTxAvailable(0));
+    BOOST_CHECK(partial.IsTxAvailable(1));
+    BOOST_CHECK(!partial.IsTxAvailable(2));
+    BOOST_CHECK(partial.IsTxAvailable(3));
+
+    // A different transaction in the missing slot rebuilds a different
+    // aggregate, which the merkle root rejects.
+    {
+        PartiallyDownloadedBlock tmp{partial};
+        CBlock wrong;
+        BOOST_CHECK(tmp.FillBlock(wrong, {MakeComponentTx(3, 200)}, /*segwit_active=*/true) == READ_STATUS_FAILED);
+    }
+    {
+        PartiallyDownloadedBlock tmp{partial};
+        CBlock wrong;
+        BOOST_CHECK(tmp.FillBlock(wrong, {}, /*segwit_active=*/true) == READ_STATUS_INVALID);
+    }
+
+    CBlock rebuilt;
+    std::vector<CTransactionRef> rebuilt_list;
+    BOOST_CHECK(partial.FillBlock(rebuilt, {components[1]}, /*segwit_active=*/true, &rebuilt_list) == READ_STATUS_OK);
+    BOOST_CHECK_EQUAL(rebuilt.GetHash(), block.GetHash());
+    BOOST_REQUIRE_EQUAL(rebuilt.vtx.size(), 2U);
+    BOOST_CHECK(rebuilt.vtx[1]->GetWitnessHash() == block.vtx[1]->GetWitnessHash());
+    BOOST_REQUIRE_EQUAL(rebuilt_list.size(), component_list.size());
+    for (size_t i = 0; i < rebuilt_list.size(); ++i) {
+        BOOST_CHECK(rebuilt_list[i]->GetWitnessHash() == component_list[i]->GetWitnessHash());
+    }
+}
+
+BOOST_AUTO_TEST_CASE(AggregateComponentsRejectTest)
+{
+    CTxMemPool& pool = *Assert(m_node.mempool);
+    const std::vector<CTransactionRef> components{MakeComponentTx(1, 100), MakeComponentTx(1, 200)};
+    const CBlock block{BuildAggregateBlock(components)};
+
+    // A single transaction is never aggregated.
+    BOOST_CHECK(!AggregateComponents({components[0]}));
+    // Components without any fee output cannot be aggregated; no exception escapes.
+    BOOST_CHECK(!AggregateComponents({MakeComponentTx(1, 0, false), MakeComponentTx(1, 0, false)}));
+    BOOST_CHECK(!ComponentListMatchesBlock(block, {block.vtx[0], components[0]}));
+
+    // A component-encoded compact block must list at least two components.
+    {
+        DataStream stream{};
+        stream << CBlockHeaderAndShortTxIDs{block}; // coinbase + one "component"
+        CBlockHeaderAndComponentIDs too_few;
+        stream >> too_few;
+        PartiallyDownloadedBlock partial(&pool);
+        BOOST_CHECK(partial.InitData(too_few, extra_txn) == READ_STATUS_INVALID);
+    }
+
+    // Components that fill every slot but cannot be aggregated fail
+    // reconstruction (fall back to the full block) rather than throwing.
+    {
+        CBlockHeaderAndComponentIDs cmpct{block, {block.vtx[0], components[0], components[1]}};
+        PartiallyDownloadedBlock partial(&pool);
+        BOOST_CHECK(partial.InitData(cmpct, extra_txn) == READ_STATUS_OK);
+        CBlock rebuilt;
+        BOOST_CHECK(partial.FillBlock(rebuilt, {MakeComponentTx(1, 0, false), MakeComponentTx(1, 0, false)}, /*segwit_active=*/true) == READ_STATUS_FAILED);
+    }
+
+    // A block that is not [coinbase, aggregate] has no component list.
+    CBlock plain{block};
+    plain.vtx.push_back(components[0]);
+    BOOST_CHECK(!FindAggregateComponents(plain, pool));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -304,6 +304,24 @@ extern const char* GETP2PMSGS;
  * and whether the requested window was scanned to the end.
  */
 extern const char* P2PMSGS;
+/**
+ * Contains a CBlockHeaderAndComponentIDs: a compact block for a BLSCT block
+ * whose second transaction is an aggregate, carrying the short ids of the
+ * aggregate's component transactions (in aggregation order) instead of the
+ * aggregate itself. Only sent to peers that announced sendcmpct version 3.
+ */
+extern const char* CMPCTAGGBLOCK;
+/**
+ * Contains a BlockTransactionsRequest whose indexes refer to the component
+ * list of a "cmpctaggblk" (coinbase at 0, then the aggregate's components).
+ * Peer should respond with an "aggblocktxn" message.
+ */
+extern const char* GETAGGBLOCKTXN;
+/**
+ * Contains a BlockTransactions carrying component transactions.
+ * Sent in response to a "getaggblktxn" message.
+ */
+extern const char* AGGBLOCKTXN;
 }; // namespace NetMsgType
 
 /* Get a vector of all valid message types (see above) */

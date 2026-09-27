@@ -47,8 +47,11 @@ class P2PCompactBlocksBlocksOnly(BitcoinTestFramework):
         p2p_conn_blocksonly = self.nodes[0].add_p2p_connection(P2PInterface())
         p2p_conn_high_bw = self.nodes[1].add_p2p_connection(P2PInterface())
         p2p_conn_low_bw = self.nodes[3].add_p2p_connection(P2PInterface())
-        for conn in [p2p_conn_blocksonly, p2p_conn_high_bw, p2p_conn_low_bw]:
-            assert_equal(conn.message_count['sendcmpct'], 1)
+        # Nodes relaying transactions also announce sendcmpct version 3
+        # (component-encoded compact blocks for BLSCT aggregate blocks);
+        # -blocksonly nodes only announce version 2.
+        for conn, expected in [(p2p_conn_blocksonly, 1), (p2p_conn_high_bw, 2), (p2p_conn_low_bw, 2)]:
+            conn.wait_until(lambda conn=conn, expected=expected: conn.message_count['sendcmpct'] == expected)
             conn.send_and_ping(msg_sendcmpct(announce=False, version=2))
 
         # Nodes:
@@ -81,7 +84,7 @@ class P2PCompactBlocksBlocksOnly(BitcoinTestFramework):
         # high bandwidth mode upon receiving a new valid block at the tip.
         p2p_conn_high_bw.send_and_ping(msg_block(block0))
         assert_equal(int(self.nodes[1].getbestblockhash(), 16), block0.sha256)
-        p2p_conn_high_bw.wait_until(lambda: p2p_conn_high_bw.message_count['sendcmpct'] == 2)
+        p2p_conn_high_bw.wait_until(lambda: p2p_conn_high_bw.message_count['sendcmpct'] == 3)
         assert_equal(p2p_conn_high_bw.last_message['sendcmpct'].announce, True)
 
         # Don't send a block from the p2p_conn_low_bw so the low bandwidth node

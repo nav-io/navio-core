@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blockencodings.h>
+#include <blsct/wallet/txfactory_global.h>
 #include <chainparams.h>
 #include <common/system.h>
 #include <consensus/consensus.h>
@@ -18,15 +19,73 @@
 #include <unordered_map>
 
 CBlockHeaderAndShortTxIDs::CBlockHeaderAndShortTxIDs(const CBlock& block) :
+        CBlockHeaderAndShortTxIDs(block, block.vtx) {}
+
+CBlockHeaderAndShortTxIDs::CBlockHeaderAndShortTxIDs(const CBlock& block, const std::vector<CTransactionRef>& txs) :
         nonce(GetRand<uint64_t>()),
-        shorttxids(block.vtx.size() - 1), prefilledtxn(1), header(block), posProof(block.posProof) {
+        shorttxids(txs.size() - 1), prefilledtxn(1), header(block), posProof(block.posProof) {
     FillShortTxIDSelector();
     //TODO: Use our mempool prior to block acceptance to predictively fill more than just the coinbase
-    prefilledtxn[0] = {0, block.vtx[0]};
-    for (size_t i = 1; i < block.vtx.size(); i++) {
-        const CTransaction& tx = *block.vtx[i];
+    prefilledtxn[0] = {0, txs[0]};
+    for (size_t i = 1; i < txs.size(); i++) {
+        const CTransaction& tx = *txs[i];
         shorttxids[i - 1] = GetShortID(tx.GetWitnessHash());
     }
+}
+
+CBlockHeaderAndComponentIDs::CBlockHeaderAndComponentIDs(const CBlock& block, const std::vector<CTransactionRef>& component_list) :
+        CBlockHeaderAndShortTxIDs(block, component_list) {
+    Assert(component_list.size() >= 1 + MIN_COMPONENTS);
+    m_aggregate_components = true;
+}
+
+CTransactionRef AggregateComponents(const std::vector<CTransactionRef>& components)
+{
+    if (components.size() < CBlockHeaderAndComponentIDs::MIN_COMPONENTS) return nullptr;
+    for (const auto& tx : components) {
+        if (!tx || !tx->IsBLSCT() || tx->IsCoinBase()) return nullptr;
+    }
+    try {
+        return blsct::AggregateTransactions(components);
+    } catch (const std::exception&) {
+        // e.g. no component carries a fee output
+        return nullptr;
+    }
+}
+
+bool ComponentListMatchesBlock(const CBlock& block, const std::vector<CTransactionRef>& component_list)
+{
+    if (block.vtx.size() != 2 || component_list.size() < 1 + CBlockHeaderAndComponentIDs::MIN_COMPONENTS) return false;
+    if (component_list[0]->GetWitnessHash() != block.vtx[0]->GetWitnessHash()) return false;
+    const auto aggregate{AggregateComponents({component_list.begin() + 1, component_list.end()})};
+    return aggregate && aggregate->GetWitnessHash() == block.vtx[1]->GetWitnessHash();
+}
+
+std::optional<std::vector<CTransactionRef>> FindAggregateComponents(const CBlock& block, const CTxMemPool& pool)
+{
+    if (block.vtx.size() != 2 || !block.vtx[1]->IsBLSCT()) return std::nullopt;
+    const CTransaction& aggregate{*block.vtx[1]};
+
+    std::vector<CTransactionRef> component_list{block.vtx[0]};
+    {
+        LOCK(pool.cs);
+        size_t pos{0};
+        while (pos < aggregate.vin.size()) {
+            const CTransaction* spender{pool.GetConflictTx(aggregate.vin[pos].prevout)};
+            if (!spender || spender->vin.empty() || pos + spender->vin.size() > aggregate.vin.size()) return std::nullopt;
+            for (size_t i = 0; i < spender->vin.size(); ++i) {
+                if (!(spender->vin[i] == aggregate.vin[pos + i])) return std::nullopt;
+            }
+            CTransactionRef ref{pool.get(spender->GetHash().ToUint256())};
+            if (!ref) return std::nullopt;
+            component_list.push_back(std::move(ref));
+            pos += spender->vin.size();
+        }
+    }
+    // Also rejects a lone "component": the assembler keeps a single
+    // transaction as is, so such a block is plain BIP152 material.
+    if (!ComponentListMatchesBlock(block, component_list)) return std::nullopt;
+    return component_list;
 }
 
 void CBlockHeaderAndShortTxIDs::FillShortTxIDSelector() const {
@@ -57,7 +116,10 @@ ReadStatus PartiallyDownloadedBlock::InitData(const CBlockHeaderAndShortTxIDs& c
         return READ_STATUS_INVALID;
 
     if (!header.IsNull() || !txn_available.empty()) return READ_STATUS_INVALID;
+    if (cmpctblock.IsAggregateComponents() && cmpctblock.BlockTxCount() < 1 + CBlockHeaderAndComponentIDs::MIN_COMPONENTS)
+        return READ_STATUS_INVALID;
 
+    m_aggregate_components = cmpctblock.IsAggregateComponents();
     header = cmpctblock.header;
     posProof = cmpctblock.posProof;
     txn_available.resize(cmpctblock.BlockTxCount());
@@ -181,7 +243,8 @@ bool PartiallyDownloadedBlock::IsTxAvailable(size_t index) const
     return txn_available[index] != nullptr;
 }
 
-ReadStatus PartiallyDownloadedBlock::FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing, bool segwit_active)
+ReadStatus PartiallyDownloadedBlock::FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing, bool segwit_active,
+                                               std::vector<CTransactionRef>* component_list_out)
 {
     if (header.IsNull()) return READ_STATUS_INVALID;
 
@@ -207,11 +270,27 @@ ReadStatus PartiallyDownloadedBlock::FillBlock(CBlock& block, const std::vector<
     if (vtx_missing.size() != tx_missing_offset)
         return READ_STATUS_INVALID;
 
+    std::vector<CTransactionRef> component_list;
+    if (m_aggregate_components) {
+        // The filled list is [coinbase, components...]; the block itself is
+        // [coinbase, aggregate]. The merkle root check below decides whether
+        // the rebuilt aggregate is the one the header commits to.
+        component_list = std::move(block.vtx);
+        CTransactionRef aggregate{AggregateComponents({component_list.begin() + 1, component_list.end()})};
+        if (!aggregate) return READ_STATUS_FAILED;
+        block.vtx = {component_list[0], std::move(aggregate)};
+    }
+
     // Check for possible mutations early now that we have a seemingly good block
     IsBlockMutatedFn check_mutated{m_check_block_mutated_mock ? m_check_block_mutated_mock : IsBlockMutated};
     if (check_mutated(/*block=*/block,
                        /*check_witness_root=*/segwit_active)) {
-        return READ_STATUS_FAILED; // Possible Short ID collision
+        return READ_STATUS_FAILED; // Possible Short ID collision, or a different aggregation
+    }
+
+    if (m_aggregate_components) {
+        LogPrint(BCLog::CMPCTBLOCK, "Rebuilt aggregate transaction of block %s from %lu components\n", hash.ToString(), component_list.size() - 1);
+        if (component_list_out) *component_list_out = std::move(component_list);
     }
 
     LogPrint(BCLog::CMPCTBLOCK, "Successfully reconstructed block %s with %lu txn prefilled, %lu txn from mempool (incl at least %lu from extra pool) and %lu txn requested\n", hash.ToString(), prefilled_count, mempool_count, extra_count, vtx_missing.size());
