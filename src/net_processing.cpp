@@ -747,6 +747,9 @@ private:
     TxRequestTracker m_txrequest GUARDED_BY(::cs_main);
     std::unique_ptr<TxReconciliationTracker> m_txreconciliation;
 
+    /** Private output fetch server; only set with -peerpir. */
+    std::unique_ptr<node::PirServer> m_pir;
+
     /** The height of the best chain */
     std::atomic<int> m_best_height{-1};
 
@@ -1093,6 +1096,16 @@ private:
      * May disconnect from the peer in the case of a bad request.
      */
     void ProcessGetOutKeys(CNode& node, Peer& peer, DataStream& vRecv);
+
+    /**
+     * Handle getpirhint and pirquery (NODE_OUTKEYS_PIR). Malformed requests,
+     * requests to a node that does not serve PIR and peers over their work
+     * budget are disconnected.
+     */
+    void ProcessGetPirHint(CNode& node, Peer& peer, DataStream& vRecv);
+    void ProcessPirQuery(CNode& node, Peer& peer, DataStream& vRecv);
+    /** Common result handling; returns true if the reply should be sent. */
+    bool HandlePirStatus(CNode& node, node::PirServer::Status status, const char* what);
 
     /**
      * Handle a getcfcheckpt request.
@@ -1628,6 +1641,7 @@ void PeerManagerImpl::ReattemptInitialBroadcast(CScheduler& scheduler)
 void PeerManagerImpl::FinalizeNode(const CNode& node)
 {
     NodeId nodeid = node.GetId();
+    if (m_pir) m_pir->ForgetPeer(nodeid);
     int misbehavior{0};
     {
     LOCK(cs_main);
@@ -1922,6 +1936,9 @@ PeerManagerImpl::PeerManagerImpl(CConnman& connman, AddrMan& addrman,
     // This argument can go away after Erlay support is complete.
     if (opts.reconcile_txs) {
         m_txreconciliation = std::make_unique<TxReconciliationTracker>(TXRECONCILIATION_VERSION);
+    }
+    if (opts.serve_pir) {
+        m_pir = std::make_unique<node::PirServer>(m_chainman, opts.pir);
     }
 }
 
@@ -3451,6 +3468,79 @@ void PeerManagerImpl::ProcessGetOutKeys(CNode& node, Peer& peer, DataStream& vRe
         reply_bytes += size;
         MakeAndPushMessage(node, NetMsgType::OUTKEYS, out_keys);
     }
+}
+
+bool PeerManagerImpl::HandlePirStatus(CNode& node, node::PirServer::Status status, const char* what)
+{
+    using Status = node::PirServer::Status;
+    switch (status) {
+    case Status::OK:
+    case Status::STALE:
+        return true;
+    case Status::BUSY:
+        LogPrint(BCLog::NET, "pir: busy, ignoring %s from peer %d\n", what, node.GetId());
+        return false;
+    case Status::UNAVAILABLE:
+        LogPrint(BCLog::NET, "pir: block data unavailable, ignoring %s from peer %d\n", what, node.GetId());
+        return false;
+    case Status::OVER_BUDGET:
+        LogPrint(BCLog::NET, "pir: peer %d exceeded its work budget with %s, disconnecting\n", node.GetId(), what);
+        node.fDisconnect = true;
+        return false;
+    case Status::INVALID:
+        LogPrint(BCLog::NET, "pir: invalid %s from peer %d, disconnecting\n", what, node.GetId());
+        node.fDisconnect = true;
+        return false;
+    }
+    assert(false);
+}
+
+void PeerManagerImpl::ProcessGetPirHint(CNode& node, Peer& peer, DataStream& vRecv)
+{
+    if (!m_pir || !(peer.m_our_services & NODE_OUTKEYS_PIR)) {
+        LogPrint(BCLog::NET, "peer %d sent getpirhint but we do not serve PIR\n", node.GetId());
+        node.fDisconnect = true;
+        return;
+    }
+    node::PirHintRequest req;
+    try {
+        vRecv >> req;
+    } catch (const std::exception&) {
+        LogPrint(BCLog::NET, "peer %d sent malformed getpirhint\n", node.GetId());
+        node.fDisconnect = true;
+        return;
+    }
+    std::vector<node::PirHintMsg> msgs;
+    if (!HandlePirStatus(node, m_pir->GetHint(node.GetId(), req.epoch, msgs), NetMsgType::GETPIRHINT)) return;
+    for (const auto& msg : msgs) MakeAndPushMessage(node, NetMsgType::PIRHINT, msg);
+}
+
+void PeerManagerImpl::ProcessPirQuery(CNode& node, Peer& peer, DataStream& vRecv)
+{
+    if (!m_pir || !(peer.m_our_services & NODE_OUTKEYS_PIR)) {
+        LogPrint(BCLog::NET, "peer %d sent pirquery but we do not serve PIR\n", node.GetId());
+        node.fDisconnect = true;
+        return;
+    }
+    node::PirQueryMsg query;
+    try {
+        vRecv >> query;
+        if (!vRecv.empty()) throw std::ios_base::failure("trailing data");
+    } catch (const std::exception&) {
+        LogPrint(BCLog::NET, "peer %d sent malformed pirquery\n", node.GetId());
+        node.fDisconnect = true;
+        return;
+    }
+    node::PirReplyMsg reply;
+    const auto status{m_pir->Answer(node.GetId(), query, reply)};
+    if (!HandlePirStatus(node, status, NetMsgType::PIRQUERY)) return;
+    if (status == node::PirServer::Status::STALE) {
+        // Tell the client to fetch the hint again: an empty answer.
+        reply.epoch = query.epoch;
+        reply.anchor_hash = query.anchor_hash;
+        reply.answer.clear();
+    }
+    MakeAndPushMessage(node, NetMsgType::PIRREPLY, reply);
 }
 
 void PeerManagerImpl::ProcessBlock(CNode& node, const std::shared_ptr<const CBlock>& block, bool force_processing, bool min_pow_checked)
@@ -5236,6 +5326,16 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
     if (msg_type == NetMsgType::GETOUTKEYS) {
         ProcessGetOutKeys(pfrom, *peer, vRecv);
+        return;
+    }
+
+    if (msg_type == NetMsgType::GETPIRHINT) {
+        ProcessGetPirHint(pfrom, *peer, vRecv);
+        return;
+    }
+
+    if (msg_type == NetMsgType::PIRQUERY) {
+        ProcessPirQuery(pfrom, *peer, vRecv);
         return;
     }
 

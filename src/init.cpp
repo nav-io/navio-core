@@ -621,6 +621,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-peerbloomfilters", strprintf("Support filtering of blocks and transaction with bloom filters (default: %u)", DEFAULT_PEERBLOOMFILTERS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-peerblockfilters", strprintf("Serve compact block filters to peers per BIP 157 (default: %u)", DEFAULT_PEERBLOCKFILTERS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-peeroutkeys", strprintf("Serve per-block BLSCT output keys and spent output hashes to peers for light wallet scanning (getoutkeys, NODE_OUTKEYS). Incompatible with -prune (default: %u)", DEFAULT_PEEROUTKEYS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-peerpir", strprintf("Answer private (SimplePIR) fetches of output data for light wallets (getpirhint, pirquery, NODE_OUTKEYS_PIR). Experimental; each query costs a scan of an output epoch. Requires -peeroutkeys (default: %u)", DEFAULT_PEERPIR), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-txreconciliation", strprintf("Enable transaction reconciliations per BIP 330 (default: %d)", DEFAULT_TXRECONCILIATION_ENABLE), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     // TODO: remove the sentence "Nodes not using ... incoming connections." once the changes from
     // https://github.com/bitcoin/bitcoin/pull/23542 have become widespread.
@@ -688,6 +689,9 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-limitdescendantsize=<n>", strprintf("Do not accept transactions if any ancestor would have more than <n> kilobytes of in-mempool descendants (default: %u).", DEFAULT_DESCENDANT_SIZE_LIMIT_KVB), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-addrmantest", "Allows to test address relay on localhost", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-outkeysmaxbytes=<n>", strprintf("Stop a getoutkeys reply before the block that would take its outkeys payload over <n> bytes; the first block is always sent (default: %u)", node::DEFAULT_OUTKEYS_MAX_REPLY_BYTES), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
+    argsman.AddArg("-pirepochblocks=<n>", strprintf("Blocks per PIR output epoch (default: %u)", node::DEFAULT_PIR_EPOCH_BLOCKS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
+    argsman.AddArg("-pirmaxepochs=<n>", strprintf("PIR output epochs kept in memory (default: %u)", node::DEFAULT_PIR_MAX_EPOCHS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
+    argsman.AddArg("-pirpeerbudget=<n>", strprintf("Per-peer PIR work budget in bytes, refilled at 1/8 per second (default: %u)", node::DEFAULT_PIR_PEER_BUDGET), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-capturemessages", "Capture all P2P messages to disk", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-mocktime=<n>", "Replace actual time with " + UNIX_EPOCH_TIME + " (default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-maxsigcachesize=<n>", strprintf("Limit sum of signature cache and script execution cache sizes to <n> MiB (default: %u)", DEFAULT_MAX_SIG_CACHE_BYTES >> 20), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
@@ -1030,6 +1034,15 @@ bool AppInitParameterInteraction(const ArgsManager& args)
             return InitError(Untranslated("Cannot set -peeroutkeys together with -prune."));
         }
         nLocalServices = ServiceFlags(nLocalServices | NODE_OUTKEYS);
+    }
+
+    // Signal NODE_OUTKEYS_PIR if peerpir is enabled. The PIR databases hold
+    // the outputs getoutkeys reports, so it needs -peeroutkeys.
+    if (args.GetBoolArg("-peerpir", DEFAULT_PEERPIR)) {
+        if (!args.GetBoolArg("-peeroutkeys", DEFAULT_PEEROUTKEYS)) {
+            return InitError(Untranslated("Cannot set -peerpir without -peeroutkeys."));
+        }
+        nLocalServices = ServiceFlags(nLocalServices | NODE_OUTKEYS_PIR);
     }
 
     if (args.GetIntArg("-prune", 0)) {
