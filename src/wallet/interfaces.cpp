@@ -120,17 +120,6 @@ WalletTxOut MakeWalletTxOut(const CWallet& wallet,
     return result;
 }
 
-WalletTxOut MakeWalletTxOut(const CWallet& wallet,
-    const COutput& output) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
-{
-    WalletTxOut result;
-    result.txout = output.txout;
-    result.time = output.time;
-    result.depth_in_main_chain = output.depth;
-    result.is_spent = wallet.IsSpent(output.outpoint);
-    return result;
-}
-
 class WalletImpl : public Wallet
 {
 public:
@@ -251,11 +240,6 @@ public:
         return value.empty() ? m_wallet->EraseAddressReceiveRequest(batch, dest, id)
                              : m_wallet->SetAddressReceiveRequest(batch, dest, id, value);
     }
-    bool displayAddress(const CTxDestination& dest) override
-    {
-        LOCK(m_wallet->cs_wallet);
-        return m_wallet->DisplayAddress(dest);
-    }
     bool lockCoin(const COutPoint& output, const bool write_to_db) override
     {
         LOCK(m_wallet->cs_wallet);
@@ -278,22 +262,6 @@ public:
         LOCK(m_wallet->cs_wallet);
         return m_wallet->ListLockedCoins(outputs);
     }
-    util::Result<CTransactionRef> createTransaction(const std::vector<CRecipient>& recipients,
-        const CCoinControl& coin_control,
-        bool sign,
-        int& change_pos,
-        CAmount& fee) override
-    {
-        LOCK(m_wallet->cs_wallet);
-        auto res = CreateTransaction(*m_wallet, recipients, change_pos == -1 ? std::nullopt : std::make_optional(change_pos),
-                                     coin_control, sign);
-        if (!res) return util::Error{util::ErrorString(res)};
-        const auto& txr = *res;
-        fee = txr.fee;
-        change_pos = txr.change_pos ? *txr.change_pos : -1;
-
-        return txr.tx;
-    }
     void commitTransaction(CTransactionRef tx,
         WalletValueMap value_map,
         WalletOrderForm order_form) override
@@ -310,25 +278,6 @@ public:
     bool transactionCanBeBumped(const uint256& txid) override
     {
         return feebumper::TransactionCanBeBumped(*m_wallet.get(), txid);
-    }
-    bool createBumpTransaction(const uint256& txid,
-        const CCoinControl& coin_control,
-        std::vector<bilingual_str>& errors,
-        CAmount& old_fee,
-        CAmount& new_fee,
-        CMutableTransaction& mtx) override
-    {
-        std::vector<CTxOut> outputs; // just an empty list of new recipients for now
-        return feebumper::CreateRateBumpTransaction(*m_wallet.get(), txid, coin_control, errors, old_fee, new_fee, mtx, /* require_mine= */ true, outputs) == feebumper::Result::OK;
-    }
-    bool signBumpTransaction(CMutableTransaction& mtx) override { return feebumper::SignTransaction(*m_wallet.get(), mtx); }
-    bool commitBumpTransaction(const uint256& txid,
-        CMutableTransaction&& mtx,
-        std::vector<bilingual_str>& errors,
-        uint256& bumped_txid) override
-    {
-        return feebumper::CommitTransaction(*m_wallet.get(), txid, std::move(mtx), errors, bumped_txid) ==
-               feebumper::Result::OK;
     }
     CTransactionRef getTx(const uint256& txid) override
     {
@@ -392,15 +341,6 @@ public:
             return MakeWalletTx(*m_wallet, mi->second);
         }
         return {};
-    }
-    TransactionError fillPSBT(int sighash_type,
-        bool sign,
-        bool bip32derivs,
-        size_t* n_signed,
-        PartiallySignedTransaction& psbtx,
-        bool& complete) override
-    {
-        return m_wallet->FillPSBT(psbtx, complete, sighash_type, sign, bip32derivs, n_signed);
     }
     WalletBalances getBalances() override
     {
@@ -470,19 +410,6 @@ public:
         LOCK(m_wallet->cs_wallet);
         return OutputGetCredit(*m_wallet, txout, filter);
     }
-    CoinsList listCoins() override
-    {
-        LOCK(m_wallet->cs_wallet);
-        CoinsList result;
-        for (const auto& entry : ListCoins(*m_wallet)) {
-            auto& group = result[entry.first];
-            for (const auto& coin : entry.second) {
-                group.emplace_back(coin.outpoint,
-                    MakeWalletTxOut(*m_wallet, coin));
-            }
-        }
-        return result;
-    }
     std::vector<WalletTxOut> getCoins(const std::vector<COutPoint>& outputs) override
     {
         LOCK(m_wallet->cs_wallet);
@@ -518,7 +445,6 @@ public:
     unsigned int getConfirmTarget() override { return m_wallet->m_confirm_target; }
     bool hdEnabled() override { return m_wallet->IsHDEnabled(); }
     bool canGetAddresses() override { return m_wallet->CanGetAddresses(); }
-    bool hasExternalSigner() override { return m_wallet->IsWalletFlagSet(WALLET_FLAG_EXTERNAL_SIGNER); }
     bool privateKeysDisabled() override { return m_wallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS); }
     bool taprootEnabled() override {
         if (m_wallet->IsLegacy()) return false;
