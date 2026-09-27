@@ -47,9 +47,22 @@ uint64_t GetBogoSize(const CScript& script_pub_key)
            script_pub_key.size() /* scriptPubKey */;
 }
 
+//! Canonical serialization of one UTXO-set entry, shared by every coin
+//! commitment (hash_serialized, muhash and the coinstatsindex).
+//!
+//! The same coin reaches this function in two shapes: as the full output
+//! taken from a block (range-proof body present), and as the coin read back
+//! from block-undo data or restored into the chainstate by a disconnect
+//! (range-proof body dropped, see CTxOutBLSCTData::StrippedForUndoScope).
+//! Serializing both in the stripped form makes them hash identically, so an
+//! output that is added in one shape and removed in the other cancels out,
+//! and a chainstate that went through a reorg hashes the same as one that
+//! did not. The outpoint must be the coin's key (its outid, computed from the
+//! full output), which is why it is passed in rather than recomputed here.
 template <typename T>
 static void TxOutSer(T& ss, const COutPoint& outpoint, const Coin& coin)
 {
+    CTxOutBLSCTData::StrippedForUndoScope strip_scope;
     ss << outpoint;
     ss << static_cast<uint32_t>((coin.nHeight << 1) + coin.fCoinBase);
     ss << coin.out;
