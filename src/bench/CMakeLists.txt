@@ -33,6 +33,7 @@ add_executable(bench_navio
   blsct_generators.cpp
   blsct_rp_verify.cpp
   blsct_setmem_verify.cpp
+  blsct_tx_deserialize.cpp
   blsct_view_tag.cpp
   block_assemble.cpp
   ccoins_caching.cpp

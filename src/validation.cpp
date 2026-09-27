@@ -449,9 +449,9 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationS
                 // In the new format, outpoints are just transaction hashes, so we need to find
                 // the correct output by matching the output hash with the input's prevout hash
                 CTxOut out;
-                for (const CTxOut& out_ : txFrom->vout) {
-                    if (out_.GetHash() == txin.prevout.hash) {
-                        out = out_;
+                for (size_t i = 0; i < txFrom->vout.size(); ++i) {
+                    if (txFrom->GetOutputId(i) == txin.prevout.hash) {
+                        out = txFrom->vout[i];
                         break;
                     }
                 }
@@ -849,7 +849,7 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
             // Are inputs missing because we already have the tx?
             for (size_t out = 0; out < tx.vout.size(); out++) {
                 // Optimistically just do efficient check of cache for outputs
-                if (coins_cache.HaveCoinInCache(COutPoint(tx.vout[out].GetHash()))) {
+                if (coins_cache.HaveCoinInCache(COutPoint(tx.GetOutputId(out)))) {
                     return state.Invalid(TxValidationResult::TX_CONFLICT, "txn-already-known");
                 }
             }
@@ -1556,8 +1556,8 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptPackage(const Package& package, 
     const auto& child = package.back();
     std::unordered_set<uint256, SaltedTxidHasher> unconfirmed_parent_outids;
     for (auto it = package.cbegin(); it != package.cend() - 1; ++it) {
-        for (const auto& output : (*it)->vout) {
-            unconfirmed_parent_outids.insert(output.GetHash());
+        for (const Outid& outid : (*it)->GetOutputIds()) {
+            unconfirmed_parent_outids.insert(outid);
         }
     }
 
