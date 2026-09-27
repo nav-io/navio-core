@@ -7,6 +7,7 @@
 #define BITCOIN_NET_PROCESSING_H
 
 #include <net.h>
+#include <node/outkeys.h>
 #include <validationinterface.h>
 
 class AddrMan;
@@ -23,6 +24,8 @@ static const uint32_t DEFAULT_MAX_ORPHAN_TRANSACTIONS{100};
 static const uint32_t DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN{100};
 static const bool DEFAULT_PEERBLOOMFILTERS = false;
 static const bool DEFAULT_PEERBLOCKFILTERS = false;
+/** Default for -peeroutkeys: serve getoutkeys to peers (NODE_OUTKEYS). */
+static const bool DEFAULT_PEEROUTKEYS = false;
 /** Threshold for marking a node to be discouraged, e.g. disconnected and added to the discouragement filter. */
 static const int DISCOURAGEMENT_THRESHOLD{100};
 /** Maximum number of outstanding CMPCTBLOCK requests for the same block. */
@@ -61,6 +64,8 @@ public:
         //! Whether or not the internal RNG behaves deterministically (this is
         //! a test-only option).
         bool deterministic_rng{false};
+        //! Budget in bytes of outkeys payload for the reply to one getoutkeys
+        uint64_t outkeys_max_reply_bytes{node::DEFAULT_OUTKEYS_MAX_REPLY_BYTES};
     };
 
     static std::unique_ptr<PeerManager> make(CConnman& connman, AddrMan& addrman,
