@@ -891,6 +891,35 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
         return false; // state filled in by CheckTxInputs
     }
 
+    // Every spendable output must be new. The mempool indexes outputs by id,
+    // and ConnectBlock rejects a block that creates a spendable output twice
+    // or one that is still unspent in the chain. So reject a transaction that
+    // repeats one of its own outputs, creates one another mempool transaction
+    // already creates, or recreates an unspent coin. An output of a
+    // transaction this one replaces is fine: that transaction leaves the
+    // mempool first. A coin lookup that finds nothing caches nothing; one that
+    // finds a coin rejects the transaction, so uncache it.
+    {
+        std::set<uint256> own_outids;
+        for (size_t i = 0; i < tx.vout.size(); ++i) {
+            if (tx.vout[i].scriptPubKey.IsUnspendable()) continue;
+            const Outid& outid = tx.GetOutputId(i);
+            if (!own_outids.insert(outid).second) {
+                return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "txn-duplicate-output");
+            }
+            const auto creator = m_pool.mapOutputToTx.find(outid);
+            if (creator != m_pool.mapOutputToTx.end() && !ws.m_conflicts.contains(creator->second)) {
+                return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "txn-duplicate-output");
+            }
+            const COutPoint outpoint{outid};
+            const bool was_cached{coins_cache.HaveCoinInCache(outpoint)};
+            if (coins_cache.HaveCoin(outpoint)) {
+                if (!was_cached) coins_to_uncache.push_back(outpoint);
+                return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "txn-duplicate-output");
+            }
+        }
+    }
+
     if (m_pool.m_require_standard && !AreInputsStandard(tx, m_view)) {
         return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "bad-txns-nonstandard-inputs");
     }
