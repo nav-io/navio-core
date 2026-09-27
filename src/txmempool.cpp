@@ -560,9 +560,13 @@ void CTxMemPool::addUnchecked(const CTxMemPoolEntry &entry, setEntries &setAnces
 
     const std::vector<Outid>& output_hashes = tx.GetOutputIds();
 
-    // Add output hash to transaction hash mapping for parent-child tracking
+    // Add output hash to transaction hash mapping for parent-child tracking.
+    // Admission rejects a spendable output another mempool transaction
+    // already creates (txn-duplicate-output); unspendable outputs may repeat
+    // across transactions. Either way the first creator keeps the entry, and
+    // removeUnchecked() only erases entries a transaction owns.
     for (unsigned int i = 0; i < tx.vout.size(); i++) {
-        mapOutputToTx[output_hashes[i]] = tx.GetHash();
+        mapOutputToTx.try_emplace(output_hashes[i], tx.GetHash());
     }
     // Don't bother worrying about child transactions of this one.
     // Normal case of a new transaction arriving is that there can't be any
@@ -631,7 +635,10 @@ void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason)
 
     // Remove output hash to transaction hash mappings
     for (const Outid& outid : it->GetTx().GetOutputIds()) {
-        mapOutputToTx.erase(outid);
+        auto output_it = mapOutputToTx.find(outid);
+        if (output_it != mapOutputToTx.end() && output_it->second == it->GetTx().GetHash()) {
+            mapOutputToTx.erase(output_it);
+        }
     }
 
     // Note: mapNextTx is already being cleaned up above with mapNextTx.erase(txin.prevout)
