@@ -563,4 +563,32 @@ BOOST_AUTO_TEST_CASE(test_unserialize_rejects_noncanonical_encoding)
     BOOST_CHECK_THROW(d.Unserialize(st3), std::ios_base::failure);
 }
 
+// Rand must be uniform over [0, r). Sampling a 256-bit value and keeping it
+// only when it is < r gives that; reducing it mod r instead (or keeping the
+// samples >= r) over-weights [0, 2^256 - 2r), because values from above r fold
+// back onto that range. The expected share of samples below 2^256 - 2r is
+// 20.8% when uniform, 28.3% when reduced mod r, and 34.5% when the rejection
+// keeps the out-of-range samples; with 20000 draws the 24.5% cutoff sits more
+// than 11 standard deviations from each.
+BOOST_AUTO_TEST_CASE(test_rand_uniform_below_order)
+{
+    // 2^256 - 2r, big-endian like GetVch().
+    const std::vector<uint8_t> fold_boundary{
+        0x18, 0x24, 0xb1, 0x59, 0xac, 0xc5, 0x05, 0x6f,
+        0x99, 0x8c, 0x4f, 0xef, 0xec, 0xbc, 0x4f, 0xf5,
+        0x58, 0x84, 0xb7, 0xfa, 0x00, 0x03, 0x48, 0x02,
+        0x00, 0x00, 0x00, 0x01, 0xff, 0xff, 0xff, 0xfe,
+    };
+    constexpr int num_draws{20000};
+    int below{0};
+    for (int i = 0; i < num_draws; ++i) {
+        const std::vector<uint8_t> v = Scalar::Rand(/*exclude_zero=*/false).GetVch();
+        BOOST_REQUIRE_EQUAL(v.size(), fold_boundary.size());
+        if (v < fold_boundary) ++below;
+    }
+    const double share = static_cast<double>(below) / num_draws;
+    BOOST_TEST_INFO("share below 2^256 - 2r: " << share);
+    BOOST_CHECK(share < 0.245);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
