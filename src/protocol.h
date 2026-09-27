@@ -293,6 +293,14 @@ extern const char* DP2PMSG;
  */
 extern const char* P2PMSGCHAL;
 /**
+ * wsendpoint announces where the sender accepts WebSocket P2P connections
+ * (NODE_P2P_WS). Sent once, unsolicited, right after the version handshake.
+ * Payload: uint16 port, then a string URL that is empty when the listener is
+ * reachable directly at ws://<peer address>:<port>, or the full public
+ * ws:// / wss:// URL when it sits behind a reverse proxy.
+ */
+extern const char* WSENDPOINT;
+/**
  * getp2pmsgs asks an archiving peer for the flagged p2pmsg envelopes it
  * relayed, filtered by a fuzzy-message-detection key the requester supplies.
  * Carries its own proof of work, because the scan it asks for costs the
@@ -417,6 +425,17 @@ enum ServiceFlags : uint64_t {
     // -peeroutkeys. Navio-specific; occupies a reserved-experiment bit (bits
     // 24-27 are p2pmsg's).
     NODE_OUTKEYS = (1 << 28),
+
+    // NODE_P2P_WS advertises that the node accepts P2P connections carried
+    // over WebSocket (-p2pwsbind), so browser and other WebSocket-only clients
+    // know they can dial it. A service bit cannot carry a port, so a node that
+    // sets it also sends a `wsendpoint` message right after the version
+    // handshake with the port (and, when fronted by a reverse proxy, the full
+    // public ws:// or wss:// URL). Like every service bit this is an
+    // unauthenticated advertisement. Navio-specific; occupies a
+    // reserved-experiment bit. Bit 30, not 28: bits 28 and 29 are taken by
+    // NODE_OUTKEYS and NODE_OUTKEYS_PIR (the light-wallet output-key service).
+    NODE_P2P_WS = (1 << 30),
 
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the
