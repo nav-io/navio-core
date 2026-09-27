@@ -9,6 +9,7 @@
 #include <consensus/amount.h>
 #include <consensus/validation.h>
 #include <core_io.h>
+#include <index/outindex.h>
 #include <index/txindex.h>
 #include <interfaces/wallet.h>
 #include <key_io.h>
@@ -1995,13 +1996,90 @@ static std::optional<UniValue> FindOutputHashInBlock(const CBlock& block, const 
     return std::nullopt;
 }
 
+//! An output located through -outindex, with the block data read back and
+//! checked against the index entry.
+struct IndexedOutput {
+    CTransactionRef tx;
+    uint32_t out_pos;
+    uint256 block_hash;
+    int height;
+    struct Spend {
+        CTransactionRef tx;
+        uint32_t in_pos;
+        uint256 block_hash;
+        int height;
+    };
+    std::optional<Spend> spent;
+};
+
+enum class OutIndexLookup {
+    FOUND,
+    NOT_FOUND,   //!< the index is synced and has no entry for the output
+    UNAVAILABLE, //!< no index, not synced, or its entry did not match the chain
+};
+
+//! Read the transaction at tx_pos of the active-chain block at height.
+//! Returns nullptr if there is no such block or position.
+static CTransactionRef ReadIndexedTx(ChainstateManager& chainman, int height, uint32_t tx_pos, uint256& block_hash)
+{
+    FlatFilePos pos;
+    {
+        LOCK(cs_main);
+        const CBlockIndex* pindex{chainman.ActiveChain()[height]};
+        if (!pindex) return nullptr;
+        if (chainman.m_blockman.IsBlockPruned(*pindex)) {
+            throw JSONRPCError(RPC_MISC_ERROR, "Output hash not found in unpruned blocks (pruned data)");
+        }
+        pos = pindex->GetBlockPos();
+        block_hash = pindex->GetBlockHash();
+    }
+    CBlock block;
+    if (!chainman.m_blockman.ReadBlockFromDisk(block, pos)) return nullptr;
+    if (block.GetHash() != block_hash || tx_pos >= block.vtx.size()) return nullptr;
+    return block.vtx[tx_pos];
+}
+
+//! Look output_hash up in -outindex. Anything that does not line up with the
+//! active chain (the index lagging a reorg, say) is reported as UNAVAILABLE so
+//! callers can fall back to a slower search rather than return a wrong answer.
+static OutIndexLookup LookupIndexedOutput(ChainstateManager& chainman, const uint256& output_hash, IndexedOutput& out)
+{
+    if (!g_outindex || !g_outindex->BlockUntilSyncedToCurrentChain()) return OutIndexLookup::UNAVAILABLE;
+
+    const std::optional<OutIndexEntry> entry{g_outindex->FindOutput(output_hash)};
+    if (!entry) return OutIndexLookup::NOT_FOUND;
+
+    out.tx = ReadIndexedTx(chainman, entry->height, entry->tx_pos, out.block_hash);
+    if (!out.tx || entry->out_pos >= out.tx->vout.size() ||
+        out.tx->vout[entry->out_pos].GetHash() != output_hash) {
+        return OutIndexLookup::UNAVAILABLE;
+    }
+    out.out_pos = entry->out_pos;
+    out.height = entry->height;
+
+    out.spent.reset();
+    if (entry->spent) {
+        IndexedOutput::Spend spend;
+        spend.tx = ReadIndexedTx(chainman, entry->spent->height, entry->spent->tx_pos, spend.block_hash);
+        if (!spend.tx || entry->spent->in_pos >= spend.tx->vin.size() ||
+            spend.tx->vin[entry->spent->in_pos].prevout.hash.ToUint256() != output_hash) {
+            return OutIndexLookup::UNAVAILABLE;
+        }
+        spend.in_pos = entry->spent->in_pos;
+        spend.height = entry->spent->height;
+        out.spent = std::move(spend);
+    }
+    return OutIndexLookup::FOUND;
+}
+
 static RPCHelpMan gettxfromoutputhash()
 {
     return RPCHelpMan{
         "gettxfromoutputhash",
         "\nReturns the transaction hash that contains the specified output hash.\n"
         "\nThis command searches through the blockchain and mempool to find which transaction contains an output with the given hash.\n"
-        "\nAn output that is still unspent is answered from the UTXO set, which names its block directly. An output already spent in a\n"
+        "\nWith -outindex enabled and synced, confirmed outputs (spent or not) are answered from the index.\n"
+        "\nOtherwise an output that is still unspent is answered from the UTXO set, which names its block directly. An output already spent in a\n"
         "block is no longer in the UTXO set, so it is looked up by scanning the chain backwards from the tip, which is expensive.\n"
         "\nOn a pruned node the scan fails once it reaches a block whose data was pruned, rather than reporting the output as missing.\n",
         {
@@ -2042,6 +2120,28 @@ static RPCHelpMan gettxfromoutputhash()
                             return result;
                         }
                     }
+                }
+            }
+
+            // The output index answers directly, including for outputs already
+            // spent in a block. A synced index without an entry means the output
+            // is not in the active chain, so there is nothing to scan for.
+            {
+                IndexedOutput indexed;
+                switch (LookupIndexedOutput(chainman, output_hash, indexed)) {
+                case OutIndexLookup::FOUND: {
+                    const int tip_height{WITH_LOCK(cs_main, return chainman.ActiveChain().Height())};
+                    UniValue result(UniValue::VOBJ);
+                    result.pushKV("txid", indexed.tx->GetHash().GetHex());
+                    result.pushKV("vout", (int)indexed.out_pos);
+                    result.pushKV("blockhash", indexed.block_hash.GetHex());
+                    result.pushKV("confirmations", 1 + tip_height - indexed.height);
+                    return result;
+                }
+                case OutIndexLookup::NOT_FOUND:
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Output hash not found in blockchain or mempool");
+                case OutIndexLookup::UNAVAILABLE:
+                    break;
                 }
             }
 
@@ -2096,6 +2196,72 @@ static RPCHelpMan gettxfromoutputhash()
     };
 }
 
+static RPCHelpMan getoutputinfo()
+{
+    return RPCHelpMan{
+        "getoutputinfo",
+        "\nReturns where a confirmed output was created and, if a block has spent it, where it was spent.\n"
+        "\nRequires -outindex. Only the active chain is consulted: outputs created or spent only in the mempool are not reported.\n",
+        {
+            {"outputhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The hash of the output (its outpoint)"},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                {RPCResult::Type::STR_HEX, "txid", "The hash of the transaction that created the output"},
+                {RPCResult::Type::NUM, "vout", "The output index within that transaction"},
+                {RPCResult::Type::STR_HEX, "blockhash", "The hash of the block that created the output"},
+                {RPCResult::Type::NUM, "height", "The height of that block"},
+                {RPCResult::Type::NUM, "confirmations", "The number of confirmations of that block"},
+                {RPCResult::Type::BOOL, "spent", "Whether a block in the active chain spends the output"},
+                {RPCResult::Type::OBJ, "spentby", /*optional=*/true, "Where the output was spent (only if spent)", {
+                    {RPCResult::Type::STR_HEX, "txid", "The hash of the spending transaction"},
+                    {RPCResult::Type::NUM, "vin", "The input index within the spending transaction"},
+                    {RPCResult::Type::STR_HEX, "blockhash", "The hash of the block that spent the output"},
+                    {RPCResult::Type::NUM, "height", "The height of that block"},
+                }},
+            }},
+        RPCExamples{HelpExampleCli("getoutputinfo", "\"outputhash\"") + HelpExampleRpc("getoutputinfo", "\"outputhash\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            const NodeContext& node = EnsureAnyNodeContext(request.context);
+            ChainstateManager& chainman = EnsureChainman(node);
+
+            const uint256 output_hash{ParseHashV(request.params[0], "outputhash")};
+
+            if (!g_outindex) {
+                throw JSONRPCError(RPC_MISC_ERROR, "Requires -outindex");
+            }
+
+            IndexedOutput indexed;
+            switch (LookupIndexedOutput(chainman, output_hash, indexed)) {
+            case OutIndexLookup::FOUND:
+                break;
+            case OutIndexLookup::NOT_FOUND:
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Output hash not found in blockchain");
+            case OutIndexLookup::UNAVAILABLE:
+                throw JSONRPCError(RPC_MISC_ERROR, "Output index is not in sync with the active chain yet");
+            }
+
+            const int tip_height{WITH_LOCK(cs_main, return chainman.ActiveChain().Height())};
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("txid", indexed.tx->GetHash().GetHex());
+            result.pushKV("vout", (int)indexed.out_pos);
+            result.pushKV("blockhash", indexed.block_hash.GetHex());
+            result.pushKV("height", indexed.height);
+            result.pushKV("confirmations", 1 + tip_height - indexed.height);
+            result.pushKV("spent", indexed.spent.has_value());
+            if (indexed.spent) {
+                UniValue spentby(UniValue::VOBJ);
+                spentby.pushKV("txid", indexed.spent->tx->GetHash().GetHex());
+                spentby.pushKV("vin", (int)indexed.spent->in_pos);
+                spentby.pushKV("blockhash", indexed.spent->block_hash.GetHex());
+                spentby.pushKV("height", indexed.spent->height);
+                result.pushKV("spentby", std::move(spentby));
+            }
+            return result;
+        },
+    };
+}
+
 void RegisterRawTransactionRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -2115,6 +2281,7 @@ void RegisterRawTransactionRPCCommands(CRPCTable& t)
         {"rawtransactions", &joinpsbts},
         {"rawtransactions", &analyzepsbt},
         {"rawtransactions", &gettxfromoutputhash},
+        {"rawtransactions", &getoutputinfo},
     };
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);

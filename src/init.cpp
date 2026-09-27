@@ -29,6 +29,7 @@
 #include <httpserver.h>
 #include <index/blockfilterindex.h>
 #include <index/coinstatsindex.h>
+#include <index/outindex.h>
 #include <index/txindex.h>
 #include <init/common.h>
 #include <interfaces/chain.h>
@@ -404,6 +405,10 @@ void Shutdown(NodeContext& node)
         g_coin_stats_index->Stop();
         g_coin_stats_index.reset();
     }
+    if (g_outindex) {
+        g_outindex->Stop();
+        g_outindex.reset();
+    }
     ForEachBlockFilterIndex([](BlockFilterIndex& index) { index.Stop(); });
     DestroyAllBlockFilterIndexes();
 
@@ -570,6 +575,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-shutdownnotify=<cmd>", "Execute command immediately before beginning shutdown. The need for shutdown may be urgent, so be careful not to delay it long (if the command doesn't require interaction with the server, consider having it fork into the background).", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 #endif
     argsman.AddArg("-txindex", strprintf("Maintain a full transaction index, used by the getrawtransaction rpc call (default: %u)", DEFAULT_TXINDEX), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-outindex", strprintf("Maintain an index from output hash to the block position that created it and, once spent, the position that spent it. Used by the getoutputinfo and gettxfromoutputhash rpc calls (default: %u)", DEFAULT_OUTINDEX), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-blockfilterindex=<type>",
                  strprintf("Maintain an index of compact filters by block (default: %s, values: %s).", DEFAULT_BLOCKFILTERINDEX, ListBlockFilterTypes()) +
                  " If <type> is not supplied or if <type> = 1, indexes for all known types are enabled.",
@@ -1024,6 +1030,8 @@ bool AppInitParameterInteraction(const ArgsManager& args)
     if (args.GetIntArg("-prune", 0)) {
         if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX))
             return InitError(_("Prune mode is incompatible with -txindex."));
+        if (args.GetBoolArg("-outindex", DEFAULT_OUTINDEX))
+            return InitError(Untranslated("Prune mode is incompatible with -outindex."));
         if (args.GetBoolArg("-reindex-chainstate", false)) {
             return InitError(_("Prune mode is incompatible with -reindex-chainstate. Use full -reindex instead."));
         }
@@ -1562,6 +1570,9 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     LogPrintf("* Using %.1f MiB for block index database\n", cache_sizes.block_tree_db * (1.0 / 1024 / 1024));
     if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
         LogPrintf("* Using %.1f MiB for transaction index database\n", cache_sizes.tx_index * (1.0 / 1024 / 1024));
+    }
+    if (args.GetBoolArg("-outindex", DEFAULT_OUTINDEX)) {
+        LogPrintf("* Using %.1f MiB for output index database\n", cache_sizes.out_index * (1.0 / 1024 / 1024));
     }
     for (BlockFilterType filter_type : g_enabled_filter_types) {
         LogPrintf("* Using %.1f MiB for %s block filter index database\n",
@@ -2394,6 +2405,11 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
         g_txindex = std::make_unique<TxIndex>(interfaces::MakeChain(node), cache_sizes.tx_index, false, fReindex);
         node.indexes.emplace_back(g_txindex.get());
+    }
+
+    if (args.GetBoolArg("-outindex", DEFAULT_OUTINDEX)) {
+        g_outindex = std::make_unique<OutIndex>(interfaces::MakeChain(node), cache_sizes.out_index, false, fReindex);
+        node.indexes.emplace_back(g_outindex.get());
     }
 
     for (const auto& filter_type : g_enabled_filter_types) {

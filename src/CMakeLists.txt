@@ -324,6 +324,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     index/base.cpp
     index/blockfilterindex.cpp
     index/coinstatsindex.cpp
+    index/outindex.cpp
     index/txindex.cpp
     init.cpp
     kernel/chain.cpp
