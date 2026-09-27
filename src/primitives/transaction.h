@@ -738,20 +738,28 @@ static inline CTxOutRef MakeOutputRef(CTxOut&& txOut)
     return std::make_shared<const CTxOut>(std::forward<Out>(txOut));
 }
 
-/** A generic txid reference (txid or wtxid). */
+/** A generic transaction reference: a txid, a wtxid, or an output hash.
+ *
+ * An output hash names the transaction that created that output. It is only
+ * used by transaction download (TxRequestTracker and net_processing), which
+ * resolves it explicitly; mempool and orphanage lookups do not interpret it
+ * and simply find nothing. */
 class GenTxid
 {
-    bool m_is_wtxid;
+    enum class Kind : uint8_t { TXID, WTXID, OUTID };
+    Kind m_kind;
     uint256 m_hash;
-    GenTxid(bool is_wtxid, const uint256& hash) : m_is_wtxid(is_wtxid), m_hash(hash) {}
+    GenTxid(Kind kind, const uint256& hash) : m_kind(kind), m_hash(hash) {}
 
 public:
-    static GenTxid Txid(const uint256& hash) { return GenTxid{false, hash}; }
-    static GenTxid Wtxid(const uint256& hash) { return GenTxid{true, hash}; }
-    bool IsWtxid() const { return m_is_wtxid; }
+    static GenTxid Txid(const uint256& hash) { return GenTxid{Kind::TXID, hash}; }
+    static GenTxid Wtxid(const uint256& hash) { return GenTxid{Kind::WTXID, hash}; }
+    static GenTxid Outid(const uint256& hash) { return GenTxid{Kind::OUTID, hash}; }
+    bool IsWtxid() const { return m_kind == Kind::WTXID; }
+    bool IsOutid() const { return m_kind == Kind::OUTID; }
     const uint256& GetHash() const LIFETIMEBOUND { return m_hash; }
-    friend bool operator==(const GenTxid& a, const GenTxid& b) { return a.m_is_wtxid == b.m_is_wtxid && a.m_hash == b.m_hash; }
-    friend bool operator<(const GenTxid& a, const GenTxid& b) { return std::tie(a.m_is_wtxid, a.m_hash) < std::tie(b.m_is_wtxid, b.m_hash); }
+    friend bool operator==(const GenTxid& a, const GenTxid& b) { return a.m_kind == b.m_kind && a.m_hash == b.m_hash; }
+    friend bool operator<(const GenTxid& a, const GenTxid& b) { return std::tie(a.m_kind, a.m_hash) < std::tie(b.m_kind, b.m_hash); }
 };
 
 #endif // BITCOIN_PRIMITIVES_TRANSACTION_H

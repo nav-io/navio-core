@@ -66,11 +66,13 @@ struct Announcement {
     /** What peer the request was from. */
     const NodeId m_peer;
     /** What sequence number this announcement has. */
-    const SequenceNumber m_sequence : 59;
+    const SequenceNumber m_sequence : 58;
     /** Whether the request is preferred. */
     const bool m_preferred : 1;
     /** Whether this is a wtxid request. */
     const bool m_is_wtxid : 1;
+    /** Whether this is an output hash request. */
+    const bool m_is_outid : 1;
 
     /** What state this announcement is in. */
     State m_state : 3 {State::CANDIDATE_DELAYED};
@@ -99,7 +101,7 @@ struct Announcement {
     Announcement(const GenTxid& gtxid, NodeId peer, bool preferred, std::chrono::microseconds reqtime,
                  SequenceNumber sequence)
         : m_txhash(gtxid.GetHash()), m_time(reqtime), m_peer(peer), m_sequence(sequence), m_preferred(preferred),
-          m_is_wtxid{gtxid.IsWtxid()} {}
+          m_is_wtxid{gtxid.IsWtxid()}, m_is_outid{gtxid.IsOutid()} {}
 };
 
 //! Type alias for priorities.
@@ -298,6 +300,7 @@ std::map<uint256, TxHashInfo> ComputeTxHashInfo(const Index& index, const Priori
 
 GenTxid ToGenTxid(const Announcement& ann)
 {
+    if (ann.m_is_outid) return GenTxid::Outid(ann.m_txhash);
     return ann.m_is_wtxid ? GenTxid::Wtxid(ann.m_txhash) : GenTxid::Txid(ann.m_txhash);
 }
 

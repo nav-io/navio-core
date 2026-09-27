@@ -54,7 +54,6 @@ from test_framework.messages import (
     msg_getcfheaders,
     msg_getcfilters,
     msg_getdata,
-    msg_getoutputdata,
     msg_getheaders,
     msg_headers,
     msg_inv,
@@ -129,7 +128,6 @@ MESSAGEMAP = {
     b"getcfheaders": msg_getcfheaders,
     b"getcfilters": msg_getcfilters,
     b"getdata": msg_getdata,
-    b"getoutputdata": msg_getoutputdata,
     b"getheaders": msg_getheaders,
     b"headers": msg_headers,
     b"inv": msg_inv,
@@ -433,7 +431,6 @@ class P2PInterface(P2PConnection):
     def on_getblocks(self, message): pass
     def on_getblocktxn(self, message): pass
     def on_getdata(self, message): pass
-    def on_getoutputdata(self, message): pass
     def on_getheaders(self, message): pass
     def on_headers(self, message): pass
     def on_mempool(self, message): pass
