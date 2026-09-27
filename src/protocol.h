@@ -318,6 +318,25 @@ extern const char* GETOUTKEYS;
  * the output hashes spent by the block.
  */
 extern const char* OUTKEYS;
+/**
+ * getpirhint requests the SimplePIR hint of one output epoch (uint32 epoch).
+ * Only available with service bit NODE_OUTKEYS_PIR.
+ */
+extern const char* GETPIRHINT;
+/**
+ * pirhint is a response to getpirhint: the epoch's description (heights,
+ * per-block output counts, database shape, public matrix seed) and the hint
+ * rows of one slot; one message per slot.
+ */
+extern const char* PIRHINT;
+/**
+ * pirquery asks for one private retrieval from an epoch database: the epoch,
+ * the anchor block naming the database version, its record count and the
+ * encrypted query vector. Only available with service bit NODE_OUTKEYS_PIR.
+ */
+extern const char* PIRQUERY;
+/** pirreply is the answer to a pirquery, sent in request order. */
+extern const char* PIRREPLY;
 }; // namespace NetMsgType
 
 /* Get a vector of all valid message types (see above) */
@@ -417,6 +436,15 @@ enum ServiceFlags : uint64_t {
     // -peeroutkeys. Navio-specific; occupies a reserved-experiment bit (bits
     // 24-27 are p2pmsg's).
     NODE_OUTKEYS = (1 << 28),
+
+    // NODE_OUTKEYS_PIR means the node answers getpirhint and pirquery: light
+    // wallets can fetch the full data of outputs they found with getoutkeys
+    // without revealing which outputs they fetch (SimplePIR). Enabled with
+    // -peerpir, which requires -peeroutkeys. A separate bit from NODE_OUTKEYS
+    // because answering queries costs a scan of the database per query, so
+    // operators opt in separately and wallets look for it separately.
+    // Navio-specific; occupies a reserved-experiment bit.
+    NODE_OUTKEYS_PIR = (1 << 29),
 
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the

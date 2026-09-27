@@ -359,6 +359,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     node/miner.cpp
     node/mini_miner.cpp
     node/outkeys.cpp
+    node/pir.cpp
     node/minisketchwrapper.cpp
     node/peerman_args.cpp
     node/psbt.cpp
