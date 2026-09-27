@@ -13,8 +13,15 @@ it as a confirmation.
 """
 
 from decimal import Decimal
+import time
 
-from test_framework.messages import COIN
+from test_framework.messages import (
+    CInv,
+    COIN,
+    MSG_WTX,
+    msg_inv,
+)
+from test_framework.p2p import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -24,6 +31,16 @@ from test_framework.util import (
 NUM_PARENTS = 3
 UTXO_AMOUNT = Decimal("10")
 SEND_AMOUNT = Decimal("4")
+
+
+class GetdataRecorder(P2PInterface):
+    def __init__(self):
+        super().__init__()
+        self.requested = set()
+
+    def on_getdata(self, message):
+        for inv in message.inv:
+            self.requested.add(inv.hash)
 
 
 class MempoolBlsctAggregateConfirmTest(BitcoinTestFramework):
@@ -79,6 +96,8 @@ class MempoolBlsctAggregateConfirmTest(BitcoinTestFramework):
         assert_equal(set(mempool), set(parents + [child]))
         assert mempool[child]["ancestorcount"] >= 2
 
+        parent_wtxids = [node.getmempoolentry(txid)["wtxid"] for txid in parents]
+
         # Keep the child out of the next block so only its parent is merged.
         node.prioritisetransaction(txid=child, fee_delta=-COIN)
 
@@ -100,6 +119,19 @@ class MempoolBlsctAggregateConfirmTest(BitcoinTestFramework):
         self.log.info("The wallet sees the parents as confirmed")
         for txid in parents:
             assert_equal(sender.gettransaction(txid)["confirmations"], 1)
+
+        self.log.info("Announcements of the merged parents are not requested")
+        peer = node.add_p2p_connection(GetdataRecorder())
+        unknown = "ab" * 32
+        peer.send_and_ping(msg_inv([CInv(MSG_WTX, int(h, 16)) for h in parent_wtxids + [unknown]]))
+        # The unknown hash is requested once the inbound delay has passed;
+        # by then the parents would have been requested too.
+        node.setmocktime(int(time.time()) + 10)
+        peer.wait_until(lambda: int(unknown, 16) in peer.requested)
+        for wtxid in parent_wtxids:
+            assert int(wtxid, 16) not in peer.requested
+        node.setmocktime(0)
+        node.disconnect_p2ps()
 
         self.log.info("The child confirms in the following block")
         node.prioritisetransaction(txid=child, fee_delta=COIN)
