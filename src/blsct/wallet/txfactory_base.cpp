@@ -354,6 +354,16 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         for (auto& in_ : vInputs) {
             for (auto& in : in_.second) {
                 if (in.is_staked_commitment) continue;
+                // A zero-value coin (e.g. padding change from an earlier
+                // exact-amount send) cannot help reach the target, only add
+                // weight and therefore fee. Inputs are sorted largest-first,
+                // so such coins are only reached when the positive ones sum to
+                // the target exactly -- and pulling them in then raises the
+                // fee past what the inputs cover, failing a send that would
+                // otherwise fit. A subtract-fee build (sweep, consolidation)
+                // still takes them: there the fee comes out of the recipient,
+                // and sweeping them is how they eventually leave the wallet.
+                if (!subtractFeeOutput && in.value.IsZero()) continue;
                 if (!mapInputs[in_.first]) mapInputs[in_.first] = 0;
                 if (mapInputs[in_.first] > nAmounts[in_.first].nFromOutputs + nAmounts[in_.first].nFromFee) break;
                 if (selected.size() >= MAX_TX_INPUT_COUNT) {
@@ -429,13 +439,23 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         }
         std::optional<uint256> firstChangeOutputHash;
         // Change outputs continue the sender's ordinal sequence after
-        // everything AddOutput queued. Their count can move between passes (a
-        // change output that lands on zero is dropped), which is harmless:
-        // only the accepting pass is returned, and recovery tries every
-        // ordinal anyway.
+        // everything AddOutput queued. Unless padding, their count can move
+        // between passes (a change output that lands on zero is dropped),
+        // which is harmless: only the accepting pass is returned, and recovery
+        // tries every ordinal anyway.
+        //
+        // With padding, zero change is emitted as a zero-value output instead,
+        // so an exact-amount send, a sweep and a subtract-fee send have the
+        // same output count as any other send and cannot be told apart by it.
+        // Only for a fee-bearing NORMAL build: stake/unstake and token
+        // create/mint have their own fixed shapes, and a fee-0 candidate half
+        // is a self-spend whose shape the aggregation layer controls. NFTs
+        // are excluded because their outputs carry a plaintext value with no
+        // range proof, so a zero-value NFT output would hide nothing.
+        const bool pad_change = m_pad_outputs && type == NORMAL && emitFeeOutput;
         uint32_t changeOrdinal = m_next_output_ordinal;
         for (auto& change : mapChange) {
-            if (change.second == 0) continue;
+            if (change.second == 0 && !(pad_change && !change.first.IsNFT())) continue;
 
             // For unstake txs the "change" output IS the unlocked portion
             // returning to the user — label it accordingly so clients (and
@@ -445,7 +465,10 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
                 ? std::string{"Stake Unlock"}
                 : std::string{"Change"};
             const Scalar changeBlindingKey = BlindingKeyFor(std::nullopt, changeOrdinal++, anchor);
-            auto changeOutput = CreateOutput(changeDestination, change.second, change_memo, change.first, changeBlindingKey, NORMAL, minStake, /*fAllowZeroValueRangeProof=*/false, m_transcript_v2);
+            // fAllowZeroValueRangeProof keeps a zero (padding) change a real
+            // range-proofed output instead of an OP_RETURN stub; the range
+            // proof hides its value like any other change.
+            auto changeOutput = CreateOutput(changeDestination, change.second, change_memo, change.first, changeBlindingKey, NORMAL, minStake, /*fAllowZeroValueRangeProof=*/true, m_transcript_v2);
 
             gammaAcc = gammaAcc - changeOutput.gamma;
 
@@ -522,7 +545,10 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         // (change-less) transaction only requires the smaller one: it
         // overpays by one change output's worth of weight. That trade is
         // deliberate -- a few hundred navoshis in a corner case, against a
-        // wedged wallet.
+        // wedged wallet. With output padding on (the wallet default for
+        // NORMAL sends) zero change is emitted rather than dropped, the
+        // output count no longer moves between passes, and this corner does
+        // not arise.
         if (nAmounts[TokenId()].nFromFee >= required_fee) {
             // Every output was consumed by the fee, so there is no output to
             // hand back as the payment. Nothing builds that shape today; fail
@@ -719,6 +745,7 @@ std::optional<BuiltTransaction> TxFactoryBase::CreateTransaction(const std::vect
 {
     auto tx = blsct::TxFactoryBase();
     tx.SetTranscriptV2(transactionData.transcript_v2);
+    tx.SetPadOutputs(transactionData.fPadOutputs);
     if (blindingSeed) tx.SetBlindingSeed(*blindingSeed);
     if (generationFn) tx.SetBlindingGenerationFn(std::move(generationFn));
 

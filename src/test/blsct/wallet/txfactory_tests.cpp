@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/wallet/blinding_key.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <test/util/random.h>
@@ -12,6 +13,8 @@
 #include <wallet/wallet.h>
 
 #include <boost/test/unit_test.hpp>
+
+#include <algorithm>
 
 BOOST_AUTO_TEST_SUITE(blsct_txfactory_tests)
 
@@ -787,6 +790,175 @@ BOOST_FIXTURE_TEST_CASE(fee_fixpoint_zero_change_terminates_test, TestingSetup)
     }
 }
 
+
+static size_t NonFeeOutputCount(const CMutableTransaction& tx)
+{
+    return std::count_if(tx.vout.begin(), tx.vout.end(), [](const CTxOut& out) { return !out.scriptPubKey.IsFee(); });
+}
+
+// Output padding (-blsctpadoutputs). A send whose inputs match amount + fee
+// exactly leaves zero change; dropping that change gives it one output fewer
+// than every other send, which singles it out in the mempool. With padding
+// the zero change is still emitted -- a real range-proofed output that
+// verifies, recovers as a zero-value "Change", and keeps a recoverable
+// blinding key -- and without padding the old one-output shape is kept.
+BOOST_FIXTURE_TEST_CASE(padded_change_exact_amount_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test_padded_change", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    const auto seed = blsct_km->GetBlindingSeed();
+    BOOST_REQUIRE(seed.has_value());
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+    const CAmount send_amount = 900 * COIN;
+
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+    const auto fund = [&](const CAmount amount) {
+        COutPoint outpoint{Txid::FromUint256(InsecureRand256())};
+        Coin coin;
+        coin.nHeight = 1;
+        coin.out = blsct::CreateOutput(recvAddress, amount, "test").out;
+        coins_view_cache.AddCoin(outpoint, std::move(coin), true);
+        return outpoint;
+    };
+
+    // The fee of an ordinary one-input send with a (non-zero) change output.
+    auto probe = blsct::TxFactory(blsct_km);
+    BOOST_CHECK(probe.AddInput(coins_view_cache, fund(1000 * COIN)));
+    probe.AddOutput(recvAddress, send_amount, "test");
+    auto probeTx = probe.BuildTx();
+    BOOST_REQUIRE(probeTx.has_value());
+    BOOST_CHECK_EQUAL(NonFeeOutputCount(probeTx->tx), 2U);
+    const CAmount fee_with_change = GetFeeValue(CTransaction(probeTx->tx));
+
+    // Fund a coin that covers exactly amount + that fee: zero change.
+    const COutPoint exact = fund(send_amount + fee_with_change);
+
+    {
+        auto tx = blsct::TxFactory(blsct_km);
+        tx.SetPadOutputs(true);
+        BOOST_CHECK(tx.AddInput(coins_view_cache, exact));
+        tx.AddOutput(recvAddress, send_amount, "test");
+        auto built = tx.BuildTx();
+        BOOST_REQUIRE(built.has_value());
+
+        TxValidationState tx_state;
+        BOOST_CHECK(blsct::VerifyTx(CTransaction(built->tx), coins_view_cache, tx_state));
+        BOOST_CHECK_EQUAL(NonFeeOutputCount(built->tx), 2U);
+        // Same shape as the probe, so the same fee -- and, unlike the dropped
+        // change case, exactly the minimum rather than an overpayment.
+        BOOST_CHECK_EQUAL(GetFeeValue(CTransaction(built->tx)), fee_with_change);
+        BOOST_CHECK_EQUAL(GetFeeValue(CTransaction(built->tx)), RequiredFee(CTransaction(built->tx)));
+
+        bool found_zero_change = false;
+        for (const auto& out : built->tx.vout) {
+            if (out.scriptPubKey.IsFee()) continue;
+            auto rec = blsct_km->RecoverOutputs({out});
+            BOOST_REQUIRE(rec.is_completed && rec.amounts.size() == 1);
+            if (rec.amounts[0].message != "Change") continue;
+            found_zero_change = true;
+            BOOST_CHECK_EQUAL(rec.amounts[0].amount, 0);
+            BOOST_CHECK(out.HasBLSCTRangeProof());
+            // The padding output keeps a recoverable, derived blinding key.
+            const auto recovered = blsct::RecoverBlindingKey(*seed, built->tx.vin, out.blsctData.ephemeralKey);
+            BOOST_REQUIRE(recovered.has_value());
+            BOOST_CHECK(*recovered == built->blindingKeys.at(out.GetHash()));
+        }
+        BOOST_CHECK(found_zero_change);
+    }
+
+    {
+        // Padding off: the zero change is dropped, one non-fee output.
+        auto tx = blsct::TxFactory(blsct_km);
+        tx.SetPadOutputs(false);
+        BOOST_CHECK(tx.AddInput(coins_view_cache, exact));
+        tx.AddOutput(recvAddress, send_amount, "test");
+        auto built = tx.BuildTx();
+        BOOST_REQUIRE(built.has_value());
+        TxValidationState tx_state;
+        BOOST_CHECK(blsct::VerifyTx(CTransaction(built->tx), coins_view_cache, tx_state));
+        BOOST_CHECK_EQUAL(NonFeeOutputCount(built->tx), 1U);
+    }
+}
+
+// The wallet entry point: CreateTransactionData pads by default, so a
+// subtract-fee send of the whole balance (a sweep) comes out as recipient +
+// zero change, and fPadOutputs=false restores the single-output shape. A
+// zero-value coin in the wallet is also never pulled into an ordinary send.
+BOOST_FIXTURE_TEST_CASE(createtransaction_pads_outputs_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test_create_padded", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+    const auto candidate = [&](const CAmount amount) {
+        COutPoint outpoint{Txid::FromUint256(InsecureRand256())};
+        Coin coin;
+        coin.nHeight = 1;
+        coin.out = blsct::CreateOutput(recvAddress, amount, "test", TokenId(), BlstScalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/true).out;
+        auto rec = blsct_km->RecoverOutputs({coin.out});
+        BOOST_REQUIRE(rec.is_completed && rec.amounts.size() == 1);
+        blsct::PrivateKey sk;
+        BOOST_REQUIRE(blsct_km->GetSpendingKeyForOutput(coin.out, sk));
+        coins_view_cache.AddCoin(outpoint, std::move(coin), true);
+        return blsct::InputCandidates{rec.amounts[0].amount, rec.amounts[0].gamma, sk, TokenId(), outpoint, false};
+    };
+
+    const std::vector<blsct::InputCandidates> inputs{candidate(1000 * COIN)};
+
+    blsct::CreateTransactionData sweep{recvAddress, blsct::SubAddress(recvAddress), 1000 * COIN, "sweep", TokenId(), blsct::NORMAL, 0};
+    sweep.fSubtractFeeFromAmount = true;
+    BOOST_CHECK(sweep.fPadOutputs); // on by default
+
+    const auto padded = blsct::TxFactoryBase::CreateTransaction(inputs, sweep);
+    BOOST_REQUIRE(padded.has_value());
+    TxValidationState state;
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(padded->tx), coins_view_cache, state));
+    BOOST_CHECK_EQUAL(NonFeeOutputCount(padded->tx), 2U);
+
+    sweep.fPadOutputs = false;
+    const auto plain = blsct::TxFactoryBase::CreateTransaction(inputs, sweep);
+    BOOST_REQUIRE(plain.has_value());
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(plain->tx), coins_view_cache, state));
+    BOOST_CHECK_EQUAL(NonFeeOutputCount(plain->tx), 1U);
+
+    // The padding costs exactly the fee of one more output.
+    const CAmount overhead = GetFeeValue(CTransaction(padded->tx)) - GetFeeValue(CTransaction(plain->tx));
+    BOOST_CHECK_GT(overhead, 0);
+    BOOST_TEST_MESSAGE("padding fee overhead: " << overhead << " sat");
+
+    // A zero-value coin (such as an earlier send's padding) is never pulled
+    // into an ordinary send. The case that matters is inputs that match
+    // amount + fee exactly: selection keeps taking coins while the sum does
+    // not EXCEED the target, so without the skip the zero coin would be added,
+    // raise the fee past what the inputs cover, and fail the send. The padded
+    // sweep above has the same 1-in/2-out shape, so its fee is this send's.
+    const auto zero = candidate(0);
+    const CAmount exact_amount = 1000 * COIN - GetFeeValue(CTransaction(padded->tx));
+    blsct::CreateTransactionData send{recvAddress, blsct::SubAddress(recvAddress), exact_amount, "send", TokenId(), blsct::NORMAL, 0};
+    const auto built = blsct::TxFactoryBase::CreateTransaction({inputs[0], zero}, send);
+    BOOST_REQUIRE(built.has_value());
+    BOOST_CHECK_EQUAL(built->tx.vin.size(), 1U);
+    BOOST_CHECK(built->tx.vin[0].prevout == inputs[0].outpoint);
+    BOOST_CHECK_EQUAL(NonFeeOutputCount(built->tx), 2U);
+    BOOST_CHECK(blsct::VerifyTx(CTransaction(built->tx), coins_view_cache, state));
+}
 
 BOOST_FIXTURE_TEST_CASE(test_add_output_rejects_non_positive_amount, TestingSetup)
 {

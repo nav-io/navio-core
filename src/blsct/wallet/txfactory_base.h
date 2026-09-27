@@ -33,6 +33,13 @@ static constexpr size_t MAX_TX_INPUT_COUNT = 1000;
 // each stakelock as its own commitment.
 static constexpr bool DEFAULT_CONSOLIDATE_STAKED_COMMITMENTS{true};
 
+// Default for the `-blsctpadoutputs` flag. When true, an ordinary wallet send
+// always carries a change output per token it spends, emitting a zero-value
+// one when the inputs match the amount exactly. Without it, exact-amount
+// sends, sweeps and subtract-fee-from-amount sends have one output fewer than
+// every other send, which singles them out in the mempool.
+static constexpr bool DEFAULT_BLSCT_PAD_OUTPUTS{true};
+
 struct CreateTransactionData {
     CreateTransactionType type;
     blsct::TokenInfo tokenInfo;
@@ -74,6 +81,12 @@ struct CreateTransactionData {
     // `-consolidatestakedcommitments` flag. Disabling it lets a single wallet
     // build the >=2 distinct commitments a PoS membership ring requires.
     bool fConsolidateStakedCommitments{true};
+
+    // When true (default), a NORMAL send emits a change output for every
+    // fungible token it spends even when that change is zero, so every such
+    // send has the same output count whatever its amount. See
+    // DEFAULT_BLSCT_PAD_OUTPUTS; controlled by `-blsctpadoutputs`.
+    bool fPadOutputs{DEFAULT_BLSCT_PAD_OUTPUTS};
 
     // When set (delegatestake), the staked output carries an encrypted
     // delegation payload addressed to this delegate so a third-party staker
@@ -258,6 +271,12 @@ protected:
     // sequence after everything AddOutput queued.
     uint32_t m_next_output_ordinal{0};
 
+    // Emit zero-value change instead of dropping it (see
+    // DEFAULT_BLSCT_PAD_OUTPUTS). Off by default at this level so raw
+    // builders (consolidation, candidate halves, the external API) keep their
+    // shape; CreateTransaction turns it on for wallet NORMAL sends.
+    bool m_pad_outputs{false};
+
     //! The blinding scalar to build an output with: the caller's pinned key
     //! when there is one, else the seed derivation, else a random scalar.
     Scalar BlindingKeyFor(const std::optional<Scalar>& pinned, uint32_t ordinal, const std::optional<Outid>& anchor) const;
@@ -285,6 +304,10 @@ public:
     TxFactoryBase()= default;
 
     void SetTranscriptV2(bool transcript_v2) { m_transcript_v2 = transcript_v2; }
+
+    //! Always emit a change output for each fungible token of a NORMAL,
+    //! fee-bearing build, at value zero when nothing is left over.
+    void SetPadOutputs(bool pad_outputs) { m_pad_outputs = pad_outputs; }
 
     //! Enable recoverable blinding keys for every output this factory builds
     //! (including change). `seed` must be 32 bytes; see blinding_key.h.
