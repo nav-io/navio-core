@@ -8,6 +8,8 @@
 #include <primitives/block.h>
 
 #include <functional>
+#include <optional>
+#include <vector>
 
 class CTxMemPool;
 class BlockValidationState;
@@ -98,6 +100,13 @@ private:
 protected:
     std::vector<uint64_t> shorttxids;
     std::vector<PrefilledTransaction> prefilledtxn;
+    /** Set by CBlockHeaderAndComponentIDs: the short ids name the components of
+     *  the block's aggregate transaction, not the block's own transactions.
+     *  Not serialized; the message type carries it. */
+    bool m_aggregate_components{false};
+
+    /** Header and posProof from block; txs[0] is prefilled, txs[1..] become short ids. */
+    CBlockHeaderAndShortTxIDs(const CBlock& block, const std::vector<CTransactionRef>& txs);
 
 public:
     static constexpr int SHORTTXIDS_LENGTH = 6;
@@ -114,6 +123,8 @@ public:
 
     size_t BlockTxCount() const { return shorttxids.size() + prefilledtxn.size(); }
 
+    bool IsAggregateComponents() const { return m_aggregate_components; }
+
     SERIALIZE_METHODS(CBlockHeaderAndShortTxIDs, obj)
     {
         READWRITE(obj.header);
@@ -129,11 +140,56 @@ public:
     }
 };
 
+/**
+ * Compact block ("cmpctaggblk") for a BLSCT block of the form
+ * [coinbase, aggregate] where the aggregate was built by the block assembler
+ * from several transactions with blsct::AggregateTransactions. The aggregate is
+ * never in anyone's mempool, but its components usually are, so this encoding
+ * lists the components instead:
+ *
+ *   index 0     the coinbase (prefilled)
+ *   index 1..n  the aggregate's components, in aggregation order (n >= 2)
+ *
+ * The receiver fills the component list exactly as for a BIP152 compact block,
+ * rebuilds the aggregate from it and accepts the result only if the block's
+ * merkle root matches. The wire layout is that of CBlockHeaderAndShortTxIDs;
+ * only the meaning of the transaction list differs.
+ */
+class CBlockHeaderAndComponentIDs : public CBlockHeaderAndShortTxIDs {
+public:
+    /** Minimum number of components: a single transaction is never aggregated. */
+    static constexpr size_t MIN_COMPONENTS = 2;
+
+    // Dummy for deserialization
+    CBlockHeaderAndComponentIDs() { m_aggregate_components = true; }
+
+    /** component_list: the block's coinbase followed by the components of its
+     *  aggregate in aggregation order (see FindAggregateComponents). */
+    CBlockHeaderAndComponentIDs(const CBlock& block, const std::vector<CTransactionRef>& component_list);
+};
+
+/** Aggregate component transactions exactly as the block assembler does.
+ *  Returns nullptr if they cannot be aggregated. */
+CTransactionRef AggregateComponents(const std::vector<CTransactionRef>& components);
+
+/** Whether component_list (coinbase followed by components) rebuilds block. */
+bool ComponentListMatchesBlock(const CBlock& block, const std::vector<CTransactionRef>& component_list);
+
+/**
+ * If block is [coinbase, aggregate] and every component of the aggregate is in
+ * pool, return the block's component list: the coinbase followed by the
+ * components in aggregation order. The components are located through the
+ * outputs they spend (each component contributes a contiguous run of the
+ * aggregate's inputs) and the result is checked by rebuilding the aggregate.
+ */
+std::optional<std::vector<CTransactionRef>> FindAggregateComponents(const CBlock& block, const CTxMemPool& pool);
+
 class PartiallyDownloadedBlock {
 protected:
     std::vector<CTransactionRef> txn_available;
     size_t prefilled_count = 0, mempool_count = 0, extra_count = 0;
     const CTxMemPool* pool;
+    bool m_aggregate_components{false};
 public:
     CBlockHeader header;
     blsct::ProofOfStake posProof;
@@ -147,8 +203,13 @@ public:
     // extra_txn is a list of extra transactions to look at, in <witness hash, reference> form
     ReadStatus InitData(const CBlockHeaderAndShortTxIDs& cmpctblock, const std::vector<std::pair<uint256, CTransactionRef>>& extra_txn);
     bool IsTxAvailable(size_t index) const;
-    // segwit_active enforces witness mutation checks just before reporting a healthy status
-    ReadStatus FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing, bool segwit_active);
+    /** Whether this was initialized from a CBlockHeaderAndComponentIDs. */
+    bool IsAggregateComponents() const { return m_aggregate_components; }
+    // segwit_active enforces witness mutation checks just before reporting a healthy status.
+    // For a component-encoded block the aggregate is rebuilt from the filled
+    // component list, and on success the list is moved to *component_list_out.
+    ReadStatus FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing, bool segwit_active,
+                         std::vector<CTransactionRef>* component_list_out = nullptr);
 };
 
 #endif // BITCOIN_BLOCKENCODINGS_H

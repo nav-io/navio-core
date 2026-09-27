@@ -58,6 +58,10 @@ static_assert(sizeof("p2pmsgs") - 1 <= 12, "net message type exceeds COMMAND_SIZ
 const char* P2PMSGCHAL = "p2pmsgchal";
 const char* GETP2PMSGS = "getp2pmsgs";
 const char* P2PMSGS = "p2pmsgs";
+static_assert(sizeof("getaggblktxn") - 1 <= 12, "net message type exceeds COMMAND_SIZE");
+const char* CMPCTAGGBLOCK = "cmpctaggblk";
+const char* GETAGGBLOCKTXN = "getaggblktxn";
+const char* AGGBLOCKTXN = "aggblocktxn";
 } // namespace NetMsgType
 
 /** All known message types. Keep this in the same order as the list of
@@ -106,6 +110,9 @@ const static std::vector<std::string> g_all_net_message_types{
     NetMsgType::P2PMSGCHAL,
     NetMsgType::GETP2PMSGS,
     NetMsgType::P2PMSGS,
+    NetMsgType::CMPCTAGGBLOCK,
+    NetMsgType::GETAGGBLOCKTXN,
+    NetMsgType::AGGBLOCKTXN,
 };
 
 CMessageHeader::CMessageHeader(const MessageStartChars& pchMessageStartIn, const char* pszCommand, unsigned int nMessageSizeIn)
