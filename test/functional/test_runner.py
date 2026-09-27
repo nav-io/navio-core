@@ -292,6 +292,7 @@ BASE_SCRIPTS = [
     'wallet_rescan_unconfirmed.py',
     'p2p_fingerprint.py',
     'rpc_gettxfromoutputhash.py',
+    'feature_outindex.py',
     'feature_uacomment.py',
     'feature_init.py',
     'wallet_coinbase_category.py',
