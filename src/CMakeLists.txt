@@ -249,6 +249,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     netaddress.cpp
     netbase.cpp
     outputtype.cpp
+    pir/simplepir.cpp
     policy/feerate.cpp
     policy/policy.cpp
     protocol.cpp
