@@ -4,7 +4,6 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test gettxoutproof and verifytxoutproof RPCs."""
 
-from test_framework.authproxy import JSONRPCException
 from test_framework.messages import (
     CMerkleBlock,
     from_hex,
@@ -21,7 +20,7 @@ class MerkleBlockTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
         self.extra_args = [
-            ["-txindex"],
+            [],
             ["-txindex"],
         ]
 
@@ -31,13 +30,17 @@ class MerkleBlockTest(BitcoinTestFramework):
         chain_height = self.nodes[1].getblockcount()
         assert_equal(chain_height, 200)
 
-        txid1 = miniwallet.send_self_transfer(from_node=self.nodes[0])['txid']
-        res = miniwallet.send_self_transfer(from_node=self.nodes[0])
-        txid2 = res['txid']
-        txoutid2 = res['new_utxo']['txid']
+        res1 = miniwallet.send_self_transfer(from_node=self.nodes[0])
+        txid1 = res1['txid']
+        outid1 = res1['new_utxo']['txid']  # hash of txid1's output
+        res2 = miniwallet.send_self_transfer(from_node=self.nodes[0])
+        txid2 = res2['txid']
+        outid2 = res2['new_utxo']['txid']  # hash of txid2's output
+        self.sync_mempools()
 
         # This will raise an exception because the transaction is not yet in a block
-        assert_raises_rpc_error(-5, "Transaction not yet in block", self.nodes[0].gettxoutproof, [txid1])
+        assert_raises_rpc_error(-5, "Transaction not yet in block", self.nodes[1].gettxoutproof, [txid1])
+        assert_raises_rpc_error(-5, "Transaction not found in the utxo set; specify the block hash or enable -txindex", self.nodes[0].gettxoutproof, [outid1])
 
         self.generate(self.nodes[0], 1)
         blockhash = self.nodes[0].getblockhash(chain_height + 1)
@@ -47,13 +50,27 @@ class MerkleBlockTest(BitcoinTestFramework):
         txlist.append(blocktxn[1])
         txlist.append(blocktxn[2])
 
-        assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([txid1])), [txid1])
-        assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([txid1, txid2])), txlist)
+        # With -txindex, transactions are located by their txid
+        assert_equal(self.nodes[1].verifytxoutproof(self.nodes[1].gettxoutproof([txid1])), [txid1])
+        assert_equal(self.nodes[1].verifytxoutproof(self.nodes[1].gettxoutproof([txid1, txid2])), txlist)
         assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([txid1, txid2], blockhash)), txlist)
 
-        txin_spent = miniwallet.get_utxo(txid=txoutid2)  # Get the change from txid2
+        # Without -txindex, a txid alone cannot be located
+        assert_raises_rpc_error(-5, "Transaction not found in the utxo set; specify the block hash or enable -txindex", self.nodes[0].gettxoutproof, [txid1])
+        # ... but the hash of an unspent output can, and the proof commits to the transaction holding it
+        assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([outid1])), [txid1])
+        assert_equal(self.nodes[1].verifytxoutproof(self.nodes[1].gettxoutproof([outid1])), [txid1])
+        # Output hashes and txids can be mixed, in any order
+        assert_equal(sorted(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([outid1, txid2]))), sorted(txlist))
+        assert_equal(sorted(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([txid2, outid1]))), sorted(txlist))
+        assert_equal(sorted(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([outid1, outid2]))), sorted(txlist))
+        # Output hashes also resolve against a given block
+        assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([outid2], blockhash)), [txid2])
+
+        txin_spent = miniwallet.get_utxo(txid=outid2)  # Get the change from txid2
         tx3 = miniwallet.send_self_transfer(from_node=self.nodes[0], utxo_to_spend=txin_spent)
         txid3 = tx3['txid']
+        outid3 = tx3['new_utxo']['txid']
         self.generate(self.nodes[0], 1)
 
         txid_spent = txid2  # The transaction that created the spent output
@@ -65,30 +82,27 @@ class MerkleBlockTest(BitcoinTestFramework):
         # Invalid blockhashes
         assert_raises_rpc_error(-8, "blockhash must be of length 64 (not 32, for '00000000000000000000000000000000')", self.nodes[0].gettxoutproof, [txid_spent], "00000000000000000000000000000000")
         assert_raises_rpc_error(-8, "blockhash must be hexadecimal string (not 'ZZZ0000000000000000000000000000000000000000000000000000000000000')", self.nodes[0].gettxoutproof, [txid_spent], "ZZZ0000000000000000000000000000000000000000000000000000000000000")
-        # We can't find the block from a fully-spent tx
-        # NOTE: With the new output hash prevout system, the behavior might be different
-        # Try to get the proof without specifying the block - it might succeed if the tx is indexed
-        try:
-            proof = self.nodes[0].gettxoutproof([txid_spent])
-            # If it succeeds, verify the proof is valid
-            assert_equal(self.nodes[0].verifytxoutproof(proof), [txid_spent])
-        except JSONRPCException as e:
-            # If it fails, it should be because the transaction is fully spent
-            assert_equal(e.error['code'], -5)
-            assert "Transaction not yet in block" in e.error['message']
+        # We can't find the block from a spent output without -txindex
+        assert_raises_rpc_error(-5, "Transaction not found in the utxo set; specify the block hash or enable -txindex", self.nodes[0].gettxoutproof, [outid2])
         # We can get the proof if we specify the block
         assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([txid_spent], blockhash)), [txid_spent])
+        assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([outid2], blockhash)), [txid_spent])
         # We can't get the proof if we specify a non-existent block
         assert_raises_rpc_error(-5, "Block not found", self.nodes[0].gettxoutproof, [txid_spent], "0000000000000000000000000000000000000000000000000000000000000000")
-        # We can get the proof if the transaction is unspent
-        assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([txid_unspent])), [txid_unspent])
-        # We can get the proof if we provide a list of transactions and one of them is unspent. The ordering of the list should not matter.
-        assert_equal(sorted(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([txid1, txid2]))), sorted(txlist))
-        assert_equal(sorted(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([txid2, txid1]))), sorted(txlist))
+        # We can get the proof if the output is unspent
+        assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([outid1])), [txid_unspent])
+        # We can get the proof if we provide a list of ids and one of them is an unspent output. The ordering of the list should not matter.
+        assert_equal(sorted(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([outid1, txid2]))), sorted(txlist))
+        assert_equal(sorted(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([txid2, outid1]))), sorted(txlist))
         # We can always get a proof if we have a -txindex
         assert_equal(self.nodes[0].verifytxoutproof(self.nodes[1].gettxoutproof([txid_spent])), [txid_spent])
+        assert_equal(sorted(self.nodes[0].verifytxoutproof(self.nodes[1].gettxoutproof([txid2, txid1]))), sorted(txlist))
+        # The newer block is found too, through either kind of id
+        assert_equal(self.nodes[1].verifytxoutproof(self.nodes[1].gettxoutproof([txid3])), [txid3])
+        assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([outid3])), [txid3])
         # We can't get a proof if we specify transactions from different blocks
-        assert_raises_rpc_error(-5, "Not all transactions found in specified or retrieved block", self.nodes[0].gettxoutproof, [txid1, txid3])
+        assert_raises_rpc_error(-5, "Not all transactions found in specified or retrieved block", self.nodes[1].gettxoutproof, [txid1, txid3])
+        assert_raises_rpc_error(-5, "Not all transactions found in specified or retrieved block", self.nodes[0].gettxoutproof, [outid1, outid3])
         # Test empty list
         assert_raises_rpc_error(-8, "Parameter 'txids' cannot be empty", self.nodes[0].gettxoutproof, [])
         # Test duplicate txid
