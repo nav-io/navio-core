@@ -2,16 +2,25 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/arith/blst/blst.h>
+#include <blsct/private_key.h>
+#include <blsct/tokens/predicate_parser.h>
 #include <common/system.h>
+#include <kernel/mempool_entry.h>
+#include <kernel/mempool_removal_reason.h>
 #include <policy/policy.h>
 #include <test/util/txmempool.h>
 #include <txmempool.h>
 #include <util/time.h>
+#include <validationinterface.h>
 
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
+#include <map>
+#include <memory>
+#include <set>
 #include <vector>
 
 BOOST_FIXTURE_TEST_SUITE(mempool_tests, TestingSetup)
@@ -54,6 +63,128 @@ BOOST_AUTO_TEST_CASE(MempoolOutputIndexOwner)
 
     pool.removeRecursive(CTransaction(tx1), REMOVAL_REASON_DUMMY);
     BOOST_CHECK(pool.mapOutputToTx.empty());
+}
+
+namespace {
+CTxOut MakeFeeOut(CAmount fee)
+{
+    CTxOut out{fee, CScript{OP_RETURN}};
+    out.predicate = blsct::PayFeePredicate(blsct::PrivateKey(BlstScalar::Rand()).GetPublicKey()).GetVch();
+    return out;
+}
+
+CMutableTransaction MakeComponent(const std::vector<uint256>& prevouts, const std::vector<CAmount>& values, CAmount fee)
+{
+    CMutableTransaction tx;
+    tx.nVersion |= CTransaction::BLSCT_MARKER;
+    for (const auto& prevout : prevouts) {
+        tx.vin.emplace_back(COutPoint(prevout));
+        tx.vin.back().scriptSig = CScript() << OP_11;
+    }
+    for (const auto& value : values) {
+        tx.vout.emplace_back(value, CScript() << OP_11 << OP_EQUAL);
+    }
+    if (fee > 0) tx.vout.push_back(MakeFeeOut(fee));
+    return tx;
+}
+
+//! Records how transactions leave the mempool.
+class RemovalRecorder final : public CValidationInterface
+{
+public:
+    std::map<uint256, MemPoolRemovalReason> removed;
+    std::set<uint256> removed_for_block;
+
+    void TransactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRemovalReason reason, uint64_t) override
+    {
+        removed.emplace(tx->GetHash(), reason);
+    }
+    void MempoolTransactionsRemovedForBlock(const std::vector<RemovedMempoolTransactionInfo>& txs, unsigned int) override
+    {
+        for (const auto& info : txs) removed_for_block.insert(info.info.m_tx->GetHash());
+    }
+};
+} // namespace
+
+BOOST_AUTO_TEST_CASE(MempoolRemoveForAggregatedBlock)
+{
+    // Two independent transactions, a and b, are merged by the block's
+    // aggregate. child spends one of a's outputs and stays in the mempool.
+    // conflict spends an input the block also spends, with different
+    // outputs, and its descendant grandchild must still be evicted.
+    const uint256 in_a{InsecureRand256()}, in_b{InsecureRand256()}, in_c{InsecureRand256()};
+    const CMutableTransaction a{MakeComponent({in_a}, {10 * COIN, 5 * COIN}, 1000)};
+    const CMutableTransaction b{MakeComponent({in_b}, {7 * COIN}, 2000)};
+    const CMutableTransaction child{MakeComponent({a.vout[1].GetHash()}, {4 * COIN}, 1000)};
+    const CMutableTransaction conflict{MakeComponent({in_c}, {3 * COIN}, 1000)};
+    const CMutableTransaction grandchild{MakeComponent({conflict.vout[0].GetHash()}, {2 * COIN}, 1000)};
+
+    // The aggregate: all inputs and non-fee outputs of a and b, plus a spend
+    // of in_c creating something else, and one merged fee output.
+    CMutableTransaction aggregate;
+    aggregate.nVersion |= CTransaction::BLSCT_MARKER;
+    for (const auto* tx : {&a, &b}) {
+        for (const auto& in : tx->vin) aggregate.vin.push_back(in);
+        for (const auto& out : tx->vout) {
+            if (!out.IsFee()) aggregate.vout.push_back(out);
+        }
+    }
+    aggregate.vin.emplace_back(COutPoint(in_c));
+    aggregate.vout.emplace_back(3 * COIN, CScript() << OP_12 << OP_EQUAL);
+    aggregate.vout.push_back(MakeFeeOut(3000));
+
+    // A transaction whose inputs are all spent by the block but that has no
+    // non-fee outputs is not identified by the block.
+    const uint256 in_d{InsecureRand256()};
+    const CMutableTransaction fee_only{MakeComponent({in_d}, {}, 1000)};
+    aggregate.vin.emplace_back(COutPoint(in_d));
+
+    auto recorder{std::make_shared<RemovalRecorder>()};
+    RegisterSharedValidationInterface(recorder);
+
+    CTxMemPool& pool = *Assert(m_node.mempool);
+    {
+        LOCK2(::cs_main, pool.cs);
+        TestMemPoolEntryHelper entry;
+        for (const auto* tx : {&a, &b, &child, &conflict, &grandchild, &fee_only}) {
+            pool.addUnchecked(entry.Fee(1000).FromTx(*tx));
+        }
+        BOOST_CHECK_EQUAL(pool.size(), 6U);
+        BOOST_CHECK_EQUAL(pool.GetIter(child.GetHash()).value()->GetCountWithAncestors(), 2U);
+
+        const std::vector<CTransactionRef> vtx{MakeTransactionRef(aggregate)};
+        const auto contained{pool.GetContainedInBlock(vtx)};
+        std::set<uint256> contained_txids;
+        for (const auto& tx : contained) contained_txids.insert(tx->GetHash());
+        BOOST_CHECK_EQUAL(contained.size(), 2U);
+        BOOST_CHECK(contained_txids == (std::set<uint256>{a.GetHash(), b.GetHash()}));
+
+        pool.removeForBlock(vtx, 1);
+
+        BOOST_CHECK(!pool.exists(GenTxid::Txid(a.GetHash())));
+        BOOST_CHECK(!pool.exists(GenTxid::Txid(b.GetHash())));
+        BOOST_CHECK(!pool.exists(GenTxid::Txid(conflict.GetHash())));
+        BOOST_CHECK(!pool.exists(GenTxid::Txid(grandchild.GetHash())));
+        BOOST_CHECK(!pool.exists(GenTxid::Txid(fee_only.GetHash())));
+        // The child of a confirmed component stays, now with no mempool parent.
+        BOOST_REQUIRE(pool.exists(GenTxid::Txid(child.GetHash())));
+        BOOST_CHECK_EQUAL(pool.size(), 1U);
+        const auto child_it{pool.GetIter(child.GetHash()).value()};
+        BOOST_CHECK_EQUAL(child_it->GetCountWithAncestors(), 1U);
+        BOOST_CHECK_EQUAL(child_it->GetSizeWithAncestors(), child_it->GetTxSize());
+    }
+    SyncWithValidationInterfaceQueue();
+    UnregisterSharedValidationInterface(recorder);
+
+    // Components leave as confirmed (no removal notification, reported to
+    // block listeners); the rest leave as conflicts.
+    BOOST_CHECK(recorder->removed_for_block == (std::set<uint256>{a.GetHash(), b.GetHash()}));
+    BOOST_CHECK(!recorder->removed.contains(a.GetHash()));
+    BOOST_CHECK(!recorder->removed.contains(b.GetHash()));
+    BOOST_CHECK(recorder->removed.at(conflict.GetHash()) == MemPoolRemovalReason::CONFLICT);
+    BOOST_CHECK(recorder->removed.at(grandchild.GetHash()) == MemPoolRemovalReason::CONFLICT);
+    BOOST_CHECK(recorder->removed.at(fee_only.GetHash()) == MemPoolRemovalReason::CONFLICT);
+    BOOST_CHECK(!recorder->removed.contains(child.GetHash()));
 }
 
 BOOST_AUTO_TEST_CASE(MempoolRemoveTest)
