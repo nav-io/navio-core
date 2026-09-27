@@ -493,6 +493,19 @@ public:
      * removeConflicts() for spent inputs. */
     void removeStakedCommitmentConflicts(const CTransaction& tx) EXCLUSIVE_LOCKS_REQUIRED(cs);
     void removeForBlock(const std::vector<CTransactionRef>& vtx, unsigned int nBlockHeight) EXCLUSIVE_LOCKS_REQUIRED(cs);
+    /**
+     * Mempool transactions that a block confirms without listing their txid.
+     *
+     * A BLSCT block carries one aggregate of the transactions its miner
+     * selected (blsct::AggregateTransactions merges their inputs and outputs
+     * and folds their fee outputs into one). A mempool transaction is
+     * contained in the block when the block spends every one of its inputs
+     * and creates every one of its non-fee outputs (it must have at least
+     * one). Transactions whose txid is in the block are not returned.
+     *
+     * @returns the contained transactions, parents before children.
+     */
+    std::vector<CTransactionRef> GetContainedInBlock(const std::vector<CTransactionRef>& vtx) const EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     bool CompareDepthAndScore(const uint256& hasha, const uint256& hashb, bool wtxid=false);
     bool isSpent(const COutPoint& outpoint) const;
