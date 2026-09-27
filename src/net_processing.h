@@ -27,6 +27,8 @@ static const bool DEFAULT_PEERBLOCKFILTERS = false;
 static const int DISCOURAGEMENT_THRESHOLD{100};
 /** Maximum number of outstanding CMPCTBLOCK requests for the same block. */
 static const unsigned int MAX_CMPCTBLOCKS_INFLIGHT_PER_BLOCK = 3;
+/** Maximum length of the URL carried in a wsendpoint message. */
+static constexpr unsigned int MAX_WS_URL_LENGTH{256};
 
 struct CNodeStateStats {
     int nSyncHeight = -1;
@@ -41,6 +43,9 @@ struct CNodeStateStats {
     bool m_addr_relay_enabled{false};
     ServiceFlags their_services;
     int64_t presync_height{-1};
+    //! WebSocket P2P endpoint the peer announced via wsendpoint (port 0: none).
+    uint16_t m_ws_port{0};
+    std::string m_ws_url;
 };
 
 class PeerManager : public CValidationInterface, public NetEventsInterface
@@ -61,6 +66,12 @@ public:
         //! Whether or not the internal RNG behaves deterministically (this is
         //! a test-only option).
         bool deterministic_rng{false};
+        //! Port of our publicly reachable WebSocket P2P listener, announced
+        //! in wsendpoint after the handshake. 0 means none (no NODE_P2P_WS).
+        uint16_t ws_port{0};
+        //! Public ws:// or wss:// URL of that listener when it is behind a
+        //! reverse proxy (-p2pwsexternal); empty when dialable directly.
+        std::string ws_url;
     };
 
     static std::unique_ptr<PeerManager> make(CConnman& connman, AddrMan& addrman,

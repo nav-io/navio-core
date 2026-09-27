@@ -634,6 +634,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-torpassword=<pass>", "Tor control port password (default: empty)", ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::CONNECTION);
     argsman.AddArg("-natpmp", strprintf("Use NAT-PMP to map the listening port (default: %s)", DEFAULT_NATPMP ? "1 when listening and no -proxy" : "0"), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pwsbind=<addr>[:<port>]", "Additionally listen on the given address for P2P connections carried over WebSocket (RFC 6455), so that browser-based clients can connect as ordinary inbound peers. Use [host]:port notation for IPv6. The listener speaks plain ws:// only; front it with a TLS-terminating reverse proxy for wss://. Can be specified multiple times (default: none)", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pwsexternal=<url>", "Public ws:// or wss:// URL of the -p2pwsbind listener when it sits behind a reverse proxy (e.g. wss://node.example.com/p2p). Announced to peers together with its port, and required to advertise NODE_P2P_WS when every -p2pwsbind address is loopback (default: none)", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-whitebind=<[permissions@]addr>", "Bind to the given address and add permission flags to the peers connecting to it. "
         "Use [host]:port notation for IPv6. Allowed permissions: " + Join(NET_PERMISSIONS_DOC, ", ") + ". "
         "Specify multiple permissions separated by commas (default: download,noban,mempool,relay). Can be specified multiple times.", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -1174,6 +1175,30 @@ bool AppInitInterfaces(NodeContext& node)
     return true;
 }
 
+/**
+ * Port of a ws:// or wss:// URL: the explicit one, else the scheme default.
+ * Returns std::nullopt for anything that is not a well-formed ws(s) URL.
+ */
+static std::optional<uint16_t> WsUrlPort(const std::string& url)
+{
+    std::string rest;
+    uint16_t default_port;
+    if (url.rfind("wss://", 0) == 0) {
+        rest = url.substr(6);
+        default_port = 443;
+    } else if (url.rfind("ws://", 0) == 0) {
+        rest = url.substr(5);
+        default_port = 80;
+    } else {
+        return std::nullopt;
+    }
+    const std::string authority{rest.substr(0, rest.find_first_of("/?#"))};
+    uint16_t port{0};
+    std::string host;
+    if (authority.empty() || !SplitHostPort(authority, port, host) || host.empty()) return std::nullopt;
+    return port != 0 ? port : default_port;
+}
+
 bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 {
     const ArgsManager& args = *Assert(node.args);
@@ -1294,6 +1319,39 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
     PeerManager::Options peerman_opts{};
     ApplyArgsManOptions(args, peerman_opts);
+
+    // WebSocket listener announcement (NODE_P2P_WS + wsendpoint). The port is
+    // the public one: from -p2pwsexternal when proxied, else the first
+    // -p2pwsbind that is not loopback-only.
+    if (args.IsArgSet("-p2pwsbind")) {
+        const uint16_t default_ws_port =
+            static_cast<uint16_t>(args.GetIntArg("-port", Params().GetDefaultPort()));
+        const std::string ws_external{args.GetArg("-p2pwsexternal", "")};
+        if (!ws_external.empty()) {
+            const auto port{WsUrlPort(ws_external)};
+            if (!port || ws_external.size() > MAX_WS_URL_LENGTH) {
+                return InitError(strprintf(_("Invalid -p2pwsexternal URL: '%s' (expected ws://host[:port][/path] or wss://...)"), ws_external));
+            }
+            peerman_opts.ws_port = *port;
+            peerman_opts.ws_url = ws_external;
+        } else {
+            for (const std::string& bind_arg : args.GetArgs("-p2pwsbind")) {
+                const std::optional<CService> bind_addr{Lookup(bind_arg, default_ws_port, /*fAllowLookup=*/false)};
+                if (bind_addr && (bind_addr->IsBindAny() || !bind_addr->IsLocal())) {
+                    peerman_opts.ws_port = bind_addr->GetPort();
+                    break;
+                }
+            }
+            if (peerman_opts.ws_port == 0) {
+                LogPrintf("WebSocket listener is loopback-only and -p2pwsexternal is unset; not advertising NODE_P2P_WS\n");
+            }
+        }
+        if (peerman_opts.ws_port != 0) {
+            nLocalServices = ServiceFlags(nLocalServices | NODE_P2P_WS);
+        }
+    } else if (args.IsArgSet("-p2pwsexternal")) {
+        return InitError(Untranslated("-p2pwsexternal requires -p2pwsbind"));
+    }
 
     {
 

@@ -57,6 +57,7 @@ NODE_P2PMSG = (1 << 24)
 NODE_P2PMSG_LEAF = (1 << 25)
 NODE_P2PMSG_ARCHIVE = (1 << 26)
 NODE_P2PMSG_V2 = (1 << 27)
+NODE_P2P_WS = (1 << 30)
 
 MSG_TX = 1
 MSG_BLOCK = 2
@@ -1927,6 +1928,26 @@ class msg_p2pmsgs(msg_p2pmsg):
 
     def __repr__(self):
         return "msg_p2pmsgs(%d bytes)" % len(self.payload)
+
+
+class msg_wsendpoint:
+    """Where the sender accepts WebSocket P2P connections (NODE_P2P_WS)."""
+    __slots__ = ("port", "url")
+    msgtype = b"wsendpoint"
+
+    def __init__(self, port=0, url=b""):
+        self.port = port
+        self.url = url
+
+    def deserialize(self, f):
+        self.port = struct.unpack("<H", f.read(2))[0]
+        self.url = deser_string(f)
+
+    def serialize(self):
+        return struct.pack("<H", self.port) + ser_string(self.url)
+
+    def __repr__(self):
+        return "msg_wsendpoint(port=%d, url=%r)" % (self.port, self.url)
 
 
 class msg_sendaddrv2:
