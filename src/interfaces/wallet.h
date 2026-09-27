@@ -22,7 +22,6 @@
 #include <map>
 #include <memory>
 #include <string>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -31,15 +30,12 @@ class CFeeRate;
 class CKey;
 enum class FeeReason;
 enum class OutputType;
-enum class TransactionError;
-struct PartiallySignedTransaction;
 struct bilingual_str;
 namespace wallet {
 class CCoinControl;
 class CWallet;
 enum class AddressPurpose;
 enum isminetype : unsigned int;
-struct CRecipient;
 struct WalletContext;
 using isminefilter = std::underlying_type<isminetype>::type;
 } // namespace wallet
@@ -127,9 +123,6 @@ public:
     //! Save or remove receive request.
     virtual bool setAddressReceiveRequest(const CTxDestination& dest, const std::string& id, const std::string& value) = 0;
 
-    //! Display address on external signer
-    virtual bool displayAddress(const CTxDestination& dest) = 0;
-
     //! Lock coin.
     virtual bool lockCoin(const COutPoint& output, bool write_to_db) = 0;
 
@@ -141,13 +134,6 @@ public:
 
     //! List locked coins.
     virtual void listLockedCoins(std::vector<COutPoint>& outputs) = 0;
-
-    //! Create transaction.
-    virtual util::Result<CTransactionRef> createTransaction(const std::vector<wallet::CRecipient>& recipients,
-        const wallet::CCoinControl& coin_control,
-        bool sign,
-        int& change_pos,
-        CAmount& fee) = 0;
 
     //! Commit transaction.
     virtual void commitTransaction(CTransactionRef tx,
@@ -162,23 +148,6 @@ public:
 
     //! Return whether transaction can be bumped.
     virtual bool transactionCanBeBumped(const uint256& txid) = 0;
-
-    //! Create bump transaction.
-    virtual bool createBumpTransaction(const uint256& txid,
-        const wallet::CCoinControl& coin_control,
-        std::vector<bilingual_str>& errors,
-        CAmount& old_fee,
-        CAmount& new_fee,
-        CMutableTransaction& mtx) = 0;
-
-    //! Sign bump transaction.
-    virtual bool signBumpTransaction(CMutableTransaction& mtx) = 0;
-
-    //! Commit bump transaction.
-    virtual bool commitBumpTransaction(const uint256& txid,
-        CMutableTransaction&& mtx,
-        std::vector<bilingual_str>& errors,
-        uint256& bumped_txid) = 0;
 
     //! Get a transaction.
     virtual CTransactionRef getTx(const uint256& txid) = 0;
@@ -201,14 +170,6 @@ public:
         WalletOrderForm& order_form,
         bool& in_mempool,
         int& num_blocks) = 0;
-
-    //! Fill PSBT.
-    virtual TransactionError fillPSBT(int sighash_type,
-        bool sign,
-        bool bip32derivs,
-        size_t* n_signed,
-        PartiallySignedTransaction& psbtx,
-        bool& complete) = 0;
 
     //! Get balances.
     virtual WalletBalances getBalances() = 0;
@@ -233,11 +194,6 @@ public:
 
     //! Return credit amount if transaction input belongs to wallet.
     virtual CAmount getCredit(const CTxOut& txout, wallet::isminefilter filter) = 0;
-
-    //! Return AvailableCoins + LockedCoins grouped by wallet address.
-    //! (put change in one group with wallet address)
-    using CoinsList = std::map<CTxDestination, std::vector<std::tuple<COutPoint, WalletTxOut>>>;
-    virtual CoinsList listCoins() = 0;
 
     //! Return wallet transaction output information.
     virtual std::vector<WalletTxOut> getCoins(const std::vector<COutPoint>& outputs) = 0;
@@ -265,9 +221,6 @@ public:
 
     // Return whether the wallet contains a Taproot scriptPubKeyMan
     virtual bool taprootEnabled() = 0;
-
-    // Return whether wallet uses an external signer.
-    virtual bool hasExternalSigner() = 0;
 
     // Get default address type.
     virtual OutputType getDefaultAddressType() = 0;
