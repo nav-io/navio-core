@@ -29,8 +29,8 @@ bool IsTopoSortedPackage(const Package& txns, std::unordered_set<uint256, Salted
             }
         }
         // Remove this transaction's output hashes from the set as we process it
-        for (const auto& output : tx->vout) {
-            later_outids.erase(output.GetHash());
+        for (const Outid& outid : tx->GetOutputIds()) {
+            later_outids.erase(outid);
         }
     }
 
@@ -41,8 +41,8 @@ bool IsTopoSortedPackage(const Package& txns)
 {
     std::unordered_set<uint256, SaltedTxidHasher> later_outids;
     for (const auto& tx : txns) {
-        for (const auto& output : tx->vout) {
-            later_outids.insert(output.GetHash());
+        for (const Outid& outid : tx->GetOutputIds()) {
+            later_outids.insert(outid);
         }
     }
 
@@ -97,8 +97,8 @@ bool IsWellFormedPackage(const Package& txns, PackageValidationState& state, boo
 
     std::unordered_set<uint256, SaltedTxidHasher> later_outids;
     for (const auto& tx : txns) {
-        for (const auto& output : tx->vout) {
-            later_outids.insert(output.GetHash());
+        for (const Outid& outid : tx->GetOutputIds()) {
+            later_outids.insert(outid);
         }
     }
 
@@ -139,8 +139,8 @@ bool IsChildWithParents(const Package& package)
     // Check if any output from each parent transaction matches an input of the child.
     return std::all_of(package.cbegin(), package.cend() - 1,
                        [&input_outids](const auto& ptx) {
-                           for (const auto& output : ptx->vout) {
-                               if (input_outids.count(output.GetHash()) > 0) {
+                           for (const Outid& outid : ptx->GetOutputIds()) {
+                               if (input_outids.contains(outid)) {
                                    return true;
                                }
                            }
@@ -157,8 +157,8 @@ bool IsChildWithParentsTree(const Package& package)
         std::unordered_set<uint256, SaltedTxidHasher> other_parent_outids;
         for (auto it2 = package.cbegin(); it2 != package.cend() - 1; ++it2) {
             if (it1 != it2) { // Skip the current parent
-                for (const auto& output : (*it2)->vout) {
-                    other_parent_outids.insert(output.GetHash());
+                for (const Outid& outid : (*it2)->GetOutputIds()) {
+                    other_parent_outids.insert(outid);
                 }
             }
         }
