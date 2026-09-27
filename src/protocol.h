@@ -271,12 +271,6 @@ extern const char* WTXIDRELAY;
  */
 extern const char* SENDTXRCNCL;
 /**
- * The getoutputdata message requests one or more transactions by output hash.
- * This is used with the new output hash prevout system to request transactions
- * that contain specific output hashes.
- */
-extern const char* GETOUTPUTDATA;
-/**
  * The p2pmsg message carries an encrypted p2p-messaging payload (ECIES-wrapped
  * over a fresh ephemeral BLS key). The fluff-phase carrier.
  */
@@ -600,8 +594,8 @@ enum GetDataMsg : uint32_t {
     MSG_WTX = 5,         //!< Defined in BIP 339
     MSG_DTX = 6,         //!< Used for Dandelion++
     MSG_DWTX = 7,        //!< Used for Dandelion++
-    MSG_OUTPUT_HASH = 8, //!< Request transaction by output hash
-    // The following can only occur in getdata. Invs always use TX/WTX/DTX/DWTX or BLOCK.
+    // The following can only occur in getdata (and notfound). Invs always use TX/WTX/DTX/DWTX or BLOCK.
+    MSG_OUTPUT_HASH = 8, //!< Request the transaction that created the output with this hash
     MSG_FILTERED_BLOCK = 3,                           //!< Defined in BIP37
     MSG_CMPCT_BLOCK = 4,                              //!< Defined in BIP152
     MSG_WITNESS_BLOCK = MSG_BLOCK | MSG_WITNESS_FLAG, //!< Defined in BIP144
@@ -632,6 +626,7 @@ public:
     bool IsMsgFilteredBlk() const { return type == MSG_FILTERED_BLOCK; }
     bool IsMsgCmpctBlk() const { return type == MSG_CMPCT_BLOCK; }
     bool IsMsgWitnessBlk() const { return type == MSG_WITNESS_BLOCK; }
+    bool IsMsgOutputHash() const { return type == MSG_OUTPUT_HASH; }
 
     // Combined-message helper methods
     bool IsGenTxMsg() const
@@ -658,21 +653,5 @@ public:
 
 /** Convert a TX/DTX/WITNESS_TX/DWTX/WTX CInv to a GenTxid. */
 GenTxid ToGenTxid(const CInv& inv);
-
-/** Output hash request data */
-class COutputHashRequest
-{
-public:
-    COutputHashRequest();
-    COutputHashRequest(const uint256& outputHashIn);
-
-    SERIALIZE_METHODS(COutputHashRequest, obj) { READWRITE(obj.output_hash); }
-
-    friend bool operator<(const COutputHashRequest& a, const COutputHashRequest& b);
-
-    std::string ToString() const;
-
-    uint256 output_hash;
-};
 
 #endif // BITCOIN_PROTOCOL_H

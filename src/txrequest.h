@@ -23,8 +23,10 @@
  *
  * The following information is tracked per peer/tx combination ("announcement"):
  * - Which peer announced it (through their NodeId)
- * - The txid or wtxid of the transaction (collectively called "txhash" in what follows)
- * - Whether it was a tx or wtx announcement (see BIP339).
+ * - The txid or wtxid of the transaction, or the hash of one of its outputs (collectively called "txhash" in
+ *   what follows)
+ * - Whether it was a tx or wtx announcement (see BIP339), or an output hash (used to fetch the transaction that
+ *   created a missing input; output hashes and txids never coincide, so they share one txhash space).
  * - What the earliest permitted time is that that transaction can be requested from that peer (called "reqtime").
  * - Whether it's from a "preferred" peer or not. Which announcements get this flag is determined by the caller, but
  *   this is designed for outbound peers, or other peers that we have a higher level of trust in. Even when the
@@ -125,8 +127,8 @@ public:
      * COMPLETED). Note that the txid/wtxid property is ignored for determining uniqueness, so if an announcement
      * is added for a wtxid H, while one for txid H from the same peer already exists, it will be ignored. This is
      * harmless as the txhashes being equal implies it is a non-segwit transaction, so it doesn't matter how it is
-     * fetched. The new announcement is given the specified preferred and reqtime values, and takes its is_wtxid
-     * from the specified gtxid.
+     * fetched. The new announcement is given the specified preferred and reqtime values, and takes its kind
+     * (txid, wtxid or output hash) from the specified gtxid.
      */
     void ReceivedInv(NodeId peer, const GenTxid& gtxid, bool preferred,
         std::chrono::microseconds reqtime);
@@ -154,7 +156,7 @@ public:
      *    exists, and for which the specified peer is the best choice among all (reqtime <= now) CANDIDATE
      *    announcements with the same txhash (subject to preferredness rules, and tiebreaking using a deterministic
      *    salted hash of peer and txhash).
-     *  - The selected announcements are converted to GenTxids using their is_wtxid flag, and returned in
+     *  - The selected announcements are converted to GenTxids of their kind, and returned in
      *    announcement order (even if multiple were added at the same time, or when the clock went backwards while
      *    they were being added). This is done to minimize disruption from dependent transactions being requested
      *    out of order: if multiple dependent transactions are announced simultaneously by one peer, and end up

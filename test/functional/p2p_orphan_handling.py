@@ -3,9 +3,12 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+from decimal import Decimal
+import time
+
 from test_framework.messages import (
     CInv,
-    MSG_TX,
+    MSG_OUTPUT_HASH,
     MSG_WITNESS_TX,
     MSG_WTX,
     msg_getdata,
@@ -26,6 +29,10 @@ from test_framework.util import (
     tx_from_hex,
 )
 from test_framework.test_framework import BitcoinTestFramework
+from test_framework.wallet import (
+    MiniWallet,
+    MiniWalletMode,
+)
 
 # Time to bump forward (using setmocktime) before waiting for the node to send getdata(tx) in response
 # to an inv(tx), in seconds. This delay includes all possible delays + 1, so it should only be used
@@ -85,24 +92,14 @@ class PeerTxRelayer(P2PTxInvStore):
         self.wait_until(test_function, timeout=10)
 
     def wait_for_output_hash_requests(self, output_hashes):
-        """Wait for requests for missing parents by output hash with witness data (MSG_WITNESS_TX or
-        WitnessTx). Requires that the getdata message contain all the specified output hashes."""
+        """Wait for a getdata requesting missing parents by output hash (MSG_OUTPUT_HASH). Requires
+        that the getdata message contain all the specified output hashes."""
         def test_function():
             last_getdata = self.last_message.get('getdata')
             if not last_getdata:
                 return False
-            received_hashes = [item.hash for item in last_getdata.inv if item.type == MSG_WITNESS_TX]
+            received_hashes = [item.hash for item in last_getdata.inv if item.type == MSG_OUTPUT_HASH]
             return all(hash_val in received_hashes for hash_val in output_hashes)
-        self.wait_until(test_function, timeout=10)
-
-    def wait_for_getoutputdata(self, output_hash_requests):
-        """Wait for getoutputdata message containing the specified output hash requests."""
-        def test_function():
-            last_getoutputdata = self.last_message.get('getoutputdata')
-            if not last_getoutputdata:
-                return False
-            received_hashes = [req.output_hash for req in last_getoutputdata.output_hashes]
-            return all(req.output_hash in received_hashes for req in output_hash_requests)
         self.wait_until(test_function, timeout=10)
 
     def assert_no_immediate_response(self, message):
@@ -185,11 +182,10 @@ class OrphanHandlingTest(BitcoinTestFramework):
         expected_missing_parent_hash = fake_orphan_tx.vin[0].prevout.hash
 
         def missing_parent_requested():
-            with p2p_lock:
-                for getdata in peer_spy.getdata_received:
-                    for request in getdata.inv:
-                        if request.hash == expected_missing_parent_hash:
-                            return True
+            for getdata in peer_spy.getdata_received:
+                for request in getdata.inv:
+                    if request.type == MSG_OUTPUT_HASH and request.hash == expected_missing_parent_hash:
+                        return True
             return False
 
         self.wait_until(missing_parent_requested, timeout=10)
@@ -422,56 +418,82 @@ class OrphanHandlingTest(BitcoinTestFramework):
         peer.wait_for_output_hash_requests([expected_missing_parent_hash])
 
     @cleanup
-    def test_orphan_inherit_rejection(self):
+    def test_parent_request_other_peer(self):
         node = self.nodes[0]
         peer1 = node.add_p2p_connection(PeerTxRelayer())
         peer2 = node.add_p2p_connection(PeerTxRelayer())
-        peer3 = node.add_p2p_connection(PeerTxRelayer())
 
-        self.log.info("Test that an orphan with rejected parents, along with any descendants, cannot be retried with an alternate witness")
-        parent_low_fee_nonsegwit = self.wallet_nonsegwit.create_self_transfer(fee_rate=0)
-        assert_equal(parent_low_fee_nonsegwit["txid"], parent_low_fee_nonsegwit["tx"].getwtxid())
-        child = self.wallet.create_self_transfer(utxo_to_spend=parent_low_fee_nonsegwit["new_utxo"])
-        grandchild = self.wallet.create_self_transfer(utxo_to_spend=child["new_utxo"])
-        assert child["txid"] != child["tx"].getwtxid()
-        assert grandchild["txid"] != grandchild["tx"].getwtxid()
+        self.log.info("Test that a missing parent is requested from another peer after notfound or timeout")
+        for response in ["notfound", "timeout"]:
+            parent = self.wallet.create_self_transfer()
+            child_1 = self.wallet.create_self_transfer(utxo_to_spend=parent["new_utxo"])
+            child_2 = self.wallet.create_self_transfer(utxo_to_spend=parent["new_utxo"], fee_rate=Decimal("0.0002"))
+            output_hash = child_1["tx"].vin[0].prevout.hash
+            assert_equal(output_hash, child_2["tx"].vin[0].prevout.hash)
+
+            # peer1 sends an orphan and is asked for the parent by output hash.
+            peer1.send_and_ping(msg_tx(child_1["tx"]))
+            node.bumpmocktime(NONPREF_PEER_TX_DELAY)
+            peer1.wait_for_output_hash_requests([output_hash])
+
+            # peer2 sends another orphan spending the same output. The parent is
+            # already being requested from peer1, so peer2 is not asked yet.
+            peer2.send_and_ping(msg_tx(child_2["tx"]))
+            node.bumpmocktime(NONPREF_PEER_TX_DELAY)
+            peer2.sync_with_ping()
+            peer2.assert_never_requested(output_hash)
+
+            if response == "notfound":
+                peer1.send_and_ping(msg_notfound(vec=[CInv(MSG_OUTPUT_HASH, output_hash)]))
+            else:
+                node.bumpmocktime(GETDATA_TX_INTERVAL)
+            peer2.wait_for_output_hash_requests([output_hash])
+
+            # Once the parent arrives, the first orphan is accepted.
+            peer2.send_and_ping(msg_tx(parent["tx"]))
+            assert parent["txid"] in node.getrawmempool()
+            self.wait_until(lambda: child_1["txid"] in node.getrawmempool() or child_2["txid"] in node.getrawmempool())
+            # Clear the mempool for the next round.
+            self.generate(node, 1)
+
+    @cleanup
+    def test_orphan_with_rejected_parent(self):
+        node = self.nodes[0]
+        peer1 = node.add_p2p_connection(PeerTxRelayer())
+
+        self.log.info("Test that an orphan whose parent was rejected is kept and the parent is requested by output hash")
+        parent_low_fee = self.wallet_nonsegwit.create_self_transfer(fee_rate=0)
+        child = self.wallet.create_self_transfer(utxo_to_spend=parent_low_fee["new_utxo"])
 
         # Relay the parent. It should be rejected because it pays 0 fees.
-        self.relay_transaction(peer1, parent_low_fee_nonsegwit["tx"])
+        self.relay_transaction(peer1, parent_low_fee["tx"])
+        assert_equal(0, len(node.getrawmempool()))
 
-        # Relay the child. It should be rejected for having missing parents, and this rejection is
-        # cached by txid and wtxid.
-        with node.assert_debug_log(['not keeping orphan with rejected parents {}'.format(child["txid"])]):
+        # Inputs name the output they spend rather than the parent txid, so the
+        # rejected parent cannot be recognised from the child. The child is kept
+        # as an orphan and its parent is requested by output hash.
+        with node.assert_debug_log(['stored orphan tx {}'.format(child["txid"])]):
             self.relay_transaction(peer1, child["tx"])
-        assert_equal(0, len(node.getrawmempool()))
-        peer1.assert_never_requested(parent_low_fee_nonsegwit["txid"])
+        node.bumpmocktime(NONPREF_PEER_TX_DELAY)
+        peer1.wait_for_output_hash_requests([child["tx"].vin[0].prevout.hash])
 
-        # Grandchild should also not be kept in orphanage because its parent has been rejected.
-        with node.assert_debug_log(['not keeping orphan with rejected parents {}'.format(grandchild["txid"])]):
-            self.relay_transaction(peer2, grandchild["tx"])
+        # The parent is still rejected when it is sent again, and so is the child.
+        peer1.send_and_ping(msg_tx(parent_low_fee["tx"]))
         assert_equal(0, len(node.getrawmempool()))
-        peer2.assert_never_requested(child["txid"])
-        peer2.assert_never_requested(child["tx"].getwtxid())
-
-        # The child should never be requested, even if announced again with potentially different witness.
-        peer3.send_and_ping(msg_inv([CInv(t=MSG_TX, h=int(child["txid"], 16))]))
-        self.nodes[0].bumpmocktime(TXREQUEST_TIME_SKIP)
-        peer3.assert_never_requested(child["txid"])
 
     def run_test(self):
-        return
-
-        # self.nodes[0].setmocktime(int(time.time()))
-        # self.wallet_nonsegwit = MiniWallet(self.nodes[0], mode=MiniWalletMode.RAW_P2PK)
-        # self.generate(self.wallet_nonsegwit, 10)
-        # self.wallet = MiniWallet(self.nodes[0])
-        # self.generate(self.wallet, 160)
-        # self.test_arrival_timing_orphan()
-        # self.test_orphan_rejected_parents_exceptions()
-        # self.test_orphan_multiple_parents()
-        # self.test_orphans_overlapping_parents()
-        # self.test_orphan_of_orphan()
-        # self.test_orphan_inherit_rejection()
+        self.nodes[0].setmocktime(int(time.time()))
+        self.wallet_nonsegwit = MiniWallet(self.nodes[0], mode=MiniWalletMode.RAW_P2PK)
+        self.generate(self.wallet_nonsegwit, 10)
+        self.wallet = MiniWallet(self.nodes[0])
+        self.generate(self.wallet, 160)
+        self.test_arrival_timing_orphan()
+        self.test_orphan_rejected_parents_exceptions()
+        self.test_orphan_multiple_parents()
+        self.test_orphans_overlapping_parents()
+        self.test_orphan_of_orphan()
+        self.test_orphan_with_rejected_parent()
+        self.test_parent_request_other_peer()
 
 
 if __name__ == '__main__':

@@ -508,6 +508,13 @@ struct CNodeState {
     //! Whether this peer is an inbound connection
     const bool m_is_inbound;
 
+    //! Output hashes we requested from this peer (MSG_OUTPUT_HASH) and may
+    //! still get a tx for. Only used to report the response to m_txrequest
+    //! without hashing the outputs of every received transaction; stale
+    //! entries cost at most some extra hashing and are dropped once nothing
+    //! is in flight from this peer.
+    std::set<uint256> m_requested_outids;
+
     CNodeState(bool is_inbound) : m_is_inbound(is_inbound) {}
 };
 
@@ -820,7 +827,7 @@ private:
     std::atomic<std::chrono::seconds> m_block_stalling_timeout{BLOCK_STALLING_TIMEOUT_DEFAULT};
 
     bool AlreadyHaveTx(const GenTxid& gtxid)
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main, !m_recent_confirmed_transactions_mutex);
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main, !m_recent_confirmed_transactions_mutex, !m_most_recent_block_mutex);
 
     /**
      * Filter for transactions that were recently rejected by the mempool.
@@ -1041,8 +1048,6 @@ private:
     bool AlreadyHaveBlock(const uint256& block_hash) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
     void ProcessGetBlockData(CNode& pfrom, Peer& peer, const CInv& inv)
         EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex);
-    void ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::vector<COutputHashRequest>& vOutputHashRequests, const std::atomic<bool>& interruptMsgProc)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex, NetEventsInterface::g_msgproc_mutex);
     /** Return the txid of the mempool or most-recent-block transaction that
      *  created the output with this hash, if any. */
     std::optional<uint256> FindTxidByOutputHash(const uint256& output_hash) EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex);
@@ -1586,7 +1591,8 @@ void PeerManagerImpl::AddTxAnnouncement(const CNode& node, const GenTxid& gtxid,
     auto delay{0us};
     const bool preferred = state->fPreferredDownload;
     if (!preferred) delay += NONPREF_PEER_TX_DELAY;
-    if (!gtxid.IsWtxid() && m_wtxid_relay_peers > 0) delay += TXID_RELAY_DELAY;
+    // Output hashes have no wtxid counterpart to wait for.
+    if (!gtxid.IsWtxid() && !gtxid.IsOutid() && m_wtxid_relay_peers > 0) delay += TXID_RELAY_DELAY;
     const bool overloaded = !node.HasPermission(NetPermissionFlags::Relay) &&
         m_txrequest.CountInFlight(nodeid) >= MAX_PEER_TX_REQUEST_IN_FLIGHT;
     if (overloaded) delay += OVERLOADED_PEER_TX_DELAY;
@@ -2166,6 +2172,10 @@ bool PeerManagerImpl::AlreadyHaveTx(const GenTxid& gtxid)
 
     const uint256& hash = gtxid.GetHash();
 
+    // An output hash is "had" once the transaction creating it is in the
+    // mempool or the most recent block.
+    if (gtxid.IsOutid()) return FindTxidByOutputHash(hash).has_value();
+
     if (m_orphanage.HaveTx(gtxid)) return true;
 
     {
@@ -2475,7 +2485,7 @@ void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic
     // Process as many TX items from the front of the getdata queue as
     // possible, since they're common and it's efficient to batch process
     // them.
-    while (it != peer.m_getdata_requests.end() && it->IsGenTxMsg()) {
+    while (it != peer.m_getdata_requests.end() && (it->IsGenTxMsg() || it->IsMsgOutputHash())) {
         if (interruptMsgProc) return;
         // The send buffer provides backpressure. If there's no space in
         // the buffer, pause processing until the next call.
@@ -2489,21 +2499,28 @@ void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic
             continue;
         }
 
-        GenTxid gtxid = ToGenTxid(inv);
-        if (inv.type == MSG_WITNESS_TX) {
-            // Inputs reference outputs by output hash, so a MSG_WITNESS_TX
-            // request may name a transaction by the hash of one of its
-            // outputs. Resolve it to the txid first so that exactly the same
-            // relay rules apply as for a request by txid.
-            if (const auto txid{FindTxidByOutputHash(inv.hash)}) {
-                gtxid = GenTxid::Txid(*txid);
-            }
-        }
-
+        // Inputs reference outputs by output hash, so a request may name a
+        // transaction by the hash of one of its outputs: explicitly with
+        // MSG_OUTPUT_HASH, or with MSG_WITNESS_TX as older nodes do. Resolve
+        // it to the txid first so that exactly the same relay rules apply as
+        // for a request by txid.
+        CTransactionRef tx;
         bool is_stem{false};
-        CTransactionRef tx = FindTxForPeer(pfrom, *tx_relay, gtxid, is_stem);
+        if (inv.IsMsgOutputHash()) {
+            if (const auto txid{FindTxidByOutputHash(inv.hash)}) {
+                tx = FindTxForPeer(pfrom, *tx_relay, GenTxid::Txid(*txid), is_stem);
+            }
+        } else {
+            GenTxid gtxid = ToGenTxid(inv);
+            if (inv.type == MSG_WITNESS_TX) {
+                if (const auto txid{FindTxidByOutputHash(inv.hash)}) {
+                    gtxid = GenTxid::Txid(*txid);
+                }
+            }
+            tx = FindTxForPeer(pfrom, *tx_relay, gtxid, is_stem);
+        }
         if (tx) {
-            // WTX and WITNESS_TX imply we serialize with witness
+            // WTX, WITNESS_TX and OUTPUT_HASH imply we serialize with witness
             const auto maybe_with_witness = (inv.IsMsgTx() ? TX_NO_WITNESS : TX_WITH_WITNESS);
             MakeAndPushMessage(pfrom, is_stem ? NetMsgType::DTX : NetMsgType::TX, maybe_with_witness(*tx));
             // Keep tx in the unbroadcast set so ReattemptInitialBroadcast keeps re-INVing
@@ -2544,51 +2561,6 @@ void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic
         // In normal operation, we often send NOTFOUND messages for parents of
         // transactions that we relay; if a peer is missing a parent, they may
         // assume we have them and request the parents from us.
-        MakeAndPushMessage(pfrom, NetMsgType::NOTFOUND, vNotFound);
-    }
-}
-
-void PeerManagerImpl::ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::vector<COutputHashRequest>& vOutputHashRequests, const std::atomic<bool>& interruptMsgProc)
-{
-    AssertLockNotHeld(cs_main);
-
-    auto tx_relay = peer.GetTxRelay();
-
-    if (tx_relay == nullptr) {
-        // Ignore GETOUTPUTDATA requests from block-relay-only peers and peers that asked us not to announce transactions.
-        return;
-    }
-
-    std::vector<CInv> vNotFound;
-    std::vector<CTransactionRef> vTxs;
-
-    // Process each output hash request
-    for (const auto& outputHashRequest : vOutputHashRequests) {
-        if (interruptMsgProc) return;
-        // The send buffer provides backpressure. If there's no space in
-        // the buffer, pause processing until the next call.
-        if (pfrom.fPauseSend) break;
-
-        const uint256& outputHash = outputHashRequest.output_hash;
-
-        // Resolve the output hash to its txid, then apply the same relay
-        // rules as a getdata by txid.
-        bool is_stem{false};
-        CTransactionRef tx;
-        if (const auto txid{FindTxidByOutputHash(outputHash)}) {
-            tx = FindTxForPeer(pfrom, *tx_relay, GenTxid::Txid(*txid), is_stem);
-        }
-
-        if (tx) {
-            MakeAndPushMessage(pfrom, is_stem ? NetMsgType::DTX : NetMsgType::TX, TX_WITH_WITNESS(*tx));
-            // Keep tx in the unbroadcast set; see matching note in ProcessGetData.
-        } else {
-            vNotFound.emplace_back(MSG_OUTPUT_HASH, outputHash);
-        }
-    }
-
-    // Send notfound for any output hashes we couldn't find
-    if (!vNotFound.empty()) {
         MakeAndPushMessage(pfrom, NetMsgType::NOTFOUND, vNotFound);
     }
 }
@@ -4170,24 +4142,6 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         return;
     }
 
-    if (msg_type == NetMsgType::GETOUTPUTDATA) {
-        std::vector<COutputHashRequest> vOutputHashRequests;
-        vRecv >> vOutputHashRequests;
-        if (vOutputHashRequests.size() > MAX_INV_SZ) {
-            Misbehaving(*peer, 20, strprintf("getoutputdata message size = %u", vOutputHashRequests.size()));
-            return;
-        }
-
-        LogPrint(BCLog::NET, "received getoutputdata (%u output hashes) peer=%d\n", vOutputHashRequests.size(), pfrom.GetId());
-
-        if (vOutputHashRequests.size() > 0) {
-            LogPrint(BCLog::NET, "received getoutputdata for: %s peer=%d\n", vOutputHashRequests[0].ToString(), pfrom.GetId());
-        }
-
-        ProcessGetOutputData(pfrom, *peer, vOutputHashRequests, interruptMsgProc);
-        return;
-    }
-
     if (msg_type == NetMsgType::GETBLOCKS) {
         CBlockLocator locator;
         uint256 hashStop;
@@ -4422,6 +4376,15 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
         m_txrequest.ReceivedResponse(pfrom.GetId(), txid);
         if (tx.HasWitness()) m_txrequest.ReceivedResponse(pfrom.GetId(), wtxid);
+        if (CNodeState* state = State(pfrom.GetId()); state && !state->m_requested_outids.empty()) {
+            // This may be the answer to a request by output hash.
+            for (const CTxOut& txout : tx.vout) {
+                const uint256 output_hash{txout.GetHash()};
+                if (state->m_requested_outids.erase(output_hash)) {
+                    m_txrequest.ReceivedResponse(pfrom.GetId(), output_hash);
+                }
+            }
+        }
 
         // We do the AlreadyHaveTx() check using wtxid, rather than txid - in the
         // absence of witness malleation, this is strictly better, because the
@@ -4492,8 +4455,6 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         }
         else if (state.GetResult() == TxValidationResult::TX_MISSING_INPUTS)
         {
-            bool fRejectedParents = false; // It may be the case that the orphans parents have all been rejected
-
             // Deduplicate parent output hashes, so that we don't have to loop over
             // the same parent output hash more than once down below.
             std::vector<uint256> unique_parent_output_hashes;
@@ -4504,79 +4465,37 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             }
             std::sort(unique_parent_output_hashes.begin(), unique_parent_output_hashes.end());
             unique_parent_output_hashes.erase(std::unique(unique_parent_output_hashes.begin(), unique_parent_output_hashes.end()), unique_parent_output_hashes.end());
-            // Check if any parent transaction has been rejected
-            // With the new output hash prevout system, we need to look up the transaction hash from the output hash
+
+            // Unlike upstream, there is no "rejected parents" shortcut here.
+            // Inputs name the output they spend, not the parent's txid, and
+            // m_recent_rejects is keyed by txid/wtxid, so a rejected parent
+            // cannot be recognised from the orphan alone. Recording output
+            // hashes of rejected transactions instead would be wrong: another
+            // transaction (e.g. a fee-bumped replacement) can create a
+            // byte-identical output, and its children would then be dropped.
+            // A parent that keeps being rejected is simply re-requested through
+            // m_txrequest like any other, and the orphan eventually expires.
+
+            // Fetch missing parents by output hash through the request tracker,
+            // so they get the usual per-peer limits, timeouts and fallback to
+            // other peers that sent us a child spending the same output.
+            const auto current_time{GetTime<std::chrono::microseconds>()};
             for (const uint256& parent_output_hash : unique_parent_output_hashes) {
-                const auto parent_txid{FindTxidByOutputHash(parent_output_hash)};
-                if (parent_txid && m_recent_rejects.contains(*parent_txid)) {
-                    fRejectedParents = true;
-                    break;
-                }
+                const auto gtxid{GenTxid::Outid(parent_output_hash)};
+                if (AlreadyHaveTx(gtxid)) continue;
+                AddTxAnnouncement(pfrom, gtxid, current_time);
             }
-            if (!fRejectedParents) {
-                // With the new output hash prevout system, we request parents by output hash
-                // Send getdata messages directly with output hashes
-                std::vector<CInv> vGetData;
-                for (const uint256& parent_output_hash : unique_parent_output_hashes) {
-                    // Check if we already have the transaction by looking up the transaction that contains this output hash
-                    const auto parent_txid{FindTxidByOutputHash(parent_output_hash)};
-                    if (parent_txid) {
-                        // If we found the transaction, check if we already have it
-                        if (AlreadyHaveTx(GenTxid::Txid(*parent_txid))) {
-                            // Already have this transaction, skip requesting it
-                            continue;
-                        }
-                    } else {
-                        // If we didn't find it by output hash, check if the hash might be a transaction hash
-                        // (This can happen with fake orphans that use transaction hashes as output hashes)
-                        // Check both by txid and wtxid, and also check mempool directly
-                        const auto gtxid_txid = GenTxid::Txid(parent_output_hash);
-                        const auto gtxid_wtxid = GenTxid::Wtxid(parent_output_hash);
-                        if (AlreadyHaveTx(gtxid_txid) || AlreadyHaveTx(gtxid_wtxid)) {
-                            // Already have this transaction, skip requesting it
-                            continue;
-                        }
-                        // Also check mempool directly by hash (in case it's a transaction hash)
-                        {
-                            LOCK(m_mempool.cs);
-                            if (m_mempool.exists(gtxid_txid) || m_mempool.exists(gtxid_wtxid)) {
-                                // Already have this transaction in mempool, skip requesting it
-                                continue;
-                            }
-                        }
-                    }
-                    // Request the transaction by output hash using MSG_WITNESS_TX type
-                    vGetData.emplace_back(MSG_WITNESS_TX, parent_output_hash);
-                }
-                if (!vGetData.empty()) {
-                    MakeAndPushMessage(pfrom, NetMsgType::GETDATA, vGetData);
-                }
 
-                if (m_orphanage.AddTx(ptx, pfrom.GetId())) {
-                    AddToCompactExtraTransactions(ptx);
-                }
-
-                // Once added to the orphan pool, a tx is considered AlreadyHave, and we shouldn't request it anymore.
-                m_txrequest.ForgetTxHash(tx.GetHash());
-                m_txrequest.ForgetTxHash(tx.GetWitnessHash());
-
-                // DoS prevention: do not allow m_orphanage to grow unbounded (see CVE-2012-3789)
-                m_orphanage.LimitOrphans(m_opts.max_orphan_txs, m_rng);
-            } else {
-                LogPrint(BCLog::MEMPOOL, "not keeping orphan with rejected parents %s (wtxid=%s)\n",
-                         tx.GetHash().ToString(),
-                         tx.GetWitnessHash().ToString());
-                // We will continue to reject this tx since it has rejected
-                // parents so avoid re-requesting it from other peers.
-                // Here we add both the txid and the wtxid, as we know that
-                // regardless of what witness is provided, we will not accept
-                // this, so we don't need to allow for redownload of this txid
-                // from any of our non-wtxidrelay peers.
-                m_recent_rejects.insert(tx.GetHash().ToUint256());
-                m_recent_rejects.insert(tx.GetWitnessHash().ToUint256());
-                m_txrequest.ForgetTxHash(tx.GetHash());
-                m_txrequest.ForgetTxHash(tx.GetWitnessHash());
+            if (m_orphanage.AddTx(ptx, pfrom.GetId())) {
+                AddToCompactExtraTransactions(ptx);
             }
+
+            // Once added to the orphan pool, a tx is considered AlreadyHave, and we shouldn't request it anymore.
+            m_txrequest.ForgetTxHash(tx.GetHash());
+            m_txrequest.ForgetTxHash(tx.GetWitnessHash());
+
+            // Do not allow m_orphanage to grow unbounded.
+            m_orphanage.LimitOrphans(m_opts.max_orphan_txs, m_rng);
         } else {
             if (state.GetResult() != TxValidationResult::TX_WITNESS_STRIPPED) {
                 // We can add the wtxid of this transaction to our reject filter.
@@ -5226,10 +5145,13 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         if (vInv.size() <= MAX_PEER_TX_ANNOUNCEMENTS + MAX_BLOCKS_IN_TRANSIT_PER_PEER) {
             LOCK(::cs_main);
             for (CInv &inv : vInv) {
-                if (inv.IsGenTxMsg()) {
+                if (inv.IsGenTxMsg() || inv.IsMsgOutputHash()) {
                     // If we receive a NOTFOUND message for a tx we requested, mark the announcement for it as
                     // completed in TxRequestTracker.
                     m_txrequest.ReceivedResponse(pfrom.GetId(), inv.hash);
+                }
+                if (inv.IsMsgOutputHash()) {
+                    if (CNodeState* state = State(pfrom.GetId())) state->m_requested_outids.erase(inv.hash);
                 }
             }
         }
@@ -6475,15 +6397,27 @@ bool PeerManagerImpl::SendMessages(CNode* pto)
         //
         std::vector<std::pair<NodeId, GenTxid>> expired;
         auto requestable = m_txrequest.GetRequestable(pto->GetId(), current_time, &expired);
+        const auto gtxid_kind = [](const GenTxid& gtxid) { return gtxid.IsOutid() ? "outid" : gtxid.IsWtxid() ? "wtx" : "tx"; };
         for (const auto& entry : expired) {
-            LogPrint(BCLog::NET, "timeout of inflight %s %s from peer=%d\n", entry.second.IsWtxid() ? "wtx" : "tx",
+            LogPrint(BCLog::NET, "timeout of inflight %s %s from peer=%d\n", gtxid_kind(entry.second),
                 entry.second.GetHash().ToString(), entry.first);
+            if (entry.second.IsOutid()) {
+                if (CNodeState* expired_state = State(entry.first)) expired_state->m_requested_outids.erase(entry.second.GetHash());
+            }
+        }
+        if (!state.m_requested_outids.empty() && m_txrequest.CountInFlight(pto->GetId()) == 0) {
+            state.m_requested_outids.clear();
         }
         for (const GenTxid& gtxid : requestable) {
             if (!AlreadyHaveTx(gtxid)) {
-                LogPrint(BCLog::NET, "Requesting %s %s peer=%d\n", gtxid.IsWtxid() ? "wtx" : "tx",
+                LogPrint(BCLog::NET, "Requesting %s %s peer=%d\n", gtxid_kind(gtxid),
                     gtxid.GetHash().ToString(), pto->GetId());
-                vGetData.emplace_back(gtxid.IsWtxid() ? MSG_WTX : (MSG_TX | GetFetchFlags(*peer)), gtxid.GetHash());
+                if (gtxid.IsOutid()) {
+                    vGetData.emplace_back(MSG_OUTPUT_HASH, gtxid.GetHash());
+                    state.m_requested_outids.insert(gtxid.GetHash());
+                } else {
+                    vGetData.emplace_back(gtxid.IsWtxid() ? MSG_WTX : (MSG_TX | GetFetchFlags(*peer)), gtxid.GetHash());
+                }
                 if (vGetData.size() >= MAX_GETDATA_SZ) {
                     MakeAndPushMessage(*pto, NetMsgType::GETDATA, vGetData);
                     vGetData.clear();

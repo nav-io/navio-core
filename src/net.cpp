@@ -919,7 +919,7 @@ const std::array<std::string, 33> V2_MESSAGE_IDS = {
     NetMsgType::GETCFCHECKPT,
     NetMsgType::CFCHECKPT,
     NetMsgType::ADDRV2,
-    NetMsgType::GETOUTPUTDATA,
+    "", // Formerly getoutputdata; kept unassigned so the other ids do not move.
     // Unimplemented message types that are assigned in BIP324:
     "",
     "",
