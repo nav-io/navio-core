@@ -48,7 +48,6 @@ const char* GETCFCHECKPT = "getcfcheckpt";
 const char* CFCHECKPT = "cfcheckpt";
 const char* WTXIDRELAY = "wtxidrelay";
 const char* SENDTXRCNCL = "sendtxrcncl";
-const char* GETOUTPUTDATA = "getoutputdata";
 const char* P2PMSG = "p2pmsg";
 const char* DP2PMSG = "dp2pmsg";
 } // namespace NetMsgType
@@ -93,7 +92,6 @@ const static std::vector<std::string> g_all_net_message_types{
     NetMsgType::CFCHECKPT,
     NetMsgType::WTXIDRELAY,
     NetMsgType::SENDTXRCNCL,
-    NetMsgType::GETOUTPUTDATA,
     NetMsgType::P2PMSG,
     NetMsgType::DP2PMSG,
 };
@@ -172,6 +170,8 @@ std::string CInv::GetCommand() const
     case MSG_WTX:            return cmd.append("wtx");
     // DWTX is not a message type, just an inv type
     case MSG_DWTX:           return cmd.append("dwtx");
+    // OUTPUT_HASH is not a message type, just a getdata/notfound type
+    case MSG_OUTPUT_HASH:    return cmd.append("outputhash");
     case MSG_BLOCK:          return cmd.append(NetMsgType::BLOCK);
     case MSG_FILTERED_BLOCK: return cmd.append(NetMsgType::MERKLEBLOCK);
     case MSG_CMPCT_BLOCK:    return cmd.append(NetMsgType::CMPCTBLOCK);
@@ -235,24 +235,4 @@ GenTxid ToGenTxid(const CInv& inv)
 {
     assert(inv.IsGenTxMsg());
     return inv.IsMsgWtx() ? GenTxid::Wtxid(inv.hash) : GenTxid::Txid(inv.hash);
-}
-
-COutputHashRequest::COutputHashRequest()
-{
-    output_hash.SetNull();
-}
-
-COutputHashRequest::COutputHashRequest(const uint256& outputHashIn)
-{
-    output_hash = outputHashIn;
-}
-
-bool operator<(const COutputHashRequest& a, const COutputHashRequest& b)
-{
-    return a.output_hash < b.output_hash;
-}
-
-std::string COutputHashRequest::ToString() const
-{
-    return "output_hash=" + output_hash.ToString();
 }
