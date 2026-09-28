@@ -497,6 +497,17 @@ additional listening socket, alongside the ordinary `-bind`/`-port` ones.
   e.g. with Caddy: `reverse_proxy /p2p 127.0.0.1:8355` under a `https://`
   site block. Bind the listener to loopback or a private interface when it is
   fronted this way.
+- **Discovery.** A publicly usable listener is advertised with the
+  `NODE_P2P_WS` service bit (`1 << 30`), which rides `addr` gossip like any
+  other. A service bit cannot carry a port, so the node also sends each peer a
+  `wsendpoint` message right after `verack`: a `uint16` port followed by a
+  var-string URL (max 256 bytes). The URL is empty when the listener is
+  dialable directly at `ws://<peer address>:<port>`; behind a proxy set
+  `-p2pwsexternal=wss://node.example.com/p2p` and that URL (with its port, or
+  443/80 by scheme) is announced instead. Nodes without `-p2pwsexternal` whose
+  every `-p2pwsbind` is loopback do not set the bit. Received announcements
+  are shown in `getpeerinfo` as `ws_port` / `ws_url`; they are informational
+  and unauthenticated, and an invalid one is ignored without penalty.
 
 ## Status / what is wired
 

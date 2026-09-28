@@ -187,6 +187,8 @@ static RPCHelpMan getpeerinfo()
                     {RPCResult::Type::STR, "transport_protocol_type", "Type of transport protocol: \n" + Join(TRANSPORT_TYPE_DOC, ",\n") + ".\n"},
                     {RPCResult::Type::STR, "session_id", "The session ID for this connection, or \"\" if there is none (\"v2\" transport protocol only).\n"},
                     {RPCResult::Type::BOOL, "websocket", "Whether the peer connected through a WebSocket listener (-p2pwsbind)"},
+                    {RPCResult::Type::NUM, "ws_port", /*optional=*/true, "Port of the WebSocket P2P listener the peer announced (wsendpoint / NODE_P2P_WS)"},
+                    {RPCResult::Type::STR, "ws_url", /*optional=*/true, "Public ws:// or wss:// URL the peer announced for that listener, when it is behind a reverse proxy"},
                 }},
             }},
         },
@@ -294,6 +296,10 @@ static RPCHelpMan getpeerinfo()
         obj.pushKV("transport_protocol_type", TransportTypeAsString(stats.m_transport_type));
         obj.pushKV("session_id", stats.m_session_id);
         obj.pushKV("websocket", stats.m_websocket);
+        if (statestats.m_ws_port != 0) {
+            obj.pushKV("ws_port", statestats.m_ws_port);
+            if (!statestats.m_ws_url.empty()) obj.pushKV("ws_url", statestats.m_ws_url);
+        }
 
         ret.push_back(obj);
     }
