@@ -892,6 +892,8 @@ private:
     std::shared_ptr<const CBlockHeaderAndShortTxIDs> m_most_recent_compact_block GUARDED_BY(m_most_recent_block_mutex);
     uint256 m_most_recent_block_hash GUARDED_BY(m_most_recent_block_mutex);
     std::unique_ptr<const std::map<uint256, CTransactionRef>> m_most_recent_block_txs GUARDED_BY(m_most_recent_block_mutex);
+    /** Output hash -> txid for every output created by m_most_recent_block. */
+    std::unique_ptr<const std::map<uint256, uint256>> m_most_recent_block_output_txids GUARDED_BY(m_most_recent_block_mutex);
 
     // Data about the low-work headers synchronization, aggregated from all peers' HeadersSyncStates.
     /** Mutex guarding the other m_headers_presync_* variables. */
@@ -1038,8 +1040,16 @@ private:
     bool AlreadyHaveBlock(const uint256& block_hash) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
     void ProcessGetBlockData(CNode& pfrom, Peer& peer, const CInv& inv)
         EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex);
-    void ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::vector<COutputHashRequest>& vOutputHashRequests, const std::atomic<bool>& interruptMsgProc) EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex);
-    CTransactionRef FindTxByOutputHash(const uint256& outputHash) EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex);
+    void ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::vector<COutputHashRequest>& vOutputHashRequests, const std::atomic<bool>& interruptMsgProc)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex, NetEventsInterface::g_msgproc_mutex);
+    /** Return the txid of the mempool or most-recent-block transaction that
+     *  created the output with this hash, if any. */
+    std::optional<uint256> FindTxidByOutputHash(const uint256& output_hash) EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex);
+    /** Apply the relay rules for a transaction request (stem-phase embargo,
+     *  then FindTxForGetData) and return the transaction to send, or nullptr.
+     *  is_stem is set when the reply must be sent as dtx. */
+    CTransactionRef FindTxForPeer(const CNode& pfrom, Peer::TxRelay& tx_relay, const GenTxid& gtxid, bool& is_stem)
+        EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex, NetEventsInterface::g_msgproc_mutex);
 
     /**
      * Validation logic for compact filters request handling.
@@ -2015,9 +2025,13 @@ void PeerManagerImpl::NewPoWValidBlock(const CBlockIndex *pindex, const std::sha
 
     {
         auto most_recent_block_txs = std::make_unique<std::map<uint256, CTransactionRef>>();
+        auto most_recent_block_output_txids = std::make_unique<std::map<uint256, uint256>>();
         for (const auto& tx : pblock->vtx) {
             most_recent_block_txs->emplace(tx->GetHash(), tx);
             most_recent_block_txs->emplace(tx->GetWitnessHash(), tx);
+            for (const auto& txout : tx->vout) {
+                most_recent_block_output_txids->emplace(txout.GetHash(), tx->GetHash());
+            }
         }
 
         LOCK(m_most_recent_block_mutex);
@@ -2025,6 +2039,7 @@ void PeerManagerImpl::NewPoWValidBlock(const CBlockIndex *pindex, const std::sha
         m_most_recent_block = pblock;
         m_most_recent_compact_block = pcmpctblock;
         m_most_recent_block_txs = std::move(most_recent_block_txs);
+        m_most_recent_block_output_txids = std::move(most_recent_block_output_txids);
     }
 
     m_connman.ForEachNode([this, pindex, &lazy_ser, &hashBlock](CNode* pnode) EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
@@ -2401,39 +2416,41 @@ CTransactionRef PeerManagerImpl::FindTxForGetData(const Peer::TxRelay& tx_relay,
     return {};
 }
 
-CTransactionRef PeerManagerImpl::FindTxByOutputHash(const uint256& outputHash) EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex)
+std::optional<uint256> PeerManagerImpl::FindTxidByOutputHash(const uint256& output_hash)
 {
-    // First, check the mempool for transactions that contain this output hash
     {
         LOCK(m_mempool.cs);
-        for (const auto& entry : m_mempool.mapTx) {
-            const CTransactionRef& tx = entry.GetSharedTx();
-            // Check if any output in this transaction has the requested output hash
-            for (const auto& txout : tx->vout) {
-                if (txout.GetHash() == outputHash) {
-                    return tx;
-                }
-            }
-        }
+        const auto it{m_mempool.mapOutputToTx.find(output_hash)};
+        if (it != m_mempool.mapOutputToTx.end()) return it->second;
     }
 
-    // Check the most recent block
     {
-        // Acquire lock to check most recent block transactions
         LOCK(m_most_recent_block_mutex);
-        if (m_most_recent_block_txs != nullptr) {
-            for (const auto& [txid, tx] : *m_most_recent_block_txs) {
-                // Check if any output in this transaction has the requested output hash
-                for (const auto& txout : tx->vout) {
-                    if (txout.GetHash() == outputHash) {
-                        return tx;
-                    }
-                }
-            }
+        if (m_most_recent_block_output_txids != nullptr) {
+            const auto it{m_most_recent_block_output_txids->find(output_hash)};
+            if (it != m_most_recent_block_output_txids->end()) return it->second;
         }
     }
 
-    return {};
+    return std::nullopt;
+}
+
+CTransactionRef PeerManagerImpl::FindTxForPeer(const CNode& pfrom, Peer::TxRelay& tx_relay, const GenTxid& gtxid, bool& is_stem)
+{
+    is_stem = false;
+    const auto current_time{GetTime<std::chrono::microseconds>()};
+    const auto txinfo = m_mempool.info(gtxid);
+
+    // A transaction still in its stem phase is only served (as dtx) to a
+    // selected stem peer.
+    if (txinfo.tx && txinfo.m_embargo > current_time) {
+        LOCK(tx_relay.m_tx_inventory_mutex);
+        LogPrint(BCLog::DANDELION, "getdata tx=%s has_embargo=1 peer=%d m_send_stem=%d\n", txinfo.tx->GetHash().ToString(), pfrom.GetId(), tx_relay.m_send_stem);
+        if (!tx_relay.m_send_stem) return {};
+        is_stem = true;
+    }
+
+    return FindTxForGetData(tx_relay, gtxid);
 }
 
 void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic<bool>& interruptMsgProc)
@@ -2462,36 +2479,23 @@ void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic
             continue;
         }
 
-        const auto gtxid = ToGenTxid(inv);
-        const auto current_time{GetTime<std::chrono::microseconds>()};
-        auto replyMsgType = NetMsgType::TX;
-        auto txinfo = m_mempool.info(gtxid);
-        bool has_embargo = txinfo.tx && txinfo.m_embargo > current_time;
-
-        // Check if tx is embargoed
-        if (has_embargo) {
-            LOCK(tx_relay->m_tx_inventory_mutex);
-            LogPrint(BCLog::DANDELION, "getdata tx=%s has_embargo=%f peer=%d m_send_stem=%f\n", txinfo.tx->GetHash().ToString(), has_embargo, pfrom.GetId(), tx_relay->m_send_stem);
-            // Set the reply message type to DTX for embargoed TX data
-            replyMsgType = NetMsgType::DTX;
-
-            // Check if peer selected as stem peer
-            if (!tx_relay->m_send_stem) {
-                // Don't send embargoed Inv to non stem peers
-                vNotFound.push_back(inv);
-                continue;
+        GenTxid gtxid = ToGenTxid(inv);
+        if (inv.type == MSG_WITNESS_TX) {
+            // Inputs reference outputs by output hash, so a MSG_WITNESS_TX
+            // request may name a transaction by the hash of one of its
+            // outputs. Resolve it to the txid first so that exactly the same
+            // relay rules apply as for a request by txid.
+            if (const auto txid{FindTxidByOutputHash(inv.hash)}) {
+                gtxid = GenTxid::Txid(*txid);
             }
         }
 
-        CTransactionRef tx = FindTxForGetData(*tx_relay, ToGenTxid(inv));
-        // If not found by transaction hash, try looking up by output hash (for MSG_WITNESS_TX requests)
-        if (!tx && inv.type == MSG_WITNESS_TX) {
-            tx = FindTxByOutputHash(inv.hash);
-        }
+        bool is_stem{false};
+        CTransactionRef tx = FindTxForPeer(pfrom, *tx_relay, gtxid, is_stem);
         if (tx) {
             // WTX and WITNESS_TX imply we serialize with witness
             const auto maybe_with_witness = (inv.IsMsgTx() ? TX_NO_WITNESS : TX_WITH_WITNESS);
-            MakeAndPushMessage(pfrom, replyMsgType, maybe_with_witness(*tx));
+            MakeAndPushMessage(pfrom, is_stem ? NetMsgType::DTX : NetMsgType::TX, maybe_with_witness(*tx));
             // Keep tx in the unbroadcast set so ReattemptInitialBroadcast keeps re-INVing
             // to newly connected peers until the tx is mined or evicted. A single peer
             // fetching the tx is not sufficient evidence that the network has it: that
@@ -2534,7 +2538,7 @@ void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic
     }
 }
 
-void PeerManagerImpl::ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::vector<COutputHashRequest>& vOutputHashRequests, const std::atomic<bool>& interruptMsgProc) EXCLUSIVE_LOCKS_REQUIRED(!m_most_recent_block_mutex)
+void PeerManagerImpl::ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::vector<COutputHashRequest>& vOutputHashRequests, const std::atomic<bool>& interruptMsgProc)
 {
     AssertLockNotHeld(cs_main);
 
@@ -2557,41 +2561,19 @@ void PeerManagerImpl::ProcessGetOutputData(CNode& pfrom, Peer& peer, const std::
 
         const uint256& outputHash = outputHashRequest.output_hash;
 
-        // Try to find a transaction that contains this output hash
-        CTransactionRef tx = FindTxByOutputHash(outputHash);
+        // Resolve the output hash to its txid, then apply the same relay
+        // rules as a getdata by txid.
+        bool is_stem{false};
+        CTransactionRef tx;
+        if (const auto txid{FindTxidByOutputHash(outputHash)}) {
+            tx = FindTxForPeer(pfrom, *tx_relay, GenTxid::Txid(*txid), is_stem);
+        }
 
         if (tx) {
-            // Found a transaction with this output hash
-            const auto current_time{GetTime<std::chrono::microseconds>()};
-            auto replyMsgType = NetMsgType::TX;
-            auto txinfo = m_mempool.info(GenTxid::Txid(tx->GetHash()));
-            bool has_embargo = txinfo.tx && txinfo.m_embargo > current_time;
-
-            // Check if tx is embargoed
-            if (has_embargo) {
-                LOCK(tx_relay->m_tx_inventory_mutex);
-                LogPrint(BCLog::DANDELION, "getoutputdata tx=%s has_embargo=%f peer=%d m_send_stem=%f\n", tx->GetHash().ToString(), has_embargo, pfrom.GetId(), tx_relay->m_send_stem);
-                // Set the reply message type to DTX for embargoed TX data
-                replyMsgType = NetMsgType::DTX;
-
-                // Check if peer selected as stem peer
-                if (!tx_relay->m_send_stem) {
-                    // Don't send embargoed Inv to non stem peers
-                    continue;
-                }
-            }
-
-            // Send the transaction with witness data
-            MakeAndPushMessage(pfrom, replyMsgType, TX_WITH_WITNESS(*tx));
+            MakeAndPushMessage(pfrom, is_stem ? NetMsgType::DTX : NetMsgType::TX, TX_WITH_WITNESS(*tx));
             // Keep tx in the unbroadcast set; see matching note in ProcessGetData.
-            // ReattemptInitialBroadcast must keep re-INVing to new peers until the
-            // tx is mined or evicted — a single fetch by output hash is not proof
-            // that the network has it.
         } else {
-            // Create a notfound entry for this output hash
-            // We'll use MSG_OUTPUT_HASH type for notfound responses
-            CInv notFoundInv(MSG_OUTPUT_HASH, outputHash);
-            vNotFound.push_back(notFoundInv);
+            vNotFound.emplace_back(MSG_OUTPUT_HASH, outputHash);
         }
     }
 
@@ -4447,8 +4429,8 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             // Check if any parent transaction has been rejected
             // With the new output hash prevout system, we need to look up the transaction hash from the output hash
             for (const uint256& parent_output_hash : unique_parent_output_hashes) {
-                CTransactionRef parent_tx = FindTxByOutputHash(parent_output_hash);
-                if (parent_tx && m_recent_rejects.contains(parent_tx->GetHash().ToUint256())) {
+                const auto parent_txid{FindTxidByOutputHash(parent_output_hash)};
+                if (parent_txid && m_recent_rejects.contains(*parent_txid)) {
                     fRejectedParents = true;
                     break;
                 }
@@ -4459,11 +4441,10 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                 std::vector<CInv> vGetData;
                 for (const uint256& parent_output_hash : unique_parent_output_hashes) {
                     // Check if we already have the transaction by looking up the transaction that contains this output hash
-                    CTransactionRef parent_tx = FindTxByOutputHash(parent_output_hash);
-                    if (parent_tx) {
+                    const auto parent_txid{FindTxidByOutputHash(parent_output_hash)};
+                    if (parent_txid) {
                         // If we found the transaction, check if we already have it
-                        const auto gtxid = GenTxid::Wtxid(parent_tx->GetWitnessHash());
-                        if (AlreadyHaveTx(gtxid)) {
+                        if (AlreadyHaveTx(GenTxid::Txid(*parent_txid))) {
                             // Already have this transaction, skip requesting it
                             continue;
                         }

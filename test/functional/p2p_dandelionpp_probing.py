@@ -20,11 +20,13 @@ from test_framework.messages import (
         CInv,
         msg_getdata,
         msg_mempool,
+        MSG_WITNESS_TX,
         MSG_WTX,
         MSG_DWTX,
 )
 from test_framework.p2p import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
+from test_framework.util import assert_equal
 from test_framework.wallet import MiniWallet
 
 
@@ -63,6 +65,16 @@ class DandelionProbingTest(BitcoinTestFramework):
             self.log.info("Sending msg_getdata: CInv({}, {})".format(tx_type, txid))
 
             assert peer.last_message.get("notfound")
+
+        self.log.info("Requesting the tx by one of its output hashes applies the same rule")
+        output_hash = tx["tx"].vout[0].hash()
+        peer.last_message.pop("notfound", None)
+        peer.send_and_ping(msg_getdata([CInv(t=MSG_WITNESS_TX, h=output_hash)]))
+        notfound = peer.last_message.get("notfound")
+        assert notfound
+        assert_equal([inv.hash for inv in notfound.vec], [output_hash])
+        assert "tx" not in peer.last_message
+        assert "dtx" not in peer.last_message
 
 
 if __name__ == "__main__":
