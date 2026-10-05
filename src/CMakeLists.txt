@@ -358,6 +358,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     node/mempool_persist_args.cpp
     node/miner.cpp
     node/mini_miner.cpp
+    node/outkeys.cpp
     node/minisketchwrapper.cpp
     node/peerman_args.cpp
     node/psbt.cpp

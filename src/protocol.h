@@ -304,6 +304,20 @@ extern const char* GETP2PMSGS;
  * and whether the requested window was scanned to the end.
  */
 extern const char* P2PMSGS;
+/**
+ * getoutkeys requests the per-block output keys for a range of blocks: a
+ * uint32 start height and the hash of the last block of the range.
+ * Only available with service bit NODE_OUTKEYS.
+ */
+extern const char* GETOUTKEYS;
+/**
+ * outkeys is a response to a getoutkeys request, sent once per block in
+ * height order. It carries the block hash, the scanning keys (output hash,
+ * blinding key, spending key, view tag and, for outputs without a spending
+ * key, the scriptPubKey) of every output with BLSCT keys in block order, and
+ * the output hashes spent by the block.
+ */
+extern const char* OUTKEYS;
 }; // namespace NetMsgType
 
 /* Get a vector of all valid message types (see above) */
@@ -396,6 +410,13 @@ enum ServiceFlags : uint64_t {
     // a v1 node never sees it advertise NODE_P2PMSG, so it never sends v1
     // traffic here either. Navio-specific; occupies a reserved-experiment bit.
     NODE_P2PMSG_V2 = (1 << 27),
+
+    // NODE_OUTKEYS means the node serves getoutkeys requests: for a range of
+    // blocks, the keys a BLSCT wallet needs to recognise its outputs (without
+    // range proofs) and the output hashes each block spends. Enabled with
+    // -peeroutkeys. Navio-specific; occupies a reserved-experiment bit (bits
+    // 24-27 are p2pmsg's).
+    NODE_OUTKEYS = (1 << 28),
 
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the

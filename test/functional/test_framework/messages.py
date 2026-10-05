@@ -57,6 +57,7 @@ NODE_P2PMSG = (1 << 24)
 NODE_P2PMSG_LEAF = (1 << 25)
 NODE_P2PMSG_ARCHIVE = (1 << 26)
 NODE_P2PMSG_V2 = (1 << 27)
+NODE_OUTKEYS = (1 << 28)
 
 MSG_TX = 1
 MSG_BLOCK = 2
@@ -2471,6 +2472,84 @@ class msg_no_witness_blocktxn(msg_blocktxn):
 
     def serialize(self):
         return self.block_transactions.serialize(with_witness=False)
+
+
+class OutKeysEntry:
+    __slots__ = ("out_id", "blinding_key", "spending_key", "view_tag", "script")
+
+    def __init__(self):
+        self.out_id = 0
+        self.blinding_key = b"\x00" * 48
+        self.spending_key = b"\x00" * 48
+        self.view_tag = 0
+        self.script = b""
+
+    def deserialize(self, f):
+        self.out_id = deser_uint256(f)
+        self.blinding_key = f.read(48)
+        self.spending_key = f.read(48)
+        self.view_tag = struct.unpack("<H", f.read(2))[0]
+        self.script = deser_string(f)
+
+    def serialize(self):
+        r = b""
+        r += ser_uint256(self.out_id)
+        r += self.blinding_key
+        r += self.spending_key
+        r += struct.pack("<H", self.view_tag)
+        r += ser_string(self.script)
+        return r
+
+    def __repr__(self):
+        return "OutKeysEntry(out_id={:064x}, view_tag={})".format(self.out_id, self.view_tag)
+
+
+class msg_getoutkeys:
+    __slots__ = ("start_height", "stop_hash")
+    msgtype = b"getoutkeys"
+
+    def __init__(self, start_height=None, stop_hash=None):
+        self.start_height = start_height
+        self.stop_hash = stop_hash
+
+    def deserialize(self, f):
+        self.start_height = struct.unpack("<I", f.read(4))[0]
+        self.stop_hash = deser_uint256(f)
+
+    def serialize(self):
+        r = b""
+        r += struct.pack("<I", self.start_height)
+        r += ser_uint256(self.stop_hash)
+        return r
+
+    def __repr__(self):
+        return "msg_getoutkeys(start_height={}, stop_hash={:x})".format(self.start_height, self.stop_hash)
+
+
+class msg_outkeys:
+    __slots__ = ("block_hash", "outputs", "spent")
+    msgtype = b"outkeys"
+
+    def __init__(self, block_hash=None, outputs=None, spent=None):
+        self.block_hash = block_hash
+        self.outputs = outputs if outputs is not None else []
+        self.spent = spent if spent is not None else []
+
+    def deserialize(self, f):
+        self.block_hash = deser_uint256(f)
+        self.outputs = deser_vector(f, OutKeysEntry)
+        self.spent = deser_uint256_vector(f)
+
+    def serialize(self):
+        r = b""
+        r += ser_uint256(self.block_hash)
+        r += ser_vector(self.outputs)
+        r += ser_uint256_vector(self.spent)
+        return r
+
+    def __repr__(self):
+        return "msg_outkeys(block_hash={:x}, outputs={}, spent={})".format(
+            self.block_hash, len(self.outputs), len(self.spent))
 
 
 class msg_getcfilters:

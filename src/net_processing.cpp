@@ -23,6 +23,7 @@
 #include <netbase.h>
 #include <netmessagemaker.h>
 #include <node/blockstorage.h>
+#include <node/outkeys.h>
 #include <node/txreconciliation.h>
 #include <p2pmsg/archive.h>
 #include <p2pmsg/transport.h>
@@ -1093,6 +1094,15 @@ private:
      * @param[in]   vRecv           The raw message received
      */
     void ProcessGetCFHeaders(CNode& node, Peer& peer, DataStream& vRecv);
+
+    /**
+     * Handle a getoutkeys request: one outkeys message per block of the
+     * requested range, read from the block files, until the reply reaches
+     * the outkeys_max_reply_bytes budget.
+     *
+     * May disconnect from the peer in the case of a bad request.
+     */
+    void ProcessGetOutKeys(CNode& node, Peer& peer, DataStream& vRecv);
 
     /**
      * Handle a getcfcheckpt request.
@@ -3357,6 +3367,74 @@ void PeerManagerImpl::ProcessGetCFCheckPt(CNode& node, Peer& peer, DataStream& v
               headers);
 }
 
+void PeerManagerImpl::ProcessGetOutKeys(CNode& node, Peer& peer, DataStream& vRecv)
+{
+    uint32_t start_height;
+    uint256 stop_hash;
+    vRecv >> start_height >> stop_hash;
+
+    // Same request validation as getcfilters (see PrepareBlockFilterRequest).
+    if (!(peer.m_our_services & NODE_OUTKEYS)) {
+        LogPrint(BCLog::NET, "peer %d sent getoutkeys but we do not serve output keys\n", node.GetId());
+        node.fDisconnect = true;
+        return;
+    }
+
+    const CBlockIndex* stop_index;
+    {
+        LOCK(cs_main);
+        stop_index = m_chainman.m_blockman.LookupBlockIndex(stop_hash);
+        if (!stop_index || !BlockRequestAllowed(stop_index)) {
+            LogPrint(BCLog::NET, "peer %d requested invalid block hash: %s\n",
+                     node.GetId(), stop_hash.ToString());
+            node.fDisconnect = true;
+            return;
+        }
+    }
+
+    const uint32_t stop_height = stop_index->nHeight;
+    if (start_height > stop_height) {
+        LogPrint(BCLog::NET, "peer %d sent invalid getoutkeys with start height %d and stop height %d\n",
+                 node.GetId(), start_height, stop_height);
+        node.fDisconnect = true;
+        return;
+    }
+    if (stop_height - start_height >= node::MAX_GETOUTKEYS_SIZE) {
+        LogPrint(BCLog::NET, "peer %d requested too many outkeys: %d / %d\n",
+                 node.GetId(), stop_height - start_height + 1, node::MAX_GETOUTKEYS_SIZE);
+        node.fDisconnect = true;
+        return;
+    }
+
+    uint64_t reply_bytes{0};
+    for (uint32_t height = start_height; height <= stop_height; ++height) {
+        const CBlockIndex* pindex{stop_index->GetAncestor(height)};
+        if (WITH_LOCK(cs_main, return !(pindex->nStatus & BLOCK_HAVE_DATA))) {
+            LogPrint(BCLog::NET, "outkeys: block %s not available, stopping reply to peer %d\n",
+                     pindex->GetBlockHash().ToString(), node.GetId());
+            return;
+        }
+        CBlock block;
+        if (!m_chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
+            LogPrint(BCLog::NET, "outkeys: failed to read block %s, stopping reply to peer %d\n",
+                     pindex->GetBlockHash().ToString(), node.GetId());
+            return;
+        }
+        const node::BlockOutKeys out_keys{node::BuildBlockOutKeys(block)};
+        const uint64_t size{GetSerializeSize(out_keys)};
+        // Always send the first block so that every request makes progress;
+        // stop before any later block that would take the reply over budget.
+        // The peer continues with a new request from the next height.
+        if (height != start_height && reply_bytes + size > m_opts.outkeys_max_reply_bytes) {
+            LogPrint(BCLog::NET, "outkeys: reply to peer %d reached %u bytes, stopping before height %d\n",
+                     node.GetId(), reply_bytes, height);
+            return;
+        }
+        reply_bytes += size;
+        MakeAndPushMessage(node, NetMsgType::OUTKEYS, out_keys);
+    }
+}
+
 void PeerManagerImpl::ProcessBlock(CNode& node, const std::shared_ptr<const CBlock>& block, bool force_processing, bool min_pow_checked)
 {
     bool new_block{false};
@@ -5134,6 +5212,11 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
     if (msg_type == NetMsgType::GETCFCHECKPT) {
         ProcessGetCFCheckPt(pfrom, *peer, vRecv);
+        return;
+    }
+
+    if (msg_type == NetMsgType::GETOUTKEYS) {
+        ProcessGetOutKeys(pfrom, *peer, vRecv);
         return;
     }
 

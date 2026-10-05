@@ -58,6 +58,8 @@ from test_framework.messages import (
     msg_getcfilters,
     msg_getdata,
     msg_getoutputdata,
+    msg_getoutkeys,
+    msg_outkeys,
     msg_getheaders,
     msg_headers,
     msg_inv,
@@ -133,6 +135,8 @@ MESSAGEMAP = {
     b"getcfilters": msg_getcfilters,
     b"getdata": msg_getdata,
     b"getoutputdata": msg_getoutputdata,
+    b"getoutkeys": msg_getoutkeys,
+    b"outkeys": msg_outkeys,
     b"getheaders": msg_getheaders,
     b"headers": msg_headers,
     b"inv": msg_inv,
@@ -161,6 +165,7 @@ MAGIC_BYTES = {
     "mainnet": b"\xdb\xd2\xb1\xac",   # mainnet
     "testnet3": b"\xe2\xbe\x8d\xb7",  # testnet3
     "regtest": b"\xfd\xbf\x9f\xfb",   # regtest
+    "blsctregtest": b"\xfd\xbf\x9f\xfb",  # blsctregtest (same magic as regtest)
     "signet": b"\x0a\x03\xcf\x40",    # signet
 }
 
@@ -427,6 +432,8 @@ class P2PInterface(P2PConnection):
     def on_dp2pmsg(self, message): pass
     def on_p2pmsgchal(self, message): pass
     def on_p2pmsgs(self, message): pass
+    def on_getoutkeys(self, message): pass
+    def on_outkeys(self, message): pass
     def on_block(self, message): pass
     def on_blocktxn(self, message): pass
     def on_cfcheckpt(self, message): pass
