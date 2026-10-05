@@ -437,6 +437,17 @@ enum ServiceFlags : uint64_t {
     // NODE_OUTKEYS and NODE_OUTKEYS_PIR (the light-wallet output-key service).
     NODE_P2P_WS = (1 << 30),
 
+    // Navio's use of the experiment range (bits 24-31). Keep this table in
+    // step when taking a bit:
+    //   24  NODE_P2PMSG          p2pmsg relay, envelope v1
+    //   25  NODE_P2PMSG_LEAF     p2pmsg delivery only, never a stem hop
+    //   26  NODE_P2PMSG_ARCHIVE  p2pmsg retention, serves getp2pmsgs
+    //   27  NODE_P2PMSG_V2       p2pmsg relay, envelope v2
+    //   28  NODE_OUTKEYS         light-wallet output keys (getoutkeys)
+    //   29  NODE_OUTKEYS_PIR     reserved: PIR variant of the output-key service
+    //   30  NODE_P2P_WS          WebSocket P2P listener (wsendpoint)
+    //   31  free
+    //
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the
     // bitcoin-development mailing list. Remember that service bits are just
