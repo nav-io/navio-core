@@ -29,6 +29,7 @@ void DummyWalletInit::AddWalletOptions(ArgsManager& argsman) const
     argsman.AddHiddenArgs({
         "-addresstype",
         "-avoidpartialspends",
+        "-blsctpadoutputs",
         "-changetype",
         "-consolidatefeerate=<amt>",
         "-consolidatestakedcommitments",

@@ -387,6 +387,7 @@ BASE_SCRIPTS = [
     'blsct_cold_signing.py',
     'blsct_import_scriptpubkeys.py',
     'blsct_subtractfee_comment.py',
+    'blsct_uniform_tx_shape.py',
     'bls_message_signing.py',
     'blsct_legacy_rpc_guards.py',
     'p2pmsg_echo.py',
