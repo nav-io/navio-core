@@ -15,6 +15,8 @@
 #include <undo.h>
 #include <validation.h>
 
+#include <stdexcept>
+
 using kernel::ApplyCoinHash;
 using kernel::CCoinsStats;
 using kernel::GetBogoSize;
@@ -23,6 +25,15 @@ using kernel::RemoveCoinHash;
 static constexpr uint8_t DB_BLOCK_HASH{'s'};
 static constexpr uint8_t DB_BLOCK_HEIGHT{'t'};
 static constexpr uint8_t DB_MUHASH{'M'};
+static constexpr uint8_t DB_VERSION{'V'};
+
+//! Version of the coin commitment stored in this index. Bump it whenever the
+//! per-coin serialization hashed by kernel::ApplyCoinHash changes: an index
+//! written under another version would mix old and new per-coin hashes in
+//! its running MuHash, so it is wiped and rebuilt instead.
+//!   0 (no key): full BLSCT output hashed on add, stripped undo form on spend
+//!   1: canonical stripped form on both add and spend
+static constexpr uint32_t COINSTATSINDEX_VERSION{1};
 
 namespace {
 
@@ -110,6 +121,20 @@ CoinStatsIndex::CoinStatsIndex(std::unique_ptr<interfaces::Chain> chain, size_t 
     fs::create_directories(path);
 
     m_db = std::make_unique<CoinStatsIndex::DB>(path / "db", n_cache_size, f_memory, f_wipe);
+
+    uint32_t version{0};
+    if (!m_db->Read(DB_VERSION, version) || version != COINSTATSINDEX_VERSION) {
+        if (!m_db->IsEmpty()) {
+            LogPrintf("%s: index was built with coin hash version %u, current is %u; rebuilding\n",
+                      GetName(), version, COINSTATSINDEX_VERSION);
+            // Release the LevelDB lock before reopening the same path.
+            m_db.reset();
+            m_db = std::make_unique<CoinStatsIndex::DB>(path / "db", n_cache_size, f_memory, /*f_wipe=*/true);
+        }
+        if (!m_db->Write(DB_VERSION, COINSTATSINDEX_VERSION, /*fSync=*/true)) {
+            throw std::runtime_error(strprintf("%s: failed to write index version", GetName()));
+        }
+    }
 }
 
 bool CoinStatsIndex::CustomAppend(const interfaces::BlockInfo& block)
@@ -147,13 +172,6 @@ bool CoinStatsIndex::CustomAppend(const interfaces::BlockInfo& block)
         assert(block.data);
         for (size_t i = 0; i < block.data->vtx.size(); ++i) {
             const auto& tx{block.data->vtx.at(i)};
-
-            // Skip duplicate txid coinbase transactions (BIP30).
-            if (IsBIP30Unspendable(*pindex) && tx->IsCoinBase()) {
-                m_total_unspendable_amount += block_subsidy;
-                m_total_unspendables_bip30 += block_subsidy;
-                continue;
-            }
 
             for (uint32_t j = 0; j < tx->vout.size(); ++j) {
                 const CTxOut& out{tx->vout[j]};
