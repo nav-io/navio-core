@@ -508,6 +508,16 @@ additional listening socket, alongside the ordinary `-bind`/`-port` ones.
   every `-p2pwsbind` is loopback do not set the bit. Received announcements
   are shown in `getpeerinfo` as `ws_port` / `ws_url`; they are informational
   and unauthenticated, and an invalid one is ignored without penalty.
+  `wsendpoint` is only sent over clearnet connections (IPv4, IPv6, and
+  loopback/LAN peers); peers reached over Tor, I2P or CJDNS never receive it,
+  so the clearnet port or URL is not linked to the node's privacy-network
+  identity. Tor inbound is recognised by its `-bind=...=onion` listener, so an
+  onion service must forward to such a bind, not to the clearnet one.
+- **Private addresses.** Any non-loopback `-p2pwsbind`, including a private
+  LAN address such as `192.168.x.x` or `10.x.x.x`, sets `NODE_P2P_WS`, and
+  peers are told to dial `ws://<the address they see>:<port>`. Behind NAT that
+  only works if the port is forwarded to the listener; otherwise bind to
+  loopback, or front the listener with a proxy and set `-p2pwsexternal`.
 
 ## Status / what is wired
 

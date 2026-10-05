@@ -383,6 +383,11 @@ class P2PWebSocketTest(BitcoinTestFramework):
             match=ErrorMatch.PARTIAL_REGEX,
         )
         node.assert_start_raises_init_error(
+            [f"-p2pwsbind={host}:{ws_port}", "-p2pwsexternal=ws://example.com:0"],
+            "Invalid -p2pwsexternal URL: 'ws://example.com:0'",
+            match=ErrorMatch.PARTIAL_REGEX,
+        )
+        node.assert_start_raises_init_error(
             ["-p2pwsexternal=wss://example.com"],
             "-p2pwsexternal requires -p2pwsbind",
             match=ErrorMatch.PARTIAL_REGEX,
@@ -397,6 +402,7 @@ class P2PWebSocketTest(BitcoinTestFramework):
         peer.sync_with_ping()
         with p2p_lock:
             msg = peer.last_message.get("wsendpoint")
+        self.last_peer_network = node.getpeerinfo()[0]["network"]
         node.disconnect_p2ps()
         self.wait_until(lambda: node.getpeerinfo() == [])
         return msg
@@ -425,7 +431,9 @@ class P2PWebSocketTest(BitcoinTestFramework):
         ])
         assert "P2P_WS" in node.getnetworkinfo()["localservicesnames"]
         assert_equal(self.wsendpoint_from_node(node, dstport=onion_port), None)
+        assert_equal(self.last_peer_network, "onion")
         msg = self.wsendpoint_from_node(node)
+        assert_equal(self.last_peer_network, "not_publicly_routable")
         assert_equal((msg.port, msg.url), (443, b"wss://node.example.com/p2p"))
 
         self.log.info("-p2pwsexternal announces the proxied URL and its port")
