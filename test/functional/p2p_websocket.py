@@ -389,9 +389,9 @@ class P2PWebSocketTest(BitcoinTestFramework):
         )
         self.start_node(0)
 
-    def wsendpoint_from_node(self, node):
+    def wsendpoint_from_node(self, node, **kwargs):
         """Connect a plain TCP peer and return the wsendpoint it got, or None."""
-        peer = node.add_p2p_connection(P2PInterface())
+        peer = node.add_p2p_connection(P2PInterface(), **kwargs)
         # Anything the node sends after verack is in flight once a ping
         # round-trips, since messages go out in order.
         peer.sync_with_ping()
@@ -415,6 +415,18 @@ class P2PWebSocketTest(BitcoinTestFramework):
         assert int(info["localservices"], 16) & NODE_P2P_WS
         msg = self.wsendpoint_from_node(node)
         assert_equal((msg.port, msg.url), (ws_port, b""))
+
+        self.log.info("wsendpoint is not sent over a Tor (onion-bound) connection")
+        onion_port = p2p_port(self.num_nodes + 1)
+        self.restart_node(0, extra_args=[
+            f"-p2pwsbind={host}:{ws_port}",
+            "-p2pwsexternal=wss://node.example.com/p2p",
+            f"-bind=127.0.0.1:{onion_port}=onion",
+        ])
+        assert "P2P_WS" in node.getnetworkinfo()["localservicesnames"]
+        assert_equal(self.wsendpoint_from_node(node, dstport=onion_port), None)
+        msg = self.wsendpoint_from_node(node)
+        assert_equal((msg.port, msg.url), (443, b"wss://node.example.com/p2p"))
 
         self.log.info("-p2pwsexternal announces the proxied URL and its port")
         self.restart_node(0, extra_args=[f"-p2pwsbind={host}:{ws_port}", "-p2pwsexternal=wss://node.example.com/p2p"])

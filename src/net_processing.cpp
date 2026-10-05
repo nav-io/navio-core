@@ -3837,7 +3837,18 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
         // Tell the peer where our WebSocket listener is: NODE_P2P_WS alone
         // says we have one, but a service bit cannot carry the port.
-        if (m_opts.ws_port != 0) {
+        //
+        // Only over clearnet. The endpoint is a clearnet port (or, with
+        // -p2pwsexternal, a clearnet URL), so announcing it to a peer that
+        // reached us over Tor/I2P/CJDNS -- or that we reached over one --
+        // would tie that identity to our clearnet host, the same reason
+        // GetLocalAddrForPeer never offers a clearnet address there.
+        // NET_UNROUTABLE covers loopback and LAN peers, which are not privacy
+        // networks; inbound Tor is recognised by its -bind=...=onion listener
+        // (m_inbound_onion), as everywhere else in net.
+        const Network conn_net{pfrom.ConnectedThroughNetwork()};
+        const bool clearnet{conn_net == NET_IPV4 || conn_net == NET_IPV6 || conn_net == NET_UNROUTABLE};
+        if (m_opts.ws_port != 0 && clearnet) {
             MakeAndPushMessage(pfrom, NetMsgType::WSENDPOINT, m_opts.ws_port, m_opts.ws_url);
         }
 
