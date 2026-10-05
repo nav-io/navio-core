@@ -22,6 +22,7 @@
 #include <util/moneystr.h>
 #include <util/transaction_identifier.h> // IWYU pragma: export
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <ios>
@@ -595,9 +596,12 @@ private:
     const bool m_has_witness;
     const Txid hash;
     const Wtxid m_witness_hash;
+    /** Output ids (CTxOut::GetHash() of each vout), in vout order. */
+    const std::vector<Outid> m_output_ids;
 
     Txid ComputeHash() const;
     Wtxid ComputeWitnessHash() const;
+    std::vector<Outid> ComputeOutputIds() const;
 
     bool ComputeHasWitness() const;
 
@@ -625,6 +629,19 @@ public:
 
     const Txid& GetHash() const LIFETIMEBOUND { return hash; }
     const Wtxid& GetWitnessHash() const LIFETIMEBOUND { return m_witness_hash; };
+
+    /**
+     * Output ids, i.e. CTxOut::GetHash() of every vout in order. An output is
+     * referenced (COutPoint) by this id, and the transaction is immutable, so
+     * the ids are computed once at construction rather than re-hashing an
+     * output (including a BLSCT range proof) on every lookup.
+     */
+    const std::vector<Outid>& GetOutputIds() const LIFETIMEBOUND { return m_output_ids; }
+    const Outid& GetOutputId(size_t i) const LIFETIMEBOUND
+    {
+        assert(i < m_output_ids.size());
+        return m_output_ids[i];
+    }
 
     // Return sum of txouts.
     CAmount GetValueOut() const;

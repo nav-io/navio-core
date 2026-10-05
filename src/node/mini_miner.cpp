@@ -91,7 +91,7 @@ MiniMiner::MiniMiner(const CTxMemPool& mempool, const std::vector<COutPoint>& ou
             // Populate m_mapOutputToTx for parent-child relationship tracking
             const auto& tx = txiter->GetTx();
             for (size_t i = 0; i < tx.vout.size(); ++i) {
-                m_mapOutputToTx[tx.vout[i].GetHash()] = tx.GetHash();
+                m_mapOutputToTx[tx.GetOutputId(i)] = tx.GetHash();
             }
         } else {
             auto outpoints_it = m_requested_outpoints_by_txid.find(txiter->GetTx().GetHash());
@@ -160,7 +160,7 @@ MiniMiner::MiniMiner(const std::vector<MiniMinerMempoolEntry>& manual_entries,
             // Populate m_mapOutputToTx for parent-child relationship tracking
             const auto& tx = entry.GetTx();
             for (size_t i = 0; i < tx.vout.size(); ++i) {
-                m_mapOutputToTx[tx.vout[i].GetHash()] = tx.GetHash();
+                m_mapOutputToTx[tx.GetOutputId(i)] = tx.GetHash();
             }
         }
     }
@@ -272,7 +272,7 @@ void MiniMiner::DeleteAncestorPackage(const std::set<MockEntryMap::iterator, Ite
         // Remove entries from m_mapOutputToTx
         const auto& tx = anc->second.GetTx();
         for (size_t i = 0; i < tx.vout.size(); ++i) {
-            m_mapOutputToTx.erase(tx.vout[i].GetHash());
+            m_mapOutputToTx.erase(tx.GetOutputId(i));
         }
 
         auto vec_it = std::find(m_entries.begin(), m_entries.end(), anc);

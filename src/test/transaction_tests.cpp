@@ -1110,4 +1110,35 @@ BOOST_AUTO_TEST_CASE(spends_witness_prog)
     }
 }
 
+BOOST_AUTO_TEST_CASE(output_ids_match_output_hashes)
+{
+    CMutableTransaction mtx;
+    mtx.vin.emplace_back(COutPoint(uint256::ONE));
+    for (int i = 0; i < 3; ++i) {
+        mtx.vout.emplace_back(1000 + i, CScript() << OP_TRUE);
+    }
+    mtx.vout.emplace_back(0, CScript() << OP_RETURN);
+
+    const auto check = [&](const CTransaction& tx) {
+        BOOST_REQUIRE_EQUAL(tx.GetOutputIds().size(), mtx.vout.size());
+        for (size_t i = 0; i < mtx.vout.size(); ++i) {
+            BOOST_CHECK(tx.GetOutputId(i) == mtx.vout[i].GetHash());
+            BOOST_CHECK(tx.GetOutputIds()[i] == tx.vout[i].GetHash());
+        }
+    };
+
+    // Built from a mutable transaction (copy and move) and deserialized.
+    check(CTransaction{mtx});
+    check(CTransaction{CMutableTransaction{mtx}});
+    DataStream ss;
+    ss << TX_WITH_WITNESS(mtx);
+    CTransactionRef tx;
+    ss >> TX_WITH_WITNESS(tx);
+    check(*tx);
+
+    // No outputs, no ids.
+    CMutableTransaction empty;
+    BOOST_CHECK(CTransaction{empty}.GetOutputIds().empty());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
