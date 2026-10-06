@@ -21,4 +21,4 @@
   `navio-wallet info` refuse it with the error "This wallet uses an external
   signer, which this build no longer supports". `navio-wallet dump` can still
   export its records, but `navio-wallet createfromdump` refuses such a dump with
-  the same error instead of creating a wallet that cannot be loaded.
+  a similar error instead of creating a wallet that cannot be loaded.

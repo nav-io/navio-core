@@ -901,10 +901,14 @@ BOOST_FIXTURE_TEST_CASE(CreateWalletWithoutChain, BasicTestingSetup)
     UnloadWallet(std::move(wallet));
 }
 
-BOOST_FIXTURE_TEST_CASE(CreateWalletRejectsExternalSigner, BasicTestingSetup)
+BOOST_FIXTURE_TEST_CASE(CreateWalletRejectsExternalSigner, TestingSetup)
 {
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    // A chain is needed so that a regression fails the checks below instead
+    // of crashing inside CreateWallet.
     WalletContext context;
     context.args = &m_args;
+    context.chain = m_node.chain.get();
     DatabaseOptions options;
     options.require_create = true;
     options.create_flags = WALLET_FLAG_DESCRIPTORS | WALLET_FLAG_DISABLE_PRIVATE_KEYS | WALLET_FLAG_EXTERNAL_SIGNER;
@@ -919,6 +923,10 @@ BOOST_FIXTURE_TEST_CASE(CreateWalletRejectsExternalSigner, BasicTestingSetup)
     BOOST_CHECK_EQUAL(error.original, "Cannot create a wallet that uses an external signer, which this build no longer supports");
     // Nothing may be written to disk.
     BOOST_CHECK(!fs::exists(GetWalletDir() / fs::PathFromString(name)));
+    if (created) {
+        RemoveWallet(context, created, /*load_on_start=*/std::nullopt);
+        TestUnloadWallet(std::move(created));
+    }
 }
 
 BOOST_FIXTURE_TEST_CASE(ZapSelectTx, TestChain100Setup)
