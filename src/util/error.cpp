@@ -35,10 +35,6 @@ bilingual_str TransactionErrorString(const TransactionError err)
             return Untranslated("Fee exceeds maximum configured by user (e.g. -maxtxfee, maxfeerate)");
         case TransactionError::MAX_BURN_EXCEEDED:
             return Untranslated("Unspendable output exceeds maximum configured by user (maxburnamount)");
-        case TransactionError::EXTERNAL_SIGNER_NOT_FOUND:
-            return Untranslated("External signer not found");
-        case TransactionError::EXTERNAL_SIGNER_FAILED:
-            return Untranslated("External signer failed to sign");
         case TransactionError::INVALID_PACKAGE:
             return Untranslated("Transaction rejected due to invalid package");
         // no default case, so the compiler can warn about missing cases

@@ -18,7 +18,6 @@ void RegisterNetRPCCommands(CRPCTable&);
 void RegisterOutputScriptRPCCommands(CRPCTable&);
 void RegisterRawTransactionRPCCommands(CRPCTable &tableRPC);
 void RegisterSignMessageRPCCommands(CRPCTable&);
-void RegisterSignerRPCCommands(CRPCTable &tableRPC);
 void RegisterTxoutProofRPCCommands(CRPCTable&);
 void RegisterTokenRPCCommands(CRPCTable&);
 void RegisterRangeProofRPCCommands(CRPCTable&);
@@ -34,9 +33,6 @@ static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
     RegisterOutputScriptRPCCommands(t);
     RegisterRawTransactionRPCCommands(t);
     RegisterSignMessageRPCCommands(t);
-#ifdef ENABLE_EXTERNAL_SIGNER
-    RegisterSignerRPCCommands(t);
-#endif // ENABLE_EXTERNAL_SIGNER
     RegisterTxoutProofRPCCommands(t);
     RegisterTokenRPCCommands(t);
     RegisterRangeProofRPCCommands(t);

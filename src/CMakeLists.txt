@@ -230,7 +230,6 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     common/interfaces.cpp
     common/netif.cpp
     common/pcp.cpp
-    common/run_command.cpp
     common/settings.cpp
     common/system.cpp
     common/url.cpp
@@ -238,7 +237,6 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     core_read.cpp
     core_write.cpp
     deploymentinfo.cpp
-    external_signer.cpp
     init/common.cpp
     kernel/chainparams.cpp
     key.cpp
@@ -253,7 +251,6 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     policy/policy.cpp
     protocol.cpp
     psbt.cpp
-    rpc/external_signer.cpp
     rpc/rawtransaction_util.cpp
     rpc/request.cpp
     rpc/util.cpp

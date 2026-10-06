@@ -86,6 +86,27 @@ BOOST_FIXTURE_TEST_CASE(wallet_load_descriptors, TestingSetup)
     }
 }
 
+BOOST_FIXTURE_TEST_CASE(wallet_load_external_signer, TestingSetup)
+{
+    // External signer support has been removed, but the flag stays known so
+    // that such a wallet is refused explicitly rather than as an unknown flag.
+    std::unique_ptr<WalletDatabase> database = CreateMockableWalletDatabase();
+    {
+        WalletBatch batch(*database, false);
+        BOOST_CHECK(batch.WriteWalletFlags(WALLET_FLAG_DESCRIPTORS | WALLET_FLAG_DISABLE_PRIVATE_KEYS | WALLET_FLAG_EXTERNAL_SIGNER));
+    }
+
+    bool found = false;
+    DebugLogHelper logHelper("This wallet uses an external signer, which this build no longer supports", [&](const std::string* s) {
+        found = true;
+        return false;
+    });
+
+    const std::shared_ptr<CWallet> wallet(new CWallet(m_node.chain.get(), "", std::move(database)));
+    BOOST_CHECK_EQUAL(wallet->LoadWallet(), DBErrors::EXTERNAL_SIGNER_SUPPORT_REQUIRED);
+    BOOST_CHECK(found); // The error must be logged
+}
+
 bool HasAnyRecordOfType(WalletDatabase& db, const std::string& key)
 {
     std::unique_ptr<DatabaseBatch> batch = db.MakeBatch(false);
