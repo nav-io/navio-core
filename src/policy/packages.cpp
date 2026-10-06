@@ -120,6 +120,19 @@ bool IsWellFormedPackage(const Package& txns, PackageValidationState& state, boo
     if (!IsConsistentPackage(txns)) {
         return state.Invalid(PackageValidationResult::PCKG_POLICY, "conflict-in-package");
     }
+
+    // Package transactions are checked against the mempool one by one before
+    // any of them is added, so also require each spendable output to be
+    // created only once across the package (see txn-duplicate-output).
+    std::unordered_set<uint256, SaltedTxidHasher> spendable_outids;
+    for (const auto& tx : txns) {
+        for (size_t i = 0; i < tx->vout.size(); ++i) {
+            if (tx->vout[i].scriptPubKey.IsUnspendable()) continue;
+            if (!spendable_outids.insert(tx->GetOutputId(i)).second) {
+                return state.Invalid(PackageValidationResult::PCKG_POLICY, "package-duplicate-output");
+            }
+        }
+    }
     return true;
 }
 

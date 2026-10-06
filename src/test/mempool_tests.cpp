@@ -24,6 +24,38 @@ public:
     using CTxMemPool::GetMinFee;
 };
 
+BOOST_AUTO_TEST_CASE(MempoolOutputIndexOwner)
+{
+    // Two transactions creating the same output (admission only lets this
+    // happen for unspendable outputs). The first creator owns the index
+    // entry, and removing the other one leaves it in place.
+    CMutableTransaction tx1, tx2;
+    for (auto* tx : {&tx1, &tx2}) {
+        tx->vin.resize(1);
+        tx->vin[0].prevout = COutPoint(InsecureRand256());
+        tx->vin[0].scriptSig = CScript() << OP_11;
+        tx->vout.emplace_back(0, CScript() << OP_RETURN << std::vector<unsigned char>(4, 0xaa));
+    }
+    tx2.vout.emplace_back(COIN, CScript() << OP_11 << OP_EQUAL);
+    const uint256 shared{tx1.vout[0].GetHash()};
+    BOOST_REQUIRE(shared == tx2.vout[0].GetHash());
+
+    CTxMemPool& pool = *Assert(m_node.mempool);
+    LOCK2(::cs_main, pool.cs);
+    TestMemPoolEntryHelper entry;
+    pool.addUnchecked(entry.FromTx(tx1));
+    pool.addUnchecked(entry.FromTx(tx2));
+    BOOST_CHECK(pool.mapOutputToTx.at(shared) == tx1.GetHash());
+    BOOST_CHECK(pool.mapOutputToTx.at(tx2.vout[1].GetHash()) == tx2.GetHash());
+
+    pool.removeRecursive(CTransaction(tx2), REMOVAL_REASON_DUMMY);
+    BOOST_CHECK(pool.mapOutputToTx.at(shared) == tx1.GetHash());
+    BOOST_CHECK(!pool.mapOutputToTx.contains(tx2.vout[1].GetHash()));
+
+    pool.removeRecursive(CTransaction(tx1), REMOVAL_REASON_DUMMY);
+    BOOST_CHECK(pool.mapOutputToTx.empty());
+}
+
 BOOST_AUTO_TEST_CASE(MempoolRemoveTest)
 {
     // Test CTxMemPool::remove functionality
