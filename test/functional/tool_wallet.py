@@ -11,11 +11,23 @@ import textwrap
 
 from collections import OrderedDict
 
+from test_framework.messages import hash256
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     sha256sum_file,
 )
+
+# Hex of the serialized "flags" wallet record key
+FLAGS_KEY = "05666c616773"
+# Mirrors WALLET_FLAG_EXTERNAL_SIGNER in src/wallet/walletutil.h
+WALLET_FLAG_EXTERNAL_SIGNER = 1 << 35
+
+
+def dump_checksum(dump):
+    """Compute a dumpfile checksum the way navio-wallet does: hash256 over every record line before the checksum."""
+    data = "".join(f"{k},{v}\n" for k, v in dump.items() if k != "checksum")
+    return hash256(data.encode()).hex()
 
 
 class ToolWalletTest(BitcoinTestFramework):
@@ -402,6 +414,18 @@ class ToolWalletTest(BitcoinTestFramework):
         self.assert_raises_tool_error('Error: Checksum is not the correct size', '-wallet=', '-dumpfile={}'.format(bad_sum_wallet_dump), 'createfromdump')
         assert self.nodes[0].wallets_path.exists()
         assert not (self.nodes[0].wallets_path / "wallet.dat").exists()
+
+        self.log.info('Checking createfromdump refuses an external signer wallet')
+        signer_dump_data = orig_dump.copy()
+        flags = int.from_bytes(bytes.fromhex(signer_dump_data[FLAGS_KEY]), 'little') | WALLET_FLAG_EXTERNAL_SIGNER
+        signer_dump_data[FLAGS_KEY] = flags.to_bytes(8, 'little').hex()
+        # Recompute a valid checksum so the flag is the only thing wrong with the dump
+        assert_equal(dump_checksum(orig_dump), orig_dump["checksum"])
+        signer_dump_data["checksum"] = dump_checksum(signer_dump_data)
+        signer_wallet_dump = self.nodes[0].datadir_path / "wallet-signer.dump"
+        self.write_dump(signer_dump_data, signer_wallet_dump)
+        self.assert_raises_tool_error('Error: This wallet uses an external signer, which this build no longer supports', '-wallet=signerload', '-dumpfile={}'.format(signer_wallet_dump), 'createfromdump')
+        assert not (self.nodes[0].wallets_path / "signerload").is_dir()
 
         self.log.info('Checking createfromdump with an unnamed wallet')
         self.do_tool_createfromdump("", "wallet.dump")

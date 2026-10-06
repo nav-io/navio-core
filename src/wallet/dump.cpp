@@ -5,6 +5,8 @@
 #include <wallet/dump.h>
 
 #include <common/args.h>
+#include <crypto/common.h>
+#include <streams.h>
 #include <util/fs.h>
 #include <util/translation.h>
 #include <wallet/wallet.h>
@@ -212,6 +214,9 @@ bool CreateFromDump(const ArgsManager& args, const std::string& name, const fs::
         std::unique_ptr<DatabaseBatch> batch = db.MakeBatch();
         batch->TxnBegin();
 
+        std::vector<unsigned char> flags_key;
+        VectorWriter{flags_key, 0, DBKeys::FLAGS};
+
         // Read the records from the dump file and write them to the database
         while (dump_file.good()) {
             std::string key;
@@ -250,6 +255,13 @@ bool CreateFromDump(const ArgsManager& args, const std::string& name, const fs::
 
             std::vector<unsigned char> k = ParseHex(key);
             std::vector<unsigned char> v = ParseHex(value);
+            // External signer support has been removed, and such a wallet
+            // would be refused on every load, so do not recreate one.
+            if (k == flags_key && v.size() == sizeof(uint64_t) && (ReadLE64(v.data()) & WALLET_FLAG_EXTERNAL_SIGNER)) {
+                error = _("Error: This wallet uses an external signer, which this build no longer supports");
+                ret = false;
+                break;
+            }
             if (!batch->Write(Span{k}, Span{v})) {
                 error = strprintf(_("Error: Unable to write record to new wallet"));
                 ret = false;

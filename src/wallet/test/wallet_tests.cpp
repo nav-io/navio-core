@@ -901,6 +901,26 @@ BOOST_FIXTURE_TEST_CASE(CreateWalletWithoutChain, BasicTestingSetup)
     UnloadWallet(std::move(wallet));
 }
 
+BOOST_FIXTURE_TEST_CASE(CreateWalletRejectsExternalSigner, BasicTestingSetup)
+{
+    WalletContext context;
+    context.args = &m_args;
+    DatabaseOptions options;
+    options.require_create = true;
+    options.create_flags = WALLET_FLAG_DESCRIPTORS | WALLET_FLAG_DISABLE_PRIVATE_KEYS | WALLET_FLAG_EXTERNAL_SIGNER;
+    DatabaseStatus status;
+    bilingual_str error;
+    std::vector<bilingual_str> warnings;
+    const std::string name{"external_signer"};
+    // Qualified: the CreateWallet test case above shadows the function name.
+    auto created = wallet::CreateWallet(context, name, /*seed=*/{}, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, options, status, error, warnings);
+    BOOST_CHECK(!created);
+    BOOST_CHECK(status == DatabaseStatus::FAILED_CREATE);
+    BOOST_CHECK_EQUAL(error.original, "Cannot create a wallet that uses an external signer, which this build no longer supports");
+    // Nothing may be written to disk.
+    BOOST_CHECK(!fs::exists(GetWalletDir() / fs::PathFromString(name)));
+}
+
 BOOST_FIXTURE_TEST_CASE(ZapSelectTx, TestChain100Setup)
 {
     m_args.ForceSetArg("-unsafesqlitesync", "1");
