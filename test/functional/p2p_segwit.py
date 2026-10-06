@@ -28,7 +28,7 @@ from test_framework.messages import (
     MSG_BLOCK,
     MSG_TX,
     MSG_WITNESS_FLAG,
-    MSG_WITNESS_TX,
+    MSG_OUTPUT_HASH,
     MSG_WTX,
     NODE_NETWORK,
     NODE_WITNESS,
@@ -2018,11 +2018,12 @@ class SegWitTest(BitcoinTestFramework):
             self.wtx_node.last_message.pop("getdata", None)
         test_transaction_acceptance(self.nodes[0], self.wtx_node, tx2, with_witness=True, accepted=False)
 
-        # Expect a request for parent (tx) by txid despite use of WTX peer
+        # Expect a request for the parent by the output id the orphan spends
+        # (MSG_OUTPUT_HASH), despite use of WTX peer
         self.wtx_node.wait_for_getdata([tx.vout[0].hash()], 60)
         with p2p_lock:
             lgd = self.wtx_node.lastgetdata[:]
-        assert_equal(lgd, [CInv(MSG_WITNESS_TX, tx.vout[0].hash())])
+        assert_equal(lgd, [CInv(MSG_OUTPUT_HASH, tx.vout[0].hash())])
 
         # Send tx through
         test_transaction_acceptance(self.nodes[0], self.wtx_node, tx, with_witness=False, accepted=True)

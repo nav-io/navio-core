@@ -737,4 +737,32 @@ BOOST_AUTO_TEST_CASE(TxRequestTest)
     }
 }
 
+BOOST_AUTO_TEST_CASE(TxRequestKinds)
+{
+    // Every announcement kind round-trips through the tracker, both when it
+    // becomes requestable and when a request for it expires.
+    TxRequestTracker tracker;
+    const std::vector<GenTxid> gtxids{
+        GenTxid::Txid(InsecureRand256()),
+        GenTxid::Wtxid(InsecureRand256()),
+        GenTxid::Outid(InsecureRand256()),
+    };
+    const NodeId peer{0};
+    for (const auto& gtxid : gtxids) tracker.ReceivedInv(peer, gtxid, /*preferred=*/true, NO_TIME);
+
+    const auto requestable{tracker.GetRequestable(peer, MICROSECOND)};
+    BOOST_CHECK(requestable == gtxids);
+    for (const auto& gtxid : requestable) tracker.RequestedTx(peer, gtxid.GetHash(), 2 * MICROSECOND);
+
+    std::vector<std::pair<NodeId, GenTxid>> expired;
+    BOOST_CHECK(tracker.GetRequestable(peer, 3 * MICROSECOND, &expired).empty());
+    BOOST_REQUIRE_EQUAL(expired.size(), gtxids.size());
+    for (const auto& gtxid : gtxids) {
+        BOOST_CHECK(std::count(expired.begin(), expired.end(), std::make_pair(peer, gtxid)) == 1);
+    }
+    BOOST_CHECK(GenTxid::Outid(gtxids[0].GetHash()) != gtxids[0]);
+    BOOST_CHECK(GenTxid::Outid(gtxids[0].GetHash()).IsOutid());
+    BOOST_CHECK(!GenTxid::Outid(gtxids[0].GetHash()).IsWtxid());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
