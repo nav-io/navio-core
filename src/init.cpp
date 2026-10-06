@@ -1355,6 +1355,16 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             }
             peerman_opts.ws_port = *port;
             peerman_opts.ws_url = ws_external;
+            // wsendpoint goes to every clearnet peer, and a connection made
+            // through -proxy still counts as clearnet: the node does not
+            // record that it was proxied. So a node that proxies to hide its
+            // address would hand this URL to the very peers it is hiding from.
+            const std::string proxy_arg{args.GetArg("-proxy", "")};
+            if (proxy_arg != "" && proxy_arg != "0") {
+                InitWarning(_("-p2pwsexternal is announced to every clearnet peer, including ones reached through -proxy, "
+                              "so it links this node's proxied connections to that URL. Unset -p2pwsexternal if the proxy "
+                              "is meant to hide this node's address."));
+            }
         } else {
             for (const std::string& bind_arg : args.GetArgs("-p2pwsbind")) {
                 const std::optional<CService> bind_addr{Lookup(bind_arg, default_ws_port, /*fAllowLookup=*/false)};
