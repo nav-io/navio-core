@@ -539,6 +539,34 @@ BOOST_FIXTURE_TEST_CASE(blinding_generation_is_claimed_once_and_never_repeats, T
     BOOST_CHECK_EQUAL(scalars.size(), claimed.size());
 }
 
+// Recovery only searches generations below MAX_GENERATION_SEARCH, so once an
+// anchor has used them all the counter must stop handing out derived
+// generations: the caller then falls back to a random key, which is exactly
+// as unrecoverable but no longer pretends otherwise.
+BOOST_FIXTURE_TEST_CASE(blinding_generation_stops_at_search_bound, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    auto w = MakeWallet(m_node.chain.get(), std::vector<unsigned char>(32, 0x41));
+    LOCK(w.wallet->cs_wallet);
+
+    const Outid anchor = OutidOfRepeatedByte(0x44);
+    for (uint32_t i = 0; i < blsct::MAX_GENERATION_SEARCH; ++i) {
+        const auto generation = w.km->ReserveBlindingGeneration(anchor);
+        BOOST_REQUIRE(generation.has_value());
+        BOOST_CHECK_EQUAL(*generation, i);
+    }
+
+    // Every generation recovery can find is spent; further claims fail, and
+    // keep failing rather than wrapping round to a generation already used.
+    BOOST_CHECK(!w.km->ReserveBlindingGeneration(anchor).has_value());
+    BOOST_CHECK(!w.km->ReserveBlindingGeneration(anchor).has_value());
+
+    // The bound is per anchor.
+    const auto other = w.km->ReserveBlindingGeneration(OutidOfRepeatedByte(0x45));
+    BOOST_REQUIRE(other.has_value());
+    BOOST_CHECK_EQUAL(*other, 0U);
+}
+
 BOOST_FIXTURE_TEST_CASE(explicit_blinding_key_opts_out_of_recovery, TestingSetup)
 {
     SeedInsecureRand(SeedRand::ZEROS);

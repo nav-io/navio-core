@@ -628,6 +628,18 @@ std::optional<uint32_t> KeyMan::ReserveBlindingGeneration(const Outid& anchor)
         generation = (it == m_blinding_generations.end()) ? 0 : it->second;
     }
 
+    // RecoverBlindingKey only tries generations below MAX_GENERATION_SEARCH,
+    // so a key derived at or past it could never be re-derived, and
+    // signblsctoutput could never sign for the output. A random key has the
+    // same outcome, so use one (the caller does on nullopt) and say so, rather
+    // than handing out a derived key that only looks recoverable.
+    if (generation >= MAX_GENERATION_SEARCH) {
+        LogPrintf("blsct: blinding generations for anchor %s are exhausted (%u builds); "
+                  "this output will use a random, unrecoverable blinding key\n",
+                  key.ToString(), MAX_GENERATION_SEARCH);
+        return std::nullopt;
+    }
+
     // Persist the NEXT generation before handing this one out. Writing first
     // means a crash between here and the broadcast burns a generation, which
     // costs nothing; writing afterwards could hand the same generation out
