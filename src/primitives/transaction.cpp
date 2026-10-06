@@ -11,6 +11,7 @@
 #include <serialize.h>
 #include <tinyformat.h>
 #include <uint256.h>
+#include <util/check.h>
 #include <util/strencodings.h>
 #include <util/transaction_identifier.h>
 
@@ -124,6 +125,11 @@ Wtxid CTransaction::ComputeWitnessHash() const
 
 std::vector<Outid> CTransaction::ComputeOutputIds() const
 {
+    // An output id hashes the full output. Under a StrippedForUndoScope the
+    // range-proof body is left out of the serialization, so ids computed there
+    // would be wrong -- and, unlike a one-off CTxOut::GetHash(), cached for the
+    // transaction's whole lifetime.
+    Assume(!CTxOutBLSCTData::IsStrippedForUndo());
     std::vector<Outid> ids;
     ids.reserve(vout.size());
     for (const auto& out : vout) {
