@@ -497,6 +497,27 @@ additional listening socket, alongside the ordinary `-bind`/`-port` ones.
   e.g. with Caddy: `reverse_proxy /p2p 127.0.0.1:8355` under a `https://`
   site block. Bind the listener to loopback or a private interface when it is
   fronted this way.
+- **Discovery.** A publicly usable listener is advertised with the
+  `NODE_P2P_WS` service bit (`1 << 30`), which rides `addr` gossip like any
+  other. A service bit cannot carry a port, so the node also sends each peer a
+  `wsendpoint` message right after `verack`: a `uint16` port followed by a
+  var-string URL (max 256 bytes). The URL is empty when the listener is
+  dialable directly at `ws://<peer address>:<port>`; behind a proxy set
+  `-p2pwsexternal=wss://node.example.com/p2p` and that URL (with its port, or
+  443/80 by scheme) is announced instead. Nodes without `-p2pwsexternal` whose
+  every `-p2pwsbind` is loopback do not set the bit. Received announcements
+  are shown in `getpeerinfo` as `ws_port` / `ws_url`; they are informational
+  and unauthenticated, and an invalid one is ignored without penalty.
+  `wsendpoint` is only sent over clearnet connections (IPv4, IPv6, and
+  loopback/LAN peers); peers reached over Tor, I2P or CJDNS never receive it,
+  so the clearnet port or URL is not linked to the node's privacy-network
+  identity. Tor inbound is recognised by its `-bind=...=onion` listener, so an
+  onion service must forward to such a bind, not to the clearnet one.
+- **Private addresses.** Any non-loopback `-p2pwsbind`, including a private
+  LAN address such as `192.168.x.x` or `10.x.x.x`, sets `NODE_P2P_WS`, and
+  peers are told to dial `ws://<the address they see>:<port>`. Behind NAT that
+  only works if the port is forwarded to the listener; otherwise bind to
+  loopback, or front the listener with a proxy and set `-p2pwsexternal`.
 
 ## Status / what is wired
 

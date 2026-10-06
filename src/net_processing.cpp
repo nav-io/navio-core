@@ -384,6 +384,11 @@ struct Peer {
      *  on a new connection, or at another archive node, commits to the wrong
      *  challenge and buys nothing. */
     uint256 m_archive_challenge GUARDED_BY(NetEventsInterface::g_msgproc_mutex);
+
+    /** WebSocket P2P endpoint announced by this peer (wsendpoint). */
+    Mutex m_ws_mutex;
+    uint16_t m_ws_port GUARDED_BY(m_ws_mutex){0};
+    std::string m_ws_url GUARDED_BY(m_ws_mutex);
     /** Stamps already spent on this connection. The challenge stops a stamp
      *  from travelling; this stops it from being replayed where it IS valid.
      *  Bounded, and the whole set dies with the connection. */
@@ -1767,6 +1772,11 @@ bool PeerManagerImpl::GetNodeStateStats(NodeId nodeid, CNodeStateStats& stats) c
     stats.m_addr_processed = peer->m_addr_processed.load();
     stats.m_addr_rate_limited = peer->m_addr_rate_limited.load();
     stats.m_addr_relay_enabled = peer->m_addr_relay_enabled.load();
+    {
+        LOCK(peer->m_ws_mutex);
+        stats.m_ws_port = peer->m_ws_port;
+        stats.m_ws_url = peer->m_ws_url;
+    }
     {
         LOCK(peer->m_headers_sync_mutex);
         if (peer->m_headers_sync) {
@@ -3825,7 +3835,41 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             MakeAndPushMessage(pfrom, NetMsgType::P2PMSGCHAL, peer->m_archive_challenge);
         }
 
+        // Tell the peer where our WebSocket listener is: NODE_P2P_WS alone
+        // says we have one, but a service bit cannot carry the port.
+        //
+        // Only over clearnet. The endpoint is a clearnet port (or, with
+        // -p2pwsexternal, a clearnet URL), so announcing it to a peer that
+        // reached us over Tor/I2P/CJDNS -- or that we reached over one --
+        // would tie that identity to our clearnet host, the same reason
+        // GetLocalAddrForPeer never offers a clearnet address there.
+        // NET_UNROUTABLE covers loopback and LAN peers, which are not privacy
+        // networks; inbound Tor is recognised by its -bind=...=onion listener
+        // (m_inbound_onion), as everywhere else in net.
+        const Network conn_net{pfrom.ConnectedThroughNetwork()};
+        const bool clearnet{conn_net == NET_IPV4 || conn_net == NET_IPV6 || conn_net == NET_UNROUTABLE};
+        if (m_opts.ws_port != 0 && clearnet) {
+            MakeAndPushMessage(pfrom, NetMsgType::WSENDPOINT, m_opts.ws_port, m_opts.ws_url);
+        }
+
         pfrom.fSuccessfullyConnected = true;
+        return;
+    }
+
+    if (msg_type == NetMsgType::WSENDPOINT) {
+        uint16_t port{0};
+        std::string url;
+        vRecv >> port >> LIMITED_STRING(url, MAX_WS_URL_LENGTH);
+        // Informational only (surfaced in getpeerinfo); nothing routes on it,
+        // so a bogus announcement is dropped rather than penalised.
+        const bool url_ok{url.empty() || url.rfind("ws://", 0) == 0 || url.rfind("wss://", 0) == 0};
+        if (port == 0 || !url_ok) {
+            LogPrint(BCLog::NET, "ignoring invalid wsendpoint from peer=%d\n", pfrom.GetId());
+            return;
+        }
+        LOCK(peer->m_ws_mutex);
+        peer->m_ws_port = port;
+        peer->m_ws_url = SanitizeString(url, SAFE_CHARS_URI);
         return;
     }
 

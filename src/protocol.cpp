@@ -56,6 +56,8 @@ const char* DP2PMSG = "dp2pmsg";
 static_assert(sizeof("getp2pmsgs") - 1 <= 12, "net message type exceeds COMMAND_SIZE");
 static_assert(sizeof("p2pmsgs") - 1 <= 12, "net message type exceeds COMMAND_SIZE");
 const char* P2PMSGCHAL = "p2pmsgchal";
+static_assert(sizeof("wsendpoint") - 1 <= 12, "net message type exceeds COMMAND_SIZE");
+const char* WSENDPOINT = "wsendpoint";
 const char* GETP2PMSGS = "getp2pmsgs";
 const char* P2PMSGS = "p2pmsgs";
 static_assert(sizeof("getoutkeys") - 1 <= 12, "net message type exceeds COMMAND_SIZE");
@@ -107,6 +109,7 @@ const static std::vector<std::string> g_all_net_message_types{
     NetMsgType::P2PMSG,
     NetMsgType::DP2PMSG,
     NetMsgType::P2PMSGCHAL,
+    NetMsgType::WSENDPOINT,
     NetMsgType::GETP2PMSGS,
     NetMsgType::P2PMSGS,
     NetMsgType::GETOUTKEYS,
@@ -230,6 +233,7 @@ static std::string serviceFlagToStr(size_t bit)
     case NODE_P2PMSG_LEAF:     return "P2PMSG_LEAF";
     case NODE_P2PMSG_ARCHIVE:  return "P2PMSG_ARCHIVE";
     case NODE_OUTKEYS:         return "OUTKEYS";
+    case NODE_P2P_WS:          return "P2P_WS";
     // Not using default, so we get warned when a case is missing
     }
 

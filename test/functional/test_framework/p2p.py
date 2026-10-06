@@ -37,6 +37,7 @@ from test_framework.messages import (
     msg_dp2pmsg,
     msg_getp2pmsgs,
     msg_p2pmsgchal,
+    msg_wsendpoint,
     msg_p2pmsgs,
     msg_addrv2,
     msg_block,
@@ -147,6 +148,7 @@ MESSAGEMAP = {
     b"dp2pmsg": msg_dp2pmsg,
     b"getp2pmsgs": msg_getp2pmsgs,
     b"p2pmsgchal": msg_p2pmsgchal,
+    b"wsendpoint": msg_wsendpoint,
     b"p2pmsgs": msg_p2pmsgs,
     b"ping": msg_ping,
     b"pong": msg_pong,
@@ -431,6 +433,7 @@ class P2PInterface(P2PConnection):
     def on_p2pmsg(self, message): pass
     def on_dp2pmsg(self, message): pass
     def on_p2pmsgchal(self, message): pass
+    def on_wsendpoint(self, message): pass
     def on_p2pmsgs(self, message): pass
     def on_getoutkeys(self, message): pass
     def on_outkeys(self, message): pass

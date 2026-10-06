@@ -17,9 +17,11 @@ import socket
 import struct
 
 from test_framework.messages import (
+    NODE_P2P_WS,
     msg_ping,
     msg_verack,
     msg_version,
+    msg_wsendpoint,
     sha256,
 )
 from test_framework.p2p import (
@@ -30,6 +32,7 @@ from test_framework.p2p import (
     P2P_VERSION,
     P2P_VERSION_RELAY,
     P2PInterface,
+    p2p_lock,
 )
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.test_node import ErrorMatch
@@ -360,6 +363,8 @@ class P2PWebSocketTest(BitcoinTestFramework):
         client.close()
         self.wait_until(lambda: node.getpeerinfo() == [])
 
+        self.test_ws_announcement(host, ws_port)
+
         self.log.info("-p2pwsbind requires -listen")
         self.stop_node(0)
         node.assert_start_raises_init_error(
@@ -372,7 +377,84 @@ class P2PWebSocketTest(BitcoinTestFramework):
             "Invalid port specified in -p2pwsbind: '127.0.0.1:notaport'",
             match=ErrorMatch.PARTIAL_REGEX,
         )
+        node.assert_start_raises_init_error(
+            [f"-p2pwsbind={host}:{ws_port}", "-p2pwsexternal=https://example.com"],
+            "Invalid -p2pwsexternal URL: 'https://example.com'",
+            match=ErrorMatch.PARTIAL_REGEX,
+        )
+        node.assert_start_raises_init_error(
+            [f"-p2pwsbind={host}:{ws_port}", "-p2pwsexternal=ws://example.com:0"],
+            "Invalid -p2pwsexternal URL: 'ws://example.com:0'",
+            match=ErrorMatch.PARTIAL_REGEX,
+        )
+        node.assert_start_raises_init_error(
+            ["-p2pwsexternal=wss://example.com"],
+            "-p2pwsexternal requires -p2pwsbind",
+            match=ErrorMatch.PARTIAL_REGEX,
+        )
         self.start_node(0)
+
+    def wsendpoint_from_node(self, node, **kwargs):
+        """Connect a plain TCP peer and return the wsendpoint it got, or None."""
+        peer = node.add_p2p_connection(P2PInterface(), **kwargs)
+        # Anything the node sends after verack is in flight once a ping
+        # round-trips, since messages go out in order.
+        peer.sync_with_ping()
+        with p2p_lock:
+            msg = peer.last_message.get("wsendpoint")
+        self.last_peer_network = node.getpeerinfo()[0]["network"]
+        node.disconnect_p2ps()
+        self.wait_until(lambda: node.getpeerinfo() == [])
+        return msg
+
+    def test_ws_announcement(self, host, ws_port):
+        node = self.nodes[0]
+
+        self.log.info("A loopback-only listener is not advertised")
+        assert "P2P_WS" not in node.getnetworkinfo()["localservicesnames"]
+        assert self.wsendpoint_from_node(node) is None
+
+        self.log.info("A listener on any address sets NODE_P2P_WS and announces its port")
+        self.restart_node(0, extra_args=[f"-p2pwsbind=0.0.0.0:{ws_port}"])
+        info = node.getnetworkinfo()
+        assert "P2P_WS" in info["localservicesnames"]
+        assert int(info["localservices"], 16) & NODE_P2P_WS
+        msg = self.wsendpoint_from_node(node)
+        assert_equal((msg.port, msg.url), (ws_port, b""))
+
+        self.log.info("wsendpoint is not sent over a Tor (onion-bound) connection")
+        onion_port = p2p_port(self.num_nodes + 1)
+        self.restart_node(0, extra_args=[
+            f"-p2pwsbind={host}:{ws_port}",
+            "-p2pwsexternal=wss://node.example.com/p2p",
+            f"-bind=127.0.0.1:{onion_port}=onion",
+        ])
+        assert "P2P_WS" in node.getnetworkinfo()["localservicesnames"]
+        assert_equal(self.wsendpoint_from_node(node, dstport=onion_port), None)
+        assert_equal(self.last_peer_network, "onion")
+        msg = self.wsendpoint_from_node(node)
+        assert_equal(self.last_peer_network, "not_publicly_routable")
+        assert_equal((msg.port, msg.url), (443, b"wss://node.example.com/p2p"))
+
+        self.log.info("-p2pwsexternal announces the proxied URL and its port")
+        self.restart_node(0, extra_args=[f"-p2pwsbind={host}:{ws_port}", "-p2pwsexternal=wss://node.example.com/p2p"])
+        assert "P2P_WS" in node.getnetworkinfo()["localservicesnames"]
+        msg = self.wsendpoint_from_node(node)
+        assert_equal((msg.port, msg.url), (443, b"wss://node.example.com/p2p"))
+        self.restart_node(0, extra_args=[f"-p2pwsbind={host}:{ws_port}", "-p2pwsexternal=ws://node.example.com:8080"])
+        msg = self.wsendpoint_from_node(node)
+        assert_equal((msg.port, msg.url), (8080, b"ws://node.example.com:8080"))
+
+        self.log.info("A peer's wsendpoint shows up in getpeerinfo")
+        peer = node.add_p2p_connection(P2PInterface())
+        assert "ws_port" not in node.getpeerinfo()[0]
+        peer.send_and_ping(msg_wsendpoint(9001, b"wss://peer.example.com/ws"))
+        info = node.getpeerinfo()[0]
+        assert_equal((info["ws_port"], info["ws_url"]), (9001, "wss://peer.example.com/ws"))
+        peer.send_and_ping(msg_wsendpoint(0, b""))  # invalid: ignored
+        assert_equal(node.getpeerinfo()[0]["ws_port"], 9001)
+        node.disconnect_p2ps()
+        self.wait_until(lambda: node.getpeerinfo() == [])
 
 
 if __name__ == "__main__":
