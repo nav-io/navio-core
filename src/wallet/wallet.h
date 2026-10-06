@@ -487,8 +487,8 @@ public:
 
     /** Index from output hash to wallet transaction for O(1) lookup in
      * GetWalletTxFromOutpoint. Entries point into mapWallet, so every path
-     * that removes a CWalletTx from mapWallet must erase the entries that
-     * refer to it (see ZapSelectTx). */
+     * that removes a CWalletTx from mapWallet must move or erase the entries
+     * that refer to it (see ZapSelectTx). */
     std::unordered_map<uint256, const CWalletTx*, SaltedTxidHasher> mapOutpointHashToWalletTx GUARDED_BY(cs_wallet);
 
     typedef std::multimap<int64_t, CWalletTx*> TxItems;
