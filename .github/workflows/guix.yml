@@ -332,9 +332,20 @@ jobs:
             echo "Using cached ${tarball} (sha256 verified)"
           else
             rm -f "${boot_dir}/${tarball}"
+            # Both GNU hosts can be down at once, and the bootstrap cache entry
+            # is evicted whenever the repo hits its cache quota, so fall back to
+            # independent mirrors outside GNU infrastructure (North American
+            # first, nearest the hosted runners). The pinned sha256 is what
+            # makes any mirror safe to use; each of these served the exact
+            # pinned 1.5.0 tarball when it was added.
             BIN_URLS=(
               "https://ftpmirror.gnu.org/gnu/guix/${tarball}"
               "https://ftp.gnu.org/gnu/guix/${tarball}"
+              "https://mirrors.kernel.org/gnu/guix/${tarball}"
+              "https://mirrors.ocf.berkeley.edu/gnu/guix/${tarball}"
+              "https://mirror.csclub.uwaterloo.ca/gnu/guix/${tarball}"
+              "https://ftp.halifax.rwth-aachen.de/gnu/guix/${tarball}"
+              "https://ftp.fau.de/gnu/guix/${tarball}"
             )
             got=0
             for url in "${BIN_URLS[@]}"; do
