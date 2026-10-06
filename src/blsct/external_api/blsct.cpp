@@ -692,7 +692,7 @@ BlsctCTxRetVal* BuildCtxImpl(
     const std::vector<BlsctTxOut>* tx_outs,
     const blsct::DoublePublicKey& change_dest)
 {
-    blsct::TxFactoryBase psbt;
+    blsct::TxFactoryBase tx_factory;
     MALLOC_BYTES(BlsctCTxRetVal, rv, sizeof(BlsctCTxRetVal));
     RETURN_IF_MEM_ALLOC_FAILED(rv);
     // Initialise all fields: every error return below hands rv to the caller.
@@ -732,7 +732,7 @@ BlsctCTxRetVal* BuildCtxImpl(
             tx_in.out_point, OUT_POINT_SIZE, out_point);
 
         // add all to TxFactoryBase
-        psbt.AddInput(
+        tx_factory.AddInput(
             tx_in.amount,
             gamma,
             spending_key,
@@ -749,7 +749,7 @@ BlsctCTxRetVal* BuildCtxImpl(
     // would be silently dropped and the transaction rejected above the gate.
     for (size_t i = 0; i < tx_outs->size(); ++i) {
         if (tx_outs->at(i).transcript_v2) {
-            psbt.SetTranscriptV2(true);
+            tx_factory.SetTranscriptV2(true);
             break;
         }
     }
@@ -797,7 +797,7 @@ BlsctCTxRetVal* BuildCtxImpl(
         );
 
         // add all to TxFactoryBase
-        psbt.AddOutput(
+        tx_factory.AddOutput(
             dest,
             tx_out.amount,
             memo_str,
@@ -819,7 +819,7 @@ BlsctCTxRetVal* BuildCtxImpl(
     // consolidation that cannot be built); the enclosing try translates those
     // into the failure code instead of letting them terminate at the
     // extern "C" frame.
-    auto maybe_ctx = psbt.BuildTx(change_dest);
+    auto maybe_ctx = tx_factory.BuildTx(change_dest);
     if (!maybe_ctx.has_value()) {
         rv->result = BLSCT_FAILURE;
         return rv;
