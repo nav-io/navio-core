@@ -516,9 +516,8 @@ struct CNodeState {
     //! Output hashes we requested from this peer (sent as MSG_WITNESS_TX, see
     //! SendMessages) and may still get a tx for. Only used to report the
     //! response to m_txrequest without hashing the outputs of every received
-    //! transaction; stale
-    //! entries cost at most some extra hashing and are dropped once nothing
-    //! is in flight from this peer.
+    //! transaction; stale entries cost at most some extra hashing and are
+    //! dropped once nothing is in flight from this peer.
     std::set<uint256> m_requested_outids;
 
     CNodeState(bool is_inbound) : m_is_inbound(is_inbound) {}
