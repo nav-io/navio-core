@@ -99,15 +99,14 @@ class DandelionProbingTest(BitcoinTestFramework):
             inv.type == MSG_DWTX and inv.hash == stem_wtxid
             for inv in stem_peer.last_message["inv"].inv) if "inv" in stem_peer.last_message else False)
 
-        # P2PInterface.on_inv already fetched the tx by wtxid; drop that dtx so
-        # the one checked below can only be the reply to the output-hash request.
-        stem_peer.sync_with_ping()
-        with p2p_lock:
-            stem_peer.last_message.pop("dtx", None)
-
         stem_output_hash = stem_tx["tx"].vout[0].hash()
         for inv_type in [MSG_WITNESS_TX, MSG_OUTPUT_HASH]:
-            stem_peer.last_message.pop("dtx", None)
+            # P2PInterface.on_inv already fetched the tx by wtxid, and the
+            # previous iteration got a dtx too. Let any such reply arrive, then
+            # drop it, so the dtx checked below can only answer this request.
+            stem_peer.sync_with_ping()
+            with p2p_lock:
+                stem_peer.last_message.pop("dtx", None)
             stem_peer.send_and_ping(msg_getdata([CInv(t=inv_type, h=stem_output_hash)]))
             assert "notfound" not in stem_peer.last_message
             assert "tx" not in stem_peer.last_message
