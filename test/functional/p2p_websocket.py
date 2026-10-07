@@ -445,6 +445,25 @@ class P2PWebSocketTest(BitcoinTestFramework):
         msg = self.wsendpoint_from_node(node)
         assert_equal((msg.port, msg.url), (8080, b"ws://node.example.com:8080"))
 
+        # A connection made through -proxy still counts as clearnet, so the URL
+        # reaches peers the proxy is hiding this node from. Without -proxy (every
+        # restart above) there is no warning, or stopping would fail on stderr.
+        self.log.info("-p2pwsexternal together with -proxy warns at startup")
+        proxy_warning = (
+            "Warning: -p2pwsexternal is announced to every clearnet peer, including ones reached through -proxy, "
+            "so it links this node's proxied connections to that URL. Unset -p2pwsexternal if the proxy "
+            "is meant to hide this node's address."
+        )
+        self.stop_node(0)
+        with node.assert_debug_log([proxy_warning]):
+            self.start_node(0, extra_args=[
+                f"-p2pwsbind={host}:{ws_port}",
+                "-p2pwsexternal=wss://node.example.com/p2p",
+                "-proxy=127.0.0.1:9",
+            ])
+        self.stop_node(0, expected_stderr=proxy_warning)
+        self.start_node(0, extra_args=[f"-p2pwsbind={host}:{ws_port}", "-p2pwsexternal=ws://node.example.com:8080"])
+
         self.log.info("A peer's wsendpoint shows up in getpeerinfo")
         peer = node.add_p2p_connection(P2PInterface())
         assert "ws_port" not in node.getpeerinfo()[0]
