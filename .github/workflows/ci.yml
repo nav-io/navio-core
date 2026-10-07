@@ -1426,3 +1426,36 @@ jobs:
         with:
           path: ${{ env.RUNNER_TEMP }}/ccache_dir
           key: ${{ steps.ccache-cache.outputs.cache-primary-key }}
+
+  # The ccache steps above save under `<job>[-<matrix.name>]-ccache-<run_id>`
+  # because a cache key can never be overwritten, so every master push adds a
+  # fresh copy per job while restore only ever reads the newest (by prefix).
+  # The stale copies (~2.5 GiB per push) filled the repo's 10 GB cache quota,
+  # and least-recently-used eviction then dropped the guix release caches
+  # first. Keep only the newest copy of each ccache entry. It runs on the bare
+  # runner (gh is preinstalled there, unlike in the matrix containers), and it
+  # picks the newest by creation time rather than by this run's id, so an
+  # overlapping master run never loses its own fresh entry.
+  prune-ccache:
+    name: 'Prune superseded ccache entries'
+    needs: [macos-native-arm64, linux-cmake, linux-cmake-centos]
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    steps:
+      - name: Delete all but the newest copy of each ccache entry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/caches?ref=${GITHUB_REF}&per_page=100" \
+            --jq '.actions_caches[] | select(.key | test("-ccache-[0-9]+$")) | [.id, .key, .created_at] | @tsv' \
+            | sort -t $'\t' -k3,3r \
+            | awk -F '\t' '{ prefix = $2; sub(/-[0-9]+$/, "", prefix); if (seen[prefix]++) print $1 "\t" $2 }' \
+            | while IFS=$'\t' read -r id key; do
+                echo "Deleting superseded ${key}"
+                gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/caches/${id}"
+              done
