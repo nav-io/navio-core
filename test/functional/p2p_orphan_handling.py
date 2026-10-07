@@ -8,7 +8,6 @@ import time
 
 from test_framework.messages import (
     CInv,
-    MSG_OUTPUT_HASH,
     MSG_WITNESS_TX,
     MSG_WTX,
     msg_getdata,
@@ -92,13 +91,13 @@ class PeerTxRelayer(P2PTxInvStore):
         self.wait_until(test_function, timeout=10)
 
     def wait_for_output_hash_requests(self, output_hashes):
-        """Wait for a getdata requesting missing parents by output hash (MSG_OUTPUT_HASH). Requires
+        """Wait for a getdata requesting missing parents by output hash (sent as MSG_WITNESS_TX). Requires
         that the getdata message contain all the specified output hashes."""
         def test_function():
             last_getdata = self.last_message.get('getdata')
             if not last_getdata:
                 return False
-            received_hashes = [item.hash for item in last_getdata.inv if item.type == MSG_OUTPUT_HASH]
+            received_hashes = [item.hash for item in last_getdata.inv if item.type == MSG_WITNESS_TX]
             return all(hash_val in received_hashes for hash_val in output_hashes)
         self.wait_until(test_function, timeout=10)
 
@@ -184,7 +183,7 @@ class OrphanHandlingTest(BitcoinTestFramework):
         def missing_parent_requested():
             for getdata in peer_spy.getdata_received:
                 for request in getdata.inv:
-                    if request.type == MSG_OUTPUT_HASH and request.hash == expected_missing_parent_hash:
+                    if request.type == MSG_WITNESS_TX and request.hash == expected_missing_parent_hash:
                         return True
             return False
 
@@ -444,7 +443,7 @@ class OrphanHandlingTest(BitcoinTestFramework):
             peer2.assert_never_requested(output_hash)
 
             if response == "notfound":
-                peer1.send_and_ping(msg_notfound(vec=[CInv(MSG_OUTPUT_HASH, output_hash)]))
+                peer1.send_and_ping(msg_notfound(vec=[CInv(MSG_WITNESS_TX, output_hash)]))
             else:
                 node.bumpmocktime(GETDATA_TX_INTERVAL)
             peer2.wait_for_output_hash_requests([output_hash])

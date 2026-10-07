@@ -513,9 +513,10 @@ struct CNodeState {
     //! Whether this peer is an inbound connection
     const bool m_is_inbound;
 
-    //! Output hashes we requested from this peer (MSG_OUTPUT_HASH) and may
-    //! still get a tx for. Only used to report the response to m_txrequest
-    //! without hashing the outputs of every received transaction; stale
+    //! Output hashes we requested from this peer (sent as MSG_WITNESS_TX, see
+    //! SendMessages) and may still get a tx for. Only used to report the
+    //! response to m_txrequest without hashing the outputs of every received
+    //! transaction; stale
     //! entries cost at most some extra hashing and are dropped once nothing
     //! is in flight from this peer.
     std::set<uint256> m_requested_outids;
@@ -5194,7 +5195,7 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                     // completed in TxRequestTracker.
                     m_txrequest.ReceivedResponse(pfrom.GetId(), inv.hash);
                 }
-                if (inv.IsMsgOutputHash()) {
+                if (inv.IsMsgOutputHash() || inv.type == MSG_WITNESS_TX) {
                     if (CNodeState* state = State(pfrom.GetId())) state->m_requested_outids.erase(inv.hash);
                 }
             }
@@ -6457,7 +6458,11 @@ bool PeerManagerImpl::SendMessages(CNode* pto)
                 LogPrint(BCLog::NET, "Requesting %s %s peer=%d\n", gtxid_kind(gtxid),
                     gtxid.GetHash().ToString(), pto->GetId());
                 if (gtxid.IsOutid()) {
-                    vGetData.emplace_back(MSG_OUTPUT_HASH, gtxid.GetHash());
+                    // Ask with MSG_WITNESS_TX, not MSG_OUTPUT_HASH: every
+                    // released node resolves an output hash sent that way, but
+                    // drops the MSG_OUTPUT_HASH type without even a notfound,
+                    // and the parent is usually announced by that peer alone.
+                    vGetData.emplace_back(MSG_WITNESS_TX, gtxid.GetHash());
                     state.m_requested_outids.insert(gtxid.GetHash());
                 } else {
                     vGetData.emplace_back(gtxid.IsWtxid() ? MSG_WTX : (MSG_TX | GetFetchFlags(*peer)), gtxid.GetHash());
