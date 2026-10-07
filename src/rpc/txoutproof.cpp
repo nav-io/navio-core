@@ -28,9 +28,10 @@ static RPCHelpMan gettxoutproof()
         "\nNOTE: Without a blockhash the block is located either through an entry that\n"
         "is the hash of an unspent output in the utxo set, or through the transaction\n"
         "index (-txindex), which is keyed by transaction hash. The index therefore finds\n"
-        "any txid, but the hash of a spent or unspendable output is only found when the\n"
-        "block is given. To make it always work, pass txids with -txindex enabled, or\n"
-        "specify the block in which the transaction is included manually (by blockhash).\n",
+        "any txid, but the hash of a spent or unspendable output is not found through the\n"
+        "index; give the block, or include another entry that locates the block. To make\n"
+        "it always work, pass txids with -txindex enabled, or specify the block in which\n"
+        "the transaction is included manually (by blockhash).\n",
         {
             {"txids", RPCArg::Type::ARR, RPCArg::Optional::NO, "The txids to filter",
                 {
