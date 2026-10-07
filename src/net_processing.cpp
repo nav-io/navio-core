@@ -533,6 +533,8 @@ public:
     /** Overridden from CValidationInterface. */
     void BlockConnected(ChainstateRole role, const std::shared_ptr<const CBlock>& pblock, const CBlockIndex* pindexConnected) override
         EXCLUSIVE_LOCKS_REQUIRED(!m_recent_confirmed_transactions_mutex);
+    void MempoolTransactionsRemovedForBlock(const std::vector<RemovedMempoolTransactionInfo>& txs_removed_for_block, unsigned int nBlockHeight) override
+        EXCLUSIVE_LOCKS_REQUIRED(!m_recent_confirmed_transactions_mutex);
     void BlockDisconnected(const std::shared_ptr<const CBlock> &block, const CBlockIndex* pindex) override
         EXCLUSIVE_LOCKS_REQUIRED(!m_recent_confirmed_transactions_mutex);
     void UpdatedBlockTip(const CBlockIndex *pindexNew, const CBlockIndex *pindexFork, bool fInitialDownload) override
@@ -2009,6 +2011,36 @@ void PeerManagerImpl::BlockConnected(
     {
         LOCK(cs_main);
         for (const auto& ptx : pblock->vtx) {
+            m_txrequest.ForgetTxHash(ptx->GetHash());
+            m_txrequest.ForgetTxHash(ptx->GetWitnessHash());
+        }
+    }
+}
+
+void PeerManagerImpl::MempoolTransactionsRemovedForBlock(const std::vector<RemovedMempoolTransactionInfo>& txs_removed_for_block, unsigned int nBlockHeight)
+{
+    // BlockConnected() only knows the block's own txids. A BLSCT block
+    // carries one aggregate of the mempool transactions its miner selected,
+    // so those transactions are confirmed without their txids appearing in
+    // the block. The mempool reports every transaction it removed as
+    // confirmed by the block, aggregated or not (this signal fires before
+    // BlockConnected), so remember those too: a late announcement of one
+    // is not requested again, and requests already in flight are dropped.
+    if (txs_removed_for_block.empty()) return;
+    {
+        LOCK(m_recent_confirmed_transactions_mutex);
+        for (const auto& removed : txs_removed_for_block) {
+            const CTransactionRef& ptx = removed.info.m_tx;
+            m_recent_confirmed_transactions.insert(ptx->GetHash().ToUint256());
+            if (ptx->HasWitness()) {
+                m_recent_confirmed_transactions.insert(ptx->GetWitnessHash().ToUint256());
+            }
+        }
+    }
+    {
+        LOCK(cs_main);
+        for (const auto& removed : txs_removed_for_block) {
+            const CTransactionRef& ptx = removed.info.m_tx;
             m_txrequest.ForgetTxHash(ptx->GetHash());
             m_txrequest.ForgetTxHash(ptx->GetWitnessHash());
         }
