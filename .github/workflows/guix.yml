@@ -350,7 +350,7 @@ jobs:
             got=0
             for url in "${BIN_URLS[@]}"; do
               echo "Fetching ${url}"
-              if wget -nv --tries=5 --waitretry=15 \
+              if wget -nv --tries=5 --waitretry=15 --connect-timeout=20 \
                    --retry-on-http-error=429,500,502,503,504 \
                    -O "${boot_dir}/${tarball}" "${url}"; then
                 if check_tarball; then
