@@ -24,7 +24,7 @@ from test_framework.messages import (
         MSG_WTX,
         MSG_DWTX,
 )
-from test_framework.p2p import P2PInterface
+from test_framework.p2p import P2PInterface, p2p_lock
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
 from test_framework.wallet import MiniWallet
@@ -75,6 +75,37 @@ class DandelionProbingTest(BitcoinTestFramework):
         assert_equal([inv.hash for inv in notfound.vec], [output_hash])
         assert "tx" not in peer.last_message
         assert "dtx" not in peer.last_message
+
+        # The other half of the rule: the peer the tx is stemmed to IS served it
+        # by output hash, as dtx (still stem phase), not as a plain tx.
+        # Restarting drops every connection, so the one peer connected next is
+        # the only route the stem shuffle can pick.
+        self.log.info("The stem peer is served the tx as dtx when it asks by output hash")
+        self.generate(self.nodes[0], 1)
+        self.restart_node(0)
+        # Wait for the peer to be picked as the stem route before sending the
+        # tx. A shuffle that runs before the peer's tx relay state exists finds
+        # nothing and backs off for 10 seconds; the embargo can run out first,
+        # and the tx would then be announced as MSG_WTX instead.
+        with self.nodes[0].assert_debug_log(["Shuffled stem peers (found=1"], timeout=15):
+            stem_peer = self.nodes[0].add_p2p_connection(P2PInterface())
+        stem_tx = wallet.send_self_transfer(from_node=self.nodes[0])
+        stem_wtxid = int(stem_tx["wtxid"], 16)
+        stem_peer.wait_until(lambda: any(
+            inv.type == MSG_DWTX and inv.hash == stem_wtxid
+            for inv in stem_peer.last_message["inv"].inv) if "inv" in stem_peer.last_message else False)
+
+        # P2PInterface.on_inv already fetched the tx by wtxid; drop that dtx so
+        # the one checked below can only be the reply to the output-hash request.
+        stem_peer.sync_with_ping()
+        with p2p_lock:
+            stem_peer.last_message.pop("dtx", None)
+
+        stem_output_hash = stem_tx["tx"].vout[0].hash()
+        stem_peer.send_and_ping(msg_getdata([CInv(t=MSG_WITNESS_TX, h=stem_output_hash)]))
+        assert "notfound" not in stem_peer.last_message
+        assert "tx" not in stem_peer.last_message
+        assert_equal(stem_peer.last_message["dtx"].tx.getwtxid(), stem_tx["wtxid"])
 
 
 if __name__ == "__main__":
