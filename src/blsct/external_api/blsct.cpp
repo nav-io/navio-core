@@ -14,6 +14,7 @@
 #include <blsct/tokens/info.h>
 #include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/address.h>
+#include <blsct/wallet/delegation.h>
 #include <blsct/wallet/helpers.h>
 #include <blsct/wallet/txfactory_base.h>
 #include <blsct/wallet/unsigned_transaction.h>
@@ -303,6 +304,27 @@ static std::optional<blsct::UnsignedOutput> UnsignedOutputFromC(const BlsctTxOut
         min_stake,
         /*fAllowZeroValueRangeProof=*/false,
         tx_out.transcript_v2);
+}
+
+// Shared by the stake-delegation builders. Refuses a request the payload
+// cannot carry safely: a zero delegate key or nonce would key a section with
+// a publicly computable secret, and an empty reward address leaves the
+// delegate nowhere to pay. The owner section's length field is two bytes, so
+// an oversized reward address would silently corrupt the payload; opening the
+// result with the owner's nonce catches that and any other mismatch.
+static std::optional<std::vector<unsigned char>> EncryptStakeDelegation(
+    const blsct::delegation::DelegationInfo& info,
+    const blsct::delegation::DelegationRequest& request,
+    const Point& nonce)
+{
+    if (request.rewardAddress.empty() || request.delegateKey.IsZero() || nonce.IsZero()) {
+        return std::nullopt;
+    }
+    auto data = blsct::delegation::Encrypt(info, request, nonce);
+    if (!blsct::delegation::RecoverOwnerInfo(data, nonce).has_value()) {
+        return std::nullopt;
+    }
+    return data;
 }
 
 static BlsctRetVal* MallocAndCopyUint256(const uint256& value)
@@ -1297,6 +1319,95 @@ BlsctPoint* calc_nonce(
     SERIALIZE_AND_COPY(nonce, blsct_nonce);
 
     return blsct_nonce;
+}
+
+// delegators of blsct/wallet/delegation
+bool is_stake_delegation_data(const uint8_t* data, const size_t data_len)
+{
+    if (data == nullptr) return false;
+    return blsct::delegation::IsDelegationData(std::vector<unsigned char>(data, data + data_len));
+}
+
+BlsctRetVal* build_stake_delegation_data(
+    const uint64_t value,
+    const BlsctScalar* gamma,
+    const char* reward_address,
+    const BlsctPoint* delegate_key,
+    const BlsctPoint* nonce)
+{
+    RETURN_RET_VAL_IF_NULL(gamma, blsct_err(BLSCT_FAILURE));
+    RETURN_RET_VAL_IF_NULL(reward_address, blsct_err(BLSCT_FAILURE));
+    RETURN_RET_VAL_IF_NULL(delegate_key, blsct_err(BLSCT_FAILURE));
+    RETURN_RET_VAL_IF_NULL(nonce, blsct_err(BLSCT_FAILURE));
+
+    blsct::delegation::DelegationInfo info;
+    if (!AmountFromUint64Checked(value, info.value)) {
+        return blsct_err(BLSCT_VALUE_OUTSIDE_THE_RANGE);
+    }
+
+    std::optional<std::vector<unsigned char>> data;
+    try {
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(gamma, SCALAR_SIZE, info.gamma);
+        info.rewardAddress = reward_address;
+
+        blsct::delegation::DelegationRequest request;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(delegate_key, POINT_SIZE, request.delegateKey);
+        request.rewardAddress = info.rewardAddress;
+
+        Point nonce_point;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(nonce, POINT_SIZE, nonce_point);
+
+        data = EncryptStakeDelegation(info, request, nonce_point);
+    } catch (const std::exception&) {
+        return blsct_err(BLSCT_DESER_FAILED);
+    }
+    if (!data.has_value()) {
+        return blsct_err(BLSCT_FAILURE);
+    }
+
+    MALLOC_BYTES(uint8_t, buf, data->size());
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(buf);
+    std::memcpy(buf, data->data(), data->size());
+    return blsct_succ(buf, data->size());
+}
+
+BlsctRetVal* recover_stake_delegation_owner_info(
+    const uint8_t* data,
+    const size_t data_len,
+    const BlsctPoint* nonce)
+{
+    RETURN_RET_VAL_IF_NULL(data, blsct_err(BLSCT_FAILURE));
+    RETURN_RET_VAL_IF_NULL(nonce, blsct_err(BLSCT_FAILURE));
+
+    std::optional<blsct::delegation::DelegationRequest> request;
+    try {
+        Point nonce_point;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(nonce, POINT_SIZE, nonce_point);
+        request = blsct::delegation::RecoverOwnerInfo(std::vector<unsigned char>(data, data + data_len), nonce_point);
+    } catch (const std::exception&) {
+        return blsct_err(BLSCT_DESER_FAILED);
+    }
+    if (!request.has_value()) {
+        return blsct_err(BLSCT_FAILURE);
+    }
+
+    MALLOC_BYTES(BlsctStakeDelegationOwnerInfo, owner_info, sizeof(BlsctStakeDelegationOwnerInfo));
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(owner_info);
+    SERIALIZE_AND_COPY(request->delegateKey, owner_info->delegate_key);
+    owner_info->reward_address = const_cast<char*>(StrToAllocCStr(request->rewardAddress));
+    if (owner_info->reward_address == nullptr) {
+        free(owner_info);
+        return blsct_err(BLSCT_MEM_ALLOC_FAILED);
+    }
+    return blsct_succ(owner_info, sizeof(BlsctStakeDelegationOwnerInfo));
+}
+
+void delete_stake_delegation_owner_info(void* vp_owner_info)
+{
+    if (vp_owner_info == nullptr) return;
+    auto* owner_info = static_cast<BlsctStakeDelegationOwnerInfo*>(vp_owner_info);
+    free(owner_info->reward_address);
+    free(owner_info);
 }
 
 // double public key
@@ -2731,6 +2842,63 @@ bool set_unsigned_output_data_predicate(void* vp_unsigned_output, const char* da
     auto* unsigned_output = static_cast<blsct::UnsignedOutput*>(vp_unsigned_output);
     unsigned_output->out.predicate = blsct::DataPredicate(std::vector<unsigned char>(data.begin(), data.end())).GetVch();
     return true;
+}
+
+bool set_unsigned_output_stake_delegation(
+    void* vp_unsigned_output,
+    const BlsctSubAddr* blsct_dest,
+    const BlsctPoint* blsct_delegate_key,
+    const char* reward_address)
+{
+    if (vp_unsigned_output == nullptr || blsct_dest == nullptr ||
+        blsct_delegate_key == nullptr || reward_address == nullptr) return false;
+
+    auto* unsigned_output = static_cast<blsct::UnsignedOutput*>(vp_unsigned_output);
+    if (unsigned_output->type != blsct::CreateTransactionType::STAKED_COMMITMENT ||
+        !unsigned_output->out.tokenId.IsNull() ||
+        !unsigned_output->out.IsStakedCommitment()) return false;
+
+    // Mirrors TxFactoryBase::MaterializeOutput. Exceptions (an undecodable
+    // key, an invalid destination) must not cross the extern "C" boundary.
+    try {
+        blsct::SubAddress destination;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_dest, SUB_ADDR_SIZE, destination);
+
+        // The owner section is keyed on the nonce derived from the
+        // destination, so a destination other than the one the output was
+        // built for would produce a payload its owner can never open.
+        // Re-deriving the output keys proves the match.
+        blsct::UnsignedOutput probe;
+        probe.GenerateKeys(unsigned_output->blindingKey, destination.GetKeys());
+        if (probe.out.blsctData.spendingKey != unsigned_output->out.blsctData.spendingKey) return false;
+
+        // The output keeps its value as a scalar; it must round-trip through
+        // a CAmount to be the committed amount.
+        CAmount value;
+        if (!AmountFromUint64Checked(unsigned_output->value.GetUint64(), value) ||
+            Scalar(value) != unsigned_output->value) return false;
+
+        blsct::delegation::DelegationRequest request;
+        UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_delegate_key, POINT_SIZE, request.delegateKey);
+        request.rewardAddress = reward_address;
+
+        blsct::delegation::DelegationInfo info;
+        info.value = value;
+        info.gamma = unsigned_output->gamma;
+        info.rewardAddress = request.rewardAddress;
+
+        Point vk;
+        if (!destination.GetKeys().GetViewKey(vk)) return false;
+        const Point nonce = vk * unsigned_output->blindingKey;
+
+        auto data = EncryptStakeDelegation(info, request, nonce);
+        if (!data.has_value()) return false;
+
+        unsigned_output->out.predicate = blsct::DataPredicate(*data).GetVch();
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 void* create_unsigned_transaction()

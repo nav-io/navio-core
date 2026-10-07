@@ -824,6 +824,22 @@ const BlsctScalar* get_unsigned_output_gamma(const void* vp_unsigned_output);
  * on invalid input. */
 bool set_unsigned_output_data_predicate(void* vp_unsigned_output, const char* data_hex);
 
+/* Delegates a built staked output to `blsct_delegate_key`: attaches the
+ * encrypted stake-delegation payload as the output's DATA predicate, exactly
+ * as core's wallet does for delegatestake. The commitment opening (value,
+ * gamma) and the owner-section nonce are taken from the output itself, so
+ * `blsct_dest` must be the destination the output was built for; it is
+ * checked against the output's keys. Must be called before the transaction is
+ * signed: the predicate is part of the output hash covered by the output's
+ * ownership signature. Returns false, leaving the output untouched, on null
+ * or invalid input, an empty reward address, a destination that does not
+ * match, or an output that is not a STAKED_COMMITMENT of the default token. */
+bool set_unsigned_output_stake_delegation(
+    void* vp_unsigned_output,
+    const BlsctSubAddr* blsct_dest,
+    const BlsctPoint* blsct_delegate_key,
+    const char* reward_address);
+
 void* create_unsigned_transaction();
 void add_unsigned_transaction_input(void* vp_unsigned_transaction, const void* vp_unsigned_input);
 void add_unsigned_transaction_output(void* vp_unsigned_transaction, const void* vp_unsigned_output);
@@ -883,6 +899,48 @@ uint64_t calc_view_tag(
 BlsctPoint* calc_nonce(
     const BlsctPubKey* blsct_blinding_pub_key,
     const BlsctScalar* view_key);
+
+// stake delegation (blsct/wallet/delegation delegators)
+
+/* Owner-side view of a stake-delegation payload: whom the stake is delegated
+ * to and where the delegate must pay block rewards. reward_address is a
+ * malloc'd NUL-terminated string; free the whole struct with
+ * delete_stake_delegation_owner_info. */
+typedef struct {
+    BlsctPoint delegate_key;
+    char* reward_address;
+} BlsctStakeDelegationOwnerInfo;
+
+/* Returns true if `data` (the payload of a DATA predicate, not the serialized
+ * predicate) looks like a stake-delegation payload. Cheap filter to run before
+ * recover_stake_delegation_owner_info while syncing. */
+bool is_stake_delegation_data(const uint8_t* data, size_t data_len);
+
+/* Builds a stake-delegation payload for a staked output whose commitment
+ * opens to (value, gamma), encrypted to `delegate_key` and with the owner
+ * section keyed on the output's BLSCT `nonce` (the destination view key times
+ * the output's blinding key). Returns the payload bytes (value_size = length),
+ * ready to be attached as a DATA predicate. Prefer
+ * set_unsigned_output_stake_delegation, which takes value, gamma and nonce
+ * from the output itself. Fails on null or invalid input, an empty reward
+ * address, or a zero delegate key or nonce. */
+BlsctRetVal* build_stake_delegation_data(
+    uint64_t value,
+    const BlsctScalar* gamma,
+    const char* reward_address,
+    const BlsctPoint* delegate_key,
+    const BlsctPoint* nonce);
+
+/* Owner side: recovers the delegate key and reward address from a
+ * stake-delegation payload using the output's BLSCT nonce (see calc_nonce).
+ * On success value points to a BlsctStakeDelegationOwnerInfo. Fails
+ * (BLSCT_FAILURE) when the data is not a delegation payload or the nonce does
+ * not open it. */
+BlsctRetVal* recover_stake_delegation_owner_info(
+    const uint8_t* data,
+    size_t data_len,
+    const BlsctPoint* nonce);
+void delete_stake_delegation_owner_info(void* vp_owner_info);
 
 // Misc helper functions and macros migrated from blist.i
 #define HANDLE_MEM_ALLOC_FAILURE(name)             \
