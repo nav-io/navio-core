@@ -25,4 +25,8 @@
 - If such a wallet is listed with `-wallet` or in the load-on-startup list in
   `settings.json`, `naviod` now fails to start with that error. Before
   upgrading, unload it with `unloadwallet <name> false` (which removes it from
-  the startup list), or remove it from `settings.json` and any `-wallet` option.
+  the `settings.json` startup list) and drop any `-wallet` option naming it,
+  whether on the command line or in `navio.conf`. If you have already upgraded,
+  `unloadwallet` is not available for it, since the wallet cannot be loaded:
+  stop `naviod`, remove the wallet from the `"wallet"` list in `settings.json`
+  and from any `-wallet` option, then start again.
