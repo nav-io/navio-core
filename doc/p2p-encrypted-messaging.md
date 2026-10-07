@@ -513,7 +513,10 @@ additional listening socket, alongside the ordinary `-bind`/`-port` ones.
   peers reached over Tor, I2P or CJDNS never receive it, so the clearnet port or
   URL is not linked to the node's privacy-network identity. Tor inbound is
   recognised by its `-bind=...=onion` listener, so an onion service must forward
-  to such a bind, not to the clearnet one.
+  to such a bind, not to the clearnet one. Nor is it sent over an outbound
+  connection made through a proxy (`-proxy`, or a hostname resolved by it),
+  since the proxy is there to hide the node's address from that peer; inbound
+  peers on a clearnet listener still get it.
 - **Private addresses.** Any non-loopback `-p2pwsbind`, including a private LAN
   address such as `192.168.x.x` or `10.x.x.x`, sets `NODE_P2P_WS`, and peers are
   told to dial `ws://<the address they see>:<port>`. Behind NAT that only works

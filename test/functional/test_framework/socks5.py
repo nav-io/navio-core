@@ -4,6 +4,7 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Dummy Socks5 server for testing."""
 
+import select
 import socket
 import threading
 import queue
@@ -32,6 +33,39 @@ def recvall(s, n):
         n -= len(d)
     return rv
 
+def sendall(s, data):
+    """Send all data to a non-blocking socket, or fail."""
+    sent = 0
+    while sent < len(data):
+        _, wlist, _ = select.select([], [s], [])
+        if len(wlist) > 0:
+            n = s.send(data[sent:])
+            if n == 0:
+                raise IOError('send() on socket returned 0')
+            sent += n
+
+def forward_sockets(a, b):
+    """Forward data received on socket a to socket b and vice versa, until EOF is received on one of the sockets."""
+    # Non-blocking, so that waiting on one side never stalls data that is
+    # already waiting on the other.
+    a.setblocking(False)
+    b.setblocking(False)
+    sockets = [a, b]
+    done = False
+    while not done:
+        rlist, _, xlist = select.select(sockets, [], sockets)
+        if len(xlist) > 0:
+            raise IOError('Exceptional condition on socket')
+        for s in rlist:
+            data = s.recv(4096)
+            if data is None or len(data) == 0:
+                done = True
+                break
+            if s == a:
+                sendall(b, data)
+            else:
+                sendall(a, data)
+
 # Implementation classes
 class Socks5Configuration():
     """Proxy configuration."""
@@ -41,6 +75,10 @@ class Socks5Configuration():
         self.unauth = False  # Support unauthenticated
         self.auth = False  # Support authentication
         self.keep_alive = False  # Do not automatically close connections
+        # Optional function that receives the requested destination (addr, port)
+        # and returns the (host, port) to actually connect to and relay the
+        # connection to, or None to only record the request.
+        self.destinations_factory = None
 
 class Socks5Command():
     """Information about an incoming socks5 command."""
@@ -117,6 +155,19 @@ class Socks5Connection():
             cmdin = Socks5Command(cmd, atyp, addr, port, username, password)
             self.serv.queue.put(cmdin)
             logger.debug('Proxy: %s', cmdin)
+
+            if self.serv.conf.destinations_factory is not None:
+                if atyp == AddressType.IPV4:
+                    requested_to_addr = socket.inet_ntop(socket.AF_INET, addr)
+                elif atyp == AddressType.IPV6:
+                    requested_to_addr = socket.inet_ntop(socket.AF_INET6, addr)
+                else:
+                    requested_to_addr = addr.decode("utf-8")
+                dest = self.serv.conf.destinations_factory(requested_to_addr, port)
+                if dest is not None:
+                    logger.debug('Proxy: relaying %s:%d to %s:%d', requested_to_addr, port, dest[0], dest[1])
+                    with socket.create_connection(dest) as conn_to:
+                        forward_sockets(self.conn, conn_to)
             # Fall through to disconnect
         except Exception as e:
             logger.exception("socks5 request handling failed.")

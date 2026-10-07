@@ -14,12 +14,13 @@ P2P and network changes
   handshake, sends peers a `wsendpoint` message with the listener's port and,
   when it sits behind a reverse proxy, its public URL. The bit is set when a
   `-p2pwsbind` address is not loopback-only, or when the new
-  `-p2pwsexternal=<ws(s)://host[:port][/path]>` option names the public URL
-  (its port, or 80/443 by scheme, is the one announced). A loopback-only
-  listener without `-p2pwsexternal` is not advertised.
+  `-p2pwsexternal=<ws(s)://host[:port][/path]>` option names the public URL (its
+  port, or 80/443 by scheme, is the one announced). A loopback-only listener
+  without `-p2pwsexternal` is not advertised. `wsendpoint` is not sent over Tor,
+  I2P or CJDNS connections, nor over outbound connections made through a proxy.
 
 Updated RPCs
 ------------
 
-- `getpeerinfo` gained a `websocket` boolean field, plus `ws_port` and
-  `ws_url` for peers that announced a WebSocket endpoint via `wsendpoint`.
+- `getpeerinfo` gained a `websocket` boolean field, plus `ws_port` and `ws_url`
+  for peers that announced a WebSocket endpoint via `wsendpoint`.
