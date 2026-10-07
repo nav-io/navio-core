@@ -22,3 +22,7 @@
   signer, which this build no longer supports". `navio-wallet dump` can still
   export its records, but `navio-wallet createfromdump` refuses such a dump with
   a similar error instead of creating a wallet that cannot be loaded.
+- If such a wallet is listed with `-wallet` or in the load-on-startup list in
+  `settings.json`, `naviod` now fails to start with that error. Before
+  upgrading, unload it with `unloadwallet <name> false` (which removes it from
+  the startup list), or remove it from `settings.json` and any `-wallet` option.
