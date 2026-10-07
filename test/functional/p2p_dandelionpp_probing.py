@@ -20,6 +20,7 @@ from test_framework.messages import (
         CInv,
         msg_getdata,
         msg_mempool,
+        MSG_OUTPUT_HASH,
         MSG_WITNESS_TX,
         MSG_WTX,
         MSG_DWTX,
@@ -66,15 +67,18 @@ class DandelionProbingTest(BitcoinTestFramework):
 
             assert peer.last_message.get("notfound")
 
+        # By output hash, both as MSG_WITNESS_TX and as the MSG_OUTPUT_HASH
+        # still served to #489-era nodes that send it.
         self.log.info("Requesting the tx by one of its output hashes applies the same rule")
         output_hash = tx["tx"].vout[0].hash()
-        peer.last_message.pop("notfound", None)
-        peer.send_and_ping(msg_getdata([CInv(t=MSG_WITNESS_TX, h=output_hash)]))
-        notfound = peer.last_message.get("notfound")
-        assert notfound
-        assert_equal([inv.hash for inv in notfound.vec], [output_hash])
-        assert "tx" not in peer.last_message
-        assert "dtx" not in peer.last_message
+        for inv_type in [MSG_WITNESS_TX, MSG_OUTPUT_HASH]:
+            peer.last_message.pop("notfound", None)
+            peer.send_and_ping(msg_getdata([CInv(t=inv_type, h=output_hash)]))
+            notfound = peer.last_message.get("notfound")
+            assert notfound
+            assert_equal([(inv.type, inv.hash) for inv in notfound.vec], [(inv_type, output_hash)])
+            assert "tx" not in peer.last_message
+            assert "dtx" not in peer.last_message
 
         # The other half of the rule: the peer the tx is stemmed to IS served it
         # by output hash, as dtx (still stem phase), not as a plain tx.
@@ -102,10 +106,12 @@ class DandelionProbingTest(BitcoinTestFramework):
             stem_peer.last_message.pop("dtx", None)
 
         stem_output_hash = stem_tx["tx"].vout[0].hash()
-        stem_peer.send_and_ping(msg_getdata([CInv(t=MSG_WITNESS_TX, h=stem_output_hash)]))
-        assert "notfound" not in stem_peer.last_message
-        assert "tx" not in stem_peer.last_message
-        assert_equal(stem_peer.last_message["dtx"].tx.getwtxid(), stem_tx["wtxid"])
+        for inv_type in [MSG_WITNESS_TX, MSG_OUTPUT_HASH]:
+            stem_peer.last_message.pop("dtx", None)
+            stem_peer.send_and_ping(msg_getdata([CInv(t=inv_type, h=stem_output_hash)]))
+            assert "notfound" not in stem_peer.last_message
+            assert "tx" not in stem_peer.last_message
+            assert_equal(stem_peer.last_message["dtx"].tx.getwtxid(), stem_tx["wtxid"])
 
 
 if __name__ == "__main__":
