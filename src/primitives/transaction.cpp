@@ -125,11 +125,16 @@ Wtxid CTransaction::ComputeWitnessHash() const
 
 std::vector<Outid> CTransaction::ComputeOutputIds() const
 {
-    // An output id hashes the full output. Under a StrippedForUndoScope the
-    // range-proof body is left out of the serialization, so ids computed there
-    // would be wrong -- and, unlike a one-off CTxOut::GetHash(), cached for the
-    // transaction's whole lifetime.
-    Assume(!CTxOutBLSCTData::IsStrippedForUndo());
+    // Under a StrippedForUndoScope the range-proof body is left out of every
+    // output's serialization. ComputeHash() and ComputeWitnessHash() serialize
+    // the outputs too, so a transaction built there would cache a wrong txid
+    // and wtxid as well as wrong output ids, for its whole lifetime. This runs
+    // last in the constructors' initializer lists, after those two, but still
+    // before the constructor returns, so it guards all three: the process stops
+    // before any caller holds the object. Assert, not Assume: a wrong cached id
+    // silently corrupts the mempool, the coins and the wallet, so release
+    // builds must stop too.
+    Assert(!CTxOutBLSCTData::IsStrippedForUndo());
     std::vector<Outid> ids;
     ids.reserve(vout.size());
     for (const auto& out : vout) {
