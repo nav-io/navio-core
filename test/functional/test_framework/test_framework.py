@@ -33,6 +33,7 @@ from .util import (
     get_datadir_path,
     initialize_datadir,
     p2p_port,
+    tor_port,
     wait_until_helper_internal,
 )
 
@@ -498,7 +499,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             )
 
         if self.bind_to_localhost_only:
-            extra_confs = [["bind=127.0.0.1"]] * num_nodes
+            extra_confs = [["bind=127.0.0.1", f"bind=127.0.0.1:{tor_port(i)}=onion"] for i in range(num_nodes)]
         else:
             extra_confs = [[]] * num_nodes
         if extra_args is None:
@@ -828,7 +829,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
                     CACHE_NODE_ID,
                     cache_node_dir,
                     chain=self.chain,
-                    extra_conf=["bind=127.0.0.1"],
+                    extra_conf=["bind=127.0.0.1", f"bind=127.0.0.1:{tor_port(CACHE_NODE_ID)}=onion"],
                     extra_args=['-disablewallet'],
                     rpchost=None,
                     timewait=self.rpc_timeout,
