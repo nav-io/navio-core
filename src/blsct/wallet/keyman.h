@@ -309,9 +309,11 @@ public:
     //! build and must survive a restart: a generation that is forgotten is a
     //! generation that gets reused.
     //!
-    //! Returns std::nullopt when the bump could not be persisted. The caller
-    //! must then fall back to a RANDOM scalar -- never to a derived one, which
-    //! would be the reuse this exists to prevent.
+    //! Returns std::nullopt when the bump could not be persisted, or when the
+    //! anchor's generations are exhausted (MAX_GENERATION_SEARCH): recovery
+    //! never searches past that bound, so a key derived there could not be
+    //! re-derived either. The caller must then fall back to a RANDOM scalar --
+    //! never to a derived one, which would be the reuse this exists to prevent.
     std::optional<uint32_t> ReserveBlindingGeneration(const Outid& anchor);
 
     //! Wallet open; does not write back.
