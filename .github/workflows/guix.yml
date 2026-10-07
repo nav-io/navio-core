@@ -271,7 +271,7 @@ jobs:
           sdk_dir="${GITHUB_WORKSPACE}/../sdk-path"
           mkdir -p "${sdk_dir}"
           cd "${sdk_dir}"
-          curl --fail --location --retry 5 --retry-delay 30 \
+          curl --fail --location --retry 5 --retry-delay 30 --connect-timeout 20 \
             --output "${SDK_TARBALL}" \
             "https://bitcoincore.org/depends-sources/sdks/${SDK_TARBALL}"
           tar -xf "${SDK_TARBALL}"
@@ -350,7 +350,7 @@ jobs:
             got=0
             for url in "${BIN_URLS[@]}"; do
               echo "Fetching ${url}"
-              if wget -nv --tries=5 --waitretry=15 --connect-timeout=20 \
+              if wget -nv --tries=5 --waitretry=15 --connect-timeout=20 --read-timeout=60 \
                    --retry-on-http-error=429,500,502,503,504 \
                    -O "${boot_dir}/${tarball}" "${url}"; then
                 if check_tarball; then
