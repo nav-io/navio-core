@@ -1457,5 +1457,14 @@ jobs:
             | awk -F '\t' '{ prefix = $2; sub(/-[0-9]+$/, "", prefix); if (seen[prefix]++) print $1 "\t" $2 }' \
             | while IFS=$'\t' read -r id key; do
                 echo "Deleting superseded ${key}"
-                gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/caches/${id}"
+                # Overlapping master runs can list the same stale id, so the
+                # later DELETE finds it gone. gh exits 1 for every HTTP error;
+                # only its "(HTTP 404)" stderr marks that case. Fail on the rest.
+                if ! err=$(gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/caches/${id}" 2>&1 >/dev/null); then
+                  if [[ "${err}" != *"(HTTP 404)"* ]]; then
+                    echo "${err}" >&2
+                    exit 1
+                  fi
+                  echo "Already gone: ${key} (deleted by an overlapping run)"
+                fi
               done
