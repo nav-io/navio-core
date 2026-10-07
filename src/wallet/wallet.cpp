@@ -2961,16 +2961,29 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
                 }
             }
         }
-        // Drop this transaction's output-index entries before the CWalletTx
+        // Fix up this transaction's output-index entries before the CWalletTx
         // they point at goes away. Several wallet transactions can carry the
         // same output (e.g. a local send and the block transaction it was
         // aggregated into); the index holds whichever was added last, so only
-        // erase entries that still refer to the transaction being removed. A
-        // remaining holder of the output is not re-pointed here; it is indexed
-        // again when the wallet is next loaded.
-        for (const auto& txout : it->second.tx->vout) {
-            const auto idx = mapOutpointHashToWalletTx.find(txout.GetHash());
-            if (idx != mapOutpointHashToWalletTx.end() && idx->second == &it->second) {
+        // entries that still refer to the transaction being removed need
+        // touching. Hand each to another wallet transaction that carries the
+        // same output, or drop it if none does. Output ids are cached, so the
+        // scan hashes nothing, and it only runs when an entry is dropped.
+        for (const Outid& out_id : it->second.tx->GetOutputIds()) {
+            const auto idx = mapOutpointHashToWalletTx.find(out_id.ToUint256());
+            if (idx == mapOutpointHashToWalletTx.end() || idx->second != &it->second) continue;
+            const CWalletTx* holder{nullptr};
+            for (const auto& [other_hash, other] : mapWallet) {
+                if (&other == &it->second) continue;
+                const auto& other_ids{other.tx->GetOutputIds()};
+                if (std::find(other_ids.begin(), other_ids.end(), out_id) != other_ids.end()) {
+                    holder = &other;
+                    break;
+                }
+            }
+            if (holder) {
+                idx->second = holder;
+            } else {
                 mapOutpointHashToWalletTx.erase(idx);
             }
         }
