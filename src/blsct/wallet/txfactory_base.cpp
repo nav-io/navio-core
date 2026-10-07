@@ -52,6 +52,14 @@ Scalar TxFactoryBase::BlindingKeyFor(const std::optional<Scalar>& pinned, const 
     // behaviour: a random, unrecoverable key.
     if (!m_blinding_seed || !anchor) return Scalar::Rand();
 
+    // RecoverBlindingKey only tries ordinals below MAX_OUTPUT_SEARCH, so a key
+    // derived at or past it could never be re-derived, and signblsctoutput
+    // could never sign for the output. A random key has the same outcome, so
+    // use one -- BuildTx reports it in BuiltTransaction::pastSearchBoundOutputs
+    // -- rather than a derived key that only looks recoverable. Checked before
+    // claiming a generation: this output uses none.
+    if (OrdinalPastSearchBound(pinned, ordinal, anchor)) return Scalar::Rand();
+
     // The generation makes repeated builds over the same input set derive
     // different scalars. Without a source for it there is no way to know
     // whether this anchor has been built on before, and deriving anyway would
@@ -68,6 +76,11 @@ Scalar TxFactoryBase::BlindingKeyFor(const std::optional<Scalar>& pinned, const 
     }
 
     return DeriveBlindingKey(*m_blinding_seed, *anchor, ordinal, claimed->second);
+}
+
+bool TxFactoryBase::OrdinalPastSearchBound(const std::optional<Scalar>& pinned, const uint32_t ordinal, const std::optional<Outid>& anchor) const
+{
+    return !pinned && m_blinding_seed && anchor && ordinal >= MAX_OUTPUT_SEARCH;
 }
 
 std::optional<Outid> TxFactoryBase::CanonicalAnchorOf(const std::vector<const UnsignedInput*>& selected)
@@ -229,6 +242,10 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
     // subtract-fee outputs are added per pass below, since they are rebuilt
     // as the fee moves.
     std::map<uint256, Scalar> baseBlindingKeys;
+    // How many of the outputs built here got a random key only because their
+    // ordinal is past the recovery search bound. Like baseBlindingKeys, the
+    // per-pass change and subtract-fee outputs are counted on top below.
+    size_t basePastSearchBound = 0;
 
     // Deferred, anchor-dependent output materialization.
     //
@@ -250,6 +267,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         outputSignatures.clear();
         outputGammas = Scalar();
         baseBlindingKeys.clear();
+        basePastSearchBound = 0;
 
         // The queued transfer outputs, then any token create/mint outputs,
         // which carry no destination blinding key of ours and are built
@@ -258,6 +276,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         builtOutputs.reserve(vPendingOutputs.size());
         for (const auto& pending : vPendingOutputs) {
             builtOutputs.push_back(MaterializeOutput(pending, anchor));
+            if (OrdinalPastSearchBound(pending.blindingKey, pending.ordinal, anchor)) ++basePastSearchBound;
         }
         for (auto& out_ : vOutputs) {
             for (auto& out : out_.second) builtOutputs.push_back(out);
@@ -402,6 +421,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         Scalar gammaAcc = outputGammas;
         std::vector<Signature> txSigs = outputSignatures;
         std::map<uint256, Scalar> blindingKeys = baseBlindingKeys;
+        size_t pastSearchBound = basePastSearchBound;
 
         for (const UnsignedInput* in : selected) {
             tx.vin.push_back(in->in);
@@ -415,6 +435,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             // so the derived key is the same on every pass even though the
             // output is rebuilt at a new value.
             const Scalar sffaBlindingKey = BlindingKeyFor(subtractFeeOutput->blindingKey, subtractFeeOutput->ordinal, anchor);
+            if (OrdinalPastSearchBound(subtractFeeOutput->blindingKey, subtractFeeOutput->ordinal, anchor)) ++pastSearchBound;
             sffaOut = CreateOutput(subtractFeeOutput->destination.GetKeys(), *sffaReduced,
                                    subtractFeeOutput->memo, subtractFeeOutput->token_id,
                                    sffaBlindingKey, subtractFeeOutput->type,
@@ -464,6 +485,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             const std::string change_memo = (type == STAKED_COMMITMENT_UNSTAKE)
                 ? std::string{"Stake Unlock"}
                 : std::string{"Change"};
+            if (OrdinalPastSearchBound(std::nullopt, changeOrdinal, anchor)) ++pastSearchBound;
             const Scalar changeBlindingKey = BlindingKeyFor(std::nullopt, changeOrdinal++, anchor);
             // fAllowZeroValueRangeProof keeps a zero (padding) change a real
             // range-proofed output instead of an OP_RETURN stub; the range
@@ -573,7 +595,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
             // aggregation merges this vin with every other transaction's in
             // the block. Its identity as the smallest outid of the sender's
             // own input set survives both. See blsct::CanonicalAnchor.
-            return BuiltTransaction{tx, *recipientOutputHash, std::move(blindingKeys)};
+            return BuiltTransaction{tx, *recipientOutputHash, std::move(blindingKeys), pastSearchBound};
         }
         // Only reached with required_fee > nFromFee, so this raises the fee.
         nAmounts[TokenId()].nFromFee = required_fee;

@@ -623,4 +623,85 @@ BOOST_FIXTURE_TEST_CASE(explicit_blinding_key_opts_out_of_recovery, TestingSetup
     BOOST_CHECK(found_recoverable);
 }
 
+// Recovery only searches ordinals below MAX_OUTPUT_SEARCH, so the factory must
+// not derive a key for an output past it: such a key would only look
+// recoverable. Queue one output more than the bound allows (plus change, which
+// continues the ordinal sequence) and check that ordinals below the bound
+// still derive while the ones past it fall back to random keys.
+BOOST_FIXTURE_TEST_CASE(output_ordinal_past_search_bound_is_not_derived, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    auto sender = MakeWallet(m_node.chain.get(), std::vector<unsigned char>(32, 0x6d));
+    LOCK(sender.wallet->cs_wallet);
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(sender.km->GetNewDestination(0).value());
+
+    const auto coin_txid = Txid::FromUint256(InsecureRand256());
+    COutPoint outpoint{coin_txid};
+    Coin coin;
+    coin.nHeight = 1;
+    coin.out = blsct::CreateOutput(recvAddress, 1000 * COIN, "funding").out;
+    {
+        CCoinsViewCache cache{&base, /*deterministic=*/true};
+        cache.SetBestBlock(InsecureRand256());
+        cache.AddCoin(outpoint, std::move(coin), true);
+        BOOST_REQUIRE(cache.Flush());
+    }
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+
+    auto factory = blsct::TxFactory(sender.km);
+    BOOST_REQUIRE(factory.AddInput(coins_view_cache, outpoint));
+    for (uint32_t i = 0; i <= blsct::MAX_OUTPUT_SEARCH; ++i) {
+        factory.AddOutput(recvAddress, 10 * COIN, "payment");
+    }
+
+    auto built = factory.BuildTx();
+    BOOST_REQUIRE(built.has_value());
+
+    std::vector<COutPoint> own;
+    for (const auto& in : built->tx.vin) own.push_back(in.prevout);
+    const auto canonical = blsct::CanonicalAnchor(own);
+    BOOST_REQUIRE(canonical.has_value());
+    const auto seed = sender.km->GetBlindingSeed();
+    BOOST_REQUIRE(seed.has_value());
+
+    // Map each built scalar back to the ordinal it was derived on, if any.
+    // This is the first build on a fresh anchor, so the generation is 0.
+    const auto derived_ordinal = [&](const BlstScalar& k) -> std::optional<uint32_t> {
+        for (uint32_t ordinal = 0; ordinal <= blsct::MAX_OUTPUT_SEARCH + 1; ++ordinal) {
+            if (blsct::DeriveBlindingKey(*seed, *canonical, ordinal, /*generation=*/0) == k) return ordinal;
+        }
+        return std::nullopt;
+    };
+
+    std::set<uint32_t> derived;
+    size_t random_keys = 0;
+    for (const auto& out : built->tx.vout) {
+        if (!out.HasBLSCTKeys()) continue;
+        const BlstScalar& k = built->blindingKeys.at(out.GetHash());
+        const auto ordinal = derived_ordinal(k);
+        const bool recoverable = sender.km->RecoverOutputBlindingKey(built->tx.vin, out, own).has_value();
+        if (ordinal) {
+            derived.insert(*ordinal);
+            // Everything the factory derived, recovery finds again.
+            BOOST_CHECK_MESSAGE(recoverable, "ordinal " << *ordinal << " was derived but is not recoverable");
+        } else {
+            ++random_keys;
+            BOOST_CHECK(!recoverable);
+        }
+    }
+
+    // The last ordinal recovery searches still derives...
+    BOOST_CHECK(derived.contains(blsct::MAX_OUTPUT_SEARCH - 1));
+    // ...and the first one it does not search never does.
+    BOOST_CHECK(!derived.contains(blsct::MAX_OUTPUT_SEARCH));
+    BOOST_CHECK_EQUAL(derived.size(), blsct::MAX_OUTPUT_SEARCH);
+    // The over-bound recipient and the change output behind it.
+    BOOST_CHECK_EQUAL(random_keys, 2U);
+    // The build reports exactly those, so the wallet can say so once.
+    BOOST_CHECK_EQUAL(built->pastSearchBoundOutputs, random_keys);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
