@@ -74,7 +74,9 @@ enum WalletFlags : uint64_t {
     //! Indicate that this wallet supports DescriptorScriptPubKeyMan
     WALLET_FLAG_DESCRIPTORS = (1ULL << 34),
 
-    //! Indicates that the wallet needs an external signer
+    //! Indicates that the wallet needs an external signer. External signer
+    //! support has been removed; the flag stays known so that such a wallet
+    //! is refused on load with a clear error instead of an unknown-flag one.
     WALLET_FLAG_EXTERNAL_SIGNER = (1ULL << 35),
 
     //! Indicates that the wallet is used for BLSCT transactions

@@ -138,8 +138,8 @@ static UniValue FinishTransaction(const std::shared_ptr<CWallet> pwallet, const 
     // Make a blank psbt
     PartiallySignedTransaction psbtx(rawTx);
 
-    // First fill transaction with our data without signing,
-    // so external signers are not asked to sign more than once.
+    // First fill transaction with our data, including BIP32 derivation
+    // paths, without signing.
     bool complete;
     pwallet->FillPSBT(psbtx, complete, SIGHASH_DEFAULT, /*sign=*/false, /*bip32derivs=*/true);
     const TransactionError err{pwallet->FillPSBT(psbtx, complete, SIGHASH_DEFAULT, /*sign=*/true, /*bip32derivs=*/false)};
@@ -1126,7 +1126,7 @@ static RPCHelpMan bumpfee_helper(std::string method_name)
                                                       "Construct and broadcast a new confidential transaction instead (see sendtoblsctaddress).");
             }
 
-            if (pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS) && !pwallet->IsWalletFlagSet(WALLET_FLAG_EXTERNAL_SIGNER) && !want_psbt) {
+            if (pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS) && !want_psbt) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "bumpfee is not available with wallets that have private keys disabled. Use psbtbumpfee instead.");
             }
 
@@ -1222,9 +1222,6 @@ static RPCHelpMan bumpfee_helper(std::string method_name)
             // For psbtbumpfee, return the base64-encoded unsigned PSBT of the new transaction.
             if (!want_psbt) {
                 if (!feebumper::SignTransaction(*pwallet, mtx)) {
-                    if (pwallet->IsWalletFlagSet(WALLET_FLAG_EXTERNAL_SIGNER)) {
-                        throw JSONRPCError(RPC_WALLET_ERROR, "Transaction incomplete. Try psbtbumpfee instead.");
-                    }
                     throw JSONRPCError(RPC_WALLET_ERROR, "Can't sign transaction.");
                 }
 

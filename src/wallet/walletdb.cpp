@@ -1783,12 +1783,12 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
         // The FLAGS key is absent during wallet creation.
         if ((result = LoadWalletFlags(pwallet, *m_batch)) != DBErrors::LOAD_OK) return result;
 
-#ifndef ENABLE_EXTERNAL_SIGNER
+        // External signer support has been removed. Refuse such wallets
+        // explicitly rather than loading them without a way to sign.
         if (pwallet->IsWalletFlagSet(WALLET_FLAG_EXTERNAL_SIGNER)) {
-            pwallet->WalletLogPrintf("Error: External signer wallet being loaded without external signer support compiled\n");
+            pwallet->WalletLogPrintf("Error: This wallet uses an external signer, which this build no longer supports\n");
             return DBErrors::EXTERNAL_SIGNER_SUPPORT_REQUIRED;
         }
-#endif
 
         // Load legacy wallet keys
         result = std::max(LoadLegacyWalletRecords(pwallet, *m_batch, last_client), result);

@@ -175,6 +175,11 @@ class CreateWalletTest(BitcoinTestFramework):
         self.log.info('Using a passphrase with private keys disabled returns error')
         assert_raises_rpc_error(-4, 'Passphrase provided but private keys are disabled. A passphrase is only used to encrypt private keys, so cannot be used for wallets with private keys disabled.', self.nodes[0].createwallet, wallet_name='w9', disable_private_keys=True, passphrase='thisisapassphrase')
 
+        self.log.info('Requesting an external signer returns error')
+        assert_raises_rpc_error(-8, "External signers are no longer supported; omit 'external_signer' or set it to false", self.nodes[0].createwallet, wallet_name='w10', disable_private_keys=True, external_signer=True)
+        self.nodes[0].createwallet(wallet_name='w10', disable_private_keys=True, external_signer=False)
+        assert 'external_signer' not in self.nodes[0].get_wallet_rpc('w10').getwalletinfo()
+
 
 
 if __name__ == '__main__':

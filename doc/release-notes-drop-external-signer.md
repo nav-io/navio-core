@@ -1,0 +1,32 @@
+## Removed functionality
+
+- External signer (hardware wallet) support has been removed. It worked by
+  passing PSBTs for transparent outputs to an HWI-compatible tool, which BLSCT
+  transactions never use. This removes the `-signer` option, the
+  `enumeratesigners` and `walletdisplayaddress` RPCs, and the
+  `ENABLE_EXTERNAL_SIGNER` build option. Passing `-signer` on the command line
+  is now an invalid parameter error; a `signer=` line in the configuration file
+  is ignored with a log message.
+
+## Updated RPCs
+
+- `createwallet` keeps its `external_signer` parameter so that the parameters
+  after it keep their positions, but setting it to `true` is now an error.
+  `false` or omitting it is accepted as before.
+- `getwalletinfo` no longer returns the `external_signer` field.
+
+## Wallet
+
+- A wallet created with an external signer can no longer be loaded. `naviod` and
+  `navio-wallet info` refuse it with the error "This wallet uses an external
+  signer, which this build no longer supports". `navio-wallet dump` can still
+  export its records, but `navio-wallet createfromdump` refuses such a dump with
+  a similar error instead of creating a wallet that cannot be loaded.
+- If such a wallet is listed with `-wallet` or in the load-on-startup list in
+  `settings.json`, `naviod` now fails to start with that error. Before
+  upgrading, unload it with `unloadwallet <name> false` (which removes it from
+  the `settings.json` startup list) and drop any `-wallet` option naming it,
+  whether on the command line or in `navio.conf`. If you have already upgraded,
+  `unloadwallet` is not available for it, since the wallet cannot be loaded:
+  stop `naviod`, remove the wallet from the `"wallet"` list in `settings.json`
+  and from any `-wallet` option, then start again.

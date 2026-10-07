@@ -9,7 +9,6 @@ add_library(navio_wallet STATIC EXCLUDE_FROM_ALL
   crypter.cpp
   db.cpp
   dump.cpp
-  external_signer_scriptpubkeyman.cpp
   feebumper.cpp
   fees.cpp
   interfaces.cpp

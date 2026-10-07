@@ -91,6 +91,9 @@ static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::pa
             tfm::format(std::cerr, "Error loading %s: Wallet requires newer version of %s",
                         name, PACKAGE_NAME);
             return nullptr;
+        } else if (load_wallet_ret == DBErrors::EXTERNAL_SIGNER_SUPPORT_REQUIRED) {
+            tfm::format(std::cerr, "Error loading %s: This wallet uses an external signer, which this build no longer supports", name);
+            return nullptr;
         } else if (load_wallet_ret == DBErrors::NEED_REWRITE) {
             tfm::format(std::cerr, "Wallet needed to be rewritten: restart %s to complete", PACKAGE_NAME);
             return nullptr;

@@ -17,6 +17,9 @@ from test_framework.util import (
 )
 from test_framework.wallet_util import WalletUnlock
 
+# Mirrors WALLET_FLAG_EXTERNAL_SIGNER in src/wallet/walletutil.h
+WALLET_FLAG_EXTERNAL_SIGNER = 1 << 35
+
 
 class WalletDescriptorTest(BitcoinTestFramework):
     def add_options(self, parser):
@@ -230,6 +233,20 @@ class WalletDescriptorTest(BitcoinTestFramework):
             conn.execute('INSERT INTO main VALUES(?, ?)', (b'\x07cscript' + b'\x00'*20, b'\x00'))
         conn.close()
         assert_raises_rpc_error(-4, "Unexpected legacy entry in descriptor wallet found.", self.nodes[0].loadwallet, "crashme")
+
+        self.log.info("Test that loading a wallet with the external signer flag set throws error")
+        self.nodes[0].createwallet(wallet_name="hww", disable_private_keys=True, descriptors=True)
+        self.nodes[0].unloadwallet("hww")
+        wallet_db = self.nodes[0].wallets_path / "hww" / self.wallet_data_filename
+        conn = sqlite3.connect(wallet_db)
+        with conn:
+            # "flags" entry: key is the serialized string "flags", value is a little-endian uint64
+            flags_key = b'\x05flags'
+            (flags_value,) = conn.execute('SELECT value FROM main WHERE key = ?', (flags_key,)).fetchone()
+            flags = int.from_bytes(flags_value, 'little') | WALLET_FLAG_EXTERNAL_SIGNER
+            conn.execute('UPDATE main SET value = ? WHERE key = ?', (flags.to_bytes(8, 'little'), flags_key))
+        conn.close()
+        assert_raises_rpc_error(-4, "This wallet uses an external signer, which this build no longer supports", self.nodes[0].loadwallet, "hww")
 
 
 if __name__ == '__main__':

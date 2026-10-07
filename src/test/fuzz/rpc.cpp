@@ -74,7 +74,6 @@ const std::vector<std::string> RPC_COMMANDS_NOT_SAFE_FOR_FUZZING{
     "dumptxoutset",   // avoid writing to disk
     "dumpwallet",     // avoid writing to disk
     "echoipc",        // avoid assertion failure (Assertion `"EnsureAnyNodeContext(request.context).init" && check' failed.)
-    "enumeratesigners",
     "generatetoaddress",      // avoid prohibitively slow execution (when `num_blocks` is large)
     "generatetoblsctaddress", // avoid prohibitively slow execution (when `num_blocks` is large)
     "generatetodescriptor",   // avoid prohibitively slow execution (when `nblocks` is large)
