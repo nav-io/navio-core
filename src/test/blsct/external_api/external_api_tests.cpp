@@ -721,10 +721,21 @@ BOOST_AUTO_TEST_CASE(test_unsigned_output_gamma_and_data_predicate)
     auto parsed = blsct::ParsePredicate(signed_tx.vout[0].predicate);
     BOOST_CHECK(parsed.IsDataPredicate());
     BOOST_CHECK(signed_tx.vout[0].IsStakedCommitment());
-    const auto& pred_vch = signed_tx.vout[0].predicate;
-    const auto payload = ParseHex<std::byte>(payload_hex);
-    BOOST_REQUIRE(pred_vch.size() >= payload.size());
-    BOOST_CHECK(std::equal(payload.begin(), payload.end(), pred_vch.end() - payload.size()));
+    // Read it back the way a binding would: the output's serialized
+    // predicate, then the DATA payload with its framing stripped.
+    const auto payload = ParseHex<unsigned char>(payload_hex);
+    auto* pred_rv = get_ctx_out_vector_predicate(&signed_tx.vout[0]);
+    BOOST_REQUIRE(pred_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(pred_rv->result, BLSCT_SUCCESS);
+    auto* data_rv = get_data_predicate_data(static_cast<const BlsctVectorPredicate*>(pred_rv->value), pred_rv->value_size);
+    BOOST_REQUIRE(data_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(data_rv->result, BLSCT_SUCCESS);
+    const auto* data = static_cast<const unsigned char*>(data_rv->value);
+    BOOST_CHECK_EQUAL_COLLECTIONS(data, data + data_rv->value_size, payload.begin(), payload.end());
+    free_obj(data_rv->value);
+    free(data_rv);
+    free_obj(pred_rv->value);
+    free(pred_rv);
 
     free_obj(view_key_rv->value);
     free(view_key_rv);
@@ -962,6 +973,58 @@ BOOST_AUTO_TEST_CASE(test_set_unsigned_output_stake_delegation)
     free_obj((void*)dest);
     free_obj((void*)other_sub_addr_id);
     free_obj((void*)other_dest);
+}
+
+BOOST_AUTO_TEST_CASE(test_get_data_predicate_data)
+{
+    init();
+
+    const auto get = [](const blsct::VectorPredicate& vch) {
+        return get_data_predicate_data(reinterpret_cast<const BlsctVectorPredicate*>(vch.data()), vch.size());
+    };
+
+    // 300 bytes needs a three-byte CompactSize length prefix, so the getter
+    // has to decode the framing rather than skip a fixed number of bytes.
+    std::vector<unsigned char> long_payload(300);
+    for (size_t i = 0; i < long_payload.size(); ++i) long_payload[i] = static_cast<unsigned char>(i);
+    const std::vector<std::vector<unsigned char>> payloads{long_payload, {0x4e, 0x56, 0x44, 0x47}, {}};
+    for (const auto& payload : payloads) {
+        auto* rv = get(blsct::DataPredicate(payload).GetVch());
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
+        BOOST_REQUIRE(rv->value != nullptr);
+        const auto* data = static_cast<const unsigned char*>(rv->value);
+        BOOST_CHECK_EQUAL_COLLECTIONS(data, data + rv->value_size, payload.begin(), payload.end());
+        free_obj(rv->value);
+        free(rv);
+    }
+
+    // Anything but a DATA predicate is refused.
+    auto* pub_key_rv = gen_random_public_key();
+    BOOST_REQUIRE(pub_key_rv != nullptr);
+    auto* mint_pred_rv = build_mint_token_predicate(static_cast<const BlsctPubKey*>(pub_key_rv->value), 5);
+    BOOST_REQUIRE(mint_pred_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(mint_pred_rv->result, BLSCT_SUCCESS);
+    auto* not_data_rv = get_data_predicate_data(static_cast<const BlsctVectorPredicate*>(mint_pred_rv->value), mint_pred_rv->value_size);
+    BOOST_REQUIRE(not_data_rv != nullptr);
+    BOOST_CHECK_EQUAL(not_data_rv->result, BLSCT_FAILURE);
+    free(not_data_rv);
+
+    // A length prefix promising more bytes than follow, an unknown
+    // operation byte, and a null pointer.
+    auto truncated = blsct::DataPredicate(long_payload).GetVch();
+    truncated.pop_back();
+    const blsct::VectorPredicate unknown_op{std::byte{0xff}, std::byte{0x00}};
+    for (auto* rv : {get(truncated), get(unknown_op), get_data_predicate_data(nullptr, 3)}) {
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK_EQUAL(rv->result, BLSCT_FAILURE);
+        free(rv);
+    }
+
+    free_obj(mint_pred_rv->value);
+    free(mint_pred_rv);
+    free_obj(pub_key_rv->value);
+    free(pub_key_rv);
 }
 
 BOOST_AUTO_TEST_CASE(test_are_ctx_in_equal)

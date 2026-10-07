@@ -28,6 +28,7 @@
 #include <util/rbf.h>
 #include <util/transaction_identifier.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <cstring>
@@ -3201,6 +3202,25 @@ void* get_mint_nft_predicate_metadata(
         return nullptr;
     }
     return CloneStringMap(predicate->GetNftMetaData());
+}
+
+BlsctRetVal* get_data_predicate_data(
+    const BlsctVectorPredicate* blsct_vector_predicate,
+    size_t obj_size)
+{
+    RETURN_RET_VAL_IF_NULL(blsct_vector_predicate, blsct_err(BLSCT_FAILURE));
+    auto predicate = ParseOpaquePredicate(blsct_vector_predicate, obj_size);
+    if (!predicate.has_value() || !predicate->IsDataPredicate()) {
+        return blsct_err(BLSCT_FAILURE);
+    }
+
+    const auto data = predicate->GetData();
+    // malloc(0) may return nullptr, which would read as an allocation
+    // failure; an empty payload still gets a valid buffer.
+    MALLOC_BYTES(uint8_t, buf, std::max<size_t>(data.size(), 1));
+    RETURN_ERR_IF_MEM_ALLOC_FAILED(buf);
+    std::memcpy(buf, data.data(), data.size());
+    return blsct_succ(buf, data.size());
 }
 
 // key derivation functions
