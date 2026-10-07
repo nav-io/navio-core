@@ -1102,6 +1102,99 @@ BOOST_FIXTURE_TEST_CASE(ZapSelectTx_repoints_shared_output, TestChain100Setup)
     TestUnloadWallet(std::move(wallet));
 }
 
+// Zapping every holder of an output in one call leaves no index entry, rather
+// than one handed between transactions of the same batch and left pointing at
+// a removed one.
+BOOST_FIXTURE_TEST_CASE(ZapSelectTx_drops_output_of_all_holders, TestChain100Setup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    auto wallet = TestLoadWallet(context);
+    CKey key = GenerateRandomKey();
+    AddKey(*wallet, key);
+
+    m_coinbase_txns.push_back(CreateAndProcessBlock({}, GetScriptForRawPubKey(coinbaseKey.GetPubKey())).vtx[0]);
+    auto block_tx = TestSimpleSpend(*m_coinbase_txns[0], 0, coinbaseKey, GetScriptForRawPubKey(key.GetPubKey()));
+    CreateAndProcessBlock({block_tx}, GetScriptForRawPubKey(coinbaseKey.GetPubKey()));
+
+    SyncWithValidationInterfaceQueue();
+
+    {
+        LOCK(wallet->cs_wallet);
+        const COutPoint block_out{block_tx.vout[0].GetHash()};
+
+        CMutableTransaction dup_mtx;
+        dup_mtx.vin.emplace_back(Txid::FromUint256(InsecureRand256()));
+        dup_mtx.vout.push_back(block_tx.vout[0]);
+        const CTransaction dup_tx{dup_mtx};
+        BOOST_REQUIRE(wallet->AddToWallet(MakeTransactionRef(dup_tx), TxStateInactive{}));
+        BOOST_REQUIRE_EQUAL(wallet->GetWalletTxFromOutpoint(block_out), wallet->GetWalletTx(dup_tx.GetHash()));
+
+        std::vector<uint256> vHashIn{block_tx.GetHash(), dup_tx.GetHash()}, vHashOut;
+        BOOST_CHECK_EQUAL(wallet->ZapSelectTx(vHashIn, vHashOut), DBErrors::LOAD_OK);
+        BOOST_CHECK_EQUAL(vHashOut.size(), 2u);
+        BOOST_CHECK_EQUAL(wallet->mapWallet.count(block_tx.GetHash()), 0u);
+        BOOST_CHECK_EQUAL(wallet->mapWallet.count(dup_tx.GetHash()), 0u);
+        BOOST_CHECK(wallet->GetWalletTxFromOutpoint(block_out) == nullptr);
+        BOOST_CHECK(!wallet->mapOutpointHashToWalletTx.contains(block_out.hash));
+    }
+
+    TestUnloadWallet(std::move(wallet));
+}
+
+// With several remaining holders, the entry goes to the newest one in
+// wtxOrdered order, not to whichever mapWallet's salted hash visits first.
+BOOST_FIXTURE_TEST_CASE(ZapSelectTx_repoints_to_newest_holder, TestChain100Setup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    auto wallet = TestLoadWallet(context);
+    CKey key = GenerateRandomKey();
+    AddKey(*wallet, key);
+
+    m_coinbase_txns.push_back(CreateAndProcessBlock({}, GetScriptForRawPubKey(coinbaseKey.GetPubKey())).vtx[0]);
+    auto block_tx = TestSimpleSpend(*m_coinbase_txns[0], 0, coinbaseKey, GetScriptForRawPubKey(key.GetPubKey()));
+    CreateAndProcessBlock({block_tx}, GetScriptForRawPubKey(coinbaseKey.GetPubKey()));
+
+    SyncWithValidationInterfaceQueue();
+
+    {
+        LOCK(wallet->cs_wallet);
+        const COutPoint block_out{block_tx.vout[0].GetHash()};
+        const CWalletTx* block_wtx = wallet->GetWalletTx(block_tx.GetHash());
+        BOOST_REQUIRE(block_wtx);
+
+        // Two more holders of the same output, added after block_tx.
+        std::vector<const CWalletTx*> dup_wtxs;
+        for (int i = 0; i < 2; ++i) {
+            CMutableTransaction dup_mtx;
+            dup_mtx.vin.emplace_back(Txid::FromUint256(InsecureRand256()));
+            dup_mtx.vout.push_back(block_tx.vout[0]);
+            const CTransaction dup_tx{dup_mtx};
+            BOOST_REQUIRE(wallet->AddToWallet(MakeTransactionRef(dup_tx), TxStateInactive{}));
+            dup_wtxs.push_back(wallet->GetWalletTx(dup_tx.GetHash()));
+        }
+        const CWalletTx* middle_wtx = dup_wtxs[0];
+        const CWalletTx* newest_wtx = dup_wtxs[1];
+        BOOST_REQUIRE_LT(block_wtx->nOrderPos, middle_wtx->nOrderPos);
+        BOOST_REQUIRE_LT(middle_wtx->nOrderPos, newest_wtx->nOrderPos);
+        BOOST_REQUIRE_EQUAL(wallet->GetWalletTxFromOutpoint(block_out), newest_wtx);
+
+        // Of the two remaining holders, middle_wtx is the newer one.
+        const uint256 newest_hash{newest_wtx->GetHash()};
+        std::vector<uint256> vHashIn{newest_hash}, vHashOut;
+        BOOST_CHECK_EQUAL(wallet->ZapSelectTx(vHashIn, vHashOut), DBErrors::LOAD_OK);
+        BOOST_CHECK_EQUAL(wallet->mapWallet.count(newest_hash), 0u);
+        BOOST_CHECK_EQUAL(wallet->GetWalletTxFromOutpoint(block_out), middle_wtx);
+    }
+
+    TestUnloadWallet(std::move(wallet));
+}
+
 /**
  * Checks a wallet invalid state where the inputs (prev-txs) of a new arriving transaction are not marked dirty,
  * while the transaction that spends them exist inside the in-memory wallet tx map (not stored on db due a db write failure).
