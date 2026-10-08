@@ -5,10 +5,14 @@
 #ifndef BITCOIN_HTTPSERVER_H
 #define BITCOIN_HTTPSERVER_H
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
+class ArgsManager;
 namespace util {
 class SignalInterrupt;
 } // namespace util
@@ -21,6 +25,12 @@ struct evhttp_request;
 struct event_base;
 class CService;
 class HTTPRequest;
+
+/** The (host, port) pairs the RPC server binds to: each -rpcbind, when
+ * -rpcallowip is also set, and otherwise the loopback addresses, with -rpcport
+ * wherever no port is given.
+ */
+std::vector<std::pair<std::string, uint16_t>> GetHTTPBindEndpoints(const ArgsManager& args);
 
 /** Initialize HTTP server.
  * Call this before RegisterHTTPHandler or EventBase().

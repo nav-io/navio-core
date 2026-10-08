@@ -355,28 +355,35 @@ static void ThreadHTTP(struct event_base* base)
     LogPrint(BCLog::HTTP, "Exited http event loop\n");
 }
 
+std::vector<std::pair<std::string, uint16_t>> GetHTTPBindEndpoints(const ArgsManager& args)
+{
+    uint16_t http_port{static_cast<uint16_t>(args.GetIntArg("-rpcport", BaseParams().RPCPort()))};
+    std::vector<std::pair<std::string, uint16_t>> endpoints;
+
+    if (!(args.IsArgSet("-rpcallowip") && args.IsArgSet("-rpcbind"))) { // Default to loopback if not allowing external IPs
+        endpoints.emplace_back("::1", http_port);
+        endpoints.emplace_back("127.0.0.1", http_port);
+    } else if (args.IsArgSet("-rpcbind")) { // Specific bind address
+        for (const std::string& strRPCBind : args.GetArgs("-rpcbind")) {
+            uint16_t port{http_port};
+            std::string host;
+            SplitHostPort(strRPCBind, port, host);
+            endpoints.emplace_back(host, port);
+        }
+    }
+    return endpoints;
+}
+
 /** Bind HTTP server to specified addresses */
 static bool HTTPBindAddresses(struct evhttp* http)
 {
-    uint16_t http_port{static_cast<uint16_t>(gArgs.GetIntArg("-rpcport", BaseParams().RPCPort()))};
-    std::vector<std::pair<std::string, uint16_t>> endpoints;
-
-    // Determine what addresses to bind to
-    if (!(gArgs.IsArgSet("-rpcallowip") && gArgs.IsArgSet("-rpcbind"))) { // Default to loopback if not allowing external IPs
-        endpoints.emplace_back("::1", http_port);
-        endpoints.emplace_back("127.0.0.1", http_port);
+    std::vector<std::pair<std::string, uint16_t>> endpoints{GetHTTPBindEndpoints(gArgs)};
+    if (!(gArgs.IsArgSet("-rpcallowip") && gArgs.IsArgSet("-rpcbind"))) {
         if (gArgs.IsArgSet("-rpcallowip")) {
             LogPrintf("WARNING: option -rpcallowip was specified without -rpcbind; this doesn't usually make sense\n");
         }
         if (gArgs.IsArgSet("-rpcbind")) {
             LogPrintf("WARNING: option -rpcbind was ignored because -rpcallowip was not specified, refusing to allow everyone to connect\n");
-        }
-    } else if (gArgs.IsArgSet("-rpcbind")) { // Specific bind address
-        for (const std::string& strRPCBind : gArgs.GetArgs("-rpcbind")) {
-            uint16_t port{http_port};
-            std::string host;
-            SplitHostPort(strRPCBind, port, host);
-            endpoints.emplace_back(host, port);
         }
     }
 

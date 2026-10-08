@@ -2817,12 +2817,12 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // - 1) cannot collide with naviod, which has no UDP listeners.
         // The P2P entries hold -port or the network default wherever no
         // explicit port was given, as do the RPC and onion ones.
-        std::vector<std::pair<std::string, uint16_t>> listeners{
-            {"RPC", static_cast<uint16_t>(args.GetIntArg("-rpcport", BaseParams().RPCPort()))},
-        };
+        std::vector<std::pair<std::string, uint16_t>> listeners;
+        for (const auto& [host, port] : GetHTTPBindEndpoints(args)) listeners.emplace_back("RPC", port);
         if (connOptions.bind_on_any) listeners.emplace_back("P2P", GetListenPort());
         for (const CService& bind : connOptions.vBinds) listeners.emplace_back("P2P", bind.GetPort());
         for (const auto& whitebind : connOptions.vWhiteBinds) listeners.emplace_back("P2P", whitebind.m_service.GetPort());
+        for (const CService& bind : connOptions.vWsBinds) listeners.emplace_back("WebSocket P2P", bind.GetPort());
         for (const CService& bind : connOptions.onion_binds) listeners.emplace_back("onion service target", bind.GetPort());
         const uint16_t sam_port{GetI2PDSAMPort(args)};
         for (const auto& [listener, port] : listeners) {

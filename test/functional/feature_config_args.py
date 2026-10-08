@@ -189,6 +189,8 @@ class ConfArgsTest(BitcoinTestFramework):
             (['-bind=127.0.0.1:18603', '-i2pdsamport=18603'], 'P2P'),
             (['-whitebind=noban@127.0.0.1:18604', '-i2pdsamport=18604'], 'P2P'),
             (['-bind=127.0.0.1:18605=onion', '-i2pdsamport=18605'], 'onion service target'),
+            (['-rpcallowip=127.0.0.1', '-rpcbind=127.0.0.1:18606', '-i2pdsamport=18606'], 'RPC'),
+            (['-p2pwsbind=127.0.0.1:18607', '-i2pdsamport=18607'], 'WebSocket P2P'),
         ]:
             sam_port = extra_args[-1].split('=')[1]
             node.assert_start_raises_init_error(
