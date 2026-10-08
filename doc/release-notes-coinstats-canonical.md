@@ -26,4 +26,6 @@ Indexes
 - Downgrading is not detected: an older release ignores the version record and
   keeps extending the index with the old coin hash, so its values silently go
   wrong. After downgrading, rebuild the index by deleting `indexes/coinstats` in
-  the network's data directory (or with `-reindex`).
+  the network's data directory (or with `-reindex`). Upgrading again does not
+  repair it: the version record written by this release is still present, so the
+  mixed index is not rebuilt either. Rebuild it the same way.
