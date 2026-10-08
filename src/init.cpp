@@ -636,7 +636,9 @@ void SetupServerArgs(ArgsManager& argsman)
     // rejected in AppInitParameterInteraction() rather than silently ignored.
     hidden_args.emplace_back("-i2pd");
     hidden_args.emplace_back("-i2pdcmd=<path>");
-    hidden_args.emplace_back("-i2pdsamport=<port>");
+    // Registered directly rather than through hidden_args, which cannot carry
+    // NETWORK_ONLY, so a config file is held to the same rules on every build.
+    argsman.AddArg("-i2pdsamport=<port>", "", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::HIDDEN);
 #endif
     argsman.AddArg("-i2pacceptincoming", strprintf("Whether to accept inbound I2P connections (default: %i). Ignored if -i2psam is not set. Listening for inbound I2P connections is done through the SAM proxy, not by binding to a local address and port.", DEFAULT_I2P_ACCEPT_INCOMING), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onlynet=<net>", "Make automatic outbound connections only to network <net> (" + Join(GetNetworkNames(), ", ") + "). Inbound and manual connections are not affected by this option. It can be specified multiple times to allow multiple networks.", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);

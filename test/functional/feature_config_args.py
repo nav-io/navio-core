@@ -163,6 +163,18 @@ class ConfArgsTest(BitcoinTestFramework):
         )
         self.start_node(0, extra_args=['-i2pd=0', '-i2pdcmd=i2pd', '-i2pdsamport=7656'])
         self.stop_node(0)
+        # -i2pdsamport is per network on every build, so outside a network
+        # section of the config file it is refused rather than applied.
+        inc_conf_file_path = node.datadir_path / 'i2pd.conf'
+        with open(node.datadir_path / 'navio.conf', 'a', encoding='utf-8') as conf:
+            conf.write(f'includeconf={inc_conf_file_path}\n')
+        with open(inc_conf_file_path, 'w', encoding='utf-8') as conf:
+            conf.write('i2pdsamport=7656\n')
+        node.assert_start_raises_init_error(
+            expected_msg=f'Error: Config setting for -i2pdsamport only applied on {self.chain} network when in [{self.chain}] section.',
+        )
+        with open(inc_conf_file_path, 'w', encoding='utf-8') as conf:
+            conf.write('')  # clear
         if not self.is_i2pd_compiled():
             node.assert_start_raises_init_error(
                 expected_msg='Error: -i2pd is set, but this build has no I2P router support. Run an I2P router separately and set -i2psam instead.',
