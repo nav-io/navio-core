@@ -1,8 +1,8 @@
 package=zlib
-$(package)_version=1.3.1
+$(package)_version=1.3.2
 $(package)_download_path=https://github.com/madler/zlib/releases/download/v$($(package)_version)/
 $(package)_file_name=$(package)-$($(package)_version).tar.gz
-$(package)_sha256_hash=9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23
+$(package)_sha256_hash=bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
 
 define $(package)_set_vars
 $(package)_config_env=CC="$($(package)_cc)" CFLAGS="$($(package)_cflags) $($(package)_cppflags) -fPIC"

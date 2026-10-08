@@ -1,11 +1,13 @@
 package=i2pd
-$(package)_version=2.60.0
+$(package)_version=2.61.0
 $(package)_download_path=https://github.com/PurpleI2P/i2pd/archive/refs/tags/
-# GitHub serves the source archive as <tag>.tar.gz; save it under a
-# project-prefixed name locally.
+# PurpleI2P publishes no separate source tarball asset, only binaries. Their
+# release's signed SHA512SUMS does list i2pd-<version>.tar.gz, and that is
+# this tag archive byte for byte, so fetch the archive and save it under
+# that name. GitHub serves it as <tag>.tar.gz.
 $(package)_download_file=$($(package)_version).tar.gz
 $(package)_file_name=$(package)-$($(package)_version).tar.gz
-$(package)_sha256_hash=ef32100c5ffdf4d23dfe78a2f6c08f65574fd79f992eb2ac8cfea0b6440deabd
+$(package)_sha256_hash=409cd3c0257491286611ab6aaf690940c7248fb898377c13fadb65a836e2a0ab
 $(package)_dependencies=boost openssl zlib
 # i2pd's CMake project lives in the build/ subdirectory; configure out-of-source.
 $(package)_build_subdir=navio-build

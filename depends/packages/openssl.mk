@@ -1,11 +1,13 @@
 package=openssl
-$(package)_version=3.0.20
+$(package)_version=3.5.9
 $(package)_download_path=https://github.com/openssl/openssl/releases/download/openssl-$($(package)_version)/
 $(package)_file_name=$(package)-$($(package)_version).tar.gz
-$(package)_sha256_hash=c80a01dfc70ece4dc21168932c37739042d404d46ccc81a5986dd75314ecda6f
+$(package)_sha256_hash=603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
 
-# Static libssl/libcrypto for the bundled Tor daemon only; navio itself does not
-# link OpenSSL. Kept minimal: no shared libs, no engines/tests/zlib.
+# Static libssl/libcrypto for the bundled i2pd router only; navio itself does
+# not link OpenSSL. Kept minimal: no shared libs, no engines/tests/zlib. The 3.5
+# LTS line also gives i2pd its post-quantum (ML-KEM) NTCP2/SSU2 transports,
+# which it only enables when built against OpenSSL >= 3.5.0.
 define $(package)_set_vars
 $(package)_config_env=AR="$($(package)_ar)" RANLIB="$($(package)_ranlib)" CC="$($(package)_cc)" CROSS_COMPILE=
 # On mingw the openssl app compiles a windres resource. Point RC at the
@@ -19,8 +21,8 @@ $(package)_config_opts+=--prefix=$(host_prefix) --openssldir=$(host_prefix)/etc/
 # -std=gnu11 last so it overrides the inherited -std=c11 (gnu11 also enables
 # _DEFAULT_SOURCE, declaring usleep). clang 19 (darwin cross) promotes
 # implicit-function-declaration / int-conversion to hard errors, which the
-# older OpenSSL 3.0.20 sources trip; keep them as warnings so the build
-# matches gcc's behaviour on the other hosts.
+# OpenSSL 3.0.x sources tripped; keep them as warnings so the build matches
+# gcc's behaviour on the other hosts.
 $(package)_config_opts+=$($(package)_cflags) $($(package)_cppflags) -std=gnu11
 $(package)_config_opts+=-Wno-error=implicit-function-declaration -Wno-error=int-conversion
 $(package)_config_opts_linux=-fPIC -Wa,--noexecstack
@@ -48,6 +50,9 @@ define $(package)_stage_cmds
   $(MAKE) DESTDIR=$($(package)_staging_dir) install_sw
 endef
 
+# OpenSSL >= 3.3 also installs a CMake package config under lib/cmake. i2pd
+# finds OpenSSL through CMake's FindOpenSSL module, so drop it with the
+# pkg-config files rather than leave a second, unused discovery path.
 define $(package)_postprocess_cmds
-  rm -rf share etc bin lib/pkgconfig
+  rm -rf share etc bin lib/pkgconfig lib/cmake
 endef
