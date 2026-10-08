@@ -141,6 +141,12 @@ CAmount CombinedCountFee(const Tx& own, std::span<const CTransactionRef> candida
     return growth * fee_rate;
 }
 
+template <typename Tx>
+CAmount CombinedCountFee(const Tx& own, const std::vector<CTransactionRef>& candidates, CAmount fee_rate)
+{
+    return CombinedCountFee(own, std::span<const CTransactionRef>{candidates.data(), candidates.size()}, fee_rate);
+}
+
 } // namespace aggregation
 
 #endif // BITCOIN_AGGREGATION_SESSION_H
