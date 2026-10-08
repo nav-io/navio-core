@@ -459,6 +459,22 @@ size_t get_ctx_outs_size(const void* vp_ctx_outs);
 const void* get_ctx_out_at(const void* vp_ctx_outs, size_t i);
 
 // ctx out
+/* Parses one serialized CTxOut, in the same encoding it has inside a
+ * serialized transaction (no transaction serialization params apply to an
+ * output). On success the value is a heap CTxOut accepted by every
+ * get_ctx_out_* getter, owned by the caller and freed with delete_ctx_out;
+ * value_size is 0, as for deserialize_ctx. Fails with BLSCT_FAILURE on a null
+ * or non-hex input, and with BLSCT_DESER_FAILED when the bytes do not parse
+ * as an output or bytes are left over after one. */
+BlsctRetVal* deserialize_ctx_out(const char* hex);
+/* Frees a CTxOut returned by deserialize_ctx_out. Null is a no-op. Never pass
+ * a pointer from get_ctx_out_at: that one points into its ctx's output
+ * vector and is freed with the ctx (delete_ctx). */
+void delete_ctx_out(void* vp_ctx_out);
+/* Serializes one CTxOut to malloc'd hex (free with free_obj), in the encoding
+ * deserialize_ctx_out reads. Accepts any CTxOut pointer, including one from
+ * get_ctx_out_at. Returns nullptr on null input or OOM. */
+const char* serialize_ctx_out(const void* vp_ctx_out);
 bool are_ctx_out_equal(const void* vp_a, const void* vp_b);
 uint64_t get_ctx_out_value(const void* vp_ctx_out);
 const BlsctScript* get_ctx_out_script_pub_key(const void* vp_ctx_out);
