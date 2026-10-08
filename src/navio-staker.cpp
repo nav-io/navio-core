@@ -1268,7 +1268,7 @@ void Loop()
                             own_delegation_rewards = std::move(*fresh);
                             // Operators and the functional test scrape this line.
                             LogPrintf("%s: [%s] Refreshed own delegations: %d of %d staked commitment(s) delegated.\n", __func__, walletName,
-                                      (int)std::ranges::count_if(commitment_set, [&](const auto& c) { return own_delegation_rewards.contains(c); }),
+                                      (int)std::count_if(commitment_set.begin(), commitment_set.end(), [&](const auto& c) { return own_delegation_rewards.contains(c); }),
                                       (int)commitment_set.size());
                             own_delegation_rewards_for = std::move(commitment_set);
                         }
