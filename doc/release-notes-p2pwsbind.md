@@ -18,6 +18,8 @@ P2P and network changes
   port, or 80/443 by scheme, is the one announced). A loopback-only listener
   without `-p2pwsexternal` is not advertised. `wsendpoint` is not sent over Tor,
   I2P or CJDNS connections, nor over outbound connections made through a proxy.
+  The `NODE_P2P_WS` bit is likewise left out of the `version` message (and of
+  the node's own address advertised) on those connections.
 
 Updated RPCs
 ------------

@@ -516,7 +516,9 @@ additional listening socket, alongside the ordinary `-bind`/`-port` ones.
   to such a bind, not to the clearnet one. Nor is it sent over an outbound
   connection made through a proxy (`-proxy`, or a hostname resolved by it),
   since the proxy is there to hide the node's address from that peer; inbound
-  peers on a clearnet listener still get it.
+  peers on a clearnet listener still get it. On every connection where
+  `wsendpoint` is withheld the `NODE_P2P_WS` bit is too: the node's `version`
+  and its self-advertised `addr` there do not carry it.
 - **Private addresses.** Any non-loopback `-p2pwsbind`, including a private LAN
   address such as `192.168.x.x` or `10.x.x.x`, sets `NODE_P2P_WS`, and peers are
   told to dial `ws://<the address they see>:<port>`. Behind NAT that only works

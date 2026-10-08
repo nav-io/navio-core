@@ -1581,6 +1581,39 @@ void PeerManagerImpl::FindNextBlocks(std::vector<const CBlockIndex*>& vBlocks, c
     }
 }
 
+/**
+ * Whether our WebSocket listener (NODE_P2P_WS and wsendpoint) may be
+ * announced to this peer.
+ *
+ * Only over clearnet. The endpoint is a clearnet port (or, with
+ * -p2pwsexternal, a clearnet URL), so announcing it to a peer that reached us
+ * over Tor/I2P/CJDNS -- or that we reached over one -- would tie that
+ * identity to our clearnet host, the same reason GetLocalAddrForPeer never
+ * offers a clearnet address there. Even the bare service bit is withheld: it
+ * would mark the privacy-network identity as a WebSocket node. NET_UNROUTABLE
+ * covers loopback and LAN peers, which are not privacy networks; inbound Tor
+ * is recognised by its -bind=...=onion listener (m_inbound_onion), as
+ * everywhere else in net.
+ *
+ * Nor over an outbound connection we made through a proxy: that proxy is
+ * there to hide our address from the peer. Inbound peers are never proxied,
+ * and the clearnet and name proxies are fixed at startup (only torcontrol
+ * sets one later, for onion), so ConnectNode's choice can be replayed: a
+ * resolved address went through the proxy for its GetNetwork(), if one is set
+ * (never for loopback or LAN, which are NET_UNROUTABLE), and an outbound peer
+ * without a valid address was reached by name through the name proxy, the
+ * only way ConnectNode connects without one.
+ */
+bool MayAnnounceWsEndpoint(const CNode& node)
+{
+    const Network conn_net{node.ConnectedThroughNetwork()};
+    const bool clearnet{conn_net == NET_IPV4 || conn_net == NET_IPV6 || conn_net == NET_UNROUTABLE};
+    Proxy proxy;
+    const bool proxied{!node.IsInboundConn() &&
+                       (!node.addr.IsValid() || GetProxy(node.addr.GetNetwork(), proxy))};
+    return clearnet && !proxied;
+}
+
 } // namespace
 
 void PeerManagerImpl::PushNodeVersion(CNode& pnode, const Peer& peer)
@@ -1645,6 +1678,12 @@ void PeerManagerImpl::UpdateLastBlockAnnounceTime(NodeId node, int64_t time_in_s
 
 void PeerManagerImpl::InitializeNode(const CNode& node, ServiceFlags our_services)
 {
+    // Offered per peer, so VERSION and our self-advertised addr (both built
+    // from Peer::m_our_services) only carry the bit where the endpoint itself
+    // may be announced.
+    if (!MayAnnounceWsEndpoint(node)) {
+        our_services = static_cast<ServiceFlags>(our_services & ~NODE_P2P_WS);
+    }
     NodeId nodeid = node.GetId();
     {
         LOCK(cs_main);
@@ -3924,32 +3963,10 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         }
 
         // Tell the peer where our WebSocket listener is: NODE_P2P_WS alone
-        // says we have one, but a service bit cannot carry the port.
-        //
-        // Only over clearnet. The endpoint is a clearnet port (or, with
-        // -p2pwsexternal, a clearnet URL), so announcing it to a peer that
-        // reached us over Tor/I2P/CJDNS -- or that we reached over one --
-        // would tie that identity to our clearnet host, the same reason
-        // GetLocalAddrForPeer never offers a clearnet address there.
-        // NET_UNROUTABLE covers loopback and LAN peers, which are not privacy
-        // networks; inbound Tor is recognised by its -bind=...=onion listener
-        // (m_inbound_onion), as everywhere else in net.
-        //
-        // Nor over an outbound connection we made through a proxy: that
-        // proxy is there to hide our address from the peer. Inbound peers are
-        // never proxied, and the clearnet and name proxies are fixed at
-        // startup (only torcontrol sets one later, for onion), so
-        // ConnectNode's choice can be replayed: a resolved address went
-        // through the proxy for its GetNetwork(), if one is set (never for
-        // loopback or LAN, which are NET_UNROUTABLE), and an outbound peer
-        // without a valid address was reached by name through the name
-        // proxy, the only way ConnectNode connects without one.
-        const Network conn_net{pfrom.ConnectedThroughNetwork()};
-        const bool clearnet{conn_net == NET_IPV4 || conn_net == NET_IPV6 || conn_net == NET_UNROUTABLE};
-        Proxy proxy;
-        const bool proxied{!pfrom.IsInboundConn() &&
-                           (!pfrom.addr.IsValid() || GetProxy(pfrom.addr.GetNetwork(), proxy))};
-        if (m_opts.ws_port != 0 && clearnet && !proxied) {
+        // says we have one, but a service bit cannot carry the port. Sent
+        // exactly where we offered the bit, which InitializeNode withholds
+        // wherever MayAnnounceWsEndpoint says no.
+        if (m_opts.ws_port != 0 && (peer->m_our_services & NODE_P2P_WS)) {
             MakeAndPushMessage(pfrom, NetMsgType::WSENDPOINT, m_opts.ws_port, m_opts.ws_url);
         }
 
