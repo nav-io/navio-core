@@ -770,6 +770,13 @@ uint64_t get_mint_nft_predicate_nft_id(
 void* get_mint_nft_predicate_metadata(
     const BlsctVectorPredicate* blsct_vector_predicate,
     size_t obj_size);
+/* Returns the payload of a DATA predicate (value_size = its length), without
+ * the operation byte and length prefix that frame it in the serialized
+ * predicate, e.g. as returned by get_ctx_out_vector_predicate. Fails
+ * (BLSCT_FAILURE) when the bytes are not a DATA predicate. */
+BlsctRetVal* get_data_predicate_data(
+    const BlsctVectorPredicate* blsct_vector_predicate,
+    size_t obj_size);
 
 // unsigned input/output/transaction helpers
 BlsctRetVal* build_unsigned_input(const BlsctTxIn* tx_in);
