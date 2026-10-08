@@ -24,6 +24,8 @@
 #include <vector>
 
 #ifdef WIN32
+#include <codecvt>
+#include <locale>
 #include <windows.h>
 #else
 #include <fcntl.h>
@@ -82,6 +84,13 @@ std::thread g_thread;
 std::string g_exe;
 std::vector<std::string> g_args;
 #ifdef WIN32
+//! g_exe and g_args as CreateProcessW() takes them, built once alongside them.
+std::wstring g_wexe;
+std::wstring g_wcmdline;
+//! Job object the router runs in, so that Windows kills it when naviod exits
+//! without stopping it (crash, TerminateProcess), the way PR_SET_PDEATHSIG
+//! does on Linux. Null if one could not be set up.
+HANDLE g_job{nullptr};
 HANDLE g_child{nullptr};
 #else
 pid_t g_child{-1};
@@ -169,25 +178,75 @@ fs::path FindCertsDir(const fs::path& i2pd)
     return Exists(certs) ? certs : fs::path{};
 }
 
+#ifdef WIN32
+//! UTF-8 to UTF-16, converted as the rest of the tree does for wide Win32 APIs.
+std::wstring ToWide(const std::string& utf8)
+{
+    return std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t>().from_bytes(utf8);
+}
+
+//! Append `arg` to a Windows command line so that the child's C runtime and
+//! CommandLineToArgvW() split it back out as exactly `arg`. Under their rules a
+//! run of backslashes is literal unless a double quote follows it; then each
+//! pair stands for one backslash and an odd one left over escapes the quote.
+//! So the argument is wrapped in quotes, embedded quotes are escaped, and the
+//! backslashes in front of an embedded or the closing quote are doubled.
+void AppendQuotedArg(std::wstring& cmdline, const std::wstring& arg)
+{
+    if (!cmdline.empty()) cmdline += L' ';
+    cmdline += L'"';
+    size_t backslashes{0};
+    for (const wchar_t c : arg) {
+        if (c == L'\\') {
+            ++backslashes;
+            continue;
+        }
+        cmdline.append(c == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
+        backslashes = 0;
+        cmdline += c;
+    }
+    cmdline.append(backslashes * 2, L'\\');
+    cmdline += L'"';
+}
+
+//! Create the kill-on-close job object for the router. If naviod already runs
+//! in a job (a service host, a terminal, a CI runner), the new job nests inside
+//! it, which Windows supports since Windows 8.
+HANDLE CreateKillOnCloseJob()
+{
+    HANDLE job{CreateJobObjectW(nullptr, nullptr)};
+    if (!job) return nullptr;
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        CloseHandle(job);
+        return nullptr;
+    }
+    return job;
+}
+#endif
+
 //! Launch g_exe/g_args as a detached child, recording its handle. Caller holds
 //! no lock; sets g_child under g_mutex.
 bool SpawnChild()
 {
 #ifdef WIN32
-    std::string cmdline;
-    for (const auto& a : g_args) {
-        if (!cmdline.empty()) cmdline += ' ';
-        cmdline += '"' + a + '"';
-    }
-    std::vector<char> mutable_cmd(cmdline.begin(), cmdline.end());
-    mutable_cmd.push_back('\0');
-    STARTUPINFOA si{};
+    // CreateProcessW() may write to the command line buffer, so pass a copy.
+    std::vector<wchar_t> mutable_cmd(g_wcmdline.begin(), g_wcmdline.end());
+    mutable_cmd.push_back(L'\0');
+    STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessA(nullptr, mutable_cmd.data(), nullptr, nullptr, FALSE,
-                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+    // Start it suspended, so that it is in the job before it runs any code and
+    // so before it could start a process of its own outside the job.
+    if (!CreateProcessW(g_wexe.c_str(), mutable_cmd.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &si, &pi)) {
         return false;
     }
+    if (g_job && !AssignProcessToJobObject(g_job, pi.hProcess)) {
+        LogPrintf("i2pd: cannot add the router to its job object (error %u); it will outlive naviod if naviod crashes\n", GetLastError());
+    }
+    ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);
     std::lock_guard<std::mutex> lk(g_mutex);
     g_child = pi.hProcess;
@@ -434,6 +493,20 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
         LogPrintf("i2pd: no reseed certificates next to %s; the router can only reseed if they are in %s\n",
                   g_exe, fs::PathToString(datadir / "certificates"));
     }
+#ifdef WIN32
+    // The narrow CreateProcessA() would read these UTF-8 strings in the ANSI
+    // code page, garbling any non-ASCII path, such as a datadir under a user
+    // profile with an accented name. i2pd still receives its argv from the C
+    // runtime in that code page, so characters it cannot represent remain
+    // out of reach; that is i2pd's limit, not one this side can lift.
+    g_wexe = ToWide(g_exe);
+    g_wcmdline.clear();
+    for (const auto& a : g_args) AppendQuotedArg(g_wcmdline, ToWide(a));
+    g_job = CreateKillOnCloseJob();
+    if (!g_job) {
+        LogPrintf("i2pd: cannot create a job object for the router (error %u); it will outlive naviod if naviod crashes\n", GetLastError());
+    }
+#endif
 
     {
         std::lock_guard<std::mutex> lk(g_mutex);
@@ -473,6 +546,13 @@ void StopI2PDProcess()
         TerminateChild(/*force=*/true);
     }
     if (g_thread.joinable()) g_thread.join();
+#ifdef WIN32
+    // The supervisor has reaped the router, so closing the job kills nothing.
+    if (g_job) {
+        CloseHandle(g_job);
+        g_job = nullptr;
+    }
+#endif
     std::lock_guard<std::mutex> lk(g_mutex);
     g_started = false;
 }
