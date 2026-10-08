@@ -78,6 +78,7 @@
 #include <stdexcept>
 #include <thread>
 #include <tuple>
+#include <unordered_set>
 #include <variant>
 
 struct KeyOriginInfo;
@@ -2949,6 +2950,13 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
 {
     AssertLockHeld(cs_wallet);
     DBErrors nZapSelectTxRet = WalletBatch(GetDatabase()).ZapSelectTx(vHashIn, vHashOut);
+    // Output-index entries that pointed at a zapped transaction. Several
+    // wallet transactions can carry the same output (e.g. a local send and
+    // the block transaction it was aggregated into), and the index holds only
+    // one of them, so an entry is only orphaned when it refers to the
+    // transaction being removed. It is erased before that CWalletTx goes
+    // away, and handed to a remaining holder once the whole batch is gone.
+    std::unordered_set<uint256, SaltedTxidHasher> orphaned_outputs;
     for (const uint256& hash : vHashOut) {
         const auto& it = mapWallet.find(hash);
         wtxOrdered.erase(it->second.m_it_wtxOrdered);
@@ -2961,33 +2969,30 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
                 }
             }
         }
-        // Fix up this transaction's output-index entries before the CWalletTx
-        // they point at goes away. Several wallet transactions can carry the
-        // same output (e.g. a local send and the block transaction it was
-        // aggregated into); the index holds whichever was added last, so only
-        // entries that still refer to the transaction being removed need
-        // touching. Hand each to another wallet transaction that carries the
-        // same output, or drop it if none does. Output ids are cached, so the
-        // scan hashes nothing, and it only runs when an entry is dropped.
         for (const Outid& out_id : it->second.tx->GetOutputIds()) {
             const auto idx = mapOutpointHashToWalletTx.find(out_id.ToUint256());
-            if (idx == mapOutpointHashToWalletTx.end() || idx->second != &it->second) continue;
-            const CWalletTx* holder{nullptr};
-            for (const auto& [other_hash, other] : mapWallet) {
-                if (&other == &it->second) continue;
-                const auto& other_ids{other.tx->GetOutputIds()};
-                if (std::find(other_ids.begin(), other_ids.end(), out_id) != other_ids.end()) {
-                    holder = &other;
-                    break;
-                }
-            }
-            if (holder) {
-                idx->second = holder;
-            } else {
+            if (idx != mapOutpointHashToWalletTx.end() && idx->second == &it->second) {
                 mapOutpointHashToWalletTx.erase(idx);
+                orphaned_outputs.insert(out_id.ToUint256());
             }
         }
         mapWallet.erase(it);
+    }
+    // One pass over the remaining transactions, newest first, so each orphaned
+    // output goes to its most recently ordered holder, deterministically. An
+    // output no remaining transaction carries stays unindexed. Output ids are
+    // cached, so the pass hashes nothing.
+    for (auto rit = wtxOrdered.rbegin(); rit != wtxOrdered.rend() && !orphaned_outputs.empty(); ++rit) {
+        const CWalletTx& wtx{*rit->second};
+        for (const Outid& out_id : wtx.tx->GetOutputIds()) {
+            if (orphaned_outputs.erase(out_id.ToUint256())) {
+                mapOutpointHashToWalletTx.emplace(out_id.ToUint256(), &wtx);
+            }
+        }
+    }
+    // Notify only once the index is consistent again, since a handler may
+    // look outputs up.
+    for (const uint256& hash : vHashOut) {
         NotifyTransactionChanged(hash, CT_DELETED);
     }
 
