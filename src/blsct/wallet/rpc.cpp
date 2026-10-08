@@ -5121,9 +5121,12 @@ RPCHelpMan signblsctoutput()
 
             if (!blindingKey) {
                 throw JSONRPCError(RPC_WALLET_ERROR,
-                                   "Could not recover the blinding key for that output. Either this wallet did not "
-                                   "create it, or it was created before recoverable blinding keys, in which case the "
-                                   "scalar was random and discarded and cannot be recovered.");
+                                   strprintf("Could not recover the blinding key for that output. Either this wallet "
+                                             "did not create it, or it was given a random key, which was discarded and "
+                                             "cannot be recovered. Outputs get a random key when they were built before "
+                                             "recoverable blinding keys, past the first %u outputs of their transaction, "
+                                             "after %u builds on the same inputs, or while the wallet seed was unavailable.",
+                                             blsct::MAX_OUTPUT_SEARCH, blsct::MAX_GENERATION_SEARCH));
             }
 
             const blsct::PrivateKey key{*blindingKey};
