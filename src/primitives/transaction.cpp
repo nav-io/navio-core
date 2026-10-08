@@ -91,6 +91,10 @@ std::string CTxOut::ToString() const
 
 uint256 CTxOut::GetHash() const
 {
+    // An output id is the hash of the full output. Under a
+    // StrippedForUndoScope the range-proof body is left out of the
+    // serialization, so the hash would silently be a different id.
+    Assert(!CTxOutBLSCTData::IsStrippedForUndo());
     return Txid::FromUint256((HashWriter{} << TX_NO_WITNESS(*this)).GetHash());
 }
 
