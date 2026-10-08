@@ -498,9 +498,7 @@ jobs:
             cc: clang
             cxx: clang++
             depends_host: i686-pc-linux-gnu
-            # NO_I2P=1: 32-bit x86 needs libatomic for libcrypto's 8-byte atomics
-            # and isn't a release/guix target; skip the bundled I2P stack here.
-            depends_opts: MULTIPROCESS=1 DEBUG=1 CC='clang -m32' CXX='clang++ -m32' NO_I2P=1
+            depends_opts: MULTIPROCESS=1 DEBUG=1 CC='clang -m32' CXX='clang++ -m32'
             cmake_flags: >-
               -DCMAKE_BUILD_TYPE=Debug
               -DWITH_MULTIPROCESS=ON
@@ -532,6 +530,8 @@ jobs:
             cc: gcc
             cxx: g++
             depends_host: x86_64-w64-mingw32
+            # Builds the bundled i2pd router: the mingw leg of its cross builds.
+            depends_opts: I2P=1
             cmake_flags: >-
               -DCMAKE_BUILD_TYPE=Release
               -DREDUCE_EXPORTS=ON
@@ -571,6 +571,8 @@ jobs:
             cc: gcc
             cxx: g++
             depends_host: x86_64-apple-darwin
+            # Builds the bundled i2pd router: the darwin leg of its cross builds.
+            depends_opts: I2P=1
             xcode_version: '15.0'
             xcode_build_id: '15A240d'
             cmake_flags: >-
@@ -603,6 +605,9 @@ jobs:
             cc: gcc
             cxx: g++
             depends_host: arm-linux-gnueabihf
+            # Builds the bundled i2pd router: the 32-bit ARM leg of its cross
+            # builds, whose unit tests run the resulting naviod natively.
+            depends_opts: I2P=1
             cmake_flags: >-
               -DCMAKE_BUILD_TYPE=Release
               -DREDUCE_EXPORTS=ON
@@ -674,9 +679,7 @@ jobs:
             cc: clang-17
             cxx: clang++-17
             depends_host: x86_64-pc-linux-gnu
-            # NO_I2P=1: the bundled i2pd/OpenSSL/Boost are not instrumented, so
-            # building them under the sanitizer is wasteful/unsound.
-            depends_opts: CC=clang-17 CXX='clang++-17 -stdlib=libc++' NO_I2P=1
+            depends_opts: CC=clang-17 CXX='clang++-17 -stdlib=libc++'
             cmake_flags: >-
               -DSANITIZERS=thread
               -DWITH_ZMQ=ON
@@ -741,7 +744,6 @@ jobs:
               -L/msan/cxx_build/lib -Wl,-rpath,/msan/cxx_build/lib
               -lc++ -lc++abi -lpthread
               -Wno-unused-command-line-argument"
-              NO_I2P=1
             # MSAN_AND_LIBCXX_FLAGS C++ side: full set passed to cmake so the
             # instrumented libc++ headers + rpath reach both compile and link lines.
             # APPEND_CFLAGS carries the non-sanitize extra MSan bits for C sources;
@@ -1041,9 +1043,8 @@ jobs:
           # from HOST instead of inheriting the linux-cmake matrix CC/CXX
           # (which would otherwise leak into per-package configure scripts —
           # e.g. zeromq would probe windows.h with the host gcc and fail).
-          # I2P is left enabled here so the bundled router (openssl+zlib+boost+
-          # i2pd) gets cross-compile coverage across the matrix (mingw, darwin,
-          # arm, i686). Pass NO_I2P=1 locally to skip it.
+          # The bundled I2P router (openssl+zlib+boost+i2pd) is opt-in; the
+          # entries that cover its cross builds pass I2P=1 in depends_opts.
           env -u CC -u CXX make -C depends HOST=${{ matrix.depends_host }} ${{ matrix.depends_opts }}
 
       - name: Dump depends config.log on failure
@@ -1359,8 +1360,7 @@ jobs:
           docker exec "${CONTAINER_NAME}" bash -eu -c '
             env -u CC -u CXX make -C depends \
               HOST='"${DEPENDS_HOST}"' \
-              CC="gcc -m32" CXX="g++ -m32" \
-              NO_I2P=1
+              CC="gcc -m32" CXX="g++ -m32"
           '
 
       - name: Save depends cache
@@ -1374,12 +1374,16 @@ jobs:
         # inside the container; $PWD inside the container resolves to the
         # workspace because docker run was invoked with -w
         # "${GITHUB_WORKSPACE}".
+        # -DWITH_I2P=ON builds naviod's -i2pd supervisor without the bundled
+        # router (depends is not built with I2P=1 here), so the functional
+        # tests that drive it with a stub -i2pdcmd run on this job.
         run: |
           docker exec "${CONTAINER_NAME}" bash -eu -c '
             cmake -B build -G Ninja \
               -DCMAKE_TOOLCHAIN_FILE="$PWD/depends/'"${DEPENDS_HOST}"'/toolchain.cmake" \
               -DCMAKE_BUILD_TYPE=Release \
               -DWITH_ZMQ=ON \
+              -DWITH_I2P=ON \
               -DREDUCE_EXPORTS=ON
           '
 

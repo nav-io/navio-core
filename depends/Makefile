@@ -40,8 +40,8 @@ NO_SQLITE ?=
 NO_WALLET ?=
 NO_ZMQ ?=
 NO_USDT ?=
-NO_I2P ?=
 MULTIPROCESS ?=
+I2P ?=
 LTO ?=
 NO_HARDEN ?=
 FALLBACK_DOWNLOAD_PATH ?= https://bitcoincore.org/depends-sources
@@ -165,9 +165,14 @@ zmq_packages_$(NO_ZMQ) = $(zmq_packages)
 multiprocess_packages_$(MULTIPROCESS) = $(multiprocess_packages)
 usdt_packages_$(NO_USDT) = $(usdt_$(host_os)_packages)
 
-# Bundled I2P router (i2pd) and its crypto/compression deps for built-in I2P
-# support. Skipped when NO_I2P=1 is passed.
-i2p_packages_$(NO_I2P) = $(i2p_packages)
+# Bundled I2P router (i2pd) and its crypto/compression deps. Opt-in: built only
+# with I2P=1, and unset, empty or 0 all leave it out. Any other value is refused
+# rather than guessed at, since it decides what ends up next to naviod.
+ifeq ($(I2P),1)
+i2p_packages_ = $(i2p_packages)
+else ifneq ($(filter-out 0,$(I2P)),)
+$(error I2P must be 1 (build the bundled i2pd router), 0 or unset; got '$(I2P)')
+endif
 
 packages += $($(host_arch)_$(host_os)_packages) $($(host_os)_packages) $(boost_packages_) $(libevent_packages_) $(wallet_packages_) $(usdt_packages_) $(i2p_packages_)
 native_packages += $($(host_arch)_$(host_os)_native_packages) $($(host_os)_native_packages)

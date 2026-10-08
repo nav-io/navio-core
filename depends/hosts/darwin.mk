@@ -28,9 +28,9 @@ darwin_STRIP=$(shell command -v llvm-strip)
 # multicall aliases of llvm-objcopy/llvm-objdump and are not always symlinked
 # unversioned (e.g. Debian's llvm package). Resolve them from the llvm bindir
 # derived from llvm-objcopy (wired above), which is version-agnostic. Only set
-# for I2P builds, so a NO_I2P=1 build sees the same tools as before (these
+# for I2P=1 builds, so any other build sees the same tools as before (these
 # also reach config.site as OTOOL / INSTALL_NAME_TOOL).
-ifeq ($(NO_I2P),)
+ifeq ($(I2P),1)
 darwin_llvm_bindir=$(shell dirname $(shell readlink -f $(shell command -v llvm-objcopy)))
 darwin_INSTALL_NAME_TOOL=$(darwin_llvm_bindir)/llvm-install-name-tool
 darwin_OTOOL=$(darwin_llvm_bindir)/llvm-otool

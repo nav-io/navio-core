@@ -6,13 +6,13 @@ $(package)_sha256_hash = 913ca43d49e93d1b158c9862009add1518a4c665e7853b349a6492d
 $(package)_build_subdir = build
 
 # i2pd needs these Boost components built as (static) libraries. Only add them
-# when the bundled I2P router is enabled (NO_I2P unset), so non-I2P builds keep
-# Boost header-only as before.
+# when the bundled I2P router is enabled (I2P=1), so other builds keep Boost
+# header-only as before.
 # Boost libraries i2pd includes (compiled ones: filesystem/program_options/
 # atomic/system; the rest are header-only). The Boost CMake superbuild pulls in
 # their transitive dependencies, installing the headers i2pd needs (asio,
 # lexical_cast, property_tree, algorithm, shared_ptr, static_assert, ...).
-ifeq ($(NO_I2P),)
+ifeq ($(I2P),1)
 boost_i2p_libs = ;filesystem;program_options;atomic;system;asio;algorithm;lexical_cast;property_tree
 # Asio's dependency closure drags in Boost.Context/Coroutine/Fiber, which have
 # per-arch assembly that mis-detects on cross targets (picks i386 asm for arm).

@@ -12,17 +12,19 @@ For example:
 
     make HOST=x86_64-w64-mingw32 -j4
 
-**Bitcoin Core's `configure` script by default will ignore the depends output.** In
-order for it to pick up libraries, tools, and settings from the depends build,
-you must set the `CONFIG_SITE` environment variable to point to a `config.site` settings file.
-Make sure that `CONFIG_SITE` is an absolute path.
-In the above example, a file named `depends/x86_64-w64-mingw32/share/config.site` will be
-created. To use it during compilation:
+**Bitcoin Core's `configure` script by default will ignore the depends output.**
+In order for it to pick up libraries, tools, and settings from the depends
+build, you must set the `CONFIG_SITE` environment variable to point to a
+`config.site` settings file. Make sure that `CONFIG_SITE` is an absolute path.
+In the above example, a file named
+`depends/x86_64-w64-mingw32/share/config.site` will be created. To use it during
+compilation:
 
     CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure
 
-The default install prefix when using `config.site` is `--prefix=depends/<host-platform-triplet>`,
-so depends build outputs will be installed in that location.
+The default install prefix when using `config.site` is
+`--prefix=depends/<host-platform-triplet>`, so depends build outputs will be
+installed in that location.
 
 Common `host-platform-triplet`s for cross compilation are:
 
@@ -42,7 +44,8 @@ Common `host-platform-triplet`s for cross compilation are:
 - `aarch64-linux-android` for Android ARM 64 bit
 - `x86_64-linux-android` for Android x86 64 bit
 
-The paths are automatically configured and no other options are needed unless targeting [Android](../doc/build-android.md).
+The paths are automatically configured and no other options are needed unless
+targeting [Android](../doc/build-android.md).
 
 ### Install the required dependencies: Ubuntu & Debian
 
@@ -51,13 +54,14 @@ The paths are automatically configured and no other options are needed unless ta
     sudo apt-get install curl bsdmainutils cmake zip
 
 Note: You must obtain the macOS SDK before proceeding with a cross-compile.
-Under the depends directory, create a subdirectory named `SDKs`.
-Then, place the extracted SDK under this new directory.
-For more information, see [SDK Extraction](../contrib/macdeploy/README.md#sdk-extraction).
+Under the depends directory, create a subdirectory named `SDKs`. Then, place the
+extracted SDK under this new directory. For more information, see
+[SDK Extraction](../contrib/macdeploy/README.md#sdk-extraction).
 
 #### For Win64 cross compilation
 
-- see [build-windows.md](../doc/build-windows.md#cross-compilation-for-ubuntu-and-windows-subsystem-for-linux)
+- see
+  [build-windows.md](../doc/build-windows.md#cross-compilation-for-ubuntu-and-windows-subsystem-for-linux)
 
 #### For linux (including i386, ARM) cross compilation
 
@@ -96,7 +100,8 @@ The following can be set when running make: `make FOO=bar`
 - `SOURCES_PATH`: Downloaded sources will be placed here
 - `BASE_CACHE`: Built packages will be placed here
 - `SDK_PATH`: Path where SDKs can be found (used by macOS)
-- `FALLBACK_DOWNLOAD_PATH`: If a source file can't be fetched, try here before giving up
+- `FALLBACK_DOWNLOAD_PATH`: If a source file can't be fetched, try here before
+  giving up
 - `C_STANDARD`: Set the C standard version used. Defaults to `c11`.
 - `CXX_STANDARD`: Set the C++ standard version used. Defaults to `c++20`.
 - `NO_BOOST`: Don't download/build/cache Boost
@@ -104,18 +109,25 @@ The following can be set when running make: `make FOO=bar`
 - `NO_ZMQ`: Don't download/build/cache packages needed for enabling ZeroMQ
 - `NO_WALLET`: Don't download/build/cache libs needed to enable the wallet
 - `NO_SQLITE`: Don't download/build/cache SQLite
-- `NO_USDT`: Don't download/build/cache packages needed for enabling USDT tracepoints
+- `NO_USDT`: Don't download/build/cache packages needed for enabling USDT
+  tracepoints
 - `MULTIPROCESS`: Build libmultiprocess (experimental, requires CMake)
+- `I2P=1`: Build the bundled i2pd I2P router and the OpenSSL, zlib and compiled
+  Boost libraries it needs, and configure navio with `WITH_I2P=ON` so `naviod`
+  can run it with `-i2pd`. Off by default; `I2P=0` is the same as leaving it
+  unset
 - `DEBUG`: Disable some optimizations and enable more runtime checking
 - `HOST_ID_SALT`: Optional salt to use when generating host package ids
 - `BUILD_ID_SALT`: Optional salt to use when generating build package ids
-- `FORCE_USE_SYSTEM_CLANG`: (EXPERTS ONLY) When cross-compiling for macOS, use Clang found in the
-  system's `$PATH` rather than the default prebuilt release of Clang
-  from llvm.org. Clang 8 or later is required
-- `LOG`: Use file-based logging for individual packages. During a package build its log file
-  resides in the `depends` directory, and the log file is printed out automatically in case
-  of build error. After successful build log files are moved along with package archives
-- `LTO`: Enable options needed for LTO. Does not add `-flto` related options to *FLAGS.
+- `FORCE_USE_SYSTEM_CLANG`: (EXPERTS ONLY) When cross-compiling for macOS, use
+  Clang found in the system's `$PATH` rather than the default prebuilt release
+  of Clang from llvm.org. Clang 8 or later is required
+- `LOG`: Use file-based logging for individual packages. During a package build
+  its log file resides in the `depends` directory, and the log file is printed
+  out automatically in case of build error. After successful build log files are
+  moved along with package archives
+- `LTO`: Enable options needed for LTO. Does not add `-flto` related options to
+  *FLAGS.
 - `NO_HARDEN=1`: Don't use hardening options when building packages
 
 If some packages are not built, for example `make NO_WALLET=1`, the appropriate
@@ -127,7 +139,6 @@ options will be passed to bitcoin's configure. In this case, `--disable-wallet`.
     download-osx: run 'make download-osx' to fetch all sources needed for macOS builds
     download-win: run 'make download-win' to fetch all sources needed for win builds
     download-linux: run 'make download-linux' to fetch all sources needed for linux builds
-
 
 ### Other documentation
 
