@@ -2894,8 +2894,9 @@ RPCHelpMan consolidate()
         "in a single transaction once they exceed the per-transaction input limit. Run this to combine\n"
         "the smallest outputs; each consolidation transaction merges up to the per-transaction input\n"
         "cap. Like plain sends, each consolidation is aggregated with fee-0 cover candidates from the\n"
-        "node's p2pmsg pool when any are available (disable with -aggregatesends=0), so the broadcast\n"
-        "transaction does not reveal which merged inputs are this wallet's.\n" +
+        "node's p2pmsg pool when any are available (disable with -aggregatesends=0), so its inputs and\n"
+        "output are merged with unrelated cover spends. Cover is at most " + ToString(aggregation::POOL_MAX_COMBINED) + " single-input spends,\n"
+        "so in a consolidation of many outputs most inputs are still attributable to this wallet.\n" +
             wallet::HELP_REQUIRING_PASSPHRASE,
         {
             {"max_txs", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Maximum number of consolidation transactions to create this call (default 1)."},
