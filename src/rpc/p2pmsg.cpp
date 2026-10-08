@@ -620,8 +620,8 @@ static RPCHelpMan listorders()
             {RPCResult::Type::NUM, "bytes", /*optional=*/true, "Approximate cache footprint"},
             {RPCResult::Type::ARR, "orders", /*optional=*/true, "Live cached orders (verbose only), sorted by declared order_expiry ascending (quote_id tie-break), from position skip and at most count of them", {{RPCResult::Type::OBJ, "", "", {
                 {RPCResult::Type::STR_HEX, "quote_id", "Standing-order identifier"},
-                {RPCResult::Type::STR, "buy", "Token the maker delivers to the taker (token id; all-zero hex is NAV)"},
-                {RPCResult::Type::STR, "sell", "Token the maker charges the taker (token id; all-zero hex is NAV)"},
+                {RPCResult::Type::STR, "buy", "Token the maker delivers to the taker: the 64-hex token id, followed by \"#<subid>\" when the id carries a subid (an NFT). NAV is all-zero hex with no suffix"},
+                {RPCResult::Type::STR, "sell", "Token the maker charges the taker: the 64-hex token id, followed by \"#<subid>\" when the id carries a subid (an NFT). NAV is all-zero hex with no suffix"},
                 {RPCResult::Type::NUM, "fill", "Units of buy token offered (base units, scaled 1e8)"},
                 {RPCResult::Type::NUM, "sell_cost", "Units of sell token charged (base units, scaled 1e8)"},
                 {RPCResult::Type::NUM, "price", "sell_cost / fill (sell units per buy unit)"},
