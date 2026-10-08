@@ -1583,13 +1583,29 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 }
             }
 
-            // Without fUpdate an output we already hold is left as it is, but
-            // the tx's spends are still recorded before returning. Knowing its
-            // outputs does not mean its inputs are marked spent -- a block
-            // disconnect un-spends them and leaves the outputs in place -- and
-            // returning before the vin loop left such a scan unable to repair
-            // that. Re-recording a spend already in place changes nothing.
+            // Without fUpdate (only ScanForWalletTransactions passes that, and
+            // always with the confirmed state of a block it checked is on the
+            // active chain) a tx whose outputs we already hold is not re-added,
+            // but the scan still moves it forward to that block: held outputs
+            // that are not confirmed become confirmed, and the tx's spends are
+            // recorded. Holding the outputs does not mean either is current --
+            // a block disconnect demotes the outputs to inactive and un-spends
+            // the inputs -- and returning early left such a scan unable to
+            // repair that. A confirmed state can only move an output or a
+            // spend forward, so re-applying it to a current record changes
+            // nothing.
             bool skip_known_tx = false;
+            const auto add_output = [&](const COutPoint& outpoint, CTxOut&& txout) {
+                CWalletOutput* wout = AddToWallet(
+                    outpoint,
+                    MakeOutputRef<CTxOut>(std::move(txout)),
+                    tx_state, /*update_wout=*/nullptr,
+                    /*fFlushOnClose=*/false, rescanning_old_block, TxStateInactive{}, tx.IsCoinBase());
+
+                if (!wout) {
+                    throw std::runtime_error("DB error adding output to wallet, write failed");
+                }
+            };
 
             // loop though all outputs
             for (size_t i = 0; i < tx.vout.size(); i++) {
@@ -1597,9 +1613,13 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 COutPoint outpoint(txout.GetHash());
 
                 bool fExisted = mapOutputs.contains(outpoint);
-                if (fExisted && !fUpdate) {
+                if (!fUpdate && (fExisted || skip_known_tx)) {
                     skip_known_tx = true;
-                    break;
+                    if (fExisted && std::holds_alternative<TxStateConfirmed>(tx_state) &&
+                        !mapOutputs.at(outpoint).state<TxStateConfirmed>()) {
+                        add_output(outpoint, std::move(txout));
+                    }
+                    continue;
                 }
                 isminetype mine = ISMINE_NO;
                 if (blsct_man) {
@@ -1621,15 +1641,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                     mine = IsMine(txout);
                 }
                 if (fExisted || mine) {
-                    CWalletOutput* wout = AddToWallet(
-                        outpoint,
-                        MakeOutputRef<CTxOut>(std::move(txout)),
-                        tx_state, /*update_wout=*/nullptr,
-                        /*fFlushOnClose=*/false, rescanning_old_block, TxStateInactive{}, tx.IsCoinBase());
-
-                    if (!wout) {
-                        throw std::runtime_error("DB error adding output to wallet, write failed");
-                    }
+                    add_output(outpoint, std::move(txout));
                 }
             }
 
