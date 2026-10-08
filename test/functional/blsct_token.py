@@ -28,6 +28,7 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
 
     def run_test(self):
         self.test_legacy()
+        self.test_disconnected_token_unlisted()
 
     def generate_blsct_blocks(self, node, address, num_blocks, batch_size=2):
         blocks = []
@@ -206,6 +207,42 @@ class NavioBlsctTokenTest(BitcoinTestFramework):
         assert "outputHash" in send_result_verbose, "Verbose result should contain outputHash"
         assert len(send_result_verbose["outputHash"]) == 64, "outputHash should be 64 characters"
         self.generate_blsct_blocks(self.nodes[0], blsct_address, 2)
+
+    def test_disconnected_token_unlisted(self):
+        self.log.info("A token whose creating block is disconnected is no longer listed")
+        node = self.nodes[0]
+        wallet = node.get_wallet_rpc("wallet1")
+        blsct_address = wallet.getnewaddress(label="", address_type="blsct")
+
+        token_id = wallet.createtoken({"name": "Reorged"}, 1000)['tokenId']
+        block = self.generate_blsct_blocks(node, blsct_address, 1)[0]
+        # gettxoutsetinfo force-flushes the chainstate, so the token lives in
+        # the coins database rather than only in the tip cache.
+        node.gettxoutsetinfo("none")
+
+        def listed():
+            return ({t['tokenId'] for t in node.listtokens()},
+                    {t['tokenId'] for t in wallet.listwallettokens()})
+
+        node_ids, wallet_ids = listed()
+        assert token_id in node_ids
+        assert token_id in wallet_ids
+
+        # Disconnecting the block erases the token in the tip cache while the
+        # flushed coins database still holds it; both listings must hide it,
+        # just as gettoken already does.
+        node.invalidateblock(block)
+        node_ids, wallet_ids = listed()
+        assert token_id not in node_ids, "listtokens still lists a disconnected token"
+        assert token_id not in wallet_ids, "listwallettokens still lists a disconnected token"
+        assert_raises_rpc_error(-5, "Unknown token", wallet.getwallettoken, token_id)
+
+        node.reconsiderblock(block)
+        assert_equal(node.getbestblockhash(), block)
+        node_ids, wallet_ids = listed()
+        assert token_id in node_ids
+        assert token_id in wallet_ids
+        assert_equal(wallet.getwallettoken(token_id)['ismine'], True)
 
     def test_output(self):
         self.log.info("Creating wallet1 with BLSCT")

@@ -1129,6 +1129,56 @@ BOOST_AUTO_TEST_CASE(coins_resource_is_used)
 }
 #endif
 
+BOOST_AUTO_TEST_CASE(ccoins_get_all_tokens_layers_over_base)
+{
+    const auto make_token = [](CAmount supply) {
+        return blsct::TokenEntry{blsct::TokenInfo{blsct::TOKEN, blsct::PublicKey{}, {}, /*nTotalSupply=*/1000}, supply};
+    };
+    const uint256 erased{uint256(uint64_t{1})};
+    const uint256 modified{uint256(uint64_t{2})};
+    const uint256 untouched{uint256(uint64_t{3})};
+    const uint256 added{uint256(uint64_t{4})};
+
+    // Persist three tokens to the database underneath the tip cache.
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    {
+        CCoinsViewCacheTest setup{&base};
+        setup.SetBestBlock(InsecureRand256());
+        for (const auto& id : {erased, modified, untouched}) setup.AddToken(id, make_token(10));
+        BOOST_REQUIRE(setup.Flush());
+    }
+
+    // The tip erases one (as disconnecting its creating block does),
+    // changes another, and creates a new one, without flushing.
+    CCoinsViewCacheTest tip{&base};
+    tip.EraseToken(erased);
+    tip.AddToken(modified, make_token(20));
+    tip.AddToken(added, make_token(30));
+
+    const auto check_view = [&](const CCoinsView& view) {
+        TokensMap all;
+        BOOST_REQUIRE(view.GetAllTokens(all));
+        BOOST_CHECK(!all.contains(erased));
+        BOOST_REQUIRE(all.contains(modified));
+        BOOST_CHECK_EQUAL(all.at(modified).token.nSupply, 20);
+        BOOST_REQUIRE(all.contains(untouched));
+        BOOST_CHECK_EQUAL(all.at(untouched).token.nSupply, 10);
+        BOOST_REQUIRE(all.contains(added));
+        BOOST_CHECK_EQUAL(all.at(added).token.nSupply, 30);
+        BOOST_CHECK_EQUAL(all.size(), 3U);
+    };
+    check_view(tip);
+
+    // A cache stacked on the tip sees the tip's layering through its base.
+    CCoinsViewCacheTest child{&tip};
+    check_view(child);
+
+    // Flushing makes the database agree with what the cache reported.
+    tip.SetBestBlock(InsecureRand256());
+    BOOST_REQUIRE(tip.Flush());
+    check_view(base);
+}
+
 BOOST_AUTO_TEST_CASE(ccoins_addcoin_exception_keeps_usage_balanced)
 {
     CCoinsView root;
