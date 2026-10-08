@@ -212,7 +212,7 @@ void TxFactoryBase::AddOutput(const Scalar& tokenKey, const SubAddress& destinat
 }
 
 std::optional<BuiltTransaction>
-TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake, const CreateTransactionType& type, const bool& fSubtractedFee, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee, const bool& emitFeeOutput)
+TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake, const CreateTransactionType& type, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee, const bool& emitFeeOutput)
 {
     this->tx = CMutableTransaction();
 
@@ -851,7 +851,7 @@ std::optional<BuiltTransaction> TxFactoryBase::CreateTransaction(const std::vect
             tx.AddOutput(transactionData.destination, transactionData.nAmount, transactionData.sMemo, transactionData.token_id, transactionData.type, transactionData.minStake, subtract_fee, /*blindingKey=*/std::nullopt, transactionData.nBLSCTDefaultFee);
         }
     }
-    return tx.BuildTx(transactionData.changeDestination, transactionData.minStake, transactionData.type, /*fSubtractedFee=*/false, transactionData.nBLSCTDefaultFee, transactionData.additionalFee);
+    return tx.BuildTx(transactionData.changeDestination, transactionData.minStake, transactionData.type, transactionData.nBLSCTDefaultFee, transactionData.additionalFee);
 }
 
 } // namespace blsct

@@ -86,7 +86,6 @@ TxFactory::BuildTx(const std::optional<CAmount>& nBLSCTDefaultFee, const CAmount
         std::get<blsct::DoublePublicKey>(*dest),
         /*minStake=*/0,
         /*type=*/NORMAL,
-        /*fSubtractedFee=*/false,
         nBLSCTDefaultFee.value_or(Params().GetConsensus().nBLSCTDefaultFee),
         additionalFee));
 }
@@ -104,7 +103,6 @@ TxFactory::BuildCandidate()
         std::get<blsct::DoublePublicKey>(dest.value()),
         /*minStake=*/0,
         /*type=*/NORMAL,
-        /*fSubtractedFee=*/false,
         /*nBLSCTDefaultFee=*/0,
         /*additionalFee=*/0,
         /*emitFeeOutput=*/false));
@@ -367,7 +365,7 @@ std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet
     // One output back to `destination`; the fee is taken from the merged amount.
     factory.AddOutput(SubAddress(destination), nSum, "Consolidate", TokenId(), NORMAL, 0, /*fSubtractFeeFromAmount=*/true, /*blindingKey=*/std::nullopt, nBLSCTDefaultFee);
 
-    return LogPastSearchBound(factory.BuildTx(destination, /*minStake=*/0, NORMAL, /*fSubtractedFee=*/true, nBLSCTDefaultFee, additionalFee));
+    return LogPastSearchBound(factory.BuildTx(destination, /*minStake=*/0, NORMAL, nBLSCTDefaultFee, additionalFee));
 }
 
 } // namespace blsct
