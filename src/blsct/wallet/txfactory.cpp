@@ -19,6 +19,21 @@ using Scalars = Elements<Scalar>;
 
 namespace blsct {
 
+namespace {
+//! Say once per built transaction when some of its outputs could not get a
+//! recoverable blinding key. The factory itself only counts them: it is part
+//! of libblsct, which has no logging.
+std::optional<BuiltTransaction> LogPastSearchBound(std::optional<BuiltTransaction> built)
+{
+    if (built && built->pastSearchBoundOutputs > 0) {
+        LogPrintf("blsct: transaction has more outputs than the recovery search bound (%u); "
+                  "the outputs past it will use random, unrecoverable blinding keys\n",
+                  MAX_OUTPUT_SEARCH);
+    }
+    return built;
+}
+} // namespace
+
 bool TxFactory::AddInput(const CCoinsViewCache& cache, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)
 {
     Coin coin;
@@ -65,13 +80,13 @@ TxFactory::BuildTx(const std::optional<CAmount>& nBLSCTDefaultFee, const CAmount
         return std::nullopt;
     }
 
-    return TxFactoryBase::BuildTx(
+    return LogPastSearchBound(TxFactoryBase::BuildTx(
         std::get<blsct::DoublePublicKey>(*dest),
         /*minStake=*/0,
         /*type=*/NORMAL,
         /*fSubtractedFee=*/false,
         nBLSCTDefaultFee.value_or(Params().GetConsensus().nBLSCTDefaultFee),
-        additionalFee);
+        additionalFee));
 }
 
 std::optional<BuiltTransaction>
@@ -83,14 +98,14 @@ TxFactory::BuildCandidate()
     // node. Return nullopt so the serve tick fails the one candidate instead.
     auto dest = km->GetNewDestination(-1);
     if (!dest) return std::nullopt;
-    return TxFactoryBase::BuildTx(
+    return LogPastSearchBound(TxFactoryBase::BuildTx(
         std::get<blsct::DoublePublicKey>(dest.value()),
         /*minStake=*/0,
         /*type=*/NORMAL,
         /*fSubtractedFee=*/false,
         /*nBLSCTDefaultFee=*/0,
         /*additionalFee=*/0,
-        /*emitFeeOutput=*/false);
+        /*emitFeeOutput=*/false));
 }
 
 std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)
@@ -127,9 +142,9 @@ std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wa
 
     // Derive every output's blinding scalar from the wallet seed, so the
     // sender can prove later that it created them (see blinding_key.h).
-    return TxFactoryBase::CreateTransaction(
+    return LogPastSearchBound(TxFactoryBase::CreateTransaction(
         inputCandidates, transactionData, blsct_km->GetBlindingSeed(),
-        [blsct_km](const Outid& anchor) { return blsct_km->ReserveBlindingGeneration(anchor); });
+        [blsct_km](const Outid& anchor) { return blsct_km->ReserveBlindingGeneration(anchor); }));
 }
 
 void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit)
@@ -332,7 +347,7 @@ std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet
     // One output back to `destination`; the fee is taken from the merged amount.
     factory.AddOutput(SubAddress(destination), nSum, "Consolidate", TokenId(), NORMAL, 0, /*fSubtractFeeFromAmount=*/true, /*blindingKey=*/std::nullopt, nBLSCTDefaultFee);
 
-    return factory.BuildTx(destination, /*minStake=*/0, NORMAL, /*fSubtractedFee=*/true, nBLSCTDefaultFee, additionalFee);
+    return LogPastSearchBound(factory.BuildTx(destination, /*minStake=*/0, NORMAL, /*fSubtractedFee=*/true, nBLSCTDefaultFee, additionalFee));
 }
 
 } // namespace blsct

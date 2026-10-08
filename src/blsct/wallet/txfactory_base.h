@@ -170,6 +170,11 @@ struct BuiltTransaction {
     // is the property the whole scheme rests on. These are secrets: do not
     // log them and do not write them anywhere.
     std::map<uint256, Scalar> blindingKeys;
+    // How many outputs got a random, unrecoverable blinding key only because
+    // their ordinal is past MAX_OUTPUT_SEARCH, which recovery never searches.
+    // Counted rather than logged: this file is part of libblsct, which has no
+    // logging, so the wallet reports it.
+    size_t pastSearchBoundOutputs{0};
 };
 
 struct InputCandidates {
@@ -280,6 +285,10 @@ protected:
     //! The blinding scalar to build an output with: the caller's pinned key
     //! when there is one, else the seed derivation, else a random scalar.
     Scalar BlindingKeyFor(const std::optional<Scalar>& pinned, uint32_t ordinal, const std::optional<Outid>& anchor) const;
+
+    //! Whether BlindingKeyFor gives this output a random key only because its
+    //! ordinal is past MAX_OUTPUT_SEARCH, i.e. it would otherwise be derived.
+    bool OrdinalPastSearchBound(const std::optional<Scalar>& pinned, uint32_t ordinal, const std::optional<Outid>& anchor) const;
 
     //! The canonical anchor over a selected input set: the lexicographically
     //! smallest outid among them (blsct::CanonicalAnchor).
