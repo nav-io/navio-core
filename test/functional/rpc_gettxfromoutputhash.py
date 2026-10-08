@@ -84,6 +84,14 @@ class GetTxFromOutputHashTest(BitcoinTestFramework):
         assert_equal(mempool_result['confirmations'], 0)
         assert 'blockhash' not in mempool_result
 
+        self.log.info("Mempool output past the first reports its own position")
+        tx_multi = wallet.send_self_transfer_multi(from_node=node, num_outputs=3)
+        for vout, utxo in enumerate(tx_multi['new_utxos']):
+            multi_result = node.gettxfromoutputhash(utxo['txid'])
+            assert_equal(multi_result['txid'], tx_multi['txid'])
+            assert_equal(multi_result['vout'], vout)
+            assert_equal(multi_result['confirmations'], 0)
+
         # Test with include_mempool=false
         assert_raises_rpc_error(
             -5,  # RPC_INVALID_ADDRESS_OR_KEY
