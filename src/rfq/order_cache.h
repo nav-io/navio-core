@@ -59,8 +59,14 @@ public:
     //! The node calls this every ORDER_PRUNE_INTERVAL from the scheduler.
     size_t PruneExpired(int64_t now) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
+    //! Cache totals, read together under one lock.
+    struct Stats {
+        size_t count; //!< entries held, including expired ones not yet pruned
+        size_t bytes; //!< approximate footprint of those entries
+    };
+
     size_t Size() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
-    size_t Bytes() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    Stats GetStats() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
     bool Contains(const uint256& quote_id) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     //! Read-only view of one cached standing order. `quote` is exactly the
@@ -72,10 +78,17 @@ public:
         int64_t effective_expiry; //!< min(quote.order_expiry, received + MAX_ORDER_TTL_SECONDS)
     };
 
+    //! The live orders together with the totals they were taken from, so
+    //! `orders.size() <= stats.count` holds even under concurrent stores.
+    struct OrderSnapshot {
+        Stats stats;
+        std::vector<OrderView> orders;
+    };
+
     //! Copies of every order still live at `now` (effective_expiry > now),
     //! sorted by the maker-declared order_expiry ascending (quote_id tie-break; wire-public keys only — see Snapshot), then quote_id. Does not touch the
     //! LRU order and does not prune. Intended for inspection (RPC).
-    std::vector<OrderView> Snapshot(int64_t now) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    OrderSnapshot Snapshot(int64_t now) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     void TransactionAddedToMempool(const NewMempoolTransactionInfo& tx, uint64_t) override
         EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);

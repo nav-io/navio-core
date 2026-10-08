@@ -264,7 +264,7 @@ BOOST_AUTO_TEST_CASE(order_snapshot_sorted_and_live_only)
     BOOST_CHECK_EQUAL(cache.Size(), 3u);
 
     // All three live, and the TTL cap binds none of them: sorted by expiry.
-    auto snap = cache.Snapshot(/*now=*/500);
+    auto snap = cache.Snapshot(/*now=*/500).orders;
     BOOST_REQUIRE_EQUAL(snap.size(), 3u);
     BOOST_CHECK(snap[0].quote.quote_id == soon_expired);
     BOOST_CHECK(snap[1].quote.quote_id == early);
@@ -276,15 +276,20 @@ BOOST_AUTO_TEST_CASE(order_snapshot_sorted_and_live_only)
     BOOST_REQUIRE(snap[1].quote.half_tx != nullptr);
 
     // Expired-but-unpruned entries are excluded; the snapshot does not prune.
-    snap = cache.Snapshot(/*now=*/1000);
+    // Its totals still count them, matching GetStats() for the same state.
+    const auto full = cache.Snapshot(/*now=*/1000);
+    snap = full.orders;
     BOOST_REQUIRE_EQUAL(snap.size(), 2u);
     BOOST_CHECK(snap[0].quote.quote_id == early);
     BOOST_CHECK_EQUAL(cache.Size(), 3u);
+    BOOST_CHECK_EQUAL(full.stats.count, 3u);
+    BOOST_CHECK_EQUAL(full.stats.bytes, cache.GetStats().bytes);
+    BOOST_CHECK_GT(full.stats.bytes, 0u);
 
     // The 14-day cap shows up as the effective expiry.
     OrderCache capped(0);
     BOOST_CHECK(capped.StoreOrder(MakeOrder(uint256::ONE, InsecureRand256(), 1, 1, /*order_expiry=*/100 * MAX_ORDER_TTL_SECONDS), /*now=*/7));
-    auto csnap = capped.Snapshot(/*now=*/8);
+    auto csnap = capped.Snapshot(/*now=*/8).orders;
     BOOST_REQUIRE_EQUAL(csnap.size(), 1u);
     BOOST_CHECK_EQUAL(csnap[0].effective_expiry, 7 + MAX_ORDER_TTL_SECONDS);
 
@@ -297,7 +302,7 @@ BOOST_AUTO_TEST_CASE(order_snapshot_sorted_and_live_only)
     const uint256 declared_sooner = InsecureRand256();
     BOOST_CHECK(mixed.StoreOrder(MakeOrder(declared_later, InsecureRand256(), 1, 1, /*order_expiry=*/100 * MAX_ORDER_TTL_SECONDS), /*now=*/0));
     BOOST_CHECK(mixed.StoreOrder(MakeOrder(declared_sooner, InsecureRand256(), 1, 1, /*order_expiry=*/50 * MAX_ORDER_TTL_SECONDS), /*now=*/1000));
-    auto msnap = mixed.Snapshot(/*now=*/1);
+    auto msnap = mixed.Snapshot(/*now=*/1).orders;
     BOOST_REQUIRE_EQUAL(msnap.size(), 2u);
     BOOST_CHECK(msnap[0].quote.quote_id == declared_sooner);
     BOOST_CHECK(msnap[1].quote.quote_id == declared_later);

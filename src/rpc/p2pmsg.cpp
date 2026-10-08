@@ -613,7 +613,7 @@ static RPCHelpMan listorders()
         },
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::BOOL, "enabled", "Whether the cache exists"},
-            {RPCResult::Type::NUM, "count", /*optional=*/true, "Cached standing orders (raw cache size; may include expired entries awaiting prune)"},
+            {RPCResult::Type::NUM, "count", /*optional=*/true, "Cached standing orders (raw cache size; may include expired entries awaiting prune). Read together with orders, so never less than its length"},
             {RPCResult::Type::NUM, "bytes", /*optional=*/true, "Approximate cache footprint"},
             {RPCResult::Type::ARR, "orders", /*optional=*/true, "Live cached orders (verbose only), sorted by declared order_expiry ascending (quote_id tie-break)", {{RPCResult::Type::OBJ, "", "", {
                 {RPCResult::Type::STR_HEX, "quote_id", "Standing-order identifier"},
@@ -639,13 +639,21 @@ static RPCHelpMan listorders()
             UniValue o(UniValue::VOBJ);
             if (!node.rfq_orders) { o.pushKV("enabled", false); return o; }
             o.pushKV("enabled", true);
-            o.pushKV("count", (uint64_t)node.rfq_orders->Size());
-            o.pushKV("bytes", (uint64_t)node.rfq_orders->Bytes());
-            if (!verbose) return o;
+            const auto push_stats = [&o](const rfq::OrderCache::Stats& stats) {
+                o.pushKV("count", (uint64_t)stats.count);
+                o.pushKV("bytes", (uint64_t)stats.bytes);
+            };
+            if (!verbose) {
+                push_stats(node.rfq_orders->GetStats());
+                return o;
+            }
 
-            const int64_t now = GetTime<std::chrono::seconds>().count();
+            // Totals and orders come from one locked read, so a concurrent
+            // store cannot make the list longer than the count beside it.
+            const rfq::OrderCache::OrderSnapshot snap = node.rfq_orders->Snapshot(GetTime<std::chrono::seconds>().count());
+            push_stats(snap.stats);
             UniValue arr(UniValue::VARR);
-            for (const rfq::OrderCache::OrderView& v : node.rfq_orders->Snapshot(now)) {
+            for (const rfq::OrderCache::OrderView& v : snap.orders) {
                 const rfq::RfqQuote& q = v.quote;
                 UniValue e(UniValue::VOBJ);
                 e.pushKV("quote_id", q.quote_id.GetHex());
