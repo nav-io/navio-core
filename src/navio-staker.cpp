@@ -804,6 +804,28 @@ std::vector<StakedCommitment> GetStakedCommitments(const std::unique_ptr<BaseReq
     return UniValueArrayToStakedCommitmentsMine(result.get_array());
 }
 
+//! Reward address of each of the wallet's own delegated staked commitments,
+//! keyed by the commitment's hex encoding (as liststakedcommitments reports
+//! it). A wallet-mode staker may stake a commitment its wallet delegated; the
+//! block reward then belongs at the delegation's reward address rather than
+//! at -coinbasedest, so listdelegations can account for it. Empty when the
+//! wallet has no delegations or the node predates the "commitment" field.
+std::map<std::string, std::string> GetOwnDelegationRewardAddresses(const std::unique_ptr<BaseRequestHandler>& rh)
+{
+    std::map<std::string, std::string> ret;
+    const UniValue& response = ConnectAndCallRPC(rh.get(), "listdelegations", /* args=*/{}, walletName);
+    const UniValue& result = response.find_value("result");
+    if (!response.find_value("error").isNull() || !result.isArray()) return ret;
+    for (const UniValue& entry : result.getValues()) {
+        if (!entry.isObject()) continue;
+        const UniValue& commitment = entry.find_value("commitment");
+        const UniValue& reward_address = entry.find_value("reward_address");
+        if (!commitment.isStr() || !reward_address.isStr() || reward_address.get_str().empty()) continue;
+        ret.emplace(commitment.get_str(), reward_address.get_str());
+    }
+    return ret;
+}
+
 struct DelegatedCommitment {
     StakedCommitment staked;
     std::string rewardAddress;
@@ -1209,12 +1231,15 @@ void Loop()
                     }
                 } else {
                     auto staked_commitments = GetStakedCommitments(rh);
+                    const auto delegation_rewards = GetOwnDelegationRewardAddresses(rh);
 
                     for (auto& it : staked_commitments) {
                         nTotalMoney += it.value.GetUint64();
 
                         if (!got) {
-                            auto candidate = GetBlockProposal(rh, it, coinbase_dest);
+                            const auto delegated = delegation_rewards.find(HexStr(it.point.GetVch()));
+                            const std::string& dest = delegated != delegation_rewards.end() ? delegated->second : coinbase_dest;
+                            auto candidate = GetBlockProposal(rh, it, dest);
 
                             got = candidate.has_value();
                             if (got)

@@ -65,12 +65,11 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         assert priv and pub, f"unexpected -gendelegationkey output: {out}"
         return priv, pub
 
-    def spawn_staker(self, extra_args):
+    def spawn_staker(self, extra_args, delegated=True):
         args = [
             self.staker_path(),
             f"-datadir={self.nodes[0].datadir_path}",
-            "-delegated",
-            "-delegationrefresh=1",
+        ] + (["-delegated", "-delegationrefresh=1"] if delegated else []) + [
             "-rpcwait",
             "-printtoconsole=1",
             "-nodebuglogfile",
@@ -100,6 +99,12 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         owner_address = owner.getnewaddress(label="", address_type="blsct")
         self.generatetoblsctaddress(node, 101, owner_address)
 
+        # Funded now, while the owner still has spendable coins; used by
+        # test_owner_staker_pays_reward_address at the end.
+        node.createwallet(wallet_name="selfstaker", blsct=True)
+        owner.sendtoblsctaddress(node.get_wallet_rpc("selfstaker").getnewaddress(label="", address_type="blsct"), 2 * self.min_stake)
+        self.generatetoblsctaddress(node, 1, owner_address)
+
         operator_priv, operator_pub = self.gen_delegation_key()
         self.log.info(f"Operator delegation pubkey: {operator_pub}")
 
@@ -114,6 +119,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         self.test_fee_split_template(node, owner)
         self.test_delegated_block_production(node, owner, operator_priv, reward_address)
         self.test_revocation(node, owner, owner_address, operator_pub)
+        self.test_owner_staker_pays_reward_address(node)
 
     def test_argument_validation(self, owner, operator_pub):
         self.log.info("Testing delegatestake argument validation")
@@ -443,6 +449,48 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         assert_greater_than(len(own_rewards), 0)
         assert_greater_than(own_rewards[0]["amount"], 0)
         assert_greater_than(own_rewards[0]["count"], 0)
+
+    def test_owner_staker_pays_reward_address(self, node):
+        """The owner's own wallet-mode staker may stake a commitment the wallet
+        delegated. The block reward must then go to the delegation's reward
+        address, not to the staker's -coinbasedest, so listdelegations
+        accounts for it."""
+        self.log.info("Testing a wallet-mode staker staking the wallet's own delegated stake")
+
+        # A wallet whose only stake is a delegation (to an operator key of its
+        # own), so whichever commitment the staker produces with, the reward
+        # belongs at the delegation's reward address.
+        wallet = node.get_wallet_rpc("selfstaker")
+        _, operator_pub = self.gen_delegation_key()
+        reward_address = wallet.getnewaddress(label="rewards", address_type="blsct")
+        wallet.delegatestake(self.min_stake, operator_pub, reward_address)
+        self.generatetoblsctaddress(node, 10, wallet.getnewaddress(label="", address_type="blsct"))
+
+        delegations = wallet.listdelegations()
+        assert_equal(len(delegations), 1)
+        assert_equal(delegations[0]["reward_address"], reward_address)
+        assert_equal([c["commitment"] for c in wallet.liststakedcommitments()], [delegations[0]["commitment"]])
+        assert_equal(delegations[0]["rewards_count"], 0)
+
+        height_before = node.getblockcount()
+        coinbase_dest = wallet.getnewaddress(label="staker", address_type="blsct")
+
+        staker = self.spawn_staker(["-wallet=selfstaker", f"-coinbasedest={coinbase_dest}"], delegated=False)
+        try:
+            found = self.wait_for_staker_line(staker, ["(ACCEPTED)"], max_lines=3000)
+            assert found, "wallet-mode staker did not produce an accepted block"
+        finally:
+            staker.kill()
+            staker.wait()
+
+        self.wait_until(lambda: node.getblockcount() > height_before)
+        node.syncwithvalidationinterfacequeue()
+
+        deleg = wallet.listdelegations()[0]
+        assert_greater_than(deleg["rewards_count"], 0)
+        assert_greater_than(deleg["rewards_received"], 0)
+        # Nothing was paid to -coinbasedest.
+        assert_equal([r for r in wallet.liststakingrewards() if r["address"] == coinbase_dest], [])
 
     def test_revocation(self, node, owner, owner_address, operator_pub):
         self.log.info("Testing revocation via stakeunlock")
