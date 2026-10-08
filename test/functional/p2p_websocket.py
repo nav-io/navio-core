@@ -376,7 +376,7 @@ class P2PWebSocketTest(BitcoinTestFramework):
         self.stop_node(0)
         node.assert_start_raises_init_error(
             [f"-p2pwsbind={host}:{ws_port}", "-listen=0"],
-            "Cannot set -bind or -whitebind together with -listen=0",
+            "Cannot set -bind, -whitebind or -p2pwsbind together with -listen=0",
             match=ErrorMatch.PARTIAL_REGEX,
         )
 
