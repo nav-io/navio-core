@@ -368,6 +368,7 @@ class P2PWebSocketTest(BitcoinTestFramework):
         client.close()
         self.wait_until(lambda: node.getpeerinfo() == [])
 
+        self.test_no_address_whitelist(host, ws_port, timeout)
         self.test_ws_announcement(host, ws_port)
 
         self.log.info("-p2pwsbind requires -listen")
@@ -504,6 +505,26 @@ class P2PWebSocketTest(BitcoinTestFramework):
         assert_equal(node.getpeerinfo()[0]["ws_port"], 9001)
         node.disconnect_p2ps()
         self.wait_until(lambda: node.getpeerinfo() == [])
+
+    def test_no_address_whitelist(self, host, ws_port, timeout):
+        node = self.nodes[0]
+
+        self.log.info("-whitelist does not grant permissions to WebSocket peers")
+        self.restart_node(0, extra_args=[f"-p2pwsbind={host}:{ws_port}", f"-whitelist={host}", "-whitelistforcerelay"])
+        # A plain inbound peer from the same address is still whitelisted.
+        node.add_p2p_connection(P2PInterface())
+        permissions = node.getpeerinfo()[0]["permissions"]
+        assert "noban" in permissions and "forcerelay" in permissions, permissions
+        client = WsClient(host, ws_port, timeout)
+        client.handshake()
+        self.wait_until(lambda: any(p["websocket"] for p in node.getpeerinfo()))
+        ws_peer = next(p for p in node.getpeerinfo() if p["websocket"])
+        assert_equal(ws_peer["addr"].split(":")[0], host)
+        assert_equal(ws_peer["permissions"], [])
+        client.close()
+        node.disconnect_p2ps()
+        self.wait_until(lambda: node.getpeerinfo() == [])
+        self.restart_node(0, extra_args=[f"-p2pwsbind={host}:{ws_port}"])
 
 
 if __name__ == "__main__":

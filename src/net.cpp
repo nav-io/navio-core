@@ -1744,8 +1744,10 @@ void CConnman::CreateNodeFromAcceptedSocket(std::unique_ptr<Sock>&& sock,
     const bool inbound_onion = std::find(m_onion_binds.begin(), m_onion_binds.end(), addr_bind) != m_onion_binds.end();
 
     // Tor inbound connections do not reveal the peer's actual network address.
-    // Therefore do not apply address-based whitelist permissions to them.
-    AddWhitelistPermissionFlags(permission_flags, inbound_onion ? std::optional<CNetAddr>{} : addr);
+    // Neither do WebSocket connections, which normally arrive through a
+    // reverse proxy, so every client shares the proxy's address. Therefore do
+    // not apply address-based whitelist permissions to either.
+    AddWhitelistPermissionFlags(permission_flags, (inbound_onion || websocket) ? std::optional<CNetAddr>{} : addr);
     if (NetPermissions::HasFlag(permission_flags, NetPermissionFlags::Implicit)) {
         NetPermissions::ClearFlag(permission_flags, NetPermissionFlags::Implicit);
         if (gArgs.GetBoolArg("-whitelistforcerelay", DEFAULT_WHITELISTFORCERELAY)) NetPermissions::AddFlag(permission_flags, NetPermissionFlags::ForceRelay);
