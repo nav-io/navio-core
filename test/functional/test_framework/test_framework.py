@@ -944,6 +944,11 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         if not self.is_zmq_compiled():
             raise SkipTest("naviod has not been built with zmq enabled.")
 
+    def skip_if_no_i2pd(self):
+        """Skip the running test if naviod has not been built to manage an i2pd router."""
+        if not self.is_i2pd_compiled():
+            raise SkipTest("naviod has not been built with -i2pd support (WITH_I2P).")
+
     def skip_if_no_wallet(self):
         """Skip the running test if wallet has not been compiled."""
         self._requires_wallet = True
