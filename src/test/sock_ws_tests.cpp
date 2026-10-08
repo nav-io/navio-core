@@ -518,4 +518,38 @@ BOOST_AUTO_TEST_CASE(peek_is_rejected)
     BOOST_CHECK_EQUAL(r2, -1);
 }
 
+BOOST_AUTO_TEST_CASE(move_assignment)
+{
+    // A WebSocketSock source hands over its decoder state mid-frame: the
+    // destination finishes that frame with the right mask offset, and the
+    // source is left as a fresh, pre-handshake socket.
+    const std::string frame{BinaryFrame("hello")};
+    const size_t split{2 + 4 + 2}; // header, mask and the first two bytes
+    MockWsSock src{Handshake() + frame.substr(0, split)};
+    const auto [head, r] = RecvAll(src);
+    BOOST_CHECK_EQUAL(head, "he");
+    BOOST_CHECK_EQUAL(r, -1);
+    BOOST_REQUIRE(src.HandshakeComplete());
+
+    MockWsSock dst{frame.substr(split) + BinaryFrame("!")};
+    static_cast<Sock&>(dst) = std::move(src);
+    BOOST_CHECK(dst.HandshakeComplete());
+    BOOST_CHECK(!src.HandshakeComplete()); // NOLINT(bugprone-use-after-move)
+    const auto [tail, r2] = RecvAll(dst);
+    BOOST_CHECK_EQUAL(tail, "llo!");
+    BOOST_CHECK_EQUAL(r2, -1);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
+
+    // A plain socket carries no WebSocket state, so the connection starts
+    // over at the handshake.
+    dst.Feed(Handshake() + BinaryFrame("again"));
+    static_cast<Sock&>(dst) = Sock{INVALID_SOCKET};
+    BOOST_CHECK(!dst.HandshakeComplete());
+    dst.m_output.clear();
+    const auto [data, r3] = RecvAll(dst);
+    BOOST_CHECK_EQUAL(data, "again");
+    BOOST_CHECK(dst.HandshakeComplete());
+    BOOST_CHECK(StartsWith(dst.m_output, "HTTP/1.1 101"));
+}
+
 BOOST_AUTO_TEST_SUITE_END()

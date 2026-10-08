@@ -79,6 +79,11 @@ public:
 
     ~WebSocketSock() override = default;
 
+    /**
+     * Take over `other`'s file descriptor together with the connection's
+     * protocol state: a `WebSocketSock` hands over its own, any other `Sock`
+     * starts over at the handshake.
+     */
     WebSocketSock& operator=(Sock&& other) override;
 
     [[nodiscard]] ssize_t Send(const void* data, size_t len, int flags) const override;
@@ -154,6 +159,10 @@ private:
     [[nodiscard]] bool FlushPending(int flags) const;
     /** Copy already-decoded application bytes to the caller. */
     ssize_t DrainAppBytes(void* buf, size_t len) const;
+    /** Exchange every protocol state member below with `other`'s. */
+    void SwapProtocolState(WebSocketSock& other);
+
+    // Protocol state. Every member must be listed in SwapProtocolState().
 
     // Receive side.
     mutable RecvState m_recv_state{RecvState::HANDSHAKE};

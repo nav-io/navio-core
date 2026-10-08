@@ -12,12 +12,12 @@
 #include <util/string.h>
 
 #include <algorithm>
-#include <cassert>
 #include <cerrno>
 #include <cstring>
 #include <map>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -98,8 +98,36 @@ WebSocketSock::WebSocketSock(SOCKET s) : Sock{s} {}
 
 WebSocketSock& WebSocketSock::operator=(Sock&& other)
 {
-    assert(false && "Move of Sock into WebSocketSock not allowed.");
+    // Not `= delete`: a deleted function may not override the non-deleted
+    // virtual Sock::operator=(Sock&&), so this has to be a real move.
+    if (&other == this) return *this;
+    // The protocol state belongs to the connection and moves with the file
+    // descriptor: a plain socket starts over at the handshake like a freshly
+    // accepted one, a WebSocketSock hands over its state and is left fresh.
+    WebSocketSock fresh{INVALID_SOCKET};
+    SwapProtocolState(fresh);
+    if (auto* const ws{dynamic_cast<WebSocketSock*>(&other)}) SwapProtocolState(*ws);
+    Sock::operator=(std::move(other));
     return *this;
+}
+
+void WebSocketSock::SwapProtocolState(WebSocketSock& other)
+{
+    std::swap(m_recv_state, other.m_recv_state);
+    std::swap(m_hs_ok, other.m_hs_ok);
+    std::swap(m_hs_buf, other.m_hs_buf);
+    std::swap(m_hdr_buf, other.m_hdr_buf);
+    std::swap(m_opcode, other.m_opcode);
+    std::swap(m_mask, other.m_mask);
+    std::swap(m_mask_idx, other.m_mask_idx);
+    std::swap(m_payload_remaining, other.m_payload_remaining);
+    std::swap(m_app_out, other.m_app_out);
+    std::swap(m_app_out_pos, other.m_app_out_pos);
+    std::swap(m_raw_buf, other.m_raw_buf);
+    std::swap(m_send_pending, other.m_send_pending);
+    std::swap(m_send_pending_pos, other.m_send_pending_pos);
+    std::swap(m_control_out, other.m_control_out);
+    std::swap(m_frame_remaining, other.m_frame_remaining);
 }
 
 std::string WebSocketSock::ComputeAccept(const std::string& key)
