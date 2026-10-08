@@ -42,6 +42,10 @@ namespace {
 const std::string I2PD_SAM_HOST{"127.0.0.1"};
 const std::string I2PD_SAM_PORT{"7656"};
 
+//! How long shutdown waits for the router to exit after asking it to, before
+//! killing it outright so that a hung router cannot stall naviod's shutdown.
+constexpr auto I2PD_STOP_TIMEOUT{std::chrono::seconds{10}};
+
 //! fs::exists() that never throws, for best-effort path probing.
 bool Exists(const fs::path& p) noexcept
 {
@@ -56,6 +60,8 @@ std::mutex g_mutex;
 std::condition_variable g_cv;
 bool g_stop{false};
 bool g_started{false};
+//! Set by the supervisor thread once it has reaped the router and is exiting.
+bool g_supervisor_done{false};
 std::thread g_thread;
 std::string g_exe;
 std::vector<std::string> g_args;
@@ -165,6 +171,10 @@ bool SpawnChild()
     CloseHandle(pi.hThread);
     std::lock_guard<std::mutex> lk(g_mutex);
     g_child = pi.hProcess;
+    // StopI2PDProcess() may have run since the supervisor last checked
+    // g_stop. Its TerminateChild() then found no child to stop, so stop this
+    // one here, or the supervisor would wait on a router nothing ends.
+    if (g_stop) TerminateProcess(g_child, 0);
     return true;
 #else
     // Build argv in the parent: naviod is multithreaded, so the child may only
@@ -180,9 +190,25 @@ bool SpawnChild()
     argv.push_back(nullptr);
     char* const exe{const_cast<char*>(g_exe.c_str())};
 
-    pid_t pid{fork()};
-    if (pid < 0) return false;
+    // Until execv() the child still runs naviod's signal handlers, so a
+    // SIGTERM from TerminateChild() landing in that window would be consumed
+    // by HandleSIGTERM and the router would start anyway. Fork with every
+    // signal blocked; the child resets the caught ones to their defaults
+    // before unblocking, so a SIGTERM already pending then ends it.
+    sigset_t all_signals, old_mask;
+    sigfillset(&all_signals);
+    pthread_sigmask(SIG_SETMASK, &all_signals, &old_mask);
+    const pid_t pid{fork()};
     if (pid == 0) {
+        struct sigaction default_action{};
+        default_action.sa_handler = SIG_DFL;
+        sigemptyset(&default_action.sa_mask);
+        for (int sig{1}; sig < NSIG; ++sig) {
+            struct sigaction current;
+            if (sigaction(sig, nullptr, &current) == 0 && current.sa_handler != SIG_IGN) {
+                sigaction(sig, &default_action, nullptr);
+            }
+        }
         setsid();
         int devnull{open("/dev/null", O_RDWR)};
         if (devnull >= 0) {
@@ -191,11 +217,18 @@ bool SpawnChild()
             dup2(devnull, STDERR_FILENO);
             if (devnull > STDERR_FILENO) close(devnull);
         }
+        sigprocmask(SIG_SETMASK, &old_mask, nullptr);
         execv(exe, argv.data());
         _exit(127);
     }
+    pthread_sigmask(SIG_SETMASK, &old_mask, nullptr);
+    if (pid < 0) return false;
     std::lock_guard<std::mutex> lk(g_mutex);
     g_child = pid;
+    // StopI2PDProcess() may have run since the supervisor last checked
+    // g_stop. Its TerminateChild() then found no child to signal, so signal
+    // this one here, or the supervisor would wait on a router nothing ends.
+    if (g_stop) kill(pid, SIGTERM);
     return true;
 #endif
 }
@@ -223,23 +256,33 @@ void WaitChild()
         pid = g_child;
     }
     if (pid <= 0) return;
+    // Wait without reaping, unpublish the pid, and only then reap. Reaping
+    // first would leave a window in which TerminateChild() could signal the
+    // pid after the system had reused it for an unrelated process.
+    siginfo_t info;
+    while (waitid(P_PID, static_cast<id_t>(pid), &info, WEXITED | WNOWAIT) < 0 && errno == EINTR) {
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        g_child = -1;
+    }
     int status;
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
     }
-    std::lock_guard<std::mutex> lk(g_mutex);
-    g_child = -1;
 #endif
 }
 
-//! Ask the child to terminate (also wakes a blocked WaitChild()).
-void TerminateChild()
+//! Ask the child to terminate (also wakes a blocked WaitChild()). With
+//! `force`, kill it outright instead of letting it shut down cleanly.
+void TerminateChild(bool force = false)
 {
 #ifdef WIN32
+    (void)force; // TerminateProcess() is already unconditional.
     std::lock_guard<std::mutex> lk(g_mutex);
     if (g_child) TerminateProcess(g_child, 0);
 #else
     std::lock_guard<std::mutex> lk(g_mutex);
-    if (g_child > 0) kill(g_child, SIGTERM);
+    if (g_child > 0) kill(g_child, force ? SIGKILL : SIGTERM);
 #endif
 }
 
@@ -280,6 +323,11 @@ void Supervise()
     }
     TerminateChild();
     WaitChild();
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        g_supervisor_done = true;
+    }
+    g_cv.notify_all();
 }
 
 } // namespace
@@ -320,6 +368,7 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
         std::lock_guard<std::mutex> lk(g_mutex);
         g_stop = false;
         g_started = true;
+        g_supervisor_done = false;
     }
     g_thread = std::thread(&Supervise);
 
@@ -337,6 +386,15 @@ void StopI2PDProcess()
     }
     g_cv.notify_all();
     TerminateChild();
+    bool exited;
+    {
+        std::unique_lock<std::mutex> lk(g_mutex);
+        exited = g_cv.wait_for(lk, I2PD_STOP_TIMEOUT, [] { return g_supervisor_done; });
+    }
+    if (!exited) {
+        LogPrintf("i2pd: router did not exit within %d seconds; killing it\n", I2PD_STOP_TIMEOUT.count());
+        TerminateChild(/*force=*/true);
+    }
     if (g_thread.joinable()) g_thread.join();
     std::lock_guard<std::mutex> lk(g_mutex);
     g_started = false;
