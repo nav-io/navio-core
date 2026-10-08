@@ -12,6 +12,7 @@
 #include <uint256.h>
 #include <validationinterface.h>
 
+#include <chrono>
 #include <cstdint>
 #include <list>
 #include <map>
@@ -23,6 +24,8 @@ namespace rfq {
 static constexpr size_t MAX_ORDER_CACHE_BYTES = 32u << 20;
 //! Standing orders live at most 14 days regardless of their declared expiry.
 static constexpr int64_t MAX_ORDER_TTL_SECONDS = 14 * 24 * 60 * 60;
+//! How often the node drops expired standing orders (see PruneExpired).
+static constexpr std::chrono::seconds ORDER_PRUNE_INTERVAL{60};
 
 /**
  * Bounded LRU cache of standing orders (broadcast pre-signed maker half-txs).
@@ -53,6 +56,7 @@ public:
         EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     //! Drop expired entries (effective expiry <= now). Returns count removed.
+    //! The node calls this every ORDER_PRUNE_INTERVAL from the scheduler.
     size_t PruneExpired(int64_t now) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     size_t Size() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);

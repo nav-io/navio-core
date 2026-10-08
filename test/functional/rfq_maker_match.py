@@ -12,10 +12,14 @@ fill / sell_cost / reply_key.
 """
 
 from decimal import Decimal
+import time
 
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
+
+# rfq::ORDER_PRUNE_INTERVAL (src/rfq/order_cache.h), in seconds.
+ORDER_PRUNE_INTERVAL = 60
 
 
 class RfqMakerMatchTest(BitcoinTestFramework):
@@ -130,6 +134,30 @@ class RfqMakerMatchTest(BitcoinTestFramework):
         assert_equal(local, wire)
 
         self.log.info("light-maker sendorder over the wire OK")
+
+        self.test_expired_orders_pruned(maker, TOKA)
+
+    def test_expired_orders_pruned(self, maker, token):
+        self.log.info("expired standing orders are pruned without an RFQ")
+        # Nothing on this node scans the cache for an RFQ, so only the
+        # scheduled prune can drop the expired order from the raw count.
+        now = int(time.time())
+        maker.setmocktime(now)
+        before = maker.listorders()["count"]
+        half = CTransaction()
+        half.vin.append(CTxIn(COutPoint(3)))
+        half.vout.append(CTxOut(0, b""))
+        expiring = maker.sendorder(half.serialize().hex(), token, 500, "", 50, now + 100)
+        assert_equal(maker.listorders()["count"], before + 1)
+
+        maker.setmocktime(now + 101)
+        # Expired: hidden from the listing at once, but only a prune drops it
+        # from the raw count.
+        assert expiring not in [o["quote_id"] for o in maker.listorders(True)["orders"]]
+
+        maker.mockscheduler(ORDER_PRUNE_INTERVAL)
+        self.wait_until(lambda: maker.listorders()["count"] == before, timeout=10)
+        maker.setmocktime(0)
 
 
 if __name__ == "__main__":
