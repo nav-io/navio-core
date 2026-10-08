@@ -621,12 +621,13 @@ std::optional<uint32_t> KeyMan::ReserveBlindingGeneration(const Outid& anchor)
 {
     const uint256& key = anchor.ToUint256();
 
-    uint32_t generation;
-    {
-        LOCK(cs_KeyStore);
-        auto it = m_blinding_generations.find(key);
-        generation = (it == m_blinding_generations.end()) ? 0 : it->second;
-    }
+    // One lock across the read, the persist and the update: two claims that
+    // interleave between the read and the update would hand out the same
+    // generation, and callers holding cs_wallet is not something KeyMan can
+    // check.
+    LOCK(cs_KeyStore);
+    auto it = m_blinding_generations.find(key);
+    const uint32_t generation = (it == m_blinding_generations.end()) ? 0 : it->second;
 
     // RecoverBlindingKey only tries generations below MAX_GENERATION_SEARCH,
     // so a key derived at or past it could never be re-derived, and
@@ -650,10 +651,7 @@ std::optional<uint32_t> KeyMan::ReserveBlindingGeneration(const Outid& anchor)
         return std::nullopt;
     }
 
-    {
-        LOCK(cs_KeyStore);
-        m_blinding_generations[key] = generation + 1;
-    }
+    m_blinding_generations[key] = generation + 1;
     return generation;
 }
 
