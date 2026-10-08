@@ -630,6 +630,7 @@ void SetupServerArgs(ArgsManager& argsman)
 #if ENABLE_I2PD
     argsman.AddArg("-i2pd", strprintf("Start and manage a bundled i2pd I2P router as a subprocess, and use it for I2P connectivity when -i2psam is not set (default: %u). The router runs as a separate process and is restarted automatically if it exits.", DEFAULT_I2PD), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-i2pdcmd=<path>", "Path to the i2pd executable to run for -i2pd (default: the bundled i2pd next to naviod, else 'i2pd' from PATH)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-i2pdsamport=<port>", strprintf("Port the -i2pd router's SAM bridge listens on at 127.0.0.1 (default: %u, testnet: %u, signet: %u, regtest: %u, blsctregtest: %u)", defaultBaseParams->I2PDSAMPort(), testnetBaseParams->I2PDSAMPort(), signetBaseParams->I2PDSAMPort(), regtestBaseParams->I2PDSAMPort(), blsctRegtestBaseParams->I2PDSAMPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
 #endif
     argsman.AddArg("-i2pacceptincoming", strprintf("Whether to accept inbound I2P connections (default: %i). Ignored if -i2psam is not set. Listening for inbound I2P connections is done through the SAM proxy, not by binding to a local address and port.", DEFAULT_I2P_ACCEPT_INCOMING), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onlynet=<net>", "Make automatic outbound connections only to network <net> (" + Join(GetNetworkNames(), ", ") + "). Inbound and manual connections are not affected by this option. It can be specified multiple times to allow multiple networks.", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -1455,6 +1456,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
     // Check port numbers
     for (const std::string port_option : {
+        "-i2pdsamport",
         "-port",
         "-rpcport",
     }) {

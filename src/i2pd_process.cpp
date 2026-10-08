@@ -6,10 +6,12 @@
 #include <config/bitcoin-config.h>
 #endif
 
+#include <chainparamsbase.h>
 #include <common/args.h>
 #include <i2pd_process.h>
 #include <logging.h>
 #include <util/fs.h>
+#include <util/string.h>
 #include <util/threadnames.h>
 
 #include <atomic>
@@ -44,9 +46,9 @@
 
 namespace {
 
-//! SAM bridge endpoint the managed i2pd listens on and naviod connects to.
+//! Address the managed i2pd's SAM bridge listens on and naviod connects to;
+//! the port is -i2pdsamport.
 const std::string I2PD_SAM_HOST{"127.0.0.1"};
-const std::string I2PD_SAM_PORT{"7656"};
 
 #ifndef WIN32
 //! Descriptor bound the child closes up to when the parent cannot read one
@@ -400,13 +402,16 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
         return std::nullopt;
     }
 
+    // Validated as a port by AppInitMain() before this runs.
+    const std::string sam_port{ToString(args.GetIntArg("-i2pdsamport", BaseParams().I2PDSAMPort()))};
+
     g_exe = fs::PathToString(i2pd);
     g_args = {
         g_exe,
         "--datadir=" + fs::PathToString(datadir),
         "--sam.enabled=true",
         "--sam.address=" + I2PD_SAM_HOST,
-        "--sam.port=" + I2PD_SAM_PORT,
+        "--sam.port=" + sam_port,
         // naviod only needs SAM. i2pd otherwise also opens its web console and
         // HTTP and SOCKS proxies on localhost by default, none of which naviod
         // uses and each of which any local user could reach.
@@ -438,7 +443,7 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
     }
     g_thread = std::thread(&Supervise);
 
-    const std::string endpoint{I2PD_SAM_HOST + ":" + I2PD_SAM_PORT};
+    const std::string endpoint{I2PD_SAM_HOST + ":" + sam_port};
     LogPrintf("i2pd: managing bundled router %s, SAM at %s\n", g_exe, endpoint);
     return endpoint;
 }

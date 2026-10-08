@@ -38,20 +38,25 @@ const CBaseChainParams& BaseParams()
 /**
  * Port numbers for incoming Tor connections (48472, 18334, 38334, 18445) have
  * been chosen arbitrarily to keep ranges of used ports tight.
+ *
+ * The managed i2pd's SAM ports sit next to them for the same reason. They
+ * differ per network so that, say, a mainnet and a testnet naviod on one host
+ * can each run their own router, and none is 7656, the SAM port of a
+ * standalone i2pd or Java I2P router on the same host.
  */
 std::unique_ptr<CBaseChainParams> CreateBaseChainParams(const ChainType chain)
 {
     switch (chain) {
     case ChainType::MAIN:
-        return std::make_unique<CBaseChainParams>("", 48471, 48472);
+        return std::make_unique<CBaseChainParams>("", 48471, 48472, 48473);
     case ChainType::TESTNET:
-        return std::make_unique<CBaseChainParams>("testnet7", 33677, 33678);
+        return std::make_unique<CBaseChainParams>("testnet7", 33677, 33678, 33679);
     case ChainType::SIGNET:
-        return std::make_unique<CBaseChainParams>("signet", 48487, 38334);
+        return std::make_unique<CBaseChainParams>("signet", 48487, 38334, 38335);
     case ChainType::REGTEST:
-        return std::make_unique<CBaseChainParams>("regtest", 48486, 18445);
+        return std::make_unique<CBaseChainParams>("regtest", 48486, 18445, 18446);
     case ChainType::BLSCTREGTEST:
-        return std::make_unique<CBaseChainParams>("blsctregtest", 48484, 18440);
+        return std::make_unique<CBaseChainParams>("blsctregtest", 48484, 18440, 18441);
     }
     assert(false);
 }
