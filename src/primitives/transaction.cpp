@@ -11,6 +11,7 @@
 #include <serialize.h>
 #include <tinyformat.h>
 #include <uint256.h>
+#include <util/check.h>
 #include <util/strencodings.h>
 #include <util/transaction_identifier.h>
 
@@ -124,6 +125,16 @@ Wtxid CTransaction::ComputeWitnessHash() const
 
 std::vector<Outid> CTransaction::ComputeOutputIds() const
 {
+    // Under a StrippedForUndoScope the range-proof body is left out of every
+    // output's serialization. ComputeHash() and ComputeWitnessHash() serialize
+    // the outputs too, so a transaction built there would cache a wrong txid
+    // and wtxid as well as wrong output ids, for its whole lifetime. This runs
+    // last in the constructors' initializer lists, after those two, but still
+    // before the constructor returns, so it guards all three: the process stops
+    // before any caller holds the object. Assert, not Assume: a wrong cached id
+    // silently corrupts the mempool, the coins and the wallet, so release
+    // builds must stop too.
+    Assert(!CTxOutBLSCTData::IsStrippedForUndo());
     std::vector<Outid> ids;
     ids.reserve(vout.size());
     for (const auto& out : vout) {
