@@ -709,7 +709,3 @@ with zero configuration.
 - **Crypto**: per-message ephemeral BLS ECDH + ChaCha20Poly1305 + HKDF, with the
   `kind` byte bound as AEAD associated data and length-bucket padding. No
   post-quantum primitives yet; PQ migration is tracked separately.
-
-```
-
-```
