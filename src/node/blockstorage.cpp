@@ -758,6 +758,10 @@ bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos
             const size_t hi = std::min(n_tx, lo + chunk_size);
             if (lo >= hi) break;
             futures.push_back(std::async(std::launch::async, [&, t, lo, hi]() {
+                // The scope is thread-local, so each worker has to open its
+                // own; without it a worker writes full range proofs that
+                // UndoReadFromDisk cannot parse.
+                CTxOutBLSCTData::StrippedForUndoScope worker_strip_scope;
                 VectorWriter w{chunks[t], 0};
                 for (size_t i = lo; i < hi; ++i) {
                     w << vtx[i];
