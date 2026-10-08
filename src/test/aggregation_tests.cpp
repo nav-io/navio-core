@@ -552,11 +552,65 @@ BOOST_FIXTURE_TEST_CASE(session_required_fee, TestingSetup)
             + aggregation::RequiredCandidateFee(cands, BLSCT_DEFAULT_FEE);
         const CAmount floor =
             static_cast<CAmount>(blsct::GetTransactionWeight(CTransaction(*combined))) * BLSCT_DEFAULT_FEE;
-        // Must clear the floor consensus enforces on the combined tx. (Holds so
-        // long as the aggregate's input/output count varints stay one byte;
-        // above ~237 combined in/out the varint grows and the initiator falls
-        // back to a plain send -- exercised at the RPC layer, not here.)
+        // Must clear the floor consensus enforces on the combined tx. (The
+        // count varints stay one byte here; session_combined_count_fee covers
+        // the CompactSize boundary.)
         BOOST_CHECK_GE(funded, floor);
+    }
+}
+
+BOOST_FIXTURE_TEST_CASE(session_combined_count_fee, BasicTestingSetup)
+{
+    // Weight is the serialized size, so stub halves with placeholder inputs
+    // and outputs model the 253-entry CompactSize boundary without building
+    // and range-proving hundreds of real ones.
+    uint64_t next_prevout{1};
+    const auto stub = [&](size_t inputs, size_t outputs) {
+        CMutableTransaction tx;
+        tx.nVersion |= CTransaction::BLSCT_MARKER;
+        for (size_t i = 0; i < inputs; ++i) {
+            tx.vin.emplace_back(COutPoint{Txid::FromUint256(uint256{next_prevout++})});
+        }
+        tx.vout.resize(outputs);
+        return tx;
+    };
+    const auto weight = [](const CMutableTransaction& tx) {
+        return static_cast<CAmount>(blsct::GetTransactionWeight(CTransaction(tx)));
+    };
+    const CAmount rate = BLSCT_DEFAULT_FEE;
+
+    struct Case {
+        size_t own_inputs, own_outputs, covers;
+        int64_t growth; // bytes the merged counts add over the own half's
+    };
+    for (const Case& c : {
+             Case{251, 2, 1, 0}, // 252 merged inputs: still one byte
+             Case{252, 2, 1, 2}, // 253: the input count grows to three bytes
+             Case{253, 2, 1, 0}, // already three bytes in the own half
+             Case{237, 2, 16, 2}, // a full cover set crossing the boundary
+             Case{2, 252, 1, 2}, // the output count crosses on its own
+             Case{252, 252, 1, 4}, // both counts cross
+         }) {
+        BOOST_TEST_CONTEXT("own " << c.own_inputs << " in / " << c.own_outputs << " out, " << c.covers << " covers")
+        {
+            const CMutableTransaction own = stub(c.own_inputs, c.own_outputs);
+            std::vector<CTransactionRef> covers;
+            for (size_t i = 0; i < c.covers; ++i) covers.push_back(MakeTransactionRef(stub(1, 1)));
+
+            const CAmount count_fee = aggregation::CombinedCountFee(own, covers, rate);
+            BOOST_CHECK_EQUAL(count_fee, c.growth * rate);
+
+            std::vector<CTransactionRef> halves{MakeTransactionRef(own)};
+            halves.insert(halves.end(), covers.begin(), covers.end());
+            const auto combined = aggregation::CombineHalves(halves);
+            BOOST_REQUIRE(combined.has_value());
+
+            // The own half funds its own weight plus the cover and count
+            // fees; that must equal the combined tx's consensus floor exactly
+            // -- under it is rejected, over it leaks the cover count.
+            const CAmount funded = weight(own) * rate + aggregation::RequiredCandidateFee(covers, rate) + count_fee;
+            BOOST_CHECK_EQUAL(funded, weight(*combined) * rate);
+        }
     }
 }
 

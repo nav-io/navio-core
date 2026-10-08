@@ -189,10 +189,11 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
 
     bool cover_refined = false;
     bool cover_sized = false;
+    CAmount count_fee = 0;
     for (;;) {
         blsct::CreateTransactionData attempt = txData;
         if (!candidates.empty()) {
-            attempt.additionalFee = aggregation::RequiredCandidateFee(candidates, attempt.nBLSCTDefaultFee);
+            attempt.additionalFee = aggregation::RequiredCandidateFee(candidates, attempt.nBLSCTDefaultFee) + count_fee;
         }
         auto res = blsct::TxFactory::CreateTransaction(&wallet, wallet.GetBLSCTKeyMan(), attempt);
         if (!res) {
@@ -260,12 +261,24 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
             cover_refined = true;
             auto refined = RefineCoverSelection(wallet, res->tx, *pool, candidates);
             if (!refined.empty()) {
-                const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, attempt.nBLSCTDefaultFee);
+                const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, attempt.nBLSCTDefaultFee) + count_fee;
                 if (refined_extra == attempt.additionalFee) {
                     candidates = std::move(refined);
                 } else {
                     LogPrint(BCLog::NET, "p2pmsg: cover refinement skipped (refined set moves the required fee %d -> %d)\n", attempt.additionalFee, refined_extra);
                 }
+            }
+        }
+
+        // Pay for the merged input/output counts once the own half's are
+        // known: crossing a CompactSize boundary would otherwise leave the
+        // aggregate under the fee floor and burn every picked candidate.
+        // count_fee only grows, so this rebuilds at most once per boundary.
+        if (!candidates.empty()) {
+            const CAmount needed = aggregation::CombinedCountFee(res->tx, candidates, attempt.nBLSCTDefaultFee);
+            if (needed > count_fee) {
+                count_fee = needed;
+                continue;
             }
         }
 
@@ -291,10 +304,8 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
                 for (const CTxIn& in : c->vin) pool->EvictByInput(in.prevout);
             }
             if (!broadcast_ok) {
-                // Falls here on a combine/broadcast failure -- including the
-                // varint-boundary corner where an aggregate of >=237 combined
-                // inputs/outputs lands just under the consensus fee floor.
-                // Safe (a plain send follows) but log it so the skip is visible.
+                // Falls here on a combine/broadcast failure. Safe (a plain
+                // send follows) but log it so the skip is visible.
                 LogPrint(BCLog::NET, "p2pmsg: aggregated send fell back to plain (combine/broadcast failed: %s)\n", err_string);
                 candidates.clear();
                 continue;
@@ -640,6 +651,18 @@ static RPCHelpMan aggregatesend()
                         LogPrint(BCLog::NET, "p2pmsg: cover refinement skipped (refined set moves the required fee %d -> %d)\n", extra, refined_extra);
                     }
                 }
+            }
+
+            // Pay for the merged input/output counts crossing a CompactSize
+            // boundary (see SendTransaction); count_fee only grows, so this
+            // rebuilds at most once per boundary.
+            for (CAmount count_fee = 0;;) {
+                const CAmount needed = aggregation::CombinedCountFee(own->tx, candidates, rate);
+                if (needed <= count_fee) break;
+                count_fee = needed;
+                txData.additionalFee = extra + count_fee;
+                own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
+                if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
             }
 
             std::vector<CTransactionRef> halves;
@@ -2942,11 +2965,12 @@ RPCHelpMan consolidate()
                 if (aggregate_sends) candidates = pool->PickForAggregate(aggregation::POOL_MAX_COMBINED);
 
                 bool exhausted = false;
+                CAmount count_fee = 0;
                 for (;;) {
                     // The cover weight's fee comes out of the merged amount
                     // (consolidation subtracts its fee), so an over-funded
                     // attempt can fail on a sum a plain one still clears.
-                    const CAmount extra = candidates.empty() ? 0 : aggregation::RequiredCandidateFee(candidates, fee_rate);
+                    const CAmount extra = candidates.empty() ? 0 : aggregation::RequiredCandidateFee(candidates, fee_rate) + count_fee;
                     auto res = blsct::TxFactory::CreateConsolidationTransaction(pwallet.get(), blsct_km, dest, max_inputs, fee_rate, extra, used_inputs);
                     if (!res) {
                         if (!candidates.empty()) {
@@ -2971,12 +2995,22 @@ RPCHelpMan consolidate()
                         // move the fee (the half is already built for extra).
                         auto refined = blsct::RefineCoverSelection(*pwallet, res->tx, *pool, candidates);
                         if (!refined.empty()) {
-                            const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, fee_rate);
+                            const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, fee_rate) + count_fee;
                             if (refined_extra == extra) {
                                 candidates = std::move(refined);
                             } else {
                                 LogPrint(BCLog::NET, "p2pmsg: consolidation cover refinement skipped (refined set moves the required fee %d -> %d)\n", extra, refined_extra);
                             }
+                        }
+                        // Consolidation routinely builds halves near 253
+                        // inputs: pay for the merged counts crossing a
+                        // CompactSize boundary (see SendTransaction).
+                        // count_fee only grows, so this rebuilds at most once
+                        // per boundary.
+                        const CAmount needed = aggregation::CombinedCountFee(*own, candidates, fee_rate);
+                        if (needed > count_fee) {
+                            count_fee = needed;
+                            continue;
                         }
                         std::vector<CTransactionRef> halves;
                         halves.reserve(candidates.size() + 1);
