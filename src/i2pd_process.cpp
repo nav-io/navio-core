@@ -266,9 +266,11 @@ bool SpawnChild()
         // close-on-exec, so an orphaned router would otherwise keep naviod's
         // P2P and RPC ports bound after naviod itself is gone.
         bool closed{false};
-#if defined(__linux__) && defined(SYS_close_range)
-        // One syscall instead of up to max_fd; ENOSYS before Linux 5.9.
-        closed = syscall(SYS_close_range, STDERR_FILENO + 1, ~0U, 0U) == 0;
+#if defined(__linux__) && defined(__NR_close_range)
+        // One syscall instead of up to max_fd; ENOSYS before Linux 5.9. Keyed
+        // on the kernel headers' __NR_ number, not glibc's SYS_ alias, which
+        // glibc only defines from 2.33 on.
+        closed = syscall(__NR_close_range, STDERR_FILENO + 1, ~0U, 0U) == 0;
 #endif
         if (!closed) {
             for (int fd{STDERR_FILENO + 1}; fd < max_fd; ++fd) close(fd);
