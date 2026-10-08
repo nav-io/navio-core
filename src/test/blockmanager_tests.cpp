@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/arith/blst/blst.h>
 #include <chainparams.h>
 #include <clientversion.h>
 #include <node/blockstorage.h>
@@ -9,8 +10,12 @@
 #include <node/kernel_notifications.h>
 #include <script/solver.h>
 #include <primitives/block.h>
+#include <primitives/transaction.h>
+#include <undo.h>
 #include <util/chaintype.h>
 #include <validation.h>
+
+#include <thread>
 
 #include <boost/test/unit_test.hpp>
 #include <test/util/logging.h>
@@ -199,6 +204,58 @@ BOOST_AUTO_TEST_CASE(blockmanager_flush_block_file)
     //   SaveBlockToDisk() did not call WriteBlockToDisk() because `FlatFilePos* dbp` was non-null
     blockman.ReadBlockFromDisk(read_block, pos2);
     BOOST_CHECK_EQUAL(read_block.nVersion, 2);
+}
+
+BOOST_FIXTURE_TEST_CASE(blockmanager_undo_round_trip_parallel_blsct, TestChain100Setup)
+{
+    // Enough entries for UndoWriteToDisk to serialize on worker threads (it
+    // stays on the calling thread for 32 or fewer).
+    constexpr size_t NUM_TX_UNDO{40};
+    // With a single core UndoWriteToDisk keeps to one thread, and this test
+    // would pass without exercising the worker path at all.
+    if (std::thread::hardware_concurrency() < 2) {
+        BOOST_TEST_MESSAGE("Skipped: the parallel undo write needs at least 2 cores");
+        return;
+    }
+
+    CBlockUndo blockundo;
+    for (size_t i = 0; i < NUM_TX_UNDO; ++i) {
+        CTxOut out;
+        out.scriptPubKey = CScript() << OP_TRUE;
+        out.blsctData.spendingKey = BlstG1Point::Rand();
+        out.blsctData.ephemeralKey = BlstG1Point::Rand();
+        out.blsctData.blindingKey = BlstG1Point::Rand();
+        auto& proof = out.blsctData.rangeProof;
+        proof.Vs.Add(BlstG1Point::Rand());
+        proof.Ls.Add(BlstG1Point::Rand());
+        proof.Rs.Add(BlstG1Point::Rand());
+        proof.A = BlstG1Point::Rand();
+        proof.A_wip = BlstG1Point::Rand();
+        proof.B = BlstG1Point::Rand();
+        proof.r_prime = BlstScalar::Rand();
+        proof.tau_x = BlstScalar::Rand();
+        blockundo.vtxundo.emplace_back().vprevout.emplace_back(out, /*nHeightIn=*/1, /*fCoinBaseIn=*/false);
+    }
+
+    auto& blockman{m_node.chainman->m_blockman};
+    LOCK(cs_main);
+    CBlockIndex& tip{*Assert(m_node.chainman->ActiveChain().Tip())};
+    // Drop the tip's real undo position so WriteUndoDataForBlock writes ours.
+    tip.nStatus &= ~BLOCK_HAVE_UNDO;
+    BlockValidationState state;
+    BOOST_REQUIRE(blockman.WriteUndoDataForBlock(blockundo, state, tip));
+
+    CBlockUndo read_undo;
+    BOOST_REQUIRE(blockman.UndoReadFromDisk(read_undo, tip));
+    BOOST_REQUIRE_EQUAL(read_undo.vtxundo.size(), NUM_TX_UNDO);
+    for (size_t i = 0; i < NUM_TX_UNDO; ++i) {
+        const CTxOut& written{blockundo.vtxundo[i].vprevout.at(0).out};
+        const CTxOut& read{read_undo.vtxundo[i].vprevout.at(0).out};
+        // Undo data keeps the commitment, not the rest of the range proof.
+        BOOST_CHECK(read.blsctData.rangeProof.Vs[0] == written.blsctData.rangeProof.Vs[0]);
+        BOOST_CHECK(read.blsctData.spendingKey == written.blsctData.spendingKey);
+        BOOST_CHECK_EQUAL(read.blsctData.rangeProof.Ls.Size(), 0U);
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
