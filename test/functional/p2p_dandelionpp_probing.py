@@ -31,6 +31,20 @@ from test_framework.util import assert_equal
 from test_framework.wallet import MiniWallet
 
 
+class InvRecordingPeer(P2PInterface):
+    """Records every (type, hash) announced to it. last_message keeps only
+    the latest inv, so a later announcement could hide the one waited for."""
+
+    def __init__(self):
+        super().__init__()
+        self.announced = set()
+
+    def on_inv(self, message):
+        super().on_inv(message)
+        for inv in message.inv:
+            self.announced.add((inv.type, inv.hash))
+
+
 class DandelionProbingTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
@@ -92,12 +106,10 @@ class DandelionProbingTest(BitcoinTestFramework):
         # nothing and backs off for 10 seconds; the embargo can run out first,
         # and the tx would then be announced as MSG_WTX instead.
         with self.nodes[0].assert_debug_log(["Shuffled stem peers (found=1"], timeout=15):
-            stem_peer = self.nodes[0].add_p2p_connection(P2PInterface())
+            stem_peer = self.nodes[0].add_p2p_connection(InvRecordingPeer())
         stem_tx = wallet.send_self_transfer(from_node=self.nodes[0])
         stem_wtxid = int(stem_tx["wtxid"], 16)
-        stem_peer.wait_until(lambda: any(
-            inv.type == MSG_DWTX and inv.hash == stem_wtxid
-            for inv in stem_peer.last_message["inv"].inv) if "inv" in stem_peer.last_message else False)
+        stem_peer.wait_until(lambda: (MSG_DWTX, stem_wtxid) in stem_peer.announced)
 
         stem_output_hash = stem_tx["tx"].vout[0].hash()
         for inv_type in [MSG_WITNESS_TX, MSG_OUTPUT_HASH]:
