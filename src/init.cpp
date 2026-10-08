@@ -2705,6 +2705,9 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             return InitError(ResolveErrMsg("p2pwsbind", bind_arg));
         }
         connOptions.vWsBinds.push_back(bind_addr.value());
+        if (IsBadPort(bind_addr->GetPort())) {
+            InitWarning(BadPortWarning("-p2pwsbind", bind_addr->GetPort()));
+        }
     }
 
     // If the user did not specify -bind= or -whitebind= then we bind
