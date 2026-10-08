@@ -928,9 +928,13 @@ BOOST_AUTO_TEST_CASE(transport_relays_to_other_peers)
 BOOST_AUTO_TEST_CASE(user_inbox_size_cap_prunes)
 {
     // A memory_only store with a tiny byte cap: after inserting well past the
-    // cap, TotalBytes() must stay within it and equal the sum of what List()
-    // still returns. Catches PruneLocked double-subtracting (which drives the
-    // persisted total below reality and disarms the cap).
+    // cap, TotalBytes() must stay within the inbox scope's share of it and
+    // equal the sum of what List() still returns. Catches PruneLocked
+    // double-subtracting (which drives the persisted total below reality and
+    // disarms the cap).
+    // Every entry is MsgScope::INBOX, so this covers one scope's oldest-first
+    // eviction only; user_inbox_scopes_have_separate_budgets covers how the
+    // scopes' budgets interact.
     UserInbox::Options opts;
     opts.memory_only = true;
     opts.max_total_bytes = 4096;
@@ -942,7 +946,7 @@ BOOST_AUTO_TEST_CASE(user_inbox_size_cap_prunes)
     for (int i = 0; i < 200; ++i) {
         inbox.Add(1000 + i, MsgScope::INBOX, "t", sender, body);
     }
-    BOOST_CHECK_LE(inbox.TotalBytes(), opts.max_total_bytes);
+    BOOST_CHECK_LE(inbox.TotalBytes(), UserInbox::ScopeCapBytes(opts.max_total_bytes, MsgScope::INBOX));
 
     // TotalBytes() must equal exactly (retained count) x (one entry's bytes),
     // measured from a fresh store so the check is independent of EntryBytes
