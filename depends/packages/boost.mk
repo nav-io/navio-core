@@ -18,6 +18,10 @@ boost_i2p_libs = ;filesystem;program_options;atomic;system;asio;algorithm;lexica
 # per-arch assembly that mis-detects on cross targets (picks i386 asm for arm).
 # i2pd uses none of them (header-only Asio only), so exclude them.
 boost_i2p_exclude = -DBOOST_EXCLUDE_LIBRARIES="context;coroutine;fiber"
+# Building the compiled components for darwin needs install_name_tool/otool;
+# point CMake at the depends-provided (llvm) ones so its binutils detection
+# succeeds (the plain-named tools do not exist in the cross environment).
+boost_i2p_darwin_opts = -DCMAKE_INSTALL_NAME_TOOL=$(host_INSTALL_NAME_TOOL) -DCMAKE_OTOOL=$(host_OTOOL)
 endif
 
 define $(package)_set_vars
@@ -31,11 +35,7 @@ define $(package)_set_vars
   $(package)_config_opts += -DCMAKE_DISABLE_FIND_PACKAGE_ICU=ON
   # Install to a unique path to prevent accidental inclusion via other dependencies' -I flags.
   $(package)_config_opts += -DCMAKE_INSTALL_INCLUDEDIR=$(package)/include
-  # Building the compiled components for darwin needs install_name_tool/otool;
-  # point CMake at the depends-provided (llvm) ones so its binutils detection
-  # succeeds (the plain-named tools do not exist in the cross environment).
-  $(package)_config_opts_darwin += -DCMAKE_INSTALL_NAME_TOOL=$(host_INSTALL_NAME_TOOL)
-  $(package)_config_opts_darwin += -DCMAKE_OTOOL=$(host_OTOOL)
+  $(package)_config_opts_darwin = $(boost_i2p_darwin_opts)
 endef
 
 define $(package)_config_cmds

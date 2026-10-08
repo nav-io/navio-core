@@ -23,14 +23,18 @@ darwin_OBJCOPY=$(shell command -v llvm-objcopy)
 darwin_OBJDUMP=$(shell command -v llvm-objdump)
 darwin_RANLIB=$(shell command -v llvm-ranlib)
 darwin_STRIP=$(shell command -v llvm-strip)
-# Needed by CMake's darwin binutils detection (e.g. when building Boost's
-# compiled libraries for the bundled i2pd). llvm-install-name-tool / llvm-otool
-# are multicall aliases of llvm-objcopy/llvm-objdump and are not always
-# symlinked unversioned (e.g. Debian's llvm package). Resolve them from the llvm
-# bindir derived from llvm-objcopy (wired above), which is version-agnostic.
+# Needed by CMake's darwin binutils detection when building Boost's compiled
+# libraries for the bundled i2pd. llvm-install-name-tool / llvm-otool are
+# multicall aliases of llvm-objcopy/llvm-objdump and are not always symlinked
+# unversioned (e.g. Debian's llvm package). Resolve them from the llvm bindir
+# derived from llvm-objcopy (wired above), which is version-agnostic. Only set
+# for I2P builds, so a NO_I2P=1 build sees the same tools as before (these
+# also reach config.site as OTOOL / INSTALL_NAME_TOOL).
+ifeq ($(NO_I2P),)
 darwin_llvm_bindir=$(shell dirname $(shell readlink -f $(shell command -v llvm-objcopy)))
 darwin_INSTALL_NAME_TOOL=$(darwin_llvm_bindir)/llvm-install-name-tool
 darwin_OTOOL=$(darwin_llvm_bindir)/llvm-otool
+endif
 
 # Flag explanations:
 #

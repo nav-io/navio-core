@@ -287,7 +287,6 @@ $(host_prefix)/share/config.site : config.site.in $(host_prefix)/.stamp_$(final_
             -e 's|@no_wallet@|$(NO_WALLET)|' \
             -e 's|@no_sqlite@|$(NO_SQLITE)|' \
             -e 's|@no_usdt@|$(NO_USDT)|' \
-            -e 's|@no_i2p@|$(NO_I2P)|' \
             -e 's|@multiprocess@|$(MULTIPROCESS)|' \
             -e 's|@lto@|$(LTO)|' \
             -e 's|@no_harden@|$(NO_HARDEN)|' \
