@@ -2808,6 +2808,27 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     // affect this node (I2P is simply unavailable until it restarts).
     std::string i2psam_arg = args.GetArg("-i2psam", "");
 #if ENABLE_I2PD
+    if (i2psam_arg.empty() && args.GetBoolArg("-i2pd", DEFAULT_I2PD)) {
+        // i2pd exits if its SAM port is taken, and the supervisor would then
+        // restart it forever, so refuse a SAM port naviod itself listens on.
+        // Only TCP matters: the UDP datagram port i2pd also opens (SAM port
+        // - 1) cannot collide with naviod, which has no UDP listeners.
+        // The P2P entries hold -port or the network default wherever no
+        // explicit port was given, as do the RPC and onion ones.
+        std::vector<std::pair<std::string, uint16_t>> listeners{
+            {"RPC", static_cast<uint16_t>(args.GetIntArg("-rpcport", BaseParams().RPCPort()))},
+        };
+        if (connOptions.bind_on_any) listeners.emplace_back("P2P", GetListenPort());
+        for (const CService& bind : connOptions.vBinds) listeners.emplace_back("P2P", bind.GetPort());
+        for (const auto& whitebind : connOptions.vWhiteBinds) listeners.emplace_back("P2P", whitebind.m_service.GetPort());
+        for (const CService& bind : connOptions.onion_binds) listeners.emplace_back("onion service target", bind.GetPort());
+        const uint16_t sam_port{GetI2PDSAMPort(args)};
+        for (const auto& [listener, port] : listeners) {
+            if (port == sam_port) {
+                return InitError(strprintf(_("-i2pdsamport %u is also naviod's %s port. Set a different -i2pdsamport."), sam_port, listener));
+            }
+        }
+    }
     if (i2psam_arg.empty()) {
         if (std::optional<std::string> managed{StartI2PDProcess(args)}) {
             i2psam_arg = *managed;

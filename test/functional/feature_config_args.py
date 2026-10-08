@@ -168,6 +168,21 @@ class ConfArgsTest(BitcoinTestFramework):
                 expected_msg='Error: -i2pd is set, but this build has no I2P router support. Run an I2P router separately and set -i2psam instead.',
                 extra_args=['-i2pd=1'],
             )
+            return
+        self.log.info("Test -i2pdsamport may not be a port naviod listens on")
+        # Each case is refused before the router is started.
+        for extra_args, listener in [
+            (['-port=18601', '-i2pdsamport=18601'], 'P2P'),
+            (['-rpcport=18602', '-i2pdsamport=18602'], 'RPC'),
+            (['-bind=127.0.0.1:18603', '-i2pdsamport=18603'], 'P2P'),
+            (['-whitebind=noban@127.0.0.1:18604', '-i2pdsamport=18604'], 'P2P'),
+            (['-bind=127.0.0.1:18605=onion', '-i2pdsamport=18605'], 'onion service target'),
+        ]:
+            sam_port = extra_args[-1].split('=')[1]
+            node.assert_start_raises_init_error(
+                expected_msg=f"Error: -i2pdsamport {sam_port} is also naviod's {listener} port. Set a different -i2pdsamport.",
+                extra_args=['-i2pd=1'] + extra_args,
+            )
 
     def test_log_buffer(self):
         self.stop_node(0)

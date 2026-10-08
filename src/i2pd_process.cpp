@@ -406,8 +406,7 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
         return std::nullopt;
     }
 
-    // Validated as a port by AppInitMain() before this runs.
-    const std::string sam_port{ToString(args.GetIntArg("-i2pdsamport", BaseParams().I2PDSAMPort()))};
+    const std::string sam_port{ToString(GetI2PDSAMPort(args))};
 
     g_exe = fs::PathToString(i2pd);
     g_args = {
@@ -450,6 +449,12 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
     const std::string endpoint{I2PD_SAM_HOST + ":" + sam_port};
     LogPrintf("i2pd: managing bundled router %s, SAM at %s\n", g_exe, endpoint);
     return endpoint;
+}
+
+uint16_t GetI2PDSAMPort(const ArgsManager& args)
+{
+    // Validated as a port by AppInitMain() before anything calls this.
+    return static_cast<uint16_t>(args.GetIntArg("-i2pdsamport", BaseParams().I2PDSAMPort()));
 }
 
 void StopI2PDProcess()

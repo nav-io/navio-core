@@ -22,6 +22,7 @@
 #ifndef BITCOIN_I2PD_PROCESS_H
 #define BITCOIN_I2PD_PROCESS_H
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -38,6 +39,9 @@ static const bool DEFAULT_I2PD = false;
  * Never blocks waiting for i2pd to become ready.
  */
 std::optional<std::string> StartI2PDProcess(const ArgsManager& args);
+
+/** TCP port the managed router's SAM bridge listens on: -i2pdsamport, else the network's default. */
+uint16_t GetI2PDSAMPort(const ArgsManager& args);
 
 /** Signal the supervisor to stop and terminate the i2pd process (no-op if not started). */
 void StopI2PDProcess();
