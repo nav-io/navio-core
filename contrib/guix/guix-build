@@ -219,6 +219,11 @@ fi
 # environment)
 JOBS="${JOBS:-$(nproc)}"
 
+# Leave the bundled I2P router out of depends, as the release workflow does, so
+# a manual build produces the same artifacts. Set NO_I2P to the empty string to
+# build it: depends treats any non-empty value, including 0, as "skip".
+NO_I2P="${NO_I2P-1}"
+
 # Usage: host_to_commonname HOST
 #
 #   HOST: The current platform triple we're building for
@@ -295,7 +300,7 @@ mkdir -p "$OUTDIR_BASE"
 # Download the depends sources now as we won't have internet access in the build
 # container
 for host in $HOSTS; do
-    make -C "${PWD}/depends" -j"$JOBS" download-"$(host_to_commonname "$host")" ${V:+V=1} ${SOURCES_PATH:+SOURCES_PATH="$SOURCES_PATH"}
+    make -C "${PWD}/depends" -j"$JOBS" download-"$(host_to_commonname "$host")" ${V:+V=1} ${SOURCES_PATH:+SOURCES_PATH="$SOURCES_PATH"} ${NO_I2P:+NO_I2P="$NO_I2P"}
 done
 
 # Usage: outdir_for_host HOST SUFFIX
