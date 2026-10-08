@@ -16,6 +16,9 @@
 #include <test/util/setup_common.h>
 #include <validationinterface.h>
 
+#include <algorithm>
+#include <vector>
+
 #include <boost/test/unit_test.hpp>
 
 using namespace rfq;
@@ -316,6 +319,29 @@ BOOST_AUTO_TEST_CASE(order_snapshot_sorted_and_live_only)
     // The cap reversed the effective order, so the case can tell the keys apart.
     BOOST_CHECK_EQUAL(msnap[0].effective_expiry, 1000 + MAX_ORDER_TTL_SECONDS);
     BOOST_CHECK_EQUAL(msnap[1].effective_expiry, MAX_ORDER_TTL_SECONDS);
+}
+
+BOOST_AUTO_TEST_CASE(order_snapshot_quote_id_tie_break)
+{
+    // Orders sharing a declared expiry come out in ascending quote_id order.
+    // Enough of them that an unstable sort without the tie-break would not
+    // keep the cache's own key order by accident.
+    OrderCache cache(0);
+    std::vector<uint256> tied;
+    for (int i = 0; i < 200; ++i) {
+        tied.push_back(InsecureRand256());
+        BOOST_REQUIRE(cache.StoreOrder(MakeOrder(tied.back(), InsecureRand256(), 1, 1, /*order_expiry=*/5000), /*now=*/0));
+    }
+    const uint256 sooner = InsecureRand256();
+    BOOST_REQUIRE(cache.StoreOrder(MakeOrder(sooner, InsecureRand256(), 1, 1, /*order_expiry=*/4000), /*now=*/0));
+    std::sort(tied.begin(), tied.end());
+
+    const auto snap = cache.Snapshot(/*now=*/1).orders;
+    BOOST_REQUIRE_EQUAL(snap.size(), tied.size() + 1);
+    BOOST_CHECK(snap[0].quote.quote_id == sooner);
+    for (size_t i = 0; i < tied.size(); ++i) {
+        BOOST_CHECK_MESSAGE(snap[i + 1].quote.quote_id == tied[i], "tied order " << i << " out of quote_id order");
+    }
 }
 
 BOOST_AUTO_TEST_CASE(order_spent_input_evicts)

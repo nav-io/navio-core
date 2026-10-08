@@ -87,8 +87,9 @@ public:
     };
 
     //! Copies of every order still live at `now` (effective_expiry > now),
-    //! sorted by the maker-declared order_expiry ascending (quote_id tie-break; wire-public keys only — see Snapshot), then quote_id. Does not touch the
-    //! LRU order and does not prune. Intended for inspection (RPC).
+    //! sorted by the maker-declared order_expiry ascending, then quote_id
+    //! (both wire-public keys). Does not touch the LRU order and does not
+    //! prune. Intended for inspection (RPC).
     OrderSnapshot Snapshot(int64_t now) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     void TransactionAddedToMempool(const NewMempoolTransactionInfo& tx, uint64_t) override
