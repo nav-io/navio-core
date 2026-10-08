@@ -225,44 +225,6 @@ cHNidP8BAHECAAAAAWLHKR9/xAjetzL/FCmZU5lbfINRMWPRPHWO68PfUzkPAQAAAAD9////AoA4AQAA
 > is permitted and will cause the wallet to automatically select appropriate
 > inputs for the transaction.
 
-### Decode and Analyze the Unsigned PSBT
-
-Decode and analyze the unsigned PSBT on the `offline_wallet` using the
-`funded_psbt.txt` file:
-
-```sh
-[offline]$ ./src/bitcoin-cli -signet decodepsbt $(cat /path/to/funded_psbt.txt)
-
-{
-    ...
-}
-
-[offline]$ ./src/bitcoin-cli -signet analyzepsbt $(cat /path/to/funded_psbt.txt)
-
-{
-  "inputs": [
-    {
-      "has_utxo": true,
-      "is_final": false,
-      "next": "signer",
-      "missing": {
-        "signatures": [
-          "5f2804634d6df60dd080932e83c408b2975cbbb2"
-        ]
-      }
-    }
-  ],
-  "estimated_vsize": 141,
-  "estimated_feerate": 0.00100000,
-  "fee": 0.00014100,
-  "next": "signer"
-}
-```
-
-Notice that the analysis of the PSBT shows that "signatures" are missing and
-should be provided by the private key corresponding to the public key hash
-(hash160) "5f2804634d6df60dd080932e83c408b2975cbbb2"
-
 ### Process and Sign the PSBT
 
 1. Unlock the `offline_wallet` with the Passphrase:

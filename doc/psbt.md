@@ -50,43 +50,26 @@ hardware implementations will typically implement multiple roles simultaneously.
 
 ### RPCs
 
-- **`converttopsbt` (Creator)** is a utility RPC that converts an unsigned raw
-  transaction to PSBT format. It ignores existing signatures.
-- **`createpsbt` (Creator)** is a utility RPC that takes a list of inputs and
-  outputs and converts them to a PSBT with no additional information. It is
-  equivalent to calling `createrawtransaction` followed by `converttopsbt`.
+The node has no RPCs that create, update, combine, join, finalize, decode or
+analyze a PSBT on its own. What remains are the wallet RPCs:
+
 - **`walletcreatefundedpsbt` (Creator, Updater)** is a wallet RPC that creates a
   PSBT with the specified inputs and outputs, adds additional inputs and change
   to it to balance it out, and adds relevant metadata. In particular, for inputs
   that the wallet knows about (counting towards its normal or watch-only
   balance), UTXO information will be added. For outputs and inputs with UTXO
   information present, key and script information will be added which the wallet
-  knows about. It is equivalent to running `createrawtransaction`, followed by
-  `fundrawtransaction`, and `converttopsbt`.
-- **`walletprocesspsbt` (Updater, Signer, Finalizer)** is a wallet RPC that
-  takes as input a PSBT, adds UTXO, key, and script data to inputs and outputs
-  that miss it, and optionally signs inputs. Where possible it also finalizes
-  the partial signatures.
-- **`utxoupdatepsbt` (Updater)** is a node RPC that takes a PSBT and updates it
-  to include information available from the UTXO set (works only for SegWit
-  inputs).
-- **`finalizepsbt` (Finalizer, Extractor)** is a utility RPC that finalizes any
-  partial signatures, and if all inputs are finalized, converts the result to a
-  fully signed transaction which can be broadcast with `sendrawtransaction`.
-- **`combinepsbt` (Combiner)** is a utility RPC that implements a Combiner. It
-  can be used at any point in the workflow to merge information added to
-  different versions of the same PSBT. In particular it is useful to combine the
-  output of multiple Updaters or Signers.
-- **`joinpsbts`** (Creator) is a utility RPC that joins multiple PSBTs together,
-  concatenating the inputs and outputs. This can be used to construct CoinJoin
-  transactions.
-- **`decodepsbt`** is a diagnostic utility RPC which will show all information
-  in a PSBT in human-readable form, as well as compute its eventual fee if
-  known.
-- **`analyzepsbt`** is a utility RPC that examines a PSBT and reports the
-  current status of its inputs, the next step in the workflow if known, and if
-  possible, computes the fee of the resulting transaction and estimates the
-  final weight and feerate.
+  knows about.
+- **`walletprocesspsbt` (Updater, Signer, Finalizer, Extractor)** is a wallet
+  RPC that takes as input a PSBT, adds UTXO, key, and script data to inputs and
+  outputs that miss it, and optionally signs inputs. Where possible it also
+  finalizes the partial signatures. Once all inputs are finalized it reports the
+  PSBT as `complete` and returns the fully signed transaction in its `hex`
+  field, which can be broadcast with `sendrawtransaction`.
+- **`psbtbumpfee`** is a wallet RPC that bumps the fee of an opt-in-RBF
+  transaction and returns the replacement as a PSBT instead of signing it.
+- The `psbt` option of the wallet RPCs `send` and `sendall` makes them return a
+  PSBT instead of a signed transaction.
 
 ### Workflows
 
@@ -133,18 +116,12 @@ not need to be involved.
   We call the resulting PSBT _P_. _P_ does not contain any signatures.
 - Carol needs to sign the transaction herself. In order to do so, she runs
   `walletprocesspsbt "P"`, and gives the resulting PSBT _P2_ to Bob.
-- Bob inspects the PSBT using `decodepsbt "P2"` to determine if the transaction
-  has indeed just the expected input, and an output to _Asend_, and the fee is
-  reasonable. If he agrees, he calls `walletprocesspsbt "P2"` to sign. The
-  resulting PSBT _P3_ contains both Carol's and Bob's signature.
-- Now anyone can call `finalizepsbt "P3"` to extract a fully signed transaction
-  _T_.
+- Bob checks that the transaction has indeed just the expected input, and an
+  output to _Asend_, and the fee is reasonable. If he agrees, he calls
+  `walletprocesspsbt "P2"` to sign. With both Carol's and Bob's signature the
+  PSBT is complete, and the result holds the fully signed transaction _T_ in its
+  `hex` field.
 - Finally anyone can broadcast the transaction using `sendrawtransaction "T"`.
 
-In case there are more signers, it may be advantageous to let them all sign in
-parallel, rather than passing the PSBT from one signer to the next one. In the
-above example this would translate to Carol handing a copy of _P_ to each signer
-separately. They can then all invoke `walletprocesspsbt "P"`, and end up with
-their individually-signed PSBT structures. They then all send those back to
-Carol (or anyone) who can combine them using `combinepsbt`. The last two steps
-(`finalizepsbt` and `sendrawtransaction`) remain unchanged.
+The signers have to sign one after another, passing the PSBT on: without
+`combinepsbt`, PSBTs signed in parallel cannot be merged.

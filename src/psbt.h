@@ -1203,16 +1203,6 @@ struct PartiallySignedTransaction
     }
 };
 
-enum class PSBTRole {
-    CREATOR,
-    UPDATER,
-    SIGNER,
-    FINALIZER,
-    EXTRACTOR
-};
-
-std::string PSBTRoleName(PSBTRole role);
-
 /** Compute a PrecomputedTransactionData object from a psbt. */
 PrecomputedTransactionData PrecomputePSBTData(const PartiallySignedTransaction& psbt);
 

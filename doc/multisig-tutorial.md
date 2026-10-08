@@ -235,89 +235,27 @@ destination_addr=$(./src/navio-cli -signet -rpcwallet="participant_1" getnewaddr
 funded_psbt=$(./src/navio-cli -signet -named -rpcwallet="multisig_wallet_01" walletcreatefundedpsbt outputs="{\"$destination_addr\": $amount}" | jq -r '.psbt')
 ```
 
-There is also the `createpsbt` RPC, which serves the same purpose, but it has no
-access to the wallet or to the UTXO set. It is functionally the same as
-`createrawtransaction` and just drops the raw transaction into an otherwise
-blank PSBT.
-[[source](https://bitcointalk.org/index.php?topic=5131043.msg50573609#msg50573609)]
-In most cases, `walletcreatefundedpsbt` solves the problem.
-
 The `send` RPC can also return a PSBT if more signatures are needed to sign the
 transaction.
 
-### 1.6 Decode or Analyze the PSBT
+### 1.6 Sign the PSBT
 
-Optionally, the PSBT can be decoded to a JSON format using `decodepsbt` RPC.
-
-The `analyzepsbt` RPC analyzes and provides information about the current status
-of a PSBT and its inputs, e.g. missing signatures.
-
-```bash
-./src/navio-cli -signet decodepsbt $funded_psbt
-
-./src/navio-cli -signet analyzepsbt $funded_psbt
-```
-
-### 1.7 Update the PSBT
-
-In the code above, two PSBTs are created. One signed by `participant_1` wallet
-and other, by the `participant_2` wallet.
-
-The `walletprocesspsbt` is used by the wallet to sign a PSBT.
-
-```bash
-psbt_1=$(./src/navio-cli -signet -rpcwallet="participant_1" walletprocesspsbt $funded_psbt | jq '.psbt')
-
-psbt_2=$(./src/navio-cli -signet -rpcwallet="participant_2" walletprocesspsbt $funded_psbt | jq '.psbt')
-```
-
-### 1.8 Combine the PSBT
-
-The PSBT, if signed separately by the co-signers, must be combined into one
-transaction before being finalized. This is done by `combinepsbt` RPC.
-
-```bash
-combined_psbt=$(./src/navio-cli -signet combinepsbt "[$psbt_1, $psbt_2]")
-```
-
-There is an RPC called `joinpsbts`, but it has a different purpose than
-`combinepsbt`. `joinpsbts` joins the inputs from multiple distinct PSBTs into
-one PSBT.
-
-In the example above, the PSBTs are the same, but signed by different
-participants. If the user tries to merge them using `joinpsbts`, the error
-`Input txid:pos exists in multiple PSBTs` is returned. To be able to merge
-different PSBTs into one, they must have different inputs and outputs.
-
-### 1.9 Finalize and Broadcast the PSBT
-
-The `finalizepsbt` RPC is used to produce a network serialized transaction which
-can be broadcast with `sendrawtransaction`.
-
-It checks that all inputs have complete scriptSigs and scriptWitnesses and, if
-so, encodes them into network serialized transactions.
-
-```bash
-finalized_psbt_hex=$(./src/navio-cli -signet finalizepsbt $combined_psbt | jq -r '.hex')
-
-./src/navio-cli -signet sendrawtransaction $finalized_psbt_hex
-```
-
-### 1.10 Alternative Workflow (PSBT sequential signatures)
-
-Instead of each wallet signing the original PSBT and combining them later, the
-wallets can also sign the PSBTs sequentially. This is less scalable than the
-previously presented parallel workflow, but it works.
-
-After that, the rest of the process is the same: the PSBT is finalized and
-transmitted to the network.
+The participants sign the PSBT one after another with `walletprocesspsbt`, each
+one signing the PSBT returned by the previous one. The node has no RPC to
+combine PSBTs that were signed in parallel.
 
 ```bash
 psbt_1=$(./src/navio-cli -signet -rpcwallet="participant_1" walletprocesspsbt $funded_psbt | jq -r '.psbt')
 
-psbt_2=$(./src/navio-cli -signet -rpcwallet="participant_2" walletprocesspsbt $psbt_1 | jq -r '.psbt')
+finalized_psbt_hex=$(./src/navio-cli -signet -rpcwallet="participant_2" walletprocesspsbt $psbt_1 | jq -r '.hex')
+```
 
-finalized_psbt_hex=$(./src/navio-cli -signet finalizepsbt $psbt_2 | jq -r '.hex')
+Once enough participants have signed, `walletprocesspsbt` reports the PSBT as
+`complete` and returns the finalized, network serialized transaction in its
+`hex` field.
 
+### 1.7 Broadcast the Transaction
+
+```bash
 ./src/navio-cli -signet sendrawtransaction $finalized_psbt_hex
 ```

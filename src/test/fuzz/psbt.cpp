@@ -5,7 +5,6 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 
-#include <node/psbt.h>
 #include <psbt.h>
 #include <pubkey.h>
 #include <script/script.h>
@@ -17,10 +16,6 @@
 #include <string>
 #include <vector>
 
-using node::AnalyzePSBT;
-using node::PSBTAnalysis;
-using node::PSBTInputAnalysis;
-
 FUZZ_TARGET(psbt)
 {
     FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
@@ -31,12 +26,6 @@ FUZZ_TARGET(psbt)
         return;
     }
     const PartiallySignedTransaction psbt = psbt_mut;
-
-    const PSBTAnalysis analysis = AnalyzePSBT(psbt);
-    (void)PSBTRoleName(analysis.next);
-    for (const PSBTInputAnalysis& input_analysis : analysis.inputs) {
-        (void)PSBTRoleName(input_analysis.next);
-    }
 
     (void)psbt.IsNull();
 

@@ -17,8 +17,6 @@ Supporting RPCs are:
   v0.18).
 - `generatetodescriptor` takes as input a descriptor and generates coins to it
   (`regtest` only, since v0.19).
-- `utxoupdatepsbt` takes as input descriptors to add information to the psbt
-  (since v0.19).
 - `createmultisig` and `addmultisigaddress` return descriptors as well (since
   v0.20).
 - `importdescriptors` takes as input descriptors to import into a descriptor
@@ -233,9 +231,11 @@ such that they are lexicographically ordered as described in BIP67.
 
 #### Basic multisig example
 
-For a good example of a basic M-of-N multisig between multiple participants
-using descriptor wallets and PSBTs, as well as a signing flow, see
-[this functional test](/test/functional/wallet_multisig_descriptor_psbt.py).
+A basic M-of-N multisig between multiple participants using descriptor wallets
+and PSBTs is described below.
+[This functional test](/test/functional/wallet_multisig_descriptor_psbt.py)
+covers the older flow, which relies on the removed `decodepsbt`, `combinepsbt`
+and `finalizepsbt` RPCs, and is disabled.
 
 Disclaimers: It is important to note that this example serves as a quick-start
 and is kept basic for readability. A downside of the approach outlined here is
@@ -272,29 +272,20 @@ The basic steps are:
    `walletcreatefundedpsbt` (anyone can initiate this). It is simple to do this
    in the GUI by going to the `Send` tab in the multisig wallet and creating an
    unsigned transaction (PSBT)
-6. At least `M` participants check the PSBT with their multisig using
-   `decodepsbt` to verify the transaction is OK before signing it.
+6. At least `M` participants check the PSBT to verify the transaction is OK
+   before signing it.
 7. (If OK) the participant signs the PSBT with their signer wallet using
-   `walletprocesspsbt`. It is simple to do this in the GUI by loading the PSBT
-   from file and signing it
-8. The signed PSBTs are collected with `combinepsbt`, finalized w/
-   `finalizepsbt`, and then the resulting transaction is broadcasted to the
-   network. Note that any wallet (eg one of the signers or multisig) is capable
-   of doing this.
+   `walletprocesspsbt` and passes the result on to the next participant. It is
+   simple to do this in the GUI by loading the PSBT from file and signing it
+8. Once `M` participants have signed, `walletprocesspsbt` reports the PSBT as
+   `complete` and returns the finalized transaction in its `hex` field, which is
+   broadcast to the network with `sendrawtransaction`.
 9. Checks that balances are correct after the transaction has been included in a
    block
 
-You may prefer a daisy chained signing flow where each participant signs the
-PSBT one after another until the PSBT has been signed `M` times and is
-"complete." For the most part, the steps above remain the same, except (6, 7)
-change slightly from signing the original PSBT in parallel to signing it in
-series. `combinepsbt` is not necessary with this signing flow and the last
-(`m`th) signer can just broadcast the PSBT after signing. Note that a parallel
-signing flow may be preferable in cases where there are more signers. This
-signing flow is also included in the test / Python example.
-[The test](/test/functional/wallet_multisig_descriptor_psbt.py) is meant to be
-documentation as much as it is a functional test, so it is kept as simple and
-readable as possible.
+The participants sign in series, each one signing the PSBT returned by the
+previous one. The node no longer has RPCs to combine PSBTs signed in parallel
+(`combinepsbt`) or to finalize one separately (`finalizepsbt`).
 
 ### BIP32 derived keys and chains
 
