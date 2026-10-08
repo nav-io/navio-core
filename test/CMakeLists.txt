@@ -30,6 +30,7 @@ function(create_test_config)
   set_configure_variable(BUILD_DAEMON BUILD_BITCOIND)
   set_configure_variable(BUILD_FUZZ_BINARY ENABLE_FUZZ_BINARY)
   set_configure_variable(WITH_ZMQ ENABLE_ZMQ)
+  set_configure_variable(WITH_I2P ENABLE_I2PD)
   set_configure_variable(WITH_USDT ENABLE_USDT_TRACEPOINTS)
 
   configure_file(config.ini.in config.ini USE_SOURCE_PERMISSIONS @ONLY)

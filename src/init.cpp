@@ -626,11 +626,17 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-maxtimeadjustment", strprintf("Maximum allowed median peer time offset adjustment. Local perspective of time may be influenced by outbound peers forward or backward by this amount (default: %u seconds).", DEFAULT_MAX_TIME_ADJUSTMENT), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-maxuploadtarget=<n>", strprintf("Tries to keep outbound traffic under the given target per 24h. Limit does not apply to peers with 'download' permission or blocks created within past week. 0 = no limit (default: %s). Optional suffix units [k|K|m|M|g|G|t|T] (default: M). Lowercase is 1000 base while uppercase is 1024 base", DEFAULT_MAX_UPLOAD_TARGET), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onion=<ip:port>", "Use separate SOCKS5 proxy to reach peers via Tor onion services, set -noonion to disable (default: -proxy)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
-    argsman.AddArg("-i2psam=<ip:port>", "I2P SAM proxy to reach I2P peers and accept I2P connections (default: none, or the bundled i2pd's SAM endpoint when -i2pd is enabled)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-i2psam=<ip:port>", strprintf("I2P SAM proxy to reach I2P peers and accept I2P connections (default: %s)", ENABLE_I2PD ? "none, or the -i2pd router's SAM endpoint when -i2pd is set" : "none"), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
 #if ENABLE_I2PD
     argsman.AddArg("-i2pd", strprintf("Start and manage a bundled i2pd I2P router as a subprocess, and use it for I2P connectivity when -i2psam is not set (default: %u). The router runs as a separate process and is restarted automatically if it exits.", DEFAULT_I2PD), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-i2pdcmd=<path>", "Path to the i2pd executable to run for -i2pd (default: the bundled i2pd next to naviod, else 'i2pd' from PATH)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-i2pdsamport=<port>", strprintf("Port the -i2pd router's SAM bridge listens on at 127.0.0.1 (default: %u, testnet: %u, signet: %u, regtest: %u, blsctregtest: %u)", defaultBaseParams->I2PDSAMPort(), testnetBaseParams->I2PDSAMPort(), signetBaseParams->I2PDSAMPort(), regtestBaseParams->I2PDSAMPort(), blsctRegtestBaseParams->I2PDSAMPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
+#else
+    // Accepted so that the same config works across builds; -i2pd=1 is then
+    // rejected in AppInitParameterInteraction() rather than silently ignored.
+    hidden_args.emplace_back("-i2pd");
+    hidden_args.emplace_back("-i2pdcmd=<path>");
+    hidden_args.emplace_back("-i2pdsamport=<port>");
 #endif
     argsman.AddArg("-i2pacceptincoming", strprintf("Whether to accept inbound I2P connections (default: %i). Ignored if -i2psam is not set. Listening for inbound I2P connections is done through the SAM proxy, not by binding to a local address and port.", DEFAULT_I2P_ACCEPT_INCOMING), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onlynet=<net>", "Make automatic outbound connections only to network <net> (" + Join(GetNetworkNames(), ", ") + "). Inbound and manual connections are not affected by this option. It can be specified multiple times to allow multiple networks.", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -1011,6 +1017,12 @@ bool AppInitParameterInteraction(const ArgsManager& args)
     if (!fs::is_directory(args.GetBlocksDirPath())) {
         return InitError(strprintf(_("Specified blocks directory \"%s\" does not exist."), args.GetArg("-blocksdir", "")));
     }
+
+#if !ENABLE_I2PD
+    if (args.GetBoolArg("-i2pd", false)) {
+        return InitError(_("-i2pd is set, but this build has no I2P router support. Run an I2P router separately and set -i2psam instead."));
+    }
+#endif
 
     // parse and validate enabled filter types
     std::string blockfilterindex_value = args.GetArg("-blockfilterindex", DEFAULT_BLOCKFILTERINDEX);

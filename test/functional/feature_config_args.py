@@ -154,6 +154,21 @@ class ConfArgsTest(BitcoinTestFramework):
             extra_args=['-proxy'],
         )
 
+    def test_i2pd_args(self):
+        self.log.info("Test -i2pd options are accepted whether or not the router support is built")
+        node = self.nodes[0]
+        node.assert_start_raises_init_error(
+            expected_msg="Error: Invalid port specified in -i2pdsamport: '0'",
+            extra_args=['-i2pdsamport=0'],
+        )
+        self.start_node(0, extra_args=['-i2pd=0', '-i2pdcmd=i2pd', '-i2pdsamport=7656'])
+        self.stop_node(0)
+        if not self.is_i2pd_compiled():
+            node.assert_start_raises_init_error(
+                expected_msg='Error: -i2pd is set, but this build has no I2P router support. Run an I2P router separately and set -i2psam instead.',
+                extra_args=['-i2pd=1'],
+            )
+
     def test_log_buffer(self):
         self.stop_node(0)
         with self.nodes[0].assert_debug_log(expected_msgs=['Warning: parsed potentially confusing double-negative -connect=0\n']):
@@ -386,6 +401,7 @@ class ConfArgsTest(BitcoinTestFramework):
         self.test_config_file_parser()
         self.test_config_file_log()
         self.test_invalid_command_line_options()
+        self.test_i2pd_args()
         self.test_ignored_conf()
         self.test_ignored_default_conf()
         self.test_acceptstalefeeestimates_arg_support()

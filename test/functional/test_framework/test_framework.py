@@ -1008,6 +1008,10 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         """Checks whether the zmq module was compiled."""
         return self.config["components"].getboolean("ENABLE_ZMQ")
 
+    def is_i2pd_compiled(self):
+        """Checks whether naviod was built to manage an i2pd router (-i2pd)."""
+        return self.config["components"].getboolean("ENABLE_I2PD")
+
     def is_usdt_compiled(self):
         """Checks whether the USDT tracepoints were compiled."""
         return self.config["components"].getboolean("ENABLE_USDT_TRACEPOINTS")
