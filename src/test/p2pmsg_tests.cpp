@@ -7,6 +7,7 @@
 #include <p2pmsg/pow.h>
 #include <p2pmsg/transport.h>
 #include <p2pmsg/worker_pool.h>
+#include <p2pmsg/user_data.h>
 #include <p2pmsg/user_inbox.h>
 
 #include <blsct/private_key.h>
@@ -19,8 +20,10 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <map>
 #include <mutex>
 #include <numeric>
+#include <string>
 #include <thread>
 
 using namespace p2pmsg;
@@ -1015,6 +1018,116 @@ BOOST_AUTO_TEST_CASE(user_inbox_expiry_prunes)
     UserInbox one(ref);
     one.Add(now, MsgScope::INBOX, "t", sender, body);
     BOOST_CHECK_EQUAL(inbox.TotalBytes(), one.TotalBytes());
+}
+
+namespace {
+//! A USER_DATA payload: the serialized frame the handler parses.
+std::vector<uint8_t> UserDataPayload(const std::string& topic, const std::vector<uint8_t>& body)
+{
+    DataStream ss;
+    ss << UserMsgFrame{topic, body};
+    const auto bytes = MakeUCharSpan(ss);
+    return {bytes.begin(), bytes.end()};
+}
+} // namespace
+
+BOOST_AUTO_TEST_CASE(user_data_handler_stores_only_accepted_recipients)
+{
+    // The production USER_DATA registration, end to end over the loopback:
+    // a message encrypted to an INTERNAL session key (a candidate-pull or RFQ
+    // reply key, which the node broadcasts on the bus) must never reach the
+    // store or the notifiers, while the same message to a minted user reply
+    // key is stored as "session" with its reply key. An unsubscribed
+    // broadcast topic is dropped too.
+    LoopbackTransport h(/*bits=*/4);
+    UserInbox::Options opts;
+    opts.memory_only = true;
+    UserInbox inbox(opts);
+    BOOST_REQUIRE(inbox.Subscribe("pub"));
+    std::atomic<int> notified{0};
+    RegisterUserDataHandler(*h.t, inbox, [&](const UserInbox::Entry&) {
+        notified.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    blsct::PrivateKey internal_priv(BlstScalar::Rand(/*exclude_zero=*/true));
+    const blsct::PublicKey internal_pub = internal_priv.GetPublicKey();
+    BOOST_REQUIRE(h.t->AddSessionKey(internal_pub, internal_priv, /*expiry=*/0));
+    blsct::PrivateKey reply_priv(BlstScalar::Rand(/*exclude_zero=*/true));
+    const blsct::PublicKey reply_pub = reply_priv.GetPublicKey();
+    BOOST_REQUIRE(h.t->AddSessionKey(reply_pub, reply_priv, /*expiry=*/0, Transport::SessionPurpose::USER_REPLY));
+
+    const std::vector<std::pair<blsct::PublicKey, std::string>> sends{
+        {internal_pub, "injected"},
+        {h.t->InboxPubKey(), "inbox"},
+        {reply_pub, "reply"},
+        {BroadcastPubKey(), "pub"},
+        {BroadcastPubKey(), "unsubscribed"},
+    };
+    for (const auto& [key, topic] : sends) {
+        BOOST_REQUIRE(h.t->Send(key, PayloadKind::USER_DATA, UserDataPayload(topic, {0x42}), /*stem=*/false));
+    }
+    // Every send is one decrypt job; wait for all of them so the dropped ones
+    // are final rather than not yet run.
+    BOOST_REQUIRE_EQUAL(h.pool.Submitted(), sends.size());
+    using namespace std::chrono_literals;
+    auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (h.pool.Completed() < h.pool.Submitted() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(1ms);
+    }
+    BOOST_REQUIRE_EQUAL(h.pool.Completed(), h.pool.Submitted());
+
+    std::map<std::string, UserInbox::Entry> by_topic;
+    for (auto& e : inbox.List(0, 0, "")) by_topic.emplace(e.topic, std::move(e));
+    BOOST_CHECK(!by_topic.contains("injected"));
+    BOOST_CHECK(!by_topic.contains("unsubscribed"));
+    BOOST_REQUIRE_EQUAL(by_topic.size(), 3U);
+    BOOST_CHECK_EQUAL(by_topic.at("inbox").scope, static_cast<uint8_t>(MsgScope::INBOX));
+    BOOST_CHECK(by_topic.at("inbox").reply_pubkey.empty());
+    BOOST_CHECK_EQUAL(by_topic.at("reply").scope, static_cast<uint8_t>(MsgScope::SESSION));
+    BOOST_CHECK(by_topic.at("reply").reply_pubkey == reply_pub.GetVch());
+    BOOST_CHECK_EQUAL(by_topic.at("pub").scope, static_cast<uint8_t>(MsgScope::BROADCAST));
+    BOOST_CHECK_EQUAL(notified.load(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(user_data_handler_drops_malformed_frames)
+{
+    // Frames the handler must refuse before they reach the store: each
+    // network-controlled field it validates, one at a time, with a
+    // well-formed message last to show the same path does store.
+    UserInbox::Options opts;
+    opts.memory_only = true;
+    UserInbox inbox(opts);
+    const blsct::PublicKey sender = blsct::PrivateKey(BlstScalar::Rand(true)).GetPublicKey();
+    auto message = [&](std::vector<uint8_t> body) {
+        InboundMessage m{.kind = PayloadKind::USER_DATA, .from_peer = 1, .sender_session = sender};
+        m.recipient = RecipientKey::INBOX;
+        m.body = std::move(body);
+        return m;
+    };
+
+    std::vector<uint8_t> trailing = UserDataPayload("t", {0x01});
+    trailing.push_back(0x00);
+    const std::vector<std::pair<std::string, std::vector<uint8_t>>> rejected{
+        {"empty payload", {}},
+        {"oversized payload", std::vector<uint8_t>(MAX_USER_MSG_BYTES + 1, 0x01)},
+        {"truncated frame", {0x05, 't'}},
+        {"trailing bytes", trailing},
+        {"empty topic", UserDataPayload("", {0x01})},
+        {"non-printable topic", UserDataPayload("t\n", {0x01})},
+        {"non-ASCII topic", UserDataPayload("t\xff", {0x01})},
+        {"empty body", UserDataPayload("t", {})},
+    };
+    for (const auto& [what, payload] : rejected) {
+        BOOST_TEST_INFO(what);
+        BOOST_CHECK(!StoreUserData(message(payload), inbox, /*now=*/1000));
+    }
+    BOOST_CHECK_EQUAL(inbox.Size(), 0U);
+
+    const auto stored = StoreUserData(message(UserDataPayload("t", {0x01})), inbox, /*now=*/1000);
+    BOOST_REQUIRE(stored);
+    BOOST_CHECK_EQUAL(stored->topic, "t");
+    BOOST_CHECK(stored->payload == std::vector<uint8_t>{0x01});
+    BOOST_CHECK_EQUAL(inbox.Size(), 1U);
 }
 
 BOOST_AUTO_TEST_CASE(envelope_v2_carries_and_binds_a_detection_flag)
