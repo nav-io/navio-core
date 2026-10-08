@@ -19,3 +19,16 @@
 - A store written by an earlier version that holds more than a scope's new share
   is not pruned at startup. The excess is pruned when the next message is stored
   after upgrading; until then `listp2pmsgs` keeps returning it.
+
+## Updated RPCs
+
+- `getp2pmsginfo` gained a `store` object, present when the user-message store
+  is enabled, with `entries`, `bytes` and `last_id`: the highest message id
+  assigned so far. Ids never repeat, so `last_id` is a cursor; pass it as
+  `listp2pmsgs`' `since_id` to receive only messages stored from now on.
+
+- `clearp2pmsgs` is unchanged, but its help now spells out how to use it safely:
+  `0` (the default) drops every stored message, including ones that arrived
+  after the client's last `listp2pmsgs`. To drop only what was read, pass the
+  highest id `listp2pmsgs` returned, and skip the call when it returned nothing.
+  Passing `last_id` drops everything stored by then, read or not.

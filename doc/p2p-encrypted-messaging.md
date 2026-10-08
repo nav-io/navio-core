@@ -472,7 +472,14 @@ Maker / debug surface (hidden or `p2pmsg` category):
 
 `getp2pmsginfo` also reports `archive_peers` (connected peers advertising
 `NODE_P2PMSG_ARCHIVE`) and, when this node archives, an `archive` object with
-entry count, bytes, id range, retention and the query base difficulty.
+entry count, bytes, id range, retention and the query base difficulty. With the
+user-message store enabled it also reports a `store` object: entry count, bytes
+and `last_id`, the highest message id assigned so far. Ids never repeat, so
+`last_id` is a cursor: `listp2pmsgs last_id` returns only messages stored after
+it was read. `clearp2pmsgs last_id` drops everything stored by then, read or
+not; to drop only what was read, pass the highest id `listp2pmsgs` returned, and
+skip the call when it returned nothing (`clearp2pmsgs 0` drops everything,
+including messages that arrived since).
 
 ## WebSocket listener
 

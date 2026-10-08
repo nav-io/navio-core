@@ -74,6 +74,11 @@ static RPCHelpMan getp2pmsginfo()
                     {RPCResult::Type::NUM, "max_bytes", "Size cap"},
                     {RPCResult::Type::NUM, "query_base_bits", "Base proof-of-work difficulty a query must pay, before the term that scales with the size of the scan"},
                 }},
+                {RPCResult::Type::OBJ, "store", /*optional=*/true, "The user-message store listp2pmsgs reads (absent when -p2pmsgstoresize=0)", {
+                    {RPCResult::Type::NUM, "entries", "Stored messages"},
+                    {RPCResult::Type::NUM, "bytes", "Bytes they occupy"},
+                    {RPCResult::Type::NUM, "last_id", "Highest message id assigned so far, 0 if none ever was. Ids never repeat, so it stays put when messages are cleared or pruned: pass it as listp2pmsgs' since_id to receive only messages from now on. Passed to clearp2pmsgs it drops everything stored by then, read or not; to drop only what you have read, pass the highest id listp2pmsgs returned instead"},
+                }},
             }},
         RPCExamples{HelpExampleCli("getp2pmsginfo", "") + HelpExampleRpc("getp2pmsginfo", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -123,6 +128,13 @@ static RPCHelpMan getp2pmsginfo()
                 a.pushKV("max_bytes", archive->MaxTotalBytes());
                 a.pushKV("query_base_bits", (uint64_t)archive->StampBaseBits());
                 obj.pushKV("archive", a);
+            }
+            if (node.p2pmsg_user_inbox) {
+                UniValue st(UniValue::VOBJ);
+                st.pushKV("entries", static_cast<uint64_t>(node.p2pmsg_user_inbox->Size()));
+                st.pushKV("bytes", node.p2pmsg_user_inbox->TotalBytes());
+                st.pushKV("last_id", node.p2pmsg_user_inbox->LastId());
+                obj.pushKV("store", st);
             }
             return obj;
         },
@@ -487,9 +499,11 @@ static RPCHelpMan clearp2pmsgs()
     return RPCHelpMan{
         "clearp2pmsgs",
         "\nDrop stored USER_DATA messages up to a cursor. Optional early compaction — the store\n"
-        "also prunes itself by -p2pmsgstoresize/-p2pmsgstoreexpiry.\n",
+        "also prunes itself by -p2pmsgstoresize/-p2pmsgstoreexpiry.\n"
+        "To drop only what you have read, pass the highest id listp2pmsgs returned, and skip the\n"
+        "call when it returned nothing: 0 also drops messages that arrived after your last read.\n",
         {
-            {"up_to_id", RPCArg::Type::NUM, RPCArg::Default{0}, "Drop messages with id up to and including this (0 = drop all)"},
+            {"up_to_id", RPCArg::Type::NUM, RPCArg::Default{0}, "Drop messages with id up to and including this (0 = drop all, including any stored since you last listed)"},
         },
         RPCResult{RPCResult::Type::NUM, "removed", "How many messages were dropped"},
         RPCExamples{HelpExampleCli("clearp2pmsgs", "42")},
