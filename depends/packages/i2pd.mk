@@ -75,9 +75,12 @@ endif
 # The reseed and family signing certificates go to share/i2pd/certificates, the
 # same place relative to bin/ that distro packages use, which is where naviod
 # looks for them next to whichever i2pd it runs. Without them i2pd cannot
-# verify reseed bundles, and naviod runs it with reseed.verify on.
+# verify reseed bundles, and naviod runs it with reseed.verify on. The router's
+# license goes beside them, with those of the libraries linked into it, which
+# the openssl and zlib packages stage into the same licenses directory.
 define $(package)_stage_cmds
-  mkdir -p $($(package)_staging_dir)$(host_prefix)/bin $($(package)_staging_dir)$(host_prefix)/share/i2pd && \
+  mkdir -p $($(package)_staging_dir)$(host_prefix)/bin $($(package)_staging_dir)$(host_prefix)/share/i2pd/licenses && \
   cp $($(package)_binary) $($(package)_staging_dir)$(host_prefix)/bin/ && \
-  cp -R ../contrib/certificates $($(package)_staging_dir)$(host_prefix)/share/i2pd/
+  cp -R ../contrib/certificates $($(package)_staging_dir)$(host_prefix)/share/i2pd/ && \
+  cp ../LICENSE $($(package)_staging_dir)$(host_prefix)/share/i2pd/licenses/i2pd-LICENSE.txt
 endef

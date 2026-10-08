@@ -505,6 +505,9 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       )
       install(PROGRAMS "${BUNDLED_I2P_EXECUTABLE}" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT naviod)
       install(DIRECTORY "${bundled_i2p_certsdir}" DESTINATION ${CMAKE_INSTALL_DATADIR}/i2pd COMPONENT naviod)
+      # The router is a separate program built from i2pd, OpenSSL and zlib,
+      # whose licenses require their notices to travel with the binary.
+      install(DIRECTORY "${bundled_i2p_bindir}/../share/i2pd/licenses" DESTINATION ${CMAKE_INSTALL_DATADIR}/i2pd COMPONENT naviod)
     endif()
   endif()
 

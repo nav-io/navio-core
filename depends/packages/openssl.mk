@@ -55,13 +55,17 @@ define $(package)_build_cmds
   $(MAKE) build_sw
 endef
 
+# libcrypto is linked into the i2pd binary that is shipped, so its license
+# goes where that binary's third-party licenses are installed from.
 define $(package)_stage_cmds
-  $(MAKE) DESTDIR=$($(package)_staging_dir) install_sw
+  $(MAKE) DESTDIR=$($(package)_staging_dir) install_sw && \
+  mkdir -p $($(package)_staging_dir)$(host_prefix)/share/i2pd/licenses && \
+  cp LICENSE.txt $($(package)_staging_dir)$(host_prefix)/share/i2pd/licenses/OpenSSL-LICENSE.txt
 endef
 
 # OpenSSL >= 3.3 also installs a CMake package config under lib/cmake. i2pd
 # finds OpenSSL through CMake's FindOpenSSL module, so drop it with the
 # pkg-config files rather than leave a second, unused discovery path.
 define $(package)_postprocess_cmds
-  rm -rf share etc bin lib/pkgconfig lib/cmake
+  rm -rf etc bin lib/pkgconfig lib/cmake
 endef
