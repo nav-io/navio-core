@@ -48,8 +48,11 @@ public:
         const std::vector<RangeProofWithSeed<T>>& proofs,
         size_t threads = 0);
 
+    // `threads` caps the recovery worker pool; 0 means
+    // std::thread::hardware_concurrency().
     AmountRecoveryResult<T> RecoverAmounts(
-        const std::vector<AmountRecoveryRequest<T>>& reqs
+        const std::vector<AmountRecoveryRequest<T>>& reqs,
+        size_t threads = 0
     );
 
 #ifndef BOOST_UNIT_TEST

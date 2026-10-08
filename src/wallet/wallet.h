@@ -798,6 +798,9 @@ public:
     /** Number of pre-generated keys/scripts by each spkm (part of the look-ahead process, used to detect payments) */
     int64_t m_keypool_size{DEFAULT_KEYPOOL_SIZE};
 
+    /** Worker cap for BLSCT output recovery, from -par (GetParThreads()); 0 means one per core */
+    size_t m_par_threads{0};
+
     /** Active wallet account **/
     int64_t m_current_account{0};
 

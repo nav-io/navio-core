@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <common/args.h>
+#include <common/system.h>
 #include <sync.h>
 #include <test/util/logging.h>
 #include <test/util/setup_common.h>
@@ -12,7 +13,9 @@
 #include <util/fs.h>
 #include <util/strencodings.h>
 
+#include <algorithm>
 #include <array>
+#include <limits>
 #include <optional>
 #include <cstdint>
 #include <cstring>
@@ -636,6 +639,49 @@ BOOST_AUTO_TEST_CASE(util_GetArg)
     BOOST_CHECK_EQUAL(testArgs.GetArg("pritest2", "default"), "a");
     BOOST_CHECK_EQUAL(testArgs.GetArg("pritest3", "default"), "a");
     BOOST_CHECK_EQUAL(testArgs.GetArg("pritest4", "default"), "b");
+}
+
+BOOST_AUTO_TEST_CASE(par_threads_from_setting)
+{
+    constexpr int cap{MAX_SCRIPTCHECK_THREADS + 1};
+    // Positive -par is taken as given, up to the cap.
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(1, 32), 1);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(4, 32), 4);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(4, 2), 4);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(cap, 32), cap);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(cap + 1, 32), cap);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(std::numeric_limits<int64_t>::max(), 32), cap);
+    // 0 is one thread per core.
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(0, 8), 8);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(0, 1), 1);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(0, 64), cap);
+    // An unknown core count (hardware_concurrency() == 0) still yields one.
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(0, 0), 1);
+    // -n leaves n cores free, never fewer than one thread.
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(-2, 8), 6);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(-7, 8), 1);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(-8, 8), 1);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(-100, 8), 1);
+    BOOST_CHECK_EQUAL(ParThreadsFromSetting(std::numeric_limits<int64_t>::min(), 8), 1);
+}
+
+BOOST_AUTO_TEST_CASE(get_par_threads)
+{
+    const int cores{GetNumCores()};
+    const int cap{MAX_SCRIPTCHECK_THREADS + 1};
+    ArgsManager args;
+    args.AddArg("-par=<n>", "", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    // Unset -par is DEFAULT_SCRIPTCHECK_THREADS, i.e. auto.
+    BOOST_CHECK_EQUAL(GetParThreads(args), ParThreadsFromSetting(DEFAULT_SCRIPTCHECK_THREADS, cores));
+    BOOST_CHECK_EQUAL(GetParThreads(args), std::clamp(cores, 1, cap));
+    args.ForceSetArg("-par", "3");
+    BOOST_CHECK_EQUAL(GetParThreads(args), 3);
+    args.ForceSetArg("-par", "1");
+    BOOST_CHECK_EQUAL(GetParThreads(args), 1);
+    args.ForceSetArg("-par", "-1");
+    BOOST_CHECK_EQUAL(GetParThreads(args), std::clamp(cores - 1, 1, cap));
+    args.ForceSetArg("-par", "1000");
+    BOOST_CHECK_EQUAL(GetParThreads(args), cap);
 }
 
 BOOST_AUTO_TEST_CASE(util_GetChainTypeString)

@@ -39,7 +39,7 @@ bool PublicKeys::VerifyBalanceBatch(const Signature& sig) const
     return aggr_pk.CoreVerify(Common::BLSCTBALANCE, sig);
 }
 
-bool PublicKeys::CoreAggregateVerify(const std::vector<PublicKey::Message>& msgs, const Signature& sig) const
+bool PublicKeys::CoreAggregateVerify(const std::vector<PublicKey::Message>& msgs, const Signature& sig, size_t threads) const
 {
     assert(m_pks.size() == msgs.size());
     const size_t n = m_pks.size();
@@ -66,9 +66,7 @@ bool PublicKeys::CoreAggregateVerify(const std::vector<PublicKey::Message>& msgs
     // accumulated in per-thread pairing contexts (hash-to-G2 + Miller loop
     // dominate and parallelise perfectly), merged, then one final
     // exponentiation. An identity public key fails (BLST_PK_IS_INFINITY).
-    size_t threads = std::thread::hardware_concurrency();
-    if (threads == 0) threads = 1;
-    threads = std::min(threads, n);
+    threads = Common::PoolThreads(threads, n);
 
     const size_t ctx_words = blst_pairing_sizeof() / sizeof(uint64_t) + 1;
     std::vector<std::vector<uint64_t>> ctxs(threads, std::vector<uint64_t>(ctx_words));
@@ -103,7 +101,7 @@ bool PublicKeys::CoreAggregateVerify(const std::vector<PublicKey::Message>& msgs
     return blst_pairing_finalverify(ctx, &gtsig);
 }
 
-bool PublicKeys::VerifyBatch(const std::vector<PublicKey::Message>& msgs, const Signature& sig, const bool& fVerifyTx) const
+bool PublicKeys::VerifyBatch(const std::vector<PublicKey::Message>& msgs, const Signature& sig, const bool& fVerifyTx, size_t threads) const
 {
     if (m_pks.size() != msgs.size() || m_pks.size() == 0) {
         throw std::runtime_error(std::string(__func__) + strprintf(
@@ -119,7 +117,7 @@ bool PublicKeys::VerifyBatch(const std::vector<PublicKey::Message>& msgs, const 
             aug_msgs.push_back(pk->AugmentMessage(*msg));
         }
     }
-    return CoreAggregateVerify(aug_msgs, sig);
+    return CoreAggregateVerify(aug_msgs, sig, threads);
 }
 
 } // namespace blsct

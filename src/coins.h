@@ -357,8 +357,9 @@ public:
     // and then populates cacheCoins serially on the calling thread. Call
     // before entering code paths that do many sequential GetCoin / HaveCoin
     // lookups (e.g. Consensus::CheckTxInputs, CCoinsViewCache::HaveInputs)
-    // to hide cold LevelDB latency behind one parallel pass.
-    void BatchPrefetch(const std::vector<COutPoint>& outpoints) const;
+    // to hide cold LevelDB latency behind one parallel pass. `threads` caps
+    // the reader pool (the -par budget on the connect path).
+    void BatchPrefetch(const std::vector<COutPoint>& outpoints, size_t threads) const;
 
     // Internal accessors used by BatchPrefetch's read-only walk. Must stay
     // const-only (no mutation) since concurrent readers rely on these.

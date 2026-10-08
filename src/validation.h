@@ -1288,6 +1288,10 @@ public:
 
     CCheckQueue<CScriptCheck>& GetCheckQueue() { return m_script_check_queue; }
 
+    //! Threads a parallel validation job may use, the calling thread included:
+    //! the -par budget (GetParThreads()), i.e. the script-check workers plus one.
+    size_t ParThreads() const { return m_script_check_queue.WorkerCount() + 1; }
+
     ~ChainstateManager();
 };
 

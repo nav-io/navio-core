@@ -42,6 +42,15 @@ public:
      */
     static size_t GetFirstPowerOf2GreaterOrEqTo(const size_t& input_value_vec_len);
 
+    /**
+     * Workers for a pool over `work_items` items, the calling thread
+     * included: `threads`, or std::thread::hardware_concurrency() when it is
+     * 0, capped at `work_items` and never below 1. libblsct has no access to
+     * -par, so node and wallet callers pass GetParThreads() as `threads`;
+     * 0 is the default for standalone (C API) callers.
+     */
+    static size_t PoolThreads(size_t threads, size_t work_items);
+
     template <typename T>
     static std::vector<T> TrimPreceedingZeros(const std::vector<T>& vec);
 

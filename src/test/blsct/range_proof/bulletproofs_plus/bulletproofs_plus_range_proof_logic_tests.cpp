@@ -12,9 +12,57 @@
 
 #include <tinyformat.h>
 #include <boost/test/unit_test.hpp>
+#include <algorithm>
+#include <atomic>
+#include <filesystem>
 #include <functional>
+#include <optional>
+#include <thread>
 #include <util/strencodings.h>
 #include <limits>
+
+namespace {
+// Threads alive in this process, or nullopt where /proc/self/task does not
+// exist (it is Linux-only), so pool sizes can only be observed there.
+std::optional<size_t> CountProcessThreads()
+{
+    std::error_code ec;
+    std::filesystem::directory_iterator it{"/proc/self/task", ec};
+    if (ec) return std::nullopt;
+    size_t n{0};
+    for (; it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+        if (ec) return std::nullopt;
+        ++n;
+    }
+    return n;
+}
+
+boost::test_tools::assertion_result CanCountThreads(boost::unit_test::test_unit_id)
+{
+    boost::test_tools::assertion_result res{CountProcessThreads().has_value()};
+    res.message() << "/proc/self/task is unavailable, so pool sizes cannot be observed";
+    return res;
+}
+
+// Runs `work` while a sampler thread polls the process's thread count, and
+// returns the most threads seen beyond those alive before (the sampler
+// itself excluded): the extra workers the pool spawned.
+size_t PeakExtraThreads(const std::function<void()>& work)
+{
+    const size_t before{*Assert(CountProcessThreads())};
+    std::atomic<bool> done{false};
+    size_t peak{0};
+    std::thread sampler{[&] {
+        while (!done.load()) {
+            if (const auto n{CountProcessThreads()}) peak = std::max(peak, *n);
+        }
+    }};
+    work();
+    done = true;
+    sampler.join();
+    return peak > before + 1 ? peak - before - 1 : 0;
+}
+} // namespace
 
 BOOST_FIXTURE_TEST_SUITE(bulletproofs_plus_range_proof_logic_tests, BasicTestingSetup)
 
@@ -567,6 +615,44 @@ BOOST_AUTO_TEST_CASE(test_verify_batch_verdict_independent_of_thread_cap)
             tampered[bad].transcript_v2 = !tampered[bad].transcript_v2;
             BOOST_CHECK_MESSAGE(!rpl.Verify(tampered, cap),
                                 "bad proof at " << bad << " accepted with cap " << cap);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_pools_spawn_at_most_thread_cap, *boost::unit_test::precondition(CanCountThreads))
+{
+    // A pool given N threads runs the calling thread plus at most N - 1
+    // workers, so with the caller's -par budget it never takes the host.
+    // Observed from outside: the peak thread count while the pool runs.
+    auto nonce = GenNonce();
+    auto msg = GenMsgPair();
+    auto token_id = GenTokenId();
+
+    RangeProofLogic rpl;
+    Scalars vs;
+    vs.Add(Scalar(7));
+    const bulletproofs_plus::RangeProofWithSeed<T> proof{rpl.Prove(vs, nonce, msg.second, token_id), token_id};
+
+    // Enough copies that every worker is alive for a good while.
+    const std::vector<bulletproofs_plus::RangeProofWithSeed<T>> proofs(64, proof);
+    const std::vector<bulletproofs_plus::AmountRecoveryRequest<T>> reqs(
+        2000, bulletproofs_plus::AmountRecoveryRequest<T>::of(proof, nonce));
+
+    for (size_t cap : {size_t{1}, size_t{2}, size_t{3}}) {
+        const size_t verify_extra{PeakExtraThreads([&] { BOOST_CHECK(rpl.Verify(proofs, cap)); })};
+        BOOST_CHECK_MESSAGE(verify_extra <= cap - 1, "Verify with cap " << cap << " ran " << verify_extra << " extra threads");
+
+        const size_t recover_extra{PeakExtraThreads([&] {
+            const auto res{rpl.RecoverAmounts(reqs, cap)};
+            BOOST_CHECK(res.is_completed);
+            BOOST_CHECK_EQUAL(res.amounts.size(), reqs.size());
+        })};
+        BOOST_CHECK_MESSAGE(recover_extra <= cap - 1, "RecoverAmounts with cap " << cap << " ran " << recover_extra << " extra threads");
+
+        // The sampler did see the pool: a cap above 1 is actually used.
+        if (cap > 1) {
+            BOOST_CHECK_MESSAGE(verify_extra > 0, "Verify with cap " << cap << " ran no extra threads");
+            BOOST_CHECK_MESSAGE(recover_extra > 0, "RecoverAmounts with cap " << cap << " ran no extra threads");
         }
     }
 }

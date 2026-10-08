@@ -348,7 +348,9 @@ public:
     bool GetSpendingKeyForOutput(const CTxOut& out, blsct::PrivateKey& key) const;
     bool GetSpendingKeyForOutput(const CTxOut& out, const CKeyID& id, blsct::PrivateKey& key) const;
     bool GetSpendingKeyForOutput(const CTxOut& out, const SubAddressIdentifier& id, blsct::PrivateKey& key) const;
-    bulletproofs_plus::AmountRecoveryResult<Blst> RecoverOutputs(const std::vector<CTxOut>& outs);
+    // `threads` caps the view-tag and amount-recovery worker pools; 0 means
+    // std::thread::hardware_concurrency().
+    bulletproofs_plus::AmountRecoveryResult<Blst> RecoverOutputs(const std::vector<CTxOut>& outs, size_t threads = 0);
     bulletproofs_plus::AmountRecoveryResult<Blst> RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce);
 
     blsct::PrivateKey GetTokenKey(const uint256& tokenId) const;

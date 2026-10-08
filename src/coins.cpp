@@ -299,7 +299,7 @@ bool GetCoinReadOnly(const CCoinsView* v, const COutPoint& outpoint, Coin& coin)
 }
 } // namespace
 
-void CCoinsViewCache::BatchPrefetch(const std::vector<COutPoint>& outpoints) const
+void CCoinsViewCache::BatchPrefetch(const std::vector<COutPoint>& outpoints, size_t threads) const
 {
     if (outpoints.empty()) return;
 
@@ -314,15 +314,15 @@ void CCoinsViewCache::BatchPrefetch(const std::vector<COutPoint>& outpoints) con
     if (to_fetch.empty()) return;
 
     const size_t n = to_fetch.size();
-    const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
-    // Cap at 4 workers: benched at 2252 inputs, 4 threads hit ~413 ms vs
-    // 8 threads at ~430 ms on an 8-core host. Diminishing returns past 4
+    // At most `threads` workers (the caller's -par budget), and at most 4:
+    // benched at 2252 inputs, 4 threads hit ~413 ms vs 8 threads at ~430 ms
+    // on an 8-core host. Diminishing returns past 4
     // because LevelDB is page-cache bound and Coin deserialisation has
     // fixed per-item cost; beyond 4 workers the per-thread partition gets
     // small enough that std::async dispatch overhead eats the gain. Plus
     // smaller parallelism leaves cores for the concurrently running PoS
     // verify future + script check queue.
-    size_t num_threads = std::min<size_t>(hw, 4);
+    size_t num_threads = std::min<size_t>(threads, 4);
     const size_t min_parallel = 128;
     if (n <= min_parallel) num_threads = 1;
     if (num_threads < 1) num_threads = 1;

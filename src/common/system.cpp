@@ -5,6 +5,7 @@
 
 #include <common/system.h>
 
+#include <common/args.h>
 #include <logging.h>
 #include <util/string.h>
 #include <util/time.h>
@@ -20,6 +21,7 @@
 #include <malloc.h>
 #endif
 
+#include <algorithm>
 #include <cstdlib>
 #include <locale>
 #include <stdexcept>
@@ -99,6 +101,17 @@ bool SetupNetworking()
 int GetNumCores()
 {
     return std::thread::hardware_concurrency();
+}
+
+int ParThreadsFromSetting(int64_t par, int num_cores)
+{
+    if (par <= 0) par += num_cores;
+    return static_cast<int>(std::clamp<int64_t>(par, 1, MAX_SCRIPTCHECK_THREADS + 1));
+}
+
+int GetParThreads(const ArgsManager& args)
+{
+    return ParThreadsFromSetting(args.GetIntArg("-par", DEFAULT_SCRIPTCHECK_THREADS), GetNumCores());
 }
 
 // Obtain the application startup time (used for uptime calculation)

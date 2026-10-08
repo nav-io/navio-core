@@ -83,7 +83,8 @@ bulletproofs_plus::RangeProofLogic<Blst>& GetSharedRPLogic()
 // Core verification body. Collects range proofs into `out_proofs` for deferred
 // batch verification. If `verify_rp_inline` is true, the call also verifies
 // the collected proofs before returning — this matches the legacy VerifyTx
-// contract.
+// contract. `threads` caps the inline signature and range-proof worker pools
+// (0 = std::thread::hardware_concurrency()).
 bool VerifyTxCoreImpl(const CTransaction& tx,
                   CCoinsViewCache& view,
                   TxValidationState& state,
@@ -95,7 +96,8 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                   bool verify_rp_inline,
                   const CAmount& nBLSCTDefaultFee,
                   int nBLSCTProofV2Height,
-                  PreparedTxSignatureCheck* out_sig_check)
+                  PreparedTxSignatureCheck* out_sig_check,
+                  size_t threads)
 {
     using Clock = std::chrono::steady_clock;
 
@@ -180,8 +182,8 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
 
         // Per-input prep runs serially: the aggregate-verify path below
         // (blsAggregateVerifyNoCheck via PublicKeys::VerifyBatch) already
-        // parallelises miller-loop / hash-to-G2 across std::thread::
-        // hardware_concurrency() internally. Adding an outer thread pool
+        // parallelises miller-loop / hash-to-G2 across `threads` workers
+        // internally. Adding an outer thread pool
         // here would spawn N workers that each contend with the library's
         // own N workers — observed regression: 0.53 ms/txin → 2.46 ms/txin
         // on a 752-input block (8-core host, 64 contending threads).
@@ -371,7 +373,7 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
         out_sig_check->inputs = std::chrono::duration_cast<std::chrono::microseconds>(t_after_inputs - t_init);
         out_sig_check->outputs = std::chrono::duration_cast<std::chrono::microseconds>(t_after_outputs - t_after_inputs);
     } else {
-        const bool sig_check = PublicKeys{vPubKeys}.VerifyBatch(vMessages, tx.txSig, true);
+        const bool sig_check = PublicKeys{vPubKeys}.VerifyBatch(vMessages, tx.txSig, true, threads);
         t_after_sig = Clock::now();
 
         if (!sig_check) {
@@ -381,7 +383,7 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
 
     if (verify_rp_inline) {
         auto& rp = GetSharedRPLogic();
-        if (!rp.Verify(out_proofs)) {
+        if (!rp.Verify(out_proofs, threads)) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-rangeproof-check");
         }
         out_proofs.clear(); // consumed
@@ -429,12 +431,13 @@ bool VerifyTxCore(const CTransaction& tx,
                   bool verify_rp_inline,
                   const CAmount& nBLSCTDefaultFee,
                   int nBLSCTProofV2Height = std::numeric_limits<int>::max(),
-                  PreparedTxSignatureCheck* out_sig_check = nullptr)
+                  PreparedTxSignatureCheck* out_sig_check = nullptr,
+                  size_t threads = 0)
 {
     try {
         return VerifyTxCoreImpl(tx, view, state, out_proofs, blockReward, minStake,
                                 nSpendHeight, nMedianTimePast, verify_rp_inline,
-                                nBLSCTDefaultFee, nBLSCTProofV2Height, out_sig_check);
+                                nBLSCTDefaultFee, nBLSCTProofV2Height, out_sig_check, threads);
     } catch (const std::exception& e) {
         LogPrint(BCLog::VALIDATION, "BLSCT tx verify threw for %s: %s\n",
                  tx.GetHash().ToString(), e.what());
@@ -443,10 +446,10 @@ bool VerifyTxCore(const CTransaction& tx,
 }
 } // namespace
 
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, int nBLSCTProofV2Height)
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, int nBLSCTProofV2Height, size_t threads)
 {
     std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> proofs;
-    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nBLSCTProofV2Height);
+    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nBLSCTProofV2Height, /*out_sig_check=*/nullptr, threads);
 }
 
 bool PrepareTxForDeferredVerification(const CTransaction& tx,
@@ -478,7 +481,7 @@ bool VerifyTxCollectProofs(const CTransaction& tx,
     return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height);
 }
 
-TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSignatureCheck>& sig_checks)
+TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSignatureCheck>& sig_checks, size_t threads)
 {
     using Clock = std::chrono::steady_clock;
     TxSignatureBatchResult result;
@@ -500,7 +503,7 @@ TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSi
         total_pairs += sig_check.total_pairs;
 
         try {
-            if (!PublicKeys{sig_check.pubkeys}.VerifyBatch(sig_check.messages, sig_check.tx_sig, true)) {
+            if (!PublicKeys{sig_check.pubkeys}.VerifyBatch(sig_check.messages, sig_check.tx_sig, true, threads)) {
                 result.ok = false;
                 result.failed_txid = sig_check.txid;
                 result.failure_reason = "failed-signature-check";

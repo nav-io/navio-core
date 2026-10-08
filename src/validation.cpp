@@ -1215,7 +1215,7 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
         const int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
         const int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
 
-        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee, args.m_chainparams.GetConsensus().nBLSCTProofV2Height)) {
+        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee, args.m_chainparams.GetConsensus().nBLSCTProofV2Height, m_active_chainstate.m_chainman.ParThreads())) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }
@@ -2753,6 +2753,13 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // output in the block must be distinct both from the live UTXO set and
     // from the other outputs in the same block.
 
+    // The operator's parallelism budget (-par), applied to each worker pool
+    // this connect spins up: coin prefetch, signature and range-proof batches.
+    // It caps each pool, not their sum: the signature batch runs on the async
+    // verifier while the range-proof batch runs here, so the two overlap and
+    // can use up to twice -par threads between them.
+    const size_t par_threads{m_chainman.ParThreads()};
+
     // Prefetch the output content-hash outpoints so the BIP30 HaveCoin checks
     // below hit cache instead of paying a serial LevelDB read per output (the
     // inputs get the same treatment further down in ConnectBlock).
@@ -2768,7 +2775,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             }
         }
         if (!prefetch_output_outpoints.empty()) {
-            view.BatchPrefetch(prefetch_output_outpoints);
+            view.BatchPrefetch(prefetch_output_outpoints, par_threads);
         }
     }
 
@@ -2856,7 +2863,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         }
         if (!prefetch_outpoints.empty()) {
             const auto t_prefetch_start = SteadyClock::now();
-            view.BatchPrefetch(prefetch_outpoints);
+            view.BatchPrefetch(prefetch_outpoints, par_threads);
             LogPrint(BCLog::BENCH, "      - BatchPrefetch %u inputs: %.2fms\n",
                      (unsigned)prefetch_outpoints.size(),
                      Ticks<MillisecondsDouble>(SteadyClock::now() - t_prefetch_start));
@@ -2879,9 +2886,9 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
 
     // Collect range proofs from every BLSCT tx in this block, verify once after
-    // the per-tx loop. Bulletproofs++ batch verify parallelises via std::async
-    // per-proof, so a block-wide batch gives more proofs-in-flight and spreads
-    // thread-spawn cost over more work.
+    // the per-tx loop. Bulletproofs++ batch verify spreads the proofs over a
+    // -par-sized worker pool, so a block-wide batch gives more proofs-in-flight
+    // and spreads thread-spawn cost over more work.
     std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> blockBLSCTProofs;
     blockBLSCTProofs.reserve(block.vtx.size() * 4);
     std::vector<blsct::PreparedTxSignatureCheck> blockBLSCTSigChecks;
@@ -3044,8 +3051,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (!blockBLSCTSigChecks.empty()) {
             const auto t_sig_dispatch_start = SteadyClock::now();
             blsct_sig_verify_future = blsct::GetAggSigAsyncVerifier().Submit(
-                [sig_checks = std::move(blockBLSCTSigChecks)]() {
-                    return blsct::VerifyPreparedTxSignatures(sig_checks);
+                [sig_checks = std::move(blockBLSCTSigChecks), par_threads]() {
+                    return blsct::VerifyPreparedTxSignatures(sig_checks, par_threads);
                 });
             blsct_sig_verify_dispatched = true;
             blsct_sig_dispatch_time = SteadyClock::now() - t_sig_dispatch_start;
@@ -3064,13 +3071,12 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         // block plus the PoS kernel range proof. Amortises transcript/setup
         // overhead; the worker pool is sized from -par, the operator's
         // parallelism budget, rather than every core on the host.
-        const size_t rangeproof_threads = m_chainman.GetCheckQueue().WorkerCount() + 1; // == -par
         const auto t_rangeproof_start = SteadyClock::now();
-        if (!blsct::VerifyCollectedRangeProofs(blockBLSCTProofs, rangeproof_threads)) {
+        if (!blsct::VerifyCollectedRangeProofs(blockBLSCTProofs, par_threads)) {
             if (pos_kernel_range_proof.has_value()) {
                 std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> pos_only_proof;
                 pos_only_proof.push_back(*pos_kernel_range_proof);
-                if (!blsct::VerifyCollectedRangeProofs(pos_only_proof, rangeproof_threads)) {
+                if (!blsct::VerifyCollectedRangeProofs(pos_only_proof, par_threads)) {
                     if (blsct_sig_verify_dispatched) blsct_sig_verify_future.wait();
                     return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
                 }

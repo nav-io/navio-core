@@ -1,7 +1,9 @@
 #include <blsct/common.h>
 
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 #include <tinyformat.h>
 
 std::vector<uint8_t> blsct::Common::DataStreamToVector(const DataStream& st)
@@ -23,6 +25,12 @@ size_t blsct::Common::GetFirstPowerOf2GreaterOrEqTo(const size_t& n)
         i *= 2;
     }
     return i;
+}
+
+size_t blsct::Common::PoolThreads(size_t threads, size_t work_items)
+{
+    if (threads == 0) threads = std::thread::hardware_concurrency();
+    return std::max<size_t>(1, std::min(threads, work_items));
 }
 
 template <typename T>
