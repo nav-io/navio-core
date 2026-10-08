@@ -3,7 +3,8 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #
-# Smoke test: run -version on every built navio binary.
+# Smoke test: run -version on every built navio binary, and --version on the
+# bundled i2pd router when the build has one.
 #
 # Catches load-time failures (missing rpath, unresolved runtime deps, ABI
 # mismatches) that the unit / functional test suites can miss, because
@@ -60,7 +61,9 @@ for cand in naviod naviod.exe; do
   fi
 done
 
-binaries=(naviod navio-cli navio-tx navio-util navio-wallet navio-staker)
+# i2pd is the bundled I2P router, present only in builds made with depends
+# I2P=1. It is not a navio binary and spells the flag --version.
+binaries=(naviod navio-cli navio-tx navio-util navio-wallet navio-staker i2pd)
 fail=0
 ran=0
 
@@ -71,15 +74,17 @@ for base in "${binaries[@]}"; do
     continue
   fi
   ran=$((ran + 1))
-  echo "::group::${base}${suffix} -version"
+  flag="-version"
+  [ "${base}" = i2pd ] && flag="--version"
+  echo "::group::${base}${suffix} ${flag}"
   if [ -n "${EMULATOR}" ]; then
-    if ! ${EMULATOR} "${bin}" -version; then
-      echo "::error::${base}${suffix} -version failed under ${EMULATOR}"
+    if ! ${EMULATOR} "${bin}" "${flag}"; then
+      echo "::error::${base}${suffix} ${flag} failed under ${EMULATOR}"
       fail=1
     fi
   elif [ -z "${NO_EXEC}" ] && [ -x "${bin}" ] && is_native_format "${bin}"; then
-    if ! "${bin}" -version; then
-      echo "::error::${base}${suffix} -version failed"
+    if ! "${bin}" "${flag}"; then
+      echo "::error::${base}${suffix} ${flag} failed"
       fail=1
     fi
   else
