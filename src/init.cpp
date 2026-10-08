@@ -2832,9 +2832,9 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         }
     }
     if (i2psam_arg.empty()) {
-        if (std::optional<std::string> managed{StartI2PDProcess(args)}) {
-            i2psam_arg = *managed;
-        }
+        const util::Result<std::optional<std::string>> managed{StartI2PDProcess(args)};
+        if (!managed) return InitError(util::ErrorString(managed));
+        if (*managed) i2psam_arg = **managed;
     }
 #endif
     if (!i2psam_arg.empty()) {

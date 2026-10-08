@@ -10,16 +10,21 @@
 #include <common/args.h>
 #include <i2pd_process.h>
 #include <logging.h>
+#include <tinyformat.h>
 #include <util/fs.h>
+#include <util/result.h>
 #include <util/string.h>
 #include <util/threadnames.h>
+#include <util/translation.h>
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -117,6 +122,19 @@ fs::path GetExecutablePath()
 #endif
 }
 
+//! Whether `p` is something to run as the router: a regular file (after
+//! following symlinks) that, on POSIX, this process may execute.
+bool IsExecutableFile(const fs::path& p) noexcept
+{
+    std::error_code ec;
+    if (!fs::is_regular_file(p, ec)) return false;
+#ifdef WIN32
+    return true;
+#else
+    return access(p.c_str(), X_OK) == 0;
+#endif
+}
+
 //! Search $PATH for an executable named `name`. Returns empty if not found.
 fs::path SearchPath(const std::string& name)
 {
@@ -135,7 +153,7 @@ fs::path SearchPath(const std::string& name)
         if (!dir.empty()) {
             fs::path candidate{fs::PathFromString(dir)};
             candidate /= fs::PathFromString(name);
-            if (Exists(candidate)) return candidate;
+            if (IsExecutableFile(candidate)) return candidate;
         }
         if (end == std::string::npos) break;
         start = end + 1;
@@ -145,8 +163,9 @@ fs::path SearchPath(const std::string& name)
 
 //! Locate the i2pd binary: explicit -i2pdcmd, then the bundled one next to
 //! naviod (where both the build tree and an install put it), then $PATH.
-//! Empty if none usable.
-fs::path FindI2pd(const ArgsManager& args)
+//! An error if -i2pdcmd names nothing runnable, empty if there is no
+//! -i2pdcmd and no router was found.
+util::Result<fs::path> FindI2pd(const ArgsManager& args)
 {
 #ifdef WIN32
     const std::string name{"i2pd.exe"};
@@ -156,15 +175,21 @@ fs::path FindI2pd(const ArgsManager& args)
     const std::string configured{args.GetArg("-i2pdcmd", "")};
     if (!configured.empty()) {
         const fs::path p{fs::PathFromString(configured)};
-        if (fs::PathToString(p.filename()) != configured) return p; // an explicit path
+        if (fs::PathToString(p.filename()) != configured) { // an explicit path
+            if (!IsExecutableFile(p)) return util::Error{strprintf(_("-i2pdcmd '%s' is not an executable file."), configured)};
+            return p;
+        }
+        // A bare name only ever means a PATH lookup: handed to execv() as is,
+        // it would run a file of that name from the working directory instead.
         const fs::path found{SearchPath(configured)};
-        return found.empty() ? p : found;
+        if (found.empty()) return util::Error{strprintf(_("-i2pdcmd '%s' was not found in PATH."), configured)};
+        return found;
     }
 
     const fs::path exe{GetExecutablePath()};
     if (!exe.empty()) {
         const fs::path next{exe.parent_path() / name};
-        if (Exists(next)) return next;
+        if (IsExecutableFile(next)) return next;
     }
     return SearchPath(name);
 }
@@ -444,14 +469,17 @@ void Supervise()
 
 } // namespace
 
-std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
+util::Result<std::optional<std::string>> StartI2PDProcess(const ArgsManager& args)
 {
-    if (!args.GetBoolArg("-i2pd", DEFAULT_I2PD)) return std::nullopt;
+    const std::optional<std::string> no_router;
+    if (!args.GetBoolArg("-i2pd", DEFAULT_I2PD)) return no_router;
 
-    const fs::path i2pd{FindI2pd(args)};
+    const util::Result<fs::path> found{FindI2pd(args)};
+    if (!found) return util::Error{util::ErrorString(found)};
+    const fs::path& i2pd{*found};
     if (i2pd.empty()) {
         LogPrintf("i2pd: -i2pd is set but no i2pd binary was found (set -i2pdcmd=<path>); I2P disabled\n");
-        return std::nullopt;
+        return no_router;
     }
 
     const fs::path datadir{args.GetDataDirNet() / "i2pd"};
@@ -459,7 +487,7 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
         fs::create_directories(datadir);
     } catch (const std::exception& e) {
         LogPrintf("i2pd: cannot create data dir %s: %s; I2P disabled\n", fs::PathToString(datadir), e.what());
-        return std::nullopt;
+        return no_router;
     }
 
     const std::string sam_port{ToString(GetI2PDSAMPort(args))};
@@ -518,7 +546,7 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
 
     const std::string endpoint{I2PD_SAM_HOST + ":" + sam_port};
     LogPrintf("i2pd: managing bundled router %s, SAM at %s\n", g_exe, endpoint);
-    return endpoint;
+    return std::optional<std::string>{endpoint};
 }
 
 uint16_t GetI2PDSAMPort(const ArgsManager& args)

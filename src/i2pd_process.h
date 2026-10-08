@@ -22,6 +22,8 @@
 #ifndef BITCOIN_I2PD_PROCESS_H
 #define BITCOIN_I2PD_PROCESS_H
 
+#include <util/result.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -36,9 +38,10 @@ static const bool DEFAULT_I2PD = false;
  * supervisor that keeps it running (auto-restart on exit). Returns the SAM
  * endpoint ("host:port") naviod should use for I2P, or std::nullopt if the
  * bundled router is disabled, unavailable, or an external -i2psam is configured.
- * Never blocks waiting for i2pd to become ready.
+ * An error if -i2pdcmd names no executable file. Never blocks waiting for i2pd
+ * to become ready.
  */
-std::optional<std::string> StartI2PDProcess(const ArgsManager& args);
+util::Result<std::optional<std::string>> StartI2PDProcess(const ArgsManager& args);
 
 /** TCP port the managed router's SAM bridge listens on: -i2pdsamport, else the network's default. */
 uint16_t GetI2PDSAMPort(const ArgsManager& args);

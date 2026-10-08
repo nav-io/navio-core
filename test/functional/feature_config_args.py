@@ -198,6 +198,27 @@ class ConfArgsTest(BitcoinTestFramework):
                 extra_args=['-i2pd=1'] + extra_args,
             )
 
+        self.log.info("Test -i2pdcmd must name an executable file")
+        # naviod runs in the tmpdir. A bare -i2pdcmd naming a router there must
+        # still be looked up in PATH only, not run from the working directory.
+        cwd_router = Path(self.options.tmpdir) / 'i2pd-in-cwd'
+        cwd_router.write_text('#!/bin/sh\n', encoding='utf-8')
+        cwd_router.chmod(0o755)
+        cases = [
+            ('no-such-i2pd-router', 'was not found in PATH.'),
+            ('i2pd-in-cwd', 'was not found in PATH.'),
+            (str(node.datadir_path / 'no-such-i2pd-router'), 'is not an executable file.'),
+            (str(node.datadir_path), 'is not an executable file.'),  # a directory
+        ]
+        if os.name == 'posix':
+            cases.append((str(node.datadir_path / 'navio.conf'), 'is not an executable file.'))  # no execute permission
+        for i2pdcmd, problem in cases:
+            node.assert_start_raises_init_error(
+                expected_msg=f"Error: -i2pdcmd '{i2pdcmd}' {problem}",
+                extra_args=['-i2pd=1', f'-i2pdcmd={i2pdcmd}'],
+            )
+        cwd_router.unlink()
+
     def test_log_buffer(self):
         self.stop_node(0)
         with self.nodes[0].assert_debug_log(expected_msgs=['Warning: parsed potentially confusing double-negative -connect=0\n']):
