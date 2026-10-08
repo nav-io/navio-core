@@ -271,7 +271,15 @@ bool SpawnChild()
     if (g_job && !AssignProcessToJobObject(g_job, pi.hProcess)) {
         LogPrintf("i2pd: cannot add the router to its job object (error %u); it will outlive naviod if naviod crashes\n", GetLastError());
     }
-    ResumeThread(pi.hThread);
+    if (ResumeThread(pi.hThread) == static_cast<DWORD>(-1)) {
+        // Never left suspended: a router that cannot run would otherwise sit
+        // there, and the supervisor would wait on it forever.
+        LogPrintf("i2pd: cannot resume the router (error %u)\n", GetLastError());
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return false;
+    }
     CloseHandle(pi.hThread);
     std::lock_guard<std::mutex> lk(g_mutex);
     g_child = pi.hProcess;
