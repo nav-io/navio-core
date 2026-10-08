@@ -490,9 +490,13 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       $<TARGET_NAME_IF_EXISTS:navio_wallet>
     )
     install_binary_component(naviod HAS_MANPAGE)
-    # Ship the bundled i2pd router alongside naviod so -i2pd works out of the box.
+    # Ship the bundled i2pd router alongside naviod so -i2pd works out of the box,
+    # with its reseed certificates where naviod looks for them: ../share/i2pd/
+    # relative to the router binary, as depends stages them.
     if(WITH_I2P AND BUNDLED_I2P_EXECUTABLE)
       install(PROGRAMS "${BUNDLED_I2P_EXECUTABLE}" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT naviod)
+      get_filename_component(bundled_i2p_bindir "${BUNDLED_I2P_EXECUTABLE}" DIRECTORY)
+      install(DIRECTORY "${bundled_i2p_bindir}/../share/i2pd/certificates" DESTINATION ${CMAKE_INSTALL_DATADIR}/i2pd COMPONENT naviod)
     endif()
   endif()
 

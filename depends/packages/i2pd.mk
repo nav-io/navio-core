@@ -67,13 +67,17 @@ define $(package)_build_cmds
 endef
 
 ifeq ($(host_os),mingw32)
-define $(package)_stage_cmds
-  mkdir -p $($(package)_staging_dir)$(host_prefix)/bin && \
-  cp i2pd.exe $($(package)_staging_dir)$(host_prefix)/bin/
-endef
+$(package)_binary=i2pd.exe
 else
-define $(package)_stage_cmds
-  mkdir -p $($(package)_staging_dir)$(host_prefix)/bin && \
-  cp i2pd $($(package)_staging_dir)$(host_prefix)/bin/
-endef
+$(package)_binary=i2pd
 endif
+
+# The reseed and family signing certificates go to share/i2pd/certificates, the
+# same place relative to bin/ that distro packages use, which is where naviod
+# looks for them next to whichever i2pd it runs. Without them i2pd cannot
+# verify reseed bundles, and naviod runs it with reseed.verify on.
+define $(package)_stage_cmds
+  mkdir -p $($(package)_staging_dir)$(host_prefix)/bin $($(package)_staging_dir)$(host_prefix)/share/i2pd && \
+  cp $($(package)_binary) $($(package)_staging_dir)$(host_prefix)/bin/ && \
+  cp -R ../contrib/certificates $($(package)_staging_dir)$(host_prefix)/share/i2pd/
+endef

@@ -161,6 +161,15 @@ fs::path FindI2pd(const ArgsManager& args)
     return SearchPath(name);
 }
 
+//! Reseed/family certificates for the router at `i2pd`, at ../share/i2pd/
+//! certificates relative to it: where depends stages and naviod installs the
+//! bundled router's, and where Debian and Fedora packages put a system one's.
+fs::path FindCertsDir(const fs::path& i2pd)
+{
+    const fs::path certs{i2pd.parent_path().parent_path() / "share" / "i2pd" / "certificates"};
+    return Exists(certs) ? certs : fs::path{};
+}
+
 //! Launch g_exe/g_args as a detached child, recording its handle. Caller holds
 //! no lock; sets g_child under g_mutex.
 bool SpawnChild()
@@ -398,12 +407,28 @@ std::optional<std::string> StartI2PDProcess(const ArgsManager& args)
         "--sam.enabled=true",
         "--sam.address=" + I2PD_SAM_HOST,
         "--sam.port=" + I2PD_SAM_PORT,
+        // naviod only needs SAM. i2pd otherwise also opens its web console and
+        // HTTP and SOCKS proxies on localhost by default, none of which naviod
+        // uses and each of which any local user could reach.
+        "--http.enabled=false",
+        "--httpproxy.enabled=false",
+        "--socksproxy.enabled=false",
+        // i2pd does not verify reseed bundles' signatures by default.
+        "--reseed.verify=true",
         // Bare switch: do not relay other routers' traffic (keeps the node
         // light). No --daemon, so i2pd stays in the foreground for us to manage.
         "--notransit",
         "--log=file",
         "--logfile=" + fs::PathToString(datadir / "i2pd.log"),
     };
+    // Because --datadir is set, i2pd's own default certsdir is
+    // <datadir>/certificates, which nothing populates.
+    if (const fs::path certs{FindCertsDir(i2pd)}; !certs.empty()) {
+        g_args.push_back("--certsdir=" + fs::PathToString(certs));
+    } else {
+        LogPrintf("i2pd: no reseed certificates next to %s; the router can only reseed if they are in %s\n",
+                  g_exe, fs::PathToString(datadir / "certificates"));
+    }
 
     {
         std::lock_guard<std::mutex> lk(g_mutex);
