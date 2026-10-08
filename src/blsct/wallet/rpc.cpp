@@ -311,6 +311,8 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
             // This is separate from the on-chain BLSCT memo, which the recipient sees.
             wallet.CommitTransaction(tx, std::move(mapValue), /*orderForm=*/{});
         }
+        // Only for the build that went out: the loop above discards others.
+        LogPastSearchBound(res->pastSearchBoundOutputs);
 
         // The factory reports which output pays the destination: vout is shuffled
         // for privacy, so the recipient is not at any fixed position.
@@ -661,6 +663,8 @@ static RPCHelpMan aggregatesend()
             }
 
             evict_candidates();
+            // Only for the own half that went out, not a resize discarded.
+            blsct::LogPastSearchBound(own->pastSearchBoundOutputs);
 
             UniValue o(UniValue::VOBJ);
             o.pushKV("txid", tx->GetHash().GetHex());
@@ -821,11 +825,15 @@ static RPCHelpMan acceptquotewallet()
             // half over-funds the combined fee. Taker pays quote.sell, receives
             // quote.buy. These committed amounts must match the maker half for the
             // combined balance proof to verify (see slippage note above).
-            auto taker_half = factory.BuildUnbalancedHalf(
+            // The base builder, which only counts outputs past the recovery
+            // search bound: the swap can still fail to combine or broadcast,
+            // so log them below once it has gone out.
+            size_t pastSearchBound = 0;
+            auto taker_half = factory.blsct::TxFactoryBase::BuildUnbalancedHalf(
                 change, taker_recv,
                 /*pay_token=*/quote.sell, /*pay_amount=*/quote.sell_cost,
                 /*recv_token=*/quote.buy, /*recv_amount=*/quote.fill,
-                /*nBLSCTDefaultFee=*/0, /*additionalFee=*/0);
+                /*nBLSCTDefaultFee=*/0, /*additionalFee=*/0, &pastSearchBound);
             if (!taker_half) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build taker half");
 
             std::vector<CTransactionRef> halves{MakeTransactionRef(taker_half.value()), quote.half_tx};
@@ -836,6 +844,7 @@ static RPCHelpMan acceptquotewallet()
             std::string err_string;
             if (!pwallet->chain().broadcastTransaction(tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string))
                 throw JSONRPCError(RPC_TRANSACTION_ERROR, err_string);
+            blsct::LogPastSearchBound(pastSearchBound);
 
             // Request already dropped by ClaimQuote; nothing left to cancel.
             return tx->GetHash().GetHex();

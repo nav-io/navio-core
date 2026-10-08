@@ -19,10 +19,6 @@ using Scalars = Elements<Scalar>;
 
 namespace blsct {
 
-namespace {
-//! Say once per built transaction when some of its outputs could not get a
-//! recoverable blinding key. The factory itself only counts them: it is part
-//! of libblsct, which has no logging.
 void LogPastSearchBound(size_t pastSearchBoundOutputs)
 {
     if (pastSearchBoundOutputs > 0) {
@@ -32,9 +28,10 @@ void LogPastSearchBound(size_t pastSearchBoundOutputs)
     }
 }
 
+namespace {
 std::optional<BuiltTransaction> LogPastSearchBound(std::optional<BuiltTransaction> built)
 {
-    if (built) LogPastSearchBound(built->pastSearchBoundOutputs);
+    if (built) blsct::LogPastSearchBound(built->pastSearchBoundOutputs);
     return built;
 }
 } // namespace
@@ -165,9 +162,9 @@ std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wa
 
     // Derive every output's blinding scalar from the wallet seed, so the
     // sender can prove later that it created them (see blinding_key.h).
-    return LogPastSearchBound(TxFactoryBase::CreateTransaction(
+    return TxFactoryBase::CreateTransaction(
         inputCandidates, transactionData, blsct_km->GetBlindingSeed(),
-        [blsct_km](const Outid& anchor) { return blsct_km->ReserveBlindingGeneration(anchor); }));
+        [blsct_km](const Outid& anchor) { return blsct_km->ReserveBlindingGeneration(anchor); });
 }
 
 void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit)
