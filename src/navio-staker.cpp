@@ -1212,6 +1212,9 @@ void Loop()
                 // only); points into `delegations`, which is stable for the rest
                 // of this loop iteration.
                 const DelegatedCommitment* producing = nullptr;
+                // Wallet mode only: the commitment the proposal was staked
+                // with and where it pays the reward.
+                std::string staked_with, reward_dest;
 
                 if (fDelegated) {
                     if (Ticks<std::chrono::seconds>(SteadyClock::now() - last_delegation_refresh) >= delegation_refresh_interval) {
@@ -1280,8 +1283,11 @@ void Loop()
                             auto candidate = GetBlockProposal(rh, it, dest);
 
                             got = candidate.has_value();
-                            if (got)
+                            if (got) {
                                 proposal = candidate.value();
+                                staked_with = HexStr(it.point.GetVch());
+                                reward_dest = dest;
+                            }
                         }
                     }
                 }
@@ -1300,6 +1306,9 @@ void Loop()
                                                proposal.GetHash().ToString().substr(0, 16));
                         dash.Log(last_event);
                         LogPrintf("%s: [%s] Found block %s (%s%s). Current difficulty: %s\n", __func__, walletName, proposal.GetHash().ToString(), accepted ? "ACCEPTED" : "REJECTED: ", accepted ? "" : reply_submit.write(0, 0), currentDifficulty.ToString());
+                        if (!staked_with.empty()) {
+                            LogPrintf("%s: [%s] Block %s staked with commitment %s, reward to %s\n", __func__, walletName, proposal.GetHash().ToString(), staked_with, reward_dest);
+                        }
 
                         if (producing != nullptr) {
                             auto& stats = delegationStats[producing->outhash];
