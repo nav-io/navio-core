@@ -134,7 +134,9 @@ struct InboundMessage {
     //! pull). Internal session keys are broadcast on the bus, so anyone can
     //! encrypt to them -- a handler that stores "session-scoped" user data
     //! must gate on user_reply or an observer can inject entries that look
-    //! like replies to the app's own minted keys.
+    //! like replies to the app's own minted keys. The reverse direction is
+    //! enforced before dispatch: a user reply key only ever delivers
+    //! USER_DATA, so every other handler sees user_reply == false.
     blsct::PublicKey recipient_session;
     bool recipient_user_reply{false};
     std::vector<uint8_t> body;       //!< decrypted terminal payload

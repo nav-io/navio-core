@@ -672,6 +672,57 @@ BOOST_AUTO_TEST_CASE(transport_recipient_key_tagging)
     BOOST_CHECK(tags[2] == RecipientKey::SESSION);
 }
 
+BOOST_AUTO_TEST_CASE(transport_user_reply_key_delivers_only_user_data)
+{
+    // A key minted for user replies carries USER_DATA and nothing else: a
+    // CANDIDATE_TX on it must never reach the aggregation pool, and no other
+    // kind may be dispatched either. Internal session keys are unaffected.
+    LoopbackTransport h(/*bits=*/4);
+
+    std::atomic<int> candidates{0};
+    std::atomic<int> pings{0};
+    std::atomic<int> user_data{0};
+    std::atomic<bool> user_data_flagged{false};
+    h.t->RegisterHandler(PayloadKind::CANDIDATE_TX, [&](const InboundMessage&) {
+        candidates.fetch_add(1, std::memory_order_relaxed);
+    });
+    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage&) {
+        pings.fetch_add(1, std::memory_order_relaxed);
+    });
+    h.t->RegisterHandler(PayloadKind::USER_DATA, [&](const InboundMessage& m) {
+        user_data_flagged.store(m.recipient_user_reply);
+        user_data.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    blsct::PrivateKey reply_priv(BlstScalar::Rand(/*exclude_zero=*/true));
+    const blsct::PublicKey reply_pub = reply_priv.GetPublicKey();
+    BOOST_REQUIRE(h.t->AddSessionKey(reply_pub, reply_priv, /*expiry=*/0, Transport::SessionPurpose::USER_REPLY));
+    blsct::PrivateKey pull_priv(BlstScalar::Rand(/*exclude_zero=*/true));
+    const blsct::PublicKey pull_pub = pull_priv.GetPublicKey();
+    BOOST_REQUIRE(h.t->AddSessionKey(pull_pub, pull_priv, /*expiry=*/0));
+
+    BOOST_REQUIRE(h.t->Send(reply_pub, PayloadKind::CANDIDATE_TX, {1}, /*stem=*/false));
+    BOOST_REQUIRE(h.t->Send(reply_pub, PayloadKind::PING, {2}, /*stem=*/false));
+    BOOST_REQUIRE(h.t->Send(reply_pub, PayloadKind::USER_DATA, {3}, /*stem=*/false));
+    BOOST_REQUIRE(h.t->Send(pull_pub, PayloadKind::CANDIDATE_TX, {4}, /*stem=*/false));
+
+    // Every send is one decrypt job, enqueued synchronously by the loopback.
+    // Waiting for all of them to complete makes the "dropped" counts final
+    // rather than a race against a worker that has not run yet.
+    BOOST_REQUIRE_EQUAL(h.pool.Submitted(), 4U);
+    using namespace std::chrono_literals;
+    auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (h.pool.Completed() < h.pool.Submitted() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(1ms);
+    }
+    BOOST_REQUIRE_EQUAL(h.pool.Completed(), h.pool.Submitted());
+
+    BOOST_CHECK_EQUAL(candidates.load(), 1); // only the internal-key one
+    BOOST_CHECK_EQUAL(pings.load(), 0);
+    BOOST_CHECK_EQUAL(user_data.load(), 1);
+    BOOST_CHECK(user_data_flagged.load());
+}
+
 BOOST_AUTO_TEST_CASE(transport_pow_kind_loopback)
 {
     LoopbackTransport h(/*bits=*/6);

@@ -100,6 +100,18 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         # than building one, spending budget on it and reporting it as served.
         assert_raises_rpc_error(-4, "invalid reply key", w1.replycandidate, IDENTITY_PUBKEY)
 
+        # A key minted for user replies carries USER_DATA only. A candidate
+        # encrypted to it decrypts on node0 but must be dropped before the
+        # pool, or anyone handed a reply key could inject cover into node0's
+        # aggregates. The pool is empty here, so a wrongly pooled candidate
+        # would show up as available == 1.
+        user_reply_key = n0.mintp2pmsgreplykey(600)["reply_pubkey"]
+        with n0.assert_debug_log(["p2pmsg: dropping kind 3 addressed to a user reply key"], timeout=240):
+            res = w1.replycandidate(user_reply_key)
+            assert "candidate_txid" in res, res
+        assert_equal(n0.getaggregationhint()["available"], 0)
+        self.log.info("candidate sent to a user reply key was dropped")
+
         keys = []
 
         def got_one():
