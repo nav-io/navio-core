@@ -480,15 +480,21 @@ BOOST_AUTO_TEST_CASE(AggregateComponentsRoundTripTest)
     }
 
     CBlock rebuilt;
-    std::vector<CTransactionRef> rebuilt_list;
-    BOOST_CHECK(partial.FillBlock(rebuilt, {components[1]}, /*segwit_active=*/true, &rebuilt_list) == READ_STATUS_OK);
+    BOOST_CHECK(partial.FillBlock(rebuilt, {components[1]}, /*segwit_active=*/true) == READ_STATUS_OK);
     BOOST_CHECK_EQUAL(rebuilt.GetHash(), block.GetHash());
     BOOST_REQUIRE_EQUAL(rebuilt.vtx.size(), 2U);
     BOOST_CHECK(rebuilt.vtx[1]->GetWitnessHash() == block.vtx[1]->GetWitnessHash());
-    BOOST_REQUIRE_EQUAL(rebuilt_list.size(), component_list.size());
-    for (size_t i = 0; i < rebuilt_list.size(); ++i) {
-        BOOST_CHECK(rebuilt_list[i]->GetWitnessHash() == component_list[i]->GetWitnessHash());
-    }
+
+    // The aggregate only commits to the sum of the components' signatures, so
+    // swapping two of them gives different components that rebuild the very
+    // same block: a list matching the block does not show that its components
+    // are the transactions that were signed, and must not be relayed as such.
+    CMutableTransaction swapped_first{*components[0]}, swapped_second{*components[1]};
+    std::swap(swapped_first.txSig, swapped_second.txSig);
+    const std::vector<CTransactionRef> forged_list{block.vtx[0], MakeTransactionRef(swapped_first), MakeTransactionRef(swapped_second), components[2]};
+    BOOST_CHECK(forged_list[1]->GetWitnessHash() != components[0]->GetWitnessHash());
+    BOOST_CHECK(forged_list[2]->GetWitnessHash() != components[1]->GetWitnessHash());
+    BOOST_CHECK(ComponentListMatchesBlock(block, forged_list));
 }
 
 BOOST_AUTO_TEST_CASE(AggregateComponentsRejectTest)

@@ -10,17 +10,39 @@ sendcmpct version 3 get a "cmpctaggblk" listing the aggregate's components
 instead, rebuild the aggregate from their mempool and only fetch missing
 components ("getaggblktxn"/"aggblocktxn"), never the whole aggregate.
 
-Topology: node1 -> node0 <- node2, node0 mines. node2 runs -blocksonly and
-so does not announce version 3.
+Topology: node1 -> node0 <- node2, node3 -> node0, node0 mines. node2 runs
+-blocksonly and so does not announce version 3. node3 is cut off from node0
+to receive blocks from test peers instead.
 
 Checks:
 - node1 reconstructs an aggregate block from its mempool with no round trip;
 - node1, missing some components, fetches exactly those and not the block;
-- node0 never sends a cmpctaggblk to node2, which still syncs.
+- node0 never sends a cmpctaggblk to node2, which still syncs;
+- node3 does not relay components a peer supplied, even though they rebuild
+  the aggregate.
 """
 
 from decimal import Decimal
+from io import BytesIO
+import random
 
+from test_framework.messages import (
+    BlockTransactionsRequest,
+    CBlockHeader,
+    HeaderAndShortIDs,
+    calculate_shortid,
+    hash256,
+    msg_aggblocktxn,
+    msg_cmpctaggblk,
+    msg_getaggblktxn,
+    ser_compact_size,
+    uint256_from_str,
+)
+from test_framework.p2p import (
+    MESSAGEMAP,
+    P2PInterface,
+    p2p_lock,
+)
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -29,6 +51,46 @@ from test_framework.util import (
 
 UTXO_AMOUNT = Decimal("10.01")
 SEND_AMOUNT = Decimal("10")
+# Size of a serialized BLSCT signature, the last field of a BLSCT transaction.
+SIGNATURE_SIZE = 96
+
+
+class msg_rawblock:
+    """A block message kept serialized: the framework cannot parse BLSCT blocks."""
+    __slots__ = ("data",)
+    msgtype = b"block"
+
+    def deserialize(self, f):
+        self.data = f.read()
+
+
+MESSAGEMAP[b"block"] = msg_rawblock
+
+
+class AggregatePeer(P2PInterface):
+    def on_inv(self, message):
+        # Never fetch what is announced: the framework cannot parse BLSCT
+        # transactions.
+        pass
+
+
+def getaggblktxn(block_hash, indexes):
+    msg = msg_getaggblktxn()
+    msg.block_txn_request = BlockTransactionsRequest(int(block_hash, 16))
+    msg.block_txn_request.from_absolute(indexes)
+    return msg
+
+
+def cmpctaggblk(header, coinbase, components):
+    """A cmpctaggblk listing components (serialized) after the prefilled coinbase."""
+    msg = msg_cmpctaggblk(header=header, nonce=random.getrandbits(64))
+    keys = HeaderAndShortIDs()
+    keys.header = header
+    keys.nonce = msg.nonce
+    k0, k1 = keys.get_siphash_keys()
+    msg.shortids = [calculate_shortid(k0, k1, uint256_from_str(hash256(tx))) for tx in components]
+    msg.prefilled_txn_data = ser_compact_size(1) + ser_compact_size(0) + coinbase
+    return msg
 
 
 class CompactAggregateBlocksTest(BitcoinTestFramework):
@@ -36,10 +98,10 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
         self.add_wallet_options(parser, blsct=True)
 
     def set_test_params(self):
-        self.num_nodes = 3
+        self.num_nodes = 4
         self.chain = "blsctregtest"
         self.setup_clean_chain = True
-        self.extra_args = [[], [], ["-blocksonly"]]
+        self.extra_args = [[], [], ["-blocksonly"], []]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -48,11 +110,13 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
         self.setup_nodes()
         self.connect_nodes(1, 0)
         self.connect_nodes(2, 0)
+        self.connect_nodes(3, 0)
 
-    def mine(self, n=1):
+    def mine(self, n=1, nodes=None):
+        """Mine n blocks on node0 and sync them to nodes (default: all)."""
         hashes = []
         for _ in range(n):
-            hashes.extend(self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr, sync_fun=self.sync_blocks))
+            hashes.extend(self.generatetoblsctaddress(self.nodes[0], 1, self.miner_addr, sync_fun=lambda: self.sync_blocks(nodes)))
         return hashes
 
     def send(self, count):
@@ -69,16 +133,16 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
         [info] = [i for i in node.getpeerinfo() if i["addr"] == outbound["addrbind"]]
         return info[f"bytes{direction}_per_msg"]
 
-    def mine_aggregate_block(self):
+    def mine_aggregate_block(self, nodes=None):
         """Mine one block on node0 holding node0's whole mempool as one aggregate."""
         assert len(self.nodes[0].getrawmempool()) >= 2
-        block_hash = self.mine()[0]
+        block_hash = self.mine(nodes=nodes)[0]
         assert_equal(len(self.nodes[0].getblock(block_hash)["tx"]), 2)
         assert_equal(self.nodes[0].getrawmempool(), [])
         return block_hash
 
     def run_test(self):
-        node0, node1, _ = self.nodes
+        node0, node1, _ = self.nodes[:3]
         node0.createwallet(wallet_name="funder", blsct=True)
         node0.createwallet(wallet_name="sender", blsct=True)
         node1.createwallet(wallet_name="receiver", blsct=True)
@@ -88,18 +152,19 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
         self.recv_addr = node1.get_wallet_rpc("receiver").getnewaddress(label="", address_type="blsct")
 
         self.mine(110)
-        # Independent confirmed UTXOs, so the sends below are siblings.
-        for _ in range(6):
+        # Independent confirmed UTXOs, one per send below, so they are siblings.
+        for _ in range(9):
             funder.sendtoblsctaddress(self.sender.getnewaddress(label="", address_type="blsct"), UTXO_AMOUNT)
         self.mine()
 
         self.test_reconstruct_from_mempool()
         self.test_fetch_missing_components()
         self.test_version2_peer()
+        self.test_forged_components_not_relayed()
 
     def test_reconstruct_from_mempool(self):
         self.log.info("A peer with every component in its mempool rebuilds the aggregate without a round trip")
-        node0, node1, _ = self.nodes
+        node0, node1, _ = self.nodes[:3]
         self.send(3)
         self.sync_mempools(self.nodes[:2])
         recv_before = self.per_msg(node1, node0, "recv")
@@ -113,7 +178,7 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
 
     def test_fetch_missing_components(self):
         self.log.info("A peer missing some components fetches only those, not the whole aggregate")
-        node0, node1, _ = self.nodes
+        node0, node1, _ = self.nodes[:3]
         # Two components reach node1's mempool and are then lost by a restart;
         # a third arrives after it reconnects.
         self.send(2)
@@ -141,11 +206,72 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
 
     def test_version2_peer(self):
         self.log.info("A peer that did not announce version 3 never gets a cmpctaggblk")
-        node0, _, node2 = self.nodes
+        node0, _, node2 = self.nodes[:3]
         assert_equal(node2.getbestblockhash(), node0.getbestblockhash())
         sent = self.per_msg(node0, node2, "sent")
         assert_equal(sent.get("cmpctaggblk", 0), 0)
         assert_equal(sent.get("aggblocktxn", 0), 0)
+
+    def mine_unrelayed_aggregate_block(self, count):
+        """Mine an aggregate block of count components on node0 while node3 is
+        cut off from it. Return its hash, its header, its serialized coinbase
+        and its serialized components in aggregation order."""
+        node0 = self.nodes[0]
+        self.send(count)
+        components = [bytes.fromhex(node0.getrawtransaction(txid)) for txid in node0.getrawmempool()]
+        assert_equal(len(components), count)
+        block_hash = self.mine_aggregate_block(nodes=self.nodes[:3])
+
+        header = CBlockHeader()
+        header.deserialize(BytesIO(bytes.fromhex(node0.getblock(block_hash, 0))))
+        assert not header.IsProofOfStake()
+        coinbase_txid = node0.getblock(block_hash)["tx"][0]
+        coinbase = bytes.fromhex(node0.getrawtransaction(coinbase_txid, False, block_hash))
+
+        # node0 recovered the components from its mempool: it lists them in
+        # aggregation order.
+        peer = node0.add_p2p_connection(AggregatePeer())
+        peer.send_and_ping(getaggblktxn(block_hash, range(1, count + 1)))
+        with p2p_lock:
+            served = peer.last_message["aggblocktxn"].txs_data
+        node0.disconnect_p2ps()
+        components.sort(key=served.find)
+        assert_equal(b"".join(components), served)
+        return block_hash, header, coinbase, components
+
+    def reconnect_node3(self):
+        self.nodes[3].disconnect_p2ps()
+        self.connect_nodes(3, 0)
+        self.sync_blocks()
+
+    def test_forged_components_not_relayed(self):
+        self.log.info("Components a peer supplied are not relayed, even though they rebuild the aggregate")
+        node3 = self.nodes[3]
+        self.disconnect_nodes(3, 0)
+        block_hash, header, coinbase, components = self.mine_unrelayed_aggregate_block(3)
+        # The aggregate's signature is the sum of its components' ones, so
+        # swapping two of them gives other transactions (a wtxid covers the
+        # signature) that rebuild the very same aggregate.
+        forged = list(components)
+        forged[0] = components[0][:-SIGNATURE_SIZE] + components[1][-SIGNATURE_SIZE:]
+        forged[1] = components[1][:-SIGNATURE_SIZE] + components[0][-SIGNATURE_SIZE:]
+        assert forged[0] != components[0] and forged[1] != components[1]
+
+        attacker = node3.add_p2p_connection(AggregatePeer())
+        attacker.send_message(cmpctaggblk(header, coinbase, forged))
+        attacker.wait_until(lambda: "getaggblktxn" in attacker.last_message)
+        attacker.send_message(msg_aggblocktxn(int(block_hash, 16), forged))
+        self.wait_until(lambda: node3.getbestblockhash() == block_hash)
+
+        downstream = node3.add_p2p_connection(AggregatePeer())
+        downstream.send_and_ping(getaggblktxn(block_hash, range(1, len(forged) + 1)))
+        with p2p_lock:
+            served = downstream.last_message.get("aggblocktxn")
+            for tx in forged[:2]:
+                assert served is None or tx not in served.txs_data, "relayed a component a peer supplied"
+            # node3 has no component list of its own, so it sends the block.
+            assert "block" in downstream.last_message
+        self.reconnect_node3()
 
 
 if __name__ == "__main__":

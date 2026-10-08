@@ -40,18 +40,21 @@ from test_framework.messages import (
     msg_wsendpoint,
     msg_p2pmsgs,
     msg_addrv2,
+    msg_aggblocktxn,
     msg_block,
     MSG_BLOCK,
     msg_blocktxn,
     msg_cfcheckpt,
     msg_cfheaders,
     msg_cfilter,
+    msg_cmpctaggblk,
     msg_cmpctblock,
     msg_feefilter,
     msg_filteradd,
     msg_filterclear,
     msg_filterload,
     msg_getaddr,
+    msg_getaggblktxn,
     msg_getblocks,
     msg_getblocktxn,
     msg_getcfcheckpt,
@@ -117,17 +120,20 @@ GETDATA_TX_INTERVAL = 60
 MESSAGEMAP = {
     b"addr": msg_addr,
     b"addrv2": msg_addrv2,
+    b"aggblocktxn": msg_aggblocktxn,
     b"block": msg_block,
     b"blocktxn": msg_blocktxn,
     b"cfcheckpt": msg_cfcheckpt,
     b"cfheaders": msg_cfheaders,
     b"cfilter": msg_cfilter,
+    b"cmpctaggblk": msg_cmpctaggblk,
     b"cmpctblock": msg_cmpctblock,
     b"feefilter": msg_feefilter,
     b"filteradd": msg_filteradd,
     b"filterclear": msg_filterclear,
     b"filterload": msg_filterload,
     b"getaddr": msg_getaddr,
+    b"getaggblktxn": msg_getaggblktxn,
     b"getblocks": msg_getblocks,
     b"getblocktxn": msg_getblocktxn,
     b"getcfcheckpt": msg_getcfcheckpt,
@@ -428,6 +434,7 @@ class P2PInterface(P2PConnection):
 
     def on_addr(self, message): pass
     def on_addrv2(self, message): pass
+    def on_aggblocktxn(self, message): pass
     def on_p2pmsg(self, message): pass
     def on_dp2pmsg(self, message): pass
     def on_p2pmsgchal(self, message): pass
@@ -440,12 +447,14 @@ class P2PInterface(P2PConnection):
     def on_cfcheckpt(self, message): pass
     def on_cfheaders(self, message): pass
     def on_cfilter(self, message): pass
+    def on_cmpctaggblk(self, message): pass
     def on_cmpctblock(self, message): pass
     def on_feefilter(self, message): pass
     def on_filteradd(self, message): pass
     def on_filterclear(self, message): pass
     def on_filterload(self, message): pass
     def on_getaddr(self, message): pass
+    def on_getaggblktxn(self, message): pass
     def on_getblocks(self, message): pass
     def on_getblocktxn(self, message): pass
     def on_getdata(self, message): pass

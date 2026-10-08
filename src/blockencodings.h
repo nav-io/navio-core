@@ -207,9 +207,8 @@ public:
     bool IsAggregateComponents() const { return m_aggregate_components; }
     // segwit_active enforces witness mutation checks just before reporting a healthy status.
     // For a component-encoded block the aggregate is rebuilt from the filled
-    // component list, and on success the list is moved to *component_list_out.
-    ReadStatus FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing, bool segwit_active,
-                         std::vector<CTransactionRef>* component_list_out = nullptr);
+    // component list.
+    ReadStatus FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing, bool segwit_active);
 };
 
 #endif // BITCOIN_BLOCKENCODINGS_H
