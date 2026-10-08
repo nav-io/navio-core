@@ -7,6 +7,7 @@
 #include <util/strencodings.h>
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/tokens/predicate_parser.h>
+#include <blsct/wallet/delegation.h>
 #include <blsct/wallet/unsigned_transaction.h>
 #include <core_io.h>
 #include <hash.h>
@@ -754,6 +755,213 @@ BOOST_AUTO_TEST_CASE(test_unsigned_output_gamma_and_data_predicate)
     delete_unsigned_transaction(unsigned_tx);
     free_obj(signed_tx_rv->value);
     free(signed_tx_rv);
+}
+
+BOOST_AUTO_TEST_CASE(test_stake_delegation_data_round_trip)
+{
+    init();
+
+    const Scalar delegate_priv_key(41);
+    const Point delegate_pub_key = Point::GetBasePoint() * delegate_priv_key;
+    BlsctPoint delegate_key;
+    SERIALIZE_AND_COPY(delegate_pub_key, delegate_key);
+
+    const Point nonce_point = Point::GetBasePoint() * Scalar(42);
+    BlsctPoint nonce;
+    SERIALIZE_AND_COPY(nonce_point, nonce);
+    const Point wrong_nonce_point = Point::GetBasePoint() * Scalar(43);
+    BlsctPoint wrong_nonce;
+    SERIALIZE_AND_COPY(wrong_nonce_point, wrong_nonce);
+
+    const Scalar gamma_scalar(44);
+    BlsctScalar gamma;
+    SERIALIZE_AND_COPY(gamma_scalar, gamma);
+
+    const CAmount value = 12345;
+    const std::string reward_address = "reward-address";
+
+    auto* data_rv = build_stake_delegation_data(value, &gamma, reward_address.c_str(), &delegate_key, &nonce);
+    BOOST_REQUIRE(data_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(data_rv->result, BLSCT_SUCCESS);
+    const auto* data = static_cast<const uint8_t*>(data_rv->value);
+    const size_t data_len = data_rv->value_size;
+    BOOST_CHECK(is_stake_delegation_data(data, data_len));
+
+    // the owner recovers the delegate key and reward address with its nonce
+    auto* owner_rv = recover_stake_delegation_owner_info(data, data_len, &nonce);
+    const auto& owner_info = RequireSuccess<BlsctStakeDelegationOwnerInfo>(owner_rv);
+    BOOST_CHECK(are_point_equal(&owner_info.delegate_key, &delegate_key) == 1);
+    BOOST_CHECK_EQUAL(std::string(owner_info.reward_address), reward_address);
+    delete_stake_delegation_owner_info(owner_rv->value);
+    free(owner_rv);
+
+    // a different nonce must not open the owner section
+    auto* wrong_nonce_rv = recover_stake_delegation_owner_info(data, data_len, &wrong_nonce);
+    BOOST_REQUIRE(wrong_nonce_rv != nullptr);
+    BOOST_CHECK_EQUAL(wrong_nonce_rv->result, BLSCT_FAILURE);
+    free(wrong_nonce_rv);
+
+    // the delegate opens the same payload with its private key, which is what
+    // core's staker consumes
+    const std::vector<unsigned char> data_vec(data, data + data_len);
+    const auto info = blsct::delegation::TryDecrypt(data_vec, delegate_priv_key);
+    BOOST_REQUIRE(info.has_value());
+    BOOST_CHECK_EQUAL(info->value, value);
+    BOOST_CHECK(info->gamma == gamma_scalar);
+    BOOST_CHECK_EQUAL(info->rewardAddress, reward_address);
+    BOOST_CHECK(!blsct::delegation::TryDecrypt(data_vec, Scalar(45)).has_value());
+
+    // bytes that are not a delegation payload are rejected
+    const std::vector<uint8_t> not_delegation(data_len, 0xab);
+    BOOST_CHECK(!is_stake_delegation_data(not_delegation.data(), not_delegation.size()));
+    BOOST_CHECK(!is_stake_delegation_data(data, 4));
+    BOOST_CHECK(!is_stake_delegation_data(nullptr, 0));
+    auto* not_delegation_rv = recover_stake_delegation_owner_info(not_delegation.data(), not_delegation.size(), &nonce);
+    BOOST_REQUIRE(not_delegation_rv != nullptr);
+    BOOST_CHECK_EQUAL(not_delegation_rv->result, BLSCT_FAILURE);
+    free(not_delegation_rv);
+
+    // requests the payload cannot carry safely are refused
+    BlsctPoint zero_point;
+    SERIALIZE_AND_COPY(Point(), zero_point);
+    const std::string oversized_address(70000, 'a');
+    for (auto* rv : {
+             build_stake_delegation_data(value, &gamma, "", &delegate_key, &nonce),
+             build_stake_delegation_data(value, &gamma, oversized_address.c_str(), &delegate_key, &nonce),
+             build_stake_delegation_data(value, &gamma, reward_address.c_str(), &zero_point, &nonce),
+             build_stake_delegation_data(value, &gamma, reward_address.c_str(), &delegate_key, &zero_point),
+             build_stake_delegation_data(value, nullptr, reward_address.c_str(), &delegate_key, &nonce),
+             build_stake_delegation_data(uint64_t{1} << 63, &gamma, reward_address.c_str(), &delegate_key, &nonce),
+         }) {
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK(rv->result != BLSCT_SUCCESS);
+        free(rv);
+    }
+
+    free_obj(data_rv->value);
+    free(data_rv);
+}
+
+BOOST_AUTO_TEST_CASE(test_set_unsigned_output_stake_delegation)
+{
+    init();
+
+    auto* view_key_rv = gen_scalar(51);
+    auto* spend_key_rv = gen_scalar(52);
+    auto* blinding_key_rv = gen_scalar(53);
+    auto* default_token_id_rv = gen_default_token_id();
+    BOOST_REQUIRE(view_key_rv != nullptr);
+    BOOST_REQUIRE(spend_key_rv != nullptr);
+    BOOST_REQUIRE(blinding_key_rv != nullptr);
+    BOOST_REQUIRE(default_token_id_rv != nullptr);
+    const auto* view_key = static_cast<const BlsctScalar*>(view_key_rv->value);
+
+    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+    BOOST_REQUIRE(spend_pub_key != nullptr);
+    auto* sub_addr_id = gen_sub_addr_id(0, 4);
+    BOOST_REQUIRE(sub_addr_id != nullptr);
+    auto* dest = derive_sub_address(view_key, spend_pub_key, sub_addr_id);
+    BOOST_REQUIRE(dest != nullptr);
+    auto* other_sub_addr_id = gen_sub_addr_id(0, 5);
+    BOOST_REQUIRE(other_sub_addr_id != nullptr);
+    auto* other_dest = derive_sub_address(view_key, spend_pub_key, other_sub_addr_id);
+    BOOST_REQUIRE(other_dest != nullptr);
+
+    const Scalar delegate_priv_key(54);
+    const Point delegate_pub_key = Point::GetBasePoint() * delegate_priv_key;
+    BlsctPoint delegate_key;
+    SERIALIZE_AND_COPY(delegate_pub_key, delegate_key);
+    const std::string reward_address = "reward-address";
+
+    const auto build_output = [&](TxOutputType type) {
+        auto* tx_out_rv = build_tx_out(
+            dest,
+            1000,
+            "",
+            0,
+            static_cast<const BlsctTokenId*>(default_token_id_rv->value),
+            type,
+            1000,
+            false,
+            static_cast<const BlsctScalar*>(blinding_key_rv->value));
+        BOOST_REQUIRE(tx_out_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(tx_out_rv->result, BLSCT_SUCCESS);
+        auto* unsigned_output_rv = build_unsigned_output(static_cast<const BlsctTxOut*>(tx_out_rv->value));
+        BOOST_REQUIRE(unsigned_output_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(unsigned_output_rv->result, BLSCT_SUCCESS);
+        void* unsigned_output = unsigned_output_rv->value;
+        free_obj(tx_out_rv->value);
+        free(tx_out_rv);
+        free(unsigned_output_rv);
+        return unsigned_output;
+    };
+
+    // a NORMAL output cannot carry a stake delegation
+    void* normal_output = build_output(TxOutputType::Normal);
+    BOOST_CHECK(!set_unsigned_output_stake_delegation(normal_output, dest, &delegate_key, reward_address.c_str()));
+    BOOST_CHECK(static_cast<const blsct::UnsignedOutput*>(normal_output)->out.predicate.empty());
+    delete_unsigned_output(normal_output);
+
+    void* staked_output = build_output(TxOutputType::StakedCommitment);
+    const auto* unsigned_output = static_cast<const blsct::UnsignedOutput*>(staked_output);
+
+    // null arguments, an empty reward address and a destination the output
+    // was not built for are refused without touching the output
+    BOOST_CHECK(!set_unsigned_output_stake_delegation(nullptr, dest, &delegate_key, reward_address.c_str()));
+    BOOST_CHECK(!set_unsigned_output_stake_delegation(staked_output, nullptr, &delegate_key, reward_address.c_str()));
+    BOOST_CHECK(!set_unsigned_output_stake_delegation(staked_output, dest, nullptr, reward_address.c_str()));
+    BOOST_CHECK(!set_unsigned_output_stake_delegation(staked_output, dest, &delegate_key, nullptr));
+    BOOST_CHECK(!set_unsigned_output_stake_delegation(staked_output, dest, &delegate_key, ""));
+    BOOST_CHECK(!set_unsigned_output_stake_delegation(staked_output, other_dest, &delegate_key, reward_address.c_str()));
+    BOOST_CHECK(unsigned_output->out.predicate.empty());
+
+    BOOST_REQUIRE(set_unsigned_output_stake_delegation(staked_output, dest, &delegate_key, reward_address.c_str()));
+
+    // the output now carries a DATA predicate holding a delegation payload
+    auto* pred_rv = get_ctx_out_vector_predicate(&unsigned_output->out);
+    BOOST_REQUIRE(pred_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(pred_rv->result, BLSCT_SUCCESS);
+    BOOST_CHECK_EQUAL(get_vector_predicate_type(static_cast<const BlsctVectorPredicate*>(pred_rv->value), pred_rv->value_size), BlsctDataPredicateType);
+    const auto data = blsct::ParsePredicate(unsigned_output->out.predicate).GetData();
+    BOOST_CHECK(is_stake_delegation_data(data.data(), data.size()));
+
+    // the owner opens it with the nonce its wallet derives while scanning
+    const BlsctPoint* blinding_pub_key = get_ctx_out_blinding_key(&unsigned_output->out);
+    BOOST_REQUIRE(blinding_pub_key != nullptr);
+    BlsctPoint* nonce = calc_nonce(reinterpret_cast<const BlsctPubKey*>(blinding_pub_key), view_key);
+    BOOST_REQUIRE(nonce != nullptr);
+    auto* owner_rv = recover_stake_delegation_owner_info(data.data(), data.size(), nonce);
+    const auto& owner_info = RequireSuccess<BlsctStakeDelegationOwnerInfo>(owner_rv);
+    BOOST_CHECK(are_point_equal(&owner_info.delegate_key, &delegate_key) == 1);
+    BOOST_CHECK_EQUAL(std::string(owner_info.reward_address), reward_address);
+
+    // and the delegate gets the opening of this output's commitment
+    const auto info = blsct::delegation::TryDecrypt(data, delegate_priv_key);
+    BOOST_REQUIRE(info.has_value());
+    BOOST_CHECK_EQUAL(info->value, 1000);
+    BOOST_CHECK(info->gamma == unsigned_output->gamma);
+    BOOST_CHECK_EQUAL(info->rewardAddress, reward_address);
+
+    delete_stake_delegation_owner_info(owner_rv->value);
+    free(owner_rv);
+    free_obj(nonce);
+    free_obj((void*)blinding_pub_key);
+    free_obj(pred_rv->value);
+    free(pred_rv);
+    delete_unsigned_output(staked_output);
+    free_obj(view_key_rv->value);
+    free(view_key_rv);
+    free_obj(spend_key_rv->value);
+    free(spend_key_rv);
+    free_obj(blinding_key_rv->value);
+    free(blinding_key_rv);
+    free_obj(default_token_id_rv->value);
+    free(default_token_id_rv);
+    free_obj((void*)spend_pub_key);
+    free_obj((void*)sub_addr_id);
+    free_obj((void*)dest);
+    free_obj((void*)other_sub_addr_id);
+    free_obj((void*)other_dest);
 }
 
 BOOST_AUTO_TEST_CASE(test_are_ctx_in_equal)
