@@ -134,8 +134,9 @@ fs::path SearchPath(const std::string& name)
     return {};
 }
 
-//! Locate the i2pd binary: explicit -i2pdcmd, then the bundled one (next to
-//! naviod / configured at build time), then $PATH. Empty if none usable.
+//! Locate the i2pd binary: explicit -i2pdcmd, then the bundled one next to
+//! naviod (where both the build tree and an install put it), then $PATH.
+//! Empty if none usable.
 fs::path FindI2pd(const ArgsManager& args)
 {
 #ifdef WIN32
@@ -151,12 +152,6 @@ fs::path FindI2pd(const ArgsManager& args)
         return found.empty() ? p : found;
     }
 
-#ifdef BUNDLED_I2P_EXECUTABLE
-    {
-        const fs::path bundled{fs::PathFromString(BUNDLED_I2P_EXECUTABLE)};
-        if (Exists(bundled)) return bundled;
-    }
-#endif
     const fs::path exe{GetExecutablePath()};
     if (!exe.empty()) {
         const fs::path next{exe.parent_path() / name};

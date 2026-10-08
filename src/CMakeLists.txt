@@ -492,11 +492,19 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     install_binary_component(naviod HAS_MANPAGE)
     # Ship the bundled i2pd router alongside naviod so -i2pd works out of the box,
     # with its reseed certificates where naviod looks for them: ../share/i2pd/
-    # relative to the router binary, as depends stages them.
+    # relative to the router binary, as depends stages them. The build tree gets
+    # the same layout, so naviod finds the router next to itself there as well
+    # as when installed, and no build-host path has to be compiled in.
     if(WITH_I2P AND BUNDLED_I2P_EXECUTABLE)
-      install(PROGRAMS "${BUNDLED_I2P_EXECUTABLE}" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT naviod)
       get_filename_component(bundled_i2p_bindir "${BUNDLED_I2P_EXECUTABLE}" DIRECTORY)
-      install(DIRECTORY "${bundled_i2p_bindir}/../share/i2pd/certificates" DESTINATION ${CMAKE_INSTALL_DATADIR}/i2pd COMPONENT naviod)
+      set(bundled_i2p_certsdir "${bundled_i2p_bindir}/../share/i2pd/certificates")
+      add_custom_command(TARGET naviod POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${BUNDLED_I2P_EXECUTABLE}" "$<TARGET_FILE_DIR:naviod>"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${bundled_i2p_certsdir}" "$<TARGET_FILE_DIR:naviod>/../share/i2pd/certificates"
+        VERBATIM
+      )
+      install(PROGRAMS "${BUNDLED_I2P_EXECUTABLE}" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT naviod)
+      install(DIRECTORY "${bundled_i2p_certsdir}" DESTINATION ${CMAKE_INSTALL_DATADIR}/i2pd COMPONENT naviod)
     endif()
   endif()
 

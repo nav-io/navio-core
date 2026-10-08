@@ -151,7 +151,4 @@
 /* Define to 1 to build the bundled-i2pd subprocess manager. */
 #cmakedefine01 ENABLE_I2PD
 
-/* Absolute path to the bundled i2pd router executable, if one was built. */
-#cmakedefine BUNDLED_I2P_EXECUTABLE "@BUNDLED_I2P_EXECUTABLE@"
-
 #endif // NAVIO_CONFIG_H
