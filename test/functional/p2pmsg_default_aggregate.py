@@ -150,6 +150,7 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         # input and the single output are its own), so it takes the same
         # aggregation path as a plain send.
         cand_inputs = self.serve_candidate(n0, n1, w1)
+        unspent_before = {u["outid"]: Decimal(str(u["amount"])) for u in w0.listblsctunspent()}
         txids = w0.consolidate(1)
         assert_equal(len(txids), 1)
         self.wait_until(lambda: txids[0] in n0.getrawmempool(), timeout=60)
@@ -169,7 +170,47 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         self.generatetoblsctaddress(n0, 1, miner0)
         self.sync_blocks()
         assert txids[0] not in n0.getrawmempool(), "aggregated consolidation did not confirm"
+        own_inputs = broadcast_prevouts - set(cand_inputs)
+        assert own_inputs <= unspent_before.keys(), "consolidation spent a coin w0 did not list as unspent"
+        fee = sum(Decimal(str(out["value"])) for out in tx["vout"])
+        merged = Decimal(sum(unspent_before[outid] for outid in own_inputs)) - fee
+        unspent_after = {u["outid"]: u for u in w0.listblsctunspent()}
+        own_outputs = [unspent_after[out["hash"]] for out in tx["vout"] if out["hash"] in unspent_after]
+        assert_equal(len(own_outputs), 1)
+        assert own_outputs[0]["spendable"], "consolidated output is not spendable: %r" % own_outputs[0]
+        assert_equal(Decimal(str(own_outputs[0]["amount"])), merged)
         self.log.info("default-aggregated consolidation confirmed")
+
+        # --- consolidate N>1: each consolidation spends coins of its own. ---
+        # The aggregated first transaction has no CWalletTx, and consolidate
+        # holds the wallet lock throughout, so the wallet cannot learn of that
+        # spend until the call returns. The second iteration must still not
+        # reselect the first one's coins: it would build a conflicting
+        # double-spend.
+        #
+        # consolidate(1) merged every coin w0 had, and the coinbases maturing
+        # now are w1's, so give w0 four small coins to merge in pairs. Node1
+        # runs -aggregatesends=0, so these sends leave node0's pool alone.
+        for _ in range(4):
+            w1.sendtoblsctaddress(w0.getnewaddress(label="", address_type="blsct"), 1.0)
+        self.wait_until(lambda: len(n1.getrawmempool()) == 4, timeout=60)
+        self.generatetoblsctaddress(n1, 1, miner1)
+        self.sync_blocks()
+        cand_inputs = self.serve_candidate(n0, n1, w1)
+        txids = w0.consolidate(2, 2)
+        assert_equal(len(txids), 2)
+        self.wait_until(lambda: set(txids) <= set(n0.getrawmempool()), timeout=60)
+        prevouts = [{vin["outid"] for vin in n0.getrawtransaction(txid, True)["vin"]} for txid in txids]
+        assert not prevouts[0] & prevouts[1], "consolidations share inputs: %r" % sorted(prevouts[0] & prevouts[1])
+        # The first merged the only pooled cover; the second found the pool
+        # empty and went out plain.
+        assert set(cand_inputs) <= prevouts[0], "first consolidation did not merge the cover"
+        assert_equal(len(prevouts[0]), 2 + len(cand_inputs))
+        assert_equal(len(prevouts[1]), 2)
+        self.generatetoblsctaddress(n0, 1, miner0)
+        self.sync_blocks()
+        assert not set(txids) & set(n0.getrawmempool()), "a consolidation did not confirm"
+        self.log.info("consolidate 2 broadcast two non-conflicting consolidations")
 
         # --- Input-derived cover sizing: a small send leaves covers pooled. ---
         # The cover cap is one candidate per COVER_INPUT_RATIO own inputs, so a
