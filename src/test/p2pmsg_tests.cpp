@@ -957,36 +957,78 @@ BOOST_AUTO_TEST_CASE(user_inbox_size_cap_prunes)
     if (!all.empty()) BOOST_CHECK_EQUAL(all.back().id, 200u);
 }
 
-BOOST_AUTO_TEST_CASE(user_inbox_prunes_broadcast_before_inbox)
+BOOST_AUTO_TEST_CASE(user_inbox_scopes_have_separate_budgets)
 {
-    // Size-cap eviction must drop broadcast-scope entries before unread 1:1
-    // inbox messages: a public-topic flood cannot push out the store's reason
-    // to exist. Interleave INBOX and BROADCAST, overflow the cap, and assert
-    // every retained entry is INBOX until the cap forces into them.
+    // Each scope is pruned against its own share of the cap, so flooding any
+    // one scope must leave every entry of another in place, however old --
+    // anyone holding the inbox prekey must not be able to evict session
+    // replies, nor a subscribed-topic flood unread 1:1 messages. The victims
+    // are inserted first, so a scope-blind oldest-first prune evicts them.
+    const std::array<MsgScope, NUM_MSG_SCOPES> scopes{MsgScope::INBOX, MsgScope::BROADCAST, MsgScope::SESSION};
+    const blsct::PublicKey sender = blsct::PrivateKey(BlstScalar::Rand(true)).GetPublicKey();
+    const std::vector<uint8_t> body(64, 0x7);
+    constexpr size_t VICTIMS{3};
+
     UserInbox::Options opts;
     opts.memory_only = true;
-    opts.max_total_bytes = 4096;
+    opts.max_total_bytes = 8192;
     opts.expiry_seconds = 0;
-    UserInbox inbox(opts);
+    // One entry's bytes, measured from a fresh store (see
+    // user_inbox_size_cap_prunes); every entry below is the same size.
+    UserInbox unit(opts);
+    unit.Add(1, MsgScope::INBOX, "t", sender, body);
+    const uint64_t entry_bytes = unit.TotalBytes();
 
+    for (const MsgScope victim : scopes) {
+        // The victims must fit their own budget, or they are not victims.
+        BOOST_REQUIRE_LE(VICTIMS * entry_bytes, UserInbox::ScopeCapBytes(opts.max_total_bytes, victim));
+        for (const MsgScope flooder : scopes) {
+            if (flooder == victim) continue;
+            BOOST_TEST_INFO("victim " << int{static_cast<uint8_t>(victim)} << " flooder " << int{static_cast<uint8_t>(flooder)});
+            UserInbox inbox(opts);
+            for (size_t i = 0; i < VICTIMS; ++i) inbox.Add(1000, victim, "t", sender, body);
+            for (int i = 0; i < 200; ++i) inbox.Add(2000 + i, flooder, "t", sender, body);
+
+            size_t victims_kept{0}, flood_kept{0};
+            for (const auto& e : inbox.List(0, 0, "")) {
+                if (e.scope == static_cast<uint8_t>(victim)) ++victims_kept;
+                if (e.scope == static_cast<uint8_t>(flooder)) ++flood_kept;
+            }
+            BOOST_CHECK_EQUAL(victims_kept, VICTIMS);
+            // The flood was pruned, and to its own budget: the newest survive.
+            BOOST_CHECK_GT(flood_kept, 0U);
+            BOOST_CHECK_LE(flood_kept * entry_bytes, UserInbox::ScopeCapBytes(opts.max_total_bytes, flooder));
+            BOOST_CHECK_EQUAL(inbox.LastId(), VICTIMS + 200);
+            BOOST_CHECK_EQUAL(inbox.List(0, 0, "").back().id, VICTIMS + 200);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(user_inbox_scope_budgets_survive_reopen)
+{
+    // The per-scope byte counts are rebuilt from the entries when the store is
+    // opened. Fill the inbox budget to its steady state, reopen, add one more:
+    // it must evict the oldest, not grow the scope past its budget as it would
+    // if the reopened store counted the scope as empty.
     const blsct::PublicKey sender = blsct::PrivateKey(BlstScalar::Rand(true)).GetPublicKey();
-    const std::vector<uint8_t> body(256, 0x7);
-    // Insert broadcast first, then a burst of inbox, so if scope were ignored
-    // the oldest (broadcast) would go anyway -- interleave to make the policy
-    // load-bearing: newest are broadcast, oldest inbox.
-    for (int i = 0; i < 30; ++i) {
-        inbox.Add(1000 + i, MsgScope::INBOX, "t", sender, body);
-        inbox.Add(1000 + i, MsgScope::BROADCAST, "pub", sender, body);
+    const std::vector<uint8_t> body(64, 0x7);
+    UserInbox::Options opts;
+    opts.path = m_path_root / "user_inbox_reopen";
+    opts.max_total_bytes = 8192;
+    opts.expiry_seconds = 0;
+
+    size_t steady{0};
+    {
+        UserInbox inbox(opts);
+        for (int i = 0; i < 200; ++i) inbox.Add(1000 + i, MsgScope::INBOX, "t", sender, body);
+        steady = inbox.Size();
+        BOOST_REQUIRE_LT(steady, 200U);
     }
-    const auto kept = inbox.List(0, 0, "");
-    size_t inbox_kept = 0, bcast_kept = 0;
-    for (const auto& e : kept) {
-        if (e.scope == static_cast<uint8_t>(MsgScope::INBOX)) ++inbox_kept;
-        else if (e.scope == static_cast<uint8_t>(MsgScope::BROADCAST)) ++bcast_kept;
-    }
-    // With broadcast-first eviction the surviving set is inbox-dominated; a
-    // scope-blind oldest-first prune would keep the newest (all broadcast).
-    BOOST_CHECK_GT(inbox_kept, bcast_kept);
+    UserInbox inbox(opts);
+    BOOST_REQUIRE_EQUAL(inbox.Size(), steady);
+    inbox.Add(2000, MsgScope::INBOX, "t", sender, body);
+    BOOST_CHECK_EQUAL(inbox.Size(), steady);
+    BOOST_CHECK_EQUAL(inbox.List(0, 0, "").size(), steady);
 }
 
 BOOST_AUTO_TEST_CASE(user_inbox_expiry_prunes)

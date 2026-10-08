@@ -431,9 +431,10 @@ static RPCHelpMan listp2pmsgs()
         "listp2pmsgs",
         "\nList stored USER_DATA messages, oldest first.\n"
         "Ids increase monotonically and never repeat, so a client can poll with the last id it has\n"
-        "seen. The store is on disk and survives restarts; it is bounded by -p2pmsgstoresize (oldest\n"
-        "pruned first) and -p2pmsgstoreexpiry. Multiple applications can read concurrently with their\n"
-        "own cursors; clearp2pmsgs is optional early compaction, not an ack.\n",
+        "seen. The store is on disk and survives restarts; it is bounded by -p2pmsgstoresize (one\n"
+        "budget per scope, each pruned oldest first) and -p2pmsgstoreexpiry. Multiple applications\n"
+        "can read concurrently with their own cursors; clearp2pmsgs is optional early compaction,\n"
+        "not an ack.\n",
         {
             {"since_id", RPCArg::Type::NUM, RPCArg::Default{0}, "Only return messages with id greater than this"},
             {"max_count", RPCArg::Type::NUM, RPCArg::Default{100}, "Maximum messages to return (0 = all)"},
