@@ -15,6 +15,15 @@ $(package)_config_env=AR="$($(package)_ar)" RANLIB="$($(package)_ranlib)" CC="$(
 # prepend it to the already-prefixed CC, doubling the prefix).
 $(package)_config_env_mingw32=RC="$(host)-windres"
 $(package)_config_opts=no-shared no-dso no-engine no-tests no-zlib
+# OPENSSLDIR is a build-host path (drive-relative on mingw), so libcrypto must
+# never read openssl.cnf from it on a user's machine: with autoload-config,
+# OPENSSL_init_ssl() loads that file, and with it whatever providers and
+# settings it names. i2pd never asks for a config file itself. What else uses
+# OPENSSLDIR is the default CA certificate location, which i2pd does not load
+# either: it verifies reseed bundles against its own certificates and turns off
+# TLS peer verification. no-dso also leaves libcrypto unable to load provider
+# modules or engines, so MODULESDIR and ENGINESDIR are never read.
+$(package)_config_opts+=no-autoload-config
 $(package)_config_opts+=--prefix=$(host_prefix) --openssldir=$(host_prefix)/etc/openssl --libdir=lib
 # depends' global CFLAGS pass -std=c11, which disables the `asm` keyword
 # OpenSSL's bignum code needs and hides POSIX prototypes (usleep). Append
