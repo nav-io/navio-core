@@ -144,16 +144,38 @@ static size_t CountRewardInputs(wallet::CWallet& wallet, const CMutableTransacti
     return reward;
 }
 
-//! Re-pick the cover set so its input types mirror the wallet's own half.
+//! Re-pick `candidates` so their input types mirror the wallet's own half,
+//! keeping the re-pick only when it leaves the half's fee unchanged. Shared by
+//! every aggregating path (SendTransaction, aggregatesend, consolidate) so the
+//! policy lives in one place.
+//!
 //! Cover is only cover if it blends: reward-ness of a prev-out is public, so
 //! covers of the wrong type partition cleanly away from the own inputs under a
-//! type heuristic. Same count as `current` (so RequiredCandidateFee usually
-//! doesn't move); the pool falls back across types when one side is short.
-static std::vector<CTransactionRef> RefineCoverSelection(wallet::CWallet& wallet, const CMutableTransaction& own, aggregation::CandidatePool& pool, const std::vector<CTransactionRef>& current)
+//! type heuristic. The re-pick keeps the count of `candidates`; the pool falls
+//! back across types when one side is short.
+//!
+//! `own` was built with `funded_fee` as its additionalFee: the cover weight of
+//! `candidates` plus `count_fee` for the merged count varints. The re-pick
+//! replaces `candidates` ONLY when it needs that same fee. A moved fee would
+//! force a rebuild of the own half at a different additionalFee, which changes
+//! coin selection (largest-first input accumulation appends inputs for a
+//! higher target) and thereby invalidates the very input mix the refinement
+//! matched -- in the worst case manufacturing the exact partition this feature
+//! removes. Honest candidates are uniform 1-in/1-out self-spends, so equal
+//! count implies equal fee in practice; when it does not hold, the known-good
+//! pre-refinement pick (type-blind but weight-true) stays.
+static void RefineCoverSelection(wallet::CWallet& wallet, const CMutableTransaction& own, aggregation::CandidatePool& pool, std::vector<CTransactionRef>& candidates, CAmount fee_rate, CAmount count_fee, CAmount funded_fee)
 {
-    if (current.empty() || own.vin.empty()) return current;
-    const size_t prefer_reward = aggregation::PreferRewardCount(current.size(), CountRewardInputs(wallet, own), own.vin.size());
-    return pool.PickForAggregate(current.size(), prefer_reward);
+    if (candidates.empty() || own.vin.empty()) return;
+    const size_t prefer_reward = aggregation::PreferRewardCount(candidates.size(), CountRewardInputs(wallet, own), own.vin.size());
+    auto refined = pool.PickForAggregate(candidates.size(), prefer_reward);
+    if (refined.empty()) return;
+    const CAmount refined_fee = aggregation::RequiredCandidateFee(refined, fee_rate) + count_fee;
+    if (refined_fee == funded_fee) {
+        candidates = std::move(refined);
+    } else {
+        LogPrint(BCLog::NET, "p2pmsg: cover refinement skipped (refined set moves the required fee %d -> %d)\n", funded_fee, refined_fee);
+    }
 }
 
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose, wallet::mapValue_t mapValue)
@@ -247,27 +269,10 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         }
 
         // One-shot cover refinement: now that the own half's inputs are
-        // known, re-pick covers whose prev-out types mirror them. Applied
-        // ONLY when the refined set's weight leaves the required fee
-        // unchanged: a moved fee would force a rebuild of the own half at a
-        // different additionalFee, which changes coin selection (largest-first
-        // input accumulation appends inputs for a higher target) and thereby
-        // invalidates the very input mix the refinement matched -- in the
-        // worst case manufacturing the exact partition this feature removes.
-        // Honest candidates are uniform 1-in/1-out self-spends, so equal
-        // count implies equal fee in practice; when it does not hold, keep
-        // the known-good pre-refinement pick (type-blind but weight-true).
+        // known, re-pick covers whose prev-out types mirror them.
         if (!candidates.empty() && !cover_refined) {
             cover_refined = true;
-            auto refined = RefineCoverSelection(wallet, res->tx, *pool, candidates);
-            if (!refined.empty()) {
-                const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, attempt.nBLSCTDefaultFee) + count_fee;
-                if (refined_extra == attempt.additionalFee) {
-                    candidates = std::move(refined);
-                } else {
-                    LogPrint(BCLog::NET, "p2pmsg: cover refinement skipped (refined set moves the required fee %d -> %d)\n", attempt.additionalFee, refined_extra);
-                }
-            }
+            RefineCoverSelection(wallet, res->tx, *pool, candidates, attempt.nBLSCTDefaultFee, count_fee, attempt.additionalFee);
         }
 
         // Pay for the merged input/output counts once the own half's are
@@ -636,26 +641,11 @@ static RPCHelpMan aggregatesend()
             }
 
             // Now that the own half's inputs are known, re-pick covers whose
-            // prev-out types mirror them (reward-ness is public; mismatched
-            // covers partition away under a type heuristic). Applied ONLY
-            // when the refined set leaves the required fee unchanged: a
-            // rebuild at a different additionalFee changes the own half's
-            // coin selection and invalidates the mix the refinement matched
-            // (and destroying the known-good half to then fail on
-            // insufficient funds turns a working send into an error). Equal
-            // candidate count implies equal fee for honest uniform
-            // candidates; otherwise keep the pre-refinement pick.
-            if (!candidates.empty()) {
-                auto refined = blsct::RefineCoverSelection(*pwallet, own->tx, *pool, candidates);
-                if (!refined.empty()) {
-                    const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, rate);
-                    if (refined_extra == extra) {
-                        candidates = std::move(refined);
-                    } else {
-                        LogPrint(BCLog::NET, "p2pmsg: cover refinement skipped (refined set moves the required fee %d -> %d)\n", extra, refined_extra);
-                    }
-                }
-            }
+            // prev-out types mirror them. This runs before the count-fee loop
+            // below, so the half is still funded for `extra` alone. Keeping
+            // the known-good half matters doubly here: a failed rebuild errors
+            // this RPC rather than falling back to a plain send.
+            blsct::RefineCoverSelection(*pwallet, own->tx, *pool, candidates, rate, /*count_fee=*/0, extra);
 
             // Pay for the merged input/output counts crossing a CompactSize
             // boundary (see SendTransaction); count_fee only grows, so this
@@ -3002,18 +2992,12 @@ RPCHelpMan consolidate()
                         // policy as the send paths: consolidation is the most
                         // reward-heavy tx a wallet builds (the motivating case
                         // of the type-aware pick), and a type-blind cover
-                        // partitions cleanly away from it. Keep the
-                        // pre-refinement set when the refined weight would
-                        // move the fee (the half is already built for extra).
-                        auto refined = blsct::RefineCoverSelection(*pwallet, res->tx, *pool, candidates);
-                        if (!refined.empty()) {
-                            const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, fee_rate) + count_fee;
-                            if (refined_extra == extra) {
-                                candidates = std::move(refined);
-                            } else {
-                                LogPrint(BCLog::NET, "p2pmsg: consolidation cover refinement skipped (refined set moves the required fee %d -> %d)\n", extra, refined_extra);
-                            }
-                        }
+                        // partitions cleanly away from it. Unlike the send
+                        // path this is not one-shot: it re-runs after a
+                        // count-fee rebuild. That is harmless, since a
+                        // consolidation's inputs (the n smallest coins) do not
+                        // depend on its fee, so the re-pick sees the same mix.
+                        blsct::RefineCoverSelection(*pwallet, res->tx, *pool, candidates, fee_rate, count_fee, extra);
                         // Consolidation routinely builds halves near 253
                         // inputs: pay for the merged counts crossing a
                         // CompactSize boundary (see SendTransaction).
