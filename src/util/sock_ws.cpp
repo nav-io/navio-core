@@ -225,6 +225,19 @@ ssize_t WebSocketSock::DrainAppBytes(void* buf, size_t len) const
 
 ssize_t WebSocketSock::Recv(void* buf, size_t len, int flags) const
 {
+    if (flags & MSG_PEEK) {
+        // Forwarding MSG_PEEK to the wire would hand back raw frame bytes,
+        // and decoding them would advance the frame decoder, so the next
+        // read would see the stream desynchronized. Serving the peek from
+        // decoded bytes instead would leave them buffered where Wait() on
+        // the file descriptor cannot see them. No caller peeks a WebSocket
+        // peer (CConnman reads with MSG_DONTWAIT; the inherited peeking
+        // helpers RecvUntilTerminator() and IsConnected() are only used on
+        // I2P SAM sockets), so refuse it before touching any state.
+        LogPrint(BCLog::NET, "websocket: MSG_PEEK is not supported\n");
+        SetLastNetError(WSAEINVAL);
+        return -1;
+    }
     if (m_recv_state == RecvState::FAILED) {
         SetLastNetError(ProtocolErrorCode());
         return -1;

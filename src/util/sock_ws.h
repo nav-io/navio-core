@@ -38,6 +38,8 @@
  * - `Recv()` returns the number of application bytes copied, `0` on EOF/close,
  *   or `-1` with `WSAEWOULDBLOCK` when no application bytes are available yet
  *   and `-1` with another error code on a protocol error.
+ * - `Recv()` rejects `MSG_PEEK` with `-1` and `WSAEINVAL`: a framed stream
+ *   cannot be peeked without consuming decoder state.
  * - `Recv()` never buffers more decoded application bytes than the caller
  *   asked for: at most `len` raw bytes are read from the wire per call and the
  *   decoded payload can never exceed that. This is what makes it safe to wait

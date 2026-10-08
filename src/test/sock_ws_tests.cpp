@@ -494,4 +494,28 @@ BOOST_AUTO_TEST_CASE(ping_flood_with_stuck_send_fails_not_grows)
     BOOST_CHECK(sock.PendingSendBytes() <= WebSocketSock::MAX_CONTROL_QUEUE_BYTES + 256);
 }
 
+BOOST_AUTO_TEST_CASE(peek_is_rejected)
+{
+    // A peek neither hands back bytes nor advances the decoder: everything is
+    // still there for the next ordinary read.
+    MockWsSock sock{Handshake() + BinaryFrame("abc")};
+    char buf[16];
+    BOOST_CHECK_EQUAL(sock.Recv(buf, sizeof(buf), MSG_PEEK), -1);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEINVAL);
+    BOOST_CHECK(!sock.HandshakeComplete());
+    BOOST_CHECK(sock.m_output.empty());
+    const auto [data, r] = RecvAll(sock);
+    BOOST_CHECK_EQUAL(data, "abc");
+    BOOST_CHECK_EQUAL(r, -1);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
+
+    // Likewise mid-stream, with a frame waiting on the wire.
+    sock.Feed(BinaryFrame("def"));
+    BOOST_CHECK_EQUAL(sock.Recv(buf, sizeof(buf), MSG_PEEK | MSG_DONTWAIT), -1);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEINVAL);
+    const auto [data2, r2] = RecvAll(sock);
+    BOOST_CHECK_EQUAL(data2, "def");
+    BOOST_CHECK_EQUAL(r2, -1);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
