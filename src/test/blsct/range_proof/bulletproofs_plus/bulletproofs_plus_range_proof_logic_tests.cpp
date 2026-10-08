@@ -14,10 +14,10 @@
 #include <boost/test/unit_test.hpp>
 #include <algorithm>
 #include <atomic>
-#include <filesystem>
 #include <functional>
 #include <optional>
 #include <thread>
+#include <util/fs.h>
 #include <util/strencodings.h>
 #include <limits>
 
@@ -27,10 +27,10 @@ namespace {
 std::optional<size_t> CountProcessThreads()
 {
     std::error_code ec;
-    std::filesystem::directory_iterator it{"/proc/self/task", ec};
+    fs::directory_iterator it{fs::path{"/proc/self/task"}, ec};
     if (ec) return std::nullopt;
     size_t n{0};
-    for (; it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+    for (; it != fs::directory_iterator{}; it.increment(ec)) {
         if (ec) return std::nullopt;
         ++n;
     }
