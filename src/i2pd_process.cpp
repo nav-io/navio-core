@@ -58,6 +58,8 @@ constexpr int FALLBACK_MAX_FD{65536};
 
 //! How long shutdown waits for the router to exit after asking it to, before
 //! killing it outright so that a hung router cannot stall naviod's shutdown.
+//! i2pd only acts on SIGTERM once its own startup has returned, and on a first
+//! run that startup includes reseeding, which takes as long as reseed servers do.
 constexpr auto I2PD_STOP_TIMEOUT{std::chrono::seconds{10}};
 
 //! fs::exists() that never throws, for best-effort path probing.
@@ -243,6 +245,8 @@ bool SpawnChild()
         // forking thread exits; that is the supervisor, which only exits after
         // reaping this child. If naviod already died before prctl() took
         // effect, the child has been reparented, so exit instead of starting.
+        // As with I2PD_STOP_TIMEOUT, a router still in its startup reseed only
+        // exits once that is done.
         prctl(PR_SET_PDEATHSIG, SIGTERM);
         if (getppid() != parent) _exit(127);
 #else
