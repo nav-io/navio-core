@@ -125,24 +125,38 @@ std::optional<RfqQuote> MatcherRegistry::GetQuote(const uint256& uuid, const uin
 {
     LOCK(m_mutex);
     auto it = m_active.find(uuid);
-    if (it == m_active.end()) return std::nullopt;
+    if (it == m_active.end() || it->second.claim != 0) return std::nullopt;
     auto qit = it->second.quotes.find(quote_id);
     if (qit == it->second.quotes.end()) return std::nullopt;
     return qit->second;
 }
 
-std::optional<RfqQuote> MatcherRegistry::ClaimQuote(const uint256& uuid, const uint256& quote_id)
+std::optional<MatcherRegistry::Claim> MatcherRegistry::ClaimQuote(const uint256& uuid, const uint256& quote_id)
 {
     LOCK(m_mutex);
     auto it = m_active.find(uuid);
-    if (it == m_active.end()) return std::nullopt;
+    if (it == m_active.end() || it->second.claim != 0) return std::nullopt;
     auto qit = it->second.quotes.find(quote_id);
     if (qit == it->second.quotes.end()) return std::nullopt;
-    RfqQuote q = qit->second;
-    // Drop the whole request so a concurrent accept of the same uuid finds
-    // nothing and cannot build a second conflicting taker half.
-    m_active.erase(it);
-    return q;
+    // Claim the whole request so a concurrent accept of the same uuid finds
+    // nothing and cannot build a second conflicting taker half. It is not
+    // erased: a failed accept releases it rather than losing it.
+    it->second.claim = ++m_last_claim;
+    return Claim{qit->second, it->second.claim};
+}
+
+void MatcherRegistry::ReleaseClaim(const uint256& uuid, uint64_t token)
+{
+    LOCK(m_mutex);
+    auto it = m_active.find(uuid);
+    if (token != 0 && it != m_active.end() && it->second.claim == token) it->second.claim = 0;
+}
+
+void MatcherRegistry::FinishClaim(const uint256& uuid, uint64_t token)
+{
+    LOCK(m_mutex);
+    auto it = m_active.find(uuid);
+    if (token != 0 && it != m_active.end() && it->second.claim == token) m_active.erase(it);
 }
 
 bool MatcherRegistry::Cancel(const uint256& uuid)

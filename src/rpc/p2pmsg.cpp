@@ -1042,15 +1042,22 @@ static RPCHelpMan acceptquote()
             const uint256 uuid(ParseHashV(request.params[0], "uuid"));
             const uint256 quote_id(ParseHashV(request.params[1], "quote_id"));
 
-            auto quote = node.rfq_matcher->GetQuote(uuid, quote_id);
-            if (!quote || !quote->half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
+            // Claim the request for the whole accept, as acceptquotewallet
+            // does, so neither path can broadcast a second swap against the
+            // same order while this one is in flight. A failure releases the
+            // claim so the request can be retried.
+            auto claimed = node.rfq_matcher->ClaimQuote(uuid, quote_id);
+            if (!claimed) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
+            rfq::ClaimGuard claim{*node.rfq_matcher, uuid, claimed->token};
+            const auto& quote = claimed->quote;
+            if (!quote.half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
 
             CMutableTransaction taker;
             if (!DecodeHexTx(taker, request.params[2].get_str())) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "taker half decode failed");
             }
 
-            std::vector<CTransactionRef> halves{MakeTransactionRef(taker), quote->half_tx};
+            std::vector<CTransactionRef> halves{MakeTransactionRef(taker), quote.half_tx};
             auto combined = aggregation::CombineHalves(halves);
             if (!combined) throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed");
 
@@ -1060,7 +1067,7 @@ static RPCHelpMan acceptquote()
                 node, tx, err_string, /*max_tx_fee=*/0, /*relay=*/true, /*wait_callback=*/true);
             if (TransactionError::OK != err) throw JSONRPCTransactionError(err, err_string);
 
-            node.rfq_matcher->Cancel(uuid); // one-shot per request
+            claim.Finish(); // one-shot per request
             return tx->GetHash().GetHex();
         },
     };

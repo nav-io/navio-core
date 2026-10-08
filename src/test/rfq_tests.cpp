@@ -372,4 +372,94 @@ BOOST_AUTO_TEST_CASE(matcher_registry_lifecycle)
     BOOST_CHECK_EQUAL(reg.Size(), 0u);
 }
 
+BOOST_AUTO_TEST_CASE(matcher_registry_claim)
+{
+    MatcherRegistry reg;
+    RfqRequest r = MakeReq(TokA(), TokB(), 1000, 5000);
+    BOOST_REQUIRE(reg.OpenRequest(r));
+    RfqQuote q1 = MakeQuote(1000, 95);
+    q1.uuid = r.uuid;
+    q1.quote_id = uint256(uint64_t{1});
+    RfqQuote q2 = MakeQuote(1000, 90);
+    q2.uuid = r.uuid;
+    q2.quote_id = uint256(uint64_t{2});
+    BOOST_REQUIRE(reg.AddQuote(q1));
+    BOOST_REQUIRE(reg.AddQuote(q2));
+
+    // An unknown quote claims nothing, so it leaves the request claimable;
+    // a zero token never matches an unclaimed request.
+    reg.FinishClaim(r.uuid, 0);
+    BOOST_CHECK_EQUAL(reg.Size(), 1u);
+    BOOST_CHECK(!reg.ClaimQuote(r.uuid, uint256(uint64_t{7})).has_value());
+
+    // While claimed, no second accept of the request gets any of its quotes.
+    const auto first = reg.ClaimQuote(r.uuid, q1.quote_id);
+    BOOST_REQUIRE(first.has_value());
+    BOOST_CHECK(first->quote.quote_id == q1.quote_id);
+    BOOST_CHECK(!reg.ClaimQuote(r.uuid, q1.quote_id).has_value());
+    BOOST_CHECK(!reg.ClaimQuote(r.uuid, q2.quote_id).has_value());
+    BOOST_CHECK(!reg.GetQuote(r.uuid, q2.quote_id).has_value());
+
+    // A failed accept releases the claim: the request and all its quotes are
+    // still there to retry. A wrong token releases nothing.
+    reg.ReleaseClaim(r.uuid, first->token + 1);
+    BOOST_CHECK(!reg.ClaimQuote(r.uuid, q2.quote_id).has_value());
+    reg.ReleaseClaim(r.uuid, first->token);
+    BOOST_CHECK_EQUAL(reg.Size(), 1u);
+    BOOST_CHECK_EQUAL(reg.GetQuotes(r.uuid).size(), 2u);
+    BOOST_CHECK(reg.GetQuote(r.uuid, q2.quote_id).has_value());
+    const auto second = reg.ClaimQuote(r.uuid, q2.quote_id);
+    BOOST_REQUIRE(second.has_value());
+    BOOST_CHECK(second->token != first->token);
+
+    // A stale token neither finishes nor releases the live claim.
+    reg.FinishClaim(r.uuid, first->token);
+    BOOST_CHECK_EQUAL(reg.Size(), 1u);
+    BOOST_CHECK(!reg.ClaimQuote(r.uuid, q1.quote_id).has_value());
+
+    // A broadcast accept drops the request.
+    reg.FinishClaim(r.uuid, second->token);
+    BOOST_CHECK_EQUAL(reg.Size(), 0u);
+    BOOST_CHECK(!reg.ClaimQuote(r.uuid, q1.quote_id).has_value());
+}
+
+BOOST_AUTO_TEST_CASE(matcher_registry_claim_reopened_uuid)
+{
+    // Accept A claims, the request is cancelled and re-opened under the same
+    // uuid, and accept B claims the new one. When A then fails (or succeeds),
+    // its stale claim must not release (or drop) B's.
+    MatcherRegistry reg;
+    RfqRequest r = MakeReq(TokA(), TokB(), 1000, 5000);
+    RfqQuote q = MakeQuote(1000, 95);
+    q.uuid = r.uuid;
+    q.quote_id = uint256(uint64_t{1});
+
+    BOOST_REQUIRE(reg.OpenRequest(r));
+    BOOST_REQUIRE(reg.AddQuote(q));
+    const auto a = reg.ClaimQuote(r.uuid, q.quote_id);
+    BOOST_REQUIRE(a.has_value());
+    BOOST_REQUIRE(reg.Cancel(r.uuid));
+
+    BOOST_REQUIRE(reg.OpenRequest(r));
+    BOOST_REQUIRE(reg.AddQuote(q));
+    const auto b = reg.ClaimQuote(r.uuid, q.quote_id);
+    BOOST_REQUIRE(b.has_value());
+
+    reg.ReleaseClaim(r.uuid, a->token);
+    BOOST_CHECK(!reg.ClaimQuote(r.uuid, q.quote_id).has_value());
+    {
+        // The RAII path a failing RPC takes.
+        ClaimGuard stale{reg, r.uuid, a->token};
+    }
+    BOOST_CHECK(!reg.ClaimQuote(r.uuid, q.quote_id).has_value());
+    reg.FinishClaim(r.uuid, a->token);
+    BOOST_CHECK_EQUAL(reg.Size(), 1u);
+
+    // B's own failure does release it.
+    {
+        ClaimGuard guard{reg, r.uuid, b->token};
+    }
+    BOOST_CHECK(reg.ClaimQuote(r.uuid, q.quote_id).has_value());
+}
+
 BOOST_AUTO_TEST_SUITE_END()

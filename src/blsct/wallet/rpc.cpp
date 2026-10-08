@@ -786,13 +786,18 @@ static RPCHelpMan acceptquotewallet()
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "max_pay/min_recv out of range");
             }
 
-            // Atomically claim the quote (fetch + drop the request) so two
+            // Atomically claim the quote (fetch + claim the request) so two
             // concurrent accepts of the same uuid cannot each build a conflicting
             // taker half. ClaimQuote also returns the quote's token pair, so we no
             // longer need a separate GetRequest lookup.
-            auto quoteOpt = matcher->ClaimQuote(uuid, quote_id);
-            if (!quoteOpt || !quoteOpt->half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
-            const rfq::RfqQuote& quote = *quoteOpt;
+            auto claimed = matcher->ClaimQuote(uuid, quote_id);
+            if (!claimed) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
+            // Until the swap is broadcast, every failure below hands the claim
+            // back, so the taker can retry or accept another quote instead of
+            // losing the whole request.
+            rfq::ClaimGuard claim{*matcher, uuid, claimed->token};
+            if (!claimed->quote.half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
+            const rfq::RfqQuote& quote = claimed->quote;
 
             // Slippage guard. The taker half must commit the SAME amounts the
             // maker's (confidential) half expects, or the combined BLSCT balance
@@ -876,7 +881,8 @@ static RPCHelpMan acceptquotewallet()
                 throw JSONRPCError(RPC_TRANSACTION_ERROR, err_string);
             blsct::LogPastSearchBound(pastSearchBound);
 
-            // Request already dropped by ClaimQuote; nothing left to cancel.
+            // The swap is out: the request is done, not retryable.
+            claim.Finish();
             return tx->GetHash().GetHex();
         },
     };

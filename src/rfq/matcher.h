@@ -11,6 +11,7 @@
 #include <sync.h>
 #include <uint256.h>
 
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <vector>
@@ -68,16 +69,34 @@ public:
     //! The request itself, if open.
     std::optional<RfqRequest> GetRequest(const uint256& uuid) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
-    //! Look up a specific collected quote by (uuid, quote_id).
+    //! Look up a specific collected quote by (uuid, quote_id). nullopt while
+    //! an accept holds the request's claim (see ClaimQuote).
     std::optional<RfqQuote> GetQuote(const uint256& uuid, const uint256& quote_id) const
         EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
-    //! Atomically fetch a quote AND drop its request, claiming it for a single
-    //! taker. Two concurrent accepts of the same uuid: only the first sees the
-    //! quote; the second gets nullopt. Prevents building two conflicting taker
-    //! halves against one order (the TOCTOU that GetQuote()+Cancel() leaves open).
-    std::optional<RfqQuote> ClaimQuote(const uint256& uuid, const uint256& quote_id)
+    //! A claimed quote and the token identifying this claim.
+    struct Claim {
+        RfqQuote quote;
+        uint64_t token{0};
+    };
+
+    //! Atomically fetch a quote AND claim its request for a single taker. Two
+    //! concurrent accepts of the same uuid: only the first sees the quote; the
+    //! second gets nullopt until the claim is released. Prevents building two
+    //! conflicting taker halves against one order (the TOCTOU that
+    //! GetQuote()+Cancel() leaves open). The request stays registered: the
+    //! claimant drops it with FinishClaim() once the swap is broadcast, or
+    //! hands it back with ReleaseClaim() if the accept fails, so the taker can
+    //! retry. Both take the claim's token, so a stale claimant cannot touch a
+    //! later claim on a request re-opened under the same uuid.
+    std::optional<Claim> ClaimQuote(const uint256& uuid, const uint256& quote_id)
         EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+
+    //! Make the request claimable again, if `token` still holds its claim.
+    void ReleaseClaim(const uint256& uuid, uint64_t token) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+
+    //! Drop the request, if `token` still holds its claim.
+    void FinishClaim(const uint256& uuid, uint64_t token) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     //! Drop a request and its quotes. Returns true if it existed.
     bool Cancel(const uint256& uuid) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
@@ -110,10 +129,41 @@ private:
     struct Active {
         RfqRequest req;
         std::map<uint256, RfqQuote> quotes; // quote_id -> quote
+        uint64_t claim{0};                  // token of the in-flight accept; 0 = none
     };
     mutable Mutex m_mutex;
+    uint64_t m_last_claim GUARDED_BY(m_mutex){0};
     std::map<uint256, Active> m_active GUARDED_BY(m_mutex);
     std::map<uint256, PendingMatch> m_pending GUARDED_BY(m_mutex);
+};
+
+//! Holds a claim for the scope of one accept: releases it on destruction
+//! unless Finish() ran, so every failure path (including a throw) hands the
+//! request back for a retry.
+class ClaimGuard
+{
+public:
+    ClaimGuard(MatcherRegistry& reg, const uint256& uuid, uint64_t token)
+        : m_reg{reg}, m_uuid{uuid}, m_token{token} {}
+    ClaimGuard(const ClaimGuard&) = delete;
+    ClaimGuard& operator=(const ClaimGuard&) = delete;
+    ~ClaimGuard()
+    {
+        if (!m_finished) m_reg.ReleaseClaim(m_uuid, m_token);
+    }
+
+    //! The accept succeeded: drop the request instead of releasing it.
+    void Finish()
+    {
+        m_finished = true;
+        m_reg.FinishClaim(m_uuid, m_token);
+    }
+
+private:
+    MatcherRegistry& m_reg;
+    const uint256 m_uuid;
+    const uint64_t m_token;
+    bool m_finished{false};
 };
 
 //! Process-global handle to the active matcher registry, so the wallet module
