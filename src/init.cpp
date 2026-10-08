@@ -1851,9 +1851,10 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // epoch: every stem message we relay in the epoch goes to the same peer,
         // so an observer cannot distinguish our originated traffic from what we
         // merely relay. The successor is re-rolled only when the epoch rolls
-        // over or the pinned peer becomes ineligible (disconnect / dropped the
-        // NODE_P2PMSG bit). The epoch phase is offset by a per-node random value
-        // so rotations are not globally synchronized (which would itself leak
+        // over or the pinned peer disconnects: a peer's service bits are fixed
+        // by its VERSION message, so it cannot stop being stem-eligible while
+        // connected. The epoch phase is offset by a per-node random value so
+        // rotations are not globally synchronized (which would itself leak
         // timing). Stem cadence is intentionally ~inbox-rotation scale.
         struct StemGraph {
             std::mutex mutex;
@@ -1868,8 +1869,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // except `exclude_peer`. In the STEM phase (stem=true) forward to the
         // epoch's single pinned Dandelion++ successor. If no eligible successor
         // exists (or it would be the peer we received from), fall back to
-        // fluffing: privacy is preserved because this node is the one fluffing,
-        // and the message still propagates rather than dead-ending.
+        // fluffing so the message still propagates rather than dead-ending.
+        // See the fallback below for what that costs in privacy.
         auto forward = [connman, stem_graph, stem_epoch_secs, stem_phase](bool stem, bool wire_stem, int64_t exclude_peer, const p2pmsg::Envelope& env) {
             // Never send p2pmsg traffic to block-relay-only connections: their
             // whole purpose is to carry blocks and nothing else, so pushing
@@ -1968,8 +1969,14 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             }
             // No stem route (no relay-capable peer -- e.g. only leaves are
             // connected), or the route is the very peer we received from
-            // (relaying back would loop): fluff instead -- still private, since
-            // we are the node doing the fluffing.
+            // (relaying back would loop): fluff instead. For a RELAYED envelope
+            // that keeps the originator hidden, since the flood starts here and
+            // not at them. For one we ORIGINATED (exclude_peer == -1) it does
+            // not: every peer receives it straight from us, with no stem
+            // anonymity at all. That happens whenever no stem-eligible peer is
+            // connected: at startup before any relay peer has finished its
+            // handshake, when our only p2pmsg peers are leaves, or under an
+            // eclipse.
             if (chosen == -1 || chosen == exclude_peer) { fluff(); return; }
             connman->ForEachNode([&](CNode* pnode) {
                 if (pnode->GetId() == chosen) connman->PushMessage(pnode, NetMsg::Make(NetMsgType::DP2PMSG, env));

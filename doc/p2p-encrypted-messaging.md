@@ -649,34 +649,35 @@ with zero configuration.
   drop on MAC failure, and bounded queues/caches that drop rather than grow.
   Per-source caps additionally bound the aggregation candidate pool
   (`POOL_MAX_PER_PEER`). Note the relay limiter is global, not per-peer.
-- **Mixed networks**: the `NODE_P2PMSG` service bit advertises a _relay_
+- **Mixed networks**: the `NODE_P2PMSG_V2` service bit advertises a _relay_
   capability -- that the node processes and forwards P2PMSG/DP2PMSG -- and
-  `forward()` stems/broadcasts only to peers that set it. It is a routing hint
-  only: it does **not** promise the node serves candidates (that is the separate
-  `-servecandidates` behaviour). A node that does not run p2pmsg silently drops
-  these messages without relaying, so routing to it would lose the message (a
-  stem hop dead-ends, a fluff copy is wasted); the bit keeps the overlay on
-  capable peers. Advertisements are unauthenticated, so a peer may set the bit
-  and not actually relay (the message is then just lost, as it would be with no
-  path) -- best-effort, but strictly better than routing blind.
+  `forward()` stems/broadcasts only to peers that set it (block-relay-only
+  connections excluded). It is a routing hint only: it does **not** promise the
+  node serves candidates (that is the separate `-servecandidates` behaviour). A
+  node that does not run p2pmsg silently drops these messages without relaying,
+  so routing to it would lose the message (a stem hop dead-ends, a fluff copy is
+  wasted); the bit keeps the overlay on capable peers. Advertisements are
+  unauthenticated, so a peer may set the bit and not actually relay (the message
+  is then just lost, as it would be with no path) -- best-effort, but strictly
+  better than routing blind.
 - **Leaves (`NODE_P2PMSG_LEAF`)**: a second bit for clients that want to
   _receive_ bus traffic but cannot relay it -- standalone SDK clients (browser,
   mobile) that hold one or two connections to full nodes and have no peers of
   their own to forward to. A relay fluffs `P2PMSG` to a leaf exactly as to a
-  `NODE_P2PMSG` peer, so the leaf sees everything that fluffs past its node, but
-  a leaf is **never** chosen as a Dandelion++ stem successor: a stem hop is a
-  single unicast, and handing it to a non-relaying peer would black-hole the
+  `NODE_P2PMSG_V2` relay, so the leaf sees everything that fluffs past its node,
+  but a leaf is **never** chosen as a Dandelion++ stem successor: a stem hop is
+  a single unicast, and handing it to a non-relaying peer would black-hole the
   message before it ever fluffs. If a node's only p2pmsg-capable peers are
   leaves it has no stem route and fluffs instead (see below). A leaf may still
   _send_ `p2pmsg`/`dp2pmsg` like any peer, under the same PoW/DoS gates.
-  `getp2pmsginfo` reports `leaf_peers` (LEAF without P2PMSG) next to
-  `relay_capable_peers`. A node that relays should set `NODE_P2PMSG`, not this
-  bit; the leaf bit only widens delivery, never the stem set.
-- **Participation is network-visible**: because `NODE_P2PMSG` is a service flag,
-  it rides ADDR gossip and appears in `getpeerinfo`/`getnodeaddresses`. Enabling
-  `-p2pmsg` therefore announces participation network-wide, not just to direct
-  peers -- an observer can enumerate the capable set without connecting to each
-  node. This is the standard service-bit trade-off (the same is true of
+  `getp2pmsginfo` reports `leaf_peers` (V2 plus LEAF) next to
+  `relay_capable_peers`. A node that relays should set `NODE_P2PMSG_V2`, not
+  this bit; the leaf bit only widens delivery, never the stem set.
+- **Participation is network-visible**: because `NODE_P2PMSG_V2` is a service
+  flag, it rides ADDR gossip and appears in `getpeerinfo`/`getnodeaddresses`.
+  Enabling `-p2pmsg` therefore announces participation network-wide, not just to
+  direct peers -- an observer can enumerate the capable set without connecting
+  to each node. This is the standard service-bit trade-off (the same is true of
   `NODE_COMPACT_FILTERS` etc.), but it means p2pmsg is not a
   covert-participation feature: the fact that you relay the overlay is public,
   even though message contents and your role in any given message are not.
@@ -692,17 +693,20 @@ with zero configuration.
   traffic cannot use fan-out-to-different-peers to separate messages the node
   _originated_ from messages it merely _relayed_, nor learn the stem graph by
   watching successor choices vary. The successor is re-rolled only when the
-  epoch rolls over or the pinned peer becomes ineligible (disconnect, or dropped
-  the `NODE_P2PMSG` bit; `NODE_P2PMSG_LEAF` peers are never eligible). If no
-  eligible successor exists, or the pinned successor is the very peer a message
-  arrived from (which would loop), the node **fluffs** that message instead of
-  dead-ending it -- privacy is preserved because the fluffing node is the one
-  broadcasting. A stem successor still learns its immediate predecessor
-  _relayed_ the message, not that it _originated_ it; a colluding fraction of
-  the stem graph degrades this the usual Dandelion++ way, and the ECIES layer
-  hides contents throughout. Remaining gap vs. the full Dandelion++ paper: no
-  explicit embargo timer to detect a black-holing stem successor (a dropped stem
-  message is recovered only when its origin re-sends); tracked as future work.
+  epoch rolls over or the pinned peer disconnects (a peer's service bits are
+  fixed by its `version` message; `NODE_P2PMSG_LEAF` peers are never eligible).
+  If no eligible successor exists, or the pinned successor is the very peer a
+  message arrived from (which would loop), the node **fluffs** that message
+  instead of dead-ending it. For a relayed message that keeps the originator
+  hidden, since the flood starts at the fluffing node; for a message the node
+  originated it does not -- every peer receives it straight from the originator,
+  with no stem anonymity; that case arises only when every connected p2pmsg peer
+  is a leaf. A stem successor still learns its immediate predecessor _relayed_
+  the message, not that it _originated_ it; a colluding fraction of the stem
+  graph degrades this the usual Dandelion++ way, and the ECIES layer hides
+  contents throughout. Remaining gap vs. the full Dandelion++ paper: no explicit
+  embargo timer to detect a black-holing stem successor (a dropped stem message
+  is recovered only when its origin re-sends); tracked as future work.
 - **RFQ probing**: config-only matching means probing cannot binary-search a
   maker's balance; it can only enumerate advertised config.
 - **Candidate-serving probing**: a served candidate is a signed self-spend of
