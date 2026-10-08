@@ -225,6 +225,11 @@ BOOST_AUTO_TEST_CASE(handshake_bad)
         "GET /p2p HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + RFC_KEY + "\r\nSec-WebSocket-Version: 8\r\n\r\n",
         // Missing key.
         "GET /p2p HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        // Key that is not base64.
+        "GET /p2p HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: not base64!\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        // Keys that decode to 15 and 17 bytes instead of 16.
+        "GET /p2p HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAA\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        "GET /p2p HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAAA=\r\nSec-WebSocket-Version: 13\r\n\r\n",
         // Malformed header line.
         "GET /p2p HTTP/1.1\r\nUpgrade websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + RFC_KEY + "\r\nSec-WebSocket-Version: 13\r\n\r\n",
     };

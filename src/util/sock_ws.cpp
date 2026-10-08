@@ -31,6 +31,8 @@ constexpr uint8_t OPCODE_PONG{0xA};
 constexpr size_t MAX_CONTROL_PAYLOAD{125};
 
 constexpr std::string_view WS_GUID{"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"};
+//! Decoded size of a valid Sec-WebSocket-Key (RFC 6455 section 4.1).
+constexpr size_t WS_KEY_NONCE_BYTES{16};
 
 constexpr std::string_view HTTP_400_RESPONSE{
     "HTTP/1.1 400 Bad Request\r\n"
@@ -448,6 +450,11 @@ bool WebSocketSock::ProcessHandshake(std::string_view request) const
     const std::string key{get("sec-websocket-key")};
     if (key.empty()) {
         LogPrint(BCLog::NET, "websocket: handshake missing Sec-WebSocket-Key\n");
+        return false;
+    }
+    // RFC 6455 section 4.2.1: the key is a base64-encoded 16-byte nonce.
+    if (const auto nonce{DecodeBase64(key)}; !nonce || nonce->size() != WS_KEY_NONCE_BYTES) {
+        LogPrint(BCLog::NET, "websocket: Sec-WebSocket-Key is not a base64 %u-byte nonce\n", WS_KEY_NONCE_BYTES);
         return false;
     }
     // Sec-WebSocket-Extensions and Sec-WebSocket-Protocol are deliberately
