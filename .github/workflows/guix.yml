@@ -271,7 +271,11 @@ jobs:
           sdk_dir="${GITHUB_WORKSPACE}/../sdk-path"
           mkdir -p "${sdk_dir}"
           cd "${sdk_dir}"
+          # --speed-limit/--speed-time abort a stalled or trickling transfer
+          # (exit 28, a timeout that --retry treats as transient), like the
+          # wget --read-timeout on the guix bootstrap fetch.
           curl --fail --location --retry 5 --retry-delay 30 --connect-timeout 20 \
+            --speed-limit 1024 --speed-time 60 \
             --output "${SDK_TARBALL}" \
             "https://bitcoincore.org/depends-sources/sdks/${SDK_TARBALL}"
           tar -xf "${SDK_TARBALL}"
