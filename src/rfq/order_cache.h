@@ -70,7 +70,8 @@ public:
     bool Contains(const uint256& quote_id) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     //! Read-only view of one cached standing order. `quote` is exactly the
-    //! ORDER_ANN payload as it arrived on the wire (public to every peer);
+    //! ORDER_ANN payload as it arrived on the wire (public to every peer), and
+    //! always carries a half-tx (StoreOrder rejects one without);
     //! `received` / `effective_expiry` are this node's local bookkeeping.
     struct OrderView {
         RfqQuote quote;

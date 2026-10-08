@@ -196,6 +196,13 @@ BOOST_AUTO_TEST_CASE(order_store_find_expiry)
     // Duplicate quote_id rejected.
     BOOST_CHECK(!cache.StoreOrder(MakeOrder(qid, InsecureRand256(), 1000, 100, 5000), 1000));
 
+    // An order without a half-tx is rejected; listorders relies on every
+    // cached order having one.
+    RfqQuote no_half = MakeOrder(InsecureRand256(), InsecureRand256(), 1000, 100, 5000);
+    no_half.half_tx.reset();
+    BOOST_CHECK(!cache.StoreOrder(no_half, 1000));
+    BOOST_CHECK_EQUAL(cache.Size(), 1u);
+
     // Already-expired store rejected.
     BOOST_CHECK(!cache.StoreOrder(MakeOrder(InsecureRand256(), InsecureRand256(), 1000, 100, /*order_expiry=*/900), 1000));
 

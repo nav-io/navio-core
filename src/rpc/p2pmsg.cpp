@@ -678,13 +678,12 @@ static RPCHelpMan listorders()
                 e.pushKV("effective_expiry", v.effective_expiry);
                 e.pushKV("received", v.received);
                 e.pushKV("maker_pubkey", HexStr(q.session_eph.GetVch()));
+                // StoreOrder refuses an order without a half-tx, so every
+                // cached order has one.
+                const CTransaction& half_tx = *CHECK_NONFATAL(q.half_tx);
+                e.pushKV("half_txid", half_tx.GetHash().GetHex());
                 UniValue inputs(UniValue::VARR);
-                if (q.half_tx) {
-                    e.pushKV("half_txid", q.half_tx->GetHash().GetHex());
-                    for (const CTxIn& in : q.half_tx->vin) inputs.push_back(in.prevout.hash.GetHex());
-                } else {
-                    e.pushKV("half_txid", "");
-                }
+                for (const CTxIn& in : half_tx.vin) inputs.push_back(in.prevout.hash.GetHex());
                 e.pushKV("inputs", std::move(inputs));
                 arr.push_back(std::move(e));
             }
