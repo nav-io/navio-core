@@ -62,7 +62,7 @@ Transport::Transport(WorkerPool& pool, BroadcastFn broadcast, RelayFn relay, Opt
 
     // Built-in PING accounting so the echo path is observable without a feature
     // module registered. A feature may still override PING later if desired.
-    RegisterHandler(PayloadKind::PING, [this](const InboundMessage&) {
+    RegisterHandler(PayloadKind::PING, RECIPIENTS_PING, [this](const InboundMessage&) {
         m_pings_received.fetch_add(1, std::memory_order_relaxed);
     });
 }
@@ -93,8 +93,9 @@ bool Transport::AllowRelay()
     return false;
 }
 
-void Transport::RegisterHandler(PayloadKind kind, MessageHandler handler)
+void Transport::RegisterHandler(PayloadKind kind, AllowedRecipients allowed, MessageHandler handler)
 {
+    m_allowed[static_cast<uint8_t>(kind)] = allowed;
     m_handlers[static_cast<uint8_t>(kind)] = std::move(handler);
 }
 
@@ -371,19 +372,32 @@ void Transport::HandleJob(const Job& job)
     }
 
     const auto kind = static_cast<PayloadKind>(env.kind);
-    // A user reply key (mintp2pmsgreplykey) is handed to a correspondent to
-    // carry USER_DATA replies and nothing else. Every other kind is dropped
-    // here, before any handler runs: a CANDIDATE_TX on it would inject cover
-    // into our aggregates, an AGG_ANN would get our wallet to answer with a
-    // candidate built from our coins, and an RFQ_REQ would queue a match the
-    // operator may answer, either linking the key's owner to coins. Dropping
-    // exactly like an unknown key also keeps the purpose of a key unprobeable.
-    if (matched_user_reply && kind != PayloadKind::USER_DATA) {
-        LogPrint(BCLog::NET, "p2pmsg: dropping kind %d addressed to a user reply key\n", env.kind);
-        return;
-    }
     const MessageHandler& handler = m_handlers[env.kind];
     if (!handler) return;
+
+    // Drop a kind that arrived under a key class it does not accept, before
+    // its handler runs (see AllowedRecipients and the per-kind RECIPIENTS_* sets).
+    const AllowedRecipients& allowed = m_allowed[env.kind];
+    bool accepted{false};
+    const char* key_class{""};
+    switch (recipient) {
+    case RecipientKey::INBOX:
+        accepted = allowed.inbox;
+        key_class = "an inbox";
+        break;
+    case RecipientKey::BROADCAST:
+        accepted = allowed.broadcast;
+        key_class = "the broadcast";
+        break;
+    case RecipientKey::SESSION:
+        accepted = matched_user_reply ? allowed.user_reply : allowed.session;
+        key_class = matched_user_reply ? "a user reply" : "an internal session";
+        break;
+    }
+    if (!accepted) {
+        LogPrint(BCLog::NET, "p2pmsg: dropping kind %d addressed to %s key\n", env.kind, key_class);
+        return;
+    }
 
     InboundMessage msg;
     msg.kind = kind;

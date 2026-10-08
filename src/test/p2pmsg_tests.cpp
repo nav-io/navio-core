@@ -410,7 +410,7 @@ BOOST_AUTO_TEST_CASE(transport_ping_loopback)
     std::atomic<int> pings{0};
     std::vector<uint8_t> got;
     std::mutex gm;
-    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage& m) {
+    h.t->RegisterHandler(PayloadKind::PING, RECIPIENTS_PING, [&](const InboundMessage& m) {
         {
             std::lock_guard<std::mutex> lk(gm);
             got = m.body;
@@ -556,7 +556,7 @@ BOOST_AUTO_TEST_CASE(transport_inbox_rotation)
     h.t->now_override = 1000;
 
     std::atomic<int> pings{0};
-    h.t->RegisterHandler(PayloadKind::PING,
+    h.t->RegisterHandler(PayloadKind::PING, RECIPIENTS_PING,
                          [&](const InboundMessage&) { pings.fetch_add(1, std::memory_order_relaxed); });
 
     auto wait_pings = [&](int want) {
@@ -635,7 +635,8 @@ BOOST_AUTO_TEST_CASE(transport_recipient_key_tagging)
     std::atomic<int> got{0};
     std::mutex gm;
     std::vector<RecipientKey> tags;
-    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage& m) {
+    // Accept every class: this test is about the tag, not the gate.
+    h.t->RegisterHandler(PayloadKind::PING, {.inbox = true, .broadcast = true, .session = true}, [&](const InboundMessage& m) {
         {
             std::lock_guard<std::mutex> lk(gm);
             tags.push_back(m.recipient);
@@ -672,44 +673,66 @@ BOOST_AUTO_TEST_CASE(transport_recipient_key_tagging)
     BOOST_CHECK(tags[2] == RecipientKey::SESSION);
 }
 
-BOOST_AUTO_TEST_CASE(transport_user_reply_key_delivers_only_user_data)
+BOOST_AUTO_TEST_CASE(transport_allowed_recipients_per_kind)
 {
-    // A key minted for user replies carries USER_DATA and nothing else: a
-    // CANDIDATE_TX on it must never reach the aggregation pool, and no other
-    // kind may be dispatched either. Internal session keys are unaffected.
+    // Every built-in kind, registered with its production set, sent under
+    // each local key class: only the classes the set names reach a handler.
+    // The expected table is written out here rather than derived from the
+    // RECIPIENTS_* constants, so a wrong constant fails this test.
     LoopbackTransport h(/*bits=*/4);
 
-    std::atomic<int> candidates{0};
-    std::atomic<int> pings{0};
-    std::atomic<int> user_data{0};
-    std::atomic<bool> user_data_flagged{false};
-    h.t->RegisterHandler(PayloadKind::CANDIDATE_TX, [&](const InboundMessage&) {
-        candidates.fetch_add(1, std::memory_order_relaxed);
-    });
-    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage&) {
-        pings.fetch_add(1, std::memory_order_relaxed);
-    });
-    h.t->RegisterHandler(PayloadKind::USER_DATA, [&](const InboundMessage& m) {
-        user_data_flagged.store(m.recipient_user_reply);
-        user_data.fetch_add(1, std::memory_order_relaxed);
-    });
+    struct Row {
+        PayloadKind kind;
+        AllowedRecipients registered;
+        AllowedRecipients expected;
+    };
+    const std::vector<Row> rows{
+        {PayloadKind::PING, RECIPIENTS_PING, {.inbox = true}},
+        {PayloadKind::AGG_ANN, RECIPIENTS_AGG_ANN, {.broadcast = true}},
+        {PayloadKind::RFQ_REQ, RECIPIENTS_RFQ_REQ, {.broadcast = true}},
+        {PayloadKind::ORDER_ANN, RECIPIENTS_ORDER_ANN, {.broadcast = true}},
+        {PayloadKind::CANDIDATE_TX, RECIPIENTS_CANDIDATE_TX, {.session = true}},
+        {PayloadKind::RFQ_QUOTE, RECIPIENTS_RFQ_QUOTE, {.session = true}},
+        {PayloadKind::USER_DATA, RECIPIENTS_USER_DATA, {.inbox = true, .broadcast = true, .user_reply = true}},
+    };
 
+    // One delivery counter per (kind, key class). Each send carries its key
+    // class as its one-byte body, so a handler can tell which it came under.
+    enum KeyClass : uint8_t { INBOX, BROADCAST, SESSION, USER_REPLY, NUM_CLASSES };
+    std::array<std::array<std::atomic<int>, NUM_CLASSES>, 256> got{};
+    std::array<std::atomic<bool>, 256> flag_ok{};
+    for (const Row& row : rows) {
+        flag_ok[static_cast<uint8_t>(row.kind)] = true;
+        h.t->RegisterHandler(row.kind, row.registered, [&](const InboundMessage& m) {
+            const uint8_t k = static_cast<uint8_t>(m.kind);
+            if (m.body.size() != 1 || m.body[0] >= NUM_CLASSES) {
+                flag_ok[k] = false;
+                return;
+            }
+            // The flag a handler sees must match the class it was sent under.
+            if (m.recipient_user_reply != (m.body[0] == USER_REPLY)) flag_ok[k] = false;
+            got[k][m.body[0]].fetch_add(1, std::memory_order_relaxed);
+        });
+    }
+
+    blsct::PrivateKey session_priv(BlstScalar::Rand(/*exclude_zero=*/true));
+    const blsct::PublicKey session_pub = session_priv.GetPublicKey();
+    BOOST_REQUIRE(h.t->AddSessionKey(session_pub, session_priv, /*expiry=*/0));
     blsct::PrivateKey reply_priv(BlstScalar::Rand(/*exclude_zero=*/true));
     const blsct::PublicKey reply_pub = reply_priv.GetPublicKey();
     BOOST_REQUIRE(h.t->AddSessionKey(reply_pub, reply_priv, /*expiry=*/0, Transport::SessionPurpose::USER_REPLY));
-    blsct::PrivateKey pull_priv(BlstScalar::Rand(/*exclude_zero=*/true));
-    const blsct::PublicKey pull_pub = pull_priv.GetPublicKey();
-    BOOST_REQUIRE(h.t->AddSessionKey(pull_pub, pull_priv, /*expiry=*/0));
+    const std::array<blsct::PublicKey, NUM_CLASSES> keys{h.t->InboxPubKey(), BroadcastPubKey(), session_pub, reply_pub};
 
-    BOOST_REQUIRE(h.t->Send(reply_pub, PayloadKind::CANDIDATE_TX, {1}, /*stem=*/false));
-    BOOST_REQUIRE(h.t->Send(reply_pub, PayloadKind::PING, {2}, /*stem=*/false));
-    BOOST_REQUIRE(h.t->Send(reply_pub, PayloadKind::USER_DATA, {3}, /*stem=*/false));
-    BOOST_REQUIRE(h.t->Send(pull_pub, PayloadKind::CANDIDATE_TX, {4}, /*stem=*/false));
+    for (const Row& row : rows) {
+        for (uint8_t c = 0; c < NUM_CLASSES; ++c) {
+            BOOST_REQUIRE(h.t->Send(keys[c], row.kind, {c}, /*stem=*/false));
+        }
+    }
 
     // Every send is one decrypt job, enqueued synchronously by the loopback.
     // Waiting for all of them to complete makes the "dropped" counts final
     // rather than a race against a worker that has not run yet.
-    BOOST_REQUIRE_EQUAL(h.pool.Submitted(), 4U);
+    BOOST_REQUIRE_EQUAL(h.pool.Submitted(), rows.size() * NUM_CLASSES);
     using namespace std::chrono_literals;
     auto deadline = std::chrono::steady_clock::now() + 10s;
     while (h.pool.Completed() < h.pool.Submitted() && std::chrono::steady_clock::now() < deadline) {
@@ -717,10 +740,36 @@ BOOST_AUTO_TEST_CASE(transport_user_reply_key_delivers_only_user_data)
     }
     BOOST_REQUIRE_EQUAL(h.pool.Completed(), h.pool.Submitted());
 
-    BOOST_CHECK_EQUAL(candidates.load(), 1); // only the internal-key one
-    BOOST_CHECK_EQUAL(pings.load(), 0);
-    BOOST_CHECK_EQUAL(user_data.load(), 1);
-    BOOST_CHECK(user_data_flagged.load());
+    for (const Row& row : rows) {
+        const uint8_t k = static_cast<uint8_t>(row.kind);
+        const std::array<bool, NUM_CLASSES> want{row.expected.inbox, row.expected.broadcast,
+                                                 row.expected.session, row.expected.user_reply};
+        for (uint8_t c = 0; c < NUM_CLASSES; ++c) {
+            BOOST_TEST_INFO("kind " << int{k} << " key class " << int{c});
+            BOOST_CHECK_EQUAL(got[k][c].load(), want[c] ? 1 : 0);
+        }
+        BOOST_CHECK_MESSAGE(flag_ok[k].load(), "kind " << int{k} << " saw a wrong body or recipient_user_reply");
+    }
+}
+
+BOOST_AUTO_TEST_CASE(transport_kind_registered_with_no_recipients_gets_nothing)
+{
+    // Default deny: an empty set accepts no key class at all.
+    LoopbackTransport h(/*bits=*/4);
+    std::atomic<int> handled{0};
+    h.t->RegisterHandler(PayloadKind::PING, AllowedRecipients{}, [&](const InboundMessage&) {
+        handled.fetch_add(1, std::memory_order_relaxed);
+    });
+    BOOST_REQUIRE(h.t->Send(h.t->InboxPubKey(), PayloadKind::PING, {1}, /*stem=*/false));
+    BOOST_REQUIRE(h.t->Send(BroadcastPubKey(), PayloadKind::PING, {2}, /*stem=*/false));
+
+    using namespace std::chrono_literals;
+    auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (h.pool.Completed() < 2 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(1ms);
+    }
+    BOOST_REQUIRE_EQUAL(h.pool.Completed(), 2U);
+    BOOST_CHECK_EQUAL(handled.load(), 0);
 }
 
 BOOST_AUTO_TEST_CASE(transport_pow_kind_loopback)
@@ -728,11 +777,11 @@ BOOST_AUTO_TEST_CASE(transport_pow_kind_loopback)
     LoopbackTransport h(/*bits=*/6);
 
     std::atomic<int> reqs{0};
-    h.t->RegisterHandler(PayloadKind::RFQ_REQ, [&](const InboundMessage&) {
+    h.t->RegisterHandler(PayloadKind::RFQ_REQ, RECIPIENTS_RFQ_REQ, [&](const InboundMessage&) {
         reqs.fetch_add(1, std::memory_order_relaxed);
     });
 
-    BOOST_REQUIRE(h.t->Send(h.t->InboxPubKey(), PayloadKind::RFQ_REQ, {1, 2, 3}, /*stem=*/true));
+    BOOST_REQUIRE(h.t->Send(BroadcastPubKey(), PayloadKind::RFQ_REQ, {1, 2, 3}, /*stem=*/true));
 
     using namespace std::chrono_literals;
     auto deadline = std::chrono::steady_clock::now() + 10s;
@@ -776,7 +825,7 @@ BOOST_AUTO_TEST_CASE(transport_replay_rejected)
 {
     LoopbackTransport h(/*bits=*/4);
     h.t->now_override = 1000;
-    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage&) {});
+    h.t->RegisterHandler(PayloadKind::PING, RECIPIENTS_PING, [&](const InboundMessage&) {});
 
     auto env = StampedEnvelope(h.t->InboxPubKey(), PayloadKind::PING, {7, 7}, /*bits=*/4, /*now=*/1000);
     auto v = SerEnv(env);
@@ -793,7 +842,7 @@ BOOST_AUTO_TEST_CASE(transport_session_key_decrypts)
     h.t->now_override = 1000;
 
     std::atomic<int> pings{0};
-    h.t->RegisterHandler(PayloadKind::PING, [&](const InboundMessage&) {
+    h.t->RegisterHandler(PayloadKind::PING, {.session = true}, [&](const InboundMessage&) {
         pings.fetch_add(1, std::memory_order_relaxed);
     });
 

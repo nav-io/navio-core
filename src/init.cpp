@@ -2194,7 +2194,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // intent, note the match. (Building + sending the encrypted quote
             // half needs the wallet and is handled by the wallet-side flow.)
             node.p2pmsg_transport->RegisterHandler(
-                p2pmsg::PayloadKind::RFQ_REQ,
+                p2pmsg::PayloadKind::RFQ_REQ, p2pmsg::RECIPIENTS_RFQ_REQ,
                 [intents, matcher](const p2pmsg::InboundMessage& m) {
                     try {
                         DataStream ss{MakeByteSpan(m.body)};
@@ -2212,19 +2212,16 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 });
 
             // A cover candidate answering one of OUR pull requests: add to the
-            // pool. Only accepted when it decrypted under a per-round pull
-            // session key — a candidate readable under the inbox or broadcast
-            // key was not solicited by us 1:1, and pooling publicly readable
-            // candidates would let any bus observer subtract the cover halves
-            // back out of a later aggregate (defeating the decoys entirely).
+            // pool. Only accepted under an internal session key (see
+            // RECIPIENTS_CANDIDATE_TX) — a candidate readable under the inbox
+            // or broadcast key was not solicited by us 1:1, and pooling
+            // publicly readable candidates would let any bus observer
+            // subtract the cover halves back out of a later aggregate
+            // (defeating the decoys entirely).
             ChainstateManager* cover_chainman = node.chainman.get();
             node.p2pmsg_transport->RegisterHandler(
-                p2pmsg::PayloadKind::CANDIDATE_TX,
+                p2pmsg::PayloadKind::CANDIDATE_TX, p2pmsg::RECIPIENTS_CANDIDATE_TX,
                 [pool, cover_chainman](const p2pmsg::InboundMessage& m) {
-                    if (m.recipient != p2pmsg::RecipientKey::SESSION) {
-                        LogPrint(BCLog::NET, "p2pmsg: dropping CANDIDATE_TX not addressed to a pull session key (recipient=%d)\n", (int)m.recipient);
-                        return;
-                    }
                     try {
                         DataStream ss{MakeByteSpan(m.body)};
                         ParamsStream ps{TX_WITH_WITNESS, ss};
@@ -2261,7 +2258,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             {
                 aggregation::CandidateRequestQueue* requests = node.agg_requests.get();
                 node.p2pmsg_transport->RegisterHandler(
-                    p2pmsg::PayloadKind::AGG_ANN,
+                    p2pmsg::PayloadKind::AGG_ANN, p2pmsg::RECIPIENTS_AGG_ANN,
                     [requests, transport = node.p2pmsg_transport.get()](const p2pmsg::InboundMessage& m) {
                         blsct::PublicKey reply_key;
                         if (!reply_key.SetVch(m.body)) return; // drop malformed
@@ -2285,8 +2282,10 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // An application message. The node parses only the frame's topic;
             // the body is stored untouched. Delivery rules by decrypting key:
             //  - our rotating inbox prekey: always stored (scope "inbox"),
-            //  - a session key (mintp2pmsgreplykey): always stored ("session")
-            //    — the key was minted deliberately to receive exactly this,
+            //  - a user reply key (mintp2pmsgreplykey): always stored
+            //    ("session") — the key was minted deliberately to receive
+            //    exactly this (internal session keys are not accepted, see
+            //    RECIPIENTS_USER_DATA),
             //  - the well-known broadcast key: public pub/sub; stored only
             //    when the topic is subscribed ("broadcast"), so every public
             //    app's traffic does not accumulate on every node.
@@ -2305,7 +2304,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 auto notify_state = std::make_shared<NotifyState>();
 #endif
                 node.p2pmsg_transport->RegisterHandler(
-                    p2pmsg::PayloadKind::USER_DATA,
+                    p2pmsg::PayloadKind::USER_DATA, p2pmsg::RECIPIENTS_USER_DATA,
                     [inbox, msg_notify, notify_state](const p2pmsg::InboundMessage& m) {
                         if (m.body.empty() || m.body.size() > p2pmsg::MAX_USER_MSG_BYTES) return;
                         p2pmsg::UserMsgFrame frame;
@@ -2325,14 +2324,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         switch (m.recipient) {
                         case p2pmsg::RecipientKey::INBOX: scope = p2pmsg::MsgScope::INBOX; break;
                         case p2pmsg::RecipientKey::SESSION:
-                            // Only keys minted via mintp2pmsgreplykey count as
-                            // user reply channels. Internal session keys (RFQ
-                            // replies, candidate pulls) are BROADCAST on the
-                            // bus, so anyone can encrypt USER_DATA to them --
-                            // storing those would let any observer inject
-                            // entries indistinguishable from real replies and
-                            // fire the push notifiers for free.
-                            if (!m.recipient_user_reply) return;
+                            // A user reply key: the transport drops USER_DATA
+                            // under an internal session key before this runs.
                             scope = p2pmsg::MsgScope::SESSION;
                             reply_pubkey = m.recipient_session.GetVch();
                             break;
@@ -2419,7 +2412,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
             // A maker quote for one of our open RFQs: record it.
             node.p2pmsg_transport->RegisterHandler(
-                p2pmsg::PayloadKind::RFQ_QUOTE,
+                p2pmsg::PayloadKind::RFQ_QUOTE, p2pmsg::RECIPIENTS_RFQ_QUOTE,
                 [matcher](const p2pmsg::InboundMessage& m) {
                     try {
                         DataStream ss{MakeByteSpan(m.body)};
@@ -2440,7 +2433,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
             // A broadcast standing order: cache it.
             node.p2pmsg_transport->RegisterHandler(
-                p2pmsg::PayloadKind::ORDER_ANN,
+                p2pmsg::PayloadKind::ORDER_ANN, p2pmsg::RECIPIENTS_ORDER_ANN,
                 [orders](const p2pmsg::InboundMessage& m) {
                     try {
                         DataStream ss{MakeByteSpan(m.body)};

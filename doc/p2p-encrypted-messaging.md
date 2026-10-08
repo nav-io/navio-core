@@ -132,6 +132,22 @@ EciesPacket   enc
 plus `8..255` reserved). The wire field is a plain `u8`; a node that does not
 recognize a kind still relays the message.
 
+Each kind is accepted only under the local key classes its senders use
+(`AllowedRecipients`, fixed at `RegisterHandler`). A message that decrypts under
+any other class is dropped before its handler runs, exactly like one that
+decrypts under no key, and a kind registered without a class accepts nothing:
+
+| Kind                              | Accepted under                              |
+| --------------------------------- | ------------------------------------------- |
+| `PING`                            | inbox key (`sendp2pping`, debug)            |
+| `AGG_ANN`, `RFQ_REQ`, `ORDER_ANN` | broadcast key                               |
+| `CANDIDATE_TX`, `RFQ_QUOTE`       | internal session key (pull / RFQ reply key) |
+| `USER_DATA`                       | inbox, broadcast or minted user reply key   |
+
+The inbox key is published with the node's identity, so a request that makes the
+node answer with its coins (`AGG_ANN`, `RFQ_REQ`) must not be accepted under it.
+A user reply key carries `USER_DATA` only.
+
 `flag` is optional and empty for everything except messages a recipient may want
 to retrieve after being offline — see **Fuzzy message detection** below. A flag
 of exactly 83 bytes is one this build can test; other non-empty sizes are
@@ -579,11 +595,11 @@ anyone running a p2pmsg node. Instead each node privately fills its own pool:
    how fast that position can be built, and operators who do not want the
    exposure can opt out with `-servecandidates=0` — but the collusion argument
    alone should not be read as a guarantee against an active adversary.
-3. **Collect** — the `CANDIDATE_TX` handler pools a candidate ONLY when it
-   decrypted under one of the node's registered pull session keys
-   (`InboundMessage::recipient == SESSION`); candidates readable under the inbox
-   or broadcast key are rejected. Spent-input eviction keeps the pool fresh.
-   Pool contents are node-private.
+3. **Collect** — a candidate is pooled ONLY when it decrypted under one of the
+   node's internal session keys (see the accepted-key table above); candidates
+   readable under the inbox or broadcast key, or sent to a user reply key, are
+   rejected. Spent-input eviction keeps the pool fresh. Pool contents are
+   node-private.
 4. **Aggregate** — every wallet send RPC (`sendtoblsctaddress`, token/NFT sends,
    staking ops — anything routed through `blsct::SendTransaction`) picks a
    RANDOM subset from the pool by default (`-aggregatesends=1`), over-funds its
