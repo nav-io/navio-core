@@ -361,6 +361,7 @@ BASE_SCRIPTS = [
     'blsct_imported_wallet_history.py',
     'blsct_unconfirmed_spending.py',
     'blsct_unconfirmed_chain_single_utxo.py',
+    'blsct_aggregated_unconfirmed_chain.py',
     'blsct_chain_in_one_block.py',
     'blsct_fixed_base_verify.py',
     'blsct_same_block_multi_send.py',

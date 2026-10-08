@@ -9,6 +9,8 @@
 #include <wallet/transaction.h>
 #include <wallet/wallet.h>
 
+#include <algorithm>
+
 namespace wallet {
 isminetype InputIsMine(const CWallet& wallet, const CTxIn& txin)
 {
@@ -250,6 +252,16 @@ CAmount OutputGetImmatureCredit(const CWallet& wallet, const CWalletOutput& wout
     return 0;
 }
 
+//! The credit `txout` adds to CachedTxGetAvailableCredit().
+static CAmount OutputGetAvailableCredit(const CWallet& wallet, const CTxOut& txout, const isminefilter& filter, const TokenId& token_id) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    if (txout.tokenId != token_id) return 0;
+    if (wallet.IsSpent(COutPoint(txout.GetHash()))) return 0;
+    const bool allow_used_addresses = (filter & ISMINE_USED) || !wallet.IsWalletFlagSet(WALLET_FLAG_AVOID_REUSE);
+    if (!allow_used_addresses && wallet.IsSpentKey(txout.scriptPubKey)) return 0;
+    return OutputGetCredit(wallet, txout, filter, token_id);
+}
+
 CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter, const TokenId& token_id)
 {
     AssertLockHeld(wallet.cs_wallet);
@@ -268,16 +280,11 @@ CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, 
         return wtx.m_amounts[CWalletTx::AVAILABLE_CREDIT].m_value[filter];
     }
 
-    bool allow_used_addresses = (filter & ISMINE_USED) || !wallet.IsWalletFlagSet(WALLET_FLAG_AVOID_REUSE);
     CAmount nCredit = 0;
-    for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
-        const CTxOut& txout = wtx.tx->vout[i];
-        if (txout.tokenId != token_id) continue;
-        if (!wallet.IsSpent(COutPoint(txout.GetHash())) && (allow_used_addresses || !wallet.IsSpentKey(txout.scriptPubKey))) {
-            nCredit += OutputGetCredit(wallet, txout, filter, token_id);
-            if (!MoneyRange(nCredit))
-                throw std::runtime_error(std::string(__func__) + " : value out of range");
-        }
+    for (const CTxOut& txout : wtx.tx->vout) {
+        nCredit += OutputGetAvailableCredit(wallet, txout, filter, token_id);
+        if (!MoneyRange(nCredit))
+            throw std::runtime_error(std::string(__func__) + " : value out of range");
     }
 
     if (allow_cache) {
@@ -286,6 +293,19 @@ CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, 
     }
 
     return nCredit;
+}
+
+//! The part of CachedTxGetAvailableCredit() in outputs the tx's trust does
+//! not cover (TxTrustCoversOutput).
+static CAmount TxGetUncoveredAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter, const TokenId& token_id) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    CAmount credit = 0;
+    for (const CTxOut& txout : wtx.tx->vout) {
+        if (TxTrustCoversOutput(wallet, wtx, txout.GetHash())) continue;
+        credit += OutputGetAvailableCredit(wallet, txout, filter, token_id);
+        if (!MoneyRange(credit)) throw std::runtime_error(std::string(__func__) + " : value out of range");
+    }
+    return credit;
 }
 
 std::vector<StakedCommitmentInfo> GetStakedCommitmentInfo(const CWallet& wallet, const CWalletTx& wtx)
@@ -444,6 +464,14 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
     // Don't trust unconfirmed transactions from us unless they are in the mempool.
     if (!wtx.InMempool()) return false;
 
+    // An aggregate this wallet built and broadcast also spends the cover
+    // halves' inputs, which belong to other wallets: skip those, still vet
+    // ours. The trust then covers only the own half's outputs (see
+    // TxTrustCoversOutput), and a cover provider can still evict the
+    // aggregate with a double-spend; see
+    // doc/release-notes-aggregated-send-trust.md and #511.
+    const bool skip_foreign_inputs{!wtx.m_own_half_outputs.empty()};
+
     // Trusted if all inputs are from us and are in the mempool:
     for (const CTxIn& txin : wtx.tx->vin) {
         // Transactions not sent by us: not trusted
@@ -463,15 +491,13 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
                     }
                 }
             }
+            if (skip_foreign_inputs && wallet.GetWalletOutput(txin.prevout) == nullptr) continue;
             return false;
         }
-        CTxOut parentOut;
-        for (auto& it : parent->tx->vout) {
-            if (it.GetHash() == txin.prevout.hash) {
-                parentOut = it;
-                break;
-            }
-        }
+        const auto parent_out_it{std::find_if(parent->tx->vout.begin(), parent->tx->vout.end(),
+                                              [&](const CTxOut& out) { return out.GetHash() == txin.prevout.hash; })};
+        if (parent_out_it == parent->tx->vout.end()) return false;
+        const CTxOut& parentOut{*parent_out_it};
         // Check that this specific input being spent is trusted. A staked
         // commitment of our own counts: a consolidating stakelock/stakeunlock
         // spends the wallet's previous commitment output, which is exactly as
@@ -479,7 +505,13 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
         // every consolidating stake tx as untrusted, so its in-flight amount
         // showed up in the untrusted pending balance instead of
         // pending_staked_commitment_balance.
-        if ((wallet.IsMine(parentOut) & (ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT)) == 0) return false;
+        if ((wallet.IsMine(parentOut) & (ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT)) == 0) {
+            // A cover input can spend another wallet's output of one of our
+            // earlier aggregates, which is indexed to that aggregate.
+            if (skip_foreign_inputs && wallet.IsMine(parentOut) == ISMINE_NO) continue;
+            return false;
+        }
+        if (!TxTrustCoversOutput(wallet, *parent, txin.prevout.hash)) return false;
         // If we've already trusted this parent, continue
         if (trusted_parents.contains(parent->GetHash())) continue;
         // Recurse to check that the parent is also trusted
@@ -509,7 +541,15 @@ bool IsOutputTrusted(const CWallet& wallet, const CWalletOutput& wout)
     const CWalletTx* parent = wallet.GetWalletTxFromOutpoint(outpoint);
     if (parent == nullptr) return false;
 
-    return CachedTxIsTrusted(wallet, *parent);
+    return CachedTxIsTrusted(wallet, *parent) && TxTrustCoversOutput(wallet, *parent, outpoint.hash);
+}
+
+bool TxTrustCoversOutput(const CWallet& wallet, const CWalletTx& wtx, const uint256& output_hash)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (wtx.m_own_half_outputs.empty() || wtx.m_own_half_outputs.contains(output_hash)) return true;
+    // Once confirmed, the cover halves' inputs are settled like ours.
+    return wallet.GetTxDepthInMainChain(wtx) >= 1;
 }
 
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx)
@@ -533,18 +573,29 @@ Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse,
             const CAmount tx_credit_mine{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | reuse_filter, token_id)};
             const CAmount tx_credit_staked_commitment{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_STAKED_COMMITMENT_BLSCT, token_id)};
             const CAmount tx_credit_watchonly{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_WATCH_ONLY | reuse_filter, token_id)};
+            // The outputs a trusted tx's trust does not cover count as
+            // untrusted pending, the same as an untrusted tx's.
+            const bool has_uncovered{is_trusted && !wtx.m_own_half_outputs.empty()};
+            const CAmount uncovered_mine{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | reuse_filter, token_id) : 0};
+            const CAmount uncovered_staked_commitment{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_STAKED_COMMITMENT_BLSCT, token_id) : 0};
+            const CAmount uncovered_watchonly{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_WATCH_ONLY | reuse_filter, token_id) : 0};
             if (is_trusted && tx_depth >= min_depth) {
-                ret.m_mine_trusted += tx_credit_mine;
-                ret.m_watchonly_trusted += tx_credit_watchonly;
+                ret.m_mine_trusted += tx_credit_mine - uncovered_mine;
+                ret.m_watchonly_trusted += tx_credit_watchonly - uncovered_watchonly;
                 if (tx_depth >= 1) {
-                    ret.m_mine_staked_commitment += tx_credit_staked_commitment;
+                    ret.m_mine_staked_commitment += tx_credit_staked_commitment - uncovered_staked_commitment;
                 } else {
-                    ret.m_mine_pending_staked_commitment += tx_credit_staked_commitment;
+                    ret.m_mine_pending_staked_commitment += tx_credit_staked_commitment - uncovered_staked_commitment;
                 }
             }
-            if (!is_trusted && tx_depth == 0 && wtx.InMempool()) {
-                ret.m_mine_untrusted_pending += tx_credit_mine + tx_credit_staked_commitment;
-                ret.m_watchonly_untrusted_pending += tx_credit_watchonly;
+            if (tx_depth == 0 && wtx.InMempool()) {
+                if (!is_trusted) {
+                    ret.m_mine_untrusted_pending += tx_credit_mine + tx_credit_staked_commitment;
+                    ret.m_watchonly_untrusted_pending += tx_credit_watchonly;
+                } else {
+                    ret.m_mine_untrusted_pending += uncovered_mine + uncovered_staked_commitment;
+                    ret.m_watchonly_untrusted_pending += uncovered_watchonly;
+                }
             }
             ret.m_mine_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id);
             ret.m_watchonly_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_WATCH_ONLY, token_id);
@@ -639,6 +690,7 @@ BlsctTrustedBalance GetBlsctTrustedBalance(const CWallet& wallet, const int min_
             if (!txout.HasBLSCTRangeProof()) continue;
             if (!txout.tokenId.IsNull()) continue;
             if (wallet.IsSpent(COutPoint(txout.GetHash()))) continue;
+            if (!TxTrustCoversOutput(wallet, wtx, txout.GetHash())) continue;
             AddBlsctTrustedCredit(ret, wallet.IsMine(txout), wtx.GetBLSCTRecoveryData(i).amount);
         }
     }
@@ -721,6 +773,7 @@ std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet, cons
             for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
                 const auto& output = wtx.tx->vout[i];
                 if (output.tokenId != token_id) continue;
+                if (!TxTrustCoversOutput(wallet, wtx, output.GetHash())) continue;
 
                 if (output.HasBLSCTRangeProof()) {
                     auto blsct_km = wallet.GetBLSCTKeyMan();

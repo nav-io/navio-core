@@ -299,10 +299,17 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
                 candidates.clear();
                 continue;
             }
-            // The combined tx's hash differs from the wallet's own half, so
-            // there is no CWalletTx to commit; the wallet recovers its inputs
-            // and outputs from the broadcast tx via BLSCT scanning (wallet-local
-            // mapValue comments are dropped on this path).
+            // Record the combined tx as this wallet's send now, as
+            // CommitTransaction does on the plain path: waiting for the
+            // mempool scan to find it leaves the spent input looking unspent
+            // and the change missing to a chained send that fires first.
+            // The record of the own half is also what lets its outputs be
+            // trusted although the cover halves' inputs are not ours.
+            if (!wallet.RecordBroadcastTransaction(agg_tx, res->tx.vout, std::move(mapValue))) {
+                // The aggregate is broadcast, so the send succeeded; failing
+                // the RPC now would invite a resend of a tx already out.
+                LogPrintf("sendtoblsctaddress: aggregate %s broadcast but not fully recorded by the wallet\n", agg_tx->GetHash().ToString());
+            }
         } else {
             const CTransactionRef& tx = MakeTransactionRef(res->tx);
 
@@ -1723,7 +1730,8 @@ RPCHelpMan getbalanceforaddress()
                         }
 
                         const CAmount blsct_amount = is_blsct ? wtx.GetBLSCTRecoveryData(i).amount : 0;
-                        add_output(txout, blsct_amount, is_blsct, is_trusted, depth, in_mempool, is_immature_coinbase, is_in_main_chain);
+                        const bool is_output_trusted = is_trusted && wallet::TxTrustCoversOutput(*pwallet, wtx, txout.GetHash());
+                        add_output(txout, blsct_amount, is_blsct, is_output_trusted, depth, in_mempool, is_immature_coinbase, is_in_main_chain);
                     }
                 }
             }

@@ -5,12 +5,18 @@
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/verification.h>
+#include <key_io.h>
+#include <rpc/util.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <txdb.h>
+#include <wallet/context.h>
 #include <wallet/receive.h>
+#include <wallet/spend.h>
 #include <wallet/test/util.h>
 #include <wallet/wallet.h>
+
+#include <algorithm>
 
 #include <boost/test/unit_test.hpp>
 
@@ -745,6 +751,294 @@ BOOST_FIXTURE_TEST_CASE(output_storage_rescan_keeps_confirmed_spend, TestingSetu
                                       /*spent_by=*/spender) != nullptr);
     BOOST_CHECK_MESSAGE(!wallet->GetWalletOutput(outpoint)->IsSpent(),
                         "a reorg of the spending tx should un-spend the output");
+}
+
+//! A wallet holding one confirmed coin, a cover wallet holding another, and
+//! an aggregate in the shape sendtoblsctaddress broadcasts by default: the
+//! wallet's own half (coin -> change) combined with a cover half (the cover
+//! wallet's coin -> back to the cover wallet, or with `cover_pays_wallet` to
+//! the wallet itself).
+struct OwnAggregate {
+    static constexpr CAmount change_amount{99 * COIN};
+    static constexpr CAmount cover_amount{5 * COIN};
+    std::shared_ptr<CWallet> wallet;
+    std::shared_ptr<CWallet> cover_wallet;
+    blsct::DoublePublicKey address;
+    COutPoint coin_outpoint;
+    COutPoint cover_coin_outpoint;
+    COutPoint change_outpoint;
+    COutPoint cover_outpoint;
+    std::vector<CTxOut> own_half_outputs;
+    CTransactionRef aggregate;
+};
+
+static OwnAggregate MakeOwnAggregate(interfaces::Chain* chain, bool cover_pays_wallet = false)
+{
+    OwnAggregate r;
+    r.wallet = std::make_shared<CWallet>(chain, "", CreateMockableWalletDatabase());
+    r.wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+    r.cover_wallet = std::make_shared<CWallet>(chain, "", CreateMockableWalletDatabase());
+    r.cover_wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    auto blsct_km = r.wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    auto cover_km = r.cover_wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(cover_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    r.wallet->SetLastBlockProcessed(1, InsecureRand256());
+    r.cover_wallet->SetLastBlockProcessed(1, InsecureRand256());
+
+    const auto address = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+    r.address = address;
+    const auto cover_address = std::get<blsct::DoublePublicKey>(cover_km->GetNewDestination(0).value());
+
+    const CTxOut coin = blsct::CreateOutput(address, 100 * COIN, "coin").out;
+    r.coin_outpoint = COutPoint(coin.GetHash());
+    BOOST_REQUIRE(r.wallet->AddToWallet(r.coin_outpoint, std::make_shared<const CTxOut>(coin), TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false));
+    const CTxOut cover_coin = blsct::CreateOutput(cover_address, 5 * COIN, "cover coin").out;
+    r.cover_coin_outpoint = COutPoint(cover_coin.GetHash());
+    BOOST_REQUIRE(r.cover_wallet->AddToWallet(r.cover_coin_outpoint, std::make_shared<const CTxOut>(cover_coin), TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false));
+
+    CMutableTransaction mtx;
+    mtx.nVersion |= CTransaction::BLSCT_MARKER;
+    mtx.vin.emplace_back(r.coin_outpoint);
+    mtx.vin.emplace_back(r.cover_coin_outpoint);
+    mtx.vout.push_back(blsct::CreateOutput(address, OwnAggregate::change_amount, "change").out);
+    mtx.vout.push_back(blsct::CreateOutput(cover_pays_wallet ? address : cover_address, OwnAggregate::cover_amount, "cover").out);
+    r.aggregate = MakeTransactionRef(mtx);
+    r.change_outpoint = COutPoint(r.aggregate->vout[0].GetHash());
+    r.cover_outpoint = COutPoint(r.aggregate->vout[1].GetHash());
+    r.own_half_outputs = {r.aggregate->vout[0]};
+    return r;
+}
+
+//! The change is the wallet's one coin, trusted and spendable.
+static void CheckChangeIsTheSpendableCoin(const OwnAggregate& r) EXCLUSIVE_LOCKS_REQUIRED(r.wallet->cs_wallet)
+{
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_REQUIRE(r.wallet->GetWalletTx(r.aggregate->GetHash()) != nullptr);
+    BOOST_CHECK(CachedTxIsTrusted(*r.wallet, *r.wallet->GetWalletTx(r.aggregate->GetHash())));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, OwnAggregate::change_amount);
+    const auto coins = AvailableBlsctCoins(*r.wallet).All();
+    BOOST_REQUIRE_EQUAL(coins.size(), 1U);
+    BOOST_CHECK(coins[0].outpoint == r.change_outpoint);
+    BOOST_CHECK_EQUAL(coins[0].txout.nValue, OwnAggregate::change_amount);
+}
+
+// Regression for issue #479. sendtoblsctaddress merges the wallet's own half
+// with cover halves from other wallets and broadcasts the combined tx, whose
+// inputs are partly not ours. Learned only from the mempool scan, that tx is
+// untrusted (a foreign input) and its change is neither in the trusted balance
+// nor spendable, so a chained send fails with "Not enough funds available".
+// Recorded by the sender as its own send, the change is trusted and spendable.
+BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_change_trusted, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+
+    // Seen only through the mempool scan: the coin is spent, the change is
+    // ours but untrusted, and nothing is spendable.
+    r.wallet->transactionAddedToMempool(r.aggregate);
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_REQUIRE(r.wallet->GetWalletTx(r.aggregate->GetHash()) != nullptr);
+    BOOST_CHECK(!CachedTxIsTrusted(*r.wallet, *r.wallet->GetWalletTx(r.aggregate->GetHash())));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 0);
+    BOOST_CHECK_EQUAL(AvailableBlsctCoins(*r.wallet).Size(), 0U);
+
+    // Recorded by the send that built it, the change is trusted and is the
+    // one spendable coin.
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    CheckChangeIsTheSpendableCoin(r);
+
+    // The cover wallet only saw the aggregate spend its coin; it did not
+    // build it, so the sender's input still makes its output untrusted.
+    r.cover_wallet->transactionAddedToMempool(r.aggregate);
+    BOOST_CHECK(r.cover_wallet->IsSpent(r.cover_coin_outpoint));
+    BOOST_REQUIRE(r.cover_wallet->GetWalletTx(r.aggregate->GetHash()) != nullptr);
+    BOOST_CHECK(!CachedTxIsTrusted(*r.cover_wallet, *r.cover_wallet->GetWalletTx(r.aggregate->GetHash())));
+    BOOST_CHECK_EQUAL(GetBalance(*r.cover_wallet).m_mine_trusted + GetBlsctBalance(*r.cover_wallet).m_mine_trusted, 0);
+    BOOST_CHECK_EQUAL(AvailableBlsctCoins(*r.cover_wallet).Size(), 0U);
+}
+
+// The order a chained send depends on: the send records its aggregate before
+// the mempool callback has run, and the change must already be spendable.
+// The callback arriving afterwards must leave that state as it is.
+BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_recorded_before_scan, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK(r.wallet->cs_wallet);
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_CHECK(r.wallet->GetWalletOutput(r.change_outpoint) != nullptr);
+    CheckChangeIsTheSpendableCoin(r);
+
+    r.wallet->transactionAddedToMempool(r.aggregate);
+    CheckChangeIsTheSpendableCoin(r);
+}
+
+// The sync callbacks can confirm the aggregate before the broadcasting RPC
+// gets to record it. Recording then must not demote the confirmed spend of
+// the wallet's coin back to a mempool spend.
+BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_recorded_after_confirm, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK(r.wallet->cs_wallet);
+
+    const TxStateConfirmed confirmed{InsecureRand256(), 1, 1};
+    BOOST_REQUIRE(r.wallet->AddToWallet(r.aggregate, confirmed));
+    BOOST_REQUIRE(r.wallet->AddToWallet(r.coin_outpoint, nullptr, confirmed, nullptr, true, false, confirmed, false, r.aggregate->GetHash()));
+    BOOST_REQUIRE(r.wallet->GetWalletOutput(r.coin_outpoint)->state_spent<TxStateConfirmed>());
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash())->isConfirmed());
+    BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash())->fFromMe);
+    BOOST_CHECK(r.wallet->GetWalletOutput(r.coin_outpoint)->state_spent<TxStateConfirmed>());
+}
+
+// A cover provider can address its candidate to this wallet. That output is
+// funded only by the provider's input, which the aggregate's trust skipped,
+// so at depth 0 it must stay untrusted pending -- out of the trusted balance,
+// the coin set, and the trust of a tx that spends it -- while the wallet's
+// own change stays trusted. Once confirmed, both are trusted.
+BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_cover_output_untrusted, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/true);
+    LOCK(r.wallet->cs_wallet);
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    const CWalletTx* wtx = r.wallet->GetWalletTx(r.aggregate->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_REQUIRE(r.wallet->GetWalletOutput(r.cover_outpoint) != nullptr);
+    BOOST_CHECK(CachedTxIsTrusted(*r.wallet, *wtx));
+    BOOST_CHECK(TxTrustCoversOutput(*r.wallet, *wtx, r.change_outpoint.hash));
+    BOOST_CHECK(!TxTrustCoversOutput(*r.wallet, *wtx, r.cover_outpoint.hash));
+    BOOST_CHECK(IsOutputTrusted(*r.wallet, *r.wallet->GetWalletOutput(r.change_outpoint)));
+    BOOST_CHECK(!IsOutputTrusted(*r.wallet, *r.wallet->GetWalletOutput(r.cover_outpoint)));
+
+    const Balance balance{GetBalance(*r.wallet)};
+    const Balance blsct_balance{GetBlsctBalance(*r.wallet)};
+    BOOST_CHECK_EQUAL(balance.m_mine_trusted + blsct_balance.m_mine_trusted, OwnAggregate::change_amount);
+    BOOST_CHECK_EQUAL(balance.m_mine_untrusted_pending + blsct_balance.m_mine_untrusted_pending, OwnAggregate::cover_amount);
+    BOOST_CHECK_EQUAL(GetBlsctTrustedBalance(*r.wallet, /*min_depth=*/0).m_mine, OwnAggregate::change_amount);
+    const auto coins = AvailableBlsctCoins(*r.wallet).All();
+    BOOST_REQUIRE_EQUAL(coins.size(), 1U);
+    BOOST_CHECK(coins[0].outpoint == r.change_outpoint);
+    const auto mapwallet_coins = AvailableCoins(*r.wallet).All();
+    BOOST_CHECK(std::none_of(mapwallet_coins.begin(), mapwallet_coins.end(), [&](const COutput& c) { return c.outpoint == r.cover_outpoint; }));
+    CAmount address_balances{0};
+    for (const auto& [_, amount] : GetAddressBalances(*r.wallet)) address_balances += amount;
+    BOOST_CHECK_EQUAL(address_balances, OwnAggregate::change_amount);
+
+    // A send of this wallet that spends the cover-funded output inherits its
+    // missing trust instead of the aggregate's.
+    CMutableTransaction child;
+    child.nVersion |= CTransaction::BLSCT_MARKER;
+    child.vin.emplace_back(r.cover_outpoint);
+    const auto address = std::get<blsct::DoublePublicKey>(r.wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    child.vout.push_back(blsct::CreateOutput(address, 4 * COIN, "child").out);
+    const CWalletTx* child_wtx = r.wallet->AddToWallet(MakeTransactionRef(child), TxStateInMempool{}, [](CWalletTx& w, bool) {
+        w.fFromMe = true;
+        return true;
+    });
+    BOOST_REQUIRE(child_wtx != nullptr);
+    BOOST_CHECK(!CachedTxIsTrusted(*r.wallet, *child_wtx));
+
+    // Confirmed, the cover's input is settled and its output is trusted too.
+    BOOST_REQUIRE(r.wallet->AddToWallet(r.aggregate, TxStateConfirmed{InsecureRand256(), 1, 1}));
+    BOOST_CHECK(TxTrustCoversOutput(*r.wallet, *wtx, r.cover_outpoint.hash));
+}
+
+// getbalanceforaddress classifies each output of the address itself: the
+// change of the aggregate is trusted, the output the cover paid to the same
+// address is untrusted pending.
+BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_cover_output_address_balance, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/true);
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+
+    WalletContext context;
+    context.args = &m_args;
+    AddWallet(context, r.wallet);
+    JSONRPCRequest request;
+    request.context = &context;
+    request.params.setArray();
+    request.params.push_back(EncodeDestination(CTxDestination{r.address}));
+    const UniValue result{getbalanceforaddress().HandleRequest(request)};
+    BOOST_CHECK_EQUAL(AmountFromValue(result["mine"]["trusted"]), OwnAggregate::change_amount);
+    BOOST_CHECK_EQUAL(AmountFromValue(result["mine"]["untrusted_pending"]), OwnAggregate::cover_amount);
+    RemoveWallet(context, r.wallet, /*load_on_start=*/std::nullopt);
+}
+
+// The aggregate is already broadcast when the wallet records it, so a wallet
+// database error must not fail the send. The mempool sync still adds the tx.
+BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_record_failure, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+
+    GetMockableDatabase(*r.wallet).m_pass = false;
+    bool recorded{true};
+    BOOST_CHECK_NO_THROW(recorded = r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_CHECK(!recorded);
+    GetMockableDatabase(*r.wallet).m_pass = true;
+
+    LOCK(r.wallet->cs_wallet);
+    r.wallet->transactionAddedToMempool(r.aggregate);
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash()) != nullptr);
+    BOOST_CHECK(r.wallet->GetWalletOutput(r.change_outpoint) != nullptr);
+}
+
+// The own half's outputs that the trust covers are part of the wallet record
+// and survive a reload.
+BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_own_half_persists, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/true);
+    LOCK(r.wallet->cs_wallet);
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    const CWalletTx* wtx = r.wallet->GetWalletTx(r.aggregate->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+
+    DataStream stream;
+    stream << *wtx;
+    CWalletTx loaded{nullptr, TxStateInactive{}};
+    stream >> loaded;
+    BOOST_CHECK(loaded.m_own_half_outputs == std::set<uint256>{r.change_outpoint.hash});
+    BOOST_CHECK(loaded.mapValue.empty());
+}
+
+// An input whose parent wallet tx does not hold the spent output (a stale
+// index entry) cannot be vetted. It must make the aggregate untrusted, not
+// pass as one of the cover halves' foreign inputs.
+BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_unlocated_parent_output, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK(r.wallet->cs_wallet);
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    const CWalletTx* wtx = r.wallet->GetWalletTx(r.aggregate->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_REQUIRE(CachedTxIsTrusted(*r.wallet, *wtx));
+
+    // Point the cover input's outpoint at a wallet tx that does not have it.
+    CMutableTransaction other;
+    other.nVersion |= CTransaction::BLSCT_MARKER;
+    const auto address = std::get<blsct::DoublePublicKey>(r.wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    other.vout.push_back(blsct::CreateOutput(address, COIN, "other").out);
+    const CWalletTx* other_wtx = r.wallet->AddToWallet(MakeTransactionRef(other), TxStateConfirmed{InsecureRand256(), 1, 2});
+    BOOST_REQUIRE(other_wtx != nullptr);
+    r.wallet->mapOutpointHashToWalletTx[r.cover_coin_outpoint.hash] = other_wtx;
+    BOOST_REQUIRE(r.wallet->GetWalletTxFromOutpoint(r.cover_coin_outpoint) == other_wtx);
+
+    BOOST_CHECK(!CachedTxIsTrusted(*r.wallet, *wtx));
 }
 
 BOOST_AUTO_TEST_SUITE_END()
