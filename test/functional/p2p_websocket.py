@@ -34,6 +34,11 @@ from test_framework.p2p import (
     P2PInterface,
     p2p_lock,
 )
+from test_framework.socks5 import (
+    AddressType,
+    Socks5Configuration,
+    Socks5Server,
+)
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.test_node import ErrorMatch
 from test_framework.util import (
@@ -407,6 +412,16 @@ class P2PWebSocketTest(BitcoinTestFramework):
         self.wait_until(lambda: node.getpeerinfo() == [])
         return msg
 
+    def wsendpoint_from_outbound(self, node, **kwargs):
+        """Have the node dial a test peer and return the wsendpoint it got, or None."""
+        peer = node.add_outbound_p2p_connection(P2PInterface(), p2p_idx=0, **kwargs)
+        peer.sync_with_ping()
+        with p2p_lock:
+            msg = peer.last_message.get("wsendpoint")
+        node.disconnect_p2ps()
+        self.wait_until(lambda: node.getpeerinfo() == [])
+        return msg
+
     def test_ws_announcement(self, host, ws_port):
         node = self.nodes[0]
 
@@ -445,24 +460,39 @@ class P2PWebSocketTest(BitcoinTestFramework):
         msg = self.wsendpoint_from_node(node)
         assert_equal((msg.port, msg.url), (8080, b"ws://node.example.com:8080"))
 
-        # A connection made through -proxy still counts as clearnet, so the URL
-        # reaches peers the proxy is hiding this node from. Without -proxy (every
-        # restart above) there is no warning, or stopping would fail on stderr.
-        self.log.info("-p2pwsexternal together with -proxy warns at startup")
-        proxy_warning = (
-            "Warning: -p2pwsexternal is announced to every clearnet peer, including ones reached through -proxy, "
-            "so it links this node's proxied connections to that URL. Unset -p2pwsexternal if the proxy "
-            "is meant to hide this node's address."
-        )
-        self.stop_node(0)
-        with node.assert_debug_log([proxy_warning]):
-            self.start_node(0, extra_args=[
-                f"-p2pwsbind={host}:{ws_port}",
-                "-p2pwsexternal=wss://node.example.com/p2p",
-                "-proxy=127.0.0.1:9",
-            ])
-        self.stop_node(0, expected_stderr=proxy_warning)
-        self.start_node(0, extra_args=[f"-p2pwsbind={host}:{ws_port}", "-p2pwsexternal=ws://node.example.com:8080"])
+        self.log.info("wsendpoint is not sent over an outbound connection made through -proxy")
+        # The proxy relays every request to the test peer listening on
+        # loopback, so a proxied connection completes the handshake.
+        socks_conf = Socks5Configuration()
+        socks_conf.addr = (host, p2p_port(self.num_nodes + 2))
+        socks_conf.unauth = True
+        socks_conf.destinations_factory = lambda _addr, port: (host, port)
+        socks = Socks5Server(socks_conf)
+        socks.start()
+        self.restart_node(0, extra_args=[
+            f"-p2pwsbind={host}:{ws_port}",
+            "-p2pwsexternal=wss://node.example.com/p2p",
+            f"-proxy={host}:{socks_conf.addr[1]}",
+        ])
+        proxy_timeout = 60 * self.options.timeout_factor
+        # A routable address goes through the proxy; it is never dialled itself.
+        assert_equal(self.wsendpoint_from_outbound(node, dial_host="1.2.3.4"), None)
+        request = socks.queue.get(timeout=proxy_timeout)
+        assert_equal((request.atyp, bytes(request.addr)), (AddressType.DOMAINNAME, b"1.2.3.4"))
+        # A hostname is resolved by the proxy, so the connection has no address.
+        assert_equal(self.wsendpoint_from_outbound(node, dial_host="localhost"), None)
+        request = socks.queue.get(timeout=proxy_timeout)
+        assert_equal((request.atyp, bytes(request.addr)), (AddressType.DOMAINNAME, b"localhost"))
+
+        self.log.info("... but it is over a direct outbound connection and an inbound one")
+        # -proxy is never used for loopback, so this outbound connection is direct.
+        msg = self.wsendpoint_from_outbound(node)
+        assert_equal((msg.port, msg.url), (443, b"wss://node.example.com/p2p"))
+        msg = self.wsendpoint_from_node(node)
+        assert_equal((msg.port, msg.url), (443, b"wss://node.example.com/p2p"))
+        socks.stop()
+        assert socks.queue.empty()
+        self.restart_node(0, extra_args=[f"-p2pwsbind={host}:{ws_port}", "-p2pwsexternal=ws://node.example.com:8080"])
 
         self.log.info("A peer's wsendpoint shows up in getpeerinfo")
         peer = node.add_p2p_connection(P2PInterface())

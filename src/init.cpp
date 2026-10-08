@@ -641,7 +641,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-torpassword=<pass>", "Tor control port password (default: empty)", ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::CONNECTION);
     argsman.AddArg("-natpmp", strprintf("Use NAT-PMP to map the listening port (default: %s)", DEFAULT_NATPMP ? "1 when listening and no -proxy" : "0"), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pwsbind=<addr>[:<port>]", "Additionally listen on the given address for P2P connections carried over WebSocket (RFC 6455), so that browser-based clients can connect as ordinary inbound peers. Use [host]:port notation for IPv6. The listener speaks plain ws:// only; front it with a TLS-terminating reverse proxy for wss://. A non-loopback address (including a private LAN one) is advertised with NODE_P2P_WS and peers dial it at the address they see us on, which behind NAT needs the port forwarded. Can be specified multiple times (default: none)", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
-    argsman.AddArg("-p2pwsexternal=<url>", "Public ws:// or wss:// URL of the -p2pwsbind listener when it sits behind a reverse proxy (e.g. wss://node.example.com/p2p). Announced to peers together with its port, and required to advertise NODE_P2P_WS when every -p2pwsbind address is loopback. Set it when the listener is on a private address that is not port-forwarded. Only announced over clearnet connections (default: none)", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pwsexternal=<url>", "Public ws:// or wss:// URL of the -p2pwsbind listener when it sits behind a reverse proxy (e.g. wss://node.example.com/p2p). Announced to peers together with its port, and required to advertise NODE_P2P_WS when every -p2pwsbind address is loopback. Set it when the listener is on a private address that is not port-forwarded. Only announced over clearnet connections, and not over outbound connections made through a proxy (default: none)", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-whitebind=<[permissions@]addr>", "Bind to the given address and add permission flags to the peers connecting to it. "
         "Use [host]:port notation for IPv6. Allowed permissions: " + Join(NET_PERMISSIONS_DOC, ", ") + ". "
         "Specify multiple permissions separated by commas (default: download,noban,mempool,relay). Can be specified multiple times.", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -1355,16 +1355,6 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             }
             peerman_opts.ws_port = *port;
             peerman_opts.ws_url = ws_external;
-            // wsendpoint goes to every clearnet peer, and a connection made
-            // through -proxy still counts as clearnet: the node does not
-            // record that it was proxied. So a node that proxies to hide its
-            // address would hand this URL to the very peers it is hiding from.
-            const std::string proxy_arg{args.GetArg("-proxy", "")};
-            if (proxy_arg != "" && proxy_arg != "0") {
-                InitWarning(_("-p2pwsexternal is announced to every clearnet peer, including ones reached through -proxy, "
-                              "so it links this node's proxied connections to that URL. Unset -p2pwsexternal if the proxy "
-                              "is meant to hide this node's address."));
-            }
         } else {
             for (const std::string& bind_arg : args.GetArgs("-p2pwsbind")) {
                 const std::optional<CService> bind_addr{Lookup(bind_arg, default_ws_port, /*fAllowLookup=*/false)};

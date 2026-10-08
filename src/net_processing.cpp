@@ -3934,9 +3934,22 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         // NET_UNROUTABLE covers loopback and LAN peers, which are not privacy
         // networks; inbound Tor is recognised by its -bind=...=onion listener
         // (m_inbound_onion), as everywhere else in net.
+        //
+        // Nor over an outbound connection we made through a proxy: that
+        // proxy is there to hide our address from the peer. Inbound peers are
+        // never proxied, and the clearnet and name proxies are fixed at
+        // startup (only torcontrol sets one later, for onion), so
+        // ConnectNode's choice can be replayed: a resolved address went
+        // through the proxy for its GetNetwork(), if one is set (never for
+        // loopback or LAN, which are NET_UNROUTABLE), and an outbound peer
+        // without a valid address was reached by name through the name
+        // proxy, the only way ConnectNode connects without one.
         const Network conn_net{pfrom.ConnectedThroughNetwork()};
         const bool clearnet{conn_net == NET_IPV4 || conn_net == NET_IPV6 || conn_net == NET_UNROUTABLE};
-        if (m_opts.ws_port != 0 && clearnet) {
+        Proxy proxy;
+        const bool proxied{!pfrom.IsInboundConn() &&
+                           (!pfrom.addr.IsValid() || GetProxy(pfrom.addr.GetNetwork(), proxy))};
+        if (m_opts.ws_port != 0 && clearnet && !proxied) {
             MakeAndPushMessage(pfrom, NetMsgType::WSENDPOINT, m_opts.ws_port, m_opts.ws_url);
         }
 

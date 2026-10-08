@@ -708,7 +708,7 @@ class TestNode():
 
         return p2p_conn
 
-    def add_outbound_p2p_connection(self, p2p_conn, *, wait_for_verack=True, p2p_idx, connection_type="outbound-full-relay", **kwargs):
+    def add_outbound_p2p_connection(self, p2p_conn, *, wait_for_verack=True, p2p_idx, connection_type="outbound-full-relay", dial_host=None, **kwargs):
         """Add an outbound p2p connection from node. Must be an
         "outbound-full-relay", "block-relay-only", "addr-fetch" or "feeler" connection.
 
@@ -718,9 +718,14 @@ class TestNode():
         p2p_idx must be different for simultaneously connected peers. When reusing it for the next peer
         after disconnecting the previous one, it is necessary to wait for the disconnect to finish to avoid
         a race condition.
+
+        dial_host, if given, is the host the node is told to dial instead of the
+        listener's own address, e.g. a name that only a -proxy resolves.
         """
 
         def addconnection_callback(address, port):
+            if dial_host is not None:
+                address = dial_host
             self.log.debug("Connecting to %s:%d %s" % (address, port, connection_type))
             self.addconnection('%s:%d' % (address, port), connection_type)
 
