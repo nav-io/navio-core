@@ -19,7 +19,8 @@ Checks:
 - node1, missing some components, fetches exactly those and not the block;
 - node0 never sends a cmpctaggblk to node2, which still syncs;
 - node3 does not relay components a peer supplied, even though they rebuild
-  the aggregate.
+  the aggregate;
+- node3 clears a block request answered with the wrong reply type.
 """
 
 from decimal import Decimal
@@ -33,6 +34,7 @@ from test_framework.messages import (
     calculate_shortid,
     hash256,
     msg_aggblocktxn,
+    msg_blocktxn,
     msg_cmpctaggblk,
     msg_getaggblktxn,
     ser_compact_size,
@@ -101,7 +103,9 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
         self.num_nodes = 4
         self.chain = "blsctregtest"
         self.setup_clean_chain = True
-        self.extra_args = [[], [], ["-blocksonly"], []]
+        # noban keeps a misbehaving test peer of node3 connected, so what
+        # happens to its block request can be observed.
+        self.extra_args = [[], [], ["-blocksonly"], ["-whitelist=noban@127.0.0.1"]]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -153,7 +157,7 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
 
         self.mine(110)
         # Independent confirmed UTXOs, one per send below, so they are siblings.
-        for _ in range(9):
+        for _ in range(11):
             funder.sendtoblsctaddress(self.sender.getnewaddress(label="", address_type="blsct"), UTXO_AMOUNT)
         self.mine()
 
@@ -161,6 +165,7 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
         self.test_fetch_missing_components()
         self.test_version2_peer()
         self.test_forged_components_not_relayed()
+        self.test_mismatched_reply_type()
 
     def test_reconstruct_from_mempool(self):
         self.log.info("A peer with every component in its mempool rebuilds the aggregate without a round trip")
@@ -271,6 +276,28 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
                 assert served is None or tx not in served.txs_data, "relayed a component a peer supplied"
             # node3 has no component list of its own, so it sends the block.
             assert "block" in downstream.last_message
+        self.reconnect_node3()
+
+    def test_mismatched_reply_type(self):
+        self.log.info("A blocktxn answering a getaggblktxn clears the block request at once")
+        node0, node3 = self.nodes[0], self.nodes[3]
+        self.disconnect_nodes(3, 0)
+        block_hash, header, coinbase, components = self.mine_unrelayed_aggregate_block(2)
+
+        peer = node3.add_p2p_connection(AggregatePeer())
+        peer.send_message(cmpctaggblk(header, coinbase, components))
+        peer.wait_until(lambda: "getaggblktxn" in peer.last_message)
+        [info] = node3.getpeerinfo()
+        assert_equal(info["inflight"], [node0.getblock(block_hash)["height"]])
+
+        reply = msg_blocktxn()
+        reply.block_transactions.blockhash = int(block_hash, 16)
+        with node3.assert_debug_log(expected_msgs=["blocktxn for a block we are reconstructing from a cmpctaggblk"]):
+            peer.send_and_ping(reply)
+        # The request was cleared at once, so the block is requested whole
+        # (from this peer, which noban keeps connected).
+        with p2p_lock:
+            assert_equal([inv.hash for inv in peer.last_message["getdata"].inv], [int(block_hash, 16)])
         self.reconnect_node3()
 
 

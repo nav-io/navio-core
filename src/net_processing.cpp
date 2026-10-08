@@ -3569,9 +3569,12 @@ void PeerManagerImpl::ProcessCompactBlockTxns(CNode& pfrom, Peer& peer, const Bl
         PartiallyDownloadedBlock& partialBlock = *range_flight.first->second.second->partialBlock;
 
         if (partialBlock.IsAggregateComponents() != aggregate_components) {
-            LogPrint(BCLog::NET, "Peer %d sent us %s for a block we are reconstructing from a %s\n", pfrom.GetId(),
-                     aggregate_components ? NetMsgType::AGGBLOCKTXN : NetMsgType::BLOCKTXN,
-                     partialBlock.IsAggregateComponents() ? NetMsgType::CMPCTAGGBLOCK : NetMsgType::CMPCTBLOCK);
+            // Not an answer to what we asked for: treat it like non-matching
+            // block transactions.
+            RemoveBlockRequest(block_transactions.blockhash, pfrom.GetId()); // Reset in-flight state in case Misbehaving does not result in a disconnect
+            Misbehaving(peer, 100, strprintf("%s for a block we are reconstructing from a %s",
+                                             aggregate_components ? NetMsgType::AGGBLOCKTXN : NetMsgType::BLOCKTXN,
+                                             partialBlock.IsAggregateComponents() ? NetMsgType::CMPCTAGGBLOCK : NetMsgType::CMPCTBLOCK));
             return;
         }
 
