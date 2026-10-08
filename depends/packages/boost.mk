@@ -15,6 +15,10 @@ $(package)_build_subdir = build
 # here fails the i2pd build, though a system Boost on the build host can hide
 # that. (shared_ptr.hpp comes from smart_ptr.) Recheck on every i2pd bump.
 ifeq ($(I2P),1)
+# These options are computed rather than written in this file, so they have to
+# reach the package ID explicitly, or a header-only Boost cached by a non-I2P
+# build would be reused here (and the reverse).
+$(package)_build_id_options = I2P=1
 boost_i2p_libs = ;filesystem;program_options;atomic;system;asio;algorithm;dynamic_bitset;lexical_cast;property_tree;smart_ptr;static_assert
 # Asio's dependency closure drags in Boost.Context/Coroutine/Fiber, which have
 # per-arch assembly that mis-detects on cross targets (picks i386 asm for arm).
