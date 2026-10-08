@@ -387,7 +387,7 @@ CoinsResult AvailableCoins(const CWallet& wallet,
         for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
             const CTxOut& output = wtx.tx->vout[i];
             CTxOut mutableOutput(output);
-            const COutPoint outpoint(output.GetHash());
+            const COutPoint outpoint(wtx.tx->GetOutputId(i));
             auto nValue = output.HasBLSCTRangeProof() ? wtx.GetBLSCTRecoveryData(i).amount : output.nValue;
             if (nValue < params.min_amount || nValue > params.max_amount) continue;
 

@@ -845,8 +845,8 @@ static RPCHelpMan getblocktemplate()
             for (const auto& it : pblock->vtx) {
                 const CTransaction& tx = *it;
                 uint256 txHash = tx.GetHash();
-                for (const CTxOut& out : tx.vout) {
-                    setOutputIndex[out.GetHash()] = i;
+                for (const Outid& out_id : tx.GetOutputIds()) {
+                    setOutputIndex[out_id.ToUint256()] = i;
                 }
                 ++i;
 

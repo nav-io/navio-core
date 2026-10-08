@@ -13,10 +13,11 @@ BlockOutKeys BuildBlockOutKeys(const CBlock& block)
     BlockOutKeys ret;
     ret.block_hash = block.GetHash();
     for (const auto& tx : block.vtx) {
-        for (const CTxOut& out : tx->vout) {
+        for (size_t o = 0; o < tx->vout.size(); ++o) {
+            const CTxOut& out{tx->vout[o]};
             if (!out.HasBLSCTKeys()) continue;
             OutKeysEntry& entry{ret.outputs.emplace_back()};
-            entry.out_id = out.GetHash();
+            entry.out_id = tx->GetOutputId(o).ToUint256();
             entry.blinding_key = out.blsctData.blindingKey;
             entry.spending_key = out.blsctData.spendingKey;
             entry.view_tag = out.blsctData.viewTag;

@@ -579,8 +579,8 @@ const CWalletTx* CWallet::GetWalletTxFromOutpoint(const COutPoint& outpoint) con
 void CWallet::IndexWalletTxOutputs(CWalletTx& wtx)
 {
     AssertLockHeld(cs_wallet);
-    for (const auto& vout : wtx.tx->vout) {
-        mapOutpointHashToWalletTx[vout.GetHash()] = &wtx;
+    for (const Outid& out_id : wtx.tx->GetOutputIds()) {
+        mapOutpointHashToWalletTx[out_id.ToUint256()] = &wtx;
     }
 }
 
@@ -743,8 +743,8 @@ std::set<uint256> CWallet::GetConflicts(const uint256& txid) const
 bool CWallet::HasWalletSpend(const CTransactionRef& tx) const
 {
     AssertLockHeld(cs_wallet);
-    for (unsigned int i = 0; i < tx->vout.size(); ++i) {
-        if (IsSpent(COutPoint(tx->vout[i].GetHash()))) {
+    for (const Outid& out_id : tx->GetOutputIds()) {
+        if (IsSpent(COutPoint(out_id))) {
             return true;
         }
     }
@@ -1387,8 +1387,8 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
             desc_tx->MarkDirty();
             batch.WriteTx(*desc_tx);
             MarkInputsDirty(desc_tx->tx);
-            for (unsigned int i = 0; i < desc_tx->tx->vout.size(); ++i) {
-                COutPoint outpoint(desc_tx->tx->vout[i].GetHash());
+            for (const Outid& out_id : desc_tx->tx->GetOutputIds()) {
+                COutPoint outpoint(out_id);
                 std::pair<TxSpends::const_iterator, TxSpends::const_iterator> range = mapTxSpends.equal_range(outpoint);
                 for (TxSpends::const_iterator it = range.first; it != range.second; ++it) {
                     const auto spending_wtx = GetWalletTx(it->second);
@@ -1563,8 +1563,8 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             // aggregate and is, for accounting purposes, confirmed here.
             if (std::get_if<TxStateConfirmed>(&tx_state)) {
                 std::set<uint256> matched_wtx;
-                for (const auto& vout : tx.vout) {
-                    auto it_idx = mapOutpointHashToWalletTx.find(vout.GetHash());
+                for (const Outid& out_id : tx.GetOutputIds()) {
+                    auto it_idx = mapOutpointHashToWalletTx.find(out_id.ToUint256());
                     if (it_idx == mapOutpointHashToWalletTx.end()) continue;
                     const CWalletTx* src = it_idx->second;
                     if (src->GetHash() == tx.GetHash()) continue; // direct match handled above
@@ -1586,7 +1586,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             // loop though all outputs
             for (size_t i = 0; i < tx.vout.size(); i++) {
                 CTxOut txout = tx.vout[i];
-                COutPoint outpoint(txout.GetHash());
+                COutPoint outpoint(tx.GetOutputId(i));
 
                 bool fExisted = mapOutputs.contains(outpoint);
                 if (fExisted && !fUpdate) return false;
@@ -1873,8 +1873,8 @@ void CWallet::RecursiveUpdateTxState(const uint256& tx_hash, const TryUpdatingSt
             wtx.MarkDirty();
             batch.WriteTx(wtx);
             // Iterate over all its outputs, and update those tx states as well (if applicable)
-            for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
-                std::pair<TxSpends::const_iterator, TxSpends::const_iterator> range = mapTxSpends.equal_range(COutPoint(wtx.tx->vout[i].GetHash()));
+            for (const Outid& out_id : wtx.tx->GetOutputIds()) {
+                std::pair<TxSpends::const_iterator, TxSpends::const_iterator> range = mapTxSpends.equal_range(COutPoint(out_id));
                 for (TxSpends::const_iterator iter = range.first; iter != range.second; ++iter) {
                     if (!done.contains(iter->second)) {
                         todo.insert(iter->second);
@@ -1929,8 +1929,8 @@ void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRe
         // In output-storage mode, mapWallet is not used for BLSCT txs.
         // Walk the matching outpoints in mapOutputs and clear InMempool state
         // so outputs do not remain stuck as unconfirmed after eviction/reorg.
-        for (const auto& vout : tx->vout) {
-            COutPoint outpoint(vout.GetHash());
+        for (const Outid& out_id : tx->GetOutputIds()) {
+            COutPoint outpoint(out_id);
             auto it = mapOutputs.find(outpoint);
             if (it != mapOutputs.end() && it->second.state<TxStateInMempool>()) {
                 it->second.m_state = TxStateInactive{};
@@ -2166,7 +2166,7 @@ CAmount CWallet::GetDebit(const CTransaction& tx, const isminefilter& filter, co
     // a chain of large sends sums past MoneyRange and throws, crashing the node
     // when the block is processed. Skip inputs that spend this tx's own outputs.
     std::set<uint256> own_outputs;
-    for (const CTxOut& txout : tx.vout) own_outputs.insert(txout.GetHash());
+    for (const Outid& out_id : tx.GetOutputIds()) own_outputs.insert(out_id.ToUint256());
 
     CAmount nDebit = 0;
     for (const CTxIn& txin : tx.vin) {
@@ -2946,7 +2946,7 @@ void CWallet::MirrorBlsctBroadcast(const CTransaction& tx)
     // "Not enough funds available", breaking chains of unconfirmed sends.
     for (size_t i = 0; i < tx.vout.size(); ++i) {
         const CTxOut& txout = tx.vout[i];
-        COutPoint outpoint(txout.GetHash());
+        COutPoint outpoint(tx.GetOutputId(i));
         if (mapOutputs.contains(outpoint)) continue;
         if (IsMine(txout) == ISMINE_NO) continue;
         CWalletOutput* wout = AddToWallet(

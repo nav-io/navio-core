@@ -96,10 +96,11 @@ CAmount TxGetCredit(const CWallet& wallet, const CTransaction& tx, const isminef
     for (const CTxIn& txin : tx.vin) spent_in_tx.insert(txin.prevout.hash);
 
     CAmount nCredit = 0;
-    for (const CTxOut& txout : tx.vout)
+    for (size_t i = 0; i < tx.vout.size(); ++i)
     {
+        const CTxOut& txout = tx.vout[i];
         if (txout.tokenId != token_id) continue;
-        if (spent_in_tx.contains(txout.GetHash())) continue;
+        if (spent_in_tx.contains(tx.GetOutputId(i).ToUint256())) continue;
         nCredit += OutputGetCredit(wallet, txout, filter);
         if (!MoneyRange(nCredit))
             throw std::runtime_error(std::string(__func__) + ": value out of range");
@@ -157,10 +158,11 @@ CAmount TxGetChange(const CWallet& wallet, const CTransaction& tx, const TokenId
     for (const CTxIn& txin : tx.vin) spent_in_tx.insert(txin.prevout.hash);
 
     CAmount nChange = 0;
-    for (const CTxOut& txout : tx.vout)
+    for (size_t i = 0; i < tx.vout.size(); ++i)
     {
+        const CTxOut& txout = tx.vout[i];
         if (txout.tokenId != token_id) continue;
-        if (spent_in_tx.contains(txout.GetHash())) continue;
+        if (spent_in_tx.contains(tx.GetOutputId(i).ToUint256())) continue;
         nChange += OutputGetChange(wallet, txout);
         if (!MoneyRange(nChange))
             throw std::runtime_error(std::string(__func__) + ": value out of range");
@@ -253,10 +255,10 @@ CAmount OutputGetImmatureCredit(const CWallet& wallet, const CWalletOutput& wout
 }
 
 //! The credit `txout` adds to CachedTxGetAvailableCredit().
-static CAmount OutputGetAvailableCredit(const CWallet& wallet, const CTxOut& txout, const isminefilter& filter, const TokenId& token_id) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+static CAmount OutputGetAvailableCredit(const CWallet& wallet, const CTxOut& txout, const Outid& out_id, const isminefilter& filter, const TokenId& token_id) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
     if (txout.tokenId != token_id) return 0;
-    if (wallet.IsSpent(COutPoint(txout.GetHash()))) return 0;
+    if (wallet.IsSpent(COutPoint(out_id))) return 0;
     const bool allow_used_addresses = (filter & ISMINE_USED) || !wallet.IsWalletFlagSet(WALLET_FLAG_AVOID_REUSE);
     if (!allow_used_addresses && wallet.IsSpentKey(txout.scriptPubKey)) return 0;
     return OutputGetCredit(wallet, txout, filter, token_id);
@@ -281,8 +283,8 @@ CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, 
     }
 
     CAmount nCredit = 0;
-    for (const CTxOut& txout : wtx.tx->vout) {
-        nCredit += OutputGetAvailableCredit(wallet, txout, filter, token_id);
+    for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
+        nCredit += OutputGetAvailableCredit(wallet, wtx.tx->vout[i], wtx.tx->GetOutputId(i), filter, token_id);
         if (!MoneyRange(nCredit))
             throw std::runtime_error(std::string(__func__) + " : value out of range");
     }
@@ -300,9 +302,10 @@ CAmount CachedTxGetAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, 
 static CAmount TxGetUncoveredAvailableCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter, const TokenId& token_id) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
     CAmount credit = 0;
-    for (const CTxOut& txout : wtx.tx->vout) {
-        if (TxTrustCoversOutput(wallet, wtx, txout.GetHash())) continue;
-        credit += OutputGetAvailableCredit(wallet, txout, filter, token_id);
+    for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
+        const Outid& out_id = wtx.tx->GetOutputId(i);
+        if (TxTrustCoversOutput(wallet, wtx, out_id.ToUint256())) continue;
+        credit += OutputGetAvailableCredit(wallet, wtx.tx->vout[i], out_id, filter, token_id);
         if (!MoneyRange(credit)) throw std::runtime_error(std::string(__func__) + " : value out of range");
     }
     return credit;
@@ -316,9 +319,10 @@ std::vector<StakedCommitmentInfo> GetStakedCommitmentInfo(const CWallet& wallet,
 
     for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
         const CTxOut& txout = wtx.tx->vout[i];
-        if (!wallet.IsSpent(COutPoint(txout.GetHash()))) {
+        const uint256& out_id = wtx.tx->GetOutputId(i).ToUint256();
+        if (!wallet.IsSpent(COutPoint(out_id))) {
             if (wallet.IsMine(txout) == ISMINE_STAKED_COMMITMENT_BLSCT) {
-                ret.push_back({txout.GetHash(), i, txout.blsctData.rangeProof.Vs[0],
+                ret.push_back({out_id, i, txout.blsctData.rangeProof.Vs[0],
                                wtx.GetBLSCTRecoveryData(i).amount,
                                wtx.GetBLSCTRecoveryData(i).gamma});
             }
@@ -689,8 +693,9 @@ BlsctTrustedBalance GetBlsctTrustedBalance(const CWallet& wallet, const int min_
             const CTxOut& txout = wtx.tx->vout[i];
             if (!txout.HasBLSCTRangeProof()) continue;
             if (!txout.tokenId.IsNull()) continue;
-            if (wallet.IsSpent(COutPoint(txout.GetHash()))) continue;
-            if (!TxTrustCoversOutput(wallet, wtx, txout.GetHash())) continue;
+            const Outid& out_id = wtx.tx->GetOutputId(i);
+            if (wallet.IsSpent(COutPoint(out_id))) continue;
+            if (!TxTrustCoversOutput(wallet, wtx, out_id.ToUint256())) continue;
             AddBlsctTrustedCredit(ret, wallet.IsMine(txout), wtx.GetBLSCTRecoveryData(i).amount);
         }
     }
@@ -773,7 +778,7 @@ std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet, cons
             for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
                 const auto& output = wtx.tx->vout[i];
                 if (output.tokenId != token_id) continue;
-                if (!TxTrustCoversOutput(wallet, wtx, output.GetHash())) continue;
+                if (!TxTrustCoversOutput(wallet, wtx, wtx.tx->GetOutputId(i).ToUint256())) continue;
 
                 if (output.HasBLSCTRangeProof()) {
                     auto blsct_km = wallet.GetBLSCTKeyMan();
@@ -786,7 +791,7 @@ std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet, cons
 
                     auto recoveryData = wtx.GetBLSCTRecoveryData(i);
 
-                    CAmount n = wallet.IsSpent(COutPoint(output.GetHash())) ? 0 : recoveryData.amount;
+                    CAmount n = wallet.IsSpent(COutPoint(wtx.tx->GetOutputId(i))) ? 0 : recoveryData.amount;
                     balances[address] += n;
                 } else {
                     CTxDestination addr;
@@ -795,7 +800,7 @@ std::map<CTxDestination, CAmount> GetAddressBalances(const CWallet& wallet, cons
                     if (!ExtractDestination(output.scriptPubKey, addr))
                         continue;
 
-                    CAmount n = wallet.IsSpent(COutPoint(output.GetHash())) ? 0 : output.nValue;
+                    CAmount n = wallet.IsSpent(COutPoint(wtx.tx->GetOutputId(i))) ? 0 : output.nValue;
                     balances[addr] += n;
                 }
             }

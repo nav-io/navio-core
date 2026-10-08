@@ -421,7 +421,7 @@ public:
     range_proof::RecoveredData<Blst> GetBLSCTRecoveryData(const COutPoint& outpoint) const
     {
         for (size_t i = 0; i < tx->vout.size(); i++) {
-            if (tx->vout[i].GetHash() == outpoint.hash) {
+            if (tx->GetOutputId(i) == outpoint.hash) {
                 return GetBLSCTRecoveryData(i);
             }
         }
@@ -550,7 +550,7 @@ public:
     int32_t GetOutputIndexFromHash(const COutPoint& outpoint) const
     {
         for (int32_t i = 0; i < static_cast<int32_t>(tx->vout.size()); i++) {
-            if (tx->vout[i].GetHash() == outpoint.hash) {
+            if (tx->GetOutputId(i) == outpoint.hash) {
                 return i;
             }
         }

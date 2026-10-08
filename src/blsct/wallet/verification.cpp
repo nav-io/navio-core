@@ -235,8 +235,9 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     std::optional<OrderedElements<BlstG1Point>> existing_staked;
     std::set<std::vector<unsigned char>> tx_staked_points;
 
-    for (auto& out : tx.vout) {
-        auto out_hash = out.GetHash();
+    for (size_t out_idx = 0; out_idx < tx.vout.size(); ++out_idx) {
+        const CTxOut& out = tx.vout[out_idx];
+        const uint256& out_hash = tx.GetOutputId(out_idx).ToUint256();
         blsct::ParsedPredicate parsedPredicate;
 
         if (out.predicate.size() > 0) {

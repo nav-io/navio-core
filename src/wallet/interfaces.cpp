@@ -116,7 +116,7 @@ WalletTxOut MakeWalletTxOut(const CWallet& wallet,
     result.txout = wtx.tx->vout[n];
     result.time = wtx.GetTxTime();
     result.depth_in_main_chain = depth;
-    result.is_spent = wallet.IsSpent(COutPoint(wtx.tx->vout[n].GetHash()));
+    result.is_spent = wallet.IsSpent(COutPoint(wtx.tx->GetOutputId(n)));
     return result;
 }
 

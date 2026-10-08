@@ -88,7 +88,7 @@ bool OutIndex::CustomAppend(const interfaces::BlockInfo& block)
             entry.height = block.height;
             entry.tx_pos = tx_pos;
             entry.out_pos = out_pos;
-            touched[tx.vout[out_pos].GetHash()] = entry;
+            touched[tx.GetOutputId(out_pos).ToUint256()] = entry;
         }
     }
 
@@ -131,8 +131,8 @@ bool OutIndex::CustomRewind(const interfaces::BlockKey& current_tip, const inter
         for (size_t tx_pos = block.vtx.size(); tx_pos-- > 0;) {
             const CTransaction& tx{*block.vtx[tx_pos]};
 
-            for (const CTxOut& out : tx.vout) {
-                auto& entry{load(out.GetHash())};
+            for (const Outid& out_id : tx.GetOutputIds()) {
+                auto& entry{load(out_id.ToUint256())};
                 // Only remove an entry this block wrote.
                 if (entry && entry->height == iter_tip->nHeight) entry.reset();
             }

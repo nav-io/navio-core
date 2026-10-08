@@ -339,8 +339,9 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
     {
         std::set<uint256> staked_outs;
         for (size_t i = 1; i < pblock->vtx.size(); ++i) {
-            for (const auto& out : pblock->vtx[i]->vout) {
-                if (out.IsStakedCommitment()) staked_outs.insert(out.GetHash());
+            const CTransaction& tx = *pblock->vtx[i];
+            for (size_t o = 0; o < tx.vout.size(); ++o) {
+                if (tx.vout[o].IsStakedCommitment()) staked_outs.insert(tx.GetOutputId(o).ToUint256());
             }
         }
         if (!staked_outs.empty()) {
@@ -360,7 +361,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
                         }
                     }
                     if (drop) {
-                        for (const auto& out : tx->vout) dropped_outs.insert(out.GetHash());
+                        for (const Outid& out_id : tx->GetOutputIds()) dropped_outs.insert(out_id.ToUint256());
                         exclude_tx(i, "spends a staked commitment created in the same block");
                         changed = true;
                     } else {
