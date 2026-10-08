@@ -4,7 +4,7 @@
 *.pdb
 
 # Local CMake build directories
-build-*
+/build-*/
 src/bench/bench_navio
 src/navio
 src/naviod
