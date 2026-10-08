@@ -671,7 +671,8 @@ with zero configuration.
   leaves it has no stem route and fluffs instead (see below). A leaf may still
   _send_ `p2pmsg`/`dp2pmsg` like any peer, under the same PoW/DoS gates.
   `getp2pmsginfo` reports `leaf_peers` (V2 plus LEAF) next to
-  `relay_capable_peers`. A node that relays should set `NODE_P2PMSG_V2`, not
+  `relay_capable_peers`; neither counts block-relay-only connections, which
+  carry no p2pmsg traffic. A node that relays should set `NODE_P2PMSG_V2`, not
   this bit; the leaf bit only widens delivery, never the stem set.
 - **Participation is network-visible**: because `NODE_P2PMSG_V2` is a service
   flag, it rides ADDR gossip and appears in `getpeerinfo`/`getnodeaddresses`.
