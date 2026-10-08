@@ -722,9 +722,32 @@ public:
      */
     void CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::vector<std::pair<std::string, std::string>> orderForm);
 
+    /**
+     * Record an aggregate this wallet built from its own half, whose outputs
+     * are `own_half_outputs`, and other wallets' cover halves, and has already
+     * broadcast itself. Does what CommitTransaction does after a successful
+     * broadcast: adds the CWalletTx (marked fFromMe, recording the own half's
+     * outputs in m_own_half_outputs) in the mempool state, marks its inputs
+     * spent and mirrors its outputs into mapOutputs, so a follow-up send sees
+     * the change without waiting for the mempool sync callback. A tx the sync
+     * callbacks already moved past the mempool keeps their state and spends.
+     *
+     * Unlike CommitTransaction this runs after the broadcast, so a wallet
+     * database error does not throw: the tx is out either way. It is logged
+     * and false is returned. The mempool sync callback still adds the tx and
+     * its outputs, but whatever was not written is lost on restart, and the
+     * reloaded wallet then treats the aggregate as one it did not build: its
+     * outputs stay untrusted until it confirms.
+     */
+    [[nodiscard]] bool RecordBroadcastTransaction(CTransactionRef tx, const std::vector<CTxOut>& own_half_outputs, mapValue_t mapValue);
+
     /** Pass this transaction to node for mempool insertion and relay to peers if flag set to true */
     bool SubmitTxMemoryPoolAndRelay(CWalletTx& wtx, std::string& err_string, bool relay) const
         EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    /** Mark the BLSCT outputs `tx` spends as spent in the mempool and mirror
+     *  its own outputs into mapOutputs (output-storage wallets only). */
+    void MirrorBlsctBroadcast(const CTransaction& tx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     bool ImportScripts(std::set<CScript> scripts, int64_t timestamp) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     bool ImportPrivKeys(const std::map<CKeyID, CKey>& privkey_map, int64_t timestamp) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);

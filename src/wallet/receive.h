@@ -51,6 +51,15 @@ bool CachedTxIsFromMe(const CWallet& wallet, const CWalletTx& wtx, const isminef
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uint256>& trusted_parents) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx);
 bool IsOutputTrusted(const CWallet& wallet, const CWalletOutput& wout) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+/**
+ * Whether the trust CachedTxIsTrusted() gives `wtx` extends to its output
+ * `output_hash`. Always, except in an unconfirmed aggregate this wallet built:
+ * there the cover halves' inputs were not vetted, so an output they fund (one
+ * a cover provider paid to us) is no safer than an unconfirmed receive. Only
+ * the outputs of the wallet's own half (CWalletTx::m_own_half_outputs) are
+ * covered.
+ */
+bool TxTrustCoversOutput(const CWallet& wallet, const CWalletTx& wtx, const uint256& output_hash) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 
 struct Balance {
     CAmount m_mine_trusted{0};           //!< Trusted, at depth=GetBalance.min_depth or more

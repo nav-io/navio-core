@@ -400,6 +400,8 @@ CoinsResult AvailableCoins(const CWallet& wallet,
 
             if (wallet.IsSpent(outpoint))
                 continue;
+            const bool safe_output{safeTx && TxTrustCoversOutput(wallet, wtx, output.GetHash())};
+            if (only_safe && !safe_output) continue;
             isminetype mine = wallet.IsMine(output);
             if (mine == ISMINE_NO) {
                 continue;
@@ -445,7 +447,7 @@ CoinsResult AvailableCoins(const CWallet& wallet,
 
             mutableOutput.nValue = nValue;
             result.Add(GetOutputType(type, is_from_p2sh),
-                       COutput(outpoint, mutableOutput, nDepth, input_bytes, spendable, solvable, safeTx, wtx.GetTxTime(), tx_from_me, feerate));
+                       COutput(outpoint, mutableOutput, nDepth, input_bytes, spendable, solvable, safe_output, wtx.GetTxTime(), tx_from_me, feerate));
 
             outpoints.push_back(outpoint);
             // Checks the sum amount of all UTXO's.

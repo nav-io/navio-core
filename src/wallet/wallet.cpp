@@ -2872,53 +2872,94 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
         // TODO: if we expect the failure to be long term or permanent, instead delete wtx from the wallet and return failure.
     }
 
-    if (tx->IsBLSCT() && IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
-        WalletBatch batch(GetDatabase(), /*_fFlushOnClose=*/false);
-        for (const CTxIn& txin : tx->vin) {
-            auto it = mapOutputs.find(txin.prevout);
-            if (it == mapOutputs.end()) continue;
-            CWalletOutput& spent_output = it->second;
-            if (spent_output.state_spent<TxStateInMempool>()) continue;
-            // CommitTransaction records self-created BLSCT txs in mapWallet
-            // immediately, but output-storage wallets populate mapOutputs for
-            // the same tx via the later sync callback. Mark parents spent now
-            // so interim balance RPCs do not count both parent and child.
-            //
-            // Record the spender too: AddToWallet() only keeps a spend against
-            // an out-of-turn Inactive re-sync when it knows which transaction
-            // claimed it, so leaving this null lets any superseded sibling --
-            // e.g. our own tx after the staker replaced it with an aggregate
-            // under a different txid -- clear a spend it did not make.
-            spent_output.m_state_spent = TxStateInMempool{};
-            spent_output.m_spent_by = tx->GetHash();
-            if (!batch.WriteOutput(txin.prevout, spent_output)) {
-                throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to update spent BLSCT output state");
-            }
-        }
+    if (tx->IsBLSCT()) MirrorBlsctBroadcast(*tx);
+}
 
-        // Synchronously mirror our own outputs into mapOutputs. The
-        // transactionAddedToMempool callback will eventually do this via
-        // AddToWalletIfInvolvingMe, but it runs on the scheduler thread —
-        // a follow-up sendtoblsctaddress that fires before the scheduler
-        // catches up would otherwise see no spendable change and fail with
-        // "Not enough funds available", breaking chains of unconfirmed sends.
-        for (size_t i = 0; i < tx->vout.size(); ++i) {
-            const CTxOut& txout = tx->vout[i];
-            COutPoint outpoint(txout.GetHash());
-            if (mapOutputs.contains(outpoint)) continue;
-            if (IsMine(txout) == ISMINE_NO) continue;
-            CWalletOutput* wout = AddToWallet(
-                outpoint,
-                MakeOutputRef<CTxOut>(CTxOut(txout)),
-                TxStateInMempool{},
-                /*update_wout=*/nullptr,
-                /*fFlushOnClose=*/true,
-                /*rescanning_old_block=*/false,
-                /*state_spent=*/TxStateInactive{},
-                /*fCoinbase=*/tx->IsCoinBase());
-            if (!wout) {
-                throw std::runtime_error(std::string(__func__) + ": failed to mirror locally-created BLSCT output");
-            }
+bool CWallet::RecordBroadcastTransaction(CTransactionRef tx, const std::vector<CTxOut>& own_half_outputs, mapValue_t mapValue)
+{
+    LOCK(cs_wallet);
+    WalletLogPrintf("RecordBroadcastTransaction:\n%s", tx->ToString()); // NOLINT(bitcoin-unterminated-logprintf)
+
+    // The sync callbacks may already have added this tx (with no mapValue and
+    // fFromMe unset) by the time the broadcasting RPC gets here; keep the
+    // state they recorded rather than demoting a confirmation to mempool.
+    const auto it = mapWallet.find(tx->GetHash());
+    const TxState state = it != mapWallet.end() ? it->second.m_state : TxState{TxStateInMempool{}};
+    CWalletTx* wtx = AddToWallet(tx, state, [&](CWalletTx& wtx, bool new_tx) {
+        if (wtx.mapValue.empty()) wtx.mapValue = std::move(mapValue);
+        wtx.fTimeReceivedIsTxTime = true;
+        wtx.fFromMe = true;
+        for (const CTxOut& out : own_half_outputs) wtx.m_own_half_outputs.insert(out.GetHash());
+        return true;
+    });
+    if (!wtx) {
+        WalletLogPrintf("%s: Wallet db error, failed to record broadcast transaction %s\n", __func__, tx->GetHash().ToString());
+        return false;
+    }
+
+    // The mirror writes mempool spend/receive states; once the sync
+    // callbacks moved the tx on (confirmed, or out of the mempool), their
+    // record is the newer one and must not be overwritten.
+    if (!wtx->InMempool()) return true;
+    try {
+        MirrorBlsctBroadcast(*tx);
+    } catch (const std::runtime_error& e) {
+        WalletLogPrintf("%s: %s\n", __func__, e.what());
+        return false;
+    }
+    return true;
+}
+
+void CWallet::MirrorBlsctBroadcast(const CTransaction& tx)
+{
+    AssertLockHeld(cs_wallet);
+    if (!IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) return;
+
+    WalletBatch batch(GetDatabase(), /*_fFlushOnClose=*/false);
+    for (const CTxIn& txin : tx.vin) {
+        auto it = mapOutputs.find(txin.prevout);
+        if (it == mapOutputs.end()) continue;
+        CWalletOutput& spent_output = it->second;
+        if (spent_output.state_spent<TxStateInMempool>()) continue;
+        // Self-created BLSCT txs are recorded in mapWallet immediately,
+        // but output-storage wallets populate mapOutputs for
+        // the same tx via the later sync callback. Mark parents spent now
+        // so interim balance RPCs do not count both parent and child.
+        //
+        // Record the spender too: AddToWallet() only keeps a spend against
+        // an out-of-turn Inactive re-sync when it knows which transaction
+        // claimed it, so leaving this null lets any superseded sibling --
+        // e.g. our own tx after the staker replaced it with an aggregate
+        // under a different txid -- clear a spend it did not make.
+        spent_output.m_state_spent = TxStateInMempool{};
+        spent_output.m_spent_by = tx.GetHash();
+        if (!batch.WriteOutput(txin.prevout, spent_output)) {
+            throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to update spent BLSCT output state");
+        }
+    }
+
+    // Synchronously mirror our own outputs into mapOutputs. The
+    // transactionAddedToMempool callback will eventually do this via
+    // AddToWalletIfInvolvingMe, but it runs on the scheduler thread —
+    // a follow-up sendtoblsctaddress that fires before the scheduler
+    // catches up would otherwise see no spendable change and fail with
+    // "Not enough funds available", breaking chains of unconfirmed sends.
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        const CTxOut& txout = tx.vout[i];
+        COutPoint outpoint(txout.GetHash());
+        if (mapOutputs.contains(outpoint)) continue;
+        if (IsMine(txout) == ISMINE_NO) continue;
+        CWalletOutput* wout = AddToWallet(
+            outpoint,
+            MakeOutputRef<CTxOut>(CTxOut(txout)),
+            TxStateInMempool{},
+            /*update_wout=*/nullptr,
+            /*fFlushOnClose=*/true,
+            /*rescanning_old_block=*/false,
+            /*state_spent=*/TxStateInactive{},
+            /*fCoinbase=*/tx.IsCoinBase());
+        if (!wout) {
+            throw std::runtime_error(std::string(__func__) + ": failed to mirror locally-created BLSCT output");
         }
     }
 }

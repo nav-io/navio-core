@@ -21,6 +21,7 @@
 #include <bitset>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -346,6 +347,7 @@ public:
      *     "fromaccount"     - serialized strFromAccount value
      *     "n"               - serialized nOrderPos value
      *     "timesmart"       - serialized nTimeSmart value
+     *     "ownhalf"         - serialized m_own_half_outputs value
      *     "spent"           - serialized vfSpent value that existed prior to
      *                         2014 (removed in commit 93a18a3)
      */
@@ -369,6 +371,14 @@ public:
      * externally and came in through the network or sendrawtransaction RPC.
      */
     bool fFromMe;
+    /**
+     * Hashes of the outputs of this wallet's own half, recorded when the
+     * wallet broadcast this tx as its own half combined with other wallets'
+     * cover halves (CWallet::RecordBroadcastTransaction). Empty for every
+     * other tx. While the tx is unconfirmed, its trust covers only these
+     * outputs (see TxTrustCoversOutput).
+     */
+    std::set<uint256> m_own_half_outputs;
     int64_t nOrderPos; //!< position in ordered transaction list
     std::multimap<int64_t, CWalletTx*>::const_iterator m_it_wtxOrdered;
 
@@ -398,6 +408,7 @@ public:
         nTimeReceived = 0;
         nTimeSmart = 0;
         fFromMe = false;
+        m_own_half_outputs.clear();
         fChangeCached = false;
         nChangeCached = 0;
         nOrderPos = -1;
@@ -437,6 +448,9 @@ public:
         if (nTimeSmart) {
             mapValueCopy["timesmart"] = strprintf("%u", nTimeSmart);
         }
+        if (!m_own_half_outputs.empty()) {
+            mapValueCopy["ownhalf"] = Join(m_own_half_outputs, ",", [](const uint256& hash) { return hash.GetHex(); });
+        }
 
         std::vector<uint8_t> dummy_vector1; //!< Used to be vMerkleBranch
         std::vector<uint8_t> dummy_vector2; //!< Used to be vtxPrev
@@ -464,11 +478,19 @@ public:
         nOrderPos = (it_op != mapValue.end()) ? LocaleIndependentAtoi<int64_t>(it_op->second) : -1;
         const auto it_ts = mapValue.find("timesmart");
         nTimeSmart = (it_ts != mapValue.end()) ? static_cast<unsigned int>(LocaleIndependentAtoi<int64_t>(it_ts->second)) : 0;
+        if (const auto it_oh = mapValue.find("ownhalf"); it_oh != mapValue.end()) {
+            // A malformed entry is left out, which only narrows the trust
+            // TxTrustCoversOutput extends: never a reason to fail the load.
+            for (const std::string& hex : SplitString(it_oh->second, ',')) {
+                if (hex.size() == 2 * uint256::size() && IsHex(hex)) m_own_half_outputs.insert(uint256S(hex));
+            }
+        }
 
         mapValue.erase("fromaccount");
         mapValue.erase("spent");
         mapValue.erase("n");
         mapValue.erase("timesmart");
+        mapValue.erase("ownhalf");
     }
 
     void SetTx(CTransactionRef arg)
