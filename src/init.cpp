@@ -55,6 +55,7 @@
 #include <netmessagemaker.h>
 #include <p2pmsg/archive.h>
 #include <p2pmsg/transport.h>
+#include <p2pmsg/user_data.h>
 #include <p2pmsg/user_inbox.h>
 #include <p2pmsg/worker_pool.h>
 #include <rfq/intent_store.h>
@@ -2279,16 +2280,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                     });
             }
 
-            // An application message. The node parses only the frame's topic;
-            // the body is stored untouched. Delivery rules by decrypting key:
-            //  - our rotating inbox prekey: always stored (scope "inbox"),
-            //  - a user reply key (mintp2pmsgreplykey): always stored
-            //    ("session") — the key was minted deliberately to receive
-            //    exactly this (internal session keys are not accepted, see
-            //    RECIPIENTS_USER_DATA),
-            //  - the well-known broadcast key: public pub/sub; stored only
-            //    when the topic is subscribed ("broadcast"), so every public
-            //    app's traffic does not accumulate on every node.
+            // An application message: stored in the user inbox (see
+            // p2pmsg::StoreUserData for the delivery rules), then announced.
             if (node.p2pmsg_user_inbox) {
                 p2pmsg::UserInbox* inbox = node.p2pmsg_user_inbox.get();
 #if HAVE_SYSTEM
@@ -2303,60 +2296,15 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 struct NotifyState { };
                 auto notify_state = std::make_shared<NotifyState>();
 #endif
-                node.p2pmsg_transport->RegisterHandler(
-                    p2pmsg::PayloadKind::USER_DATA, p2pmsg::RECIPIENTS_USER_DATA,
-                    [inbox, msg_notify, notify_state](const p2pmsg::InboundMessage& m) {
-                        if (m.body.empty() || m.body.size() > p2pmsg::MAX_USER_MSG_BYTES) return;
-                        p2pmsg::UserMsgFrame frame;
-                        try {
-                            DataStream ss{MakeByteSpan(m.body)};
-                            ss >> frame;
-                            if (!ss.empty()) return; // trailing bytes: malformed
-                        } catch (const std::exception&) {
-                            return;
-                        }
-                        if (frame.topic.empty() || frame.topic.size() > p2pmsg::MAX_USER_MSG_TOPIC_BYTES) return;
-                        if (!p2pmsg::IsValidTopic(frame.topic)) return; // network-controlled; keep RPC/JSON output valid
-                        if (frame.body.empty()) return;
-
-                        p2pmsg::MsgScope scope{p2pmsg::MsgScope::INBOX};
-                        std::vector<uint8_t> reply_pubkey;
-                        switch (m.recipient) {
-                        case p2pmsg::RecipientKey::INBOX: scope = p2pmsg::MsgScope::INBOX; break;
-                        case p2pmsg::RecipientKey::SESSION:
-                            // A user reply key: the transport drops USER_DATA
-                            // under an internal session key before this runs.
-                            scope = p2pmsg::MsgScope::SESSION;
-                            reply_pubkey = m.recipient_session.GetVch();
-                            break;
-                        case p2pmsg::RecipientKey::BROADCAST:
-                            if (!inbox->IsSubscribed(frame.topic)) return;
-                            scope = p2pmsg::MsgScope::BROADCAST;
-                            break;
-                        }
-
-                        std::optional<p2pmsg::UserInbox::Entry> stored;
-                        try {
-                            stored = inbox->Add(GetTime<std::chrono::seconds>().count(), scope,
-                                                frame.topic, m.sender_session, std::move(frame.body), reply_pubkey);
-                        } catch (const std::exception& e) {
-                            // CDBWrapper throws dbwrapper_error on any LevelDB
-                            // failure (e.g. full disk). This handler runs on a
-                            // p2pmsg worker with no try/catch above it, so an
-                            // escape is std::terminate for the whole node --
-                            // one inbound message must never be able to do
-                            // that. Drop the message and log.
-                            LogPrintf("p2pmsg: user inbox store failed, message dropped: %s\n", e.what());
-                            return;
-                        }
-                        if (!stored) return;
-
+                p2pmsg::RegisterUserDataHandler(
+                    *node.p2pmsg_transport, *inbox,
+                    [msg_notify, notify_state](const p2pmsg::UserInbox::Entry& stored) {
 #if ENABLE_ZMQ
                         // Push notifiers run on the validation-interface queue so
                         // zmq sends are serialized with the validation-driven ones
                         // (this handler runs on a p2pmsg worker thread).
                         if (g_zmq_notification_interface) {
-                            CallFunctionInValidationInterfaceQueue([entry = *stored] {
+                            CallFunctionInValidationInterfaceQueue([entry = stored] {
                                 if (g_zmq_notification_interface) g_zmq_notification_interface->NotifyP2PMsg(entry);
                             });
                         }
@@ -2375,8 +2323,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                             // fetch-max: workers can race here and a plain
                             // store could regress latest to a lower id.
                             uint64_t prev = notify_state->latest.load(std::memory_order_relaxed);
-                            while (prev < stored->id &&
-                                   !notify_state->latest.compare_exchange_weak(prev, stored->id, std::memory_order_relaxed)) {}
+                            while (prev < stored.id &&
+                                   !notify_state->latest.compare_exchange_weak(prev, stored.id, std::memory_order_relaxed)) {}
                             if (!notify_state->running.exchange(true, std::memory_order_acq_rel)) {
                                 try {
                                     std::thread([state = notify_state, tmpl = msg_notify] {
