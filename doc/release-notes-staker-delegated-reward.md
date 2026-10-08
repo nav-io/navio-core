@@ -7,7 +7,8 @@ Staking changes
   Before, the reward reached the wallet but not the reward address, so
   `listdelegations` kept reporting `rewards_received` as 0. The staker falls
   back to `-coinbasedest` when connected to a node whose `listdelegations`
-  lacks the new `commitment` field.
+  lacks the new `commitment` field. It calls `listdelegations` only when the
+  wallet's set of staked commitments changes, not on every staking cycle.
 
 RPC changes
 -----------
