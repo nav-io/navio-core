@@ -23,13 +23,18 @@ namespace {
 //! Say once per built transaction when some of its outputs could not get a
 //! recoverable blinding key. The factory itself only counts them: it is part
 //! of libblsct, which has no logging.
-std::optional<BuiltTransaction> LogPastSearchBound(std::optional<BuiltTransaction> built)
+void LogPastSearchBound(size_t pastSearchBoundOutputs)
 {
-    if (built && built->pastSearchBoundOutputs > 0) {
+    if (pastSearchBoundOutputs > 0) {
         LogPrintf("blsct: transaction has more outputs than the recovery search bound (%u); "
                   "the outputs past it will use random, unrecoverable blinding keys\n",
                   MAX_OUTPUT_SEARCH);
     }
+}
+
+std::optional<BuiltTransaction> LogPastSearchBound(std::optional<BuiltTransaction> built)
+{
+    if (built) LogPastSearchBound(built->pastSearchBoundOutputs);
     return built;
 }
 } // namespace
@@ -106,6 +111,24 @@ TxFactory::BuildCandidate()
         /*nBLSCTDefaultFee=*/0,
         /*additionalFee=*/0,
         /*emitFeeOutput=*/false));
+}
+
+std::optional<CMutableTransaction>
+TxFactory::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestination,
+                               const SubAddress& recvDestination,
+                               const TokenId& pay_token,
+                               const CAmount& pay_amount,
+                               const TokenId& recv_token,
+                               const CAmount& recv_amount,
+                               const CAmount& nBLSCTDefaultFee,
+                               const CAmount& additionalFee)
+{
+    size_t pastSearchBound = 0;
+    auto half = TxFactoryBase::BuildUnbalancedHalf(changeDestination, recvDestination, pay_token, pay_amount,
+                                                   recv_token, recv_amount, nBLSCTDefaultFee, additionalFee,
+                                                   &pastSearchBound);
+    if (half) LogPastSearchBound(pastSearchBound);
+    return half;
 }
 
 std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData)

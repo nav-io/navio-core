@@ -6,6 +6,7 @@
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <crypto/sha256.h>
+#include <test/util/logging.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <txdb.h>
@@ -702,6 +703,71 @@ BOOST_FIXTURE_TEST_CASE(output_ordinal_past_search_bound_is_not_derived, Testing
     BOOST_CHECK_EQUAL(random_keys, 2U);
     // The build reports exactly those, so the wallet can say so once.
     BOOST_CHECK_EQUAL(built->pastSearchBoundOutputs, random_keys);
+}
+
+// Swap halves (BuildUnbalancedHalf) materialize queued outputs the same way
+// BuildTx does, so an output queued past MAX_OUTPUT_SEARCH gets a random key
+// there too. The half reports how many, and the wallet logs it once per half
+// it returns -- not once per attempt BuildHalfAddingSpares discards.
+BOOST_FIXTURE_TEST_CASE(swap_half_reports_outputs_past_search_bound, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    auto sender = MakeWallet(m_node.chain.get(), RepeatedByte(0x6e));
+    LOCK(sender.wallet->cs_wallet);
+
+    const auto recvAddress = std::get<blsct::DoublePublicKey>(sender.km->GetNewDestination(0).value());
+    const auto change = std::get<blsct::DoublePublicKey>(sender.km->GetNewDestination(-1).value());
+    // One output per ordinal recovery searches, plus the first one it does not.
+    const CAmount payment = 10 * COIN;
+    const CAmount pay_amount = (blsct::MAX_OUTPUT_SEARCH + 1) * payment;
+
+    const auto coin = [](CAmount amount) {
+        return blsct::InputCandidates{amount, BlstScalar::Rand(), blsct::PrivateKey(BlstScalar::Rand()), TokenId(), COutPoint{Txid::FromUint256(InsecureRand256())}, false};
+    };
+    const auto fill = [&](blsct::TxFactory& factory, const blsct::InputCandidates& in) {
+        factory.blsct::TxFactoryBase::AddInput(in.amount, in.gamma, in.spendingKey, in.token_id, in.outpoint);
+        for (uint32_t i = 0; i <= blsct::MAX_OUTPUT_SEARCH; ++i) {
+            factory.AddOutput(recvAddress, payment, "payment");
+        }
+    };
+
+    // The half reports the over-bound output; change and the received output
+    // take explicit random keys and are not counted.
+    {
+        auto factory = blsct::TxFactory(sender.km);
+        fill(factory, coin(pay_amount));
+        size_t past = 0;
+        const auto half = factory.blsct::TxFactoryBase::BuildUnbalancedHalf(
+            change, blsct::SubAddress(recvAddress), TokenId(), pay_amount, TokenId(), payment,
+            /*nBLSCTDefaultFee=*/0, /*additionalFee=*/0, &past);
+        BOOST_REQUIRE(half.has_value());
+        BOOST_CHECK_EQUAL(past, 1U);
+    }
+
+    // The wallet logs it once for the half BuildHalfAddingSpares returns: the
+    // first attempt is short of funds and fails, the spare makes the second
+    // build.
+    {
+        auto factory = blsct::TxFactory(sender.km);
+        fill(factory, coin(pay_amount - 1));
+        const std::vector<blsct::InputCandidates> spares{coin(pay_amount)};
+        size_t builds = 0;
+        size_t logged = 0;
+        {
+            DebugLogHelper count_logs{"more outputs than the recovery search bound", [&](const std::string* line) {
+                                          if (line) ++logged;
+                                          return false;
+                                      }};
+            const auto half = factory.BuildHalfAddingSpares(spares, /*first_spare=*/0, [&] {
+                ++builds;
+                return factory.BuildUnbalancedHalf(change, blsct::SubAddress(recvAddress), TokenId(), pay_amount,
+                                                   TokenId(), payment, /*nBLSCTDefaultFee=*/0);
+            });
+            BOOST_REQUIRE(half.has_value());
+        }
+        BOOST_CHECK_EQUAL(builds, 2U);
+        BOOST_CHECK_EQUAL(logged, 1U);
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
