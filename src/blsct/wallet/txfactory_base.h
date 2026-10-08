@@ -385,6 +385,8 @@ public:
     //! Inputs (added via AddInput) must be `pay_token` covering
     //! `pay_amount` + fee. Fee is always NAV; if `pay_token` is not NAV the
     //! caller must also AddInput enough NAV to cover the fee.
+    //! `pastSearchBoundOutputs`, when non-null, receives the count
+    //! BuiltTransaction::pastSearchBoundOutputs would carry for this half.
     std::optional<CMutableTransaction> BuildUnbalancedHalf(
         const blsct::DoublePublicKey& changeDestination,
         const SubAddress& recvDestination,
@@ -393,7 +395,8 @@ public:
         const TokenId& recv_token,
         const CAmount& recv_amount,
         const CAmount& nBLSCTDefaultFee,
-        const CAmount& additionalFee = 0);
+        const CAmount& additionalFee = 0,
+        size_t* pastSearchBoundOutputs = nullptr);
 
     //! Feed spare NAV coins into this factory one at a time and rebuild until
     //! the unbalanced half builds or the spares run out. BuildUnbalancedHalf

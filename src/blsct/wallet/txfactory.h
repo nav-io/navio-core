@@ -21,6 +21,12 @@
 
 namespace blsct {
 
+//! Say once per built transaction when some of its outputs could not get a
+//! recoverable blinding key. The factory itself only counts them
+//! (BuiltTransaction::pastSearchBoundOutputs): it is part of libblsct, which
+//! has no logging.
+void LogPastSearchBound(size_t pastSearchBoundOutputs);
+
 class TxFactory : public TxFactoryBase
 {
 private:
@@ -52,6 +58,22 @@ public:
     //! `sendcandidate`; the result is only valid inside a CombineHalves
     //! aggregate, never standalone.
     std::optional<BuiltTransaction> BuildCandidate();
+    //! TxFactoryBase::BuildUnbalancedHalf, logging once for a half that
+    //! builds when some of its outputs could not get a recoverable blinding
+    //! key. A failed attempt does not log, so BuildHalfAddingSpares retries
+    //! log only for the half they return.
+    std::optional<CMutableTransaction> BuildUnbalancedHalf(
+        const blsct::DoublePublicKey& changeDestination,
+        const SubAddress& recvDestination,
+        const TokenId& pay_token,
+        const CAmount& pay_amount,
+        const TokenId& recv_token,
+        const CAmount& recv_amount,
+        const CAmount& nBLSCTDefaultFee,
+        const CAmount& additionalFee = 0);
+    //! Unlike the other builders this does not call LogPastSearchBound: the
+    //! send paths build and discard attempts while sizing aggregation cover,
+    //! so they log for the one transaction they actually send.
     static std::optional<BuiltTransaction> CreateTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, CreateTransactionData transactionData);
     // Build one transaction that merges up to `maxInputs` of the wallet's
     // smallest spendable outputs into a single output paid to `destination`

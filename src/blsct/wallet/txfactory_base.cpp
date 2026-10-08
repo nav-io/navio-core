@@ -658,7 +658,8 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
                                    const TokenId& recv_token,
                                    const CAmount& recv_amount,
                                    const CAmount& nBLSCTDefaultFee,
-                                   const CAmount& additionalFee)
+                                   const CAmount& additionalFee,
+                                   size_t* pastSearchBoundOutputs)
 {
     // Output the received token up front; its blinding/gamma are folded into the
     // balance accumulator so the half's signature covers it. There is no matching
@@ -671,9 +672,12 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
 
     std::vector<UnsignedOutput> payOutputs;
     payOutputs.reserve(vPendingOutputs.size());
+    size_t pastSearchBound = 0;
     for (const auto& pending : vPendingOutputs) {
         payOutputs.push_back(MaterializeOutput(pending, anchor));
+        if (OrdinalPastSearchBound(pending.blindingKey, pending.ordinal, anchor)) ++pastSearchBound;
     }
+    if (pastSearchBoundOutputs) *pastSearchBoundOutputs = pastSearchBound;
     for (auto& out_ : vOutputs) {
         for (auto& out : out_.second) payOutputs.push_back(out);
     }
