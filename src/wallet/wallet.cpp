@@ -1583,13 +1583,24 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 }
             }
 
+            // Without fUpdate an output we already hold is left as it is, but
+            // the tx's spends are still recorded before returning. Knowing its
+            // outputs does not mean its inputs are marked spent -- a block
+            // disconnect un-spends them and leaves the outputs in place -- and
+            // returning before the vin loop left such a scan unable to repair
+            // that. Re-recording a spend already in place changes nothing.
+            bool skip_known_tx = false;
+
             // loop though all outputs
             for (size_t i = 0; i < tx.vout.size(); i++) {
                 CTxOut txout = tx.vout[i];
                 COutPoint outpoint(txout.GetHash());
 
                 bool fExisted = mapOutputs.contains(outpoint);
-                if (fExisted && !fUpdate) return false;
+                if (fExisted && !fUpdate) {
+                    skip_known_tx = true;
+                    break;
+                }
                 isminetype mine = ISMINE_NO;
                 if (blsct_man) {
                     // Derive the nonce (blindingKey * viewKey) once and share
@@ -1630,6 +1641,10 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 // keeps a confirmed spend sticky, so re-syncing a superseded /
                 // conflicted (Inactive) tx that lists an already-confirmed-spent
                 // outpoint intentionally leaves it spent.
+            }
+            if (skip_known_tx) {
+                MarkInputsDirty(ptx);
+                return false;
             }
 
             // A transaction that spends our own outputs (send / stakelock /
