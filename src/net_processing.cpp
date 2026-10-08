@@ -11,6 +11,7 @@
 #include <blockfilter.h>
 #include <chainparams.h>
 #include <consensus/amount.h>
+#include <consensus/consensus.h>
 #include <consensus/validation.h>
 #include <deploymentstatus.h>
 #include <hash.h>
@@ -193,6 +194,11 @@ static constexpr uint64_t CMPCTBLOCKS_AGGREGATE_VERSION{3};
 /** Number of recent blocks whose aggregate component list we remember, to
  *  build cmpctaggblk messages and answer getaggblktxn requests. */
 static constexpr size_t MAX_BLOCK_COMPONENT_LISTS{16};
+/** Serialized size of the transactions in the component lists we remember:
+ *  room for the lists of the tip and of a block preceding or competing with
+ *  it, even when both are full. BLSCT transactions carry no witness data, so
+ *  a block's serialized size is at most MAX_BLOCK_WEIGHT / WITNESS_SCALE_FACTOR. */
+static constexpr size_t MAX_BLOCK_COMPONENT_BYTES{2 * MAX_BLOCK_WEIGHT / WITNESS_SCALE_FACTOR};
 
 // Internal stuff
 namespace {
@@ -716,9 +722,6 @@ private:
     /** Answer a getblocktxn (or, with aggregate_components, a getaggblktxn) request from txs. */
     void SendBlockTransactions(CNode& pfrom, Peer& peer, const std::vector<CTransactionRef>& txs, const BlockTransactionsRequest& req, bool aggregate_components = false);
 
-    /** Remember the component list (coinbase followed by the aggregate's components) of a block. */
-    void RememberBlockComponents(const uint256& block_hash, std::shared_ptr<const std::vector<CTransactionRef>> component_list)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_block_components_mutex);
     /** The remembered component list of a block, or nullptr. */
     std::shared_ptr<const std::vector<CTransactionRef>> GetBlockComponents(const uint256& block_hash)
         EXCLUSIVE_LOCKS_REQUIRED(!m_block_components_mutex);
@@ -1072,11 +1075,10 @@ private:
     /** Offset into vExtraTxnForCompact to insert the next tx */
     size_t vExtraTxnForCompactIt GUARDED_BY(g_msgproc_mutex) = 0;
 
-    /** Component lists (coinbase followed by the aggregate's components) of
-     *  recent aggregate blocks, oldest first, at most MAX_BLOCK_COMPONENT_LISTS.
-     *  Only filled by GetOrFindBlockComponents, from our own mempool. */
+    /** Component lists of recent aggregate blocks. Only filled by
+     *  GetOrFindBlockComponents, from our own mempool. */
     Mutex m_block_components_mutex;
-    std::deque<std::pair<uint256, std::shared_ptr<const std::vector<CTransactionRef>>>> m_block_components GUARDED_BY(m_block_components_mutex);
+    RecentBlockComponents m_block_components GUARDED_BY(m_block_components_mutex){MAX_BLOCK_COMPONENT_LISTS, MAX_BLOCK_COMPONENT_BYTES};
 
     /** Check whether the last unknown block a peer advertised is not yet known. */
     void ProcessBlockAvailability(NodeId nodeid) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
@@ -2661,23 +2663,10 @@ void PeerManagerImpl::SendBlockTransactions(CNode& pfrom, Peer& peer, const std:
     MakeAndPushMessage(pfrom, aggregate_components ? NetMsgType::AGGBLOCKTXN : NetMsgType::BLOCKTXN, resp);
 }
 
-void PeerManagerImpl::RememberBlockComponents(const uint256& block_hash, std::shared_ptr<const std::vector<CTransactionRef>> component_list)
-{
-    LOCK(m_block_components_mutex);
-    for (const auto& [hash, list] : m_block_components) {
-        if (hash == block_hash) return;
-    }
-    m_block_components.emplace_back(block_hash, std::move(component_list));
-    while (m_block_components.size() > MAX_BLOCK_COMPONENT_LISTS) m_block_components.pop_front();
-}
-
 std::shared_ptr<const std::vector<CTransactionRef>> PeerManagerImpl::GetBlockComponents(const uint256& block_hash)
 {
     LOCK(m_block_components_mutex);
-    for (const auto& [hash, list] : m_block_components) {
-        if (hash == block_hash) return list;
-    }
-    return nullptr;
+    return m_block_components.Get(block_hash);
 }
 
 std::shared_ptr<const std::vector<CTransactionRef>> PeerManagerImpl::GetOrFindBlockComponents(const CBlock& block)
@@ -2688,7 +2677,7 @@ std::shared_ptr<const std::vector<CTransactionRef>> PeerManagerImpl::GetOrFindBl
     auto found{FindAggregateComponents(block, m_mempool)};
     if (!found) return nullptr;
     auto component_list{std::make_shared<const std::vector<CTransactionRef>>(std::move(*found))};
-    RememberBlockComponents(block_hash, component_list);
+    WITH_LOCK(m_block_components_mutex, m_block_components.Add(block_hash, component_list));
     return component_list;
 }
 

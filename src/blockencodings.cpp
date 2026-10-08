@@ -88,6 +88,28 @@ std::optional<std::vector<CTransactionRef>> FindAggregateComponents(const CBlock
     return component_list;
 }
 
+void RecentBlockComponents::Add(const uint256& block_hash, std::shared_ptr<const std::vector<CTransactionRef>> component_list)
+{
+    if (Get(block_hash)) return;
+    size_t bytes{0};
+    for (const auto& tx : *component_list) bytes += tx->GetTotalSize();
+    if (bytes > m_max_bytes) return;
+    m_entries.push_back({block_hash, std::move(component_list), bytes});
+    m_bytes += bytes;
+    while (!m_entries.empty() && (m_entries.size() > m_max_lists || m_bytes > m_max_bytes)) {
+        m_bytes -= m_entries.front().bytes;
+        m_entries.pop_front();
+    }
+}
+
+std::shared_ptr<const std::vector<CTransactionRef>> RecentBlockComponents::Get(const uint256& block_hash) const
+{
+    for (const auto& entry : m_entries) {
+        if (entry.block_hash == block_hash) return entry.component_list;
+    }
+    return nullptr;
+}
+
 void CBlockHeaderAndShortTxIDs::FillShortTxIDSelector() const {
     DataStream stream{};
     stream << header;

@@ -535,4 +535,54 @@ BOOST_AUTO_TEST_CASE(AggregateComponentsRejectTest)
     BOOST_CHECK(!FindAggregateComponents(plain, pool));
 }
 
+BOOST_AUTO_TEST_CASE(RecentBlockComponentsBoundsTest)
+{
+    // Lists of the same shape, so of the same serialized size.
+    const auto make_list{[] {
+        return std::make_shared<const std::vector<CTransactionRef>>(std::vector<CTransactionRef>{MakeComponentTx(1, 100), MakeComponentTx(1, 100)});
+    }};
+    const uint256 a{InsecureRand256()}, b{InsecureRand256()}, c{InsecureRand256()};
+    const auto list_a{make_list()}, list_b{make_list()}, list_c{make_list()};
+    const size_t list_bytes{(*list_a)[0]->GetTotalSize() + (*list_a)[1]->GetTotalSize()};
+
+    // The size bound evicts the oldest list.
+    {
+        RecentBlockComponents recent{/*max_lists=*/10, /*max_bytes=*/2 * list_bytes};
+        recent.Add(a, list_a);
+        recent.Add(b, list_b);
+        recent.Add(b, list_c); // already known: neither replaced nor counted twice
+        BOOST_CHECK_EQUAL(recent.Bytes(), 2 * list_bytes);
+        BOOST_CHECK(recent.Get(a) == list_a);
+        BOOST_CHECK(recent.Get(b) == list_b);
+        recent.Add(c, list_c);
+        BOOST_CHECK_EQUAL(recent.Bytes(), 2 * list_bytes);
+        BOOST_CHECK(!recent.Get(a));
+        BOOST_CHECK(recent.Get(b) == list_b);
+        BOOST_CHECK(recent.Get(c) == list_c);
+    }
+
+    // So does the count bound.
+    {
+        RecentBlockComponents recent{/*max_lists=*/2, /*max_bytes=*/10 * list_bytes};
+        recent.Add(a, list_a);
+        recent.Add(b, list_b);
+        recent.Add(c, list_c);
+        BOOST_CHECK_EQUAL(recent.Bytes(), 2 * list_bytes);
+        BOOST_CHECK(!recent.Get(a));
+        BOOST_CHECK(recent.Get(b) == list_b);
+        BOOST_CHECK(recent.Get(c) == list_c);
+    }
+
+    // A list larger than the whole size bound is not kept, and evicts nothing.
+    {
+        RecentBlockComponents recent{/*max_lists=*/10, /*max_bytes=*/2 * list_bytes};
+        recent.Add(a, list_a);
+        const auto oversized{std::make_shared<const std::vector<CTransactionRef>>(5, (*list_a)[0])};
+        recent.Add(b, oversized);
+        BOOST_CHECK_EQUAL(recent.Bytes(), list_bytes);
+        BOOST_CHECK(recent.Get(a) == list_a);
+        BOOST_CHECK(!recent.Get(b));
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
