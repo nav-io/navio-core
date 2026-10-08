@@ -700,7 +700,6 @@ BOOST_FIXTURE_TEST_CASE(output_storage_staked_balance_honours_output_spend_flag,
     BOOST_CHECK_EQUAL(GetBlsctBalance(*wallet).m_mine_staked_commitment, 0);
 }
 
-
 // Regression for issue #470: re-scanning the block that CREATED an output
 // must not un-spend it. The receive side re-adds the output with no spend
 // information (an unspent state and a null spender), and treating that as an
