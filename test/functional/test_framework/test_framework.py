@@ -716,7 +716,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         wallet and return the corresponding outpoints as a list of dictionaries
         `[{"outid": outid}, ...]`.
         The result can be used to specify inputs for RPCs like `createrawtransaction`,
-        `createpsbt`, `lockunspent` etc."""
+        `lockunspent` etc."""
         assert all(len(output.keys()) == 1 for output in outputs)
         send_res = node.send(outputs)
         assert send_res["complete"]

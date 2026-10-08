@@ -358,7 +358,6 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     node/outkeys.cpp
     node/minisketchwrapper.cpp
     node/peerman_args.cpp
-    node/psbt.cpp
     node/transaction.cpp
     node/txreconciliation.cpp
     node/utxo_snapshot.cpp

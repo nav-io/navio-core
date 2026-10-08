@@ -53,6 +53,7 @@ class HelpRpcTest(BitcoinTestFramework):
     def run_test(self):
         self.test_client_conversion_table()
         self.test_categories()
+        self.test_removed_rpcs()
         self.dump_help()
         if self.is_wallet_compiled():
             self.wallet_help()
@@ -113,6 +114,13 @@ class HelpRpcTest(BitcoinTestFramework):
             components.append('Zmq')
 
         assert_equal(titles, sorted(components))
+
+    def test_removed_rpcs(self):
+        node = self.nodes[0]
+        for method in ['analyzepsbt', 'combinepsbt', 'converttopsbt', 'createpsbt', 'decodepsbt',
+                       'descriptorprocesspsbt', 'finalizepsbt', 'joinpsbts', 'utxoupdatepsbt']:
+            assert_equal(node.help(method), f'help: unknown command: {method}')
+            assert_raises_rpc_error(-32601, 'Method not found', getattr(node, method))
 
     def dump_help(self):
         dump_dir = os.path.join(self.options.tmpdir, 'rpc_help_dump')
