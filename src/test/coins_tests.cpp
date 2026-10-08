@@ -1147,4 +1147,36 @@ BOOST_AUTO_TEST_CASE(ccoins_addcoin_exception_keeps_usage_balanced)
     BOOST_CHECK(cache.AccessCoin(outpoint) == coin1);
 }
 
+BOOST_AUTO_TEST_CASE(ccoins_readd_erased_token)
+{
+    const uint256 id{uint256(uint64_t{1})};
+    const blsct::TokenEntry entry{blsct::TokenInfo{blsct::TOKEN, blsct::PublicKey{}, {}, /*nTotalSupply=*/1000}, /*nSupply=*/10};
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CCoinsViewCacheTest cache{&base};
+
+    // Erase then re-add within one cache, as VerifyDB does when it
+    // disconnects and then reconnects the same blocks.
+    cache.AddToken(id, blsct::TokenEntry{entry});
+    cache.EraseToken(id);
+    BOOST_CHECK(!cache.HaveToken(id));
+    cache.AddToken(id, blsct::TokenEntry{entry});
+
+    blsct::TokenEntry got;
+    BOOST_CHECK(cache.GetToken(id, got));
+    BOOST_CHECK_EQUAL(got.nSupply, 10);
+    BOOST_CHECK(cache.HaveToken(id));
+    BOOST_CHECK(cache.HaveTokenInCache(id));
+    TokensMap all;
+    BOOST_REQUIRE(cache.GetAllTokens(all));
+    BOOST_CHECK(all.contains(id));
+
+    // Flushing writes the token rather than erasing it.
+    cache.SetBestBlock(InsecureRand256());
+    BOOST_REQUIRE(cache.Flush());
+    BOOST_CHECK(base.HaveToken(id));
+    BOOST_CHECK(base.GetToken(id, got));
+    BOOST_CHECK_EQUAL(got.nSupply, 10);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
