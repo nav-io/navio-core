@@ -20,7 +20,8 @@ Checks:
 - node0 never sends a cmpctaggblk to node2, which still syncs;
 - node3 does not relay components a peer supplied, even though they rebuild
   the aggregate;
-- node3 clears a block request answered with the wrong reply type.
+- node3 clears a block request answered with the wrong reply type;
+- node0 answers getaggblktxn under the rules of getblocktxn.
 """
 
 from decimal import Decimal
@@ -55,6 +56,8 @@ UTXO_AMOUNT = Decimal("10.01")
 SEND_AMOUNT = Decimal("10")
 # Size of a serialized BLSCT signature, the last field of a BLSCT transaction.
 SIGNATURE_SIZE = 96
+# net_processing's MAX_BLOCKTXN_DEPTH.
+MAX_BLOCKTXN_DEPTH = 10
 
 
 class msg_rawblock:
@@ -164,8 +167,9 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
         self.test_reconstruct_from_mempool()
         self.test_fetch_missing_components()
         self.test_version2_peer()
-        self.test_forged_components_not_relayed()
+        block_hash = self.test_forged_components_not_relayed()
         self.test_mismatched_reply_type()
+        self.test_getaggblktxn_answer_rules(block_hash)
 
     def test_reconstruct_from_mempool(self):
         self.log.info("A peer with every component in its mempool rebuilds the aggregate without a round trip")
@@ -277,6 +281,7 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
             # node3 has no component list of its own, so it sends the block.
             assert "block" in downstream.last_message
         self.reconnect_node3()
+        return block_hash
 
     def test_mismatched_reply_type(self):
         self.log.info("A blocktxn answering a getaggblktxn clears the block request at once")
@@ -299,6 +304,30 @@ class CompactAggregateBlocksTest(BitcoinTestFramework):
         with p2p_lock:
             assert_equal([inv.hash for inv in peer.last_message["getdata"].inv], [int(block_hash, 16)])
         self.reconnect_node3()
+
+    def test_getaggblktxn_answer_rules(self, block_hash):
+        self.log.info("getaggblktxn is answered under the rules of getblocktxn")
+        node0 = self.nodes[0]
+        peer = node0.add_p2p_connection(AggregatePeer())
+
+        with node0.assert_debug_log(expected_msgs=["sent us a getaggblktxn for a block we don't have"]):
+            peer.send_and_ping(getaggblktxn("%064x" % random.getrandbits(256), [1]))
+
+        # A recent block's components are served.
+        peer.send_and_ping(getaggblktxn(block_hash, [1]))
+        with p2p_lock:
+            assert_equal(peer.message_count["aggblocktxn"], 1)
+            assert_equal(peer.message_count["block"], 0)
+
+        # A deeper block is sent whole.
+        depth = node0.getblockcount() - node0.getblock(block_hash)["height"]
+        self.mine(MAX_BLOCKTXN_DEPTH + 1 - depth)
+        with node0.assert_debug_log(expected_msgs=[f"sent us a getaggblktxn for a block > {MAX_BLOCKTXN_DEPTH} deep"]):
+            peer.send_and_ping(getaggblktxn(block_hash, [1]))
+        with p2p_lock:
+            assert_equal(peer.message_count["aggblocktxn"], 1)
+            assert_equal(peer.message_count["block"], 1)
+        node0.disconnect_p2ps()
 
 
 if __name__ == "__main__":

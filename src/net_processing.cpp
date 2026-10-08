@@ -4733,14 +4733,34 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         BlockTransactionsRequest req;
         vRecv >> req;
 
-        if (auto component_list{GetBlockComponents(req.blockhash)}) {
-            SendBlockTransactions(pfrom, *peer, *component_list, req, /*aggregate_components=*/true);
-            return;
+        // Answered under the rules of GETBLOCKTXN: from the most recent block,
+        // or a block we have that is at most MAX_BLOCKTXN_DEPTH deep; a block
+        // we don't have is ignored and a deeper one is sent whole.
+        bool recent_block{WITH_LOCK(m_most_recent_block_mutex, return m_most_recent_block && m_most_recent_block_hash == req.blockhash)};
+        if (!recent_block) {
+            LOCK(cs_main);
+
+            const CBlockIndex* pindex = m_chainman.m_blockman.LookupBlockIndex(req.blockhash);
+            if (!pindex || !(pindex->nStatus & BLOCK_HAVE_DATA)) {
+                LogPrint(BCLog::NET, "Peer %d sent us a getaggblktxn for a block we don't have\n", pfrom.GetId());
+                return;
+            }
+            recent_block = pindex->nHeight >= m_chainman.ActiveChain().Height() - MAX_BLOCKTXN_DEPTH;
         }
 
-        // We no longer remember this block's components (we only keep them
-        // for a few recent blocks), so answer with the full block instead.
-        LogPrint(BCLog::NET, "Peer %d sent us a getaggblktxn for a block whose components we don't have\n", pfrom.GetId());
+        if (!recent_block) {
+            LogPrint(BCLog::NET, "Peer %d sent us a getaggblktxn for a block > %i deep\n", pfrom.GetId(), MAX_BLOCKTXN_DEPTH);
+        } else if (auto component_list{GetBlockComponents(req.blockhash)}) {
+            SendBlockTransactions(pfrom, *peer, *component_list, req, /*aggregate_components=*/true);
+            return;
+        } else {
+            // We no longer remember this block's components (we only keep
+            // them for a few recent blocks), or never knew them from our own
+            // mempool.
+            LogPrint(BCLog::NET, "Peer %d sent us a getaggblktxn for a block whose components we don't have\n", pfrom.GetId());
+        }
+
+        // Answer with the full block instead, as GETBLOCKTXN does for a deep block.
         CInv inv{MSG_WITNESS_BLOCK, req.blockhash};
         WITH_LOCK(peer->m_getdata_requests_mutex, peer->m_getdata_requests.push_back(inv));
         return;
