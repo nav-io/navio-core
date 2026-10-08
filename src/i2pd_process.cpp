@@ -29,7 +29,13 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <climits>
 #include <csignal>
+#endif
+
+#ifdef __linux__
+#include <sys/prctl.h>
+#include <sys/syscall.h>
 #endif
 
 #ifdef __APPLE__
@@ -41,6 +47,12 @@ namespace {
 //! SAM bridge endpoint the managed i2pd listens on and naviod connects to.
 const std::string I2PD_SAM_HOST{"127.0.0.1"};
 const std::string I2PD_SAM_PORT{"7656"};
+
+#ifndef WIN32
+//! Descriptor bound the child closes up to when the parent cannot read one
+//! from sysconf(_SC_OPEN_MAX) (unlimited or indeterminate).
+constexpr int FALLBACK_MAX_FD{65536};
+#endif
 
 //! How long shutdown waits for the router to exit after asking it to, before
 //! killing it outright so that a hung router cannot stall naviod's shutdown.
@@ -190,6 +202,11 @@ bool SpawnChild()
     argv.push_back(nullptr);
     char* const exe{const_cast<char*>(g_exe.c_str())};
 
+    // Read in the parent: neither is async-signal-safe to compute in the child.
+    const pid_t parent{getpid()};
+    const long open_max{sysconf(_SC_OPEN_MAX)};
+    const int max_fd{open_max > 0 && open_max <= INT_MAX ? static_cast<int>(open_max) : FALLBACK_MAX_FD};
+
     // Until execv() the child still runs naviod's signal handlers, so a
     // SIGTERM from TerminateChild() landing in that window would be consumed
     // by HandleSIGTERM and the router would start anyway. Fork with every
@@ -209,13 +226,37 @@ bool SpawnChild()
                 sigaction(sig, &default_action, nullptr);
             }
         }
+#ifdef __linux__
+        // Have the kernel SIGTERM the router when naviod goes away without
+        // running Shutdown() (crash, SIGKILL). It is delivered when the
+        // forking thread exits; that is the supervisor, which only exits after
+        // reaping this child. If naviod already died before prctl() took
+        // effect, the child has been reparented, so exit instead of starting.
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
+        if (getppid() != parent) _exit(127);
+#else
+        // No equivalent is used on macOS or other non-Linux systems: if
+        // naviod dies without running Shutdown(), the router keeps running,
+        // and keeps its SAM port, until it is stopped by hand.
+        (void)parent;
+#endif
         setsid();
         int devnull{open("/dev/null", O_RDWR)};
         if (devnull >= 0) {
             dup2(devnull, STDIN_FILENO);
             dup2(devnull, STDOUT_FILENO);
             dup2(devnull, STDERR_FILENO);
-            if (devnull > STDERR_FILENO) close(devnull);
+        }
+        // Close everything else naviod has open: its sockets are not
+        // close-on-exec, so an orphaned router would otherwise keep naviod's
+        // P2P and RPC ports bound after naviod itself is gone.
+        bool closed{false};
+#if defined(__linux__) && defined(SYS_close_range)
+        // One syscall instead of up to max_fd; ENOSYS before Linux 5.9.
+        closed = syscall(SYS_close_range, STDERR_FILENO + 1, ~0U, 0U) == 0;
+#endif
+        if (!closed) {
+            for (int fd{STDERR_FILENO + 1}; fd < max_fd; ++fd) close(fd);
         }
         sigprocmask(SIG_SETMASK, &old_mask, nullptr);
         execv(exe, argv.data());
