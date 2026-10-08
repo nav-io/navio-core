@@ -343,6 +343,16 @@ def rpc_port(n):
     return PORT_MIN + PORT_RANGE + n + (MAX_NODES * PortSeed.n) % (PORT_RANGE - 1 - MAX_NODES)
 
 
+def tor_port(n):
+    """Port for a node's onion-service target bind (-bind=...=onion).
+
+    Without an explicit onion bind, naviod binds the chain's default onion
+    target (127.0.0.1:18445 on regtest, 127.0.0.1:18440 on blsctregtest),
+    which lies inside the rpc_port() range: a test node whose RPC port happens
+    to equal it fails to bind RPC while a node of a concurrent test holds it."""
+    return PORT_MIN + 2 * PORT_RANGE + n + (MAX_NODES * PortSeed.n) % (PORT_RANGE - 1 - MAX_NODES)
+
+
 def rpc_url(datadir, i, chain, rpchost):
     rpc_u, rpc_p = get_auth_cookie(datadir, chain)
     host = '127.0.0.1'
