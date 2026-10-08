@@ -399,14 +399,26 @@ class P2PWebSocketTest(BitcoinTestFramework):
         )
         self.start_node(0)
 
-    def wsendpoint_from_node(self, node, **kwargs):
-        """Connect a plain TCP peer and return the wsendpoint it got, or None."""
-        peer = node.add_p2p_connection(P2PInterface(), **kwargs)
+    def ws_announcement(self, peer):
+        """Return the wsendpoint the peer got, or None.
+
+        Also checks that the node's version advertised NODE_P2P_WS on exactly
+        the connections it sent wsendpoint over, so the bit cannot mark a
+        connection whose endpoint is withheld (Tor, proxied).
+        """
         # Anything the node sends after verack is in flight once a ping
         # round-trips, since messages go out in order.
         peer.sync_with_ping()
         with p2p_lock:
             msg = peer.last_message.get("wsendpoint")
+            services = peer.last_message["version"].nServices
+        assert_equal(bool(services & NODE_P2P_WS), msg is not None)
+        return msg
+
+    def wsendpoint_from_node(self, node, **kwargs):
+        """Connect a plain TCP peer and return the wsendpoint it got, or None."""
+        peer = node.add_p2p_connection(P2PInterface(), **kwargs)
+        msg = self.ws_announcement(peer)
         self.last_peer_network = node.getpeerinfo()[0]["network"]
         node.disconnect_p2ps()
         self.wait_until(lambda: node.getpeerinfo() == [])
@@ -415,9 +427,7 @@ class P2PWebSocketTest(BitcoinTestFramework):
     def wsendpoint_from_outbound(self, node, **kwargs):
         """Have the node dial a test peer and return the wsendpoint it got, or None."""
         peer = node.add_outbound_p2p_connection(P2PInterface(), p2p_idx=0, **kwargs)
-        peer.sync_with_ping()
-        with p2p_lock:
-            msg = peer.last_message.get("wsendpoint")
+        msg = self.ws_announcement(peer)
         node.disconnect_p2ps()
         self.wait_until(lambda: node.getpeerinfo() == [])
         return msg
