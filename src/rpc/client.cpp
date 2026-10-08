@@ -71,6 +71,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "requestquote", 3, "expiry" },
     { "listquotes", 1, "min_fill_ratio" },
     { "listorders", 0, "verbose" },
+    { "listorders", 1, "count" },
+    { "listorders", 2, "skip" },
     { "addrfqquote", 2, "fill" },
     { "addrfqquote", 3, "sell_cost" },
     { "addrfqquote", 5, "order_expiry" },

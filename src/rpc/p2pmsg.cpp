@@ -37,6 +37,7 @@
 #include <util/time.h>
 
 #include <algorithm>
+#include <limits>
 #include <rpc/protocol.h>
 #include <rpc/request.h>
 #include <rpc/server.h>
@@ -610,12 +611,14 @@ static RPCHelpMan listorders()
         "a wire-public key, so the array order itself reveals nothing node-local.\n",
         {
             {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "Also list the cached orders"},
+            {"count", RPCArg::Type::NUM, RPCArg::DefaultHint{"all"}, "The number of orders to list (verbose only)"},
+            {"skip", RPCArg::Type::NUM, RPCArg::Default{0}, "The number of orders to skip (verbose only)"},
         },
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::BOOL, "enabled", "Whether the cache exists"},
             {RPCResult::Type::NUM, "count", /*optional=*/true, "Cached standing orders (raw cache size; may include expired entries awaiting prune). Read together with orders, so never less than its length"},
             {RPCResult::Type::NUM, "bytes", /*optional=*/true, "Approximate cache footprint"},
-            {RPCResult::Type::ARR, "orders", /*optional=*/true, "Live cached orders (verbose only), sorted by declared order_expiry ascending (quote_id tie-break)", {{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::ARR, "orders", /*optional=*/true, "Live cached orders (verbose only), sorted by declared order_expiry ascending (quote_id tie-break), from position skip and at most count of them", {{RPCResult::Type::OBJ, "", "", {
                 {RPCResult::Type::STR_HEX, "quote_id", "Standing-order identifier"},
                 {RPCResult::Type::STR, "buy", "Token the maker delivers to the taker (token id; all-zero hex is NAV)"},
                 {RPCResult::Type::STR, "sell", "Token the maker charges the taker (token id; all-zero hex is NAV)"},
@@ -632,10 +635,16 @@ static RPCHelpMan listorders()
                 }},
             }}}},
         }},
-        RPCExamples{HelpExampleCli("listorders", "") + HelpExampleCli("listorders", "true") + HelpExampleRpc("listorders", "true")},
+        RPCExamples{HelpExampleCli("listorders", "") + HelpExampleCli("listorders", "true") +
+                    "\nList the second page of 100 orders\n" + HelpExampleCli("listorders", "true 100 100") +
+                    HelpExampleRpc("listorders", "true, 100, 100")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             node::NodeContext& node = EnsureAnyNodeContext(request.context);
             const bool verbose = request.params[0].isNull() ? false : request.params[0].get_bool();
+            const int64_t count = request.params[1].isNull() ? std::numeric_limits<int64_t>::max() : request.params[1].getInt<int64_t>();
+            const int64_t skip = request.params[2].isNull() ? 0 : request.params[2].getInt<int64_t>();
+            if (count < 0) throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative count");
+            if (skip < 0) throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative skip");
             UniValue o(UniValue::VOBJ);
             if (!node.rfq_orders) { o.pushKV("enabled", false); return o; }
             o.pushKV("enabled", true);
@@ -652,8 +661,11 @@ static RPCHelpMan listorders()
             // store cannot make the list longer than the count beside it.
             const rfq::OrderCache::OrderSnapshot snap = node.rfq_orders->Snapshot(GetTime<std::chrono::seconds>().count());
             push_stats(snap.stats);
+            const size_t first = std::min<uint64_t>(skip, snap.orders.size());
+            const size_t last = first + std::min<uint64_t>(count, snap.orders.size() - first);
             UniValue arr(UniValue::VARR);
-            for (const rfq::OrderCache::OrderView& v : snap.orders) {
+            for (size_t i = first; i < last; ++i) {
+                const rfq::OrderCache::OrderView& v = snap.orders[i];
                 const rfq::RfqQuote& q = v.quote;
                 UniValue e(UniValue::VOBJ);
                 e.pushKV("quote_id", q.quote_id.GetHex());

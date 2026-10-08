@@ -16,10 +16,18 @@ import time
 
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal
+from test_framework.util import assert_equal, assert_raises_rpc_error
 
 # rfq::ORDER_PRUNE_INTERVAL (src/rfq/order_cache.h), in seconds.
 ORDER_PRUNE_INTERVAL = 60
+
+
+def order_half_hex(outpoint):
+    """A syntactically valid standing-order half spending `outpoint`."""
+    half = CTransaction()
+    half.vin.append(CTxIn(COutPoint(outpoint)))
+    half.vout.append(CTxOut(0, b""))
+    return half.serialize().hex()
 
 
 class RfqMakerMatchTest(BitcoinTestFramework):
@@ -135,7 +143,31 @@ class RfqMakerMatchTest(BitcoinTestFramework):
 
         self.log.info("light-maker sendorder over the wire OK")
 
+        self.test_listorders_paging(maker, TOKA)
         self.test_expired_orders_pruned(maker, TOKA)
+
+    def test_listorders_paging(self, maker, token):
+        self.log.info("listorders count/skip page through the sorted orders")
+        # Expiries both before and after the order already cached, so paging
+        # must follow the sort rather than insertion order.
+        for i, expiry in enumerate([1893456000 + 2, 1893456000 - 1, 1893456000 + 1]):
+            maker.sendorder(order_half_hex(10 + i), token, 500, "", 50, expiry)
+        full = maker.listorders(True)
+        orders = full["orders"]
+        assert_equal(len(orders), 4)
+        assert_equal([o["order_expiry"] for o in orders], [1893456000 - 1, 1893456000, 1893456000 + 1, 1893456000 + 2])
+
+        assert_equal(maker.listorders(True, 2)["orders"], orders[:2])
+        assert_equal(maker.listorders(True, 2, 1)["orders"], orders[1:3])
+        assert_equal(maker.listorders(True, 10, 3)["orders"], orders[3:])
+        assert_equal(maker.listorders(True, 0)["orders"], [])
+        assert_equal(maker.listorders(True, 1, 4)["orders"], [])
+        assert_equal(maker.listorders(True, None, 2)["orders"], orders[2:])
+        # Paging narrows the list only; the totals still describe the cache.
+        page = maker.listorders(True, 1, 1)
+        assert_equal((page["count"], page["bytes"]), (full["count"], full["bytes"]))
+        assert_raises_rpc_error(-8, "Negative count", maker.listorders, True, -1)
+        assert_raises_rpc_error(-8, "Negative skip", maker.listorders, True, 1, -1)
 
     def test_expired_orders_pruned(self, maker, token):
         self.log.info("expired standing orders are pruned without an RFQ")
@@ -144,10 +176,7 @@ class RfqMakerMatchTest(BitcoinTestFramework):
         now = int(time.time())
         maker.setmocktime(now)
         before = maker.listorders()["count"]
-        half = CTransaction()
-        half.vin.append(CTxIn(COutPoint(3)))
-        half.vout.append(CTxOut(0, b""))
-        expiring = maker.sendorder(half.serialize().hex(), token, 500, "", 50, now + 100)
+        expiring = maker.sendorder(order_half_hex(3), token, 500, "", 50, now + 100)
         assert_equal(maker.listorders()["count"], before + 1)
 
         maker.setmocktime(now + 101)
