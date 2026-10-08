@@ -2381,6 +2381,8 @@ struct WalletDelegation {
     CAmount amount{0};
     int depth{0};
     blsct::delegation::DelegationRequest request;
+    //! The staked commitment, as liststakedcommitments reports it.
+    BlstG1Point commitment;
 };
 
 //! Recover every delegated staked output of the wallet (unspent, any depth)
@@ -2411,7 +2413,7 @@ static std::vector<WalletDelegation> GetWalletDelegations(const wallet::CWallet&
     }
 
     const auto consider = [&](const uint256& outhash, const CTxOut& out, const CAmount amount, const int depth) {
-        if (out.predicate.empty()) return;
+        if (out.predicate.empty() || out.blsctData.rangeProof.Vs.Size() == 0) return;
         try {
             const auto parsed = blsct::ParsePredicate(out.predicate);
             if (!parsed.IsDataPredicate() || !blsct::delegation::IsDelegationData(parsed.GetData())) return;
@@ -2424,7 +2426,7 @@ static std::vector<WalletDelegation> GetWalletDelegations(const wallet::CWallet&
             // of the same address must match.
             const CTxDestination dest = DecodeDestination(request->rewardAddress);
             if (IsValidDestination(dest)) request->rewardAddress = EncodeDestination(dest);
-            ret.push_back({outhash, amount, depth, *request});
+            ret.push_back({outhash, amount, depth, *request, out.blsctData.rangeProof.Vs[0]});
         } catch (const std::exception&) {
         }
     };
@@ -2536,6 +2538,7 @@ RPCHelpMan listdelegations()
             "",
             {{RPCResult::Type::OBJ, "", "", {
                  {RPCResult::Type::STR_HEX, "outhash", "The hash identifying the staked output."},
+                 {RPCResult::Type::STR_HEX, "commitment", "The staked commitment, as reported by liststakedcommitments."},
                  {RPCResult::Type::STR_AMOUNT, "amount", "The delegated amount."},
                  {RPCResult::Type::NUM, "confirmations", "The number of confirmations of the staked output."},
                  {RPCResult::Type::STR_HEX, "delegate_pubkey", "The delegate's G1 delegation public key."},
@@ -2571,6 +2574,7 @@ RPCHelpMan listdelegations()
             for (const auto& d : delegations) {
                 UniValue entry(UniValue::VOBJ);
                 entry.pushKV("outhash", d.outhash.GetHex());
+                entry.pushKV("commitment", HexStr(d.commitment.GetVch()));
                 entry.pushKV("amount", ValueFromAmount(d.amount));
                 entry.pushKV("confirmations", d.depth);
                 entry.pushKV("delegate_pubkey", HexStr(d.request.delegateKey.GetVch()));

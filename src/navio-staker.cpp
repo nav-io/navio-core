@@ -47,6 +47,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 
 #ifndef WIN32
@@ -804,6 +805,37 @@ std::vector<StakedCommitment> GetStakedCommitments(const std::unique_ptr<BaseReq
     return UniValueArrayToStakedCommitmentsMine(result.get_array());
 }
 
+//! Reward address of each of the wallet's own delegated staked commitments,
+//! keyed by the commitment's hex encoding (as liststakedcommitments reports
+//! it). A wallet-mode staker may stake a commitment its wallet delegated; the
+//! block reward then belongs at the delegation's reward address rather than
+//! at -coinbasedest, so listdelegations can account for it. Empty when the
+//! wallet has no delegations or the node lacks listdelegations or its
+//! "commitment" field; std::nullopt on any other RPC error, so the caller can
+//! retry instead of caching an empty answer.
+std::optional<std::map<std::string, std::string>> GetOwnDelegationRewardAddresses(const std::unique_ptr<BaseRequestHandler>& rh)
+{
+    std::map<std::string, std::string> ret;
+    const UniValue& response = ConnectAndCallRPC(rh.get(), "listdelegations", /* args=*/{}, walletName);
+    const UniValue& error = response.find_value("error");
+    const UniValue& result = response.find_value("result");
+    if (!error.isNull()) {
+        LogPrintf("%s: [%s] Could not list delegations (%s); delegated stakes not yet mapped pay -coinbasedest\n", __func__, walletName, error.write());
+        const UniValue& code = error.isObject() ? error.find_value("code") : NullUniValue;
+        if (code.isNum() && code.getInt<int>() == RPC_METHOD_NOT_FOUND) return ret;
+        return std::nullopt;
+    }
+    if (!result.isArray()) return ret;
+    for (const UniValue& entry : result.getValues()) {
+        if (!entry.isObject()) continue;
+        const UniValue& commitment = entry.find_value("commitment");
+        const UniValue& reward_address = entry.find_value("reward_address");
+        if (!commitment.isStr() || !reward_address.isStr() || reward_address.get_str().empty()) continue;
+        ret.emplace(commitment.get_str(), reward_address.get_str());
+    }
+    return ret;
+}
+
 struct DelegatedCommitment {
     StakedCommitment staked;
     std::string rewardAddress;
@@ -1147,6 +1179,15 @@ void Loop()
     const int64_t delegation_refresh_interval = std::max<int64_t>(1, gArgs.GetIntArg("-delegationrefresh", 300));
     auto last_delegation_refresh{SteadyClock::now() - std::chrono::seconds(delegation_refresh_interval)};
 
+    // Wallet mode: reward address of each of the wallet's own delegated
+    // stakes, and the staked-commitment set it was fetched for. listdelegations
+    // is expensive on the node, so it is only called again when that set
+    // changes: a new delegation always shows up as a new staked commitment,
+    // and a revoked or spent one disappears from it. Unset until the first
+    // successful fetch, so a (re)started staker fetches on its first cycle.
+    std::map<std::string, std::string> own_delegation_rewards;
+    std::optional<std::set<std::string>> own_delegation_rewards_for;
+
     dash.Log(strprintf("staking started (wallet=%s)%s%s", walletName, auto_consolidate ? " (auto-consolidate enabled)" : "", fDelegated ? " (delegated mode)" : ""));
 
     while (dash.State() != tui::RunState::Quitting) {
@@ -1171,6 +1212,9 @@ void Loop()
                 // only); points into `delegations`, which is stable for the rest
                 // of this loop iteration.
                 const DelegatedCommitment* producing = nullptr;
+                // Wallet mode only: the commitment the proposal was staked
+                // with and where it pays the reward.
+                std::string staked_with, reward_dest;
 
                 if (fDelegated) {
                     if (Ticks<std::chrono::seconds>(SteadyClock::now() - last_delegation_refresh) >= delegation_refresh_interval) {
@@ -1210,15 +1254,40 @@ void Loop()
                 } else {
                     auto staked_commitments = GetStakedCommitments(rh);
 
+                    std::set<std::string> commitment_set;
+                    for (const auto& it : staked_commitments)
+                        commitment_set.insert(HexStr(it.point.GetVch()));
+                    if (commitment_set.empty()) {
+                        // Nothing to stake, so nothing to look up.
+                        own_delegation_rewards.clear();
+                        own_delegation_rewards_for = std::move(commitment_set);
+                    } else if (own_delegation_rewards_for != commitment_set) {
+                        // On an RPC error keep the previous map (it can only
+                        // be missing entries) and retry on the next cycle.
+                        if (auto fresh = GetOwnDelegationRewardAddresses(rh)) {
+                            own_delegation_rewards = std::move(*fresh);
+                            // Operators and the functional test scrape this line.
+                            LogPrintf("%s: [%s] Refreshed own delegations: %d of %d staked commitment(s) delegated.\n", __func__, walletName,
+                                      (int)std::count_if(commitment_set.begin(), commitment_set.end(), [&](const auto& c) { return own_delegation_rewards.contains(c); }),
+                                      (int)commitment_set.size());
+                            own_delegation_rewards_for = std::move(commitment_set);
+                        }
+                    }
+
                     for (auto& it : staked_commitments) {
                         nTotalMoney += it.value.GetUint64();
 
                         if (!got) {
-                            auto candidate = GetBlockProposal(rh, it, coinbase_dest);
+                            const auto delegated = own_delegation_rewards.find(HexStr(it.point.GetVch()));
+                            const std::string& dest = delegated != own_delegation_rewards.end() ? delegated->second : coinbase_dest;
+                            auto candidate = GetBlockProposal(rh, it, dest);
 
                             got = candidate.has_value();
-                            if (got)
+                            if (got) {
                                 proposal = candidate.value();
+                                staked_with = HexStr(it.point.GetVch());
+                                reward_dest = dest;
+                            }
                         }
                     }
                 }
@@ -1237,6 +1306,9 @@ void Loop()
                                                proposal.GetHash().ToString().substr(0, 16));
                         dash.Log(last_event);
                         LogPrintf("%s: [%s] Found block %s (%s%s). Current difficulty: %s\n", __func__, walletName, proposal.GetHash().ToString(), accepted ? "ACCEPTED" : "REJECTED: ", accepted ? "" : reply_submit.write(0, 0), currentDifficulty.ToString());
+                        if (!staked_with.empty()) {
+                            LogPrintf("%s: [%s] Block %s staked with commitment %s, reward to %s\n", __func__, walletName, proposal.GetHash().ToString(), staked_with, reward_dest);
+                        }
 
                         if (producing != nullptr) {
                             auto& stats = delegationStats[producing->outhash];
