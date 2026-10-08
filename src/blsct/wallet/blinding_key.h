@@ -85,9 +85,12 @@ inline constexpr uint32_t MAX_GENERATION_SEARCH{32};
 //! each candidate against the output's public point, which makes a match a
 //! proof rather than an assumption.
 //!
-//! 16 is ample: it bounds the number of outputs one wallet-built transaction
-//! pays (recipient + subtract-fee recipient + one change output per token),
-//! and the whole search is a handful of scalar multiplications.
+//! The bound covers the outputs a wallet-built transaction normally pays
+//! (recipient + subtract-fee recipient + one change output per token), and
+//! the whole search is a handful of scalar multiplications. An output whose
+//! ordinal is at or past it would never be searched, so the factory gives it
+//! a random, unrecoverable key instead (TxFactoryBase::BlindingKeyFor), and
+//! signblsctoutput cannot sign for it.
 inline constexpr uint32_t MAX_OUTPUT_SEARCH{16};
 
 //! The deterministic blinding scalar for the `ordinal`-th output of a
