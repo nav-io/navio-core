@@ -999,6 +999,21 @@ BOOST_AUTO_TEST_CASE(test_get_data_predicate_data)
         free(rv);
     }
 
+    // Bytes after the payload are ignored, as core's predicate parser
+    // ignores them: only the framed payload comes back.
+    {
+        const std::vector<unsigned char> payload{0x4e, 0x56, 0x44, 0x47};
+        auto with_trailing = blsct::DataPredicate(payload).GetVch();
+        with_trailing.push_back(std::byte{0xaa});
+        auto* rv = get(with_trailing);
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
+        const auto* data = static_cast<const unsigned char*>(rv->value);
+        BOOST_CHECK_EQUAL_COLLECTIONS(data, data + rv->value_size, payload.begin(), payload.end());
+        free_obj(rv->value);
+        free(rv);
+    }
+
     // Anything but a DATA predicate is refused.
     auto* pub_key_rv = gen_random_public_key();
     BOOST_REQUIRE(pub_key_rv != nullptr);
