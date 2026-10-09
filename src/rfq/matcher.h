@@ -98,8 +98,18 @@ public:
     //! Drop the request, if `token` still holds its claim.
     void FinishClaim(const uint256& uuid, uint64_t token) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
-    //! Drop a request and its quotes. Returns true if it existed.
-    bool Cancel(const uint256& uuid) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    //! Outcome of Cancel().
+    enum class CancelResult {
+        Cancelled, //!< the request and its quotes were dropped
+        NotFound,  //!< no open request has this uuid
+        Claimed,   //!< an accept holds the claim; the request is kept
+    };
+
+    //! Drop a request and its quotes. Refused while an accept holds the
+    //! request's claim (see ClaimQuote): that accept may still broadcast the
+    //! swap, so reporting it cancelled would be false. Retry once the claim is
+    //! released; a finished claim drops the request itself.
+    CancelResult Cancel(const uint256& uuid) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     //! Open request uuids.
     std::vector<uint256> ListRequests() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);

@@ -367,8 +367,8 @@ BOOST_AUTO_TEST_CASE(matcher_registry_lifecycle)
     // Lookup by id, then cancel.
     BOOST_CHECK(reg.GetQuote(uint256::ONE, uint256(uint64_t{2})).has_value());
     BOOST_CHECK(!reg.GetQuote(uint256::ONE, uint256(uint64_t{7})).has_value());
-    BOOST_CHECK(reg.Cancel(uint256::ONE));
-    BOOST_CHECK(!reg.Cancel(uint256::ONE));
+    BOOST_CHECK(reg.Cancel(uint256::ONE) == MatcherRegistry::CancelResult::Cancelled);
+    BOOST_CHECK(reg.Cancel(uint256::ONE) == MatcherRegistry::CancelResult::NotFound);
     BOOST_CHECK_EQUAL(reg.Size(), 0u);
 }
 
@@ -423,11 +423,38 @@ BOOST_AUTO_TEST_CASE(matcher_registry_claim)
     BOOST_CHECK(!reg.ClaimQuote(r.uuid, q1.quote_id).has_value());
 }
 
+BOOST_AUTO_TEST_CASE(matcher_registry_cancel_while_claimed)
+{
+    MatcherRegistry reg;
+    RfqRequest r = MakeReq(TokA(), TokB(), 1000, 5000);
+    RfqQuote q = MakeQuote(1000, 95);
+    q.uuid = r.uuid;
+    q.quote_id = uint256(uint64_t{1});
+    BOOST_REQUIRE(reg.OpenRequest(r));
+    BOOST_REQUIRE(reg.AddQuote(q));
+
+    // An in-flight accept may still broadcast the swap, so a cancel must not
+    // claim to have stopped it: refused, and the request and quote remain.
+    const auto claim = reg.ClaimQuote(r.uuid, q.quote_id);
+    BOOST_REQUIRE(claim.has_value());
+    BOOST_CHECK(reg.Cancel(r.uuid) == MatcherRegistry::CancelResult::Claimed);
+    BOOST_CHECK_EQUAL(reg.Size(), 1u);
+    BOOST_CHECK(reg.GetRequest(r.uuid).has_value());
+    BOOST_CHECK_EQUAL(reg.GetQuotes(r.uuid).size(), 1u);
+
+    // Once the failed accept hands the claim back, the cancel goes through.
+    {
+        ClaimGuard failed{reg, r.uuid, claim->token};
+    }
+    BOOST_CHECK(reg.Cancel(r.uuid) == MatcherRegistry::CancelResult::Cancelled);
+    BOOST_CHECK_EQUAL(reg.Size(), 0u);
+}
+
 BOOST_AUTO_TEST_CASE(matcher_registry_claim_reopened_uuid)
 {
-    // Accept A claims, the request is cancelled and re-opened under the same
-    // uuid, and accept B claims the new one. When A then fails (or succeeds),
-    // its stale claim must not release (or drop) B's.
+    // Accept A claims and finishes, the request is re-opened under the same
+    // uuid, and accept B claims the new one. A's stale token must then not
+    // release (or drop) B's claim.
     MatcherRegistry reg;
     RfqRequest r = MakeReq(TokA(), TokB(), 1000, 5000);
     RfqQuote q = MakeQuote(1000, 95);
@@ -438,7 +465,8 @@ BOOST_AUTO_TEST_CASE(matcher_registry_claim_reopened_uuid)
     BOOST_REQUIRE(reg.AddQuote(q));
     const auto a = reg.ClaimQuote(r.uuid, q.quote_id);
     BOOST_REQUIRE(a.has_value());
-    BOOST_REQUIRE(reg.Cancel(r.uuid));
+    reg.FinishClaim(r.uuid, a->token);
+    BOOST_REQUIRE_EQUAL(reg.Size(), 0u);
 
     BOOST_REQUIRE(reg.OpenRequest(r));
     BOOST_REQUIRE(reg.AddQuote(q));

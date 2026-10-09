@@ -43,6 +43,7 @@
 #include <rpc/server_util.h>
 #include <rpc/util.h>
 #include <univalue.h>
+#include <util/check.h>
 #include <util/strencodings.h>
 
 static RPCHelpMan getp2pmsginfo()
@@ -1091,13 +1092,22 @@ static RPCHelpMan listrfqs()
 static RPCHelpMan cancelrfq()
 {
     return RPCHelpMan{
-        "cancelrfq", "\nCancel an open RFQ, discarding its collected quotes.\n",
+        "cancelrfq", "\nCancel an open RFQ, discarding its collected quotes.\n"
+        "Fails while a quote of the RFQ is being accepted.\n",
         {{"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The request uuid"}},
         RPCResult{RPCResult::Type::BOOL, "", "Whether a request was cancelled"},
         RPCExamples{HelpExampleCli("cancelrfq", "\"<uuid>\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             rfq::MatcherRegistry& reg = EnsureMatcher(request);
-            return reg.Cancel(uint256(ParseHashV(request.params[0], "uuid")));
+            switch (reg.Cancel(uint256(ParseHashV(request.params[0], "uuid")))) {
+            case rfq::MatcherRegistry::CancelResult::Cancelled:
+                return true;
+            case rfq::MatcherRegistry::CancelResult::NotFound:
+                return false;
+            case rfq::MatcherRegistry::CancelResult::Claimed:
+                throw JSONRPCError(RPC_MISC_ERROR, "RFQ has a quote being accepted; the swap may still broadcast, so it cannot be cancelled now");
+            } // no default case, so the compiler can warn about missing cases
+            NONFATAL_UNREACHABLE();
         },
     };
 }

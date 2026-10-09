@@ -159,10 +159,16 @@ void MatcherRegistry::FinishClaim(const uint256& uuid, uint64_t token)
     if (token != 0 && it != m_active.end() && it->second.claim == token) m_active.erase(it);
 }
 
-bool MatcherRegistry::Cancel(const uint256& uuid)
+MatcherRegistry::CancelResult MatcherRegistry::Cancel(const uint256& uuid)
 {
     LOCK(m_mutex);
-    return m_active.erase(uuid) > 0;
+    auto it = m_active.find(uuid);
+    if (it == m_active.end()) return CancelResult::NotFound;
+    // An accept holding the claim is already building (or broadcasting) the
+    // swap; dropping the request now would report a cancel the swap ignores.
+    if (it->second.claim != 0) return CancelResult::Claimed;
+    m_active.erase(it);
+    return CancelResult::Cancelled;
 }
 
 std::vector<uint256> MatcherRegistry::ListRequests() const
