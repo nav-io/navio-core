@@ -599,6 +599,7 @@ BOOST_FIXTURE_TEST_CASE(blinding_generation_claims_are_atomic, TestingSetup)
     std::vector<std::vector<std::optional<uint32_t>>> results(THREADS);
     std::atomic<bool> start{false};
     std::vector<std::thread> threads;
+    threads.reserve(results.size());
     for (auto& result : results) {
         threads.emplace_back([&w, &anchors, &result, &start] {
             while (!start) std::this_thread::yield();
