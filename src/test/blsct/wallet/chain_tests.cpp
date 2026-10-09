@@ -5,6 +5,7 @@
 #include <blsct/wallet/txfactory.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
+#include <kernel/chain.h>
 #include <policy/fees.h>
 #include <validation.h>
 #include <wallet/coincontrol.h>
@@ -12,6 +13,8 @@
 #include <wallet/spend.h>
 #include <wallet/test/util.h>
 #include <wallet/test/wallet_test_fixture.h>
+
+#include <algorithm>
 
 #include <boost/test/unit_test.hpp>
 
@@ -221,6 +224,84 @@ BOOST_FIXTURE_TEST_CASE(StakelockConsolidationPendingBalanceTest, TestBLSCTChain
     BOOST_CHECK_EQUAL(after.m_mine_staked_commitment, 0);
     BOOST_CHECK_EQUAL(after.m_mine_pending_staked_commitment, before.m_mine_staked_commitment + added);
     BOOST_CHECK_EQUAL(after.m_mine_untrusted_pending, 0);
+}
+
+// A scan without fUpdate that meets a transaction whose outputs the wallet
+// already holds must still record that transaction's spends. Knowing the
+// outputs does not mean the inputs are marked spent: a block disconnect
+// un-spends them and leaves the outputs in place. AddToWalletIfInvolvingMe's
+// output-storage path used to return before its vin loop in that case, so
+// such a scan could never repair the spend. The disconnect also demotes the
+// block's own outputs to inactive (the coinbase's to abandoned), and the scan
+// must bring those back to confirmed too.
+BOOST_FIXTURE_TEST_CASE(OutputStorageScanRecordsKnownTxSpendTest, TestBLSCTChain100Setup)
+{
+    CreateAndProcessBlock({});
+    CChain& cchain = WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain());
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    {
+        LOCK2(wallet->cs_wallet, ::cs_main);
+        wallet->SetLastBlockProcessed(cchain.Height(), cchain.Tip()->GetBlockHash());
+    }
+    wallet->LoadWallet();
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    blsct_km->SetHDSeed(BlstScalar(uint256(uint64_t{1})));
+    BOOST_REQUIRE(blsct_km->NewSubAddressPool());
+    BOOST_REQUIRE(blsct_km->NewSubAddressPool(-1));
+    auto walletDestination = blsct::SubAddress(std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value()));
+
+    for (size_t i = 0; i <= COINBASE_MATURITY; i++) {
+        CreateAndProcessBlock({}, walletDestination);
+    }
+    BOOST_REQUIRE(SyncBLSCTWallet(wallet, cchain));
+
+    auto tx = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, blsct::CreateTransactionData{walletDestination, 1 * COIN, "test"});
+    BOOST_REQUIRE(tx != std::nullopt);
+    BOOST_REQUIRE(!tx->tx.vin.empty());
+    const COutPoint spent{tx->tx.vin[0].prevout};
+    BOOST_REQUIRE(wallet->GetWalletOutput(spent) != nullptr);
+
+    const CBlock block = CreateAndProcessBlock({tx->tx}, walletDestination);
+    BOOST_REQUIRE(SyncBLSCTWallet(wallet, cchain));
+    BOOST_REQUIRE(wallet->GetWalletOutput(spent)->IsSpent());
+
+    // The wallet's own outputs of the block: the send's change and the coinbase.
+    std::vector<COutPoint> own_outputs;
+    for (const auto& block_tx : block.vtx) {
+        for (const CTxOut& out : block_tx->vout) {
+            if (wallet->GetWalletOutput(COutPoint{out.GetHash()})) own_outputs.emplace_back(out.GetHash());
+        }
+    }
+    BOOST_REQUIRE(!own_outputs.empty());
+    BOOST_REQUIRE(wallet->GetWalletOutput(COutPoint{block.vtx[0]->vout[0].GetHash()}) != nullptr);
+    BOOST_REQUIRE(std::any_of(block.vtx[1]->vout.begin(), block.vtx[1]->vout.end(), [&](const CTxOut& out) {
+        return wallet->GetWalletOutput(COutPoint{out.GetHash()}) != nullptr;
+    }));
+
+    // The wallet sees the block disconnected: the spend is undone, while the
+    // spending transaction's outputs stay in mapOutputs.
+    const CBlockIndex* pindex = WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->m_blockman.LookupBlockIndex(block.GetHash()));
+    BOOST_REQUIRE(pindex != nullptr);
+    wallet->blockDisconnected(kernel::MakeBlockInfo(pindex, &block));
+    BOOST_REQUIRE(!wallet->GetWalletOutput(spent)->IsSpent());
+    for (const COutPoint& outpoint : own_outputs) {
+        BOOST_REQUIRE(wallet->GetWalletOutput(outpoint)->state<TxStateInactive>());
+    }
+
+    // The block is still on the active chain, so a scan without fUpdate meets
+    // the spending transaction again and must record its spend.
+    BOOST_REQUIRE(SyncBLSCTWallet(wallet, cchain));
+    BOOST_CHECK_MESSAGE(wallet->GetWalletOutput(spent)->IsSpent(),
+                        "a scan without fUpdate did not record the spend of a known transaction");
+    for (const COutPoint& outpoint : own_outputs) {
+        const auto* confirmed = wallet->GetWalletOutput(outpoint)->state<TxStateConfirmed>();
+        BOOST_CHECK_MESSAGE(confirmed && confirmed->confirmed_block_hash == block.GetHash(),
+                            "a scan without fUpdate left an output of an active block unconfirmed: " + outpoint.ToString());
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
