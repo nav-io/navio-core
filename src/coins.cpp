@@ -182,7 +182,10 @@ void CCoinsViewCache::AddToken(const uint256& tokenId, blsct::TokenEntry&& token
     bool inserted;
     std::tie(it, inserted) = cacheTokens.emplace(std::piecewise_construct, std::forward_as_tuple(tokenId), std::tuple<>());
     it->second.token = std::move(token);
-    it->second.flags |= TokenCacheEntry::WRITE;
+    // Re-adding a token erased earlier in this same cache (e.g. VerifyDB
+    // reconnecting blocks it just disconnected) must revive it, so the erase
+    // mark cannot survive the write.
+    it->second.flags = (it->second.flags & ~TokenCacheEntry::ERASE) | TokenCacheEntry::WRITE;
 }
 
 void CCoinsViewCache::EraseToken(const uint256& tokenId)
