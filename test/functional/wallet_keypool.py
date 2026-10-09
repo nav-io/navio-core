@@ -4,13 +4,17 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the wallet keypool and interaction with wallet encryption/locking."""
 
+import math
 import time
 from decimal import Decimal
 
-from test_framework.psbt_policy import DISABLE_PSBT_TESTS
+from test_framework.messages import COIN
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, assert_raises_rpc_error
+from test_framework.util import assert_equal, assert_raises_rpc_error, tx_from_hex
 from test_framework.wallet_util import WalletUnlock
+
+# The node's default -dustrelayfee (DUST_RELAY_TX_FEE), in sat/kvB
+DUST_RELAY_TX_FEE = 3000
 
 class KeyPoolTest(BitcoinTestFramework):
     def add_options(self, parser):
@@ -177,36 +181,52 @@ class KeyPoolTest(BitcoinTestFramework):
         self.generate(nodes[0], 1)
         destination = addr.pop()
 
-        if DISABLE_PSBT_TESTS:
-            return
+        def fund(outputs, inputs=None, **options):
+            return w2.fundrawtransaction(w2.createrawtransaction(inputs or [], outputs), options)
 
         # Using a fee rate (10 sat / byte) well above the minimum relay rate
         # creating a 5,000 sat transaction with change should not be possible
-        assert_raises_rpc_error(-4, "Transaction needs a change address, but we can't generate it.", w2.walletcreatefundedpsbt, inputs=[], outputs=[{addr.pop(): 0.00005000}], subtractFeeFromOutputs=[0], feeRate=0.00010)
+        assert_raises_rpc_error(-4, "Transaction needs a change address, but we can't generate it.", fund, [{addr.pop(): 0.00005000}], subtractFeeFromOutputs=[0], feeRate=0.00010)
 
         # creating a 10,000 sat transaction without change, with a manual input, should still be possible
-        res = w2.walletcreatefundedpsbt(inputs=w2.listunspent(), outputs=[{destination: 0.00010000}], subtractFeeFromOutputs=[0], feeRate=0.00010)
-        assert_equal("psbt" in res, True)
+        res = fund([{destination: 0.00010000}], inputs=w2.listunspent(), add_inputs=False, subtractFeeFromOutputs=[0], feeRate=0.00010)
+        assert_equal(res["changepos"], -1)
 
         # creating a 10,000 sat transaction without change should still be possible
-        res = w2.walletcreatefundedpsbt(inputs=[], outputs=[{destination: 0.00010000}], subtractFeeFromOutputs=[0], feeRate=0.00010)
-        assert_equal("psbt" in res, True)
+        res = fund([{destination: 0.00010000}], subtractFeeFromOutputs=[0], feeRate=0.00010)
+        assert_equal(res["changepos"], -1)
+        no_change_fee = res["fee"]
+        no_change_tx = tx_from_hex(res["hex"])
+        assert_equal(no_change_tx.serialize().hex(), res["hex"])
+        assert_equal(no_change_tx.vout[0].scriptPubKey[0], 0)  # witness v0 program
         # should work without subtractFeeFromOutputs if the exact fee is subtracted from the amount
-        res = w2.walletcreatefundedpsbt(inputs=[], outputs=[{destination: 0.00008900}], feeRate=0.00010)
-        assert_equal("psbt" in res, True)
+        res = fund([{destination: Decimal("0.00010000") - no_change_fee}], feeRate=0.00010)
+        assert_equal(res["changepos"], -1)
+        assert_equal(res["fee"], no_change_fee)
 
         # dust change should be removed
-        res = w2.walletcreatefundedpsbt(inputs=[], outputs=[{destination: 0.00008800}], feeRate=0.00010)
-        assert_equal("psbt" in res, True)
+        res = fund([{destination: Decimal("0.00010000") - no_change_fee - Decimal("0.00000100")}], feeRate=0.00010)
+        assert_equal(res["changepos"], -1)
+        assert_equal(res["fee"], no_change_fee + Decimal("0.00000100"))
 
         # create a transaction without change at the maximum fee rate, such that the output is still spendable:
-        res = w2.walletcreatefundedpsbt(inputs=[], outputs=[{destination: 0.00010000}], subtractFeeFromOutputs=[0], feeRate=0.0008823)
-        assert_equal("psbt" in res, True)
-        assert_equal(res["fee"], Decimal("0.00009706"))
+        # the fee leaves the output exactly at the dust threshold (GetDustThreshold for a witness output)
+        no_change_sats = int(no_change_fee * COIN)
+        assert_equal(no_change_sats % 10, 0)
+        vsize = no_change_sats // 10  # paid at 10 sat/vB
+        dust = math.ceil(DUST_RELAY_TX_FEE * (len(no_change_tx.vout[0].serialize()) + 32 + 4 + 1 + 107 // 4 + 4) / 1000)
+        max_fee = 10000 - dust
+        max_rate = max_fee * 1000 // vsize  # sat/kvB
+        res = fund([{destination: 0.00010000}], subtractFeeFromOutputs=[0], feeRate=Decimal(max_rate) / COIN)
+        assert_equal(res["changepos"], -1)
+        assert_equal(res["fee"], Decimal(max_fee) / COIN)
+        # one step higher pushes the output below the dust threshold
+        assert_raises_rpc_error(-4, "The transaction amount is too small to send after the fee has been deducted",
+                                fund, [{destination: 0.00010000}], subtractFeeFromOutputs=[0], feeRate=Decimal(max_rate + 1) / COIN)
 
         # creating a 10,000 sat transaction with a manual change address should be possible
-        res = w2.walletcreatefundedpsbt(inputs=[], outputs=[{destination: 0.00010000}], subtractFeeFromOutputs=[0], feeRate=0.00010, changeAddress=addr.pop())
-        assert_equal("psbt" in res, True)
+        res = fund([{destination: 0.00010000}], subtractFeeFromOutputs=[0], feeRate=0.00010, changeAddress=addr.pop())
+        assert "hex" in res
 
         if not self.options.descriptors:
             msg = "Error: Private keys are disabled for this wallet"

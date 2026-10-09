@@ -10,8 +10,5 @@
   of the removed RPCs now fails with "Method not found".
 - The node can no longer inspect a PSBT before it is signed: `decodepsbt` and
   `analyzepsbt` have no replacement.
-- The wallet PSBT RPCs (`walletprocesspsbt`, `walletcreatefundedpsbt`,
-  `psbtbumpfee`) are still available. A PSBT that `walletprocesspsbt` completes
-  is returned finalized in its `hex` field, ready for `sendrawtransaction`;
-  without `combinepsbt`, multiple signers sign in series rather than in
-  parallel.
+- The wallet PSBT RPCs have been removed as well; see the wallet PSBT RPC
+  release notes.

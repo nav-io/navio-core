@@ -6,7 +6,6 @@
 
 from decimal import Decimal, getcontext
 
-from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -292,8 +291,6 @@ class SendallTest(BitcoinTestFramework):
 
     @cleanup
     def sendall_watchonly_specific_inputs(self):
-        if DISABLE_PSBT_TESTS:
-            return
         self.log.info("Test sendall with a subset of UTXO pool in a watchonly wallet")
         self.add_utxos([17, 4])
         utxo = self.wallet.listunspent()[0]
@@ -310,13 +307,16 @@ class SendallTest(BitcoinTestFramework):
         else:
             watchonly.importmulti(import_req)
 
-        sendall_tx_receipt = watchonly.sendall(recipients=[self.remainder_target], inputs=[utxo])
-        psbt = sendall_tx_receipt["psbt"]
-        decoded = self.nodes[0].decodepsbt(psbt)
-        assert_equal(len(decoded["inputs"]), 1)
-        assert_equal(len(decoded["outputs"]), 1)
-        assert_equal(decoded["tx"]["vin"][0]["outid"], utxo["outid"])
-        assert_equal(decoded["tx"]["vout"][0]["scriptPubKey"]["address"], self.remainder_target)
+        sendall_tx_receipt = watchonly.sendall(recipients=[self.remainder_target], inputs=[utxo], lock_unspents=True)
+        # Only the given input is used: it is the one sendall locked
+        assert_equal(watchonly.listlockunspent(), [{"outid": utxo["outid"]}])
+        # Without private keys the transaction cannot be signed, so nothing is
+        # broadcast and the input stays unspent.
+        assert_equal(sendall_tx_receipt["complete"], False)
+        assert "txid" not in sendall_tx_receipt
+        assert_equal(self.nodes[0].getrawmempool(), [])
+        assert utxo["outid"] in [u["outid"] for u in self.wallet.listunspent()]
+        watchonly.lockunspent(True)
 
     @cleanup
     def sendall_with_minconf(self):
@@ -452,9 +452,8 @@ class SendallTest(BitcoinTestFramework):
         # Sendall fails when fee rate is lower than minimum
         self.sendall_fails_on_low_fee()
 
-        # Sendall succeeds with watchonly wallets spending specific UTXOs
-        if not DISABLE_PSBT_TESTS:
-            self.sendall_watchonly_specific_inputs()
+        # Sendall leaves a watchonly wallet's specific UTXOs unspent, as it cannot sign them
+        self.sendall_watchonly_specific_inputs()
 
         # Sendall only uses outputs with at least a give number of confirmations when using minconf
         self.sendall_with_minconf()

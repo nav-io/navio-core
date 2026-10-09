@@ -163,7 +163,7 @@ bool TransactionCanBeBumped(const CWallet& wallet, const uint256& txid)
 }
 
 Result CreateRateBumpTransaction(CWallet& wallet, const uint256& txid, const CCoinControl& coin_control, std::vector<bilingual_str>& errors,
-                                 CAmount& old_fee, CAmount& new_fee, CMutableTransaction& mtx, bool require_mine, const std::vector<CTxOut>& outputs, std::optional<uint32_t> original_change_index)
+                                 CAmount& old_fee, CAmount& new_fee, CMutableTransaction& mtx, const std::vector<CTxOut>& outputs, std::optional<uint32_t> original_change_index)
 {
     // For now, cannot specify both new outputs to use and an output index to send change
     if (!outputs.empty() && original_change_index.has_value()) {
@@ -236,7 +236,7 @@ Result CreateRateBumpTransaction(CWallet& wallet, const uint256& txid, const CCo
         }
     }
 
-    Result result = PreconditionChecks(wallet, wtx, require_mine, errors);
+    Result result = PreconditionChecks(wallet, wtx, /*require_mine=*/true, errors);
     if (result != Result::OK) {
         return result;
     }

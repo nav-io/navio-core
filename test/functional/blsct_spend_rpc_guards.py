@@ -92,24 +92,6 @@ class BLSCTSpendRPCGuardsTest(BitcoinTestFramework):
             blsct_wallet.bumpfee, dummy_txid,
         )
 
-        self.log.info("psbtbumpfee is rejected on a BLSCT wallet")
-        assert_raises_rpc_error(
-            -4, "BLSCT",
-            blsct_wallet.psbtbumpfee, dummy_txid,
-        )
-
-        self.log.info("walletprocesspsbt is rejected on a BLSCT wallet")
-        assert_raises_rpc_error(
-            -4, "blsct",
-            blsct_wallet.walletprocesspsbt, "cHNidP8AAAA=",
-        )
-
-        self.log.info("walletcreatefundedpsbt is rejected on a BLSCT wallet")
-        assert_raises_rpc_error(
-            -4, "blsct",
-            blsct_wallet.walletcreatefundedpsbt, [], [{"data": "00"}],
-        )
-
         self.log.info("sendmany rejects a BLSCT destination even from a transparent wallet")
         assert_raises_rpc_error(
             -8, "sendtoblsctaddress",

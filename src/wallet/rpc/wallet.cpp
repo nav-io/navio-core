@@ -1037,11 +1037,8 @@ RPCHelpMan sendmany();
 RPCHelpMan settxfee();
 RPCHelpMan fundrawtransaction();
 RPCHelpMan bumpfee();
-RPCHelpMan psbtbumpfee();
 RPCHelpMan send();
 RPCHelpMan sendall();
-RPCHelpMan walletprocesspsbt();
-RPCHelpMan walletcreatefundedpsbt();
 RPCHelpMan signrawtransactionwithwallet();
 
 // signmessage
@@ -1068,7 +1065,6 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &addmultisigaddress},
         {"wallet", &backupwallet},
         {"wallet", &bumpfee},
-        {"wallet", &psbtbumpfee},
         {"wallet", &createwallet},
         {"wallet", &restorewallet},
         {"wallet", &dumpprivkey},
@@ -1129,11 +1125,9 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &sendall},
         {"wallet", &unloadwallet},
         {"wallet", &upgradewallet},
-        {"wallet", &walletcreatefundedpsbt},
         {"wallet", &walletlock},
         {"wallet", &walletpassphrase},
         {"wallet", &walletpassphrasechange},
-        {"wallet", &walletprocesspsbt},
     };
     return commands;
 }

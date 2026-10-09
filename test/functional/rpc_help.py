@@ -54,6 +54,8 @@ class HelpRpcTest(BitcoinTestFramework):
         self.test_client_conversion_table()
         self.test_categories()
         self.test_removed_rpcs()
+        if self.is_wallet_compiled():
+            self.test_removed_options()
         self.dump_help()
         if self.is_wallet_compiled():
             self.wallet_help()
@@ -117,10 +119,29 @@ class HelpRpcTest(BitcoinTestFramework):
 
     def test_removed_rpcs(self):
         node = self.nodes[0]
-        for method in ['analyzepsbt', 'combinepsbt', 'converttopsbt', 'createpsbt', 'decodepsbt',
-                       'descriptorprocesspsbt', 'finalizepsbt', 'joinpsbts', 'utxoupdatepsbt']:
+        removed = ['analyzepsbt', 'combinepsbt', 'converttopsbt', 'createpsbt', 'decodepsbt',
+                   'descriptorprocesspsbt', 'finalizepsbt', 'joinpsbts', 'utxoupdatepsbt']
+        if self.is_wallet_compiled():
+            # The wallet RPC table is registered, so these are unknown because
+            # they were removed, not because the wallet is missing.
+            assert node.help('bumpfee').startswith('bumpfee ')
+            removed += ['psbtbumpfee', 'walletcreatefundedpsbt', 'walletprocesspsbt']
+        for method in removed:
             assert_equal(node.help(method), f'help: unknown command: {method}')
             assert_raises_rpc_error(-32601, 'Method not found', getattr(node, method))
+
+    def test_removed_options(self):
+        node = self.nodes[0]
+        node.createwallet(wallet_name='removed_options')
+        wallet = node.get_wallet_rpc('removed_options')
+        address = wallet.getnewaddress()
+        # Rejected outright: sendall ignores unknown options, so a dropped
+        # psbt=true would otherwise go on to sign and broadcast.
+        for method, args in [('send', [{address: 1}]), ('sendall', [[address]])]:
+            assert_raises_rpc_error(-8, 'The psbt option has been removed', getattr(wallet, method), *args, options={'psbt': True})
+        rawtx = wallet.createrawtransaction([], [{address: 1}])
+        assert_raises_rpc_error(-3, 'Unexpected key psbt', wallet.fundrawtransaction, rawtx, {'psbt': True})
+        wallet.unloadwallet()
 
     def dump_help(self):
         dump_dir = os.path.join(self.options.tmpdir, 'rpc_help_dump')
