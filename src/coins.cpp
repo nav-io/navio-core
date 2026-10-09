@@ -164,8 +164,12 @@ bool CCoinsViewCache::GetAllTokens(TokensMap& tokensMap) const
     if (!base->GetAllTokens(tokensMap))
         return false;
 
+    // The cache layers over the base: an entry erased here (e.g. its creating
+    // block was disconnected) must hide the base's copy, not just be skipped.
     for (auto& it : cacheTokens) {
-        if (!it.second.IsErased())
+        if (it.second.IsErased())
+            tokensMap.erase(it.first);
+        else
             tokensMap[it.first] = it.second;
     };
 

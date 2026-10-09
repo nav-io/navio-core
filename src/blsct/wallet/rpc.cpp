@@ -1219,12 +1219,6 @@ RPCHelpMan createtoken()
 }
 
 
-//! Read-only wallet ownership check for a token/NFT collection: the token's
-//! creator key is derived from the wallet's master token key and the hash of
-//! the token's immutable fields, so re-deriving and comparing the public key
-//! answers "did this wallet create it" without touching the chain or
-//! broadcasting anything (the same check minttoken/mintnft perform before
-//! spending).
 //! tokenInfoResult with "ismine" spliced in after tokenId, matching the
 //! output order of the wallet-aware token RPCs.
 static std::vector<RPCResult> WalletTokenInfoResult()
@@ -1244,6 +1238,12 @@ static std::vector<RPCResult> WalletTokenInfoResult()
     return res;
 }
 
+//! Read-only wallet ownership check for a token/NFT collection: the token's
+//! creator key is derived from the wallet's master token key and the hash of
+//! the token's immutable fields, so re-deriving and comparing the public key
+//! answers "did this wallet create it" without touching the chain or
+//! broadcasting anything (the same check minttoken/mintnft perform before
+//! spending).
 static bool TokenIsMine(const wallet::CWallet& wallet, blsct::KeyMan& blsct_km, const blsct::TokenEntry& token)
 {
     // A wallet without an HD seed (e.g. imported from a view key) can never
@@ -1282,7 +1282,7 @@ static RPCHelpMan listwallettokens()
 
             LOCK(pwallet->cs_wallet);
             auto blsct_km = pwallet->GetOrCreateBLSCTKeyMan();
-            const bool mine_only = request.params[0].isNull() ? false : request.params[0].get_bool();
+            const bool mine_only{self.Arg<bool>(0)};
 
             std::map<uint256, blsct::TokenEntry> tokens;
             pwallet->chain().listAllTokens(tokens);
