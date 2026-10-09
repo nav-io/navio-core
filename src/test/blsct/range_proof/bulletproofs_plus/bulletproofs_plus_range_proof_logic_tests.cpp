@@ -22,10 +22,13 @@
 #include <limits>
 
 namespace {
-// Threads alive in this process, or nullopt where /proc/self/task does not
-// exist (it is Linux-only), so pool sizes can only be observed there.
+// Threads alive in this process, or nullopt off a Linux build, so pool sizes
+// can only be observed there. A Windows binary under Wine can open the
+// host's /proc/self/task too, but its count never showed the pool's workers
+// (the Win64 cross-compile CI job), so only a Linux build counts.
 std::optional<size_t> CountProcessThreads()
 {
+#ifdef __linux__
     std::error_code ec;
     fs::directory_iterator it{fs::path{"/proc/self/task"}, ec};
     if (ec) return std::nullopt;
@@ -35,14 +38,22 @@ std::optional<size_t> CountProcessThreads()
         ++n;
     }
     return n;
+#else
+    return std::nullopt;
+#endif
 }
 
 boost::test_tools::assertion_result CanCountThreads(boost::unit_test::test_unit_id)
 {
     boost::test_tools::assertion_result res{CountProcessThreads().has_value()};
-    res.message() << "/proc/self/task is unavailable, so pool sizes cannot be observed";
+    res.message() << "counting threads needs a Linux build with /proc/self/task, so pool sizes cannot be observed";
     return res;
 }
+
+// Measurements of a pool with a cap above 1 before concluding it spawned no
+// worker: on a loaded host a worker can live and die between two samples,
+// but not on every attempt.
+constexpr int MAX_POOL_ATTEMPTS{5};
 
 // Runs `work` while a sampler thread polls the process's thread count, and
 // returns the most threads seen beyond those alive before (the sampler
@@ -639,20 +650,30 @@ BOOST_AUTO_TEST_CASE(test_pools_spawn_at_most_thread_cap, *boost::unit_test::pre
         2000, bulletproofs_plus::AmountRecoveryRequest<T>::of(proof, nonce));
 
     for (size_t cap : {size_t{1}, size_t{2}, size_t{3}}) {
-        const size_t verify_extra{PeakExtraThreads([&] { BOOST_CHECK(rpl.Verify(proofs, cap)); })};
-        BOOST_CHECK_MESSAGE(verify_extra <= cap - 1, "Verify with cap " << cap << " ran " << verify_extra << " extra threads");
+        // Every measurement must stay within the cap; a cap above 1 is
+        // remeasured until the sampler has seen each pool spawn a worker.
+        bool verify_seen{false};
+        bool recover_seen{false};
+        for (int attempt = 0; attempt < MAX_POOL_ATTEMPTS; ++attempt) {
+            const size_t verify_extra{PeakExtraThreads([&] { BOOST_CHECK(rpl.Verify(proofs, cap)); })};
+            BOOST_CHECK_MESSAGE(verify_extra <= cap - 1, "Verify with cap " << cap << " ran " << verify_extra << " extra threads");
+            verify_seen |= verify_extra > 0;
 
-        const size_t recover_extra{PeakExtraThreads([&] {
-            const auto res{rpl.RecoverAmounts(reqs, cap)};
-            BOOST_CHECK(res.is_completed);
-            BOOST_CHECK_EQUAL(res.amounts.size(), reqs.size());
-        })};
-        BOOST_CHECK_MESSAGE(recover_extra <= cap - 1, "RecoverAmounts with cap " << cap << " ran " << recover_extra << " extra threads");
+            const size_t recover_extra{PeakExtraThreads([&] {
+                const auto res{rpl.RecoverAmounts(reqs, cap)};
+                BOOST_CHECK(res.is_completed);
+                BOOST_CHECK_EQUAL(res.amounts.size(), reqs.size());
+            })};
+            BOOST_CHECK_MESSAGE(recover_extra <= cap - 1, "RecoverAmounts with cap " << cap << " ran " << recover_extra << " extra threads");
+            recover_seen |= recover_extra > 0;
+
+            if (cap == 1 || (verify_seen && recover_seen)) break;
+        }
 
         // The sampler did see the pool: a cap above 1 is actually used.
         if (cap > 1) {
-            BOOST_CHECK_MESSAGE(verify_extra > 0, "Verify with cap " << cap << " ran no extra threads");
-            BOOST_CHECK_MESSAGE(recover_extra > 0, "RecoverAmounts with cap " << cap << " ran no extra threads");
+            BOOST_CHECK_MESSAGE(verify_seen, "Verify with cap " << cap << " ran no extra threads in " << MAX_POOL_ATTEMPTS << " attempts");
+            BOOST_CHECK_MESSAGE(recover_seen, "RecoverAmounts with cap " << cap << " ran no extra threads in " << MAX_POOL_ATTEMPTS << " attempts");
         }
     }
 }
