@@ -38,6 +38,8 @@
  * - `Recv()` returns the number of application bytes copied, `0` on EOF/close,
  *   or `-1` with `WSAEWOULDBLOCK` when no application bytes are available yet
  *   and `-1` with another error code on a protocol error.
+ * - `Recv()` rejects `MSG_PEEK` with `-1` and `WSAEINVAL`: a framed stream
+ *   cannot be peeked without consuming decoder state.
  * - `Recv()` never buffers more decoded application bytes than the caller
  *   asked for: at most `len` raw bytes are read from the wire per call and the
  *   decoded payload can never exceed that. This is what makes it safe to wait
@@ -77,6 +79,11 @@ public:
 
     ~WebSocketSock() override = default;
 
+    /**
+     * Take over `other`'s file descriptor together with the connection's
+     * protocol state: a `WebSocketSock` hands over its own, any other `Sock`
+     * starts over at the handshake.
+     */
     WebSocketSock& operator=(Sock&& other) override;
 
     [[nodiscard]] ssize_t Send(const void* data, size_t len, int flags) const override;
@@ -152,6 +159,10 @@ private:
     [[nodiscard]] bool FlushPending(int flags) const;
     /** Copy already-decoded application bytes to the caller. */
     ssize_t DrainAppBytes(void* buf, size_t len) const;
+    /** Exchange every protocol state member below with `other`'s. */
+    void SwapProtocolState(WebSocketSock& other);
+
+    // Protocol state. Every member must be listed in SwapProtocolState().
 
     // Receive side.
     mutable RecvState m_recv_state{RecvState::HANDSHAKE};

@@ -53,6 +53,8 @@ OPCODE_BINARY = 0x2
 OPCODE_CLOSE = 0x8
 OPCODE_PING = 0x9
 OPCODE_PONG = 0xA
+# A port listed in doc/p2p-bad-ports.md (Amanda), outside the test framework's port range.
+BAD_PORT = 10080
 
 
 def recv_exact(sock, n):
@@ -374,9 +376,21 @@ class P2PWebSocketTest(BitcoinTestFramework):
         self.stop_node(0)
         node.assert_start_raises_init_error(
             [f"-p2pwsbind={host}:{ws_port}", "-listen=0"],
-            "Cannot set -bind or -whitebind together with -listen=0",
+            "Cannot set -bind, -whitebind or -p2pwsbind together with -listen=0",
             match=ErrorMatch.PARTIAL_REGEX,
         )
+
+        self.log.info("A bad -p2pwsbind port is warned about, as for -bind")
+        bad_port_warning = (
+            f'Warning: -p2pwsbind request to listen on port {BAD_PORT}. This port is considered "bad" and '
+            "thus it is unlikely that any peer will connect to it. See doc/p2p-bad-ports.md for details "
+            "and a full list."
+        )
+        with node.assert_debug_log([bad_port_warning]):
+            self.start_node(0, extra_args=[f"-p2pwsbind={host}:{BAD_PORT}"])
+        self.stop_node(0, expected_stderr=bad_port_warning)
+
+        self.log.info("Malformed -p2pwsbind and -p2pwsexternal values are init errors")
         node.assert_start_raises_init_error(
             ["-p2pwsbind=127.0.0.1:notaport"],
             "Invalid port specified in -p2pwsbind: '127.0.0.1:notaport'",

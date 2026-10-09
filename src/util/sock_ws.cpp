@@ -12,12 +12,12 @@
 #include <util/string.h>
 
 #include <algorithm>
-#include <cassert>
 #include <cerrno>
 #include <cstring>
 #include <map>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -31,6 +31,8 @@ constexpr uint8_t OPCODE_PONG{0xA};
 constexpr size_t MAX_CONTROL_PAYLOAD{125};
 
 constexpr std::string_view WS_GUID{"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"};
+//! Decoded size of a valid Sec-WebSocket-Key (RFC 6455 section 4.1).
+constexpr size_t WS_KEY_NONCE_BYTES{16};
 
 constexpr std::string_view HTTP_400_RESPONSE{
     "HTTP/1.1 400 Bad Request\r\n"
@@ -98,8 +100,36 @@ WebSocketSock::WebSocketSock(SOCKET s) : Sock{s} {}
 
 WebSocketSock& WebSocketSock::operator=(Sock&& other)
 {
-    assert(false && "Move of Sock into WebSocketSock not allowed.");
+    // Not `= delete`: a deleted function may not override the non-deleted
+    // virtual Sock::operator=(Sock&&), so this has to be a real move.
+    if (&other == this) return *this;
+    // The protocol state belongs to the connection and moves with the file
+    // descriptor: a plain socket starts over at the handshake like a freshly
+    // accepted one, a WebSocketSock hands over its state and is left fresh.
+    WebSocketSock fresh{INVALID_SOCKET};
+    SwapProtocolState(fresh);
+    if (auto* const ws{dynamic_cast<WebSocketSock*>(&other)}) SwapProtocolState(*ws);
+    Sock::operator=(std::move(other));
     return *this;
+}
+
+void WebSocketSock::SwapProtocolState(WebSocketSock& other)
+{
+    std::swap(m_recv_state, other.m_recv_state);
+    std::swap(m_hs_ok, other.m_hs_ok);
+    std::swap(m_hs_buf, other.m_hs_buf);
+    std::swap(m_hdr_buf, other.m_hdr_buf);
+    std::swap(m_opcode, other.m_opcode);
+    std::swap(m_mask, other.m_mask);
+    std::swap(m_mask_idx, other.m_mask_idx);
+    std::swap(m_payload_remaining, other.m_payload_remaining);
+    std::swap(m_app_out, other.m_app_out);
+    std::swap(m_app_out_pos, other.m_app_out_pos);
+    std::swap(m_raw_buf, other.m_raw_buf);
+    std::swap(m_send_pending, other.m_send_pending);
+    std::swap(m_send_pending_pos, other.m_send_pending_pos);
+    std::swap(m_control_out, other.m_control_out);
+    std::swap(m_frame_remaining, other.m_frame_remaining);
 }
 
 std::string WebSocketSock::ComputeAccept(const std::string& key)
@@ -225,6 +255,19 @@ ssize_t WebSocketSock::DrainAppBytes(void* buf, size_t len) const
 
 ssize_t WebSocketSock::Recv(void* buf, size_t len, int flags) const
 {
+    if (flags & MSG_PEEK) {
+        // Forwarding MSG_PEEK to the wire would hand back raw frame bytes,
+        // and decoding them would advance the frame decoder, so the next
+        // read would see the stream desynchronized. Serving the peek from
+        // decoded bytes instead would leave them buffered where Wait() on
+        // the file descriptor cannot see them. No caller peeks a WebSocket
+        // peer (CConnman reads with MSG_DONTWAIT; the inherited peeking
+        // helpers RecvUntilTerminator() and IsConnected() are only used on
+        // I2P SAM sockets), so refuse it before touching any state.
+        LogPrint(BCLog::NET, "websocket: MSG_PEEK is not supported\n");
+        SetLastNetError(WSAEINVAL);
+        return -1;
+    }
     if (m_recv_state == RecvState::FAILED) {
         SetLastNetError(ProtocolErrorCode());
         return -1;
@@ -407,6 +450,11 @@ bool WebSocketSock::ProcessHandshake(std::string_view request) const
     const std::string key{get("sec-websocket-key")};
     if (key.empty()) {
         LogPrint(BCLog::NET, "websocket: handshake missing Sec-WebSocket-Key\n");
+        return false;
+    }
+    // RFC 6455 section 4.2.1: the key is a base64-encoded 16-byte nonce.
+    if (const auto nonce{DecodeBase64(key)}; !nonce || nonce->size() != WS_KEY_NONCE_BYTES) {
+        LogPrint(BCLog::NET, "websocket: Sec-WebSocket-Key is not a base64 %u-byte nonce\n", WS_KEY_NONCE_BYTES);
         return false;
     }
     // Sec-WebSocket-Extensions and Sec-WebSocket-Protocol are deliberately

@@ -1055,9 +1055,11 @@ bool AppInitParameterInteraction(const ArgsManager& args)
     }
 
     // -bind, -whitebind and -p2pwsbind can't be set when not listening
-    size_t nUserBind = args.GetArgs("-bind").size() + args.GetArgs("-whitebind").size() + args.GetArgs("-p2pwsbind").size();
+    const size_t ws_binds{args.GetArgs("-p2pwsbind").size()};
+    size_t nUserBind = args.GetArgs("-bind").size() + args.GetArgs("-whitebind").size() + ws_binds;
     if (nUserBind != 0 && !args.GetBoolArg("-listen", DEFAULT_LISTEN)) {
-        return InitError(Untranslated("Cannot set -bind or -whitebind together with -listen=0"));
+        return InitError(Untranslated(ws_binds != 0 ? "Cannot set -bind, -whitebind or -p2pwsbind together with -listen=0" :
+                                                      "Cannot set -bind or -whitebind together with -listen=0"));
     }
 
     // if listen=0, then disallow listenonion=1
@@ -2705,6 +2707,9 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             return InitError(ResolveErrMsg("p2pwsbind", bind_arg));
         }
         connOptions.vWsBinds.push_back(bind_addr.value());
+        if (IsBadPort(bind_addr->GetPort())) {
+            InitWarning(BadPortWarning("-p2pwsbind", bind_addr->GetPort()));
+        }
     }
 
     // If the user did not specify -bind= or -whitebind= then we bind

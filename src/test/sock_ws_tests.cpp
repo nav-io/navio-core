@@ -225,6 +225,11 @@ BOOST_AUTO_TEST_CASE(handshake_bad)
         "GET /p2p HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + RFC_KEY + "\r\nSec-WebSocket-Version: 8\r\n\r\n",
         // Missing key.
         "GET /p2p HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        // Key that is not base64.
+        "GET /p2p HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: not base64!\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        // Keys that decode to 15 and 17 bytes instead of 16.
+        "GET /p2p HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAA\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        "GET /p2p HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAAA=\r\nSec-WebSocket-Version: 13\r\n\r\n",
         // Malformed header line.
         "GET /p2p HTTP/1.1\r\nUpgrade websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + RFC_KEY + "\r\nSec-WebSocket-Version: 13\r\n\r\n",
     };
@@ -492,6 +497,64 @@ BOOST_AUTO_TEST_CASE(ping_flood_with_stuck_send_fails_not_grows)
     // endlessly-growing buffer that returns EWOULDBLOCK forever.
     BOOST_CHECK_EQUAL(r, -1);
     BOOST_CHECK(sock.PendingSendBytes() <= WebSocketSock::MAX_CONTROL_QUEUE_BYTES + 256);
+}
+
+BOOST_AUTO_TEST_CASE(peek_is_rejected)
+{
+    // A peek neither hands back bytes nor advances the decoder: everything is
+    // still there for the next ordinary read.
+    MockWsSock sock{Handshake() + BinaryFrame("abc")};
+    char buf[16];
+    BOOST_CHECK_EQUAL(sock.Recv(buf, sizeof(buf), MSG_PEEK), -1);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEINVAL);
+    BOOST_CHECK(!sock.HandshakeComplete());
+    BOOST_CHECK(sock.m_output.empty());
+    const auto [data, r] = RecvAll(sock);
+    BOOST_CHECK_EQUAL(data, "abc");
+    BOOST_CHECK_EQUAL(r, -1);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
+
+    // Likewise mid-stream, with a frame waiting on the wire.
+    sock.Feed(BinaryFrame("def"));
+    BOOST_CHECK_EQUAL(sock.Recv(buf, sizeof(buf), MSG_PEEK | MSG_DONTWAIT), -1);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEINVAL);
+    const auto [data2, r2] = RecvAll(sock);
+    BOOST_CHECK_EQUAL(data2, "def");
+    BOOST_CHECK_EQUAL(r2, -1);
+}
+
+BOOST_AUTO_TEST_CASE(move_assignment)
+{
+    // A WebSocketSock source hands over its decoder state mid-frame: the
+    // destination finishes that frame with the right mask offset, and the
+    // source is left as a fresh, pre-handshake socket.
+    const std::string frame{BinaryFrame("hello")};
+    const size_t split{2 + 4 + 2}; // header, mask and the first two bytes
+    MockWsSock src{Handshake() + frame.substr(0, split)};
+    const auto [head, r] = RecvAll(src);
+    BOOST_CHECK_EQUAL(head, "he");
+    BOOST_CHECK_EQUAL(r, -1);
+    BOOST_REQUIRE(src.HandshakeComplete());
+
+    MockWsSock dst{frame.substr(split) + BinaryFrame("!")};
+    static_cast<Sock&>(dst) = std::move(src);
+    BOOST_CHECK(dst.HandshakeComplete());
+    BOOST_CHECK(!src.HandshakeComplete()); // NOLINT(bugprone-use-after-move)
+    const auto [tail, r2] = RecvAll(dst);
+    BOOST_CHECK_EQUAL(tail, "llo!");
+    BOOST_CHECK_EQUAL(r2, -1);
+    BOOST_CHECK_EQUAL(WSAGetLastError(), WSAEWOULDBLOCK);
+
+    // A plain socket carries no WebSocket state, so the connection starts
+    // over at the handshake.
+    dst.Feed(Handshake() + BinaryFrame("again"));
+    static_cast<Sock&>(dst) = Sock{INVALID_SOCKET};
+    BOOST_CHECK(!dst.HandshakeComplete());
+    dst.m_output.clear();
+    const auto [data, r3] = RecvAll(dst);
+    BOOST_CHECK_EQUAL(data, "again");
+    BOOST_CHECK(dst.HandshakeComplete());
+    BOOST_CHECK(StartsWith(dst.m_output, "HTTP/1.1 101"));
 }
 
 BOOST_AUTO_TEST_SUITE_END()
