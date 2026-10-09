@@ -300,7 +300,7 @@ def sha256sum_file(filename):
 MAX_NODES = 12
 # Don't assign rpc or p2p ports lower than this
 PORT_MIN = int(os.getenv('TEST_RUNNER_PORT_MIN', default=11000))
-# The number of ports to "reserve" for p2p and rpc, each
+# The number of ports to "reserve" for each of p2p, tor and rpc
 PORT_RANGE = 5000
 
 
@@ -340,16 +340,22 @@ def p2p_port(n):
 
 
 def rpc_port(n):
-    return PORT_MIN + PORT_RANGE + n + (MAX_NODES * PortSeed.n) % (PORT_RANGE - 1 - MAX_NODES)
+    # Its own block above p2p (PORT_MIN..), tor_port() (PORT_MIN + 2 *
+    # PORT_RANGE..) and every chain's default ports: a block starting at
+    # PORT_MIN + PORT_RANGE (16000-20999 by default) contained regtest's and
+    # blsctregtest's default onion targets (18445, 18440), which nodes of tests
+    # that don't bind to localhost only still bind, so a concurrent test whose
+    # node drew one of them as its RPC port failed to bind RPC.
+    return PORT_MIN + 3 * PORT_RANGE + n + (MAX_NODES * PortSeed.n) % (PORT_RANGE - 1 - MAX_NODES)
 
 
 def tor_port(n):
     """Port for a node's onion-service target bind (-bind=...=onion).
 
     Without an explicit onion bind, naviod binds the chain's default onion
-    target (127.0.0.1:18445 on regtest, 127.0.0.1:18440 on blsctregtest),
-    which lies inside the rpc_port() range: a test node whose RPC port happens
-    to equal it fails to bind RPC while a node of a concurrent test holds it."""
+    target (127.0.0.1:18445 on regtest, 127.0.0.1:18440 on blsctregtest).
+    Tests that don't bind to localhost only still get that default, which is
+    why rpc_port() keeps its block clear of those ports."""
     return PORT_MIN + 2 * PORT_RANGE + n + (MAX_NODES * PortSeed.n) % (PORT_RANGE - 1 - MAX_NODES)
 
 
