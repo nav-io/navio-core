@@ -487,11 +487,12 @@ additional listening socket, alongside the ordinary `-bind`/`-port` ones.
   `Sec-WebSocket-Accept`. A malformed request gets `400 Bad Request` and the
   connection is closed.
 - **Same peer, same rules.** A WebSocket peer is an ordinary `inbound` peer: it
-  counts against `-maxconnections`, gets `NetPermissionFlags::None` unless
-  whitelisted, and is subject to the same DoS scoring, eviction and ban logic.
-  It always uses the v1 transport (BIP324 is not attempted). `getpeerinfo`
-  reports `"websocket": true` for such peers. Limits: the upgrade request is
-  capped at 8 KiB and a single frame payload at 4 MiB.
+  counts against `-maxconnections`, always gets `NetPermissionFlags::None`
+  (`-whitelist` does not apply to it: behind a reverse proxy every WebSocket
+  peer has the proxy's address), and is subject to the same DoS scoring,
+  eviction and ban logic. It always uses the v1 transport (BIP324 is not
+  attempted). `getpeerinfo` reports `"websocket": true` for such peers. Limits:
+  the upgrade request is capped at 8 KiB and a single frame payload at 4 MiB.
 - **No TLS.** `naviod` speaks plain `ws://` only. For `wss://` (which browsers
   require from `https://` pages) terminate TLS in a reverse proxy such as nginx
   or Caddy and forward the upgraded connection to the `-p2pwsbind` address, e.g.
