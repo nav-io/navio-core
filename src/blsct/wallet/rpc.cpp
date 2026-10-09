@@ -274,6 +274,10 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         // known: crossing a CompactSize boundary would otherwise leave the
         // aggregate under the fee floor and burn every picked candidate.
         // count_fee only grows, so this rebuilds at most once per boundary.
+        // The rebuild runs after the one-shot cover refinement and, at a
+        // higher additionalFee, may select more coins: at a count boundary
+        // the own half's input mix can drift from the one the refinement
+        // matched. Accepted as the rarer cost; refinement is not repeated.
         if (!candidates.empty()) {
             const CAmount needed = aggregation::CombinedCountFee(res->tx, candidates, attempt.nBLSCTDefaultFee);
             if (needed > count_fee) {
@@ -655,14 +659,16 @@ static RPCHelpMan aggregatesend()
 
             // Pay for the merged input/output counts crossing a CompactSize
             // boundary (see SendTransaction); count_fee only grows, so this
-            // rebuilds at most once per boundary.
+            // rebuilds at most once per boundary. As there, the rebuild comes
+            // after refinement and may reselect coins, so at a boundary the
+            // input mix the refinement matched can change.
             for (CAmount count_fee = 0;;) {
                 const CAmount needed = aggregation::CombinedCountFee(own->tx, candidates, rate);
                 if (needed <= count_fee) break;
                 count_fee = needed;
                 txData.additionalFee = extra + count_fee;
                 own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
-                if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+                if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available to cover the extra fee for the merged input/output count");
             }
 
             std::vector<CTransactionRef> halves;
@@ -3012,7 +3018,10 @@ RPCHelpMan consolidate()
                         // inputs: pay for the merged counts crossing a
                         // CompactSize boundary (see SendTransaction).
                         // count_fee only grows, so this rebuilds at most once
-                        // per boundary.
+                        // per boundary. Unlike the send paths the rebuild
+                        // keeps the same inputs (the smallest coins, chosen
+                        // regardless of fee) and the refinement above reruns
+                        // against it, so the matched input mix holds.
                         const CAmount needed = aggregation::CombinedCountFee(*own, candidates, fee_rate);
                         if (needed > count_fee) {
                             count_fee = needed;
