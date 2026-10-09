@@ -17,8 +17,8 @@ namespace blsct {
 uint64_t CalculateViewTag(const BlstG1Point& blindingKey, const BlstScalar& viewKey);
 
 // Threaded batch variant. Computes CalculateViewTag for each blindingKey in `blindingKeys`
-// against the shared `viewKey` in parallel. Thread count defaults to
-// std::thread::hardware_concurrency(); pass an explicit `threads` to cap.
+// against the shared `viewKey` in parallel. `threads` caps the worker pool;
+// 0 means std::thread::hardware_concurrency().
 // For small batches (< kViewTagBatchSerialThreshold) falls back to the serial loop
 // to avoid thread-spawn overhead.
 std::vector<uint64_t> CalculateViewTagBatch(const std::vector<BlstG1Point>& blindingKeys,

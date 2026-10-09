@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/common.h>
 #include <blsct/eip_2333/bls12_381_keygen.h>
 #include <blsct/wallet/helpers.h>
 
@@ -36,11 +37,7 @@ std::vector<uint64_t> CalculateViewTagBatch(const std::vector<BlstG1Point>& blin
         return tags;
     }
 
-    if (threads == 0) {
-        threads = std::thread::hardware_concurrency();
-        if (threads == 0) threads = 1;
-    }
-    threads = std::min(threads, n);
+    threads = Common::PoolThreads(threads, n);
 
     std::atomic<size_t> next{0};
     auto worker = [&]() {

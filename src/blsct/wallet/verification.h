@@ -54,7 +54,9 @@ struct TxSignatureBatchResult {
 // on every non-coinbase BLSCT transaction. Block-validation callers MUST
 // pass `Consensus::Params::nBLSCTDefaultFee`; tests/helpers may rely on the
 // default (== `BLSCT_DEFAULT_FEE`).
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0, const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE, int nBLSCTProofV2Height = std::numeric_limits<int>::max());
+// `threads` caps the signature and range-proof worker pools; 0 means
+// std::thread::hardware_concurrency().
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0, const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE, int nBLSCTProofV2Height = std::numeric_limits<int>::max(), size_t threads = 0);
 
 // Same collection semantics as VerifyTxCollectProofs, but also returns the
 // prepared aggregate-signature job so callers can defer BLS signature checking
@@ -89,8 +91,9 @@ bool VerifyTxCollectProofs(const CTransaction& tx,
                            int nBLSCTProofV2Height = std::numeric_limits<int>::max());
 
 // Batch verify prepared aggregate-signature jobs collected by
-// PrepareTxForDeferredVerification.
-TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSignatureCheck>& sig_checks);
+// PrepareTxForDeferredVerification. `threads` caps each batch's pairing worker
+// pool; 0 means std::thread::hardware_concurrency().
+TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSignatureCheck>& sig_checks, size_t threads = 0);
 
 // Batch verify collected range proofs. Call once per block after all
 // VerifyTxCollectProofs calls succeed. `threads` caps the verification worker

@@ -585,9 +585,7 @@ bool RangeProofLogic<T>::VerifyProofs(
         }
     };
 
-    size_t nthreads = threads != 0 ? threads : std::thread::hardware_concurrency();
-    if (nthreads == 0) nthreads = 1;
-    nthreads = std::min(nthreads, n);
+    const size_t nthreads = blsct::Common::PoolThreads(threads, n);
     if (nthreads <= 1) {
         for (size_t idx = 0; idx < n; ++idx) do_one(idx);
     } else {
@@ -658,14 +656,16 @@ template bool RangeProofLogic<Blst>::Verify(
 
 template <typename T>
 AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
-    const std::vector<AmountRecoveryRequest<T>>& reqs
+    const std::vector<AmountRecoveryRequest<T>>& reqs,
+    size_t threads
 ) {
     using Scalar = typename T::Scalar;
     using Point = typename T::Point;
 
     // Each request is recovered independently, so fan the loop out across a
     // bounded worker pool (a wallet rescan can pass thousands of outputs, so we
-    // must NOT spawn one thread per request). Each request resolves to Fail
+    // must NOT spawn one thread per request) of at most `threads` workers (the
+    // wallet passes -par). Each request resolves to Fail
     // (malformed sizes -> the whole batch fails, preserving the original
     // early-return semantics), Skip (not a recoverable single-value proof), or
     // Ok with the recovered data. Results are written to a per-index slot so
@@ -762,9 +762,7 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
         }
     };
 
-    size_t nthreads = std::thread::hardware_concurrency();
-    if (nthreads == 0) nthreads = 1;
-    nthreads = std::min(nthreads, n);
+    const size_t nthreads = blsct::Common::PoolThreads(threads, n);
     if (nthreads <= 1) {
         for (size_t i = 0; i < n; ++i) do_one(i);
     } else {
@@ -802,7 +800,8 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
     };
 }
 template AmountRecoveryResult<Blst> RangeProofLogic<Blst>::RecoverAmounts(
-    const std::vector<AmountRecoveryRequest<Blst>>&
+    const std::vector<AmountRecoveryRequest<Blst>>&,
+    size_t
 );
 
 } // namespace bulletproofs_plus

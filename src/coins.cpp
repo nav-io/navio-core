@@ -205,7 +205,7 @@ void CCoinsViewCache::EmplaceCoinInternalDANGER(COutPoint&& outpoint, Coin&& coi
         std::forward_as_tuple(std::move(coin), CCoinsCacheEntry::DIRTY));
 }
 
-void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check_for_overwrite, const std::vector<uint256>* precomputed_out_hashes)
+void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check_for_overwrite)
 {
     bool fCoinbase = tx.IsCoinBase();
     // BLSCT block aggregation collapses a chain of dependent txs into one
@@ -216,38 +216,19 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool 
     // UpdateCoins) then removed them. Re-adding them here would resurrect
     // already-spent outputs.
     std::set<uint256> self_spent;
-    // CTxOut::GetHash() serializes the whole output (for a BLSCT output that
-    // means the full bulletproof range proof) and double-SHA256s it -- not
-    // cheap per output. When the self-spent scan runs it already hashes every
-    // output, so compute each content hash once there and reuse it in the add
-    // loop below instead of hashing twice; other paths keep hashing lazily in
-    // the loop.
-    // The caller supplies either a full set of content hashes or none: a
-    // partial or mismatched set would index past the vector below (an
-    // out-of-bounds read on the connect path) and key coins under the wrong
-    // outpoints. Enforce the contract with a hard check that fires in shipped
-    // builds too -- navio keeps assertions on in every configuration
-    // (ProcessConfigurations.cmake strips -DNDEBUG), so Assert() aborts in
-    // Release/RelWithDebInfo, whereas Assume() would only abort under Debug.
-    // Use the caller's vector directly -- copying it would defeat the point on
-    // the connect hot path -- and only compute our own when none was provided.
-    Assert(!precomputed_out_hashes || precomputed_out_hashes->size() == tx.vout.size());
-    std::vector<uint256> computed;
-    const std::vector<uint256>* out_hashes = precomputed_out_hashes;
+    // Output ids come from the transaction's cache (computed once at
+    // construction) rather than CTxOut::GetHash(), which serializes the whole
+    // output -- for a BLSCT output, its full range proof -- on every call.
+    const std::vector<Outid>& out_ids = tx.GetOutputIds();
     if (tx.IsBLSCT() && !fCoinbase) {
-        if (out_hashes == nullptr) {
-            computed.resize(tx.vout.size());
-            for (size_t i = 0; i < tx.vout.size(); ++i) computed[i] = tx.vout[i].GetHash();
-            out_hashes = &computed;
-        }
         std::set<uint256> vin_prevouts;
         for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
-        for (const auto& out_hash : *out_hashes) {
-            if (vin_prevouts.contains(out_hash)) self_spent.insert(out_hash);
+        for (const Outid& out_id : out_ids) {
+            if (vin_prevouts.contains(out_id.ToUint256())) self_spent.insert(out_id.ToUint256());
         }
     }
     for (size_t i = 0; i < tx.vout.size(); ++i) {
-        const uint256 outid = out_hashes ? (*out_hashes)[i] : tx.vout[i].GetHash();
+        const uint256& outid = out_ids[i].ToUint256();
         if (self_spent.contains(outid)) continue;
         bool overwrite = check_for_overwrite ? cache.HaveCoin(COutPoint(outid)) : fCoinbase;
         // Coinbase transactions can always be overwritten, in order to correctly
@@ -325,7 +306,7 @@ bool GetCoinReadOnly(const CCoinsView* v, const COutPoint& outpoint, Coin& coin)
 }
 } // namespace
 
-void CCoinsViewCache::BatchPrefetch(const std::vector<COutPoint>& outpoints) const
+void CCoinsViewCache::BatchPrefetch(const std::vector<COutPoint>& outpoints, size_t threads) const
 {
     if (outpoints.empty()) return;
 
@@ -340,15 +321,15 @@ void CCoinsViewCache::BatchPrefetch(const std::vector<COutPoint>& outpoints) con
     if (to_fetch.empty()) return;
 
     const size_t n = to_fetch.size();
-    const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
-    // Cap at 4 workers: benched at 2252 inputs, 4 threads hit ~413 ms vs
-    // 8 threads at ~430 ms on an 8-core host. Diminishing returns past 4
+    // At most `threads` workers (the caller's -par budget), and at most 4:
+    // benched at 2252 inputs, 4 threads hit ~413 ms vs 8 threads at ~430 ms
+    // on an 8-core host. Diminishing returns past 4
     // because LevelDB is page-cache bound and Coin deserialisation has
     // fixed per-item cost; beyond 4 workers the per-thread partition gets
     // small enough that std::async dispatch overhead eats the gain. Plus
     // smaller parallelism leaves cores for the concurrently running PoS
     // verify future + script check queue.
-    size_t num_threads = std::min<size_t>(hw, 4);
+    size_t num_threads = std::min<size_t>(threads, 4);
     const size_t min_parallel = 128;
     if (n <= min_parallel) num_threads = 1;
     if (num_threads < 1) num_threads = 1;

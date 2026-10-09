@@ -35,12 +35,13 @@ public:
     // Basic scheme
     bool VerifyBalanceBatch(const Signature& sig) const;
 
-    // Message augmentation scheme
-    bool VerifyBatch(const std::vector<PublicKey::Message>& msgs, const Signature& sig, const bool& fVerifyTx = false) const;
+    // Message augmentation scheme. `threads` caps the pairing worker pool;
+    // 0 means std::thread::hardware_concurrency().
+    bool VerifyBatch(const std::vector<PublicKey::Message>& msgs, const Signature& sig, const bool& fVerifyTx = false, size_t threads = 0) const;
 
 private:
     // Core operations
-    bool CoreAggregateVerify(const std::vector<PublicKey::Message>& msgs, const Signature& sig) const;
+    bool CoreAggregateVerify(const std::vector<PublicKey::Message>& msgs, const Signature& sig, size_t threads) const;
 
     std::span<const PublicKey> m_pks;
 };

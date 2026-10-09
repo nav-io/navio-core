@@ -5,9 +5,6 @@
 
 #include <validation.h>
 
-#include <atomic>
-#include <thread>
-
 #include <arith_uint256.h>
 #include <blsct/pos/pos.h>
 #include <blsct/pos/pos_async_verifier.h>
@@ -1218,7 +1215,7 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
         const int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
         const int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
 
-        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee, args.m_chainparams.GetConsensus().nBLSCTProofV2Height)) {
+        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee, args.m_chainparams.GetConsensus().nBLSCTProofV2Height, m_active_chainstate.m_chainman.ParThreads())) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }
@@ -1971,7 +1968,7 @@ void Chainstate::InvalidBlockFound(CBlockIndex* pindex, const BlockValidationSta
     }
 }
 
-void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo &txundo, int nHeight, const std::vector<uint256>* out_hashes)
+void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo &txundo, int nHeight)
 {
     // mark inputs spent
     if (!tx.IsCoinBase()) {
@@ -1983,12 +1980,7 @@ void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo &txund
         }
     }
     // add outputs
-    AddCoins(inputs, tx, nHeight, /*check_for_overwrite=*/false, out_hashes);
-}
-
-void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo &txundo, int nHeight)
-{
-    UpdateCoins(tx, inputs, txundo, nHeight, /*out_hashes=*/nullptr);
+    AddCoins(inputs, tx, nHeight, /*check_for_overwrite=*/false);
 }
 
 bool CScriptCheck::operator()() {
@@ -2191,18 +2183,14 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
         // were never added to the UTXO set on connect, so SpendCoin must not
         // be called for them on disconnect — otherwise it returns false and
         // marks the disconnect UNCLEAN, which DisconnectTip treats as fatal.
-        // Same single-hash reuse as ConnectBlock/AddCoins: when the self-spent
-        // scan runs it already hashes every output, so keep those hashes for
-        // the SpendCoin loop below instead of hashing each output twice.
-        std::vector<uint256> out_hashes;
+        // Output ids come from the transaction's cache, as in AddCoins.
+        const std::vector<Outid>& out_ids = tx.GetOutputIds();
         std::set<uint256> self_spent;
         if (tx.IsBLSCT() && !is_coinbase) {
-            out_hashes.resize(tx.vout.size());
-            for (size_t o = 0; o < tx.vout.size(); o++) out_hashes[o] = tx.vout[o].GetHash();
             std::set<uint256> vin_prevouts;
             for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
-            for (const auto& oh : out_hashes) {
-                if (vin_prevouts.contains(oh)) self_spent.insert(oh);
+            for (const Outid& out_id : out_ids) {
+                if (vin_prevouts.contains(out_id.ToUint256())) self_spent.insert(out_id.ToUint256());
             }
         }
 
@@ -2229,7 +2217,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
                 }
             }
             if (!tx.vout[o].scriptPubKey.IsUnspendable()) {
-                COutPoint out(out_hashes.empty() ? tx.vout[o].GetHash() : out_hashes[o]);
+                COutPoint out(out_ids[o]);
                 if (self_spent.contains(out.hash)) continue;
                 Coin coin;
                 bool is_spent = view.SpendCoin(out, &coin);
@@ -2764,71 +2752,13 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // ConnectBlock and aborts the node. So we always reject duplicates: every
     // output in the block must be distinct both from the live UTXO set and
     // from the other outputs in the same block.
-    // Per-tx output content hashes computed by the BIP30 / self-spent scan
-    // below (BLSCT non-coinbase txs only; empty otherwise), reused by
-    // UpdateCoins -> AddCoins in the connect loop.
-    std::vector<std::vector<uint256>> block_out_hashes;
-    {
-        // Hash every BLSCT non-coinbase output once, up front and in parallel.
-        // CTxOut::GetHash() on a BLSCT output serializes the whole range proof
-        // and double-SHA256s it (tens of microseconds each) and an aggregated
-        // block carries thousands of outputs; the hashes are pure functions of
-        // immutable outputs, so they fan out over a bounded worker pool. The
-        // serial scans below (BIP30 / self-spent, transient coins, AddCoins)
-        // then only look them up.
-        block_out_hashes.assign(block.vtx.size(), {});
-        std::vector<std::pair<size_t, size_t>> tasks; // (tx index, output index)
-        for (size_t tx_idx = 0; tx_idx < block.vtx.size(); ++tx_idx) {
-            const auto& tx = block.vtx[tx_idx];
-            if (!tx->IsBLSCT() || tx->IsCoinBase()) continue;
-            block_out_hashes[tx_idx].resize(tx->vout.size());
-            for (size_t o = 0; o < tx->vout.size(); ++o) tasks.emplace_back(tx_idx, o);
-        }
-        const auto hash_task = [&](size_t k) {
-            const auto [tx_idx, o] = tasks[k];
-            block_out_hashes[tx_idx][o] = block.vtx[tx_idx]->vout[o].GetHash();
-        };
-        // One worker per kParallelHashMinOutputs outputs (integer division), so
-        // the fan-out only splits at >= 2*kParallelHashMinOutputs tasks and is
-        // serial below that -- small blocks aren't worth the thread setup.
-        // Size from -par, the operator's parallelism budget, rather than
-        // hardware_concurrency() (which ignores that config): this hashing runs
-        // before the script-check queue is started below, so nothing else is
-        // in flight yet, but -par is still the right ceiling for how many
-        // threads a connect should ever spin.
-        static constexpr size_t kParallelHashMinOutputs = 64;
-        const size_t par = m_chainman.GetCheckQueue().WorkerCount() + 1; // == -par
-        size_t threads = std::min<size_t>(par, tasks.size() / kParallelHashMinOutputs);
-        if (threads <= 1) {
-            for (size_t k = 0; k < tasks.size(); ++k) hash_task(k);
-        } else {
-            std::atomic<size_t> next{0};
-            // GetHash() can throw (e.g. bad_alloc on a large aggregated block).
-            // An exception escaping a worker would std::terminate the node;
-            // capture per slot and rethrow after the join so the block fails
-            // validation instead of killing the process.
-            std::vector<std::exception_ptr> errs(threads);
-            auto worker = [&](size_t slot) {
-                try {
-                    for (;;) {
-                        const size_t k = next.fetch_add(1, std::memory_order_relaxed);
-                        if (k >= tasks.size()) return;
-                        hash_task(k);
-                    }
-                } catch (...) {
-                    errs[slot] = std::current_exception();
-                }
-            };
-            std::vector<std::thread> pool;
-            pool.reserve(threads - 1);
-            for (size_t t = 1; t < threads; ++t) pool.emplace_back(worker, t);
-            worker(0);
-            for (auto& th : pool) th.join();
-            for (auto& e : errs) {
-                if (e) std::rethrow_exception(e);
-            }
-        }
-    }
+
+    // The operator's parallelism budget (-par), applied to each worker pool
+    // this connect spins up: coin prefetch, signature and range-proof batches.
+    // It caps each pool, not their sum: the signature batch runs on the async
+    // verifier while the range-proof batch runs here, so the two overlap and
+    // can use up to twice -par threads between them.
+    const size_t par_threads{m_chainman.ParThreads()};
 
     // Prefetch the output content-hash outpoints so the BIP30 HaveCoin checks
     // below hit cache instead of paying a serial LevelDB read per output (the
@@ -2838,17 +2768,14 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         size_t est_outputs = 0;
         for (const auto& tx_ref : block.vtx) est_outputs += tx_ref->vout.size();
         prefetch_output_outpoints.reserve(est_outputs);
-        for (size_t tx_idx = 0; tx_idx < block.vtx.size(); ++tx_idx) {
-            const auto& tx = block.vtx[tx_idx];
-            const std::vector<uint256>& out_hashes = block_out_hashes[tx_idx];
+        for (const auto& tx : block.vtx) {
             for (size_t o = 0; o < tx->vout.size(); ++o) {
                 if (tx->vout[o].scriptPubKey.IsUnspendable()) continue;
-                const uint256 outid = out_hashes.empty() ? tx->vout[o].GetHash() : out_hashes[o];
-                prefetch_output_outpoints.emplace_back(outid);
+                prefetch_output_outpoints.emplace_back(tx->GetOutputId(o));
             }
         }
         if (!prefetch_output_outpoints.empty()) {
-            view.BatchPrefetch(prefetch_output_outpoints);
+            view.BatchPrefetch(prefetch_output_outpoints, par_threads);
         }
     }
 
@@ -2872,35 +2799,18 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             // BLSCT aggregation can carry vouts that are spent by sibling vins
             // inside the same tx; those never enter the UTXO set (see
             // coins.cpp::AddCoins), so they cannot collide and are exempt.
-            // Hash each output's content once (a BLSCT output hash serializes the
-            // whole range proof + double-SHA256) and reuse it for the self-spent
-            // scan and the overwrite check below, rather than hashing twice.
-            // Gated on the self-spent scan actually running: that scan already
-            // hashed every output unconditionally, so the precompute is free
-            // there, while the ungated paths (non-BLSCT tx, coinbase) would pay
-            // a new hash for unspendable outputs the loop below skips before
-            // hashing.
-            // Kept for the tx loop below, which hands them to AddCoins so the
-            // same outputs are not hashed a third time when they enter the
-            // UTXO set.
-            const std::vector<uint256>& out_hashes = block_out_hashes[tx_idx];
+            const std::vector<Outid>& out_ids = tx->GetOutputIds();
             std::set<uint256> self_spent;
             if (is_blsct_noncoinbase) {
-                // Hard check that fires in shipped builds: a mismatch would key
-                // UTXOs under the wrong outpoints. navio keeps assertions on in
-                // every configuration (ProcessConfigurations.cmake strips
-                // -DNDEBUG), so Assert() aborts in Release/RelWithDebInfo too --
-                // Assume() would only abort under Debug.
-                Assert(out_hashes.size() == tx->vout.size());
                 std::set<uint256> vin_prevouts;
                 for (const auto& in : tx->vin) vin_prevouts.insert(in.prevout.hash);
-                for (const auto& oh : out_hashes) {
-                    if (vin_prevouts.contains(oh)) self_spent.insert(oh);
+                for (const Outid& out_id : out_ids) {
+                    if (vin_prevouts.contains(out_id.ToUint256())) self_spent.insert(out_id.ToUint256());
                 }
             }
             for (size_t o = 0; o < tx->vout.size(); o++) {
                 if (tx->vout[o].scriptPubKey.IsUnspendable()) continue; // not stored in UTXO set
-                const uint256 outid = out_hashes.empty() ? tx->vout[o].GetHash() : out_hashes[o];
+                const uint256& outid = out_ids[o].ToUint256();
                 if (self_spent.contains(outid)) continue;
                 if (view.HaveCoin(COutPoint(outid)) || !block_outids.insert(outid).second) {
                     LogPrintf("ERROR: ConnectBlock(): tried to overwrite transaction\n");
@@ -2953,7 +2863,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         }
         if (!prefetch_outpoints.empty()) {
             const auto t_prefetch_start = SteadyClock::now();
-            view.BatchPrefetch(prefetch_outpoints);
+            view.BatchPrefetch(prefetch_outpoints, par_threads);
             LogPrint(BCLog::BENCH, "      - BatchPrefetch %u inputs: %.2fms\n",
                      (unsigned)prefetch_outpoints.size(),
                      Ticks<MillisecondsDouble>(SteadyClock::now() - t_prefetch_start));
@@ -2976,9 +2886,9 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
 
     // Collect range proofs from every BLSCT tx in this block, verify once after
-    // the per-tx loop. Bulletproofs++ batch verify parallelises via std::async
-    // per-proof, so a block-wide batch gives more proofs-in-flight and spreads
-    // thread-spawn cost over more work.
+    // the per-tx loop. Bulletproofs++ batch verify spreads the proofs over a
+    // -par-sized worker pool, so a block-wide batch gives more proofs-in-flight
+    // and spreads thread-spawn cost over more work.
     std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> blockBLSCTProofs;
     blockBLSCTProofs.reserve(block.vtx.size() * 4);
     std::vector<blsct::PreparedTxSignatureCheck> blockBLSCTSigChecks;
@@ -3003,17 +2913,9 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (tx.IsBLSCT() && !tx.IsCoinBase()) {
             std::set<uint256> vin_prevouts;
             for (const auto& in : tx.vin) vin_prevouts.insert(in.prevout.hash);
-            // Reuse the output content hashes from the BIP30 / self-spent scan
-            // above (present for every BLSCT non-coinbase tx) instead of
-            // serializing every range proof a second time.
-            // block_out_hashes[i] is empty or exactly tx.vout.size() entries by
-            // construction, so !empty() means a full set -- one spelling of the
-            // predicate, matching the UpdateCoins call below and AddCoins's
-            // Assert.
-            const std::vector<uint256>* pre = (i < block_out_hashes.size() && !block_out_hashes[i].empty()) ? &block_out_hashes[i] : nullptr;
             for (size_t o = 0; o < tx.vout.size(); ++o) {
                 const CTxOut& out = tx.vout[o];
-                const uint256 out_hash = pre ? (*pre)[o] : out.GetHash();
+                const uint256& out_hash = tx.GetOutputId(o).ToUint256();
                 if (!vin_prevouts.contains(out_hash)) continue;
                 const COutPoint op{out_hash};
                 if (view.HaveCoin(op)) continue; // already on chain
@@ -3104,8 +3006,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (i > 0) {
             blockundo.vtxundo.emplace_back();
         }
-        UpdateCoins(tx, view, i == 0 ? undoDummy : blockundo.vtxundo.back(), pindex->nHeight,
-                    (i < block_out_hashes.size() && !block_out_hashes[i].empty()) ? &block_out_hashes[i] : nullptr);
+        UpdateCoins(tx, view, i == 0 ? undoDummy : blockundo.vtxundo.back(), pindex->nHeight);
     }
     const auto time_4{SteadyClock::now()};
     time_connect += time_4 - time_3;
@@ -3150,8 +3051,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (!blockBLSCTSigChecks.empty()) {
             const auto t_sig_dispatch_start = SteadyClock::now();
             blsct_sig_verify_future = blsct::GetAggSigAsyncVerifier().Submit(
-                [sig_checks = std::move(blockBLSCTSigChecks)]() {
-                    return blsct::VerifyPreparedTxSignatures(sig_checks);
+                [sig_checks = std::move(blockBLSCTSigChecks), par_threads]() {
+                    return blsct::VerifyPreparedTxSignatures(sig_checks, par_threads);
                 });
             blsct_sig_verify_dispatched = true;
             blsct_sig_dispatch_time = SteadyClock::now() - t_sig_dispatch_start;
@@ -3170,13 +3071,12 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         // block plus the PoS kernel range proof. Amortises transcript/setup
         // overhead; the worker pool is sized from -par, the operator's
         // parallelism budget, rather than every core on the host.
-        const size_t rangeproof_threads = m_chainman.GetCheckQueue().WorkerCount() + 1; // == -par
         const auto t_rangeproof_start = SteadyClock::now();
-        if (!blsct::VerifyCollectedRangeProofs(blockBLSCTProofs, rangeproof_threads)) {
+        if (!blsct::VerifyCollectedRangeProofs(blockBLSCTProofs, par_threads)) {
             if (pos_kernel_range_proof.has_value()) {
                 std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> pos_only_proof;
                 pos_only_proof.push_back(*pos_kernel_range_proof);
-                if (!blsct::VerifyCollectedRangeProofs(pos_only_proof, rangeproof_threads)) {
+                if (!blsct::VerifyCollectedRangeProofs(pos_only_proof, par_threads)) {
                     if (blsct_sig_verify_dispatched) blsct_sig_verify_future.wait();
                     return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
                 }

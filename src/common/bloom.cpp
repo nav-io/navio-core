@@ -103,7 +103,7 @@ bool CBloomFilter::IsRelevantAndUpdate(const CTransaction& tx)
     for (unsigned int i = 0; i < tx.vout.size(); i++)
     {
         const CTxOut& txout = tx.vout[i];
-        const Txid& hash = txout.GetHash();
+        const Outid& hash = tx.GetOutputId(i);
         if (contains(COutPoint(hash.ToUint256()))) {
             fFound = true;
         }

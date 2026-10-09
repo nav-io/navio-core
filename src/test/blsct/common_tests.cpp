@@ -9,8 +9,10 @@
 #include <blsct/common.h>
 #include <streams.h>
 
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 
 BOOST_FIXTURE_TEST_SUITE(common_tests, BasicTestingSetup)
 
@@ -184,6 +186,22 @@ BOOST_AUTO_TEST_CASE(test_add_zero_if_empty)
         std::vector<bool> exp { false };
         BOOST_CHECK(exp == act);
     }
+}
+
+BOOST_AUTO_TEST_CASE(test_pool_threads)
+{
+    using blsct::Common;
+    // An explicit cap is honoured, bounded by the work.
+    BOOST_CHECK_EQUAL(Common::PoolThreads(1, 100), 1U);
+    BOOST_CHECK_EQUAL(Common::PoolThreads(3, 100), 3U);
+    BOOST_CHECK_EQUAL(Common::PoolThreads(64, 5), 5U);
+    // Never zero workers, even for no work.
+    BOOST_CHECK_EQUAL(Common::PoolThreads(3, 0), 1U);
+    BOOST_CHECK_EQUAL(Common::PoolThreads(0, 0), 1U);
+    // 0 is the standalone-library default: one per core.
+    const size_t hw{std::max<size_t>(1, std::thread::hardware_concurrency())};
+    BOOST_CHECK_EQUAL(Common::PoolThreads(0, 1'000'000), hw);
+    BOOST_CHECK_EQUAL(Common::PoolThreads(0, 1), 1U);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

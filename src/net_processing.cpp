@@ -2134,8 +2134,8 @@ void PeerManagerImpl::NewPoWValidBlock(const CBlockIndex *pindex, const std::sha
         for (const auto& tx : pblock->vtx) {
             most_recent_block_txs->emplace(tx->GetHash(), tx);
             most_recent_block_txs->emplace(tx->GetWitnessHash(), tx);
-            for (const auto& txout : tx->vout) {
-                most_recent_block_output_txids->emplace(txout.GetHash(), tx->GetHash());
+            for (const Outid& out_id : tx->GetOutputIds()) {
+                most_recent_block_output_txids->emplace(out_id.ToUint256(), tx->GetHash());
             }
         }
 
@@ -4577,8 +4577,8 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         if (tx.HasWitness()) m_txrequest.ReceivedResponse(pfrom.GetId(), wtxid);
         if (CNodeState* state = State(pfrom.GetId()); state && !state->m_requested_outids.empty()) {
             // This may be the answer to a request by output hash.
-            for (const CTxOut& txout : tx.vout) {
-                const uint256 output_hash{txout.GetHash()};
+            for (const Outid& out_id : tx.GetOutputIds()) {
+                const uint256& output_hash{out_id.ToUint256()};
                 if (state->m_requested_outids.erase(output_hash)) {
                     m_txrequest.ReceivedResponse(pfrom.GetId(), output_hash);
                 }

@@ -782,7 +782,8 @@ namespace {
 bulletproofs_plus::AmountRecoveryResult<Blst> RecoverWithTranscriptFallback(
     bulletproofs_plus::RangeProofLogic<Blst>& rp,
     const std::vector<CTxOut>& outs,
-    const std::vector<std::pair<size_t, BlstG1Point>>& candidates)
+    const std::vector<std::pair<size_t, BlstG1Point>>& candidates,
+    size_t threads = 0)
 {
     auto run = [&](const std::vector<std::pair<size_t, BlstG1Point>>& cands, bool transcript_v2) {
         std::vector<bulletproofs_plus::AmountRecoveryRequest<Blst>> reqs;
@@ -793,7 +794,7 @@ bulletproofs_plus::AmountRecoveryResult<Blst> RecoverWithTranscriptFallback(
             proof.transcript_v2 = transcript_v2;
             reqs.push_back(bulletproofs_plus::AmountRecoveryRequest<Blst>::of(proof, nonce, i));
         }
-        return rp.RecoverAmounts(reqs);
+        return rp.RecoverAmounts(reqs, threads);
     };
 
     auto result = run(candidates, /*transcript_v2=*/false);
@@ -815,7 +816,7 @@ bulletproofs_plus::AmountRecoveryResult<Blst> RecoverWithTranscriptFallback(
 }
 } // namespace
 
-bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std::vector<CTxOut>& outs)
+bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std::vector<CTxOut>& outs, size_t threads)
 {
     if (!fViewKeyDefined || !viewKey.IsValid())
         return bulletproofs_plus::AmountRecoveryResult<Arith>::failure();
@@ -837,7 +838,7 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
         candidateBlindingKeys.push_back(out.blsctData.blindingKey);
     }
 
-    auto tags = CalculateViewTagBatch(candidateBlindingKeys, viewKey.GetScalar());
+    auto tags = CalculateViewTagBatch(candidateBlindingKeys, viewKey.GetScalar(), threads);
 
     // (output index, recovery nonce) for every view-tag match.
     std::vector<std::pair<size_t, BlstG1Point>> candidates;
@@ -849,7 +850,7 @@ bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputs(const std:
         candidates.emplace_back(i, CalculateNonce(out.blsctData.blindingKey, viewKey.GetScalar()));
     }
 
-    return RecoverWithTranscriptFallback(rp, outs, candidates);
+    return RecoverWithTranscriptFallback(rp, outs, candidates, threads);
 }
 
 bulletproofs_plus::AmountRecoveryResult<Arith> KeyMan::RecoverOutputsWithNonce(const std::vector<CTxOut>& outs, const Point& nonce)

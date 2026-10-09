@@ -357,8 +357,9 @@ public:
     // and then populates cacheCoins serially on the calling thread. Call
     // before entering code paths that do many sequential GetCoin / HaveCoin
     // lookups (e.g. Consensus::CheckTxInputs, CCoinsViewCache::HaveInputs)
-    // to hide cold LevelDB latency behind one parallel pass.
-    void BatchPrefetch(const std::vector<COutPoint>& outpoints) const;
+    // to hide cold LevelDB latency behind one parallel pass. `threads` caps
+    // the reader pool (the -par budget on the connect path).
+    void BatchPrefetch(const std::vector<COutPoint>& outpoints, size_t threads) const;
 
     // Internal accessors used by BatchPrefetch's read-only walk. Must stay
     // const-only (no mutation) since concurrent readers rely on these.
@@ -468,13 +469,8 @@ private:
 //! an overwrite.
 // TODO: pass in a boolean to limit these possible overwrites to known
 // (pre-BIP34) cases.
-//! Utility function to add all of a transaction's outputs to a cache.
-//! When `precomputed_out_hashes` is non-null it MUST hold exactly
-//! tx.vout.size() entries, each output's content hash (CTxOut::GetHash());
-//! they are used instead of re-hashing every output (a BLSCT output hash
-//! serializes its whole range proof), e.g. when ConnectBlock already computed
-//! them for its BIP30 scan. The size contract is Assume()d in the callee.
-void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check_for_overwrite = false, const std::vector<uint256>* precomputed_out_hashes = nullptr);
+//! Coins are keyed by the transaction's cached output ids (GetOutputIds()).
+void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check_for_overwrite = false);
 
 //! Utility function to find any unspent output with a given txid.
 //! This function can be quite expensive because in the event of a transaction
