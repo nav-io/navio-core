@@ -1096,6 +1096,7 @@ jobs:
         env:
           CMAKE_CROSSCOMPILING_EMULATOR: ${{ matrix.depends_host == 'x86_64-w64-mingw32' && '/usr/bin/wine' || '' }}
           NAVIO_SMOKE_NO_EXEC: ${{ contains(matrix.depends_host, 'darwin') && '1' || '' }}
+          NAVIO_SMOKE_REQUIRE_I2PD: ${{ contains(matrix.depends_opts, 'I2P=1') && '1' || '' }}
         run: ci/smoke_test_binaries.sh build
 
       - name: Run unit tests

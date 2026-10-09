@@ -20,6 +20,8 @@
 #     smoke step still asserts something useful without tripping
 #     "Exec format error".
 #   - Otherwise execute the binary directly.
+#   - If NAVIO_SMOKE_REQUIRE_I2PD is set (builds with depends I2P=1), a
+#     missing i2pd fails the run instead of being skipped.
 
 export LC_ALL=C
 
@@ -28,6 +30,7 @@ set -euo pipefail
 BUILD_DIR="${1:-build}"
 BIN_DIR="${BUILD_DIR}/bin"
 EMULATOR="${CMAKE_CROSSCOMPILING_EMULATOR:-}"
+REQUIRE_I2PD="${NAVIO_SMOKE_REQUIRE_I2PD:-}"
 NO_EXEC="${NAVIO_SMOKE_NO_EXEC:-}"
 
 if [ ! -d "${BIN_DIR}" ]; then
@@ -70,6 +73,11 @@ ran=0
 for base in "${binaries[@]}"; do
   bin="${BIN_DIR}/${base}${suffix}"
   if [ ! -e "${bin}" ]; then
+    if [ "${base}" = i2pd ] && [ -n "${REQUIRE_I2PD}" ]; then
+      echo "::error::${bin} missing from a build made with depends I2P=1"
+      fail=1
+      continue
+    fi
     echo "skip: ${bin} not built"
     continue
   fi
