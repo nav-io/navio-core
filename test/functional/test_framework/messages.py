@@ -2461,6 +2461,74 @@ class msg_no_witness_blocktxn(msg_blocktxn):
         return self.block_transactions.serialize(with_witness=False)
 
 
+# The messages below carry the components of a BLSCT block's aggregate
+# transaction. This framework cannot parse BLSCT transactions, so they keep
+# their transactions serialized.
+
+class msg_cmpctaggblk:
+    """A cmpctblock whose short ids name the components of the block's aggregate."""
+    __slots__ = ("header", "posProof", "nonce", "shortids", "prefilled_txn_data")
+    msgtype = b"cmpctaggblk"
+
+    def __init__(self, header=None, nonce=0, shortids=None, prefilled_txn_data=b""):
+        self.header = header if header is not None else CBlockHeader()
+        self.posProof = PosProof()
+        self.nonce = nonce
+        self.shortids = shortids if shortids is not None else []
+        # The serialized vector of PrefilledTransaction, length included.
+        self.prefilled_txn_data = prefilled_txn_data
+
+    def deserialize(self, f):
+        self.header.deserialize(f)
+        if self.header.IsProofOfStake():
+            self.posProof.deserialize(f)
+        self.nonce = struct.unpack("<Q", f.read(8))[0]
+        self.shortids = [struct.unpack("<Q", f.read(6) + b'\x00\x00')[0] for _ in range(deser_compact_size(f))]
+        self.prefilled_txn_data = f.read()
+
+    def serialize(self):
+        r = self.header.serialize()
+        if self.header.IsProofOfStake():
+            r += self.posProof.serialize()
+        r += struct.pack("<Q", self.nonce)
+        r += ser_compact_size(len(self.shortids))
+        for x in self.shortids:
+            r += struct.pack("<Q", x)[0:6]
+        r += self.prefilled_txn_data
+        return r
+
+    def __repr__(self):
+        return "msg_cmpctaggblk(header=%s, nonce=%d, shortids=%s)" % (repr(self.header), self.nonce, repr(self.shortids))
+
+
+class msg_getaggblktxn(msg_getblocktxn):
+    __slots__ = ()
+    msgtype = b"getaggblktxn"
+
+
+class msg_aggblocktxn:
+    __slots__ = ("blockhash", "tx_count", "txs_data")
+    msgtype = b"aggblocktxn"
+
+    def __init__(self, blockhash=0, txs=None):
+        self.blockhash = blockhash
+        txs = txs if txs is not None else []
+        self.tx_count = len(txs)
+        # The serialized transactions, back to back.
+        self.txs_data = b"".join(txs)
+
+    def deserialize(self, f):
+        self.blockhash = deser_uint256(f)
+        self.tx_count = deser_compact_size(f)
+        self.txs_data = f.read()
+
+    def serialize(self):
+        return ser_uint256(self.blockhash) + ser_compact_size(self.tx_count) + self.txs_data
+
+    def __repr__(self):
+        return "msg_aggblocktxn(hash=%064x, tx_count=%d)" % (self.blockhash, self.tx_count)
+
+
 class OutKeysEntry:
     __slots__ = ("out_id", "blinding_key", "spending_key", "view_tag", "script")
 

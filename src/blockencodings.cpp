@@ -88,6 +88,28 @@ std::optional<std::vector<CTransactionRef>> FindAggregateComponents(const CBlock
     return component_list;
 }
 
+void RecentBlockComponents::Add(const uint256& block_hash, std::shared_ptr<const std::vector<CTransactionRef>> component_list)
+{
+    if (Get(block_hash)) return;
+    size_t bytes{0};
+    for (const auto& tx : *component_list) bytes += tx->GetTotalSize();
+    if (bytes > m_max_bytes) return;
+    m_entries.push_back({block_hash, std::move(component_list), bytes});
+    m_bytes += bytes;
+    while (!m_entries.empty() && (m_entries.size() > m_max_lists || m_bytes > m_max_bytes)) {
+        m_bytes -= m_entries.front().bytes;
+        m_entries.pop_front();
+    }
+}
+
+std::shared_ptr<const std::vector<CTransactionRef>> RecentBlockComponents::Get(const uint256& block_hash) const
+{
+    for (const auto& entry : m_entries) {
+        if (entry.block_hash == block_hash) return entry.component_list;
+    }
+    return nullptr;
+}
+
 void CBlockHeaderAndShortTxIDs::FillShortTxIDSelector() const {
     DataStream stream{};
     stream << header;
@@ -243,8 +265,7 @@ bool PartiallyDownloadedBlock::IsTxAvailable(size_t index) const
     return txn_available[index] != nullptr;
 }
 
-ReadStatus PartiallyDownloadedBlock::FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing, bool segwit_active,
-                                               std::vector<CTransactionRef>* component_list_out)
+ReadStatus PartiallyDownloadedBlock::FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing, bool segwit_active)
 {
     if (header.IsNull()) return READ_STATUS_INVALID;
 
@@ -290,7 +311,6 @@ ReadStatus PartiallyDownloadedBlock::FillBlock(CBlock& block, const std::vector<
 
     if (m_aggregate_components) {
         LogPrint(BCLog::CMPCTBLOCK, "Rebuilt aggregate transaction of block %s from %lu components\n", hash.ToString(), component_list.size() - 1);
-        if (component_list_out) *component_list_out = std::move(component_list);
     }
 
     LogPrint(BCLog::CMPCTBLOCK, "Successfully reconstructed block %s with %lu txn prefilled, %lu txn from mempool (incl at least %lu from extra pool) and %lu txn requested\n", hash.ToString(), prefilled_count, mempool_count, extra_count, vtx_missing.size());

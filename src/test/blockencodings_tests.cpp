@@ -480,15 +480,21 @@ BOOST_AUTO_TEST_CASE(AggregateComponentsRoundTripTest)
     }
 
     CBlock rebuilt;
-    std::vector<CTransactionRef> rebuilt_list;
-    BOOST_CHECK(partial.FillBlock(rebuilt, {components[1]}, /*segwit_active=*/true, &rebuilt_list) == READ_STATUS_OK);
+    BOOST_CHECK(partial.FillBlock(rebuilt, {components[1]}, /*segwit_active=*/true) == READ_STATUS_OK);
     BOOST_CHECK_EQUAL(rebuilt.GetHash(), block.GetHash());
     BOOST_REQUIRE_EQUAL(rebuilt.vtx.size(), 2U);
     BOOST_CHECK(rebuilt.vtx[1]->GetWitnessHash() == block.vtx[1]->GetWitnessHash());
-    BOOST_REQUIRE_EQUAL(rebuilt_list.size(), component_list.size());
-    for (size_t i = 0; i < rebuilt_list.size(); ++i) {
-        BOOST_CHECK(rebuilt_list[i]->GetWitnessHash() == component_list[i]->GetWitnessHash());
-    }
+
+    // The aggregate only commits to the sum of the components' signatures, so
+    // swapping two of them gives different components that rebuild the very
+    // same block: a list matching the block does not show that its components
+    // are the transactions that were signed, and must not be relayed as such.
+    CMutableTransaction swapped_first{*components[0]}, swapped_second{*components[1]};
+    std::swap(swapped_first.txSig, swapped_second.txSig);
+    const std::vector<CTransactionRef> forged_list{block.vtx[0], MakeTransactionRef(swapped_first), MakeTransactionRef(swapped_second), components[2]};
+    BOOST_CHECK(forged_list[1]->GetWitnessHash() != components[0]->GetWitnessHash());
+    BOOST_CHECK(forged_list[2]->GetWitnessHash() != components[1]->GetWitnessHash());
+    BOOST_CHECK(ComponentListMatchesBlock(block, forged_list));
 }
 
 BOOST_AUTO_TEST_CASE(AggregateComponentsRejectTest)
@@ -527,6 +533,56 @@ BOOST_AUTO_TEST_CASE(AggregateComponentsRejectTest)
     CBlock plain{block};
     plain.vtx.push_back(components[0]);
     BOOST_CHECK(!FindAggregateComponents(plain, pool));
+}
+
+BOOST_AUTO_TEST_CASE(RecentBlockComponentsBoundsTest)
+{
+    // Lists of the same shape, so of the same serialized size.
+    const auto make_list{[] {
+        return std::make_shared<const std::vector<CTransactionRef>>(std::vector<CTransactionRef>{MakeComponentTx(1, 100), MakeComponentTx(1, 100)});
+    }};
+    const uint256 a{InsecureRand256()}, b{InsecureRand256()}, c{InsecureRand256()};
+    const auto list_a{make_list()}, list_b{make_list()}, list_c{make_list()};
+    const size_t list_bytes{(*list_a)[0]->GetTotalSize() + (*list_a)[1]->GetTotalSize()};
+
+    // The size bound evicts the oldest list.
+    {
+        RecentBlockComponents recent{/*max_lists=*/10, /*max_bytes=*/2 * list_bytes};
+        recent.Add(a, list_a);
+        recent.Add(b, list_b);
+        recent.Add(b, list_c); // already known: neither replaced nor counted twice
+        BOOST_CHECK_EQUAL(recent.Bytes(), 2 * list_bytes);
+        BOOST_CHECK(recent.Get(a) == list_a);
+        BOOST_CHECK(recent.Get(b) == list_b);
+        recent.Add(c, list_c);
+        BOOST_CHECK_EQUAL(recent.Bytes(), 2 * list_bytes);
+        BOOST_CHECK(!recent.Get(a));
+        BOOST_CHECK(recent.Get(b) == list_b);
+        BOOST_CHECK(recent.Get(c) == list_c);
+    }
+
+    // So does the count bound.
+    {
+        RecentBlockComponents recent{/*max_lists=*/2, /*max_bytes=*/10 * list_bytes};
+        recent.Add(a, list_a);
+        recent.Add(b, list_b);
+        recent.Add(c, list_c);
+        BOOST_CHECK_EQUAL(recent.Bytes(), 2 * list_bytes);
+        BOOST_CHECK(!recent.Get(a));
+        BOOST_CHECK(recent.Get(b) == list_b);
+        BOOST_CHECK(recent.Get(c) == list_c);
+    }
+
+    // A list larger than the whole size bound is not kept, and evicts nothing.
+    {
+        RecentBlockComponents recent{/*max_lists=*/10, /*max_bytes=*/2 * list_bytes};
+        recent.Add(a, list_a);
+        const auto oversized{std::make_shared<const std::vector<CTransactionRef>>(5, (*list_a)[0])};
+        recent.Add(b, oversized);
+        BOOST_CHECK_EQUAL(recent.Bytes(), list_bytes);
+        BOOST_CHECK(recent.Get(a) == list_a);
+        BOOST_CHECK(!recent.Get(b));
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

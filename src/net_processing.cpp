@@ -11,6 +11,7 @@
 #include <blockfilter.h>
 #include <chainparams.h>
 #include <consensus/amount.h>
+#include <consensus/consensus.h>
 #include <consensus/validation.h>
 #include <deploymentstatus.h>
 #include <hash.h>
@@ -193,6 +194,11 @@ static constexpr uint64_t CMPCTBLOCKS_AGGREGATE_VERSION{3};
 /** Number of recent blocks whose aggregate component list we remember, to
  *  build cmpctaggblk messages and answer getaggblktxn requests. */
 static constexpr size_t MAX_BLOCK_COMPONENT_LISTS{16};
+/** Serialized size of the transactions in the component lists we remember:
+ *  room for the lists of the tip and of a block preceding or competing with
+ *  it, even when both are full. BLSCT transactions carry no witness data, so
+ *  a block's serialized size is at most MAX_BLOCK_WEIGHT / WITNESS_SCALE_FACTOR. */
+static constexpr size_t MAX_BLOCK_COMPONENT_BYTES{2 * MAX_BLOCK_WEIGHT / WITNESS_SCALE_FACTOR};
 
 // Internal stuff
 namespace {
@@ -716,13 +722,18 @@ private:
     /** Answer a getblocktxn (or, with aggregate_components, a getaggblktxn) request from txs. */
     void SendBlockTransactions(CNode& pfrom, Peer& peer, const std::vector<CTransactionRef>& txs, const BlockTransactionsRequest& req, bool aggregate_components = false);
 
-    /** Remember the component list (coinbase followed by the aggregate's components) of a block. */
-    void RememberBlockComponents(const uint256& block_hash, std::shared_ptr<const std::vector<CTransactionRef>> component_list)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_block_components_mutex);
     /** The remembered component list of a block, or nullptr. */
     std::shared_ptr<const std::vector<CTransactionRef>> GetBlockComponents(const uint256& block_hash)
         EXCLUSIVE_LOCKS_REQUIRED(!m_block_components_mutex);
-    /** The remembered component list of a block, or else one recovered from the mempool. */
+    /** The remembered component list of a block, or else one recovered from
+     *  the mempool (and then remembered). This is the only source of
+     *  remembered lists: a list a peer supplied, or one filled from the extra
+     *  pool, can rebuild the block's aggregate without its components being
+     *  the transactions that were signed (their signatures can be swapped, as
+     *  the aggregate only commits to their sum). Relaying it would hand
+     *  peers short ids matching nothing in their mempool, so they fetch every
+     *  forged component, unvalidated, to rebuild the block. Mempool
+     *  transactions were each validated on their own. */
     std::shared_ptr<const std::vector<CTransactionRef>> GetOrFindBlockComponents(const CBlock& block)
         EXCLUSIVE_LOCKS_REQUIRED(!m_block_components_mutex);
     /** Build the compact block to send to a peer: component-encoded when the peer supports it and we know the components. */
@@ -1064,10 +1075,10 @@ private:
     /** Offset into vExtraTxnForCompact to insert the next tx */
     size_t vExtraTxnForCompactIt GUARDED_BY(g_msgproc_mutex) = 0;
 
-    /** Component lists (coinbase followed by the aggregate's components) of
-     *  recent aggregate blocks, oldest first, at most MAX_BLOCK_COMPONENT_LISTS. */
+    /** Component lists of recent aggregate blocks. Only filled by
+     *  GetOrFindBlockComponents, from our own mempool. */
     Mutex m_block_components_mutex;
-    std::deque<std::pair<uint256, std::shared_ptr<const std::vector<CTransactionRef>>>> m_block_components GUARDED_BY(m_block_components_mutex);
+    RecentBlockComponents m_block_components GUARDED_BY(m_block_components_mutex){MAX_BLOCK_COMPONENT_LISTS, MAX_BLOCK_COMPONENT_BYTES};
 
     /** Check whether the last unknown block a peer advertised is not yet known. */
     void ProcessBlockAvailability(NodeId nodeid) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
@@ -2691,23 +2702,10 @@ void PeerManagerImpl::SendBlockTransactions(CNode& pfrom, Peer& peer, const std:
     MakeAndPushMessage(pfrom, aggregate_components ? NetMsgType::AGGBLOCKTXN : NetMsgType::BLOCKTXN, resp);
 }
 
-void PeerManagerImpl::RememberBlockComponents(const uint256& block_hash, std::shared_ptr<const std::vector<CTransactionRef>> component_list)
-{
-    LOCK(m_block_components_mutex);
-    for (const auto& [hash, list] : m_block_components) {
-        if (hash == block_hash) return;
-    }
-    m_block_components.emplace_back(block_hash, std::move(component_list));
-    while (m_block_components.size() > MAX_BLOCK_COMPONENT_LISTS) m_block_components.pop_front();
-}
-
 std::shared_ptr<const std::vector<CTransactionRef>> PeerManagerImpl::GetBlockComponents(const uint256& block_hash)
 {
     LOCK(m_block_components_mutex);
-    for (const auto& [hash, list] : m_block_components) {
-        if (hash == block_hash) return list;
-    }
-    return nullptr;
+    return m_block_components.Get(block_hash);
 }
 
 std::shared_ptr<const std::vector<CTransactionRef>> PeerManagerImpl::GetOrFindBlockComponents(const CBlock& block)
@@ -2718,7 +2716,7 @@ std::shared_ptr<const std::vector<CTransactionRef>> PeerManagerImpl::GetOrFindBl
     auto found{FindAggregateComponents(block, m_mempool)};
     if (!found) return nullptr;
     auto component_list{std::make_shared<const std::vector<CTransactionRef>>(std::move(*found))};
-    RememberBlockComponents(block_hash, component_list);
+    WITH_LOCK(m_block_components_mutex, m_block_components.Add(block_hash, component_list));
     return component_list;
 }
 
@@ -3572,7 +3570,6 @@ void PeerManagerImpl::ProcessCompactBlockTxns(CNode& pfrom, Peer& peer, const Bl
 {
     std::shared_ptr<CBlock> pblock = std::make_shared<CBlock>();
     bool fBlockRead{false};
-    std::vector<CTransactionRef> component_list;
     {
         LOCK(cs_main);
 
@@ -3600,17 +3597,19 @@ void PeerManagerImpl::ProcessCompactBlockTxns(CNode& pfrom, Peer& peer, const Bl
         PartiallyDownloadedBlock& partialBlock = *range_flight.first->second.second->partialBlock;
 
         if (partialBlock.IsAggregateComponents() != aggregate_components) {
-            LogPrint(BCLog::NET, "Peer %d sent us %s for a block we are reconstructing from a %s\n", pfrom.GetId(),
-                     aggregate_components ? NetMsgType::AGGBLOCKTXN : NetMsgType::BLOCKTXN,
-                     partialBlock.IsAggregateComponents() ? NetMsgType::CMPCTAGGBLOCK : NetMsgType::CMPCTBLOCK);
+            // Not an answer to what we asked for: treat it like non-matching
+            // block transactions.
+            RemoveBlockRequest(block_transactions.blockhash, pfrom.GetId()); // Reset in-flight state in case Misbehaving does not result in a disconnect
+            Misbehaving(peer, 100, strprintf("%s for a block we are reconstructing from a %s",
+                                             aggregate_components ? NetMsgType::AGGBLOCKTXN : NetMsgType::BLOCKTXN,
+                                             partialBlock.IsAggregateComponents() ? NetMsgType::CMPCTAGGBLOCK : NetMsgType::CMPCTBLOCK));
             return;
         }
 
         // We should not have gotten this far in compact block processing unless it's attached to a known header
         const CBlockIndex* prev_block{Assume(m_chainman.m_blockman.LookupBlockIndex(partialBlock.header.hashPrevBlock))};
         ReadStatus status = partialBlock.FillBlock(*pblock, block_transactions.txn,
-                                                   /*segwit_active=*/DeploymentActiveAfter(prev_block, m_chainman, Consensus::DEPLOYMENT_SEGWIT),
-                                                   &component_list);
+                                                   /*segwit_active=*/DeploymentActiveAfter(prev_block, m_chainman, Consensus::DEPLOYMENT_SEGWIT));
         if (status == READ_STATUS_INVALID) {
             RemoveBlockRequest(block_transactions.blockhash, pfrom.GetId()); // Reset in-flight state in case Misbehaving does not result in a disconnect
             Misbehaving(peer, 100, "invalid compact block/non-matching block transactions");
@@ -3639,10 +3638,6 @@ void PeerManagerImpl::ProcessCompactBlockTxns(CNode& pfrom, Peer& peer, const Bl
             mapBlockSource.emplace(block_transactions.blockhash, std::make_pair(pfrom.GetId(), false));
         }
     } // Don't hold cs_main when we call into ProcessNewBlock
-    if (fBlockRead && !component_list.empty()) {
-        // Remember the components so we can relay this block by component ids too.
-        RememberBlockComponents(block_transactions.blockhash, std::make_shared<const std::vector<CTransactionRef>>(std::move(component_list)));
-    }
     if (fBlockRead) {
         // Since we requested this block (it was in mapBlocksInFlight), force it to be processed,
         // even if it would not be a candidate for new tip (missing previous block, chain not long enough, etc)
@@ -4744,14 +4739,34 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         BlockTransactionsRequest req;
         vRecv >> req;
 
-        if (auto component_list{GetBlockComponents(req.blockhash)}) {
-            SendBlockTransactions(pfrom, *peer, *component_list, req, /*aggregate_components=*/true);
-            return;
+        // Answered under the rules of GETBLOCKTXN: from the most recent block,
+        // or a block we have that is at most MAX_BLOCKTXN_DEPTH deep; a block
+        // we don't have is ignored and a deeper one is sent whole.
+        bool recent_block{WITH_LOCK(m_most_recent_block_mutex, return m_most_recent_block && m_most_recent_block_hash == req.blockhash)};
+        if (!recent_block) {
+            LOCK(cs_main);
+
+            const CBlockIndex* pindex = m_chainman.m_blockman.LookupBlockIndex(req.blockhash);
+            if (!pindex || !(pindex->nStatus & BLOCK_HAVE_DATA)) {
+                LogPrint(BCLog::NET, "Peer %d sent us a getaggblktxn for a block we don't have\n", pfrom.GetId());
+                return;
+            }
+            recent_block = pindex->nHeight >= m_chainman.ActiveChain().Height() - MAX_BLOCKTXN_DEPTH;
         }
 
-        // We no longer remember this block's components (we only keep them
-        // for a few recent blocks), so answer with the full block instead.
-        LogPrint(BCLog::NET, "Peer %d sent us a getaggblktxn for a block whose components we don't have\n", pfrom.GetId());
+        if (!recent_block) {
+            LogPrint(BCLog::NET, "Peer %d sent us a getaggblktxn for a block > %i deep\n", pfrom.GetId(), MAX_BLOCKTXN_DEPTH);
+        } else if (auto component_list{GetBlockComponents(req.blockhash)}) {
+            SendBlockTransactions(pfrom, *peer, *component_list, req, /*aggregate_components=*/true);
+            return;
+        } else {
+            // We no longer remember this block's components (we only keep
+            // them for a few recent blocks), or never knew them from our own
+            // mempool.
+            LogPrint(BCLog::NET, "Peer %d sent us a getaggblktxn for a block whose components we don't have\n", pfrom.GetId());
+        }
+
+        // Answer with the full block instead, as GETBLOCKTXN does for a deep block.
         CInv inv{MSG_WITNESS_BLOCK, req.blockhash};
         WITH_LOCK(peer->m_getdata_requests_mutex, peer->m_getdata_requests.push_back(inv));
         return;
@@ -4825,7 +4840,6 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         // below)
         std::shared_ptr<CBlock> pblock = std::make_shared<CBlock>();
         bool fBlockReconstructed = false;
-        std::vector<CTransactionRef> reconstructed_components;
 
         {
         LOCK(cs_main);
@@ -4952,8 +4966,7 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                 std::vector<CTransactionRef> dummy;
                 const CBlockIndex* prev_block{Assume(m_chainman.m_blockman.LookupBlockIndex(cmpctblock.header.hashPrevBlock))};
                 status = tempBlock.FillBlock(*pblock, dummy,
-                                             /*segwit_active=*/DeploymentActiveAfter(prev_block, m_chainman, Consensus::DEPLOYMENT_SEGWIT),
-                                             &reconstructed_components);
+                                             /*segwit_active=*/DeploymentActiveAfter(prev_block, m_chainman, Consensus::DEPLOYMENT_SEGWIT));
                 if (status == READ_STATUS_OK) {
                     fBlockReconstructed = true;
                 }
@@ -4994,9 +5007,6 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             {
                 LOCK(cs_main);
                 mapBlockSource.emplace(pblock->GetHash(), std::make_pair(pfrom.GetId(), false));
-            }
-            if (!reconstructed_components.empty()) {
-                RememberBlockComponents(pblock->GetHash(), std::make_shared<const std::vector<CTransactionRef>>(std::move(reconstructed_components)));
             }
             // Setting force_processing to true means that we bypass some of
             // our anti-DoS protections in AcceptBlock, which filters

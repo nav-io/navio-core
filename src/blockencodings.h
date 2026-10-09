@@ -7,7 +7,9 @@
 
 #include <primitives/block.h>
 
+#include <deque>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -184,6 +186,38 @@ bool ComponentListMatchesBlock(const CBlock& block, const std::vector<CTransacti
  */
 std::optional<std::vector<CTransactionRef>> FindAggregateComponents(const CBlock& block, const CTxMemPool& pool);
 
+/**
+ * Component lists (coinbase followed by the aggregate's components) of recent
+ * aggregate blocks, bounded both by their number and by the serialized size of
+ * the transactions they hold. When either bound is exceeded the oldest lists
+ * are dropped; a list larger than the whole size bound is not kept at all,
+ * and drops nothing.
+ */
+class RecentBlockComponents
+{
+public:
+    RecentBlockComponents(size_t max_lists, size_t max_bytes) : m_max_lists{max_lists}, m_max_bytes{max_bytes} {}
+
+    /** Remember the component list of a block, unless one is already known. */
+    void Add(const uint256& block_hash, std::shared_ptr<const std::vector<CTransactionRef>> component_list);
+    /** The remembered component list of a block, or nullptr. */
+    std::shared_ptr<const std::vector<CTransactionRef>> Get(const uint256& block_hash) const;
+    /** Serialized size of the transactions in the remembered lists. */
+    size_t Bytes() const { return m_bytes; }
+
+private:
+    struct Entry {
+        uint256 block_hash;
+        std::shared_ptr<const std::vector<CTransactionRef>> component_list;
+        size_t bytes;
+    };
+    const size_t m_max_lists;
+    const size_t m_max_bytes;
+    /** Oldest first. */
+    std::deque<Entry> m_entries;
+    size_t m_bytes{0};
+};
+
 class PartiallyDownloadedBlock {
 protected:
     std::vector<CTransactionRef> txn_available;
@@ -207,9 +241,8 @@ public:
     bool IsAggregateComponents() const { return m_aggregate_components; }
     // segwit_active enforces witness mutation checks just before reporting a healthy status.
     // For a component-encoded block the aggregate is rebuilt from the filled
-    // component list, and on success the list is moved to *component_list_out.
-    ReadStatus FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing, bool segwit_active,
-                         std::vector<CTransactionRef>* component_list_out = nullptr);
+    // component list.
+    ReadStatus FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing, bool segwit_active);
 };
 
 #endif // BITCOIN_BLOCKENCODINGS_H
