@@ -1196,6 +1196,47 @@ const void* get_ctx_out_at(const void* vp_ctx_outs, const size_t i)
 }
 
 // ctx out
+BlsctRetVal* deserialize_ctx_out(const char* hex)
+{
+    if (hex == nullptr) return blsct_err(BLSCT_FAILURE);
+    CTxOut* ctx_out = nullptr;
+
+    try {
+        std::vector<uint8_t> vec;
+        if (!TryParseHexWrap(std::string(hex), vec)) {
+            return blsct_err(BLSCT_FAILURE);
+        }
+
+        ctx_out = new CTxOut();
+        DataStream st{vec};
+        st >> *ctx_out;
+        // A CTxOut has no length prefix of its own, so bytes left over mean
+        // the hex was not exactly one output.
+        if (!st.empty()) {
+            delete ctx_out;
+            return blsct_err(BLSCT_DESER_FAILED);
+        }
+    } catch (const std::exception&) {
+        delete ctx_out;
+        return blsct_err(BLSCT_DESER_FAILED);
+    }
+
+    // the object will be deleted after use. the size will not be used
+    return blsct_succ(ctx_out, 0);
+}
+
+void delete_ctx_out(void* vp_ctx_out)
+{
+    if (vp_ctx_out == nullptr) return;
+    delete static_cast<CTxOut*>(vp_ctx_out);
+}
+
+const char* serialize_ctx_out(const void* vp_ctx_out)
+{
+    RETURN_RET_VAL_IF_NULL(vp_ctx_out, nullptr);
+    return SerializeSerializableObject(*static_cast<const CTxOut*>(vp_ctx_out));
+}
+
 bool are_ctx_out_equal(const void* vp_a, const void* vp_b)
 {
     auto* a = static_cast<const CTxOut*>(vp_a);

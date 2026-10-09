@@ -975,6 +975,269 @@ BOOST_AUTO_TEST_CASE(test_set_unsigned_output_stake_delegation)
     free_obj((void*)other_dest);
 }
 
+BOOST_AUTO_TEST_CASE(test_ctx_out_serialize_round_trip)
+{
+    init();
+
+    auto* view_key_rv = gen_scalar(61);
+    auto* spend_key_rv = gen_scalar(62);
+    auto* blinding_key_rv = gen_scalar(63);
+    auto* input_spending_key_rv = gen_scalar(64);
+    auto* input_gamma_rv = gen_scalar(65);
+    auto* default_token_id_rv = gen_default_token_id();
+    BOOST_REQUIRE(view_key_rv != nullptr);
+    BOOST_REQUIRE(spend_key_rv != nullptr);
+    BOOST_REQUIRE(blinding_key_rv != nullptr);
+    BOOST_REQUIRE(input_spending_key_rv != nullptr);
+    BOOST_REQUIRE(input_gamma_rv != nullptr);
+    BOOST_REQUIRE(default_token_id_rv != nullptr);
+    const auto* view_key = static_cast<const BlsctScalar*>(view_key_rv->value);
+    const auto* token_id = static_cast<const BlsctTokenId*>(default_token_id_rv->value);
+
+    const BlsctPubKey* spend_pub_key = scalar_to_pub_key(static_cast<const BlsctScalar*>(spend_key_rv->value));
+    BOOST_REQUIRE(spend_pub_key != nullptr);
+    auto* sub_addr_id = gen_sub_addr_id(0, 6);
+    BOOST_REQUIRE(sub_addr_id != nullptr);
+    auto* dest = derive_sub_address(view_key, spend_pub_key, sub_addr_id);
+    BOOST_REQUIRE(dest != nullptr);
+
+    const Scalar delegate_priv_key(66);
+    const Point delegate_pub_key = Point::GetBasePoint() * delegate_priv_key;
+    BlsctPoint delegate_key;
+    SERIALIZE_AND_COPY(delegate_pub_key, delegate_key);
+    const std::string reward_address = "reward-address";
+
+    const auto build_output = [&](TxOutputType type, uint64_t amount) {
+        auto* tx_out_rv = build_tx_out(
+            dest,
+            amount,
+            "",
+            0,
+            token_id,
+            type,
+            1000,
+            false,
+            static_cast<const BlsctScalar*>(blinding_key_rv->value));
+        BOOST_REQUIRE(tx_out_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(tx_out_rv->result, BLSCT_SUCCESS);
+        auto* unsigned_output_rv = build_unsigned_output(static_cast<const BlsctTxOut*>(tx_out_rv->value));
+        BOOST_REQUIRE(unsigned_output_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(unsigned_output_rv->result, BLSCT_SUCCESS);
+        void* unsigned_output = unsigned_output_rv->value;
+        free_obj(tx_out_rv->value);
+        free(tx_out_rv);
+        free(unsigned_output_rv);
+        return unsigned_output;
+    };
+
+    // A staked output carrying a stake delegation (a DATA predicate), a
+    // plain BLSCT output, and the fee output (a PAY_FEE predicate) that
+    // signing adds.
+    void* staked_output = build_output(TxOutputType::StakedCommitment, 1000);
+    BOOST_REQUIRE(set_unsigned_output_stake_delegation(staked_output, dest, &delegate_key, reward_address.c_str()));
+    void* normal_output = build_output(TxOutputType::Normal, 875);
+
+    auto* out_point_rv = gen_out_point("2102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+    BOOST_REQUIRE(out_point_rv != nullptr);
+    auto* tx_in_rv = build_tx_in(
+        2000,
+        static_cast<const BlsctScalar*>(input_gamma_rv->value),
+        static_cast<const BlsctScalar*>(input_spending_key_rv->value),
+        token_id,
+        static_cast<const BlsctOutPoint*>(out_point_rv->value),
+        false,
+        false);
+    BOOST_REQUIRE(tx_in_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(tx_in_rv->result, BLSCT_SUCCESS);
+    auto* unsigned_input_rv = build_unsigned_input(static_cast<const BlsctTxIn*>(tx_in_rv->value));
+    BOOST_REQUIRE(unsigned_input_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(unsigned_input_rv->result, BLSCT_SUCCESS);
+
+    void* unsigned_tx = create_unsigned_transaction();
+    BOOST_REQUIRE(unsigned_tx != nullptr);
+    add_unsigned_transaction_input(unsigned_tx, unsigned_input_rv->value);
+    add_unsigned_transaction_output(unsigned_tx, staked_output);
+    add_unsigned_transaction_output(unsigned_tx, normal_output);
+    set_unsigned_transaction_fee(unsigned_tx, 125);
+
+    auto* signed_tx_rv = sign_unsigned_transaction(unsigned_tx);
+    BOOST_REQUIRE(signed_tx_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(signed_tx_rv->result, BLSCT_SUCCESS);
+    const std::string tx_hex(static_cast<const char*>(signed_tx_rv->value));
+
+    auto* ctx_rv = deserialize_ctx(tx_hex.c_str());
+    BOOST_REQUIRE(ctx_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(ctx_rv->result, BLSCT_SUCCESS);
+    const void* ctx_outs = get_ctx_outs(ctx_rv->value);
+    BOOST_REQUIRE_EQUAL(get_ctx_outs_size(ctx_outs), 3U);
+
+    const auto range_proof_hex = [](const void* vp_ctx_out) {
+        auto* rv = get_ctx_out_range_proof(vp_ctx_out);
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_REQUIRE_EQUAL(rv->result, BLSCT_SUCCESS);
+        const auto* bytes = static_cast<const uint8_t*>(rv->value);
+        std::string hex = HexStr(Span{bytes, rv->value_size});
+        free_obj(rv->value);
+        free((void*)rv);
+        return hex;
+    };
+    const auto point_equal = [](const BlsctPoint* a, const BlsctPoint* b) {
+        BOOST_REQUIRE(a != nullptr);
+        BOOST_REQUIRE(b != nullptr);
+        const bool equal = are_point_equal(a, b) == 1;
+        free_obj((void*)a);
+        free_obj((void*)b);
+        return equal;
+    };
+
+    size_t delegation_outputs = 0;
+    for (size_t i = 0; i < get_ctx_outs_size(ctx_outs); ++i) {
+        BOOST_TEST_MESSAGE("output " << i);
+        const void* org = get_ctx_out_at(ctx_outs, i);
+        BOOST_REQUIRE(org != nullptr);
+
+        const char* hex = serialize_ctx_out(org);
+        BOOST_REQUIRE(hex != nullptr);
+        // An output inside a transaction is encoded the same way.
+        BOOST_CHECK(tx_hex.find(hex) != std::string::npos);
+
+        auto* rt_rv = deserialize_ctx_out(hex);
+        BOOST_REQUIRE(rt_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(rt_rv->result, BLSCT_SUCCESS);
+        const void* rt = rt_rv->value;
+        BOOST_REQUIRE(rt != nullptr);
+
+        const char* rt_hex = serialize_ctx_out(rt);
+        BOOST_REQUIRE(rt_hex != nullptr);
+        BOOST_CHECK_EQUAL(std::string(rt_hex), std::string(hex));
+
+        BOOST_CHECK(are_ctx_out_equal(org, rt));
+        BOOST_CHECK_EQUAL(get_ctx_out_value(rt), get_ctx_out_value(org));
+        const BlsctTokenId* org_token = get_ctx_out_token_id(org);
+        const BlsctTokenId* rt_token = get_ctx_out_token_id(rt);
+        BOOST_REQUIRE(org_token != nullptr);
+        BOOST_REQUIRE(rt_token != nullptr);
+        BOOST_CHECK(std::memcmp(*org_token, *rt_token, TOKEN_ID_SIZE) == 0);
+        free_obj((void*)org_token);
+        free_obj((void*)rt_token);
+        BOOST_CHECK(point_equal(get_ctx_out_spending_key(org), get_ctx_out_spending_key(rt)));
+        BOOST_CHECK(point_equal(get_ctx_out_blinding_key(org), get_ctx_out_blinding_key(rt)));
+        BOOST_CHECK(point_equal(get_ctx_out_ephemeral_key(org), get_ctx_out_ephemeral_key(rt)));
+        BOOST_CHECK_EQUAL(get_ctx_out_view_tag(rt), get_ctx_out_view_tag(org));
+        // are_ctx_out_equal leaves the range proof out
+        BOOST_CHECK_EQUAL(range_proof_hex(rt), range_proof_hex(org));
+
+        auto* org_pred_rv = get_ctx_out_vector_predicate(org);
+        auto* rt_pred_rv = get_ctx_out_vector_predicate(rt);
+        BOOST_REQUIRE(org_pred_rv != nullptr);
+        BOOST_REQUIRE(rt_pred_rv != nullptr);
+        BOOST_REQUIRE_EQUAL(org_pred_rv->result, BLSCT_SUCCESS);
+        BOOST_REQUIRE_EQUAL(rt_pred_rv->result, BLSCT_SUCCESS);
+        BOOST_REQUIRE_EQUAL(rt_pred_rv->value_size, org_pred_rv->value_size);
+        if (org_pred_rv->value_size > 0) {
+            const auto* rt_pred = static_cast<const BlsctVectorPredicate*>(rt_pred_rv->value);
+            BOOST_CHECK(are_vector_predicate_equal(
+                            static_cast<const BlsctVectorPredicate*>(org_pred_rv->value), org_pred_rv->value_size,
+                            rt_pred, rt_pred_rv->value_size) == 1);
+        }
+        if (org_pred_rv->value_size > 0 &&
+            get_vector_predicate_type(static_cast<const BlsctVectorPredicate*>(org_pred_rv->value), org_pred_rv->value_size) == BlsctDataPredicateType) {
+            const auto* rt_pred = static_cast<const BlsctVectorPredicate*>(rt_pred_rv->value);
+
+            // The SDK's cold-staking path: read the delegation back from
+            // the deserialized output alone, and open it as the owner.
+            auto* data_rv = get_data_predicate_data(rt_pred, rt_pred_rv->value_size);
+            BOOST_REQUIRE(data_rv != nullptr);
+            BOOST_REQUIRE_EQUAL(data_rv->result, BLSCT_SUCCESS);
+            const auto* data = static_cast<const uint8_t*>(data_rv->value);
+            BOOST_REQUIRE(is_stake_delegation_data(data, data_rv->value_size));
+            const BlsctPoint* blinding_pub_key = get_ctx_out_blinding_key(rt);
+            BOOST_REQUIRE(blinding_pub_key != nullptr);
+            BlsctPoint* nonce = calc_nonce(reinterpret_cast<const BlsctPubKey*>(blinding_pub_key), view_key);
+            BOOST_REQUIRE(nonce != nullptr);
+            auto* owner_rv = recover_stake_delegation_owner_info(data, data_rv->value_size, nonce);
+            const auto& owner_info = RequireSuccess<BlsctStakeDelegationOwnerInfo>(owner_rv);
+            BOOST_CHECK(are_point_equal(&owner_info.delegate_key, &delegate_key) == 1);
+            BOOST_CHECK_EQUAL(std::string(owner_info.reward_address), reward_address);
+            ++delegation_outputs;
+
+            delete_stake_delegation_owner_info(owner_rv->value);
+            free(owner_rv);
+            free_obj(nonce);
+            free_obj((void*)blinding_pub_key);
+            free_obj(data_rv->value);
+            free(data_rv);
+        }
+        free_obj(org_pred_rv->value);
+        free_obj(rt_pred_rv->value);
+        free(org_pred_rv);
+        free(rt_pred_rv);
+
+        delete_ctx_out(rt_rv->value);
+        free(rt_rv);
+        free_obj((void*)rt_hex);
+        free_obj((void*)hex);
+    }
+    // the predicate branch above must actually have run
+    BOOST_CHECK_EQUAL(delegation_outputs, 1U);
+
+    // Bad hex, a truncated output, a byte past the end of one, and no
+    // input at all are refused.
+    const char* first_hex = serialize_ctx_out(get_ctx_out_at(ctx_outs, 0));
+    BOOST_REQUIRE(first_hex != nullptr);
+    const std::string valid(first_hex);
+    free_obj((void*)first_hex);
+    const std::vector<std::pair<std::string, BLSCT_RESULT>> bad_inputs{
+        {"not hex", BLSCT_FAILURE},
+        {valid.substr(1), BLSCT_FAILURE},
+        {valid.substr(0, valid.size() - 2), BLSCT_DESER_FAILED},
+        {valid + "00", BLSCT_DESER_FAILED},
+        {"", BLSCT_DESER_FAILED},
+    };
+    for (const auto& [input, expected] : bad_inputs) {
+        auto* rv = deserialize_ctx_out(input.c_str());
+        BOOST_REQUIRE(rv != nullptr);
+        BOOST_CHECK_EQUAL(rv->result, expected);
+        BOOST_CHECK(rv->value == nullptr);
+        free(rv);
+    }
+    auto* null_rv = deserialize_ctx_out(nullptr);
+    BOOST_REQUIRE(null_rv != nullptr);
+    BOOST_CHECK_EQUAL(null_rv->result, BLSCT_FAILURE);
+    free(null_rv);
+    BOOST_CHECK(serialize_ctx_out(nullptr) == nullptr);
+    delete_ctx_out(nullptr);
+
+    delete_ctx(ctx_rv->value);
+    free(ctx_rv);
+    free_obj(signed_tx_rv->value);
+    free(signed_tx_rv);
+    delete_unsigned_transaction(unsigned_tx);
+    delete_unsigned_output(staked_output);
+    delete_unsigned_output(normal_output);
+    delete_unsigned_input(unsigned_input_rv->value);
+    free(unsigned_input_rv);
+    free_obj(tx_in_rv->value);
+    free(tx_in_rv);
+    free_obj(out_point_rv->value);
+    free(out_point_rv);
+    free_obj(view_key_rv->value);
+    free(view_key_rv);
+    free_obj(spend_key_rv->value);
+    free(spend_key_rv);
+    free_obj(blinding_key_rv->value);
+    free(blinding_key_rv);
+    free_obj(input_spending_key_rv->value);
+    free(input_spending_key_rv);
+    free_obj(input_gamma_rv->value);
+    free(input_gamma_rv);
+    free_obj(default_token_id_rv->value);
+    free(default_token_id_rv);
+    free_obj((void*)spend_pub_key);
+    free_obj((void*)sub_addr_id);
+    free_obj((void*)dest);
+}
+
 BOOST_AUTO_TEST_CASE(test_get_data_predicate_data)
 {
     init();
