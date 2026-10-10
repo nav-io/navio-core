@@ -1229,4 +1229,40 @@ BOOST_AUTO_TEST_CASE(ccoins_readd_erased_token)
     BOOST_CHECK_EQUAL(got.nSupply, 10);
 }
 
+BOOST_AUTO_TEST_CASE(ccoins_fetched_token_keeps_parent_dirty)
+{
+    const uint256 id{uint256(uint64_t{1})};
+    const auto make_token = [](CAmount supply) {
+        return blsct::TokenEntry{blsct::TokenInfo{blsct::TOKEN, blsct::PublicKey{}, {}, /*nTotalSupply=*/1000}, supply};
+    };
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    {
+        CCoinsViewCacheTest setup{&base};
+        setup.SetBestBlock(InsecureRand256());
+        setup.AddToken(id, make_token(10));
+        BOOST_REQUIRE(setup.Flush());
+    }
+
+    // The parent modifies the token without flushing it.
+    CCoinsViewCacheTest parent{&base};
+    parent.AddToken(id, make_token(20));
+
+    // A child only reads the token, then writes back into the parent.
+    {
+        CCoinsViewCacheTest child{&parent};
+        blsct::TokenEntry got;
+        BOOST_REQUIRE(child.GetToken(id, got));
+        BOOST_CHECK_EQUAL(got.nSupply, 20);
+        BOOST_REQUIRE(child.Flush());
+    }
+
+    // The parent's modification must still reach the database.
+    parent.SetBestBlock(InsecureRand256());
+    BOOST_REQUIRE(parent.Flush());
+    blsct::TokenEntry got;
+    BOOST_REQUIRE(base.GetToken(id, got));
+    BOOST_CHECK_EQUAL(got.nSupply, 20);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
