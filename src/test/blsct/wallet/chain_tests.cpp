@@ -170,6 +170,118 @@ BOOST_FIXTURE_TEST_CASE(TokenCreateMintReorgTest, TestBLSCTChain100Setup)
     }
 }
 
+// Cross-transaction predicate ordering on disconnect. ConnectBlock runs a
+// BLSCT block's coinbase (vtx[0]) through its token predicates AFTER the loop
+// over the other transactions, so a coinbase MINT of a token CREATEd by an
+// ordinary transaction in the same block connects: create first, coinbase mint
+// last. DisconnectBlock must therefore revert the coinbase's predicates FIRST,
+// before the reverse transaction loop reaches the create. Reverting them in
+// the loop's last-to-first order would erase the token before the coinbase
+// mint revert looks it up, and the disconnect would fail (DISCONNECT_FAILED),
+// leaving the block impossible to reorg past, invalidate or verify at level 3.
+// The stock miner never puts a token predicate in the coinbase, so the block
+// is hand-built here.
+BOOST_FIXTURE_TEST_CASE(DisconnectRevertsCoinbasePredicatesFirst, TestBLSCTChain100Setup)
+{
+    CreateAndProcessBlock({});
+    auto wallet = CreateBLSCTWallet(*m_node.chain, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain()));
+    BOOST_CHECK(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+
+    auto blsct_km = wallet->GetBLSCTKeyMan();
+    auto walletDestination = blsct::SubAddress(std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value()));
+
+    LOCK(wallet->cs_wallet);
+
+    // One mature coinbase funds the create tx's fee; +1 for headroom.
+    for (size_t i = 0; i <= COINBASE_MATURITY + 1; i++) {
+        CreateAndProcessBlock({}, walletDestination);
+    }
+    BOOST_CHECK(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+
+    // Token T: created by an ordinary (non-coinbase) transaction, minted by the
+    // coinbase of the same block. The coinbase mint must be signed by T's token
+    // key, so derive the exact scalar the wallet factory uses for the create
+    // (txfactory.cpp: GetTokenKey(hash(metadata, totalSupply)).GetScalar()).
+    blsct::TokenInfo token;
+    token.type = blsct::TOKEN;
+    token.nTotalSupply = 1000 * COIN;
+    token.mapMetadata["name"] = "DisconnectOrder";
+    const uint256 tokenKeyHash = (HashWriter{} << token.mapMetadata << token.nTotalSupply).GetHash();
+    const Scalar tokenKey = blsct_km->GetTokenKey(tokenKeyHash).GetScalar();
+    token.publicKey = blsct_km->GetTokenKey(tokenKeyHash).GetPublicKey();
+    const uint256 tokenId = token.publicKey.GetHash();
+    const CAmount mintAmount = 100 * COIN;
+
+    auto create_tx = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, blsct::CreateTransactionData{token});
+    BOOST_REQUIRE(create_tx != std::nullopt);
+
+    WITH_LOCK(::cs_main, m_node.chainman->ActiveChainstate().ForceFlushStateToDisk());
+
+    CBlock block = CreateBlock({create_tx->tx}, m_node.chainman->ActiveChainstate(), walletDestination);
+
+    // Splice a MINT of T into the coinbase. The mint output carries a range
+    // proof and destination keys, so aggregate its own output+balance signature
+    // (UnsignedOutput::GetSignature) plus the token key's mint authorization
+    // into the coinbase's existing aggregate signature. transcript_v2 is true on
+    // blsctregtest (nBLSCTProofV2Height = 0), matching what the verifier applies.
+    CMutableTransaction coinbase{*block.vtx[0]};
+    const blsct::UnsignedOutput mintOut = blsct::CreateOutput(walletDestination.GetKeys(), mintAmount, Scalar::Rand(), tokenKey, token.publicKey, /*transcript_v2=*/true);
+    BOOST_REQUIRE(mintOut.out.HasBLSCTRangeProof() && mintOut.out.HasBLSCTKeys());
+    coinbase.vout.push_back(mintOut.out);
+    coinbase.txSig = blsct::Signature::Aggregate({coinbase.txSig, mintOut.GetSignature(), blsct::PrivateKey(tokenKey).Sign(mintOut.out.GetHash())});
+    block.vtx[0] = MakeTransactionRef(std::move(coinbase));
+    block.hashMerkleRoot = BlockMerkleRoot(block);
+    node::RegenerateCommitments(block, *m_node.chainman);
+    while (!CheckProofOfWork(block.GetHash(), block.nBits, m_node.chainman->GetConsensus())) ++block.nNonce;
+
+    // Connect: the block is accepted and the coinbase mint applies on top of the
+    // ordinary transaction's create (supply == mintAmount).
+    BOOST_REQUIRE(m_node.chainman->ProcessNewBlock(std::make_shared<const CBlock>(block), true, true, nullptr));
+
+    CBlockIndex* pindex{nullptr};
+    {
+        LOCK(::cs_main);
+        Chainstate& chainstate{m_node.chainman->ActiveChainstate()};
+        BOOST_REQUIRE_EQUAL(chainstate.m_chain.Tip()->GetBlockHash(), block.GetHash());
+        blsct::TokenEntry entry;
+        BOOST_REQUIRE_MESSAGE(chainstate.CoinsTip().GetToken(tokenId, entry), "connect did not create/mint the token");
+        BOOST_CHECK_EQUAL(entry.nSupply, mintAmount);
+        pindex = chainstate.m_blockman.LookupBlockIndex(block.GetHash());
+        BOOST_REQUIRE(pindex != nullptr);
+
+        // verifychain at level 3 disconnects the tip in memory, so it fails
+        // unless the coinbase mint is reverted before the create.
+        const VerifyDBResult verify = CVerifyDB(m_node.chainman->GetNotifications()).VerifyDB(
+            chainstate, m_node.chainman->GetConsensus(), chainstate.CoinsTip(), /*nCheckLevel=*/3, /*nCheckDepth=*/1);
+        BOOST_CHECK_MESSAGE(verify == VerifyDBResult::SUCCESS,
+                            "VerifyDB level 3 failed to disconnect the coinbase-mint block");
+    }
+
+    // Disconnect: the block rolls back, the tip returns to its parent and the
+    // token the block created is gone again.
+    BlockValidationState state;
+    BOOST_REQUIRE(m_node.chainman->ActiveChainstate().InvalidateBlock(state, pindex));
+    BOOST_REQUIRE(state.IsValid());
+    {
+        LOCK(::cs_main);
+        BOOST_REQUIRE_EQUAL(m_node.chainman->ActiveChain().Tip()->GetBlockHash(), pindex->pprev->GetBlockHash());
+        blsct::TokenEntry entry;
+        BOOST_CHECK(!m_node.chainman->ActiveChainstate().CoinsTip().GetToken(tokenId, entry));
+    }
+
+    // Reconnect: the block applies again and the token state returns.
+    WITH_LOCK(::cs_main, m_node.chainman->ActiveChainstate().ResetBlockFailureFlags(pindex));
+    BlockValidationState state2;
+    BOOST_REQUIRE(m_node.chainman->ActiveChainstate().ActivateBestChain(state2));
+    {
+        LOCK(::cs_main);
+        BOOST_REQUIRE_EQUAL(m_node.chainman->ActiveChain().Tip()->GetBlockHash(), block.GetHash());
+        blsct::TokenEntry entry;
+        BOOST_REQUIRE(m_node.chainman->ActiveChainstate().CoinsTip().GetToken(tokenId, entry));
+        BOOST_CHECK_EQUAL(entry.nSupply, mintAmount);
+    }
+}
+
 // Regression: a consolidating stakelock spends the wallet's previous staked
 // commitment output. CachedTxIsTrusted used to reject that input because its
 // isminetype is ISMINE_STAKED_COMMITMENT_BLSCT (neither "spendable" value),
