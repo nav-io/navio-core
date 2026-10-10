@@ -878,6 +878,68 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_recorded_before_scan, Testi
     CheckChangeIsTheSpendableCoin(r);
 }
 
+// A chained send records its aggregate before the mempool callback for it
+// has run, spending the change of the previous aggregate. A balance query
+// made earlier cached that change in the previous aggregate's available
+// credit, and the record must drop that cache: a query in the window before
+// the callback otherwise counted the spent change next to the new one.
+BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_chain_recorded_before_scan, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    r.wallet->transactionAddedToMempool(r.aggregate);
+    // Also caches the change as the aggregate's available credit.
+    CheckChangeIsTheSpendableCoin(r);
+
+    constexpr CAmount child_change{98 * COIN};
+    const auto cover_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    CMutableTransaction child;
+    child.nVersion |= CTransaction::BLSCT_MARKER;
+    child.vin.emplace_back(r.change_outpoint);
+    // The child's cover half spends a coin of another wallet.
+    child.vin.emplace_back(COutPoint{InsecureRand256()});
+    child.vout.push_back(blsct::CreateOutput(r.address, child_change, "child change").out);
+    child.vout.push_back(blsct::CreateOutput(cover_address, OwnAggregate::cover_amount, "child cover").out);
+    const CTransactionRef child_tx{MakeTransactionRef(child)};
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child_tx, {child_tx->vout[0]}, {}));
+    BOOST_CHECK(r.wallet->IsSpent(r.change_outpoint));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, child_change);
+
+    r.wallet->transactionAddedToMempool(child_tx);
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, child_change);
+}
+
+// The plain send path has the same window: CommitTransaction spends the
+// change of an earlier send before any sync callback runs, and with
+// broadcasting off no callback ever comes. The earlier send's cached credit
+// must not keep counting the change the new send spent.
+BOOST_FIXTURE_TEST_CASE(output_storage_commit_drops_parent_credit_cache, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK(r.wallet->cs_wallet);
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    // Also caches the change as the aggregate's available credit.
+    CheckChangeIsTheSpendableCoin(r);
+
+    constexpr CAmount child_change{98 * COIN};
+    CMutableTransaction child;
+    child.nVersion |= CTransaction::BLSCT_MARKER;
+    child.vin.emplace_back(r.change_outpoint);
+    child.vout.push_back(blsct::CreateOutput(r.address, child_change, "child change").out);
+    BOOST_REQUIRE(!r.wallet->GetBroadcastTransactions());
+    r.wallet->CommitTransaction(MakeTransactionRef(child), {}, {});
+
+    // The unbroadcast child is not trusted, and the change it spent is gone.
+    BOOST_CHECK(r.wallet->IsSpent(r.change_outpoint));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 0);
+}
+
 // The sync callbacks can confirm the aggregate before the broadcasting RPC
 // gets to record it. Recording then must not demote the confirmed spend of
 // the wallet's coin back to a mempool spend.
