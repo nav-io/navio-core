@@ -776,7 +776,17 @@ AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(
         };
         std::vector<std::thread> pool;
         pool.reserve(nthreads - 1);
-        for (size_t t = 1; t < nthreads; ++t) pool.emplace_back(worker);
+        for (size_t t = 1; t < nthreads; ++t) {
+            // Same spawn-failure fallback as VerifyProofs: a std::system_error
+            // escaping here would destroy `pool` with joinable threads and
+            // std::terminate, while the shared counter lets the workers we did
+            // get drain every index.
+            try {
+                pool.emplace_back(worker);
+            } catch (const std::system_error&) {
+                break;
+            }
+        }
         worker();
         for (auto& th : pool) th.join();
     }
