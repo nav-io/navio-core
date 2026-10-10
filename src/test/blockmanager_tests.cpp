@@ -15,16 +15,16 @@
 #include <util/chaintype.h>
 #include <validation.h>
 
-#include <thread>
-
 #include <boost/test/unit_test.hpp>
 #include <test/util/logging.h>
 #include <test/util/setup_common.h>
+#include <test/util/threads.h>
 
 using node::BLOCK_SERIALIZATION_HEADER_SIZE;
 using node::BlockManager;
 using node::KernelNotifications;
 using node::MAX_BLOCKFILE_SIZE;
+using node::UNDO_WRITE_MIN_ENTRIES_PER_THREAD;
 
 // use BasicTestingSetup here for the data directory configuration, setup, and cleanup
 BOOST_FIXTURE_TEST_SUITE(blockmanager_tests, BasicTestingSetup)
@@ -206,55 +206,116 @@ BOOST_AUTO_TEST_CASE(blockmanager_flush_block_file)
     BOOST_CHECK_EQUAL(read_block.nVersion, 2);
 }
 
+// An undo entry spending one BLSCT output with a random range proof.
+static CTxUndo RandomBlsctTxUndo()
+{
+    CTxOut out;
+    out.scriptPubKey = CScript() << OP_TRUE;
+    out.blsctData.spendingKey = BlstG1Point::Rand();
+    out.blsctData.ephemeralKey = BlstG1Point::Rand();
+    out.blsctData.blindingKey = BlstG1Point::Rand();
+    auto& proof = out.blsctData.rangeProof;
+    proof.Vs.Add(BlstG1Point::Rand());
+    proof.Ls.Add(BlstG1Point::Rand());
+    proof.Rs.Add(BlstG1Point::Rand());
+    proof.A = BlstG1Point::Rand();
+    proof.A_wip = BlstG1Point::Rand();
+    proof.B = BlstG1Point::Rand();
+    proof.r_prime = BlstScalar::Rand();
+    proof.tau_x = BlstScalar::Rand();
+    CTxUndo txundo;
+    txundo.vprevout.emplace_back(out, /*nHeightIn=*/1, /*fCoinBaseIn=*/false);
+    return txundo;
+}
+
 BOOST_FIXTURE_TEST_CASE(blockmanager_undo_round_trip_parallel_blsct, TestChain100Setup)
 {
-    // Enough entries for UndoWriteToDisk to serialize on worker threads (it
-    // stays on the calling thread for 32 or fewer).
-    constexpr size_t NUM_TX_UNDO{40};
-    // With a single core UndoWriteToDisk keeps to one thread, and this test
-    // would pass without exercising the worker path at all.
-    if (std::thread::hardware_concurrency() < 2) {
-        BOOST_TEST_MESSAGE("Skipped: the parallel undo write needs at least 2 cores");
-        return;
-    }
+    // UndoWriteToDisk runs min(cap, n / UNDO_WRITE_MIN_ENTRIES_PER_THREAD)
+    // threads (at least 1; cap 0 is one per core) over ceil-sized chunks.
+    // Block sizes off a multiple of the thread count leave a short last
+    // chunk, which is where a chunking slip drops or repeats entries.
+    constexpr size_t M{UNDO_WRITE_MIN_ENTRIES_PER_THREAD};
+    const std::vector<size_t> block_sizes{
+        2 * M - 1, // one thread under every cap: the min-entries rule
+        3 * M + 1, // 3 threads at cap 64 (min-entries rule), 2 at cap 2 (-par)
+        8 * M + 7, // 8 threads at cap 64 (min-entries rule), 2 or 3 at caps 2 and 3 (-par)
+    };
 
-    CBlockUndo blockundo;
-    for (size_t i = 0; i < NUM_TX_UNDO; ++i) {
-        CTxOut out;
-        out.scriptPubKey = CScript() << OP_TRUE;
-        out.blsctData.spendingKey = BlstG1Point::Rand();
-        out.blsctData.ephemeralKey = BlstG1Point::Rand();
-        out.blsctData.blindingKey = BlstG1Point::Rand();
-        auto& proof = out.blsctData.rangeProof;
-        proof.Vs.Add(BlstG1Point::Rand());
-        proof.Ls.Add(BlstG1Point::Rand());
-        proof.Rs.Add(BlstG1Point::Rand());
-        proof.A = BlstG1Point::Rand();
-        proof.A_wip = BlstG1Point::Rand();
-        proof.B = BlstG1Point::Rand();
-        proof.r_prime = BlstScalar::Rand();
-        proof.tau_x = BlstScalar::Rand();
-        blockundo.vtxundo.emplace_back().vprevout.emplace_back(out, /*nHeightIn=*/1, /*fCoinBaseIn=*/false);
+    CBlockUndo all_undo;
+    all_undo.vtxundo.reserve(block_sizes.back());
+    for (size_t i = 0; i < block_sizes.back(); ++i) {
+        all_undo.vtxundo.push_back(RandomBlsctTxUndo());
     }
 
     auto& blockman{m_node.chainman->m_blockman};
     LOCK(cs_main);
     CBlockIndex& tip{*Assert(m_node.chainman->ActiveChain().Tip())};
-    // Drop the tip's real undo position so WriteUndoDataForBlock writes ours.
-    tip.nStatus &= ~BLOCK_HAVE_UNDO;
-    BlockValidationState state;
-    BOOST_REQUIRE(blockman.WriteUndoDataForBlock(blockundo, state, tip));
+    for (size_t n : block_sizes) {
+        CBlockUndo blockundo;
+        blockundo.vtxundo.assign(all_undo.vtxundo.begin(), all_undo.vtxundo.begin() + n);
+        for (size_t cap : {size_t{0}, size_t{1}, size_t{2}, size_t{3}, size_t{64}}) {
+            // Drop the tip's undo position so WriteUndoDataForBlock writes ours.
+            tip.nStatus &= ~BLOCK_HAVE_UNDO;
+            BlockValidationState state;
+            BOOST_REQUIRE(blockman.WriteUndoDataForBlock(blockundo, state, tip, cap));
 
-    CBlockUndo read_undo;
-    BOOST_REQUIRE(blockman.UndoReadFromDisk(read_undo, tip));
-    BOOST_REQUIRE_EQUAL(read_undo.vtxundo.size(), NUM_TX_UNDO);
-    for (size_t i = 0; i < NUM_TX_UNDO; ++i) {
-        const CTxOut& written{blockundo.vtxundo[i].vprevout.at(0).out};
-        const CTxOut& read{read_undo.vtxundo[i].vprevout.at(0).out};
-        // Undo data keeps the commitment, not the rest of the range proof.
-        BOOST_CHECK(read.blsctData.rangeProof.Vs[0] == written.blsctData.rangeProof.Vs[0]);
-        BOOST_CHECK(read.blsctData.spendingKey == written.blsctData.spendingKey);
-        BOOST_CHECK_EQUAL(read.blsctData.rangeProof.Ls.Size(), 0U);
+            CBlockUndo read_undo;
+            if (!blockman.UndoReadFromDisk(read_undo, tip)) {
+                BOOST_ERROR("undo of " << n << " entries with cap " << cap << " does not read back");
+                continue;
+            }
+            if (read_undo.vtxundo.size() != n) {
+                BOOST_ERROR("undo of " << n << " entries with cap " << cap << " read back " << read_undo.vtxundo.size());
+                continue;
+            }
+            for (size_t i = 0; i < n; ++i) {
+                const CTxOut& written{blockundo.vtxundo[i].vprevout.at(0).out};
+                const CTxOut& read{read_undo.vtxundo[i].vprevout.at(0).out};
+                // Undo data keeps the commitment, not the rest of the range proof.
+                BOOST_CHECK_MESSAGE(read.blsctData.rangeProof.Vs[0] == written.blsctData.rangeProof.Vs[0],
+                                    "entry " << i << " of " << n << " commitment differs with cap " << cap);
+                BOOST_CHECK_MESSAGE(read.blsctData.spendingKey == written.blsctData.spendingKey,
+                                    "entry " << i << " of " << n << " spending key differs with cap " << cap);
+                BOOST_CHECK_EQUAL(read.blsctData.rangeProof.Ls.Size(), 0U);
+            }
+        }
+    }
+}
+
+BOOST_FIXTURE_TEST_CASE(blockmanager_undo_write_spawns_at_most_thread_cap, TestChain100Setup,
+                        *boost::unit_test::precondition(CanCountThreads))
+{
+    // The undo write takes its workers out of the caller's -par budget: with
+    // a cap of N it runs the calling thread plus at most N - 1 workers.
+    // Enough entries (copies of one, as the content does not matter here)
+    // that the workers live long enough for the sampler to see them.
+    constexpr size_t NUM_TX_UNDO{20000};
+    constexpr size_t MAX_CAP{3};
+    // The cap, not the min-entries rule, has to be what limits the pool here.
+    static_assert(NUM_TX_UNDO / UNDO_WRITE_MIN_ENTRIES_PER_THREAD > MAX_CAP);
+    CBlockUndo blockundo;
+    blockundo.vtxundo.assign(NUM_TX_UNDO, RandomBlsctTxUndo());
+
+    auto& blockman{m_node.chainman->m_blockman};
+    LOCK(cs_main);
+    CBlockIndex& tip{*Assert(m_node.chainman->ActiveChain().Tip())};
+    for (size_t cap{1}; cap <= MAX_CAP; ++cap) {
+        // Every measurement must stay within the cap; a cap above 1 is
+        // remeasured until the sampler has seen the pool spawn a worker.
+        bool seen{false};
+        for (int attempt = 0; attempt < MAX_POOL_ATTEMPTS; ++attempt) {
+            tip.nStatus &= ~BLOCK_HAVE_UNDO;
+            const size_t extra{PeakExtraThreads([&] {
+                BlockValidationState state;
+                BOOST_CHECK(blockman.WriteUndoDataForBlock(blockundo, state, tip, cap));
+            })};
+            BOOST_CHECK_MESSAGE(extra <= cap - 1, "undo write with cap " << cap << " ran " << extra << " extra threads");
+            seen |= extra > 0;
+            if (cap == 1 || seen) break;
+        }
+        if (cap > 1) {
+            BOOST_CHECK_MESSAGE(seen, "undo write with cap " << cap << " ran no extra threads in " << MAX_POOL_ATTEMPTS << " attempts");
+        }
     }
 }
 
