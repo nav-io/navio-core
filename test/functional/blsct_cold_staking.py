@@ -650,17 +650,25 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                 assert_greater_than(sum(r["count"] for r in wallet.liststakingrewards() if r["address"] == coinbase_dest), coinbase_paid_before)
 
         # A staked commitment disappearing also triggers a lookup. The unlock
-        # spends stakes in the mempool (re-staking any remainder), which can
-        # leave the staker nothing to stake until it confirms, so mine that
-        # block here.
+        # spends every staked commitment in one transaction (with the default
+        # -consolidatestakedcommitments) and re-stakes the remainder as one
+        # new commitment, so the staked set changes once: from both stakes,
+        # perhaps through empty while the unlock is unconfirmed (nothing to
+        # look up), to that one commitment. Mine the unlock here so the staker
+        # has something to stake, and check the resulting set before counting
+        # lookups, so an unlock of a different shape fails here rather than
+        # as a lookup-count mismatch.
         session = Session()
         try:
             session.read_until(lambda: len(session.staked_with) >= 1)
             assert_equal(session.refresh, ["1 of 2 staked commitment(s) delegated."])
             wallet.stakeunlock(self.min_stake)
             self.generatetoblsctaddress(node, 1, wallet.getnewaddress(label="", address_type="blsct"))
+            remaining = [c["commitment"] for c in wallet.liststakedcommitments()]
+            assert_equal(len(remaining), 1)
+            remaining_delegated = remaining[0] in {d["commitment"] for d in wallet.listdelegations()}
             session.read_until(lambda: len(session.refresh) >= 2)
-            assert session.refresh[1].endswith("of 1 staked commitment(s) delegated."), session.refresh
+            assert_equal(session.refresh[1], f"{int(remaining_delegated)} of 1 staked commitment(s) delegated.")
             # Several more blocks (and many more cycles), no more lookups.
             seen_before = len(session.staked_with)
             session.read_until(lambda: len(session.staked_with) >= seen_before + 3)
