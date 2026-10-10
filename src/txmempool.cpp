@@ -17,6 +17,7 @@
 #include <random.h>
 #include <reverse_iterator.h>
 #include <util/check.h>
+#include <util/hasher.h>
 #include <util/moneystr.h>
 #include <util/overflow.h>
 #include <util/result.h>
@@ -31,6 +32,7 @@
 #include <numeric>
 #include <optional>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 bool TestLockPointValidity(CChain& active_chain, const LockPoints& lp)
@@ -800,6 +802,29 @@ void CTxMemPool::removeStakedCommitmentConflicts(const CTransaction& tx)
     }
 }
 
+namespace {
+/** True if the block (given as the set of outids it spends and creates)
+ * spends every input of tx and creates every one of its non-fee outputs.
+ * Fee outputs are excluded because aggregation folds them into a single fee
+ * output (see blsct::AggregateTransactions). A tx with no non-fee output is
+ * never considered contained: its inputs alone do not identify it. */
+bool IsContainedIn(const CTransaction& tx,
+                   const std::unordered_set<uint256, SaltedTxidHasher>& block_spent,
+                   const std::unordered_set<uint256, SaltedTxidHasher>& block_created)
+{
+    for (const CTxIn& in : tx.vin) {
+        if (!block_spent.contains(in.prevout.hash)) return false;
+    }
+    bool has_output{false};
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        if (tx.vout[i].IsFee()) continue;
+        if (!block_created.contains(tx.GetOutputId(i))) return false;
+        has_output = true;
+    }
+    return has_output;
+}
+} // namespace
+
 /**
  * Called when a block is connected. Removes from mempool.
  */
@@ -808,6 +833,24 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
     AssertLockHeld(cs);
     std::vector<RemovedMempoolTransactionInfo> txs_removed_for_block;
     txs_removed_for_block.reserve(vtx.size());
+
+    // A BLSCT block carries a single aggregate of the transactions its miner
+    // selected (blsct::AggregateTransactions), so their txids are not in the
+    // block and the lookup by txid below does not find them. Such a
+    // transaction is nevertheless confirmed: the block spends every one of
+    // its inputs and creates every one of its outputs. Remove those as BLOCK,
+    // keeping their in-mempool descendants, before removeConflicts() would
+    // evict them (and their descendants) for sharing inputs with the block.
+    for (const CTransactionRef& ptx : GetContainedInBlock(vtx)) {
+        txiter it = mapTx.find(ptx->GetHash());
+        if (it == mapTx.end()) continue;
+        setEntries stage;
+        stage.insert(it);
+        txs_removed_for_block.emplace_back(*it);
+        RemoveStaged(stage, true, MemPoolRemovalReason::BLOCK);
+        ClearPrioritisation(ptx->GetHash());
+    }
+
     for (const auto& tx : vtx)
     {
         txiter it = mapTx.find(tx->GetHash());
@@ -824,6 +867,48 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
     GetMainSignals().MempoolTransactionsRemovedForBlock(txs_removed_for_block, nBlockHeight);
     lastRollingFeeUpdate = GetTime();
     blockSinceLastRollingFeeBump = true;
+}
+
+std::vector<CTransactionRef> CTxMemPool::GetContainedInBlock(const std::vector<CTransactionRef>& vtx) const
+{
+    AssertLockHeld(cs);
+    std::unordered_set<uint256, SaltedTxidHasher> block_txids;
+    std::unordered_set<uint256, SaltedTxidHasher> block_spent;
+    std::unordered_set<uint256, SaltedTxidHasher> block_created;
+    for (const auto& tx : vtx) {
+        block_txids.insert(tx->GetHash());
+        for (const CTxIn& in : tx->vin) block_spent.insert(in.prevout.hash);
+        for (const Outid& outid : tx->GetOutputIds()) block_created.insert(outid);
+    }
+
+    // Candidates are the mempool spenders of the block's inputs that are not
+    // themselves block transactions (those are removed by txid).
+    std::vector<txiter> contained;
+    std::unordered_set<uint256, SaltedTxidHasher> seen;
+    for (const auto& tx : vtx) {
+        for (const CTxIn& in : tx->vin) {
+            auto spender = mapNextTx.find(in.prevout);
+            if (spender == mapNextTx.end()) continue;
+            const CTransaction& candidate = *spender->second;
+            if (block_txids.contains(candidate.GetHash())) continue;
+            if (!seen.insert(candidate.GetHash()).second) continue;
+            if (!IsContainedIn(candidate, block_spent, block_created)) continue;
+            txiter it = mapTx.find(candidate.GetHash());
+            if (it != mapTx.end()) contained.push_back(it);
+        }
+    }
+
+    // Remove parents before children, as a block lists them.
+    std::sort(contained.begin(), contained.end(), [](const txiter& a, const txiter& b) {
+        if (a->GetCountWithAncestors() != b->GetCountWithAncestors()) {
+            return a->GetCountWithAncestors() < b->GetCountWithAncestors();
+        }
+        return a->GetTx().GetHash() < b->GetTx().GetHash();
+    });
+    std::vector<CTransactionRef> ret;
+    ret.reserve(contained.size());
+    for (txiter it : contained) ret.push_back(it->GetSharedTx());
+    return ret;
 }
 
 void CTxMemPool::check(const CCoinsViewCache& active_coins_tip, int64_t spendheight) const

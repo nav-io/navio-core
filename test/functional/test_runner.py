@@ -363,6 +363,7 @@ BASE_SCRIPTS = [
     'blsct_chain_in_one_block.py',
     'blsct_fixed_base_verify.py',
     'blsct_same_block_multi_send.py',
+    'mempool_blsct_aggregate_confirm.py',
     'blsct_send_outputhash.py',
     'blsct_aggregated_spend_no_phantom.py',
     'blsct_keypool_restore.py',
