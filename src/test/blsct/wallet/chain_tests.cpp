@@ -5,8 +5,13 @@
 #include <blsct/wallet/txfactory.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
+#include <consensus/merkle.h>
+#include <dbwrapper.h>
 #include <kernel/chain.h>
+#include <node/miner.h>
 #include <policy/fees.h>
+#include <pow.h>
+#include <util/vector.h>
 #include <validation.h>
 #include <wallet/coincontrol.h>
 #include <wallet/receive.h>
@@ -302,6 +307,181 @@ BOOST_FIXTURE_TEST_CASE(OutputStorageScanRecordsKnownTxSpendTest, TestBLSCTChain
         BOOST_CHECK_MESSAGE(confirmed && confirmed->confirmed_block_hash == block.GetHash(),
                             "a scan without fUpdate left an output of an active block unconfirmed: " + outpoint.ToString());
     }
+}
+
+//! Coins database on disk, so a test can reopen it the way a restart would.
+struct OnDiskCoinsBLSCTChainSetup : public TestBLSCTChain100Setup {
+    OnDiskCoinsBLSCTChainSetup() : TestBLSCTChain100Setup{blsct::SubAddress(), ChainType::BLSCTREGTEST, {}, /*coins_db_in_memory=*/false} {}
+};
+
+/**
+ * Leave the coins database as a crash part way through flushing the active
+ * tip would: marked as between the database's best block and the tip, with
+ * only `erased_coins` of the flush written, then replay it as startup does.
+ * The tip cache is dropped unflushed.
+ */
+static void CrashFlushAndReplay(Chainstate& chainstate, const std::vector<COutPoint>& erased_coins) EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
+{
+    // Key prefixes of CCoinsViewDB (txdb.cpp): DB_COIN, DB_BEST_BLOCK, DB_HEAD_BLOCKS.
+    constexpr uint8_t db_coin{'C'}, db_best_block{'B'}, db_head_blocks{'H'};
+
+    const uint256 old_tip{chainstate.CoinsDB().GetBestBlock()};
+    const uint256 new_tip{chainstate.m_chain.Tip()->GetBlockHash()};
+    BOOST_REQUIRE(old_tip != new_tip);
+    const fs::path path{*Assert(chainstate.CoinsDB().StoragePath())};
+    const size_t db_cache{chainstate.m_coinsdb_cache_size_bytes};
+    const size_t tip_cache{chainstate.m_coinstip_cache_size_bytes};
+
+    chainstate.ResetCoinsViews();
+    {
+        CDBWrapper db{DBParams{.path = path, .cache_bytes = 1 << 20, .obfuscate = true}};
+        CDBBatch batch{db};
+        batch.Erase(db_best_block);
+        batch.Write(db_head_blocks, Vector(new_tip, old_tip));
+        for (const COutPoint& outpoint : erased_coins) {
+            // A key that matched nothing would leave the coin for SpendCoin
+            // to find, and the test would pass without the case it targets.
+            BOOST_REQUIRE(db.Exists(std::make_pair(db_coin, outpoint.hash)));
+            batch.Erase(std::make_pair(db_coin, outpoint.hash));
+        }
+        BOOST_REQUIRE(db.WriteBatch(batch, /*fSync=*/true));
+    }
+    chainstate.InitCoinsDB(db_cache, /*in_memory=*/false, /*should_wipe=*/false);
+    BOOST_REQUIRE_EQUAL(chainstate.CoinsDB().GetHeadBlocks().size(), 2U);
+    BOOST_REQUIRE(chainstate.ReplayBlocks());
+    chainstate.InitCoinsCache(tip_cache);
+    BOOST_REQUIRE_EQUAL(chainstate.CoinsTip().GetBestBlock(), new_tip);
+    BOOST_REQUIRE(chainstate.CoinsDB().GetHeadBlocks().empty());
+}
+
+// ReplayBlocks must apply the token predicates of the blocks it rolls
+// forward, both those of ordinary transactions and those of the coinbase,
+// which ConnectBlock executes after the other transactions.
+BOOST_FIXTURE_TEST_CASE(ReplayAppliesTokenPredicatesTest, OnDiskCoinsBLSCTChainSetup)
+{
+    CreateAndProcessBlock({});
+    auto wallet = CreateBLSCTWallet(*m_node.chain, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain()));
+    auto blsct_km = wallet->GetBLSCTKeyMan();
+    auto walletDestination = blsct::SubAddress(std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value()));
+
+    LOCK(wallet->cs_wallet);
+    for (size_t i = 0; i <= COINBASE_MATURITY; i++) {
+        CreateAndProcessBlock({}, walletDestination);
+    }
+    BOOST_REQUIRE(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+
+    blsct::TokenInfo txToken;
+    txToken.type = blsct::TOKEN;
+    txToken.nTotalSupply = 1000 * COIN;
+    txToken.mapMetadata["name"] = "ReplayTx";
+    txToken.publicKey = blsct_km->GetTokenKey((HashWriter{} << txToken.mapMetadata << txToken.nTotalSupply).GetHash()).GetPublicKey();
+    auto create_tx = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, blsct::CreateTransactionData{txToken});
+    BOOST_REQUIRE(create_tx != std::nullopt);
+
+    // A coinbase may carry a create-token output too: the miner signs it
+    // with the token key into the coinbase's aggregate signature.
+    const Scalar coinbaseTokenKey{Scalar::Rand()};
+    blsct::TokenInfo coinbaseToken;
+    coinbaseToken.type = blsct::TOKEN;
+    coinbaseToken.nTotalSupply = 500 * COIN;
+    coinbaseToken.mapMetadata["name"] = "ReplayCoinbase";
+    coinbaseToken.publicKey = blsct::PrivateKey(coinbaseTokenKey).GetPublicKey();
+
+    WITH_LOCK(::cs_main, m_node.chainman->ActiveChainstate().ForceFlushStateToDisk());
+
+    CBlock block = CreateBlock({create_tx->tx}, m_node.chainman->ActiveChainstate(), walletDestination);
+    CMutableTransaction coinbase{*block.vtx[0]};
+    const blsct::UnsignedOutput tokenOut = blsct::CreateOutput(coinbaseTokenKey, coinbaseToken);
+    BOOST_REQUIRE(!tokenOut.out.HasBLSCTRangeProof() && !tokenOut.out.HasBLSCTKeys());
+    coinbase.vout.push_back(tokenOut.out);
+    coinbase.txSig = blsct::Signature::Aggregate({coinbase.txSig, blsct::PrivateKey(coinbaseTokenKey).Sign(tokenOut.out.GetHash())});
+    block.vtx[0] = MakeTransactionRef(std::move(coinbase));
+    block.hashMerkleRoot = BlockMerkleRoot(block);
+    node::RegenerateCommitments(block, *m_node.chainman);
+    while (!CheckProofOfWork(block.GetHash(), block.nBits, m_node.chainman->GetConsensus())) ++block.nNonce;
+    BOOST_REQUIRE(m_node.chainman->ProcessNewBlock(std::make_shared<const CBlock>(block), true, true, nullptr));
+    CreateAndProcessBlock({}, walletDestination);
+
+    LOCK(::cs_main);
+    Chainstate& chainstate{m_node.chainman->ActiveChainstate()};
+    BOOST_REQUIRE_EQUAL(chainstate.m_chain.Tip()->pprev->GetBlockHash(), block.GetHash());
+    for (const auto& token : {txToken, coinbaseToken}) {
+        blsct::TokenEntry entry;
+        BOOST_REQUIRE_MESSAGE(chainstate.CoinsTip().GetToken(token.publicKey.GetHash(), entry), "connect did not create " + token.mapMetadata.at("name"));
+    }
+
+    // Replay must roll forward the token block, not only the one after it.
+    BOOST_REQUIRE_EQUAL(chainstate.CoinsDB().GetBestBlock(), block.hashPrevBlock);
+    CrashFlushAndReplay(chainstate, /*erased_coins=*/{});
+
+    for (const auto& token : {txToken, coinbaseToken}) {
+        blsct::TokenEntry entry;
+        BOOST_CHECK_MESSAGE(chainstate.CoinsTip().GetToken(token.publicKey.GetHash(), entry), "replay lost " + token.mapMetadata.at("name"));
+        BOOST_CHECK_EQUAL(entry.info.nTotalSupply, token.nTotalSupply);
+    }
+}
+
+// A crash can land after a partial batch has already erased a spent staked
+// commitment's coin, while the staked-commitment set itself is only written
+// in the final batch. Replaying the spend must still drop the commitment
+// from the set, though the coin is no longer there to look up.
+BOOST_FIXTURE_TEST_CASE(ReplayRemovesSpentStakedCommitmentTest, OnDiskCoinsBLSCTChainSetup)
+{
+    CreateAndProcessBlock({});
+    auto wallet = CreateBLSCTWallet(*m_node.chain, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain()));
+    auto blsct_km = wallet->GetBLSCTKeyMan();
+    auto walletDestination = blsct::SubAddress(std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value()));
+
+    LOCK(wallet->cs_wallet);
+    const CAmount min_stake = Params().GetConsensus().nPePoSMinStakeAmount;
+    const int extra_blocks = static_cast<int>(min_stake / (4 * COIN)) + 5;
+    for (int i = 0; i <= COINBASE_MATURITY + extra_blocks; i++) {
+        CreateAndProcessBlock({}, walletDestination);
+    }
+    BOOST_REQUIRE(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+
+    auto stakeDest = blsct::SubAddress(std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(blsct::STAKING_ACCOUNT).value()));
+    auto stake1 = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, blsct::CreateTransactionData(stakeDest, min_stake, "", TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, min_stake));
+    BOOST_REQUIRE(stake1 != std::nullopt);
+    CreateAndProcessBlock({stake1->tx}, walletDestination);
+    BOOST_REQUIRE(SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+
+    const CTransaction stake1_tx{stake1->tx};
+    std::optional<COutPoint> staked_outpoint;
+    BlstG1Point staked_point;
+    for (size_t o = 0; o < stake1_tx.vout.size(); o++) {
+        if (!stake1_tx.vout[o].IsStakedCommitment()) continue;
+        staked_outpoint = COutPoint{stake1_tx.GetOutputId(o)};
+        staked_point = stake1_tx.vout[o].blsctData.rangeProof.Vs[0];
+    }
+    BOOST_REQUIRE(staked_outpoint.has_value());
+
+    {
+        LOCK(::cs_main);
+        m_node.chainman->ActiveChainstate().ForceFlushStateToDisk();
+        BOOST_REQUIRE(m_node.chainman->ActiveChainstate().CoinsDB().GetStakedCommitments().Exists(staked_point));
+    }
+
+    // Consolidating spends the first commitment into a new one.
+    blsct::CreateTransactionData stake2_data(stakeDest, 4 * COIN, "", TokenId(), blsct::CreateTransactionType::STAKED_COMMITMENT, min_stake);
+    BOOST_REQUIRE(stake2_data.fConsolidateStakedCommitments);
+    auto stake2 = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, stake2_data);
+    BOOST_REQUIRE(stake2 != std::nullopt);
+    BOOST_REQUIRE(std::any_of(stake2->tx.vin.begin(), stake2->tx.vin.end(), [&](const CTxIn& in) { return in.prevout == *staked_outpoint; }));
+    CreateAndProcessBlock({stake2->tx}, walletDestination);
+
+    LOCK(::cs_main);
+    Chainstate& chainstate{m_node.chainman->ActiveChainstate()};
+    const auto expected = chainstate.CoinsTip().GetStakedCommitments();
+    BOOST_REQUIRE(!expected.Exists(staked_point));
+
+    CrashFlushAndReplay(chainstate, /*erased_coins=*/{*staked_outpoint});
+
+    const auto replayed = chainstate.CoinsTip().GetStakedCommitments();
+    BOOST_CHECK_MESSAGE(!replayed.Exists(staked_point), "replay kept the spent staked commitment");
+    BOOST_CHECK_EQUAL(replayed.Size(), expected.Size());
+    const auto expected_points = expected.GetElements();
+    for (size_t i = 0; i < expected_points.Size(); i++) BOOST_CHECK(replayed.Exists(expected_points[i]));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -381,6 +381,7 @@ BASE_SCRIPTS = [
     'blsct_output_storage.py',
     'blsct_token_output_storage.py',
     'blsct_token_verifychain.py',
+    'blsct_token_replay.py',
     'blsct_block_rpc.py',
     'blsct_txoutset_amounts.py',
     'blsct_coinstatsindex_consistency.py',

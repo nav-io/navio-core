@@ -9,6 +9,7 @@
 #include <blsct/pos/pos.h>
 #include <blsct/pos/pos_async_verifier.h>
 #include <blsct/pos/proof_logic.h>
+#include <blsct/tokens/predicate_exec.h>
 #include <chain.h>
 #include <checkqueue.h>
 #include <clientversion.h>
@@ -5335,7 +5336,14 @@ VerifyDBResult CVerifyDB::VerifyDB(
     return VerifyDBResult::SUCCESS;
 }
 
-/** Apply the effects of a block on the utxo cache, ignoring that it may already have been applied. */
+/** Apply the effects of a block on the utxo cache, ignoring that it may already have been applied.
+ *
+ * Token predicates are the exception: they are not idempotent (a mint adds
+ * to the supply), so they must run against the token set exactly as it was
+ * after the previous block. ReplayBlocks starts from the database's token
+ * set, which CCoinsViewDB::BatchWrite keeps at the old tip by writing tokens
+ * only in the final batch of a flush, and every later block then runs on the
+ * cache the earlier ones updated. */
 bool Chainstate::RollforwardBlock(const CBlockIndex* pindex, CCoinsViewCache& inputs)
 {
     AssertLockHeld(cs_main);
@@ -5344,16 +5352,49 @@ bool Chainstate::RollforwardBlock(const CBlockIndex* pindex, CCoinsViewCache& in
     if (!m_blockman.ReadBlockFromDisk(block, *pindex)) {
         return error("ReplayBlock(): ReadBlockFromDisk failed at %d, hash=%s", pindex->nHeight, pindex->GetBlockHash().ToString());
     }
+    // A partial batch of the interrupted flush may already have erased a
+    // spent coin, and SpendCoin only drops a staked commitment it finds. The
+    // undo data still holds every spent coin.
+    CBlockUndo blockUndo;
+    if (!m_blockman.UndoReadFromDisk(blockUndo, *pindex)) {
+        return error("ReplayBlock(): UndoReadFromDisk failed at %d, hash=%s", pindex->nHeight, pindex->GetBlockHash().ToString());
+    }
+    if (blockUndo.vtxundo.size() + 1 != block.vtx.size()) {
+        return error("ReplayBlock(): block and undo data inconsistent at %d, hash=%s", pindex->nHeight, pindex->GetBlockHash().ToString());
+    }
 
-    for (const CTransactionRef& tx : block.vtx) {
-        if (!tx->IsCoinBase()) {
-            for (const CTxIn &txin : tx->vin) {
-                inputs.SpendCoin(txin.prevout);
+    // ConnectBlock executes the predicates of a BLSCT transaction in output
+    // order (blsct::VerifyTxCore): the other transactions' as it goes, the
+    // coinbase's after them. DisconnectBlock reverts them, so replay has to
+    // apply them in the same order.
+    const auto apply_predicates = [&](const CTransaction& tx) {
+        for (const CTxOut& out : tx.vout) {
+            if (out.predicate.size() > 0 && !blsct::ExecutePredicate(out.predicate, inputs)) {
+                return error("ReplayBlock(): Could not apply predicate %s at %d, hash=%s", blsct::PredicateToString(out.predicate), pindex->nHeight, pindex->GetBlockHash().ToString());
             }
         }
+        return true;
+    };
+
+    for (size_t i = 0; i < block.vtx.size(); i++) {
+        const CTransaction& tx = *block.vtx[i];
+        if (!tx.IsCoinBase()) {
+            const CTxUndo& txundo = blockUndo.vtxundo[i - 1];
+            if (txundo.vprevout.size() != tx.vin.size()) {
+                return error("ReplayBlock(): transaction and undo data inconsistent at %d, hash=%s", pindex->nHeight, pindex->GetBlockHash().ToString());
+            }
+            for (const CTxIn &txin : tx.vin) {
+                inputs.SpendCoin(txin.prevout);
+            }
+            for (const Coin& spent : txundo.vprevout) {
+                if (spent.out.IsStakedCommitment()) inputs.RemoveStakedCommitment(spent.out.blsctData.rangeProof.Vs[0]);
+            }
+            if (tx.IsBLSCT() && !apply_predicates(tx)) return false;
+        }
         // Pass check = true as every addition may be an overwrite.
-        AddCoins(inputs, *tx, pindex->nHeight, true);
+        AddCoins(inputs, tx, pindex->nHeight, true);
     }
+    if (block.IsBLSCT() && !apply_predicates(*block.vtx[0])) return false;
     return true;
 }
 

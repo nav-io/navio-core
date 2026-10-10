@@ -196,6 +196,11 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CSt
         }
     }
 
+    // Tokens go only in the final batch, together with the new best block,
+    // never in a partial one, so -dbbatchsize and -dbcrashratio do not apply
+    // to them. Unlike coins, token updates are not idempotent (a mint adds to
+    // the supply), so ReplayBlocks can only reapply them to a token set that
+    // is still exactly at the old tip.
     for (TokensMap::iterator it = tokensMap.begin(); it != tokensMap.end();) {
         if (it->second.flags > 0) {
             TokenDbEntry entry(&it->first);
@@ -205,18 +210,6 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CSt
                 batch.Write(entry, it->second.token);
         }
         it = erase ? tokensMap.erase(it) : std::next(it);
-        if (batch.SizeEstimate() > m_options.batch_write_bytes) {
-            LogPrint(BCLog::COINDB, "Writing partial batch of %.2f MiB\n", batch.SizeEstimate() * (1.0 / 1048576.0));
-            m_db->WriteBatch(batch);
-            batch.Clear();
-            if (m_options.simulate_crash_ratio) {
-                static FastRandomContext rng;
-                if (rng.randrange(m_options.simulate_crash_ratio) == 0) {
-                    LogPrintf("Simulating a crash. Goodbye.\n");
-                    _Exit(0);
-                }
-            }
-        }
     }
 
     // In the last batch, mark the database as consistent with hashBlock again.

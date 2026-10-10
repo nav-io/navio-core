@@ -530,6 +530,10 @@ bool CCoinsViewCache::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlockIn
     if (erase)
         cacheStakedCommitmentsIn.clear();
     for (auto& it : cacheTokensIn) {
+        // Like coins, skip entries the child only fetched: copying one
+        // would overwrite a modification still pending here with a flagless
+        // entry, which the next flush would then never write.
+        if (it.second.flags == 0) continue;
         cacheTokens[it.first] = it.second;
     };
     if (erase)
