@@ -16,6 +16,9 @@
 #include <test/util/setup_common.h>
 #include <validationinterface.h>
 
+#include <algorithm>
+#include <vector>
+
 #include <boost/test/unit_test.hpp>
 
 using namespace rfq;
@@ -196,6 +199,13 @@ BOOST_AUTO_TEST_CASE(order_store_find_expiry)
     // Duplicate quote_id rejected.
     BOOST_CHECK(!cache.StoreOrder(MakeOrder(qid, InsecureRand256(), 1000, 100, 5000), 1000));
 
+    // An order without a half-tx is rejected; listorders relies on every
+    // cached order having one.
+    RfqQuote no_half = MakeOrder(InsecureRand256(), InsecureRand256(), 1000, 100, 5000);
+    no_half.half_tx.reset();
+    BOOST_CHECK(!cache.StoreOrder(no_half, 1000));
+    BOOST_CHECK_EQUAL(cache.Size(), 1u);
+
     // Already-expired store rejected.
     BOOST_CHECK(!cache.StoreOrder(MakeOrder(InsecureRand256(), InsecureRand256(), 1000, 100, /*order_expiry=*/900), 1000));
 
@@ -264,7 +274,7 @@ BOOST_AUTO_TEST_CASE(order_snapshot_sorted_and_live_only)
     BOOST_CHECK_EQUAL(cache.Size(), 3u);
 
     // All three live, and the TTL cap binds none of them: sorted by expiry.
-    auto snap = cache.Snapshot(/*now=*/500);
+    auto snap = cache.Snapshot(/*now=*/500).orders;
     BOOST_REQUIRE_EQUAL(snap.size(), 3u);
     BOOST_CHECK(snap[0].quote.quote_id == soon_expired);
     BOOST_CHECK(snap[1].quote.quote_id == early);
@@ -276,15 +286,20 @@ BOOST_AUTO_TEST_CASE(order_snapshot_sorted_and_live_only)
     BOOST_REQUIRE(snap[1].quote.half_tx != nullptr);
 
     // Expired-but-unpruned entries are excluded; the snapshot does not prune.
-    snap = cache.Snapshot(/*now=*/1000);
+    // Its totals still count them, matching GetStats() for the same state.
+    const auto full = cache.Snapshot(/*now=*/1000);
+    snap = full.orders;
     BOOST_REQUIRE_EQUAL(snap.size(), 2u);
     BOOST_CHECK(snap[0].quote.quote_id == early);
     BOOST_CHECK_EQUAL(cache.Size(), 3u);
+    BOOST_CHECK_EQUAL(full.stats.count, 3u);
+    BOOST_CHECK_EQUAL(full.stats.bytes, cache.GetStats().bytes);
+    BOOST_CHECK_GT(full.stats.bytes, 0u);
 
     // The 14-day cap shows up as the effective expiry.
     OrderCache capped(0);
     BOOST_CHECK(capped.StoreOrder(MakeOrder(uint256::ONE, InsecureRand256(), 1, 1, /*order_expiry=*/100 * MAX_ORDER_TTL_SECONDS), /*now=*/7));
-    auto csnap = capped.Snapshot(/*now=*/8);
+    auto csnap = capped.Snapshot(/*now=*/8).orders;
     BOOST_REQUIRE_EQUAL(csnap.size(), 1u);
     BOOST_CHECK_EQUAL(csnap[0].effective_expiry, 7 + MAX_ORDER_TTL_SECONDS);
 
@@ -297,13 +312,36 @@ BOOST_AUTO_TEST_CASE(order_snapshot_sorted_and_live_only)
     const uint256 declared_sooner = InsecureRand256();
     BOOST_CHECK(mixed.StoreOrder(MakeOrder(declared_later, InsecureRand256(), 1, 1, /*order_expiry=*/100 * MAX_ORDER_TTL_SECONDS), /*now=*/0));
     BOOST_CHECK(mixed.StoreOrder(MakeOrder(declared_sooner, InsecureRand256(), 1, 1, /*order_expiry=*/50 * MAX_ORDER_TTL_SECONDS), /*now=*/1000));
-    auto msnap = mixed.Snapshot(/*now=*/1);
+    auto msnap = mixed.Snapshot(/*now=*/1).orders;
     BOOST_REQUIRE_EQUAL(msnap.size(), 2u);
     BOOST_CHECK(msnap[0].quote.quote_id == declared_sooner);
     BOOST_CHECK(msnap[1].quote.quote_id == declared_later);
     // The cap reversed the effective order, so the case can tell the keys apart.
     BOOST_CHECK_EQUAL(msnap[0].effective_expiry, 1000 + MAX_ORDER_TTL_SECONDS);
     BOOST_CHECK_EQUAL(msnap[1].effective_expiry, MAX_ORDER_TTL_SECONDS);
+}
+
+BOOST_AUTO_TEST_CASE(order_snapshot_quote_id_tie_break)
+{
+    // Orders sharing a declared expiry come out in ascending quote_id order.
+    // Enough of them that an unstable sort without the tie-break would not
+    // keep the cache's own key order by accident.
+    OrderCache cache(0);
+    std::vector<uint256> tied;
+    for (int i = 0; i < 200; ++i) {
+        tied.push_back(InsecureRand256());
+        BOOST_REQUIRE(cache.StoreOrder(MakeOrder(tied.back(), InsecureRand256(), 1, 1, /*order_expiry=*/5000), /*now=*/0));
+    }
+    const uint256 sooner = InsecureRand256();
+    BOOST_REQUIRE(cache.StoreOrder(MakeOrder(sooner, InsecureRand256(), 1, 1, /*order_expiry=*/4000), /*now=*/0));
+    std::sort(tied.begin(), tied.end());
+
+    const auto snap = cache.Snapshot(/*now=*/1).orders;
+    BOOST_REQUIRE_EQUAL(snap.size(), tied.size() + 1);
+    BOOST_CHECK(snap[0].quote.quote_id == sooner);
+    for (size_t i = 0; i < tied.size(); ++i) {
+        BOOST_CHECK_MESSAGE(snap[i + 1].quote.quote_id == tied[i], "tied order " << i << " out of quote_id order");
+    }
 }
 
 BOOST_AUTO_TEST_CASE(order_spent_input_evicts)

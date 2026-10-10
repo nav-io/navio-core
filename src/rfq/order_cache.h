@@ -12,6 +12,7 @@
 #include <uint256.h>
 #include <validationinterface.h>
 
+#include <chrono>
 #include <cstdint>
 #include <list>
 #include <map>
@@ -23,6 +24,8 @@ namespace rfq {
 static constexpr size_t MAX_ORDER_CACHE_BYTES = 32u << 20;
 //! Standing orders live at most 14 days regardless of their declared expiry.
 static constexpr int64_t MAX_ORDER_TTL_SECONDS = 14 * 24 * 60 * 60;
+//! How often the node drops expired standing orders (see PruneExpired).
+static constexpr std::chrono::seconds ORDER_PRUNE_INTERVAL{60};
 
 /**
  * Bounded LRU cache of standing orders (broadcast pre-signed maker half-txs).
@@ -53,14 +56,22 @@ public:
         EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     //! Drop expired entries (effective expiry <= now). Returns count removed.
+    //! The node calls this every ORDER_PRUNE_INTERVAL from the scheduler.
     size_t PruneExpired(int64_t now) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
+    //! Cache totals, read together under one lock.
+    struct Stats {
+        size_t count; //!< entries held, including expired ones not yet pruned
+        size_t bytes; //!< approximate footprint of those entries
+    };
+
     size_t Size() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
-    size_t Bytes() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    Stats GetStats() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
     bool Contains(const uint256& quote_id) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     //! Read-only view of one cached standing order. `quote` is exactly the
-    //! ORDER_ANN payload as it arrived on the wire (public to every peer);
+    //! ORDER_ANN payload as it arrived on the wire (public to every peer), and
+    //! always carries a half-tx (StoreOrder rejects one without);
     //! `received` / `effective_expiry` are this node's local bookkeeping.
     struct OrderView {
         RfqQuote quote;
@@ -68,10 +79,18 @@ public:
         int64_t effective_expiry; //!< min(quote.order_expiry, received + MAX_ORDER_TTL_SECONDS)
     };
 
+    //! The live orders together with the totals they were taken from, so
+    //! `orders.size() <= stats.count` holds even under concurrent stores.
+    struct OrderSnapshot {
+        Stats stats;
+        std::vector<OrderView> orders;
+    };
+
     //! Copies of every order still live at `now` (effective_expiry > now),
-    //! sorted by the maker-declared order_expiry ascending (quote_id tie-break; wire-public keys only — see Snapshot), then quote_id. Does not touch the
-    //! LRU order and does not prune. Intended for inspection (RPC).
-    std::vector<OrderView> Snapshot(int64_t now) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    //! sorted by the maker-declared order_expiry ascending, then quote_id
+    //! (both wire-public keys). Does not touch the LRU order and does not
+    //! prune. Intended for inspection (RPC).
+    OrderSnapshot Snapshot(int64_t now) const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     void TransactionAddedToMempool(const NewMempoolTransactionInfo& tx, uint64_t) override
         EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
