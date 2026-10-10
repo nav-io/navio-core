@@ -353,9 +353,10 @@ def tor_port(n):
     """Port for a node's onion-service target bind (-bind=...=onion).
 
     Without an explicit onion bind, naviod binds the chain's default onion
-    target (127.0.0.1:18445 on regtest, 127.0.0.1:18440 on blsctregtest).
-    Tests that don't bind to localhost only still get that default, which is
-    why rpc_port() keeps its block clear of those ports."""
+    target (the onion service target port in src/chainparamsbase.cpp). Tests
+    that don't bind to localhost only still get that default, which is why
+    rpc_port() keeps its block clear of those ports."""
+    assert n <= MAX_NODES
     return PORT_MIN + 2 * PORT_RANGE + n + (MAX_NODES * PortSeed.n) % (PORT_RANGE - 1 - MAX_NODES)
 
 

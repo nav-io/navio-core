@@ -29,6 +29,7 @@
 #include <script/sign.h>
 #include <script/signingprovider.h>
 #include <script/solver.h>
+#include <txmempool.h>
 #include <uint256.h>
 #include <undo.h>
 #include <util/check.h>
@@ -38,6 +39,7 @@
 #include <validation.h>
 #include <validationinterface.h>
 
+#include <algorithm>
 #include <numeric>
 #include <cstdint>
 #include <optional>
@@ -898,26 +900,38 @@ static RPCHelpMan gettxfromoutputhash()
                 g_txindex->BlockUntilSyncedToCurrentChain();
             }
 
-            // First, search in mempool if requested
+            // First, search in mempool if requested. mapOutputToTx names the
+            // transaction creating the output, and its cached output ids give
+            // the position without re-hashing any output. It keeps one entry
+            // per output id: an unspendable output two mempool transactions
+            // both create is not found once the first creator leaves.
             if (include_mempool && node.mempool) {
-                LOCK(node.mempool->cs);
-                for (const auto& entry : node.mempool->mapTx) {
-                    const CTransaction& tx = *entry.GetSharedTx();
-                    for (size_t i = 0; i < tx.vout.size(); i++) {
-                        if (tx.vout[i].GetHash() == output_hash) {
-                            UniValue result(UniValue::VOBJ);
-                            result.pushKV("txid", tx.GetHash().GetHex());
-                            result.pushKV("vout", (int)i);
-                            result.pushKV("confirmations", 0);
-                            return result;
-                        }
-                    }
+                const CTxMemPool& mempool{*node.mempool};
+                LOCK(mempool.cs);
+                const auto creator{mempool.mapOutputToTx.find(output_hash)};
+                if (creator != mempool.mapOutputToTx.end()) {
+                    const auto entry{mempool.GetIter(creator->second)};
+                    CHECK_NONFATAL(entry);
+                    const CTransaction& tx{(*entry)->GetTx()};
+                    const auto& output_ids{tx.GetOutputIds()};
+                    const auto pos{std::find(output_ids.begin(), output_ids.end(), output_hash)};
+                    CHECK_NONFATAL(pos != output_ids.end());
+                    UniValue result(UniValue::VOBJ);
+                    result.pushKV("txid", tx.GetHash().GetHex());
+                    result.pushKV("vout", (int)(pos - output_ids.begin()));
+                    result.pushKV("confirmations", 0);
+                    return result;
                 }
             }
 
             // The output index answers directly, including for outputs already
-            // spent in a block. A synced index without an entry means the output
-            // is not in the active chain, so there is nothing to scan for.
+            // spent in a block. A synced index without an entry is taken as the
+            // output not being in the active chain, so there is nothing to scan
+            // for. That is not fully authoritative: the index keeps one entry per
+            // output id, so when an identical output is created twice (a value-0
+            // OP_RETURN stub, or a spendable output re-created after its spend)
+            // and the later block is rewound, the erased entry hides the earlier
+            // copy still in the chain.
             {
                 IndexedOutput indexed;
                 switch (LookupIndexedOutput(chainman, output_hash, indexed)) {

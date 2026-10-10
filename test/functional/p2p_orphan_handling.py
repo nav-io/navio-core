@@ -69,8 +69,10 @@ class PeerTxRelayer(P2PTxInvStore):
 
     @property
     def getdata_received(self):
+        # A copy: the network thread appends to the list, so callers iterating
+        # it must not see it change under them once the lock is released.
         with p2p_lock:
-            return self._getdata_received
+            return list(self._getdata_received)
 
     def on_tx(self, message):
         self._tx_received.append(message)

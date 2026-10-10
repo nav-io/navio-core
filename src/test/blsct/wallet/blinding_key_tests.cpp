@@ -15,7 +15,11 @@
 #include <wallet/wallet.h>
 
 #include <algorithm>
+#include <atomic>
+#include <optional>
 #include <set>
+#include <thread>
+#include <vector>
 #include <boost/test/unit_test.hpp>
 
 BOOST_AUTO_TEST_SUITE(blsct_blinding_key_tests)
@@ -566,6 +570,59 @@ BOOST_FIXTURE_TEST_CASE(blinding_generation_stops_at_search_bound, TestingSetup)
     const auto other = w.km->ReserveBlindingGeneration(OutidOfRepeatedByte(0x45));
     BOOST_REQUIRE(other.has_value());
     BOOST_CHECK_EQUAL(*other, 0U);
+}
+
+// The claim is a read-modify-write of the counter with a database write in the
+// middle. KeyMan must make it atomic on its own: callers serialise through
+// cs_wallet today, but KeyMan cannot name that lock, so nothing would catch a
+// new caller that does not. Concurrent claims without cs_wallet must still
+// never hand one generation out twice.
+BOOST_FIXTURE_TEST_CASE(blinding_generation_claims_are_atomic, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    auto w = MakeWallet(m_node.chain.get(), std::vector<unsigned char>(32, 0x41));
+
+    // Every thread claims on every anchor in the same order, so each anchor
+    // sees THREADS claims racing; many anchors give the race many chances.
+    constexpr uint32_t THREADS{8};
+    constexpr uint32_t ANCHORS{256};
+    static_assert(THREADS <= blsct::MAX_GENERATION_SEARCH);
+
+    std::vector<Outid> anchors;
+    for (uint32_t a = 0; a < ANCHORS; ++a) {
+        uint256 h;
+        std::fill(h.begin(), h.end(), 0x46);
+        std::copy_n(reinterpret_cast<const unsigned char*>(&a), sizeof(a), h.begin());
+        anchors.push_back(Outid::FromUint256(h));
+    }
+
+    std::vector<std::vector<std::optional<uint32_t>>> results(THREADS);
+    std::atomic<bool> start{false};
+    std::vector<std::thread> threads;
+    threads.reserve(results.size());
+    for (auto& result : results) {
+        threads.emplace_back([&w, &anchors, &result, &start] {
+            while (!start) std::this_thread::yield();
+            for (const Outid& anchor : anchors) {
+                result.push_back(w.km->ReserveBlindingGeneration(anchor));
+            }
+        });
+    }
+    start = true;
+    for (auto& thread : threads) thread.join();
+
+    // Each anchor handed out generations 0..THREADS-1, each exactly once.
+    for (uint32_t a = 0; a < ANCHORS; ++a) {
+        std::set<uint32_t> claimed;
+        for (const auto& result : results) {
+            BOOST_REQUIRE_EQUAL(result.size(), ANCHORS);
+            BOOST_REQUIRE(result[a].has_value());
+            BOOST_CHECK_MESSAGE(claimed.insert(*result[a]).second,
+                                "anchor " << a << ": generation " << *result[a] << " was handed out twice");
+        }
+        BOOST_CHECK_EQUAL(claimed.size(), THREADS);
+        BOOST_CHECK_EQUAL(*claimed.rbegin(), THREADS - 1);
+    }
 }
 
 BOOST_FIXTURE_TEST_CASE(explicit_blinding_key_opts_out_of_recovery, TestingSetup)

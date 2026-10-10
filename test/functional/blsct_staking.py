@@ -7,6 +7,7 @@
 
 from decimal import Decimal
 
+from test_framework.authproxy import JSONRPCException
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -113,14 +114,17 @@ class NavioBlsctStakingTest(BitcoinTestFramework):
 
         # Test unstaking - try to unstake a specific amount
         self.log.info("Testing unstaking")
+        # Only the RPC itself may fail here. The checks after it stay outside
+        # the try, so a real balance mismatch is not logged as expected.
         try:
             unstake_txid = wallet.stakeunlock(200)
+        except JSONRPCException as e:
+            self.log.info(f"Unstaking failed (expected due to txfactory constraints): {e}")
+        else:
             assert len(unstake_txid) == 64, "Unstake txid should be valid"
             self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
             self.log.info("Unstaking succeeded")
             self.check_staked_balance_matches_commitments(wallet, "after unstaking")
-        except Exception as e:
-            self.log.info(f"Unstaking failed (expected due to txfactory constraints): {e}")
 
     def test_balance_movements(self):
         self.log.info("Testing balance movements")
