@@ -1613,6 +1613,9 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 COutPoint outpoint(tx.GetOutputId(i));
 
                 bool fExisted = mapOutputs.contains(outpoint);
+                // The tx is only known to be held from its first held output on:
+                // the outputs before it took the IsMine path below, while
+                // unheld outputs after it are skipped without one.
                 if (!fUpdate && (fExisted || skip_known_tx)) {
                     skip_known_tx = true;
                     if (fExisted && std::holds_alternative<TxStateConfirmed>(tx_state) &&
