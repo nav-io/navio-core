@@ -32,6 +32,7 @@
 #include <util/chaintype.h>
 #include <util/exception.h>
 #include <util/fs.h>
+#include <util/result.h>
 #include <util/strencodings.h>
 #include <util/string.h>
 #include <util/time.h>
@@ -109,7 +110,7 @@ static void SetupCliArgs(ArgsManager& argsman)
     argsman.AddArg("-gendelegationkey", "Generate a new delegation key pair, print it and exit. Publish the public key so wallet owners can delegate to you with delegatestake", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-operatoraddress=<address>", "BLSCT address that receives the -operatorfee share of delegated block rewards", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::OPTIONS);
     argsman.AddArg("-operatorfee=<bps>", "Operator fee taken from delegated block rewards, in basis points [0, 10000] (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-delegationrefresh=<seconds>", "How often to rescan the chain for stake delegations in -delegated mode (default: 300)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-delegationrefresh=<seconds>", "How often to rescan the chain for stake delegations in -delegated mode. In wallet mode, the longest wait between retries of a failing listdelegations lookup (default: 300)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 }
 
 /** libevent event log callback */
@@ -811,19 +812,22 @@ std::vector<StakedCommitment> GetStakedCommitments(const std::unique_ptr<BaseReq
 //! block reward then belongs at the delegation's reward address rather than
 //! at -coinbasedest, so listdelegations can account for it. Empty when the
 //! wallet has no delegations or the node lacks listdelegations or its
-//! "commitment" field; std::nullopt on any other RPC error, so the caller can
-//! retry instead of caching an empty answer.
-std::optional<std::map<std::string, std::string>> GetOwnDelegationRewardAddresses(const std::unique_ptr<BaseRequestHandler>& rh)
+//! "commitment" field; an error carrying the RPC error otherwise, so the
+//! caller can retry instead of caching an empty answer, and decide whether to
+//! log it.
+util::Result<std::map<std::string, std::string>> GetOwnDelegationRewardAddresses(const std::unique_ptr<BaseRequestHandler>& rh)
 {
     std::map<std::string, std::string> ret;
     const UniValue& response = ConnectAndCallRPC(rh.get(), "listdelegations", /* args=*/{}, walletName);
     const UniValue& error = response.find_value("error");
     const UniValue& result = response.find_value("result");
     if (!error.isNull()) {
-        LogPrintf("%s: [%s] Could not list delegations (%s); delegated stakes not yet mapped pay -coinbasedest\n", __func__, walletName, error.write());
         const UniValue& code = error.isObject() ? error.find_value("code") : NullUniValue;
-        if (code.isNum() && code.getInt<int>() == RPC_METHOD_NOT_FOUND) return ret;
-        return std::nullopt;
+        if (code.isNum() && code.getInt<int>() == RPC_METHOD_NOT_FOUND) {
+            LogPrintf("%s: [%s] Could not list delegations (%s); delegated stakes not yet mapped pay -coinbasedest\n", __func__, walletName, error.write());
+            return ret;
+        }
+        return util::Error{Untranslated(error.write())};
     }
     if (!result.isArray()) return ret;
     for (const UniValue& entry : result.getValues()) {
@@ -835,6 +839,16 @@ std::optional<std::map<std::string, std::string>> GetOwnDelegationRewardAddresse
     }
     return ret;
 }
+
+//! Wait before the first retry of a failed GetOwnDelegationRewardAddresses
+//! lookup. Each further consecutive failure doubles it, up to
+//! -delegationrefresh.
+static constexpr std::chrono::seconds OWN_DELEGATION_RETRY_INITIAL{2};
+
+//! Upper bound on -delegationrefresh. Longer values are clamped to it, which
+//! keeps the time points computed from the interval (now plus or minus it)
+//! far from SteadyClock's range limits.
+static constexpr std::chrono::seconds MAX_DELEGATION_REFRESH{std::chrono::days{1}};
 
 struct DelegatedCommitment {
     StakedCommitment staked;
@@ -1176,7 +1190,7 @@ void Loop()
     // Delegated mode: the set of delegations addressed to us, refreshed from
     // the chain on an interval (and immediately on the first cycle).
     std::vector<DelegatedCommitment> delegations;
-    const int64_t delegation_refresh_interval = std::max<int64_t>(1, gArgs.GetIntArg("-delegationrefresh", 300));
+    const int64_t delegation_refresh_interval = std::clamp<int64_t>(gArgs.GetIntArg("-delegationrefresh", 300), 1, MAX_DELEGATION_REFRESH.count());
     auto last_delegation_refresh{SteadyClock::now() - std::chrono::seconds(delegation_refresh_interval)};
 
     // Wallet mode: reward address of each of the wallet's own delegated
@@ -1187,6 +1201,15 @@ void Loop()
     // successful fetch, so a (re)started staker fetches on its first cycle.
     std::map<std::string, std::string> own_delegation_rewards;
     std::optional<std::set<std::string>> own_delegation_rewards_for;
+    // Backoff for a failing lookup: consecutive failures, the earliest time
+    // the next attempt may run, how long the next failure will wait, and the
+    // staked-commitment set of the last failed attempt.
+    const auto own_delegation_retry_max{std::chrono::seconds{delegation_refresh_interval}};
+    const auto own_delegation_retry_first{std::min(OWN_DELEGATION_RETRY_INITIAL, own_delegation_retry_max)};
+    int own_delegation_failures{0};
+    SteadyClock::time_point own_delegation_retry_at{};
+    std::chrono::seconds own_delegation_retry_wait{own_delegation_retry_first};
+    std::optional<std::set<std::string>> own_delegation_failed_for;
 
     dash.Log(strprintf("staking started (wallet=%s)%s%s", walletName, auto_consolidate ? " (auto-consolidate enabled)" : "", fDelegated ? " (delegated mode)" : ""));
 
@@ -1261,10 +1284,40 @@ void Loop()
                         // Nothing to stake, so nothing to look up.
                         own_delegation_rewards.clear();
                         own_delegation_rewards_for = std::move(commitment_set);
-                    } else if (own_delegation_rewards_for != commitment_set) {
-                        // On an RPC error keep the previous map (it can only
-                        // be missing entries) and retry on the next cycle.
-                        if (auto fresh = GetOwnDelegationRewardAddresses(rh)) {
+                    } else if (own_delegation_rewards_for != commitment_set &&
+                               (SteadyClock::now() >= own_delegation_retry_at || own_delegation_failed_for != commitment_set)) {
+                        // On an RPC error keep the previous map: it may lack
+                        // delegations added since it was fetched, and may
+                        // still hold commitments no longer staked, which are
+                        // harmless as nothing looks them up. Then back off:
+                        // the first failure is logged and retried after
+                        // OWN_DELEGATION_RETRY_INITIAL (or -delegationrefresh
+                        // if shorter), and each further consecutive failure,
+                        // unlogged, doubles the wait up to
+                        // -delegationrefresh. A staked set that differs from
+                        // the one of the last failed attempt (a stake added
+                        // or removed meanwhile) is tried on the cycle that
+                        // sees it, without waiting; that attempt counts as a
+                        // failure like any other, so an unchanging set is
+                        // still tried at most once per wait. The first
+                        // success logs the recovery and resets the backoff.
+                        auto fresh = GetOwnDelegationRewardAddresses(rh);
+                        if (!fresh) {
+                            if (own_delegation_failures == 0) {
+                                LogPrintf("%s: [%s] Could not list delegations (%s); delegated stakes not yet mapped pay -coinbasedest. Retrying with backoff; further failures are not logged\n",
+                                          __func__, walletName, util::ErrorString(fresh).original);
+                            }
+                            ++own_delegation_failures;
+                            own_delegation_failed_for = commitment_set;
+                            own_delegation_retry_at = SteadyClock::now() + own_delegation_retry_wait;
+                            own_delegation_retry_wait = std::min(own_delegation_retry_wait * 2, own_delegation_retry_max);
+                        } else {
+                            if (own_delegation_failures > 0) {
+                                LogPrintf("%s: [%s] Listed delegations again after %d failed attempt(s)\n", __func__, walletName, own_delegation_failures);
+                                own_delegation_failures = 0;
+                                own_delegation_retry_wait = own_delegation_retry_first;
+                                own_delegation_failed_for.reset();
+                            }
                             own_delegation_rewards = std::move(*fresh);
                             // Operators and the functional test scrape this line.
                             LogPrintf("%s: [%s] Refreshed own delegations: %d of %d staked commitment(s) delegated.\n", __func__, walletName,
