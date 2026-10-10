@@ -3053,7 +3053,8 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
     // output goes to its most recently ordered holder, deterministically. An
     // output no remaining transaction carries stays unindexed. Output ids are
     // cached, so the pass computes no transaction or output hashes; the only
-    // hashing is the set's salted lookup per output.
+    // hashing is the salted container hash of each output id (the set lookup,
+    // plus the index insert on a match).
     for (auto rit = wtxOrdered.rbegin(); rit != wtxOrdered.rend() && !orphaned_outputs.empty(); ++rit) {
         const CWalletTx& wtx{*rit->second};
         for (const Outid& out_id : wtx.tx->GetOutputIds()) {
