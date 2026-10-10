@@ -10,8 +10,11 @@ templates, end-to-end delegated block production and revocation."""
 
 import json
 import os.path
+import queue
 import re
 import subprocess
+import threading
+import time
 
 from decimal import Decimal
 
@@ -35,6 +38,11 @@ NULL_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 NULL_VIEW_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp9l36wnnr97hjsnf2cuvf756cr7rdzxyl9m5hyz6zn368ut3htzcd327s0le0gdwl7e67q9dkgkxhvmdqls40d"
 NULL_SPEND_KEY_ADDRESS = "rnv1jlca8fe3jltegf54vwxyl2dvplpk3rz0ja6tjpdpfcar79cm43vxc40g8luh5xh0lva0qzkmytrthsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqma0f57ul"
 NULL_KEY_ADDRESSES = (NULL_KEY_ADDRESS, NULL_VIEW_KEY_ADDRESS, NULL_SPEND_KEY_ADDRESS)
+
+# Seconds (before --timeout-factor) a test waits for a staker log line,
+# producing a block included.
+STAKER_TIMEOUT = 120
+
 
 
 class NavioBlsctColdStakingTest(BitcoinTestFramework):
@@ -75,17 +83,43 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
             "-printtoconsole=1",
             "-nodebuglogfile",
         ] + extra_args
-        return subprocess.Popen(args, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
+        staker = subprocess.Popen(args, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True)
+        # readline() on the pipe blocks for as long as the staker stays quiet,
+        # so a reader thread feeds the lines to a queue that staker_lines()
+        # reads with a deadline. None marks the end of the output.
+        staker.lines = queue.Queue()
 
-    def wait_for_staker_line(self, staker, needles, max_lines=600):
-        """Read staker stdout until a line containing any needle appears.
-        Returns the matching needle or None."""
-        for _ in range(max_lines):
-            line = staker.stdout.readline()
-            if not line:
-                return None
+        def pump():
+            for line in staker.stdout:
+                staker.lines.put(line)
+            staker.lines.put(None)
+        threading.Thread(target=pump, daemon=True).start()
+        return staker
+
+    def staker_lines(self, staker, timeout, waiting_for):
+        """Yield staker output lines until it ends, raising AssertionError
+        (naming waiting_for) once timeout seconds, scaled by
+        --timeout-factor, pass first."""
+        timeout *= self.options.timeout_factor
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise queue.Empty
+                line = staker.lines.get(timeout=remaining)
+            except queue.Empty:
+                raise AssertionError(f"staker timed out after {timeout:g}s waiting for {waiting_for}") from None
+            if line is None:
+                return
             self.log.debug(f"staker: {line.rstrip()}")
+            yield line
+
+    def wait_for_staker_line(self, staker, needles, timeout=STAKER_TIMEOUT):
+        """Read staker output until a line containing any needle appears.
+        Returns the matching needle, or None if the output ends first."""
+        for line in self.staker_lines(staker, timeout, f"a line containing one of {needles}"):
             for needle in needles:
                 if needle in line:
                     return needle
@@ -411,7 +445,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                 return False
 
         try:
-            found = self.wait_for_staker_line(staker, ["(ACCEPTED)"], max_lines=3000)
+            found = self.wait_for_staker_line(staker, ["(ACCEPTED)"])
             assert found, "delegated staker did not produce an accepted block"
             # The stats file is updated right after the acceptance log line;
             # don't race the kill against it.
@@ -481,7 +515,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
 
         staker = self.spawn_staker(["-wallet=selfstaker", f"-coinbasedest={coinbase_dest}"], delegated=False)
         try:
-            found = self.wait_for_staker_line(staker, ["(ACCEPTED)"], max_lines=3000)
+            found = self.wait_for_staker_line(staker, ["(ACCEPTED)"])
             assert found, "wallet-mode staker did not produce an accepted block"
         finally:
             staker.kill()
@@ -524,14 +558,10 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                 session.refresh = []
                 session.staked_with = []
 
-            def read_until(session, condition, max_lines=3000):
+            def read_until(session, condition, timeout=STAKER_TIMEOUT):
                 """Consume output until condition() holds, checking it after
                 each refresh or staked-block line."""
-                for _ in range(max_lines):
-                    line = session.proc.stdout.readline()
-                    if not line:
-                        break
-                    self.log.debug(f"staker: {line.rstrip()}")
+                for line in session.lines(timeout):
                     if refresh_line in line:
                         session.refresh.append(line.split(refresh_line)[1].strip())
                     elif m := staked_with_re.search(line):
@@ -540,7 +570,17 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                         continue
                     if condition():
                         return
-                raise AssertionError(f"staker output ended early; refresh={session.refresh} staked_with={session.staked_with}")
+                raise AssertionError(f"staker output ended early; {session.progress()}")
+
+            def lines(session, timeout):
+                """staker_lines(), reporting progress so far on a timeout."""
+                try:
+                    yield from self.staker_lines(session.proc, timeout, "a condition")
+                except AssertionError as e:
+                    raise AssertionError(f"{e}; {session.progress()}") from None
+
+            def progress(session):
+                return f"refresh={session.refresh} staked_with={session.staked_with}"
 
             def stop(session):
                 session.proc.kill()
