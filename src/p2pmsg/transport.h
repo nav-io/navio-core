@@ -111,18 +111,60 @@ using BroadcastFn = std::function<void(bool stem, const Envelope&)>;
 //! flooded by its sender and must not be reflected back at it.
 using RelayFn = std::function<void(int64_t origin_peer, bool stem, bool wire_stem, const Envelope&)>;
 
-//! Decrypted, authenticated inbound message handed to a feature module.
-//! Which local key class decrypted an inbound message. Handlers use this to
-//! enforce delivery semantics: e.g. a CANDIDATE_TX is only accepted when it
-//! was encrypted 1:1 to one of our registered pull session keys — a candidate
-//! readable under the well-known broadcast key is public, and public cover
-//! candidates can be subtracted back out of an aggregate by any bus observer.
+//! Which local key class decrypted an inbound message.
 enum class RecipientKey : uint8_t {
     INBOX,     //!< our stable node inbox key
     BROADCAST, //!< the well-known broadcast key (anyone can read)
     SESSION,   //!< a per-request session key registered via AddSessionKey
 };
 
+//! The local key classes a kind may arrive under, fixed per kind at
+//! RegisterHandler. The transport drops a message that decrypts under any
+//! other class before its handler runs, exactly as if it had decrypted under
+//! no key, so how a node treats a key cannot be probed by sending it other
+//! kinds. Every field defaults to false: a kind accepts nothing it does not
+//! name, and a user reply key, handed to a correspondent for replies, is
+//! accepted only by kinds that say so.
+struct AllowedRecipients {
+    bool inbox{false};
+    bool broadcast{false};
+    bool session{false};    //!< internal session keys (RFQ replies, candidate pulls)
+    bool user_reply{false}; //!< session keys minted by mintp2pmsgreplykey
+};
+
+//! The set each built-in kind is registered with, named after the key its
+//! senders encrypt to.
+//! PING: sendp2pping addresses a node by its published inbox key (debug).
+inline constexpr AllowedRecipients RECIPIENTS_PING{.inbox = true};
+//! AGG_ANN, RFQ_REQ, ORDER_ANN: public announcements, always sent to the
+//! broadcast key. Under our inbox key an AGG_ANN would get a candidate built
+//! from our coins sent back, and an RFQ_REQ would queue a match the operator
+//! may answer, either linking our published identity to coins.
+inline constexpr AllowedRecipients RECIPIENTS_AGG_ANN{.broadcast = true};
+inline constexpr AllowedRecipients RECIPIENTS_RFQ_REQ{.broadcast = true};
+inline constexpr AllowedRecipients RECIPIENTS_ORDER_ANN{.broadcast = true};
+//! CANDIDATE_TX, RFQ_QUOTE: replies to a pull or RFQ request, encrypted to the
+//! internal session key the request carried.
+inline constexpr AllowedRecipients RECIPIENTS_CANDIDATE_TX{.session = true};
+inline constexpr AllowedRecipients RECIPIENTS_RFQ_QUOTE{.session = true};
+//! USER_DATA: sendp2pmsg to an inbox key, a minted reply key or "broadcast".
+//! Never an internal session key: those are broadcast on the bus, so anyone
+//! could inject entries indistinguishable from real replies.
+inline constexpr AllowedRecipients RECIPIENTS_USER_DATA{.inbox = true, .broadcast = true, .user_reply = true};
+
+// Invariants the handlers rely on now that they no longer recheck the key.
+// Widening a set past one of these reopens the hole named beside it.
+static_assert(!RECIPIENTS_USER_DATA.session,
+              "internal session keys are public on the bus: USER_DATA under one would be an injected reply");
+static_assert(!RECIPIENTS_CANDIDATE_TX.inbox && !RECIPIENTS_CANDIDATE_TX.broadcast,
+              "cover readable outside our own pull key is unsolicited or public, and can be subtracted from an aggregate");
+static_assert(!RECIPIENTS_AGG_ANN.inbox && !RECIPIENTS_RFQ_REQ.inbox,
+              "answering a request sent to our published inbox key links our identity to our coins");
+static_assert(!RECIPIENTS_PING.user_reply && !RECIPIENTS_AGG_ANN.user_reply && !RECIPIENTS_RFQ_REQ.user_reply &&
+                  !RECIPIENTS_ORDER_ANN.user_reply && !RECIPIENTS_CANDIDATE_TX.user_reply && !RECIPIENTS_RFQ_QUOTE.user_reply,
+              "a user reply key is handed to a correspondent for USER_DATA only");
+
+//! Decrypted, authenticated inbound message handed to a feature module.
 struct InboundMessage {
     PayloadKind kind;
     int64_t from_peer;
@@ -132,11 +174,10 @@ struct InboundMessage {
     //! message, and whether it was minted for the user (mintp2pmsgreplykey)
     //! rather than opened by an internal subsystem (RFQ reply, candidate
     //! pull). Internal session keys are broadcast on the bus, so anyone can
-    //! encrypt to them -- a handler that stores "session-scoped" user data
-    //! must gate on user_reply or an observer can inject entries that look
-    //! like replies to the app's own minted keys. The reverse direction is
-    //! enforced before dispatch: a user reply key only ever delivers
-    //! USER_DATA, so every other handler sees user_reply == false.
+    //! encrypt to them -- a kind that stores "session-scoped" user data must
+    //! accept user_reply but not session (see AllowedRecipients), or an
+    //! observer can inject entries that look like replies to the app's own
+    //! minted keys.
     blsct::PublicKey recipient_session;
     bool recipient_user_reply{false};
     std::vector<uint8_t> body;       //!< decrypted terminal payload
@@ -300,8 +341,11 @@ public:
     bool HasSessionKey(const blsct::PublicKey& pub) const
         EXCLUSIVE_LOCKS_REQUIRED(!m_session_mutex);
 
-    //! Register the handler for an application kind. Call before the net is live.
-    void RegisterHandler(PayloadKind kind, MessageHandler handler);
+    //! Register the handler for an application kind, and the key classes it
+    //! is accepted under (see AllowedRecipients). The set comes before the
+    //! handler so it reads at the top of a long lambda. Call before the net
+    //! is live.
+    void RegisterHandler(PayloadKind kind, AllowedRecipients allowed, MessageHandler handler);
 
     //! Net-thread entrypoint. `stem` = arrived as dp2pmsg. Parses the envelope,
     //! verifies the mandatory PoW + timestamp, checks the replay cache. If the
@@ -476,6 +520,7 @@ private:
     std::vector<std::pair<blsct::PublicKey, SessionKey>> m_session_keys GUARDED_BY(m_session_mutex);
 
     std::array<MessageHandler, 256> m_handlers{};
+    std::array<AllowedRecipients, 256> m_allowed{};
 
     std::atomic<uint64_t> m_pings_received{0};
 

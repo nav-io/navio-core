@@ -75,6 +75,16 @@ class RfqMakerMatchTest(BitcoinTestFramework):
         assert_equal(quotes[0]["fill"], 500)
         assert_equal(quotes[0]["sell_cost"], 50)
 
+        # A quote answers the request's reply key and nothing else. A second
+        # valid, signed quote for the same open request, encrypted to the
+        # taker's published inbox key instead, must be dropped before it
+        # reaches the quote set (AddQuote would otherwise take it: the uuid is
+        # open and the pair matches).
+        taker_inbox = taker.getp2pmsginfo()["inbox_pubkey"]
+        with taker.assert_debug_log(["p2pmsg: dropping kind 5 addressed to an inbox key"], timeout=20):
+            maker.sendquote(uuid, taker_inbox, half_hex, TOKA, "", 500, 50, 1893456000)
+        assert_equal([q["quote_id"] for q in taker.listquotes(uuid)], [quote_id])
+
         self.log.info("light-maker sendquote over the wire OK")
 
         # Light-maker standing order: sendorder caches locally and broadcasts.
