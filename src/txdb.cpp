@@ -149,6 +149,7 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CSt
     CDBBatch batch(*m_db);
     size_t count = 0;
     size_t changed = 0;
+    size_t tokens_changed = 0;
     assert(!hashBlock.IsNull());
 
     uint256 old_tip = GetBestBlock();
@@ -208,6 +209,7 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CSt
                 batch.Erase(entry);
             else
                 batch.Write(entry, it->second.token);
+            tokens_changed++;
         }
         it = erase ? tokensMap.erase(it) : std::next(it);
     }
@@ -233,7 +235,7 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, CSt
 
     LogPrint(BCLog::COINDB, "Writing final batch of %.2f MiB\n", batch.SizeEstimate() * (1.0 / 1048576.0));
     bool ret = m_db->WriteBatch(batch);
-    LogPrint(BCLog::COINDB, "Committed %u changed transaction outputs (out of %u) to coin database...\n", (unsigned int)changed, (unsigned int)count);
+    LogPrint(BCLog::COINDB, "Committed %u changed transaction outputs (out of %u) and %u changed tokens to coin database...\n", (unsigned int)changed, (unsigned int)count, (unsigned int)tokens_changed);
     return ret;
 }
 
