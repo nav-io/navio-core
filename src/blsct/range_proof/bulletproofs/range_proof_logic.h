@@ -42,8 +42,11 @@ public:
         const Seed& seed,
         const Scalar& minValue = 0) const;
 
+    // `threads` caps the verification worker pool; 0 means
+    // std::thread::hardware_concurrency().
     bool Verify(
-        const std::vector<RangeProofWithSeed<T>>& proofs) const;
+        const std::vector<RangeProofWithSeed<T>>& proofs,
+        size_t threads = 0) const;
 
     AmountRecoveryResult<T> RecoverAmounts(
         const std::vector<AmountRecoveryRequest<T>>& reqs) const;
@@ -52,7 +55,8 @@ private:
     bool
     VerifyProofs(
         const std::vector<RangeProofWithTranscript<T>>& proof_transcripts,
-        const size_t& max_mn) const;
+        const size_t& max_mn,
+        size_t threads) const;
 
     range_proof::Common<T> m_common;
 };

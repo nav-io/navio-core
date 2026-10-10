@@ -14,9 +14,12 @@
 #include <blsct/range_proof/bulletproofs/range_proof_logic.h>
 #include <blsct/range_proof/common.h>
 #include <blsct/range_proof/msg_amt_cipher.h>
-#include <future>
+#include <atomic>
+#include <exception>
 #include <optional>
 #include <stdexcept>
+#include <system_error>
+#include <thread>
 #include <variant>
 #include <vector>
 
@@ -245,104 +248,148 @@ template RangeProof<Blst> RangeProofLogic<Blst>::Prove(
 template <typename T>
 bool RangeProofLogic<T>::VerifyProofs(
     const std::vector<RangeProofWithTranscript<T>>& proof_transcripts,
-    const size_t& max_mn) const
+    const size_t& max_mn,
+    size_t threads) const
 {
     using Scalar = typename T::Scalar;
     using Scalars = Elements<Scalar>;
 
-    // Vector to hold future results from async tasks
-    std::vector<std::future<bool>> futures;
+    auto verify_one = [this, &proof_transcripts, max_mn](size_t idx) -> bool {
+        const RangeProofWithTranscript<T>& p = proof_transcripts[idx];
+        if (p.proof.Ls.Size() != p.proof.Rs.Size()) return false;
 
-    futures.reserve(proof_transcripts.size());
+        const range_proof::Generators<T> gens = m_common.Gf().GetInstance(p.proof.seed);
+        G_H_Gi_Hi_ZeroVerifier<T> verifier(max_mn);
 
-    // Launch a verification task for each proof transcript in parallel
-    for (const RangeProofWithTranscript<T>& p : proof_transcripts) {
-        futures.emplace_back(std::async(std::launch::async, [this, &p, max_mn]() -> bool {
-            if (p.proof.Ls.Size() != p.proof.Rs.Size()) return false;
+        auto num_rounds = range_proof::Common<T>::GetNumRoundsExclLast(p.proof.Vs.Size());
+        Scalar weight_y = Scalar::Rand();
+        Scalar weight_z = Scalar::Rand();
 
-            const range_proof::Generators<T> gens = m_common.Gf().GetInstance(p.proof.seed);
-            G_H_Gi_Hi_ZeroVerifier<T> verifier(max_mn);
+        Scalars z_pows_from_2 = Scalars::FirstNPow(p.z, p.num_input_values_power_2 + 1, 2); // z^2, z^3, ...
+        Scalar y_pows_sum = Scalars::FirstNPow(p.y, p.concat_input_values_in_bits).Sum();
 
-            auto num_rounds = range_proof::Common<T>::GetNumRoundsExclLast(p.proof.Vs.Size());
-            Scalar weight_y = Scalar::Rand();
-            Scalar weight_z = Scalar::Rand();
+        //////// (65)
+        verifier.AddNegativeH(p.proof.tau_x * weight_y);
 
-            Scalars z_pows_from_2 = Scalars::FirstNPow(p.z, p.num_input_values_power_2 + 1, 2); // z^2, z^3, ...
-            Scalar y_pows_sum = Scalars::FirstNPow(p.y, p.concat_input_values_in_bits).Sum();
+        Scalar delta_yz = p.z * y_pows_sum - (z_pows_from_2[0] * y_pows_sum);
+        for (size_t i = 1; i <= p.num_input_values_power_2; ++i) {
+            delta_yz = delta_yz - z_pows_from_2[i] * m_common.InnerProd1x2Pows64();
+        }
 
-            //////// (65)
-            verifier.AddNegativeH(p.proof.tau_x * weight_y);
+        verifier.AddNegativeG((p.proof.t_hat - delta_yz) * weight_y);
 
-            Scalar delta_yz = p.z * y_pows_sum - (z_pows_from_2[0] * y_pows_sum);
-            for (size_t i = 1; i <= p.num_input_values_power_2; ++i) {
-                delta_yz = delta_yz - z_pows_from_2[i] * m_common.InnerProd1x2Pows64();
+        for (size_t i = 0; i < p.proof.Vs.Size(); ++i) {
+            verifier.AddPoint(LazyPoint<T>(p.proof.Vs[i] - (gens.G * p.proof.min_value), z_pows_from_2[i] * weight_y));
+        }
+
+        verifier.AddPoint(LazyPoint<T>(p.proof.T1, p.x * weight_y));
+        verifier.AddPoint(LazyPoint<T>(p.proof.T2, p.x.Square() * weight_y));
+
+        //////// (66)
+        verifier.AddPoint(LazyPoint<T>(p.proof.A, weight_z));
+        verifier.AddPoint(LazyPoint<T>(p.proof.S, p.x * weight_z));
+
+        //////// (67), (68)
+        auto gen_exps = ImpInnerProdArg::GenGeneratorExponents<T>(num_rounds, p.xs);
+
+        ImpInnerProdArg::LoopWithYPows<Blst>(p.concat_input_values_in_bits, p.y,
+                                            [&](const size_t& i, const Scalar& y_pow, const Scalar& y_inv_pow) {
+                                                Scalar gi_exp = p.proof.a * gen_exps[i];
+                                                Scalar hi_exp = p.proof.b * y_inv_pow * gen_exps[p.concat_input_values_in_bits - 1 - i];
+
+                                                gi_exp = gi_exp + p.z;
+
+                                                Scalar tmp = z_pows_from_2[i / range_proof::Setup::num_input_value_bits] *
+                                                             m_common.TwoPows64()[i % range_proof::Setup::num_input_value_bits];
+
+                                                hi_exp = hi_exp - (tmp + p.z * y_pow) * y_inv_pow;
+
+                                                verifier.SetGiExp(i, (gi_exp * weight_z).Negate());
+                                                verifier.SetHiExp(i, (hi_exp * weight_z).Negate());
+                                            });
+
+        verifier.AddNegativeH(p.proof.mu * weight_z);
+        auto x_invs = p.xs.Invert();
+
+        for (size_t i = 0; i < num_rounds; ++i) {
+            verifier.AddPoint(LazyPoint<T>(p.proof.Ls[i], p.xs[i].Square() * weight_z));
+            verifier.AddPoint(LazyPoint<T>(p.proof.Rs[i], x_invs[i].Square() * weight_z));
+        }
+
+        verifier.AddPositiveG((p.proof.t_hat - p.proof.a * p.proof.b) * p.c_factor * weight_z);
+
+        bool res = verifier.Verify(
+            gens.G,
+            gens.H,
+            gens.GetGiSubset(max_mn),
+            gens.GetHiSubset(max_mn));
+        return res;
+    };
+
+    // Bounded worker pool of at most `threads` workers (0 means
+    // hardware_concurrency()), pulling indices off an atomic counter, as in
+    // bulletproofs_plus::RangeProofLogic::VerifyProofs: one thread per proof
+    // would spawn as many OS threads as the batch has proofs. Outcomes are
+    // kept per slot and read back in index order, so the caller sees what the
+    // former one-future-per-proof loop reported: the first proof (by index)
+    // that throws or fails decides, whatever order the workers ran in.
+    const size_t n = proof_transcripts.size();
+    // uint8_t, not bool: workers write distinct slots concurrently, and
+    // std::vector<bool> packs several slots into one byte.
+    std::vector<uint8_t> results(n, 0);
+    std::vector<std::exception_ptr> errors(n);
+    auto do_one = [&](size_t idx) {
+        try {
+            results[idx] = verify_one(idx);
+        } catch (...) {
+            errors[idx] = std::current_exception();
+        }
+    };
+
+    const size_t nthreads = blsct::Common::PoolThreads(threads, n);
+    if (nthreads <= 1) {
+        for (size_t idx = 0; idx < n; ++idx) do_one(idx);
+    } else {
+        std::atomic<size_t> next{0};
+        auto worker = [&]() {
+            for (;;) {
+                const size_t idx = next.fetch_add(1, std::memory_order_relaxed);
+                if (idx >= n) return;
+                do_one(idx);
             }
-
-            verifier.AddNegativeG((p.proof.t_hat - delta_yz) * weight_y);
-
-            for (size_t i = 0; i < p.proof.Vs.Size(); ++i) {
-                verifier.AddPoint(LazyPoint<T>(p.proof.Vs[i] - (gens.G * p.proof.min_value), z_pows_from_2[i] * weight_y));
+        };
+        std::vector<std::thread> pool;
+        pool.reserve(nthreads - 1);
+        for (size_t t = 1; t < nthreads; ++t) {
+            // A std::system_error escaping here would destroy `pool` with
+            // joinable threads and std::terminate; run with the workers we
+            // did get instead, which the shared counter lets drain every index.
+            try {
+                pool.emplace_back(worker);
+            } catch (const std::system_error&) {
+                break;
             }
-
-            verifier.AddPoint(LazyPoint<T>(p.proof.T1, p.x * weight_y));
-            verifier.AddPoint(LazyPoint<T>(p.proof.T2, p.x.Square() * weight_y));
-
-            //////// (66)
-            verifier.AddPoint(LazyPoint<T>(p.proof.A, weight_z));
-            verifier.AddPoint(LazyPoint<T>(p.proof.S, p.x * weight_z));
-
-            //////// (67), (68)
-            auto gen_exps = ImpInnerProdArg::GenGeneratorExponents<T>(num_rounds, p.xs);
-
-            ImpInnerProdArg::LoopWithYPows<Blst>(p.concat_input_values_in_bits, p.y,
-                                                [&](const size_t& i, const Scalar& y_pow, const Scalar& y_inv_pow) {
-                                                    Scalar gi_exp = p.proof.a * gen_exps[i];
-                                                    Scalar hi_exp = p.proof.b * y_inv_pow * gen_exps[p.concat_input_values_in_bits - 1 - i];
-
-                                                    gi_exp = gi_exp + p.z;
-
-                                                    Scalar tmp = z_pows_from_2[i / range_proof::Setup::num_input_value_bits] *
-                                                                 m_common.TwoPows64()[i % range_proof::Setup::num_input_value_bits];
-
-                                                    hi_exp = hi_exp - (tmp + p.z * y_pow) * y_inv_pow;
-
-                                                    verifier.SetGiExp(i, (gi_exp * weight_z).Negate());
-                                                    verifier.SetHiExp(i, (hi_exp * weight_z).Negate());
-                                                });
-
-            verifier.AddNegativeH(p.proof.mu * weight_z);
-            auto x_invs = p.xs.Invert();
-
-            for (size_t i = 0; i < num_rounds; ++i) {
-                verifier.AddPoint(LazyPoint<T>(p.proof.Ls[i], p.xs[i].Square() * weight_z));
-                verifier.AddPoint(LazyPoint<T>(p.proof.Rs[i], x_invs[i].Square() * weight_z));
-            }
-
-            verifier.AddPositiveG((p.proof.t_hat - p.proof.a * p.proof.b) * p.c_factor * weight_z);
-
-            bool res = verifier.Verify(
-                gens.G,
-                gens.H,
-                gens.GetGiSubset(max_mn),
-                gens.GetHiSubset(max_mn));
-            return res;
-        }));
+        }
+        worker();
+        for (auto& th : pool) th.join();
     }
 
-    // Wait for all threads to finish and collect results
-    for (auto& fut : futures) {
-        if (!fut.get()) return false;
+    for (size_t idx = 0; idx < n; ++idx) {
+        if (errors[idx]) std::rethrow_exception(errors[idx]);
+        if (!results[idx]) return false;
     }
 
     return true;
 }
 template bool RangeProofLogic<Blst>::VerifyProofs(
     const std::vector<RangeProofWithTranscript<Blst>>&,
-    const size_t&) const;
+    const size_t&,
+    size_t) const;
 
 template <typename T>
 bool RangeProofLogic<T>::Verify(
-    const std::vector<RangeProofWithSeed<T>>& proofs) const
+    const std::vector<RangeProofWithSeed<T>>& proofs,
+    size_t threads) const
 {
     range_proof::Common<T>::ValidateProofsBySizes(proofs);
 
@@ -362,10 +409,11 @@ bool RangeProofLogic<T>::Verify(
 
     return VerifyProofs(
         proof_transcripts,
-        max_mn);
+        max_mn,
+        threads);
 }
 template bool RangeProofLogic<Blst>::Verify(
-    const std::vector<RangeProofWithSeed<Blst>>&) const;
+    const std::vector<RangeProofWithSeed<Blst>>&, size_t) const;
 
 template <typename T>
 AmountRecoveryResult<T> RangeProofLogic<T>::RecoverAmounts(

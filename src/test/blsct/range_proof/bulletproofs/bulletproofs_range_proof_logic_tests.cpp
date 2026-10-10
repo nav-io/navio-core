@@ -7,6 +7,7 @@
 #include <blsct/arith/blst/blst.h>
 #include <blsct/building_block/imp_inner_prod_arg.h>
 #include <test/util/setup_common.h>
+#include <test/util/threads.h>
 
 #include <tinyformat.h>
 #include <boost/test/unit_test.hpp>
@@ -390,6 +391,77 @@ BOOST_AUTO_TEST_CASE(test_range_proof_number_of_input_values)
             values.Add(Scalar(1));
         }
         BOOST_CHECK_THROW(rp.Prove(values, nonce, msg, token_id), std::runtime_error);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_verify_batch_verdict_independent_of_thread_cap)
+{
+    // The batch verdict must not depend on how the worker pool is sized: one
+    // bad proof at any position fails the batch under every thread cap, and
+    // an all-valid batch passes under every cap. Guards the index hand-off
+    // between workers: a slot no worker claims keeps its initial "failed"
+    // result, so a skipped slot rejects the valid batch (the tampered batches
+    // fail either way, and a slot claimed twice changes no verdict). It does
+    // not observe how many threads actually ran.
+    auto nonce = GenNonce();
+    auto msg = GenMsgPair();
+    auto token_id = GenTokenId();
+
+    constexpr int BATCH_SIZE{5};
+    bulletproofs::RangeProofLogic<T> rp;
+    std::vector<bulletproofs::RangeProofWithSeed<T>> batch;
+    batch.reserve(BATCH_SIZE);
+    for (int i = 0; i < BATCH_SIZE; ++i) {
+        Scalars vs;
+        vs.Add(Scalar(i + 1));
+        batch.emplace_back(rp.Prove(vs, nonce, msg.second, token_id), token_id);
+    }
+
+    for (size_t cap : {size_t{0}, size_t{1}, size_t{2}, size_t{3}, size_t{64}}) {
+        BOOST_CHECK_MESSAGE(rp.Verify(batch, cap), "valid batch rejected with cap " << cap);
+        for (size_t bad = 0; bad < batch.size(); ++bad) {
+            auto tampered = batch;
+            // The commitment is checked net of min_value, which the transcript
+            // does not cover, so shifting it breaks only that proof's equation.
+            tampered[bad].min_value = tampered[bad].min_value + Scalar(1);
+            BOOST_CHECK_MESSAGE(!rp.Verify(tampered, cap),
+                                "bad proof at " << bad << " accepted with cap " << cap);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_verify_spawns_at_most_thread_cap, *boost::unit_test::precondition(CanCountThreads))
+{
+    // A pool given N threads runs the calling thread plus at most N - 1
+    // workers, so with the caller's -par budget it never takes the host.
+    // Observed from outside: the peak thread count while the pool runs.
+    auto nonce = GenNonce();
+    auto msg = GenMsgPair();
+    auto token_id = GenTokenId();
+
+    bulletproofs::RangeProofLogic<T> rp;
+    Scalars vs;
+    vs.Add(Scalar(7));
+    const bulletproofs::RangeProofWithSeed<T> proof{rp.Prove(vs, nonce, msg.second, token_id), token_id};
+
+    // Enough copies that every worker is alive for a good while.
+    const std::vector<bulletproofs::RangeProofWithSeed<T>> proofs(64, proof);
+
+    for (size_t cap : {size_t{1}, size_t{2}, size_t{3}}) {
+        // Every measurement must stay within the cap; a cap above 1 is
+        // remeasured until the sampler has seen the pool spawn a worker.
+        bool seen{false};
+        for (int attempt = 0; attempt < MAX_POOL_ATTEMPTS; ++attempt) {
+            const size_t extra{PeakExtraThreads([&] { BOOST_CHECK(rp.Verify(proofs, cap)); })};
+            BOOST_CHECK_MESSAGE(extra <= cap - 1, "Verify with cap " << cap << " ran " << extra << " extra threads");
+            seen |= extra > 0;
+            if (cap == 1 || seen) break;
+        }
+
+        // The sampler did see the pool: a cap above 1 is actually used.
+        if (cap > 1) {
+            BOOST_CHECK_MESSAGE(seen, "Verify with cap " << cap << " ran no extra threads in " << MAX_POOL_ATTEMPTS << " attempts");
+        }
     }
 }
 
