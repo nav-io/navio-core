@@ -229,64 +229,6 @@ Key order does not matter for `sortedmulti()`. `sortedmulti()` behaves in the
 same way as `multi()` does but the keys are reordered in the resulting script
 such that they are lexicographically ordered as described in BIP67.
 
-#### Basic multisig example
-
-A basic M-of-N multisig between multiple participants using descriptor wallets
-and PSBTs is described below.
-[This functional test](/test/functional/wallet_multisig_descriptor_psbt.py)
-covers the older flow, which relies on the removed `decodepsbt`, `combinepsbt`
-and `finalizepsbt` RPCs, and is disabled.
-
-Disclaimers: It is important to note that this example serves as a quick-start
-and is kept basic for readability. A downside of the approach outlined here is
-that each participant must maintain (and backup) two separate wallets: a signer
-and the corresponding multisig. It should also be noted that privacy
-best-practices are not "by default" here - participants should take care to only
-use the signer to sign transactions related to the multisig. Lastly, it is not
-recommended to use anything other than a Bitcoin Core descriptor wallet to serve
-as your signer(s). Other wallets, whether hardware or software, likely impose
-additional checks and safeguards to prevent users from signing transactions that
-could lead to loss of funds, or are deemed security hazards. Conforming to
-various 3rd-party checks and verifications is not in the scope of this example.
-
-The basic steps are:
-
-1. Every participant generates an xpub. The most straightforward way is to
-   create a new descriptor wallet which we will refer to as the participant's
-   signer wallet. Avoid reusing this wallet for any purpose other than signing
-   transactions from the corresponding multisig we are about to create. Hint:
-   extract the wallet's xpubs using `listdescriptors` and pick the one from the
-   `pkh` descriptor since it's least likely to be accidentally reused (legacy
-   addresses)
-2. Create a watch-only descriptor wallet (blank, private keys disabled). Now the
-   multisig is created by importing the two descriptors:
-   `wsh(sortedmulti(<M>,XPUB1/0/*,XPUB2/0/*,…,XPUBN/0/*))` and
-   `wsh(sortedmulti(<M>,XPUB1/1/*,XPUB2/1/*,…,XPUBN/1/*))` (one descriptor w/
-   `0` for receiving addresses and another w/ `1` for change). Every participant
-   does this
-3. A receiving address is generated for the multisig. As a check to ensure step
-   2 was done correctly, every participant should verify they get the same
-   addresses
-4. Funds are sent to the resulting address
-5. A sending transaction from the multisig is created using
-   `walletcreatefundedpsbt` (anyone can initiate this). It is simple to do this
-   in the GUI by going to the `Send` tab in the multisig wallet and creating an
-   unsigned transaction (PSBT)
-6. At least `M` participants check the PSBT to verify the transaction is OK
-   before signing it.
-7. (If OK) the participant signs the PSBT with their signer wallet using
-   `walletprocesspsbt` and passes the result on to the next participant. It is
-   simple to do this in the GUI by loading the PSBT from file and signing it
-8. Once `M` participants have signed, `walletprocesspsbt` reports the PSBT as
-   `complete` and returns the finalized transaction in its `hex` field, which is
-   broadcast to the network with `sendrawtransaction`.
-9. Checks that balances are correct after the transaction has been included in a
-   block
-
-The participants sign in series, each one signing the PSBT returned by the
-previous one. The node no longer has RPCs to combine PSBTs signed in parallel
-(`combinepsbt`) or to finalize one separately (`finalizepsbt`).
-
 ### BIP32 derived keys and chains
 
 Most modern wallet software and hardware uses keys that are derived using BIP32

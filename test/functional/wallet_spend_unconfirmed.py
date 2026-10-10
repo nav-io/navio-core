@@ -5,7 +5,6 @@
 
 from decimal import Decimal, getcontext
 
-from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_greater_than_or_equal,
@@ -443,37 +442,6 @@ class UnconfirmedInputTest(BitcoinTestFramework):
 
         wallet.unloadwallet()
 
-    def test_external_input_unconfirmed_low(self):
-        if DISABLE_PSBT_TESTS:
-            return
-        self.log.info("Send funds to an external wallet then build tx that bumps parent by spending external input")
-        wallet = self.setup_and_fund_wallet("test_external_wallet")
-
-        external_address = self.def_wallet.getnewaddress()
-        address_info = self.def_wallet.getaddressinfo(external_address)
-        external_descriptor = address_info["desc"]
-        parent_txid = wallet.sendtoaddress(address=external_address, amount=1, fee_rate=1)
-        parent_tx = wallet.gettransaction(txid=parent_txid, verbose=True)
-
-        self.assert_undershoots_target(parent_tx)
-
-        spend_res = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"inputs":[{"outid": find_outid_for_address(self.nodes[0], parent_txid, external_address)}], "solving_data":{"descriptors":[external_descriptor]}})
-        signed_psbt = self.def_wallet.walletprocesspsbt(spend_res["psbt"])
-        external_tx = self.def_wallet.finalizepsbt(signed_psbt["psbt"])
-        ancestor_aware_txid = self.def_wallet.sendrawtransaction(external_tx["hex"])
-
-        ancestor_aware_tx = self.def_wallet.gettransaction(txid=ancestor_aware_txid, verbose=True)
-
-        self.assert_spends_only_parents(ancestor_aware_tx, [parent_txid])
-
-        self.assert_beats_target(ancestor_aware_tx)
-        resulting_ancestry_fee_rate = self.calc_set_fee_rate([parent_tx, ancestor_aware_tx])
-        assert_greater_than_or_equal(resulting_ancestry_fee_rate, self.target_fee_rate)
-        assert_greater_than_or_equal(self.target_fee_rate*1.018, resulting_ancestry_fee_rate)
-
-        wallet.unloadwallet()
-
-
     def run_test(self):
         self.log.info("Starting UnconfirmedInputTest!")
         self.target_fee_rate = 60
@@ -509,9 +477,6 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         self.test_sibling_tx_bumps_parent()
 
         self.test_confirmed_and_unconfirmed_parent()
-
-        if not DISABLE_PSBT_TESTS:
-            self.test_external_input_unconfirmed_low()
 
 if __name__ == '__main__':
     UnconfirmedInputTest(__file__).main()

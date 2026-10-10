@@ -58,7 +58,6 @@ from test_framework.descriptors import (
     descsum_create,
     descsum_check,
 )
-from test_framework.psbt_policy import DISABLE_PSBT_TESTS
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -162,24 +161,20 @@ class AddressTypeTest(BitcoinTestFramework):
 
     def test_desc(self, node, address, multisig, typ, utxo):
         """Run sanity checks on a descriptor reported by getaddressinfo."""
-        if DISABLE_PSBT_TESTS:
-            return
         info = self.nodes[node].getaddressinfo(address)
         assert 'desc' in info
         assert_equal(info['desc'], utxo['desc'])
         assert self.nodes[node].validateaddress(address)['isvalid']
 
-        # Use a ridiculously roundabout way to find the key origin info through
-        # the PSBT logic. However, this does test consistency between the PSBT reported
-        # fingerprints/paths and the descriptor logic.
-        psbt = self.nodes[node].createpsbt([{'outid':utxo['outid']}],[{address:0.00010000}])
-        psbt = self.nodes[node].walletprocesspsbt(psbt, False, "ALL", True)
-        decode = self.nodes[node].decodepsbt(psbt['psbt'])
-        key_descs = {}
-        for deriv in decode['inputs'][0]['bip32_derivs']:
-            assert_equal(len(deriv['master_fingerprint']), 8)
-            assert_equal(deriv['path'][0], 'm')
-            key_descs[deriv['pubkey']] = '[' + deriv['master_fingerprint'] + deriv['path'][1:].replace("'","h") + ']' + deriv['pubkey']
+        # Find the key origin info of each key through getaddressinfo, which
+        # tests consistency between the reported fingerprints/paths and the
+        # descriptor logic.
+        def key_desc(key_info):
+            assert_equal(len(key_info['hdmasterfingerprint']), 8)
+            assert_equal(key_info['hdkeypath'][0], 'm')
+            return '[' + key_info['hdmasterfingerprint'] + key_info['hdkeypath'][1:].replace("'", "h") + ']' + key_info['pubkey']
+
+        key_descs = {info['pubkey']: key_desc(info)}
 
         # Verify the descriptor checksum against the Python implementation
         assert descsum_check(info['desc'])
