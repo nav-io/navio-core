@@ -349,7 +349,7 @@ public:
     //! signatures), so CombineHalves can merge many candidates behind the
     //! initiator's single fee output. The caller must pass a value-balanced set
     //! of inputs/outputs (a self-spend), since no fee is charged.
-    std::optional<BuiltTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const bool& fSubtractedFee = false, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const CAmount& additionalFee = 0, const bool& emitFeeOutput = true);
+    std::optional<BuiltTransaction> BuildTx(const blsct::DoublePublicKey& changeDestination, const CAmount& minStake = 0, const CreateTransactionType& type = NORMAL, const CAmount& nBLSCTDefaultFee = ::BLSCT_DEFAULT_FEE, const CAmount& additionalFee = 0, const bool& emitFeeOutput = true);
     //! `blindingSeed`, when supplied, makes every output of the built
     //! transaction carry a blinding scalar recoverable from that seed. Pass
     //! blsct::KeyMan::GetBlindingSeed(); std::nullopt keeps the old random

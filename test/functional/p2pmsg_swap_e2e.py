@@ -18,7 +18,7 @@ Then we mine and assert the swap confirms on-chain on both nodes.
 """
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal
+from test_framework.util import assert_equal, assert_raises_rpc_error
 
 
 class P2PMsgSwapE2ETest(BitcoinTestFramework):
@@ -68,6 +68,8 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         # "Not enough of the pay token".
         maker.minttoken(tid, maker_addr, 3)
         self.gb(maker_n, maker_addr, 1)
+        mined_txs = maker_n.getblock(maker_n.getbestblockhash(), 2)["tx"]
+        spent_tx_hex = next(tx["hex"] for tx in mined_txs if "coinbase" not in tx["vin"][0])
         maker.minttoken(tid, maker_addr, 2)
         self.gb(maker_n, maker_addr, 2)
         self.sync_all()
@@ -91,6 +93,22 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         # Taker collects the quote and accepts it.
         self.wait_until(lambda: len(taker.listquotes(uuid)) >= 1, timeout=30)
         quote = taker.listquotes(uuid)[0]
+
+        # A quote whose half cannot be broadcast (it re-spends the confirmed
+        # mint tx) fails the accept late, after the request was claimed. The
+        # failure must hand the request back: retrying the same quote reaches
+        # the broadcast again rather than "unknown quote", and the genuine
+        # quote below can still be accepted.
+        bad_quote_id = "%064x" % 1
+        assert taker_n.addrfqquote(uuid, bad_quote_id, quote["fill"], quote["sell_cost"], spent_tx_hex)
+        for _ in range(2):
+            assert_raises_rpc_error(-25, None, taker.acceptquotewallet, uuid, bad_quote_id,
+                                    quote["sell_cost"], quote["fill"])
+            assert_equal(len(taker.listquotes(uuid)), 2)
+        # The raw acceptquote claims the request the same way: its failure
+        # must release the claim too, or the accept below finds it taken.
+        assert_raises_rpc_error(-22, "taker half decode failed", taker_n.acceptquote, uuid, bad_quote_id, "00")
+
         # Slippage bounds: accept exactly the quoted terms (max_pay=sell_cost,
         # min_recv=fill). A worse quote would be rejected by these bounds.
         txid = taker.acceptquotewallet(uuid, quote["quote_id"],

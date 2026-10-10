@@ -12,6 +12,13 @@ on node0 from a wallet holding only reward outputs must then merge a
 reward-backed cover, and one from a wallet holding only transfer outputs must
 merge a transfer-backed cover.
 
+consolidate draws a full POOL_MAX_COMBINED cover set without input-derived
+sizing, so refinement only changes its pick when the pool holds more than that.
+With sixteen reward-backed and two transfer-backed candidates pooled, a
+consolidation of block rewards must merge exactly the sixteen reward-backed
+ones; a type-blind pick of sixteen from eighteen avoids both transfer-backed
+candidates only once in 153 draws.
+
 This exercises the pool admission classification (MarkRewardInput),
 CountRewardInputs and RefineCoverSelection end to end.
 """
@@ -76,27 +83,35 @@ class P2PMsgCoverTypesTest(BitcoinTestFramework):
 
     def run_test(self):
         n0, n1 = self.nodes
-        for node, name in ((n0, "reward_sender"), (n0, "transfer_sender"),
-                           (n1, "reward_producer"), (n1, "transfer_producer"), (n1, "funder")):
+        for node, name in ((n0, "reward_sender"), (n0, "transfer_sender"), (n0, "reward_consolidator"),
+                           (n1, "reward_producer"), (n1, "transfer_producer"), (n1, "funder"),
+                           (n1, "reward_pool_producer")):
             node.createwallet(wallet_name=name, blsct=True, storage_output=True)
         reward_sender = n0.get_wallet_rpc("reward_sender")
         transfer_sender = n0.get_wallet_rpc("transfer_sender")
+        reward_consolidator = n0.get_wallet_rpc("reward_consolidator")
         reward_producer = n1.get_wallet_rpc("reward_producer")
         transfer_producer = n1.get_wallet_rpc("transfer_producer")
         funder = n1.get_wallet_rpc("funder")
+        # reward_producer's self-spend from a merged candidate is a transfer
+        # output it may serve next, so the bulk reward-backed candidates come
+        # from a wallet whose every coin is a block reward.
+        reward_pool_producer = n1.get_wallet_rpc("reward_pool_producer")
 
         def addr(wallet):
             return wallet.getnewaddress(label="", address_type="blsct")
 
         self.log.info("Fund reward-only wallets by mining and transfer-only wallets by payment")
         self.mine(n1, addr(reward_producer), 10)
+        self.mine(n1, addr(reward_pool_producer), 20)
         self.mine(n0, addr(reward_sender), 10)
-        self.mine(n1, addr(funder), 110)
-        # Two transfer outputs for two candidates, one for the transfer sender.
-        # Node1 runs -aggregatesends=0, so these are plain transfers.
-        for wallet in (transfer_producer, transfer_producer, transfer_sender):
+        self.mine(n0, addr(reward_consolidator), 3)
+        self.mine(n1, addr(funder), 120)
+        # Three transfer outputs for three candidates, one for the transfer
+        # sender. Node1 runs -aggregatesends=0, so these are plain transfers.
+        for wallet in (transfer_producer, transfer_producer, transfer_producer, transfer_sender):
             funder.sendtoblsctaddress(addr(wallet), 10)
-        self.wait_until(lambda: len(n1.getrawmempool()) == 3, timeout=60)
+        self.wait_until(lambda: len(n1.getrawmempool()) == 4, timeout=60)
         self.mine(n1, addr(funder), 1)
         self.wait_until(lambda: len(transfer_sender.listblsctunspent()) == 1, timeout=60)
 
@@ -119,6 +134,25 @@ class P2PMsgCoverTypesTest(BitcoinTestFramework):
             _, prevouts = self.send_and_get_prevouts(n0, transfer_sender, dest, {txid})
             assert prevouts & transfer_inputs, "no transfer-backed cover in %r" % sorted(prevouts)
             assert not prevouts & reward_inputs, "reward-backed cover merged: %r" % sorted(prevouts & reward_inputs)
+            assert_equal(n0.getaggregationhint()["available"], 2)
+
+            self.mine(n0, addr(funder), 1)
+            assert_equal(n0.getrawmempool(), [])
+
+            self.log.info("Grow the pool to sixteen reward-backed and two transfer-backed candidates")
+            for _ in range(15):
+                reward_inputs |= self.serve_candidate(reward_pool_producer)
+            transfer_inputs |= self.serve_candidate(transfer_producer)
+            assert_equal(n0.getaggregationhint()["available"], 18)
+
+            self.log.info("A consolidation of block rewards merges only reward-backed covers")
+            txids = reward_consolidator.consolidate(1)
+            assert_equal(len(txids), 1)
+            self.wait_until(lambda: txids[0] in n0.getrawmempool(), timeout=60)
+            tx = n0.getrawtransaction(txids[0], True)
+            prevouts = {vin["outid"] for vin in tx["vin"] if "outid" in vin}
+            assert not prevouts & transfer_inputs, "transfer-backed cover merged: %r" % sorted(prevouts & transfer_inputs)
+            assert_equal(len(prevouts & reward_inputs), 16)
             assert_equal(n0.getaggregationhint()["available"], 2)
 
         self.mine(n0, addr(funder), 1)

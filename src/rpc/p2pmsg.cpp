@@ -43,6 +43,7 @@
 #include <rpc/server_util.h>
 #include <rpc/util.h>
 #include <univalue.h>
+#include <util/check.h>
 #include <util/strencodings.h>
 
 static RPCHelpMan getp2pmsginfo()
@@ -1042,15 +1043,22 @@ static RPCHelpMan acceptquote()
             const uint256 uuid(ParseHashV(request.params[0], "uuid"));
             const uint256 quote_id(ParseHashV(request.params[1], "quote_id"));
 
-            auto quote = node.rfq_matcher->GetQuote(uuid, quote_id);
-            if (!quote || !quote->half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
+            // Claim the request for the whole accept, as acceptquotewallet
+            // does, so neither path can broadcast a second swap against the
+            // same order while this one is in flight. A failure releases the
+            // claim so the request can be retried.
+            auto claimed = node.rfq_matcher->ClaimQuote(uuid, quote_id);
+            if (!claimed) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
+            rfq::ClaimGuard claim{*node.rfq_matcher, uuid, claimed->token};
+            const auto& quote = claimed->quote;
+            if (!quote.half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
 
             CMutableTransaction taker;
             if (!DecodeHexTx(taker, request.params[2].get_str())) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "taker half decode failed");
             }
 
-            std::vector<CTransactionRef> halves{MakeTransactionRef(taker), quote->half_tx};
+            std::vector<CTransactionRef> halves{MakeTransactionRef(taker), quote.half_tx};
             auto combined = aggregation::CombineHalves(halves);
             if (!combined) throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed");
 
@@ -1060,7 +1068,7 @@ static RPCHelpMan acceptquote()
                 node, tx, err_string, /*max_tx_fee=*/0, /*relay=*/true, /*wait_callback=*/true);
             if (TransactionError::OK != err) throw JSONRPCTransactionError(err, err_string);
 
-            node.rfq_matcher->Cancel(uuid); // one-shot per request
+            claim.Finish(); // one-shot per request
             return tx->GetHash().GetHex();
         },
     };
@@ -1084,13 +1092,22 @@ static RPCHelpMan listrfqs()
 static RPCHelpMan cancelrfq()
 {
     return RPCHelpMan{
-        "cancelrfq", "\nCancel an open RFQ, discarding its collected quotes.\n",
+        "cancelrfq", "\nCancel an open RFQ, discarding its collected quotes.\n"
+        "Fails while a quote of the RFQ is being accepted.\n",
         {{"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The request uuid"}},
         RPCResult{RPCResult::Type::BOOL, "", "Whether a request was cancelled"},
         RPCExamples{HelpExampleCli("cancelrfq", "\"<uuid>\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             rfq::MatcherRegistry& reg = EnsureMatcher(request);
-            return reg.Cancel(uint256(ParseHashV(request.params[0], "uuid")));
+            switch (reg.Cancel(uint256(ParseHashV(request.params[0], "uuid")))) {
+            case rfq::MatcherRegistry::CancelResult::Cancelled:
+                return true;
+            case rfq::MatcherRegistry::CancelResult::NotFound:
+                return false;
+            case rfq::MatcherRegistry::CancelResult::Claimed:
+                throw JSONRPCError(RPC_MISC_ERROR, "RFQ has a quote being accepted; the swap may still broadcast, so it cannot be cancelled now");
+            } // no default case, so the compiler can warn about missing cases
+            NONFATAL_UNREACHABLE();
         },
     };
 }

@@ -9,6 +9,7 @@
 #include <blsct/wallet/txfactory_global.h>
 #include <consensus/amount.h>
 #include <primitives/transaction.h>
+#include <serialize.h>
 #include <util/overflow.h>
 
 #include <algorithm>
@@ -113,6 +114,37 @@ inline CAmount RequiredCandidateFee(std::span<const CTransactionRef> candidates,
 inline CAmount RequiredCandidateFee(const std::vector<CTransactionRef>& candidates, CAmount fee_rate)
 {
     return RequiredCandidateFee(std::span<const CTransactionRef>{candidates.data(), candidates.size()}, fee_rate);
+}
+
+//! The fee for the bytes the COMBINED tx's input and output count varints
+//! take beyond the own half's. RequiredCandidateFee charges each candidate
+//! its body only (its counts are part of the overhead combining removes) and
+//! the own half pays for its own counts, so the merged counts cost nothing
+//! extra until one of them crosses a CompactSize boundary -- 253 entries
+//! grow a count from 1 to 3 bytes -- where an initiator funding only
+//! RequiredCandidateFee lands under the consensus fee floor. The own half's
+//! counts are only known once it is built, so callers rebuild it with this
+//! added to additionalFee when it is non-zero.
+template <typename Tx>
+CAmount CombinedCountFee(const Tx& own, std::span<const CTransactionRef> candidates, CAmount fee_rate)
+{
+    size_t inputs = own.vin.size();
+    size_t outputs = own.vout.size();
+    for (const auto& c : candidates) {
+        if (c) {
+            inputs += c->vin.size();
+            outputs += c->vout.size();
+        }
+    }
+    const int64_t growth = (int64_t{GetSizeOfCompactSize(inputs)} - GetSizeOfCompactSize(own.vin.size())) +
+                           (int64_t{GetSizeOfCompactSize(outputs)} - GetSizeOfCompactSize(own.vout.size()));
+    return growth * fee_rate;
+}
+
+template <typename Tx>
+CAmount CombinedCountFee(const Tx& own, const std::vector<CTransactionRef>& candidates, CAmount fee_rate)
+{
+    return CombinedCountFee(own, std::span<const CTransactionRef>{candidates.data(), candidates.size()}, fee_rate);
 }
 
 } // namespace aggregation

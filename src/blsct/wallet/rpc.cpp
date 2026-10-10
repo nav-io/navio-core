@@ -144,16 +144,38 @@ static size_t CountRewardInputs(wallet::CWallet& wallet, const CMutableTransacti
     return reward;
 }
 
-//! Re-pick the cover set so its input types mirror the wallet's own half.
+//! Re-pick `candidates` so their input types mirror the wallet's own half,
+//! keeping the re-pick only when it leaves the half's fee unchanged. Shared by
+//! every aggregating path (SendTransaction, aggregatesend, consolidate) so the
+//! policy lives in one place.
+//!
 //! Cover is only cover if it blends: reward-ness of a prev-out is public, so
 //! covers of the wrong type partition cleanly away from the own inputs under a
-//! type heuristic. Same count as `current` (so RequiredCandidateFee usually
-//! doesn't move); the pool falls back across types when one side is short.
-static std::vector<CTransactionRef> RefineCoverSelection(wallet::CWallet& wallet, const CMutableTransaction& own, aggregation::CandidatePool& pool, const std::vector<CTransactionRef>& current)
+//! type heuristic. The re-pick keeps the count of `candidates`; the pool falls
+//! back across types when one side is short.
+//!
+//! `own` was built with `funded_fee` as its additionalFee: the cover weight of
+//! `candidates` plus `count_fee` for the merged count varints. The re-pick
+//! replaces `candidates` ONLY when it needs that same fee. A moved fee would
+//! force a rebuild of the own half at a different additionalFee, which changes
+//! coin selection (largest-first input accumulation appends inputs for a
+//! higher target) and thereby invalidates the very input mix the refinement
+//! matched -- in the worst case manufacturing the exact partition this feature
+//! removes. Honest candidates are uniform 1-in/1-out self-spends, so equal
+//! count implies equal fee in practice; when it does not hold, the known-good
+//! pre-refinement pick (type-blind but weight-true) stays.
+static void RefineCoverSelection(wallet::CWallet& wallet, const CMutableTransaction& own, aggregation::CandidatePool& pool, std::vector<CTransactionRef>& candidates, CAmount fee_rate, CAmount count_fee, CAmount funded_fee)
 {
-    if (current.empty() || own.vin.empty()) return current;
-    const size_t prefer_reward = aggregation::PreferRewardCount(current.size(), CountRewardInputs(wallet, own), own.vin.size());
-    return pool.PickForAggregate(current.size(), prefer_reward);
+    if (candidates.empty() || own.vin.empty()) return;
+    const size_t prefer_reward = aggregation::PreferRewardCount(candidates.size(), CountRewardInputs(wallet, own), own.vin.size());
+    auto refined = pool.PickForAggregate(candidates.size(), prefer_reward);
+    if (refined.empty()) return;
+    const CAmount refined_fee = aggregation::RequiredCandidateFee(refined, fee_rate) + count_fee;
+    if (refined_fee == funded_fee) {
+        candidates = std::move(refined);
+    } else {
+        LogPrint(BCLog::NET, "p2pmsg: cover refinement skipped (refined set moves the required fee %d -> %d)\n", funded_fee, refined_fee);
+    }
 }
 
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose, wallet::mapValue_t mapValue)
@@ -189,10 +211,11 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
 
     bool cover_refined = false;
     bool cover_sized = false;
+    CAmount count_fee = 0;
     for (;;) {
         blsct::CreateTransactionData attempt = txData;
         if (!candidates.empty()) {
-            attempt.additionalFee = aggregation::RequiredCandidateFee(candidates, attempt.nBLSCTDefaultFee);
+            attempt.additionalFee = aggregation::RequiredCandidateFee(candidates, attempt.nBLSCTDefaultFee) + count_fee;
         }
         auto res = blsct::TxFactory::CreateTransaction(&wallet, wallet.GetBLSCTKeyMan(), attempt);
         if (!res) {
@@ -246,26 +269,25 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
         }
 
         // One-shot cover refinement: now that the own half's inputs are
-        // known, re-pick covers whose prev-out types mirror them. Applied
-        // ONLY when the refined set's weight leaves the required fee
-        // unchanged: a moved fee would force a rebuild of the own half at a
-        // different additionalFee, which changes coin selection (largest-first
-        // input accumulation appends inputs for a higher target) and thereby
-        // invalidates the very input mix the refinement matched -- in the
-        // worst case manufacturing the exact partition this feature removes.
-        // Honest candidates are uniform 1-in/1-out self-spends, so equal
-        // count implies equal fee in practice; when it does not hold, keep
-        // the known-good pre-refinement pick (type-blind but weight-true).
+        // known, re-pick covers whose prev-out types mirror them.
         if (!candidates.empty() && !cover_refined) {
             cover_refined = true;
-            auto refined = RefineCoverSelection(wallet, res->tx, *pool, candidates);
-            if (!refined.empty()) {
-                const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, attempt.nBLSCTDefaultFee);
-                if (refined_extra == attempt.additionalFee) {
-                    candidates = std::move(refined);
-                } else {
-                    LogPrint(BCLog::NET, "p2pmsg: cover refinement skipped (refined set moves the required fee %d -> %d)\n", attempt.additionalFee, refined_extra);
-                }
+            RefineCoverSelection(wallet, res->tx, *pool, candidates, attempt.nBLSCTDefaultFee, count_fee, attempt.additionalFee);
+        }
+
+        // Pay for the merged input/output counts once the own half's are
+        // known: crossing a CompactSize boundary would otherwise leave the
+        // aggregate under the fee floor and burn every picked candidate.
+        // count_fee only grows, so this rebuilds at most once per boundary.
+        // The rebuild runs after the one-shot cover refinement and, at a
+        // higher additionalFee, may select more coins: at a count boundary
+        // the own half's input mix can drift from the one the refinement
+        // matched. Accepted as the rarer cost; refinement is not repeated.
+        if (!candidates.empty()) {
+            const CAmount needed = aggregation::CombinedCountFee(res->tx, candidates, attempt.nBLSCTDefaultFee);
+            if (needed > count_fee) {
+                count_fee = needed;
+                continue;
             }
         }
 
@@ -291,10 +313,8 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
                 for (const CTxIn& in : c->vin) pool->EvictByInput(in.prevout);
             }
             if (!broadcast_ok) {
-                // Falls here on a combine/broadcast failure -- including the
-                // varint-boundary corner where an aggregate of >=237 combined
-                // inputs/outputs lands just under the consensus fee floor.
-                // Safe (a plain send follows) but log it so the skip is visible.
+                // Falls here on a combine/broadcast failure. Safe (a plain
+                // send follows) but log it so the skip is visible.
                 LogPrint(BCLog::NET, "p2pmsg: aggregated send fell back to plain (combine/broadcast failed: %s)\n", err_string);
                 candidates.clear();
                 continue;
@@ -621,25 +641,24 @@ static RPCHelpMan aggregatesend()
             }
 
             // Now that the own half's inputs are known, re-pick covers whose
-            // prev-out types mirror them (reward-ness is public; mismatched
-            // covers partition away under a type heuristic). Applied ONLY
-            // when the refined set leaves the required fee unchanged: a
-            // rebuild at a different additionalFee changes the own half's
-            // coin selection and invalidates the mix the refinement matched
-            // (and destroying the known-good half to then fail on
-            // insufficient funds turns a working send into an error). Equal
-            // candidate count implies equal fee for honest uniform
-            // candidates; otherwise keep the pre-refinement pick.
-            if (!candidates.empty()) {
-                auto refined = blsct::RefineCoverSelection(*pwallet, own->tx, *pool, candidates);
-                if (!refined.empty()) {
-                    const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, rate);
-                    if (refined_extra == extra) {
-                        candidates = std::move(refined);
-                    } else {
-                        LogPrint(BCLog::NET, "p2pmsg: cover refinement skipped (refined set moves the required fee %d -> %d)\n", extra, refined_extra);
-                    }
-                }
+            // prev-out types mirror them. This runs before the count-fee loop
+            // below, so the half is still funded for `extra` alone. Keeping
+            // the known-good half matters doubly here: a failed rebuild errors
+            // this RPC rather than falling back to a plain send.
+            blsct::RefineCoverSelection(*pwallet, own->tx, *pool, candidates, rate, /*count_fee=*/0, extra);
+
+            // Pay for the merged input/output counts crossing a CompactSize
+            // boundary (see SendTransaction); count_fee only grows, so this
+            // rebuilds at most once per boundary. As there, the rebuild comes
+            // after refinement and may reselect coins, so at a boundary the
+            // input mix the refinement matched can change.
+            for (CAmount count_fee = 0;;) {
+                const CAmount needed = aggregation::CombinedCountFee(own->tx, candidates, rate);
+                if (needed <= count_fee) break;
+                count_fee = needed;
+                txData.additionalFee = extra + count_fee;
+                own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
+                if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available to cover the extra fee for the merged input/output count");
             }
 
             std::vector<CTransactionRef> halves;
@@ -763,13 +782,18 @@ static RPCHelpMan acceptquotewallet()
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "max_pay/min_recv out of range");
             }
 
-            // Atomically claim the quote (fetch + drop the request) so two
+            // Atomically claim the quote (fetch + claim the request) so two
             // concurrent accepts of the same uuid cannot each build a conflicting
             // taker half. ClaimQuote also returns the quote's token pair, so we no
             // longer need a separate GetRequest lookup.
-            auto quoteOpt = matcher->ClaimQuote(uuid, quote_id);
-            if (!quoteOpt || !quoteOpt->half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
-            const rfq::RfqQuote& quote = *quoteOpt;
+            auto claimed = matcher->ClaimQuote(uuid, quote_id);
+            if (!claimed) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
+            // Until the swap is broadcast, every failure below hands the claim
+            // back, so the taker can retry or accept another quote instead of
+            // losing the whole request.
+            rfq::ClaimGuard claim{*matcher, uuid, claimed->token};
+            if (!claimed->quote.half_tx) throw JSONRPCError(RPC_INVALID_PARAMETER, "unknown quote");
+            const rfq::RfqQuote& quote = claimed->quote;
 
             // Slippage guard. The taker half must commit the SAME amounts the
             // maker's (confidential) half expects, or the combined BLSCT balance
@@ -853,7 +877,8 @@ static RPCHelpMan acceptquotewallet()
                 throw JSONRPCError(RPC_TRANSACTION_ERROR, err_string);
             blsct::LogPastSearchBound(pastSearchBound);
 
-            // Request already dropped by ClaimQuote; nothing left to cancel.
+            // The swap is out: the request is done, not retryable.
+            claim.Finish();
             return tx->GetHash().GetHex();
         },
     };
@@ -2869,14 +2894,17 @@ RPCHelpMan consolidate()
         "in a single transaction once they exceed the per-transaction input limit. Run this to combine\n"
         "the smallest outputs; each consolidation transaction merges up to the per-transaction input\n"
         "cap. Like plain sends, each consolidation is aggregated with fee-0 cover candidates from the\n"
-        "node's p2pmsg pool when any are available (disable with -aggregatesends=0), so the broadcast\n"
-        "transaction does not reveal which merged inputs are this wallet's.\n" +
+        "node's p2pmsg pool when any are available (disable with -aggregatesends=0), so its inputs and\n"
+        "output are merged with unrelated cover spends. Cover is at most " + ToString(aggregation::POOL_MAX_COMBINED) + " single-input spends,\n"
+        "so in a consolidation of many outputs most inputs are still attributable to this wallet.\n"
+        "If a transaction after the first fails, the call stops and returns the ids already\n"
+        "broadcast (the failure is logged); it raises an error only when none went out.\n" +
             wallet::HELP_REQUIRING_PASSPHRASE,
         {
             {"max_txs", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Maximum number of consolidation transactions to create this call (default 1)."},
             {"max_inputs", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Maximum outputs to merge per transaction (default and hard cap: the per-transaction input limit)."},
         },
-        RPCResult{RPCResult::Type::ARR, "", "The ids of the consolidation transactions created (empty if nothing to consolidate).", {{RPCResult::Type::STR_HEX, "txid", "The consolidation transaction id (the combined transaction's id when cover candidates were aggregated in)."}}},
+        RPCResult{RPCResult::Type::ARR, "", "The ids of the consolidation transactions broadcast (empty if nothing to consolidate; fewer than max_txs when the outputs ran out or a later transaction failed).", {{RPCResult::Type::STR_HEX, "txid", "The consolidation transaction id (the combined transaction's id when cover candidates were aggregated in)."}}},
         RPCExamples{
             HelpExampleCli("consolidate", "5") + HelpExampleRpc("consolidate", "5")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -2926,94 +2954,115 @@ RPCHelpMan consolidate()
             // that scan lands, coin selection would hand the next iteration the
             // same smallest coins, building a conflicting double-spend half.
             std::set<COutPoint> used_inputs;
-            for (int i = 0; i < max_txs; ++i) {
-                // Drawing a fresh destination per iteration drains the pool by
-                // construction, so this is the loop most likely to exhaust it.
-                // util::Result::value() is an assert() and navio keeps
-                // assertions on in every configuration, so an unchecked
-                // dereference aborts the node instead of failing the call.
-                auto op_dest = blsct_km->GetNewDestination(0);
-                if (!op_dest) {
-                    throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
-                }
-                auto dest = std::get<blsct::DoublePublicKey>(*op_dest);
+            // A failure after the first transaction went out must not discard
+            // the ids already broadcast: an aggregated consolidation has no
+            // CWalletTx, so its returned id is the only handle on it. Return
+            // them as a short result, like running out of outputs to merge,
+            // and log the failure.
+            const auto stop_after = [&](const std::string& error) {
+                pwallet->WalletLogPrintf("consolidate: stopped after %u of %d transactions: %s\n", txids.size(), max_txs, error);
+            };
+            try {
+                for (int i = 0; i < max_txs; ++i) {
+                    // Drawing a fresh destination per iteration drains the pool by
+                    // construction, so this is the loop most likely to exhaust it.
+                    // util::Result::value() is an assert() and navio keeps
+                    // assertions on in every configuration, so an unchecked
+                    // dereference aborts the node instead of failing the call.
+                    auto op_dest = blsct_km->GetNewDestination(0);
+                    if (!op_dest) {
+                        throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
+                    }
+                    auto dest = std::get<blsct::DoublePublicKey>(*op_dest);
 
-                std::vector<CTransactionRef> candidates;
-                if (aggregate_sends) candidates = pool->PickForAggregate(aggregation::POOL_MAX_COMBINED);
+                    std::vector<CTransactionRef> candidates;
+                    if (aggregate_sends) candidates = pool->PickForAggregate(aggregation::POOL_MAX_COMBINED);
 
-                bool exhausted = false;
-                for (;;) {
-                    // The cover weight's fee comes out of the merged amount
-                    // (consolidation subtracts its fee), so an over-funded
-                    // attempt can fail on a sum a plain one still clears.
-                    const CAmount extra = candidates.empty() ? 0 : aggregation::RequiredCandidateFee(candidates, fee_rate);
-                    auto res = blsct::TxFactory::CreateConsolidationTransaction(pwallet.get(), blsct_km, dest, max_inputs, fee_rate, extra, used_inputs);
-                    if (!res) {
-                        if (!candidates.empty()) {
-                            // (PickForAggregate does not remove from the pool,
-                            // so dropping the candidates here loses nothing.)
-                            LogPrint(BCLog::NET, "p2pmsg: aggregated consolidation fell back to plain (merged amount cannot fund the cover fee)\n");
-                            candidates.clear();
-                            continue;
+                    bool exhausted = false;
+                    CAmount count_fee = 0;
+                    for (;;) {
+                        // The cover weight's fee comes out of the merged amount
+                        // (consolidation subtracts its fee), so an over-funded
+                        // attempt can fail on a sum a plain one still clears.
+                        const CAmount extra = candidates.empty() ? 0 : aggregation::RequiredCandidateFee(candidates, fee_rate) + count_fee;
+                        auto res = blsct::TxFactory::CreateConsolidationTransaction(pwallet.get(), blsct_km, dest, max_inputs, fee_rate, extra, used_inputs);
+                        if (!res) {
+                            if (!candidates.empty()) {
+                                // (PickForAggregate does not remove from the pool,
+                                // so dropping the candidates here loses nothing.)
+                                LogPrint(BCLog::NET, "p2pmsg: aggregated consolidation fell back to plain (merged amount cannot fund the cover fee)\n");
+                                candidates.clear();
+                                continue;
+                            }
+                            exhausted = true; // fewer than two small outputs remain to merge
+                            break;
                         }
-                        exhausted = true; // fewer than two small outputs remain to merge
+
+                        const CTransactionRef own = MakeTransactionRef(res->tx);
+                        if (!candidates.empty()) {
+                            // Type-refine the cover against the built half, same
+                            // policy as the send paths: consolidation is the most
+                            // reward-heavy tx a wallet builds (the motivating case
+                            // of the type-aware pick), and a type-blind cover
+                            // partitions cleanly away from it. Unlike the send
+                            // path this is not one-shot: it re-runs after a
+                            // count-fee rebuild. That is harmless, since a
+                            // consolidation's inputs (the n smallest coins) do not
+                            // depend on its fee, so the re-pick sees the same mix.
+                            blsct::RefineCoverSelection(*pwallet, res->tx, *pool, candidates, fee_rate, count_fee, extra);
+                            // Consolidation routinely builds halves near 253
+                            // inputs: pay for the merged counts crossing a
+                            // CompactSize boundary (see SendTransaction).
+                            // count_fee only grows, so this rebuilds at most once
+                            // per boundary.
+                            const CAmount needed = aggregation::CombinedCountFee(*own, candidates, fee_rate);
+                            if (needed > count_fee) {
+                                count_fee = needed;
+                                continue;
+                            }
+                            std::vector<CTransactionRef> halves;
+                            halves.reserve(candidates.size() + 1);
+                            halves.push_back(own);
+                            halves.insert(halves.end(), candidates.begin(), candidates.end());
+
+                            auto combined = aggregation::CombineHalves(halves);
+                            CTransactionRef agg_tx;
+                            bool broadcast_ok = false;
+                            std::string err_string;
+                            if (combined) {
+                                agg_tx = MakeTransactionRef(std::move(*combined));
+                                broadcast_ok = pwallet->chain().broadcastTransaction(agg_tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string);
+                            }
+                            // Evict the picked candidates whether or not the
+                            // aggregate went through: a broadcast one must not be
+                            // merged into a second aggregate, and a malformed/stale
+                            // one must not be re-picked and poison every subsequent
+                            // consolidation.
+                            for (const auto& c : candidates) {
+                                for (const CTxIn& in : c->vin) pool->EvictByInput(in.prevout);
+                            }
+                            if (!broadcast_ok) {
+                                LogPrint(BCLog::NET, "p2pmsg: aggregated consolidation fell back to plain (combine/broadcast failed: %s)\n", err_string);
+                                candidates.clear();
+                                continue;
+                            }
+                            for (const CTxIn& in : own->vin) used_inputs.insert(in.prevout);
+                            txids.push_back(agg_tx->GetHash().GetHex());
+                        } else {
+                            wallet::mapValue_t map_value;
+                            pwallet->CommitTransaction(own, std::move(map_value), /*orderForm=*/{});
+                            txids.push_back(own->GetHash().GetHex());
+                        }
                         break;
                     }
-
-                    const CTransactionRef own = MakeTransactionRef(res->tx);
-                    if (!candidates.empty()) {
-                        // Type-refine the cover against the built half, same
-                        // policy as the send paths: consolidation is the most
-                        // reward-heavy tx a wallet builds (the motivating case
-                        // of the type-aware pick), and a type-blind cover
-                        // partitions cleanly away from it. Keep the
-                        // pre-refinement set when the refined weight would
-                        // move the fee (the half is already built for extra).
-                        auto refined = blsct::RefineCoverSelection(*pwallet, res->tx, *pool, candidates);
-                        if (!refined.empty()) {
-                            const CAmount refined_extra = aggregation::RequiredCandidateFee(refined, fee_rate);
-                            if (refined_extra == extra) {
-                                candidates = std::move(refined);
-                            } else {
-                                LogPrint(BCLog::NET, "p2pmsg: consolidation cover refinement skipped (refined set moves the required fee %d -> %d)\n", extra, refined_extra);
-                            }
-                        }
-                        std::vector<CTransactionRef> halves;
-                        halves.reserve(candidates.size() + 1);
-                        halves.push_back(own);
-                        halves.insert(halves.end(), candidates.begin(), candidates.end());
-
-                        auto combined = aggregation::CombineHalves(halves);
-                        CTransactionRef agg_tx;
-                        bool broadcast_ok = false;
-                        std::string err_string;
-                        if (combined) {
-                            agg_tx = MakeTransactionRef(std::move(*combined));
-                            broadcast_ok = pwallet->chain().broadcastTransaction(agg_tx, pwallet->m_default_max_tx_fee, /*relay=*/true, err_string);
-                        }
-                        // Evict the picked candidates whether or not the
-                        // aggregate went through: a broadcast one must not be
-                        // merged into a second aggregate, and a malformed/stale
-                        // one must not be re-picked and poison every subsequent
-                        // consolidation.
-                        for (const auto& c : candidates) {
-                            for (const CTxIn& in : c->vin) pool->EvictByInput(in.prevout);
-                        }
-                        if (!broadcast_ok) {
-                            LogPrint(BCLog::NET, "p2pmsg: aggregated consolidation fell back to plain (combine/broadcast failed: %s)\n", err_string);
-                            candidates.clear();
-                            continue;
-                        }
-                        for (const CTxIn& in : own->vin) used_inputs.insert(in.prevout);
-                        txids.push_back(agg_tx->GetHash().GetHex());
-                    } else {
-                        wallet::mapValue_t map_value;
-                        pwallet->CommitTransaction(own, std::move(map_value), /*orderForm=*/{});
-                        txids.push_back(own->GetHash().GetHex());
-                    }
-                    break;
+                    if (exhausted) break;
                 }
-                if (exhausted) break;
+            } catch (const UniValue& err) {
+                if (txids.empty()) throw;
+                stop_after(err.find_value("message").getValStr());
+            } catch (const std::exception& e) {
+                if (txids.empty()) throw;
+                stop_after(e.what());
             }
 
             return txids;
