@@ -2880,6 +2880,12 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
             coin.MarkDirty();
             NotifyTransactionChanged(coin.GetHash(), CT_UPDATED);
         }
+    } else {
+        // A BLSCT input may have no wallet tx (output storage keeps received
+        // coins in mapOutputs only), which the loop above cannot handle.
+        // cs_wallet is held until the mirror below has marked the inputs
+        // spent too, so no balance query can refill the caches in between.
+        MarkInputsDirty(tx);
     }
 
     if (!fBroadcastTransactions) {
@@ -2919,6 +2925,13 @@ bool CWallet::RecordBroadcastTransaction(CTransactionRef tx, const std::vector<C
         for (const CTxOut& out : own_half_outputs) wtx.m_own_half_outputs.insert(out.GetHash());
         return true;
     });
+    // The record spends the parents' outputs ahead of the sync callbacks,
+    // whose MarkInputsDirty is otherwise the first to drop the parents'
+    // cached available credit: a balance query in between counted a spent
+    // change next to the new one. AddToWallet records the spends before its
+    // database write, so this runs even when that write fails. cs_wallet is
+    // held until the mirror below has marked the inputs spent too.
+    MarkInputsDirty(tx);
     if (!wtx) {
         WalletLogPrintf("%s: Wallet db error, failed to record broadcast transaction %s\n", __func__, tx->GetHash().ToString());
         return false;
