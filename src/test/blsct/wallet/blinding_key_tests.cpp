@@ -499,9 +499,6 @@ BOOST_FIXTURE_TEST_CASE(recovery_after_seed_only_restore, TestingSetup)
     }
 }
 
-// An explicitly supplied blinding key is the documented opt-out: the factory
-// must use it verbatim rather than deriving, and such an output is then NOT
-// recoverable -- which is also what every pre-existing output looks like.
 // The wallet-level half of the rebuild defence: the counter the derivation is
 // keyed on is claimed once per build, never repeats for an anchor, and is
 // independent per anchor.
@@ -625,6 +622,9 @@ BOOST_FIXTURE_TEST_CASE(blinding_generation_claims_are_atomic, TestingSetup)
     }
 }
 
+// An explicitly supplied blinding key is the documented opt-out: the factory
+// must use it verbatim rather than deriving, and such an output is then NOT
+// recoverable -- which is also what every pre-existing output looks like.
 BOOST_FIXTURE_TEST_CASE(explicit_blinding_key_opts_out_of_recovery, TestingSetup)
 {
     SeedInsecureRand(SeedRand::ZEROS);

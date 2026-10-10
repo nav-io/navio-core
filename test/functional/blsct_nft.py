@@ -124,6 +124,14 @@ class NavioBlsctNftTest(BitcoinTestFramework):
         assert nft_balance == [{'index': '1', 'metadata': [{'key': 'id', 'value': 'null'}]}], "incorrect nft balance in node 1"
         assert nft_balance_2 == [], "incorrect nft balance in node 2"
 
+        # A second NFT of the collection is tallied apart from the first.
+        wallet.mintnft(token['tokenId'], 2, blsct_address, {"id": "two"})
+        self.generate_blsct_blocks(self.nodes[0], blsct_address, 1)
+
+        nft_balance = wallet.getnftbalance(token['tokenId'])
+        assert nft_balance == [{'index': '1', 'metadata': [{'key': 'id', 'value': 'null'}]},
+                               {'index': '2', 'metadata': [{'key': 'id', 'value': 'two'}]}], "incorrect nft balance in node 1"
+
         self.log.info(f"Sending NFT with id #1 to NODE 2")
 
         wallet.sendnfttoblsctaddress(token['tokenId'], 1, blsct_address_2)
@@ -136,7 +144,7 @@ class NavioBlsctNftTest(BitcoinTestFramework):
         self.log.info(f"Balance in NODE 2: {nft_balance_2}")
 
         assert nft_balance_2 == [{'index': '1', 'metadata': [{'key': 'id', 'value': 'null'}]}], "incorrect nft balance in node 2"
-        assert nft_balance == [], "incorrect nft balance in node"
+        assert nft_balance == [{'index': '2', 'metadata': [{'key': 'id', 'value': 'two'}]}], "incorrect nft balance in node"
 
 
 if __name__ == '__main__':

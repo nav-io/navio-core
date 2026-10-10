@@ -302,6 +302,12 @@ MAX_NODES = 12
 PORT_MIN = int(os.getenv('TEST_RUNNER_PORT_MIN', default=11000))
 # The number of ports to "reserve" for each of p2p, tor and rpc
 PORT_RANGE = 5000
+# Start of Linux's default ip_local_port_range. The OS hands ports from there
+# up to outgoing connections, so a node binding one can collide with them.
+LINUX_EPHEMERAL_PORT_MIN = 32768
+# rpc_port()'s block (PORT_MIN + 3 * PORT_RANGE ..) is the highest one.
+assert PORT_MIN + 4 * PORT_RANGE <= LINUX_EPHEMERAL_PORT_MIN, \
+    f"TEST_RUNNER_PORT_MIN={PORT_MIN} puts rpc_port() in the ephemeral port range (from {LINUX_EPHEMERAL_PORT_MIN})"
 
 
 class PortSeed:
