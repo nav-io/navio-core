@@ -1952,12 +1952,17 @@ RPCHelpMan getnftbalance()
 
             UniValue ret(UniValue::VARR);
 
+            // Sum both halves like getbalance()/gettokenbalance(): the
+            // output-storage path delegates self-created confirmed txs to
+            // the CWalletTx path, so either half alone under-reports.
+            const auto bals = GetNftBalances(*pwallet, token_id, min_depth, /*avoid_reuse=*/false);
+            const auto blsct_bals = GetBlsctNftBalances(*pwallet, token_id, min_depth);
+
             for (auto& it : token.mapMintedNft) {
-                // Sum both halves like getbalance()/gettokenbalance(): the
-                // output-storage path delegates self-created confirmed txs to
-                // the CWalletTx path, so either half alone under-reports.
-                const auto bal = GetBalance(*pwallet, min_depth, false, TokenId(token_id, it.first));
-                const auto blsct_bal = GetBlsctBalance(*pwallet, min_depth, TokenId(token_id, it.first));
+                const auto bal_it = bals.find(it.first);
+                const auto blsct_bal_it = blsct_bals.find(it.first);
+                const wallet::Balance bal = bal_it != bals.end() ? bal_it->second : wallet::Balance{};
+                const wallet::Balance blsct_bal = blsct_bal_it != blsct_bals.end() ? blsct_bal_it->second : wallet::Balance{};
 
                 if ((bal.m_mine_trusted + blsct_bal.m_mine_trusted +
                      (include_watchonly ? bal.m_watchonly_trusted + blsct_bal.m_watchonly_trusted : 0)) > 0) {

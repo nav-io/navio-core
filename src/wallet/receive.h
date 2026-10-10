@@ -73,6 +73,11 @@ struct Balance {
 };
 Balance GetBalance(const CWallet& wallet, int min_depth = 0, bool avoid_reuse = true, const TokenId& token_id = TokenId());
 Balance GetBlsctBalance(const CWallet& wallet, int min_depth = 0, const TokenId& token_id = TokenId());
+//! GetBalance() and GetBlsctBalance() for every NFT of `collection` in one
+//! walk, keyed by NFT subid: entry `s` is what they return for
+//! TokenId(collection, s); a subid with no entry has a zero balance.
+std::map<uint64_t, Balance> GetNftBalances(const CWallet& wallet, const uint256& collection, int min_depth, bool avoid_reuse);
+std::map<uint64_t, Balance> GetBlsctNftBalances(const CWallet& wallet, const uint256& collection, int min_depth);
 
 /** Trusted, spendable credit backed by BLSCT outputs of the default token.
  *
