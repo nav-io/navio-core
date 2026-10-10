@@ -10,6 +10,7 @@
 #include <sync.h>
 #include <util/fs.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -47,6 +48,19 @@ enum class MsgScope : uint8_t {
     BROADCAST = 1, //!< readable by anyone; stored because the topic is subscribed
     SESSION = 2,   //!< encrypted to a reply key minted via mintp2pmsgreplykey
 };
+static constexpr size_t NUM_MSG_SCOPES = 3;
+
+//! Share of the store's size cap (-p2pmsgstoresize), in percent, that each
+//! scope may fill. A scope is pruned against its own share only, so a flood
+//! in one never evicts another's messages: anyone can write to the published
+//! inbox prekey or a subscribed topic, and to a minted reply key once they
+//! have seen it. Broadcast gets the smallest share: it is opt-in public
+//! traffic, while unread 1:1 messages are what the store exists for.
+static constexpr unsigned USER_STORE_INBOX_PERCENT = 40;
+static constexpr unsigned USER_STORE_SESSION_PERCENT = 40;
+static constexpr unsigned USER_STORE_BROADCAST_PERCENT = 20;
+static_assert(USER_STORE_INBOX_PERCENT + USER_STORE_SESSION_PERCENT + USER_STORE_BROADCAST_PERCENT == 100,
+              "the scope shares split the whole store cap, so together they also enforce it");
 
 //! The node-parsed framing inside a USER_DATA payload: a routing topic plus an
 //! opaque body. The topic is the ONLY part the node interprets — it keys
@@ -89,7 +103,8 @@ struct UserMsgFrame {
 //!
 //! LevelDB-backed so an application that polls infrequently (or a node that
 //! restarts) does not lose messages. Growth is bounded two ways, both
-//! enforced on insert: a total-bytes cap (-p2pmsgstoresize) pruning OLDEST
+//! enforced on insert: a size cap (-p2pmsgstoresize) split into one budget per
+//! scope (see USER_STORE_INBOX_PERCENT), each pruning its own oldest entries
 //! first, and an age cap (-p2pmsgstoreexpiry). Message ids increase
 //! monotonically for the life of the store and never repeat, so a client
 //! polls with `since_id` and misses nothing that was not pruned.
@@ -129,9 +144,10 @@ public:
     explicit UserInbox(Options opts);
     ~UserInbox();
 
-    //! Store an inbound message, pruning oldest/expired entries to keep the
-    //! caps. Returns the stored entry (with its assigned id) so callers can
-    //! feed push notifiers, or std::nullopt if the write failed.
+    //! Store an inbound message, pruning expired entries and the oldest
+    //! entries of any scope over its budget. Returns the stored entry (with
+    //! its assigned id) so callers can feed push notifiers, or std::nullopt if
+    //! the write failed.
     std::optional<Entry> Add(int64_t received_at, MsgScope scope, const std::string& topic,
                              const blsct::PublicKey& sender_session, std::vector<uint8_t> body,
                              const std::vector<uint8_t>& reply_pubkey = {})
@@ -148,6 +164,10 @@ public:
 
     size_t Size() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
     uint64_t TotalBytes() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+
+    //! The bytes `scope` may fill in a store capped at `max_total_bytes`
+    //! (0 = no cap, returned as 0).
+    static uint64_t ScopeCapBytes(size_t max_total_bytes, MsgScope scope);
 
     //! The id the NEXT stored message will get minus one; a client records
     //! this as its starting cursor to receive only messages from now on.
@@ -167,13 +187,19 @@ private:
     uint64_t m_next_id GUARDED_BY(m_mutex){1};
     uint64_t m_total_bytes GUARDED_BY(m_mutex){0};
     uint64_t m_count GUARDED_BY(m_mutex){0};
+    //! m_total_bytes split by MsgScope. Not persisted: rebuilt by a scan on
+    //! open, so stores written before the split need no migration.
+    std::array<uint64_t, NUM_MSG_SCOPES> m_scope_bytes GUARDED_BY(m_mutex){};
     std::set<std::string> m_topics GUARDED_BY(m_mutex);
 
     void WriteMetaLocked(CDBBatch& batch) EXCLUSIVE_LOCKS_REQUIRED(m_mutex);
     void WriteTopicsLocked(CDBBatch& batch) EXCLUSIVE_LOCKS_REQUIRED(m_mutex);
-    //! Delete oldest entries until both caps hold. Adds deletes to `batch`
-    //! and updates the cached totals.
+    //! Delete expired entries, then each scope's oldest entries until it is
+    //! within its budget. Adds deletes to `batch` and updates the cached
+    //! totals.
     void PruneLocked(int64_t now, CDBBatch& batch) EXCLUSIVE_LOCKS_REQUIRED(m_mutex);
+    //! Drop one stored entry's bytes from the cached totals.
+    void ForgetLocked(uint8_t scope, uint64_t bytes) EXCLUSIVE_LOCKS_REQUIRED(m_mutex);
 };
 
 } // namespace p2pmsg

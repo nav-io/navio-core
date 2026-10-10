@@ -55,6 +55,7 @@
 #include <netmessagemaker.h>
 #include <p2pmsg/archive.h>
 #include <p2pmsg/transport.h>
+#include <p2pmsg/user_data.h>
 #include <p2pmsg/user_inbox.h>
 #include <p2pmsg/worker_pool.h>
 #include <rfq/intent_store.h>
@@ -588,7 +589,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-servecandidates", strprintf("Answer p2pmsg candidate pull requests with fee-0 cover candidates built from loaded BLSCT wallets' coins, each encrypted 1:1 to its requester. Each served candidate proves this node owns one specific on-chain output to that requester, so serving trades some wallet-clustering resistance for the network's aggregation supply and is rate-limited per peer and by a rolling per-window coin budget; disable with -servecandidates=0 (default: %u)", aggregation::DEFAULT_SERVE_CANDIDATES), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-servecandidateinterval=<n>", strprintf("Seconds between built-in candidate serving ticks (default: %d)", aggregation::SERVE_INTERVAL_SECONDS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::WALLET);
     argsman.AddArg("-p2pmsgpowbits=<n>", strprintf("Anti-spam proof-of-work difficulty (leading zero bits) for p2p messaging requests (default: %u)", p2pmsg::DEFAULT_POW_BITS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
-    argsman.AddArg("-p2pmsgstoresize=<n>", strprintf("Maximum total size of the on-disk p2pmsg user-message store in MiB; when exceeded, broadcast-topic messages are pruned first, then oldest-first. 0 disables the store entirely (no messages retained; listp2pmsgs unavailable) (default: %u)", p2pmsg::DEFAULT_USER_STORE_MB), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-p2pmsgstoresize=<n>", strprintf("Maximum total size of the on-disk p2pmsg user-message store in MiB, split between inbox (%u%%), session (%u%%) and broadcast (%u%%) messages; each part prunes its own oldest messages when full, so a flood of one kind never evicts another. 0 disables the store entirely (no messages retained; listp2pmsgs unavailable) (default: %u)", p2pmsg::USER_STORE_INBOX_PERCENT, p2pmsg::USER_STORE_SESSION_PERCENT, p2pmsg::USER_STORE_BROADCAST_PERCENT, p2pmsg::DEFAULT_USER_STORE_MB), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsgstoreexpiry=<n>", strprintf("Days a stored p2pmsg user message is retained before being pruned; 0 = no age limit (default: %u)", p2pmsg::DEFAULT_USER_STORE_EXPIRY_DAYS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsgarchive", strprintf("Retain the FLAGGED p2pmsg envelopes this node relays and serve them back to peers that ask, so a peer which was offline can pick up what it missed. Advertises NODE_P2PMSG_ARCHIVE. The node stores ciphertext it cannot read, and learns who an envelope is for only as precisely as a requester's detection key allows (see doc/p2p-encrypted-messaging.md). Costs disk and CPU: strictly opt-in (default: %u)", p2pmsg::DEFAULT_ARCHIVE_ENABLE), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-p2pmsgarchivesize=<n>", strprintf("Maximum total size of the p2pmsg envelope archive in MiB, pruned oldest-first (default: %u)", p2pmsg::DEFAULT_ARCHIVE_MB), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -2090,7 +2091,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         // Inbound USER_DATA store, drained via listp2pmsgs (chat and other
         // applications built on the bus). On disk so infrequently-polling
         // applications and restarts do not lose messages; bounded by
-        // -p2pmsgstoresize (oldest pruned first) and -p2pmsgstoreexpiry.
+        // -p2pmsgstoresize (one budget per scope, each pruned oldest first)
+        // and -p2pmsgstoreexpiry.
         // -p2pmsgstoresize=0 disables the store entirely: no LevelDB dir, no
         // message retention, listp2pmsgs errors "store disabled". The old
         // behavior (0 -> UNLIMITED store) inverted the obvious reading and
@@ -2279,16 +2281,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                     });
             }
 
-            // An application message. The node parses only the frame's topic;
-            // the body is stored untouched. Delivery rules by decrypting key:
-            //  - our rotating inbox prekey: always stored (scope "inbox"),
-            //  - a user reply key (mintp2pmsgreplykey): always stored
-            //    ("session") — the key was minted deliberately to receive
-            //    exactly this (internal session keys are not accepted, see
-            //    RECIPIENTS_USER_DATA),
-            //  - the well-known broadcast key: public pub/sub; stored only
-            //    when the topic is subscribed ("broadcast"), so every public
-            //    app's traffic does not accumulate on every node.
+            // An application message: stored in the user inbox (see
+            // p2pmsg::StoreUserData for the delivery rules), then announced.
             if (node.p2pmsg_user_inbox) {
                 p2pmsg::UserInbox* inbox = node.p2pmsg_user_inbox.get();
 #if HAVE_SYSTEM
@@ -2303,60 +2297,15 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 struct NotifyState { };
                 auto notify_state = std::make_shared<NotifyState>();
 #endif
-                node.p2pmsg_transport->RegisterHandler(
-                    p2pmsg::PayloadKind::USER_DATA, p2pmsg::RECIPIENTS_USER_DATA,
-                    [inbox, msg_notify, notify_state](const p2pmsg::InboundMessage& m) {
-                        if (m.body.empty() || m.body.size() > p2pmsg::MAX_USER_MSG_BYTES) return;
-                        p2pmsg::UserMsgFrame frame;
-                        try {
-                            DataStream ss{MakeByteSpan(m.body)};
-                            ss >> frame;
-                            if (!ss.empty()) return; // trailing bytes: malformed
-                        } catch (const std::exception&) {
-                            return;
-                        }
-                        if (frame.topic.empty() || frame.topic.size() > p2pmsg::MAX_USER_MSG_TOPIC_BYTES) return;
-                        if (!p2pmsg::IsValidTopic(frame.topic)) return; // network-controlled; keep RPC/JSON output valid
-                        if (frame.body.empty()) return;
-
-                        p2pmsg::MsgScope scope{p2pmsg::MsgScope::INBOX};
-                        std::vector<uint8_t> reply_pubkey;
-                        switch (m.recipient) {
-                        case p2pmsg::RecipientKey::INBOX: scope = p2pmsg::MsgScope::INBOX; break;
-                        case p2pmsg::RecipientKey::SESSION:
-                            // A user reply key: the transport drops USER_DATA
-                            // under an internal session key before this runs.
-                            scope = p2pmsg::MsgScope::SESSION;
-                            reply_pubkey = m.recipient_session.GetVch();
-                            break;
-                        case p2pmsg::RecipientKey::BROADCAST:
-                            if (!inbox->IsSubscribed(frame.topic)) return;
-                            scope = p2pmsg::MsgScope::BROADCAST;
-                            break;
-                        }
-
-                        std::optional<p2pmsg::UserInbox::Entry> stored;
-                        try {
-                            stored = inbox->Add(GetTime<std::chrono::seconds>().count(), scope,
-                                                frame.topic, m.sender_session, std::move(frame.body), reply_pubkey);
-                        } catch (const std::exception& e) {
-                            // CDBWrapper throws dbwrapper_error on any LevelDB
-                            // failure (e.g. full disk). This handler runs on a
-                            // p2pmsg worker with no try/catch above it, so an
-                            // escape is std::terminate for the whole node --
-                            // one inbound message must never be able to do
-                            // that. Drop the message and log.
-                            LogPrintf("p2pmsg: user inbox store failed, message dropped: %s\n", e.what());
-                            return;
-                        }
-                        if (!stored) return;
-
+                p2pmsg::RegisterUserDataHandler(
+                    *node.p2pmsg_transport, *inbox,
+                    [msg_notify, notify_state](const p2pmsg::UserInbox::Entry& stored) {
 #if ENABLE_ZMQ
                         // Push notifiers run on the validation-interface queue so
                         // zmq sends are serialized with the validation-driven ones
                         // (this handler runs on a p2pmsg worker thread).
                         if (g_zmq_notification_interface) {
-                            CallFunctionInValidationInterfaceQueue([entry = *stored] {
+                            CallFunctionInValidationInterfaceQueue([entry = stored] {
                                 if (g_zmq_notification_interface) g_zmq_notification_interface->NotifyP2PMsg(entry);
                             });
                         }
@@ -2375,8 +2324,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                             // fetch-max: workers can race here and a plain
                             // store could regress latest to a lower id.
                             uint64_t prev = notify_state->latest.load(std::memory_order_relaxed);
-                            while (prev < stored->id &&
-                                   !notify_state->latest.compare_exchange_weak(prev, stored->id, std::memory_order_relaxed)) {}
+                            while (prev < stored.id &&
+                                   !notify_state->latest.compare_exchange_weak(prev, stored.id, std::memory_order_relaxed)) {}
                             if (!notify_state->running.exchange(true, std::memory_order_acq_rel)) {
                                 try {
                                     std::thread([state = notify_state, tmpl = msg_notify] {
