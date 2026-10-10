@@ -789,7 +789,10 @@ void* get_mint_nft_predicate_metadata(
 /* Returns the payload of a DATA predicate (value_size = its length), without
  * the operation byte and length prefix that frame it in the serialized
  * predicate, e.g. as returned by get_ctx_out_vector_predicate. Fails
- * (BLSCT_FAILURE) when the bytes do not start with a complete DATA predicate.
+ * (BLSCT_FAILURE) when the bytes do not start with a well-formed DATA
+ * predicate, e.g. a null pointer, another predicate operation, a payload
+ * shorter than its length prefix, or a length prefix that is non-canonical or
+ * larger than the serializer's MAX_SIZE, or when allocating the result fails.
  * Bytes after the payload are ignored, as core's predicate parser ignores
  * them. Free the returned value with free_obj. */
 BlsctRetVal* get_data_predicate_data(

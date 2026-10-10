@@ -578,8 +578,10 @@ Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse,
             const CAmount tx_credit_staked_commitment{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_STAKED_COMMITMENT_BLSCT, token_id)};
             const CAmount tx_credit_watchonly{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_WATCH_ONLY | reuse_filter, token_id)};
             // The outputs a trusted tx's trust does not cover count as
-            // untrusted pending, the same as an untrusted tx's.
-            const bool has_uncovered{is_trusted && !wtx.m_own_half_outputs.empty()};
+            // untrusted pending, the same as an untrusted tx's. Once confirmed,
+            // its trust covers every output (TxTrustCoversOutput), so skip the
+            // walk.
+            const bool has_uncovered{is_trusted && tx_depth == 0 && !wtx.m_own_half_outputs.empty()};
             const CAmount uncovered_mine{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | reuse_filter, token_id) : 0};
             const CAmount uncovered_staked_commitment{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_STAKED_COMMITMENT_BLSCT, token_id) : 0};
             const CAmount uncovered_watchonly{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_WATCH_ONLY | reuse_filter, token_id) : 0};

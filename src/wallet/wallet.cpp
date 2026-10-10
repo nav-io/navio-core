@@ -1613,6 +1613,9 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 COutPoint outpoint(tx.GetOutputId(i));
 
                 bool fExisted = mapOutputs.contains(outpoint);
+                // The tx is only known to be held from its first held output on:
+                // the outputs before it took the IsMine path below, while
+                // unheld outputs after it are skipped without one.
                 if (!fUpdate && (fExisted || skip_known_tx)) {
                     skip_known_tx = true;
                     if (fExisted && std::holds_alternative<TxStateConfirmed>(tx_state) &&
@@ -3050,7 +3053,8 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
     // output goes to its most recently ordered holder, deterministically. An
     // output no remaining transaction carries stays unindexed. Output ids are
     // cached, so the pass computes no transaction or output hashes; the only
-    // hashing is the set's salted lookup per output.
+    // hashing is the salted container hash of each output id (the set lookup,
+    // plus the index insert on a match).
     for (auto rit = wtxOrdered.rbegin(); rit != wtxOrdered.rend() && !orphaned_outputs.empty(); ++rit) {
         const CWalletTx& wtx{*rit->second};
         for (const Outid& out_id : wtx.tx->GetOutputIds()) {
