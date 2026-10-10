@@ -76,6 +76,15 @@ static const unsigned int MAX_BLOCKFILE_SIZE = 0x8000000; // 128 MiB
 /** Size of header written by WriteBlockToDisk before a serialized CBlock */
 static constexpr size_t BLOCK_SERIALIZATION_HEADER_SIZE = std::tuple_size_v<MessageStartChars> + sizeof(unsigned int);
 
+/**
+ * Fewest undo entries each thread serializes in UndoWriteToDisk. Once the
+ * pre-pass has normalised every point, an entry serializes at memcpy speed,
+ * so a task with fewer entries costs more to start than it saves. It also
+ * keeps a block with fewer than twice this many entries on the calling
+ * thread. -par (the caller's `threads`) still caps the pool above this.
+ */
+static constexpr size_t UNDO_WRITE_MIN_ENTRIES_PER_THREAD{32};
+
 extern std::atomic_bool fReindex;
 
 // Because validation code takes pointers to the map's CBlockIndex objects, if
@@ -165,7 +174,9 @@ private:
     AutoFile OpenUndoFile(const FlatFilePos& pos, bool fReadOnly = false) const;
 
     bool WriteBlockToDisk(const CBlock& block, FlatFilePos& pos) const;
-    bool UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos, const uint256& hashBlock) const;
+    //! `threads` caps the serialization worker pool (-par, via
+    //! ChainstateManager::ParThreads()); 0 means hardware_concurrency().
+    bool UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos, const uint256& hashBlock, size_t threads) const;
 
     /* Calculate the block/rev files to delete based on height specified by user with RPC command pruneblockchain */
     void FindFilesToPruneManual(
@@ -309,7 +320,8 @@ public:
     /** Get block file info entry for one block file */
     CBlockFileInfo* GetBlockFileInfo(size_t n);
 
-    bool WriteUndoDataForBlock(const CBlockUndo& blockundo, BlockValidationState& state, CBlockIndex& block)
+    /** `threads` caps the undo serialization pool, as for UndoWriteToDisk(). */
+    bool WriteUndoDataForBlock(const CBlockUndo& blockundo, BlockValidationState& state, CBlockIndex& block, size_t threads)
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
     /** Store block on disk. If dbp is not nullptr, then it provides the known position of the block within a block file on disk. */

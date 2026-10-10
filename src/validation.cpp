@@ -2754,7 +2754,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // from the other outputs in the same block.
 
     // The operator's parallelism budget (-par), applied to each worker pool
-    // this connect spins up: coin prefetch, signature and range-proof batches.
+    // this connect spins up: coin prefetch, signature and range-proof batches,
+    // and the undo-data write.
     // It caps each pool, not their sum: the signature batch runs on the async
     // verifier while the range-proof batch runs here, so the two overlap and
     // can use up to twice -par threads between them.
@@ -3169,7 +3170,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     if (fJustCheck)
         return true;
 
-    if (!m_blockman.WriteUndoDataForBlock(blockundo, state, *pindex)) {
+    if (!m_blockman.WriteUndoDataForBlock(blockundo, state, *pindex, par_threads)) {
         return false;
     }
 

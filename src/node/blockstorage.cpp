@@ -6,6 +6,7 @@
 
 #include <arith_uint256.h>
 #include <blsct/arith/blst/blst_g1point.h>
+#include <blsct/common.h>
 #include <chain.h>
 #include <consensus/params.h>
 #include <consensus/validation.h>
@@ -32,7 +33,6 @@
 
 #include <future>
 #include <span>
-#include <thread>
 
 namespace {
 // Collect every G1 point stored inside the CBlockUndo so they can be
@@ -693,7 +693,7 @@ CBlockFileInfo* BlockManager::GetBlockFileInfo(size_t n)
     return &m_blockfile_info.at(n);
 }
 
-bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos, const uint256& hashBlock) const
+bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos, const uint256& hashBlock, size_t threads) const
 {
     // Open history file to append
     AutoFile fileout{OpenUndoFile(pos)};
@@ -735,11 +735,11 @@ bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos
     const auto& vtx = blockundo.vtxundo;
     const size_t n_tx = vtx.size();
 
-    const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
-    size_t num_threads = std::min<size_t>(hw, 8);
-    const size_t min_parallel = 32;
-    if (n_tx <= min_parallel) num_threads = 1;
-    if (num_threads < 1) num_threads = 1;
+    // Workers come out of the caller's -par budget (`threads`), like the
+    // other validation pools, and each gets at least
+    // UNDO_WRITE_MIN_ENTRIES_PER_THREAD entries.
+    const size_t num_threads = std::min(blsct::Common::PoolThreads(threads, n_tx),
+                                        std::max<size_t>(1, n_tx / UNDO_WRITE_MIN_ENTRIES_PER_THREAD));
 
     std::vector<std::vector<unsigned char>> chunks(num_threads);
 
@@ -750,24 +750,27 @@ bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos
             w << entry;
         }
     } else {
-        std::vector<std::future<void>> futures;
-        futures.reserve(num_threads);
         const size_t chunk_size = (n_tx + num_threads - 1) / num_threads;
-        for (size_t t = 0; t < num_threads; ++t) {
+        auto write_chunk = [&](size_t t) {
             const size_t lo = t * chunk_size;
             const size_t hi = std::min(n_tx, lo + chunk_size);
-            if (lo >= hi) break;
-            futures.push_back(std::async(std::launch::async, [&, t, lo, hi]() {
-                // The scope is thread-local, so each worker has to open its
-                // own; without it a worker writes full range proofs that
-                // UndoReadFromDisk cannot parse.
-                CTxOutBLSCTData::StrippedForUndoScope worker_strip_scope;
-                VectorWriter w{chunks[t], 0};
-                for (size_t i = lo; i < hi; ++i) {
-                    w << vtx[i];
-                }
-            }));
+            // The scope is thread-local, so each worker has to open its
+            // own; without it a worker writes full range proofs that
+            // UndoReadFromDisk cannot parse.
+            CTxOutBLSCTData::StrippedForUndoScope worker_strip_scope;
+            VectorWriter w{chunks[t], 0};
+            for (size_t i = lo; i < hi; ++i) {
+                w << vtx[i];
+            }
+        };
+        // The calling thread writes chunk 0 itself, so `num_threads` counts
+        // it and the pool stays within the -par budget.
+        std::vector<std::future<void>> futures;
+        futures.reserve(num_threads - 1);
+        for (size_t t = 1; t < num_threads && t * chunk_size < n_tx; ++t) {
+            futures.push_back(std::async(std::launch::async, write_chunk, t));
         }
+        write_chunk(0);
         for (auto& f : futures) f.get();
     }
 
@@ -1107,7 +1110,7 @@ bool BlockManager::WriteBlockToDisk(const CBlock& block, FlatFilePos& pos) const
     return true;
 }
 
-bool BlockManager::WriteUndoDataForBlock(const CBlockUndo& blockundo, BlockValidationState& state, CBlockIndex& block)
+bool BlockManager::WriteUndoDataForBlock(const CBlockUndo& blockundo, BlockValidationState& state, CBlockIndex& block, size_t threads)
 {
     AssertLockHeld(::cs_main);
     const BlockfileType type = BlockfileTypeForHeight(block.nHeight);
@@ -1119,7 +1122,7 @@ bool BlockManager::WriteUndoDataForBlock(const CBlockUndo& blockundo, BlockValid
         if (!FindUndoPos(state, block.nFile, _pos, ::GetSerializeSize(blockundo) + 40)) {
             return error("ConnectBlock(): FindUndoPos failed");
         }
-        if (!UndoWriteToDisk(blockundo, _pos, block.pprev->GetBlockHash())) {
+        if (!UndoWriteToDisk(blockundo, _pos, block.pprev->GetBlockHash(), threads)) {
             return FatalError(m_opts.notifications, state, "Failed to write undo data");
         }
         // rev files are written in block height order, whereas blk files are written as blocks come in (often out of order)
