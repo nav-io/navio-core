@@ -24,8 +24,9 @@ import struct
 import time
 
 from test_framework.messages import (
-    NODE_P2PMSG,
     NODE_P2PMSG_ARCHIVE,
+    NODE_P2PMSG_LEAF,
+    NODE_P2PMSG_V2,
     msg_getp2pmsgs,
     sha256,
     ser_compact_size,
@@ -40,6 +41,11 @@ ARCHIVE_QUERY_BURST = 3
 POW_BITS = 2
 ARCHIVE_ARGS = ["-p2pmsg=1", f"-p2pmsgpowbits={POW_BITS}", "-p2pmsgarchive=1"]
 PLAIN_ARGS = ["-p2pmsg=1", f"-p2pmsgpowbits={POW_BITS}"]
+# What a retrieving client advertises: it is an SDK client catching up after
+# being offline, i.e. a v2 leaf that reads the bus and relays nothing. Serving
+# an archive query does not look at these bits; routing does, and a leaf is
+# never picked as a stem successor.
+CLIENT_SERVICES = NODE_P2PMSG_V2 | NODE_P2PMSG_LEAF
 
 FMD_SCALAR_SIZE = 32
 POW_HEADER_SIZE = 1 + 8 + 1 + 48 + 32 + 8
@@ -227,7 +233,7 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
         independent of the others; the limiter itself is asserted separately
         below.
         """
-        peer = node.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer = node.add_p2p_connection(ArchiveClient(), services=CLIENT_SERVICES)
         try:
             # The node issues its challenge unsolicited right after verack; a
             # stamp that does not commit to it buys nothing.
@@ -333,7 +339,7 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
         assert_greater_than(resp["next_cursor"], 0)
 
         self.log.info("An unground query stamp is rejected")
-        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer = n1.add_p2p_connection(ArchiveClient(), services=CLIENT_SERVICES)
         peer.wait_until(lambda: peer.challenge is not None, timeout=30)
         peer.send_query(detection_key=bytes.fromhex(dk), precision=24, limit=500, break_pow=True)
         peer.sync_with_ping()
@@ -344,7 +350,7 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
         # Without this, one grind is spendable for its whole validity window on
         # every connection and at every archive node, and the per-peer bucket
         # does not help because a new connection brings a new bucket.
-        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer = n1.add_p2p_connection(ArchiveClient(), services=CLIENT_SERVICES)
         peer.wait_until(lambda: peer.challenge is not None, timeout=30)
         first_challenge = peer.challenge
         replayed = peer.send_query(detection_key=bytes.fromhex(dk), precision=24)
@@ -353,7 +359,7 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
 
         # The very same bytes on a new connection: the challenge has changed,
         # so the stamp commits to the wrong query and buys nothing.
-        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer = n1.add_p2p_connection(ArchiveClient(), services=CLIENT_SERVICES)
         peer.wait_until(lambda: peer.challenge is not None, timeout=30)
         assert peer.challenge != first_challenge, "challenge must be per-connection"
         peer.send_message(msg_getp2pmsgs(replayed))
@@ -363,7 +369,7 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
         n1.disconnect_p2ps()
 
         self.log.info("A stamp cannot be spent twice on the connection it IS valid on")
-        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer = n1.add_p2p_connection(ArchiveClient(), services=CLIENT_SERVICES)
         peer.wait_until(lambda: peer.challenge is not None, timeout=30)
         sent = peer.send_query(detection_key=bytes.fromhex(dk), precision=24)
         peer.wait_until(lambda: len(peer.responses) >= 1, timeout=30)
@@ -379,7 +385,7 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
         # that matches nothing used to return cheaply while walking the entire
         # window. The budget is now what is priced, and a stamp ground for a
         # small budget does not pay for a large one.
-        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer = n1.add_p2p_connection(ArchiveClient(), services=CLIENT_SERVICES)
         peer.wait_until(lambda: peer.challenge is not None, timeout=30)
         assert_greater_than(stamp_bits(POW_BITS, 50000, 24), stamp_bits(POW_BITS, 1, 24))
         cheap = build_request(detection_key=bytes.fromhex(dk), precision=24,
@@ -399,7 +405,7 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
         # allowed, then the peer is throttled -- dropped silently rather than
         # banned, because a client syncing a long window legitimately issues
         # back-to-back queries and should back off, not be disconnected.
-        peer = n1.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        peer = n1.add_p2p_connection(ArchiveClient(), services=CLIENT_SERVICES)
         peer.wait_until(lambda: peer.challenge is not None, timeout=30)
         attempts = ARCHIVE_QUERY_BURST + 2
         for i in range(attempts):
@@ -413,7 +419,7 @@ class P2PMsgArchiveTest(BitcoinTestFramework):
         n1.disconnect_p2ps()
 
         self.log.info("A node without -p2pmsgarchive ignores the query")
-        plain = n0.add_p2p_connection(ArchiveClient(), services=NODE_P2PMSG)
+        plain = n0.add_p2p_connection(ArchiveClient(), services=CLIENT_SERVICES)
         # It issues no challenge either, since it has no archive to protect.
         plain.sync_with_ping()
         assert plain.challenge is None

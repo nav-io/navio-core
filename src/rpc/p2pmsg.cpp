@@ -63,8 +63,8 @@ static RPCHelpMan getp2pmsginfo()
                 {RPCResult::Type::STR_HEX, "fmd_sig", /*optional=*/true, "identity_pubkey's signature over fmd_clue_key"},
                 {RPCResult::Type::NUM, "fmd_gamma", /*optional=*/true, "Number of flag bits, i.e. the maximum detection precision this build supports (2^-gamma)"},
                 {RPCResult::Type::NUM, "pings_received", /*optional=*/true, "PING payloads decrypted and dispatched to us"},
-                {RPCResult::Type::NUM, "relay_capable_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_V2 (can relay this envelope format for us). Note this is a lower bound on network participation: capability rides ADDR gossip, so many more nodes may be reachable indirectly."},
-                {RPCResult::Type::NUM, "leaf_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_LEAF but not NODE_P2PMSG: receive-only bus clients that get our fluff traffic but are never chosen as a Dandelion++ stem successor."},
+                {RPCResult::Type::NUM, "relay_capable_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_V2 but not NODE_P2PMSG_LEAF (can relay this envelope format for us, and may be chosen as our Dandelion++ stem successor). Block-relay-only connections are not counted: they carry no p2pmsg traffic. Note this is a lower bound on network participation: capability rides ADDR gossip, so many more nodes may be reachable indirectly."},
+                {RPCResult::Type::NUM, "leaf_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_V2 plus NODE_P2PMSG_LEAF: receive-only bus clients that get our fluff traffic but are never chosen as a Dandelion++ stem successor. Block-relay-only connections are not counted."},
                 {RPCResult::Type::NUM, "archive_peers", /*optional=*/true, "Connected peers advertising NODE_P2PMSG_ARCHIVE: peers that retain flagged envelopes and will serve them back, so a client that was offline can catch up through them."},
                 {RPCResult::Type::OBJ, "archive", /*optional=*/true, "This node's own envelope archive (-p2pmsgarchive)", {
                     {RPCResult::Type::NUM, "entries", "Archived envelopes"},
@@ -101,8 +101,11 @@ static RPCHelpMan getp2pmsginfo()
                     const uint64_t their = pnode->m_their_services.load();
                     // The format bit says the peer speaks v2 at all; the leaf
                     // bit says not to stem to it. A peer claiming neither is
-                    // not part of this overlay.
-                    if ((their & NODE_P2PMSG_V2) != 0) {
+                    // not part of this overlay, and neither is a
+                    // block-relay-only connection whatever it claims: relay
+                    // never sends p2pmsg traffic over one (see forward() in
+                    // init.cpp), so counting it would overstate our routes.
+                    if (!pnode->IsBlockOnlyConn() && (their & NODE_P2PMSG_V2) != 0) {
                         if ((their & NODE_P2PMSG_LEAF) != 0) ++leaves;
                         else ++capable;
                     }
