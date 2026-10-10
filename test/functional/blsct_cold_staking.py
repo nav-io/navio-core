@@ -8,10 +8,16 @@ liststakedcommitmentsdata scan, owner-side visibility (listdelegations,
 delegated balances), redelegation, reward compounding, fee-split block
 templates, end-to-end delegated block production and revocation."""
 
+import http.client
+import http.server
+import itertools
 import json
 import os.path
+import queue
 import re
 import subprocess
+import threading
+import time
 
 from decimal import Decimal
 
@@ -21,6 +27,7 @@ from test_framework.util import (
     assert_greater_than,
     assert_greater_than_or_equal,
     assert_raises_rpc_error,
+    rpc_port,
 )
 
 # DataPredicate serialization: <DATA op (0x04)> <compact size> <payload>.
@@ -35,6 +42,67 @@ NULL_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 NULL_VIEW_KEY_ADDRESS = "rnv1cqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp9l36wnnr97hjsnf2cuvf756cr7rdzxyl9m5hyz6zn368ut3htzcd327s0le0gdwl7e67q9dkgkxhvmdqls40d"
 NULL_SPEND_KEY_ADDRESS = "rnv1jlca8fe3jltegf54vwxyl2dvplpk3rz0ja6tjpdpfcar79cm43vxc40g8luh5xh0lva0qzkmytrthsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqma0f57ul"
 NULL_KEY_ADDRESSES = (NULL_KEY_ADDRESS, NULL_VIEW_KEY_ADDRESS, NULL_SPEND_KEY_ADDRESS)
+
+# Seconds (before --timeout-factor) a test waits for a staker log line,
+# producing a block included.
+STAKER_TIMEOUT = 120
+
+
+class FailingListDelegationsProxy:
+    """JSON-RPC proxy in front of a node that answers listdelegations with an
+    RPC error while `fail` is set and forwards everything else, recording
+    when it sees each call, per method. Read or change `fail` and `calls`
+    under `lock`."""
+
+    def __init__(self, node_port):
+        self.fail = True
+        self.calls = {}
+        self.lock = threading.Lock()
+        proxy = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(handler):
+                body = handler.rfile.read(int(handler.headers["Content-Length"]))
+                request = json.loads(body)
+                method = request.get("method")
+                with proxy.lock:
+                    proxy.calls.setdefault(method, []).append(time.monotonic())
+                    fail = proxy.fail and method == "listdelegations"
+                if fail:
+                    status = 500
+                    reply = json.dumps({"result": None, "error": {"code": -4, "message": "injected listdelegations failure"}, "id": request.get("id")}).encode()
+                else:
+                    conn = http.client.HTTPConnection("127.0.0.1", node_port)
+                    conn.request("POST", handler.path, body, {k: v for k, v in handler.headers.items() if k.lower() in ("authorization", "content-type")})
+                    response = conn.getresponse()
+                    status, reply = response.status, response.read()
+                    conn.close()
+                handler.send_response(status)
+                handler.send_header("Content-Type", "application/json")
+                handler.send_header("Content-Length", str(len(reply)))
+                handler.end_headers()
+                handler.wfile.write(reply)
+
+            def log_message(handler, *_args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        # Joined by server_close(), so stop() waits for requests in flight.
+        self.server.daemon_threads = False
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def count(self, method):
+        with self.lock:
+            return len(self.calls.get(method, []))
+
+    def times(self, method):
+        with self.lock:
+            return list(self.calls.get(method, []))
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
 
 
 class NavioBlsctColdStakingTest(BitcoinTestFramework):
@@ -75,17 +143,43 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
             "-printtoconsole=1",
             "-nodebuglogfile",
         ] + extra_args
-        return subprocess.Popen(args, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
+        staker = subprocess.Popen(args, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True)
+        # readline() on the pipe blocks for as long as the staker stays quiet,
+        # so a reader thread feeds the lines to a queue that staker_lines()
+        # reads with a deadline. None marks the end of the output.
+        staker.lines = queue.Queue()
 
-    def wait_for_staker_line(self, staker, needles, max_lines=600):
-        """Read staker stdout until a line containing any needle appears.
-        Returns the matching needle or None."""
-        for _ in range(max_lines):
-            line = staker.stdout.readline()
-            if not line:
-                return None
+        def pump():
+            for line in staker.stdout:
+                staker.lines.put(line)
+            staker.lines.put(None)
+        threading.Thread(target=pump, daemon=True).start()
+        return staker
+
+    def staker_lines(self, staker, timeout, waiting_for):
+        """Yield staker output lines until it ends, raising AssertionError
+        (naming waiting_for) once timeout seconds, scaled by
+        --timeout-factor, pass first."""
+        timeout *= self.options.timeout_factor
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise queue.Empty
+                line = staker.lines.get(timeout=remaining)
+            except queue.Empty:
+                raise AssertionError(f"staker timed out after {timeout:g}s waiting for {waiting_for}") from None
+            if line is None:
+                return
             self.log.debug(f"staker: {line.rstrip()}")
+            yield line
+
+    def wait_for_staker_line(self, staker, needles, timeout=STAKER_TIMEOUT):
+        """Read staker output until a line containing any needle appears.
+        Returns the matching needle, or None if the output ends first."""
+        for line in self.staker_lines(staker, timeout, f"a line containing one of {needles}"):
             for needle in needles:
                 if needle in line:
                     return needle
@@ -124,6 +218,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         self.test_revocation(node, owner, owner_address, operator_pub)
         self.test_owner_staker_pays_reward_address(node)
         self.test_mixed_wallet_staker(node)
+        self.test_own_delegation_lookup_backoff(node)
 
     def test_argument_validation(self, owner, operator_pub):
         self.log.info("Testing delegatestake argument validation")
@@ -411,7 +506,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                 return False
 
         try:
-            found = self.wait_for_staker_line(staker, ["(ACCEPTED)"], max_lines=3000)
+            found = self.wait_for_staker_line(staker, ["(ACCEPTED)"])
             assert found, "delegated staker did not produce an accepted block"
             # The stats file is updated right after the acceptance log line;
             # don't race the kill against it.
@@ -481,7 +576,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
 
         staker = self.spawn_staker(["-wallet=selfstaker", f"-coinbasedest={coinbase_dest}"], delegated=False)
         try:
-            found = self.wait_for_staker_line(staker, ["(ACCEPTED)"], max_lines=3000)
+            found = self.wait_for_staker_line(staker, ["(ACCEPTED)"])
             assert found, "wallet-mode staker did not produce an accepted block"
         finally:
             staker.kill()
@@ -524,14 +619,10 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                 session.refresh = []
                 session.staked_with = []
 
-            def read_until(session, condition, max_lines=3000):
+            def read_until(session, condition, timeout=STAKER_TIMEOUT):
                 """Consume output until condition() holds, checking it after
                 each refresh or staked-block line."""
-                for _ in range(max_lines):
-                    line = session.proc.stdout.readline()
-                    if not line:
-                        break
-                    self.log.debug(f"staker: {line.rstrip()}")
+                for line in session.lines(timeout):
                     if refresh_line in line:
                         session.refresh.append(line.split(refresh_line)[1].strip())
                     elif m := staked_with_re.search(line):
@@ -540,7 +631,17 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                         continue
                     if condition():
                         return
-                raise AssertionError(f"staker output ended early; refresh={session.refresh} staked_with={session.staked_with}")
+                raise AssertionError(f"staker output ended early; {session.progress()}")
+
+            def lines(session, timeout):
+                """staker_lines(), reporting progress so far on a timeout."""
+                try:
+                    yield from self.staker_lines(session.proc, timeout, "a condition")
+                except AssertionError as e:
+                    raise AssertionError(f"{e}; {session.progress()}") from None
+
+            def progress(session):
+                return f"refresh={session.refresh} staked_with={session.staked_with}"
 
             def stop(session):
                 session.proc.kill()
@@ -610,23 +711,155 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                 assert_greater_than(sum(r["count"] for r in wallet.liststakingrewards() if r["address"] == coinbase_dest), coinbase_paid_before)
 
         # A staked commitment disappearing also triggers a lookup. The unlock
-        # spends stakes in the mempool (re-staking any remainder), which can
-        # leave the staker nothing to stake until it confirms, so mine that
-        # block here.
+        # spends every staked commitment in one transaction (with the default
+        # -consolidatestakedcommitments) and re-stakes the remainder as one
+        # new commitment, so the staked set changes once: from both stakes,
+        # perhaps through empty while the unlock is unconfirmed (nothing to
+        # look up), to that one commitment. Mine the unlock here so the staker
+        # has something to stake, and check the resulting set before counting
+        # lookups, so an unlock of a different shape fails here rather than
+        # as a lookup-count mismatch.
         session = Session()
         try:
             session.read_until(lambda: len(session.staked_with) >= 1)
             assert_equal(session.refresh, ["1 of 2 staked commitment(s) delegated."])
             wallet.stakeunlock(self.min_stake)
             self.generatetoblsctaddress(node, 1, wallet.getnewaddress(label="", address_type="blsct"))
+            remaining = [c["commitment"] for c in wallet.liststakedcommitments()]
+            assert_equal(len(remaining), 1)
+            remaining_delegated = remaining[0] in {d["commitment"] for d in wallet.listdelegations()}
             session.read_until(lambda: len(session.refresh) >= 2)
-            assert session.refresh[1].endswith("of 1 staked commitment(s) delegated."), session.refresh
+            assert_equal(session.refresh[1], f"{int(remaining_delegated)} of 1 staked commitment(s) delegated.")
             # Several more blocks (and many more cycles), no more lookups.
             seen_before = len(session.staked_with)
             session.read_until(lambda: len(session.staked_with) >= seen_before + 3)
             assert_equal(len(session.refresh), 2)
         finally:
             session.stop()
+
+    def test_own_delegation_lookup_backoff(self, node):
+        """A wallet-mode staker whose listdelegations keeps failing logs the
+        failure once and retries with a backoff capped at -delegationrefresh
+        rather than every cycle, but at once when its staked set changes. It
+        keeps staking, and logs the recovery and looks the delegations up
+        once the call works again."""
+        self.log.info("Testing the wallet-mode staker's backoff on a failing listdelegations")
+
+        wallet = node.get_wallet_rpc("mixedstaker")
+        coinbase_dest = wallet.getnewaddress(label="staker", address_type="blsct")
+        # Above every wait this test reaches, so the waits are 2, 4, 8, 16, ...
+        refresh_max = 120
+        failed_line = "Could not list delegations"
+        recovered_re = re.compile(r"Listed delegations again after (\d+) failed attempt\(s\)")
+        refresh_line = "Refreshed own delegations:"
+
+        def scheduled_waits():
+            """The staker's wait after each consecutive failed lookup."""
+            wait = 2
+            while True:
+                yield wait
+                wait = min(wait * 2, refresh_max)
+
+        def max_attempts(elapsed):
+            """Most lookups the backoff allows in `elapsed` seconds for an
+            unchanging staked set: one right away, then one after each
+            scheduled wait."""
+            attempts, at = 1, 0
+            for wait in scheduled_waits():
+                if at + wait > elapsed:
+                    return attempts
+                attempts, at = attempts + 1, at + wait
+
+        def change_staked_set():
+            """Fold the stake into a new commitment and confirm it."""
+            before = {c["commitment"] for c in wallet.liststakedcommitments()}
+            wallet.stakelock(1)
+            self.generatetoblsctaddress(node, 1, wallet.getnewaddress(label="", address_type="blsct"))
+            assert before != {c["commitment"] for c in wallet.liststakedcommitments()}
+
+        log = {"failed": 0, "recovered": None, "refreshed": 0}
+
+        def scan():
+            """Tally the staker output so far, without blocking."""
+            while True:
+                try:
+                    line = staker.lines.get_nowait()
+                except queue.Empty:
+                    return
+                if line is None:
+                    return
+                self.log.debug(f"staker: {line.rstrip()}")
+                log["failed"] += failed_line in line
+                log["refreshed"] += refresh_line in line
+                if m := recovered_re.search(line):
+                    log["recovered"] = int(m.group(1))
+
+        def wait_for(predicate, what, timeout=STAKER_TIMEOUT):
+            """wait_until(predicate), failing at once if the staker exits."""
+            def done():
+                scan()
+                return staker.poll() is not None or predicate()
+            self.wait_until(done, timeout=timeout)
+            assert staker.poll() is None, f"staker exited early while waiting for {what}"
+
+        proxy = FailingListDelegationsProxy(rpc_port(0))
+        start = time.monotonic()
+        staker = self.spawn_staker(["-wallet=mixedstaker", f"-coinbasedest={coinbase_dest}",
+                                    "-rpcconnect=127.0.0.1", f"-rpcport={proxy.port}",
+                                    f"-delegationrefresh={refresh_max}"], delegated=False)
+        try:
+            # An unchanging staked set: the failure is logged once and the
+            # lookups follow the backoff. The old behaviour looked up, and
+            # logged, on every cycle. Counts first, then the time, so the
+            # time covers every counted lookup.
+            wait_for(lambda: proxy.count("listdelegations") >= 4, "4 lookups")
+            lookups, cycles = proxy.count("listdelegations"), proxy.count("liststakedcommitments")
+            elapsed = time.monotonic() - start
+            scan()
+            self.log.info(f"{lookups} lookup(s) and {log['failed']} failure line(s) in {cycles} cycles over {elapsed:.1f}s")
+            assert_equal(log["failed"], 1)
+            assert_greater_than_or_equal(max_attempts(elapsed), lookups)
+
+            # A staked-set change while the lookups fail is tried at once
+            # rather than at the next scheduled retry, once, and without
+            # logging the failure again.
+            change_staked_set()
+            wait_for(lambda: proxy.count("listdelegations") > lookups, "the lookup after the set change")
+            times = proxy.times("listdelegations")
+            assert_equal(len(times), lookups + 1)
+            scheduled = list(itertools.islice(scheduled_waits(), lookups))[-1]
+            self.log.info(f"set-change lookup {times[-1] - times[-2]:.1f}s after the previous one; the scheduled retry was {scheduled}s after it")
+            assert times[-1] - times[-2] < scheduled, "the set-change lookup waited for the scheduled retry"
+            # The next scheduled retry is twice as far off; nothing runs
+            # before then however many cycles pass.
+            cycles = proxy.count("liststakedcommitments")
+            quiet_window = 8
+            time.sleep(quiet_window)
+            assert_greater_than(proxy.count("liststakedcommitments"), cycles)
+            assert_equal(proxy.count("listdelegations"), lookups + 1)
+            scan()
+            assert_equal(log["failed"], 1)
+
+            # Recovery: the next scheduled retry succeeds, is logged with the
+            # number of failed attempts, and maps the stake.
+            with proxy.lock:
+                proxy.fail = False
+                failed = len(proxy.calls["listdelegations"])
+            wait_for(lambda: log["refreshed"] >= 1, "the lookup to recover", timeout=2 * refresh_max)
+            assert_equal(log["recovered"], failed)
+            assert_equal(proxy.count("listdelegations"), failed + 1)
+            assert_equal(log["failed"], 1)
+
+            # After recovery a staked-set change is looked up again at once.
+            change_staked_set()
+            wait_for(lambda: log["refreshed"] >= 2, "the lookup after recovery", timeout=30)
+            assert_equal(proxy.count("listdelegations"), failed + 2)
+        finally:
+            # Stop the proxy first: it lets a request in flight finish while
+            # the staker can still read the reply.
+            proxy.stop()
+            staker.kill()
+            staker.wait()
 
     def test_revocation(self, node, owner, owner_address, operator_pub):
         self.log.info("Testing revocation via stakeunlock")
