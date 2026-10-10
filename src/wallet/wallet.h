@@ -798,7 +798,18 @@ public:
     /** Number of pre-generated keys/scripts by each spkm (part of the look-ahead process, used to detect payments) */
     int64_t m_keypool_size{DEFAULT_KEYPOOL_SIZE};
 
-    /** Worker cap for BLSCT output recovery, from -par (GetParThreads()); 0 means one per core */
+    /**
+     * Worker cap for BLSCT output recovery, from -par (GetParThreads()); 0 means one per core.
+     *
+     * Only CWallet::Create() sets it, and every node wallet comes from there:
+     * loading, creating, restoring and migrating all go through it with the
+     * node's args. The wallets navio-wallet builds directly (MakeWallet in
+     * wallettool.cpp, CreateFromDump in dump.cpp) keep the default because
+     * they have no chain: nothing reaches AddToWallet(CTransactionRef, ...),
+     * the only multi-output recovery that reads this, so it never caps a
+     * pool there. Unit tests and benches that construct a CWallet directly
+     * also keep 0 and recover with one worker per core.
+     */
     size_t m_par_threads{0};
 
     /** Active wallet account **/
