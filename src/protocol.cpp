@@ -66,6 +66,10 @@ static_assert(sizeof("getaggblktxn") - 1 <= 12, "net message type exceeds COMMAN
 const char* CMPCTAGGBLOCK = "cmpctaggblk";
 const char* GETAGGBLOCKTXN = "getaggblktxn";
 const char* AGGBLOCKTXN = "aggblocktxn";
+const char* GETPIRHINT = "getpirhint";
+const char* PIRHINT = "pirhint";
+const char* PIRQUERY = "pirquery";
+const char* PIRREPLY = "pirreply";
 } // namespace NetMsgType
 
 /** All known message types. Keep this in the same order as the list of
@@ -119,6 +123,10 @@ const static std::vector<std::string> g_all_net_message_types{
     NetMsgType::CMPCTAGGBLOCK,
     NetMsgType::GETAGGBLOCKTXN,
     NetMsgType::AGGBLOCKTXN,
+    NetMsgType::GETPIRHINT,
+    NetMsgType::PIRHINT,
+    NetMsgType::PIRQUERY,
+    NetMsgType::PIRREPLY,
 };
 
 CMessageHeader::CMessageHeader(const MessageStartChars& pchMessageStartIn, const char* pszCommand, unsigned int nMessageSizeIn)
@@ -241,6 +249,7 @@ static std::string serviceFlagToStr(size_t bit)
     case NODE_P2PMSG_ARCHIVE:  return "P2PMSG_ARCHIVE";
     case NODE_OUTKEYS:         return "OUTKEYS";
     case NODE_P2P_WS:          return "P2P_WS";
+    case NODE_OUTKEYS_PIR:     return "OUTKEYS_PIR";
     // Not using default, so we get warned when a case is missing
     }
 
