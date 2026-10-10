@@ -195,9 +195,16 @@ static constexpr uint64_t CMPCTBLOCKS_AGGREGATE_VERSION{3};
  *  build cmpctaggblk messages and answer getaggblktxn requests. */
 static constexpr size_t MAX_BLOCK_COMPONENT_LISTS{16};
 /** Serialized size of the transactions in the component lists we remember:
- *  room for the lists of the tip and of a block preceding or competing with
- *  it, even when both are full. BLSCT transactions carry no witness data, so
- *  a block's serialized size is at most MAX_BLOCK_WEIGHT / WITNESS_SCALE_FACTOR. */
+ *  the size of two full blocks. BLSCT transactions carry no witness data, so
+ *  a block's serialized size is at most MAX_BLOCK_WEIGHT / WITNESS_SCALE_FACTOR.
+ *  A component list is larger than its block, though: each component keeps
+ *  its own version, lock time, txSig and fee output, where the aggregate
+ *  (blsct::AggregateTransactions) has one of each. So this does not hold the
+ *  lists of two full blocks: RecentBlockComponents drops the oldest lists to
+ *  stay within this and MAX_BLOCK_COMPONENT_LISTS, and does not keep a list
+ *  larger than the whole bound. A peer asking for a list we no longer have,
+ *  or never kept, gets a plain compact block or the
+ *  full block instead. */
 static constexpr size_t MAX_BLOCK_COMPONENT_BYTES{2 * MAX_BLOCK_WEIGHT / WITNESS_SCALE_FACTOR};
 
 // Internal stuff
