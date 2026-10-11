@@ -478,7 +478,6 @@ class RawTransactionsTest(BitcoinTestFramework):
     def raw_multisig_transaction_legacy_tests(self):
         self.log.info("Test raw multisig transactions (legacy)")
         # The traditional multisig workflow does not work with descriptor wallets so these are legacy only.
-        # The multisig workflow with descriptor wallets uses PSBTs and is tested elsewhere, no need to do them here.
 
         # 2of2 test
         addr1 = self.nodes[2].getnewaddress()
