@@ -85,6 +85,14 @@ static constexpr size_t BLOCK_SERIALIZATION_HEADER_SIZE = std::tuple_size_v<Mess
  */
 static constexpr size_t UNDO_WRITE_MIN_ENTRIES_PER_THREAD{32};
 
+/**
+ * Workers UndoWriteToDisk serializes `n_tx` undo entries with, the calling
+ * thread included: the -par cap `threads` (0 means hardware_concurrency(),
+ * as blsct::Common::PoolThreads), further limited so each worker gets at
+ * least UNDO_WRITE_MIN_ENTRIES_PER_THREAD entries. Never below 1.
+ */
+size_t UndoWriteThreads(size_t threads, size_t n_tx);
+
 extern std::atomic_bool fReindex;
 
 // Because validation code takes pointers to the map's CBlockIndex objects, if

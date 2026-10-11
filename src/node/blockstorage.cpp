@@ -694,6 +694,12 @@ CBlockFileInfo* BlockManager::GetBlockFileInfo(size_t n)
     return &m_blockfile_info.at(n);
 }
 
+size_t UndoWriteThreads(size_t threads, size_t n_tx)
+{
+    return std::min(blsct::Common::PoolThreads(threads, n_tx),
+                    std::max<size_t>(1, n_tx / UNDO_WRITE_MIN_ENTRIES_PER_THREAD));
+}
+
 bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos, const uint256& hashBlock, size_t threads) const
 {
     // Open history file to append
@@ -737,10 +743,8 @@ bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos
     const size_t n_tx = vtx.size();
 
     // Workers come out of the caller's -par budget (`threads`), like the
-    // other validation pools, and each gets at least
-    // UNDO_WRITE_MIN_ENTRIES_PER_THREAD entries.
-    const size_t num_threads = std::min(blsct::Common::PoolThreads(threads, n_tx),
-                                        std::max<size_t>(1, n_tx / UNDO_WRITE_MIN_ENTRIES_PER_THREAD));
+    // other validation pools.
+    const size_t num_threads = UndoWriteThreads(threads, n_tx);
 
     std::vector<std::vector<unsigned char>> chunks(num_threads);
 
