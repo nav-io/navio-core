@@ -2948,17 +2948,16 @@ RPCHelpMan consolidate()
 
             UniValue txids(UniValue::VARR);
             // Inputs already consumed by an AGGREGATED consolidation broadcast
-            // this call. The combined tx's hash differs from the wallet's own
-            // half, so there is no CWalletTx to commit (the wallet recovers the
-            // spend by scanning, as on the aggregated send path) — and until
-            // that scan lands, coin selection would hand the next iteration the
-            // same smallest coins, building a conflicting double-spend half.
+            // this call. RecordBroadcastTransaction marks them spent, but it
+            // runs after the broadcast and can fail on a wallet database error;
+            // until the mempool sync callback then catches up, coin selection
+            // would hand the next iteration the same smallest coins, building
+            // a conflicting double-spend half.
             std::set<COutPoint> used_inputs;
             // A failure after the first transaction went out must not discard
-            // the ids already broadcast: an aggregated consolidation has no
-            // CWalletTx, so its returned id is the only handle on it. Return
-            // them as a short result, like running out of outputs to merge,
-            // and log the failure.
+            // the ids already broadcast: the caller has no other record of
+            // which consolidations went out. Return them as a short result,
+            // like running out of outputs to merge, and log the failure.
             const auto stop_after = [&](const std::string& error) {
                 pwallet->WalletLogPrintf("consolidate: stopped after %u of %d transactions: %s\n", txids.size(), max_txs, error);
             };
@@ -3047,6 +3046,18 @@ RPCHelpMan consolidate()
                                 continue;
                             }
                             for (const CTxIn& in : own->vin) used_inputs.insert(in.prevout);
+                            // Record the combined tx as this wallet's own now,
+                            // as the send path does: otherwise the next call
+                            // can run before the mempool sync callback marks
+                            // the inputs spent, reselect them and build a
+                            // conflicting double-spend, and the merged output
+                            // stays untrusted until it confirms.
+                            if (!pwallet->RecordBroadcastTransaction(agg_tx, own->vout, {})) {
+                                // The aggregate is broadcast, so the
+                                // consolidation succeeded; failing the RPC now
+                                // would lose the id of a tx already out.
+                                LogPrintf("consolidate: aggregate %s broadcast but not fully recorded by the wallet\n", agg_tx->GetHash().ToString());
+                            }
                             txids.push_back(agg_tx->GetHash().GetHex());
                         } else {
                             wallet::mapValue_t map_value;
