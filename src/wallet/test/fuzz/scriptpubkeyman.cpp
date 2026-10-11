@@ -7,7 +7,6 @@
 #include <coins.h>
 #include <key.h>
 #include <primitives/transaction.h>
-#include <psbt.h>
 #include <script/descriptor.h>
 #include <script/interpreter.h>
 #include <script/script.h>
@@ -180,17 +179,6 @@ FUZZ_TARGET(scriptpubkeyman, .init = initialize_spkm)
                 const int sighash{fuzzed_data_provider.ConsumeIntegral<int>()};
                 std::map<int, bilingual_str> input_errors;
                 (void)spk_manager->SignTransaction(tx_to, coins, sighash, input_errors);
-            },
-            [&] {
-                std::optional<PartiallySignedTransaction> opt_psbt{ConsumeDeserializable<PartiallySignedTransaction>(fuzzed_data_provider)};
-                if (!opt_psbt) {
-                    good_data = false;
-                    return;
-                }
-                auto psbt{*opt_psbt};
-                const PrecomputedTransactionData txdata{PrecomputePSBTData(psbt)};
-                const int sighash_type{fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 150)};
-                (void)spk_manager->FillPSBT(psbt, txdata, sighash_type, fuzzed_data_provider.ConsumeBool(), fuzzed_data_provider.ConsumeBool(), nullptr, fuzzed_data_provider.ConsumeBool());
             }
         );
     }

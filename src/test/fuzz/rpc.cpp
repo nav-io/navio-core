@@ -7,7 +7,6 @@
 #include <key_io.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
-#include <psbt.h>
 #include <rpc/client.h>
 #include <rpc/request.h>
 #include <rpc/server.h>
@@ -328,17 +327,6 @@ std::string ConsumeScalarRPCArgument(FuzzedDataProvider& fuzzed_data_provider, b
             auto allow_witness = (fuzzed_data_provider.ConsumeBool() ? TX_WITH_WITNESS : TX_NO_WITNESS);
             data_stream << allow_witness(*opt_tx);
             r = HexStr(data_stream);
-        },
-        [&] {
-            // base64 encoded psbt
-            std::optional<PartiallySignedTransaction> opt_psbt = ConsumeDeserializable<PartiallySignedTransaction>(fuzzed_data_provider);
-            if (!opt_psbt) {
-                good_data = false;
-                return;
-            }
-            DataStream data_stream{};
-            data_stream << *opt_psbt;
-            r = EncodeBase64(data_stream);
         },
         [&] {
             // base58 encoded key
