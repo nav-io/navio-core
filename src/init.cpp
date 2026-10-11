@@ -51,6 +51,7 @@
 #include <aggregation/pool.h>
 #include <aggregation/pull.h>
 #include <aggregation/session.h>
+#include <blsct/building_block/fixed_base_window.h>
 #include <blsct/range_proof/bulletproofs_plus/fixed_base_cache.h>
 #include <netmessagemaker.h>
 #include <p2pmsg/archive.h>
@@ -683,8 +684,8 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-checkblockindex", strprintf("Do a consistency check for the block tree, chainstate, and other validation data structures occasionally. (default: %u, regtest: %u, blsctregtest: %u)", defaultChainParams->DefaultConsistencyChecks(), regtestChainParams->DefaultConsistencyChecks(), blsctRegtestChainParams->DefaultConsistencyChecks()), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-checkaddrman=<n>", strprintf("Run addrman consistency checks every <n> operations. Use 0 to disable. (default: %u)", DEFAULT_ADDRMAN_CONSISTENCY_CHECKS), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-blsctfixedbase", "Use precomputed fixed-base tables for the Gi/Hi range-proof generators (a verify-time speed-up, bit-identical to the generic MSM). (default: 1)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
-    argsman.AddArg("-blsctfixedbaseprefix=<n>", "Number of Gi/Hi generators to precompute when -blsctfixedbase is on (default: 128)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
-    argsman.AddArg("-blsctfixedbasewin=<n>", "Window width (2..12) for the fixed-base tables (default: 8)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
+    argsman.AddArg("-blsctfixedbaseprefix=<n>", strprintf("Number of Gi/Hi generators to precompute when -blsctfixedbase is on (default: %u)", bulletproofs_plus::FixedBaseCache::DEFAULT_PREFIX), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
+    argsman.AddArg("-blsctfixedbasewin=<n>", strprintf("Window width (%u..%u) for the fixed-base tables (default: %u)", FixedBaseWindow::MIN_WIN_SIZE, FixedBaseWindow::MAX_WIN_SIZE, bulletproofs_plus::FixedBaseCache::DEFAULT_WIN_SIZE), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-checkmempool=<n>", strprintf("Run mempool consistency checks every <n> transactions. Use 0 to disable. (default: %u, regtest: %u, blsctregtest: %u)", defaultChainParams->DefaultConsistencyChecks(), regtestChainParams->DefaultConsistencyChecks(), blsctRegtestChainParams->DefaultConsistencyChecks()), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-checkpoints", strprintf("Enable rejection of any forks from the known historical chain until block %s (default: %u)", defaultChainParams->Checkpoints().GetHeight(), DEFAULT_CHECKPOINTS_ENABLED), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-deprecatedrpc=<method>", "Allows deprecated RPC method(s) to be used", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
@@ -1680,10 +1681,10 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         bulletproofs_plus::FixedBaseCache::SetEnabled(false);
     } else {
         if (args.IsArgSet("-blsctfixedbaseprefix")) {
-            bulletproofs_plus::FixedBaseCache::SetPrefix(static_cast<size_t>(std::max<int64_t>(0, args.GetIntArg("-blsctfixedbaseprefix", 128))));
+            bulletproofs_plus::FixedBaseCache::SetPrefix(static_cast<size_t>(std::max<int64_t>(0, args.GetIntArg("-blsctfixedbaseprefix", bulletproofs_plus::FixedBaseCache::DEFAULT_PREFIX))));
         }
         if (args.IsArgSet("-blsctfixedbasewin")) {
-            bulletproofs_plus::FixedBaseCache::SetWinSize(static_cast<size_t>(std::clamp<int64_t>(args.GetIntArg("-blsctfixedbasewin", 8), 2, 12)));
+            bulletproofs_plus::FixedBaseCache::SetWinSize(static_cast<size_t>(std::clamp<int64_t>(args.GetIntArg("-blsctfixedbasewin", bulletproofs_plus::FixedBaseCache::DEFAULT_WIN_SIZE), FixedBaseWindow::MIN_WIN_SIZE, FixedBaseWindow::MAX_WIN_SIZE)));
         }
     }
 

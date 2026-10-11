@@ -20,13 +20,9 @@ namespace bulletproofs_plus {
 // range_proof::GeneratorsFactory), so the tables are built exactly once and
 // shared by every verifier.
 //
-// This is an experimental acceleration of the range-proof verification MSM. It
-// is disabled by default and enabled only via environment variables so that the
-// default consensus path is byte-for-byte unchanged:
-//
-//   NAVIO_BLSCT_FIXEDBASE=1           enable (default: off)
-//   NAVIO_BLSCT_FIXEDBASE_WIN=<bits>  window size, default 8
-//   NAVIO_BLSCT_FIXEDBASE_PREFIX=<n>  # of Gi (and Hi) generators to table, default 128
+// It accelerates the range-proof verification MSM. It is on by default;
+// -blsctfixedbase=0 turns it off, and -blsctfixedbaseprefix and
+// -blsctfixedbasewin tune it (see the setters below).
 //
 // When enabled, a proof whose aggregated length mn is <= the tabled prefix has
 // its Gi/Hi multi-scalar terms computed from the tables; larger proofs and the
@@ -38,6 +34,11 @@ class FixedBaseCache
 public:
     static FixedBaseCache& Get();
 
+    //! Defaults for SetPrefix and SetWinSize (-blsctfixedbaseprefix and
+    //! -blsctfixedbasewin).
+    static constexpr size_t DEFAULT_PREFIX{128};
+    static constexpr size_t DEFAULT_WIN_SIZE{8};
+
     // Process-wide configuration, read once by MaybeInit. Defaults are ON so
     // every consumer that never touches init.cpp's ArgsManager (libblsct.a,
     // bench_navio, test_navio, navio-wallet) still gets the fast path; init.cpp
@@ -48,6 +49,14 @@ public:
     // setters assert the tables have not been latched yet -- a mis-ordered call
     // (a proof verified before init runs) fails loudly instead of quietly
     // ignoring the operator's -blsctfixedbase* flags.
+    //
+    // The ordering invariant is: every setter runs on the init thread, before
+    // any proof is verified on any thread. s_latched only detects a setter
+    // that comes after MaybeInit has latched; it does not synchronise the config values,
+    // which are plain statics MaybeInit reads inside its call_once with no
+    // lock. A setter running concurrently with the first MaybeInit could pass
+    // its assert and then race that read, so the invariant above -- not the
+    // atomic's memory ordering -- is what makes the config reads safe.
     static void SetEnabled(bool on) { assert(!s_latched.load(std::memory_order_acquire)); s_enabled = on; }
     static void SetPrefix(size_t prefix) { assert(!s_latched.load(std::memory_order_acquire)); s_prefix = prefix; }
     static void SetWinSize(size_t win) { assert(!s_latched.load(std::memory_order_acquire)); s_winSize = win; }
@@ -68,15 +77,15 @@ private:
     // Config source (defaults ON); MaybeInit copies these into the resolved
     // per-instance state below.
     inline static bool s_enabled = true;
-    inline static size_t s_prefix = 128;
-    inline static size_t s_winSize = 8;
+    inline static size_t s_prefix = DEFAULT_PREFIX;
+    inline static size_t s_winSize = DEFAULT_WIN_SIZE;
     // Set true when MaybeInit latches the config into the built tables. Guards
     // the setters against a too-late config change (see above).
     inline static std::atomic<bool> s_latched{false};
 
     bool m_enabled = false;
     size_t m_prefix = 0;
-    size_t m_winSize = 8;
+    size_t m_winSize = DEFAULT_WIN_SIZE;
     FixedBaseWindow m_gi;
     FixedBaseWindow m_hi;
     // First tabled base, kept to assert the generators the tables were built
