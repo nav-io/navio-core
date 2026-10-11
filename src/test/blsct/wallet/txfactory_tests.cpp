@@ -350,11 +350,12 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_sendmax_test, TestingSetup
     BOOST_CHECK(foundRecipient);
 }
 
-// `additionalFee` on the subtract-fee path: the aggregated `consolidate` RPC
-// over-funds the fee output (out of the merged amount) to cover the weight of
-// fee-0 cover candidates. Two identical single-output subtract-fee builds must
-// differ in fee output by exactly the additionalFee, with the recipient output
-// reduced by the same amount.
+// `additionalFee` on the subtract-fee path of BuildTx: two identical
+// single-output subtract-fee builds must differ in fee output by exactly the
+// additionalFee, with the recipient output reduced by the same amount. This is
+// the factory arithmetic the aggregated `consolidate` RPC relies on to fund
+// its cover candidates out of the merged amount; the RPC itself is covered by
+// the functional tests.
 BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_additionalfee_test, TestingSetup)
 {
     SeedInsecureRand(SeedRand::ZEROS);
@@ -416,6 +417,61 @@ BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_additionalfee_test, Testin
     // additionalFee lands in the fee output and comes out of the recipient.
     BOOST_CHECK_EQUAL(fee_extra, fee_plain + extra);
     BOOST_CHECK_EQUAL(amount_extra, amount_plain - extra);
+}
+
+// A subtract-fee output whose amount is exactly the fee would be reduced to
+// zero. CreateOutput emits a zero amount as a keyless, proofless OP_RETURN, so
+// such a build cannot balance: it must fail rather than return a transaction
+// that does not verify.
+BOOST_FIXTURE_TEST_CASE(createtransaction_subtractfee_reduced_to_zero_test, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    CCoinsViewDB base{{.path = "test_sffa_zero", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+
+    LOCK(wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    const auto add_coin = [&](const CAmount amount) {
+        COutPoint outpoint{Txid::FromUint256(InsecureRand256())};
+        CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+        coins_view_cache.SetBestBlock(InsecureRand256());
+        Coin coin;
+        coin.nHeight = 1;
+        coin.out = blsct::CreateOutput(recvAddress, amount, "test").out;
+        coins_view_cache.AddCoin(outpoint, std::move(coin), true);
+        BOOST_CHECK(coins_view_cache.Flush());
+        return outpoint;
+    };
+
+    // The fee of a 1-in/1-out subtract-fee build: the whole input sent, so no
+    // change output exists, the same shape as the build below.
+    CAmount fee = 0;
+    {
+        const COutPoint outpoint = add_coin(1000 * COIN);
+        CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+        auto tx = blsct::TxFactory(blsct_km);
+        BOOST_CHECK(tx.AddInput(coins_view_cache, outpoint));
+        tx.AddOutput(recvAddress, 1000 * COIN, "test", TokenId(), blsct::NORMAL, 0, /*fSubtractFeeFromAmount=*/true);
+        auto finalTx = tx.BuildTx();
+        BOOST_REQUIRE(finalTx.has_value());
+        fee = GetFeeValue(CTransaction(finalTx->tx));
+        BOOST_REQUIRE(fee > 0);
+    }
+
+    // Spend an input worth exactly that fee, subtracting the fee from an output
+    // of the same amount: the recipient would receive nothing.
+    const COutPoint outpoint = add_coin(fee);
+    CCoinsViewCache coins_view_cache{&base, /*deterministic=*/true};
+    auto tx = blsct::TxFactory(blsct_km);
+    BOOST_CHECK(tx.AddInput(coins_view_cache, outpoint));
+    tx.AddOutput(recvAddress, fee, "test", TokenId(), blsct::NORMAL, 0, /*fSubtractFeeFromAmount=*/true);
+    BOOST_CHECK(!tx.BuildTx().has_value());
 }
 
 // BuildTx randomises vout order, so the recipient output sits at no fixed

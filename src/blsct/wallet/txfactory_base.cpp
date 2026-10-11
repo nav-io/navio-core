@@ -339,7 +339,11 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         if (subtractFeeOutput) {
             const CAmount fee = nAmounts[TokenId()].nFromFee;
             const CAmount reduced = subtractFeeOutput->amount - fee;
-            if (reduced < 0) return std::nullopt; // fee exceeds the amount sent
+            // A zero reduced value cannot be paid either: CreateOutput turns a
+            // zero amount into a keyless, proofless OP_RETURN, yet the output's
+            // gamma would still enter the balance and its key the signature,
+            // so the transaction would fail verification.
+            if (reduced <= 0) return std::nullopt; // fee consumes the whole amount sent
             nAmounts[subtractFeeOutput->token_id].nFromOutputs = nFromPlainOutputs + reduced;
             sffaReduced = reduced;
         }
