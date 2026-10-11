@@ -531,8 +531,8 @@ bool RangeProofLogic<T>::VerifyProofs(
         // precomputed window table can serve them faster than the generic MSM,
         // which rebuilds its NAF tables on every proof. The windowed result is
         // bit-identical to mulVecMT (EC addition is associative/commutative), so
-        // the consensus verdict is unchanged. Disabled unless NAVIO_BLSCT_FIXEDBASE=1
-        // and the proof's aggregated length fits the tabled generator prefix.
+        // the consensus verdict is unchanged. Used unless -blsctfixedbase=0, and
+        // only when the proof's aggregated length fits the tabled generator prefix.
         bool used_fixed_base = false;
         Point fixed_base_sum; // identity
         if constexpr (std::is_same_v<T, Blst>) {
