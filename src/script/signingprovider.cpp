@@ -22,37 +22,6 @@ bool LookupHelper(const M& map, const K& key, V& value)
     return false;
 }
 
-bool HidingSigningProvider::GetCScript(const CScriptID& scriptid, CScript& script) const
-{
-    return m_provider->GetCScript(scriptid, script);
-}
-
-bool HidingSigningProvider::GetPubKey(const CKeyID& keyid, CPubKey& pubkey) const
-{
-    return m_provider->GetPubKey(keyid, pubkey);
-}
-
-bool HidingSigningProvider::GetKey(const CKeyID& keyid, CKey& key) const
-{
-    if (m_hide_secret) return false;
-    return m_provider->GetKey(keyid, key);
-}
-
-bool HidingSigningProvider::GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const
-{
-    if (m_hide_origin) return false;
-    return m_provider->GetKeyOrigin(keyid, info);
-}
-
-bool HidingSigningProvider::GetTaprootSpendData(const XOnlyPubKey& output_key, TaprootSpendData& spenddata) const
-{
-    return m_provider->GetTaprootSpendData(output_key, spenddata);
-}
-bool HidingSigningProvider::GetTaprootBuilder(const XOnlyPubKey& output_key, TaprootBuilder& builder) const
-{
-    return m_provider->GetTaprootBuilder(output_key, builder);
-}
-
 bool FlatSigningProvider::GetCScript(const CScriptID& scriptid, CScript& script) const { return LookupHelper(scripts, scriptid, script); }
 bool FlatSigningProvider::GetPubKey(const CKeyID& keyid, CPubKey& pubkey) const { return LookupHelper(pubkeys, keyid, pubkey); }
 bool FlatSigningProvider::GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const

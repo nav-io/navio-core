@@ -250,7 +250,6 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     policy/feerate.cpp
     policy/policy.cpp
     protocol.cpp
-    psbt.cpp
     rpc/rawtransaction_util.cpp
     rpc/request.cpp
     rpc/util.cpp
