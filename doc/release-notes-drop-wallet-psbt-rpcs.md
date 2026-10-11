@@ -15,9 +15,7 @@
 - The `psbt` option of `send` and `sendall` has been removed. Passing it is now
   an invalid parameter error, so a call that still asks for a PSBT fails instead
   of broadcasting a transaction. Use `add_to_wallet=false` to get the signed
-  transaction in the `hex` field without broadcasting it. A transaction the
-  wallet cannot fully sign is still returned as a PSBT in the `psbt` field, with
-  `complete` set to `false`.
+  transaction in the `hex` field without broadcasting it.
 - `fundrawtransaction` no longer accepts a `psbt` key in its options, which it
   had ignored; passing it is now an error.
 - `bumpfee` on a wallet with private keys disabled still fails, and its error no

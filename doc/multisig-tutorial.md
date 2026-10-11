@@ -235,9 +235,6 @@ destination_addr=$(./src/navio-cli -signet -rpcwallet="participant_1" getnewaddr
 funded_psbt=$(./src/navio-cli -signet -named -rpcwallet="multisig_wallet_01" walletcreatefundedpsbt outputs="{\"$destination_addr\": $amount}" | jq -r '.psbt')
 ```
 
-The `send` RPC can also return a PSBT if more signatures are needed to sign the
-transaction.
-
 ### 1.6 Sign the PSBT
 
 The participants sign the PSBT one after another with `walletprocesspsbt`, each

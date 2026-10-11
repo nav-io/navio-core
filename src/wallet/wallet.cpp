@@ -2693,6 +2693,15 @@ void MaybeResendWalletTxs(WalletContext& context)
  * @{
  */
 
+std::optional<Coin> CWallet::GetWalletCoin(const COutPoint& outpoint) const
+{
+    AssertLockHeld(cs_wallet);
+    const CWalletTx* wtx{GetWalletTxFromOutpoint(outpoint)};
+    if (wtx == nullptr) return std::nullopt;
+    const int height{wtx->state<TxStateConfirmed>() ? wtx->state<TxStateConfirmed>()->confirmed_block_height : 0};
+    return Coin(wtx->tx->vout[wtx->GetOutputIndexFromHash(outpoint)], height, wtx->IsCoinBase());
+}
+
 bool CWallet::SignTransaction(CMutableTransaction& tx) const
 {
     AssertLockHeld(cs_wallet);
@@ -2700,12 +2709,11 @@ bool CWallet::SignTransaction(CMutableTransaction& tx) const
     // Build coins map
     std::map<COutPoint, Coin> coins;
     for (auto& input : tx.vin) {
-        const auto wtx = GetWalletTxFromOutpoint(input.prevout);
-        if (wtx == nullptr) {
+        auto coin{GetWalletCoin(input.prevout)};
+        if (!coin) {
             return false;
         }
-        int prev_height = wtx->state<TxStateConfirmed>() ? wtx->state<TxStateConfirmed>()->confirmed_block_height : 0;
-        coins[input.prevout] = Coin(wtx->tx->vout[wtx->GetOutputIndexFromHash(input.prevout)], prev_height, wtx->IsCoinBase());
+        coins[input.prevout] = std::move(*coin);
     }
     std::map<int, bilingual_str> input_errors;
     return SignTransaction(tx, coins, SIGHASH_DEFAULT, input_errors);

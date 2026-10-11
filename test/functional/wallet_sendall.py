@@ -34,8 +34,10 @@ class SendallTest(BitcoinTestFramework):
 
     def set_test_params(self):
         getcontext().prec=10
-        self.num_nodes = 1
+        self.num_nodes = 2
         self.setup_clean_chain = True
+        # Node 1 keeps its wallet transactions out of the mempool
+        self.extra_args = [[], ["-walletbroadcast=0"]]
 
     def assert_balance_swept_completely(self, tx, balance):
         output_sum = sum([o["value"] for o in tx["decoded"]["vout"]])
@@ -316,7 +318,59 @@ class SendallTest(BitcoinTestFramework):
         assert "txid" not in sendall_tx_receipt
         assert_equal(self.nodes[0].getrawmempool(), [])
         assert utxo["outid"] in [u["outid"] for u in self.wallet.listunspent()]
+        # The unsigned transaction comes back as hex, with the input it could
+        # not sign reported as an error
+        assert "psbt" not in sendall_tx_receipt
+        decoded = self.nodes[0].decoderawtransaction(sendall_tx_receipt["hex"])
+        assert_equal([vin["outid"] for vin in decoded["vin"]], [utxo["outid"]])
+        assert_equal([e["outid"] for e in sendall_tx_receipt["errors"]], [utxo["outid"]])
         watchonly.lockunspent(True)
+
+    @cleanup
+    def sendall_add_to_wallet_false(self):
+        self.log.info("Test sendall with add_to_wallet=false returns the signed transaction without broadcasting it")
+        pre_sendall_balance = self.add_utxos([8, 13])
+
+        sendall_tx_receipt = self.wallet.sendall(recipients=[self.remainder_target], add_to_wallet=False)
+        assert_equal(sendall_tx_receipt["complete"], True)
+        assert "psbt" not in sendall_tx_receipt
+        assert "errors" not in sendall_tx_receipt
+        decoded = self.nodes[0].decoderawtransaction(sendall_tx_receipt["hex"])
+        assert_equal(decoded["txid"], sendall_tx_receipt["txid"])
+        assert_equal(len(decoded["vin"]), 2)
+
+        # Neither broadcast nor added to the wallet
+        assert_equal(self.nodes[0].getrawmempool(), [])
+        assert_raises_rpc_error(-5, "Invalid or non-wallet transaction id", self.wallet.gettransaction, sendall_tx_receipt["txid"])
+        assert_equal(self.wallet.getbalances()["mine"]["trusted"], pre_sendall_balance)
+
+        # The hex is fully signed, so the node would accept it
+        assert_equal(self.nodes[0].testmempoolaccept([sendall_tx_receipt["hex"]])[0]["allowed"], True)
+
+    def send_spends_unbroadcast_wallet_tx(self):
+        self.log.info("Test sendall and send sign an input from a wallet transaction that is not in the mempool")
+        wallet = self.nodes[1].get_wallet_rpc(self.default_wallet_name)
+        self.def_wallet.sendtoaddress(wallet.getnewaddress(), 10)
+        self.generate(self.nodes[0], 1)
+
+        # With -walletbroadcast=0 the parent is only added to the wallet
+        parent_addr = wallet.getnewaddress()
+        parent_txid = wallet.sendtoaddress(parent_addr, 5)
+        assert_equal(self.nodes[1].getrawmempool(), [])
+        parent = wallet.gettransaction(txid=parent_txid, verbose=True)
+        outid = next(o["hash"] for o in parent["decoded"]["vout"] if o["scriptPubKey"].get("address") == parent_addr)
+
+        sendall_tx_receipt = wallet.sendall(recipients=[self.remainder_target], inputs=[{"outid": outid}], add_to_wallet=False)
+        send_tx_receipt = wallet.send(outputs=[{self.remainder_target: 1}], inputs=[{"outid": outid}], add_inputs=False, add_to_wallet=False)
+        for receipt in [sendall_tx_receipt, send_tx_receipt]:
+            assert_equal(receipt["complete"], True)
+            assert "errors" not in receipt
+            decoded = self.nodes[1].decoderawtransaction(receipt["hex"])
+            assert_equal([vin["outid"] for vin in decoded["vin"]], [outid])
+            # The child's signature over the parent's output is valid
+            accept = self.nodes[1].testmempoolaccept([parent["hex"], receipt["hex"]])
+            assert_equal([r["allowed"] for r in accept], [True, True])
+        assert_equal(self.nodes[1].getrawmempool(), [])
 
     @cleanup
     def sendall_with_minconf(self):
@@ -455,6 +509,9 @@ class SendallTest(BitcoinTestFramework):
         # Sendall leaves a watchonly wallet's specific UTXOs unspent, as it cannot sign them
         self.sendall_watchonly_specific_inputs()
 
+        # Sendall with add_to_wallet=false returns the signed hex without broadcasting it
+        self.sendall_add_to_wallet_false()
+
         # Sendall only uses outputs with at least a give number of confirmations when using minconf
         self.sendall_with_minconf()
 
@@ -463,6 +520,9 @@ class SendallTest(BitcoinTestFramework):
 
         # Sendall fails when many inputs result to too large transaction
         self.sendall_fails_with_transaction_too_large()
+
+        # Sendall and send sign an input whose wallet transaction is not in the mempool
+        self.send_spends_unbroadcast_wallet_tx()
 
 if __name__ == '__main__':
     SendallTest(__file__).main()

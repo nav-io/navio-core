@@ -517,6 +517,9 @@ public:
 
     const CWalletTx* GetWalletTx(const uint256& hash) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     const CWalletTx* GetWalletTxFromOutpoint(const COutPoint& outpoint) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    //! The output at outpoint as a Coin, from the wallet's own transaction
+    //! (height 0 while it is unconfirmed), or nullopt if the wallet has none.
+    std::optional<Coin> GetWalletCoin(const COutPoint& outpoint) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     void IndexWalletTxOutputs(CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     std::set<uint256> GetTxConflicts(const CWalletTx& wtx) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);

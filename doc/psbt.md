@@ -68,8 +68,6 @@ analyze a PSBT on its own. What remains are the wallet RPCs:
   field, which can be broadcast with `sendrawtransaction`.
 - **`psbtbumpfee`** is a wallet RPC that bumps the fee of an opt-in-RBF
   transaction and returns the replacement as a PSBT instead of signing it.
-- The `psbt` option of the wallet RPCs `send` and `sendall` makes them return a
-  PSBT instead of a signed transaction.
 
 ### Workflows
 
