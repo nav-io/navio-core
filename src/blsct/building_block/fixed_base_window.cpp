@@ -4,6 +4,8 @@
 
 #include <blsct/building_block/fixed_base_window.h>
 
+#include <tinyformat.h>
+
 #include <stdexcept>
 #include <string>
 
@@ -19,8 +21,8 @@ constexpr size_t kScalarBits = 255;
 size_t CheckedWinSize(size_t winSize)
 {
     if (winSize < FixedBaseWindow::MIN_WIN_SIZE || winSize > FixedBaseWindow::MAX_WIN_SIZE) {
-        throw std::invalid_argument("FixedBaseWindow: winSize must be in [" + std::to_string(FixedBaseWindow::MIN_WIN_SIZE) +
-                                    ", " + std::to_string(FixedBaseWindow::MAX_WIN_SIZE) + "]");
+        throw std::invalid_argument(strprintf("FixedBaseWindow: winSize must be in [%d, %d]",
+                                              FixedBaseWindow::MIN_WIN_SIZE, FixedBaseWindow::MAX_WIN_SIZE));
     }
     return winSize;
 }
