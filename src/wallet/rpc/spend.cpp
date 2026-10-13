@@ -135,42 +135,42 @@ static void InterpretFeeEstimationInstructions(const UniValue& conf_target, cons
 
 static UniValue FinishTransaction(const std::shared_ptr<CWallet> pwallet, const UniValue& options, const CMutableTransaction& rawTx)
 {
-    // Make a blank psbt
-    PartiallySignedTransaction psbtx(rawTx);
+    CMutableTransaction mtx{rawTx};
+    LOCK(pwallet->cs_wallet);
 
-    // First fill transaction with our data, including BIP32 derivation
-    // paths, without signing.
-    bool complete;
-    pwallet->FillPSBT(psbtx, complete, SIGHASH_DEFAULT, /*sign=*/false, /*bip32derivs=*/true);
-    const TransactionError err{pwallet->FillPSBT(psbtx, complete, SIGHASH_DEFAULT, /*sign=*/true, /*bip32derivs=*/false)};
-    if (err != TransactionError::OK) {
-        throw JSONRPCTransactionError(err);
+    // Fetch the spent outputs, as signrawtransactionwithwallet does
+    std::map<COutPoint, Coin> coins;
+    for (const CTxIn& txin : mtx.vin) {
+        coins[txin.prevout]; // Create empty map entry keyed by prevout.
+    }
+    pwallet->chain().findCoins(coins);
+    // findCoins only sees the UTXO set and mempool, and clears what it does
+    // not find. These are wallet coins, so take any it missed (e.g. an
+    // unconfirmed parent that is not in the mempool) from the wallet.
+    for (auto& [outpoint, coin] : coins) {
+        if (!coin.IsSpent()) continue;
+        if (auto wallet_coin{pwallet->GetWalletCoin(outpoint)}) coin = std::move(*wallet_coin);
     }
 
-    CMutableTransaction mtx;
-    complete = FinalizeAndExtractPSBT(psbtx, mtx);
+    std::map<int, bilingual_str> input_errors;
+    const bool complete{pwallet->SignTransaction(mtx, coins, SIGHASH_DEFAULT, input_errors)};
 
     UniValue result(UniValue::VOBJ);
 
     bool add_to_wallet{options.exists("add_to_wallet") ? options["add_to_wallet"].get_bool() : true};
-    if (!complete || !add_to_wallet) {
-        // Serialize the PSBT
-        DataStream ssTx{};
-        ssTx << psbtx;
-        result.pushKV("psbt", EncodeBase64(ssTx.str()));
+    if (complete && add_to_wallet) {
+        CTransactionRef tx(MakeTransactionRef(std::move(mtx)));
+        result.pushKV("txid", tx->GetHash().GetHex());
+        pwallet->CommitTransaction(tx, {}, /*orderForm=*/{});
+        result.pushKV("complete", complete);
+        return result;
     }
 
     if (complete) {
-        std::string hex{EncodeHexTx(CTransaction(mtx))};
-        CTransactionRef tx(MakeTransactionRef(std::move(mtx)));
-        result.pushKV("txid", tx->GetHash().GetHex());
-        if (add_to_wallet) {
-            pwallet->CommitTransaction(tx, {}, /*orderForm=*/{});
-        } else {
-            result.pushKV("hex", hex);
-        }
+        result.pushKV("txid", CTransaction(mtx).GetHash().GetHex());
     }
-    result.pushKV("complete", complete);
+    // Adds "hex", "complete" and, for inputs that could not be signed, "errors"
+    SignTransactionResultToJSON(mtx, complete, coins, input_errors, result);
 
     return result;
 }
@@ -936,6 +936,37 @@ RPCHelpMan fundrawtransaction()
     };
 }
 
+// Per-input signing errors, as reported by SignTransactionResultToJSON
+static RPCResult SignErrorsDoc()
+{
+    return {RPCResult::Type::ARR, "errors", /*optional=*/true, "Script verification errors (if there are any)",
+            {
+                {RPCResult::Type::OBJ, "", "",
+                 {
+                     {RPCResult::Type::STR_HEX, "outid", "The hash of the referenced, previous output"},
+                     {RPCResult::Type::ARR, "witness", "",
+                      {
+                          {RPCResult::Type::STR_HEX, "witness", ""},
+                      }},
+                     {RPCResult::Type::STR_HEX, "scriptSig", "The hex-encoded signature script"},
+                     {RPCResult::Type::NUM, "sequence", "Script sequence number"},
+                     {RPCResult::Type::STR, "error", "Verification or signing error related to the input"},
+                 }},
+            }};
+}
+
+// Result of the send and sendall RPCs, as built by FinishTransaction
+static RPCResult SendResultDoc()
+{
+    return {RPCResult::Type::OBJ, "", "",
+            {
+                {RPCResult::Type::BOOL, "complete", "If the transaction has a complete set of signatures"},
+                {RPCResult::Type::STR_HEX, "txid", /*optional=*/true, "If the transaction is complete, the transaction id for the send. Only 1 transaction is created regardless of the number of addresses."},
+                {RPCResult::Type::STR_HEX, "hex", /*optional=*/true, "If add_to_wallet is false or more signatures are needed, the hex-encoded raw transaction with signature(s)"},
+                SignErrorsDoc(),
+            }};
+}
+
 RPCHelpMan signrawtransactionwithwallet()
 {
     return RPCHelpMan{
@@ -980,17 +1011,7 @@ RPCHelpMan signrawtransactionwithwallet()
             RPCResult::Type::OBJ, "", "", {
                                               {RPCResult::Type::STR_HEX, "hex", "The hex-encoded raw transaction with signature(s)"},
                                               {RPCResult::Type::BOOL, "complete", "If the transaction has a complete set of signatures"},
-                                              {RPCResult::Type::ARR, "errors", /*optional=*/true, "Script verification errors (if there are any)", {
-                                                                                                                                                       {RPCResult::Type::OBJ, "", "", {
-                                                                                                                                                                                          {RPCResult::Type::STR_HEX, "outid", "The hash of the referenced, previous output"},
-                                                                                                                                                                                          {RPCResult::Type::ARR, "witness", "", {
-                                                                                                                                                                                                                                    {RPCResult::Type::STR_HEX, "witness", ""},
-                                                                                                                                                                                                                                }},
-                                                                                                                                                                                          {RPCResult::Type::STR_HEX, "scriptSig", "The hex-encoded signature script"},
-                                                                                                                                                                                          {RPCResult::Type::NUM, "sequence", "Script sequence number"},
-                                                                                                                                                                                          {RPCResult::Type::STR, "error", "Verification or signing error related to the input"},
-                                                                                                                                                                                      }},
-                                                                                                                                                   }},
+                                              SignErrorsDoc(),
                                           }},
         RPCExamples{HelpExampleCli("signrawtransactionwithwallet", "\"myhex\"") + HelpExampleRpc("signrawtransactionwithwallet", "\"myhex\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -1309,8 +1330,7 @@ RPCHelpMan send()
                                FundTxDoc()),
                            RPCArgOptions{.oneline_description = "options"}},
                       },
-                      RPCResult{
-                          RPCResult::Type::OBJ, "", "", {{RPCResult::Type::BOOL, "complete", "If the transaction has a complete set of signatures"}, {RPCResult::Type::STR_HEX, "txid", /*optional=*/true, "The transaction id for the send. Only 1 transaction is created regardless of the number of addresses."}, {RPCResult::Type::STR_HEX, "hex", /*optional=*/true, "If add_to_wallet is false, the hex-encoded raw transaction with signature(s)"}, {RPCResult::Type::STR, "psbt", /*optional=*/true, "If more signatures are needed, or if add_to_wallet is false, the base64-encoded (partially) signed transaction"}}},
+                      SendResultDoc(),
                       RPCExamples{""
                                   "\nSend 0.1 BTC with a confirmation target of 6 blocks in economical fee estimate mode\n" +
                                   HelpExampleCli("send", "'{\"" + EXAMPLE_ADDRESS[0] + "\": 0.1}' 6 economical\n") +
@@ -1410,8 +1430,7 @@ RPCHelpMan sendall()
                                FundTxDoc()),
                            RPCArgOptions{.oneline_description = "options"}},
                       },
-                      RPCResult{
-                          RPCResult::Type::OBJ, "", "", {{RPCResult::Type::BOOL, "complete", "If the transaction has a complete set of signatures"}, {RPCResult::Type::STR_HEX, "txid", /*optional=*/true, "The transaction id for the send. Only 1 transaction is created regardless of the number of addresses."}, {RPCResult::Type::STR_HEX, "hex", /*optional=*/true, "If add_to_wallet is false, the hex-encoded raw transaction with signature(s)"}, {RPCResult::Type::STR, "psbt", /*optional=*/true, "If more signatures are needed, or if add_to_wallet is false, the base64-encoded (partially) signed transaction"}}},
+                      SendResultDoc(),
                       RPCExamples{""
                                   "\nSpend all UTXOs from the wallet with a fee rate of 1 " +
                                   CURRENCY_ATOM + "/vB using named arguments\n" + HelpExampleCli("-named sendall", "recipients='[\"" + EXAMPLE_ADDRESS[0] + "\"]' fee_rate=1\n") +
