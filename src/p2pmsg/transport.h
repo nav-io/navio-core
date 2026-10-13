@@ -392,11 +392,15 @@ public:
     //! Signal that the node is shutting down so any in-flight PoW grind on a
     //! worker aborts promptly instead of blocking the pool-stop join. Call
     //! before stopping the worker pool. Idempotent, safe from any thread.
-    void Interrupt()
+    void Interrupt() EXCLUSIVE_LOCKS_REQUIRED(!m_send_order_mutex)
     {
         m_interrupt.store(true, std::memory_order_relaxed);
         // Wake senders parked on the send-order gate so they abandon promptly
-        // instead of waiting out a predecessor's (also aborting) grind.
+        // instead of waiting out a predecessor's (also aborting) grind. Pass
+        // through the gate's mutex first: a sender that read the flag before
+        // the store above holds it until wait() releases it, so the
+        // notification cannot land in that gap and be lost.
+        { LOCK(m_send_order_mutex); }
         m_send_order_cv.notify_all();
     }
 
