@@ -2173,6 +2173,28 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
     bool fEnforceBIP30 = !((pindex->nHeight==91722 && pindex->GetBlockHash() == uint256S("0x00000000000271a2dc26e7667f8419f2e15416dc6955e5a6c6cdf3f2574dd08e")) ||
                            (pindex->nHeight==91812 && pindex->GetBlockHash() == uint256S("0x00000000000af0aed4792b1acee3d966af36cf5def14935db8de83d6f9306f2f")));
 
+    const auto revert_predicate = [&view](const CTxOut& out) {
+        if (out.predicate.size() == 0) return true;
+        if (blsct::ExecutePredicate(out.predicate, view, true)) return true;
+        error("DisconnectBlock(): Could not revert predicate: %s", blsct::PredicateToString(out.predicate));
+        return false;
+    };
+
+    // ConnectBlock applies a BLSCT block's coinbase predicates last: vtx[0]
+    // goes through blsct::PrepareTxForDeferredVerification after the loop
+    // over every other transaction. Unwind them first, so a coinbase
+    // predicate that depends on another transaction of the same block (a
+    // coinbase MINT of a token CREATEd by vtx[1]) is reverted before what it
+    // depends on. The rest of the coinbase's disconnect stays in the reverse
+    // transaction loop below.
+    const bool coinbase_predicates_applied_last{block.IsBLSCT()};
+    if (coinbase_predicates_applied_last) {
+        const CTransaction& coinbase = *block.vtx[0];
+        for (int o = static_cast<int>(coinbase.vout.size()) - 1; o >= 0; o--) {
+            if (!revert_predicate(coinbase.vout[o])) return DISCONNECT_FAILED;
+        }
+    }
+
     // undo transactions in reverse order
     for (int i = block.vtx.size() - 1; i >= 0; i--) {
         const CTransaction& tx = *(block.vtx[i]);
@@ -2207,16 +2229,17 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
         // aborts (DISCONNECT_FAILED). Unwinding in reverse mirrors application
         // order. Staked-commitment removal and the output/coin match below are
         // per-output and order-independent, so reversing does not affect them.
+        //
+        // The same holds across transactions, which is why this loop runs
+        // last-to-first -- except for a BLSCT block's coinbase: its predicates
+        // were applied after every other transaction and have already been
+        // reverted above, so they are skipped here.
+        const bool revert_predicates{!(i == 0 && coinbase_predicates_applied_last)};
         for (int o = static_cast<int>(tx.vout.size()) - 1; o >= 0; o--) {
             if (tx.vout[o].IsStakedCommitment()) {
                 view.RemoveStakedCommitment(tx.vout[o].blsctData.rangeProof.Vs[0]);
             }
-            if (tx.vout[o].predicate.size() > 0) {
-                if (!blsct::ExecutePredicate(tx.vout[o].predicate, view, true)) {
-                    error("DisconnectBlock(): Could not revert predicate: %s", blsct::PredicateToString(tx.vout[o].predicate));
-                    return DISCONNECT_FAILED;
-                }
-            }
+            if (revert_predicates && !revert_predicate(tx.vout[o])) return DISCONNECT_FAILED;
             if (!tx.vout[o].scriptPubKey.IsUnspendable()) {
                 COutPoint out(out_ids[o]);
                 if (self_spent.contains(out.hash)) continue;
