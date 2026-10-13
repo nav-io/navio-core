@@ -2082,6 +2082,13 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         node.rfq_orders = std::make_unique<rfq::OrderCache>(GetTime<std::chrono::seconds>().count());
         RegisterValidationInterface(node.rfq_orders.get());
         rfq::SetActiveOrderCache(node.rfq_orders.get());
+        // FindMatching only prunes lazily, so a node that never serves an RFQ
+        // would otherwise keep expired orders until LRU pressure evicts them.
+        if (node.scheduler) {
+            rfq::OrderCache* orders = node.rfq_orders.get();
+            node.scheduler->scheduleEvery([orders] { orders->PruneExpired(GetTime<std::chrono::seconds>().count()); },
+                                          rfq::ORDER_PRUNE_INTERVAL);
+        }
 
         // Taker-side RFQ request/quote registry.
         node.rfq_matcher = std::make_unique<rfq::MatcherRegistry>();

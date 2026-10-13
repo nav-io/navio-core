@@ -147,14 +147,16 @@ size_t OrderCache::PruneExpired(int64_t now)
 }
 
 size_t OrderCache::Size() const { LOCK(m_mutex); return m_orders.size(); }
-size_t OrderCache::Bytes() const { LOCK(m_mutex); return m_bytes; }
+OrderCache::Stats OrderCache::GetStats() const { LOCK(m_mutex); return Stats{m_orders.size(), m_bytes}; }
 bool OrderCache::Contains(const uint256& quote_id) const { LOCK(m_mutex); return m_orders.contains(quote_id); }
 
-std::vector<OrderCache::OrderView> OrderCache::Snapshot(int64_t now) const
+OrderCache::OrderSnapshot OrderCache::Snapshot(int64_t now) const
 {
-    std::vector<OrderView> out;
+    OrderSnapshot snap;
+    std::vector<OrderView>& out = snap.orders;
     {
         LOCK(m_mutex);
+        snap.stats = Stats{m_orders.size(), m_bytes};
         out.reserve(m_orders.size());
         for (const auto& kv : m_orders) {
             const Entry& e = kv.second;
@@ -171,7 +173,7 @@ std::vector<OrderCache::OrderView> OrderCache::Snapshot(int64_t now) const
         if (a.quote.order_expiry != b.quote.order_expiry) return a.quote.order_expiry < b.quote.order_expiry;
         return a.quote.quote_id < b.quote.quote_id;
     });
-    return out;
+    return snap;
 }
 
 void OrderCache::EvictSpentBy(const CTransaction& tx)

@@ -450,17 +450,19 @@ Maker / debug surface (hidden or `p2pmsg` category):
 - `setswapintent token_in token_out min_size max_size price_min expiry`
 - `clearswapintent intent_id`
 - `listswapintents`
-- `listorders [verbose]` — standing-order cache state; with `verbose=true` also
-  lists every live cached order (quote_id, buy/sell token, fill, sell_cost,
-  price, declared expiry, maker session pubkey, half-tx hash and spent inputs —
-  wire-public `ORDER_ANN` fields — plus two pieces of THIS NODE's local
-  bookkeeping: `received` (when this node cached the order; the set of receive
-  times maps the node's uptime since its last restart) and `effective_expiry`
-  (`min(order_expiry, received + 14d)`, which leaks `received` whenever the cap
-  binds). Fine over a private RPC connection; strip those two fields before
-  republishing the output on a public endpoint; the array is sorted by the
-  wire-public declared `order_expiry` (quote_id tie-break), so its order reveals
-  nothing node-local
+- `listorders [verbose] [count] [skip]` — standing-order cache state; with
+  `verbose=true` also lists every live cached order (quote_id, buy/sell token,
+  fill, sell_cost, price, declared expiry, maker session pubkey, half-tx hash
+  and spent inputs — wire-public `ORDER_ANN` fields — plus two pieces of THIS
+  NODE's local bookkeeping: `received` (when this node cached the order; the set
+  of receive times maps the node's uptime since its last restart) and
+  `effective_expiry` (`min(order_expiry, received + 14d)`, which leaks
+  `received` whenever the cap binds). Fine over a private RPC connection; strip
+  those two fields before republishing the output on a public endpoint; the
+  array is sorted by the wire-public declared `order_expiry` (quote_id
+  tie-break), so its order reveals nothing node-local. `count` and `skip` page
+  through that sorted list (default: all of it); the result's `count` and
+  `bytes` fields always describe the whole cache
 - `getp2pmsginfo` — identity, inbox prekey, `prekey_sig`, FMD clue key +
   `fmd_sig` + `fmd_gamma`, PING counter, peer counts
 - `getp2pmsgdetectionkey precision` — derive a detection key at false-positive
