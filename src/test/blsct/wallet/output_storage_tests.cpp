@@ -525,6 +525,99 @@ BOOST_FIXTURE_TEST_CASE(output_storage_token_outputs, TestingSetup)
     BOOST_CHECK_EQUAL(bal.m_mine_trusted, 8 * COIN);
 }
 
+static void CheckBalanceEqual(const Balance& got, const Balance& want)
+{
+    BOOST_CHECK_EQUAL(got.m_mine_trusted, want.m_mine_trusted);
+    BOOST_CHECK_EQUAL(got.m_mine_staked_commitment, want.m_mine_staked_commitment);
+    BOOST_CHECK_EQUAL(got.m_mine_pending_staked_commitment, want.m_mine_pending_staked_commitment);
+    BOOST_CHECK_EQUAL(got.m_mine_untrusted_pending, want.m_mine_untrusted_pending);
+    BOOST_CHECK_EQUAL(got.m_mine_immature, want.m_mine_immature);
+    BOOST_CHECK_EQUAL(got.m_watchonly_trusted, want.m_watchonly_trusted);
+    BOOST_CHECK_EQUAL(got.m_watchonly_untrusted_pending, want.m_watchonly_untrusted_pending);
+    BOOST_CHECK_EQUAL(got.m_watchonly_immature, want.m_watchonly_immature);
+}
+
+// getnftbalance tallies a collection in one walk (GetNftBalances,
+// GetBlsctNftBalances); each entry must equal the per-NFT GetBalance() and
+// GetBlsctBalance() it replaces, and a subid with no entry must hold nothing.
+BOOST_FIXTURE_TEST_CASE(nft_balances_match_per_nft_balance, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK(wallet->cs_wallet);
+    wallet->SetLastBlockProcessed(2, InsecureRand256());
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    const uint256 collection{uint256::ONE};
+    const uint256 other_collection{uint256(uint64_t{2})};
+    const auto output = [&](CAmount amount, const TokenId& token_id) {
+        return blsct::CreateOutput(recvAddress, amount, "nft", token_id).out;
+    };
+
+    // CWalletTx path. The first tx holds two NFTs of the collection, one of
+    // them in two outputs: AddTxBalance() already sums every output of the
+    // NFT it is given, so GetNftBalances() must call it once per NFT, not
+    // once per output. It also holds an NFT of another collection and NAV.
+    // The second tx is confirmed one block later, so min_depth tells them
+    // apart.
+    CMutableTransaction two_nfts;
+    two_nfts.vout.push_back(output(1, TokenId(collection, 1)));
+    two_nfts.vout.push_back(output(1, TokenId(collection, 2)));
+    two_nfts.vout.push_back(output(1, TokenId(collection, 2)));
+    two_nfts.vout.push_back(output(1, TokenId(other_collection, 1)));
+    two_nfts.vout.push_back(output(5 * COIN, TokenId()));
+    BOOST_REQUIRE(wallet->AddToWallet(MakeTransactionRef(two_nfts), TxStateConfirmed{InsecureRand256(), 1, 0}));
+    CMutableTransaction one_nft;
+    one_nft.vout.push_back(output(1, TokenId(collection, 3)));
+    BOOST_REQUIRE(wallet->AddToWallet(MakeTransactionRef(one_nft), TxStateConfirmed{InsecureRand256(), 2, 0}));
+
+    // mapOutputs path, with no CWalletTx behind the outputs.
+    const auto add_output = [&](CAmount amount, const TokenId& token_id, int height) {
+        const CTxOut txout{output(amount, token_id)};
+        BOOST_REQUIRE(wallet->AddToWallet(COutPoint{txout.GetHash()}, std::make_shared<const CTxOut>(txout),
+                                          TxStateConfirmed{InsecureRand256(), height, 0}, nullptr,
+                                          /*fFlushOnClose=*/true, /*rescanning_old_block=*/false,
+                                          TxStateInactive{}, /*fCoinbase=*/false) != nullptr);
+    };
+    add_output(1, TokenId(collection, 4), 1);
+    add_output(1, TokenId(collection, 5), 2);
+    add_output(1, TokenId(other_collection, 4), 1);
+    add_output(7 * COIN, TokenId(), 1);
+
+    // Each path credits what it was given, so the comparisons below are not
+    // between two zeroes.
+    BOOST_REQUIRE_EQUAL(GetBalance(*wallet, 0, false, TokenId(collection, 2)).m_mine_trusted, 2);
+    BOOST_REQUIRE_EQUAL(GetBalance(*wallet, 2, false, TokenId(collection, 3)).m_mine_trusted, 0);
+    BOOST_REQUIRE_EQUAL(GetBlsctBalance(*wallet, 0, TokenId(collection, 4)).m_mine_trusted, 1);
+    BOOST_REQUIRE_EQUAL(GetBlsctBalance(*wallet, 2, TokenId(collection, 5)).m_mine_trusted, 0);
+
+    // Every subid the collection holds, plus one it does not. Subids 1 and 4
+    // are also held by the other collection, which must not be credited.
+    for (const int min_depth : {0, 1, 2}) {
+        for (const bool avoid_reuse : {false, true}) {
+            const auto nft_balances{GetNftBalances(*wallet, collection, min_depth, avoid_reuse)};
+            const auto blsct_nft_balances{GetBlsctNftBalances(*wallet, collection, min_depth)};
+            for (const uint64_t subid : {1, 2, 3, 4, 5, 9}) {
+                BOOST_TEST_CONTEXT("min_depth=" << min_depth << " avoid_reuse=" << avoid_reuse << " subid=" << subid)
+                {
+                    const TokenId token_id{collection, subid};
+                    const auto it{nft_balances.find(subid)};
+                    CheckBalanceEqual(it == nft_balances.end() ? Balance{} : it->second,
+                                      GetBalance(*wallet, min_depth, avoid_reuse, token_id));
+                    const auto blsct_it{blsct_nft_balances.find(subid)};
+                    CheckBalanceEqual(blsct_it == blsct_nft_balances.end() ? Balance{} : blsct_it->second,
+                                      GetBlsctBalance(*wallet, min_depth, token_id));
+                }
+            }
+        }
+    }
+}
+
 // A transaction is "from me" when it spends an output the wallet knows, even if
 // that output does not add to the wallet's NAV debit (here: a token output).
 BOOST_FIXTURE_TEST_CASE(is_from_me_token_input, TestingSetup)

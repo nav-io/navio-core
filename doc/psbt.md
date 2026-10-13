@@ -75,10 +75,8 @@ analyze a PSBT on its own. What remains are the wallet RPCs:
 
 #### Multisig with multiple Bitcoin Core instances
 
-For a quick start see
-[Basic M-of-N multisig example using descriptor wallets and PSBTs](./descriptors.md#basic-multisig-example).
-If you are using legacy wallets feel free to continue with the example provided
-here.
+This example uses `addmultisigaddress` and `importaddress`, which only work with
+legacy wallets.
 
 Alice, Bob, and Carol want to create a 2-of-3 multisig address. They're all
 using Bitcoin Core. We assume their wallets only contain the multisig funds. In

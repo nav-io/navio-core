@@ -563,6 +563,46 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx)
     return CachedTxIsTrusted(wallet, wtx, trusted_parents);
 }
 
+//! Adds what `wtx` holds of `token_id` to `ret`: GetBalance()'s step for
+//! one CWalletTx.
+static void AddTxBalance(const CWallet& wallet, const CWalletTx& wtx, const int min_depth, const isminefilter reuse_filter, const TokenId& token_id,
+                         std::set<uint256>& trusted_parents, Balance& ret) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    const bool is_trusted{CachedTxIsTrusted(wallet, wtx, trusted_parents)};
+    const int tx_depth{wallet.GetTxDepthInMainChain(wtx)};
+    const CAmount tx_credit_mine{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | reuse_filter, token_id)};
+    const CAmount tx_credit_staked_commitment{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_STAKED_COMMITMENT_BLSCT, token_id)};
+    const CAmount tx_credit_watchonly{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_WATCH_ONLY | reuse_filter, token_id)};
+    // The outputs a trusted tx's trust does not cover count as
+    // untrusted pending, the same as an untrusted tx's. Once confirmed,
+    // its trust covers every output (TxTrustCoversOutput), so skip the
+    // walk.
+    const bool has_uncovered{is_trusted && tx_depth == 0 && !wtx.m_own_half_outputs.empty()};
+    const CAmount uncovered_mine{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | reuse_filter, token_id) : 0};
+    const CAmount uncovered_staked_commitment{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_STAKED_COMMITMENT_BLSCT, token_id) : 0};
+    const CAmount uncovered_watchonly{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_WATCH_ONLY | reuse_filter, token_id) : 0};
+    if (is_trusted && tx_depth >= min_depth) {
+        ret.m_mine_trusted += tx_credit_mine - uncovered_mine;
+        ret.m_watchonly_trusted += tx_credit_watchonly - uncovered_watchonly;
+        if (tx_depth >= 1) {
+            ret.m_mine_staked_commitment += tx_credit_staked_commitment - uncovered_staked_commitment;
+        } else {
+            ret.m_mine_pending_staked_commitment += tx_credit_staked_commitment - uncovered_staked_commitment;
+        }
+    }
+    if (tx_depth == 0 && wtx.InMempool()) {
+        if (!is_trusted) {
+            ret.m_mine_untrusted_pending += tx_credit_mine + tx_credit_staked_commitment;
+            ret.m_watchonly_untrusted_pending += tx_credit_watchonly;
+        } else {
+            ret.m_mine_untrusted_pending += uncovered_mine + uncovered_staked_commitment;
+            ret.m_watchonly_untrusted_pending += uncovered_watchonly;
+        }
+    }
+    ret.m_mine_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id);
+    ret.m_watchonly_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_WATCH_ONLY, token_id);
+}
+
 Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse, const TokenId& token_id)
 {
     Balance ret;
@@ -571,43 +611,61 @@ Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse,
         LOCK(wallet.cs_wallet);
         std::set<uint256> trusted_parents;
         for (const auto& entry : wallet.mapWallet) {
-            const CWalletTx& wtx = entry.second;
-            const bool is_trusted{CachedTxIsTrusted(wallet, wtx, trusted_parents)};
-            const int tx_depth{wallet.GetTxDepthInMainChain(wtx)};
-            const CAmount tx_credit_mine{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | reuse_filter, token_id)};
-            const CAmount tx_credit_staked_commitment{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_STAKED_COMMITMENT_BLSCT, token_id)};
-            const CAmount tx_credit_watchonly{CachedTxGetAvailableCredit(wallet, wtx, ISMINE_WATCH_ONLY | reuse_filter, token_id)};
-            // The outputs a trusted tx's trust does not cover count as
-            // untrusted pending, the same as an untrusted tx's. Once confirmed,
-            // its trust covers every output (TxTrustCoversOutput), so skip the
-            // walk.
-            const bool has_uncovered{is_trusted && tx_depth == 0 && !wtx.m_own_half_outputs.empty()};
-            const CAmount uncovered_mine{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | reuse_filter, token_id) : 0};
-            const CAmount uncovered_staked_commitment{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_STAKED_COMMITMENT_BLSCT, token_id) : 0};
-            const CAmount uncovered_watchonly{has_uncovered ? TxGetUncoveredAvailableCredit(wallet, wtx, ISMINE_WATCH_ONLY | reuse_filter, token_id) : 0};
-            if (is_trusted && tx_depth >= min_depth) {
-                ret.m_mine_trusted += tx_credit_mine - uncovered_mine;
-                ret.m_watchonly_trusted += tx_credit_watchonly - uncovered_watchonly;
-                if (tx_depth >= 1) {
-                    ret.m_mine_staked_commitment += tx_credit_staked_commitment - uncovered_staked_commitment;
-                } else {
-                    ret.m_mine_pending_staked_commitment += tx_credit_staked_commitment - uncovered_staked_commitment;
-                }
-            }
-            if (tx_depth == 0 && wtx.InMempool()) {
-                if (!is_trusted) {
-                    ret.m_mine_untrusted_pending += tx_credit_mine + tx_credit_staked_commitment;
-                    ret.m_watchonly_untrusted_pending += tx_credit_watchonly;
-                } else {
-                    ret.m_mine_untrusted_pending += uncovered_mine + uncovered_staked_commitment;
-                    ret.m_watchonly_untrusted_pending += uncovered_watchonly;
-                }
-            }
-            ret.m_mine_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id);
-            ret.m_watchonly_immature += CachedTxGetImmatureCredit(wallet, wtx, ISMINE_WATCH_ONLY, token_id);
+            AddTxBalance(wallet, entry.second, min_depth, reuse_filter, token_id, trusted_parents, ret);
         }
     }
     return ret;
+}
+
+//! Adds what `wout` holds of `token_id` to `ret`: GetBlsctBalance()'s step
+//! for one mapOutputs entry.
+static void AddOutputBalance(const CWallet& wallet, const COutPoint& outpoint, const CWalletOutput& wout, const int min_depth, const TokenId& token_id,
+                             Balance& ret) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    // In BLSCT output-storage mode, locally-created BLSCT transactions
+    // are still recorded in mapWallet for broadcast/history purposes and
+    // their outputs are mirrored into mapOutputs by sync callbacks.
+    // Skip the mapOutputs entry only when the matching CWalletTx is
+    // alive on chain or in the mempool — in those cases the
+    // CWalletTx-driven path counts the output and we'd double-count.
+    //
+    // When a chain of BLSCT sends is mined together, the staker
+    // aggregates them into a single block tx with a different txid;
+    // the originating CWalletTx ends up in TxStateInactive because
+    // its hash is not in the chain. Its outputs still belong to us
+    // (mapOutputs proves it), so the CWalletTx path will not count
+    // them and we must count them here, lest the wallet's reported
+    // balance lose the change a chain-spend produced.
+    if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint);
+        if (wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool())) {
+            return;
+        }
+    }
+    // Both spend records, same rule as GetStakedCommitmentInfo(): the
+    // spending tx may be known only as a CWalletTx (mapTxSpends) and
+    // never have reached this output's own flag.
+    if (wout.IsSpent() || wallet.IsSpent(outpoint)) return;
+    const bool is_trusted{IsOutputTrusted(wallet, wout)};
+    const int out_depth{wallet.GetOutputDepthInMainChain(wout)};
+    const CAmount tx_credit_mine{OutputGetCredit(wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id)};
+    const CAmount tx_credit_staked_commitment{OutputGetCredit(wallet, wout, ISMINE_STAKED_COMMITMENT_BLSCT, token_id)};
+    const CAmount tx_credit_watchonly{OutputGetCredit(wallet, wout, ISMINE_WATCH_ONLY, token_id)};
+    if (is_trusted && out_depth >= min_depth) {
+        ret.m_mine_trusted += tx_credit_mine;
+        ret.m_watchonly_trusted += tx_credit_watchonly;
+        if (out_depth >= 1) {
+            ret.m_mine_staked_commitment += tx_credit_staked_commitment;
+        } else {
+            ret.m_mine_pending_staked_commitment += tx_credit_staked_commitment;
+        }
+    }
+    if (!is_trusted && out_depth == 0 && wout.InMempool()) {
+        ret.m_mine_untrusted_pending += tx_credit_mine + tx_credit_staked_commitment;
+        ret.m_watchonly_untrusted_pending += tx_credit_watchonly;
+    }
+    ret.m_mine_immature += OutputGetImmatureCredit(wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id);
+    ret.m_watchonly_immature += OutputGetImmatureCredit(wallet, wout, ISMINE_WATCH_ONLY, token_id);
 }
 
 Balance GetBlsctBalance(const CWallet& wallet, const int min_depth, const TokenId& token_id)
@@ -615,52 +673,45 @@ Balance GetBlsctBalance(const CWallet& wallet, const int min_depth, const TokenI
     Balance ret;
     {
         LOCK(wallet.cs_wallet);
-        for (const auto& entry : wallet.mapOutputs) {
-            // In BLSCT output-storage mode, locally-created BLSCT transactions
-            // are still recorded in mapWallet for broadcast/history purposes and
-            // their outputs are mirrored into mapOutputs by sync callbacks.
-            // Skip the mapOutputs entry only when the matching CWalletTx is
-            // alive on chain or in the mempool — in those cases the
-            // CWalletTx-driven path counts the output and we'd double-count.
-            //
-            // When a chain of BLSCT sends is mined together, the staker
-            // aggregates them into a single block tx with a different txid;
-            // the originating CWalletTx ends up in TxStateInactive because
-            // its hash is not in the chain. Its outputs still belong to us
-            // (mapOutputs proves it), so the CWalletTx path will not count
-            // them and we must count them here, lest the wallet's reported
-            // balance lose the change a chain-spend produced.
-            if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
-                const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(entry.first);
-                if (wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool())) {
-                    continue;
-                }
+        for (const auto& [outpoint, wout] : wallet.mapOutputs) {
+            AddOutputBalance(wallet, outpoint, wout, min_depth, token_id, ret);
+        }
+    }
+    return ret;
+}
+
+std::map<uint64_t, Balance> GetNftBalances(const CWallet& wallet, const uint256& collection, const int min_depth, bool avoid_reuse)
+{
+    std::map<uint64_t, Balance> ret;
+    isminefilter reuse_filter = avoid_reuse ? ISMINE_NO : ISMINE_USED;
+    {
+        LOCK(wallet.cs_wallet);
+        std::set<uint256> trusted_parents;
+        for (const auto& entry : wallet.mapWallet) {
+            const CWalletTx& wtx = entry.second;
+            // AddTxBalance() sums every output of the NFT it is given, so
+            // take each NFT a tx holds once.
+            std::set<uint64_t> subids;
+            for (const CTxOut& txout : wtx.tx->vout) {
+                if (txout.tokenId.token == collection) subids.insert(txout.tokenId.subid);
             }
-            const CWalletOutput& wout = entry.second;
-            // Both spend records, same rule as GetStakedCommitmentInfo(): the
-            // spending tx may be known only as a CWalletTx (mapTxSpends) and
-            // never have reached this output's own flag.
-            if (wout.IsSpent() || wallet.IsSpent(entry.first)) continue;
-            const bool is_trusted{IsOutputTrusted(wallet, wout)};
-            const int out_depth{wallet.GetOutputDepthInMainChain(wout)};
-            const CAmount tx_credit_mine{OutputGetCredit(wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id)};
-            const CAmount tx_credit_staked_commitment{OutputGetCredit(wallet, wout, ISMINE_STAKED_COMMITMENT_BLSCT, token_id)};
-            const CAmount tx_credit_watchonly{OutputGetCredit(wallet, wout, ISMINE_WATCH_ONLY, token_id)};
-            if (is_trusted && out_depth >= min_depth) {
-                ret.m_mine_trusted += tx_credit_mine;
-                ret.m_watchonly_trusted += tx_credit_watchonly;
-                if (out_depth >= 1) {
-                    ret.m_mine_staked_commitment += tx_credit_staked_commitment;
-                } else {
-                    ret.m_mine_pending_staked_commitment += tx_credit_staked_commitment;
-                }
+            for (const uint64_t subid : subids) {
+                AddTxBalance(wallet, wtx, min_depth, reuse_filter, TokenId(collection, subid), trusted_parents, ret[subid]);
             }
-            if (!is_trusted && out_depth == 0 && wout.InMempool()) {
-                ret.m_mine_untrusted_pending += tx_credit_mine + tx_credit_staked_commitment;
-                ret.m_watchonly_untrusted_pending += tx_credit_watchonly;
-            }
-            ret.m_mine_immature += OutputGetImmatureCredit(wallet, wout, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id);
-            ret.m_watchonly_immature += OutputGetImmatureCredit(wallet, wout, ISMINE_WATCH_ONLY, token_id);
+        }
+    }
+    return ret;
+}
+
+std::map<uint64_t, Balance> GetBlsctNftBalances(const CWallet& wallet, const uint256& collection, const int min_depth)
+{
+    std::map<uint64_t, Balance> ret;
+    {
+        LOCK(wallet.cs_wallet);
+        for (const auto& [outpoint, wout] : wallet.mapOutputs) {
+            const TokenId& token_id = wout.out->tokenId;
+            if (token_id.token != collection) continue;
+            AddOutputBalance(wallet, outpoint, wout, min_depth, token_id, ret[token_id.subid]);
         }
     }
     return ret;
