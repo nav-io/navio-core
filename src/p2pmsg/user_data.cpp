@@ -8,6 +8,7 @@
 #include <p2pmsg/transport.h>
 #include <span.h>
 #include <streams.h>
+#include <util/check.h>
 #include <util/time.h>
 
 #include <chrono>
@@ -39,6 +40,7 @@ std::optional<UserInbox::Entry> StoreUserData(const InboundMessage& m, UserInbox
     case RecipientKey::SESSION:
         // A user reply key: the transport drops USER_DATA
         // under an internal session key before this runs.
+        Assume(m.recipient_user_reply);
         scope = MsgScope::SESSION;
         reply_pubkey = m.recipient_session.GetVch();
         break;
