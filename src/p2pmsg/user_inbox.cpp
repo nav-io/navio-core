@@ -253,6 +253,12 @@ uint64_t UserInbox::LastId() const
     return m_next_id - 1;
 }
 
+UserInbox::Stats UserInbox::GetStats() const
+{
+    LOCK(m_mutex);
+    return Stats{m_count, m_total_bytes, m_next_id - 1};
+}
+
 bool UserInbox::Subscribe(const std::string& topic)
 {
     LOCK(m_mutex);

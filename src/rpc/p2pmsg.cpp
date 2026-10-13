@@ -135,10 +135,11 @@ static RPCHelpMan getp2pmsginfo()
                 obj.pushKV("archive", a);
             }
             if (node.p2pmsg_user_inbox) {
+                const p2pmsg::UserInbox::Stats stats{node.p2pmsg_user_inbox->GetStats()};
                 UniValue st(UniValue::VOBJ);
-                st.pushKV("entries", static_cast<uint64_t>(node.p2pmsg_user_inbox->Size()));
-                st.pushKV("bytes", node.p2pmsg_user_inbox->TotalBytes());
-                st.pushKV("last_id", node.p2pmsg_user_inbox->LastId());
+                st.pushKV("entries", stats.count);
+                st.pushKV("bytes", stats.bytes);
+                st.pushKV("last_id", stats.last_id);
                 obj.pushKV("store", st);
             }
             return obj;

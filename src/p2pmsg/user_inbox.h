@@ -173,6 +173,15 @@ public:
     //! this as its starting cursor to receive only messages from now on.
     uint64_t LastId() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
+    //! Store totals, read together under one lock.
+    struct Stats {
+        uint64_t count;   //!< as Size()
+        uint64_t bytes;   //!< as TotalBytes()
+        uint64_t last_id; //!< as LastId()
+    };
+
+    Stats GetStats() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+
     //! Broadcast-topic subscriptions (persisted). Returns false when already
     //! (un)subscribed.
     bool Subscribe(const std::string& topic) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);

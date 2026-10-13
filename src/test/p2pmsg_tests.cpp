@@ -1035,6 +1035,23 @@ BOOST_AUTO_TEST_CASE(user_inbox_scope_budgets_survive_reopen)
     BOOST_CHECK_EQUAL(inbox.List(0, 0, "").size(), steady);
 }
 
+BOOST_AUTO_TEST_CASE(user_inbox_stats_match_single_accessors)
+{
+    UserInbox::Options opts;
+    opts.memory_only = true;
+    UserInbox inbox(opts);
+    const blsct::PublicKey sender = blsct::PrivateKey(BlstScalar::Rand(true)).GetPublicKey();
+    for (int i = 0; i < 3; ++i) inbox.Add(1000 + i, MsgScope::INBOX, "t", sender, std::vector<uint8_t>(16 + i, 0x5));
+
+    const UserInbox::Stats stats{inbox.GetStats()};
+    BOOST_CHECK_EQUAL(stats.count, 3U);
+    BOOST_CHECK_EQUAL(stats.count, inbox.Size());
+    BOOST_CHECK_EQUAL(stats.bytes, inbox.TotalBytes());
+    BOOST_CHECK_GT(stats.bytes, 0U);
+    BOOST_CHECK_EQUAL(stats.last_id, inbox.LastId());
+    BOOST_CHECK_EQUAL(stats.last_id, 3U);
+}
+
 BOOST_AUTO_TEST_CASE(user_inbox_expiry_prunes)
 {
     UserInbox::Options opts;
