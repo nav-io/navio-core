@@ -4,23 +4,24 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Encrypted p2p messaging: NODE_P2PMSG_LEAF receive-only peers.
 
-A leaf (NODE_P2PMSG_LEAF, plus the envelope format bit but not the relay bit)
-is a bus client that wants fluff
-traffic delivered but never relays. The node must:
+A leaf (NODE_P2PMSG_LEAF plus the envelope format bit, NODE_P2PMSG_V2) is a
+bus client that wants fluff traffic delivered but never relays. The node must:
 
   * fluff P2PMSG to it like any relay-capable peer;
   * never pick it as the Dandelion++ stem successor (it would black-hole the
     stem), so with only a leaf connected a stem send falls back to fluff and
     the leaf sees `p2pmsg`, not `dp2pmsg`;
-  * once a NODE_P2PMSG relay is also connected, route stem sends to the relay
-    (`dp2pmsg`) while the leaf still only ever sees `p2pmsg`;
-  * count it in getp2pmsginfo()['leaf_peers'] and not in relay_capable_peers.
+  * once a NODE_P2PMSG_V2 relay is also connected, route stem sends to the
+    relay (`dp2pmsg`) while the leaf still only ever sees `p2pmsg`;
+  * count it in getp2pmsginfo()['leaf_peers'] and not in relay_capable_peers;
+  * send nothing to, and count in neither field, a block-relay-only
+    connection, whichever p2pmsg bits it advertises.
 
 PoW difficulty is set to 1 bit so the test does not burn CPU.
 """
 
 from test_framework.messages import NODE_P2PMSG_LEAF, NODE_P2PMSG_V2
-from test_framework.p2p import P2PInterface
+from test_framework.p2p import P2P_SERVICES, P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
 
@@ -74,6 +75,20 @@ class P2PMsgLeafTest(BitcoinTestFramework):
         assert_equal(info["relay_capable_peers"], 1)
         assert_equal(info["leaf_peers"], 1)
 
+        # Block-relay-only connections carry blocks and nothing else, so relay
+        # never routes p2pmsg over them and getp2pmsginfo must not count them,
+        # even when they advertise a relay or a leaf. They are outbound, so
+        # they must also offer the services the node requires of a full peer.
+        self.log.info("Block-relay-only peers are neither routed to nor counted")
+        block_only = [
+            node.add_outbound_p2p_connection(P2PInterface(), p2p_idx=i, connection_type="block-relay-only",
+                                             services=P2P_SERVICES | bits)
+            for i, bits in enumerate([NODE_P2PMSG_V2, NODE_P2PMSG_V2 | NODE_P2PMSG_LEAF])
+        ]
+        info = node.getp2pmsginfo()
+        assert_equal(info["relay_capable_peers"], 1)
+        assert_equal(info["leaf_peers"], 1)
+
         leaf_fluffs = leaf.message_count["p2pmsg"]
         assert_equal(node.sendp2pping(inbox, True), True)
         relay.wait_until(lambda: relay.message_count["dp2pmsg"] >= 1, timeout=20)
@@ -85,6 +100,12 @@ class P2PMsgLeafTest(BitcoinTestFramework):
         assert_equal(leaf.message_count["dp2pmsg"], 0)
         assert_equal(leaf.message_count["p2pmsg"], leaf_fluffs + 1)
         assert_equal(relay.message_count["dp2pmsg"], 1)
+        # Anything pushed to a block-relay-only peer before the fence would be
+        # queued ahead of the pong.
+        for peer in block_only:
+            peer.sync_with_ping()
+            assert_equal(peer.message_count["p2pmsg"], 0)
+            assert_equal(peer.message_count["dp2pmsg"], 0)
 
         # Dropping the leaf leaves only the relay counted.
         self.log.info("Disconnect the leaf: leaf_peers drops to 0")

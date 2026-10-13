@@ -232,15 +232,15 @@ BOOST_AUTO_TEST_CASE(fmd_rejects_non_canonical_y)
         y_plus_r[i] = static_cast<uint8_t>(sum & 0xff);
         carry = sum >> 8;
     }
-    // Only meaningful when it did not overflow 32 bytes; y is random, so this
-    // holds unless y is very large, in which case there is nothing to test.
-    if (carry == 0) {
-        auto malleated = flag;
-        std::copy(y_plus_r.begin(), y_plus_r.end(), malleated.begin() + FMD_POINT_SIZE);
-        BOOST_CHECK(malleated != flag);
-        BOOST_CHECK_MESSAGE(!FmdTest(dk, malleated),
-                            "a non-canonical y was accepted, so the flag encoding is malleable");
-    }
+    // A valid flag has y < r, and 2r < 2^256, so y + r always fits in 32
+    // bytes. Required rather than branched on, so the check below can never
+    // be skipped silently.
+    BOOST_REQUIRE_EQUAL(carry, 0U);
+    auto malleated = flag;
+    std::copy(y_plus_r.begin(), y_plus_r.end(), malleated.begin() + FMD_POINT_SIZE);
+    BOOST_CHECK(malleated != flag);
+    BOOST_CHECK_MESSAGE(!FmdTest(dk, malleated),
+                        "a non-canonical y was accepted, so the flag encoding is malleable");
 }
 
 BOOST_AUTO_TEST_CASE(fmd_cross_implementation_vectors)

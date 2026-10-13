@@ -388,7 +388,7 @@ enum ServiceFlags : uint64_t {
     // RECEIVE the encrypted overlay's fluff traffic but never relays it (it has
     // no peers of its own to forward to -- think a standalone SDK client in a
     // browser or on mobile that only speaks to one or two full nodes). Relays
-    // fluff P2PMSG to leaves exactly as to NODE_P2PMSG peers, but never pick a
+    // fluff P2PMSG to leaves exactly as to NODE_P2PMSG_V2 relays, but never pick a
     // leaf as a Dandelion++ stem successor: a stem hop to a non-relaying peer
     // would black-hole the message before it ever fluffs. A leaf may still
     // SEND P2PMSG/DP2PMSG like any peer, under the same PoW/DoS checks. A node
@@ -404,7 +404,7 @@ enum ServiceFlags : uint64_t {
     // NODE_P2PMSG_ARCHIVE advertises that the node RETAINS the flagged p2pmsg
     // envelopes it relays and will serve them back on getp2pmsgs, so a peer
     // that was offline can pick up what it missed. It says nothing about relay
-    // (an archiving node will normally also set NODE_P2PMSG). The node keeps
+    // (an archiving node will normally also set NODE_P2PMSG_V2). The node keeps
     // ciphertext only and learns who an envelope is for only to the extent a
     // requester's detection key reveals it -- which is deliberately fuzzy, see
     // p2pmsg/fmd.h. Navio-specific; occupies a reserved-experiment bit.
@@ -426,7 +426,7 @@ enum ServiceFlags : uint64_t {
     // With a bit of its own the two overlays are simply disjoint until the
     // network has moved, which is the honest outcome: each is internally
     // healthy and neither degrades the other. A v2 node sends P2PMSG/DP2PMSG
-    // only to peers advertising this (or NODE_P2PMSG_LEAF, for a v2 leaf), and
+    // only to peers advertising this (plus NODE_P2PMSG_LEAF, for a v2 leaf), and
     // a v1 node never sees it advertise NODE_P2PMSG, so it never sends v1
     // traffic here either. Navio-specific; occupies a reserved-experiment bit.
     NODE_P2PMSG_V2 = (1 << 27),
