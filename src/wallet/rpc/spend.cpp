@@ -167,7 +167,7 @@ static UniValue FinishTransaction(const std::shared_ptr<CWallet> pwallet, const 
     }
 
     if (complete) {
-        result.pushKV("txid", CTransaction(mtx).GetHash().GetHex());
+        result.pushKV("txid", mtx.GetHash().GetHex());
     }
     // Adds "hex", "complete" and, for inputs that could not be signed, "errors"
     SignTransactionResultToJSON(mtx, complete, coins, input_errors, result);
