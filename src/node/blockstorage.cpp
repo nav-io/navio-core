@@ -33,6 +33,7 @@
 
 #include <future>
 #include <span>
+#include <system_error>
 
 namespace {
 // Collect every G1 point stored inside the CBlockUndo so they can be
@@ -763,14 +764,26 @@ bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos
                 w << vtx[i];
             }
         };
-        // The calling thread writes chunk 0 itself, so `num_threads` counts
-        // it and the pool stays within the -par budget.
+        // The calling thread writes chunk 0 itself (and any chunk whose
+        // worker failed to spawn), so `num_threads` counts it and the pool
+        // stays within the -par budget.
         std::vector<std::future<void>> futures;
         futures.reserve(num_threads - 1);
-        for (size_t t = 1; t < num_threads && t * chunk_size < n_tx; ++t) {
-            futures.push_back(std::async(std::launch::async, write_chunk, t));
+        size_t t = 1;
+        for (; t < num_threads && t * chunk_size < n_tx; ++t) {
+            // A std::system_error escaping here would propagate out of
+            // ConnectBlock; run with the workers we did get instead, and write
+            // the chunks that got none on this thread below.
+            try {
+                futures.push_back(std::async(std::launch::async, write_chunk, t));
+            } catch (const std::system_error&) {
+                break;
+            }
         }
         write_chunk(0);
+        for (; t < num_threads && t * chunk_size < n_tx; ++t) {
+            write_chunk(t);
+        }
         for (auto& f : futures) f.get();
     }
 
