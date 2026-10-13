@@ -282,6 +282,54 @@ BOOST_FIXTURE_TEST_CASE(blockmanager_undo_round_trip_parallel_blsct, TestChain10
     }
 }
 
+BOOST_FIXTURE_TEST_CASE(blockmanager_undo_reserves_stripped_size, TestChain100Setup)
+{
+    // The rev-file space reserved for an undo record must be exactly what
+    // UndoWriteToDisk writes: the stripped form (no range-proof body) plus
+    // the header and checksum. Reserving the full form leaves gaps in rev
+    // files and overcounts disk usage for pruning; reserving less lets the
+    // next record overwrite this one's tail.
+    constexpr unsigned int UNDO_CHECKSUM_SIZE{sizeof(uint256)};
+    // Enough entries for the parallel path, where each worker has to open
+    // its own stripped scope.
+    constexpr size_t NUM_TX_UNDO{2 * UNDO_WRITE_MIN_ENTRIES_PER_THREAD + 1};
+    CBlockUndo blockundo;
+    for (size_t i = 0; i < NUM_TX_UNDO; ++i) {
+        blockundo.vtxundo.push_back(RandomBlsctTxUndo());
+    }
+    const size_t full_size{::GetSerializeSize(blockundo)};
+    const size_t stripped_size{[&] {
+        CTxOutBLSCTData::StrippedForUndoScope strip_scope;
+        return ::GetSerializeSize(blockundo);
+    }()};
+    // Otherwise the test cannot tell the two reservations apart.
+    BOOST_REQUIRE_LT(stripped_size, full_size);
+
+    auto& blockman{m_node.chainman->m_blockman};
+    LOCK(cs_main);
+    CBlockIndex& tip{*Assert(m_node.chainman->ActiveChain().Tip())};
+    CBlockIndex& prev{*Assert(tip.pprev)};
+    BOOST_REQUIRE_EQUAL(prev.nFile, tip.nFile);
+    tip.nStatus &= ~BLOCK_HAVE_UNDO;
+    const unsigned int undo_size_before{blockman.GetBlockFileInfo(tip.nFile)->nUndoSize};
+    BlockValidationState state;
+    BOOST_REQUIRE(blockman.WriteUndoDataForBlock(blockundo, state, tip, /*threads=*/2));
+    const unsigned int undo_size_after{blockman.GetBlockFileInfo(tip.nFile)->nUndoSize};
+
+    // The record starts where the file's undo data ended...
+    BOOST_CHECK_EQUAL(tip.nUndoPos - BLOCK_SERIALIZATION_HEADER_SIZE, undo_size_before);
+    // ...and the reservation covers the stripped record and nothing more.
+    BOOST_CHECK_EQUAL(undo_size_after - undo_size_before, stripped_size + BLOCK_SERIALIZATION_HEADER_SIZE + UNDO_CHECKSUM_SIZE);
+
+    // A record written right after it must leave it intact.
+    prev.nStatus &= ~BLOCK_HAVE_UNDO;
+    BOOST_REQUIRE(blockman.WriteUndoDataForBlock(blockundo, state, prev, /*threads=*/2));
+    BOOST_CHECK_EQUAL(prev.nUndoPos - BLOCK_SERIALIZATION_HEADER_SIZE, undo_size_after);
+    CBlockUndo read_undo;
+    BOOST_REQUIRE(blockman.UndoReadFromDisk(read_undo, tip));
+    BOOST_CHECK_EQUAL(read_undo.vtxundo.size(), blockundo.vtxundo.size());
+}
+
 BOOST_FIXTURE_TEST_CASE(blockmanager_undo_write_spawns_at_most_thread_cap, TestChain100Setup,
                         *boost::unit_test::precondition(CanCountThreads))
 {

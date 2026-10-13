@@ -1132,7 +1132,13 @@ bool BlockManager::WriteUndoDataForBlock(const CBlockUndo& blockundo, BlockValid
     // Write undo information to disk
     if (block.GetUndoPos().IsNull()) {
         FlatFilePos _pos;
-        if (!FindUndoPos(state, block.nFile, _pos, ::GetSerializeSize(blockundo) + 40)) {
+        // Size the reservation in the stripped form UndoWriteToDisk writes;
+        // outside the (thread-local) scope it would count full range proofs.
+        const unsigned int undo_size{[&] {
+            CTxOutBLSCTData::StrippedForUndoScope strip_scope;
+            return static_cast<unsigned int>(::GetSerializeSize(blockundo) + 40);
+        }()};
+        if (!FindUndoPos(state, block.nFile, _pos, undo_size)) {
             return error("ConnectBlock(): FindUndoPos failed");
         }
         if (!UndoWriteToDisk(blockundo, _pos, block.pprev->GetBlockHash(), threads)) {
