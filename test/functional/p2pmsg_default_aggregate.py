@@ -182,11 +182,10 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         self.log.info("default-aggregated consolidation confirmed")
 
         # --- consolidate N>1: each consolidation spends coins of its own. ---
-        # The aggregated first transaction has no CWalletTx, and consolidate
-        # holds the wallet lock throughout, so the wallet cannot learn of that
-        # spend until the call returns. The second iteration must still not
-        # reselect the first one's coins: it would build a conflicting
-        # double-spend.
+        # consolidate holds the wallet lock throughout, so the mempool sync
+        # callback cannot tell the wallet of the aggregated first transaction
+        # until the call returns. The second iteration must still not reselect
+        # the first one's coins: it would build a conflicting double-spend.
         #
         # consolidate(1) merged every coin w0 had, and the coinbases maturing
         # now are w1's, so give w0 four small coins to merge in pairs. Node1
@@ -233,6 +232,116 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         self.sync_blocks()
         assert res["txid"] not in n0.getrawmempool(), "cover-sized aggregatesend did not confirm"
         self.log.info("small aggregatesend merged %d of %d pooled covers" % (expected, pooled))
+
+        fee_aggregated, fee_plain = self.test_back_to_back_consolidations()
+        self.test_consolidate_opt_out()
+        self.test_consolidate_evicts_on_failed_broadcast(fee_aggregated, fee_plain)
+
+    @staticmethod
+    def tx_fee(tx):
+        # The fee output is the only one carrying a plain value.
+        return sum(Decimal(str(out["value"])) for out in tx["vout"])
+
+    def test_back_to_back_consolidations(self):
+        """Two consolidate calls in a row: the wallet records the first call's
+        aggregate as its own when broadcast, rather than waiting for the
+        mempool sync callback, so the second call cannot reselect its coins
+        and the merged output is trusted at once."""
+        n0, n1 = self.nodes
+        w0 = n0.get_wallet_rpc("w0")
+        w1 = n1.get_wallet_rpc("w1")
+        miner0 = w0.getnewaddress(label="", address_type="blsct")
+
+        # Give w0 four coins smaller than any it holds, so each consolidate(1, 2)
+        # merges two of them. Self-sends, because w0's default aggregation
+        # drains the pool cover the previous section left, which may otherwise
+        # have gone stale by the time the consolidation below picks it.
+        for _ in range(4):
+            w0.sendtoblsctaddress(w0.getnewaddress(label="", address_type="blsct"), 0.5)
+        self.generatetoblsctaddress(n0, 1, miner0)
+        self.sync_blocks()
+        assert_equal(n0.getaggregationhint()["available"], 0)
+        cand_inputs = self.serve_candidate(n0, n1, w1)
+
+        # No wait between the calls. Without the record, the second call races
+        # the mempool sync callback for the first one's spend; the callback
+        # usually wins, so the disjoint-inputs check below only catches that
+        # sometimes. The trust check after it does not depend on the race.
+        first = w0.consolidate(1, 2)
+        second = w0.consolidate(1, 2)
+        assert_equal(len(first), 1)
+        assert_equal(len(second), 1)
+
+        mempool = n0.getrawmempool()
+        assert first[0] in mempool and second[0] in mempool, "a consolidation is missing from the mempool"
+        txs = [n0.getrawtransaction(txid, True) for txid in (first[0], second[0])]
+        prevouts = [{vin["outid"] for vin in tx["vin"]} for tx in txs]
+        assert not prevouts[0] & prevouts[1], "consolidations share inputs: %r" % sorted(prevouts[0] & prevouts[1])
+        assert set(cand_inputs) <= prevouts[0], "first consolidation did not merge the cover"
+        assert_equal(len(prevouts[0]), 2 + len(cand_inputs))
+        assert_equal(len(prevouts[1]), 2)
+
+        # The aggregate's merged output belongs to the wallet's own half, so
+        # it is trusted. When only the sync callback adds the aggregate, the
+        # cover input makes the whole tx untrusted until it confirms.
+        n0.syncwithvalidationinterfacequeue()
+        assert_equal(w0.getbalances()["mine"]["untrusted_pending"], 0)
+
+        self.generatetoblsctaddress(n0, 1, miner0)
+        self.sync_blocks()
+        assert not {first[0], second[0]} & set(n0.getrawmempool()), "a consolidation did not confirm"
+        self.log.info("back-to-back consolidations recorded and spent disjoint coins")
+        return self.tx_fee(txs[0]), self.tx_fee(txs[1])
+
+    def test_consolidate_opt_out(self):
+        """consolidate on the -aggregatesends=0 node leaves its pool alone."""
+        n0, n1 = self.nodes
+        w0 = n0.get_wallet_rpc("w0")
+        w1 = n1.get_wallet_rpc("w1")
+        miner1 = w1.getnewaddress(label="", address_type="blsct")
+
+        cand_inputs = self.serve_candidate(n1, n0, w0)
+        before = n1.getaggregationhint()["available"]
+        txids = w1.consolidate(1, 2)
+        assert_equal(len(txids), 1)
+        tx = n1.getrawtransaction(txids[0], True)
+        prevouts = {vin["outid"] for vin in tx["vin"]}
+        assert_equal(len(prevouts), 2)
+        assert not set(cand_inputs) & prevouts, "opt-out consolidation merged a pooled candidate"
+        assert_equal(n1.getaggregationhint()["available"], before)
+        self.generatetoblsctaddress(n1, 1, miner1)
+        self.sync_blocks()
+        self.log.info("opt-out consolidation left the pool untouched")
+
+    def test_consolidate_evicts_on_failed_broadcast(self, fee_aggregated, fee_plain):
+        """A -maxtxfee between the plain and the aggregated consolidation fee
+        makes the aggregate's broadcast fail (max fee exceeded) while the plain
+        fallback goes out. The cover candidate picked for the failed aggregate
+        is evicted, so it cannot poison the next consolidation."""
+        n0, n1 = self.nodes
+        assert fee_plain < fee_aggregated, "cover did not raise the fee: %s vs %s" % (fee_plain, fee_aggregated)
+        max_fee = ((fee_plain + fee_aggregated) / 2).quantize(Decimal("0.00000001"))
+        self.restart_node(0, extra_args=PULL_ARGS + ["-maxtxfee=%s" % max_fee])
+        if "w0" not in n0.listwallets():
+            n0.loadwallet("w0")
+        self.connect_nodes(0, 1)
+        w0 = n0.get_wallet_rpc("w0")
+        w1 = n1.get_wallet_rpc("w1")
+        # Node1 still queues pull requests from before the restart, whose reply
+        # keys node0 no longer holds: a candidate served to one is never pooled.
+        n1.listpendingcandidaterequests(1000)
+
+        cand_inputs = self.serve_candidate(n0, n1, w1)
+        assert_equal(n0.getaggregationhint()["available"], 1)
+        txids = w0.consolidate(1, 2)
+        assert_equal(len(txids), 1)
+        tx = n0.getrawtransaction(txids[0], True)
+        prevouts = {vin["outid"] for vin in tx["vin"]}
+        assert_equal(len(prevouts), 2)
+        assert not set(cand_inputs) & prevouts, "consolidation over -maxtxfee still merged the candidate"
+        assert self.tx_fee(tx) <= max_fee
+        assert_equal(n0.getaggregationhint()["available"], 0)
+        self.log.info("candidate evicted after the aggregate exceeded -maxtxfee")
 
 
 if __name__ == "__main__":
