@@ -9,9 +9,10 @@ crosses the relay (node2 is not node0's direct message target peer under stem
 routing). Covers: 1:1 send/receive of a topic-framed payload, broadcast
 pub/sub with topic subscriptions, minted session reply keys, the reply path an
 application builds by framing its own inbox key inside the payload, poll
-cursors (since_id), topic filtering, clearp2pmsgs, size/validation errors,
-store + subscription persistence across restart, -p2pmsgtopic seeding and
--p2pmsgnotify, and that a non-recipient node relays but does not store.
+cursors (since_id, getp2pmsginfo's store.last_id), topic filtering,
+clearp2pmsgs, size/validation errors, store + subscription persistence across
+restart, -p2pmsgtopic seeding and -p2pmsgnotify, and that a non-recipient node
+relays but does not store.
 """
 
 import os
@@ -131,6 +132,26 @@ class P2PMsgUserMessagingTest(BitcoinTestFramework):
         assert_equal(n2.clearp2pmsgs(), 1)
         assert_equal(n2.listp2pmsgs(), [])
 
+        self.log.info("getp2pmsginfo's store.last_id is a cursor that outlives a clear")
+        store = n2.getp2pmsginfo()["store"]
+        assert_equal(store["entries"], 0)
+        assert_equal(store["bytes"], 0)
+        # Ids never repeat: the empty store still reports the last one assigned.
+        assert_equal(store["last_id"], ids[2])
+        # A client starting from now polls since last_id and clears up to the
+        # cursor it holds, so a message stored in between survives the clear
+        # (clearp2pmsgs(0) would have dropped it).
+        cursor = store["last_id"]
+        assert n0.sendp2pmsg(info2["inbox_pubkey"], "cursors", "01")
+        self.wait_until(lambda: len(n2.listp2pmsgs(cursor)) >= 1, timeout=30)
+        store = n2.getp2pmsginfo()["store"]
+        assert_equal(store["last_id"], cursor + 1)
+        assert_equal(store["entries"], 1)
+        assert store["bytes"] > 0
+        assert_equal(n2.clearp2pmsgs(cursor), 0)
+        assert_equal([m["id"] for m in n2.listp2pmsgs()], [cursor + 1])
+        n2.clearp2pmsgs()
+
         self.log.info("Validation: bad recipient, bad topic, empty and oversized payloads rejected")
         assert_raises_rpc_error(-5, "invalid recipient",
                                 n0.sendp2pmsg, "deadbeef", "chat", payload)
@@ -150,6 +171,7 @@ class P2PMsgUserMessagingTest(BitcoinTestFramework):
         self.log.info("-p2pmsgstoresize=0 disables the store entirely")
         self.restart_node(0, extra_args=["-p2pmsg=1", "-p2pmsgpowbits=1", "-p2pmsgstoresize=0"])
         assert_raises_rpc_error(-1, "store disabled", n0.listp2pmsgs)
+        assert "store" not in n0.getp2pmsginfo()
         self.restart_node(0, extra_args=["-p2pmsg=1", "-p2pmsgpowbits=1"])
         self.connect_nodes(0, 1)
 

@@ -38,6 +38,13 @@ size_t EntryBytes(const UserInbox::Entry& e)
     return GetSerializeSize(e);
 }
 
+//! An entry's budget. An unknown scope byte counts as inbox, the scope
+//! listp2pmsgs reports it under.
+size_t ScopeIndex(uint8_t scope)
+{
+    return scope < NUM_MSG_SCOPES ? scope : static_cast<size_t>(MsgScope::INBOX);
+}
+
 } // namespace
 
 UserInbox::UserInbox(Options opts) : m_opts(std::move(opts))
@@ -63,6 +70,17 @@ UserInbox::UserInbox(Options opts) : m_opts(std::move(opts))
     if (m_db->Read(DB_TOPICS, topics)) {
         m_topics.insert(topics.begin(), topics.end());
     }
+
+    // m_scope_bytes is not persisted (see its declaration): count it here.
+    LOCK(m_mutex);
+    std::unique_ptr<CDBIterator> it{m_db->NewIterator()};
+    for (it->Seek(std::make_pair(DB_MSG, MsgKey{0})); it->Valid(); it->Next()) {
+        std::pair<uint8_t, MsgKey> key;
+        if (!it->GetKey(key) || key.first != DB_MSG) break;
+        Entry e;
+        if (!it->GetValue(e)) break;
+        m_scope_bytes[ScopeIndex(e.scope)] += EntryBytes(e);
+    }
 }
 
 UserInbox::~UserInbox() = default;
@@ -77,81 +95,66 @@ void UserInbox::WriteTopicsLocked(CDBBatch& batch)
     batch.Write(DB_TOPICS, std::vector<std::string>{m_topics.begin(), m_topics.end()});
 }
 
+uint64_t UserInbox::ScopeCapBytes(size_t max_total_bytes, MsgScope scope)
+{
+    unsigned percent{0};
+    switch (scope) {
+    case MsgScope::INBOX: percent = USER_STORE_INBOX_PERCENT; break;
+    case MsgScope::BROADCAST: percent = USER_STORE_BROADCAST_PERCENT; break;
+    case MsgScope::SESSION: percent = USER_STORE_SESSION_PERCENT; break;
+    }
+    // Split before multiplying so a cap near SIZE_MAX cannot overflow.
+    const uint64_t max{max_total_bytes};
+    return max / 100 * percent + max % 100 * percent / 100;
+}
+
+void UserInbox::ForgetLocked(uint8_t scope, uint64_t bytes)
+{
+    m_total_bytes -= std::min(m_total_bytes, bytes);
+    uint64_t& scope_bytes = m_scope_bytes[ScopeIndex(scope)];
+    scope_bytes -= std::min(scope_bytes, bytes);
+    if (m_count > 0) --m_count;
+}
+
 void UserInbox::PruneLocked(int64_t now, CDBBatch& batch)
 {
-    // Single scan: the DB iterator reads the backing store, NOT the pending
-    // batch, so a two-pass walk would see pass-1 erasures again in pass 2 and
-    // double-subtract them from m_total_bytes/m_count -- persisted into
-    // DB_META, that undercount permanently disarms the size cap. Collect the
-    // metadata once, decide, erase each key exactly once.
-    struct Candidate {
-        std::pair<uint8_t, MsgKey> key;
-        size_t bytes;
-        bool expired;
-        bool broadcast;
-    };
     const int64_t cutoff = m_opts.expiry_seconds > 0 ? now - m_opts.expiry_seconds : std::numeric_limits<int64_t>::min();
-    // Cheap path: within the size cap, only expiry can evict. Entries are
-    // stored in arrival order (big-endian MsgKey), so the oldest are first and
-    // the scan can stop at the first non-expired one -- O(expired), not
-    // O(store), which is what keeps per-message cost bounded by PoW. Only the
-    // over-cap case needs the full collect-and-decide walk below (its
-    // broadcast-first eviction can't early-exit). No expiry configured + within
-    // cap: nothing to do at all.
-    const bool over_cap = m_opts.max_total_bytes > 0 && m_total_bytes > m_opts.max_total_bytes;
-    if (!over_cap) {
-        if (m_opts.expiry_seconds <= 0) return;
-        std::unique_ptr<CDBIterator> eit{m_db->NewIterator()};
-        for (eit->Seek(std::make_pair(DB_MSG, MsgKey{0})); eit->Valid(); eit->Next()) {
-            std::pair<uint8_t, MsgKey> key;
-            if (!eit->GetKey(key) || key.first != DB_MSG) break;
-            Entry e;
-            if (!eit->GetValue(e)) break;
-            if (e.received_at >= cutoff) break; // first fresh entry: nothing older remains
-            batch.Erase(key);
-            m_total_bytes -= std::min<uint64_t>(m_total_bytes, EntryBytes(e));
-            if (m_count > 0) --m_count;
-        }
-        return;
+    std::array<uint64_t, NUM_MSG_SCOPES> cap{};
+    for (size_t sc = 0; sc < NUM_MSG_SCOPES; ++sc) {
+        cap[sc] = ScopeCapBytes(m_opts.max_total_bytes, static_cast<MsgScope>(sc));
     }
+    const auto over_budget = [&](size_t sc) EXCLUSIVE_LOCKS_REQUIRED(m_mutex) {
+        return m_opts.max_total_bytes > 0 && m_scope_bytes[sc] > cap[sc];
+    };
+    const auto any_over_budget = [&]() EXCLUSIVE_LOCKS_REQUIRED(m_mutex) {
+        for (size_t sc = 0; sc < NUM_MSG_SCOPES; ++sc) {
+            if (over_budget(sc)) return true;
+        }
+        return false;
+    };
+    if (m_opts.expiry_seconds <= 0 && !any_over_budget()) return;
 
-    std::vector<Candidate> entries;
+    // One walk, oldest first (big-endian MsgKey is arrival order): drop every
+    // expired entry, and the oldest entries of each scope over its budget --
+    // never another scope's. It stops at the first fresh entry once every
+    // scope is within budget, since nothing older remains to expire; within
+    // budget that keeps the cost O(expired), not O(store), which is what
+    // keeps per-message cost bounded by PoW. Each key is visited once: the
+    // iterator reads the backing store, NOT the pending batch, so a second
+    // walk would see these erasures again and double-subtract them from the
+    // totals -- persisted into DB_META, that undercount permanently disarms
+    // the size cap.
     std::unique_ptr<CDBIterator> it{m_db->NewIterator()};
     for (it->Seek(std::make_pair(DB_MSG, MsgKey{0})); it->Valid(); it->Next()) {
         std::pair<uint8_t, MsgKey> key;
         if (!it->GetKey(key) || key.first != DB_MSG) break;
         Entry e;
         if (!it->GetValue(e)) break;
-        entries.push_back({key, EntryBytes(e), e.received_at < cutoff,
-                           e.scope == static_cast<uint8_t>(MsgScope::BROADCAST)});
-    }
-
-    std::vector<bool> erase(entries.size(), false);
-    uint64_t remaining = m_total_bytes;
-    // Expiry applies to everything.
-    for (size_t i = 0; i < entries.size(); ++i) {
-        if (entries[i].expired) {
-            erase[i] = true;
-            remaining -= std::min<uint64_t>(remaining, entries[i].bytes);
-        }
-    }
-    // Size cap: broadcast-scope first (a public-topic flood must not push out
-    // unread 1:1 messages), then oldest-first across the rest.
-    if (m_opts.max_total_bytes > 0) {
-        for (const bool broadcast_only : {true, false}) {
-            for (size_t i = 0; i < entries.size() && remaining > m_opts.max_total_bytes; ++i) {
-                if (erase[i]) continue;
-                if (broadcast_only && !entries[i].broadcast) continue;
-                erase[i] = true;
-                remaining -= std::min<uint64_t>(remaining, entries[i].bytes);
-            }
-        }
-    }
-    for (size_t i = 0; i < entries.size(); ++i) {
-        if (!erase[i]) continue;
-        batch.Erase(entries[i].key);
-        m_total_bytes -= std::min<uint64_t>(m_total_bytes, entries[i].bytes);
-        if (m_count > 0) --m_count;
+        const bool expired = e.received_at < cutoff;
+        if (!expired && !any_over_budget()) break;
+        if (!expired && !over_budget(ScopeIndex(e.scope))) continue;
+        batch.Erase(key);
+        ForgetLocked(e.scope, EntryBytes(e));
     }
 }
 
@@ -173,6 +176,7 @@ std::optional<UserInbox::Entry> UserInbox::Add(int64_t received_at, MsgScope sco
     batch.Write(std::make_pair(DB_MSG, MsgKey{e.id}), e);
     ++m_next_id;
     m_total_bytes += EntryBytes(e);
+    m_scope_bytes[ScopeIndex(e.scope)] += EntryBytes(e);
     ++m_count;
     PruneLocked(received_at, batch);
     WriteMetaLocked(batch);
@@ -217,9 +221,7 @@ size_t UserInbox::Clear(uint64_t up_to_id)
         Entry e;
         if (!it->GetValue(e)) break;
         batch.Erase(key);
-        const size_t sz = EntryBytes(e);
-        m_total_bytes -= std::min<uint64_t>(m_total_bytes, sz);
-        if (m_count > 0) --m_count;
+        ForgetLocked(e.scope, EntryBytes(e));
         ++removed;
     }
     if (removed > 0) {
