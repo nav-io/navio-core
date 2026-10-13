@@ -850,6 +850,17 @@ static constexpr std::chrono::seconds OWN_DELEGATION_RETRY_INITIAL{2};
 //! far from SteadyClock's range limits.
 static constexpr std::chrono::seconds MAX_DELEGATION_REFRESH{std::chrono::days{1}};
 
+//! Wait before the first reconnect attempt once a staking cycle cannot reach
+//! the node. Each further consecutive failure doubles it, up to
+//! MAX_RECONNECT_WAIT.
+static constexpr std::chrono::seconds RECONNECT_WAIT_INITIAL{2};
+
+//! Upper bound on the reconnect wait. A staker that finds no node misses every
+//! slot anyway, so the cap only decides how soon staking resumes once the node
+//! is back: it bounds both the slots lost after the node returns and how often
+//! a node that stays down is tried.
+static constexpr std::chrono::seconds MAX_RECONNECT_WAIT{60};
+
 struct DelegatedCommitment {
     StakedCommitment staked;
     std::string rewardAddress;
@@ -925,8 +936,10 @@ static std::optional<std::string> RpcWallet()
 //! Scan the chain's staked outputs for delegations addressed to our
 //! delegation key, decrypt their openings and sanity-check each opening
 //! against the on-chain commitment (so a bogus or mismatched blob cannot
-//! make us burn slots on unprovable stakes).
-std::vector<DelegatedCommitment> GetDelegatedCommitments(const std::unique_ptr<BaseRequestHandler>& rh)
+//! make us burn slots on unprovable stakes). std::nullopt when the node
+//! answers with an RPC error (e.g. still warming up), so the caller can keep
+//! the delegations it already tracks instead of dropping them all.
+std::optional<std::vector<DelegatedCommitment>> GetDelegatedCommitments(const std::unique_ptr<BaseRequestHandler>& rh)
 {
     std::vector<DelegatedCommitment> ret;
 
@@ -939,8 +952,8 @@ std::vector<DelegatedCommitment> GetDelegatedCommitments(const std::unique_ptr<B
 
     if (!error.isNull()) {
         ParseError(error, strError, nRet);
-        LogPrintf("%s: Could not load staked commitments data (%s)\n", __func__, strError);
-        return ret;
+        LogPrintf("%s: Could not load staked commitments data (%s); keeping the tracked delegations\n", __func__, strError);
+        return std::nullopt;
     }
 
     range_proof::GeneratorsFactory<Blst> gf;
@@ -1139,6 +1152,10 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         if (valid == blsct::ProofOfStake::VALID) return proposal;
 
         return std::nullopt;
+    } catch (const CConnectionFailed&) {
+        // The node is unreachable rather than this slot being bad: Loop()
+        // backs off before it tries again.
+        throw;
     } catch (const std::exception& e) {
         // Surface the exception type+message so the next bug-report does
         // not require gdb. Any throw from RPC parsing / point deserialisation
@@ -1211,6 +1228,13 @@ void Loop()
     std::chrono::seconds own_delegation_retry_wait{own_delegation_retry_first};
     std::optional<std::set<std::string>> own_delegation_failed_for;
 
+    // Backoff while the node cannot be reached: consecutive cycles that failed
+    // to connect, the earliest time the next cycle may run, and how long the
+    // next failure will wait.
+    int reconnect_failures{0};
+    SteadyClock::time_point reconnect_at{};
+    std::chrono::seconds reconnect_wait{RECONNECT_WAIT_INITIAL};
+
     dash.Log(strprintf("staking started (wallet=%s)%s%s", walletName, auto_consolidate ? " (auto-consolidate enabled)" : "", fDelegated ? " (delegated mode)" : ""));
 
     while (dash.State() != tui::RunState::Quitting) {
@@ -1223,8 +1247,12 @@ void Loop()
         if (dash.State() == tui::RunState::Quitting) break;
 
         const bool paused = dash.State() == tui::RunState::Paused;
-        if (!paused) {
+        // While backing off, skip the cycle's RPC work but keep the dashboard
+        // and the key polling going.
+        const bool reconnecting = reconnect_failures > 0 && SteadyClock::now() < reconnect_at;
+        if (!paused && !reconnecting) {
             ++cycles;
+            bool connection_failed{false};
             // Best-effort cycle: a transient RPC/crypto hiccup must not kill the
             // session. Errors are surfaced on the dashboard, not fatal.
             try {
@@ -1241,24 +1269,32 @@ void Loop()
 
                 if (fDelegated) {
                     if (Ticks<std::chrono::seconds>(SteadyClock::now() - last_delegation_refresh) >= delegation_refresh_interval) {
+                        // Advanced even when the scan fails, so a persistent
+                        // RPC error is retried on the refresh interval rather
+                        // than every cycle.
                         last_delegation_refresh = SteadyClock::now();
-                        delegations = GetDelegatedCommitments(rh);
-                        dash.Log(strprintf("tracking %d delegated commitment(s)", (int)delegations.size()));
-                        // Also emit to the log/console (-printtoconsole): operators
-                        // and the functional test scrape this exact line from stdout.
-                        LogPrintf("%s: Tracking %d delegated commitment(s).\n", __func__, (int)delegations.size());
-                        // Drop stats entries whose delegation is gone from the
-                        // chain and that never produced a block: compounding
-                        // owners re-create their delegated output on every run,
-                        // so without pruning the map (and the stats file) grows
-                        // by one dead entry per compounding round.
-                        std::set<std::string> tracked;
-                        for (const auto& d : delegations)
-                            tracked.insert(d.outhash);
-                        std::erase_if(delegationStats, [&](const auto& item) {
-                            return !tracked.contains(item.first) && item.second.blocksAccepted == 0 && item.second.blocksRejected == 0;
-                        });
-                        WriteDelegationStats();
+                        // On an RPC error keep tracking the previous set:
+                        // taking the error as an empty set would stop staking
+                        // every delegation and prune their stats.
+                        if (auto fresh = GetDelegatedCommitments(rh)) {
+                            delegations = std::move(*fresh);
+                            dash.Log(strprintf("tracking %d delegated commitment(s)", (int)delegations.size()));
+                            // Also emit to the log/console (-printtoconsole): operators
+                            // and the functional test scrape this exact line from stdout.
+                            LogPrintf("%s: Tracking %d delegated commitment(s).\n", __func__, (int)delegations.size());
+                            // Drop stats entries whose delegation is gone from the
+                            // chain and that never produced a block: compounding
+                            // owners re-create their delegated output on every run,
+                            // so without pruning the map (and the stats file) grows
+                            // by one dead entry per compounding round.
+                            std::set<std::string> tracked;
+                            for (const auto& d : delegations)
+                                tracked.insert(d.outhash);
+                            std::erase_if(delegationStats, [&](const auto& item) {
+                                return !tracked.contains(item.first) && item.second.blocksAccepted == 0 && item.second.blocksRejected == 0;
+                            });
+                            WriteDelegationStats();
+                        }
                     }
 
                     for (auto& it : delegations) {
@@ -1399,6 +1435,29 @@ void Loop()
                         dash.Log(last_event);
                     }
                 }
+            } catch (const CConnectionFailed& e) {
+                // The node is down or unreachable. Retrying every cycle would
+                // log the same error every cycle for as long as it stays
+                // down, so log the first failure only and back off. Every
+                // failed attempt still counts as an RPC error on the dashboard.
+                connection_failed = true;
+                ++rpc_errors;
+                if (reconnect_failures == 0) {
+                    // The message can carry a multi-line hint; keep its first line.
+                    std::string what{e.what()};
+                    what = what.substr(0, what.find('\n'));
+                    last_event = strprintf("lost connection to the node (%s); retrying with backoff", what);
+                    dash.Log(last_event);
+                    LogPrintf("%s: [%s] Lost connection to the node (%s). Retrying with backoff; further failures are not logged\n", __func__, walletName, what);
+                }
+                ++reconnect_failures;
+                reconnect_at = SteadyClock::now() + reconnect_wait;
+                reconnect_wait = std::min(reconnect_wait * 2, MAX_RECONNECT_WAIT);
+                // Delegated mode: rescan on the first cycle back. Delegations
+                // may have changed meanwhile, and with none tracked that
+                // rescan is the cycle's only call to the node, so without it
+                // the cycle would count as reconnected without reaching it.
+                last_delegation_refresh = SteadyClock::now() - std::chrono::seconds(delegation_refresh_interval);
             } catch (const std::exception& e) {
                 ++rpc_errors;
                 last_event = std::string("error: ") + e.what();
@@ -1408,12 +1467,20 @@ void Loop()
                 last_event = "unknown error";
                 dash.Log(last_event);
             }
+
+            if (!connection_failed && reconnect_failures > 0) {
+                last_event = strprintf("reconnected to the node after %d failed attempt(s)", reconnect_failures);
+                dash.Log(last_event);
+                LogPrintf("%s: [%s] Reconnected to the node after %d failed attempt(s)\n", __func__, walletName, reconnect_failures);
+                reconnect_failures = 0;
+                reconnect_wait = RECONNECT_WAIT_INITIAL;
+            }
         }
 
         // Refresh stats.
         const auto uptime = std::chrono::duration_cast<std::chrono::seconds>(SteadyClock::now() - start);
         const double hours = std::max(1e-9, Ticks<std::chrono::duration<double>>(SteadyClock::now() - start) / 3600.0);
-        dash.SetStat("State", paused ? "paused" : (fDelegated ? "staking (delegated)" : "staking"));
+        dash.SetStat("State", paused ? "paused" : reconnect_failures > 0 ? "waiting for node" : (fDelegated ? "staking (delegated)" : "staking"));
         dash.SetStat("Uptime", FmtUptime(uptime));
         dash.SetStat("Blocks found", strprintf("%.0f", found));
         dash.SetStat("Rate", strprintf("%.4f blocks/hour", found / hours));

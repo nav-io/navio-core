@@ -48,15 +48,39 @@ NULL_KEY_ADDRESSES = (NULL_KEY_ADDRESS, NULL_VIEW_KEY_ADDRESS, NULL_SPEND_KEY_AD
 STAKER_TIMEOUT = 120
 
 
-class FailingListDelegationsProxy:
-    """JSON-RPC proxy in front of a node that answers listdelegations with an
-    RPC error while `fail` is set and forwards everything else, recording
-    when it sees each call, per method. Read or change `fail` and `calls`
-    under `lock`."""
+def backoff_waits(cap):
+    """The staker's wait after each consecutive failure of a call it retries
+    with backoff (OWN_DELEGATION_RETRY_INITIAL, RECONNECT_WAIT_INITIAL),
+    doubling up to `cap`."""
+    wait = 2
+    while True:
+        yield wait
+        wait = min(wait * 2, cap)
 
-    def __init__(self, node_port):
-        self.fail = True
+
+def max_backoff_attempts(elapsed, cap):
+    """Most attempts such a backoff allows in `elapsed` seconds: one right
+    away, then one after each scheduled wait."""
+    attempts, at = 1, 0
+    for wait in backoff_waits(cap):
+        if at + wait > elapsed:
+            return attempts
+        attempts, at = attempts + 1, at + wait
+
+
+class FaultInjectingProxy:
+    """JSON-RPC proxy in front of a node that answers each method named in
+    the set `fail` with an RPC error and forwards everything else, recording
+    when it sees each call, per method. While `down` is set it instead closes
+    every connection without replying, as a node that went away would, and
+    records when it does in `dropped`. Read or change `fail`, `down`, `calls`
+    and `dropped` under `lock`."""
+
+    def __init__(self, node_port, fail=("listdelegations",)):
+        self.fail = set(fail)
+        self.down = False
         self.calls = {}
+        self.dropped = []
         self.lock = threading.Lock()
         proxy = self
 
@@ -66,11 +90,18 @@ class FailingListDelegationsProxy:
                 request = json.loads(body)
                 method = request.get("method")
                 with proxy.lock:
-                    proxy.calls.setdefault(method, []).append(time.monotonic())
-                    fail = proxy.fail and method == "listdelegations"
+                    down = proxy.down
+                    if down:
+                        proxy.dropped.append(time.monotonic())
+                    else:
+                        proxy.calls.setdefault(method, []).append(time.monotonic())
+                    fail = method in proxy.fail
+                if down:
+                    handler.close_connection = True
+                    return
                 if fail:
                     status = 500
-                    reply = json.dumps({"result": None, "error": {"code": -4, "message": "injected listdelegations failure"}, "id": request.get("id")}).encode()
+                    reply = json.dumps({"result": None, "error": {"code": -4, "message": f"injected {method} failure"}, "id": request.get("id")}).encode()
                 else:
                     conn = http.client.HTTPConnection("127.0.0.1", node_port)
                     conn.request("POST", handler.path, body, {k: v for k, v in handler.headers.items() if k.lower() in ("authorization", "content-type")})
@@ -185,6 +216,27 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                     return needle
         return None
 
+    def scan_staker(self, staker, on_line):
+        """Pass each staker output line so far to on_line, without blocking."""
+        while True:
+            try:
+                line = staker.lines.get_nowait()
+            except queue.Empty:
+                return
+            if line is None:
+                return
+            self.log.debug(f"staker: {line.rstrip()}")
+            on_line(line)
+
+    def wait_for_staker(self, staker, on_line, predicate, what, timeout=STAKER_TIMEOUT):
+        """wait_until(predicate), passing the staker output to on_line
+        meanwhile and failing at once if the staker exits."""
+        def done():
+            self.scan_staker(staker, on_line)
+            return staker.poll() is not None or predicate()
+        self.wait_until(done, timeout=timeout)
+        assert staker.poll() is None, f"staker exited early while waiting for {what}"
+
     def run_test(self):
         node = self.nodes[0]
         self.min_stake = 100
@@ -219,6 +271,8 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         self.test_owner_staker_pays_reward_address(node)
         self.test_mixed_wallet_staker(node)
         self.test_own_delegation_lookup_backoff(node)
+        self.test_reconnect_backoff(node)
+        self.test_delegation_refresh_error(operator_priv)
 
     def test_argument_validation(self, owner, operator_pub):
         self.log.info("Testing delegatestake argument validation")
@@ -753,23 +807,6 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         recovered_re = re.compile(r"Listed delegations again after (\d+) failed attempt\(s\)")
         refresh_line = "Refreshed own delegations:"
 
-        def scheduled_waits():
-            """The staker's wait after each consecutive failed lookup."""
-            wait = 2
-            while True:
-                yield wait
-                wait = min(wait * 2, refresh_max)
-
-        def max_attempts(elapsed):
-            """Most lookups the backoff allows in `elapsed` seconds for an
-            unchanging staked set: one right away, then one after each
-            scheduled wait."""
-            attempts, at = 1, 0
-            for wait in scheduled_waits():
-                if at + wait > elapsed:
-                    return attempts
-                attempts, at = attempts + 1, at + wait
-
         def change_staked_set():
             """Fold the stake into a new commitment and confirm it."""
             before = {c["commitment"] for c in wallet.liststakedcommitments()}
@@ -779,30 +816,19 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
 
         log = {"failed": 0, "recovered": None, "refreshed": 0}
 
+        def tally(line):
+            log["failed"] += failed_line in line
+            log["refreshed"] += refresh_line in line
+            if m := recovered_re.search(line):
+                log["recovered"] = int(m.group(1))
+
         def scan():
-            """Tally the staker output so far, without blocking."""
-            while True:
-                try:
-                    line = staker.lines.get_nowait()
-                except queue.Empty:
-                    return
-                if line is None:
-                    return
-                self.log.debug(f"staker: {line.rstrip()}")
-                log["failed"] += failed_line in line
-                log["refreshed"] += refresh_line in line
-                if m := recovered_re.search(line):
-                    log["recovered"] = int(m.group(1))
+            self.scan_staker(staker, tally)
 
         def wait_for(predicate, what, timeout=STAKER_TIMEOUT):
-            """wait_until(predicate), failing at once if the staker exits."""
-            def done():
-                scan()
-                return staker.poll() is not None or predicate()
-            self.wait_until(done, timeout=timeout)
-            assert staker.poll() is None, f"staker exited early while waiting for {what}"
+            self.wait_for_staker(staker, tally, predicate, what, timeout)
 
-        proxy = FailingListDelegationsProxy(rpc_port(0))
+        proxy = FaultInjectingProxy(rpc_port(0))
         start = time.monotonic()
         staker = self.spawn_staker(["-wallet=mixedstaker", f"-coinbasedest={coinbase_dest}",
                                     "-rpcconnect=127.0.0.1", f"-rpcport={proxy.port}",
@@ -818,7 +844,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
             scan()
             self.log.info(f"{lookups} lookup(s) and {log['failed']} failure line(s) in {cycles} cycles over {elapsed:.1f}s")
             assert_equal(log["failed"], 1)
-            assert_greater_than_or_equal(max_attempts(elapsed), lookups)
+            assert_greater_than_or_equal(max_backoff_attempts(elapsed, refresh_max), lookups)
 
             # A staked-set change while the lookups fail is tried at once
             # rather than at the next scheduled retry, once, and without
@@ -827,7 +853,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
             wait_for(lambda: proxy.count("listdelegations") > lookups, "the lookup after the set change")
             times = proxy.times("listdelegations")
             assert_equal(len(times), lookups + 1)
-            scheduled = list(itertools.islice(scheduled_waits(), lookups))[-1]
+            scheduled = list(itertools.islice(backoff_waits(refresh_max), lookups))[-1]
             self.log.info(f"set-change lookup {times[-1] - times[-2]:.1f}s after the previous one; the scheduled retry was {scheduled}s after it")
             assert times[-1] - times[-2] < scheduled, "the set-change lookup waited for the scheduled retry"
             # The next scheduled retry is twice as far off; nothing runs
@@ -843,7 +869,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
             # Recovery: the next scheduled retry succeeds, is logged with the
             # number of failed attempts, and maps the stake.
             with proxy.lock:
-                proxy.fail = False
+                proxy.fail = set()
                 failed = len(proxy.calls["listdelegations"])
             wait_for(lambda: log["refreshed"] >= 1, "the lookup to recover", timeout=2 * refresh_max)
             assert_equal(log["recovered"], failed)
@@ -857,6 +883,126 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         finally:
             # Stop the proxy first: it lets a request in flight finish while
             # the staker can still read the reply.
+            proxy.stop()
+            staker.kill()
+            staker.wait()
+
+    def test_reconnect_backoff(self, node):
+        """A staker that loses its node (with -rpcwait=0, so a failed
+        connection reaches the staking loop) stays up, logs the loss once and
+        retries with a doubling backoff rather than every cycle, then logs the
+        reconnect once and resumes staking when the node answers again."""
+        self.log.info("Testing the staker's backoff while the node is unreachable")
+
+        wallet = node.get_wallet_rpc("mixedstaker")
+        coinbase_dest = wallet.getnewaddress(label="staker", address_type="blsct")
+        # MAX_RECONNECT_WAIT in navio-staker.
+        reconnect_max = 60
+        lost_line = "Lost connection to the node"
+        reconnected_re = re.compile(r"Reconnected to the node after (\d+) failed attempt\(s\)")
+        accepted_line = "(ACCEPTED)"
+
+        log = {"lost": 0, "reconnected": [], "accepted": 0}
+
+        def tally(line):
+            log["lost"] += lost_line in line
+            log["accepted"] += accepted_line in line
+            if m := reconnected_re.search(line):
+                log["reconnected"].append(int(m.group(1)))
+
+        def scan():
+            self.scan_staker(staker, tally)
+
+        def wait_for(predicate, what, timeout=STAKER_TIMEOUT):
+            self.wait_for_staker(staker, tally, predicate, what, timeout)
+
+        def dropped():
+            with proxy.lock:
+                return len(proxy.dropped)
+
+        proxy = FaultInjectingProxy(rpc_port(0), fail=())
+        staker = self.spawn_staker(["-wallet=mixedstaker", f"-coinbasedest={coinbase_dest}",
+                                    "-rpcconnect=127.0.0.1", f"-rpcport={proxy.port}",
+                                    "-rpcwait=0"], delegated=False)
+        try:
+            wait_for(lambda: proxy.count("liststakedcommitments") >= 2, "the staker to start cycling")
+
+            # The node goes away. The loss is logged once and the attempts
+            # follow the backoff; the old behaviour retried, and logged, on
+            # every cycle. Count first, then the time, so the time covers
+            # every counted attempt.
+            start = time.monotonic()
+            with proxy.lock:
+                proxy.down = True
+            wait_for(lambda: dropped() >= 3, "3 failed connection attempts")
+            attempts = dropped()
+            elapsed = time.monotonic() - start
+            scan()
+            self.log.info(f"{attempts} connection attempt(s) and {log['lost']} lost-connection line(s) over {elapsed:.1f}s")
+            assert_equal(log["lost"], 1)
+            assert_greater_than_or_equal(max_backoff_attempts(elapsed, reconnect_max), attempts)
+
+            # The node is back: the next scheduled attempt reconnects, logs
+            # how many attempts failed, and staking resumes.
+            with proxy.lock:
+                proxy.down = False
+                failed = len(proxy.dropped)
+            wait_for(lambda: log["reconnected"], "the reconnect", timeout=2 * reconnect_max)
+            accepted = log["accepted"]
+            wait_for(lambda: log["accepted"] > accepted, "a block after the reconnect")
+            assert_equal(log["reconnected"], [failed])
+            assert_equal(log["lost"], 1)
+        finally:
+            # Stop the proxy first: it lets a request in flight finish while
+            # the staker can still read the reply.
+            proxy.stop()
+            staker.kill()
+            staker.wait()
+
+    def test_delegation_refresh_error(self, operator_priv):
+        """A delegated staker whose delegation rescan gets an RPC error (as
+        from a node still warming up) keeps tracking the delegations it had,
+        instead of taking the error for an empty set, and picks the set up
+        again once the rescan works."""
+        self.log.info("Testing that a failing delegation rescan keeps the tracked delegations")
+
+        tracking_re = re.compile(r"Tracking (\d+) delegated commitment\(s\)")
+        tracked = []
+
+        def tally(line):
+            if m := tracking_re.search(line):
+                tracked.append(int(m.group(1)))
+
+        def wait_for(predicate, what):
+            self.wait_for_staker(staker, tally, predicate, what)
+
+        def rescans():
+            return proxy.count("liststakedcommitmentsdata")
+
+        proxy = FaultInjectingProxy(rpc_port(0), fail=())
+        staker = self.spawn_staker([f"-delegationkey={operator_priv}",
+                                    "-rpcconnect=127.0.0.1", f"-rpcport={proxy.port}"])
+        try:
+            wait_for(lambda: tracked, "the first rescan")
+            expected = tracked[0]
+            assert_greater_than(expected, 0)
+
+            # Every rescan fails. The old behaviour logged "Tracking 0" on
+            # the first and dropped every delegation.
+            with proxy.lock:
+                proxy.fail = {"liststakedcommitmentsdata"}
+                failing_from = len(proxy.calls["liststakedcommitmentsdata"])
+            wait_for(lambda: rescans() >= failing_from + 2, "2 failed rescans")
+            self.scan_staker(staker, tally)
+            assert 0 not in tracked, f"a failed rescan dropped the delegations: {tracked}"
+
+            # The rescan works again and finds the same set.
+            with proxy.lock:
+                proxy.fail = set()
+            seen = len(tracked)
+            wait_for(lambda: len(tracked) > seen, "a rescan after the failures")
+            assert_equal(set(tracked), {expected})
+        finally:
             proxy.stop()
             staker.kill()
             staker.wait()
