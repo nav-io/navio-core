@@ -99,7 +99,9 @@ class BlsctTokenReplayTest(BitcoinTestFramework):
         token_ids.append(big_token)
         expected = self.token_state(token_ids)
         assert_equal(len(expected[2]), len(token_ids))
-        with node.assert_debug_log(["Writing final batch"], unexpected_msgs=["Writing partial batch", "Simulating a crash"]):
+        # The big token is the only token this flush changes, and the commit
+        # log line counts token entries alongside the coins.
+        with node.assert_debug_log(["Writing final batch", "and 1 changed tokens to coin database"], unexpected_msgs=["Writing partial batch", "Simulating a crash"]):
             node.gettxoutsetinfo()
         with node.assert_debug_log([], unexpected_msgs=["Replaying blocks"]):
             self.restart_node(0, extra_args=[])
