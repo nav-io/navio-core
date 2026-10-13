@@ -4875,11 +4875,6 @@ bool CWallet::ApplyMigrationData(MigrationData& data, bilingual_str& error)
     return true;
 }
 
-bool CWallet::CanGrindR() const
-{
-    return !IsWalletFlagSet(WALLET_FLAG_EXTERNAL_SIGNER);
-}
-
 bool DoMigration(CWallet& wallet, WalletContext& context, bilingual_str& error, MigrationResult& res) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
     AssertLockHeld(wallet.cs_wallet);

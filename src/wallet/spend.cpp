@@ -53,12 +53,10 @@ static bool UseMaxSig(const std::optional<CTxIn>& txin, const CCoinControl* coin
  * @param txin Optionally the txin to estimate the size of. Used to determine the size of ECDSA signatures.
  * @param coin_control Information about the context to determine the size of ECDSA signatures.
  * @param tx_is_segwit Whether the transaction has at least a single input spending a segwit coin.
- * @param can_grind_r Whether the signer will be able to grind the R of the signature.
  */
 static std::optional<int64_t> MaxInputWeight(const Descriptor& desc, const std::optional<CTxIn>& txin,
-                                             const CCoinControl* coin_control, const bool tx_is_segwit,
-                                             const bool can_grind_r) {
-    if (const auto sat_weight = desc.MaxSatisfactionWeight(!can_grind_r || UseMaxSig(txin, coin_control))) {
+                                             const CCoinControl* coin_control, const bool tx_is_segwit) {
+    if (const auto sat_weight = desc.MaxSatisfactionWeight(UseMaxSig(txin, coin_control))) {
         if (const auto elems_count = desc.MaxSatisfactionElems()) {
             const bool is_segwit = IsSegwit(desc);
             // Account for the size of the scriptsig and the number of elements on the witness stack. Note
@@ -78,12 +76,12 @@ static std::optional<int64_t> MaxInputWeight(const Descriptor& desc, const std::
     return {};
 }
 
-int CalculateMaximumSignedInputSize(const CTxOut& txout, const COutPoint outpoint, const SigningProvider* provider, bool can_grind_r, const CCoinControl* coin_control)
+int CalculateMaximumSignedInputSize(const CTxOut& txout, const COutPoint outpoint, const SigningProvider* provider, const CCoinControl* coin_control)
 {
     if (!provider) return -1;
 
     if (const auto desc = InferDescriptor(txout.scriptPubKey, *provider)) {
-        if (const auto weight = MaxInputWeight(*desc, CTxIn{outpoint}, coin_control, true, can_grind_r)) {
+        if (const auto weight = MaxInputWeight(*desc, CTxIn{outpoint}, coin_control, true)) {
             return static_cast<int>(GetVirtualTransactionSize(*weight, 0, 0));
         }
     }
@@ -94,7 +92,7 @@ int CalculateMaximumSignedInputSize(const CTxOut& txout, const COutPoint outpoin
 int CalculateMaximumSignedInputSize(const CTxOut& txout, const CWallet* wallet, const CCoinControl* coin_control)
 {
     const std::unique_ptr<SigningProvider> provider = wallet->GetSolvingProvider(txout.scriptPubKey);
-    return CalculateMaximumSignedInputSize(txout, COutPoint(), provider.get(), wallet->CanGrindR(), coin_control);
+    return CalculateMaximumSignedInputSize(txout, COutPoint(), provider.get(), coin_control);
 }
 
 /** Infer a descriptor for the given output script. */
@@ -113,8 +111,7 @@ static std::unique_ptr<Descriptor> GetDescriptor(const CWallet* wallet, const CC
 
 /** Infer the maximum size of this input after it will be signed. */
 static std::optional<int64_t> GetSignedTxinWeight(const CWallet* wallet, const CCoinControl* coin_control,
-                                                  const CTxIn& txin, const CTxOut& txo, const bool tx_is_segwit,
-                                                  const bool can_grind_r)
+                                                  const CTxIn& txin, const CTxOut& txo, const bool tx_is_segwit)
 {
     // If weight was provided, use that.
     std::optional<int64_t> weight;
@@ -124,7 +121,7 @@ static std::optional<int64_t> GetSignedTxinWeight(const CWallet* wallet, const C
 
     // Otherwise, use the maximum satisfaction size provided by the descriptor.
     std::unique_ptr<Descriptor> desc{GetDescriptor(wallet, coin_control, txo.scriptPubKey)};
-    if (desc) return MaxInputWeight(*desc, {txin}, coin_control, tx_is_segwit, can_grind_r);
+    if (desc) return MaxInputWeight(*desc, {txin}, coin_control, tx_is_segwit);
 
     return {};
 }
@@ -149,7 +146,7 @@ TxSize CalculateMaximumSignedTxSize(const CTransaction &tx, const CWallet *walle
 
     // Add the size of the transaction inputs as if they were signed.
     for (uint32_t i = 0; i < txouts.size(); i++) {
-        const auto txin_weight = GetSignedTxinWeight(wallet, coin_control, tx.vin[i], txouts[i], is_segwit, wallet->CanGrindR());
+        const auto txin_weight = GetSignedTxinWeight(wallet, coin_control, tx.vin[i], txouts[i], is_segwit);
         if (!txin_weight) return TxSize{-1, -1};
         assert(*txin_weight > -1);
         weight += *txin_weight;
@@ -266,7 +263,6 @@ util::Result<PreSelectedInputs> FetchSelectedInputs(const CWallet& wallet, const
                                             const CoinSelectionParams& coin_selection_params) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
     PreSelectedInputs result;
-    const bool can_grind_r = wallet.CanGrindR();
     std::map<COutPoint, CAmount> map_of_bump_fees = wallet.chain().calculateIndividualBumpFees(coin_control.ListSelected(), coin_selection_params.m_effective_feerate);
     for (const COutPoint& outpoint : coin_control.ListSelected()) {
         int64_t input_bytes = coin_control.GetInputWeight(outpoint).value_or(-1);
@@ -295,7 +291,7 @@ util::Result<PreSelectedInputs> FetchSelectedInputs(const CWallet& wallet, const
         }
 
         if (input_bytes == -1) {
-            input_bytes = CalculateMaximumSignedInputSize(txout, outpoint, &coin_control.m_external_provider, can_grind_r, &coin_control);
+            input_bytes = CalculateMaximumSignedInputSize(txout, outpoint, &coin_control.m_external_provider, &coin_control);
         }
 
         if (input_bytes == -1) {
@@ -324,7 +320,6 @@ CoinsResult AvailableCoins(const CWallet& wallet,
     const int min_depth = {coinControl ? coinControl->m_min_depth : DEFAULT_MIN_DEPTH};
     const int max_depth = {coinControl ? coinControl->m_max_depth : DEFAULT_MAX_DEPTH};
     const bool only_safe = {coinControl ? !coinControl->m_include_unsafe_inputs : true};
-    const bool can_grind_r = wallet.CanGrindR();
     std::vector<COutPoint> outpoints;
 
     std::set<uint256> trusted_parents;
@@ -423,7 +418,7 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             }
             std::unique_ptr<SigningProvider> provider = wallet.GetSolvingProvider(output.scriptPubKey);
 
-            int input_bytes = CalculateMaximumSignedInputSize(output, COutPoint(), provider.get(), can_grind_r, coinControl);
+            int input_bytes = CalculateMaximumSignedInputSize(output, COutPoint(), provider.get(), coinControl);
             bool solvable = provider ? InferDescriptor(output.scriptPubKey, *provider)->IsSolvable() : false;
             bool spendable = ((mine & (ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT)) != ISMINE_NO) || (((mine & ISMINE_WATCH_ONLY) != ISMINE_NO) && (coinControl && coinControl->fAllowWatchOnly && solvable));
 

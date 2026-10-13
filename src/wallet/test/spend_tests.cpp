@@ -28,8 +28,8 @@ BOOST_AUTO_TEST_CASE(max_signed_input_size_uses_external_outpoint)
     CCoinControl coin_control;
     coin_control.Select(outpoint).SetTxOut(txout);
 
-    const int low_r{CalculateMaximumSignedInputSize(txout, COutPoint{}, &provider, /*can_grind_r=*/true, &coin_control)};
-    const int high_r{CalculateMaximumSignedInputSize(txout, outpoint, &provider, /*can_grind_r=*/true, &coin_control)};
+    const int low_r{CalculateMaximumSignedInputSize(txout, COutPoint{}, &provider, &coin_control)};
+    const int high_r{CalculateMaximumSignedInputSize(txout, outpoint, &provider, &coin_control)};
     BOOST_CHECK_EQUAL(high_r, low_r + 1);
 }
 
