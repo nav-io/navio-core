@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef NAVIO_PIR_SIMPLEPIR_H
-#define NAVIO_PIR_SIMPLEPIR_H
+#ifndef BITCOIN_PIR_SIMPLEPIR_H
+#define BITCOIN_PIR_SIMPLEPIR_H
 
 #include <span.h>
 #include <uint256.h>
@@ -186,4 +186,4 @@ std::unique_ptr<FastRandomContext> MakeSecretRng();
 
 } // namespace pir
 
-#endif // NAVIO_PIR_SIMPLEPIR_H
+#endif // BITCOIN_PIR_SIMPLEPIR_H
