@@ -366,11 +366,41 @@ class SendallTest(BitcoinTestFramework):
             assert_equal(receipt["complete"], True)
             assert "errors" not in receipt
             decoded = self.nodes[1].decoderawtransaction(receipt["hex"])
+            assert_equal(decoded["txid"], receipt["txid"])
             assert_equal([vin["outid"] for vin in decoded["vin"]], [outid])
             # The child's signature over the parent's output is valid
             accept = self.nodes[1].testmempoolaccept([parent["hex"], receipt["hex"]])
             assert_equal([r["allowed"] for r in accept], [True, True])
         assert_equal(self.nodes[1].getrawmempool(), [])
+
+    def send_and_sendall_on_locked_wallet(self):
+        self.log.info("Test sendall and send on a locked wallet return the unsigned transaction")
+        self.nodes[0].createwallet(wallet_name="locked", passphrase="pass")
+        locked = self.nodes[0].get_wallet_rpc("locked")
+        self.def_wallet.sendtoaddress(locked.getnewaddress(), 10)
+        self.generate(self.nodes[0], 1)
+        utxo = locked.listunspent()[0]
+
+        sendall_tx_receipt = locked.sendall(recipients=[self.remainder_target])
+        send_tx_receipt = locked.send(outputs=[{self.remainder_target: 1}])
+        for receipt in [sendall_tx_receipt, send_tx_receipt]:
+            # Neither RPC asks for the passphrase: without the keys nothing is
+            # signed or broadcast, and each unsigned input is reported
+            assert_equal(receipt["complete"], False)
+            assert "txid" not in receipt
+            decoded = self.nodes[0].decoderawtransaction(receipt["hex"])
+            assert_equal([vin["outid"] for vin in decoded["vin"]], [utxo["outid"]])
+            assert_equal([e["outid"] for e in receipt["errors"]], [utxo["outid"]])
+            assert_equal(self.nodes[0].testmempoolaccept([receipt["hex"]])[0]["allowed"], False)
+        assert_equal(self.nodes[0].getrawmempool(), [])
+        assert_equal(locked.getbalances()["mine"]["trusted"], utxo["amount"])
+
+        locked.walletpassphrase("pass", 60)
+        assert_equal(locked.sendall(recipients=[self.remainder_target])["complete"], True)
+        locked.walletlock()
+        self.generate(self.nodes[0], 1)
+        assert_equal(locked.getbalances()["mine"]["trusted"], 0)
+        locked.unloadwallet()
 
     @cleanup
     def sendall_with_minconf(self):
@@ -511,6 +541,9 @@ class SendallTest(BitcoinTestFramework):
 
         # Sendall with add_to_wallet=false returns the signed hex without broadcasting it
         self.sendall_add_to_wallet_false()
+
+        # Sendall and send on a locked wallet return the transaction unsigned
+        self.send_and_sendall_on_locked_wallet()
 
         # Sendall only uses outputs with at least a give number of confirmations when using minconf
         self.sendall_with_minconf()
