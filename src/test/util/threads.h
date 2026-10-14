@@ -50,8 +50,11 @@ inline boost::test_tools::assertion_result CanCountThreads(boost::unit_test::tes
 
 // Measurements of a pool with a cap above 1 before concluding it spawned no
 // worker: on a loaded host a worker can live and die between two samples,
-// but not on every attempt.
-constexpr int MAX_POOL_ATTEMPTS{5};
+// and the sampler can be starved for many attempts in a row (a parallel CI
+// run missed the undo write's short-lived workers on every one of a handful),
+// but not on every attempt. Attempts stop at the first sighting, so the
+// bound only costs time when the pool really spawns nothing.
+constexpr int MAX_POOL_ATTEMPTS{100};
 
 // Runs `work` while a sampler thread polls the process's thread count, and
 // returns the most threads seen beyond those alive before (the sampler
