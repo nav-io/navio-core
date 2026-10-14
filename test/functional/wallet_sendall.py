@@ -391,6 +391,9 @@ class SendallTest(BitcoinTestFramework):
             decoded = self.nodes[0].decoderawtransaction(receipt["hex"])
             assert_equal([vin["outid"] for vin in decoded["vin"]], [utxo["outid"]])
             assert_equal([e["outid"] for e in receipt["errors"]], [utxo["outid"]])
+            # Without a signature the P2WPKH witness lacks the two items (signature, pubkey)
+            # the program needs: ScriptErrorString of SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH
+            assert_equal([e["error"] for e in receipt["errors"]], ["Witness program hash mismatch"])
             assert_equal(self.nodes[0].testmempoolaccept([receipt["hex"]])[0]["allowed"], False)
         assert_equal(self.nodes[0].getrawmempool(), [])
         assert_equal(locked.getbalances()["mine"]["trusted"], utxo["amount"])
