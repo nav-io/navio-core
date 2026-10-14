@@ -96,11 +96,12 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_window_size)
     // shift out of range. Both must throw, not reach UB.
     std::vector<BlstG1Point> bases = RandBases(1);
     BOOST_CHECK_THROW(FixedBaseWindow(bases, 0), std::invalid_argument);
-    // blst wbits requires a window width >= 2; width 1 aborts inside blst.
-    BOOST_CHECK_THROW(FixedBaseWindow(bases, 1), std::invalid_argument);
-    BOOST_CHECK_THROW(FixedBaseWindow(bases, 17), std::invalid_argument);
+    // A width below MIN_WIN_SIZE aborts inside blst wbits.
+    BOOST_CHECK_THROW(FixedBaseWindow(bases, FixedBaseWindow::MIN_WIN_SIZE - 1), std::invalid_argument);
+    BOOST_CHECK_THROW(FixedBaseWindow(bases, FixedBaseWindow::MAX_WIN_SIZE + 1), std::invalid_argument);
     BOOST_CHECK_THROW(FixedBaseWindow(bases, 64), std::invalid_argument);
-    BOOST_CHECK_NO_THROW(FixedBaseWindow(bases, 16));
+    BOOST_CHECK_NO_THROW(FixedBaseWindow(bases, FixedBaseWindow::MIN_WIN_SIZE));
+    BOOST_CHECK_NO_THROW(FixedBaseWindow(bases, FixedBaseWindow::MAX_WIN_SIZE));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

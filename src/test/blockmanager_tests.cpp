@@ -20,11 +20,16 @@
 #include <test/util/setup_common.h>
 #include <test/util/threads.h>
 
+#include <algorithm>
+#include <initializer_list>
+#include <thread>
+
 using node::BLOCK_SERIALIZATION_HEADER_SIZE;
 using node::BlockManager;
 using node::KernelNotifications;
 using node::MAX_BLOCKFILE_SIZE;
 using node::UNDO_WRITE_MIN_ENTRIES_PER_THREAD;
+using node::UndoWriteThreads;
 
 // use BasicTestingSetup here for the data directory configuration, setup, and cleanup
 BOOST_FIXTURE_TEST_SUITE(blockmanager_tests, BasicTestingSetup)
@@ -328,6 +333,46 @@ BOOST_FIXTURE_TEST_CASE(blockmanager_undo_reserves_stripped_size, TestChain100Se
     CBlockUndo read_undo;
     BOOST_REQUIRE(blockman.UndoReadFromDisk(read_undo, tip));
     BOOST_CHECK_EQUAL(read_undo.vtxundo.size(), blockundo.vtxundo.size());
+}
+
+BOOST_AUTO_TEST_CASE(blockmanager_undo_write_threads)
+{
+    // Each worker gets at least UNDO_WRITE_MIN_ENTRIES_PER_THREAD entries,
+    // and the -par cap still bounds the pool above that.
+    constexpr size_t K{UNDO_WRITE_MIN_ENTRIES_PER_THREAD};
+    constexpr size_t BIG_CAP{1000};
+    struct Case {
+        size_t threads;
+        size_t n_tx;
+        size_t expected;
+    };
+    for (const Case& c : std::initializer_list<Case>{
+             {BIG_CAP, 0, 1},
+             {BIG_CAP, 1, 1},
+             {BIG_CAP, K - 1, 1},
+             {BIG_CAP, K, 1},
+             {BIG_CAP, 2 * K - 1, 1},
+             {BIG_CAP, 2 * K, 2},
+             {BIG_CAP, 3 * K - 1, 2},
+             {BIG_CAP, 3 * K, 3},
+             {BIG_CAP, 10 * K + 1, 10},
+             // The cap wins once the entries would allow more workers.
+             {1, 10 * K, 1},
+             {4, 10 * K, 4},
+             {10, 10 * K, 10},
+             {11, 10 * K, 10},
+             // Cap 0 means one per core; below 2 * K entries that is still 1.
+             {0, 2 * K - 1, 1},
+         }) {
+        BOOST_CHECK_MESSAGE(UndoWriteThreads(c.threads, c.n_tx) == c.expected,
+                            "UndoWriteThreads(" << c.threads << ", " << c.n_tx << ") = "
+                                                << UndoWriteThreads(c.threads, c.n_tx) << ", expected " << c.expected);
+    }
+    // Cap 0 with plenty of entries: as many workers as cores, up to the
+    // entry rule.
+    const size_t n_big{1000 * K};
+    BOOST_CHECK_EQUAL(UndoWriteThreads(0, n_big),
+                      std::min<size_t>(std::max<unsigned>(1, std::thread::hardware_concurrency()), n_big / K));
 }
 
 BOOST_FIXTURE_TEST_CASE(blockmanager_undo_write_spawns_at_most_thread_cap, TestChain100Setup,

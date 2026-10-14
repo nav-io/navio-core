@@ -35,7 +35,7 @@ void FixedBaseCache::MaybeInit(const range_proof::Generators<Blst>& gens)
         if (!m_enabled) return;
 
         m_winSize = s_winSize;
-        if (m_winSize < 2 || m_winSize > 12) m_winSize = 8;
+        if (m_winSize < FixedBaseWindow::MIN_WIN_SIZE || m_winSize > FixedBaseWindow::MAX_WIN_SIZE) m_winSize = DEFAULT_WIN_SIZE;
 
         // Clamp the prefix to the generator pool actually available.
         const size_t pool = range_proof::Setup::max_input_value_vec_len;

@@ -31,6 +31,13 @@
 class FixedBaseWindow
 {
 public:
+    // Accepted window widths, the one bound every layer uses: the constructor
+    // throws outside it, FixedBaseCache falls back to its default and init.cpp
+    // clamps -blsctfixedbasewin to it. blst wbits needs a width of at least 2;
+    // the upper bound caps the table, which doubles with every extra bit.
+    static constexpr size_t MIN_WIN_SIZE{2};
+    static constexpr size_t MAX_WIN_SIZE{12};
+
     FixedBaseWindow() = default;
     FixedBaseWindow(const std::vector<BlstG1Point>& bases, size_t winSize);
 

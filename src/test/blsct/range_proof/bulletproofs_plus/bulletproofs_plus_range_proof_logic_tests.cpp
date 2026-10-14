@@ -572,6 +572,44 @@ BOOST_AUTO_TEST_CASE(test_verify_batch_verdict_independent_of_thread_cap)
     }
 }
 
+BOOST_AUTO_TEST_CASE(test_recovery_outcome_follows_request_order)
+{
+    // RecoverAmounts must behave like the serial loop it replaced: the first
+    // request in index order that stops the batch decides the outcome, under
+    // every thread cap. A Fail before a throwing request is failure() with
+    // no throw; the throwing request first propagates its exception.
+    auto nonce = GenNonce();
+    auto msg = GenMsgPair();
+    auto token_id = GenTokenId();
+
+    RangeProofLogic rpl;
+    Scalars vs;
+    vs.Add(Scalar(1));
+    const bulletproofs_plus::RangeProofWithSeed<T> proof{rpl.Prove(vs, nonce, msg.second, token_id), token_id};
+    const auto valid{bulletproofs_plus::AmountRecoveryRequest<T>::of(proof, nonce)};
+
+    // No value commitments: Fail.
+    auto fail{valid};
+    fail.Vs.Clear();
+    // One value commitment but m = 2: the z powers (size m) are multiplied
+    // with the single gamma, so ConfirmSizesMatch throws.
+    auto throws{valid};
+    throws.m = 2;
+    BOOST_REQUIRE_THROW(rpl.RecoverAmounts({throws}, 1), std::runtime_error);
+
+    for (size_t cap : {size_t{1}, size_t{2}}) {
+        BOOST_TEST_CONTEXT("cap " << cap)
+        {
+            bulletproofs_plus::AmountRecoveryResult<T> res{true, {}};
+            BOOST_CHECK_NO_THROW(res = rpl.RecoverAmounts({valid, fail, throws}, cap));
+            BOOST_CHECK(!res.is_completed);
+            BOOST_CHECK(res.amounts.empty());
+
+            BOOST_CHECK_THROW(rpl.RecoverAmounts({valid, throws, fail}, cap), std::runtime_error);
+        }
+    }
+}
+
 BOOST_AUTO_TEST_CASE(test_pools_spawn_at_most_thread_cap, *boost::unit_test::precondition(CanCountThreads))
 {
     // A pool given N threads runs the calling thread plus at most N - 1
