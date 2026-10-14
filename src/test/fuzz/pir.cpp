@@ -11,6 +11,7 @@
 #include <test/fuzz/util.h>
 
 #include <cassert>
+#include <string>
 
 namespace {
 template <typename T>
@@ -25,11 +26,13 @@ void RoundTrip(Span<const uint8_t> bytes)
     }
     DataStream out;
     out << msg;
+    const std::string encoded{out.str()};
     T msg2;
     out >> msg2;
+    assert(out.empty());
     DataStream out2;
     out2 << msg2;
-    assert(out.str() == out2.str());
+    assert(encoded == out2.str());
 }
 } // namespace
 
