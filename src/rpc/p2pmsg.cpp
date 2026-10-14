@@ -15,37 +15,37 @@
 #include <ctokens/tokenid.h>
 #include <net.h>
 #include <node/context.h>
-#include <validation.h>
 #include <node/transaction.h>
-#include <protocol.h>
-#include <policy/policy.h>
-#include <primitives/transaction.h>
-#include <util/transaction_identifier.h>
-#include <cmath>
 #include <p2pmsg/archive.h>
 #include <p2pmsg/crypto.h>
 #include <p2pmsg/fmd.h>
 #include <p2pmsg/transport.h>
 #include <p2pmsg/user_inbox.h>
+#include <policy/policy.h>
+#include <primitives/transaction.h>
+#include <protocol.h>
+#include <random.h>
 #include <rfq/intent_store.h>
 #include <rfq/matcher.h>
 #include <rfq/order_cache.h>
 #include <rfq/quote.h>
 #include <rfq/request.h>
-#include <random.h>
-#include <streams.h>
-#include <util/time.h>
-
-#include <algorithm>
-#include <limits>
 #include <rpc/protocol.h>
 #include <rpc/request.h>
 #include <rpc/server.h>
 #include <rpc/server_util.h>
 #include <rpc/util.h>
+#include <streams.h>
 #include <univalue.h>
 #include <util/check.h>
 #include <util/strencodings.h>
+#include <util/time.h>
+#include <util/transaction_identifier.h>
+#include <validation.h>
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
 
 static RPCHelpMan getp2pmsginfo()
 {
@@ -135,10 +135,11 @@ static RPCHelpMan getp2pmsginfo()
                 obj.pushKV("archive", a);
             }
             if (node.p2pmsg_user_inbox) {
+                const p2pmsg::UserInbox::Stats stats{node.p2pmsg_user_inbox->GetStats()};
                 UniValue st(UniValue::VOBJ);
-                st.pushKV("entries", static_cast<uint64_t>(node.p2pmsg_user_inbox->Size()));
-                st.pushKV("bytes", node.p2pmsg_user_inbox->TotalBytes());
-                st.pushKV("last_id", node.p2pmsg_user_inbox->LastId());
+                st.pushKV("entries", stats.count);
+                st.pushKV("bytes", stats.bytes);
+                st.pushKV("last_id", stats.last_id);
                 obj.pushKV("store", st);
             }
             return obj;

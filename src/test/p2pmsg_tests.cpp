@@ -12,6 +12,7 @@
 
 #include <blsct/private_key.h>
 #include <blsct/arith/blst/blst_scalar.h>
+#include <dbwrapper.h>
 #include <test/util/setup_common.h>
 #include <util/time.h>
 
@@ -1033,6 +1034,114 @@ BOOST_AUTO_TEST_CASE(user_inbox_scope_budgets_survive_reopen)
     inbox.Add(2000, MsgScope::INBOX, "t", sender, body);
     BOOST_CHECK_EQUAL(inbox.Size(), steady);
     BOOST_CHECK_EQUAL(inbox.List(0, 0, "").size(), steady);
+}
+
+BOOST_AUTO_TEST_CASE(user_inbox_stats_match_single_accessors)
+{
+    UserInbox::Options opts;
+    opts.memory_only = true;
+    UserInbox inbox(opts);
+    const blsct::PublicKey sender = blsct::PrivateKey(BlstScalar::Rand(true)).GetPublicKey();
+    for (int i = 0; i < 3; ++i) inbox.Add(1000 + i, MsgScope::INBOX, "t", sender, std::vector<uint8_t>(16 + i, 0x5));
+
+    const UserInbox::Stats stats{inbox.GetStats()};
+    BOOST_CHECK_EQUAL(stats.count, 3U);
+    BOOST_CHECK_EQUAL(stats.count, inbox.Size());
+    BOOST_CHECK_EQUAL(stats.bytes, inbox.TotalBytes());
+    BOOST_CHECK_GT(stats.bytes, 0U);
+    BOOST_CHECK_EQUAL(stats.last_id, inbox.LastId());
+    BOOST_CHECK_EQUAL(stats.last_id, 3U);
+}
+
+namespace {
+//! The store's on-disk layout, restated so the test below can damage it from
+//! outside: DB_MSG ('m') + big-endian id per entry, DB_META ('M') holding
+//! (next_id, total_bytes, count).
+struct RawMsgKey {
+    uint64_t id{0};
+    SERIALIZE_METHODS(RawMsgKey, obj) { READWRITE(Using<BigEndianFormatter<8>>(obj.id)); }
+};
+struct RawMeta {
+    uint64_t next_id{0};
+    uint64_t total_bytes{0};
+    uint64_t count{0};
+    SERIALIZE_METHODS(RawMeta, obj) { READWRITE(obj.next_id, obj.total_bytes, obj.count); }
+};
+} // namespace
+
+BOOST_AUTO_TEST_CASE(user_inbox_skips_undecodable_entries)
+{
+    // An entry that no longer decodes must not hide the entries after it from
+    // any walk, nor be counted, and must stay on disk (a lost obfuscation key
+    // or a downgrade makes every entry fail, and those messages are not ours
+    // to destroy). A DB_META that disagrees with the entries must not be
+    // believed: the store recounts from the entries on open.
+    const blsct::PublicKey sender = blsct::PrivateKey(BlstScalar::Rand(true)).GetPublicKey();
+    UserInbox::Options opts;
+    opts.path = m_path_root / "user_inbox_corrupt";
+    opts.max_total_bytes = 0;
+    opts.expiry_seconds = 0;
+
+    // The oldest entry, so every walk meets it before the others.
+    constexpr uint64_t CORRUPT_ID{1};
+    constexpr uint64_t OLDEST_INBOX_ID{3};
+    const auto payload_for = [](uint64_t id) { return std::vector<uint8_t>(32 * id, 0x9); };
+    uint64_t inbox_bytes{0}, session_bytes{0};
+    {
+        UserInbox inbox(opts);
+        for (uint64_t id = 1; id <= 5; ++id) {
+            const MsgScope scope{id % 2 == 0 ? MsgScope::SESSION : MsgScope::INBOX};
+            const uint64_t before{inbox.TotalBytes()};
+            BOOST_REQUIRE(inbox.Add(1000, scope, "t", sender, payload_for(id)));
+            if (id == CORRUPT_ID) continue;
+            (scope == MsgScope::INBOX ? inbox_bytes : session_bytes) += inbox.TotalBytes() - before;
+        }
+    }
+    const auto corrupt_key{std::make_pair(uint8_t{'m'}, RawMsgKey{CORRUPT_ID})};
+    {
+        CDBWrapper db{DBParams{.path = opts.path, .cache_bytes = 1 << 20, .obfuscate = true}};
+        BOOST_REQUIRE(db.Write(corrupt_key, std::vector<uint8_t>{0xff}));
+        BOOST_REQUIRE(db.Write(uint8_t{'M'}, RawMeta{6, 999999, 42}));
+    }
+    const auto list_ids = [](const UserInbox& inbox) {
+        std::vector<uint64_t> ids;
+        for (const auto& e : inbox.List(0, 0, "")) ids.push_back(e.id);
+        return ids;
+    };
+
+    {
+        UserInbox inbox(opts);
+        BOOST_CHECK((list_ids(inbox) == std::vector<uint64_t>{2, 3, 4, 5}));
+        BOOST_CHECK_EQUAL(inbox.Size(), 4U);
+        BOOST_CHECK_EQUAL(inbox.TotalBytes(), inbox_bytes + session_bytes);
+        BOOST_CHECK_EQUAL(inbox.LastId(), 5U);
+    }
+    {
+        CDBWrapper db{DBParams{.path = opts.path, .cache_bytes = 1 << 20, .obfuscate = true}};
+        BOOST_CHECK(db.Exists(corrupt_key));
+    }
+
+    // The per-scope totals show only through pruning. Cap the store so the
+    // inbox scope holds exactly its surviving bytes: one more inbox entry the
+    // size of the oldest surviving one must evict just that one, walking past
+    // the undecodable entry and leaving the session entries alone. An
+    // undercounted scope would evict nothing.
+    UserInbox::Options capped = opts;
+    while (UserInbox::ScopeCapBytes(capped.max_total_bytes, MsgScope::INBOX) < inbox_bytes) ++capped.max_total_bytes;
+    BOOST_REQUIRE_GE(UserInbox::ScopeCapBytes(capped.max_total_bytes, MsgScope::SESSION), session_bytes);
+    {
+        UserInbox inbox(capped);
+        BOOST_REQUIRE(inbox.Add(1000, MsgScope::INBOX, "t", sender, payload_for(OLDEST_INBOX_ID)));
+        BOOST_CHECK((list_ids(inbox) == std::vector<uint64_t>{2, 4, 5, 6}));
+        BOOST_CHECK_EQUAL(inbox.TotalBytes(), inbox_bytes + session_bytes);
+
+        // Clearing the range takes the undecodable entry with it.
+        BOOST_CHECK_EQUAL(inbox.Clear(0), 5U);
+        BOOST_CHECK_EQUAL(inbox.Size(), 0U);
+        BOOST_CHECK_EQUAL(inbox.TotalBytes(), 0U);
+    }
+    CDBWrapper db{DBParams{.path = opts.path, .cache_bytes = 1 << 20, .obfuscate = true}};
+    BOOST_CHECK(!db.Exists(corrupt_key));
 }
 
 BOOST_AUTO_TEST_CASE(user_inbox_expiry_prunes)

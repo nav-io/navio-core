@@ -60,26 +60,42 @@ UserInbox::UserInbox(Options opts) : m_opts(std::move(opts))
         // crypto -- but the same baseline every other sensitive store gets.)
         .obfuscate = true});
 
-    Meta meta;
-    if (m_db->Read(DB_META, meta)) {
-        m_next_id = meta.next_id;
-        m_total_bytes = meta.total_bytes;
-        m_count = meta.count;
-    }
+    LOCK(m_mutex);
+    Meta meta; // absent on a new store: the defaults stand
+    m_db->Read(DB_META, meta);
     std::vector<std::string> topics;
     if (m_db->Read(DB_TOPICS, topics)) {
         m_topics.insert(topics.begin(), topics.end());
     }
 
-    // m_scope_bytes is not persisted (see its declaration): count it here.
-    LOCK(m_mutex);
+    // Count every total from the entries themselves rather than trust
+    // DB_META: m_scope_bytes is not persisted (see its declaration), and a
+    // drifted meta would misreport the store and misaim the size cap. Nothing
+    // is written back: every open recounts, and reads only next_id from it.
+    size_t undecodable{0};
     std::unique_ptr<CDBIterator> it{m_db->NewIterator()};
     for (it->Seek(std::make_pair(DB_MSG, MsgKey{0})); it->Valid(); it->Next()) {
         std::pair<uint8_t, MsgKey> key;
         if (!it->GetKey(key) || key.first != DB_MSG) break;
+        // Never hand out an id already on disk, even an undecodable one's: a
+        // client's since_id cursor may already be past it.
+        m_next_id = std::max(m_next_id, key.second.id + 1);
         Entry e;
-        if (!it->GetValue(e)) break;
+        if (!it->GetValue(e)) {
+            // Skipped, not erased: when every entry fails (a lost obfuscation
+            // key, or a downgrade past an Entry format change) erasing would
+            // destroy messages a working binary can still read.
+            ++undecodable;
+            continue;
+        }
+        m_total_bytes += EntryBytes(e);
         m_scope_bytes[ScopeIndex(e.scope)] += EntryBytes(e);
+        ++m_count;
+    }
+    m_next_id = std::max(m_next_id, meta.next_id);
+
+    if (undecodable > 0) {
+        LogPrintf("p2pmsg: user inbox skips %d undecodable entries; they are not listed or counted\n", undecodable);
     }
 }
 
@@ -142,14 +158,16 @@ void UserInbox::PruneLocked(int64_t now, CDBBatch& batch)
     // keeps per-message cost bounded by PoW. Each key is visited once: the
     // iterator reads the backing store, NOT the pending batch, so a second
     // walk would see these erasures again and double-subtract them from the
-    // totals -- persisted into DB_META, that undercount permanently disarms
-    // the size cap.
+    // totals -- persisted into DB_META, that undercount disarms the size cap
+    // until the next open recounts it.
     std::unique_ptr<CDBIterator> it{m_db->NewIterator()};
     for (it->Seek(std::make_pair(DB_MSG, MsgKey{0})); it->Valid(); it->Next()) {
         std::pair<uint8_t, MsgKey> key;
         if (!it->GetKey(key) || key.first != DB_MSG) break;
         Entry e;
-        if (!it->GetValue(e)) break;
+        // Its age and scope are unknown, so it can be neither expired nor
+        // charged to a budget; stopping here would shield every entry after it.
+        if (!it->GetValue(e)) continue;
         const bool expired = e.received_at < cutoff;
         if (!expired && !any_over_budget()) break;
         if (!expired && !over_budget(ScopeIndex(e.scope))) continue;
@@ -196,7 +214,7 @@ std::vector<UserInbox::Entry> UserInbox::List(uint64_t since_id, size_t max_coun
         std::pair<uint8_t, MsgKey> key;
         if (!it->GetKey(key) || key.first != DB_MSG) break;
         Entry e;
-        if (!it->GetValue(e)) break;
+        if (!it->GetValue(e)) continue; // skipped, as the constructor does
         if (!topic.empty() && e.topic != topic) continue;
         // Expiry is enforced on writes (PruneLocked runs in Add); with no new
         // traffic, expired entries linger on disk until then -- skip them
@@ -218,11 +236,12 @@ size_t UserInbox::Clear(uint64_t up_to_id)
         std::pair<uint8_t, MsgKey> key;
         if (!it->GetKey(key) || key.first != DB_MSG) break;
         if (up_to_id != 0 && key.second.id > up_to_id) break;
-        Entry e;
-        if (!it->GetValue(e)) break;
         batch.Erase(key);
-        ForgetLocked(e.scope, EntryBytes(e));
         ++removed;
+        Entry e;
+        // The caller asked for this range gone, so an undecodable entry goes
+        // too; it was never counted, so there is nothing to forget.
+        if (it->GetValue(e)) ForgetLocked(e.scope, EntryBytes(e));
     }
     if (removed > 0) {
         WriteMetaLocked(batch);
@@ -251,6 +270,12 @@ uint64_t UserInbox::LastId() const
 {
     LOCK(m_mutex);
     return m_next_id - 1;
+}
+
+UserInbox::Stats UserInbox::GetStats() const
+{
+    LOCK(m_mutex);
+    return Stats{m_count, m_total_bytes, m_next_id - 1};
 }
 
 bool UserInbox::Subscribe(const std::string& topic)
