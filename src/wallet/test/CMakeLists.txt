@@ -8,7 +8,6 @@ target_sources(test_navio
     wallet_test_fixture.cpp
     coinselector_tests.cpp
     db_tests.cpp
-    feebumper_tests.cpp
     group_outputs_tests.cpp
     init_tests.cpp
     ismine_tests.cpp

@@ -476,11 +476,6 @@ public:
             [fn](const CTxDestination& address, const std::string& label, bool is_mine,
                  AddressPurpose purpose, ChangeType status) { fn(address, label, is_mine, purpose, status); }));
     }
-    std::unique_ptr<Handler> handleTransactionChanged(TransactionChangedFn fn) override
-    {
-        return MakeSignalHandler(m_wallet->NotifyTransactionChanged.connect(
-            [fn](const uint256& txid, ChangeType status) { fn(txid, status); }));
-    }
     std::unique_ptr<Handler> handleWatchOnlyChanged(WatchOnlyChangedFn fn) override
     {
         return MakeSignalHandler(m_wallet->NotifyWatchonlyChanged.connect(fn));
