@@ -25,6 +25,8 @@ constexpr TransactionError ALL_TRANSACTION_ERROR[] = {
     TransactionError::MEMPOOL_REJECTED,
     TransactionError::MEMPOOL_ERROR,
     TransactionError::MAX_FEE_EXCEEDED,
+    TransactionError::MAX_BURN_EXCEEDED,
+    TransactionError::INVALID_PACKAGE,
 };
 }; // namespace
 
