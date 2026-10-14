@@ -80,6 +80,7 @@ static RPCHelpMan getp2pmsginfo()
                     {RPCResult::Type::NUM, "entries", "Stored messages"},
                     {RPCResult::Type::NUM, "bytes", "Bytes they occupy"},
                     {RPCResult::Type::NUM, "last_id", "Highest message id assigned so far, 0 if none ever was. Ids never repeat, so it stays put when messages are cleared or pruned: pass it as listp2pmsgs' since_id to receive only messages from now on. Passed to clearp2pmsgs it drops everything stored by then, read or not; to drop only what you have read, pass the highest id listp2pmsgs returned instead"},
+                    {RPCResult::Type::NUM, "undecodable", "Messages on disk this node cannot read, e.g. written under a different obfuscation key or an incompatible store format. They are kept, but not listed and not counted in entries, bytes or toward -p2pmsgstoresize; clearp2pmsgs removes those in its range"},
                 }},
             }},
         RPCExamples{HelpExampleCli("getp2pmsginfo", "") + HelpExampleRpc("getp2pmsginfo", "")},
@@ -140,6 +141,7 @@ static RPCHelpMan getp2pmsginfo()
                 st.pushKV("entries", stats.count);
                 st.pushKV("bytes", stats.bytes);
                 st.pushKV("last_id", stats.last_id);
+                st.pushKV("undecodable", stats.undecodable);
                 obj.pushKV("store", st);
             }
             return obj;
@@ -511,7 +513,7 @@ static RPCHelpMan clearp2pmsgs()
         {
             {"up_to_id", RPCArg::Type::NUM, RPCArg::Default{0}, "Drop messages with id up to and including this (0 = drop all, including any stored since you last listed)"},
         },
-        RPCResult{RPCResult::Type::NUM, "removed", "How many messages were dropped"},
+        RPCResult{RPCResult::Type::NUM, "removed", "How many messages were dropped, including any undecodable ones in the range (see getp2pmsginfo's store.undecodable), so it can exceed what listp2pmsgs showed"},
         RPCExamples{HelpExampleCli("clearp2pmsgs", "42")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             p2pmsg::UserInbox& inbox = EnsureUserInbox(request);

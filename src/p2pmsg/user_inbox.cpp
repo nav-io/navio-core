@@ -72,7 +72,6 @@ UserInbox::UserInbox(Options opts) : m_opts(std::move(opts))
     // DB_META: m_scope_bytes is not persisted (see its declaration), and a
     // drifted meta would misreport the store and misaim the size cap. Nothing
     // is written back: every open recounts, and reads only next_id from it.
-    size_t undecodable{0};
     std::unique_ptr<CDBIterator> it{m_db->NewIterator()};
     for (it->Seek(std::make_pair(DB_MSG, MsgKey{0})); it->Valid(); it->Next()) {
         std::pair<uint8_t, MsgKey> key;
@@ -85,7 +84,7 @@ UserInbox::UserInbox(Options opts) : m_opts(std::move(opts))
             // Skipped, not erased: when every entry fails (a lost obfuscation
             // key, or a downgrade past an Entry format change) erasing would
             // destroy messages a working binary can still read.
-            ++undecodable;
+            ++m_undecodable;
             continue;
         }
         m_total_bytes += EntryBytes(e);
@@ -94,8 +93,8 @@ UserInbox::UserInbox(Options opts) : m_opts(std::move(opts))
     }
     m_next_id = std::max(m_next_id, meta.next_id);
 
-    if (undecodable > 0) {
-        LogPrintf("p2pmsg: user inbox skips %d undecodable entries; they are not listed or counted\n", undecodable);
+    if (m_undecodable > 0) {
+        LogPrintf("p2pmsg: user inbox skips %d undecodable entries; they are not listed or counted\n", m_undecodable);
     }
 }
 
@@ -240,8 +239,12 @@ size_t UserInbox::Clear(uint64_t up_to_id)
         ++removed;
         Entry e;
         // The caller asked for this range gone, so an undecodable entry goes
-        // too; it was never counted, so there is nothing to forget.
-        if (it->GetValue(e)) ForgetLocked(e.scope, EntryBytes(e));
+        // too; it was never in the totals, only in m_undecodable.
+        if (it->GetValue(e)) {
+            ForgetLocked(e.scope, EntryBytes(e));
+        } else if (m_undecodable > 0) {
+            --m_undecodable;
+        }
     }
     if (removed > 0) {
         WriteMetaLocked(batch);
@@ -275,7 +278,7 @@ uint64_t UserInbox::LastId() const
 UserInbox::Stats UserInbox::GetStats() const
 {
     LOCK(m_mutex);
-    return Stats{m_count, m_total_bytes, m_next_id - 1};
+    return Stats{m_count, m_total_bytes, m_next_id - 1, m_undecodable};
 }
 
 bool UserInbox::Subscribe(const std::string& topic)

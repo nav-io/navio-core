@@ -1115,6 +1115,7 @@ BOOST_AUTO_TEST_CASE(user_inbox_skips_undecodable_entries)
         BOOST_CHECK_EQUAL(inbox.Size(), 4U);
         BOOST_CHECK_EQUAL(inbox.TotalBytes(), inbox_bytes + session_bytes);
         BOOST_CHECK_EQUAL(inbox.LastId(), 5U);
+        BOOST_CHECK_EQUAL(inbox.GetStats().undecodable, 1U);
     }
     {
         CDBWrapper db{DBParams{.path = opts.path, .cache_bytes = 1 << 20, .obfuscate = true}};
@@ -1135,13 +1136,49 @@ BOOST_AUTO_TEST_CASE(user_inbox_skips_undecodable_entries)
         BOOST_CHECK((list_ids(inbox) == std::vector<uint64_t>{2, 4, 5, 6}));
         BOOST_CHECK_EQUAL(inbox.TotalBytes(), inbox_bytes + session_bytes);
 
-        // Clearing the range takes the undecodable entry with it.
+        // Pruning walks past the undecodable entry without erasing it: it is
+        // still counted here, and Clear below still finds it on disk.
+        BOOST_CHECK_EQUAL(inbox.GetStats().undecodable, 1U);
+
+        // Clearing the range takes the undecodable entry with it, and counts
+        // it in the return value (four decodable entries plus that one).
         BOOST_CHECK_EQUAL(inbox.Clear(0), 5U);
         BOOST_CHECK_EQUAL(inbox.Size(), 0U);
         BOOST_CHECK_EQUAL(inbox.TotalBytes(), 0U);
+        BOOST_CHECK_EQUAL(inbox.GetStats().undecodable, 0U);
+    }
+    {
+        CDBWrapper db{DBParams{.path = opts.path, .cache_bytes = 1 << 20, .obfuscate = true}};
+        BOOST_CHECK(!db.Exists(corrupt_key));
+    }
+
+    // A Clear whose range stops short of an undecodable entry leaves it, and
+    // its count, alone. The newest entry is the corrupt one this time.
+    uint64_t kept_id{0}, newest_id{0};
+    {
+        UserInbox inbox(opts);
+        BOOST_CHECK_EQUAL(inbox.GetStats().undecodable, 0U);
+        const auto kept{inbox.Add(1000, MsgScope::INBOX, "t", sender, payload_for(1))};
+        const auto newest{inbox.Add(1000, MsgScope::INBOX, "t", sender, payload_for(1))};
+        BOOST_REQUIRE(kept && newest);
+        kept_id = kept->id;
+        newest_id = newest->id;
+    }
+    const auto newest_key{std::make_pair(uint8_t{'m'}, RawMsgKey{newest_id})};
+    {
+        CDBWrapper db{DBParams{.path = opts.path, .cache_bytes = 1 << 20, .obfuscate = true}};
+        BOOST_REQUIRE(db.Write(newest_key, std::vector<uint8_t>{0xff}));
+    }
+    {
+        UserInbox inbox(opts);
+        BOOST_CHECK_EQUAL(inbox.GetStats().undecodable, 1U);
+        BOOST_CHECK_EQUAL(inbox.Clear(kept_id), 1U);
+        BOOST_CHECK_EQUAL(inbox.GetStats().undecodable, 1U);
+        BOOST_CHECK_EQUAL(inbox.Clear(0), 1U);
+        BOOST_CHECK_EQUAL(inbox.GetStats().undecodable, 0U);
     }
     CDBWrapper db{DBParams{.path = opts.path, .cache_bytes = 1 << 20, .obfuscate = true}};
-    BOOST_CHECK(!db.Exists(corrupt_key));
+    BOOST_CHECK(!db.Exists(newest_key));
 }
 
 BOOST_AUTO_TEST_CASE(user_inbox_expiry_prunes)
