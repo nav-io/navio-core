@@ -1192,7 +1192,7 @@ static util::Result<SelectionResult> select_coins(const CAmount& target, const C
     LOCK(wallet->cs_wallet);
     auto result = SelectCoins(*wallet, available_coins, /*pre_set_inputs=*/ {}, target, cc, cs_params);
     if (result) {
-        const auto signedTxSize = 10 + 34 + 68 * result->GetInputSet().size(); // static header size + output size + inputs size (P2WPKH)
+        const auto signedTxSize = 10 + 34 + 64 * result->GetInputSet().size(); // static header size + output size + inputs size (P2WPKH)
         BOOST_CHECK_LE(signedTxSize * WITNESS_SCALE_FACTOR, MAX_STANDARD_TX_WEIGHT);
 
         BOOST_CHECK_GE(result->GetSelectedValue(), target);
@@ -1225,7 +1225,7 @@ BOOST_AUTO_TEST_CASE(check_max_weight)
 
     {
         // Scenario 1:
-        // The actor starts with 1x 50.0 BTC and 1515x 0.033 BTC (~100.0 BTC total) unspent outputs
+        // The actor starts with 1x 50.0 BTC and 1700x 0.03 BTC (101.0 BTC total) unspent outputs
         // Then tries to spend 49.5 BTC
         // The 50.0 BTC output should be selected, because the transaction would otherwise be too large
 
@@ -1234,8 +1234,8 @@ BOOST_AUTO_TEST_CASE(check_max_weight)
         const auto result = select_coins(
             target, cs_params, cc, [&](CWallet& wallet) {
                 CoinsResult available_coins;
-                for (int j = 0; j < 1515; ++j) {
-                    add_coin(available_coins, wallet, CAmount(0.033 * COIN), CFeeRate(0), 144, false, 0, true);
+                for (int j = 0; j < 1700; ++j) {
+                    add_coin(available_coins, wallet, CAmount(3 * CENT), CFeeRate(0), 144, false, 0, true);
                 }
 
                 add_coin(available_coins, wallet, CAmount(50 * COIN), CFeeRate(0), 144, false, 0, true);
@@ -1278,23 +1278,23 @@ BOOST_AUTO_TEST_CASE(check_max_weight)
     {
         // Scenario 3:
 
-        // The actor starts with 1515x 0.033 BTC (49.995 BTC total) unspent outputs
+        // The actor starts with 1700x 0.03 BTC (51.0 BTC total) unspent outputs
         // No results should be returned, because the transaction would be too large
 
         // Perform selection
         const auto result = select_coins(
             target, cs_params, cc, [&](CWallet& wallet) {
                 CoinsResult available_coins;
-                for (int j = 0; j < 1515; ++j) {
-                    add_coin(available_coins, wallet, CAmount(0.033 * COIN), CFeeRate(0), 144, false, 0, true);
+                for (int j = 0; j < 1700; ++j) {
+                    add_coin(available_coins, wallet, CAmount(3 * CENT), CFeeRate(0), 144, false, 0, true);
                 }
                 return available_coins;
             },
             m_node);
 
         // No results
-        // 1515 inputs * 68 bytes = 103,020 bytes
-        // 103,020 bytes * 4 = 412,080 weight, which is above the MAX_STANDARD_TX_WEIGHT of 400,000
+        // The target needs 1650 inputs; 1650 inputs * 64 bytes (P2WPKH) = 105,600 bytes
+        // 105,600 bytes * 4 = 422,400 weight, which is above the MAX_STANDARD_TX_WEIGHT of 400,000
         BOOST_CHECK(!result);
     }
 }

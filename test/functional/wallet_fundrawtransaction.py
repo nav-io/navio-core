@@ -7,8 +7,12 @@
 
 from decimal import Decimal
 from itertools import product
+from math import ceil
 
 from test_framework.descriptors import descsum_create
+from test_framework.messages import (
+    COIN,
+)
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_approx,
@@ -107,6 +111,7 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         self.test_add_inputs_default_value()
         self.test_preset_inputs_selection()
+        self.test_weight_calculation()
         self.test_change_position()
         self.test_simple()
         self.test_simple_two_coins()
@@ -593,9 +598,9 @@ class RawTransactionsTest(BitcoinTestFramework):
         inputs = wallet.listunspent()
 
         # Deduce exact fee to produce a changeless transaction
-        # Total tx size: 161 vbytes, p2wpkh -> p2wpkh. Input 68 vbytes + rest of tx is 93 vbytes,
+        # Total tx size: 157 vbytes, p2wpkh -> p2wpkh. Input 64 vbytes + rest of tx is 93 vbytes,
         # most of it the output: 82 bytes, since it carries a DATA predicate.
-        tx_size = 161
+        tx_size = 157
         value = inputs[0]["amount"] - get_fee(tx_size, self.min_relay_tx_fee)
 
         outputs = {self.nodes[0].getnewaddress():value}
@@ -633,11 +638,8 @@ class RawTransactionsTest(BitcoinTestFramework):
             # Make sure funds are received at node1.
             assert_equal(oldBalance+Decimal('51.10000000'), self.nodes[0].getbalance())
 
-            # Restore pre-test wallet state.
-            # sendall sizes its fee before filling in the output amounts, and a
-            # zero-value output with a predicate serializes without its 8-byte value, so at exactly
-            # the minimum relay feerate the result is rejected; pay a higher rate.
-            restore = wallet.sendall(recipients=[df_wallet.getnewaddress(), df_wallet.getnewaddress(), df_wallet.getnewaddress()], fee_rate=2)
+            # Restore pre-test wallet state
+            restore = wallet.sendall(recipients=[df_wallet.getnewaddress(), df_wallet.getnewaddress(), df_wallet.getnewaddress()])
             assert restore["txid"] in self.nodes[1].getrawmempool()
         wallet.unloadwallet()
         self.generate(self.nodes[1], 1)
@@ -1177,6 +1179,39 @@ class RawTransactionsTest(BitcoinTestFramework):
         assert_raises_rpc_error(-4, "Insufficient funds", wallet.send, outputs=[{wallet.getnewaddress(address_type="bech32"): 29}], options=options)
 
         self.nodes[2].unloadwallet("test_preset_inputs_selection")
+
+    def test_weight_calculation(self):
+        self.log.info("Test weight calculation with external inputs")
+
+        self.nodes[2].createwallet("test_weight_calculation")
+        wallet = self.nodes[2].get_wallet_rpc("test_weight_calculation")
+
+        addr = wallet.getnewaddress(address_type="bech32")
+        ext_addr = self.nodes[0].getnewaddress(address_type="bech32")
+        utxo, ext_utxo = self.create_outpoints(self.nodes[0], outputs=[{addr: 5}, {ext_addr: 5}])
+
+        self.nodes[0].sendtoaddress(wallet.getnewaddress(address_type="bech32"), 5)
+        self.generate(self.nodes[0], 1)
+
+        rawtx = wallet.createrawtransaction([utxo], [{self.nodes[0].getnewaddress(address_type="bech32"): 8}])
+        fundedtx = wallet.fundrawtransaction(rawtx, fee_rate=10, change_type="bech32")
+        # with 71-byte signatures we should expect following tx size
+        # tx overhead (10) + 2 inputs (37 each: 32-byte outpoint + 1-byte scriptSig len + 4-byte sequence)
+        # + 2 p2wpkh outputs (82 each, they carry a DATA predicate)
+        # + (segwit marker and flag (2) + 2 p2wpkh 71 byte sig witnesses (107 each)) / witness scaling factor (4)
+        tx_size = ceil(10 + 37*2 + 82*2 + (2 + 107*2)/4)
+        assert_equal(fundedtx['fee'] * COIN, tx_size * 10)
+
+        # Using the other output should have 72 byte sigs
+        rawtx = wallet.createrawtransaction([ext_utxo], [{self.nodes[0].getnewaddress(address_type="bech32"): 13}])
+        ext_desc = self.nodes[0].getaddressinfo(ext_addr)["desc"]
+        fundedtx = wallet.fundrawtransaction(rawtx, fee_rate=10, change_type="bech32", solving_data={"descriptors": [ext_desc]})
+        # tx overhead (10) + 3 inputs (37 each) + 2 p2wpkh outputs (82 each)
+        # + (segwit marker and flag (2) + 2 p2wpkh 71 bytes sig witnesses (107 each) + p2wpkh 72 byte sig witness (108)) / witness scaling factor (4)
+        tx_size = ceil(10 + 37*3 + 82*2 + (2 + 107*2 + 108)/4)
+        assert_equal(fundedtx['fee'] * COIN, tx_size * 10)
+
+        self.nodes[2].unloadwallet("test_weight_calculation")
 
     def test_include_unsafe(self):
         self.log.info("Test fundrawtxn with unsafe inputs")

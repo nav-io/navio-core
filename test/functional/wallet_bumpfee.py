@@ -499,7 +499,7 @@ def test_dust_to_fee(self, rbf_node, dest_address):
     # Dust should be dropped to the fee, so actual bump fee is 0.00050000 BTC.
     bumped_tx = rbf_node.bumpfee(rbfid, fee_rate=350.25)
     full_bumped_tx = rbf_node.getrawtransaction(bumped_tx["txid"], 1)
-    assert_equal(bumped_tx["fee"], Decimal("0.00095140"))
+    assert_equal(bumped_tx["fee"], Decimal("0.00095220"))
     assert_equal(len(fulltx["vout"]), 2)
     assert_equal(len(full_bumped_tx["vout"]), 1)  # change output is eliminated
     assert_equal(full_bumped_tx["vout"][0]['value'], Decimal("0.00050000"))

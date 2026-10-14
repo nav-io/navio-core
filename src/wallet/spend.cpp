@@ -67,9 +67,12 @@ static std::optional<int64_t> MaxInputWeight(const Descriptor& desc, const std::
             // is always a push of the witness program in this case, which is smaller than 253 bytes).
             const int64_t scriptsig_len = is_segwit ? 1 : GetSizeOfCompactSize(*sat_weight / WITNESS_SCALE_FACTOR);
             const int64_t witstack_len = is_segwit ? GetSizeOfCompactSize(*elems_count) : (tx_is_segwit ? 1 : 0);
-            // previous txid + previous vout + sequence + scriptsig len + witstack size + scriptsig or witness
+            // The outpoint references the previous output by its hash alone (no vout index).
+            const int64_t outpoint_len = ::GetSerializeSize(COutPoint{});
+            const int64_t sequence_len = sizeof(CTxIn::nSequence);
+            // outpoint + sequence + scriptsig len + witstack size + scriptsig or witness
             // NOTE: sat_weight already accounts for the witness discount accordingly.
-            return (32 + 4 + 4 + scriptsig_len) * WITNESS_SCALE_FACTOR + witstack_len + *sat_weight;
+            return (outpoint_len + sequence_len + scriptsig_len) * WITNESS_SCALE_FACTOR + witstack_len + *sat_weight;
         }
     }
 
