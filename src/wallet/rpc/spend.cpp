@@ -1542,8 +1542,15 @@ RPCHelpMan sendall()
                               }
                           }
 
-                          // estimate final size of tx
-                          const TxSize tx_size{CalculateMaximumSignedTxSize(CTransaction(rawTx), pwallet.get())};
+                          // estimate final size of tx. The outputs without an amount are still zero-valued
+                          // here, and a zero-valued output carrying a predicate serializes without its value,
+                          // so size a copy where they hold a non-zero amount, as they will once filled in.
+                          // A data output stays zero-valued.
+                          CMutableTransaction sized_tx{rawTx};
+                          for (CTxOut& out : sized_tx.vout) {
+                              if (out.nValue == 0 && !out.scriptPubKey.IsUnspendable()) out.nValue = 1;
+                          }
+                          const TxSize tx_size{CalculateMaximumSignedTxSize(CTransaction(sized_tx), pwallet.get())};
                           if (tx_size.vsize == -1) {
                               throw JSONRPCError(RPC_WALLET_ERROR, "Unable to determine the size of the transaction, the wallet contains unsolvable descriptors");
                           }
