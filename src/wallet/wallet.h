@@ -60,7 +60,6 @@ class Coin;
 class SigningProvider;
 enum class MemPoolRemovalReason;
 enum class SigningResult;
-enum class TransactionError;
 namespace interfaces {
 class Wallet;
 }
@@ -73,7 +72,6 @@ struct CBlockLocator;
 struct CExtKey;
 struct FlatSigningProvider;
 struct KeyOriginInfo;
-struct PartiallySignedTransaction;
 struct SignatureData;
 
 using LoadWalletFn = std::function<void(std::unique_ptr<interfaces::Wallet> wallet)>;
@@ -690,29 +688,6 @@ public:
     /** Sign the tx given the input coins and sighash. */
     bool SignTransaction(CMutableTransaction& tx, const std::map<COutPoint, Coin>& coins, int sighash, std::map<int, bilingual_str>& input_errors) const;
     SigningResult SignMessage(const std::string& message, const PKHash& pkhash, std::string& str_sig) const;
-
-    /**
-     * Fills out a PSBT with information from the wallet. Fills in UTXOs if we have
-     * them. Tries to sign if sign=true. Sets `complete` if the PSBT is now complete
-     * (i.e. has all required signatures or signature-parts, and is ready to
-     * finalize.) Sets `error` and returns false if something goes wrong.
-     *
-     * @param[in]  psbtx PartiallySignedTransaction to fill in
-     * @param[out] complete indicates whether the PSBT is now complete
-     * @param[in]  sighash_type the sighash type to use when signing (if PSBT does not specify)
-     * @param[in]  sign whether to sign or not
-     * @param[in]  bip32derivs whether to fill in bip32 derivation information if available
-     * @param[out] n_signed the number of inputs signed by this wallet
-     * @param[in] finalize whether to create the final scriptSig or scriptWitness if possible
-     * return error
-     */
-    TransactionError FillPSBT(PartiallySignedTransaction& psbtx,
-                              bool& complete,
-                              int sighash_type = SIGHASH_DEFAULT,
-                              bool sign = true,
-                              bool bip32derivs = true,
-                              size_t* n_signed = nullptr,
-                              bool finalize = true) const;
 
     /**
      * Submit the transaction to the node's mempool and then relay to peers.

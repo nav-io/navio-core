@@ -617,59 +617,6 @@ SigningResult LegacyScriptPubKeyMan::SignMessage(const std::string& message, con
     return SigningResult::SIGNING_FAILED;
 }
 
-TransactionError LegacyScriptPubKeyMan::FillPSBT(PartiallySignedTransaction& psbtx, const PrecomputedTransactionData& txdata, int sighash_type, bool sign, bool bip32derivs, int* n_signed, bool finalize) const
-{
-    if (n_signed) {
-        *n_signed = 0;
-    }
-    for (unsigned int i = 0; i < psbtx.tx->vin.size(); ++i) {
-        const CTxIn& txin = psbtx.tx->vin[i];
-        PSBTInput& input = psbtx.inputs.at(i);
-
-        if (PSBTInputSigned(input)) {
-            continue;
-        }
-
-        // Get the Sighash type
-        if (sign && input.sighash_type != std::nullopt && *input.sighash_type != sighash_type) {
-            return TransactionError::SIGHASH_MISMATCH;
-        }
-
-        // Check non_witness_utxo has specified prevout
-        if (input.non_witness_utxo) {
-            CTxOut utxo;
-            for (auto &it: input.non_witness_utxo->vout) {
-                if (it.GetHash() == txin.prevout.hash) {
-                    utxo = it;
-                    break;
-                }
-            }
-            if (utxo.IsNull()) return TransactionError::MISSING_INPUTS;
-        } else if (input.witness_utxo.IsNull()) {
-            // There's no UTXO so we can just skip this now
-            continue;
-        }
-        SignatureData sigdata;
-        input.FillSignatureData(sigdata);
-        SignPSBTInput(HidingSigningProvider(this, !sign, !bip32derivs), psbtx, i, &txdata, sighash_type, nullptr, finalize);
-
-        bool signed_one = PSBTInputSigned(input);
-        if (n_signed && (signed_one || !sign)) {
-            // If sign is false, we assume that we _could_ sign if we get here. This
-            // will never have false negatives; it is hard to tell under what i
-            // circumstances it could have false positives.
-            (*n_signed)++;
-        }
-    }
-
-    // Fill in the bip32 keypaths and redeemscripts for the outputs so that hardware wallets can identify change
-    for (unsigned int i = 0; i < psbtx.tx->vout.size(); ++i) {
-        UpdatePSBTOutput(HidingSigningProvider(this, true, !bip32derivs), psbtx, i);
-    }
-
-    return TransactionError::OK;
-}
-
 std::unique_ptr<CKeyMetadata> LegacyScriptPubKeyMan::GetMetadata(const CTxDestination& dest) const
 {
     LOCK(cs_KeyStore);
@@ -2399,21 +2346,6 @@ std::unique_ptr<FlatSigningProvider> DescriptorScriptPubKeyMan::GetSigningProvid
     return GetSigningProvider(index, include_private);
 }
 
-std::unique_ptr<FlatSigningProvider> DescriptorScriptPubKeyMan::GetSigningProvider(const CPubKey& pubkey) const
-{
-    LOCK(cs_desc_man);
-
-    // Find index of the pubkey
-    auto it = m_map_pubkeys.find(pubkey);
-    if (it == m_map_pubkeys.end()) {
-        return nullptr;
-    }
-    int32_t index = it->second;
-
-    // Always try to get the signing provider with private keys. This function should only be called during signing anyways
-    return GetSigningProvider(index, true);
-}
-
 std::unique_ptr<FlatSigningProvider> DescriptorScriptPubKeyMan::GetSigningProvider(int32_t index, bool include_private) const
 {
     AssertLockHeld(cs_desc_man);
@@ -2482,111 +2414,6 @@ SigningResult DescriptorScriptPubKeyMan::SignMessage(const std::string& message,
         return SigningResult::SIGNING_FAILED;
     }
     return SigningResult::OK;
-}
-
-TransactionError DescriptorScriptPubKeyMan::FillPSBT(PartiallySignedTransaction& psbtx, const PrecomputedTransactionData& txdata, int sighash_type, bool sign, bool bip32derivs, int* n_signed, bool finalize) const
-{
-    if (n_signed) {
-        *n_signed = 0;
-    }
-    for (unsigned int i = 0; i < psbtx.tx->vin.size(); ++i) {
-        const CTxIn& txin = psbtx.tx->vin[i];
-        PSBTInput& input = psbtx.inputs.at(i);
-
-        if (PSBTInputSigned(input)) {
-            continue;
-        }
-
-        // Get the Sighash type
-        if (sign && input.sighash_type != std::nullopt && *input.sighash_type != sighash_type) {
-            return TransactionError::SIGHASH_MISMATCH;
-        }
-
-        // Get the scriptPubKey to know which SigningProvider to use
-        CScript script;
-        if (!input.witness_utxo.IsNull()) {
-            script = input.witness_utxo.scriptPubKey;
-        } else if (input.non_witness_utxo) {
-            CTxOut utxo;
-            for (auto &it: input.non_witness_utxo->vout) {
-                if (it.GetHash() == txin.prevout.hash) {
-                    utxo = it;
-                    break;
-                }
-            }
-            if (utxo.IsNull()) return TransactionError::MISSING_INPUTS;
-            script = utxo.scriptPubKey;
-        } else {
-            // There's no UTXO so we can just skip this now
-            continue;
-        }
-        SignatureData sigdata;
-        input.FillSignatureData(sigdata);
-
-        std::unique_ptr<FlatSigningProvider> keys = std::make_unique<FlatSigningProvider>();
-        std::unique_ptr<FlatSigningProvider> script_keys = GetSigningProvider(script, /*include_private=*/sign);
-        if (script_keys) {
-            keys->Merge(std::move(*script_keys));
-        } else {
-            // Maybe there are pubkeys listed that we can sign for
-            std::vector<CPubKey> pubkeys;
-            pubkeys.reserve(input.hd_keypaths.size() + 2);
-
-            // ECDSA Pubkeys
-            for (const auto& [pk, _] : input.hd_keypaths) {
-                pubkeys.push_back(pk);
-            }
-
-            // Taproot output pubkey
-            std::vector<std::vector<unsigned char>> sols;
-            if (Solver(script, sols) == TxoutType::WITNESS_V1_TAPROOT) {
-                sols[0].insert(sols[0].begin(), 0x02);
-                pubkeys.emplace_back(sols[0]);
-                sols[0][0] = 0x03;
-                pubkeys.emplace_back(sols[0]);
-            }
-
-            // Taproot pubkeys
-            for (const auto& pk_pair : input.m_tap_bip32_paths) {
-                const XOnlyPubKey& pubkey = pk_pair.first;
-                for (unsigned char prefix : {0x02, 0x03}) {
-                    unsigned char b[33] = {prefix};
-                    std::copy(pubkey.begin(), pubkey.end(), b + 1);
-                    CPubKey fullpubkey;
-                    fullpubkey.Set(b, b + 33);
-                    pubkeys.push_back(fullpubkey);
-                }
-            }
-
-            for (const auto& pubkey : pubkeys) {
-                std::unique_ptr<FlatSigningProvider> pk_keys = GetSigningProvider(pubkey);
-                if (pk_keys) {
-                    keys->Merge(std::move(*pk_keys));
-                }
-            }
-        }
-
-        SignPSBTInput(HidingSigningProvider(keys.get(), /*hide_secret=*/!sign, /*hide_origin=*/!bip32derivs), psbtx, i, &txdata, sighash_type, nullptr, finalize);
-
-        bool signed_one = PSBTInputSigned(input);
-        if (n_signed && (signed_one || !sign)) {
-            // If sign is false, we assume that we _could_ sign if we get here. This
-            // will never have false negatives; it is hard to tell under what i
-            // circumstances it could have false positives.
-            (*n_signed)++;
-        }
-    }
-
-    // Fill in the bip32 keypaths and redeemscripts for the outputs so that hardware wallets can identify change
-    for (unsigned int i = 0; i < psbtx.tx->vout.size(); ++i) {
-        std::unique_ptr<SigningProvider> keys = GetSolvingProvider(psbtx.tx->vout.at(i).scriptPubKey);
-        if (!keys) {
-            continue;
-        }
-        UpdatePSBTOutput(HidingSigningProvider(keys.get(), /*hide_secret=*/true, /*hide_origin=*/!bip32derivs), psbtx, i);
-    }
-
-    return TransactionError::OK;
 }
 
 std::unique_ptr<CKeyMetadata> DescriptorScriptPubKeyMan::GetMetadata(const CTxDestination& dest) const

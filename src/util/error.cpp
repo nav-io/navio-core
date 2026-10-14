@@ -25,12 +25,6 @@ bilingual_str TransactionErrorString(const TransactionError err)
             return Untranslated("Transaction rejected by mempool");
         case TransactionError::MEMPOOL_ERROR:
             return Untranslated("Mempool internal error");
-        case TransactionError::INVALID_PSBT:
-            return Untranslated("PSBT is not well-formed");
-        case TransactionError::PSBT_MISMATCH:
-            return Untranslated("PSBTs not compatible (different transactions)");
-        case TransactionError::SIGHASH_MISMATCH:
-            return Untranslated("Specified sighash value does not match value stored in PSBT");
         case TransactionError::MAX_FEE_EXCEEDED:
             return Untranslated("Fee exceeds maximum configured by user (e.g. -maxtxfee, maxfeerate)");
         case TransactionError::MAX_BURN_EXCEEDED:

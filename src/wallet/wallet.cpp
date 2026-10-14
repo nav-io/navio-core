@@ -30,7 +30,6 @@
 #include <policy/feerate.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
-#include <psbt.h>
 #include <pubkey.h>
 #include <random.h>
 #include <script/descriptor.h>
@@ -2732,59 +2731,6 @@ bool CWallet::SignTransaction(CMutableTransaction& tx, const std::map<COutPoint,
 
     // At this point, one input was not fully signed otherwise we would have exited already
     return false;
-}
-
-TransactionError CWallet::FillPSBT(PartiallySignedTransaction& psbtx, bool& complete, int sighash_type, bool sign, bool bip32derivs, size_t* n_signed, bool finalize) const
-{
-    if (n_signed) {
-        *n_signed = 0;
-    }
-    LOCK(cs_wallet);
-    // Get all of the previous transactions
-    for (unsigned int i = 0; i < psbtx.tx->vin.size(); ++i) {
-        const CTxIn& txin = psbtx.tx->vin[i];
-        PSBTInput& input = psbtx.inputs.at(i);
-
-        if (PSBTInputSigned(input)) {
-            continue;
-        }
-
-        // If we have no utxo, grab it from the wallet.
-        if (!input.non_witness_utxo) {
-            auto wtxhash = GetWalletTxFromOutpoint(txin.prevout);
-            if (wtxhash != nullptr) {
-                const CWalletTx& wtx = *wtxhash;
-                // We only need the non_witness_utxo, which is a superset of the witness_utxo.
-                //   The signing code will switch to the smaller witness_utxo if this is ok.
-                input.non_witness_utxo = wtx.tx;
-            }
-        }
-    }
-
-    const PrecomputedTransactionData txdata = PrecomputePSBTData(psbtx);
-
-    // Fill in information from ScriptPubKeyMans
-    for (ScriptPubKeyMan* spk_man : GetAllScriptPubKeyMans()) {
-        int n_signed_this_spkm = 0;
-        TransactionError res = spk_man->FillPSBT(psbtx, txdata, sighash_type, sign, bip32derivs, &n_signed_this_spkm, finalize);
-        if (res != TransactionError::OK) {
-            return res;
-        }
-
-        if (n_signed) {
-            (*n_signed) += n_signed_this_spkm;
-        }
-    }
-
-    RemoveUnnecessaryTransactions(psbtx, sighash_type);
-
-    // Complete if every input is now signed
-    complete = true;
-    for (const auto& input : psbtx.inputs) {
-        complete &= PSBTInputSigned(input);
-    }
-
-    return TransactionError::OK;
 }
 
 SigningResult CWallet::SignMessage(const std::string& message, const PKHash& pkhash, std::string& str_sig) const
