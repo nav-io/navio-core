@@ -159,7 +159,7 @@ public:
         EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     //! Drop every entry with id <= up_to_id (0 = drop all). Returns the number
-    //! of entries removed.
+    //! of entries removed, undecodable ones included (see Stats::undecodable).
     size_t Clear(uint64_t up_to_id) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
     size_t Size() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
@@ -178,6 +178,10 @@ public:
         uint64_t count;   //!< as Size()
         uint64_t bytes;   //!< as TotalBytes()
         uint64_t last_id; //!< as LastId()
+        //! Entries on disk this binary cannot decode (another obfuscation key
+        //! or Entry format). Kept, but not listed, not in count or bytes and
+        //! outside the size cap; only Clear removes them.
+        uint64_t undecodable;
     };
 
     Stats GetStats() const EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
@@ -196,6 +200,9 @@ private:
     uint64_t m_next_id GUARDED_BY(m_mutex){1};
     uint64_t m_total_bytes GUARDED_BY(m_mutex){0};
     uint64_t m_count GUARDED_BY(m_mutex){0};
+    //! Undecodable entries found by the open scan, less those Clear has
+    //! erased since. Add only writes decodable entries, so none appear later.
+    uint64_t m_undecodable GUARDED_BY(m_mutex){0};
     //! m_total_bytes split by MsgScope. Not persisted: rebuilt by a scan on
     //! open, so stores written before the split need no migration.
     std::array<uint64_t, NUM_MSG_SCOPES> m_scope_bytes GUARDED_BY(m_mutex){};
