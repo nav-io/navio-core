@@ -136,6 +136,7 @@ class P2PMsgUserMessagingTest(BitcoinTestFramework):
         store = n2.getp2pmsginfo()["store"]
         assert_equal(store["entries"], 0)
         assert_equal(store["bytes"], 0)
+        assert_equal(store["undecodable"], 0)
         # Ids never repeat: the empty store still reports the last one assigned.
         assert_equal(store["last_id"], ids[2])
         # A client starting from now polls since last_id and clears up to the
