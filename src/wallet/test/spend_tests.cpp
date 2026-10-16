@@ -3,8 +3,10 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <consensus/amount.h>
+#include <consensus/validation.h>
 #include <key.h>
 #include <policy/fees.h>
+#include <policy/policy.h>
 #include <script/solver.h>
 #include <validation.h>
 #include <wallet/coincontrol.h>
@@ -31,6 +33,24 @@ BOOST_AUTO_TEST_CASE(max_signed_input_size_uses_external_outpoint)
     const int low_r{CalculateMaximumSignedInputSize(txout, COutPoint{}, &provider, &coin_control)};
     const int high_r{CalculateMaximumSignedInputSize(txout, outpoint, &provider, &coin_control)};
     BOOST_CHECK_EQUAL(high_r, low_r + 1);
+}
+
+BOOST_AUTO_TEST_CASE(max_signed_input_size_matches_serialization)
+{
+    const CKey key{GenerateRandomKey()};
+    FillableSigningProvider provider;
+    BOOST_REQUIRE(provider.AddKey(key));
+    const CTxOut txout{COIN, GetScriptForDestination(WitnessV0KeyHash{key.GetPubKey()})};
+
+    // A P2WPKH input signed with a low-R signature: a 71-byte signature
+    // (including the sighash byte) and a 33-byte compressed pubkey. The
+    // estimate must equal the weight of that input as actually serialized,
+    // whose outpoint is the output hash alone.
+    CTxIn signed_txin{COutPoint{}};
+    signed_txin.scriptWitness.stack = {std::vector<unsigned char>(71), std::vector<unsigned char>(CPubKey::COMPRESSED_SIZE)};
+    const int64_t expected_vsize{GetVirtualTransactionSize(GetTransactionInputWeight(signed_txin), 0, 0)};
+
+    BOOST_CHECK_EQUAL(CalculateMaximumSignedInputSize(txout, COutPoint{}, &provider, /*coin_control=*/nullptr), expected_vsize);
 }
 
 BOOST_FIXTURE_TEST_CASE(SubtractFee, TestChain100Setup)

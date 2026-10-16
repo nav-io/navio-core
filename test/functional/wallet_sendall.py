@@ -6,10 +6,12 @@
 
 from decimal import Decimal, getcontext
 
+from test_framework.messages import COIN
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_greater_than,
+    assert_greater_than_or_equal,
     assert_raises_rpc_error,
 )
 
@@ -292,6 +294,21 @@ class SendallTest(BitcoinTestFramework):
         self.wallet.sendall, recipients=[self.recipient], fee_rate=0.999)
 
     @cleanup
+    def sendall_at_minimum_relay_feerate(self):
+        self.log.info("Test sendall at the minimum relay feerate pays enough to enter the mempool")
+        # The outputs without an amount are sized before they are filled in; a zero-valued
+        # output serializes shorter, so an estimate taken from it would fall below the
+        # minimum relay fee by the missing bytes.
+        min_relay_feerate = 1  # sat/vB, the default -minrelaytxfee
+        for recipients in [[self.remainder_target], [self.remainder_target, self.split_target]]:
+            self.add_utxos([7, 9])
+            receipt = self.wallet.sendall(recipients=recipients, fee_rate=min_relay_feerate)
+            assert receipt["txid"] in self.nodes[0].getrawmempool()
+            entry = self.nodes[0].getmempoolentry(receipt["txid"])
+            assert_greater_than_or_equal(entry["fees"]["base"] * COIN, entry["vsize"] * min_relay_feerate)
+            self.generate(self.nodes[0], 1)
+
+    @cleanup
     def sendall_watchonly_specific_inputs(self):
         self.log.info("Test sendall with a subset of UTXO pool in a watchonly wallet")
         self.add_utxos([17, 4])
@@ -391,6 +408,9 @@ class SendallTest(BitcoinTestFramework):
             decoded = self.nodes[0].decoderawtransaction(receipt["hex"])
             assert_equal([vin["outid"] for vin in decoded["vin"]], [utxo["outid"]])
             assert_equal([e["outid"] for e in receipt["errors"]], [utxo["outid"]])
+            # Without a signature the P2WPKH witness lacks the two items (signature, pubkey)
+            # the program needs: ScriptErrorString of SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH
+            assert_equal([e["error"] for e in receipt["errors"]], ["Witness program hash mismatch"])
             assert_equal(self.nodes[0].testmempoolaccept([receipt["hex"]])[0]["allowed"], False)
         assert_equal(self.nodes[0].getrawmempool(), [])
         assert_equal(locked.getbalances()["mine"]["trusted"], utxo["amount"])
@@ -535,6 +555,9 @@ class SendallTest(BitcoinTestFramework):
 
         # Sendall fails when fee rate is lower than minimum
         self.sendall_fails_on_low_fee()
+
+        # Sendall at the minimum relay feerate gets into the mempool
+        self.sendall_at_minimum_relay_feerate()
 
         # Sendall leaves a watchonly wallet's specific UTXOs unspent, as it cannot sign them
         self.sendall_watchonly_specific_inputs()

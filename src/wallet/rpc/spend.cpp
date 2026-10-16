@@ -767,9 +767,8 @@ CreatedTransactionResult FundTransaction(CWallet& wallet, const CMutableTransact
             }
             int64_t weight = weight_v.getInt<int64_t>();
             const int64_t min_input_weight = GetTransactionInputWeight(CTxIn());
-            CHECK_NONFATAL(min_input_weight == 165);
             if (weight < min_input_weight) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, weight cannot be less than 165 (41 bytes (size of outpoint + sequence + empty scriptSig) * 4 (witness scaling factor)) + 1 (empty witness)");
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid parameter, weight cannot be less than %d (the weight of an input with an empty scriptSig and an empty witness)", min_input_weight));
             }
             if (weight > MAX_STANDARD_TX_WEIGHT) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid parameter, weight cannot be greater than the maximum standard tx weight of %d", MAX_STANDARD_TX_WEIGHT));
@@ -1542,8 +1541,15 @@ RPCHelpMan sendall()
                               }
                           }
 
-                          // estimate final size of tx
-                          const TxSize tx_size{CalculateMaximumSignedTxSize(CTransaction(rawTx), pwallet.get())};
+                          // estimate final size of tx. The outputs without an amount are still zero-valued
+                          // here, and a zero-valued output carrying a predicate serializes without its value,
+                          // so size a copy where they hold a non-zero amount, as they will once filled in.
+                          // A data output stays zero-valued.
+                          CMutableTransaction sized_tx{rawTx};
+                          for (CTxOut& out : sized_tx.vout) {
+                              if (out.nValue == 0 && !out.scriptPubKey.IsUnspendable()) out.nValue = 1;
+                          }
+                          const TxSize tx_size{CalculateMaximumSignedTxSize(CTransaction(sized_tx), pwallet.get())};
                           if (tx_size.vsize == -1) {
                               throw JSONRPCError(RPC_WALLET_ERROR, "Unable to determine the size of the transaction, the wallet contains unsolvable descriptors");
                           }
