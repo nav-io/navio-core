@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <chainparams.h>
 #include <core_io.h>
 #include <key_io.h>
 #include <rpc/util.h>
@@ -258,6 +259,13 @@ RPCHelpMan addmultisigaddress()
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
+            // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+            // transaction ("non-blsct-tx-not-allowed"), so a transparent ECDSA
+            // multisig script can never be funded from or spent here.
+            if (Params().GetConsensus().fBLSCT) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) multisig scripts cannot send or receive here, so addmultisigaddress is not available. Use the BLSCT wallet functionality instead.");
+            }
+
             LegacyScriptPubKeyMan& spk_man = EnsureLegacyScriptPubKeyMan(*pwallet);
 
             LOCK2(pwallet->cs_wallet, spk_man.cs_KeyStore);
@@ -381,6 +389,13 @@ RPCHelpMan newkeypool()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
+
+            // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+            // transaction ("non-blsct-tx-not-allowed"), and this only regenerates
+            // the legacy transparent (ECDSA) keypool; BLSCT keys are untouched.
+            if (Params().GetConsensus().fBLSCT) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) keys cannot send or receive here, so newkeypool is not available. Use the BLSCT wallet functionality instead.");
+            }
 
             LOCK(pwallet->cs_wallet);
 

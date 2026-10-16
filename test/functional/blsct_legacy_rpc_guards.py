@@ -24,6 +24,11 @@ This test asserts that:
    BLSCT-flagged ones. importprivkey/dumpprivkey/importaddress/importpubkey/
    importmulti are guarded on Params().GetConsensus().fBLSCT (a chain-level
    property, not the wallet's BLSCT flag) and now raise a clear error here.
+ - The same chain-level guard covers the RPCs that only build, sign, mine or
+   price transparent transactions: generatetoaddress/generatetodescriptor/
+   generateblock (a block here must pay a BLSCT coinbase reward),
+   createrawtransaction/signrawtransactionwithkey, and the wallet RPCs
+   addmultisigaddress/newkeypool/settxfee.
  - A plain (non-BLSCT) wallet on this same fBLSCT chain is still subject to
    the chain-level guard (dumpwallet/sethdseed/signmessage remain unaffected
    since those are gated on the wallet's own BLSCT flag, not the chain).
@@ -60,6 +65,7 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         self.test_signmessage_guard(blsct_wallet)
         self.test_preexisting_descriptor_guards(blsct_wallet)
         self.test_transparent_key_rpcs_guarded(blsct_wallet)
+        self.test_transparent_tx_rpcs_guarded(blsct_wallet)
         self.test_legacy_wallet_unaffected()
 
     def test_dumpwallet_guard(self, wallet):
@@ -187,6 +193,87 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
             legacy_addr,
             "hello transparent",
         )
+
+    def test_transparent_tx_rpcs_guarded(self, wallet):
+        """The RPCs that only build, sign, mine or price transparent
+        transactions are dead on an fBLSCT chain for the same reason as the
+        key RPCs above. Every block here must carry a BLSCT coinbase reward,
+        so the transparent-coinbase miners can never produce a valid block;
+        createrawtransaction/signrawtransactionwithkey only yield transparent
+        transactions, which consensus rejects; and settxfee sets a rate that
+        only transparent transactions use. The wallet RPCs are guarded on the
+        chain, so a plain wallet is refused as well as a BLSCT one."""
+        self.log.info("Transparent-only transaction, mining and fee RPCs raise a clear guard error on an fBLSCT chain")
+        node = self.nodes[0]
+        plain_wallet = node.get_wallet_rpc("transparent_addr_source")
+        legacy_addr = plain_wallet.getnewaddress(label="", address_type="legacy")
+        legacy_pubkey = plain_wallet.getaddressinfo(legacy_addr)["pubkey"]
+
+        assert_raises_rpc_error(
+            -1,
+            "a block paying a transparent coinbase is always rejected here, so generatetoaddress is not available. Use generatetoblsctaddress instead.",
+            self.generatetoaddress,
+            node,
+            1,
+            legacy_addr,
+        )
+        assert_raises_rpc_error(
+            -1,
+            "a block paying a transparent coinbase is always rejected here, so generatetodescriptor is not available. Use generatetoblsctaddress instead.",
+            self.generatetodescriptor,
+            node,
+            1,
+            "raw(51)",
+        )
+        assert_raises_rpc_error(
+            -1,
+            "a block paying a transparent coinbase is always rejected here, so generateblock is not available. Use generatetoblsctaddress instead.",
+            self.generateblock,
+            node,
+            legacy_addr,
+            [],
+        )
+
+        self.log.info("...while generatetoblsctaddress, the alternative they name, still mines")
+        height = node.getblockcount()
+        self.generatetoblsctaddress(node, 1, wallet.getnewaddress(label="", address_type="blsct"))
+        assert_equal(node.getblockcount(), height + 1)
+
+        assert_raises_rpc_error(
+            -1,
+            "a transparent transaction can never confirm here, so createrawtransaction is not available. Use createblsctrawtransaction instead.",
+            node.createrawtransaction,
+            [],
+            {legacy_addr: 1},
+        )
+        # The guard fires before the hex is decoded, so a malformed one is fine.
+        assert_raises_rpc_error(
+            -1,
+            "transparent (ECDSA) keys cannot send or receive here, so signrawtransactionwithkey is not available. Use signblsctrawtransaction instead.",
+            node.signrawtransactionwithkey,
+            "00",
+            [],
+        )
+
+        for w in (wallet, plain_wallet):
+            assert_raises_rpc_error(
+                -4,
+                "transparent (ECDSA) multisig scripts cannot send or receive here, so addmultisigaddress is not available",
+                w.addmultisigaddress,
+                1,
+                [legacy_pubkey],
+            )
+            assert_raises_rpc_error(
+                -4,
+                "transparent (ECDSA) keys cannot send or receive here, so newkeypool is not available",
+                w.newkeypool,
+            )
+            assert_raises_rpc_error(
+                -4,
+                "their fees follow the consensus BLSCT fee rate, not this wallet setting, so settxfee is not available",
+                w.settxfee,
+                0.0001,
+            )
 
     def test_legacy_wallet_unaffected(self):
         """A plain (non-BLSCT-flagged) wallet is unaffected by the 4
