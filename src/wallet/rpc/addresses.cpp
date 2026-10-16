@@ -266,6 +266,10 @@ RPCHelpMan addmultisigaddress()
                 throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) multisig scripts cannot send or receive here, so addmultisigaddress is not available. Use the BLSCT wallet functionality instead.");
             }
 
+            if (IsBlsctWallet(*pwallet)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "addmultisigaddress does not support BLSCT (confidential) wallets: it only creates transparent script-hash multisig addresses, and a BLSCT wallet hands out no transparent addresses.");
+            }
+
             LegacyScriptPubKeyMan& spk_man = EnsureLegacyScriptPubKeyMan(*pwallet);
 
             LOCK2(pwallet->cs_wallet, spk_man.cs_KeyStore);
@@ -285,7 +289,7 @@ RPCHelpMan addmultisigaddress()
                 }
             }
 
-            OutputType output_type = pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT) ? OutputType::BLSCT : pwallet->m_default_address_type;
+            OutputType output_type = pwallet->m_default_address_type;
             if (!request.params[3].isNull()) {
                 std::optional<OutputType> parsed = ParseOutputType(request.params[3].get_str());
                 if (!parsed) {

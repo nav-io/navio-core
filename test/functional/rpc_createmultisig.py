@@ -94,6 +94,35 @@ class RpcCreateMultiSigTest(BitcoinTestFramework):
         # Check that bech32m is currently not allowed
         assert_raises_rpc_error(-5, "createmultisig cannot create bech32m multisig addresses", self.nodes[0].createmultisig, 2, self.pub, "bech32m")
 
+        self.check_blsct_multisig_errors()
+
+    def check_blsct_multisig_errors(self):
+        # A BLSCT output type has no script-hash form for a multisig script.
+        # These calls used to reach an assert and abort the node.
+        node0 = self.nodes[0]
+        self.log.info('Check that createmultisig rejects BLSCT address types')
+        for addr_type in ["blsct", "blsct-stake"]:
+            assert_raises_rpc_error(-5, f"Multisig addresses cannot be created with address type '{addr_type}'", node0.createmultisig, 2, self.pub, addr_type)
+
+        if not self.is_wallet_compiled():
+            return
+
+        self.log.info('Check that addmultisigaddress rejects a BLSCT wallet')
+        node0.createwallet(wallet_name="multisig_blsct", blsct=True)
+        blsct_wallet = node0.get_wallet_rpc("multisig_blsct")
+        for addr_type in [None, "blsct", "legacy"]:
+            args = [2, self.pub] if addr_type is None else [2, self.pub, "", addr_type]
+            assert_raises_rpc_error(-4, "addmultisigaddress does not support BLSCT (confidential) wallets", blsct_wallet.addmultisigaddress, *args)
+
+        self.log.info('Check that addmultisigaddress rejects BLSCT address types on a legacy wallet')
+        node0.createwallet(wallet_name="multisig_legacy", descriptors=False, blsct=False)
+        legacy_wallet = node0.get_wallet_rpc("multisig_legacy")
+        for addr_type in ["blsct", "blsct-stake"]:
+            assert_raises_rpc_error(-5, f"Multisig addresses cannot be created with address type '{addr_type}'", legacy_wallet.addmultisigaddress, 2, self.pub, "", addr_type)
+        assert_raises_rpc_error(-5, "Bech32m multisig addresses cannot be created with legacy wallets", legacy_wallet.addmultisigaddress, 2, self.pub, "", "bech32m")
+        # A transparent type still works, so the guard is not over-broad.
+        assert_equal(legacy_wallet.addmultisigaddress(2, self.pub, "", "legacy")["address"], node0.createmultisig(2, self.pub, "legacy")["address"])
+
     def check_addmultisigaddress_errors(self):
         if self.options.descriptors:
             return
