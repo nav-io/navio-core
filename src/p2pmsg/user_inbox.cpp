@@ -4,6 +4,7 @@
 
 #include <p2pmsg/user_inbox.h>
 
+#include <util/check.h>
 #include <util/time.h>
 
 #include <dbwrapper.h>
@@ -239,10 +240,11 @@ size_t UserInbox::Clear(uint64_t up_to_id)
         ++removed;
         Entry e;
         // The caller asked for this range gone, so an undecodable entry goes
-        // too; it was never in the totals, only in m_undecodable.
+        // too; it was never in the totals, only in m_undecodable, where the
+        // open scan counted it, so a zero here means the counter drifted.
         if (it->GetValue(e)) {
             ForgetLocked(e.scope, EntryBytes(e));
-        } else if (m_undecodable > 0) {
+        } else if (Assume(m_undecodable > 0)) {
             --m_undecodable;
         }
     }
