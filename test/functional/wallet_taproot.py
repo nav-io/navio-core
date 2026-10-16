@@ -376,8 +376,11 @@ class WalletTaprootTest(BitcoinTestFramework):
         # Cleanup
         unsigned = online.sendall(recipients=[self.boring.getnewaddress()])
         assert_equal(unsigned["complete"], False)
+        assert_equal(self.nodes[0].testmempoolaccept([unsigned["hex"]])[0]["allowed"], False)
         res = offline.signrawtransactionwithwallet(unsigned["hex"], self.spent_outputs(online, unsigned["hex"]))
         assert_equal(res["complete"], True)
+        assert "errors" not in res
+        assert self.nodes[0].testmempoolaccept([res["hex"]])[0]["allowed"]
         txid = self.nodes[0].sendrawtransaction(res["hex"])
         self.generatetoaddress(self.nodes[0], 1, self.boring.getnewaddress(), sync_fun=self.no_op)
         assert online.gettransaction(txid)['confirmations'] > 0
