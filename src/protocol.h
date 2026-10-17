@@ -338,6 +338,25 @@ extern const char* GETAGGBLOCKTXN;
  * Sent in response to a "getaggblktxn" message.
  */
 extern const char* AGGBLOCKTXN;
+/**
+ * getpirhint requests the SimplePIR hint of one output epoch (uint32 epoch).
+ * Only available with service bit NODE_OUTKEYS_PIR.
+ */
+extern const char* GETPIRHINT;
+/**
+ * pirhint is a response to getpirhint: the epoch's description (heights,
+ * per-block output counts, database shape, public matrix seed) and the hint
+ * rows of one slot; one message per slot.
+ */
+extern const char* PIRHINT;
+/**
+ * pirquery asks for one private retrieval from an epoch database: the epoch,
+ * the anchor block naming the database version, its record count and the
+ * encrypted query vector. Only available with service bit NODE_OUTKEYS_PIR.
+ */
+extern const char* PIRQUERY;
+/** pirreply is the answer to a pirquery, sent in request order. */
+extern const char* PIRREPLY;
 }; // namespace NetMsgType
 
 /* Get a vector of all valid message types (see above) */
@@ -438,6 +457,15 @@ enum ServiceFlags : uint64_t {
     // 24-27 are p2pmsg's).
     NODE_OUTKEYS = (1 << 28),
 
+    // NODE_OUTKEYS_PIR means the node answers getpirhint and pirquery: light
+    // wallets can fetch the full data of outputs they found with getoutkeys
+    // without revealing which outputs they fetch (SimplePIR). Enabled with
+    // -peerpir, which requires -peeroutkeys. A separate bit from NODE_OUTKEYS
+    // because answering queries costs a scan of the database per query, so
+    // operators opt in separately and wallets look for it separately.
+    // Navio-specific; occupies a reserved-experiment bit.
+    NODE_OUTKEYS_PIR = (1 << 29),
+
     // NODE_P2P_WS advertises that the node accepts P2P connections carried
     // over WebSocket (-p2pwsbind), so browser and other WebSocket-only clients
     // know they can dial it. A service bit cannot carry a port, so a node that
@@ -456,7 +484,7 @@ enum ServiceFlags : uint64_t {
     //   26  NODE_P2PMSG_ARCHIVE  p2pmsg retention, serves getp2pmsgs
     //   27  NODE_P2PMSG_V2       p2pmsg relay, envelope v2
     //   28  NODE_OUTKEYS         light-wallet output keys (getoutkeys)
-    //   29  NODE_OUTKEYS_PIR     reserved: PIR variant of the output-key service
+    //   29  NODE_OUTKEYS_PIR     private output fetch for light wallets (SimplePIR)
     //   30  NODE_P2P_WS          WebSocket P2P listener (wsendpoint)
     //   31  free
     //
