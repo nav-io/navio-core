@@ -523,6 +523,14 @@ RPCHelpMan settxfee()
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
+            // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+            // transaction ("non-blsct-tx-not-allowed"). The rate set here only
+            // prices transparent transactions; BLSCT fees come from the consensus
+            // nBLSCTDefaultFee, so accepting it would silently change nothing.
+            if (Params().GetConsensus().fBLSCT) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; their fees follow the consensus BLSCT fee rate, not this wallet setting, so settxfee is not available.");
+            }
+
             LOCK(pwallet->cs_wallet);
 
             CAmount nAmount = AmountFromValue(request.params[0]);

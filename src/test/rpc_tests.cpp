@@ -46,9 +46,18 @@ private:
 class RPCTestingSetup : public TestingSetup
 {
 public:
-    RPCTestingSetup() : TestingSetup{ChainType::MAIN} {}
+    explicit RPCTestingSetup(ChainType chain_type = ChainType::MAIN) : TestingSetup{chain_type} {}
     UniValue TransformParams(const UniValue& params, std::vector<std::pair<std::string, bool>> arg_names) const;
     UniValue CallRPC(std::string args);
+};
+
+//! MAIN is an fBLSCT chain, where createrawtransaction and
+//! signrawtransactionwithkey refuse to run, so their transparent behaviour is
+//! exercised on regtest instead.
+class RegtestRPCTestingSetup : public RPCTestingSetup
+{
+public:
+    RegtestRPCTestingSetup() : RPCTestingSetup{ChainType::REGTEST} {}
 };
 
 UniValue RPCTestingSetup::TransformParams(const UniValue& params, std::vector<std::pair<std::string, bool>> arg_names) const
@@ -136,7 +145,7 @@ BOOST_AUTO_TEST_CASE(rpc_namedonlyparams)
                           HasJSON(R"({"code":-8,"message":"Parameter options specified twice both as positional and named argument"})"));
 }
 
-BOOST_AUTO_TEST_CASE(rpc_rawparams)
+BOOST_FIXTURE_TEST_CASE(rpc_rawparams, RegtestRPCTestingSetup)
 {
     // Test raw transaction API argument handling
     UniValue r;
@@ -212,27 +221,35 @@ BOOST_AUTO_TEST_CASE(rpc_togglenetwork)
     BOOST_CHECK_EQUAL(netState, true);
 }
 
-BOOST_AUTO_TEST_CASE(rpc_rawsign)
+BOOST_FIXTURE_TEST_CASE(rpc_rawsign, RegtestRPCTestingSetup)
 {
     UniValue r;
     // input is a 1-of-2 multisig (so is output):
     std::string prevout =
         "[{\"outid\":\"b4cc287e58f87cdae59417329f710f3ecd75a4ee1d2872b7248f50977c8493f3\",\"scriptPubKey\":\"a914b10c9df5f7edf436c697f02f1efdba4cf399615187\","
         "\"redeemScript\":\"512103debedc17b3df2badbcdd86d5feb4562b86fe182e5998abd8bcd4f122c6155b1b21027e940bb73ab8732bfdf7f9216ecefca5b94d6df834e77e108f68e66f126044c052ae\"}]";
-    // Use a mainnet P2SH address from key_io test vectors so this stays aligned
+    // Use a regtest P2SH address from key_io test vectors so this stays aligned
     // with the current NAVIO address tables.
     r = CallRPC(std::string("createrawtransaction ") + prevout + " " +
-                "{\"36j4NfKv6Akva9amjWrLG6MuSQym1GuEmm\":11}");
+                "{\"2MxFajLApXpYk4VodBSZSt7rw8y4ryABkfA\":11}");
     std::string notsigned = r.get_str();
-    std::string privkey1 = "\"KzsXybp9jX64P5ekX1KUxRQ79Jht9uzW7LorgwE65i5rWACL6LQe\"";
-    std::string privkey2 = "\"Kyhdf5LuKTRx4ge69ybABsiUAWjVRK4XGxAKk2FQLp2HjGMy87Z4\"";
+    std::string privkey1 = "\"cREXSWp1AanKYX81uR8cKjuAmY1HpN6CBNxKoMgbapjrkuEooecf\"";
+    std::string privkey2 = "\"cQ4d7zLkkX8DE87MYPQHZCDXnk2u5mADLzJnrShuqvgHz1QTEXkV\"";
     r = CallRPC(std::string("signrawtransactionwithkey ")+notsigned+" [] "+prevout);
     BOOST_CHECK(r.get_obj().find_value("complete").get_bool() == false);
     r = CallRPC(std::string("signrawtransactionwithkey ")+notsigned+" ["+privkey1+","+privkey2+"] "+prevout);
     BOOST_CHECK(r.get_obj().find_value("complete").get_bool() == true);
 }
 
-BOOST_AUTO_TEST_CASE(rpc_createraw_op_return)
+BOOST_AUTO_TEST_CASE(rpc_transparent_raw_rejected_on_blsct_chain)
+{
+    // Both guards fire before the transaction hex is decoded, so even a
+    // malformed one reaches them.
+    BOOST_CHECK_EXCEPTION(CallRPC("createrawtransaction [] {}"), std::runtime_error, HasReason("so createrawtransaction is not available"));
+    BOOST_CHECK_EXCEPTION(CallRPC("signrawtransactionwithkey 00 []"), std::runtime_error, HasReason("so signrawtransactionwithkey is not available"));
+}
+
+BOOST_FIXTURE_TEST_CASE(rpc_createraw_op_return, RegtestRPCTestingSetup)
 {
     BOOST_CHECK_NO_THROW(CallRPC("createrawtransaction [{\"outid\":\"a3b807410df0b60fcb9736768df5823938b2f838694939ba45f3c0a1bff150ed\"}] {\"data\":\"68656c6c6f776f726c64\"}"));
 

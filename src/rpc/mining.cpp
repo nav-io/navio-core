@@ -122,6 +122,17 @@ static UniValue generateBlsctBlocks(ChainstateManager& chainman, const CTxMemPoo
     return blockHashes;
 }
 
+static void EnsureTransparentCoinbaseAllowed(const JSONRPCRequest& request, const std::string& method)
+{
+    // On an fBLSCT chain every block must carry the BLSCT version bit, so
+    // ConnectBlock verifies its coinbase as a BLSCT reward transaction. A
+    // block built around a transparent coinbase script fails that check
+    // ("failed-signature-check") and can never be mined here.
+    if (EnsureAnyChainman(request.context).GetConsensus().fBLSCT) {
+        throw JSONRPCError(RPC_MISC_ERROR, strprintf("This network only supports confidential (BLSCT) transactions; a block paying a transparent coinbase is always rejected here, so %s is not available. Use generatetoblsctaddress instead.", method));
+    }
+}
+
 static bool getScriptFromDescriptor(const std::string& descriptor, CScript& script, std::string& error)
 {
     FlatSigningProvider key_provider;
@@ -176,6 +187,8 @@ static RPCHelpMan generatetodescriptor()
             "\nGenerate 11 blocks to mydesc\n" + HelpExampleCli("generatetodescriptor", "11 \"mydesc\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
+    EnsureTransparentCoinbaseAllowed(request, self.m_name);
+
     const auto num_blocks{self.Arg<int>(0)};
     const auto max_tries{self.Arg<uint64_t>(2)};
 
@@ -249,6 +262,8 @@ static RPCHelpMan generatetoaddress()
                                                                     }},
         RPCExamples{"\nGenerate 11 blocks to myaddress\n" + HelpExampleCli("generatetoaddress", "11 \"myaddress\"") + "If you are using the " PACKAGE_NAME " wallet, you can get a new address to send the newly generated NAV to with:\n" + HelpExampleCli("getnewaddress", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            EnsureTransparentCoinbaseAllowed(request, self.m_name);
+
             const int num_blocks{request.params[0].getInt<int>()};
             const uint64_t max_tries{request.params[2].isNull() ? DEFAULT_MAX_TRIES : request.params[2].getInt<int>()};
 
@@ -296,6 +311,8 @@ static RPCHelpMan generateblock()
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
+    EnsureTransparentCoinbaseAllowed(request, self.m_name);
+
     const auto address_or_descriptor = request.params[0].get_str();
     CScript coinbase_script;
     std::string error;

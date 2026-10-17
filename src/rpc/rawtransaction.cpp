@@ -376,6 +376,13 @@ static RPCHelpMan createrawtransaction()
         RPCExamples{
             HelpExampleCli("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"address\\\":0.01}]\"") + HelpExampleCli("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"") + HelpExampleRpc("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\", \"[{\\\"address\\\":0.01}]\"") + HelpExampleRpc("createrawtransaction", "\"[{\\\"outid\\\":\\\"myoutid\\\"}]\", \"[{\\\"data\\\":\\\"00010203\\\"}]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+            // transaction ("non-blsct-tx-not-allowed"), and this RPC can only
+            // build a transparent one, so nothing it returns could ever confirm.
+            if (EnsureAnyChainman(request.context).GetConsensus().fBLSCT) {
+                throw JSONRPCError(RPC_MISC_ERROR, "This network only supports confidential (BLSCT) transactions; a transparent transaction can never confirm here, so createrawtransaction is not available. Use createblsctrawtransaction instead.");
+            }
+
             std::optional<bool> rbf;
             if (!request.params[3].isNull()) {
                 rbf = request.params[3].get_bool();
@@ -715,6 +722,13 @@ static RPCHelpMan signrawtransactionwithkey()
                                           }},
         RPCExamples{HelpExampleCli("signrawtransactionwithkey", "\"myhex\" \"[\\\"key1\\\",\\\"key2\\\"]\"") + HelpExampleRpc("signrawtransactionwithkey", "\"myhex\", \"[\\\"key1\\\",\\\"key2\\\"]\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+            // transaction ("non-blsct-tx-not-allowed"), so a transaction signed
+            // with transparent ECDSA keys can never confirm here.
+            if (EnsureAnyChainman(request.context).GetConsensus().fBLSCT) {
+                throw JSONRPCError(RPC_MISC_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) keys cannot send or receive here, so signrawtransactionwithkey is not available. Use signblsctrawtransaction instead.");
+            }
+
             CMutableTransaction mtx;
             if (!DecodeHexTx(mtx, request.params[0].get_str())) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed. Make sure the tx has at least one input.");
