@@ -398,6 +398,49 @@ BOOST_AUTO_TEST_CASE(peer_discouragement)
     connman->ClearTestNodes();
 }
 
+BOOST_AUTO_TEST_CASE(paused_send_peer_times_out)
+{
+    // A peer that stops reading leaves our send buffer full. It is dropped
+    // once the buffer has stayed full for TIMEOUT_INTERVAL.
+    const auto start{GetTime<std::chrono::seconds>()};
+    SetMockTime(start);
+
+    ConnmanTestMsg connman{0x1337, 0x1337, *m_node.addrman, *m_node.netgroupman, Params()};
+    connman.SetPeerConnectTimeout(0s);
+    CNode node{/*id=*/0,
+               /*sock=*/nullptr,
+               CAddress{ip(0xa0b0c001), NODE_NONE},
+               /*nKeyedNetGroupIn=*/0,
+               /*nLocalHostNonceIn=*/0,
+               CAddress{},
+               /*addrNameIn=*/"",
+               ConnectionType::INBOUND,
+               /*inbound_onion=*/false};
+    node.fSuccessfullyConnected = true;
+
+    // Keep the peer otherwise active, so only the paused send can time it out.
+    const auto inactive_at{[&](std::chrono::seconds now) {
+        SetMockTime(now);
+        node.m_last_send = now;
+        node.m_last_recv = now;
+        return connman.InactivityCheck(node);
+    }};
+    BOOST_CHECK(!inactive_at(start + 1s));
+
+    // The test connman has a zero send buffer limit, so any message fills it.
+    CSerializedNetMsg msg;
+    msg.m_type = "ping";
+    msg.data.resize(8);
+    connman.PushMessage(&node, std::move(msg));
+    BOOST_REQUIRE(node.fPauseSend);
+    BOOST_CHECK(node.m_pause_send_since.load() == start + 1s);
+
+    BOOST_CHECK(!inactive_at(start + 1s + TIMEOUT_INTERVAL));
+    BOOST_CHECK(inactive_at(start + 2s + TIMEOUT_INTERVAL));
+
+    SetMockTime(0s);
+}
+
 BOOST_AUTO_TEST_CASE(DoS_bantime)
 {
     LOCK(NetEventsInterface::g_msgproc_mutex);
