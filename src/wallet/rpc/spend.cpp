@@ -42,6 +42,18 @@ static void EnsureNotBLSCTWallet(const CWallet& wallet, const std::string& blsct
     }
 }
 
+//! On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+//! transaction ("non-blsct-tx-not-allowed") and the coinbase must be BLSCT, so
+//! no wallet here can ever hold a transparent coin to spend, and whatever these
+//! RPCs build could never confirm. EnsureNotBLSCTWallet only catches BLSCT
+//! wallets; this also refuses a plain one, before any argument is parsed.
+static void EnsureTransparentSpendAllowed(const std::string& method, const std::string& advice)
+{
+    if (Params().GetConsensus().fBLSCT) {
+        throw JSONRPCError(RPC_WALLET_ERROR, strprintf("This network only supports confidential (BLSCT) transactions; a transparent transaction can never confirm here, so %s is not available. %s", method, advice));
+    }
+}
+
 static void EnsureDestinationNotBLSCT(const CTxDestination& dest, const std::string& address, const std::string& blsct_rpc_alternative)
 {
     if (std::holds_alternative<blsct::DoublePublicKey>(dest)) {
@@ -468,6 +480,7 @@ RPCHelpMan sendmany()
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
+            EnsureTransparentSpendAllowed(self.m_name, "Use sendtoblsctaddress from a BLSCT wallet instead.");
             EnsureNotBLSCTWallet(*pwallet, "sendtoblsctaddress");
 
             // Make sure the results are valid at least up to the most recent block
@@ -918,6 +931,7 @@ RPCHelpMan fundrawtransaction()
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
+            EnsureTransparentSpendAllowed(self.m_name, "Use fundblsctrawtransaction from a BLSCT wallet instead.");
             EnsureNotBLSCTWallet(*pwallet, "fundblsctrawtransaction");
 
             // parse hex string from parameter
@@ -1025,6 +1039,7 @@ RPCHelpMan signrawtransactionwithwallet()
             const std::shared_ptr<const CWallet> pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
+            EnsureTransparentSpendAllowed(self.m_name, "Use signblsctrawtransaction from a BLSCT wallet instead.");
             EnsureNotBLSCTWallet(*pwallet, "signblsctrawtransaction");
 
             CMutableTransaction mtx;
@@ -1151,6 +1166,8 @@ RPCHelpMan bumpfee()
         [](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
+
+            EnsureTransparentSpendAllowed(self.m_name, "There is no BLSCT fee bump; send a new confidential transaction with sendtoblsctaddress from a BLSCT wallet instead.");
 
             if (pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "BLSCT (confidential) wallets do not support transparent RBF fee bumping. "
@@ -1349,6 +1366,7 @@ RPCHelpMan send()
                           std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
                           if (!pwallet) return UniValue::VNULL;
 
+                          EnsureTransparentSpendAllowed(self.m_name, "Use sendtoblsctaddress from a BLSCT wallet instead.");
                           EnsureNotBLSCTWallet(*pwallet, "sendtoblsctaddress");
                           EnsureOutputsHaveNoBLSCTDestination(request.params[0], "sendtoblsctaddress");
 
@@ -1449,6 +1467,7 @@ RPCHelpMan sendall()
                           std::shared_ptr<CWallet> const pwallet{GetWalletForJSONRPCRequest(request)};
                           if (!pwallet) return UniValue::VNULL;
 
+                          EnsureTransparentSpendAllowed(self.m_name, "Use sendtoblsctaddress from a BLSCT wallet instead.");
                           EnsureNotBLSCTWallet(*pwallet, "sendtoblsctaddress");
 
                           // Make sure the results are valid at least up to the most recent block

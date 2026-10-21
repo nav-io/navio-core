@@ -338,6 +338,14 @@ RPCHelpMan keypoolrefill()
             std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
             if (!pwallet) return UniValue::VNULL;
 
+            // On an fBLSCT chain, ConnectBlock rejects any non-coinbase transparent
+            // transaction ("non-blsct-tx-not-allowed"). A plain wallet's keypool
+            // holds only transparent (ECDSA) keys, which cannot send or receive
+            // here; a BLSCT wallet still needs this to top up its subaddress pool.
+            if (Params().GetConsensus().fBLSCT && !IsBlsctWallet(*pwallet)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) keys cannot send or receive here, so keypoolrefill is not available on a non-BLSCT wallet. Use a BLSCT wallet instead.");
+            }
+
             if (pwallet->IsLegacy() && pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error: Private keys are disabled for this wallet");
             }
