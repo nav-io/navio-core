@@ -84,7 +84,11 @@ static bool GetWalletAddressesForKey(const LegacyScriptPubKeyMan* spk_man, const
         }
     }
     if (!fLabelFound) {
-        strAddr = EncodeDestination(GetDestinationForKey(key.GetPubKey(), wallet.m_default_address_type));
+        // -addresstype may name a type with no address for a legacy key (bech32m or a
+        // BLSCT type), which GetDestinationForKey asserts on or leaves blank, so fall
+        // back to bech32.
+        const OutputType type{LEGACY_OUTPUT_TYPES.contains(wallet.m_default_address_type) ? wallet.m_default_address_type : OutputType::BECH32};
+        strAddr = EncodeDestination(GetDestinationForKey(key.GetPubKey(), type));
     }
     return fLabelFound;
 }

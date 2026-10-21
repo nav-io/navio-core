@@ -314,5 +314,34 @@ class AddressTypeTest(BitcoinTestFramework):
         self.test_address(4, self.nodes[4].getnewaddress("", "bech32m"), typ="bech32m")
         self.test_address(4, self.nodes[4].getrawchangeaddress("bech32m"), typ="bech32m")
 
+        self.test_legacy_dumpwallet_unsupported_addresstype()
+
+    def test_legacy_dumpwallet_unsupported_addresstype(self):
+        """A legacy wallet's dumpwallet names an address for every key that has
+        no address book entry, derived from -addresstype. Neither bech32m nor
+        blsct describes an address for a legacy key, so the dump must still
+        print a transparent one rather than abort the node or leave it blank."""
+        for address_type in ["bech32m", "blsct"]:
+            self.log.info(f"dumpwallet on a legacy wallet with -addresstype={address_type}")
+            self.restart_node(5, extra_args=[f"-addresstype={address_type}"])
+            wallet_name = f"legacy_dump_{address_type}"
+            self.nodes[5].createwallet(wallet_name=wallet_name, descriptors=False, blsct=False)
+            wallet = self.nodes[5].get_wallet_rpc(wallet_name)
+            dump_path = self.nodes[5].datadir_path / f"{wallet_name}.dump"
+            wallet.dumpwallet(dump_path)
+
+            with open(dump_path, encoding="utf8") as f:
+                key_lines = [line for line in f if " # addr=" in line and "script=1" not in line]
+            # The seed and the keypool keys have no address book entry.
+            assert any("hdseed=1" in line for line in key_lines)
+            assert any("reserve=1" in line for line in key_lines)
+            for line in key_lines:
+                addr = line.split(" # addr=")[1].split(" ")[0].strip()
+                assert addr, f"empty address in dump line: {line}"
+                assert_equal(wallet.getaddressinfo(addr)["ismine"], True)
+                info = self.nodes[5].validateaddress(addr)
+                assert_equal(info["iswitness"], True)
+                assert_equal(info["witness_version"], 0)
+
 if __name__ == '__main__':
     AddressTypeTest(__file__).main()
