@@ -32,8 +32,12 @@ This test asserts that:
  - A plain (non-BLSCT) wallet on this same fBLSCT chain is still subject to
    the chain-level guard (dumpwallet/sethdseed/signmessage remain unaffected
    since those are gated on the wallet's own BLSCT flag, not the chain).
+ - migratewallet refuses every wallet it cannot migrate (all of them are
+   SQLite already, and descriptor wallets have nothing to migrate) before
+   unloading it or writing a backup, so the wallet stays loaded and usable.
 """
 
+import hashlib
 import os
 
 from test_framework.test_framework import BitcoinTestFramework
@@ -67,6 +71,7 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         self.test_transparent_key_rpcs_guarded(blsct_wallet)
         self.test_transparent_tx_rpcs_guarded(blsct_wallet)
         self.test_legacy_wallet_unaffected()
+        self.test_migratewallet_refused()
 
     def test_dumpwallet_guard(self, wallet):
         self.log.info("dumpwallet on a BLSCT wallet raises a clear guard error")
@@ -315,6 +320,56 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
             importer.importprivkey,
             "cNotAValidKeyButTheGuardFiresBeforeItIsParsed",
         )
+
+    def assert_migratewallet_refused(self, wallet_name, message, passphrase=None):
+        node = self.nodes[0]
+        was_loaded = wallet_name in node.listwallets()
+        args = [wallet_name] if passphrase is None else [wallet_name, passphrase]
+        # An unloaded wallet's file must come through byte for byte: refusing
+        # only after CWallet::Create would already have topped up its keypool.
+        wallet_file = node.wallets_path / wallet_name / "wallet.dat"
+        digest_before = None if was_loaded else hashlib.sha256(wallet_file.read_bytes()).hexdigest()
+        assert_raises_rpc_error(-4, message, node.migratewallet, *args)
+        assert_equal(wallet_name in node.listwallets(), was_loaded)
+        if was_loaded:
+            assert_equal(node.get_wallet_rpc(wallet_name).getwalletinfo()["walletname"], wallet_name)
+        else:
+            assert_equal(hashlib.sha256(wallet_file.read_bytes()).hexdigest(), digest_before)
+        assert_equal(list(node.wallets_path.rglob("*.legacy.bak")), [])
+
+    def test_migratewallet_refused(self):
+        """Every wallet here is SQLite, which migration cannot convert, so
+        migratewallet must refuse before unloading the wallet or backing it
+        up -- otherwise the user's wallet is silently left unloaded."""
+        node = self.nodes[0]
+        sqlite_error = "Error: This wallet already uses SQLite"
+
+        self.log.info("migratewallet refuses a loaded BLSCT wallet and leaves it loaded")
+        self.assert_migratewallet_refused("blsct_guards", sqlite_error)
+
+        self.log.info("migratewallet refuses a loaded legacy wallet and leaves it loaded")
+        self.assert_migratewallet_refused("legacy_guards", sqlite_error)
+
+        self.log.info("migratewallet refuses an encrypted legacy wallet even with its passphrase")
+        node.createwallet(wallet_name="legacy_encrypted", descriptors=False, blsct=False, passphrase="pass")
+        self.assert_migratewallet_refused("legacy_encrypted", sqlite_error, passphrase="pass")
+
+        self.log.info("migratewallet refuses a loaded descriptor wallet and leaves it loaded")
+        node.createwallet(wallet_name="descriptor_wallet", descriptors=True, blsct=False)
+        self.assert_migratewallet_refused("descriptor_wallet", "Error: This wallet is already a descriptor wallet")
+
+        self.log.info("migratewallet refuses an unloaded legacy wallet without loading or backing it up")
+        node.createwallet(wallet_name="legacy_unloaded", descriptors=False, blsct=False)
+        node.unloadwallet("legacy_unloaded")
+        self.assert_migratewallet_refused("legacy_unloaded", sqlite_error)
+        node.loadwallet("legacy_unloaded")
+
+        # Unloaded, the file is refused for its format before it is opened as a
+        # wallet, so a descriptor wallet gets the SQLite error here.
+        self.log.info("migratewallet refuses an unloaded descriptor wallet without loading it")
+        node.unloadwallet("descriptor_wallet")
+        self.assert_migratewallet_refused("descriptor_wallet", sqlite_error)
+        node.loadwallet("descriptor_wallet")
 
 
 if __name__ == '__main__':
