@@ -35,7 +35,9 @@ class RfqMakerMatchTest(BitcoinTestFramework):
         self.num_nodes = 2
         self.setup_clean_chain = True
         args = ["-p2pmsg=1", "-p2pmsgpowbits=1"]
-        self.extra_args = [args, args]
+        # One decrypt worker on the maker, so it handles RFQ requests strictly
+        # in arrival order (see test_nft_token_ids).
+        self.extra_args = [args, args + ["-onionworkers=1"]]
 
     def run_test(self):
         taker, maker = self.nodes
@@ -145,6 +147,7 @@ class RfqMakerMatchTest(BitcoinTestFramework):
 
         self.test_listorders_paging(maker, TOKA)
         self.test_expired_orders_pruned(maker, TOKA)
+        self.test_nft_token_ids(taker, maker, TOKA)
 
     def test_listorders_paging(self, maker, token):
         self.log.info("listorders count/skip page through the sorted orders")
@@ -187,6 +190,76 @@ class RfqMakerMatchTest(BitcoinTestFramework):
         maker.mockscheduler(ORDER_PRUNE_INTERVAL)
         self.wait_until(lambda: maker.listorders()["count"] == before, timeout=10)
         maker.setmocktime(0)
+
+    def test_nft_token_ids(self, taker, maker, token):
+        self.log.info("an NFT token id (<hex>#<subid>) round-trips through every RFQ RPC")
+        nft = token + "#7"
+        expiry = 1893456000
+        order_id = maker.sendorder(order_half_hex(20), nft, 500, "", 50, expiry)
+        self.wait_until(lambda: order_id in [o["quote_id"] for o in taker.listorders(True)["orders"]], timeout=20)
+        listed = next(o for o in taker.listorders(True)["orders"] if o["quote_id"] == order_id)
+        assert_equal(listed["buy"], nft)
+        # From here on use the listed spelling verbatim: what listorders prints
+        # must be accepted back as input.
+        nft = listed["buy"]
+
+        # The subid travels with the request: the maker's intent on the bare
+        # token (from run_test) must not answer an NFT request. An unmatched
+        # request leaves no trace on the maker, so the bare-token request sent
+        # after it is the sync point. That holds only because the taker emits
+        # both on one connection in call order and the maker's single worker
+        # (-onionworkers=1) dispatches its FIFO ring one job at a time: once
+        # the bare request is pending, the NFT one has been fully handled. With
+        # more workers the NFT request could still be in flight here.
+        nft_uuid = taker.requestquote(nft, "", 500, expiry)["uuid"]
+        bare_uuid = taker.requestquote(token, "", 500, expiry)["uuid"]
+        self.wait_until(lambda: bare_uuid in [p["uuid"] for p in maker.listpendingquoterequests()], timeout=20)
+        assert nft_uuid not in [p["uuid"] for p in maker.listpendingquoterequests()]
+
+        intent_id = maker.setswapintent(nft, "", 100, 1000, 10000000, expiry)
+        # The run_test intent is on the fungible token, which prints exactly as
+        # before (no suffix).
+        assert_equal(sorted((i["id"] == intent_id, i["token_in"], i["token_out"]) for i in maker.listswapintents()),
+                     [(False, token, "00" * 32), (True, nft, "00" * 32)])
+
+        uuid = taker.requestquote(nft, "", 500, expiry)["uuid"]
+        self.wait_until(lambda: uuid in [p["uuid"] for p in maker.listpendingquoterequests()], timeout=20)
+        p = next(p for p in maker.listpendingquoterequests() if p["uuid"] == uuid)
+        assert_equal((p["buy_token"], p["sell_token"]), (nft, "00" * 32))
+        bare = next(p for p in maker.listpendingquoterequests() if p["uuid"] == bare_uuid)
+        assert_equal((bare["buy_token"], bare["sell_token"]), (token, "00" * 32))
+
+        # The taker only collects a quote whose pair equals the open request's,
+        # so this lands only if sendquote parsed the NFT id intact.
+        quote_id = maker.sendquote(uuid, p["reply_key"], order_half_hex(21), nft, "", 500, 50, expiry)
+        self.wait_until(lambda: len(taker.listquotes(uuid)) >= 1, timeout=20)
+        quotes = taker.listquotes(uuid)
+        assert_equal([(q["quote_id"], q["buy"]) for q in quotes], [(quote_id, nft)])
+
+        self.log.info("malformed token ids are rejected by every RFQ RPC")
+        bad_ids = [
+            token + "#",                       # empty subid
+            token + "#-1",                     # sign
+            token + "#+7",                     # sign
+            token + "#0x7",                    # hex subid
+            token + "#07",                     # second spelling of #7
+            token + "# 7",                     # whitespace
+            token + "#18446744073709551616",   # overflows uint64
+            token + "#18446744073709551615",   # fungible sentinel: would alias the bare token
+            "00" * 32 + "#1",                  # NAV has no NFTs
+            token[:-2] + "#7",                 # short token hash
+        ]
+        for bad in bad_ids:
+            assert_raises_rpc_error(-8, f"token_in must be a 64-hex token id, followed by #<subid> for an NFT, or empty for NAV (not '{bad}')",
+                                    maker.setswapintent, bad, "", 100, 1000, 10000000, expiry)
+        bad = token + "#"
+        assert_raises_rpc_error(-8, "token_out must be a 64-hex token id", maker.setswapintent, "", bad, 100, 1000, 10000000, expiry)
+        assert_raises_rpc_error(-8, "buy_token must be a 64-hex token id", taker.requestquote, bad, "", 500, expiry)
+        assert_raises_rpc_error(-8, "sell_token must be a 64-hex token id", taker.requestquote, "", bad, 500, expiry)
+        assert_raises_rpc_error(-8, "buy_token must be a 64-hex token id", maker.sendquote, uuid, p["reply_key"], order_half_hex(22), bad, "", 500, 50, expiry)
+        assert_raises_rpc_error(-8, "sell_token must be a 64-hex token id", maker.sendquote, uuid, p["reply_key"], order_half_hex(22), "", bad, 500, 50, expiry)
+        assert_raises_rpc_error(-8, "offer_token must be a 64-hex token id", maker.sendorder, order_half_hex(22), bad, 500, "", 50, expiry)
+        assert_raises_rpc_error(-8, "want_token must be a 64-hex token id", maker.sendorder, order_half_hex(22), "", 500, bad, 50, expiry)
 
 
 if __name__ == "__main__":

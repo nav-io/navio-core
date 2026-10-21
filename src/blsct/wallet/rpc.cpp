@@ -895,9 +895,9 @@ static RPCHelpMan broadcastorder()
         "on the maker's behalf. The half over-funds the fee so a taker can accept\n"
         "with a fee-free half.\n",
         {
-            {"offer_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token the maker offers (hex, empty for NAV)"},
+            {"offer_token", RPCArg::Type::STR, RPCArg::Optional::NO, "Token the maker offers: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
             {"offer_amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "Amount of offer_token to deliver"},
-            {"want_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token the maker wants (hex, empty for NAV)"},
+            {"want_token", RPCArg::Type::STR, RPCArg::Optional::NO, "Token the maker wants: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
             {"want_amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "Amount of want_token to receive"},
             {"expiry", RPCArg::Type::NUM, RPCArg::Optional::NO, "Unix time the order expires (capped to 14 days)"},
         },
@@ -910,14 +910,9 @@ static RPCHelpMan broadcastorder()
             rfq::OrderCache* orders = rfq::GetActiveOrderCache();
             if (!transport || !orders) throw JSONRPCError(RPC_MISC_ERROR, "p2pmsg disabled");
 
-            auto parse_token = [](const UniValue& v) -> TokenId {
-                const std::string& s = v.get_str();
-                if (s.empty()) return TokenId();
-                return TokenId(uint256(ParseHashV(v, "token")));
-            };
-            const TokenId offer_token = parse_token(request.params[0]);
+            const TokenId offer_token = ParseTokenIdV(request.params[0], "offer_token");
             const CAmount offer_amount = AmountFromValue(request.params[1]);
-            const TokenId want_token = parse_token(request.params[2]);
+            const TokenId want_token = ParseTokenIdV(request.params[2], "want_token");
             const CAmount want_amount = AmountFromValue(request.params[3]);
             const int64_t expiry = request.params[4].getInt<int64_t>();
 

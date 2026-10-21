@@ -6,6 +6,7 @@
 #include <core_io.h>
 #include <common/args.h>
 #include <consensus/amount.h>
+#include <ctokens/tokenid.h>
 #include <script/interpreter.h>
 #include <key_io.h>
 #include <outputtype.h>
@@ -88,6 +89,15 @@ uint256 ParseHashV(const UniValue& v, std::string_view name)
 uint256 ParseHashO(const UniValue& o, std::string_view strKey)
 {
     return ParseHashV(o.find_value(strKey), strKey);
+}
+TokenId ParseTokenIdV(const UniValue& v, std::string_view name)
+{
+    const std::string& str{v.get_str()};
+    const std::optional<TokenId> token_id{TokenId::FromString(str)};
+    if (!token_id) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("%s must be a 64-hex token id, followed by #<subid> for an NFT, or empty for NAV (not '%s')", name, str));
+    }
+    return *token_id;
 }
 std::vector<unsigned char> ParseHexV(const UniValue& v, std::string_view name)
 {

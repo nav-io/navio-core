@@ -538,8 +538,8 @@ static RPCHelpMan setswapintent()
         "\nConfigure a local swap intent: offer to pay out `token_in` for `token_out`.\n"
         "Never gossiped; used to answer matching RFQ requests.\n",
         {
-            {"token_in", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token the maker pays out (hex token hash, empty for NAV)"},
-            {"token_out", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token the maker wants to receive (hex, empty for NAV)"},
+            {"token_in", RPCArg::Type::STR, RPCArg::Optional::NO, "Token the maker pays out: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
+            {"token_out", RPCArg::Type::STR, RPCArg::Optional::NO, "Token the maker wants to receive: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
             {"min_size", RPCArg::Type::NUM, RPCArg::Optional::NO, "Minimum fill size"},
             {"max_size", RPCArg::Type::NUM, RPCArg::Optional::NO, "Maximum fill size"},
             {"price_min", RPCArg::Type::NUM, RPCArg::Optional::NO, "Minimum price, sell-units per buy-unit scaled by 1e8"},
@@ -549,13 +549,8 @@ static RPCHelpMan setswapintent()
         RPCExamples{HelpExampleCli("setswapintent", "\"\" \"abcd...\" 100 1000 100000000 1893456000")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             rfq::IntentStore& store = EnsureIntentStore(request);
-            auto parse_token = [](const UniValue& v) -> TokenId {
-                const std::string& s = v.get_str();
-                if (s.empty()) return TokenId();
-                return TokenId(uint256(ParseHashV(v, "token")));
-            };
-            TokenId in = parse_token(request.params[0]);
-            TokenId out = parse_token(request.params[1]);
+            TokenId in = ParseTokenIdV(request.params[0], "token_in");
+            TokenId out = ParseTokenIdV(request.params[1], "token_out");
             const CAmount min_size = request.params[2].getInt<int64_t>();
             const CAmount max_size = request.params[3].getInt<int64_t>();
             const CAmount price_min = request.params[4].getInt<int64_t>();
@@ -590,8 +585,8 @@ static RPCHelpMan listswapintents()
         {},
         RPCResult{RPCResult::Type::ARR, "", "", {{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::NUM, "id", "Intent id"},
-            {RPCResult::Type::STR_HEX, "token_in", "Token paid out"},
-            {RPCResult::Type::STR_HEX, "token_out", "Token received"},
+            {RPCResult::Type::STR, "token_in", "Token paid out: the 64-hex token id, followed by \"#<subid>\" when the id carries a subid (an NFT). NAV is all-zero hex with no suffix"},
+            {RPCResult::Type::STR, "token_out", "Token received: the 64-hex token id, followed by \"#<subid>\" when the id carries a subid (an NFT). NAV is all-zero hex with no suffix"},
             {RPCResult::Type::NUM, "min_size", "Minimum fill"},
             {RPCResult::Type::NUM, "max_size", "Maximum fill"},
             {RPCResult::Type::NUM, "price_min", "Minimum price (scaled 1e8)"},
@@ -604,8 +599,8 @@ static RPCHelpMan listswapintents()
             for (const auto& it : store.List()) {
                 UniValue o(UniValue::VOBJ);
                 o.pushKV("id", (uint64_t)it.id);
-                o.pushKV("token_in", it.token_in.token.GetHex());
-                o.pushKV("token_out", it.token_out.token.GetHex());
+                o.pushKV("token_in", it.token_in.ToString());
+                o.pushKV("token_out", it.token_out.ToString());
                 o.pushKV("min_size", it.min_size);
                 o.pushKV("max_size", it.max_size);
                 o.pushKV("price_min", it.price_min);
@@ -935,15 +930,10 @@ static rfq::MatcherRegistry& EnsureMatcher(const JSONRPCRequest& request)
 static rfq::RfqRequest ParseRequestArgs(const JSONRPCRequest& request, const uint256& uuid,
                                         const blsct::PublicKey& reply_key)
 {
-    auto parse_token = [](const UniValue& v) -> TokenId {
-        const std::string& s = v.get_str();
-        if (s.empty()) return TokenId();
-        return TokenId(uint256(ParseHashV(v, "token")));
-    };
     rfq::RfqRequest r;
     r.uuid = uuid;
-    r.buy = parse_token(request.params[0]);
-    r.sell = parse_token(request.params[1]);
+    r.buy = ParseTokenIdV(request.params[0], "buy_token");
+    r.sell = ParseTokenIdV(request.params[1], "sell_token");
     r.size = request.params[2].getInt<int64_t>();
     r.expiry = request.params[3].getInt<int64_t>();
     r.reply_key = reply_key;
@@ -959,8 +949,8 @@ static RPCHelpMan requestquote()
         "paying with `sell_token`. Returns a uuid + the session pubkey makers encrypt\n"
         "their quotes to. (Broadcast over the wire is handled by the orchestrator.)\n",
         {
-            {"buy_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token to receive (hex, empty for NAV)"},
-            {"sell_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token to pay with (hex, empty for NAV)"},
+            {"buy_token", RPCArg::Type::STR, RPCArg::Optional::NO, "Token to receive: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
+            {"sell_token", RPCArg::Type::STR, RPCArg::Optional::NO, "Token to pay with: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
             {"size", RPCArg::Type::NUM, RPCArg::Optional::NO, "Amount of buy_token wanted"},
             {"expiry", RPCArg::Type::NUM, RPCArg::Optional::NO, "Unix time the collection window closes"},
         },
@@ -1032,8 +1022,8 @@ static RPCHelpMan listquotes()
         },
         RPCResult{RPCResult::Type::ARR, "", "", {{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "quote_id", "Quote id"},
-            {RPCResult::Type::STR, "buy", "Token delivered to the taker"},
-            {RPCResult::Type::STR, "sell", "Token charged to the taker"},
+            {RPCResult::Type::STR, "buy", "Token delivered to the taker: the 64-hex token id, followed by \"#<subid>\" when the id carries a subid (an NFT). NAV is all-zero hex with no suffix"},
+            {RPCResult::Type::STR, "sell", "Token charged to the taker: the 64-hex token id, followed by \"#<subid>\" when the id carries a subid (an NFT). NAV is all-zero hex with no suffix"},
             {RPCResult::Type::NUM, "fill", "Units of buy token offered"},
             {RPCResult::Type::NUM, "sell_cost", "Units of sell token charged"},
             {RPCResult::Type::NUM, "price", "sell_cost / fill"},
@@ -1204,8 +1194,8 @@ static RPCHelpMan listpendingquoterequests()
         {},
         RPCResult{RPCResult::Type::ARR, "", "", {{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "uuid", "The request uuid"},
-            {RPCResult::Type::STR_HEX, "buy_token", "Token the taker wants (we deliver)"},
-            {RPCResult::Type::STR_HEX, "sell_token", "Token the taker pays (we receive)"},
+            {RPCResult::Type::STR, "buy_token", "Token the taker wants (we deliver): the 64-hex token id, followed by \"#<subid>\" when the id carries a subid (an NFT). NAV is all-zero hex with no suffix"},
+            {RPCResult::Type::STR, "sell_token", "Token the taker pays (we receive): the 64-hex token id, followed by \"#<subid>\" when the id carries a subid (an NFT). NAV is all-zero hex with no suffix"},
             {RPCResult::Type::NUM, "fill", "Amount of buy_token to deliver"},
             {RPCResult::Type::NUM, "sell_cost", "Amount of sell_token to charge"},
             {RPCResult::Type::STR_HEX, "reply_key", "Encrypt the quote to this key"},
@@ -1218,8 +1208,8 @@ static RPCHelpMan listpendingquoterequests()
             for (const auto& pm : node.rfq_matcher->ListPendingMatches()) {
                 UniValue o(UniValue::VOBJ);
                 o.pushKV("uuid", pm.req.uuid.GetHex());
-                o.pushKV("buy_token", pm.req.buy.token.GetHex());
-                o.pushKV("sell_token", pm.req.sell.token.GetHex());
+                o.pushKV("buy_token", pm.req.buy.ToString());
+                o.pushKV("sell_token", pm.req.sell.ToString());
                 o.pushKV("fill", pm.fill);
                 o.pushKV("sell_cost", pm.sell_cost);
                 o.pushKV("reply_key", HexStr(pm.req.reply_key.GetVch()));
@@ -1245,8 +1235,8 @@ static RPCHelpMan sendquote()
             {"uuid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The RFQ request uuid being answered"},
             {"reply_key", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The requester's reply session pubkey (from the RFQ request)"},
             {"half_tx_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The maker's signed unbalanced half-transaction"},
-            {"buy_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token delivered to the taker (hex, empty for NAV)"},
-            {"sell_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token charged to the taker (hex, empty for NAV)"},
+            {"buy_token", RPCArg::Type::STR, RPCArg::Optional::NO, "Token delivered to the taker: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
+            {"sell_token", RPCArg::Type::STR, RPCArg::Optional::NO, "Token charged to the taker: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
             {"fill", RPCArg::Type::NUM, RPCArg::Optional::NO, "Units of buy_token delivered"},
             {"sell_cost", RPCArg::Type::NUM, RPCArg::Optional::NO, "Units of sell_token charged"},
             {"order_expiry", RPCArg::Type::NUM, RPCArg::Optional::NO, "Unix time the quote expires"},
@@ -1267,18 +1257,12 @@ static RPCHelpMan sendquote()
             if (!DecodeHexTx(mtx, request.params[2].get_str())) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "half decode failed");
             }
-            auto parse_token = [](const UniValue& v) -> TokenId {
-                const std::string& s = v.get_str();
-                if (s.empty()) return TokenId();
-                return TokenId(uint256(ParseHashV(v, "token")));
-            };
-
             rfq::RfqQuote q;
             q.uuid = uuid;
             q.quote_id = GetRandHash();
             q.half_tx = MakeTransactionRef(std::move(mtx));
-            q.buy = parse_token(request.params[3]);
-            q.sell = parse_token(request.params[4]);
+            q.buy = ParseTokenIdV(request.params[3], "buy_token");
+            q.sell = ParseTokenIdV(request.params[4], "sell_token");
             q.fill = request.params[5].getInt<int64_t>();
             q.sell_cost = request.params[6].getInt<int64_t>();
             q.order_expiry = request.params[7].getInt<int64_t>();
@@ -1319,9 +1303,9 @@ static RPCHelpMan sendorder()
         "behalf while the maker is offline.\n",
         {
             {"half_tx_hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The maker's signed unbalanced half-transaction"},
-            {"offer_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token the maker offers (hex, empty for NAV)"},
+            {"offer_token", RPCArg::Type::STR, RPCArg::Optional::NO, "Token the maker offers: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
             {"offer_amount", RPCArg::Type::NUM, RPCArg::Optional::NO, "Units of offer_token delivered to the taker"},
-            {"want_token", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Token the maker wants (hex, empty for NAV)"},
+            {"want_token", RPCArg::Type::STR, RPCArg::Optional::NO, "Token the maker wants: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
             {"want_amount", RPCArg::Type::NUM, RPCArg::Optional::NO, "Units of want_token charged to the taker"},
             {"expiry", RPCArg::Type::NUM, RPCArg::Optional::NO, "Unix time the order expires (capped to 14 days)"},
         },
@@ -1336,18 +1320,12 @@ static RPCHelpMan sendorder()
             if (!DecodeHexTx(mtx, request.params[0].get_str())) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "half decode failed");
             }
-            auto parse_token = [](const UniValue& v) -> TokenId {
-                const std::string& s = v.get_str();
-                if (s.empty()) return TokenId();
-                return TokenId(uint256(ParseHashV(v, "token")));
-            };
-
             rfq::RfqQuote q;
             q.uuid = uint256(); // standing order: bound to an RFQ at match time
             q.quote_id = GetRandHash();
             q.half_tx = MakeTransactionRef(std::move(mtx));
-            q.buy = parse_token(request.params[1]);
-            q.sell = parse_token(request.params[3]);
+            q.buy = ParseTokenIdV(request.params[1], "offer_token");
+            q.sell = ParseTokenIdV(request.params[3], "want_token");
             q.fill = request.params[2].getInt<int64_t>();
             q.sell_cost = request.params[4].getInt<int64_t>();
             q.order_expiry = request.params[5].getInt<int64_t>();
