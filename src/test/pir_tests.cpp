@@ -112,6 +112,36 @@ BOOST_AUTO_TEST_CASE(matrix_expansion)
     BOOST_CHECK(!std::equal(other.begin(), other.end(), rows.begin()));
 }
 
+BOOST_AUTO_TEST_CASE(error_cdt)
+{
+    // The exact table agrees with a double-precision evaluation where double
+    // resolves it (relative error about 2^-53, i.e. 2^11 of 2^64), rises
+    // strictly until the tail mass drops below 2^-64, then saturates.
+    const auto& cdt{ErrorCdt()};
+    double weight[ERROR_TAIL + 1], total{0};
+    for (int32_t m = 0; m <= ERROR_TAIL; ++m) {
+        weight[m] = std::exp(-double(m) * m / (2 * SIGMA * SIGMA)) * (m == 0 ? 1 : 2);
+        total += weight[m];
+    }
+    double cumulative{0};
+    for (int32_t m = 0; m < ERROR_TAIL; ++m) {
+        cumulative += weight[m];
+        const double approx{std::ldexp(cumulative / total, 64)};
+        if (m < 40) BOOST_CHECK(std::abs(approx - double(cdt[m])) < 65536.0);
+        if (m > 0) BOOST_CHECK(m <= 58 ? cdt[m] > cdt[m - 1] : cdt[m] == cdt[m - 1]);
+    }
+    BOOST_CHECK_EQUAL(cdt[58], ~uint64_t{0});
+    BOOST_CHECK(cdt[57] < ~uint64_t{0});
+    // Variance of the tabulated distribution: P(|e| = m) from consecutive thresholds.
+    long double var{0};
+    for (int32_t m = 1; m <= ERROR_TAIL; ++m) {
+        const uint64_t hi{m < ERROR_TAIL ? cdt[m] : ~uint64_t{0}};
+        var += (long double)(hi - cdt[m - 1]) * m * m;
+    }
+    var = std::ldexp(var, -64);
+    BOOST_CHECK(std::abs(double(var) - SIGMA * SIGMA) < 1e-6);
+}
+
 BOOST_AUTO_TEST_CASE(error_distribution)
 {
     const auto rng{MakeSecretRngForTesting(uint256::ONE)};

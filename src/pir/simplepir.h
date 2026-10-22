@@ -10,6 +10,7 @@
 #include <support/allocators/secure.h>
 #include <uint256.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -191,8 +192,17 @@ struct QueryState {
     std::vector<uint32_t, secure_allocator<uint32_t>> secret;
 };
 
-/** Sample one discrete Gaussian value (standard deviation SIGMA, |x| <= 64). */
+/** Largest error magnitude the sampler produces (10 standard deviations). */
+static constexpr int32_t ERROR_TAIL{64};
+
+/**
+ * Sample one discrete Gaussian value (standard deviation SIGMA, |x| <=
+ * ERROR_TAIL): the magnitude is the number of ErrorCdt() thresholds a
+ * uniform 64-bit value is at or above, scanned in constant time.
+ */
 int32_t SampleError(SecretRng& rng);
+/** The sampler's cumulative distribution table, for tests. */
+const std::array<uint64_t, ERROR_TAIL>& ErrorCdt();
 
 /**
  * Build the query for record `index` of a database with the given shape; rng

@@ -31,35 +31,42 @@ static_assert(uint64_t{MAX_COLS} * BLOCKS_PER_ROW <= uint64_t{1} << 32);
 //! group of hint rows.
 constexpr uint32_t HINT_BLOCK{32};
 
-//! Largest error magnitude the sampler produces (10 standard deviations).
-constexpr int32_t ERROR_TAIL{64};
-
 //! Database entry as a centred value in [-128, 127], lifted to Z_q.
 inline uint32_t Lift(uint8_t byte) { return static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(byte))); }
 
-//! Cumulative distribution of |e| for the discrete Gaussian, as 64-bit thresholds.
-const std::array<uint64_t, ERROR_TAIL>& ErrorCdt()
-{
-    static const std::array<uint64_t, ERROR_TAIL> cdt = [] {
-        std::array<double, ERROR_TAIL + 1> weight;
-        double total{0};
-        for (int32_t m = 0; m <= ERROR_TAIL; ++m) {
-            // |e| = m > 0 covers both signs.
-            weight[m] = std::exp(-double(m) * m / (2 * SIGMA * SIGMA)) * (m == 0 ? 1 : 2);
-            total += weight[m];
-        }
-        std::array<uint64_t, ERROR_TAIL> out;
-        double cumulative{0};
-        for (int32_t m = 0; m < ERROR_TAIL; ++m) {
-            cumulative += weight[m];
-            // 2^64 * P(|e| <= m); saturates below 2^64.
-            const double scaled{std::ldexp(cumulative / total, 64)};
-            out[m] = scaled >= 18446744073709551615.0 ? ~uint64_t{0} : static_cast<uint64_t>(scaled);
-        }
-        return out;
-    }();
-    return cdt;
-}
+/**
+ * ERROR_CDT[m] = round(2^64 * P(|e| <= m)) for the discrete Gaussian with
+ * standard deviation SIGMA truncated to |e| <= ERROR_TAIL, saturated at
+ * 2^64 - 1. Exact integers, computed with 100-digit decimal arithmetic:
+ *
+ *   from decimal import *; getcontext().prec = 100
+ *   w = [(Decimal(-m * m) / Decimal("81.92")).exp() * (1 if m == 0 else 2) for m in range(65)]
+ *   c = 0
+ *   for m in range(64): c += w[m]; print(min(int((c / sum(w) * 2**64).to_integral_value()), 2**64 - 1))
+ *
+ * so each threshold is off by at most 1/2 from the true value, and the
+ * sampled distribution is within 2^-64 of the truncated Gaussian in every
+ * probability. Above |e| = 57 the remaining mass is below 2^-64 and the
+ * thresholds saturate: the only u at or above them is 2^64 - 1.
+ */
+constexpr std::array<uint64_t, ERROR_TAIL> ERROR_CDT{
+    0x0ff52b4064a1f258, 0x2f7c60a73fd7d188, 0x4de15b3adda5de9e, 0x6a799fecc5149eef,
+    0x84ba5c80f0e2593c, 0x9c3fd98e6afdaf5f, 0xb0d0b93423b946aa, 0xc25d070e855a7576,
+    0xd0f9ae4b2490f23f, 0xdcd9536a8bf79cc4, 0xe643c2b8ef9964cf, 0xed8d2178b2b4bc36,
+    0xf30ddfa949d92128, 0xf71c1bc6a8d9fb0c, 0xfa06d38c8efbeab1, 0xfc12ed48cfb3cf25,
+    0xfd79e80f7da63de0, 0xfe69db7106258600, 0xff0660b4e9f72366, 0xff6a039e19247fe6,
+    0xffa7e8f42ad7bced, 0xffcd6ef1c645c418, 0xffe3a1f98533f959, 0xfff0730a41da5dd4,
+    0xfff7aba82bcfb232, 0xfffba41563f3b337, 0xfffdc577a82fd265, 0xfffee30bc5a8f0a9,
+    0xffff74f9faff9336, 0xffffbdbf955dc9f8, 0xffffe129a302737c, 0xfffff1fb3360804e,
+    0xfffff9c6a44fff1d, 0xfffffd4d2317515f, 0xfffffedb78be786e, 0xffffff870b5bba04,
+    0xffffffcf29a52629, 0xffffffecbeda851e, 0xfffffff896734c9a, 0xfffffffd36bef16a,
+    0xfffffffefa3bc3e8, 0xffffffffa233c84a, 0xffffffffdf2f6ca6, 0xfffffffff4cab458,
+    0xfffffffffc433283, 0xfffffffffec882e6, 0xffffffffff9d0076, 0xffffffffffe1489a,
+    0xfffffffffff6b235, 0xfffffffffffd3fb9, 0xffffffffffff34b5, 0xffffffffffffc6b7,
+    0xfffffffffffff03e, 0xfffffffffffffbc5, 0xfffffffffffffee4, 0xffffffffffffffb7,
+    0xffffffffffffffee, 0xfffffffffffffffc, 0xffffffffffffffff, 0xffffffffffffffff,
+    0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff,
+};
 
 } // namespace
 
@@ -321,9 +328,11 @@ std::optional<std::vector<uint32_t>> Answer(const Database& db, Span<const uint3
     return out;
 }
 
+const std::array<uint64_t, ERROR_TAIL>& ErrorCdt() { return ERROR_CDT; }
+
 int32_t SampleError(SecretRng& rng)
 {
-    const auto& cdt{ErrorCdt()};
+    const auto& cdt{ERROR_CDT};
     const uint64_t u{rng.rand64()};
     int32_t mag{0};
     // Constant-time scan: count the thresholds u is at or above.
