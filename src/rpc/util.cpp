@@ -241,6 +241,13 @@ CTxDestination AddAndGetMultisigDestination(const int required, const std::vecto
         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Number of keys involved in the multisignature address creation > %d\nReduce the number", MAX_PUBKEYS_PER_MULTISIG));
     }
 
+    // AddAndGetDestinationForScript only handles the P2SH and P2WSH types and
+    // asserts on any other, so refuse it here instead of letting a
+    // caller-supplied address type abort the node.
+    if (type != OutputType::LEGACY && type != OutputType::P2SH_SEGWIT && type != OutputType::BECH32) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("Multisig addresses cannot be created with address type '%s'", FormatOutputType(type)));
+    }
+
     script_out = GetScriptForMultisig(required, pubkeys);
 
     // Check if any keys are uncompressed. If so, the type is legacy
