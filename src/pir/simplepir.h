@@ -5,7 +5,9 @@
 #ifndef BITCOIN_PIR_SIMPLEPIR_H
 #define BITCOIN_PIR_SIMPLEPIR_H
 
+#include <random.h>
 #include <span.h>
+#include <support/allocators/secure.h>
 #include <uint256.h>
 
 #include <cstddef>
@@ -13,8 +15,6 @@
 #include <memory>
 #include <optional>
 #include <vector>
-
-class FastRandomContext;
 
 /**
  * Single-server private information retrieval after SimplePIR (Henzinger,
@@ -155,24 +155,52 @@ void ExtendHint(Hint& hint, const Database& db, const uint256& seed, uint32_t fi
  */
 std::optional<std::vector<uint32_t>> Answer(const Database& db, Span<const uint32_t> query, uint32_t num_records);
 
+/**
+ * Randomness for a query's secret and errors. The secret together with the
+ * query reveals the queried index, so it must come from strong randomness:
+ * the only ways to obtain one are MakeSecretRng() and, in test binaries,
+ * MakeSecretRngForTesting() (test/util/pir.h), which production code does
+ * not link.
+ */
+class SecretRng
+{
+public:
+    SecretRng(const SecretRng&) = delete;
+    SecretRng& operator=(const SecretRng&) = delete;
+
+    uint32_t rand32() noexcept { return m_rng.rand32(); }
+    uint64_t rand64() noexcept { return m_rng.rand64(); }
+
+private:
+    explicit SecretRng(const uint256& key) noexcept : m_rng{key} {}
+    //! ChaCha20 based; its state is wiped on destruction.
+    FastRandomContext m_rng;
+
+    friend std::unique_ptr<SecretRng> MakeSecretRng();
+    friend std::unique_ptr<SecretRng> MakeSecretRngForTesting(const uint256& seed);
+};
+
+/** A SecretRng keyed from GetStrongRandBytes. */
+std::unique_ptr<SecretRng> MakeSecretRng();
+
 /** Client state for one query: kept secret until the answer is decoded. */
 struct QueryState {
     Params params;
     uint32_t index{0};
-    std::vector<uint32_t> secret;
+    //! The LWE secret s; the allocator wipes it whenever it is freed.
+    std::vector<uint32_t, secure_allocator<uint32_t>> secret;
 };
 
 /** Sample one discrete Gaussian value (standard deviation SIGMA, |x| <= 64). */
-int32_t SampleError(FastRandomContext& rng);
+int32_t SampleError(SecretRng& rng);
 
 /**
- * Build the query for record `index` of a database with the given shape.
- * rng must be a cryptographically secure generator seeded from strong
- * randomness (see MakeSecretRng); it provides the secret and the errors.
+ * Build the query for record `index` of a database with the given shape; rng
+ * provides the secret and the errors.
  * Returns std::nullopt for invalid params or index.
  */
 std::optional<std::vector<uint32_t>> MakeQuery(const Params& params, const uint256& seed, uint32_t index,
-                                               FastRandomContext& rng, QueryState& state);
+                                               SecretRng& rng, QueryState& state);
 
 /**
  * Decode an answer into the queried record's bytes. Needs the rows of the
@@ -180,9 +208,6 @@ std::optional<std::vector<uint32_t>> MakeQuery(const Params& params, const uint2
  * Returns std::nullopt if the hint or answer has the wrong size.
  */
 std::optional<std::vector<uint8_t>> Decode(const QueryState& state, Span<const uint32_t> hint, Span<const uint32_t> answer);
-
-/** A FastRandomContext keyed from GetStrongRandBytes, for query secrets and errors. */
-std::unique_ptr<FastRandomContext> MakeSecretRng();
 
 } // namespace pir
 

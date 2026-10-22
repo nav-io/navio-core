@@ -329,7 +329,7 @@ std::optional<uint32_t> PirEpochClient::IndexOf(uint32_t height, uint32_t pos) c
     return std::accumulate(m_info.block_counts.begin(), m_info.block_counts.begin() + offset, uint32_t{0}) + pos;
 }
 
-std::optional<PirQueryMsg> PirEpochClient::MakeQuery(uint32_t index, FastRandomContext& rng, pir::QueryState& state) const
+std::optional<PirQueryMsg> PirEpochClient::MakeQuery(uint32_t index, pir::SecretRng& rng, pir::QueryState& state) const
 {
     if (!Complete()) return std::nullopt;
     auto query{pir::MakeQuery(m_info.GetParams(), m_info.seed, index, rng, state)};

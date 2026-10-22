@@ -9,6 +9,7 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <test/util/pir.h>
 
 #include <cassert>
 #include <string>
@@ -72,10 +73,10 @@ FUZZ_TARGET(pir_answer_decode)
         db.Append(rec);
     }
     const uint256 seed{ConsumeUInt256(fdp)};
-    FastRandomContext rng{ConsumeUInt256(fdp)};
+    const auto rng{pir::MakeSecretRngForTesting(ConsumeUInt256(fdp))};
     const uint32_t index{fdp.ConsumeIntegralInRange<uint32_t>(0, n)};
     pir::QueryState state;
-    auto query{pir::MakeQuery(db.GetParams(), seed, index, rng, state)};
+    auto query{pir::MakeQuery(db.GetParams(), seed, index, *rng, state)};
     if (index >= n) {
         assert(!query);
         return;

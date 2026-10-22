@@ -9,6 +9,7 @@
 #include <pir/simplepir.h>
 #include <random.h>
 #include <streams.h>
+#include <test/util/pir.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 
@@ -38,7 +39,7 @@ void CheckFetch(const Database& db, const Hint& hint, const uint256& seed, uint3
     pir::Params params{db.GetParams()};
     if (num_records) params.num_records = *num_records;
     QueryState state;
-    auto query{MakeQuery(params, seed, index, rng, state)};
+    auto query{MakeQuery(params, seed, index, *MakeSecretRngForTesting(rng.rand256()), state)};
     BOOST_REQUIRE(query);
     BOOST_CHECK_EQUAL(query->size(), params.Cols());
     auto answer{Answer(db, *query, params.num_records)};
@@ -113,12 +114,12 @@ BOOST_AUTO_TEST_CASE(matrix_expansion)
 
 BOOST_AUTO_TEST_CASE(error_distribution)
 {
-    FastRandomContext rng{uint256::ONE};
+    const auto rng{MakeSecretRngForTesting(uint256::ONE)};
     constexpr int N{200000};
     double sum{0}, sumsq{0};
     int32_t max_abs{0};
     for (int i = 0; i < N; ++i) {
-        const int32_t e{SampleError(rng)};
+        const int32_t e{SampleError(*rng)};
         sum += e;
         sumsq += double(e) * e;
         max_abs = std::max(max_abs, std::abs(e));
@@ -129,6 +130,21 @@ BOOST_AUTO_TEST_CASE(error_distribution)
     BOOST_CHECK(std::abs(sd - SIGMA) < 0.1);
     BOOST_CHECK(max_abs <= 64);
     BOOST_CHECK(max_abs > 20);
+}
+
+BOOST_AUTO_TEST_CASE(secret_rng)
+{
+    // The test generator reproduces FastRandomContext(seed).
+    FastRandomContext ref{uint256::ONE};
+    const auto det{MakeSecretRngForTesting(uint256::ONE)};
+    BOOST_CHECK_EQUAL(det->rand64(), ref.rand64());
+    BOOST_CHECK_EQUAL(det->rand32(), ref.rand32());
+    // Two strong generators give different secrets for the same query.
+    const pir::Params params{4, 3, 1};
+    QueryState a, b;
+    BOOST_REQUIRE(MakeQuery(params, uint256::ONE, 1, *MakeSecretRng(), a));
+    BOOST_REQUIRE(MakeQuery(params, uint256::ONE, 1, *MakeSecretRng(), b));
+    BOOST_CHECK(a.secret != b.secret);
 }
 
 BOOST_AUTO_TEST_CASE(fetch_random_databases)
@@ -205,12 +221,13 @@ BOOST_AUTO_TEST_CASE(prefix_answers)
     Database old3{db3};
     old3.Truncate(48);
     CheckFetch(db3, ComputeHint(old3, seed), seed, 47, rng, 48);
+    const auto qrng{MakeSecretRngForTesting(rng.rand256())};
     QueryState state;
-    auto query{MakeQuery(pir::Params{13, 50, 4}, seed, 0, rng, state)};
+    auto query{MakeQuery(pir::Params{13, 50, 4}, seed, 0, *qrng, state)};
     BOOST_REQUIRE(query);
     BOOST_CHECK(!Answer(db3, *query, 50));
     // More records than the database holds.
-    auto query2{MakeQuery(pir::Params{13, 81, 1}, seed, 0, rng, state)};
+    auto query2{MakeQuery(pir::Params{13, 81, 1}, seed, 0, *qrng, state)};
     BOOST_REQUIRE(query2);
     BOOST_CHECK(!Answer(db, *query2, 81));
 }
@@ -221,10 +238,11 @@ BOOST_AUTO_TEST_CASE(malformed_inputs)
     const Database db{RandomDatabase(rng, 8, 10, 1)};
     const uint256 seed{rng.rand256()};
     const Hint hint{ComputeHint(db, seed)};
+    const auto qrng{MakeSecretRngForTesting(rng.rand256())};
     QueryState state;
-    BOOST_CHECK(!MakeQuery(db.GetParams(), seed, 10, rng, state));
-    BOOST_CHECK(!MakeQuery(pir::Params{0, 10, 1}, seed, 0, rng, state));
-    auto query{MakeQuery(db.GetParams(), seed, 4, rng, state)};
+    BOOST_CHECK(!MakeQuery(db.GetParams(), seed, 10, *qrng, state));
+    BOOST_CHECK(!MakeQuery(pir::Params{0, 10, 1}, seed, 0, *qrng, state));
+    auto query{MakeQuery(db.GetParams(), seed, 4, *qrng, state)};
     BOOST_REQUIRE(query);
 
     auto shorter{*query};
@@ -361,7 +379,7 @@ BOOST_AUTO_TEST_CASE(messages_and_client)
 
     const uint32_t index{*client.IndexOf(17, 3)};
     QueryState state;
-    auto query{client.MakeQuery(index, rng, state)};
+    auto query{client.MakeQuery(index, *MakeSecretRngForTesting(rng.rand256()), state)};
     BOOST_REQUIRE(query);
     DataStream qs;
     qs << *query;

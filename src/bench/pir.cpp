@@ -75,13 +75,13 @@ void ClientQuery(benchmark::Bench& bench, int log2_records)
 {
     if (!Enabled(log2_records)) return;
     const pir::Params params{MakeParams(log2_records)};
-    FastRandomContext rng{/*fDeterministic=*/true};
+    const auto rng{pir::MakeSecretRng()};
     const uint256 seed{uint256::ONE};
     uint32_t index{0};
     if (log2_records >= 20) bench.epochs(3).epochIterations(1);
     bench.unit("query").run([&] {
         pir::QueryState state;
-        auto query{pir::MakeQuery(params, seed, index, rng, state)};
+        auto query{pir::MakeQuery(params, seed, index, *rng, state)};
         index = (index + 7919) % params.num_records;
         ankerl::nanobench::doNotOptimizeAway((*query)[0]);
     });

@@ -7,6 +7,7 @@
 #include <crypto/chacha20.h>
 #include <crypto/common.h>
 #include <random.h>
+#include <support/cleanse.h>
 #include <util/check.h>
 
 #include <algorithm>
@@ -320,19 +321,19 @@ std::optional<std::vector<uint32_t>> Answer(const Database& db, Span<const uint3
     return out;
 }
 
-int32_t SampleError(FastRandomContext& rng)
+int32_t SampleError(SecretRng& rng)
 {
     const auto& cdt{ErrorCdt()};
     const uint64_t u{rng.rand64()};
     int32_t mag{0};
     // Constant-time scan: count the thresholds u is at or above.
     for (int32_t m = 0; m < ERROR_TAIL; ++m) mag += static_cast<int32_t>(u >= cdt[m]);
-    const int32_t sign{static_cast<int32_t>(rng.randbits(1))};
+    const int32_t sign{static_cast<int32_t>(rng.rand32() & 1)};
     return mag - 2 * sign * mag;
 }
 
 std::optional<std::vector<uint32_t>> MakeQuery(const Params& params, const uint256& seed, uint32_t index,
-                                               FastRandomContext& rng, QueryState& state)
+                                               SecretRng& rng, QueryState& state)
 {
     if (!params.IsValid() || index >= params.num_records) return std::nullopt;
     state.params = params;
@@ -382,11 +383,13 @@ std::optional<std::vector<uint8_t>> Decode(const QueryState& state, Span<const u
     return out;
 }
 
-std::unique_ptr<FastRandomContext> MakeSecretRng()
+std::unique_ptr<SecretRng> MakeSecretRng()
 {
     uint256 key;
     GetStrongRandBytes(key);
-    return std::make_unique<FastRandomContext>(key);
+    std::unique_ptr<SecretRng> rng{new SecretRng{key}};
+    memory_cleanse(key.data(), key.size());
+    return rng;
 }
 
 } // namespace pir

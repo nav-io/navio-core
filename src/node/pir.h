@@ -282,8 +282,8 @@ public:
 
     /** Record index of the output at position pos of the block at height, if in this epoch version. */
     std::optional<uint32_t> IndexOf(uint32_t height, uint32_t pos) const;
-    /** Query for record index; rng as for pir::MakeQuery. */
-    std::optional<PirQueryMsg> MakeQuery(uint32_t index, FastRandomContext& rng, pir::QueryState& state) const;
+    /** Query for record index (see pir::MakeQuery). */
+    std::optional<PirQueryMsg> MakeQuery(uint32_t index, pir::SecretRng& rng, pir::QueryState& state) const;
     /** The record's bytes, if the reply matches the query and decodes. */
     std::optional<std::vector<uint8_t>> Decode(const pir::QueryState& state, const PirReplyMsg& reply) const;
 
