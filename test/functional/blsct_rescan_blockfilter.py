@@ -88,6 +88,16 @@ class BlsctRescanBlockFilterTest(BitcoinTestFramework):
         receives = [tx for tx in restored.listtransactions() if tx["category"] == "receive"]
         assert_equal([Decimal(str(tx["amount"])) for tx in receives], [Decimal("1")])
 
+        self.log.info("A wallet restored with createwallet has no legacy ScriptPubKeyMan either")
+        node.createwallet(wallet_name="rpc_restored", blsct=True, mnemonic=mnemonic)
+        rpc_restored = node.get_wallet_rpc("rpc_restored")
+        # The framework runs nodes with -keypool=1, so a legacy ScriptPubKeyMan
+        # would hold a transparent key here.
+        assert_equal(rpc_restored.getwalletinfo()["keypoolsize"], 0)
+        with node.assert_debug_log(["[rpc_restored] Rescan started from block"], unexpected_msgs=["fast variant using block filters"]):
+            rpc_restored.rescanblockchain()
+        assert_equal(Decimal(str(rpc_restored.getblsctbalance())), Decimal("1"))
+
 
 if __name__ == "__main__":
     BlsctRescanBlockFilterTest(__file__).main()

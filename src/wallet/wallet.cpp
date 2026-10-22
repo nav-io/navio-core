@@ -448,6 +448,13 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
                             status = DatabaseStatus::FAILED_CREATE;
                             return nullptr;
                         }
+                        // A wallet born encrypted was created blank only so it could be
+                        // encrypted first. Unlike a legacy ScriptPubKeyMan's seed, the
+                        // BLSCT seed does not clear that flag, and a BLSCT wallet may
+                        // have no legacy ScriptPubKeyMan to clear it.
+                        if (wallet->IsWalletFlagSet(WALLET_FLAG_BLANK_WALLET)) {
+                            wallet->UnsetWalletFlag(WALLET_FLAG_BLANK_WALLET);
+                        }
                     }
                 }
             }
@@ -3648,8 +3655,10 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
 
         walletInstance->SetupBLSCTKeyMan();
 
-        // Only create LegacyScriptPubKeyMan when not descriptor wallet
-        if (!walletInstance->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+        // Only create LegacyScriptPubKeyMan when not descriptor wallet. A BLSCT
+        // wallet keeps its keys in the BLSCT keyman, so a transparent HD seed
+        // would only be an unused key to back up.
+        if (!walletInstance->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS) && !walletInstance->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
             walletInstance->SetupLegacyScriptPubKeyMan();
         }
 
@@ -4950,7 +4959,9 @@ util::Result<MigrationResult> MigrateLegacyToDescriptor(const std::string& walle
         // Refuse a wallet that cannot be migrated while it is still loaded: the refusals
         // further down return without loading it again, so reaching them after the
         // unload would leave the user's wallet unloaded.
-        if (!wallet->GetLegacyScriptPubKeyMan()) {
+        // A BLSCT wallet may have no legacy ScriptPubKeyMan, but it is not a
+        // descriptor wallet either: it falls through to the SQLite refusal.
+        if (!wallet->GetLegacyScriptPubKeyMan() && !wallet->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
             return util::Error{_("Error: This wallet is already a descriptor wallet")};
         }
         if (wallet->GetDatabase().Format() == "sqlite") {

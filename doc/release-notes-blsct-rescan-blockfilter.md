@@ -10,6 +10,6 @@ Wallet
   blocks were mined while it was unloaded, and `rescanblockchain` all missed its
   transactions. If you ran such a wallet with `-blockfilterindex=1`, run
   `rescanblockchain` after upgrading to pick up anything that was missed. A
-  BLSCT wallet created with the `createwallet` RPC carries a legacy key manager
-  and already used the slow rescan. Non-BLSCT descriptor wallets still use the
-  fast rescan.
+  BLSCT wallet created with the `createwallet` RPC before this release carries a
+  legacy key manager and already used the slow rescan. Non-BLSCT descriptor
+  wallets still use the fast rescan.
