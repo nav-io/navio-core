@@ -4538,6 +4538,11 @@ ScriptPubKeyMan* CWallet::AddWalletDescriptor(WalletDescriptor& desc, const Flat
     return spk_man;
 }
 
+static bilingual_str AlreadySQLiteError()
+{
+    return _("Error: This wallet already uses SQLite");
+}
+
 bool CWallet::MigrateToSQLite(bilingual_str& error)
 {
     AssertLockHeld(cs_wallet);
@@ -4545,7 +4550,7 @@ bool CWallet::MigrateToSQLite(bilingual_str& error)
     WalletLogPrintf("Migrating wallet storage database from BerkeleyDB to SQLite.\n");
 
     if (m_database->Format() == "sqlite") {
-        error = _("Error: This wallet already uses SQLite");
+        error = AlreadySQLiteError();
         return false;
     }
 
@@ -4941,6 +4946,15 @@ util::Result<MigrationResult> MigrateLegacyToDescriptor(const std::string& walle
 
     // If the wallet is still loaded, unload it so that nothing else tries to use it while we're changing it
     if (auto wallet = GetWallet(context, wallet_name)) {
+        // Refuse a wallet that cannot be migrated while it is still loaded: the refusals
+        // further down return without loading it again, so reaching them after the
+        // unload would leave the user's wallet unloaded.
+        if (!wallet->GetLegacyScriptPubKeyMan()) {
+            return util::Error{_("Error: This wallet is already a descriptor wallet")};
+        }
+        if (wallet->GetDatabase().Format() == "sqlite") {
+            return util::Error{AlreadySQLiteError()};
+        }
         if (!RemoveWallet(context, wallet, /*load_on_start=*/std::nullopt, warnings)) {
             return util::Error{_("Unable to unload the wallet before migrating")};
         }
@@ -4957,6 +4971,13 @@ util::Result<MigrationResult> MigrateLegacyToDescriptor(const std::string& walle
     std::unique_ptr<WalletDatabase> database = MakeWalletDatabase(wallet_name, options, status, error);
     if (!database) {
         return util::Error{Untranslated("Wallet file verification failed.") + Untranslated(" ") + error};
+    }
+
+    // Migration converts the database to SQLite, so a wallet stored in SQLite already cannot be
+    // migrated. Check the file before CWallet::Create, which can write to it (e.g. a keypool
+    // top-up), so that refusing leaves the wallet as it was.
+    if (database->Format() == "sqlite") {
+        return util::Error{AlreadySQLiteError()};
     }
 
     // Make the local wallet
