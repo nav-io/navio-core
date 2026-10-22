@@ -131,8 +131,16 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         taker_n.syncwithvalidationinterfacequeue()
         balances = taker.getbalances()["mine"]
         assert_equal(balances["untrusted_pending"], 0)
-        assert_equal(Decimal(str(balances["trusted"])), trusted_before - Decimal(quote["sell_cost"]) / one)
+        trusted = trusted_before - Decimal(quote["sell_cost"]) / one
+        assert_equal(Decimal(str(balances["trusted"])), trusted)
         assert_equal(taker.gettokenbalance(tid), 0)
+
+        # A chained NAV send of the whole trusted balance needs the swap's
+        # change: the other coins alone fall short of it.
+        swap_outputs = {out["hash"] for out in taker_n.getrawtransaction(txid, True)["vout"]}
+        other_coins = sum(Decimal(str(u["amount"])) for u in taker.listblsctunspent(0) if u["outid"] not in swap_outputs)
+        assert other_coins < trusted, "the taker can fund the chained send without the swap's change"
+        taker.sendtoblsctaddress(taker.getnewaddress(label="", address_type="blsct"), trusted, "", False, True)
 
         # Pin the split: the maker half must have combined BOTH token coins
         # (plus a NAV fee coin), the taker at least one NAV coin — so the
@@ -140,13 +148,17 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         # changes (e.g. minttoken merging its own change) could quietly turn
         # the split-balance setup above into a single-coin swap that covers
         # nothing.
-        swap_vin = len(taker_n.getrawtransaction(txid, True)["vin"])
+        swap_prevouts = {vin["outid"] for vin in taker_n.getrawtransaction(txid, True)["vin"]}
+        swap_vin = len(swap_prevouts)
         assert swap_vin >= 4, f"expected a multi-input swap, got {swap_vin} inputs"
 
         blocks = self.generatetoblsctaddress(taker_n, 1, taker_addr)
         self.sync_all()
-        blk = taker_n.getblock(blocks[0])
-        assert txid in blk["tx"], "swap not in the mined block"
+        # The miner merges the swap and the chained send into one block tx
+        # under a new txid, so look for the swap's inputs rather than its id.
+        assert_equal(taker_n.getrawmempool(), [])
+        block_prevouts = {vin["outid"] for tx in taker_n.getblock(blocks[0], 2)["tx"] for vin in tx["vin"] if "outid" in vin}
+        assert swap_prevouts <= block_prevouts, "swap not in the mined block"
         # Once the swap confirms, the received token is trusted too.
         assert_equal(Decimal(str(taker.gettokenbalance(tid))), Decimal(quote["fill"]) / one)
 
