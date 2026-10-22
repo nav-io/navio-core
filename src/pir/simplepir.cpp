@@ -23,6 +23,8 @@ namespace {
 //! ChaCha20 blocks per row of A.
 constexpr uint32_t BLOCKS_PER_ROW{LWE_N * 4 / 64};
 static_assert(LWE_N * 4 % 64 == 0);
+//! ExpandA's SIMD path produces four blocks at a time, so a row is a whole number of those.
+static_assert(BLOCKS_PER_ROW % 4 == 0);
 //! Rows of A are addressed by a 32-bit ChaCha20 block counter.
 static_assert(uint64_t{MAX_COLS} * BLOCKS_PER_ROW <= uint64_t{1} << 32);
 
@@ -143,16 +145,9 @@ void ExpandA(const uint256& seed, uint32_t first, uint32_t count, uint32_t* out)
         }
         const V x[16]{x0 + c0, x1 + c1, x2 + c2, x3 + c3, x4 + k[0], x5 + k[1], x6 + k[2], x7 + k[3],
                       x8 + k[4], x9 + k[5], x10 + k[6], x11 + k[7], x12 + j12, x13, x14, x15};
-        if (blocks - b0 >= 4) {
-            for (uint32_t l = 0; l < 4; ++l) {
-                uint32_t* o{out + size_t{b0 + l} * 16};
-                for (int i = 0; i < 16; ++i) o[i] = x[i][l];
-            }
-        } else {
-            for (uint32_t l = 0; l < blocks - b0; ++l) {
-                uint32_t* o{out + size_t{b0 + l} * 16};
-                for (int i = 0; i < 16; ++i) o[i] = x[i][l];
-            }
+        for (uint32_t l = 0; l < 4; ++l) {
+            uint32_t* o{out + size_t{b0 + l} * 16};
+            for (int i = 0; i < 16; ++i) o[i] = x[i][l];
         }
     }
 #undef PIR_QR
