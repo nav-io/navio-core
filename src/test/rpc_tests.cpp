@@ -4,6 +4,7 @@
 
 #include <blsct/tokens/predicate_parser.h>
 #include <core_io.h>
+#include <ctokens/tokenid.h>
 #include <interfaces/chain.h>
 #include <node/context.h>
 #include <primitives/transaction.h>
@@ -348,6 +349,56 @@ BOOST_AUTO_TEST_CASE(rpc_parse_monetary_values)
     BOOST_CHECK_THROW(AmountFromValue(ValueFromString("1e+11")), UniValue);                // overflow error
     BOOST_CHECK_THROW(AmountFromValue(ValueFromString("1e11")), UniValue);                 // overflow error signless
     BOOST_CHECK_THROW(AmountFromValue(ValueFromString("93e+9")), UniValue);                // overflow error
+}
+
+BOOST_AUTO_TEST_CASE(rpc_parse_token_id)
+{
+    // Asymmetric, so a byte-order mismatch with ToString() cannot cancel out.
+    const std::string hex{"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"};
+    const uint256 token{uint256S(hex)};
+    const uint64_t fungible{std::numeric_limits<uint64_t>::max()};
+
+    // FromString() inverts ToString() for NAV, fungible tokens and NFTs.
+    for (const TokenId& id : {TokenId{}, TokenId{token}, TokenId{token, 0}, TokenId{token, 7}, TokenId{token, fungible - 1}}) {
+        BOOST_CHECK(TokenId::FromString(id.ToString()) == id);
+    }
+    BOOST_CHECK(TokenId::FromString("") == TokenId{});
+    BOOST_CHECK(TokenId::FromString(hex) == TokenId{token});
+    BOOST_CHECK(TokenId::FromString(hex + "#0") == (TokenId{token, 0}));
+    BOOST_CHECK(TokenId::FromString(hex + "#18446744073709551614") == (TokenId{token, fungible - 1}));
+    BOOST_CHECK_EQUAL((TokenId{token, 7}).ToString(), hex + "#7");
+    BOOST_CHECK_EQUAL(TokenId::FromString(hex)->token.GetHex(), hex);
+    // The hash, unlike the subid, is case-insensitive.
+    BOOST_CHECK(TokenId::FromString(ToUpper(hex) + "#7") == (TokenId{token, 7}));
+
+    for (const std::string& bad : std::vector<std::string>{
+             hex + "#",                     // empty subid
+             hex + "#-1",                   // sign
+             hex + "#+7",                   // sign
+             hex + "#0x7",                  // hex subid
+             hex + "#7a",                   // trailing junk
+             hex + "# 7",                   // whitespace
+             hex + "#7 ",                   // whitespace
+             hex + "#07",                   // second spelling of #7
+             hex + "#00",                   // second spelling of #0
+             hex + "#7#8",                  // two separators
+             hex + "#18446744073709551616", // overflows uint64
+             hex + "#18446744073709551615", // fungible sentinel: second spelling of the bare token
+             std::string(64, '0') + "#1",   // NAV has no NFTs
+             hex.substr(2) + "#7",          // short hash
+             hex + "00",                    // long hash
+             "0x" + hex.substr(2),          // uint256S() would accept the prefix
+             " " + hex.substr(1),           // uint256S() would skip the space
+             std::string(63, '0') + "g",    // not hex
+             "#7",                          // no hash
+         }) {
+        BOOST_CHECK_MESSAGE(!TokenId::FromString(bad), bad);
+    }
+
+    BOOST_CHECK(ParseTokenIdV(UniValue{hex + "#7"}, "token") == (TokenId{token, 7}));
+    BOOST_CHECK(ParseTokenIdV(UniValue{""}, "token") == TokenId{});
+    const std::string error{R"({"code":-8,"message":"buy_token must be a 64-hex token id, followed by #<subid> for an NFT, or empty for NAV (not ')" + hex + "#')\"}"};
+    BOOST_CHECK_EXCEPTION(ParseTokenIdV(UniValue{hex + "#"}, "buy_token"), UniValue, HasJSON(error));
 }
 
 BOOST_AUTO_TEST_CASE(rpc_ban)

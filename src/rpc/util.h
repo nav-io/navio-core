@@ -33,6 +33,7 @@
 #include <vector>
 
 class JSONRPCRequest;
+class TokenId;
 enum ServiceFlags : uint64_t;
 enum class OutputType;
 enum class TransactionError;
@@ -96,6 +97,8 @@ uint256 ParseHashV(const UniValue& v, std::string_view name);
 uint256 ParseHashO(const UniValue& o, std::string_view strKey);
 std::vector<unsigned char> ParseHexV(const UniValue& v, std::string_view name);
 std::vector<unsigned char> ParseHexO(const UniValue& o, std::string_view strKey);
+/** Parse a token id in TokenId::ToString() form ("" for NAV); throws RPC_INVALID_PARAMETER otherwise. */
+TokenId ParseTokenIdV(const UniValue& v, std::string_view name);
 
 /**
  * Validate and return a CAmount from a UniValue number or string.
