@@ -219,9 +219,16 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         legacy_addr = plain_wallet.getnewaddress(label="", address_type="legacy")
         legacy_pubkey = plain_wallet.getaddressinfo(legacy_addr)["pubkey"]
 
+        # The height is blsctregtest's nLastPOWHeight: above it a block must be
+        # proof-of-stake, so generatetoblsctaddress is only an alternative up to it.
+        coinbase_refusal = (
+            "a block paying a transparent coinbase is always rejected here, so {} is not available. "
+            "Blocks above height 25000 must be proof-of-stake; up to that height, "
+            "generatetoblsctaddress can mine proof-of-work blocks instead."
+        )
         assert_raises_rpc_error(
             -1,
-            "a block paying a transparent coinbase is always rejected here, so generatetoaddress is not available. Use generatetoblsctaddress instead.",
+            coinbase_refusal.format("generatetoaddress"),
             self.generatetoaddress,
             node,
             1,
@@ -229,7 +236,7 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         )
         assert_raises_rpc_error(
             -1,
-            "a block paying a transparent coinbase is always rejected here, so generatetodescriptor is not available. Use generatetoblsctaddress instead.",
+            coinbase_refusal.format("generatetodescriptor"),
             self.generatetodescriptor,
             node,
             1,
@@ -237,7 +244,7 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         )
         assert_raises_rpc_error(
             -1,
-            "a block paying a transparent coinbase is always rejected here, so generateblock is not available. Use generatetoblsctaddress instead.",
+            coinbase_refusal.format("generateblock"),
             self.generateblock,
             node,
             legacy_addr,

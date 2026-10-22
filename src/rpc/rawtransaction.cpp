@@ -369,7 +369,8 @@ static RPCHelpMan createrawtransaction()
         "Outputs can be addresses or data.\n"
         "Returns hex-encoded raw transaction.\n"
         "Note that the transaction's inputs are not signed, and\n"
-        "it is not stored in the wallet or transmitted to the network.\n",
+        "it is not stored in the wallet or transmitted to the network.\n"
+        "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
         CreateTxDoc(),
         RPCResult{
             RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"},
@@ -662,7 +663,8 @@ static RPCHelpMan signrawtransactionwithkey()
         "The second argument is an array of base58-encoded private\n"
         "keys that will be the only keys used to sign the transaction.\n"
         "The third optional argument (may be null) is an array of previous transaction outputs that\n"
-        "this transaction depends on but may not yet be in the block chain.\n",
+        "this transaction depends on but may not yet be in the block chain.\n"
+        "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
         {
             {"hexstring", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction hex string"},
             {
