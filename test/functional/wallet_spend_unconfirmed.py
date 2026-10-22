@@ -462,7 +462,8 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         assert_equal(spend_res["complete"], False)
         assert "txid" not in spend_res
         assert_equal([e["outid"] for e in spend_res["errors"]], [external_outid])
-        assert self.nodes[0].testmempoolaccept([spend_res["hex"]])[0]["reject-reason"].startswith("mempool-script-verify-flag-failed")
+        reject_reason = self.nodes[0].testmempoolaccept([spend_res["hex"]])[0]["reject-reason"]
+        assert reject_reason.startswith("mempool-script-verify-flag-failed"), reject_reason
 
         # The external wallet owns the input and completes the signature
         signed = self.def_wallet.signrawtransactionwithwallet(spend_res["hex"])
