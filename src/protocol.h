@@ -346,7 +346,8 @@ extern const char* GETPIRHINT;
 /**
  * pirhint is a response to getpirhint: the epoch's description (heights,
  * per-block output counts, database shape, public matrix seed) and the hint
- * rows of one slot; one message per slot.
+ * rows of one slot; one message per slot. A request the node does not serve
+ * now gets a single pirhint with a non-zero status and no data.
  */
 extern const char* PIRHINT;
 /**
@@ -355,7 +356,11 @@ extern const char* PIRHINT;
  * encrypted query vector. Only available with service bit NODE_OUTKEYS_PIR.
  */
 extern const char* PIRQUERY;
-/** pirreply is the answer to a pirquery, sent in request order. */
+/**
+ * pirreply is the reply to a pirquery, sent in request order: the answer,
+ * or a status saying why there is none (anchor reorganised away, busy,
+ * epoch unavailable).
+ */
 extern const char* PIRREPLY;
 }; // namespace NetMsgType
 

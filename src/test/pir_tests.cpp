@@ -425,6 +425,7 @@ BOOST_AUTO_TEST_CASE(messages_and_client)
     BOOST_CHECK(msg2.hint == msg.hint);
     BOOST_CHECK(msg2.block_counts == msg.block_counts);
     BOOST_CHECK(msg2.seed == msg.seed);
+    BOOST_CHECK_EQUAL(msg2.status, node::PIR_STATUS_OK);
 
     // A vector claiming more words than the stream holds fails cleanly.
     DataStream bad;
@@ -483,13 +484,32 @@ BOOST_AUTO_TEST_CASE(messages_and_client)
     const auto expected{db.Record(index)};
     BOOST_CHECK(std::equal(record->begin(), record->end(), expected.begin(), expected.end()));
 
-    // A reply for another version, or the empty (stale) reply, does not decode.
+    // A reply for another version, or one with a status, does not decode.
     auto other{reply};
     other.anchor_hash = rng.rand256();
     BOOST_CHECK(!client.Decode(state, other));
-    auto stale{reply};
-    stale.answer.clear();
-    BOOST_CHECK(!client.Decode(state, stale));
+    for (uint8_t status : {node::PIR_STATUS_STALE, node::PIR_STATUS_BUSY, node::PIR_STATUS_UNAVAILABLE}) {
+        auto refused{reply};
+        refused.status = status;
+        BOOST_CHECK(!client.Decode(state, refused));
+        refused.answer.clear();
+        BOOST_CHECK(!client.Decode(state, refused));
+    }
+
+    // A status-only pirhint round-trips and is rejected, as is a hint with data and a status.
+    node::PirHintMsg busy;
+    busy.epoch = epoch;
+    busy.status = node::PIR_STATUS_BUSY;
+    BOOST_CHECK(!node::PirEpochClient{genesis}.AddHint(busy));
+    auto busy_with_data{msg};
+    busy_with_data.status = node::PIR_STATUS_BUSY;
+    BOOST_CHECK(!node::PirEpochClient{genesis}.AddHint(busy_with_data));
+    DataStream busy_ss;
+    busy_ss << busy;
+    node::PirHintMsg busy2;
+    busy_ss >> busy2;
+    BOOST_CHECK_EQUAL(busy2.status, node::PIR_STATUS_BUSY);
+    BOOST_CHECK(busy2.hint.empty() && busy2.block_counts.empty());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

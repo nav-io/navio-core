@@ -21,6 +21,8 @@ from decimal import Decimal
 from test_framework.crypto.chacha20 import chacha20_block
 from test_framework.messages import (
     NODE_OUTKEYS_PIR,
+    PIR_STATUS_OK,
+    PIR_STATUS_STALE,
     hash256,
     msg_getoutkeys,
     msg_getpirhint,
@@ -59,6 +61,13 @@ class PirClient(P2PInterface):
 
     def on_pirreply(self, message):
         self.replies.append(message)
+
+
+class msg_getpirhint_trailing(msg_getpirhint):
+    __slots__ = ()
+
+    def serialize(self):
+        return super().serialize() + b"\x00"
 
 
 def epoch_seed(genesis_hash, epoch):
@@ -161,9 +170,10 @@ class P2POutKeysPirTest(BitcoinTestFramework):
         client.wait_until(lambda: len(client.hints) >= 1)
         client.sync_with_ping()
         assert_equal(len(client.hints), 1)  # records_per_col is 1 for small epochs
+        assert_equal(client.hints[0].status, PIR_STATUS_OK)
         return client.hints[0]
 
-    def query(self, client, hint, index):
+    def query(self, client, hint, index, expect_status=PIR_STATUS_OK):
         q = Query(hint, index)
         client.replies.clear()
         client.send_message(msg_pirquery(epoch=hint.epoch, anchor_hash=hint.anchor_hash,
@@ -172,6 +182,7 @@ class P2POutKeysPirTest(BitcoinTestFramework):
         reply = client.replies[0]
         assert_equal(reply.epoch, hint.epoch)
         assert_equal(reply.anchor_hash, hint.anchor_hash)
+        assert_equal(reply.status, expect_status)
         return q, reply
 
     def test_fetch(self, node):
@@ -237,11 +248,11 @@ class P2POutKeysPirTest(BitcoinTestFramework):
         payload = record_payload(q.decode(new_hint.hint, reply.answer))
         assert_equal(uint256_from_str(hash256(payload)), last_ids[-1])
 
-        self.log.info("A query anchored at a block that was reorganised away gets an empty reply")
+        self.log.info("A query anchored at a block that was reorganised away gets a stale reply")
         stale_tip = node.getbestblockhash()
         node.invalidateblock(stale_tip)
         self.generatetoblsctaddress(node, 2, self.addr, sync_fun=self.no_op)
-        q, reply = self.query(client, new_hint, 0)
+        q, reply = self.query(client, new_hint, 0, expect_status=PIR_STATUS_STALE)
         assert_equal(reply.answer, [])
         # The rebuilt epoch serves the new chain.
         rebuilt = self.get_hint(client, epoch)
@@ -264,8 +275,9 @@ class P2POutKeysPirTest(BitcoinTestFramework):
         node.disconnect_p2ps()
         good = [0] * hint.num_records
 
-        self.log.info("A hint request for an epoch above the tip disconnects")
+        self.log.info("A hint request for an epoch above the tip, or with trailing data, disconnects")
         self.expect_disconnect(node, msg_getpirhint(epoch=epoch + 1))
+        self.expect_disconnect(node, msg_getpirhint_trailing(epoch=epoch))
 
         self.log.info("A query of the wrong length disconnects")
         self.expect_disconnect(node, msg_pirquery(epoch, hint.anchor_hash, hint.num_records, good + [0]))
@@ -282,6 +294,7 @@ class P2POutKeysPirTest(BitcoinTestFramework):
         client = node.add_p2p_connection(PirClient())
         client.send_message(msg_pirquery(epoch, hint.anchor_hash, hint.num_records, good))
         client.wait_until(lambda: len(client.replies) == 1)
+        assert_equal(client.replies[0].status, PIR_STATUS_OK)
         assert_equal(len(client.replies[0].answer), RECORD_BYTES)
         node.disconnect_p2ps()
 

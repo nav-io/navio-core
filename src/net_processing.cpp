@@ -1163,12 +1163,13 @@ private:
     /**
      * Handle getpirhint and pirquery (NODE_OUTKEYS_PIR). Malformed requests,
      * requests to a node that does not serve PIR and peers over their work
-     * budget are disconnected.
+     * budget are disconnected; every other request gets a pirhint or pirreply,
+     * whose status says why if it was not served.
      */
     void ProcessGetPirHint(CNode& node, Peer& peer, DataStream& vRecv);
     void ProcessPirQuery(CNode& node, Peer& peer, DataStream& vRecv);
-    /** Common result handling; returns true if the reply should be sent. */
-    bool HandlePirStatus(CNode& node, node::PirServer::Status status, const char* what);
+    /** Common result handling: the status to reply with, or std::nullopt if the peer is disconnected. */
+    std::optional<uint8_t> HandlePirStatus(CNode& node, node::PirServer::Status status, const char* what);
 
     /**
      * Handle a getcfcheckpt request.
@@ -3566,27 +3567,28 @@ void PeerManagerImpl::ProcessGetOutKeys(CNode& node, Peer& peer, DataStream& vRe
     }
 }
 
-bool PeerManagerImpl::HandlePirStatus(CNode& node, node::PirServer::Status status, const char* what)
+std::optional<uint8_t> PeerManagerImpl::HandlePirStatus(CNode& node, node::PirServer::Status status, const char* what)
 {
     using Status = node::PirServer::Status;
     switch (status) {
     case Status::OK:
+        return node::PIR_STATUS_OK;
     case Status::STALE:
-        return true;
+        return node::PIR_STATUS_STALE;
     case Status::BUSY:
-        LogPrint(BCLog::NET, "pir: busy, ignoring %s from peer %d\n", what, node.GetId());
-        return false;
+        LogPrint(BCLog::NET, "pir: busy, deferring %s from peer %d\n", what, node.GetId());
+        return node::PIR_STATUS_BUSY;
     case Status::UNAVAILABLE:
-        LogPrint(BCLog::NET, "pir: block data unavailable, ignoring %s from peer %d\n", what, node.GetId());
-        return false;
+        LogPrint(BCLog::NET, "pir: epoch unavailable for %s from peer %d\n", what, node.GetId());
+        return node::PIR_STATUS_UNAVAILABLE;
     case Status::OVER_BUDGET:
         LogPrint(BCLog::NET, "pir: peer %d exceeded its work budget with %s, disconnecting\n", node.GetId(), what);
         node.fDisconnect = true;
-        return false;
+        return std::nullopt;
     case Status::INVALID:
         LogPrint(BCLog::NET, "pir: invalid %s from peer %d, disconnecting\n", what, node.GetId());
         node.fDisconnect = true;
-        return false;
+        return std::nullopt;
     }
     assert(false);
 }
@@ -3601,13 +3603,23 @@ void PeerManagerImpl::ProcessGetPirHint(CNode& node, Peer& peer, DataStream& vRe
     node::PirHintRequest req;
     try {
         vRecv >> req;
+        if (!vRecv.empty()) throw std::ios_base::failure("trailing data");
     } catch (const std::exception&) {
         LogPrint(BCLog::NET, "peer %d sent malformed getpirhint\n", node.GetId());
         node.fDisconnect = true;
         return;
     }
     std::vector<node::PirHintMsg> msgs;
-    if (!HandlePirStatus(node, m_pir->GetHint(node.GetId(), req.epoch, msgs), NetMsgType::GETPIRHINT)) return;
+    const auto status{HandlePirStatus(node, m_pir->GetHint(node.GetId(), req.epoch, msgs), NetMsgType::GETPIRHINT)};
+    if (!status) return;
+    if (*status != node::PIR_STATUS_OK) {
+        Assume(*status != node::PIR_STATUS_STALE);
+        node::PirHintMsg msg;
+        msg.epoch = req.epoch;
+        msg.status = *status;
+        MakeAndPushMessage(node, NetMsgType::PIRHINT, msg);
+        return;
+    }
     for (const auto& msg : msgs) MakeAndPushMessage(node, NetMsgType::PIRHINT, msg);
 }
 
@@ -3628,13 +3640,14 @@ void PeerManagerImpl::ProcessPirQuery(CNode& node, Peer& peer, DataStream& vRecv
         return;
     }
     node::PirReplyMsg reply;
-    const auto status{m_pir->Answer(node.GetId(), query, reply)};
-    if (!HandlePirStatus(node, status, NetMsgType::PIRQUERY)) return;
-    if (status == node::PirServer::Status::STALE) {
-        // Tell the client to fetch the hint again: an empty answer.
+    const auto status{HandlePirStatus(node, m_pir->Answer(node.GetId(), query, reply), NetMsgType::PIRQUERY)};
+    if (!status) return;
+    if (*status != node::PIR_STATUS_OK) {
+        // Not answered: tell the client why, so it can tell this from a lost message.
+        reply = {};
         reply.epoch = query.epoch;
         reply.anchor_hash = query.anchor_hash;
-        reply.answer.clear();
+        reply.status = *status;
     }
     MakeAndPushMessage(node, NetMsgType::PIRREPLY, reply);
 }

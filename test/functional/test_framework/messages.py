@@ -61,6 +61,12 @@ NODE_OUTKEYS = (1 << 28)
 NODE_P2P_WS = (1 << 30)
 NODE_OUTKEYS_PIR = (1 << 29)
 
+# Status of a pirhint or pirreply (node/pir.h)
+PIR_STATUS_OK = 0
+PIR_STATUS_STALE = 1
+PIR_STATUS_BUSY = 2
+PIR_STATUS_UNAVAILABLE = 3
+
 MSG_TX = 1
 MSG_BLOCK = 2
 MSG_FILTERED_BLOCK = 3
@@ -2638,12 +2644,13 @@ class msg_getpirhint:
 
 
 class msg_pirhint:
-    __slots__ = ("epoch", "epoch_blocks", "start_height", "anchor_hash", "block_counts", "seed",
+    __slots__ = ("epoch", "status", "epoch_blocks", "start_height", "anchor_hash", "block_counts", "seed",
                  "record_bytes", "num_records", "records_per_col", "slot", "hint")
     msgtype = b"pirhint"
 
     def __init__(self):
         self.epoch = 0
+        self.status = PIR_STATUS_OK
         self.epoch_blocks = 0
         self.start_height = 0
         self.anchor_hash = 0
@@ -2656,7 +2663,7 @@ class msg_pirhint:
         self.hint = []
 
     def deserialize(self, f):
-        self.epoch, self.epoch_blocks, self.start_height = struct.unpack("<III", f.read(12))
+        self.epoch, self.status, self.epoch_blocks, self.start_height = struct.unpack("<IBII", f.read(13))
         self.anchor_hash = deser_uint256(f)
         self.block_counts = deser_uint32_words(f)
         self.seed = deser_uint256(f)
@@ -2664,7 +2671,7 @@ class msg_pirhint:
         self.hint = deser_uint32_words(f)
 
     def serialize(self):
-        r = struct.pack("<III", self.epoch, self.epoch_blocks, self.start_height)
+        r = struct.pack("<IBII", self.epoch, self.status, self.epoch_blocks, self.start_height)
         r += ser_uint256(self.anchor_hash)
         r += ser_uint32_words(self.block_counts)
         r += ser_uint256(self.seed)
@@ -2673,8 +2680,8 @@ class msg_pirhint:
         return r
 
     def __repr__(self):
-        return "msg_pirhint(epoch={}, num_records={}, records_per_col={}, slot={})".format(
-            self.epoch, self.num_records, self.records_per_col, self.slot)
+        return "msg_pirhint(epoch={}, status={}, num_records={}, records_per_col={}, slot={})".format(
+            self.epoch, self.status, self.num_records, self.records_per_col, self.slot)
 
 
 class msg_pirquery:
@@ -2705,24 +2712,25 @@ class msg_pirquery:
 
 
 class msg_pirreply:
-    __slots__ = ("epoch", "anchor_hash", "answer")
+    __slots__ = ("epoch", "status", "anchor_hash", "answer")
     msgtype = b"pirreply"
 
     def __init__(self):
         self.epoch = 0
+        self.status = PIR_STATUS_OK
         self.anchor_hash = 0
         self.answer = []
 
     def deserialize(self, f):
-        self.epoch = struct.unpack("<I", f.read(4))[0]
+        self.epoch, self.status = struct.unpack("<IB", f.read(5))
         self.anchor_hash = deser_uint256(f)
         self.answer = deser_uint32_words(f)
 
     def serialize(self):
-        return struct.pack("<I", self.epoch) + ser_uint256(self.anchor_hash) + ser_uint32_words(self.answer)
+        return struct.pack("<IB", self.epoch, self.status) + ser_uint256(self.anchor_hash) + ser_uint32_words(self.answer)
 
     def __repr__(self):
-        return "msg_pirreply(epoch={}, len={})".format(self.epoch, len(self.answer))
+        return "msg_pirreply(epoch={}, status={}, len={})".format(self.epoch, self.status, len(self.answer))
 
 
 class msg_getcfilters:

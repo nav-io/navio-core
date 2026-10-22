@@ -20,21 +20,26 @@ P2P and network changes
 
   - `getpirhint` (`uint32 epoch`) requests an epoch's hint. It is answered by
     one `pirhint` per slot (one, unless the epoch holds more than 2^19
-    outputs), each carrying `uint32 epoch`, `uint32 epoch_blocks`,
-    `uint32 start_height`, `uint256 anchor_hash` (the last block the epoch
-    data covers), the number of outputs of each block from `start_height` up
-    to the anchor (`vector<uint32>`), the public matrix seed (`uint256`, which
-    must equal `SHA256d(ser_string("navio/simplepir/A/v1") || genesis hash ||
-    uint32 epoch)`), `uint32 record_bytes`, `uint32 num_records`,
-    `uint32 records_per_col`, `uint32 slot` and the slot's hint rows
-    (`vector<uint32>`, 1152 x 1024 words, about 4.7 MB).
+    outputs), each carrying `uint32 epoch`, `uint8 status` (0), `uint32
+    epoch_blocks`, `uint32 start_height`, `uint256 anchor_hash` (the last
+    block the epoch data covers), the number of outputs of each block from
+    `start_height` up to the anchor (`vector<uint32>`), the public matrix
+    seed (`uint256`, which must equal `SHA256d(ser_string("navio/simplepir/A/v1")
+    || genesis hash || uint32 epoch)`), `uint32 record_bytes`, `uint32
+    num_records`, `uint32 records_per_col`, `uint32 slot` and the slot's
+    hint rows (`vector<uint32>`, 1152 x 1024 words, about 4.7 MB).
   - `pirquery` (`uint32 epoch`, `uint256 anchor_hash`, `uint32 num_records`,
     `vector<uint32> query`) retrieves one record from the epoch as of the
     anchor block. The node answers with `pirreply` (`uint32 epoch`,
-    `uint256 anchor_hash`, `vector<uint32> answer`), or with an empty answer
-    if the anchor is no longer in the active chain; the wallet then fetches
-    the hint again. A query against an older anchor of the same epoch is
-    still answered as long as that anchor is in the active chain.
+    `uint8 status`, `uint256 anchor_hash`, `vector<uint32> answer`). A query
+    against an older anchor of the same epoch is still answered as long as
+    that anchor is in the active chain.
+  - A request the node does not serve, other than one it disconnects for,
+    gets a single `pirhint` or `pirreply` with a non-zero `status` and no
+    data (empty vectors, zero fields): 1 (`pirreply` only) the anchor is no
+    longer in the active chain, so the wallet should fetch the hint again;
+    2 the node is busy, retry later; 3 the node cannot serve this epoch
+    (block data missing, or more outputs than one database holds).
 
   A request to a node that does not advertise `NODE_OUTKEYS_PIR`, a hint
   request for an epoch above the tip, and a query with an unknown anchor, an
@@ -43,5 +48,5 @@ P2P and network changes
   scan of the epoch database and each hint about 4.7 MB of upload, so each
   peer has a work budget (1 GiB, refilled at 128 MiB/s); a peer that exceeds
   it is disconnected. Building or extending an epoch's hint is charged to a
-  budget shared by all peers, and while that is exhausted requests are
-  ignored.
+  budget shared by all peers, and while that is exhausted requests get a
+  busy reply.

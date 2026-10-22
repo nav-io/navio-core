@@ -302,6 +302,7 @@ PirServer::Status PirServer::Answer(int64_t peer, const PirQueryMsg& query, PirR
 
 bool PirEpochClient::AddHint(const PirHintMsg& msg)
 {
+    if (msg.status != PIR_STATUS_OK) return false;
     const pir::Params params{msg.GetParams()};
     if (!params.IsValid() || params.records_per_col != pir::ChooseRecordsPerCol(params.num_records)) return false;
     if (msg.epoch_blocks == 0 || msg.epoch_blocks > MAX_PIR_EPOCH_BLOCKS) return false;
@@ -356,7 +357,7 @@ std::optional<PirQueryMsg> PirEpochClient::MakeQuery(uint32_t index, pir::Secret
 
 std::optional<std::vector<uint8_t>> PirEpochClient::Decode(const pir::QueryState& state, const PirReplyMsg& reply) const
 {
-    if (!Complete() || reply.epoch != m_info.epoch || reply.anchor_hash != m_info.anchor_hash) return std::nullopt;
+    if (!Complete() || reply.status != PIR_STATUS_OK || reply.epoch != m_info.epoch || reply.anchor_hash != m_info.anchor_hash) return std::nullopt;
     if (!(state.params == m_info.GetParams())) return std::nullopt;
     return pir::Decode(state, m_hint, reply.answer);
 }

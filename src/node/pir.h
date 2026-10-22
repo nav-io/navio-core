@@ -111,6 +111,16 @@ struct PirWords {
     }
 };
 
+/**
+ * Status of a pirhint or pirreply. A request that is neither served nor
+ * punished with a disconnect still gets exactly one reply, carrying the
+ * reason and otherwise empty.
+ */
+static constexpr uint8_t PIR_STATUS_OK{0};          //!< served
+static constexpr uint8_t PIR_STATUS_STALE{1};       //!< pirreply only: the anchor left the active chain; fetch the hint again
+static constexpr uint8_t PIR_STATUS_BUSY{2};        //!< not served now; retry later
+static constexpr uint8_t PIR_STATUS_UNAVAILABLE{3}; //!< this node cannot serve the epoch (block data missing, or too many outputs)
+
 /** getpirhint: request the hint of one epoch. */
 struct PirHintRequest {
     uint32_t epoch{0};
@@ -119,10 +129,13 @@ struct PirHintRequest {
 
 /**
  * pirhint: one per slot (records_per_col of them; one for an empty epoch),
- * each carrying the epoch description and the hint rows of its slot.
+ * each carrying the epoch description and the hint rows of its slot. If
+ * status is not PIR_STATUS_OK there is a single pirhint and only epoch and
+ * status are set.
  */
 struct PirHintMsg {
     uint32_t epoch{0};
+    uint8_t status{PIR_STATUS_OK};
     uint32_t epoch_blocks{0};
     uint32_t start_height{0};
     //! Last block the epoch data covers; names this version of the epoch.
@@ -141,7 +154,7 @@ struct PirHintMsg {
 
     SERIALIZE_METHODS(PirHintMsg, obj)
     {
-        READWRITE(obj.epoch, obj.epoch_blocks, obj.start_height, obj.anchor_hash, obj.block_counts,
+        READWRITE(obj.epoch, obj.status, obj.epoch_blocks, obj.start_height, obj.anchor_hash, obj.block_counts,
                   obj.seed, obj.record_bytes, obj.num_records, obj.records_per_col, obj.slot,
                   Using<PirWords>(obj.hint));
     }
@@ -160,15 +173,16 @@ struct PirQueryMsg {
     }
 };
 
-/** pirreply: the answer to a pirquery, in request order; empty answer: the anchor was reorganised away. */
+/** pirreply: the reply to a pirquery, in request order; the answer is empty unless status is PIR_STATUS_OK. */
 struct PirReplyMsg {
     uint32_t epoch{0};
+    uint8_t status{PIR_STATUS_OK};
     uint256 anchor_hash;
     std::vector<uint32_t> answer;
 
     SERIALIZE_METHODS(PirReplyMsg, obj)
     {
-        READWRITE(obj.epoch, obj.anchor_hash, Using<PirWords>(obj.answer));
+        READWRITE(obj.epoch, obj.status, obj.anchor_hash, Using<PirWords>(obj.answer));
     }
 };
 
@@ -231,11 +245,11 @@ public:
 
     enum class Status {
         OK,
-        STALE,        //!< anchor no longer in the active chain (reply with an empty answer)
-        BUSY,         //!< global budget exhausted (ignore the request)
+        STALE,        //!< anchor no longer in the active chain (reply PIR_STATUS_STALE)
+        BUSY,         //!< global budget exhausted (reply PIR_STATUS_BUSY)
         OVER_BUDGET,  //!< peer exceeded its budget (disconnect)
         INVALID,      //!< malformed request (disconnect)
-        UNAVAILABLE,  //!< block data could not be read (ignore)
+        UNAVAILABLE,  //!< block data could not be read, or the epoch is too large (reply PIR_STATUS_UNAVAILABLE)
     };
 
     PirServer(ChainstateManager& chainman, const Options& opts);
