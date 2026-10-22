@@ -1560,7 +1560,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             // block tx back to the CWalletTx that produced it: any send
             // whose outputs all appear in this block was rolled into the
             // aggregate and is, for accounting purposes, confirmed here.
-            if (std::get_if<TxStateConfirmed>(&tx_state)) {
+            if (const auto* conf = std::get_if<TxStateConfirmed>(&tx_state)) {
                 std::set<uint256> matched_wtx;
                 for (const Outid& out_id : tx.GetOutputIds()) {
                     auto it_idx = mapOutpointHashToWalletTx.find(out_id.ToUint256());
@@ -1579,6 +1579,46 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                         wit->second.MarkDirty();
                         batch.WriteTx(wit->second);
                     }
+                }
+
+                // Any other wallet tx spending an input of this block tx is
+                // conflicted by it, together with its descendants, so its
+                // inputs stop counting as spent (see IsSpent()). This mirrors
+                // the MarkConflicted() call of the non-BLSCT path below, which
+                // this branch returns before.
+                //
+                // A wallet tx with an output in this block tx is excluded: it
+                // is one of our sends the staker merged into the aggregate,
+                // spending the same inputs under another hash, so it was
+                // confirmed by the reconciliation above, not conflicted. The
+                // outputs are compared directly rather than through
+                // mapOutpointHashToWalletTx, which maps a shared output to a
+                // single wallet tx.
+                std::set<uint256> block_outputs;
+                for (const Outid& out_id : tx.GetOutputIds()) {
+                    block_outputs.insert(out_id.ToUint256());
+                }
+                const auto has_output_in_block = [&](const CWalletTx& wtx) {
+                    for (const Outid& out_id : wtx.tx->GetOutputIds()) {
+                        if (block_outputs.contains(out_id.ToUint256())) return true;
+                    }
+                    return false;
+                };
+                std::set<uint256> conflicted;
+                for (const CTxIn& txin : tx.vin) {
+                    const auto range = mapTxSpends.equal_range(txin.prevout);
+                    for (auto it_spend = range.first; it_spend != range.second; ++it_spend) {
+                        const uint256& spender = it_spend->second;
+                        if (spender == tx.GetHash()) continue;
+                        const auto wit = mapWallet.find(spender);
+                        if (wit == mapWallet.end() || has_output_in_block(wit->second)) continue;
+                        if (conflicted.insert(spender).second) {
+                            WalletLogPrintf("Transaction %s (in block %s) conflicts with wallet transaction %s (both spend %s)\n", tx.GetHash().ToString(), conf->confirmed_block_hash.ToString(), spender.ToString(), txin.prevout.hash.ToString());
+                        }
+                    }
+                }
+                for (const uint256& spender : conflicted) {
+                    MarkConflicted(conf->confirmed_block_hash, conf->confirmed_block_height, spender);
                 }
             }
 

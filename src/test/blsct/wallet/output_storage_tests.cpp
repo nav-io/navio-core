@@ -1280,4 +1280,147 @@ BOOST_FIXTURE_TEST_CASE(output_storage_block_removal_keeps_confirmed, TestingSet
     BOOST_CHECK(!r.wallet->AbandonTransaction(txid));
 }
 
+//! A block at height 2, on top of the height-1 tip MakeOwnAggregate sets,
+//! holding the given transactions. Keeps the block and the hashes that
+//! interfaces::BlockInfo points into alive for blockConnected() and
+//! blockDisconnected().
+struct TestBlock {
+    CBlock block;
+    uint256 hash{InsecureRand256()};
+    uint256 prev_hash{InsecureRand256()};
+
+    explicit TestBlock(std::vector<CTransactionRef> txs) { block.vtx = std::move(txs); }
+
+    interfaces::BlockInfo Info() const
+    {
+        interfaces::BlockInfo info{hash};
+        info.prev_hash = &prev_hash;
+        info.height = 2;
+        info.data = &block;
+        return info;
+    }
+};
+
+//! A send chained on the aggregate's change, in the shape of the aggregate:
+//! the change -> a new change, plus a cover half spending a foreign coin.
+static CTransactionRef MakeChainedSend(const OwnAggregate& r) EXCLUSIVE_LOCKS_REQUIRED(r.cover_wallet->cs_wallet)
+{
+    const auto cover_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    CMutableTransaction child;
+    child.nVersion |= CTransaction::BLSCT_MARKER;
+    child.vin.emplace_back(r.change_outpoint);
+    child.vin.emplace_back(COutPoint{InsecureRand256()});
+    child.vout.push_back(blsct::CreateOutput(r.address, 98 * COIN, "child change").out);
+    child.vout.push_back(blsct::CreateOutput(cover_address, OwnAggregate::cover_amount, "child cover").out);
+    return MakeTransactionRef(child);
+}
+
+// Regression for issue #511. A block that confirms another tx spending an
+// input of our unconfirmed aggregate (the cover provider double-spending its
+// candidate input) conflicts the aggregate and every send chained on it. The
+// output-storage wallet used to keep both unconfirmed and not abandoned, so
+// the aggregate kept the wallet's own coin spent and the next send failed
+// with "Not enough funds available" until the user abandoned it. Disconnecting
+// the block lifts the conflict again.
+BOOST_FIXTURE_TEST_CASE(output_storage_block_conflict_frees_inputs, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    const uint256 txid{r.aggregate->GetHash()};
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    r.wallet->transactionAddedToMempool(r.aggregate);
+    const CTransactionRef child{MakeChainedSend(r)};
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child, {child->vout[0]}, {}));
+    r.wallet->transactionAddedToMempool(child);
+
+    // The cover provider's double-spend of its candidate input.
+    const auto cover_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    CMutableTransaction double_spend;
+    double_spend.nVersion |= CTransaction::BLSCT_MARKER;
+    double_spend.vin.emplace_back(r.cover_coin_outpoint);
+    double_spend.vout.push_back(blsct::CreateOutput(cover_address, 5 * COIN, "double spend").out);
+
+    // As the node signals it: the mempool drops the aggregate and its
+    // descendant as conflicts before the block is reported connected.
+    r.wallet->transactionRemovedFromMempool(r.aggregate, MemPoolRemovalReason::CONFLICT);
+    r.wallet->transactionRemovedFromMempool(child, MemPoolRemovalReason::CONFLICT);
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MakeTransactionRef(double_spend)}};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+
+    const CWalletTx* wtx = r.wallet->GetWalletTx(txid);
+    const CWalletTx* child_wtx = r.wallet->GetWalletTx(child->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_REQUIRE(child_wtx != nullptr);
+    BOOST_CHECK(wtx->isConflicted());
+    BOOST_CHECK(child_wtx->isConflicted());
+    BOOST_CHECK_EQUAL(r.wallet->GetTxDepthInMainChain(*wtx), -1);
+    BOOST_CHECK_EQUAL(r.wallet->GetTxDepthInMainChain(*child_wtx), -1);
+    // The wallet's own coin, which only the aggregate spent, is spendable
+    // again without abandoning anything.
+    BOOST_CHECK(!r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 100 * COIN);
+    const auto coins = AvailableBlsctCoins(*r.wallet).All();
+    BOOST_REQUIRE_EQUAL(coins.size(), 1U);
+    BOOST_CHECK(coins[0].outpoint == r.coin_outpoint);
+    BOOST_CHECK_EQUAL(coins[0].txout.nValue, 100 * COIN);
+
+    // Disconnecting the block lifts the conflict: the aggregate is an
+    // unconfirmed tx again, outside the mempool, that keeps its input spent
+    // until it is abandoned, as after any other removal from the mempool.
+    r.wallet->blockDisconnected(block.Info());
+    BOOST_CHECK(!wtx->isConflicted());
+    BOOST_CHECK(!child_wtx->isConflicted());
+    BOOST_CHECK(!wtx->InMempool());
+    BOOST_CHECK(!wtx->isAbandoned());
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 0);
+}
+
+// A staker that merges our aggregate into its block aggregate confirms it
+// under another hash: the block tx spends the same inputs and carries the
+// aggregate's outputs. That is not a conflict; the aggregate is confirmed by
+// the block and its change is the wallet's spendable coin. The mempool may or
+// may not have reported the merged tx removed as a conflict first.
+BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_not_conflicted, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    for (const bool removed_as_conflict : {false, true}) {
+        BOOST_TEST_CONTEXT("removed as conflict first: " << removed_as_conflict)
+        {
+            const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+            LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+            const uint256 txid{r.aggregate->GetHash()};
+
+            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+            r.wallet->transactionAddedToMempool(r.aggregate);
+            if (removed_as_conflict) {
+                r.wallet->transactionRemovedFromMempool(r.aggregate, MemPoolRemovalReason::CONFLICT);
+            }
+
+            // The block aggregate: our aggregate merged with another sender's
+            // tx, so the inputs and outputs are a superset under a new hash.
+            const auto other_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+            CMutableTransaction merged{*r.aggregate};
+            merged.vin.emplace_back(COutPoint{InsecureRand256()});
+            merged.vout.push_back(blsct::CreateOutput(other_address, COIN, "other sender").out);
+            const CTransactionRef merged_tx{MakeTransactionRef(merged)};
+            BOOST_REQUIRE(merged_tx->GetHash() != txid);
+
+            r.wallet->SetBirthTime(0);
+            const TestBlock block{{merged_tx}};
+            r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+
+            const CWalletTx* wtx = r.wallet->GetWalletTx(txid);
+            BOOST_REQUIRE(wtx != nullptr);
+            BOOST_CHECK(wtx->isConfirmed());
+            BOOST_CHECK(!wtx->isConflicted());
+            BOOST_CHECK_EQUAL(r.wallet->GetTxDepthInMainChain(*wtx), 1);
+            CheckChangeIsTheSpendableCoin(r);
+        }
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
