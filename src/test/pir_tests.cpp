@@ -515,6 +515,27 @@ BOOST_AUTO_TEST_CASE(messages_and_client)
     BOOST_CHECK(busy2.hint.empty() && busy2.block_counts.empty());
 }
 
+BOOST_AUTO_TEST_CASE(budget)
+{
+    const NodeClock::time_point t0{NodeClock::time_point{} + 1000s};
+    // Starts partly full and fills at the refill rate, up to capacity.
+    node::PirBudget b{1000, 100, 250, t0};
+    BOOST_CHECK(!b.TryConsume(300, t0));
+    BOOST_CHECK(b.TryConsume(250, t0));
+    BOOST_CHECK(!b.TryConsume(1, t0));
+    BOOST_CHECK(b.TryConsume(200, t0 + 2s));
+    BOOST_CHECK(!b.TryConsume(1001, t0 + 100s));
+    BOOST_CHECK(b.TryConsume(1000, t0 + 100s));
+    // Charges may go into debt, which refills like anything else.
+    b.Charge(500, t0 + 100s);
+    BOOST_CHECK(b.InDebt(t0 + 104s));
+    BOOST_CHECK(!b.InDebt(t0 + 105s));
+    // The initial amount is capped at the capacity.
+    node::PirBudget full{10, 1, 20, t0};
+    BOOST_CHECK(!full.TryConsume(11, t0));
+    BOOST_CHECK(full.TryConsume(10, t0));
+}
+
 BOOST_FIXTURE_TEST_CASE(server_builds_in_background, TestChain100Setup)
 {
     using Status = node::PirServer::Status;
@@ -523,7 +544,7 @@ BOOST_FIXTURE_TEST_CASE(server_builds_in_background, TestChain100Setup)
     node::PirServer::Options opts;
     opts.epoch_blocks = 10; // epochs 0 to 10 up to the tip at height 100
     opts.max_epochs = 16;
-    opts.peer_budget = 1000; // a build costs the requesting peer 250
+    opts.peer_budget = 1600; // a new peer holds 200 and a build costs it 100
     node::PirServer server{*m_node.chainman, opts};
     std::vector<node::PirHintMsg> msgs;
 
@@ -543,25 +564,37 @@ BOOST_FIXTURE_TEST_CASE(server_builds_in_background, TestChain100Setup)
     // An epoch above the tip is invalid without queuing anything.
     BOOST_CHECK(server.GetHint(1, 11, msgs) == Status::INVALID);
 
-    // Each build a peer queues is charged up front: three more fit the
-    // budget, the next one does not and is not queued.
-    for (uint32_t epoch : {2U, 3U, 4U}) BOOST_CHECK(server.GetHint(1, epoch, msgs) == Status::BUSY);
-    BOOST_CHECK(server.GetHint(1, 5, msgs) == Status::OVER_BUDGET);
+    // Each build a peer queues is charged up front: one more fits what is
+    // left of the peer's starting budget, the next does not and is not
+    // queued (but the peer is not disconnected for it).
+    BOOST_CHECK(server.GetHint(1, 2, msgs) == Status::BUSY);
+    BOOST_CHECK(server.GetHint(1, 3, msgs) == Status::BUSY);
     server.SyncWithBuilds();
-    // Built epochs cost another peer nothing to rebuild; epoch 5 was never queued.
-    for (uint32_t epoch : {2U, 3U, 4U}) BOOST_CHECK(server.GetHint(2, epoch, msgs) == Status::OK);
-    BOOST_CHECK(server.GetHint(2, 5, msgs) == Status::BUSY);
+    BOOST_CHECK(server.GetHint(2, 2, msgs) == Status::OK);
+    BOOST_CHECK(server.GetHint(2, 3, msgs) == Status::BUSY);
+    server.SyncWithBuilds();
+    BOOST_CHECK(server.GetHint(2, 3, msgs) == Status::OK);
+    // The bucket refills with time, and a peer that reconnects starts over
+    // with the starting budget, not the full burst.
+    SetMockTime(GetTime<std::chrono::seconds>() + 1s);
+    BOOST_CHECK(server.GetHint(1, 4, msgs) == Status::BUSY);
+    server.ForgetPeer(1);
+    for (uint32_t epoch : {5U, 6U}) BOOST_CHECK(server.GetHint(1, epoch, msgs) == Status::BUSY);
+    BOOST_CHECK(server.GetHint(1, 7, msgs) == Status::BUSY);
+    server.SyncWithBuilds();
+    for (uint32_t epoch : {4U, 5U, 6U}) BOOST_CHECK(server.GetHint(3, epoch, msgs) == Status::OK);
+    BOOST_CHECK(server.GetHint(3, 7, msgs) == Status::BUSY);
 
     // The last epoch follows the tip: a new block makes it out of date,
     // and the rebuild extends it.
-    BOOST_CHECK(server.GetHint(2, 10, msgs) == Status::BUSY);
+    BOOST_CHECK(server.GetHint(4, 10, msgs) == Status::BUSY);
     server.SyncWithBuilds();
-    BOOST_REQUIRE(server.GetHint(2, 10, msgs) == Status::OK);
+    BOOST_REQUIRE(server.GetHint(4, 10, msgs) == Status::OK);
     BOOST_CHECK_EQUAL(msgs[0].block_counts.size(), 1U);
     mineBlocks(1);
-    BOOST_CHECK(server.GetHint(2, 10, msgs) == Status::BUSY);
+    BOOST_CHECK(server.GetHint(4, 10, msgs) == Status::BUSY);
     server.SyncWithBuilds();
-    BOOST_REQUIRE(server.GetHint(2, 10, msgs) == Status::OK);
+    BOOST_REQUIRE(server.GetHint(4, 10, msgs) == Status::OK);
     BOOST_CHECK_EQUAL(msgs[0].block_counts.size(), 2U);
     BOOST_CHECK(msgs[0].anchor_hash == WITH_LOCK(::cs_main, return m_node.chainman->ActiveChain().Tip()->GetBlockHash()));
 
@@ -573,19 +606,19 @@ BOOST_FIXTURE_TEST_CASE(server_builds_in_background, TestChain100Setup)
     node::PirReplyMsg reply;
     BOOST_CHECK(server.Answer(3, query, reply) == Status::OK);
     BOOST_CHECK_EQUAL(reply.answer.size(), node::PIR_RECORD_BYTES);
-    query.epoch = 6;
-    query.anchor_hash = WITH_LOCK(::cs_main, return m_node.chainman->ActiveChain()[65]->GetBlockHash());
+    query.epoch = 8;
+    query.anchor_hash = WITH_LOCK(::cs_main, return m_node.chainman->ActiveChain()[85]->GetBlockHash());
     BOOST_CHECK(server.Answer(3, query, reply) == Status::BUSY);
     server.SyncWithBuilds();
     BOOST_CHECK(server.Answer(3, query, reply) == Status::OK);
     // An anchor outside the query's epoch is invalid.
-    query.epoch = 5;
+    query.epoch = 7;
     BOOST_CHECK(server.Answer(3, query, reply) == Status::INVALID);
 
     // Destroying the server with a build queued stops the build thread.
     {
         node::PirServer other{*m_node.chainman, opts};
-        BOOST_CHECK(other.GetHint(1, 7, msgs) == Status::BUSY);
+        BOOST_CHECK(other.GetHint(1, 9, msgs) == Status::BUSY);
     }
     SetMockTime(0);
 }

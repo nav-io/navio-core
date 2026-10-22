@@ -46,11 +46,12 @@ P2P and network changes
   anchor outside its epoch, a record count that does not match the anchor or
   a query of the wrong length disconnect the peer. Each query costs the node a
   scan of the epoch database and each hint about 4.7 MB of upload, so each
-  peer has a work budget (1 GiB, refilled at 128 MiB/s); a peer that exceeds
-  it is disconnected. Queries are also charged to a budget shared by all
+  peer has a work budget (1 GiB, refilled at 128 MiB/s; a new connection
+  starts with 128 MiB of it); a peer that exceeds it is disconnected. Queries are also charged to a budget shared by all
   peers, and while that is exhausted requests get a busy reply. The node
   builds or extends an epoch's hint on a background thread, one epoch at a
   time, when a request needs a version it does not hold (an epoch it has not
   built or has evicted, or one that is behind the tip or was reorganised);
   that request gets a busy reply, and the peer that triggered the build is
-  charged a quarter of its budget for it.
+  charged 64 MiB of its budget for it (a peer that cannot afford that gets a
+  busy reply and the build is not started).

@@ -100,7 +100,7 @@ PirServer::PirServer(ChainstateManager& chainman, const Options& opts)
     : m_chainman{chainman},
       m_opts{opts},
       m_genesis{chainman.GetParams().GenesisBlock().GetHash()},
-      m_global_budget{PIR_GLOBAL_BUDGET, PIR_GLOBAL_BUDGET / 16, NodeClock::now()}
+      m_global_budget{PIR_GLOBAL_BUDGET, PIR_GLOBAL_BUDGET / 16, PIR_GLOBAL_BUDGET, NodeClock::now()}
 {
     Assert(opts.epoch_blocks > 0 && opts.epoch_blocks <= MAX_PIR_EPOCH_BLOCKS);
     Assert(opts.max_epochs > 0);
@@ -121,7 +121,7 @@ PirBudget& PirServer::PeerBudget(int64_t peer, NodeClock::time_point now)
 {
     auto it{m_peer_budgets.find(peer)};
     if (it == m_peer_budgets.end()) {
-        it = m_peer_budgets.emplace(peer, PirBudget{m_opts.peer_budget, m_opts.peer_budget / 8, now}).first;
+        it = m_peer_budgets.emplace(peer, PirBudget{m_opts.peer_budget, m_opts.peer_budget / 8, m_opts.peer_budget / PIR_PEER_START_DIVISOR, now}).first;
     }
     return it->second;
 }
@@ -156,7 +156,7 @@ PirServer::Status PirServer::RequestBuild(int64_t peer, uint32_t epoch, const ui
     {
         LOCK(m_budget_mutex);
         const auto now{NodeClock::now()};
-        if (!PeerBudget(peer, now).TryConsume(m_opts.peer_budget / PIR_BUILD_CHARGE_DIVISOR, now)) return Status::OVER_BUDGET;
+        if (!PeerBudget(peer, now).TryConsume(m_opts.peer_budget / PIR_BUILD_CHARGE_DIVISOR, now)) return Status::BUSY;
     }
     m_queue.push_back(epoch);
     m_queue_cv.notify_one();

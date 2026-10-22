@@ -323,13 +323,18 @@ class P2POutKeysPirTest(BitcoinTestFramework):
     def test_budget(self, node):
         self.log.info("A peer over its work budget is disconnected")
         hint_bytes = RECORD_BYTES * LWE_N * 4
-        # Room for queuing the epoch's build (a quarter of the budget) and one
-        # hint, but not two (refill is 1/8 of the budget per second).
-        budget = hint_bytes + hint_bytes // 2
+        # A new peer starts with an eighth of the budget: room for queuing the
+        # epoch's build (a sixteenth) and one hint.
+        budget = 16 * hint_bytes
         self.restart_node(0, extra_args=self.pir_args + [f"-pirpeerbudget={budget}"])
+        self.get_hint(node.add_p2p_connection(PirClient()), 2)
+
+        self.log.info("A new connection cannot spend the whole budget at once")
+        # Eight hints fit the budget but not a new peer's starting share of it
+        # (two hints, refilled at two hints per second).
         client = node.add_p2p_connection(PirClient())
-        self.get_hint(client, 2)
-        client.send_message(msg_getpirhint(epoch=2))
+        for _ in range(8):
+            client.send_message(msg_getpirhint(epoch=2))
         client.wait_for_disconnect()
         self.restart_node(0, extra_args=self.pir_args)
         self.connect_nodes(0, 1)

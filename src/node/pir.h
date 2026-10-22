@@ -71,21 +71,26 @@ static constexpr uint32_t DEFAULT_PIR_MAX_EPOCHS{4};
  * costs its size in bytes sent, so both are charged in bytes. Each peer has
  * a token bucket (burst DEFAULT_PIR_PEER_BUDGET, refilled at 1/8 of that per
  * second) and a peer that exceeds it is disconnected: a client knows the cost
- * of each request from the pirhint it holds and can pace itself. Queries are
- * also charged to a global bucket shared by all peers (burst
- * PIR_GLOBAL_BUDGET, refilled at 1/16 of that per second); while it is in
- * debt requests get a busy reply.
+ * of each request from the pirhint it holds and can pace itself. A new peer's
+ * bucket starts at 1/PIR_PEER_START_DIVISOR of the burst (one second of
+ * refill) and fills from there, so disconnecting and reconnecting does not
+ * buy a peer more than staying connected would. Queries are also charged to
+ * a global bucket shared by all peers (burst PIR_GLOBAL_BUDGET, refilled at
+ * 1/16 of that per second); while it is in debt requests get a busy reply.
  *
  * Building or extending an epoch's hint costs LWE_N multiply-adds per
  * database byte against one for a scan, which is too much to do while
  * handling a message. Builds run one at a time on a background thread and
  * the request that needs one gets a busy reply until it is done; the peer
  * whose request queues a build is charged 1/PIR_BUILD_CHARGE_DIVISOR of its
- * budget for it, up front.
+ * burst for it, up front. A peer that cannot afford that is not
+ * disconnected, since it cannot know which of its requests need a build: the
+ * build is not queued and the request gets a busy reply.
  */
 static constexpr uint64_t DEFAULT_PIR_PEER_BUDGET{uint64_t{1} << 30};
+static constexpr uint64_t PIR_PEER_START_DIVISOR{8};
 static constexpr uint64_t PIR_GLOBAL_BUDGET{uint64_t{16} << 30};
-static constexpr uint64_t PIR_BUILD_CHARGE_DIVISOR{4};
+static constexpr uint64_t PIR_BUILD_CHARGE_DIVISOR{16};
 
 /** Serialize a vector<uint32_t> as a compact size and little-endian words, in bulk. */
 struct PirWords {
@@ -209,8 +214,9 @@ void AppendBlockRecords(const CBlock& block, std::vector<std::vector<uint8_t>>& 
 class PirBudget
 {
 public:
-    PirBudget(uint64_t capacity, uint64_t per_second, NodeClock::time_point now)
-        : m_capacity{capacity}, m_per_second{per_second}, m_tokens{double(capacity)}, m_last{now} {}
+    /** A bucket holding initial tokens (at most capacity) at time now. */
+    PirBudget(uint64_t capacity, uint64_t per_second, uint64_t initial, NodeClock::time_point now)
+        : m_capacity{capacity}, m_per_second{per_second}, m_tokens{double(std::min(initial, capacity))}, m_last{now} {}
     /** Take cost if available. */
     bool TryConsume(uint64_t cost, NodeClock::time_point now);
     /** Take cost unconditionally (may go into debt). */
@@ -287,9 +293,9 @@ private:
     /** The cached version of an epoch (made the most recently used), or nullptr. */
     EpochRef Lookup(uint32_t epoch) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
     /**
-     * Queue a build of an epoch unless one is already queued or running,
-     * charging the peer for it. Returns BUSY, OVER_BUDGET, or UNAVAILABLE if
-     * the last build of the epoch failed at the same tip.
+     * Queue a build of an epoch unless one is already queued or running and
+     * the peer can afford it, charging the peer for it. Returns BUSY, or
+     * UNAVAILABLE if the last build of the epoch failed at the same tip.
      */
     Status RequestBuild(int64_t peer, uint32_t epoch, const uint256& tip) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex, !m_budget_mutex);
     void BuildThread() EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
