@@ -11,6 +11,7 @@
 #include <node/blockstorage.h>
 #include <primitives/block.h>
 #include <streams.h>
+#include <util/thread.h>
 #include <validation.h>
 
 #include <limits>
@@ -103,6 +104,17 @@ PirServer::PirServer(ChainstateManager& chainman, const Options& opts)
 {
     Assert(opts.epoch_blocks > 0 && opts.epoch_blocks <= MAX_PIR_EPOCH_BLOCKS);
     Assert(opts.max_epochs > 0);
+    m_thread = std::thread{&util::TraceThread, "pirbuild", [this] { BuildThread(); }};
+}
+
+PirServer::~PirServer()
+{
+    {
+        LOCK(m_mutex);
+        m_interrupt = true;
+    }
+    m_queue_cv.notify_all();
+    m_thread.join();
 }
 
 PirBudget& PirServer::PeerBudget(int64_t peer, NodeClock::time_point now)
@@ -116,58 +128,120 @@ PirBudget& PirServer::PeerBudget(int64_t peer, NodeClock::time_point now)
 
 void PirServer::ForgetPeer(int64_t peer)
 {
-    LOCK(m_mutex);
+    LOCK(m_budget_mutex);
     m_peer_budgets.erase(peer);
 }
 
-PirEpoch* PirServer::Update(uint32_t epoch, Status& status)
+void PirServer::SyncWithBuilds()
+{
+    WAIT_LOCK(m_mutex, lock);
+    m_idle_cv.wait(lock, [&]() EXCLUSIVE_LOCKS_REQUIRED(m_mutex) { return m_interrupt || (m_queue.empty() && !m_building); });
+}
+
+PirServer::EpochRef PirServer::Lookup(uint32_t epoch)
+{
+    LOCK(m_mutex);
+    auto it{std::find_if(m_epochs.begin(), m_epochs.end(), [&](const auto& e) { return e->epoch == epoch; })};
+    if (it == m_epochs.end()) return nullptr;
+    m_epochs.splice(m_epochs.begin(), m_epochs, it);
+    return m_epochs.front();
+}
+
+PirServer::Status PirServer::RequestBuild(int64_t peer, uint32_t epoch, const uint256& tip)
+{
+    LOCK(m_mutex);
+    if (const auto it{m_failed.find(epoch)}; it != m_failed.end() && it->second == tip) return Status::UNAVAILABLE;
+    if (m_building == epoch || std::find(m_queue.begin(), m_queue.end(), epoch) != m_queue.end()) return Status::BUSY;
+    if (m_queue.size() >= m_opts.max_epochs) return Status::BUSY;
+    {
+        LOCK(m_budget_mutex);
+        const auto now{NodeClock::now()};
+        if (!PeerBudget(peer, now).TryConsume(m_opts.peer_budget / PIR_BUILD_CHARGE_DIVISOR, now)) return Status::OVER_BUDGET;
+    }
+    m_queue.push_back(epoch);
+    m_queue_cv.notify_one();
+    return Status::BUSY;
+}
+
+void PirServer::BuildThread()
+{
+    while (true) {
+        uint32_t epoch;
+        EpochRef base;
+        {
+            WAIT_LOCK(m_mutex, lock);
+            m_building.reset();
+            if (m_queue.empty()) m_idle_cv.notify_all();
+            m_queue_cv.wait(lock, [&]() EXCLUSIVE_LOCKS_REQUIRED(m_mutex) { return m_interrupt || !m_queue.empty(); });
+            if (m_interrupt) {
+                m_idle_cv.notify_all();
+                return;
+            }
+            epoch = m_queue.front();
+            m_queue.pop_front();
+            m_building = epoch;
+            const auto it{std::find_if(m_epochs.begin(), m_epochs.end(), [&](const auto& e) { return e->epoch == epoch; })};
+            if (it != m_epochs.end()) base = *it;
+        }
+
+        EpochRef built;
+        uint256 tip;
+        const BuildResult result{Build(epoch, base, built, tip)};
+
+        LOCK(m_mutex);
+        if (result == BuildResult::BUILT) {
+            const auto it{std::find_if(m_epochs.begin(), m_epochs.end(), [&](const auto& e) { return e->epoch == epoch; })};
+            if (it != m_epochs.end()) m_epochs.erase(it);
+            m_epochs.push_front(std::move(built));
+            while (m_epochs.size() > m_opts.max_epochs) m_epochs.pop_back();
+            m_failed.erase(epoch);
+        } else if (result == BuildResult::FAILED) {
+            m_failed[epoch] = tip;
+        }
+    }
+}
+
+PirServer::BuildResult PirServer::Build(uint32_t epoch, const EpochRef& base, EpochRef& out, uint256& tip)
 {
     const uint64_t start{uint64_t{epoch} * m_opts.epoch_blocks};
 
-    // Find the cached epoch and make it the most recently used.
-    auto it{std::find_if(m_epochs.begin(), m_epochs.end(), [&](const auto& e) { return e->epoch == epoch; })};
-    if (it != m_epochs.end()) m_epochs.splice(m_epochs.begin(), m_epochs, it);
-    PirEpoch* cached{it != m_epochs.end() ? m_epochs.front().get() : nullptr};
-
+    // Which blocks to add, and whether the cached version is a prefix of the
+    // active chain that can be extended.
     std::vector<const CBlockIndex*> todo;
-    bool rebuild{false};
+    bool extend{false};
     {
         LOCK(::cs_main);
         const CChain& chain{m_chainman.ActiveChain()};
-        if (start > uint64_t(chain.Height())) {
-            status = Status::INVALID;
-            return nullptr;
-        }
+        tip = chain.Tip()->GetBlockHash();
+        if (start > uint64_t(chain.Height())) return BuildResult::CURRENT; // the chain shrank; nothing to serve
         const uint32_t end{uint32_t(std::min<uint64_t>(start + m_opts.epoch_blocks - 1, chain.Height()))};
         uint32_t from{uint32_t(start)};
-        if (cached && !cached->block_counts.empty()) {
-            const CBlockIndex* anchor{chain[cached->end_height]};
-            if (cached->end_height <= end && anchor && anchor->GetBlockHash() == cached->anchor_hash) {
-                from = cached->end_height + 1;
-            } else {
-                rebuild = true;
+        if (base && base->end_height <= end) {
+            const CBlockIndex* anchor{chain[base->end_height]};
+            if (anchor && anchor->GetBlockHash() == base->anchor_hash) {
+                extend = true;
+                from = base->end_height + 1;
             }
         }
+        if (extend && from > end) return BuildResult::CURRENT;
         for (uint32_t h = from; h <= end; ++h) {
             const CBlockIndex* pindex{chain[h]};
             if (!(pindex->nStatus & BLOCK_HAVE_DATA)) {
-                status = Status::UNAVAILABLE;
-                return nullptr;
+                LogPrintf("pir: cannot build epoch %u: no data for block %s\n", epoch, pindex->GetBlockHash().ToString());
+                return BuildResult::FAILED;
             }
             todo.push_back(pindex);
         }
     }
-    if (cached && !rebuild && todo.empty()) return cached;
 
-    // Read the new blocks before touching the cached epoch.
     std::vector<std::vector<uint8_t>> records;
     std::vector<uint32_t> counts;
     for (const CBlockIndex* pindex : todo) {
+        if (m_interrupt) return BuildResult::INTERRUPTED;
         CBlock block;
         if (!m_chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
-            LogPrint(BCLog::NET, "pir: failed to read block %s\n", pindex->GetBlockHash().ToString());
-            status = Status::UNAVAILABLE;
-            return nullptr;
+            LogPrintf("pir: cannot build epoch %u: failed to read block %s\n", epoch, pindex->GetBlockHash().ToString());
+            return BuildResult::FAILED;
         }
         const size_t before{records.size()};
         AppendBlockRecords(block, records);
@@ -175,63 +249,79 @@ PirEpoch* PirServer::Update(uint32_t epoch, Status& status)
     }
 
     // Refuse an epoch too large for one database (about 29M records with the
-    // default record size) before touching the cached one; ComputeHint and
-    // ExtendHint require a valid shape.
-    const uint64_t total{(cached && !rebuild ? cached->db.GetParams().num_records : 0) + uint64_t{records.size()}};
-    if (total > std::numeric_limits<uint32_t>::max() ||
-        !pir::Params{PIR_RECORD_BYTES, uint32_t(total), pir::ChooseRecordsPerCol(uint32_t(total))}.IsValid()) {
-        LogPrint(BCLog::NET, "pir: epoch %u would hold %u records, more than one database can; lower -pirepochblocks\n", epoch, total);
-        status = Status::UNAVAILABLE;
-        return nullptr;
+    // default record size); ComputeHint and ExtendHint require a valid shape.
+    const uint32_t old_records{extend ? base->db.GetParams().num_records : 0};
+    const uint64_t total{uint64_t{old_records} + records.size()};
+    const uint32_t k{pir::ChooseRecordsPerCol(uint32_t(std::min<uint64_t>(total, std::numeric_limits<uint32_t>::max())))};
+    if (total > std::numeric_limits<uint32_t>::max() || !pir::Params{PIR_RECORD_BYTES, uint32_t(total), k}.IsValid()) {
+        LogPrintf("pir: cannot build epoch %u: %u records are more than one database holds; lower -pirepochblocks\n", epoch, total);
+        return BuildResult::FAILED;
     }
 
-    if (!cached || rebuild) {
-        if (!cached) {
-            m_epochs.push_front(std::make_unique<PirEpoch>());
-            while (m_epochs.size() > m_opts.max_epochs) m_epochs.pop_back();
-        }
-        cached = m_epochs.front().get();
-        *cached = PirEpoch{};
-        cached->epoch = epoch;
-        cached->start_height = uint32_t(start);
-        cached->seed = PirEpochSeed(m_genesis, epoch);
-        LogPrint(BCLog::NET, "pir: building epoch %u\n", epoch);
-    }
-
-    const uint32_t old_records{cached->db.GetParams().num_records};
-    cached->db.Reserve(old_records + records.size());
-    for (const auto& r : records) cached->db.Append(r);
-    cached->block_counts.insert(cached->block_counts.end(), counts.begin(), counts.end());
-    cached->end_height = todo.back()->nHeight;
-    cached->anchor_hash = todo.back()->GetBlockHash();
-
-    const uint32_t num_records{cached->db.GetParams().num_records};
-    m_global_budget.Charge(uint64_t{num_records - old_records} * PIR_RECORD_BYTES * PIR_HINT_WORK_FACTOR, NodeClock::now());
-    const uint32_t k{pir::ChooseRecordsPerCol(num_records)};
-    if (num_records == 0) {
-        cached->hint.clear();
-    } else if (k != cached->db.GetParams().records_per_col || cached->hint.size() != size_t{PIR_RECORD_BYTES} * k * pir::LWE_N) {
-        cached->db.SetRecordsPerCol(k);
-        cached->hint = pir::ComputeHint(cached->db, cached->seed);
+    // Build into a new snapshot. If the cached version keeps its shape, copy
+    // it and extend its hint; otherwise start over with the new shape.
+    auto next{std::make_shared<PirEpoch>()};
+    const size_t hint_size{size_t{PIR_RECORD_BYTES} * k * pir::LWE_N};
+    const bool keep{extend && base->db.GetParams().records_per_col == k && base->hint.size() == hint_size};
+    if (keep) {
+        *next = *base;
     } else {
-        pir::ExtendHint(cached->hint, cached->db, cached->seed, old_records);
+        next->epoch = epoch;
+        next->start_height = uint32_t(start);
+        next->seed = PirEpochSeed(m_genesis, epoch);
+        next->db = pir::Database{PIR_RECORD_BYTES, k};
+        if (extend) next->block_counts = base->block_counts;
+        if (total > 0) next->hint.assign(hint_size, 0);
     }
-    LogPrint(BCLog::NET, "pir: epoch %u now at height %u with %u records\n", epoch, cached->end_height, num_records);
-    return cached;
+    next->db.Reserve(uint32_t(total));
+    // Append and hash in chunks so that shutdown does not wait for a whole build.
+    constexpr size_t CHUNK{4096};
+    const auto add{[&](size_t count, const auto& record_at) {
+        for (size_t i = 0; i < count;) {
+            if (m_interrupt) return false;
+            const uint32_t before{next->db.GetParams().num_records};
+            for (const size_t stop{std::min(count, i + CHUNK)}; i < stop; ++i) next->db.Append(record_at(i));
+            pir::ExtendHint(next->hint, next->db, next->seed, before);
+        }
+        return true;
+    }};
+    if (extend && !keep && !add(old_records, [&](size_t i) { return base->db.Record(uint32_t(i)); })) return BuildResult::INTERRUPTED;
+    if (!add(records.size(), [&](size_t i) { return Span<const uint8_t>{records[i]}; })) return BuildResult::INTERRUPTED;
+    next->block_counts.insert(next->block_counts.end(), counts.begin(), counts.end());
+    next->end_height = todo.back()->nHeight;
+    next->anchor_hash = todo.back()->GetBlockHash();
+    LogPrint(BCLog::NET, "pir: epoch %u now at height %u with %u records\n", epoch, next->end_height, total);
+    out = std::move(next);
+    return BuildResult::BUILT;
 }
 
 PirServer::Status PirServer::GetHint(int64_t peer, uint32_t epoch, std::vector<PirHintMsg>& out)
 {
-    LOCK(m_mutex);
-    const auto now{NodeClock::now()};
-    if (m_global_budget.InDebt(now)) return Status::BUSY;
-    Status status{Status::OK};
-    const PirEpoch* e{Update(epoch, status)};
-    if (!e) return status;
+    {
+        LOCK(m_budget_mutex);
+        if (m_global_budget.InDebt(NodeClock::now())) return Status::BUSY;
+    }
+    const EpochRef e{Lookup(epoch)};
+    bool current;
+    uint256 tip;
+    {
+        LOCK(::cs_main);
+        const CChain& chain{m_chainman.ActiveChain()};
+        const uint64_t start{uint64_t{epoch} * m_opts.epoch_blocks};
+        if (start > uint64_t(chain.Height())) return Status::INVALID;
+        const uint32_t end{uint32_t(std::min<uint64_t>(start + m_opts.epoch_blocks - 1, chain.Height()))};
+        current = e && e->end_height == end && chain[end]->GetBlockHash() == e->anchor_hash;
+        tip = chain.Tip()->GetBlockHash();
+    }
+    if (!current) return RequestBuild(peer, epoch, tip);
 
     const pir::Params params{e->db.GetParams()};
     const uint64_t cost{params.num_records == 0 ? 0 : params.HintBytes()};
-    if (!PeerBudget(peer, now).TryConsume(cost, now)) return Status::OVER_BUDGET;
+    {
+        LOCK(m_budget_mutex);
+        const auto now{NodeClock::now()};
+        if (!PeerBudget(peer, now).TryConsume(cost, now)) return Status::OVER_BUDGET;
+    }
 
     const uint32_t slots{params.num_records == 0 ? 1 : params.records_per_col};
     const size_t slot_words{size_t{params.record_bytes} * pir::LWE_N};
@@ -257,28 +347,31 @@ PirServer::Status PirServer::GetHint(int64_t peer, uint32_t epoch, std::vector<P
 
 PirServer::Status PirServer::Answer(int64_t peer, const PirQueryMsg& query, PirReplyMsg& out)
 {
-    LOCK(m_mutex);
-    const auto now{NodeClock::now()};
-    if (m_global_budget.InDebt(now)) return Status::BUSY;
-
+    {
+        LOCK(m_budget_mutex);
+        if (m_global_budget.InDebt(NodeClock::now())) return Status::BUSY;
+    }
     const uint64_t start{uint64_t{query.epoch} * m_opts.epoch_blocks};
+    const EpochRef e{Lookup(query.epoch)};
     uint32_t anchor_height;
+    bool usable;
+    uint256 tip;
     {
         LOCK(::cs_main);
         const CBlockIndex* pindex{m_chainman.m_blockman.LookupBlockIndex(query.anchor_hash)};
         if (!pindex || uint64_t(pindex->nHeight) < start || uint64_t(pindex->nHeight) >= start + m_opts.epoch_blocks) {
             return Status::INVALID;
         }
-        if (!m_chainman.ActiveChain().Contains(pindex)) return Status::STALE;
+        const CChain& chain{m_chainman.ActiveChain()};
+        if (!chain.Contains(pindex)) return Status::STALE;
         anchor_height = pindex->nHeight;
+        // The cached version serves the query if it reaches the anchor and is
+        // still on the active chain (then so is everything up to the anchor).
+        const CBlockIndex* end{e ? chain[e->end_height] : nullptr};
+        usable = end && anchor_height <= e->end_height && end->GetBlockHash() == e->anchor_hash;
+        tip = chain.Tip()->GetBlockHash();
     }
-
-    Status status{Status::OK};
-    const PirEpoch* e{Update(query.epoch, status)};
-    if (!e) return status;
-    // The anchor was in the active chain above; if it is past the epoch data
-    // now, the chain changed in between.
-    if (anchor_height > e->end_height) return Status::STALE;
+    if (!usable) return RequestBuild(peer, query.epoch, tip);
 
     const uint32_t prefix_blocks{anchor_height - e->start_height + 1};
     const uint64_t num_records{std::accumulate(e->block_counts.begin(), e->block_counts.begin() + prefix_blocks, uint64_t{0})};
@@ -289,9 +382,14 @@ PirServer::Status PirServer::Answer(int64_t peer, const PirQueryMsg& query, PirR
     if (params.records_per_col != e->db.GetParams().records_per_col) return Status::STALE;
 
     const uint64_t cost{params.DatabaseBytes()};
-    if (!PeerBudget(peer, now).TryConsume(cost, now)) return Status::OVER_BUDGET;
-    m_global_budget.Charge(cost, now);
+    {
+        LOCK(m_budget_mutex);
+        const auto now{NodeClock::now()};
+        if (!PeerBudget(peer, now).TryConsume(cost, now)) return Status::OVER_BUDGET;
+        m_global_budget.Charge(cost, now);
+    }
 
+    // The scan runs on the snapshot, with no lock held.
     auto answer{pir::Answer(e->db, query.query, query.num_records)};
     if (!answer) return Status::STALE;
     out.epoch = query.epoch;

@@ -21,6 +21,7 @@ from decimal import Decimal
 from test_framework.crypto.chacha20 import chacha20_block
 from test_framework.messages import (
     NODE_OUTKEYS_PIR,
+    PIR_STATUS_BUSY,
     PIR_STATUS_OK,
     PIR_STATUS_STALE,
     hash256,
@@ -164,22 +165,38 @@ class P2POutKeysPirTest(BitcoinTestFramework):
             extra_args=["-peerpir"],
             expected_msg="Error: Cannot set -peerpir without -peeroutkeys.")
 
-    def get_hint(self, client, epoch):
+    def request_hint(self, client, epoch):
         client.hints.clear()
         client.send_message(msg_getpirhint(epoch=epoch))
         client.wait_until(lambda: len(client.hints) >= 1)
         client.sync_with_ping()
-        assert_equal(len(client.hints), 1)  # records_per_col is 1 for small epochs
-        assert_equal(client.hints[0].status, PIR_STATUS_OK)
-        return client.hints[0]
+        return client.hints
+
+    def get_hint(self, client, epoch):
+        """The epoch's hint, retrying while the node builds it in the background."""
+        hints = []
+
+        def served():
+            hints[:] = self.request_hint(client, epoch)
+            return hints[0].status != PIR_STATUS_BUSY
+        self.wait_until(served)
+        assert_equal(len(hints), 1)  # records_per_col is 1 for small epochs
+        assert_equal(hints[0].status, PIR_STATUS_OK)
+        return hints[0]
 
     def query(self, client, hint, index, expect_status=PIR_STATUS_OK):
         q = Query(hint, index)
-        client.replies.clear()
-        client.send_message(msg_pirquery(epoch=hint.epoch, anchor_hash=hint.anchor_hash,
-                                         num_records=hint.num_records, query=q.query))
-        client.wait_until(lambda: len(client.replies) == 1)
-        reply = client.replies[0]
+        msg = msg_pirquery(epoch=hint.epoch, anchor_hash=hint.anchor_hash, num_records=hint.num_records, query=q.query)
+        reply = None
+
+        def answered():
+            nonlocal reply
+            client.replies.clear()
+            client.send_message(msg)
+            client.wait_until(lambda: len(client.replies) == 1)
+            reply = client.replies[0]
+            return reply.status != PIR_STATUS_BUSY
+        self.wait_until(answered)
         assert_equal(reply.epoch, hint.epoch)
         assert_equal(reply.anchor_hash, hint.anchor_hash)
         assert_equal(reply.status, expect_status)
@@ -197,6 +214,13 @@ class P2POutKeysPirTest(BitcoinTestFramework):
         client.send_message(msg_getoutkeys(start_height=start, stop_hash=int(node.getbestblockhash(), 16)))
         client.wait_until(lambda: len(client.outkeys) == tip - start + 1)
         outkeys = list(client.outkeys)
+
+        self.log.info("The first request for an epoch is answered busy while it is built in the background")
+        busy = self.request_hint(client, epoch)
+        assert_equal(len(busy), 1)
+        assert_equal(busy[0].status, PIR_STATUS_BUSY)
+        assert_equal(busy[0].epoch, epoch)
+        assert_equal(busy[0].hint, [])
 
         self.log.info("getpirhint describes the epoch consistently with outkeys")
         hint = self.get_hint(client, epoch)
@@ -292,17 +316,17 @@ class P2POutKeysPirTest(BitcoinTestFramework):
 
         self.log.info("A well-formed query is still answered")
         client = node.add_p2p_connection(PirClient())
-        client.send_message(msg_pirquery(epoch, hint.anchor_hash, hint.num_records, good))
-        client.wait_until(lambda: len(client.replies) == 1)
-        assert_equal(client.replies[0].status, PIR_STATUS_OK)
-        assert_equal(len(client.replies[0].answer), RECORD_BYTES)
+        _, reply = self.query(client, hint, 0)
+        assert_equal(len(reply.answer), RECORD_BYTES)
         node.disconnect_p2ps()
 
     def test_budget(self, node):
         self.log.info("A peer over its work budget is disconnected")
         hint_bytes = RECORD_BYTES * LWE_N * 4
-        # Room for one hint but not two (refill is 1/8 of the budget per second).
-        self.restart_node(0, extra_args=self.pir_args + [f"-pirpeerbudget={hint_bytes + hint_bytes // 2}"])
+        # Room for queuing the epoch's build (a quarter of the budget) and one
+        # hint, but not two (refill is 1/8 of the budget per second).
+        budget = hint_bytes + hint_bytes // 2
+        self.restart_node(0, extra_args=self.pir_args + [f"-pirpeerbudget={budget}"])
         client = node.add_p2p_connection(PirClient())
         self.get_hint(client, 2)
         client.send_message(msg_getpirhint(epoch=2))

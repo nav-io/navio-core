@@ -14,13 +14,17 @@
 #include <util/time.h>
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <list>
 #include <map>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <vector>
 
 class CBlock;
@@ -67,16 +71,21 @@ static constexpr uint32_t DEFAULT_PIR_MAX_EPOCHS{4};
  * costs its size in bytes sent, so both are charged in bytes. Each peer has
  * a token bucket (burst DEFAULT_PIR_PEER_BUDGET, refilled at 1/8 of that per
  * second) and a peer that exceeds it is disconnected: a client knows the cost
- * of each request from the pirhint it holds and can pace itself.
- * Building or extending a hint costs LWE_N multiply-adds per database byte
- * against one for a scan, so it is charged as PIR_HINT_WORK_FACTOR scanned
- * bytes per byte added, to a global bucket shared by all peers (burst
- * PIR_GLOBAL_BUDGET, refilled at 1/16 of that per second) that queries are
- * also charged to; while it is in debt new requests are ignored.
+ * of each request from the pirhint it holds and can pace itself. Queries are
+ * also charged to a global bucket shared by all peers (burst
+ * PIR_GLOBAL_BUDGET, refilled at 1/16 of that per second); while it is in
+ * debt requests get a busy reply.
+ *
+ * Building or extending an epoch's hint costs LWE_N multiply-adds per
+ * database byte against one for a scan, which is too much to do while
+ * handling a message. Builds run one at a time on a background thread and
+ * the request that needs one gets a busy reply until it is done; the peer
+ * whose request queues a build is charged 1/PIR_BUILD_CHARGE_DIVISOR of its
+ * budget for it, up front.
  */
 static constexpr uint64_t DEFAULT_PIR_PEER_BUDGET{uint64_t{1} << 30};
 static constexpr uint64_t PIR_GLOBAL_BUDGET{uint64_t{16} << 30};
-static constexpr uint64_t PIR_HINT_WORK_FACTOR{pir::LWE_N};
+static constexpr uint64_t PIR_BUILD_CHARGE_DIVISOR{4};
 
 /** Serialize a vector<uint32_t> as a compact size and little-endian words, in bulk. */
 struct PirWords {
@@ -230,9 +239,12 @@ struct PirEpoch {
 
 /**
  * Server side: keeps the most recently used epochs in memory, brings them up
- * to the active chain on use, answers queries and accounts for work.
- * All methods are thread-safe; in practice they are called from the message
- * handler thread.
+ * to the active chain on a background thread when a request needs it,
+ * answers queries and accounts for work. All methods are thread-safe; in
+ * practice requests come from the message handler thread and ForgetPeer from
+ * the socket handler thread. No lock is held while an epoch is built or a
+ * query is answered: requests work on immutable snapshots of an epoch, and
+ * a build makes a new snapshot that is swapped in when complete.
  */
 class PirServer
 {
@@ -246,36 +258,70 @@ public:
     enum class Status {
         OK,
         STALE,        //!< anchor no longer in the active chain (reply PIR_STATUS_STALE)
-        BUSY,         //!< global budget exhausted (reply PIR_STATUS_BUSY)
+        BUSY,         //!< global budget exhausted or the epoch is being built (reply PIR_STATUS_BUSY)
         OVER_BUDGET,  //!< peer exceeded its budget (disconnect)
         INVALID,      //!< malformed request (disconnect)
-        UNAVAILABLE,  //!< block data could not be read, or the epoch is too large (reply PIR_STATUS_UNAVAILABLE)
+        UNAVAILABLE,  //!< the epoch could not be built at this tip: block data missing, or too large (reply PIR_STATUS_UNAVAILABLE)
     };
 
+    /** Starts the build thread. */
     PirServer(ChainstateManager& chainman, const Options& opts);
+    /** Interrupts a build in progress and joins the build thread. */
+    ~PirServer();
 
     uint32_t EpochBlocks() const { return m_opts.epoch_blocks; }
 
     /** Build the pirhint messages for an epoch. */
-    Status GetHint(int64_t peer, uint32_t epoch, std::vector<PirHintMsg>& out) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    Status GetHint(int64_t peer, uint32_t epoch, std::vector<PirHintMsg>& out) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex, !m_budget_mutex);
     /** Answer a pirquery. */
-    Status Answer(int64_t peer, const PirQueryMsg& query, PirReplyMsg& out) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    Status Answer(int64_t peer, const PirQueryMsg& query, PirReplyMsg& out) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex, !m_budget_mutex);
     /** Drop a disconnected peer's budget. */
-    void ForgetPeer(int64_t peer) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    void ForgetPeer(int64_t peer) EXCLUSIVE_LOCKS_REQUIRED(!m_budget_mutex);
+
+    /** Wait until no build is queued or running (for tests). */
+    void SyncWithBuilds() EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
 
 private:
-    /** The epoch brought up to the active chain; nullptr if it starts above the tip. */
-    PirEpoch* Update(uint32_t epoch, Status& status) EXCLUSIVE_LOCKS_REQUIRED(m_mutex);
-    PirBudget& PeerBudget(int64_t peer, NodeClock::time_point now) EXCLUSIVE_LOCKS_REQUIRED(m_mutex);
+    using EpochRef = std::shared_ptr<const PirEpoch>;
+
+    /** The cached version of an epoch (made the most recently used), or nullptr. */
+    EpochRef Lookup(uint32_t epoch) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    /**
+     * Queue a build of an epoch unless one is already queued or running,
+     * charging the peer for it. Returns BUSY, OVER_BUDGET, or UNAVAILABLE if
+     * the last build of the epoch failed at the same tip.
+     */
+    Status RequestBuild(int64_t peer, uint32_t epoch, const uint256& tip) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex, !m_budget_mutex);
+    void BuildThread() EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    enum class BuildResult { BUILT, CURRENT, FAILED, INTERRUPTED };
+    /** Bring an epoch up to the active chain, starting from its cached version base (may be nullptr). */
+    BuildResult Build(uint32_t epoch, const EpochRef& base, EpochRef& out, uint256& tip) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex);
+    PirBudget& PeerBudget(int64_t peer, NodeClock::time_point now) EXCLUSIVE_LOCKS_REQUIRED(m_budget_mutex);
 
     ChainstateManager& m_chainman;
     const Options m_opts;
     const uint256 m_genesis;
+
+    //! Guards the epoch cache and the build queue; only ever held briefly.
     Mutex m_mutex;
     //! Cached epochs, most recently used first.
-    std::list<std::unique_ptr<PirEpoch>> m_epochs GUARDED_BY(m_mutex);
-    std::map<int64_t, PirBudget> m_peer_budgets GUARDED_BY(m_mutex);
-    PirBudget m_global_budget GUARDED_BY(m_mutex);
+    std::list<EpochRef> m_epochs GUARDED_BY(m_mutex);
+    //! Epochs waiting to be built, and the one being built.
+    std::deque<uint32_t> m_queue GUARDED_BY(m_mutex);
+    std::optional<uint32_t> m_building GUARDED_BY(m_mutex);
+    //! Epochs whose last build failed, with the tip it was attempted at.
+    std::map<uint32_t, uint256> m_failed GUARDED_BY(m_mutex);
+    std::condition_variable m_queue_cv;
+    std::condition_variable m_idle_cv;
+    //! Set (under m_mutex) on destruction; checked by a build in progress.
+    std::atomic<bool> m_interrupt{false};
+
+    //! Guards the budgets; never held while taking m_mutex.
+    Mutex m_budget_mutex;
+    std::map<int64_t, PirBudget> m_peer_budgets GUARDED_BY(m_budget_mutex);
+    PirBudget m_global_budget GUARDED_BY(m_budget_mutex);
+
+    std::thread m_thread;
 };
 
 /**
