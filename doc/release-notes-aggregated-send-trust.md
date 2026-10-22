@@ -2,14 +2,15 @@ Wallet
 ------
 
 - Chained unconfirmed sends now work when `sendtoblsctaddress` or `consolidate`
-  aggregates a send with cover candidates (the default, `-aggregatesends`).
-  Previously the wallet did not record its aggregated send until it found it in
-  the mempool, and then treated the change as untrusted because the cover inputs
-  belong to other wallets, so the next send failed with "Not enough funds
-  available". The wallet now records the aggregate as its own send when it
-  broadcasts it, together with the outputs of its own half, and those outputs
-  (the change, or a payment to itself) count as trusted at 0 confirmations, like
-  the change of a plain send. The wallet's own inputs are still checked.
+  aggregates a send with cover candidates (the default, `-aggregatesends`), and
+  after `aggregatesend` and `acceptquotewallet`. Previously the wallet did not
+  record its aggregated send until it found it in the mempool, and then treated
+  the change as untrusted because the cover inputs belong to other wallets, so
+  the next send failed with "Not enough funds available". The wallet now records
+  the aggregate as its own send when it broadcasts it, together with the outputs
+  of its own half, and those outputs (the change, or a payment to itself) count
+  as trusted at 0 confirmations, like the change of a plain send. The wallet's
+  own inputs are still checked.
 
   Only the own half's outputs are trusted. Any other output of the aggregate
   that pays this wallet, such as a cover candidate addressed to it, is funded
@@ -51,6 +52,7 @@ Wallet
   back more of the balance at once; a later consolidation may also chain on that
   coin before the aggregate confirms.
 
-  This covers `sendtoblsctaddress` and `consolidate` only. `aggregatesend` and
-  `acceptquotewallet` still broadcast without recording the aggregate, so their
-  change stays untrusted until it confirms (#510).
+  For `acceptquotewallet` the taker's own half pays the sell token and receives
+  the bought token. Its change is trusted at once, but the received output is
+  funded only by the maker's inputs, so it stays untrusted pending, and out of
+  the spendable coins, until the swap confirms.

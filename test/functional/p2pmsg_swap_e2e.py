@@ -17,6 +17,8 @@ NAV and wants the token. The full bus flow runs across the wire:
 Then we mine and assert the swap confirms on-chain on both nodes.
 """
 
+from decimal import Decimal
+
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -109,6 +111,9 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         # must release the claim too, or the accept below finds it taken.
         assert_raises_rpc_error(-22, "taker half decode failed", taker_n.acceptquote, uuid, bad_quote_id, "00")
 
+        trusted_before = Decimal(str(taker.getbalances()["mine"]["trusted"]))
+        assert_equal(taker.gettokenbalance(tid), 0)
+
         # Slippage bounds: accept exactly the quoted terms (max_pay=sell_cost,
         # min_recv=fill). A worse quote would be rejected by these bounds.
         txid = taker.acceptquotewallet(uuid, quote["quote_id"],
@@ -117,6 +122,17 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
 
         # Confirm on-chain.
         self.wait_until(lambda: txid in taker_n.getrawmempool(), timeout=20)
+
+        # acceptquotewallet records the swap as the taker's own: its NAV
+        # change is trusted at once, less only the sell cost (the taker pays
+        # no fee). When only the sync callback adds the swap, the maker's
+        # inputs leave it untrusted until it confirms. The received token is
+        # funded by the maker's inputs alone, so it is not trusted yet.
+        taker_n.syncwithvalidationinterfacequeue()
+        balances = taker.getbalances()["mine"]
+        assert_equal(balances["untrusted_pending"], 0)
+        assert_equal(Decimal(str(balances["trusted"])), trusted_before - Decimal(quote["sell_cost"]) / one)
+        assert_equal(taker.gettokenbalance(tid), 0)
 
         # Pin the split: the maker half must have combined BOTH token coins
         # (plus a NAV fee coin), the taker at least one NAV coin — so the
@@ -131,6 +147,8 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         self.sync_all()
         blk = taker_n.getblock(blocks[0])
         assert txid in blk["tx"], "swap not in the mined block"
+        # Once the swap confirms, the received token is trusted too.
+        assert_equal(Decimal(str(taker.gettokenbalance(tid))), Decimal(quote["fill"]) / one)
 
         self.log.info("two-node RFQ atomic swap confirmed on-chain OK")
 

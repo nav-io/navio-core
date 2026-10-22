@@ -228,6 +228,12 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         assert expected < pooled, "own half has %d inputs; the cap would not bind" % own_inputs
         assert_equal(res["candidates_merged"], expected)
         assert_equal(n0.getaggregationhint()["available"], pooled - expected)
+        # aggregatesend records the aggregate as the wallet's own send, so
+        # the change of its own half is trusted at once. When only the sync
+        # callback adds it, the cover input leaves it untrusted until it
+        # confirms.
+        n0.syncwithvalidationinterfacequeue()
+        assert_equal(w0.getbalances()["mine"]["untrusted_pending"], 0)
         self.generatetoblsctaddress(n0, 1, miner0)
         self.sync_blocks()
         assert res["txid"] not in n0.getrawmempool(), "cover-sized aggregatesend did not confirm"

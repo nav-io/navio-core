@@ -691,6 +691,15 @@ static RPCHelpMan aggregatesend()
             evict_candidates();
             // Only for the own half that went out, not a resize discarded.
             blsct::LogPastSearchBound(own->pastSearchBoundOutputs);
+            // Record the aggregate as this wallet's send now, as the send
+            // path does: otherwise a chained send can reselect the spent
+            // inputs before the mempool sync callback marks them, and the
+            // change stays untrusted until it confirms.
+            if (!pwallet->RecordBroadcastTransaction(tx, own->tx.vout, {})) {
+                // The aggregate is broadcast, so the send succeeded; failing
+                // the RPC now would invite a resend of a tx already out.
+                LogPrintf("aggregatesend: aggregate %s broadcast but not fully recorded by the wallet\n", tx->GetHash().ToString());
+            }
 
             UniValue o(UniValue::VOBJ);
             o.pushKV("txid", tx->GetHash().GetHex());
@@ -879,6 +888,28 @@ static RPCHelpMan acceptquotewallet()
 
             // The swap is out: the request is done, not retryable.
             claim.Finish();
+
+            // Record the swap as this wallet's own now, so its inputs are
+            // spent and its change is trusted without waiting for the mempool
+            // sync callback. The received output is funded only by the
+            // maker's inputs, so it stays out of the own-half set and
+            // untrusted until the swap confirms (see
+            // doc/release-notes-aggregated-send-trust.md).
+            const CTxDestination recv_dest{taker_recv.GetKeys()};
+            std::vector<CTxOut> own_outputs;
+            for (const CTxOut& out : taker_half->vout) {
+                if (km->GetDestination(out) != recv_dest) own_outputs.push_back(out);
+            }
+            if (own_outputs.size() + 1 != taker_half->vout.size()) {
+                // Recording without excluding the received output would
+                // trust it; leave the swap to the sync callback instead,
+                // which records it untrusted as a whole.
+                LogPrintf("acceptquotewallet: swap %s broadcast but not recorded: received output not identified\n", tx->GetHash().ToString());
+            } else if (!pwallet->RecordBroadcastTransaction(tx, own_outputs, {})) {
+                // The swap is broadcast; failing the RPC now would lose the
+                // id of a tx already out.
+                LogPrintf("acceptquotewallet: swap %s broadcast but not fully recorded by the wallet\n", tx->GetHash().ToString());
+            }
             return tx->GetHash().GetHex();
         },
     };
