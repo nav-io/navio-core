@@ -29,6 +29,10 @@ This test asserts that:
    generateblock (a block here must pay a BLSCT coinbase reward),
    createrawtransaction/signrawtransactionwithkey, and the wallet RPCs
    addmultisigaddress/newkeypool/settxfee.
+ - The transparent wallet spend RPCs (sendmany/send/sendall/
+   fundrawtransaction/signrawtransactionwithwallet/bumpfee) are refused on
+   the chain for every wallet, and keypoolrefill for a plain wallet, while a
+   BLSCT wallet can still refill its keypool.
  - A plain (non-BLSCT) wallet on this same fBLSCT chain is still subject to
    the chain-level guard (dumpwallet/sethdseed/signmessage remain unaffected
    since those are gated on the wallet's own BLSCT flag, not the chain).
@@ -66,6 +70,7 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         self.test_preexisting_descriptor_guards(blsct_wallet)
         self.test_transparent_key_rpcs_guarded(blsct_wallet)
         self.test_transparent_tx_rpcs_guarded(blsct_wallet)
+        self.test_transparent_spend_rpcs_guarded(blsct_wallet)
         self.test_legacy_wallet_unaffected()
 
     def test_dumpwallet_guard(self, wallet):
@@ -274,6 +279,69 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
                 w.settxfee,
                 0.0001,
             )
+
+    def test_transparent_spend_rpcs_guarded(self, wallet):
+        """No wallet on an fBLSCT chain can hold a transparent coin: the
+        coinbase must be BLSCT and consensus rejects every other transparent
+        transaction. The transparent spend RPCs are guarded on the chain, so
+        a plain wallet is refused as well as a BLSCT one (which
+        EnsureNotBLSCTWallet already refused on any chain). keypoolrefill is
+        refused only for a plain wallet, whose keypool is transparent keys
+        alone; a BLSCT wallet still refills its BLSCT subaddress pool."""
+        self.log.info("Transparent wallet spend RPCs raise a clear guard error on an fBLSCT chain")
+        plain_wallet = self.nodes[0].get_wallet_rpc("transparent_addr_source")
+        legacy_addr = plain_wallet.getnewaddress(label="", address_type="legacy")
+        refusal = "This network only supports confidential (BLSCT) transactions; a transparent transaction can never confirm here, so {} is not available. {}"
+
+        for w in (wallet, plain_wallet):
+            assert_raises_rpc_error(
+                -4,
+                refusal.format("sendmany", "Use sendtoblsctaddress from a BLSCT wallet instead."),
+                w.sendmany,
+                "",
+                {legacy_addr: 1},
+            )
+            assert_raises_rpc_error(
+                -4,
+                refusal.format("send", "Use sendtoblsctaddress from a BLSCT wallet instead."),
+                w.send,
+                {legacy_addr: 1},
+            )
+            assert_raises_rpc_error(
+                -4,
+                refusal.format("sendall", "Use sendtoblsctaddress from a BLSCT wallet instead."),
+                w.sendall,
+                [legacy_addr],
+            )
+            # The guards fire before the hex is decoded, so a malformed
+            # transaction and an unknown txid are fine.
+            assert_raises_rpc_error(
+                -4,
+                refusal.format("fundrawtransaction", "Use fundblsctrawtransaction from a BLSCT wallet instead."),
+                w.fundrawtransaction,
+                "00",
+            )
+            assert_raises_rpc_error(
+                -4,
+                refusal.format("signrawtransactionwithwallet", "Use signblsctrawtransaction from a BLSCT wallet instead."),
+                w.signrawtransactionwithwallet,
+                "00",
+            )
+            assert_raises_rpc_error(
+                -4,
+                refusal.format("bumpfee", "There is no BLSCT fee bump; send a new confidential transaction with sendtoblsctaddress from a BLSCT wallet instead."),
+                w.bumpfee,
+                "00" * 32,
+            )
+
+        assert_raises_rpc_error(
+            -4,
+            "transparent (ECDSA) keys cannot send or receive here, so keypoolrefill is not available on a non-BLSCT wallet. Use a BLSCT wallet instead.",
+            plain_wallet.keypoolrefill,
+        )
+
+        self.log.info("...while a BLSCT wallet still refills its keypool")
+        assert_equal(wallet.keypoolrefill(), None)
 
     def test_legacy_wallet_unaffected(self):
         """A plain (non-BLSCT-flagged) wallet is unaffected by the 4
