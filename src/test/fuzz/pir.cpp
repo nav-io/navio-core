@@ -11,6 +11,7 @@
 #include <test/fuzz/util.h>
 #include <test/util/pir.h>
 
+#include <algorithm>
 #include <cassert>
 #include <string>
 
@@ -82,9 +83,16 @@ FUZZ_TARGET(pir_answer_decode)
         return;
     }
     assert(query);
-    if (fdp.ConsumeBool() && !query->empty()) (*query)[fdp.ConsumeIntegralInRange<size_t>(0, query->size() - 1)] ^= fdp.ConsumeIntegral<uint32_t>();
+    // Optionally tamper with the query: the answer must still decode to
+    // some record of the right size, just not necessarily the queried one.
+    const bool tampered{fdp.ConsumeBool()};
+    if (tampered) (*query)[fdp.ConsumeIntegralInRange<size_t>(0, query->size() - 1)] ^= fdp.ConsumeIntegral<uint32_t>();
     const auto answer{pir::Answer(db, *query, n)};
     assert(answer);
     const auto record{pir::Decode(state, pir::ComputeHint(db, seed), *answer)};
     assert(record && record->size() == record_bytes);
+    if (!tampered) {
+        const auto expected{db.Record(index)};
+        assert(std::equal(record->begin(), record->end(), expected.begin(), expected.end()));
+    }
 }
