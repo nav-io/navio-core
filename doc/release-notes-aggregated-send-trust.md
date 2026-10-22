@@ -25,18 +25,22 @@ Wallet
   confirm.
 
   Chains of aggregated sends make it more likely that a send leaves the mempool
-  without confirming. Wallets with output storage now handle this as other
-  wallets do:
+  without confirming. Wallets with output storage now handle this as follows:
   - After a block conflict, for example when a cover provider's double-spend of
     its candidate input is mined, the wallet marks the aggregate and every send
-    chained on it as conflicted (negative `confirmations` in `gettransaction`).
-    Their inputs no longer count as spent, so the original coins are back in the
-    balance and in `listblsctunspent` without `abandontransaction`. If the
-    conflicting block is disconnected, they become unconfirmed transactions
-    again that keep their inputs spent until they are abandoned. Previously the
-    wallet kept them as unconfirmed and not abandoned, so the trusted balance
-    and the coin set dropped, and sends failed with "Not enough funds available"
-    until `abandontransaction <aggregate txid>` restored the original coins.
+    chained on it as conflicted, as Bitcoin Core does for non-BLSCT
+    transactions: `confirmations` in `gettransaction` goes negative. When the
+    double-spend is not a wallet transaction, such as a cover provider's,
+    `walletconflicts` stays empty. Their inputs no longer count as spent, so the
+    original coins are back in the balance and in `listblsctunspent` without
+    `abandontransaction`. If the conflicting block is disconnected, they become
+    unconfirmed transactions again that keep their inputs spent until they are
+    abandoned. Previously the wallet kept them as unconfirmed and not abandoned,
+    so the trusted balance and the coin set dropped, and sends failed with "Not
+    enough funds available" until `abandontransaction <aggregate txid>` restored
+    the original coins. The same now applies when another sender's aggregate
+    using the same cover candidate is mined; the wallet used to count its own
+    aggregate as confirmed then, although its outputs never reached the chain.
   - After expiry, eviction or another removal that is not a block conflict, the
     transaction keeps its inputs spent until it is abandoned, but the wallet no
     longer treats it as in the mempool: it stops being trusted, and its change

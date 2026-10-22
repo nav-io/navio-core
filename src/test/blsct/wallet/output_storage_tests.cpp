@@ -2,6 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/private_key.h>
+#include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/verification.h>
@@ -1379,9 +1381,19 @@ BOOST_FIXTURE_TEST_CASE(output_storage_block_conflict_frees_inputs, TestingSetup
     BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 0);
 }
 
+//! A BLSCT fee output burning `fee`, as a send pays it.
+static CTxOut MakeFeeOutput(CAmount fee)
+{
+    CTxOut out{fee, CScript{OP_RETURN}};
+    out.predicate = blsct::PayFeePredicate(blsct::PrivateKey(BlstScalar::Rand()).GetPublicKey()).GetVch();
+    BOOST_REQUIRE(out.IsFee());
+    return out;
+}
+
 // A staker that merges our aggregate into its block aggregate confirms it
 // under another hash: the block tx spends the same inputs and carries the
-// aggregate's outputs. That is not a conflict; the aggregate is confirmed by
+// aggregate's outputs, except its fee output, which aggregation folds into a
+// single new fee output. That is not a conflict; the aggregate is confirmed by
 // the block and its change is the wallet's spendable coin. The mempool may or
 // may not have reported the merged tx removed as a conflict first.
 BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_not_conflicted, TestingSetup)
@@ -1390,8 +1402,11 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_not_conflicted, TestingS
     for (const bool removed_as_conflict : {false, true}) {
         BOOST_TEST_CONTEXT("removed as conflict first: " << removed_as_conflict)
         {
-            const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+            OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
             LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+            CMutableTransaction with_fee{*r.aggregate};
+            with_fee.vout.push_back(MakeFeeOutput(COIN / 100));
+            r.aggregate = MakeTransactionRef(with_fee);
             const uint256 txid{r.aggregate->GetHash()};
 
             BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
@@ -1400,14 +1415,23 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_not_conflicted, TestingS
                 r.wallet->transactionRemovedFromMempool(r.aggregate, MemPoolRemovalReason::CONFLICT);
             }
 
-            // The block aggregate: our aggregate merged with another sender's
-            // tx, so the inputs and outputs are a superset under a new hash.
+            // The block aggregate, as blsct::AggregateTransactions builds it
+            // from our aggregate and another sender's tx: the inputs and the
+            // non-fee outputs of both, and one fee output for the two.
             const auto other_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
-            CMutableTransaction merged{*r.aggregate};
+            CMutableTransaction merged;
+            merged.nVersion = r.aggregate->nVersion;
+            merged.vin = r.aggregate->vin;
             merged.vin.emplace_back(COutPoint{InsecureRand256()});
+            for (const CTxOut& out : r.aggregate->vout) {
+                if (!out.IsFee()) merged.vout.push_back(out);
+            }
             merged.vout.push_back(blsct::CreateOutput(other_address, COIN, "other sender").out);
+            merged.vout.push_back(MakeFeeOutput(2 * COIN / 100));
             const CTransactionRef merged_tx{MakeTransactionRef(merged)};
             BOOST_REQUIRE(merged_tx->GetHash() != txid);
+            const auto& merged_ids = merged_tx->GetOutputIds();
+            BOOST_REQUIRE(std::find(merged_ids.begin(), merged_ids.end(), r.aggregate->GetOutputIds().back()) == merged_ids.end());
 
             r.wallet->SetBirthTime(0);
             const TestBlock block{{merged_tx}};
@@ -1421,6 +1445,89 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_not_conflicted, TestingS
             CheckChangeIsTheSpendableCoin(r);
         }
     }
+}
+
+// CandidatePool::PickForAggregate leaves a picked cover candidate in the pool,
+// so two senders can aggregate the same candidate C. When the other sender's
+// aggregate (C plus its own half) is mined, the block tx spends C's input and
+// carries C's output, but not our own half. Our aggregate was not merged into
+// it, so it is conflicted, not confirmed, and our coin, which only our
+// aggregate spent, is spendable again. Sharing C's output used to be enough to
+// confirm our aggregate, keeping the coin spent while its change never landed.
+BOOST_FIXTURE_TEST_CASE(output_storage_shared_cover_aggregate_conflicted, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    const uint256 txid{r.aggregate->GetHash()};
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    r.wallet->transactionAddedToMempool(r.aggregate);
+
+    // The other sender's aggregate: C (the cover coin -> the cover output)
+    // plus the other sender's half.
+    const auto other_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    CMutableTransaction other;
+    other.nVersion |= CTransaction::BLSCT_MARKER;
+    other.vin.emplace_back(r.cover_coin_outpoint);
+    other.vin.emplace_back(COutPoint{InsecureRand256()});
+    other.vout.push_back(r.aggregate->vout[1]);
+    other.vout.push_back(blsct::CreateOutput(other_address, COIN, "other sender").out);
+    other.vout.push_back(MakeFeeOutput(COIN / 100));
+
+    r.wallet->transactionRemovedFromMempool(r.aggregate, MemPoolRemovalReason::CONFLICT);
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MakeTransactionRef(other)}};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+
+    const CWalletTx* wtx = r.wallet->GetWalletTx(txid);
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_CHECK(!wtx->isConfirmed());
+    BOOST_CHECK(wtx->isConflicted());
+    BOOST_CHECK_EQUAL(r.wallet->GetTxDepthInMainChain(*wtx), -1);
+    BOOST_CHECK(!r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 100 * COIN);
+    const auto coins = AvailableBlsctCoins(*r.wallet).All();
+    BOOST_REQUIRE_EQUAL(coins.size(), 1U);
+    BOOST_CHECK(coins[0].outpoint == r.coin_outpoint);
+}
+
+// A block tx spending our coin under another hash with other outputs, such as
+// a send from another copy of the wallet, conflicts our unconfirmed aggregate.
+// The conflicted aggregate no longer accounts for the spend, so the block tx
+// gets a CWalletTx of its own that reports it.
+BOOST_FIXTURE_TEST_CASE(output_storage_block_spend_of_conflicted_send_tracked, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    const uint256 txid{r.aggregate->GetHash()};
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    r.wallet->transactionAddedToMempool(r.aggregate);
+
+    const auto other_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    CMutableTransaction spend;
+    spend.nVersion |= CTransaction::BLSCT_MARKER;
+    spend.vin.emplace_back(r.coin_outpoint);
+    spend.vout.push_back(blsct::CreateOutput(r.address, 90 * COIN, "other change").out);
+    spend.vout.push_back(blsct::CreateOutput(other_address, 9 * COIN, "other payment").out);
+    spend.vout.push_back(MakeFeeOutput(COIN));
+    const CTransactionRef spend_tx{MakeTransactionRef(spend)};
+
+    r.wallet->transactionRemovedFromMempool(r.aggregate, MemPoolRemovalReason::CONFLICT);
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{spend_tx}};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+
+    const CWalletTx* wtx = r.wallet->GetWalletTx(txid);
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_CHECK(wtx->isConflicted());
+    const CWalletTx* spend_wtx = r.wallet->GetWalletTx(spend_tx->GetHash());
+    BOOST_REQUIRE(spend_wtx != nullptr);
+    BOOST_CHECK(spend_wtx->isConfirmed());
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 90 * COIN);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

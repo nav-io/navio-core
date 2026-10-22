@@ -1556,11 +1556,42 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             // into a single block tx whose hash differs from any of ours.
             // The originating CWalletTx records would otherwise stay stuck
             // in TxStateInMempool / TxStateInactive forever (its hash is not
-            // on chain). Reconcile by matching every vout of the incoming
-            // block tx back to the CWalletTx that produced it: any send
-            // whose outputs all appear in this block was rolled into the
-            // aggregate and is, for accounting purposes, confirmed here.
+            // on chain). Reconcile them: a wallet tx sharing an output with
+            // the incoming block tx that was merged into it (see
+            // merged_into_block) is, for accounting purposes, confirmed here.
             if (const auto* conf = std::get_if<TxStateConfirmed>(&tx_state)) {
+                // Whether wtx was merged into this block tx by aggregation
+                // (blsct::AggregateTransactions): the block tx spends every
+                // input of wtx and creates every one of its non-fee outputs.
+                // Fee outputs are skipped because aggregation folds them into
+                // a single new fee output. Sharing some outputs is not enough:
+                // two senders can pick the same cover candidate, so another
+                // sender's aggregate mined with it shares the candidate's
+                // output with ours while our own half never lands. A tx with
+                // no non-fee output is never merged; its inputs alone do not
+                // identify it. This is the rule CTxMemPool applies to remove
+                // merged txs for a block (IsContainedIn() in txmempool.cpp).
+                std::set<uint256> block_spent;
+                for (const CTxIn& txin : tx.vin) {
+                    block_spent.insert(txin.prevout.hash);
+                }
+                std::set<uint256> block_created;
+                for (const Outid& out_id : tx.GetOutputIds()) {
+                    block_created.insert(out_id.ToUint256());
+                }
+                const auto merged_into_block = [&](const CWalletTx& wtx) {
+                    for (const CTxIn& txin : wtx.tx->vin) {
+                        if (!block_spent.contains(txin.prevout.hash)) return false;
+                    }
+                    bool has_output{false};
+                    for (size_t i = 0; i < wtx.tx->vout.size(); ++i) {
+                        if (wtx.tx->vout[i].IsFee()) continue;
+                        if (!block_created.contains(wtx.tx->GetOutputId(i).ToUint256())) return false;
+                        has_output = true;
+                    }
+                    return has_output;
+                };
+
                 std::set<uint256> matched_wtx;
                 for (const Outid& out_id : tx.GetOutputIds()) {
                     auto it_idx = mapOutpointHashToWalletTx.find(out_id.ToUint256());
@@ -1568,6 +1599,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                     const CWalletTx* src = it_idx->second;
                     if (src->GetHash() == tx.GetHash()) continue; // direct match handled above
                     if (src->isConfirmed()) continue;
+                    if (!merged_into_block(*src)) continue;
                     matched_wtx.insert(src->GetHash());
                 }
                 if (!matched_wtx.empty()) {
@@ -1587,23 +1619,13 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 // the MarkConflicted() call of the non-BLSCT path below, which
                 // this branch returns before.
                 //
-                // A wallet tx with an output in this block tx is excluded: it
-                // is one of our sends the staker merged into the aggregate,
-                // spending the same inputs under another hash, so it was
-                // confirmed by the reconciliation above, not conflicted. The
-                // outputs are compared directly rather than through
-                // mapOutpointHashToWalletTx, which maps a shared output to a
-                // single wallet tx.
-                std::set<uint256> block_outputs;
-                for (const Outid& out_id : tx.GetOutputIds()) {
-                    block_outputs.insert(out_id.ToUint256());
-                }
-                const auto has_output_in_block = [&](const CWalletTx& wtx) {
-                    for (const Outid& out_id : wtx.tx->GetOutputIds()) {
-                        if (block_outputs.contains(out_id.ToUint256())) return true;
-                    }
-                    return false;
-                };
+                // A wallet tx merged into this block tx is excluded: it is one
+                // of our sends the staker aggregated, spending the same inputs
+                // under another hash, so it is confirmed, not conflicted. It
+                // is checked for every spender rather than taken from
+                // matched_wtx, which finds a wallet tx through
+                // mapOutpointHashToWalletTx and so only one of several sharing
+                // an output.
                 std::set<uint256> conflicted;
                 for (const CTxIn& txin : tx.vin) {
                     const auto range = mapTxSpends.equal_range(txin.prevout);
@@ -1611,7 +1633,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                         const uint256& spender = it_spend->second;
                         if (spender == tx.GetHash()) continue;
                         const auto wit = mapWallet.find(spender);
-                        if (wit == mapWallet.end() || has_output_in_block(wit->second)) continue;
+                        if (wit == mapWallet.end() || merged_into_block(wit->second)) continue;
                         if (conflicted.insert(spender).second) {
                             WalletLogPrintf("Transaction %s (in block %s) conflicts with wallet transaction %s (both spend %s)\n", tx.GetHash().ToString(), conf->confirmed_block_hash.ToString(), spender.ToString(), txin.prevout.hash.ToString());
                         }
@@ -1716,10 +1738,20 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             // alone is not enough; adding a second CWalletTx for the on-chain
             // tx would then double-count the debit. The output-listing path
             // dedups any output reachable via a CWalletTx, so credits are not
-            // double-counted either.
+            // double-counted either. A conflicted spender, such as one this
+            // block tx just conflicted above, accounts for nothing: its debit
+            // no longer counts, so it does not stand in for this spend.
             bool spend_already_tracked = false;
             for (const auto& txin : tx.vin) {
-                if (mapTxSpends.contains(txin.prevout)) { spend_already_tracked = true; break; }
+                const auto range = mapTxSpends.equal_range(txin.prevout);
+                for (auto it_spend = range.first; it_spend != range.second; ++it_spend) {
+                    const auto wit = mapWallet.find(it_spend->second);
+                    if (wit == mapWallet.end() || !wit->second.isConflicted()) {
+                        spend_already_tracked = true;
+                        break;
+                    }
+                }
+                if (spend_already_tracked) break;
             }
             if (IsFromMe(tx) && !mapWallet.contains(tx.GetHash()) && !spend_already_tracked) {
                 CWalletTx* wtx = AddToWallet(MakeTransactionRef(tx), tx_state, /*update_wtx=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block);
