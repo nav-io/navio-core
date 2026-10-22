@@ -285,6 +285,7 @@ BASE_SCRIPTS = [
     'rpc_getblockstats.py',
     'feature_bind_port_externalip.py',
     'wallet_create_tx.py',
+    'wallet_send.py',
     'wallet_sendall.py',
     'wallet_spend_unconfirmed.py',
     'wallet_rescan_unconfirmed.py',
