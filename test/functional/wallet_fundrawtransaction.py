@@ -1349,16 +1349,17 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.nodes[0].sendtoaddress(addr, 1)
         self.generate(self.nodes[0], 1)
 
-        # A P2WPKH input costs 68 vbytes; With a single P2WPKH output, the rest of the tx is 42 vbytes for a total of 110 vbytes.
-        # At a feerate of 1.85 sat/vb, the input will need a fee of 125.8 sats and the rest 77.7 sats
-        # The entire tx fee should be 203.5 sats.
+        # A P2WPKH input costs 64 vbytes (navio's outpoint has no index); with a single P2WPKH output, the rest of the
+        # tx is 93 vbytes (the wallet gives the output a predicate) for a total of 157 vbytes.
+        # At a feerate of 1.85 sat/vb, the input will need a fee of 118.4 sats and the rest 172.05 sats
+        # The entire tx fee should be 290.45 sats.
         # Coin selection rounds the fee individually instead of at the end (due to how CFeeRate::GetFee works).
-        # If rounding down (which is the incorrect behavior), then the calculated fee will be 125 + 77 = 202.
-        # If rounding up, then the calculated fee will be 126 + 78 = 204.
+        # If rounding down (which is the incorrect behavior), then the calculated fee will be 118 + 172 = 290.
+        # If rounding up, then the calculated fee will be 119 + 173 = 292.
         # In the former case, the calculated needed fee is higher than the actual fee being paid, so an assertion is reached
-        # To test this does not happen, we subtract 202 sats from the input value. If working correctly, this should
+        # To test this does not happen, we subtract 290 sats from the input value. If working correctly, this should
         # fail with insufficient funds rather than naviod asserting.
-        rawtx = w.createrawtransaction(inputs=[], outputs=[{self.nodes[0].getnewaddress(address_type="bech32"): 1 - 0.00000202}])
+        rawtx = w.createrawtransaction(inputs=[], outputs=[{self.nodes[0].getnewaddress(address_type="bech32"): 1 - 0.00000290}])
         assert_raises_rpc_error(-4, "Insufficient funds", w.fundrawtransaction, rawtx, fee_rate=1.85)
 
     def test_input_confs_control(self):
