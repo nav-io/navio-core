@@ -25,19 +25,23 @@ Wallet
   confirm.
 
   In wallets with output storage, a transaction that leaves the mempool without
-  confirming keeps its inputs spent. This behaviour is not new, and it is
-  tracked in #511, but chains of aggregated sends make it more likely:
+  confirming keeps its inputs spent until it is abandoned. Chains of aggregated
+  sends make this more likely:
   - After a block conflict, for example when a cover provider's double-spend of
     its candidate input is mined, the aggregate and every send chained on it
     leave the mempool. The wallet keeps them as unconfirmed transactions that
     are not abandoned, so their inputs still count as spent. The trusted balance
     and the coin set drop, and sends fail with "Not enough funds available"
-    until `abandontransaction <aggregate txid>` restores the original coins.
-  - After expiry or another removal that is not a block conflict, the
-    transaction's outputs stop counting as coins, so `listblsctunspent` is
-    empty, but the wallet transaction stays marked as in the mempool.
-    `getbalances` keeps counting it, and `abandontransaction` is refused. A
-    restart resubmits it, and the state is consistent again.
+    until `abandontransaction <aggregate txid>` restores the original coins. The
+    wallet does not yet detect this conflict itself (#511).
+  - After expiry, eviction or another removal that is not a block conflict, the
+    wallet transaction is no longer treated as in the mempool: it stops being
+    trusted, and its change leaves `getbalances` and `listblsctunspent`.
+    `abandontransaction <txid>` now accepts it and restores the coins it spent.
+    Until then the wallet may rebroadcast it, at startup or periodically, and if
+    the mempool accepts it again it counts as before. Previously the transaction
+    stayed marked as in the mempool, `getbalances` kept counting it, and
+    `abandontransaction` was refused until a restart resubmitted it.
 
   Only the wallet that broadcast the aggregate marks it as its own send. A
   wallet restored or reimported from the same seed (or any wallet that did not

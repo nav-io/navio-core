@@ -1954,17 +1954,20 @@ void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRe
         if (it != mapWallet.end()) {
             RefreshMempoolStatus(it->second, chain());
         }
-    } else {
-        // In output-storage mode, mapWallet is not used for BLSCT txs.
-        // Walk the matching outpoints in mapOutputs and clear InMempool state
-        // so outputs do not remain stuck as unconfirmed after eviction/reorg.
-        for (const Outid& out_id : tx->GetOutputIds()) {
-            COutPoint outpoint(out_id);
-            auto it = mapOutputs.find(outpoint);
-            if (it != mapOutputs.end() && it->second.state<TxStateInMempool>()) {
-                it->second.m_state = TxStateInactive{};
-            }
-        }
+    } else if (reason != MemPoolRemovalReason::BLOCK && reason != MemPoolRemovalReason::CONFLICT) {
+        // Output-storage BLSCT txs do not go through RefreshMempoolStatus:
+        // their state is not refreshed from the mempool. Sync the tx
+        // out of the mempool as Inactive, as the CONFLICT path below does,
+        // or a locally-created send that expired or was evicted stays
+        // InMempool: trusted, counted in the balance, and refused by
+        // abandontransaction, so the coins it spends cannot be freed.
+        // Its outputs become Inactive and the spend flags it set in
+        // mapOutputs are cleared, but as a CWalletTx it keeps its inputs
+        // spent through mapTxSpends (see IsSpent()) until it is abandoned
+        // or conflicted.
+        // BLOCK is excluded because blockConnected() has just synced the
+        // tx as confirmed before reporting it removed.
+        SyncTransaction(tx, TxStateInactive{});
     }
     // Handle transactions that were removed from the mempool because they
     // conflict with transactions in a newly connected block.

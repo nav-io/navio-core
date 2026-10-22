@@ -5,6 +5,8 @@
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/verification.h>
+#include <kernel/chain.h>
+#include <kernel/mempool_removal_reason.h>
 #include <key_io.h>
 #include <rpc/util.h>
 #include <test/util/random.h>
@@ -1193,6 +1195,89 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_unlocated_parent_output, Te
     BOOST_REQUIRE(r.wallet->GetWalletTxFromOutpoint(r.cover_coin_outpoint) == other_wtx);
 
     BOOST_CHECK(!CachedTxIsTrusted(*r.wallet, *wtx));
+}
+
+// Regression for issue #511. An output-storage wallet's own send that leaves
+// the mempool without being mined (expiry, size limiting, a reorg, a
+// replacement) used to stay InMempool: trusted, in the balance, and refused by
+// abandontransaction, so the coin it spends could never be recovered. It must
+// drop out of the mempool state and keep its input spent until abandoned, and
+// abandoning it must make the input spendable again.
+BOOST_FIXTURE_TEST_CASE(output_storage_removed_tx_can_be_abandoned, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    for (const MemPoolRemovalReason reason : {MemPoolRemovalReason::EXPIRY, MemPoolRemovalReason::SIZELIMIT,
+                                              MemPoolRemovalReason::REORG, MemPoolRemovalReason::REPLACED}) {
+        BOOST_TEST_CONTEXT("removal reason " << RemovalReasonToString(reason))
+        {
+            const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+            LOCK(r.wallet->cs_wallet);
+            const uint256 txid{r.aggregate->GetHash()};
+
+            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+            r.wallet->transactionAddedToMempool(r.aggregate);
+            CheckChangeIsTheSpendableCoin(r);
+
+            r.wallet->transactionRemovedFromMempool(r.aggregate, reason);
+            const CWalletTx* wtx = r.wallet->GetWalletTx(txid);
+            BOOST_REQUIRE(wtx != nullptr);
+            BOOST_CHECK(!wtx->InMempool());
+            BOOST_CHECK(!wtx->isAbandoned());
+            BOOST_CHECK(!CachedTxIsTrusted(*r.wallet, *wtx));
+            // The input stays spent until the user abandons the tx, and the
+            // change of a tx outside the mempool is neither trusted nor
+            // spendable.
+            BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+            // Leaving the mempool already clears the spend flag the tx set
+            // in mapOutputs; only mapTxSpends still holds the input.
+            BOOST_CHECK(!r.wallet->GetWalletOutput(r.coin_outpoint)->IsSpent());
+            BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 0);
+            BOOST_CHECK_EQUAL(AvailableBlsctCoins(*r.wallet).Size(), 0U);
+
+            BOOST_REQUIRE(r.wallet->AbandonTransaction(txid));
+            BOOST_CHECK(wtx->isAbandoned());
+            BOOST_CHECK(!r.wallet->IsSpent(r.coin_outpoint));
+            BOOST_CHECK(!r.wallet->GetWalletOutput(r.coin_outpoint)->IsSpent());
+            BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 100 * COIN);
+            const auto coins = AvailableBlsctCoins(*r.wallet).All();
+            BOOST_REQUIRE_EQUAL(coins.size(), 1U);
+            BOOST_CHECK(coins[0].outpoint == r.coin_outpoint);
+            BOOST_CHECK_EQUAL(coins[0].txout.nValue, 100 * COIN);
+        }
+    }
+}
+
+// blockConnected() syncs each block tx as confirmed and then reports it
+// removed from the mempool with reason BLOCK. That removal must leave the
+// confirmed send as it is.
+BOOST_FIXTURE_TEST_CASE(output_storage_block_removal_keeps_confirmed, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK(r.wallet->cs_wallet);
+    const uint256 txid{r.aggregate->GetHash()};
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    r.wallet->transactionAddedToMempool(r.aggregate);
+
+    r.wallet->SetBirthTime(0);
+    CBlock block;
+    block.vtx.push_back(r.aggregate);
+    const uint256 block_hash{InsecureRand256()};
+    const uint256 prev_hash{InsecureRand256()};
+    interfaces::BlockInfo info{block_hash};
+    info.prev_hash = &prev_hash;
+    info.height = 2;
+    info.data = &block;
+    r.wallet->blockConnected(ChainstateRole::NORMAL, info);
+
+    const CWalletTx* wtx = r.wallet->GetWalletTx(txid);
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_CHECK(wtx->isConfirmed());
+    BOOST_CHECK(r.wallet->GetWalletOutput(r.change_outpoint)->state<TxStateConfirmed>());
+    BOOST_CHECK(r.wallet->GetWalletOutput(r.coin_outpoint)->state_spent<TxStateConfirmed>());
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK(!r.wallet->AbandonTransaction(txid));
 }
 
 BOOST_AUTO_TEST_SUITE_END()
