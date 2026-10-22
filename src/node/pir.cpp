@@ -13,6 +13,7 @@
 #include <streams.h>
 #include <validation.h>
 
+#include <limits>
 #include <numeric>
 
 namespace node {
@@ -171,6 +172,17 @@ PirEpoch* PirServer::Update(uint32_t epoch, Status& status)
         const size_t before{records.size()};
         AppendBlockRecords(block, records);
         counts.push_back(records.size() - before);
+    }
+
+    // Refuse an epoch too large for one database (about 29M records with the
+    // default record size) before touching the cached one; ComputeHint and
+    // ExtendHint require a valid shape.
+    const uint64_t total{(cached && !rebuild ? cached->db.GetParams().num_records : 0) + uint64_t{records.size()}};
+    if (total > std::numeric_limits<uint32_t>::max() ||
+        !pir::Params{PIR_RECORD_BYTES, uint32_t(total), pir::ChooseRecordsPerCol(uint32_t(total))}.IsValid()) {
+        LogPrint(BCLog::NET, "pir: epoch %u would hold %u records, more than one database can; lower -pirepochblocks\n", epoch, total);
+        status = Status::UNAVAILABLE;
+        return nullptr;
     }
 
     if (!cached || rebuild) {
