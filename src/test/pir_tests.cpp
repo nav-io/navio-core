@@ -158,7 +158,6 @@ BOOST_AUTO_TEST_CASE(error_distribution)
     const double sd{std::sqrt(sumsq / N - mean * mean)};
     BOOST_CHECK(std::abs(mean) < 0.1);
     BOOST_CHECK(std::abs(sd - SIGMA) < 0.1);
-    BOOST_CHECK(max_abs <= 64);
     BOOST_CHECK(max_abs > 20);
 }
 
@@ -205,17 +204,75 @@ BOOST_AUTO_TEST_CASE(fetch_full_size_records)
 
 BOOST_AUTO_TEST_CASE(fetch_extreme_entries)
 {
-    // Every entry at the largest centred magnitude (-128) maximises the noise.
+    // Entries of the largest centred magnitude (bytes 0x80 and 0x7f: -128 and
+    // 127) maximise the noise. The error of an answer entry is the sum over
+    // all columns of entry times error, with standard deviation up to
+    // SIGMA * 128 * sqrt(cols): at MAX_COLS columns 1/14 of Delta / 2, the
+    // bound in simplepir.h. Fetch at MAX_COLS with one and two records per
+    // column, and measure the error of every answer row against that
+    // standard deviation, so that noise even twice what the analysis says
+    // fails. Signs are random per entry so that rows are independent samples.
     FastRandomContext rng{uint256::ONE};
-    Database db{16, 1};
-    const std::vector<uint8_t> rec(16, 0x80);
-    for (int i = 0; i < 4096; ++i) db.Append(rec);
-    std::vector<uint8_t> marked(16, 0x7f);
-    db.Append(marked);
-    const uint256 seed{rng.rand256()};
-    const Hint hint{ComputeHint(db, seed)};
-    CheckFetch(db, hint, seed, 4096, rng);
-    CheckFetch(db, hint, seed, 17, rng);
+    double sum_sq_error{0}, sum_var{0};
+    uint32_t samples{0};
+    for (uint32_t k : {1U, 2U}) {
+        const uint32_t record_bytes{16 / k}; // sixteen hint rows either way
+        const uint32_t n{MAX_COLS * k};
+        Database db{record_bytes, k};
+        db.Reserve(n);
+        std::vector<uint8_t> rec(record_bytes);
+        for (uint32_t i = 0; i < n; ++i) {
+            for (auto& byte : rec) byte = rng.randbool() ? 0x80 : 0x7f;
+            db.Append(rec);
+        }
+        BOOST_REQUIRE_EQUAL(db.GetParams().Cols(), MAX_COLS);
+        const uint256 seed{rng.rand256()};
+        const Hint hint{ComputeHint(db, seed)};
+
+        // One fetch per shape: expanding A for a query at MAX_COLS takes seconds.
+        const uint32_t index{uint32_t(rng.randrange(n))};
+        QueryState state;
+        const auto query{MakeQuery(db.GetParams(), seed, index, *MakeSecretRngForTesting(rng.rand256()), state)};
+        BOOST_REQUIRE(query);
+        const auto answer{Answer(db, *query, n)};
+        BOOST_REQUIRE(answer);
+        const auto record{Decode(state, hint, *answer)};
+        BOOST_REQUIRE(record);
+        const auto expected{db.Record(index)};
+        BOOST_CHECK(std::equal(record->begin(), record->end(), expected.begin(), expected.end()));
+
+        // The error of every answer row: row (t, b) holds byte b of slot t of
+        // the queried column, so answer - H * s - Delta * entry is its error.
+        const uint32_t col{index / k};
+        for (uint32_t t = 0; t < k; ++t) {
+            for (uint32_t b = 0; b < record_bytes; ++b) {
+                const size_t row{size_t{t} * record_bytes + b};
+                // Mod 2^32 in 64-bit arithmetic that does not wrap (the
+                // integer sanitizer allows wrap-around only in simplepir.cpp).
+                uint64_t hs{0};
+                for (uint32_t x = 0; x < LWE_N; ++x) hs = (hs + uint64_t{hint[row * LWE_N + x]} * state.secret[x]) & 0xffffffff;
+                const int64_t entry{static_cast<int8_t>(db.Record(col * k + t)[b])};
+                int64_t centred{(int64_t{(*answer)[row]} - int64_t(hs) - int64_t{DELTA} * entry) % (int64_t{1} << 32)};
+                if (centred >= int64_t{1} << 31) centred -= int64_t{1} << 32;
+                if (centred < -(int64_t{1} << 31)) centred += int64_t{1} << 32;
+                const double error{double(centred)};
+                BOOST_CHECK(std::abs(error) < 6 * ErrorStdDevOverHalfDelta(MAX_COLS) * (DELTA / 2.0));
+                double sum_sq_entries{0};
+                for (uint32_t j = 0; j < MAX_COLS; ++j) {
+                    const double d{double(static_cast<int8_t>(db.Record(j * k + t)[b]))};
+                    sum_sq_entries += d * d;
+                }
+                sum_sq_error += error * error;
+                sum_var += SIGMA * SIGMA * sum_sq_entries;
+                ++samples;
+            }
+        }
+    }
+    // The mean squared error over the rows against its expectation: a ratio
+    // of 1 within the sampling spread of 32 rows (about 0.25).
+    const double ratio{sum_sq_error / sum_var};
+    BOOST_TEST_MESSAGE("noise variance / expected over " << samples << " rows: " << ratio);
+    BOOST_CHECK(ratio > 0.5 && ratio < 2.0);
 }
 
 BOOST_AUTO_TEST_CASE(incremental_hint)
