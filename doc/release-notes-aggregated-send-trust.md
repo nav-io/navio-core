@@ -40,7 +40,8 @@ Wallet
     enough funds available" until `abandontransaction <aggregate txid>` restored
     the original coins. The same now applies when another sender's aggregate
     using the same cover candidate is mined; the wallet used to count its own
-    aggregate as confirmed then, although its outputs never reached the chain.
+    aggregate as confirmed then, although its own outputs never reached the
+    chain.
   - After expiry, eviction or another removal that is not a block conflict, the
     transaction keeps its inputs spent until it is abandoned, but the wallet no
     longer treats it as in the mempool: it stops being trusted, and its change
