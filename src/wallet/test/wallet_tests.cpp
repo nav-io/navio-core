@@ -947,7 +947,7 @@ BOOST_FIXTURE_TEST_CASE(CreateBlsctWalletHasNoLegacySpkm, TestingSetup)
             DatabaseStatus status;
             bilingual_str error;
             std::vector<bilingual_str> warnings;
-            auto wallet = wallet::CreateWallet(context, "blsct_" + std::to_string(passphrase.size()), /*seed=*/{}, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, options, status, error, warnings);
+            auto wallet = wallet::CreateWallet(context, passphrase.empty() ? "blsct_plain" : "blsct_crypted", /*seed=*/{}, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, options, status, error, warnings);
             BOOST_REQUIRE_MESSAGE(wallet, error.original);
             {
                 LOCK(wallet->cs_wallet);
