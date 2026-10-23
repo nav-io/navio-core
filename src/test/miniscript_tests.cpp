@@ -718,4 +718,17 @@ BOOST_AUTO_TEST_CASE(fixed_tests)
     g_testdata.reset();
 }
 
+BOOST_AUTO_TEST_CASE(tx_body_leeway_weight)
+{
+    // The Tapscript size limit reserves TX_BODY_LEEWAY_WEIGHT for a one-input, one-P2WSH-output
+    // spending transaction. Check it against the size of such a transparent (non-BLSCT) transaction
+    // as Navio serializes it.
+    CMutableTransaction tx;
+    tx.vin.emplace_back();
+    tx.vout.emplace_back(/*nValueIn=*/0, CScript() << OP_0 << WitnessV0ScriptHash(CScript()));
+    const auto body_size{GetSerializeSize(TX_NO_WITNESS(CTransaction{tx}))};
+    // + 2 for the segwit marker and flag, which are serialized with the witness.
+    BOOST_CHECK_EQUAL(body_size * WITNESS_SCALE_FACTOR + 2, miniscript::internal::TX_BODY_LEEWAY_WEIGHT);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
