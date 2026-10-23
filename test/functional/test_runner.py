@@ -366,6 +366,7 @@ BASE_SCRIPTS = [
     'blsct_send_outputhash.py',
     'blsct_aggregated_spend_no_phantom.py',
     'blsct_keypool_restore.py',
+    'blsct_rescan_blockfilter.py',
     'blsct_getbalanceforaddress.py',
     'blsct_token.py',
     'blsct_nft.py',

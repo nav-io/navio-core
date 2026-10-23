@@ -352,7 +352,9 @@ RPCHelpMan keypoolrefill()
                 throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) keys cannot send or receive here, so keypoolrefill is not available on a non-BLSCT wallet. Use a BLSCT wallet instead.");
             }
 
-            if (pwallet->IsLegacy() && pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+            // A view-only BLSCT wallet may have no legacy ScriptPubKeyMan, so
+            // IsLegacy() alone would let it through to a refill it cannot do.
+            if ((pwallet->IsLegacy() || IsBlsctWallet(*pwallet)) && pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error: Private keys are disabled for this wallet");
             }
 
@@ -376,7 +378,11 @@ RPCHelpMan keypoolrefill()
             EnsureWalletIsUnlocked(*pwallet);
             pwallet->TopUpKeyPool(kpSize, fBlsct);
 
-            if (pwallet->GetKeyPoolSize() < kpSize) {
+            // GetKeyPoolSize() counts transparent keys only, and a BLSCT wallet
+            // may have no legacy ScriptPubKeyMan to hold any: check the pool
+            // this call refilled.
+            const unsigned int pool_size = fBlsct && IsBlsctWallet(*pwallet) ? pwallet->GetSubAddressPoolSize(pwallet->m_current_account) : pwallet->GetKeyPoolSize();
+            if (pool_size < kpSize) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error refreshing keypool.");
             }
 
