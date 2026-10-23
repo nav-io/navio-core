@@ -35,10 +35,13 @@ SYSTEM_SYMBOL_PATTERNS = [
     # _ZNSt / _ZNKSt — libstdc++ std:: namespace
     # _ZNS[a-z] — Itanium ABI standard substitutions (So=ostream, Sd=iostream, …)
     # _ZNSt3__1 — libc++ std::__1 namespace
-    re.compile(r'^_ZNK?S[a-z]'),
-    re.compile(r'^_ZNK?St3__1'),    # libc++ std::__1::
+    # A nested name may carry a ref-qualifier after its CV-qualifiers
+    # (R = &, O = &&), e.g. libstdc++'s C++20 basic_stringbuf::str() const &
+    # mangles as _ZNKRSt7__cxx11...
+    re.compile(r'^_ZNK?[RO]?S[a-z]'),
+    re.compile(r'^_ZNK?[RO]?St3__1'),    # libc++ std::__1::
     # __gnu_cxx / __cxxabiv1 / __exception_ptr namespaces
-    re.compile(r'^_ZNK?(9__gnu_cxx|10__cxxabiv1|14__exception_ptr)'),
+    re.compile(r'^_ZNK?[RO]?(9__gnu_cxx|10__cxxabiv1|14__exception_ptr)'),
     re.compile(r'^_ZSt'),       # std:: standalone (operators, globals, templates)
     re.compile(r'^_ZTI'),       # typeinfo
     re.compile(r'^_ZTV'),       # vtable
