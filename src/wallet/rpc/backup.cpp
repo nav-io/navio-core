@@ -810,6 +810,9 @@ RPCHelpMan getblsctseed()
             const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
 
             if (!blsct_km.IsHDEnabled()) {
+                if (wallet.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+                    throw JSONRPCError(RPC_WALLET_BLANK, "Wallet has no BLSCT seed (private keys are disabled)");
+                }
                 throw JSONRPCError(RPC_WALLET_BLANK, "Wallet has no BLSCT seed (blank wallet); use setblsctseed to initialize");
             }
 
@@ -899,6 +902,9 @@ RPCHelpMan dumpmnemonic()
                         "seed/master key, or created by a build predating mnemonic backup storage. "
                         "The mnemonic cannot be derived from the seed. Use 'getblsctseed' to back up "
                         "this wallet's seed instead.");
+                }
+                if (wallet.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+                    throw JSONRPCError(RPC_WALLET_ERROR, "Wallet has no BLSCT seed (private keys are disabled)");
                 }
                 throw JSONRPCError(RPC_WALLET_ERROR,
                     "Wallet has no BLSCT seed (blank wallet); initialize it with 'setblsctseed', or "

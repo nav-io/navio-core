@@ -163,6 +163,44 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert "mnemonic" not in result_blank
         assert_equal(node.get_wallet_rpc("test_blank").getwalletinfo().get("birthtime", 0), 0)
 
+        self.log.info("Test BLSCT wallet with private keys disabled holds no seed")
+        result_nopriv = node.createwallet(wallet_name="test_nopriv", blsct=True, disable_private_keys=True)
+        assert "mnemonic" not in result_nopriv
+        w_nopriv = node.get_wallet_rpc("test_nopriv")
+        assert_equal(w_nopriv.getwalletinfo()["private_keys_enabled"], False)
+        assert "hdseedid" not in w_nopriv.getwalletinfo()
+        no_seed_msg = "Wallet has no BLSCT seed (private keys are disabled)"
+        assert_raises_rpc_error(-37, no_seed_msg, w_nopriv.getblsctseed)
+        assert_raises_rpc_error(-4, no_seed_msg, w_nopriv.dumpmnemonic)
+        assert_raises_rpc_error(-4, "This wallet has no available keys", w_nopriv.getnewaddress)
+        node.unloadwallet("test_nopriv")
+        node.loadwallet("test_nopriv")
+        w_nopriv = node.get_wallet_rpc("test_nopriv")
+        assert_equal(w_nopriv.getwalletinfo()["private_keys_enabled"], False)
+        assert_raises_rpc_error(-37, no_seed_msg, w_nopriv.getblsctseed)
+
+        self.log.info("Test createwallet refuses a master seed or mnemonic with private keys disabled")
+        nopriv_msg = "Cannot combine 'disable_private_keys' with a master seed or 'mnemonic'"
+        assert_raises_rpc_error(-8, nopriv_msg,
+            node.createwallet, wallet_name="test_nopriv_seed",
+            blsct=True, disable_private_keys=True, seed="00" * 32)
+        assert_raises_rpc_error(-8, nopriv_msg,
+            node.createwallet, wallet_name="test_nopriv_mnemonic",
+            blsct=True, disable_private_keys=True, mnemonic="abandon " * 23 + "art")
+        assert_raises_rpc_error(-8, "Cannot combine 'disable_private_keys' with 'mnemonic_passphrase'",
+            node.createwallet, wallet_name="test_nopriv_passphrase",
+            blsct=True, disable_private_keys=True, mnemonic_passphrase="extra")
+        # the refusal must come before the wallet database is written
+        for name in ("test_nopriv_seed", "test_nopriv_mnemonic", "test_nopriv_passphrase"):
+            assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, name)
+
+        self.log.info("Test an audit key with private keys disabled explicitly creates a watch-only wallet")
+        audit_key = node.get_wallet_rpc("test_blsct").getblsctauditkey()
+        node.createwallet(wallet_name="test_nopriv_audit", blsct=True, disable_private_keys=True, seed=audit_key)
+        w_audit = node.get_wallet_rpc("test_nopriv_audit")
+        assert_equal(w_audit.getwalletinfo()["private_keys_enabled"], False)
+        assert_equal(w_audit.getblsctauditkey(), audit_key)
+
         self.log.info("Test encrypted wallet: dumpmnemonic works after encryption")
         node.createwallet(wallet_name="test_encrypted", blsct=True, passphrase="testpass")
         w_enc = node.get_wallet_rpc("test_encrypted")
