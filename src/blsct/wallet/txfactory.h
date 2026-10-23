@@ -17,8 +17,6 @@
 #include <wallet/spend.h>
 #include <wallet/wallet.h>
 
-#include <set>
-
 namespace blsct {
 
 //! Say once per built transaction when some of its outputs could not get a
@@ -84,10 +82,7 @@ public:
     // RPC interface, not this function directly). `additionalFee` over-funds the fee output
     // (also out of the merged amount) so an aggregation initiator can cover
     // the combined weight of its half + fee-0 cover candidates.
-    // `excludedInputs` are skipped during selection: the aggregated path
-    // broadcasts a combined tx with no CWalletTx to commit, so the caller must
-    // exclude inputs its earlier aggregates already spend.
-    static std::optional<BuiltTransaction> CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee = 0, const std::set<COutPoint>& excludedInputs = {}) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
+    static std::optional<BuiltTransaction> CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee = 0) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
     static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
     static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const bool& consolidateStakedCommitments = true) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
 };

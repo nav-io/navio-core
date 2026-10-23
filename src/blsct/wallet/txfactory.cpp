@@ -323,7 +323,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     }
 }
 
-std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee, const std::set<COutPoint>& excludedInputs)
+std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee)
 {
     AssertLockHeld(wallet->cs_wallet);
 
@@ -333,7 +333,7 @@ std::optional<BuiltTransaction> TxFactory::CreateConsolidationTransaction(wallet
     AddAvailableCoins(wallet, blsct_km, TokenId(), CreateTransactionType::NORMAL, candidates, MAX_MONEY);
 
     std::erase_if(candidates, [&](const InputCandidates& c) {
-        return c.is_staked_commitment || !c.token_id.IsNull() || excludedInputs.contains(c.outpoint);
+        return c.is_staked_commitment || !c.token_id.IsNull();
     });
     std::sort(candidates.begin(), candidates.end(), [](const InputCandidates& a, const InputCandidates& b) {
         return a.amount < b.amount;
