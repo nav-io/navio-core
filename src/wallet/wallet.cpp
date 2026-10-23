@@ -2184,6 +2184,11 @@ CAmount CWallet::GetDebit(const CTxIn& txin, const isminefilter& filter, const T
             const auto mo = mapOutputs.find(txin.prevout);
             if (mo != mapOutputs.end()) {
                 const CWalletOutput& wout = (*mo).second;
+                // Apply the filter and token id, as the CWalletTx branch above
+                // does for BLSCT outputs: without them a watch-only query
+                // counts every spendable input, and a token input counts
+                // toward the NAV debit.
+                if (wout.out->tokenId != token_id || !(IsMine(*wout.out) & filter)) return 0;
                 return wout.blsctRecoveryData.amount;
             }
         }
