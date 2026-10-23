@@ -29,7 +29,7 @@ from test_framework.script import (
     OP_TRUE,
 )
 from test_framework.script_util import (
-    # DUMMY_MIN_OP_RETURN_SCRIPT,
+    DUMMY_MIN_OP_RETURN_SCRIPT,
     keys_to_multisig_script,
     MIN_PADDING,
     MIN_STANDARD_TX_NONWITNESS_SIZE,
@@ -353,12 +353,9 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
         tx.vin.append(CTxIn(COutPoint(seed_tx["tx"].vout[seed_tx["sent_vout"]].hash()), b"", SEQUENCE_FINAL))
         tx.wit.vtxinwit = [CTxInWitness()]
         tx.wit.vtxinwit[0].scriptWitness.stack = [CScript([OP_TRUE])]
-        # Adjust padding to account for output hash system changes in modified Bitcoin Core
-        padding_needed = 64 - 60  # We need 4 more bytes to reach 64
-        tx.vout.append(CTxOut(0, CScript([OP_RETURN] + ([OP_0] * (MIN_PADDING - 2 + padding_needed)))))
+        tx.vout.append(CTxOut(0, CScript([OP_RETURN] + ([OP_0] * (MIN_PADDING - 2)))))
         # Note it's only non-witness size that matters!
-        actual_size = len(tx.serialize_without_witness())
-        assert_equal(actual_size, 64)
+        assert_equal(len(tx.serialize_without_witness()), 64)
         assert_equal(MIN_STANDARD_TX_NONWITNESS_SIZE - 1, 64)
         assert_greater_than(len(tx.serialize()), 64)
 
@@ -369,9 +366,7 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
         )
 
         self.log.info('Minimally-small transaction(in non-witness bytes) that is allowed')
-        # Adjust padding to account for output hash system changes in modified Bitcoin Core
-        padding_needed = MIN_STANDARD_TX_NONWITNESS_SIZE - 61  # We need 4 more bytes to reach 65
-        tx.vout[0] = CTxOut(COIN - 1000, CScript([OP_RETURN] + ([OP_0] * (MIN_PADDING - 2 + padding_needed + 1))))
+        tx.vout[0] = CTxOut(COIN - 1000, DUMMY_MIN_OP_RETURN_SCRIPT)
         assert_equal(len(tx.serialize_without_witness()), MIN_STANDARD_TX_NONWITNESS_SIZE)
         self.check_mempool_result(
             result_expected=[{'txid': tx.rehash(), 'allowed': True, 'vsize': tx.get_vsize(), 'fees': { 'base': Decimal('0.00001000')}}],
