@@ -31,7 +31,7 @@ static void WalletToolReleaseWallet(CWallet* wallet)
     delete wallet;
 }
 
-static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flags, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time = std::nullopt)
+static bool WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flags, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time = std::nullopt)
 {
     LOCK(wallet_instance->cs_wallet);
     wallet_instance->SetMinVersion(FEATURE_LATEST);
@@ -48,7 +48,10 @@ static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flag
         auto blsct_man = wallet_instance->GetOrCreateBLSCTKeyMan();
 
         if (blsct_man) {
-            blsct_man->SetupGeneration(seed, type, /*force=*/false, mnemonic_passphrase, creation_time);
+            if (!blsct_man->SetupGeneration(seed, type, /*force=*/false, mnemonic_passphrase, creation_time)) {
+                tfm::format(std::cerr, "Unable to generate initial blsct keys\n");
+                return false;
+            }
             if (creation_time.has_value()) {
                 blsct_man->WriteWalletBirthday(*creation_time);
             }
@@ -57,6 +60,7 @@ static void WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flag
 
     tfm::format(std::cout, "Topping up keypool...\n");
     wallet_instance->TopUpKeyPool();
+    return true;
 }
 
 static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::path& path, DatabaseOptions options, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt)
@@ -107,7 +111,9 @@ static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::pa
         }
     }
 
-    if (options.require_create) WalletCreate(wallet_instance.get(), options.create_flags, seed, type, mnemonic_passphrase, creation_time);
+    if (options.require_create && !WalletCreate(wallet_instance.get(), options.create_flags, seed, type, mnemonic_passphrase, creation_time)) {
+        return nullptr;
+    }
 
     return wallet_instance;
 }
@@ -218,6 +224,14 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         }
         if (!seed.empty() && !mnemonic_passphrase.empty()) {
             tfm::format(std::cerr, "Cannot specify both -seed and -mnemonicpassphrase\n");
+            return false;
+        }
+
+        // A seed is either a master key or a view key, as in createwallet
+        // (which also skips whitespace). Any other value used to leave a
+        // BLSCT wallet with no seed, or with a random one never shown.
+        if (!seed.empty() && !(IsHex(seed) && (seed.size() == 64 || seed.size() == 64 + 96))) {
+            tfm::format(std::cerr, "Seed must be 64 (master) or 160 (view) characters long\n");
             return false;
         }
 
