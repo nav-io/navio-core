@@ -230,7 +230,8 @@ RPCHelpMan addmultisigaddress()
         "This functionality is only intended for use with non-watchonly addresses.\n"
         "See `importaddress` for watchonly p2sh address support.\n"
         "If 'label' is specified, assign address to that label.\n"
-        "Note: This command is only compatible with legacy wallets.\n",
+        "Note: This command is only compatible with legacy wallets.\n"
+        "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
         {
             {"nrequired", RPCArg::Type::NUM, RPCArg::Optional::NO, "The number of required signatures out of the n keys or addresses."},
             {
@@ -329,7 +330,8 @@ RPCHelpMan keypoolrefill()
 {
     return RPCHelpMan{
         "keypoolrefill",
-        "\nFills the keypool." +
+        "\nFills the keypool.\n"
+        "Note: This command is not available for non-BLSCT wallets on networks that only accept confidential (BLSCT) transactions." +
             HELP_REQUIRING_PASSPHRASE,
         {
             {"newsize", RPCArg::Type::NUM, RPCArg::DefaultHint{strprintf("%u, or as set by -keypool", DEFAULT_KEYPOOL_SIZE)}, "The new keypool size"},
@@ -350,7 +352,9 @@ RPCHelpMan keypoolrefill()
                 throw JSONRPCError(RPC_WALLET_ERROR, "This network only supports confidential (BLSCT) transactions; transparent (ECDSA) keys cannot send or receive here, so keypoolrefill is not available on a non-BLSCT wallet. Use a BLSCT wallet instead.");
             }
 
-            if (pwallet->IsLegacy() && pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+            // A view-only BLSCT wallet may have no legacy ScriptPubKeyMan, so
+            // IsLegacy() alone would let it through to a refill it cannot do.
+            if ((pwallet->IsLegacy() || IsBlsctWallet(*pwallet)) && pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error: Private keys are disabled for this wallet");
             }
 
@@ -374,7 +378,11 @@ RPCHelpMan keypoolrefill()
             EnsureWalletIsUnlocked(*pwallet);
             pwallet->TopUpKeyPool(kpSize, fBlsct);
 
-            if (pwallet->GetKeyPoolSize() < kpSize) {
+            // GetKeyPoolSize() counts transparent keys only, and a BLSCT wallet
+            // may have no legacy ScriptPubKeyMan to hold any: check the pool
+            // this call refilled.
+            const unsigned int pool_size = fBlsct && IsBlsctWallet(*pwallet) ? pwallet->GetSubAddressPoolSize(pwallet->m_current_account) : pwallet->GetKeyPoolSize();
+            if (pool_size < kpSize) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error refreshing keypool.");
             }
 
@@ -392,7 +400,8 @@ RPCHelpMan newkeypool()
         "When restoring a backup of an HD wallet created before the newkeypool command is run, funds received to\n"
         "new addresses may not appear automatically. They have not been lost, but the wallet may not find them.\n"
         "This can be fixed by running the newkeypool command on the backup and then rescanning, so the wallet\n"
-        "re-generates the required keys." +
+        "re-generates the required keys.\n"
+        "Note: This command is not available on networks that only accept confidential (BLSCT) transactions." +
             HELP_REQUIRING_PASSPHRASE,
         {},
         RPCResult{RPCResult::Type::NONE, "", ""},

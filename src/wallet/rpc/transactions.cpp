@@ -1197,7 +1197,21 @@ RPCHelpMan gettransaction()
         CAmount nCredit = CachedTxGetCredit(*pwallet, wtx, filter);
         CAmount nDebit = CachedTxGetDebit(*pwallet, wtx, filter);
         CAmount nNet = nCredit - nDebit;
-        CAmount nFee = (CachedTxIsFromMe(*pwallet, wtx, filter) ? wtx.tx->GetValueOut() - nDebit : 0);
+        CAmount nFee = 0;
+        if (CachedTxIsFromMe(*pwallet, wtx, filter)) {
+            if (wtx.tx->IsBLSCT()) {
+                // Range-proofed outputs carry nValue 0, so GetValueOut() is
+                // only the fee output and inputs-minus-outputs would count the
+                // payment and change as fee. Take the fee the same way the
+                // details entries do, including the cover-candidate rule.
+                std::list<COutputEntry> received, sent;
+                CAmount blsct_fee;
+                CachedTxGetAmounts(*pwallet, wtx, received, sent, blsct_fee, filter, /*include_change=*/false);
+                nFee = -blsct_fee;
+            } else {
+                nFee = wtx.tx->GetValueOut() - nDebit;
+            }
+        }
 
         entry.pushKV("amount", ValueFromAmount(nNet - nFee));
         if (CachedTxIsFromMe(*pwallet, wtx, filter))

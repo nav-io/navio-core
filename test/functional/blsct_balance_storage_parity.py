@@ -59,18 +59,22 @@ class BlsctBalanceStorageParityTest(BitcoinTestFramework):
             self.generatetoblsctaddress(self.nodes[0], to_generate, address)
             remaining -= to_generate
 
-    def unconfirmed_send_fee(self, wallet):
-        """Fee of the one send still sitting unconfirmed in `wallet`.
+    def unconfirmed_send_fee(self, wallet, amount):
+        """Fee of the one send of `amount` still sitting unconfirmed in `wallet`.
 
         sendtoblsctaddress returns an output hash rather than a txid, so the fee
-        has to be read back from the transaction list.
+        has to be read back from the transaction list. gettransaction must
+        report the same send amount and fee at its top level.
         """
         fees = {e["txid"]: -to_dec(e["fee"])
                 for e in wallet.listtransactions("*", 10 ** 9, 0, True)
                 if e.get("category") == "send" and e.get("confirmations", 1) == 0}
         assert_equal(len(fees), 1)
-        fee = next(iter(fees.values()))
+        txid, fee = next(iter(fees.items()))
         assert_greater_than(fee, Decimal("0"))
+        tx = wallet.gettransaction(txid)
+        assert_equal(to_dec(tx["amount"]), -amount)
+        assert_equal(to_dec(tx["fee"]), -fee)
         return fee
 
     def assert_balance_rpcs(self, wallet, expected, scenario):
@@ -166,7 +170,7 @@ class BlsctBalanceStorageParityTest(BitcoinTestFramework):
             assert_equal(to_dec(unspent_before[0]["amount"]), expected)
 
             wallet.sendtoblsctaddress(self.miner_addr, amount)
-            fee = self.unconfirmed_send_fee(wallet)
+            fee = self.unconfirmed_send_fee(wallet, amount)
             self.generate_blsct_blocks(self.miner_addr, 1)
 
             expected = expected - amount - fee
