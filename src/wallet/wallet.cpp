@@ -3643,7 +3643,7 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
         !walletInstance->GetOrCreateBLSCTKeyMan()->CanGenerateKeys() &&
         !walletInstance->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS) &&
         !walletInstance->IsWalletFlagSet(WALLET_FLAG_BLANK_WALLET)) {
-        error = strprintf(_("Error loading %s: BLSCT wallet has no seed and is not blank"), walletFile);
+        error = strprintf(_("Error loading %s: BLSCT wallet has no seed, so its creation probably did not complete. Restore the wallet from its mnemonic or seed, or from a backup"), walletFile);
         return nullptr;
     }
 

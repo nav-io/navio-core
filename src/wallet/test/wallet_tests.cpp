@@ -965,6 +965,7 @@ BOOST_FIXTURE_TEST_CASE(LoadSeedlessBlsctWalletFails, TestingSetup)
     BOOST_CHECK(!loaded);
     BOOST_CHECK(status == DatabaseStatus::FAILED_LOAD);
     BOOST_CHECK_MESSAGE(error.original.find("BLSCT wallet has no seed") != std::string::npos, error.original);
+    BOOST_CHECK_MESSAGE(error.original.find("Restore the wallet from its mnemonic or seed, or from a backup") != std::string::npos, error.original);
     if (loaded) {
         RemoveWallet(context, loaded, /*load_on_start=*/std::nullopt);
         TestUnloadWallet(std::move(loaded));
