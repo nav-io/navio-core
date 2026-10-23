@@ -400,6 +400,15 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
         return nullptr;
     }
 
+    // A master seed or mnemonic derives the spend key, so importing one would
+    // store private keys in a wallet that promises to hold none. Only an audit
+    // (view) key can seed a BLSCT wallet with private keys disabled.
+    if ((wallet_creation_flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS) && !seed.empty() && type != blsct::IMPORT_VIEW_KEY) {
+        error = Untranslated("Cannot create a wallet with private keys disabled from a master seed or mnemonic, which hold private keys. Use an audit key as the seed to create a watch-only BLSCT wallet.");
+        status = DatabaseStatus::FAILED_CREATE;
+        return nullptr;
+    }
+
     // Wallet::Verify will check if we're trying to create a wallet with a duplicate name.
     std::unique_ptr<WalletDatabase> database = MakeWalletDatabase(name, options, status, error);
     if (!database) {
@@ -441,8 +450,13 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
                 wallet->SetupBLSCTKeyMan();
                 {
                     auto blsct_man = wallet->GetBLSCTKeyMan();
+                    // With private keys disabled the only keys a BLSCT wallet
+                    // may hold are an imported audit key; without one it stays
+                    // keyless, since generating a seed here would store the
+                    // private keys the flag rules out.
+                    const bool keyless = (wallet_creation_flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS) && seed.empty();
 
-                    if (blsct_man) {
+                    if (blsct_man && !keyless) {
                         if (!blsct_man->SetupGeneration(seed, type, /*force=*/false, mnemonic_passphrase, creation_time)) {
                             error = Untranslated("Unable to generate initial blsct keys");
                             status = DatabaseStatus::FAILED_CREATE;
