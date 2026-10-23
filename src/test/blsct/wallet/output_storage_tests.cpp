@@ -673,6 +673,69 @@ BOOST_FIXTURE_TEST_CASE(is_from_me_output_storage_input, TestingSetup)
     BOOST_CHECK(wallet->IsFromMe(CTransaction{spend}));
 }
 
+// An input whose coin lives only in mapOutputs is debited under the same
+// ismine filter and token id as one backed by a CWalletTx. Without the filter
+// every such input read as watch-only, so listtransactions flagged ordinary
+// sends with involvesWatchonly; without the token id a token input counted
+// toward the NAV debit.
+BOOST_FIXTURE_TEST_CASE(get_debit_output_storage_input_honours_filter_and_token, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+
+    auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+    auto source_wallet = std::make_unique<CWallet>(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    source_wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+
+    LOCK2(wallet->cs_wallet, source_wallet->cs_wallet);
+    auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    auto recvAddress = std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value());
+
+    // A watch-only HTLC paying a subaddress of another wallet, as in
+    // output_storage_recovers_watchonly_output_with_nonce_hint.
+    auto source_blsct_km = source_wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_CHECK(source_blsct_km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+    auto source_address = std::get<blsct::DoublePublicKey>(source_blsct_km->GetNewDestination(0).value());
+    Scalar blinding_key{ParseHex("42c0926471b3bd01ae130d9382c5fca2e2b5000abbf826a93132696ffa5f2c65")};
+    BlstG1Point view_key;
+    BOOST_CHECK(source_address.GetViewKey(view_key));
+    std::vector<unsigned char> hash_bytes(32, 0x11);
+    std::vector<unsigned char> spending_key_bytes(blsct::PublicKey::SIZE, 0x22);
+    CScript watch_script = blsct::BuildHTLCScript(hash_bytes, spending_key_bytes, spending_key_bytes, 100);
+    BOOST_CHECK(blsct_km->AddWatchOnly(watch_script, blsct::PublicKey(view_key * blinding_key)));
+
+    const TokenId token_id{uint256::ONE};
+    const auto store = [&](const CTxOut& txout, CAmount amount) {
+        COutPoint outpoint{txout.GetHash()};
+        BOOST_REQUIRE(wallet->AddToWallet(outpoint, std::make_shared<const CTxOut>(txout), TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false));
+        BOOST_REQUIRE(wallet->GetWalletTxFromOutpoint(outpoint) == nullptr);
+        BOOST_REQUIRE_EQUAL(wallet->mapOutputs.at(outpoint).blsctRecoveryData.amount, amount);
+        return CTxIn{outpoint};
+    };
+    const CTxIn nav_in = store(blsct::CreateOutput(recvAddress, 5 * COIN, "nav").out, 5 * COIN);
+    const CTxIn token_in = store(blsct::CreateOutput(recvAddress, 7 * COIN, "token", token_id).out, 7 * COIN);
+    const CTxIn watch_in = store(blsct::CreateOutput(std::make_pair(source_address, watch_script), 42 * COIN, "watch-only", TokenId(), blinding_key).out, 42 * COIN);
+    // Staked commitments keep their range proof when stored, which is what
+    // classifies them as ISMINE_STAKED_COMMITMENT_BLSCT.
+    const CTxIn staked_in = store(blsct::CreateOutput(recvAddress, 9 * COIN, "staked", TokenId(), BlstScalar::Rand(),
+                                                      blsct::STAKED_COMMITMENT, /*minStake=*/9 * COIN)
+                                      .out,
+                                  9 * COIN);
+
+    BOOST_CHECK_EQUAL(wallet->GetDebit(nav_in, ISMINE_SPENDABLE_BLSCT, TokenId()), 5 * COIN);
+    BOOST_CHECK_EQUAL(wallet->GetDebit(nav_in, ISMINE_WATCH_ONLY, TokenId()), 0);
+
+    BOOST_CHECK_EQUAL(wallet->GetDebit(token_in, ISMINE_ALL, TokenId()), 0);
+    BOOST_CHECK_EQUAL(wallet->GetDebit(token_in, ISMINE_ALL, token_id), 7 * COIN);
+
+    BOOST_CHECK_EQUAL(wallet->GetDebit(watch_in, ISMINE_WATCH_ONLY, TokenId()), 42 * COIN);
+    BOOST_CHECK_EQUAL(wallet->GetDebit(watch_in, ISMINE_SPENDABLE_BLSCT, TokenId()), 0);
+
+    BOOST_CHECK_EQUAL(wallet->GetDebit(staked_in, ISMINE_STAKED_COMMITMENT_BLSCT, TokenId()), 9 * COIN);
+    BOOST_CHECK_EQUAL(wallet->GetDebit(staked_in, ISMINE_SPENDABLE_BLSCT, TokenId()), 0);
+}
+
 // Regression for issue #470: getwalletinfo reported a staked_commitment_balance
 // that still contained a commitment already consumed by a newer stake, so it
 // disagreed with liststakedcommitments (which listed only the live one).
