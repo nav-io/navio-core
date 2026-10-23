@@ -883,6 +883,12 @@ struct DelegationStats {
 };
 static std::map<std::string, DelegationStats> delegationStats;
 
+//! Attempts, and the wait between them, at moving a new -statsfile into
+//! place. On Windows the rename is refused while another process has the old
+//! file open, as a monitor reading it does.
+static constexpr int STATS_RENAME_ATTEMPTS{10};
+static constexpr std::chrono::milliseconds STATS_RENAME_RETRY_WAIT{10};
+
 //! Atomically (write + rename) dump the per-delegation stats to -statsfile.
 static void WriteDelegationStats()
 {
@@ -919,7 +925,11 @@ static void WriteDelegationStats()
     file << root.write(2) << "\n";
     file.close();
     std::error_code ec;
-    fs::rename(tmp, target, ec);
+    for (int attempt = 0; attempt < STATS_RENAME_ATTEMPTS; ++attempt) {
+        if (attempt > 0) UninterruptibleSleep(STATS_RENAME_RETRY_WAIT);
+        fs::rename(tmp, target, ec);
+        if (!ec) break;
+    }
     if (ec) {
         LogPrintf("%s: Could not rename %s into place: %s\n", __func__, fs::PathToString(tmp), ec.message());
     }
