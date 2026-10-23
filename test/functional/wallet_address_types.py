@@ -318,10 +318,11 @@ class AddressTypeTest(BitcoinTestFramework):
 
     def test_legacy_dumpwallet_unsupported_addresstype(self):
         """A legacy wallet's dumpwallet names an address for every key that has
-        no address book entry, derived from -addresstype. Neither bech32m nor
-        blsct describes an address for a legacy key, so the dump must still
-        print a transparent one rather than abort the node or leave it blank."""
-        for address_type in ["bech32m", "blsct"]:
+        no address book entry, derived from -addresstype. None of bech32m,
+        blsct or blsct-stake describes an address for a legacy key, so the
+        dump must still print a transparent one rather than abort the node or
+        leave it blank."""
+        for address_type in ["bech32m", "blsct", "blsct-stake"]:
             self.log.info(f"dumpwallet on a legacy wallet with -addresstype={address_type}")
             self.restart_node(5, extra_args=[f"-addresstype={address_type}"])
             wallet_name = f"legacy_dump_{address_type}"
