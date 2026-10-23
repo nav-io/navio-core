@@ -262,6 +262,37 @@ BOOST_FIXTURE_TEST_CASE(wallet_blsct_mnemonic_passphrase, TestingSetup)
     BOOST_CHECK(id_plain == legacy.GetPublicKey().GetID());
 }
 
+BOOST_FIXTURE_TEST_CASE(wallet_load_blsct_with_legacy_records, TestingSetup)
+{
+    // BLSCT wallets used to be created with a LegacyScriptPubKeyMan holding a
+    // transparent HD seed. New ones are not, but those files must still load.
+    MockableData records;
+    CKeyID legacy_seed_id;
+    {
+        std::shared_ptr<CWallet> wallet(new CWallet(m_node.chain.get(), "", CreateMockableWalletDatabase()));
+        wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+        LOCK(wallet->cs_wallet);
+        BOOST_REQUIRE(wallet->GetOrCreateBLSCTKeyMan()->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+        auto legacy_spkm = wallet->GetOrCreateLegacyScriptPubKeyMan();
+        BOOST_REQUIRE(legacy_spkm->SetupGeneration(true));
+        legacy_seed_id = legacy_spkm->GetHDChain().seed_id;
+        wallet->Flush();
+        records = GetMockableDatabase(*wallet).m_records;
+    }
+    BOOST_REQUIRE(HasAnyRecordOfType(*CreateMockableWalletDatabase(records), DBKeys::HDCHAIN));
+    BOOST_REQUIRE(HasAnyRecordOfType(*CreateMockableWalletDatabase(records), DBKeys::KEY));
+
+    std::shared_ptr<CWallet> wallet(new CWallet(m_node.chain.get(), "", CreateMockableWalletDatabase(records)));
+    BOOST_CHECK_EQUAL(wallet->LoadWallet(), DBErrors::LOAD_OK);
+    LOCK(wallet->cs_wallet);
+    BOOST_CHECK(wallet->IsWalletFlagSet(WALLET_FLAG_BLSCT));
+    BOOST_CHECK(wallet->IsLegacy());
+    auto legacy_spkm = wallet->GetLegacyScriptPubKeyMan();
+    BOOST_REQUIRE(legacy_spkm);
+    BOOST_CHECK(legacy_spkm->GetHDChain().seed_id == legacy_seed_id);
+    BOOST_CHECK(wallet->GetBLSCTKeyMan() && wallet->GetBLSCTKeyMan()->CanGenerateKeys());
+}
+
 BOOST_FIXTURE_TEST_CASE(wallet_load_verif_crypted_blsct, TestingSetup)
 {
     // The test duplicates the db so each case has its own db instance.

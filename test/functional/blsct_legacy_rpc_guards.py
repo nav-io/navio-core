@@ -75,6 +75,7 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         self.test_transparent_key_rpcs_guarded(blsct_wallet)
         self.test_transparent_tx_rpcs_guarded(blsct_wallet)
         self.test_transparent_spend_rpcs_guarded(blsct_wallet)
+        self.test_new_blsct_wallet_keys(blsct_wallet)
         self.test_legacy_wallet_unaffected()
         self.test_migratewallet_refused()
 
@@ -219,9 +220,16 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         legacy_addr = plain_wallet.getnewaddress(label="", address_type="legacy")
         legacy_pubkey = plain_wallet.getaddressinfo(legacy_addr)["pubkey"]
 
+        # The height is blsctregtest's nLastPOWHeight: above it a block must be
+        # proof-of-stake, so generatetoblsctaddress is only an alternative up to it.
+        coinbase_refusal = (
+            "a block paying a transparent coinbase is always rejected here, so {} is not available. "
+            "Blocks above height 25000 must be proof-of-stake; up to that height, "
+            "generatetoblsctaddress can mine proof-of-work blocks instead."
+        )
         assert_raises_rpc_error(
             -1,
-            "a block paying a transparent coinbase is always rejected here, so generatetoaddress is not available. Use generatetoblsctaddress instead.",
+            coinbase_refusal.format("generatetoaddress"),
             self.generatetoaddress,
             node,
             1,
@@ -229,7 +237,7 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         )
         assert_raises_rpc_error(
             -1,
-            "a block paying a transparent coinbase is always rejected here, so generatetodescriptor is not available. Use generatetoblsctaddress instead.",
+            coinbase_refusal.format("generatetodescriptor"),
             self.generatetodescriptor,
             node,
             1,
@@ -237,7 +245,7 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         )
         assert_raises_rpc_error(
             -1,
-            "a block paying a transparent coinbase is always rejected here, so generateblock is not available. Use generatetoblsctaddress instead.",
+            coinbase_refusal.format("generateblock"),
             self.generateblock,
             node,
             legacy_addr,
@@ -348,6 +356,34 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         self.log.info("...while a BLSCT wallet still refills its keypool")
         assert_equal(wallet.keypoolrefill(), None)
 
+    def test_new_blsct_wallet_keys(self, wallet):
+        """A new BLSCT wallet keeps its keys in the BLSCT keyman only, with no
+        transparent (legacy) keychain beside it, so nothing may rely on that
+        keychain to finish setting the wallet up."""
+        node = self.nodes[0]
+
+        self.log.info("keypoolrefill grows a BLSCT wallet's subaddress pool, not a transparent one")
+        # The framework runs nodes with -keypool=1, so this adds keys.
+        with node.assert_debug_log(["[blsct_guards] KeyMan::TopUpAccount(): added 4 keys for account 0, size=5"]):
+            assert_equal(wallet.keypoolrefill(5), None)
+
+        self.log.info("A BLSCT wallet is not left blank once its seed exists, with or without a passphrase")
+        assert_equal(wallet.getwalletinfo()["blank"], False)
+        node.createwallet(wallet_name="blsct_encrypted", blsct=True, passphrase="pass")
+        encrypted = node.get_wallet_rpc("blsct_encrypted")
+        assert_equal(encrypted.getwalletinfo()["blank"], False)
+        encrypted.walletpassphrase("pass", 60)
+        assert_equal(encrypted.keypoolrefill(5), None)
+        encrypted.getnewaddress(label="", address_type="blsct")
+        encrypted.walletlock()
+
+        self.log.info("keypoolrefill refuses a view-only BLSCT wallet")
+        node.createwallet(wallet_name="blsct_view_only", blsct=True, seed=wallet.getblsctauditkey())
+        view_only = node.get_wallet_rpc("blsct_view_only")
+        assert_equal(view_only.getwalletinfo()["private_keys_enabled"], False)
+        assert_raises_rpc_error(-4, "Error: Private keys are disabled for this wallet", view_only.keypoolrefill)
+        assert_raises_rpc_error(-4, "Error: Private keys are disabled for this wallet", view_only.keypoolrefill, 5)
+
     def test_legacy_wallet_unaffected(self):
         """A plain (non-BLSCT-flagged) wallet is unaffected by the 4
         wallet-flag guards (dumpwallet/sethdseed/signmessage/importwallet),
@@ -414,6 +450,7 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
 
         self.log.info("migratewallet refuses a loaded BLSCT wallet and leaves it loaded")
         self.assert_migratewallet_refused("blsct_guards", sqlite_error)
+        self.assert_migratewallet_refused("blsct_encrypted", sqlite_error)
 
         self.log.info("migratewallet refuses a loaded legacy wallet and leaves it loaded")
         self.assert_migratewallet_refused("legacy_guards", sqlite_error)

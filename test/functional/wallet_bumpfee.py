@@ -488,19 +488,23 @@ def test_dust_to_fee(self, rbf_node, dest_address):
     rbfid = spend_one_input(rbf_node, dest_address)["txid"]
     fulltx = rbf_node.getrawtransaction(rbfid, 1)
     # The DER formatting used by Bitcoin to serialize ECDSA signatures means that signatures can have a
-    # variable size of 70-72 bytes (or possibly even less), with most being 71 or 72 bytes. The signature
-    # in the witness is divided by 4 for the vsize, so this variance can take the weight across a 4-byte
-    # boundary. Thus expected transaction size (p2wpkh, 1 input, 2 outputs) is 140-141 vbytes, usually 141.
-    if not 238 <= fulltx["vsize"] <= 241:
-        raise AssertionError("Invalid tx vsize of {} (238-141 expected), full tx: {}".format(fulltx["vsize"], fulltx))
-    # Bump with fee_rate of 350.25 sat/vB vbytes to create dust.
-    # Expected fee is 141 vbytes * fee_rate 0.00350250 BTC / 1000 vbytes = 0.00049385 BTC.
-    # or occasionally 140 vbytes * fee_rate 0.00350250 BTC / 1000 vbytes = 0.00049035 BTC.
+    # variable size; the wallet grinds for low R, so they are at most 71 bytes and usually exactly 71. The
+    # signature in the witness is divided by 4 for the vsize, so this variance can take the weight across a
+    # 4-byte boundary. Thus expected transaction size (p2wpkh, 1 input, 2 outputs with predicates) is 238-239 vbytes,
+    # usually 239.
+    if not 238 <= fulltx["vsize"] <= 239:
+        raise AssertionError("Invalid tx vsize of {} (238-239 expected), full tx: {}".format(fulltx["vsize"], fulltx))
+    # Bump with fee_rate of 206.25 sat/vB vbytes to create dust.
+    # Expected fee is 239 vbytes * fee_rate 0.00206250 BTC / 1000 vbytes = 0.00049294 BTC.
+    # or occasionally 238 vbytes * fee_rate 0.00206250 BTC / 1000 vbytes = 0.00049088 BTC.
     # Dust should be dropped to the fee, so actual bump fee is 0.00050000 BTC.
-    bumped_tx = rbf_node.bumpfee(rbfid, fee_rate=350.25)
+    # The rate must also stay low enough that the 1-output tx's fee fits in the 0.00050000 BTC the original
+    # input leaves after the payment; above that, bumpfee adds a wallet input and keeps a change output.
+    bumped_tx = rbf_node.bumpfee(rbfid, fee_rate=206.25)
     full_bumped_tx = rbf_node.getrawtransaction(bumped_tx["txid"], 1)
-    assert_equal(bumped_tx["fee"], Decimal("0.00095220"))
+    assert_equal(bumped_tx["fee"], Decimal("0.00050000"))
     assert_equal(len(fulltx["vout"]), 2)
+    assert_equal(len(full_bumped_tx["vin"]), 1)  # no wallet input is added
     assert_equal(len(full_bumped_tx["vout"]), 1)  # change output is eliminated
     assert_equal(full_bumped_tx["vout"][0]['value'], Decimal("0.00050000"))
     self.clear_mempool()
@@ -532,8 +536,8 @@ def test_settxfee(self, rbf_node, dest_address):
 
 def test_maxtxfee_fails(self, rbf_node, dest_address):
     self.log.info('Test that bumpfee fails when it hits -maxtxfee')
-    # size of bumped transaction (p2wpkh, 1 input, 2 outputs): 141 vbytes
-    # expected bump fee of 141 vbytes * 0.00200000 BTC / 1000 vbytes = 0.00002820 BTC
+    # size of bumped transaction (p2wpkh, 1 input, 2 outputs with predicates): 239 vbytes
+    # expected bump fee of 239 vbytes * 0.00020000 BTC / 1000 vbytes = 0.00004780 BTC
     # which exceeds maxtxfee and is expected to raise
     self.restart_node(1, ['-maxtxfee=0.000025'] + self.extra_args[1])
     rbf_node.walletpassphrase(WALLET_PASSPHRASE, WALLET_PASSPHRASE_TIMEOUT)
