@@ -19,7 +19,9 @@ from test_framework.blocktools import (
     COINBASE_MATURITY,
 )
 from test_framework.messages import (
+    COIN,
     MAX_BIP125_RBF_SEQUENCE,
+    WITNESS_SCALE_FACTOR,
 )
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
@@ -41,7 +43,26 @@ WALLET_PASSPHRASE_TIMEOUT = 3600
 INSUFFICIENT =      1
 ECONOMICAL   =     50
 NORMAL       =    100
-TOO_HIGH     = 100000
+# Navio's default -maxtxfee is far above Bitcoin's, so this rate is too: it must push the fee for the
+# single-input tx test_invalid_parameters bumps over DEFAULT_MAX_TX_FEE.
+TOO_HIGH     = 5000000
+
+# DEFAULT_TRANSACTION_MAXFEE, in satoshis
+DEFAULT_MAX_TX_FEE = 10 * COIN
+# Size of the dummy signature, sighash byte included, that the wallet's size estimate assumes for a
+# low-R signer: DummySignatureCreator(32, 32) in src/script/sign.cpp
+DUMMY_SIGNATURE_SIZE = 32 + 32 + 7
+# -discardfee (BTC/kvB), set explicitly because test_dust_to_fee depends on it
+DISCARD_FEE = Decimal("0.0001")
+# Longest target estimatesmartfee accepts; it is clamped to the longest the estimator can answer for
+MAX_CONF_TARGET = 1008
+
+def format_money(sats):
+    """Format an amount in satoshis as FormatMoney does: trailing zeros trimmed down to two decimals."""
+    money = f"{sats // COIN}.{sats % COIN:08d}"
+    while money.endswith("0") and money[-3].isdigit():
+        money = money[:-1]
+    return money
 
 def get_change_address(tx, node):
     tx_details = node.getrawtransaction(tx, 1)
@@ -58,6 +79,7 @@ class BumpFeeTest(BitcoinTestFramework):
         self.extra_args = [[
             "-walletrbf={}".format(i),
             "-mintxfee=0.00002",
+            "-discardfee={}".format(DISCARD_FEE),
             "-addresstype=bech32",
             "-whitelist=noban@127.0.0.1",
         ] for i in range(self.num_nodes)]
@@ -90,6 +112,7 @@ class BumpFeeTest(BitcoinTestFramework):
         dest_address = peer_node.getnewaddress()
         for mode in ["default", "fee_rate", "new_outputs"]:
             test_simple_bumpfee_succeeds(self, mode, rbf_node, peer_node, dest_address)
+        self.test_invalid_parameters(rbf_node, peer_node, dest_address)
         test_nonrbf_bumpfee_fails(self, peer_node, dest_address)
         test_notmine_bumpfee(self, rbf_node, peer_node, dest_address)
         test_bumpfee_with_descendant_fails(self, rbf_node, rbf_node_address, dest_address)
@@ -120,15 +143,23 @@ class BumpFeeTest(BitcoinTestFramework):
         rbfid = spend_one_input(rbf_node, dest_address)["txid"]
         self.sync_mempools((rbf_node, peer_node))
         assert rbfid in rbf_node.getrawmempool() and rbfid in peer_node.getrawmempool()
+        # bumpfee prices a fee_rate on the tx's maximum signed size, which the wallet estimates with a
+        # 71-byte dummy signature (DUMMY_SIGNATURE_CREATOR) in place of the real one in the witness.
+        rbftx = rbf_node.getrawtransaction(rbfid, 1)
+        signature_size = len(rbftx["vin"][0]["txinwitness"][0]) // 2
+        max_vsize = -(-(rbftx["weight"] - signature_size + DUMMY_SIGNATURE_SIZE) // WITNESS_SCALE_FACTOR)
 
         for key in ["totalFee", "feeRate"]:
             assert_raises_rpc_error(-3, "Unexpected key {}".format(key), rbf_node.bumpfee, rbfid, {key: NORMAL})
 
         # Bumping to just above minrelay should fail to increase the total fee enough.
-        assert_raises_rpc_error(-8, "Insufficient total fee 0.00000141", rbf_node.bumpfee, rbfid, fee_rate=INSUFFICIENT)
+        assert_raises_rpc_error(-8, f"Insufficient total fee {format_money(max_vsize * INSUFFICIENT)},",
+            rbf_node.bumpfee, rbfid, fee_rate=INSUFFICIENT)
 
         self.log.info("Test invalid fee rate settings")
-        assert_raises_rpc_error(-4, "Specified or calculated fee 0.141 is too high (cannot be higher than -maxtxfee 0.10",
+        assert_greater_than(max_vsize * TOO_HIGH, DEFAULT_MAX_TX_FEE)
+        assert_raises_rpc_error(-4, f"Specified or calculated fee {format_money(max_vsize * TOO_HIGH)} is too high "
+            f"(cannot be higher than -maxtxfee {format_money(DEFAULT_MAX_TX_FEE)})",
             rbf_node.bumpfee, rbfid, fee_rate=TOO_HIGH)
         # Test fee_rate with zero values.
         msg = "Insufficient total fee 0.00"
@@ -485,6 +516,12 @@ def test_small_output_with_feerate_succeeds(self, rbf_node, dest_address):
 
 def test_dust_to_fee(self, rbf_node, dest_address):
     self.log.info('Test that bumped output that is dust is dropped to fee')
+    # Whether the leftover change is dust depends on the wallet's discard rate, which is the longest-target
+    # fee estimate capped at -discardfee. A lower rate keeps the leftover as a change output, so the
+    # estimate must not undercut -discardfee.
+    estimate = rbf_node.estimatesmartfee(MAX_CONF_TARGET, "economical")
+    assert "feerate" not in estimate or estimate["feerate"] >= DISCARD_FEE, \
+        f"fee estimate {estimate} lowers the discard rate below -discardfee {DISCARD_FEE}"
     rbfid = spend_one_input(rbf_node, dest_address)["txid"]
     fulltx = rbf_node.getrawtransaction(rbfid, 1)
     # The DER formatting used by Bitcoin to serialize ECDSA signatures means that signatures can have a
@@ -499,7 +536,8 @@ def test_dust_to_fee(self, rbf_node, dest_address):
     # or occasionally 238 vbytes * fee_rate 0.00206250 BTC / 1000 vbytes = 0.00049088 BTC.
     # Dust should be dropped to the fee, so actual bump fee is 0.00050000 BTC.
     # The rate must also stay low enough that the 1-output tx's fee fits in the 0.00050000 BTC the original
-    # input leaves after the payment; above that, bumpfee adds a wallet input and keeps a change output.
+    # input leaves after the payment; above that, bumpfee adds a wallet input to cover the fee (still with a
+    # single output), so the fee is no longer just the original change dropped as dust.
     bumped_tx = rbf_node.bumpfee(rbfid, fee_rate=206.25)
     full_bumped_tx = rbf_node.getrawtransaction(bumped_tx["txid"], 1)
     assert_equal(bumped_tx["fee"], Decimal("0.00050000"))
