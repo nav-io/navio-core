@@ -448,6 +448,13 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
                             status = DatabaseStatus::FAILED_CREATE;
                             return nullptr;
                         }
+                        // A wallet born encrypted was created blank only so it could be
+                        // encrypted first. Unlike a legacy ScriptPubKeyMan's seed, the
+                        // BLSCT seed does not clear that flag, and a BLSCT wallet may
+                        // have no legacy ScriptPubKeyMan to clear it.
+                        if (wallet->IsWalletFlagSet(WALLET_FLAG_BLANK_WALLET)) {
+                            wallet->UnsetWalletFlag(WALLET_FLAG_BLANK_WALLET);
+                        }
                     }
                 }
             }
@@ -1556,11 +1563,42 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             // into a single block tx whose hash differs from any of ours.
             // The originating CWalletTx records would otherwise stay stuck
             // in TxStateInMempool / TxStateInactive forever (its hash is not
-            // on chain). Reconcile by matching every vout of the incoming
-            // block tx back to the CWalletTx that produced it: any send
-            // whose outputs all appear in this block was rolled into the
-            // aggregate and is, for accounting purposes, confirmed here.
-            if (std::get_if<TxStateConfirmed>(&tx_state)) {
+            // on chain). Reconcile them: a wallet tx sharing an output with
+            // the incoming block tx that was merged into it (see
+            // merged_into_block) is, for accounting purposes, confirmed here.
+            if (const auto* conf = std::get_if<TxStateConfirmed>(&tx_state)) {
+                // Whether wtx was merged into this block tx by aggregation
+                // (blsct::AggregateTransactions): the block tx spends every
+                // input of wtx and creates every one of its non-fee outputs.
+                // Fee outputs are skipped because aggregation folds them into
+                // a single new fee output. Sharing some outputs is not enough:
+                // two senders can pick the same cover candidate, so another
+                // sender's aggregate mined with it shares the candidate's
+                // output with ours while our own half never lands. A tx with
+                // no non-fee output is never merged; its inputs alone do not
+                // identify it. This is the rule CTxMemPool applies to remove
+                // merged txs for a block (IsContainedIn() in txmempool.cpp).
+                std::set<uint256> block_spent;
+                for (const CTxIn& txin : tx.vin) {
+                    block_spent.insert(txin.prevout.hash);
+                }
+                std::set<uint256> block_created;
+                for (const Outid& out_id : tx.GetOutputIds()) {
+                    block_created.insert(out_id.ToUint256());
+                }
+                const auto merged_into_block = [&](const CWalletTx& wtx) {
+                    for (const CTxIn& txin : wtx.tx->vin) {
+                        if (!block_spent.contains(txin.prevout.hash)) return false;
+                    }
+                    bool has_output{false};
+                    for (size_t i = 0; i < wtx.tx->vout.size(); ++i) {
+                        if (wtx.tx->vout[i].IsFee()) continue;
+                        if (!block_created.contains(wtx.tx->GetOutputId(i).ToUint256())) return false;
+                        has_output = true;
+                    }
+                    return has_output;
+                };
+
                 std::set<uint256> matched_wtx;
                 for (const Outid& out_id : tx.GetOutputIds()) {
                     auto it_idx = mapOutpointHashToWalletTx.find(out_id.ToUint256());
@@ -1568,6 +1606,7 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                     const CWalletTx* src = it_idx->second;
                     if (src->GetHash() == tx.GetHash()) continue; // direct match handled above
                     if (src->isConfirmed()) continue;
+                    if (!merged_into_block(*src)) continue;
                     matched_wtx.insert(src->GetHash());
                 }
                 if (!matched_wtx.empty()) {
@@ -1579,6 +1618,36 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                         wit->second.MarkDirty();
                         batch.WriteTx(wit->second);
                     }
+                }
+
+                // Any other wallet tx spending an input of this block tx is
+                // conflicted by it, together with its descendants, so its
+                // inputs stop counting as spent (see IsSpent()). This mirrors
+                // the MarkConflicted() call of the non-BLSCT path below, which
+                // this branch returns before.
+                //
+                // A wallet tx merged into this block tx is excluded: it is one
+                // of our sends the staker aggregated, spending the same inputs
+                // under another hash, so it is confirmed, not conflicted. It
+                // is checked for every spender rather than taken from
+                // matched_wtx, which finds a wallet tx through
+                // mapOutpointHashToWalletTx and so only one of several sharing
+                // an output.
+                std::set<uint256> conflicted;
+                for (const CTxIn& txin : tx.vin) {
+                    const auto range = mapTxSpends.equal_range(txin.prevout);
+                    for (auto it_spend = range.first; it_spend != range.second; ++it_spend) {
+                        const uint256& spender = it_spend->second;
+                        if (spender == tx.GetHash()) continue;
+                        const auto wit = mapWallet.find(spender);
+                        if (wit == mapWallet.end() || merged_into_block(wit->second)) continue;
+                        if (conflicted.insert(spender).second) {
+                            WalletLogPrintf("Transaction %s (in block %s) conflicts with wallet transaction %s (both spend %s)\n", tx.GetHash().ToString(), conf->confirmed_block_hash.ToString(), spender.ToString(), txin.prevout.hash.ToString());
+                        }
+                    }
+                }
+                for (const uint256& spender : conflicted) {
+                    MarkConflicted(conf->confirmed_block_hash, conf->confirmed_block_height, spender);
                 }
             }
 
@@ -1676,10 +1745,20 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             // alone is not enough; adding a second CWalletTx for the on-chain
             // tx would then double-count the debit. The output-listing path
             // dedups any output reachable via a CWalletTx, so credits are not
-            // double-counted either.
+            // double-counted either. A conflicted spender, such as one this
+            // block tx just conflicted above, accounts for nothing: its debit
+            // no longer counts, so it does not stand in for this spend.
             bool spend_already_tracked = false;
             for (const auto& txin : tx.vin) {
-                if (mapTxSpends.contains(txin.prevout)) { spend_already_tracked = true; break; }
+                const auto range = mapTxSpends.equal_range(txin.prevout);
+                for (auto it_spend = range.first; it_spend != range.second; ++it_spend) {
+                    const auto wit = mapWallet.find(it_spend->second);
+                    if (wit == mapWallet.end() || !wit->second.isConflicted()) {
+                        spend_already_tracked = true;
+                        break;
+                    }
+                }
+                if (spend_already_tracked) break;
             }
             if (IsFromMe(tx) && !mapWallet.contains(tx.GetHash()) && !spend_already_tracked) {
                 CWalletTx* wtx = AddToWallet(MakeTransactionRef(tx), tx_state, /*update_wtx=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block);
@@ -1954,17 +2033,20 @@ void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRe
         if (it != mapWallet.end()) {
             RefreshMempoolStatus(it->second, chain());
         }
-    } else {
-        // In output-storage mode, mapWallet is not used for BLSCT txs.
-        // Walk the matching outpoints in mapOutputs and clear InMempool state
-        // so outputs do not remain stuck as unconfirmed after eviction/reorg.
-        for (const Outid& out_id : tx->GetOutputIds()) {
-            COutPoint outpoint(out_id);
-            auto it = mapOutputs.find(outpoint);
-            if (it != mapOutputs.end() && it->second.state<TxStateInMempool>()) {
-                it->second.m_state = TxStateInactive{};
-            }
-        }
+    } else if (reason != MemPoolRemovalReason::BLOCK && reason != MemPoolRemovalReason::CONFLICT) {
+        // Output-storage BLSCT txs do not go through RefreshMempoolStatus:
+        // their state is not refreshed from the mempool. Sync the tx
+        // out of the mempool as Inactive, as the CONFLICT path below does,
+        // or a locally-created send that expired or was evicted stays
+        // InMempool: trusted, counted in the balance, and refused by
+        // abandontransaction, so the coins it spends cannot be freed.
+        // Its outputs become Inactive and the spend flags it set in
+        // mapOutputs are cleared, but as a CWalletTx it keeps its inputs
+        // spent through mapTxSpends (see IsSpent()) until it is abandoned
+        // or conflicted.
+        // BLOCK is excluded because blockConnected() has just synced the
+        // tx as confirmed before reporting it removed.
+        SyncTransaction(tx, TxStateInactive{});
     }
     // Handle transactions that were removed from the mempool because they
     // conflict with transactions in a newly connected block.
@@ -2102,6 +2184,11 @@ CAmount CWallet::GetDebit(const CTxIn& txin, const isminefilter& filter, const T
             const auto mo = mapOutputs.find(txin.prevout);
             if (mo != mapOutputs.end()) {
                 const CWalletOutput& wout = (*mo).second;
+                // Apply the filter and token id, as the CWalletTx branch above
+                // does for BLSCT outputs: without them a watch-only query
+                // counts every spendable input, and a token input counts
+                // toward the NAV debit.
+                if (wout.out->tokenId != token_id || !(IsMine(*wout.out) & filter)) return 0;
                 return wout.blsctRecoveryData.amount;
             }
         }
@@ -2416,7 +2503,8 @@ CWallet::ScanResult CWallet::ScanForWalletTransactions(const uint256& start_bloc
     ScanResult result;
 
     std::unique_ptr<FastWalletRescanFilter> fast_rescan_filter;
-    if (!IsLegacy() && chain().hasBlockFilterIndex(BlockFilterType::BASIC)) fast_rescan_filter = std::make_unique<FastWalletRescanFilter>(*this);
+    // BLSCT outputs are found by view key, not by a scriptPubKey a block filter can match.
+    if (!IsLegacy() && !IsWalletFlagSet(WALLET_FLAG_BLSCT) && chain().hasBlockFilterIndex(BlockFilterType::BASIC)) fast_rescan_filter = std::make_unique<FastWalletRescanFilter>(*this);
 
     WalletLogPrintf("Rescan started from block %s... (%s)\n", start_block.ToString(),
                     fast_rescan_filter ? "fast variant using block filters" : "slow variant inspecting all blocks");
@@ -3660,8 +3748,10 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
 
         walletInstance->SetupBLSCTKeyMan();
 
-        // Only create LegacyScriptPubKeyMan when not descriptor wallet
-        if (!walletInstance->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+        // Only create LegacyScriptPubKeyMan when not descriptor wallet. A BLSCT
+        // wallet keeps its keys in the BLSCT keyman, so a transparent HD seed
+        // would only be an unused key to back up.
+        if (!walletInstance->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS) && !walletInstance->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
             walletInstance->SetupLegacyScriptPubKeyMan();
         }
 
@@ -4962,7 +5052,9 @@ util::Result<MigrationResult> MigrateLegacyToDescriptor(const std::string& walle
         // Refuse a wallet that cannot be migrated while it is still loaded: the refusals
         // further down return without loading it again, so reaching them after the
         // unload would leave the user's wallet unloaded.
-        if (!wallet->GetLegacyScriptPubKeyMan()) {
+        // A BLSCT wallet may have no legacy ScriptPubKeyMan, but it is not a
+        // descriptor wallet either: it falls through to the SQLite refusal.
+        if (!wallet->GetLegacyScriptPubKeyMan() && !wallet->IsWalletFlagSet(WALLET_FLAG_BLSCT)) {
             return util::Error{_("Error: This wallet is already a descriptor wallet")};
         }
         if (wallet->GetDatabase().Format() == "sqlite") {

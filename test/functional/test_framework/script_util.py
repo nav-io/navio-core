@@ -22,17 +22,21 @@ from test_framework.script import (
 # non-witness size of at least 65 bytes (MIN_STANDARD_TX_NONWITNESS_SIZE in
 # src/policy/policy.h). Considering a Tx with the smallest possible single
 # input (blank, empty scriptSig), and with an output omitting the scriptPubKey,
-# we get to a minimum size of 60 bytes:
+# we get to a minimum size of 56 bytes:
 #
 # Tx Skeleton: 4 [Version] + 1 [InCount] + 1 [OutCount] + 4 [LockTime] = 10 bytes
-# Blank Input: 32 [PrevTxHash] + 4 [Index] + 1 [scriptSigLen] + 4 [SeqNo] = 41 bytes
+# Blank Input: 32 [PrevOutHash] + 1 [scriptSigLen] + 4 [SeqNo] = 37 bytes
 # Output:      8 [Amount] + 1 [scriptPubKeyLen] = 9 bytes
 #
+# A navio COutPoint serializes only the output hash, with no index. The output
+# size assumes an OP_RETURN script: messages.CTxOut gives any other script a
+# random predicate, which adds flags and predicate bytes to the output.
+#
 # Hence, the scriptPubKey of the single output has to have a size of at
-# least 5 bytes.
+# least 9 bytes.
 MIN_STANDARD_TX_NONWITNESS_SIZE = 65
-MIN_PADDING = MIN_STANDARD_TX_NONWITNESS_SIZE - 10 - 41 - 9
-assert MIN_PADDING == 5
+MIN_PADDING = MIN_STANDARD_TX_NONWITNESS_SIZE - 10 - 37 - 9
+assert MIN_PADDING == 9
 
 # This script cannot be spent, allowing dust output values under
 # standardness checks

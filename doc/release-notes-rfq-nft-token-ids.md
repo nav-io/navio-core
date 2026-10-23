@@ -1,5 +1,4 @@
-Updated RPCs
-------------
+## Updated RPCs
 
 - `setswapintent`, `requestquote`, `sendquote`, `sendorder` and `broadcastorder`
   now accept an NFT as a token argument, written the way `listorders` prints it:

@@ -86,14 +86,24 @@ CAmount OutputGetCredit(const CWallet& wallet, const CWalletOutput& wout, const 
         return ((wallet.IsMine(txout) & filter) ? txout.nValue : 0);
 }
 
-CAmount TxGetCredit(const CWallet& wallet, const CTransaction& tx, const isminefilter& filter, const TokenId& token_id)
+// Outpoint hashes spent by the inputs of tx. An aggregated block transaction
+// (the staker merges several BLSCT txs into one, without cut-through) holds
+// intermediates: outputs created by one merged tx and spent by a later one, so
+// both the output and the input spending it sit inside the same transaction.
+// They are internal to the aggregate and must be skipped on the output side,
+// as CWallet::GetDebit skips the inputs that spend them.
+static std::set<uint256> OutputsSpentInTx(const CTransaction& tx)
 {
-    // Skip outputs that are spent by a later input of the SAME transaction.
-    // Aggregated block transactions (the staker merges several BLSCT txs into
-    // one) contain such intermediates; counting them inflates the credit past
-    // MoneyRange and throws, crashing the node on block processing.
     std::set<uint256> spent_in_tx;
     for (const CTxIn& txin : tx.vin) spent_in_tx.insert(txin.prevout.hash);
+    return spent_in_tx;
+}
+
+CAmount TxGetCredit(const CWallet& wallet, const CTransaction& tx, const isminefilter& filter, const TokenId& token_id)
+{
+    // Counting intermediates inflates the credit past MoneyRange and throws,
+    // crashing the node on block processing.
+    const std::set<uint256> spent_in_tx{OutputsSpentInTx(tx)};
 
     CAmount nCredit = 0;
     for (size_t i = 0; i < tx.vout.size(); ++i)
@@ -152,10 +162,8 @@ CAmount OutputGetChange(const CWallet& wallet, const CTxOut& txout, const TokenI
 CAmount TxGetChange(const CWallet& wallet, const CTransaction& tx, const TokenId& token_id)
 {
     LOCK(wallet.cs_wallet);
-    // Skip intra-transaction self-spends (aggregated block tx intermediates),
-    // as in TxGetCredit, to avoid summing past MoneyRange.
-    std::set<uint256> spent_in_tx;
-    for (const CTxIn& txin : tx.vin) spent_in_tx.insert(txin.prevout.hash);
+    // Skip intermediates, as in TxGetCredit, to avoid summing past MoneyRange.
+    const std::set<uint256> spent_in_tx{OutputsSpentInTx(tx)};
 
     CAmount nChange = 0;
     for (size_t i = 0; i < tx.vout.size(); ++i)
@@ -352,11 +360,18 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
 
     LOCK(wallet.cs_wallet);
 
+    // nDebit leaves out the inputs that spend intermediates, so the
+    // intermediates themselves must not count as change or as received: a
+    // reimported wallet that sees only the merged block tx would otherwise
+    // net every intermediate change against the debit of the original coins.
+    const std::set<uint256> spent_in_tx{OutputsSpentInTx(*wtx.tx)};
+
     // Sent/received.
     for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i)
     {
         const CTxOut& txout = wtx.tx->vout[i];
         if (txout.tokenId != token_id) continue;
+        if (spent_in_tx.contains(wtx.tx->GetOutputId(i).ToUint256())) continue;
         isminetype fIsMine = wallet.IsMine(txout);
         // Only need to handle txouts if AT LEAST one of these is true:
         //   1) they debit from us (sent)

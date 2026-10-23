@@ -127,9 +127,12 @@ static void EnsureTransparentCoinbaseAllowed(const JSONRPCRequest& request, cons
     // On an fBLSCT chain every block must carry the BLSCT version bit, so
     // ConnectBlock verifies its coinbase as a BLSCT reward transaction. A
     // block built around a transparent coinbase script fails that check
-    // ("failed-signature-check") and can never be mined here.
-    if (EnsureAnyChainman(request.context).GetConsensus().fBLSCT) {
-        throw JSONRPCError(RPC_MISC_ERROR, strprintf("This network only supports confidential (BLSCT) transactions; a block paying a transparent coinbase is always rejected here, so %s is not available. Use generatetoblsctaddress instead.", method));
+    // ("failed-signature-check") and can never be mined here. The BLSCT
+    // miner is no general replacement: ContextualCheckBlockHeader rejects a
+    // proof-of-work block above nLastPOWHeight ("late proof of work").
+    const Consensus::Params& consensus{EnsureAnyChainman(request.context).GetConsensus()};
+    if (consensus.fBLSCT) {
+        throw JSONRPCError(RPC_MISC_ERROR, strprintf("This network only supports confidential (BLSCT) transactions; a block paying a transparent coinbase is always rejected here, so %s is not available. Blocks above height %d must be proof-of-stake; up to that height, generatetoblsctaddress can mine proof-of-work blocks instead.", method, consensus.nLastPOWHeight));
     }
 }
 
@@ -171,7 +174,8 @@ static RPCHelpMan generatetodescriptor()
 {
     return RPCHelpMan{
         "generatetodescriptor",
-        "Mine to a specified descriptor and return the block hashes.",
+        "Mine to a specified descriptor and return the block hashes.\n"
+        "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
         {
             {"num_blocks", RPCArg::Type::NUM, RPCArg::Optional::NO, "How many blocks are generated."},
             {"descriptor", RPCArg::Type::STR, RPCArg::Optional::NO, "The descriptor to send the newly generated NAV to."},
@@ -250,7 +254,8 @@ static RPCHelpMan generatetoaddress()
 {
     return RPCHelpMan{
         "generatetoaddress",
-        "Mine to a specified address and return the block hashes.",
+        "Mine to a specified address and return the block hashes.\n"
+        "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
         {
             {"nblocks", RPCArg::Type::NUM, RPCArg::Optional::NO, "How many blocks are generated."},
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The address to send the newly generated nav to."},
@@ -286,7 +291,8 @@ static RPCHelpMan generatetoaddress()
 static RPCHelpMan generateblock()
 {
     return RPCHelpMan{"generateblock",
-        "Mine a set of ordered transactions to a specified address or descriptor and return the block hash.",
+        "Mine a set of ordered transactions to a specified address or descriptor and return the block hash.\n"
+        "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
         {
             {"output", RPCArg::Type::STR, RPCArg::Optional::NO, "The address or descriptor to send the newly generated NAV to."},
             {"transactions", RPCArg::Type::ARR, RPCArg::Optional::NO, "An array of hex strings which are either txids or raw transactions.\n"

@@ -11,10 +11,21 @@ confidential balance behind), nor against a BLSCT destination address (they
 would build a broken, unspendable transparent output). This test asserts
 that each guarded RPC fails fast with an actionable error pointing at the
 correct blsct RPC, instead of silently doing the wrong thing.
+
+It runs on regtest on purpose: on an fBLSCT chain EnsureTransparentSpendAllowed
+refuses these RPCs first, so the wallet guards checked here would never fire.
 """
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_raises_rpc_error
+
+# EnsureNotBLSCTWallet's message, formatted with the blsct RPC to use instead.
+# Asserted in full: its alternative-RPC names and "BLSCT" also appear in other
+# errors these RPCs can raise, which would not prove this guard fired.
+BLSCT_WALLET_ERROR = ("This RPC does not support BLSCT (confidential) wallets: it would silently "
+                      "build a transparent transaction and/or ignore confidential coins. Use {} instead.")
+BUMPFEE_BLSCT_WALLET_ERROR = ("BLSCT (confidential) wallets do not support transparent RBF fee bumping. "
+                              "Construct and broadcast a new confidential transaction instead (see sendtoblsctaddress).")
 
 # A well-formed regtest BLSCT address whose view and spend keys are both the
 # identity (point at infinity). It decodes fine and validateaddress calls it
@@ -58,37 +69,37 @@ class BLSCTSpendRPCGuardsTest(BitcoinTestFramework):
 
         self.log.info("sendmany is rejected on a BLSCT wallet")
         assert_raises_rpc_error(
-            -4, "sendtoblsctaddress",
+            -4, BLSCT_WALLET_ERROR.format("sendtoblsctaddress"),
             blsct_wallet.sendmany, "", {transparent_addr: 1},
         )
 
         self.log.info("send is rejected on a BLSCT wallet")
         assert_raises_rpc_error(
-            -4, "sendtoblsctaddress",
+            -4, BLSCT_WALLET_ERROR.format("sendtoblsctaddress"),
             blsct_wallet.send, {transparent_addr: 1},
         )
 
         self.log.info("sendall is rejected on a BLSCT wallet")
         assert_raises_rpc_error(
-            -4, "sendtoblsctaddress",
+            -4, BLSCT_WALLET_ERROR.format("sendtoblsctaddress"),
             blsct_wallet.sendall, [transparent_addr],
         )
 
         self.log.info("fundrawtransaction is rejected on a BLSCT wallet")
         assert_raises_rpc_error(
-            -4, "fundblsctrawtransaction",
+            -4, BLSCT_WALLET_ERROR.format("fundblsctrawtransaction"),
             blsct_wallet.fundrawtransaction, "00",
         )
 
         self.log.info("signrawtransactionwithwallet is rejected on a BLSCT wallet")
         assert_raises_rpc_error(
-            -4, "signblsctrawtransaction",
+            -4, BLSCT_WALLET_ERROR.format("signblsctrawtransaction"),
             blsct_wallet.signrawtransactionwithwallet, "00",
         )
 
         self.log.info("bumpfee is rejected on a BLSCT wallet")
         assert_raises_rpc_error(
-            -4, "BLSCT",
+            -4, BUMPFEE_BLSCT_WALLET_ERROR,
             blsct_wallet.bumpfee, dummy_txid,
         )
 

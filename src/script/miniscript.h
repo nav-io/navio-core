@@ -253,8 +253,8 @@ static constexpr uint32_t MAX_TAPMINISCRIPT_STACK_ELEM_SIZE{65};
 
 //! nVersion + nLockTime
 constexpr uint32_t TX_OVERHEAD{4 + 4};
-//! prevout + nSequence + scriptSig
-constexpr uint32_t TXIN_BYTES_NO_WITNESS{36 + 4 + 1};
+//! prevout (output hash only, no index in Navio) + nSequence + scriptSig length
+constexpr uint32_t TXIN_BYTES_NO_WITNESS{32 + 4 + 1};
 //! nValue + script len + OP_0 + pushdata 32.
 constexpr uint32_t P2WSH_TXOUT_BYTES{8 + 1 + 1 + 33};
 //! Data other than the witness in a transaction. Overhead + vin count + one vin + vout count + one vout + segwit marker

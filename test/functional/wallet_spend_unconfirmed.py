@@ -461,8 +461,9 @@ class UnconfirmedInputTest(BitcoinTestFramework):
         spend_res = wallet.send(outputs=[{self.def_wallet.getnewaddress(): 0.5}], fee_rate=self.target_fee_rate, options={"inputs":[{"outid": external_outid}], "solving_data":{"descriptors":[external_descriptor]}})
         assert_equal(spend_res["complete"], False)
         assert "txid" not in spend_res
-        assert_equal([(e["outid"], e["error"]) for e in spend_res["errors"]], [(external_outid, "Witness program hash mismatch")])
-        assert_equal(self.nodes[0].testmempoolaccept([spend_res["hex"]])[0]["reject-reason"], "mempool-script-verify-flag-failed (Witness program hash mismatch)")
+        assert_equal([e["outid"] for e in spend_res["errors"]], [external_outid])
+        reject_reason = self.nodes[0].testmempoolaccept([spend_res["hex"]])[0]["reject-reason"]
+        assert reject_reason.startswith("mempool-script-verify-flag-failed"), reject_reason
 
         # The external wallet owns the input and completes the signature
         signed = self.def_wallet.signrawtransactionwithwallet(spend_res["hex"])

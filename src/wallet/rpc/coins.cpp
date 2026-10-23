@@ -581,7 +581,8 @@ RPCHelpMan getbalances()
             // Watch-only material comes in two flavours: legacy scripts held by
             // the LegacyScriptPubKeyMan, and BLSCT scripts imported with
             // importblsctscript, which a BLSCT wallet keeps in blsct::KeyMan
-            // (it has no legacy ScriptPubKeyMan at all). Either one earns the
+            // (it may have no legacy ScriptPubKeyMan at all; wallets created
+            // before that change still have one). Either one earns the
             // section, and the amounts are the sum of both.
             auto spk_man = wallet.GetLegacyScriptPubKeyMan();
             auto blsct_km = wallet.GetBLSCTKeyMan();

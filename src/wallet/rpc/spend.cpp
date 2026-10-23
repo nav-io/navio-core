@@ -419,7 +419,8 @@ RPCHelpMan sendmany()
 {
     return RPCHelpMan{
         "sendmany",
-        "Send multiple times. Amounts are double-precision floating point numbers." +
+        "Send multiple times. Amounts are double-precision floating point numbers.\n"
+        "Note: This command is not available on networks that only accept confidential (BLSCT) transactions." +
             HELP_REQUIRING_PASSPHRASE,
         {
             {"dummy", RPCArg::Type::STR, RPCArg::Default{"\"\""}, "Must be set to \"\" for backwards compatibility.",
@@ -524,7 +525,8 @@ RPCHelpMan settxfee()
     return RPCHelpMan{
         "settxfee",
         "\nSet the transaction fee rate in " + CURRENCY_UNIT + "/kvB for this wallet. Overrides the global -paytxfee command line parameter.\n"
-                                                               "Can be deactivated by passing 0 as the fee. In that case automatic fee selection will be used by default.\n",
+                                                               "Can be deactivated by passing 0 as the fee. In that case automatic fee selection will be used by default.\n"
+                                                               "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
         {
             {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The transaction fee rate in " + CURRENCY_UNIT + "/kvB"},
         },
@@ -852,7 +854,8 @@ RPCHelpMan fundrawtransaction()
         "Note that all inputs selected must be of standard form and P2SH scripts must be\n"
         "in the wallet using importaddress or addmultisigaddress (to calculate fees).\n"
         "You can see whether this is the case by checking the \"solvable\" field in the listunspent output.\n"
-        "Only pay-to-pubkey, multisig, and P2SH versions thereof are currently supported for watch-only\n",
+        "Only pay-to-pubkey, multisig, and P2SH versions thereof are currently supported for watch-only\n"
+        "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
         {
             {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The hex string of the raw transaction"},
             {"options", RPCArg::Type::OBJ_NAMED_PARAMS, RPCArg::Optional::OMITTED, "For backward compatibility: passing in a true instead of an object will result in {\"includeWatching\":true}",
@@ -994,7 +997,8 @@ RPCHelpMan signrawtransactionwithwallet()
         "signrawtransactionwithwallet",
         "\nSign inputs for raw transaction (serialized, hex-encoded).\n"
         "The second optional argument (may be null) is an array of previous transaction outputs that\n"
-        "this transaction depends on but may not yet be in the block chain." +
+        "this transaction depends on but may not yet be in the block chain.\n"
+        "Note: This command is not available on networks that only accept confidential (BLSCT) transactions." +
             HELP_REQUIRING_PASSPHRASE,
         {
             {"hexstring", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction hex string"},
@@ -1121,7 +1125,8 @@ RPCHelpMan bumpfee()
                             "At a minimum, the new fee rate must be high enough to pay an additional new relay fee (incrementalfee\n"
                             "returned by getnetworkinfo) to enter the node's mempool.\n"
                             "* WARNING: before version 0.21, fee_rate was in " +
-            CURRENCY_UNIT + "/kvB. As of 0.21, fee_rate is in " + CURRENCY_ATOM + "/vB. *\n",
+            CURRENCY_UNIT + "/kvB. As of 0.21, fee_rate is in " + CURRENCY_ATOM + "/vB. *\n"
+                            "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
         {
             {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The txid to be bumped"},
             {"options", RPCArg::Type::OBJ_NAMED_PARAMS, RPCArg::Optional::OMITTED, "", {
@@ -1291,7 +1296,8 @@ RPCHelpMan send()
 {
     return RPCHelpMan{"send",
                       "\nEXPERIMENTAL warning: this call may be changed in future releases.\n"
-                      "\nSend a transaction.\n",
+                      "\nSend a transaction.\n"
+                      "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
                       {
                           {"outputs", RPCArg::Type::ARR, RPCArg::Optional::NO, "The outputs specified as key-value pairs.\n"
                                                                                "Each key may only appear once, i.e. there can only be one 'data' output, and no address may be duplicated.\n"
@@ -1394,7 +1400,8 @@ RPCHelpMan sendall()
                       "EXPERIMENTAL warning: this call may be changed in future releases.\n"
                       "\nSpend the value of all (or specific) confirmed UTXOs in the wallet to one or more recipients.\n"
                       "Unconfirmed inbound UTXOs and locked UTXOs will not be spent. Sendall will respect the avoid_reuse wallet flag.\n"
-                      "If your wallet contains many small inputs, either because it received tiny payments or as a result of accumulating change, consider using `send_max` to exclude inputs that are worth less than the fees needed to spend them.\n",
+                      "If your wallet contains many small inputs, either because it received tiny payments or as a result of accumulating change, consider using `send_max` to exclude inputs that are worth less than the fees needed to spend them.\n"
+                      "Note: This command is not available on networks that only accept confidential (BLSCT) transactions.\n",
                       {
                           {
                               "recipients",

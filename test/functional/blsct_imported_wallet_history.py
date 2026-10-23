@@ -116,6 +116,24 @@ class BlsctImportedWalletHistoryTest(BitcoinTestFramework):
                 continue
             assert_equal(t, block_time[height])
 
+        self.log.info("No entry may claim watch-only involvement: neither wallet imported a script")
+        # The inputs of these sends are coinbase/stake outputs held only in
+        # mapOutputs; GetDebit must apply the ismine filter to them, or
+        # CachedTxIsFromMe(ISMINE_WATCH_ONLY) is true for every such send.
+        flagged = {name: [(e["category"], e["txid"]) for e in wallet.listtransactions("*", 100000, 0, True)
+                          if e.get("involvesWatchonly")]
+                   for name, wallet in (("created", created), ("imported", imported))}
+        assert_equal(flagged, {"created": [], "imported": []})
+        # The filter must not hide the sends themselves. stakelock returns an
+        # output hash, so find the stakelock tx by its stake entry.
+        for wallet in (created, imported):
+            rows = wallet.listtransactions("*", 100000, 0, True)
+            stake_txid = next(e["txid"] for e in rows if e["category"] == "stake")
+            assert any(e["category"] == "send" and e["txid"] == stake_txid for e in rows)
+        details = created.gettransaction(stake_txid)["details"]
+        assert any(d["category"] == "send" for d in details)
+        assert_equal([d for d in details if d.get("involvesWatchonly")], [])
+
 
 if __name__ == '__main__':
     BlsctImportedWalletHistoryTest(__file__).main()

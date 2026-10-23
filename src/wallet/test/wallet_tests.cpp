@@ -929,6 +929,41 @@ BOOST_FIXTURE_TEST_CASE(CreateWalletRejectsExternalSigner, TestingSetup)
     }
 }
 
+BOOST_FIXTURE_TEST_CASE(CreateBlsctWalletHasNoLegacySpkm, TestingSetup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    // A wallet born encrypted is created blank first; the flag must still be
+    // cleared once its BLSCT seed exists.
+    for (const std::string passphrase : {"", "passphrase"}) {
+        BOOST_TEST_CONTEXT("passphrase=\"" << passphrase << "\"")
+        {
+            DatabaseOptions options;
+            options.require_create = true;
+            options.create_flags = WALLET_FLAG_BLSCT;
+            options.create_passphrase = SecureString{passphrase};
+            DatabaseStatus status;
+            bilingual_str error;
+            std::vector<bilingual_str> warnings;
+            auto wallet = wallet::CreateWallet(context, passphrase.empty() ? "blsct_plain" : "blsct_crypted", /*seed=*/{}, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, options, status, error, warnings);
+            BOOST_REQUIRE_MESSAGE(wallet, error.original);
+            {
+                LOCK(wallet->cs_wallet);
+                BOOST_CHECK(!wallet->IsLegacy());
+                BOOST_CHECK(!wallet->GetLegacyScriptPubKeyMan());
+                BOOST_CHECK(wallet->GetActiveScriptPubKeyMans().empty());
+                BOOST_CHECK(wallet->GetBLSCTKeyMan() && wallet->GetBLSCTKeyMan()->CanGenerateKeys());
+                BOOST_CHECK(!wallet->IsWalletFlagSet(WALLET_FLAG_BLANK_WALLET));
+                BOOST_CHECK_EQUAL(wallet->IsCrypted(), !passphrase.empty());
+            }
+            RemoveWallet(context, wallet, /*load_on_start=*/std::nullopt);
+            TestUnloadWallet(std::move(wallet));
+        }
+    }
+}
+
 BOOST_FIXTURE_TEST_CASE(LoadSeedlessBlsctWalletFails, TestingSetup)
 {
     m_args.ForceSetArg("-unsafesqlitesync", "1");

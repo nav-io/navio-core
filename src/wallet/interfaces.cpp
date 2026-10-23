@@ -169,8 +169,9 @@ public:
         if (spk_man && spk_man->HaveWatchOnly()) {
             return true;
         }
-        // BLSCT wallets have no legacy ScriptPubKeyMan; their watch-only
-        // scripts (importblsctscript) live in blsct::KeyMan.
+        // A BLSCT wallet may have no legacy ScriptPubKeyMan (wallets created
+        // before that change still have one); its watch-only scripts
+        // (importblsctscript) live in blsct::KeyMan.
         auto blsct_km = m_wallet->GetBLSCTKeyMan();
         return blsct_km && blsct_km->HaveWatchOnly();
     };

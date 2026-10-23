@@ -160,9 +160,9 @@ class BlsctUnconfirmedChainSingleUtxoTest(BitcoinTestFramework):
         balance_B = self.trusted_balance(walletB)
         balance_C = self.trusted_balance(walletC)
 
-        # `gettransaction["fee"]` on BLSCT sends carries a pre-existing
-        # accounting skew, and aggregation breaks per-tx tracking entirely.
-        # Derive realized total fee from the conservation invariant: every
+        # Aggregation folds the chain's fee outputs into the aggregate's single
+        # fee output, so derive the realized total fee from the conservation
+        # invariant rather than from per-tx fees: every
         # coin that left walletA either ended up in B, C, or paid as fee.
         total_external_sent = sent_to_B + sent_to_C
         total_fee = FUNDING_AMOUNT - balance_A - balance_B - balance_C

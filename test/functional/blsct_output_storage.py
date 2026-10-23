@@ -93,6 +93,19 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
                 fees_by_txid[e["txid"]] = Decimal(str(e["fee"]))
         return amount_sum + sum(fees_by_txid.values())
 
+    def assert_gettransaction_matches_send_row(self, wallet, txid, expected_amount):
+        """gettransaction's top-level amount/fee must agree with the tx's
+        listtransactions send row: the fee is the BLSCT fee output, not
+        inputs minus the (range-proofed, nValue 0) outputs."""
+        row = next(e for e in wallet.listtransactions("*", 10 ** 9, 0, True)
+                   if e["txid"] == txid and e.get("category") == "send")
+        gt = wallet.gettransaction(txid)
+        self.log.info(f"gettransaction {txid}: amount={gt['amount']} fee={gt['fee']}, "
+                      f"send row amount={row['amount']} fee={row['fee']}")
+        assert_greater_than(Decimal("0"), Decimal(str(row["fee"])))
+        assert_equal(Decimal(str(gt["fee"])), Decimal(str(row["fee"])))
+        assert_equal(Decimal(str(gt["amount"])), expected_amount)
+
     def assert_listtx_matches_balance(self, wallet, scenario_label):
         balances = wallet.getbalances()["mine"]
         total_balance = (
@@ -176,6 +189,15 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         # Already triggered above for wa as the sender. Invariant must hold.
         self.assert_listtx_matches_balance(wa, "outgoing external")
 
+        # sendtoblsctaddress returns an output hash, not a txid, so take the
+        # txid from the sender's (only) send row.
+        a_sends = [e for e in wa.listtransactions("*", 10 ** 9, 0, True)
+                   if e.get("category") == "send"]
+        assert_equal(len(a_sends), 1)
+        external_txid = a_sends[0]["txid"]
+        assert_equal(Decimal(str(a_sends[0]["amount"])), -recv_amount)
+        self.assert_gettransaction_matches_send_row(wa, external_txid, -recv_amount)
+
         # --- Scenario: outgoing internal (self-send) ---
         self.log.info("Scenario: self-send")
         self_addr = wa.getnewaddress(label="", address_type="blsct")
@@ -184,6 +206,16 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         self.generate_blsct_blocks(self.nodes[0], aa, 1)
         self.sync_all()
         self.assert_listtx_matches_balance(wa, "self-send")
+
+        # A self-send moves no value out of the wallet: amount 0, fee only.
+        # Its details carry a send of the amount and a matching receive, as
+        # in Bitcoin Core.
+        self_sends = [e for e in wa.listtransactions("*", 10 ** 9, 0, True)
+                      if e.get("category") == "send" and e["txid"] != external_txid]
+        assert_equal(len(self_sends), 1)
+        self_send_txid = self_sends[0]["txid"]
+        assert_equal(Decimal(str(self_sends[0]["amount"])), -Decimal("3"))
+        self.assert_gettransaction_matches_send_row(wa, self_send_txid, Decimal("0"))
 
         # --- Scenario: dedup (mapOutputs entry for local spend must NOT duplicate CWalletTx) ---
         self.log.info("Scenario: dedup check")

@@ -23,8 +23,12 @@ learns the aggregates only from the mempool sync, so it never marks them as
 its own sends: their change stays untrusted and it cannot chain a send until
 one confirmation. The miner merges the chain into one block tx; after that
 block the reimported wallet must report the creating wallet's history,
-balances and coins, with one send leg per aggregated send. Reimporting only
-after the merged block is a separate known issue (#512), not covered here.
+balances and coins, with one send leg per aggregated send.
+
+A wallet reimported only after the merged block cannot split the block tx back
+into the original sends: it reports one send row for the block tx, paying the
+whole chain's amount to others with the chain's total fee, and the creating
+wallet's balances and coins (#512).
 """
 
 from collections import Counter
@@ -149,6 +153,27 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         assert_equal([Decimal(str(e["amount"])) for e in receives], [FUNDING_AMOUNT])
         assert_equal(Counter(e["category"] for e in entries), Counter({"send": len(chain_txids), "receive": 1}))
 
+    def assert_merged_send(self, created, imported, merged_txid, chain_txids):
+        """A wallet that only ever saw the merged block tx reports it as one
+        send of everything the chain paid to others, with the chain's total
+        fee, and holds the creating wallet's balances and coins."""
+        entries = [e for e in imported.listtransactions("*", 100000, 0, True) if e["confirmations"] > 0]
+        self.log.info(f"imported after: history: {[(e['category'], e['amount'], e.get('fee'), e['txid'][:8]) for e in entries]}")
+        sends = [e for e in entries if e["category"] == "send"]
+        assert_equal([e["txid"] for e in sends], [merged_txid])
+        # Every hop paid SEND_AMOUNT to the producer's address; the
+        # intermediate change each hop created and the next spent is internal
+        # to the merged tx and must not count as sent or received.
+        assert_equal(Decimal(str(sends[0]["amount"])), -len(chain_txids) * SEND_AMOUNT)
+        # The cover halves pay no fee, so the merged tx's fee is exactly the
+        # sum of the creating wallet's per-send fees.
+        created_fees = sum(Decimal(str(e["fee"])) for e in created.listtransactions("*", 100000, 0, True) if e["category"] == "send")
+        assert_equal(Decimal(str(sends[0]["fee"])), created_fees)
+        assert_equal(Counter(e["category"] for e in entries), Counter({"send": 1, "receive": 1}))
+        assert_equal(imported.getbalances()["mine"], created.getbalances()["mine"])
+        assert_equal(self.coins(imported), self.coins(created))
+        self.assert_balance_matches_coins(imported, "imported after confirmation")
+
     def import_wallet(self, node, name):
         node.createwallet(wallet_name=name, blsct=True, blank=True, storage_output=True)
         wallet = node.get_wallet_rpc(name)
@@ -258,12 +283,18 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
 
         # The reimported wallet got one wallet tx per aggregate from the
         # mempool scan that ends its rescan, and block connection matched
-        # each to the merged block tx, as for the creating wallet. A wallet
-        # reimported only after the merged block reports the chain as one
-        # wrong send row (#512); that case is deliberately not tested here.
+        # each to the merged block tx, as for the creating wallet.
         self.assert_same_wallet_view(walletA, unconfirmed_import, "imported before confirmation")
         self.assert_send_legs(unconfirmed_import, chain_txids)
         self.assert_balance_matches_coins(unconfirmed_import, "imported before confirmation, after mining")
+
+        # A wallet reimported only after the merged block never saw the
+        # aggregates, and the block tx keeps no boundaries between them, so it
+        # reports the whole chain as one send row under the block tx's txid
+        # (#512).
+        self.log.info("Reimport the seed after the merged block")
+        confirmed_import = self.import_wallet(n0, "imported_after")
+        self.assert_merged_send(walletA, confirmed_import, block_txids[1], chain_txids)
 
 
 if __name__ == "__main__":
