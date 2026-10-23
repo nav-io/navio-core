@@ -140,6 +140,41 @@ BOOST_AUTO_TEST_CASE(wait)
     waiter.join();
 }
 
+BOOST_AUTO_TEST_CASE(wait_many_no_error_event_when_not_reading)
+{
+    // A socket we wait on only to send must not report an error event for
+    // pending urgent (out-of-band) data: the socket handler receives on an
+    // error event, which would read from a peer whose receiving is paused.
+    const SOCKET listen_fd{CreateSocket()};
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    socklen_t addr_len{sizeof(addr)};
+    BOOST_REQUIRE_EQUAL(bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), addr_len), 0);
+    BOOST_REQUIRE_EQUAL(listen(listen_fd, 1), 0);
+    BOOST_REQUIRE_EQUAL(getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &addr_len), 0);
+    const Sock listener{listen_fd};
+
+    const Sock client{CreateSocket()};
+    BOOST_REQUIRE_EQUAL(client.Connect(reinterpret_cast<sockaddr*>(&addr), addr_len), 0);
+    const SOCKET server_fd = accept(listen_fd, nullptr, nullptr);
+    BOOST_REQUIRE(server_fd != INVALID_SOCKET);
+
+    BOOST_REQUIRE_EQUAL(client.Send("u", 1, MSG_OOB), 1);
+    // Wait until the urgent byte has arrived, so the check below sees it.
+    fd_set except;
+    FD_ZERO(&except);
+    FD_SET(server_fd, &except);
+    timeval tv{/*tv_sec=*/60, /*tv_usec=*/0};
+    BOOST_REQUIRE_EQUAL(select(server_fd + 1, nullptr, nullptr, &except, &tv), 1);
+
+    const auto server{std::make_shared<const Sock>(server_fd)};
+    Sock::EventsPerSock events{{server, Sock::Events{Sock::SEND}}};
+    BOOST_REQUIRE(server->WaitMany(0ms, events));
+    BOOST_CHECK(events.at(server).occurred & Sock::SEND);
+    BOOST_CHECK(!(events.at(server).occurred & Sock::ERR));
+}
+
 BOOST_AUTO_TEST_CASE(recv_until_terminator_limit)
 {
     constexpr auto timeout = 1min; // High enough so that it is never hit.
