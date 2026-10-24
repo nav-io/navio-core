@@ -1201,6 +1201,11 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_record_failure, TestingSetu
 {
     SeedInsecureRand(SeedRand::ZEROS);
     const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    {
+        LOCK(r.wallet->cs_wallet);
+        const auto coins = AvailableBlsctCoins(*r.wallet).All();
+        BOOST_REQUIRE(std::any_of(coins.begin(), coins.end(), [&](const COutput& c) { return c.outpoint == r.coin_outpoint; }));
+    }
 
     GetMockableDatabase(*r.wallet).m_pass = false;
     bool recorded{true};
@@ -1209,6 +1214,12 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_record_failure, TestingSetu
     GetMockableDatabase(*r.wallet).m_pass = true;
 
     LOCK(r.wallet->cs_wallet);
+    // The spend is recorded in memory ahead of the failed write, so coin
+    // selection skips the input before the mempool sync catches up: a
+    // consolidate call with max_txs > 1 relies on this not to reselect it.
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK(AvailableBlsctCoins(*r.wallet).All().empty());
+
     r.wallet->transactionAddedToMempool(r.aggregate);
     BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
     BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash()) != nullptr);
