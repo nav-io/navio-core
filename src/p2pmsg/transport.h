@@ -83,7 +83,7 @@ struct Envelope {
 
     SERIALIZE_METHODS(Envelope, obj)
     {
-        READWRITE(obj.kind, obj.pow, obj.flag, obj.enc);
+        READWRITE(obj.kind, obj.pow, Using<BoundedByteVectorFormatter<MAX_FLAG_BYTES>>(obj.flag), obj.enc);
     }
 
     //! What pow.payload_hash must equal for this envelope.
