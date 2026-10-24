@@ -299,6 +299,85 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
         pblocktemplate->vTxSigOpsCost.erase(pblocktemplate->vTxSigOpsCost.begin() + i);
     };
 
+    // Drop any selected transaction whose predicate side effects conflict with
+    // the token state accumulated by earlier selected transactions. Mempool
+    // validation verifies every tx against a fresh view that cannot see other
+    // mempool txs' CREATE/MINT state, so two individually-valid mints can
+    // jointly exceed a token's supply cap. Aggregation folds both into one
+    // block tx; ConnectBlock then applies the predicates in order, the second
+    // mint fails, and the whole template fails TestBlockValidity -- halting
+    // every stock miner while the pair sits in the mempool. Simulate the
+    // predicates here and exclude conflicting txs (and their descendants)
+    // instead, mirroring the staked-commitment conflict handling below.
+    {
+        bool any_predicate = false;
+        for (size_t i = 1; i < pblock->vtx.size() && !any_predicate; ++i) {
+            for (const auto& out : pblock->vtx[i]->vout) {
+                if (!out.predicate.empty()) {
+                    any_predicate = true;
+                    break;
+                }
+            }
+        }
+        while (any_predicate) {
+            std::vector<size_t> conflicts;
+            {
+                CCoinsViewCache predicate_view(&m_chainstate.CoinsTip());
+                for (size_t i = 1; i < pblock->vtx.size(); ++i) {
+                    bool ok = true;
+                    for (const auto& out : pblock->vtx[i]->vout) {
+                        if (out.predicate.empty()) continue;
+                        try {
+                            if (!ExecutePredicate(blsct::ParsePredicate(out.predicate), predicate_view)) {
+                                ok = false;
+                                break;
+                            }
+                        } catch (const std::ios_base::failure&) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (!ok) conflicts.push_back(i);
+                }
+            }
+            if (conflicts.empty()) break;
+
+            std::set<size_t> drop(conflicts.begin(), conflicts.end());
+            std::set<uint256> dropped_outs;
+            for (const size_t i : conflicts) {
+                for (size_t o = 0; o < pblock->vtx[i]->vout.size(); ++o) {
+                    dropped_outs.insert(pblock->vtx[i]->GetOutputId(o).ToUint256());
+                }
+            }
+            // A tx spending an excluded tx's output can no longer be in the
+            // block; carry that exclusion transitively (vtx order need not be
+            // parent-first).
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (size_t i = 1; i < pblock->vtx.size(); ++i) {
+                    if (drop.contains(i)) continue;
+                    bool spends_dropped = false;
+                    for (const auto& in : pblock->vtx[i]->vin) {
+                        if (dropped_outs.contains(in.prevout.hash)) {
+                            spends_dropped = true;
+                            break;
+                        }
+                    }
+                    if (!spends_dropped) continue;
+                    drop.insert(i);
+                    for (size_t o = 0; o < pblock->vtx[i]->vout.size(); ++o) {
+                        dropped_outs.insert(pblock->vtx[i]->GetOutputId(o).ToUint256());
+                    }
+                    changed = true;
+                }
+            }
+            for (auto it = drop.rbegin(); it != drop.rend(); ++it) {
+                exclude_tx(*it, "predicate conflict");
+            }
+        }
+    }
+
     {
         const auto existing_staked = m_chainstate.CoinsTip().GetStakedCommitments();
         std::set<std::vector<unsigned char>> selected_points;
