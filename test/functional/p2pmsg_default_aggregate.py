@@ -221,6 +221,7 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         self.serve_candidate(n0, n1, w1)
         pooled = n0.getaggregationhint()["available"]
         assert_equal(pooled, 2)
+        trusted_before = Decimal(str(w0.getbalances()["mine"]["trusted"]))
         res = w0.aggregatesend(w1.getnewaddress(label="", address_type="blsct"), 1.0, 16)
         tx = n0.getrawtransaction(res["txid"], True)
         own_inputs = len(tx["vin"]) - res["candidates_merged"]
@@ -228,9 +229,25 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         assert expected < pooled, "own half has %d inputs; the cap would not bind" % own_inputs
         assert_equal(res["candidates_merged"], expected)
         assert_equal(n0.getaggregationhint()["available"], pooled - expected)
+        # aggregatesend records the aggregate as the wallet's own send, so
+        # the change of its own half is trusted at once. When only the sync
+        # callback adds it, the cover input leaves it untrusted until it
+        # confirms.
+        n0.syncwithvalidationinterfacequeue()
+        assert_equal(w0.getbalances()["mine"]["untrusted_pending"], 0)
+        # w0 paid the 1.0 and the whole fee; the cover half is fee-0.
+        trusted = trusted_before - Decimal("1.0") - self.tx_fee(tx)
+        assert_equal(Decimal(str(w0.getbalances()["mine"]["trusted"])), trusted)
+        # A chained send of the whole trusted balance needs the aggregate's
+        # change: the other coins alone fall short of it.
+        aggregate_outputs = {out["hash"] for out in tx["vout"]}
+        other_coins = sum(Decimal(str(u["amount"])) for u in w0.listblsctunspent(0) if u["outid"] not in aggregate_outputs)
+        assert other_coins < trusted, "w0 can fund the chained send without the aggregate's change"
+        w0.sendtoblsctaddress(w0.getnewaddress(label="", address_type="blsct"), trusted, "", False, True)
         self.generatetoblsctaddress(n0, 1, miner0)
         self.sync_blocks()
         assert res["txid"] not in n0.getrawmempool(), "cover-sized aggregatesend did not confirm"
+        assert_equal(n0.getrawmempool(), [])
         self.log.info("small aggregatesend merged %d of %d pooled covers" % (expected, pooled))
 
         fee_aggregated, fee_plain = self.test_back_to_back_consolidations()

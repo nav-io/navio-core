@@ -2153,7 +2153,8 @@ RPCHelpMan restorewallet()
         "restorewallet",
         "\nRestores and loads a wallet from backup.\n"
         "\nThe rescan is significantly faster if a descriptor wallet is restored"
-        "\nand block filters are available (using startup option \"-blockfilterindex=1\").\n",
+        "\nand block filters are available (using startup option \"-blockfilterindex=1\")."
+        "\nA BLSCT wallet always scans every block: block filters don't index its outputs.\n",
         {
             {"wallet_name", RPCArg::Type::STR, RPCArg::Optional::NO, "The name that will be applied to the restored wallet"},
             {"backup_file", RPCArg::Type::STR, RPCArg::Optional::NO, "The backup file that will be used to restore the wallet."},

@@ -325,6 +325,16 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert_equal(rc_12w, 1)
         assert "Only 24-word" in stderr_12w
 
+        self.log.info("Test CLI tool: navio-wallet create with a malformed -seed errors and leaves no wallet")
+        for bad_seed in ["abcd", "00" * 33, "zz" * 32]:
+            bad_name = "test_cli_bad_seed_{}".format(len(bad_seed))
+            rc_bs, stdout_bs, stderr_bs = self.navio_wallet_create(bad_name, seed=bad_seed)
+            assert_equal(rc_bs, 1)
+            assert "Seed must be" in stderr_bs
+            # Loading a seedless BLSCT wallet used to abort the node, so the
+            # tool must not leave one behind.
+            assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, bad_name)
+
         self.log.info("Test CLI tool: navio-wallet create with -mnemonic but without -blsct errors")
         # BLSCT is the tool's default wallet type, so -descriptors must be passed
         # explicitly here to exercise the "-mnemonic requires -blsct" validation.

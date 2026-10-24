@@ -3737,8 +3737,21 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
         }
     }
 
+    // A BLSCT wallet gets its seed only after its flags are on disk, so a
+    // creation that did not complete can leave one with no seed although it
+    // is neither blank nor watch-only. The seed it was meant to hold is
+    // unknown, so it cannot be finished here: refuse to load it.
+    if (walletInstance->IsWalletFlagSet(WALLET_FLAG_BLSCT) &&
+        !walletInstance->GetOrCreateBLSCTKeyMan()->CanGenerateKeys() &&
+        !walletInstance->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS) &&
+        !walletInstance->IsWalletFlagSet(WALLET_FLAG_BLANK_WALLET)) {
+        error = strprintf(_("Error loading %s: BLSCT wallet has no seed, so its creation probably did not complete. Restore the wallet from its mnemonic or seed, or from a backup"), walletFile);
+        return nullptr;
+    }
+
     // This wallet is in its first run if there are no ScriptPubKeyMans and it isn't blank or no privkeys
-    const bool fFirstRun = ((walletInstance->m_spk_managers.empty() && !walletInstance->IsWalletFlagSet(WALLET_FLAG_BLSCT)) || (walletInstance->IsWalletFlagSet(WALLET_FLAG_BLSCT) && !walletInstance->GetOrCreateBLSCTKeyMan()->CanGenerateKeys())) &&
+    const bool fFirstRun = walletInstance->m_spk_managers.empty() &&
+                           !walletInstance->IsWalletFlagSet(WALLET_FLAG_BLSCT) &&
                            !walletInstance->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS) &&
                            !walletInstance->IsWalletFlagSet(WALLET_FLAG_BLANK_WALLET);
     if (fFirstRun) {

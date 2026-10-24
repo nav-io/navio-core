@@ -47,6 +47,9 @@ NULL_KEY_ADDRESSES = (NULL_KEY_ADDRESS, NULL_VIEW_KEY_ADDRESS, NULL_SPEND_KEY_AD
 # producing a block included.
 STAKER_TIMEOUT = 120
 
+# generatetoblsctaddress calls mine_blocks() makes before giving up.
+MINE_ATTEMPTS = 10
+
 
 def backoff_waits(cap):
     """The staker's wait after each consecutive failure of a call it retries
@@ -187,6 +190,21 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
             staker.lines.put(None)
         threading.Thread(target=pump, daemon=True).start()
         return staker
+
+    def mine_blocks(self, node, nblocks, address):
+        """Mine exactly nblocks to address and return their hashes. Once a
+        staked block has retargeted (every 30 blocks), PoW blocks take over
+        its PoS target (on blsctregtest GetNextWorkRequired returns the last
+        nBits that is not the PoW limit), so a single generatetoblsctaddress
+        can run out of maxtries and return fewer blocks, without an error.
+        Retry for the rest instead."""
+        hashes = []
+        for attempt in range(1, MINE_ATTEMPTS + 1):
+            hashes += self.generatetoblsctaddress(node, nblocks - len(hashes), address)
+            if len(hashes) == nblocks:
+                return hashes
+            self.log.debug(f"mined {len(hashes)} of {nblocks} block(s) after {attempt} call(s); retrying")
+        raise AssertionError(f"mined only {len(hashes)} of {nblocks} block(s) in {MINE_ATTEMPTS} calls")
 
     def staker_lines(self, staker, timeout, waiting_for):
         """Yield staker output lines until it ends, raising AssertionError
@@ -556,7 +574,9 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                 with open(self.statsfile, encoding="utf8") as f:
                     stats = json.load(f)
                 return stats["delegations"][0]["blocks_accepted"] > 0
-            except (FileNotFoundError, json.JSONDecodeError, KeyError, IndexError):
+            # PermissionError: on Windows, opening the file while the staker
+            # renames a new copy over it is refused; the next poll succeeds.
+            except (FileNotFoundError, PermissionError, json.JSONDecodeError, KeyError, IndexError):
                 return False
 
         try:
@@ -617,7 +637,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         _, operator_pub = self.gen_delegation_key()
         reward_address = wallet.getnewaddress(label="rewards", address_type="blsct")
         wallet.delegatestake(self.min_stake, operator_pub, reward_address)
-        self.generatetoblsctaddress(node, 10, wallet.getnewaddress(label="", address_type="blsct"))
+        self.mine_blocks(node, 10, wallet.getnewaddress(label="", address_type="blsct"))
 
         delegations = wallet.listdelegations()
         assert_equal(len(delegations), 1)
@@ -655,7 +675,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
 
         wallet = node.get_wallet_rpc("mixedstaker")
         wallet.stakelock(self.min_stake)
-        self.generatetoblsctaddress(node, 10, wallet.getnewaddress(label="", address_type="blsct"))
+        self.mine_blocks(node, 10, wallet.getnewaddress(label="", address_type="blsct"))
         plain_commitment = [c["commitment"] for c in wallet.liststakedcommitments()]
         assert_equal(len(plain_commitment), 1)
         plain_commitment = plain_commitment[0]
@@ -778,7 +798,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
             session.read_until(lambda: len(session.staked_with) >= 1)
             assert_equal(session.refresh, ["1 of 2 staked commitment(s) delegated."])
             wallet.stakeunlock(self.min_stake)
-            self.generatetoblsctaddress(node, 1, wallet.getnewaddress(label="", address_type="blsct"))
+            self.mine_blocks(node, 1, wallet.getnewaddress(label="", address_type="blsct"))
             remaining = [c["commitment"] for c in wallet.liststakedcommitments()]
             assert_equal(len(remaining), 1)
             remaining_delegated = remaining[0] in {d["commitment"] for d in wallet.listdelegations()}
@@ -811,8 +831,10 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
             """Fold the stake into a new commitment and confirm it."""
             before = {c["commitment"] for c in wallet.liststakedcommitments()}
             wallet.stakelock(1)
-            self.generatetoblsctaddress(node, 1, wallet.getnewaddress(label="", address_type="blsct"))
-            assert before != {c["commitment"] for c in wallet.liststakedcommitments()}
+            self.mine_blocks(node, 1, wallet.getnewaddress(label="", address_type="blsct"))
+            after = {c["commitment"] for c in wallet.liststakedcommitments()}
+            assert after, "the stakelock left nothing staked"
+            assert before != after
 
         log = {"failed": 0, "recovered": None, "refreshed": 0}
 
@@ -1015,7 +1037,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         staked = owner.getbalances()["mine"]["staked_commitment_balance"]
         out_hash = owner.stakeunlock(staked)
         assert_equal(len(out_hash), 64)
-        self.generatetoblsctaddress(node, 1, owner_address)
+        self.mine_blocks(node, 1, owner_address)
 
         assert_equal(node.liststakedcommitmentsdata(), [])
         assert_equal(owner.listdelegations(), [])
@@ -1024,7 +1046,7 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         # Delegating again after a revocation works: the delegation died with
         # the commitment, not with the wallet or the operator key.
         owner.delegatestake(self.min_stake, operator_pub)
-        self.generatetoblsctaddress(node, 1, owner_address)
+        self.mine_blocks(node, 1, owner_address)
         assert_equal(len(owner.listdelegations()), 1)
 
         # Reward history survives revocation: the rewards earned under the
