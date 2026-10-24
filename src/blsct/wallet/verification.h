@@ -56,7 +56,7 @@ struct TxSignatureBatchResult {
 // default (== `BLSCT_DEFAULT_FEE`).
 // `threads` caps the signature and range-proof worker pools; 0 means
 // std::thread::hardware_concurrency().
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0, const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE, int nBLSCTProofV2Height = std::numeric_limits<int>::max(), size_t threads = 0);
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0, const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE, int nBLSCTProofV2Height = std::numeric_limits<int>::max(), size_t threads = 0, bool enforce_pair_limit = false);
 
 // Same collection semantics as VerifyTxCollectProofs, but also returns the
 // prepared aggregate-signature job so callers can defer BLS signature checking

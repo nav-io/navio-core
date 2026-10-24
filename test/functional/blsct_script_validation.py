@@ -67,6 +67,9 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         # Group C: malformed hex rejection
         self.test_malformed_hex_rejected()
 
+        # Group D: policy bound on script-supplied BLS verification pairs
+        self.test_too_many_bls_pairs()
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -113,6 +116,34 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         self.nodes[0].sendrawtransaction(signed)
         self.generatetoblsctaddress(self.nodes[0], 1, self.addr1)
         return signed
+
+    def test_too_many_bls_pairs(self):
+        """A script with 30 OP_BLSCHECKSIGs exceeds the mempool pair budget.
+
+        The tx is otherwise valid: the script pushes a valid G1 point before
+        each op, ignores the false results, and ends in OP_TRUE. Only the
+        policy cap on script-supplied verification pairs rejects it.
+        """
+        self.log.info("=== D1: too many OP_BLSCHECKSIG pairs ===")
+
+        g1 = "97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb"
+        script_hex = ("30" + g1 + "b3") * 30 + "51"
+        bk = "d1" * 32
+
+        signed_tx = self._create_custom_script_output(script_hex, bk)
+        oh, amt, gamma = self._recover_output(self.w1, signed_tx, COIN)
+        sk = self.w1.deriveblsctspendingkey(bk, self.addr1)
+
+        inputs = [{"outid": oh, "value": amt, "gamma": gamma,
+                   "spending_key": sk}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
+        raw = self.w1.createblsctrawtransaction(inputs, outputs)
+        funded = self.w1.fundblsctrawtransaction(raw)
+        signed = self.w1.signblsctrawtransaction(funded)
+
+        assert_raises_rpc_error(-26, "too-many-bls-signature-pairs",
+                                self.nodes[0].sendrawtransaction, signed)
+        self.log.info("=== D1 PASSED ===")
 
     # ------------------------------------------------------------------
     # Group A: HTLC / atomic_swap (spendingKey nullified)
