@@ -633,4 +633,50 @@ BOOST_FIXTURE_TEST_CASE(mempool_rejects_blsct_tx_with_marker_stripped, TestBLSCT
     BOOST_CHECK_EQUAL(res.m_state.GetRejectReason(), "non-blsct-tx-not-allowed");
 }
 
+// The consensus minimum fee is a native per-weight rate, but the fee output
+// itself may name any token. A token issuer can mint fee units for free and
+// pay the rate in them; a zero-input tx can even pay without spending a coin.
+// Mempool policy rejects both shapes (block validation stays permissive).
+BOOST_FIXTURE_TEST_CASE(mempool_rejects_token_fee_and_empty_vin, TestBLSCTChain100Setup)
+{
+    auto wallet = wallet::CreateBLSCTWallet(*m_node.chain, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain()));
+    auto blsct_km = wallet->GetBLSCTKeyMan();
+    const auto dest = blsct::SubAddress(std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value()));
+
+    for (int i = 0; i <= COINBASE_MATURITY; i++) {
+        CreateAndProcessBlock({}, dest);
+    }
+    BOOST_REQUIRE(wallet::SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+
+    const auto built = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, blsct::CreateTransactionData{dest, 1 * COIN, "test"});
+    BOOST_REQUIRE(built);
+
+    const auto accept = [&](const CMutableTransaction& mtx) {
+        return WITH_LOCK(cs_main, return m_node.chainman->ProcessTransaction(MakeTransactionRef(mtx), /*test_accept=*/true));
+    };
+
+    // Pay the fee in a non-native token instead of native value.
+    CMutableTransaction token_fee{built->tx};
+    bool found_fee = false;
+    for (auto& out : token_fee.vout) {
+        if (out.nValue > 0 && out.IsFee()) {
+            out.tokenId = TokenId(uint256(uint64_t{1}));
+            found_fee = true;
+            break;
+        }
+    }
+    BOOST_REQUIRE(found_fee);
+    const auto fee_res = accept(token_fee);
+    BOOST_CHECK(fee_res.m_result_type == MempoolAcceptResult::ResultType::INVALID);
+    BOOST_CHECK_EQUAL(fee_res.m_state.GetRejectReason(), "non-native-fee-output");
+
+    // No inputs at all: a mint can balance the tx, so consensus lets it
+    // through, but it must not be relayable.
+    CMutableTransaction no_inputs{built->tx};
+    no_inputs.vin.clear();
+    const auto vin_res = accept(no_inputs);
+    BOOST_CHECK(vin_res.m_result_type == MempoolAcceptResult::ResultType::INVALID);
+    BOOST_CHECK_EQUAL(vin_res.m_state.GetRejectReason(), "blsct-vin-empty");
+}
+
 BOOST_AUTO_TEST_SUITE_END()
