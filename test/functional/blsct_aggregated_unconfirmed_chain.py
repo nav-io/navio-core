@@ -29,6 +29,12 @@ A wallet reimported only after the merged block cannot split the block tx back
 into the original sends: it reports one send row for the block tx, paying the
 whole chain's amount to others with the chain's total fee, and the creating
 wallet's balances and coins (#512).
+
+The miner merges a chain of plain sends (-aggregatesends=0, as in #512) the
+same way. A sender that keeps full transactions (storage_output=false) replaces
+its sends with the merged block tx when it confirms, so it reports the same
+single send row as a wallet reimported after the block, which must match it.
+An output-storage sender keeps one send leg per plain send.
 """
 
 from collections import Counter
@@ -46,6 +52,9 @@ SEND_AMOUNT = Decimal("1")
 # Deterministic BLSCT seed (same WIF used by blsct_setblsctseed.py), so the
 # sending wallet can be reimported.
 SEED_WIF = "cMceqPhHedrhbcR9eXgzmfWy7kRqLyAxMYwFT6ABDWsiwUp9Nsq9"
+# Seed of the plain-chain sender that keeps full transactions (bytes_to_wif of
+# 32 bytes of 0x02), so it can be reimported too.
+PLAIN_SEED_WIF = "cMec2DGaTXkYJYfi7x3ZGjRXkeqmAvYAoWzMAcWj5fdLaqudWsNi"
 
 
 class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
@@ -174,12 +183,75 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         assert_equal(self.coins(imported), self.coins(created))
         self.assert_balance_matches_coins(imported, "imported after confirmation")
 
-    def import_wallet(self, node, name):
+    def import_wallet(self, node, name, seed=SEED_WIF):
         node.createwallet(wallet_name=name, blsct=True, blank=True, storage_output=True)
         wallet = node.get_wallet_rpc(name)
-        wallet.setblsctseed(SEED_WIF)
+        wallet.setblsctseed(seed)
         wallet.rescanblockchain()
         return wallet
+
+    def plain_chain(self, wallet, dest):
+        """Chain CHAIN_LENGTH plain sends of SEND_AMOUNT off one funding UTXO
+        on node1 (-aggregatesends=0) and return their txids and fees."""
+        n1 = self.nodes[1]
+        txids, fees = [], []
+        for _ in range(CHAIN_LENGTH):
+            mempool_before = set(n1.getrawmempool())
+            wallet.sendtoblsctaddress(dest, SEND_AMOUNT)
+            new = set(n1.getrawmempool()) - mempool_before
+            assert_equal(len(new), 1)
+            txid = new.pop()
+            # A plain send spends only the previous hop's change.
+            assert_equal(len(n1.getrawtransaction(txid, True)["vin"]), 1)
+            fee = Decimal(str(wallet.gettransaction(txid)["fee"]))
+            assert Decimal("-1") < fee < 0, fee
+            txids.append(txid)
+            fees.append(fee)
+        return txids, fees
+
+    def mine_merged_chain(self, chain_txids, producer_addr):
+        """Mine the chain on node1 and return the txid of the block tx the
+        miner merged it into."""
+        n1 = self.nodes[1]
+        assert_equal(set(n1.getrawmempool()), set(chain_txids))
+        self.generate_blsct_blocks(n1, producer_addr, 1)
+        self.sync_blocks()
+        block_txids = n1.getblock(n1.getbestblockhash())["tx"]
+        self.log.info(f"mined block txs: {block_txids}")
+        assert_equal(len(block_txids), 2)
+        assert not set(chain_txids) & set(block_txids)
+        assert_equal(n1.getrawmempool(), [])
+        n1.syncwithvalidationinterfacequeue()
+        return block_txids[1]
+
+    def assert_replaced_by_merged_send(self, wallet, merged_txid, chain_txids, fees):
+        """A sender that keeps full transactions dropped its sends for the
+        merged block tx: one send row under the block txid, paying the whole
+        chain's amount to others with the sum of the sends' fees."""
+        entries = wallet.listtransactions("*", 100000, 0, True)
+        self.log.info(f"full-tx sender: history: {[(e['category'], e['amount'], e.get('fee'), e['confirmations'], e['txid'][:8]) for e in entries]}")
+        assert all(e["confirmations"] > 0 for e in entries)
+        sent = CHAIN_LENGTH * SEND_AMOUNT
+        total_fee = sum(fees)
+        sends = [e for e in entries if e["category"] == "send"]
+        assert_equal([e["txid"] for e in sends], [merged_txid])
+        assert_equal(Decimal(str(sends[0]["amount"])), -sent)
+        assert_equal(Decimal(str(sends[0]["fee"])), total_fee)
+        assert_equal(Counter(e["category"] for e in entries), Counter({"send": 1, "receive": 1}))
+        receives = [e for e in entries if e["category"] == "receive"]
+        assert_equal(Decimal(str(receives[0]["amount"])), FUNDING_AMOUNT)
+
+        merged = wallet.gettransaction(merged_txid)
+        assert_equal(Decimal(str(merged["amount"])), -sent)
+        assert_equal(Decimal(str(merged["fee"])), total_fee)
+        assert_equal([(d["category"], Decimal(str(d["amount"]))) for d in merged["details"]], [("send", -sent)])
+        for txid in chain_txids:
+            assert_raises_rpc_error(-5, "Invalid or non-wallet transaction id", wallet.gettransaction, txid)
+
+        balances = wallet.getbalances()["mine"]
+        assert_equal(Decimal(str(balances["trusted"])), FUNDING_AMOUNT - sent + total_fee)
+        assert_equal(Decimal(str(balances["untrusted_pending"])), 0)
+        self.assert_balance_matches_coins(wallet, "full-tx sender after confirmation")
 
     def run_test(self):
         n0, n1 = self.nodes
@@ -295,6 +367,43 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         self.log.info("Reimport the seed after the merged block")
         confirmed_import = self.import_wallet(n0, "imported_after")
         self.assert_merged_send(walletA, confirmed_import, block_txids[1], chain_txids)
+
+        self.log.info("Fund a full-tx sender and an output-storage sender for plain chains on node1")
+        n1.createwallet(wallet_name="plain_full", blsct=True, blank=True, storage_output=False)
+        n1.createwallet(wallet_name="plain_outputs", blsct=True, storage_output=True)
+        plain_full = n1.get_wallet_rpc("plain_full")
+        plain_full.setblsctseed(PLAIN_SEED_WIF)
+        plain_outputs = n1.get_wallet_rpc("plain_outputs")
+        # The restart left the funder unloaded.
+        n0.loadwallet("funder")
+        funder = n0.get_wallet_rpc("funder")
+        for wallet in (plain_full, plain_outputs):
+            funder.sendtoblsctaddress(wallet.getnewaddress(label="", address_type="blsct"), FUNDING_AMOUNT)
+            self.sync_mempools()
+            self.generate_blsct_blocks(n1, producer_addr, 1)
+            self.sync_blocks()
+            assert_equal(len(wallet.listblsctunspent()), 1)
+
+        self.log.info(f"Chain {CHAIN_LENGTH} plain sends from the full-tx sender and confirm them merged")
+        full_txids, full_fees = self.plain_chain(plain_full, dest)
+        full_merged = self.mine_merged_chain(full_txids, producer_addr)
+        self.assert_replaced_by_merged_send(plain_full, full_merged, full_txids, full_fees)
+
+        # The issue's repro: a reimport after the merged block reports what
+        # the full-tx sender reports for the same block tx.
+        self.log.info("Reimport the full-tx sender's seed after the merged block")
+        plain_import = self.import_wallet(n1, "plain_imported_after", PLAIN_SEED_WIF)
+        self.assert_merged_send(plain_full, plain_import, full_merged, full_txids)
+        assert_equal(self.history(plain_import), self.history(plain_full))
+
+        self.log.info(f"Chain {CHAIN_LENGTH} plain sends from the output-storage sender and confirm them merged")
+        outputs_txids, outputs_fees = self.plain_chain(plain_outputs, dest)
+        self.mine_merged_chain(outputs_txids, producer_addr)
+        self.assert_send_legs(plain_outputs, outputs_txids)
+        fee_by_txid = {e["txid"]: Decimal(str(e["fee"])) for e in plain_outputs.listtransactions("*", 100000, 0, True) if e["category"] == "send"}
+        assert_equal(fee_by_txid, dict(zip(outputs_txids, outputs_fees)))
+        trusted = self.assert_balance_matches_coins(plain_outputs, "output-storage sender after confirmation")
+        assert_equal(trusted, FUNDING_AMOUNT - CHAIN_LENGTH * SEND_AMOUNT + sum(outputs_fees))
 
 
 if __name__ == "__main__":
