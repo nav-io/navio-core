@@ -1153,6 +1153,21 @@ bool MemPoolAccept::PolicyScriptChecks(const ATMPArgs& args, Workspace& ws)
         if (!args.m_chainparams.GetConsensus().fBLSCT) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "blsct-tx-not-allowed");
         }
+        // Mempool policy (block validation stays permissive so this is not a
+        // consensus fork). A non-coinbase BLSCT tx with no inputs can only be
+        // funded by a mint, and the consensus fee rule compares nFee to a
+        // native per-weight rate. Requiring the fee output to be native stops
+        // a token issuer from paying that rate in a token they minted for
+        // free, and rejecting empty vin removes the zero-input variant of the
+        // same tx entirely.
+        if (tx.vin.empty()) {
+            return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "blsct-vin-empty");
+        }
+        for (const auto& out : tx.vout) {
+            if (out.nValue > 0 && out.IsFee() && !out.tokenId.IsNull()) {
+                return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "non-native-fee-output");
+            }
+        }
         return true;
     }
 
