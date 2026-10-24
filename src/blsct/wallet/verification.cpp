@@ -38,11 +38,32 @@ static constexpr uint32_t BLSCT_SEQUENCE_RELATIVE_FLAG = (1U << 31); // 0x800000
 class BLSCTSignatureChecker : public TransactionSignatureChecker
 {
     uint32_t m_input_locktime;
+    // Policy-only bound on the number of OP_BLSCHECKSIG pairs a script may
+    // contribute. Block validation passes SIZE_MAX (no limit) so consensus is
+    // unchanged; mempool acceptance passes a small per-tx budget. Without it,
+    // one crafted scriptPubKey can make the verifier do one hash-to-G2 +
+    // Miller loop per opcode, and the cost is paid before txSig is checked.
+    size_t m_max_pairs;
+    mutable size_t m_seen_pairs{0};
+    mutable bool m_exceeded{false};
 
 public:
-    BLSCTSignatureChecker(const CTransaction* tx, unsigned int nIn)
+    BLSCTSignatureChecker(const CTransaction* tx, unsigned int nIn,
+                          size_t max_pairs = std::numeric_limits<size_t>::max())
         : TransactionSignatureChecker(tx, nIn, 0, MissingDataBehavior::FAIL),
-          m_input_locktime(tx->vin[nIn].nSequence) {}
+          m_input_locktime(tx->vin[nIn].nSequence), m_max_pairs(max_pairs) {}
+
+    bool CheckBlsSignature(Span<const unsigned char> pubkey) const override
+    {
+        if (m_seen_pairs >= m_max_pairs) {
+            m_exceeded = true;
+            return false;
+        }
+        ++m_seen_pairs;
+        return TransactionSignatureChecker::CheckBlsSignature(pubkey);
+    }
+
+    bool ExceededPairLimit() const { return m_exceeded; }
 
     bool CheckLockTime(const CScriptNum& nLockTime) const override
     {
@@ -97,7 +118,8 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                   const CAmount& nBLSCTDefaultFee,
                   int nBLSCTProofV2Height,
                   PreparedTxSignatureCheck* out_sig_check,
-                  size_t threads)
+                  size_t threads,
+                  bool enforce_pair_limit)
 {
     using Clock = std::chrono::steady_clock;
 
@@ -187,14 +209,32 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
         // here would spawn N workers that each contend with the library's
         // own N workers — observed regression: 0.53 ms/txin → 2.46 ms/txin
         // on a 752-input block (8-core host, 64 contending threads).
+        // Mempool policy: total OP_BLSCHECKSIG pairs a tx may add. The
+        // structural (input/output/predicate/balance) pairs are not counted;
+        // this only bounds script-supplied pairs, and is generous enough for
+        // every legitimate BLSCT shape. SIZE_MAX disables the bound for block
+        // validation.
+        const size_t pair_budget = enforce_pair_limit
+            ? 16 + 2 * (tx.vin.size() + tx.vout.size())
+            : std::numeric_limits<size_t>::max();
+        size_t pairs_seen = 0;
+
         for (size_t i = 0; i < n_in; ++i) {
-            BLSCTSignatureChecker checker(&tx, i);
+            const size_t remaining_pairs = pair_budget == std::numeric_limits<size_t>::max()
+                ? std::numeric_limits<size_t>::max()
+                : (pair_budget > pairs_seen ? pair_budget - pairs_seen : 0);
+            BLSCTSignatureChecker checker(&tx, i, remaining_pairs);
             ScriptError serror;
             uint32_t flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY;
 
-            if (!VerifyScript(tx.vin[i].scriptSig, coins[i].out.scriptPubKey, nullptr, flags, checker, &serror)) {
+            const bool script_ok = VerifyScript(tx.vin[i].scriptSig, coins[i].out.scriptPubKey, nullptr, flags, checker, &serror);
+            if (checker.ExceededPairLimit()) {
+                return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "too-many-bls-signature-pairs");
+            }
+            if (!script_ok) {
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-script-check");
             }
+            pairs_seen += checker.GetKeyMessagePairs().size();
 
             for (const auto& pair : checker.GetKeyMessagePairs()) {
                 vPubKeys.emplace_back(pair.first);
@@ -432,12 +472,14 @@ bool VerifyTxCore(const CTransaction& tx,
                   const CAmount& nBLSCTDefaultFee,
                   int nBLSCTProofV2Height = std::numeric_limits<int>::max(),
                   PreparedTxSignatureCheck* out_sig_check = nullptr,
-                  size_t threads = 0)
+                  size_t threads = 0,
+                  bool enforce_pair_limit = false)
 {
     try {
         return VerifyTxCoreImpl(tx, view, state, out_proofs, blockReward, minStake,
                                 nSpendHeight, nMedianTimePast, verify_rp_inline,
-                                nBLSCTDefaultFee, nBLSCTProofV2Height, out_sig_check, threads);
+                                nBLSCTDefaultFee, nBLSCTProofV2Height, out_sig_check, threads,
+                                enforce_pair_limit);
     } catch (const std::exception& e) {
         LogPrint(BCLog::VALIDATION, "BLSCT tx verify threw for %s: %s\n",
                  tx.GetHash().ToString(), e.what());
@@ -446,10 +488,10 @@ bool VerifyTxCore(const CTransaction& tx,
 }
 } // namespace
 
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, int nBLSCTProofV2Height, size_t threads)
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, int nBLSCTProofV2Height, size_t threads, bool enforce_pair_limit)
 {
     std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> proofs;
-    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nBLSCTProofV2Height, /*out_sig_check=*/nullptr, threads);
+    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nBLSCTProofV2Height, /*out_sig_check=*/nullptr, threads, enforce_pair_limit);
 }
 
 bool PrepareTxForDeferredVerification(const CTransaction& tx,
