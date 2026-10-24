@@ -964,6 +964,49 @@ BOOST_FIXTURE_TEST_CASE(CreateBlsctWalletHasNoLegacySpkm, TestingSetup)
     }
 }
 
+BOOST_FIXTURE_TEST_CASE(LoadSeedlessBlsctWalletFails, TestingSetup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    const std::string name{"seedless_blsct"};
+    bilingual_str error;
+    std::vector<bilingual_str> warnings;
+    DatabaseStatus status;
+    {
+        // CWallet::Create writes the BLSCT flag and CreateWallet only then
+        // sets up the seed, so stopping after the first step reproduces what
+        // an interrupted or failed creation leaves on disk. Without a chain
+        // nothing else holds the wallet, so it is released at scope exit.
+        WalletContext create_context;
+        create_context.args = &m_args;
+        DatabaseOptions options;
+        options.require_create = true;
+        options.require_format = DatabaseFormat::SQLITE;
+        options.create_flags = WALLET_FLAG_BLSCT;
+        auto database = MakeWalletDatabase(name, options, status, error);
+        BOOST_REQUIRE(database);
+        auto created = CWallet::Create(create_context, name, std::move(database), options.create_flags, error, warnings);
+        BOOST_REQUIRE(created);
+        BOOST_REQUIRE(created->IsWalletFlagSet(WALLET_FLAG_BLSCT));
+        BOOST_REQUIRE(!created->GetOrCreateBLSCTKeyMan()->CanGenerateKeys());
+    }
+
+    DatabaseOptions options;
+    options.require_existing = true;
+    error = {};
+    auto loaded = LoadWallet(context, name, /*load_on_start=*/std::nullopt, options, status, error, warnings);
+    BOOST_CHECK(!loaded);
+    BOOST_CHECK(status == DatabaseStatus::FAILED_LOAD);
+    BOOST_CHECK_MESSAGE(error.original.find("BLSCT wallet has no seed") != std::string::npos, error.original);
+    BOOST_CHECK_MESSAGE(error.original.find("Restore the wallet from its mnemonic or seed, or from a backup") != std::string::npos, error.original);
+    if (loaded) {
+        RemoveWallet(context, loaded, /*load_on_start=*/std::nullopt);
+        TestUnloadWallet(std::move(loaded));
+    }
+}
+
 BOOST_FIXTURE_TEST_CASE(ZapSelectTx, TestChain100Setup)
 {
     m_args.ForceSetArg("-unsafesqlitesync", "1");
