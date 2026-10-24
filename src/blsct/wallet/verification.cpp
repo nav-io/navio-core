@@ -97,7 +97,8 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                   const CAmount& nBLSCTDefaultFee,
                   int nBLSCTProofV2Height,
                   PreparedTxSignatureCheck* out_sig_check,
-                  size_t threads)
+                  size_t threads,
+                  bool skip_fee_rule)
 {
     using Clock = std::chrono::steady_clock;
 
@@ -343,7 +344,7 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     // Skipped for coinbase/coinstake-style reward txs (blockReward > 0): they
     // carry no fee output, are funded by the block subsidy + collected fees,
     // and use a separate consensus path (`BlockReward`/coinbase value check).
-    if (!tx.IsCoinBase() && blockReward == 0) {
+    if (!skip_fee_rule && !tx.IsCoinBase() && blockReward == 0) {
         const CAmount min_fee = static_cast<CAmount>(blsct::GetTransactionWeight(tx)) * nBLSCTDefaultFee;
         if (nFee < min_fee) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "blsct-fee-below-min");
@@ -432,12 +433,14 @@ bool VerifyTxCore(const CTransaction& tx,
                   const CAmount& nBLSCTDefaultFee,
                   int nBLSCTProofV2Height = std::numeric_limits<int>::max(),
                   PreparedTxSignatureCheck* out_sig_check = nullptr,
-                  size_t threads = 0)
+                  size_t threads = 0,
+                  bool skip_fee_rule = false)
 {
     try {
         return VerifyTxCoreImpl(tx, view, state, out_proofs, blockReward, minStake,
                                 nSpendHeight, nMedianTimePast, verify_rp_inline,
-                                nBLSCTDefaultFee, nBLSCTProofV2Height, out_sig_check, threads);
+                                nBLSCTDefaultFee, nBLSCTProofV2Height, out_sig_check, threads,
+                                skip_fee_rule);
     } catch (const std::exception& e) {
         LogPrint(BCLog::VALIDATION, "BLSCT tx verify threw for %s: %s\n",
                  tx.GetHash().ToString(), e.what());
@@ -446,10 +449,10 @@ bool VerifyTxCore(const CTransaction& tx,
 }
 } // namespace
 
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, int nBLSCTProofV2Height, size_t threads)
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, int nBLSCTProofV2Height, size_t threads, bool skip_fee_rule)
 {
     std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> proofs;
-    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nBLSCTProofV2Height, /*out_sig_check=*/nullptr, threads);
+    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nBLSCTProofV2Height, /*out_sig_check=*/nullptr, threads, skip_fee_rule);
 }
 
 bool PrepareTxForDeferredVerification(const CTransaction& tx,

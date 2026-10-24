@@ -65,6 +65,39 @@ CTransactionRef BuildCandidate(blsct::KeyMan* km, CCoinsViewCache& cache,
 }
 } // namespace
 
+// Cover candidates are deliberately fee-0: the initiator's half pays the
+// aggregate fee. Mempool-style verification must therefore be able to skip
+// exactly the minimum-fee rule while still checking balance, signature and
+// range proofs, which is what candidate ingress uses to reject poison halves.
+BOOST_FIXTURE_TEST_CASE(candidate_verifies_with_fee_rule_skipped, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CCoinsViewCache cache{&base, /*deterministic=*/true};
+    cache.SetBestBlock(InsecureRand256());
+
+    blsct::SubAddress dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+    CTransactionRef candidate = BuildCandidate(km, cache, 100 * COIN, dest);
+
+    TxValidationState fee_state;
+    BOOST_CHECK(!blsct::VerifyTx(CTransaction(*candidate), cache, fee_state));
+    BOOST_CHECK_EQUAL(fee_state.GetRejectReason(), "blsct-fee-below-min");
+
+    TxValidationState candidate_state;
+    const bool ok = blsct::VerifyTx(CTransaction(*candidate), cache, candidate_state,
+                                    /*blockReward=*/0, /*minStake=*/0,
+                                    /*nSpendHeight=*/0, /*nMedianTimePast=*/0,
+                                    BLSCT_DEFAULT_FEE, std::numeric_limits<int>::max(),
+                                    /*threads=*/0, /*skip_fee_rule=*/true);
+    if (!ok) BOOST_TEST_MESSAGE("candidate reject: " << candidate_state.GetRejectReason());
+    BOOST_CHECK(ok);
+}
+
 BOOST_FIXTURE_TEST_CASE(combine_empty_returns_nullopt, TestingSetup)
 {
     std::vector<CTransactionRef> none;

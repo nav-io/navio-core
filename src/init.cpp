@@ -45,6 +45,8 @@
 #include <node/blockmanager_args.h>
 #include <node/blockstorage.h>
 #include <node/caches.h>
+#include <blsct/wallet/verification.h>
+#include <consensus/validation.h>
 #include <node/chainstate.h>
 #include <node/chainstatemanager_args.h>
 #include <node/context.h>
@@ -2244,26 +2246,45 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                         ParamsStream ps{TX_WITH_WITNESS, ss};
                         CTransactionRef tx;
                         ps >> tx;
-                        // Admit first, classify after: the chainstate lookup
-                        // takes cs_main on a p2pmsg worker thread (of which
-                        // there are only one or two), and the reply key that
-                        // reaches this handler is publicly broadcast, so any
-                        // bus observer can drive it. Classifying only pooled
-                        // candidates means a message rejected by the
-                        // structural checks or the caps costs no coin lookup,
-                        // no tip-cache growth, and no cs_main wait.
-                        const bool added = pool->AddCandidate(tx);
+                        // The reply key is published on the public broadcast
+                        // channel, so any bus observer can inject a
+                        // structurally valid candidate. Verify the half
+                        // against the chain UTXO before pooling it: candidates
+                        // are fee-0, so skip only the minimum-fee rule. This
+                        // costs a real BLS/range-proof verification (PoW-gated)
+                        // and makes unsigned or nonexistent-input poison fail
+                        // here instead of poisoning a later aggregate.
+                        if (!tx || tx->vin.size() != 1 || tx->vout.size() != 1 ||
+                            GetTransactionWeight(*tx) > aggregation::CANDIDATE_MAX_WEIGHT) {
+                            return;
+                        }
+                        bool valid{false};
                         bool reward_input{false};
-                        if (added && !tx->vin.empty()) {
+                        {
+                            LOCK(cs_main);
+                            Chainstate& cs = cover_chainman->ActiveChainstate();
+                            CCoinsViewCache view(&cs.CoinsTip());
+                            TxValidationState st;
+                            const Consensus::Params& cons = Params().GetConsensus();
+                            valid = blsct::VerifyTx(*tx, view, st, 0, cons.nPePoSMinStakeAmount,
+                                                    cs.m_chain.Height() + 1,
+                                                    cs.m_chain.Tip()->GetMedianTimePast(),
+                                                    cons.nBLSCTDefaultFee, cons.nBLSCTProofV2Height,
+                                                    /*threads=*/0, /*skip_fee_rule=*/true);
+                            if (!valid) {
+                                LogPrint(BCLog::NET, "p2pmsg: dropping CANDIDATE_TX %s: %s\n",
+                                         tx->GetHash().ToString(), st.GetRejectReason());
+                                return;
+                            }
                             // Reward-ness of the prev-out is public chain
                             // data the initiator matches against its own
-                            // input types (see PickForAggregate). An unknown
-                            // coin (unconfirmed or spent) stays classified
-                            // as transfer.
-                            LOCK(cs_main);
-                            const Coin& coin = cover_chainman->ActiveChainstate().CoinsTip().AccessCoin(tx->vin[0].prevout);
+                            // input types (see PickForAggregate).
+                            const Coin& coin = view.AccessCoin(tx->vin[0].prevout);
                             reward_input = !coin.IsSpent() && coin.IsCoinBase();
-                            if (reward_input) pool->MarkRewardInput(tx->vin[0].prevout);
+                        }
+                        const bool added = pool->AddCandidate(tx, reward_input);
+                        if (added && reward_input) {
+                            pool->MarkRewardInput(tx->vin[0].prevout);
                         }
                         LogPrint(BCLog::NET, "p2pmsg: CANDIDATE_TX %s %s (peer=%d reward_input=%d)\n",
                                  tx->GetHash().ToString(), added ? "pooled" : "rejected (duplicate input or cap)", m.from_peer, reward_input);
