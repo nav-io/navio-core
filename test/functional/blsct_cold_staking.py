@@ -574,7 +574,9 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
                 with open(self.statsfile, encoding="utf8") as f:
                     stats = json.load(f)
                 return stats["delegations"][0]["blocks_accepted"] > 0
-            except (FileNotFoundError, json.JSONDecodeError, KeyError, IndexError):
+            # PermissionError: on Windows, opening the file while the staker
+            # renames a new copy over it is refused; the next poll succeeds.
+            except (FileNotFoundError, PermissionError, json.JSONDecodeError, KeyError, IndexError):
                 return False
 
         try:
