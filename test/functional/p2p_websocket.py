@@ -18,6 +18,7 @@ import struct
 
 from test_framework.messages import (
     NODE_P2P_WS,
+    msg_getaddr,
     msg_ping,
     msg_verack,
     msg_version,
@@ -42,6 +43,7 @@ from test_framework.socks5 import (
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.test_node import ErrorMatch
 from test_framework.util import (
+    append_config,
     assert_equal,
     p2p_port,
 )
@@ -240,6 +242,17 @@ def build_message(magic, message):
     return tmsg
 
 
+class AddrReceiver(P2PInterface):
+    """Keep every address the node sends, not only the last addr message."""
+
+    def __init__(self):
+        super().__init__()
+        self.addrs = []
+
+    def on_addr(self, message):
+        self.addrs.extend(message.addrs)
+
+
 class P2PWebSocketTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
@@ -252,6 +265,12 @@ class P2PWebSocketTest(BitcoinTestFramework):
         # Port index num_nodes is reserved for this test process but unused by any node.
         ws_port = p2p_port(self.num_nodes)
         timeout = 60 * self.options.timeout_factor
+
+        # The self-announcement checked by ws_announcement needs a node out of
+        # IBD, and -addrmantest to announce its loopback address at all. The
+        # config file keeps it across every restart's own extra_args.
+        self.generate(node, 1)
+        append_config(node.datadir_path, ["addrmantest=1"])
 
         self.log.info("Restart node with -p2pwsbind")
         with node.assert_debug_log([f"Bound to {host}:{ws_port} (websocket)"]):
@@ -419,20 +438,31 @@ class P2PWebSocketTest(BitcoinTestFramework):
 
         Also checks that the node's version advertised NODE_P2P_WS on exactly
         the connections it sent wsendpoint over, so the bit cannot mark a
-        connection whose endpoint is withheld (Tor, proxied).
+        connection whose endpoint is withheld (Tor, proxied), and that the
+        node's self-announced addr carries the same services as its version.
         """
-        # Anything the node sends after verack is in flight once a ping
-        # round-trips, since messages go out in order.
+        # An inbound peer only gets addr relay once it asks; an outbound peer
+        # has it from the version handshake, and the node ignores getaddr from
+        # it.
+        peer.send_message(msg_getaddr())
+        peer.wait_until(lambda: any(a.ip == "127.0.0.1" for a in peer.addrs))
+        # Anything else the node sends after verack or getaddr is in flight
+        # once a ping round-trips, since messages go out in order.
         peer.sync_with_ping()
         with p2p_lock:
             msg = peer.last_message.get("wsendpoint")
             services = peer.last_message["version"].nServices
+            # -addrmantest makes the node announce itself as 127.0.0.1, which
+            # addrman never holds, so this entry can only be the self-announcement.
+            self_addrs = [a for a in peer.addrs if a.ip == "127.0.0.1"]
         assert_equal(bool(services & NODE_P2P_WS), msg is not None)
+        assert_equal(len(self_addrs), 1)
+        assert_equal(self_addrs[0].nServices, services)
         return msg
 
     def wsendpoint_from_node(self, node, **kwargs):
         """Connect a plain TCP peer and return the wsendpoint it got, or None."""
-        peer = node.add_p2p_connection(P2PInterface(), **kwargs)
+        peer = node.add_p2p_connection(AddrReceiver(), **kwargs)
         msg = self.ws_announcement(peer)
         self.last_peer_network = node.getpeerinfo()[0]["network"]
         node.disconnect_p2ps()
@@ -441,7 +471,7 @@ class P2PWebSocketTest(BitcoinTestFramework):
 
     def wsendpoint_from_outbound(self, node, **kwargs):
         """Have the node dial a test peer and return the wsendpoint it got, or None."""
-        peer = node.add_outbound_p2p_connection(P2PInterface(), p2p_idx=0, **kwargs)
+        peer = node.add_outbound_p2p_connection(AddrReceiver(), p2p_idx=0, **kwargs)
         msg = self.ws_announcement(peer)
         node.disconnect_p2ps()
         self.wait_until(lambda: node.getpeerinfo() == [])
