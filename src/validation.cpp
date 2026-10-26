@@ -3577,6 +3577,64 @@ bool Chainstate::DisconnectTip(BlockValidationState& state, DisconnectedBlockTra
     return true;
 }
 
+/**
+ * Evict mempool transactions whose token predicates no longer hold at the tip
+ * after `block` connected.
+ *
+ * Mempool acceptance checks a tx's CREATE/MINT/NFT_MINT predicates against the
+ * chain's token state only (CCoinsViewMemPool::GetToken reads the chain), so
+ * once a block changes a token's state, a mempool tx touching that token can
+ * be left unminable: e.g. a second mint of a capped token after the first one
+ * confirmed. Nothing else removes it (removeForBlock only handles input
+ * conflicts), so without this it stays until expiry and is reconsidered by
+ * every block template.
+ *
+ * Exact: a tx is evicted only if its predicates fail against the new tip in a
+ * fresh view, i.e. only if mempool acceptance would reject it right now, and
+ * since mempool txs never rely on unconfirmed token state that check is
+ * independent of the rest of the mempool. Bounded: token state only changes
+ * through the predicates of connected blocks, so only txs touching a token the
+ * block touched can be affected. Blocks without token predicates cost one pass
+ * over their outputs; otherwise one pass over mempool outputs, inspecting just
+ * the predicate operation byte, plus a predicate re-run for the matching txs.
+ */
+static void RemoveTokenPredicateConflicts(CTxMemPool& mempool, const CBlock& block, CCoinsViewCache& tip) EXCLUSIVE_LOCKS_REQUIRED(cs_main, mempool.cs)
+{
+    AssertLockHeld(cs_main);
+    AssertLockHeld(mempool.cs);
+
+    std::set<uint256> touched;
+    for (const auto& tx : block.vtx) {
+        for (const auto& out : tx->vout) {
+            if (auto key = blsct::GetPredicateTokenKey(out.predicate)) touched.insert(*key);
+        }
+    }
+    if (touched.empty()) return;
+
+    std::vector<CTransactionRef> stale;
+    for (const auto& entry : mempool.mapTx) {
+        const CTransaction& tx = entry.GetTx();
+        if (!tx.IsBLSCT()) continue;
+        bool affected = false;
+        for (const auto& out : tx.vout) {
+            const auto key = blsct::GetPredicateTokenKey(out.predicate);
+            if (key && touched.contains(*key)) {
+                affected = true;
+                break;
+            }
+        }
+        if (!affected) continue;
+        CCoinsViewCache view(&tip);
+        if (!blsct::ApplyTokenPredicates(tx, view)) stale.push_back(entry.GetSharedTx());
+    }
+    for (const auto& tx : stale) {
+        // An earlier removeRecursive may already have taken it as a descendant.
+        if (!mempool.exists(GenTxid::Txid(tx->GetHash()))) continue;
+        LogPrint(BCLog::MEMPOOL, "Evicting %s: token predicate no longer valid at the tip\n", tx->GetHash().ToString());
+        mempool.removeRecursive(*tx, MemPoolRemovalReason::CONFLICT);
+    }
+}
+
 static SteadyClock::duration time_connect_total{};
 static SteadyClock::duration time_flush{};
 static SteadyClock::duration time_chainstate{};
@@ -3694,6 +3752,9 @@ bool Chainstate::ConnectTip(BlockValidationState& state, CBlockIndex* pindexNew,
     if (m_mempool) {
         m_mempool->removeForBlock(blockConnecting.vtx, pindexNew->nHeight);
         disconnectpool.removeForBlock(blockConnecting.vtx);
+        // Token predicates are the other way a block can conflict with
+        // mempool txs: e.g. a mint of a capped token that just filled up.
+        RemoveTokenPredicateConflicts(*m_mempool, blockConnecting, CoinsTip());
 
         // BLSCT proof transcript v2: a BLSCT tx's BLSCT_PROOF_V2_MARKER must match
         // the regime at the tip (set iff tip+1 >= nBLSCTProofV2Height). Evict every
