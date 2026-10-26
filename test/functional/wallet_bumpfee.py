@@ -13,7 +13,7 @@ can be disabled or reordered if needed for debugging. If new test cases are
 added in the future, they should try to follow the same convention and not
 make assumptions about execution order.
 """
-from decimal import Decimal
+from decimal import Decimal, ROUND_UP
 
 from test_framework.blocktools import (
     COINBASE_MATURITY,
@@ -30,7 +30,6 @@ from test_framework.util import (
     assert_fee_amount,
     assert_greater_than,
     assert_raises_rpc_error,
-    get_fee,
     find_vout_for_address,
 )
 from test_framework.wallet import MiniWallet
@@ -49,9 +48,17 @@ TOO_HIGH     = 5000000
 
 # DEFAULT_TRANSACTION_MAXFEE, in satoshis
 DEFAULT_MAX_TX_FEE = 10 * COIN
-# Size of the dummy signature, sighash byte included, that the wallet's size estimate assumes for a
-# low-R signer: DummySignatureCreator(32, 32) in src/script/sign.cpp
-DUMMY_SIGNATURE_SIZE = 32 + 32 + 7
+# Size of the signature, sighash byte included, that bumpfee's size estimate assumes for a wallet-owned
+# input: CalculateMaximumSignedTxSize -> GetSignedTxinWeight -> MaxInputWeight ->
+# Descriptor::MaxSatisfactionWeight(use_max_sig=false), i.e. sig_size in WPKHDescriptor::MaxSatSize
+# (src/script/descriptor.cpp)
+DUMMY_SIGNATURE_SIZE = 71
+# Size of a wallet P2WPKH output: unlike Bitcoin's 31 bytes, a navio output also carries
+# its marker, flags and value fields and a DATA predicate
+P2WPKH_OUTPUT_SIZE = 82
+# Floor the wallet puts under the node's incremental relay fee when bumping (sat/vB):
+# WALLET_INCREMENTAL_RELAY_FEE in src/wallet/wallet.h
+WALLET_INCREMENTAL_RELAY_FEE = 5
 # -discardfee (BTC/kvB), set explicitly because test_dust_to_fee depends on it
 DISCARD_FEE = Decimal("0.0001")
 # Longest target estimatesmartfee accepts; it is clamped to the longest the estimator can answer for
@@ -63,6 +70,10 @@ def format_money(sats):
     while money.endswith("0") and money[-3].isdigit():
         money = money[:-1]
     return money
+
+def wallet_incremental_fee_rate(node):
+    """The incremental fee rate (sat/vB) bumpfee requires on top of the old fee, as CheckFeeRate computes it."""
+    return max(node.getmempoolinfo()["incrementalrelayfee"] * COIN / 1000, Decimal(WALLET_INCREMENTAL_RELAY_FEE))
 
 def get_change_address(tx, node):
     tx_details = node.getrawtransaction(tx, 1)
@@ -112,6 +123,7 @@ class BumpFeeTest(BitcoinTestFramework):
         dest_address = peer_node.getnewaddress()
         for mode in ["default", "fee_rate", "new_outputs"]:
             test_simple_bumpfee_succeeds(self, mode, rbf_node, peer_node, dest_address)
+        test_segwit_bumpfee_succeeds(self, rbf_node, dest_address)
         self.test_invalid_parameters(rbf_node, peer_node, dest_address)
         test_nonrbf_bumpfee_fails(self, peer_node, dest_address)
         test_notmine_bumpfee(self, rbf_node, peer_node, dest_address)
@@ -136,7 +148,7 @@ class BumpFeeTest(BitcoinTestFramework):
         self.test_single_output()
 
         # Context independent tests
-        # test_feerate_checks_replaced_outputs(self, rbf_node, peer_node)
+        test_feerate_checks_replaced_outputs(self, rbf_node, peer_node)
 
     def test_invalid_parameters(self, rbf_node, peer_node, dest_address):
         self.log.info('Test invalid parameters')
@@ -144,7 +156,7 @@ class BumpFeeTest(BitcoinTestFramework):
         self.sync_mempools((rbf_node, peer_node))
         assert rbfid in rbf_node.getrawmempool() and rbfid in peer_node.getrawmempool()
         # bumpfee prices a fee_rate on the tx's maximum signed size, which the wallet estimates with a
-        # 71-byte dummy signature (DUMMY_SIGNATURE_CREATOR) in place of the real one in the witness.
+        # DUMMY_SIGNATURE_SIZE signature in place of the real one in the witness.
         rbftx = rbf_node.getrawtransaction(rbfid, 1)
         signature_size = len(rbftx["vin"][0]["txinwitness"][0]) // 2
         max_vsize = -(-(rbftx["weight"] - signature_size + DUMMY_SIGNATURE_SIZE) // WITNESS_SCALE_FACTOR)
@@ -162,7 +174,10 @@ class BumpFeeTest(BitcoinTestFramework):
             f"(cannot be higher than -maxtxfee {format_money(DEFAULT_MAX_TX_FEE)})",
             rbf_node.bumpfee, rbfid, fee_rate=TOO_HIGH)
         # Test fee_rate with zero values.
-        msg = "Insufficient total fee 0.00"
+        old_fee = int(rbf_node.getmempoolentry(rbfid)["fees"]["base"] * COIN)
+        incremental_fee = int((max_vsize * wallet_incremental_fee_rate(rbf_node)).to_integral_value(rounding=ROUND_UP))
+        msg = (f"Insufficient total fee 0.00, must be at least {format_money(old_fee + incremental_fee)} "
+               f"(oldFee {format_money(old_fee)} + incrementalFee {format_money(incremental_fee)})")
         for zero_value in [0, 0.000, 0.00000000, "0", "0.000", "0.00000000"]:
             assert_raises_rpc_error(-8, msg, rbf_node.bumpfee, rbfid, fee_rate=zero_value)
         msg = "Invalid amount"
@@ -748,13 +763,16 @@ def test_feerate_checks_replaced_outputs(self, rbf_node, peer_node):
     tx_details = rbf_node.gettransaction(txid=tx_res["txid"], verbose=True)
 
     # Calculate the minimum feerate required for the bump to work.
-    # Since the bumped tx will replace all of the outputs with a single output, we can estimate that its size will 31 * (len(outputs) - 1) bytes smaller
-    tx_size = tx_details["decoded"]["vsize"]
-    est_bumped_size = tx_size - (len(tx_details["decoded"]["vout"]) - 1) * 31
-    inc_fee_rate = max(rbf_node.getmempoolinfo()["incrementalrelayfee"], Decimal(0.00100000)) # Wallet has a fixed incremental relay fee of 5 sat/vb
+    # bumpfee checks the rate against the maximum signed size of the tx with its outputs replaced, so take the tx's
+    # own size with each signature priced as DUMMY_SIGNATURE_SIZE, less every output but the single new one.
+    decoded = tx_details["decoded"]
+    signatures_size = sum(len(txin["txinwitness"][0]) // 2 for txin in decoded["vin"])
+    max_weight = decoded["weight"] - signatures_size + len(decoded["vin"]) * DUMMY_SIGNATURE_SIZE
+    est_bumped_size = -(-max_weight // WITNESS_SCALE_FACTOR) - (len(decoded["vout"]) - 1) * P2WPKH_OUTPUT_SIZE
     # RPC gives us fee as negative
-    min_fee = (-tx_details["fee"] + get_fee(est_bumped_size, inc_fee_rate)) * Decimal(1e8)
-    min_fee_rate = (min_fee / est_bumped_size).quantize(Decimal("1.000"))
+    min_fee = -tx_details["fee"] * COIN + est_bumped_size * wallet_incremental_fee_rate(rbf_node)
+    # Round up so the rate can't fall short of the minimum
+    min_fee_rate = (min_fee / est_bumped_size).quantize(Decimal("0.001"), rounding=ROUND_UP)
 
     # Attempt to bumpfee and replace all outputs with a single one using a feerate slightly less than the minimum
     new_outputs = [{rbf_node.getnewaddress(address_type="bech32"): 49}]
