@@ -7,7 +7,8 @@ doing work that can never confirm:
 - `generatetoaddress`, `generatetodescriptor` and `generateblock` built blocks
   paying a transparent coinbase, which these networks always reject. Up to the
   network's last proof-of-work height, `generatetoblsctaddress` can mine
-  instead; above it, blocks must be proof-of-stake, and the error says so.
+  instead; above it, blocks must be proof-of-stake. The error says so, and names
+  `generatetoblsctaddress` only while the chain is below that height.
 - `createrawtransaction` and `signrawtransactionwithkey` built and signed
   transparent transactions, which these networks never confirm. Use
   `createblsctrawtransaction` and `signblsctrawtransaction`.
