@@ -42,6 +42,16 @@ struct TxSignatureBatchResult {
     std::chrono::microseconds total{};
 };
 
+// Options for VerifyTx. Named fields, so that call sites cannot mix up two
+// trailing booleans.
+struct VerifyTxOptions {
+    // Skip only the minimum-fee rule (nFee >= weight * nBLSCTDefaultFee);
+    // balance, signatures, range proofs and scripts are still checked. Set
+    // only by the p2pmsg cover-candidate ingress: candidates are fee-0 halves
+    // whose aggregate pays the fee. Never set on a mempool or block path.
+    bool skip_fee_rule{false};
+};
+
 // NOTE: nSpendHeight = 0 / nMedianTimePast = 0 silently reject any input whose
 // nSequence encodes a locktime > 0 (height-based) or MTP > 0 (time-based).
 // Callers that do not have a real chain context (e.g. unit tests that only
@@ -56,7 +66,8 @@ struct TxSignatureBatchResult {
 // default (== `BLSCT_DEFAULT_FEE`).
 // `threads` caps the signature and range-proof worker pools; 0 means
 // std::thread::hardware_concurrency().
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0, const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE, int nBLSCTProofV2Height = std::numeric_limits<int>::max(), size_t threads = 0, bool skip_fee_rule = false);
+// `options` holds the policy switches; see VerifyTxOptions.
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0, const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE, int nBLSCTProofV2Height = std::numeric_limits<int>::max(), size_t threads = 0, const VerifyTxOptions& options = {});
 
 // Same collection semantics as VerifyTxCollectProofs, but also returns the
 // prepared aggregate-signature job so callers can defer BLS signature checking

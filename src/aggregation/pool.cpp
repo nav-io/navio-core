@@ -6,10 +6,16 @@
 
 #include <logging.h>
 
+#include <blsct/wallet/verification.h>
+#include <coins.h>
+#include <consensus/params.h>
+#include <consensus/tx_check.h>
+#include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <kernel/mempool_entry.h>
 #include <primitives/block.h>
 #include <random.h>
+#include <txmempool.h>
 
 #include <algorithm>
 #include <atomic>
@@ -45,25 +51,48 @@ bool CandidatePool::Contains(const COutPoint& input) const
     return m_shards[s].contains(input);
 }
 
+bool IsCandidateShape(const CTransaction& tx)
+{
+    if ((tx.nVersion & CTransaction::BLSCT_MARKER) == 0) return false;
+    if (tx.vin.size() != 1) return false;
+    if (tx.vout.size() != 1) return false;
+    if (tx.vout[0].scriptPubKey.IsFee()) return false;
+    if (GetTransactionWeight(tx) > CANDIDATE_MAX_WEIGHT) return false;
+    return true;
+}
+
+bool CheckCandidate(const CTransaction& tx, CCoinsViewCache& view, const CTxMemPool* mempool,
+                    int spend_height, int64_t median_time_past, const Consensus::Params& params,
+                    TxValidationState& state)
+{
+    if (!CheckTransaction(tx, state)) return false;
+    if (mempool != nullptr) {
+        for (const CTxIn& in : tx.vin) {
+            if (mempool->isSpent(in.prevout)) {
+                return state.Invalid(TxValidationResult::TX_CONFLICT, "txn-mempool-conflict");
+            }
+        }
+    }
+    CAmount fee{0};
+    if (!Consensus::CheckTxInputs(tx, state, view, spend_height, fee)) return false;
+    return blsct::VerifyTx(tx, view, state, /*blockReward=*/0, params.nPePoSMinStakeAmount,
+                           spend_height, median_time_past, params.nBLSCTDefaultFee,
+                           params.nBLSCTProofV2Height, /*threads=*/0,
+                           blsct::VerifyTxOptions{.skip_fee_rule = true});
+}
+
+bool CandidatePool::WouldAccept(const CTransaction& candidate) const
+{
+    return IsCandidateShape(candidate) && !Contains(candidate.vin[0].prevout) && Size() < POOL_MAX_TOTAL;
+}
+
 bool CandidatePool::AddCandidate(const CTransactionRef& candidate, bool reward_input)
 {
-    if (candidate == nullptr) return false;
-    // Structural validation. Candidates arrive unauthenticated from the network
-    // and are combined WITHOUT a per-candidate signature/UTXO recheck, so a
-    // malformed one would only fail when the whole aggregate is built --
-    // wasting the initiator's attempt. Reject the obviously-invalid shapes here:
-    //  - a BLSCT tx (marker set),
-    //  - exactly one input and one output (a 1-in/1-out self-spend),
-    //  - NOT a fee output (candidates must be fee-0 and fee-output-free; a fee
-    //    output would give the combined tx a second fee output and fail
-    //    consensus's one-fee-output rule),
-    //  - within a sane weight bound (oversized candidates inflate the
-    //    initiator's additionalFee and memory use).
-    if ((candidate->nVersion & CTransaction::BLSCT_MARKER) == 0) return false;
-    if (candidate->vin.size() != 1) return false;
-    if (candidate->vout.size() != 1) return false;
-    if (candidate->vout[0].scriptPubKey.IsFee()) return false;
-    if (GetTransactionWeight(*candidate) > CANDIDATE_MAX_WEIGHT) return false;
+    // Candidates arrive unauthenticated from the network. Network ingress runs
+    // CheckCandidate (signature, UTXO, maturity, mempool conflict) before this;
+    // the shape is checked again here because the debug RPC
+    // addaggregationcandidate inserts directly.
+    if (candidate == nullptr || !IsCandidateShape(*candidate)) return false;
     const COutPoint& input = candidate->vin[0].prevout;
 
     // Total cap only (best-effort; Size() is a snapshot). There is deliberately
@@ -148,14 +177,6 @@ std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n, size_
         out.insert(out.end(), reward.begin() + take_reward, reward.begin() + take_reward + top_up);
     }
     return out;
-}
-
-void CandidatePool::MarkRewardInput(const COutPoint& input)
-{
-    const size_t s = ShardFor(input);
-    LOCK(m_shard_mutex[s]);
-    auto it = m_shards[s].find(input);
-    if (it != m_shards[s].end()) it->second.reward_input = true;
 }
 
 bool CandidatePool::EvictByInput(const COutPoint& input)
