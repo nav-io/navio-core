@@ -20,12 +20,12 @@ FUZZ_TARGET(tokenid)
     FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
 
     // Whatever FromString() accepts, ToString() prints back in the one canonical
-    // spelling (only the hash's case may differ), and that spelling parses to the
-    // same id.
+    // spelling (only the hash's case may differ, and the empty string prints as
+    // NAV's hash), and that spelling parses to the same id.
     const std::string str{fuzzed_data_provider.ConsumeRandomLengthString()};
     if (const std::optional<TokenId> parsed{TokenId::FromString(str)}) {
         const std::string printed{parsed->ToString()};
-        if (!str.empty()) assert(printed == ToLower(str));
+        assert(printed == (str.empty() ? uint256{}.ToString() : ToLower(str)));
         const std::optional<TokenId> reparsed{TokenId::FromString(printed)};
         assert(reparsed && *reparsed == *parsed);
         assert(reparsed->ToString() == printed);
