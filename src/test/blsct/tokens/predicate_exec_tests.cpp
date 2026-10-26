@@ -8,6 +8,7 @@
 #include <blsct/tokens/predicate_parser.h>
 #include <coins.h>
 #include <consensus/amount.h>
+#include <primitives/transaction.h>
 #include <test/util/setup_common.h>
 #include <txdb.h>
 
@@ -251,6 +252,91 @@ BOOST_AUTO_TEST_CASE(create_then_mint_reverts_in_reverse_order_only)
         blsct::TokenEntry gone;
         BOOST_CHECK(!view.GetToken(owner_sk.GetPublicKey().GetHash(), gone));
     }
+}
+
+// ---- Token-state helpers used by block assembly and mempool eviction -------
+
+BOOST_AUTO_TEST_CASE(token_state_predicate_classification)
+{
+    blsct::PrivateKey owner_sk(7);
+    const blsct::PublicKey owner_pk = owner_sk.GetPublicKey();
+
+    auto create = MakeCreate(blsct::TOKEN, /*total_supply=*/1000);
+    blsct::MintTokenPredicate mint(owner_pk, /*amount=*/1);
+    blsct::MintNftPredicate mint_nft(owner_pk, /*nftId=*/0, {});
+    blsct::PayFeePredicate pay_fee(owner_pk);
+    blsct::DataPredicate data(uint64_t{42});
+
+    for (const auto& vch : {create.GetVch(), mint.GetVch(), mint_nft.GetVch()}) {
+        BOOST_CHECK(blsct::IsTokenStatePredicate(vch));
+        BOOST_CHECK(blsct::GetPredicateTokenKey(vch) == owner_pk.GetHash());
+    }
+    for (const auto& vch : {pay_fee.GetVch(), data.GetVch(), blsct::VectorPredicate{}}) {
+        BOOST_CHECK(!blsct::IsTokenStatePredicate(vch));
+        BOOST_CHECK(!blsct::GetPredicateTokenKey(vch).has_value());
+    }
+    // A truncated MINT is a token-state op but has no parsable key.
+    blsct::VectorPredicate truncated = mint.GetVch();
+    truncated.resize(2);
+    BOOST_CHECK(blsct::IsTokenStatePredicate(truncated));
+    BOOST_CHECK(!blsct::GetPredicateTokenKey(truncated).has_value());
+}
+
+static CTransaction MakeMintTx(const blsct::PublicKey& owner_pk, const std::vector<CAmount>& amounts)
+{
+    CMutableTransaction mtx;
+    for (const CAmount amount : amounts) {
+        CTxOut out;
+        out.predicate = blsct::MintTokenPredicate(owner_pk, amount).GetVch();
+        mtx.vout.push_back(out);
+    }
+    // Every BLSCT tx carries a stateless PAY_FEE predicate; it is skipped.
+    CTxOut fee;
+    fee.predicate = blsct::PayFeePredicate(owner_pk).GetVch();
+    mtx.vout.push_back(fee);
+    return CTransaction{mtx};
+}
+
+// Two mints that are each within the cap but exceed it together: applying
+// them one after another fails the second, and a per-tx child view keeps a tx
+// that fails on a later output from leaving partial supply behind.
+BOOST_AUTO_TEST_CASE(apply_token_predicates_accumulates_and_is_all_or_nothing)
+{
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 20, .memory_only = true}, {}};
+    CCoinsViewCache view{&base};
+    const auto owner_pk = RegisterToken(view, blsct::TOKEN, /*total_supply=*/100);
+    const auto supply = [&] {
+        blsct::TokenEntry entry;
+        BOOST_REQUIRE(view.GetToken(owner_pk.GetHash(), entry));
+        return entry.nSupply;
+    };
+
+    {
+        // 60 fits, the second output's 60 does not: nothing is kept.
+        CCoinsViewCache tx_view{&view};
+        BOOST_CHECK(!blsct::ApplyTokenPredicates(MakeMintTx(owner_pk, {60, 60}), tx_view));
+    }
+    BOOST_CHECK_EQUAL(supply(), 0);
+
+    const CTransaction first = MakeMintTx(owner_pk, {60});
+    const CTransaction second = MakeMintTx(owner_pk, {60});
+    {
+        // Each is valid against the base state on its own.
+        CCoinsViewCache a{&view}, b{&view};
+        BOOST_CHECK(blsct::ApplyTokenPredicates(first, a));
+        BOOST_CHECK(blsct::ApplyTokenPredicates(second, b));
+    }
+    {
+        CCoinsViewCache tx_view{&view};
+        BOOST_CHECK(blsct::ApplyTokenPredicates(first, tx_view));
+        tx_view.Flush();
+    }
+    BOOST_CHECK_EQUAL(supply(), 60);
+    {
+        CCoinsViewCache tx_view{&view};
+        BOOST_CHECK(!blsct::ApplyTokenPredicates(second, tx_view));
+    }
+    BOOST_CHECK_EQUAL(supply(), 60);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
