@@ -964,6 +964,33 @@ BOOST_FIXTURE_TEST_CASE(CreateBlsctWalletHasNoLegacySpkm, TestingSetup)
     }
 }
 
+BOOST_FIXTURE_TEST_CASE(CreateWatchOnlyBlsctWalletRejectsMasterSeed, TestingSetup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    DatabaseOptions options;
+    options.require_create = true;
+    options.create_flags = WALLET_FLAG_BLSCT | WALLET_FLAG_DISABLE_PRIVATE_KEYS;
+    DatabaseStatus status;
+    bilingual_str error;
+    std::vector<bilingual_str> warnings;
+    const std::string name{"watch_only_master_seed"};
+    const std::vector<unsigned char> master_seed(32, 1);
+    // Qualified: the CreateWallet test case above shadows the function name.
+    auto created = wallet::CreateWallet(context, name, master_seed, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, options, status, error, warnings);
+    BOOST_CHECK(!created);
+    BOOST_CHECK(status == DatabaseStatus::FAILED_CREATE);
+    BOOST_CHECK(error.original.starts_with("Cannot create a wallet with private keys disabled from a master seed"));
+    // Nothing may be written to disk.
+    BOOST_CHECK(!fs::exists(GetWalletDir() / fs::PathFromString(name)));
+    if (created) {
+        RemoveWallet(context, created, /*load_on_start=*/std::nullopt);
+        TestUnloadWallet(std::move(created));
+    }
+}
+
 BOOST_FIXTURE_TEST_CASE(LoadSeedlessBlsctWalletFails, TestingSetup)
 {
     m_args.ForceSetArg("-unsafesqlitesync", "1");

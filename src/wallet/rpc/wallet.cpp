@@ -353,7 +353,7 @@ static RPCHelpMan createwallet()
         "\nCreates and loads a new wallet. By default this creates a BLSCT wallet, navio's standard wallet type; pass blsct=false to create a legacy/descriptor wallet instead.\n",
         {
             {"wallet_name", RPCArg::Type::STR, RPCArg::Optional::NO, "The name for the new wallet. If this is a path, the wallet will be created at the path location."},
-            {"disable_private_keys", RPCArg::Type::BOOL, RPCArg::Default{false}, "Disable the possibility of private keys (only watchonlys are possible in this mode)."},
+            {"disable_private_keys", RPCArg::Type::BOOL, RPCArg::Default{false}, "Disable the possibility of private keys (only watchonlys are possible in this mode). For a BLSCT wallet, only an audit key may be passed as 'seed'; without one the wallet holds no keys."},
             {"blank", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a blank wallet. A blank wallet has no keys or HD seed. One can be set using setblsctseed."},
             {"passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Encrypt the wallet with this passphrase."},
             {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{false}, "Keep track of coin reuse, and treat dirty and clean coins differently with privacy considerations in mind."},
@@ -362,7 +362,7 @@ static RPCHelpMan createwallet()
             {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "No longer supported; must be false or omitted. External signers (hardware wallets) were removed, and setting this to true is an error. Kept so that the parameters after it keep their positions."},
             {"blsct", RPCArg::Type::BOOL, RPCArg::Default{true}, "Create a wallet with BLSCT keys. This is the default and standard wallet type on navio. Set to false to create a legacy or descriptor wallet instead."},
             {"storage_output", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for BLSCT wallets, otherwise false"}, "Store outputs instead of full transactions. BLSCT wallets enable this by default; pass false to keep full transactions."},
-            {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the BLSCT wallet from the specified seed (can be a master seed or an audit key). Requires blsct=true."},
+            {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the BLSCT wallet from the specified seed (a master seed, or an audit key for a watch-only wallet). Requires blsct=true."},
             {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words, or 26 with the Navio birthday suffix encoding the wallet creation time) to restore a BLSCT wallet from. Requires blsct=true. Mutually exclusive with 'seed'."},
             {"mnemonic_passphrase", RPCArg::Type::STR, RPCArg::Default{""}, "Optional BIP-39 passphrase used to extend the mnemonic when deriving the wallet keys. Requires blsct=true. Cannot be combined with 'seed'. The same passphrase must be provided again to restore the wallet from its mnemonic. Must be ASCII when creating a new wallet, since no NFKD normalization is applied and a non-ASCII passphrase would not be interoperable with other BIP-39 wallets. A non-ASCII passphrase is still accepted, with a warning, when restoring from 'mnemonic', so wallets created that way remain recoverable."},
         },
@@ -501,6 +501,17 @@ static RPCHelpMan createwallet()
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot specify both 'seed' and 'mnemonic'");
             }
 
+            // A master seed or mnemonic derives the spend key, so it cannot back
+            // a wallet that must hold no private keys. Refuse before the wallet
+            // database is created; only an audit key may seed such a wallet.
+            if ((flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS) && type != blsct::IMPORT_VIEW_KEY && (!seed.empty() || !mnemonic_str.empty())) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'disable_private_keys' with a master seed or 'mnemonic', which hold private keys. Pass an audit key as 'seed' to create a watch-only BLSCT wallet.");
+            }
+            // Such a wallet derives no keys, so a passphrase would be dropped.
+            if ((flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS) && !mnemonic_passphrase.empty()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'disable_private_keys' with 'mnemonic_passphrase'");
+            }
+
             // If mnemonic provided, convert to entropy. Accepts plain
             // 24-word BIP-39 or the 26-word Navio birthday variant, whose
             // two extra words encode the wallet creation time.
@@ -521,10 +532,11 @@ static RPCHelpMan createwallet()
             // For new BLSCT wallets (no seed or mnemonic), generate entropy here
             // so we can return the mnemonic in the response even for encrypted wallets.
             std::string mnemonic_response;
-            // Blank and watch-only wallets skip key generation entirely
-            // (fFirstRun excludes them), so a generated seed would never be
-            // imported and stamping "now" as their birthday would be wrong:
-            // a blank wallet exists to have an older seed imported later.
+            // Blank and private-keys-disabled wallets get no generated seed:
+            // CreateWallet skips BLSCT key generation for a blank wallet, and
+            // a wallet with private keys disabled must not hold one. Stamping
+            // "now" as their birthday would be wrong too: a blank wallet
+            // exists to have an older seed imported later.
             const bool fresh_blsct_seed = seed.empty() && mnemonic_str.empty() && (flags & WALLET_FLAG_BLSCT) &&
                                           !(flags & (WALLET_FLAG_BLANK_WALLET | WALLET_FLAG_DISABLE_PRIVATE_KEYS));
             // The creation time handed to the wallet. For a restore from a
