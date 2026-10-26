@@ -33,8 +33,9 @@ wallet's balances and coins (#512).
 The miner merges a chain of plain sends (-aggregatesends=0, as in #512) the
 same way. A sender that keeps full transactions (storage_output=false) replaces
 its sends with the merged block tx when it confirms, so it reports the same
-single send row as a wallet reimported after the block, which must match it.
-An output-storage sender keeps one send leg per plain send.
+single send row as a wallet reimported after the block, which must match it
+whether the reimport keeps full transactions or outputs only. An
+output-storage sender keeps one send leg per plain send.
 """
 
 from collections import Counter
@@ -183,8 +184,8 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         assert_equal(self.coins(imported), self.coins(created))
         self.assert_balance_matches_coins(imported, "imported after confirmation")
 
-    def import_wallet(self, node, name, seed=SEED_WIF):
-        node.createwallet(wallet_name=name, blsct=True, blank=True, storage_output=True)
+    def import_wallet(self, node, name, seed=SEED_WIF, storage_output=True):
+        node.createwallet(wallet_name=name, blsct=True, blank=True, storage_output=storage_output)
         wallet = node.get_wallet_rpc(name)
         wallet.setblsctseed(seed)
         wallet.rescanblockchain()
@@ -224,12 +225,12 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         n1.syncwithvalidationinterfacequeue()
         return block_txids[1]
 
-    def assert_replaced_by_merged_send(self, wallet, merged_txid, chain_txids, fees):
+    def assert_replaced_by_merged_send(self, wallet, merged_txid, chain_txids, fees, label="full-tx sender"):
         """A sender that keeps full transactions dropped its sends for the
         merged block tx: one send row under the block txid, paying the whole
         chain's amount to others with the sum of the sends' fees."""
         entries = wallet.listtransactions("*", 100000, 0, True)
-        self.log.info(f"full-tx sender: history: {[(e['category'], e['amount'], e.get('fee'), e['confirmations'], e['txid'][:8]) for e in entries]}")
+        self.log.info(f"{label}: history: {[(e['category'], e['amount'], e.get('fee'), e['confirmations'], e['txid'][:8]) for e in entries]}")
         assert all(e["confirmations"] > 0 for e in entries)
         sent = CHAIN_LENGTH * SEND_AMOUNT
         total_fee = sum(fees)
@@ -251,7 +252,7 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         balances = wallet.getbalances()["mine"]
         assert_equal(Decimal(str(balances["trusted"])), FUNDING_AMOUNT - sent + total_fee)
         assert_equal(Decimal(str(balances["untrusted_pending"])), 0)
-        self.assert_balance_matches_coins(wallet, "full-tx sender after confirmation")
+        self.assert_balance_matches_coins(wallet, f"{label} after confirmation")
 
     def run_test(self):
         n0, n1 = self.nodes
@@ -390,11 +391,13 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         self.assert_replaced_by_merged_send(plain_full, full_merged, full_txids, full_fees)
 
         # The issue's repro: a reimport after the merged block reports what
-        # the full-tx sender reports for the same block tx.
-        self.log.info("Reimport the full-tx sender's seed after the merged block")
-        plain_import = self.import_wallet(n1, "plain_imported_after", PLAIN_SEED_WIF)
-        self.assert_merged_send(plain_full, plain_import, full_merged, full_txids)
-        assert_equal(self.history(plain_import), self.history(plain_full))
+        # the full-tx sender reports for the same block tx, in either mode.
+        for storage_output in (True, False):
+            self.log.info(f"Reimport the full-tx sender's seed after the merged block (storage_output={storage_output})")
+            plain_import = self.import_wallet(n1, f"plain_imported_after_{storage_output}", PLAIN_SEED_WIF, storage_output)
+            self.assert_merged_send(plain_full, plain_import, full_merged, full_txids)
+            assert_equal(self.history(plain_import), self.history(plain_full))
+            self.assert_replaced_by_merged_send(plain_import, full_merged, full_txids, full_fees, f"reimport (storage_output={storage_output})")
 
         self.log.info(f"Chain {CHAIN_LENGTH} plain sends from the output-storage sender and confirm them merged")
         outputs_txids, outputs_fees = self.plain_chain(plain_outputs, dest)
