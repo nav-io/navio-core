@@ -7,6 +7,7 @@
 #define BITCOIN_NODE_MINER_H
 
 #include <blsct/wallet/txfactory.h>
+#include <coins.h>
 #include <policy/policy.h>
 #include <primitives/block.h>
 #include <txmempool.h>
@@ -188,8 +189,11 @@ private:
     // Methods for how to add transactions to a block.
     /** Add transactions based on feerate including unconfirmed ancestors
       * Increments nPackagesSelected / nDescendantsUpdated with corresponding
-      * statistics from the package selection (for logging statistics). */
-    void addPackageTxs(const CTxMemPool& mempool, int& nPackagesSelected, int& nDescendantsUpdated) EXCLUSIVE_LOCKS_REQUIRED(mempool.cs);
+      * statistics from the package selection (for logging statistics).
+      * token_view accumulates the token state (CREATE/MINT predicates) of the
+      * packages selected so far, on top of the chain tip; a package whose
+      * predicates fail against it is skipped and selection continues. */
+    void addPackageTxs(const CTxMemPool& mempool, CCoinsViewCache& token_view, int& nPackagesSelected, int& nDescendantsUpdated) EXCLUSIVE_LOCKS_REQUIRED(mempool.cs);
 
     // helper functions for addPackageTxs()
     /** Remove confirmed (inBlock) entries from given set */
@@ -201,6 +205,11 @@ private:
       * These checks should always succeed, and they're here
       * only as an extra check in case of suboptimal node configuration */
     bool TestPackageTransactions(const CTxMemPool::setEntries& package) const;
+    /** Apply the package's token predicates (in block order) on top of
+      * token_view. On success the package's token state is added to
+      * token_view; on failure token_view is unchanged and the failing tx is
+      * recorded in predicateFailedTx. */
+    bool TestPackageTokenPredicates(const std::vector<CTxMemPool::txiter>& sortedEntries, CCoinsViewCache& token_view, std::set<Txid>& predicateFailedTx) const;
     /** Sort the package in an order that is valid to appear in a block */
     void SortForBlock(const CTxMemPool::setEntries& package, std::vector<CTxMemPool::txiter>& sortedEntries);
 };

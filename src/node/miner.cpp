@@ -6,6 +6,7 @@
 #include <node/miner.h>
 
 #include <blsct/pos/pos.h>
+#include <blsct/tokens/predicate_exec.h>
 #include <blsct/wallet/txfactory.h>
 #include <chain.h>
 #include <chainparams.h>
@@ -140,7 +141,8 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     int nDescendantsUpdated = 0;
     if (m_mempool) {
         LOCK(m_mempool->cs);
-        addPackageTxs(*m_mempool, nPackagesSelected, nDescendantsUpdated);
+        CCoinsViewCache token_view(&m_chainstate.CoinsTip());
+        addPackageTxs(*m_mempool, token_view, nPackagesSelected, nDescendantsUpdated);
     }
 
     const auto time_1{SteadyClock::now()};
@@ -232,38 +234,31 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
 
     int nPackagesSelected = 0;
     int nDescendantsUpdated = 0;
+    // Token state (CREATE/MINT predicates) of everything selected so far, in
+    // block order. Aggregation keeps transaction and output order, so this is
+    // the order ConnectBlock applies the predicates in.
+    CCoinsViewCache token_view(&m_chainstate.CoinsTip());
     if (m_mempool) {
         LOCK(m_mempool->cs);
-        addPackageTxs(*m_mempool, nPackagesSelected, nDescendantsUpdated);
+        addPackageTxs(*m_mempool, token_view, nPackagesSelected, nDescendantsUpdated);
     }
 
-    CCoinsViewCache viewNew(&m_chainstate.CoinsTip());
-
     for (const CMutableTransaction& tx : txns) {
-        bool validPredicate = true;
-        CAmount txFees = 0;
+        // Per-tx child view, flushed only on success, so a tx failing on a
+        // later output leaves no partial token state behind.
+        CCoinsViewCache tx_view(&token_view);
+        if (!blsct::ApplyTokenPredicates(CTransaction{tx}, tx_view)) {
+            LogPrintf("%s: Failed validation of predicates of tx %s\n", __func__, tx.GetHash().ToString());
+            continue;
+        }
+        tx_view.Flush();
 
-        for (auto& out : tx.vout) {
-            if (out.predicate.size() > 0) {
-                try {
-                    auto parsedPredicate = blsct::ParsePredicate(out.predicate);
-                    if (!ExecutePredicate(parsedPredicate, viewNew)) {
-                        LogPrintf("%s: Failed validation of predicate of output %s\n", __func__, out.ToString());
-                        validPredicate = false;
-                        break;
-                    }
-                } catch (const std::ios_base::failure&) {
-                    LogPrintf("%s: Invalid predicate in output %s\n", __func__, out.ToString());
-                    validPredicate = false;
-                    break;
-                }
-            }
+        CAmount txFees = 0;
+        for (const auto& out : tx.vout) {
             if (out.IsFee()) {
                 txFees += out.nValue;
             }
         }
-
-        if (!validPredicate) continue;
 
         nFees += txFees;
         pblock->vtx.push_back(MakeTransactionRef(tx));
@@ -298,85 +293,6 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
         pblocktemplate->vTxFees.erase(pblocktemplate->vTxFees.begin() + i);
         pblocktemplate->vTxSigOpsCost.erase(pblocktemplate->vTxSigOpsCost.begin() + i);
     };
-
-    // Drop any selected transaction whose predicate side effects conflict with
-    // the token state accumulated by earlier selected transactions. Mempool
-    // validation verifies every tx against a fresh view that cannot see other
-    // mempool txs' CREATE/MINT state, so two individually-valid mints can
-    // jointly exceed a token's supply cap. Aggregation folds both into one
-    // block tx; ConnectBlock then applies the predicates in order, the second
-    // mint fails, and the whole template fails TestBlockValidity -- halting
-    // every stock miner while the pair sits in the mempool. Simulate the
-    // predicates here and exclude conflicting txs (and their descendants)
-    // instead, mirroring the staked-commitment conflict handling below.
-    {
-        bool any_predicate = false;
-        for (size_t i = 1; i < pblock->vtx.size() && !any_predicate; ++i) {
-            for (const auto& out : pblock->vtx[i]->vout) {
-                if (!out.predicate.empty()) {
-                    any_predicate = true;
-                    break;
-                }
-            }
-        }
-        while (any_predicate) {
-            std::vector<size_t> conflicts;
-            {
-                CCoinsViewCache predicate_view(&m_chainstate.CoinsTip());
-                for (size_t i = 1; i < pblock->vtx.size(); ++i) {
-                    bool ok = true;
-                    for (const auto& out : pblock->vtx[i]->vout) {
-                        if (out.predicate.empty()) continue;
-                        try {
-                            if (!ExecutePredicate(blsct::ParsePredicate(out.predicate), predicate_view)) {
-                                ok = false;
-                                break;
-                            }
-                        } catch (const std::ios_base::failure&) {
-                            ok = false;
-                            break;
-                        }
-                    }
-                    if (!ok) conflicts.push_back(i);
-                }
-            }
-            if (conflicts.empty()) break;
-
-            std::set<size_t> drop(conflicts.begin(), conflicts.end());
-            std::set<uint256> dropped_outs;
-            for (const size_t i : conflicts) {
-                for (size_t o = 0; o < pblock->vtx[i]->vout.size(); ++o) {
-                    dropped_outs.insert(pblock->vtx[i]->GetOutputId(o).ToUint256());
-                }
-            }
-            // A tx spending an excluded tx's output can no longer be in the
-            // block; carry that exclusion transitively (vtx order need not be
-            // parent-first).
-            bool changed = true;
-            while (changed) {
-                changed = false;
-                for (size_t i = 1; i < pblock->vtx.size(); ++i) {
-                    if (drop.contains(i)) continue;
-                    bool spends_dropped = false;
-                    for (const auto& in : pblock->vtx[i]->vin) {
-                        if (dropped_outs.contains(in.prevout.hash)) {
-                            spends_dropped = true;
-                            break;
-                        }
-                    }
-                    if (!spends_dropped) continue;
-                    drop.insert(i);
-                    for (size_t o = 0; o < pblock->vtx[i]->vout.size(); ++o) {
-                        dropped_outs.insert(pblock->vtx[i]->GetOutputId(o).ToUint256());
-                    }
-                    changed = true;
-                }
-            }
-            for (auto it = drop.rbegin(); it != drop.rend(); ++it) {
-                exclude_tx(*it, "predicate conflict");
-            }
-        }
-    }
 
     {
         const auto existing_staked = m_chainstate.CoinsTip().GetStakedCommitments();
@@ -447,6 +363,76 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
                         ++i;
                     }
                 }
+            }
+        }
+    }
+
+    // Safety net for token predicates. addPackageTxs and the txns loop above
+    // already admit only transactions whose predicates hold on top of
+    // everything selected before them, so this normally finds nothing. It
+    // re-checks the final set because the exclusions above can remove a
+    // transaction whose token state a later one relied on (e.g. a CREATE
+    // followed by a MINT from txns): ConnectBlock would then reject the whole
+    // block. Re-simulate in block order, drop failing transactions and their
+    // descendants, and repeat until consistent. Linear per pass, and skipped
+    // entirely unless some transaction carries a token-state predicate.
+    {
+        bool any_token_predicate = false;
+        for (size_t i = 1; i < pblock->vtx.size() && !any_token_predicate; ++i) {
+            for (const auto& out : pblock->vtx[i]->vout) {
+                if (blsct::IsTokenStatePredicate(out.predicate)) {
+                    any_token_predicate = true;
+                    break;
+                }
+            }
+        }
+        while (any_token_predicate) {
+            std::vector<size_t> conflicts;
+            {
+                CCoinsViewCache predicate_view(&m_chainstate.CoinsTip());
+                for (size_t i = 1; i < pblock->vtx.size(); ++i) {
+                    CCoinsViewCache tx_view(&predicate_view);
+                    if (blsct::ApplyTokenPredicates(*pblock->vtx[i], tx_view)) {
+                        tx_view.Flush();
+                    } else {
+                        conflicts.push_back(i);
+                    }
+                }
+            }
+            if (conflicts.empty()) break;
+
+            std::set<size_t> drop(conflicts.begin(), conflicts.end());
+            std::set<uint256> dropped_outs;
+            for (const size_t i : conflicts) {
+                for (size_t o = 0; o < pblock->vtx[i]->vout.size(); ++o) {
+                    dropped_outs.insert(pblock->vtx[i]->GetOutputId(o).ToUint256());
+                }
+            }
+            // A tx spending an excluded tx's output can no longer be in the
+            // block; carry that exclusion transitively (vtx order need not be
+            // parent-first).
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (size_t i = 1; i < pblock->vtx.size(); ++i) {
+                    if (drop.contains(i)) continue;
+                    bool spends_dropped = false;
+                    for (const auto& in : pblock->vtx[i]->vin) {
+                        if (dropped_outs.contains(in.prevout.hash)) {
+                            spends_dropped = true;
+                            break;
+                        }
+                    }
+                    if (!spends_dropped) continue;
+                    drop.insert(i);
+                    for (size_t o = 0; o < pblock->vtx[i]->vout.size(); ++o) {
+                        dropped_outs.insert(pblock->vtx[i]->GetOutputId(o).ToUint256());
+                    }
+                    changed = true;
+                }
+            }
+            for (auto it = drop.rbegin(); it != drop.rend(); ++it) {
+                exclude_tx(*it, "predicate conflict");
             }
         }
     }
@@ -599,6 +585,40 @@ bool BlockAssembler::TestPackageTransactions(const CTxMemPool::setEntries& packa
     return true;
 }
 
+bool BlockAssembler::TestPackageTokenPredicates(const std::vector<CTxMemPool::txiter>& sortedEntries, CCoinsViewCache& token_view, std::set<Txid>& predicateFailedTx) const
+{
+    // Cheap path: nothing token-related in the package (every BLSCT tx carries
+    // a PAY_FEE predicate, which is stateless and ignored here).
+    bool any_token_predicate = false;
+    for (CTxMemPool::txiter it : sortedEntries) {
+        const CTransaction& tx = it->GetTx();
+        if (predicateFailedTx.contains(tx.GetHash())) return false;
+        if (!tx.IsBLSCT()) continue;
+        for (const auto& out : tx.vout) {
+            if (blsct::IsTokenStatePredicate(out.predicate)) {
+                any_token_predicate = true;
+                break;
+            }
+        }
+    }
+    if (!any_token_predicate) return true;
+
+    // The whole package goes in or none of it: apply it to a child view and
+    // flush that into token_view only if every tx passes.
+    CCoinsViewCache package_view(&token_view);
+    for (CTxMemPool::txiter it : sortedEntries) {
+        const CTransaction& tx = it->GetTx();
+        if (!tx.IsBLSCT()) continue;
+        if (!blsct::ApplyTokenPredicates(tx, package_view)) {
+            LogPrint(BCLog::MEMPOOL, "%s: skipping tx %s: token predicate conflicts with the block template\n", __func__, tx.GetHash().ToString());
+            predicateFailedTx.insert(tx.GetHash());
+            return false;
+        }
+    }
+    package_view.Flush();
+    return true;
+}
+
 void BlockAssembler::AddToBlock(CTxMemPool::txiter iter)
 {
     pblocktemplate->block.vtx.emplace_back(iter->GetSharedTx());
@@ -676,7 +696,7 @@ void BlockAssembler::SortForBlock(const CTxMemPool::setEntries& package, std::ve
 // Each time through the loop, we compare the best transaction in
 // mapModifiedTxs with the next transaction in the mempool to decide what
 // transaction package to work on next.
-void BlockAssembler::addPackageTxs(const CTxMemPool& mempool, int& nPackagesSelected, int& nDescendantsUpdated)
+void BlockAssembler::addPackageTxs(const CTxMemPool& mempool, CCoinsViewCache& token_view, int& nPackagesSelected, int& nDescendantsUpdated)
 {
     AssertLockHeld(mempool.cs);
     // mapModifiedTx will store sorted packages after they are modified
@@ -684,6 +704,13 @@ void BlockAssembler::addPackageTxs(const CTxMemPool& mempool, int& nPackagesSele
     indexed_modified_transaction_set mapModifiedTx;
     // Keep track of entries that failed inclusion, to avoid duplicate work
     std::set<Txid> failedTx;
+    // Transactions whose token predicates failed against token_view. Token
+    // state only accumulates during selection (a token, once created, stays;
+    // supply and minted NFT ids only grow), so such a tx cannot become valid
+    // later in this template; any package containing one is skipped without
+    // re-executing its predicates. (A negative-amount mint could free supply;
+    // the cache then only over-excludes for this one template.)
+    std::set<Txid> predicateFailedTx;
 
     CTxMemPool::indexed_transaction_set::index<ancestor_score>::type::iterator mi = mempool.mapTx.get<ancestor_score>().begin();
     CTxMemPool::txiter iter;
@@ -794,12 +821,27 @@ void BlockAssembler::addPackageTxs(const CTxMemPool& mempool, int& nPackagesSele
             continue;
         }
 
-        // This transaction will make it in; reset the failed counter.
-        nConsecutiveFailed = 0;
-
         // Package can be added. Sort the entries in a valid order.
         std::vector<CTxMemPool::txiter> sortedEntries;
         SortForBlock(ancestors, sortedEntries);
+
+        // Token predicates. Mempool acceptance checks each tx's CREATE/MINT
+        // predicates against the chain only, so two txs that are each valid
+        // there can conflict with each other (e.g. two mints that together
+        // exceed a token's supply cap). ConnectBlock applies them in block
+        // order and would reject the whole block, so apply the package's
+        // predicates on top of what is already selected and skip the package
+        // if any fails, keeping the space free for the next candidate.
+        if (!TestPackageTokenPredicates(sortedEntries, token_view, predicateFailedTx)) {
+            if (fUsingModified) {
+                mapModifiedTx.get<ancestor_score>().erase(modit);
+                failedTx.insert(iter->GetSharedTx()->GetHash());
+            }
+            continue;
+        }
+
+        // This transaction will make it in; reset the failed counter.
+        nConsecutiveFailed = 0;
 
         for (size_t i = 0; i < sortedEntries.size(); ++i) {
             AddToBlock(sortedEntries[i]);
