@@ -620,6 +620,11 @@ BOOST_FIXTURE_TEST_CASE(mempool_rejects_blsct_tx_with_marker_stripped, TestBLSCT
         return WITH_LOCK(cs_main, return m_node.chainman->ProcessTransaction(MakeTransactionRef(mtx), /*test_accept=*/true));
     };
 
+    // Positive control: the unmodified tx is accepted, so the rules below do
+    // not reject an ordinary wallet send.
+    const auto ok_res = accept(built->tx);
+    BOOST_CHECK_MESSAGE(ok_res.m_result_type == MempoolAcceptResult::ResultType::VALID, ok_res.m_state.ToString());
+
     // The genuine transaction is acceptable...
     const auto genuine = accept(built->tx);
     BOOST_REQUIRE_MESSAGE(genuine.m_result_type == MempoolAcceptResult::ResultType::VALID, genuine.m_state.ToString());
@@ -655,6 +660,11 @@ BOOST_FIXTURE_TEST_CASE(mempool_rejects_token_fee_and_empty_vin, TestBLSCTChain1
         return WITH_LOCK(cs_main, return m_node.chainman->ProcessTransaction(MakeTransactionRef(mtx), /*test_accept=*/true));
     };
 
+    // Positive control: the unmodified tx is accepted, so the rules below do
+    // not reject an ordinary wallet send.
+    const auto ok_res = accept(built->tx);
+    BOOST_CHECK_MESSAGE(ok_res.m_result_type == MempoolAcceptResult::ResultType::VALID, ok_res.m_state.ToString());
+
     // Pay the fee in a non-native token instead of native value.
     CMutableTransaction token_fee{built->tx};
     bool found_fee = false;
@@ -668,6 +678,7 @@ BOOST_FIXTURE_TEST_CASE(mempool_rejects_token_fee_and_empty_vin, TestBLSCTChain1
     BOOST_REQUIRE(found_fee);
     const auto fee_res = accept(token_fee);
     BOOST_CHECK(fee_res.m_result_type == MempoolAcceptResult::ResultType::INVALID);
+    BOOST_CHECK(fee_res.m_state.GetResult() == TxValidationResult::TX_NOT_STANDARD);
     BOOST_CHECK_EQUAL(fee_res.m_state.GetRejectReason(), "non-native-fee-output");
 
     // No inputs at all: a mint can balance the tx, so consensus lets it
@@ -676,7 +687,140 @@ BOOST_FIXTURE_TEST_CASE(mempool_rejects_token_fee_and_empty_vin, TestBLSCTChain1
     no_inputs.vin.clear();
     const auto vin_res = accept(no_inputs);
     BOOST_CHECK(vin_res.m_result_type == MempoolAcceptResult::ResultType::INVALID);
+    BOOST_CHECK(vin_res.m_state.GetResult() == TxValidationResult::TX_NOT_STANDARD);
     BOOST_CHECK_EQUAL(vin_res.m_state.GetRejectReason(), "blsct-vin-empty");
+}
+
+// A validly signed tx that pays its fee in a token it holds. Consensus accepts
+// it on its own: the balance check subtracts nValue * G_token for the fee
+// output. But AggregateTransactions folds every fee into one native fee
+// output, so a template that aggregates it with any other tx is unbalanced by
+// nValue * (G_token - G_native) and fails TestBlockValidity, which halts block
+// production. The mempool rejects it, the assembler drops it (and its
+// spenders) before aggregating, and AggregateTransactions refuses it.
+BOOST_FIXTURE_TEST_CASE(token_fee_tx_rejected_and_kept_out_of_template, TestBLSCTChain100Setup)
+{
+    auto wallet = wallet::CreateBLSCTWallet(*m_node.chain, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain()));
+    auto blsct_km = wallet->GetBLSCTKeyMan();
+    const auto dest = blsct::SubAddress(std::get<blsct::DoublePublicKey>(blsct_km->GetNewDestination(0).value()));
+    const auto sync = [&] {
+        BOOST_REQUIRE(wallet::SyncBLSCTWallet(wallet, WITH_LOCK(Assert(m_node.chainman)->GetMutex(), return m_node.chainman->ActiveChain())));
+    };
+
+    // Mature coinbases: one funds the create, one the mint, one the native
+    // send used as the template's other tx.
+    for (int i = 0; i <= COINBASE_MATURITY + 3; i++) {
+        CreateAndProcessBlock({}, dest);
+    }
+    sync();
+
+    blsct::TokenInfo token;
+    token.type = blsct::TOKEN;
+    token.nTotalSupply = 1000 * COIN;
+    token.mapMetadata["name"] = "FeeToken";
+    token.publicKey = blsct_km->GetTokenKey((HashWriter{} << token.mapMetadata << token.nTotalSupply).GetHash()).GetPublicKey();
+    const TokenId token_id{token.publicKey.GetHash()};
+
+    const auto create_tx = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, blsct::CreateTransactionData{token});
+    BOOST_REQUIRE(create_tx);
+    CreateAndProcessBlock({create_tx->tx}, dest);
+    sync();
+
+    const auto mint_tx = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, blsct::CreateTransactionData{token, 100 * COIN, dest});
+    BOOST_REQUIRE(mint_tx);
+    const CBlock mint_block = CreateAndProcessBlock({mint_tx->tx}, dest);
+    sync();
+
+    // The minted token coin, opened with the wallet's keys.
+    std::optional<CTxOut> token_coin;
+    for (const auto& out : mint_block.vtx.back()->vout) {
+        if (out.tokenId == token_id && out.HasBLSCTRangeProof()) token_coin = out;
+    }
+    BOOST_REQUIRE(token_coin);
+    const auto recovered = blsct_km->RecoverOutputs({*token_coin});
+    BOOST_REQUIRE(recovered.is_completed && recovered.amounts.size() == 1);
+    const CAmount token_amount = recovered.amounts[0].amount;
+    blsct::PrivateKey spending_key;
+    BOOST_REQUIRE(blsct_km->GetSpendingKeyForOutput(*token_coin, spending_key));
+
+    // Spend it to a token output and a fee output in the same token, signed
+    // the way TxFactoryBase::BuildTx signs a native-fee tx.
+    const auto& consensus = m_node.chainman->GetConsensus();
+    const int spend_height = WITH_LOCK(cs_main, return m_node.chainman->ActiveChain().Height()) + 1;
+    const bool transcript_v2 = spend_height >= consensus.nBLSCTProofV2Height;
+    const auto build_token_fee_tx = [&](CAmount fee) {
+        CMutableTransaction mtx;
+        mtx.nVersion = CTransaction::BLSCT_MARKER | (transcript_v2 ? CTransaction::BLSCT_PROOF_V2_MARKER : 0);
+        mtx.vin.emplace_back(COutPoint(token_coin->GetHash())); // sequence defaults to SEQUENCE_FINAL
+        const auto out = blsct::CreateOutput(dest.GetKeys(), token_amount - fee, "token-fee", token_id, Scalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/false, transcript_v2);
+        mtx.vout.push_back(out.out);
+        const blsct::PrivateKey fee_key{BlstScalar::Rand()};
+        CTxOut fee_out{fee, CScript(OP_RETURN)};
+        fee_out.tokenId = token_id;
+        fee_out.predicate = blsct::PayFeePredicate(fee_key.GetPublicKey()).GetVch();
+        mtx.vout.push_back(fee_out);
+        const Scalar gamma_acc = Scalar(recovered.amounts[0].gamma) - out.gamma;
+        mtx.txSig = blsct::Signature::Aggregate({spending_key.Sign(mtx.vin[0].GetHash()),
+                                                 blsct::PrivateKey(out.blindingKey).Sign(out.out.GetHash()),
+                                                 blsct::PrivateKey(gamma_acc).SignBalance(),
+                                                 fee_key.SignFee()});
+        return mtx;
+    };
+    // The fee value does not change the serialized size, so size it from a
+    // first build: twice the consensus minimum.
+    const CAmount fee = 2 * blsct::GetTransactionWeight(CTransaction(build_token_fee_tx(1))) * consensus.nBLSCTDefaultFee;
+    BOOST_REQUIRE(fee < token_amount);
+    const CMutableTransaction token_fee_tx = build_token_fee_tx(fee);
+    BOOST_REQUIRE(blsct::HasNonNativeFeeOutput(CTransaction(token_fee_tx)));
+
+    // Consensus-valid on its own: balance, signatures, range proof, min fee.
+    {
+        LOCK(cs_main);
+        CCoinsViewCache view(&m_node.chainman->ActiveChainstate().CoinsTip());
+        TxValidationState state;
+        BOOST_CHECK_MESSAGE(blsct::VerifyTx(CTransaction(token_fee_tx), view, state, /*blockReward=*/0, /*minStake=*/0, spend_height,
+                                            m_node.chainman->ActiveChain().Tip()->GetMedianTimePast(),
+                                            consensus.nBLSCTDefaultFee, consensus.nBLSCTProofV2Height),
+                            state.ToString());
+    }
+
+    // Not relayable.
+    const auto res = WITH_LOCK(cs_main, return m_node.chainman->ProcessTransaction(MakeTransactionRef(token_fee_tx), /*test_accept=*/true));
+    BOOST_CHECK(res.m_result_type == MempoolAcceptResult::ResultType::INVALID);
+    BOOST_CHECK(res.m_state.GetResult() == TxValidationResult::TX_NOT_STANDARD);
+    BOOST_CHECK_EQUAL(res.m_state.GetRejectReason(), "non-native-fee-output");
+
+    // An ordinary native-fee send to share the template with.
+    const auto native = blsct::TxFactory::CreateTransaction(wallet.get(), blsct_km, blsct::CreateTransactionData{dest, 1 * COIN, "native"});
+    BOOST_REQUIRE(native);
+    const auto native_res = WITH_LOCK(cs_main, return m_node.chainman->ProcessTransaction(MakeTransactionRef(native->tx), /*test_accept=*/true));
+    BOOST_CHECK_MESSAGE(native_res.m_result_type == MempoolAcceptResult::ResultType::VALID, native_res.m_state.ToString());
+
+    BOOST_CHECK_THROW(blsct::AggregateTransactions({MakeTransactionRef(token_fee_tx), MakeTransactionRef(native->tx)}), std::invalid_argument);
+
+    // A tx spending the token-fee tx's output must go with it. It need not be
+    // valid: the assembler drops it before anything validates it.
+    CMutableTransaction spender;
+    spender.nVersion = CTransaction::BLSCT_MARKER;
+    spender.vin.emplace_back(COutPoint(token_fee_tx.vout[0].GetHash()));
+    spender.vout = native->tx.vout;
+
+    // Handed straight to the assembler (bypassing the mempool), the token-fee
+    // tx (and its spender) is dropped and the template stays valid. Without
+    // the exclusion, CreateNewBLSCTBlock throws "TestBlockValidity failed".
+    Chainstate& chainstate = m_node.chainman->ActiveChainstate();
+    const CAmount reward = GetBLSCTBlockReward(spend_height, consensus, false);
+    for (const auto& txns : {std::vector<CMutableTransaction>{token_fee_tx, native->tx},
+                             std::vector<CMutableTransaction>{token_fee_tx, spender, native->tx}}) {
+        std::unique_ptr<node::CBlockTemplate> tmpl;
+        {
+            LOCK(cs_main);
+            BOOST_REQUIRE_NO_THROW((tmpl = node::BlockAssembler{chainstate, nullptr}.CreateNewBLSCTBlock(dest, reward, txns)));
+        }
+        BOOST_REQUIRE(tmpl);
+        BOOST_REQUIRE_EQUAL(tmpl->block.vtx.size(), 2U);
+        BOOST_CHECK(tmpl->block.vtx[1]->GetHash() == CTransaction(native->tx).GetHash());
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

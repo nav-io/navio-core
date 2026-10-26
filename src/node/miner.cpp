@@ -299,6 +299,35 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBLSCTBlock(const blsct:
         pblocktemplate->vTxSigOpsCost.erase(pblocktemplate->vTxSigOpsCost.begin() + i);
     };
 
+    // Drop any selected transaction that pays its fee in a non-native token,
+    // plus anything spending its outputs. Consensus accepts such a tx on its
+    // own, but AggregateTransactions folds every fee into one native fee
+    // output, which would leave the aggregate unbalanced and fail
+    // TestBlockValidity for the whole template. Mempool policy already
+    // rejects these txs; this covers the txns argument and any path that
+    // bypasses that policy.
+    {
+        std::set<uint256> dropped_outs;
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (size_t i = 1; i < pblock->vtx.size();) {
+                const CTransactionRef& tx = pblock->vtx[i];
+                bool drop = blsct::HasNonNativeFeeOutput(*tx);
+                for (size_t in = 0; !drop && in < tx->vin.size(); ++in) {
+                    drop = dropped_outs.contains(tx->vin[in].prevout.hash);
+                }
+                if (drop) {
+                    for (const Outid& out_id : tx->GetOutputIds()) dropped_outs.insert(out_id.ToUint256());
+                    exclude_tx(i, "fee not paid in the native token, or spends such a tx");
+                    changed = true;
+                } else {
+                    ++i;
+                }
+            }
+        }
+    }
+
     {
         const auto existing_staked = m_chainstate.CoinsTip().GetStakedCommitments();
         std::set<std::vector<unsigned char>> selected_points;

@@ -10,6 +10,7 @@
 #include <blsct/pos/pos_async_verifier.h>
 #include <blsct/pos/proof_logic.h>
 #include <blsct/tokens/predicate_exec.h>
+#include <blsct/wallet/txfactory_global.h>
 #include <chain.h>
 #include <checkqueue.h>
 #include <clientversion.h>
@@ -775,6 +776,26 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "non-blsct-tx-not-allowed");
     }
 
+    // BLSCT standardness (block validation stays permissive, so this is not a
+    // consensus fork). Both checks are stateless, so they run here rather
+    // than after the input lookups. A non-coinbase BLSCT tx with no inputs can
+    // only be funded by a mint, and the consensus fee rule compares nFee to a
+    // native per-weight rate. Requiring the fee output to be native stops a
+    // token issuer from paying that rate in a token they minted for free, and
+    // rejecting empty vin removes the zero-input variant of the same tx
+    // entirely. A token fee would also break block assembly: the aggregate's
+    // single fee output is native (see blsct::AggregateTransactions). Not
+    // gated on -acceptnonstdtxn for that reason. (On a non-BLSCT chain a
+    // BLSCT tx is rejected outright in PolicyScriptChecks.)
+    if (args.m_chainparams.GetConsensus().fBLSCT && tx.IsBLSCT()) {
+        if (tx.vin.empty()) {
+            return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "blsct-vin-empty");
+        }
+        if (blsct::HasNonNativeFeeOutput(tx)) {
+            return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "non-native-fee-output");
+        }
+    }
+
     // Rather not work on nonstandard transactions (unless -testnet/-regtest)
     std::string reason;
     if (m_pool.m_require_standard && !IsStandardTx(tx, m_pool.m_max_datacarrier_bytes, m_pool.m_permit_bare_multisig, m_pool.m_dust_relay_feerate, reason)) {
@@ -1152,21 +1173,6 @@ bool MemPoolAccept::PolicyScriptChecks(const ATMPArgs& args, Workspace& ws)
         // at all — a relay-amplified DoS / pollution vector. Reject it now.
         if (!args.m_chainparams.GetConsensus().fBLSCT) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "blsct-tx-not-allowed");
-        }
-        // Mempool policy (block validation stays permissive so this is not a
-        // consensus fork). A non-coinbase BLSCT tx with no inputs can only be
-        // funded by a mint, and the consensus fee rule compares nFee to a
-        // native per-weight rate. Requiring the fee output to be native stops
-        // a token issuer from paying that rate in a token they minted for
-        // free, and rejecting empty vin removes the zero-input variant of the
-        // same tx entirely.
-        if (tx.vin.empty()) {
-            return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "blsct-vin-empty");
-        }
-        for (const auto& out : tx.vout) {
-            if (out.nValue > 0 && out.IsFee() && !out.tokenId.IsNull()) {
-                return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "non-native-fee-output");
-            }
         }
         return true;
     }
