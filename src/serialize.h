@@ -509,6 +509,7 @@ static inline Wrapper<Formatter, T&> Using(T&& t) { return Wrapper<Formatter, T&
 #define VARINT(obj) Using<VarIntFormatter<VarIntMode::DEFAULT>>(obj)
 #define COMPACTSIZE(obj) Using<CompactSizeFormatter<true>>(obj)
 #define LIMITED_STRING(obj,n) Using<LimitedStringFormatter<n>>(obj)
+#define LIMITED_BYTES(obj,n) Using<LimitedByteVectorFormatter<n>>(obj)
 
 /** Serialization wrapper class for integers in VarInt format. */
 template<VarIntMode Mode>
@@ -645,6 +646,33 @@ struct LimitedStringFormatter
 
     template<typename Stream>
     void Ser(Stream& s, const std::string& v)
+    {
+        s << v;
+    }
+};
+
+/** Byte-vector counterpart of LimitedStringFormatter: rejects a length prefix
+ * above Limit before resizing. The generic std::vector<unsigned char>
+ * Unserialize allocates up to MAX_VECTOR_ALLOCATE per chunk from an untrusted
+ * CompactSize before a short read fails; this allocates nothing for an
+ * oversized prefix. The serialized form is identical to the unbounded one.
+ */
+template<size_t Limit>
+struct LimitedByteVectorFormatter
+{
+    template<typename Stream>
+    void Unser(Stream& s, std::vector<unsigned char>& v)
+    {
+        size_t size = ReadCompactSize(s);
+        if (size > Limit) {
+            throw std::ios_base::failure("Byte vector length limit exceeded");
+        }
+        v.resize(size);
+        if (size != 0) s.read(MakeWritableByteSpan(v));
+    }
+
+    template<typename Stream>
+    void Ser(Stream& s, const std::vector<unsigned char>& v)
     {
         s << v;
     }

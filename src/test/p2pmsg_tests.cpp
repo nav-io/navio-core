@@ -1431,7 +1431,7 @@ BOOST_AUTO_TEST_CASE(envelope_rejects_oversized_declared_lengths_before_allocati
     auto env = StampedEnvelope(h.t->InboxPubKey(), PayloadKind::PING, {1}, /*bits=*/4, /*now=*/1000);
 
     const auto has_limit_reason = [](const std::ios_base::failure& e) {
-        return std::string(e.what()).find("exceeds limit") != std::string::npos;
+        return std::string(e.what()).find("limit exceeded") != std::string::npos;
     };
 
     {

@@ -7,8 +7,8 @@
 
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
+#include <p2pmsg/worker_pool.h>
 #include <serialize.h>
-#include <span.h>
 #include <uint256.h>
 
 #include <array>
@@ -32,55 +32,21 @@ static constexpr size_t ECIES_EPH_SIZE = blsct::PublicKey::SIZE; // 48
 //! Poly1305 tag length.
 static constexpr size_t ECIES_TAG_SIZE = 16;
 
-//! Byte-vector formatter that enforces a protocol maximum at the length prefix,
-//! before resizing. The generic std::vector<uint8_t> Unserialize allocates up
-//! to 5 MiB from an untrusted CompactSize before the stream's short read fails,
-//! which a 4 KiB p2pmsg packet must not be able to trigger.
-template <uint64_t MaxBytes>
-struct BoundedByteVectorFormatter {
-    template <typename Stream>
-    void Ser(Stream& s, const std::vector<uint8_t>& v) const
-    {
-        ::WriteCompactSize(s, v.size());
-        if (!v.empty()) s.write(MakeByteSpan(v));
-    }
-
-    template <typename Stream>
-    void Unser(Stream& s, std::vector<uint8_t>& v) const
-    {
-        const uint64_t size = ::ReadCompactSize(s);
-        if (size > MaxBytes) {
-            throw std::ios_base::failure("BoundedByteVectorFormatter: length exceeds limit");
-        }
-        v.resize(static_cast<size_t>(size));
-        if (size != 0) s.read(MakeWritableByteSpan(v));
-    }
-};
-
-//! Largest ciphertext this wire format accepts. The transport caps the whole
-//! body at MAX_JOB_BYTES (4096) and the padding ladder tops out at 3584 bytes
-//! of plaintext, so this leaves ample headroom while bounding the allocation.
-static constexpr uint64_t MAX_ECIES_CIPHERTEXT_BYTES = 4096;
+//! Largest ciphertext this wire format accepts. A packet only ever arrives
+//! inside a transport body, which is capped at MAX_JOB_BYTES, so no valid
+//! ciphertext can be longer than that. (The padding ladder does not bound it:
+//! a payload above the top bucket is sent unpadded.) This bounds the
+//! allocation at the length prefix, before the body cap is known to hold.
+static constexpr size_t MAX_ECIES_CIPHERTEXT_BYTES = MAX_JOB_BYTES;
 
 struct EciesPacket {
     blsct::PublicKey eph;                    //!< sender's per-message ephemeral pubkey
     std::vector<uint8_t> ciphertext;         //!< AEAD ciphertext (== plaintext length)
     std::array<uint8_t, ECIES_TAG_SIZE> tag; //!< Poly1305 tag
 
-    template <typename Stream>
-    void Serialize(Stream& s) const
+    SERIALIZE_METHODS(EciesPacket, obj)
     {
-        ::Serialize(s, eph);
-        ::Serialize(s, Using<BoundedByteVectorFormatter<MAX_ECIES_CIPHERTEXT_BYTES>>(ciphertext));
-        ::Serialize(s, tag);
-    }
-
-    template <typename Stream>
-    void Unserialize(Stream& s)
-    {
-        ::Unserialize(s, eph);
-        ::Unserialize(s, Using<BoundedByteVectorFormatter<MAX_ECIES_CIPHERTEXT_BYTES>>(ciphertext));
-        ::Unserialize(s, tag);
+        READWRITE(obj.eph, LIMITED_BYTES(obj.ciphertext, MAX_ECIES_CIPHERTEXT_BYTES), obj.tag);
     }
 
     //! Stable identifier for replay detection: SHA256(eph || ciphertext || tag).
