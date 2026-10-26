@@ -42,6 +42,36 @@ struct TxSignatureBatchResult {
     std::chrono::microseconds total{};
 };
 
+// Mempool policy bound on the OP_BLSCHECKSIG calls the input scripts of one
+// transaction may make: MAX_SCRIPT_BLS_CHECKS_BASE + MAX_SCRIPT_BLS_CHECKS_PER_INPUT
+// * vin. Each call that decodes a key adds a pair to the aggregate signature
+// check, so each costs a hash-to-G2 and a Miller loop, and that is paid before
+// txSig is known to be valid. The bound grows with the inputs only: script
+// pairs come only from inputs, and every input has to name a distinct coin
+// that exists, while an output costs a few bytes. The structural pairs (input
+// spending keys, output ephemeral and predicate keys) are not counted. The
+// base leaves room for one input with a 16-key script; the per-input part
+// covers the one-signature-per-input shapes (HTLC, atomic swap) when several
+// halves are combined into one transaction.
+static constexpr size_t MAX_SCRIPT_BLS_CHECKS_BASE{16};
+static constexpr size_t MAX_SCRIPT_BLS_CHECKS_PER_INPUT{2};
+
+inline size_t MaxScriptBlsChecks(size_t n_inputs)
+{
+    return MAX_SCRIPT_BLS_CHECKS_BASE + MAX_SCRIPT_BLS_CHECKS_PER_INPUT * n_inputs;
+}
+
+// Options for VerifyTx. Named fields, so that call sites cannot mix up two
+// trailing booleans.
+struct VerifyTxOptions {
+    // Reject with "too-many-bls-signature-pairs" (TX_MEMPOOL_POLICY) once the
+    // input scripts make more than MaxScriptBlsChecks(vin) OP_BLSCHECKSIG
+    // calls. On by default: VerifyTx is the mempool/relay entry point. Block
+    // validation goes through PrepareTxForDeferredVerification and
+    // VerifyTxCollectProofs, which never apply it, so consensus is unchanged.
+    bool enforce_script_pair_limit{true};
+};
+
 // NOTE: nSpendHeight = 0 / nMedianTimePast = 0 silently reject any input whose
 // nSequence encodes a locktime > 0 (height-based) or MTP > 0 (time-based).
 // Callers that do not have a real chain context (e.g. unit tests that only
@@ -56,7 +86,8 @@ struct TxSignatureBatchResult {
 // default (== `BLSCT_DEFAULT_FEE`).
 // `threads` caps the signature and range-proof worker pools; 0 means
 // std::thread::hardware_concurrency().
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0, const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE, int nBLSCTProofV2Height = std::numeric_limits<int>::max(), size_t threads = 0, bool enforce_pair_limit = false);
+// `options` holds the policy switches; see VerifyTxOptions.
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward = 0, const CAmount& minStake = 0, int nSpendHeight = 0, int64_t nMedianTimePast = 0, const CAmount& nBLSCTDefaultFee = BLSCT_DEFAULT_FEE, int nBLSCTProofV2Height = std::numeric_limits<int>::max(), size_t threads = 0, const VerifyTxOptions& options = {});
 
 // Same collection semantics as VerifyTxCollectProofs, but also returns the
 // prepared aggregate-signature job so callers can defer BLS signature checking
