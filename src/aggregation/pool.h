@@ -14,6 +14,13 @@
 #include <map>
 #include <vector>
 
+class CCoinsViewCache;
+class CTxMemPool;
+class TxValidationState;
+namespace Consensus {
+struct Params;
+} // namespace Consensus
+
 namespace aggregation {
 
 //! Target number of candidates a node keeps on hand for cover traffic.
@@ -31,6 +38,30 @@ static constexpr int64_t CANDIDATE_MAX_WEIGHT = 6000;
 //! Number of lock shards (by input-outpoint hash top byte).
 static constexpr size_t POOL_SHARDS = 16;
 
+//! The shape every pooled candidate has: a BLSCT tx (marker set) with exactly
+//! one input and one output, the output not a fee output (a candidate is fee-0
+//! and must not give the combined tx a second fee output, which consensus's
+//! one-fee-output rule rejects), within CANDIDATE_MAX_WEIGHT (an oversized
+//! candidate inflates the initiator's additionalFee and memory use). Cheap: no
+//! locks, no chain lookups.
+bool IsCandidateShape(const CTransaction& tx);
+
+//! Check a cover candidate the way mempool acceptance would check it, except
+//! for the minimum-fee rule (a candidate is fee-0): CheckTransaction, an input
+//! that a mempool tx already spends ("txn-mempool-conflict"),
+//! Consensus::CheckTxInputs against `view` (missing or spent coin, immature
+//! coinbase), and blsct::VerifyTx (scripts, balance, txSig, range proof).
+//! Without the mempool check a candidate spending a coin whose spend is already
+//! in the mempool is never evicted: the TransactionAddedToMempool eviction for
+//! that spend ran before the candidate existed, and every aggregate that picks
+//! it then fails. `view` must be backed by the chain tip and `spend_height` is
+//! the tip height + 1. Run only after IsCandidateShape (or
+//! CandidatePool::WouldAccept) passed; the caller holds cs_main so `view` and
+//! `mempool` agree. `mempool` may be null.
+bool CheckCandidate(const CTransaction& tx, CCoinsViewCache& view, const CTxMemPool* mempool,
+                    int spend_height, int64_t median_time_past, const Consensus::Params& params,
+                    TxValidationState& state);
+
 /**
  * Local pool of single-input-single-output fee-0 cover candidates received from
  * peers. Each candidate is keyed by its single input outpoint:
@@ -47,9 +78,9 @@ class CandidatePool final : public CValidationInterface
 public:
     CandidatePool() = default;
 
-    //! Insert a validated candidate from `peer`. Returns false (no insert) if:
-    //! the candidate is not 1-input, its input is already pooled, the per-peer
-    //! cap is hit, or the global cap is hit. `reward_input` records whether the
+    //! Insert a candidate that passed CheckCandidate. Returns false (no insert)
+    //! if it fails IsCandidateShape, its input is already pooled, or the global
+    //! cap is hit. `reward_input` records whether the
     //! candidate's prev-out was created by a coinbase (block-reward) tx -- that
     //! is public chain data, and matching it against the initiator's own input
     //! types is what makes the cover blend (see PickForAggregate).
@@ -82,13 +113,11 @@ public:
     std::vector<CTransactionRef> PickForAggregate(size_t max_n, size_t prefer_reward) const
        ;
 
-    //! Flag the pooled candidate holding `input` as reward-backed. Split from
-    //! AddCandidate so the (cs_main-holding) chainstate classification runs
-    //! only for candidates that actually entered the pool -- a message
-    //! rejected by the structural checks or the caps must not pay for a coin
-    //! lookup, grow the tip coins cache, or block a p2pmsg worker. No-op if
-    //! the entry is gone (already evicted).
-    void MarkRewardInput(const COutPoint& input);
+    //! Whether AddCandidate would take `candidate` now: IsCandidateShape, its
+    //! input not already pooled, and the pool below POOL_MAX_TOTAL. Lets
+    //! network ingress drop what the pool would refuse anyway before paying
+    //! for cs_main and CheckCandidate. A snapshot: AddCandidate checks again.
+    bool WouldAccept(const CTransaction& candidate) const;
 
     //! Drop the candidate holding `input`, if any. Returns true if one was removed.
     bool EvictByInput(const COutPoint& input);

@@ -378,6 +378,11 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     // Skipped for coinbase/coinstake-style reward txs (blockReward > 0): they
     // carry no fee output, are funded by the block subsidy + collected fees,
     // and use a separate consensus path (`BlockReward`/coinbase value check).
+    //
+    // Also skipped when the caller sets `options.skip_fee_rule`: only the
+    // p2pmsg cover-candidate ingress does, because a candidate is a fee-0
+    // half whose aggregate is fee-checked in full when it reaches the mempool.
+    // No mempool or block path sets it.
     if (!options.skip_fee_rule && !tx.IsCoinBase() && blockReward == 0) {
         const CAmount min_fee = static_cast<CAmount>(blsct::GetTransactionWeight(tx)) * nBLSCTDefaultFee;
         if (nFee < min_fee) {

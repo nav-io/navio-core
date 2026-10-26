@@ -19,7 +19,7 @@ consolidation of block rewards must merge exactly the sixteen reward-backed
 ones; a type-blind pick of sixteen from eighteen avoids both transfer-backed
 candidates only once in 153 draws.
 
-This exercises the pool admission classification (MarkRewardInput),
+This exercises the pool admission classification (reward_input at AddCandidate),
 CountRewardInputs and RefineCoverSelection end to end.
 """
 
