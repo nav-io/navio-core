@@ -194,6 +194,17 @@ class WalletMnemonicTest(BitcoinTestFramework):
         for name in ("test_nopriv_seed", "test_nopriv_mnemonic", "test_nopriv_passphrase"):
             assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, name)
 
+        self.log.info("Test createwallet refuses a seed, mnemonic or mnemonic passphrase for a blank wallet")
+        blank_msg = "Cannot combine 'blank' with 'seed', 'mnemonic' or 'mnemonic_passphrase'"
+        blank_keys = {
+            "test_blank_seed": {"seed": "00" * 32},
+            "test_blank_mnemonic": {"mnemonic": "abandon " * 23 + "art"},
+            "test_blank_passphrase": {"mnemonic_passphrase": "extra"},
+        }
+        for name, keys in blank_keys.items():
+            assert_raises_rpc_error(-8, blank_msg, node.createwallet, wallet_name=name, blsct=True, blank=True, **keys)
+            assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, name)
+
         self.log.info("Test an audit key with private keys disabled explicitly creates a watch-only wallet")
         audit_key = node.get_wallet_rpc("test_blsct").getblsctauditkey()
         node.createwallet(wallet_name="test_nopriv_audit", blsct=True, disable_private_keys=True, seed=audit_key)
