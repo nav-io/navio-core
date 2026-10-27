@@ -484,6 +484,11 @@ class P2PWebSocketTest(BitcoinTestFramework):
         assert "P2P_WS" not in node.getnetworkinfo()["localservicesnames"]
         assert self.wsendpoint_from_node(node) is None
 
+        self.log.info("Without -p2pwsbind NODE_P2P_WS is neither set nor announced")
+        self.restart_node(0, extra_args=[])
+        assert "P2P_WS" not in node.getnetworkinfo()["localservicesnames"]
+        assert self.wsendpoint_from_node(node) is None
+
         self.log.info("A listener on any address sets NODE_P2P_WS and announces its port")
         self.restart_node(0, extra_args=[f"-p2pwsbind=0.0.0.0:{ws_port}"])
         info = node.getnetworkinfo()
