@@ -50,6 +50,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <system_error>
 
 #ifndef WIN32
 #include <unistd.h>
@@ -884,8 +885,10 @@ struct DelegationStats {
 static std::map<std::string, DelegationStats> delegationStats;
 
 //! Attempts, and the wait between them, at moving a new -statsfile into
-//! place. On Windows the rename is refused while another process has the old
-//! file open, as a monitor reading it does.
+//! place. On Windows the rename can be refused while another process has the
+//! old file open, as a monitor reading it does: MSVC and MinGW report that as
+//! permission denied, and MinGW reports a sharing violation as busy. Those
+//! are the only failures worth retrying.
 static constexpr int STATS_RENAME_ATTEMPTS{10};
 static constexpr std::chrono::milliseconds STATS_RENAME_RETRY_WAIT{10};
 
@@ -928,7 +931,7 @@ static void WriteDelegationStats()
     for (int attempt = 0; attempt < STATS_RENAME_ATTEMPTS; ++attempt) {
         if (attempt > 0) UninterruptibleSleep(STATS_RENAME_RETRY_WAIT);
         fs::rename(tmp, target, ec);
-        if (!ec) break;
+        if (ec != std::errc::permission_denied && ec != std::errc::device_or_resource_busy) break;
     }
     if (ec) {
         LogPrintf("%s: Could not rename %s into place: %s\n", __func__, fs::PathToString(tmp), ec.message());
