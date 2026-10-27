@@ -35,13 +35,14 @@ SYSTEM_SYMBOL_PATTERNS = [
     # _ZNSt / _ZNKSt — libstdc++ std:: namespace
     # _ZNS[a-z] — Itanium ABI standard substitutions (So=ostream, Sd=iostream, …)
     # _ZNSt3__1 — libc++ std::__1 namespace
-    # A nested name may carry a ref-qualifier after its CV-qualifiers
-    # (R = &, O = &&), e.g. libstdc++'s C++20 basic_stringbuf::str() const &
-    # mangles as _ZNKRSt7__cxx11...
-    re.compile(r'^_ZNK?[RO]?S[a-z]'),
-    re.compile(r'^_ZNK?[RO]?St3__1'),    # libc++ std::__1::
+    # A nested name may carry CV-qualifiers (r = restrict, V = volatile,
+    # K = const, in that order) and then a ref-qualifier (R = &, O = &&),
+    # e.g. libstdc++'s C++20 basic_stringbuf::str() const & mangles as
+    # _ZNKRSt7__cxx11...
+    re.compile(r'^_ZNr?V?K?[RO]?S[a-z]'),
+    re.compile(r'^_ZNr?V?K?[RO]?St3__1'),    # libc++ std::__1::
     # __gnu_cxx / __cxxabiv1 / __exception_ptr namespaces
-    re.compile(r'^_ZNK?[RO]?(9__gnu_cxx|10__cxxabiv1|14__exception_ptr)'),
+    re.compile(r'^_ZNr?V?K?[RO]?(9__gnu_cxx|10__cxxabiv1|14__exception_ptr)'),
     re.compile(r'^_ZSt'),       # std:: standalone (operators, globals, templates)
     re.compile(r'^_ZTI'),       # typeinfo
     re.compile(r'^_ZTV'),       # vtable
@@ -83,7 +84,55 @@ SYSTEM_SYMBOL_PATTERNS = [
 ]
 
 
-def is_system_symbol(sym: str) -> bool:
+# First four bytes of a Mach-O object, in either byte order and word size.
+MACHO_MAGICS = {
+    bytes.fromhex(m) for m in ("feedface", "cefaedfe", "feedfacf", "cffaedfe")
+}
+# Members this check can't classify: a universal (fat) object, or LLVM bitcode
+# from an LTO build, plain or in its wrapper.
+UNSUPPORTED_MAGICS = {
+    bytes.fromhex(m) for m in ("cafebabe", "bebafeca", "4243c0de", "dec0170b")
+}
+
+
+def is_macho_archive(archive: str) -> bool:
+    """Whether the first object in an ar archive is Mach-O."""
+    with open(archive, "rb") as f:
+        if f.read(8) != b"!<arch>\n":
+            return False
+        while True:
+            header = f.read(60)
+            if len(header) < 60:
+                return False
+            name = header[:16].decode("ascii", "replace").rstrip()
+            size = int(header[48:58].decode("ascii").strip())
+            data = f.read(size)
+            f.read(size % 2)  # members are 2-byte aligned
+            # BSD ar stores a long member name ("#1/<len>") ahead of the data.
+            if name.startswith("#1/"):
+                name_len = int(name[3:])
+                name = data[:name_len].rstrip(b"\0").decode("ascii", "replace")
+                data = data[name_len:]
+            # Skip the symbol tables (GNU "/" and "/SYM64/", BSD "__.SYMDEF")
+            # and GNU's long name table ("//").
+            if name in ("/", "/SYM64/", "//") or name.startswith("__.SYMDEF"):
+                continue
+            # Guessing ELF here would silently bring back the Mach-O blind spot.
+            if data[:4] in UNSUPPORTED_MAGICS:
+                raise SystemExit(
+                    f"ERROR: {archive}: member '{name}' is a fat or bitcode object; "
+                    "check a single-architecture, non-LTO archive"
+                )
+            return data[:4] in MACHO_MAGICS
+
+
+def is_system_symbol(sym: str, macho: bool = False) -> bool:
+    # Mach-O prefixes every C-level name with one underscore, so _ZNSt...
+    # appears as __ZNSt... and memcpy as _memcpy. Strip it so the patterns,
+    # written for ELF names, mean the same thing; left in place, ^__ would
+    # accept every C++ symbol.
+    if macho and sym.startswith("_"):
+        sym = sym[1:]
     return any(p.match(sym) for p in SYSTEM_SYMBOL_PATTERNS)
 
 
@@ -201,9 +250,10 @@ def check_undefined(archive: str, dep_archives: list[str]) -> list[tuple[str, li
         all_defined |= dep_defined
 
     # Unsatisfied = undefined in main archive, not defined anywhere, not system
+    macho = is_macho_archive(archive)
     unsatisfied = [
         sym for sym in archive_undefined
-        if sym not in all_defined and not is_system_symbol(sym)
+        if sym not in all_defined and not is_system_symbol(sym, macho)
     ]
 
     if not unsatisfied:
