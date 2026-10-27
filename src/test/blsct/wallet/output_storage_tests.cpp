@@ -1726,6 +1726,125 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_chain_disconnected, TestingSetup)
     BOOST_CHECK(!child_wtx->isAbandoned());
 }
 
+// Disconnecting the block that confirmed our aggregate merged under another
+// hash puts the block tx back in the mempool. The aggregate is in the mempool
+// with it: trusted, its change spendable, and not abandonable. It used to stay
+// unconfirmed outside the mempool, so its change was untrusted while the coin
+// stayed spent, and abandoning it was accepted. When the block tx leaves the
+// mempool without being mined, the aggregate leaves it too and can be
+// abandoned. Abandoned, it is back in the mempool, and no longer abandoned,
+// when the block tx returns there, as any tx re-entering the mempool is.
+BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_back_in_mempool, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    for (const MemPoolRemovalReason reason : {MemPoolRemovalReason::EXPIRY, MemPoolRemovalReason::SIZELIMIT,
+                                              MemPoolRemovalReason::REORG, MemPoolRemovalReason::REPLACED,
+                                              MemPoolRemovalReason::CONFLICT}) {
+        BOOST_TEST_CONTEXT("removal reason " << RemovalReasonToString(reason))
+        {
+            OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+            LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+            AddFeeOutput(r);
+            const uint256 txid{r.aggregate->GetHash()};
+
+            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+            r.wallet->transactionAddedToMempool(r.aggregate);
+            r.wallet->transactionRemovedFromMempool(r.aggregate, MemPoolRemovalReason::BLOCK);
+            r.wallet->SetBirthTime(0);
+            const TestBlock block{{MakeMergedBlockTx(r, COIN)}};
+            const CTransactionRef& block_tx{block.block.vtx[0]};
+            r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+            const CWalletTx* wtx = r.wallet->GetWalletTx(txid);
+            BOOST_REQUIRE(wtx != nullptr);
+            BOOST_REQUIRE(wtx->isConfirmed());
+            r.wallet->blockDisconnected(block.Info());
+            BOOST_REQUIRE(wtx->state<TxStateInactive>());
+
+            r.wallet->transactionAddedToMempool(block_tx);
+            BOOST_CHECK(wtx->InMempool());
+            BOOST_CHECK(r.wallet->GetWalletTx(block_tx->GetHash()) == nullptr);
+            CheckChangeIsTheSpendableCoin(r);
+            BOOST_CHECK(!r.wallet->AbandonTransaction(txid));
+
+            r.wallet->transactionRemovedFromMempool(block_tx, reason);
+            BOOST_CHECK(wtx->state<TxStateInactive>());
+            BOOST_CHECK(!wtx->isAbandoned());
+            BOOST_CHECK(!CachedTxIsTrusted(*r.wallet, *wtx));
+            BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+            BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 0);
+
+            BOOST_REQUIRE(r.wallet->AbandonTransaction(txid));
+            BOOST_CHECK(wtx->isAbandoned());
+            BOOST_CHECK(!r.wallet->IsSpent(r.coin_outpoint));
+            BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 100 * COIN);
+
+            r.wallet->transactionAddedToMempool(block_tx);
+            BOOST_CHECK(wtx->InMempool());
+            BOOST_CHECK(!wtx->isAbandoned());
+            BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+        }
+    }
+}
+
+// The same for a chain of our sends merged into one block tx: back in the
+// mempool with the block tx, each send of the chain is in the mempool and
+// trusted, so the last change is the trusted balance, and out of it again,
+// each can be abandoned. Such a block tx spends outputs it creates, which
+// keeps the node from accepting it back into its mempool today; the wallet
+// does not rely on that.
+BOOST_FIXTURE_TEST_CASE(output_storage_merged_chain_back_in_mempool, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    r.wallet->transactionAddedToMempool(r.aggregate);
+    const CTransactionRef child{MakeChainedSend(r)};
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child, {child->vout[0]}, {}));
+    r.wallet->transactionAddedToMempool(child);
+
+    CMutableTransaction merged;
+    merged.nVersion = r.aggregate->nVersion;
+    for (const CTransactionRef& tx : {r.aggregate, child}) {
+        merged.vin.insert(merged.vin.end(), tx->vin.begin(), tx->vin.end());
+        merged.vout.insert(merged.vout.end(), tx->vout.begin(), tx->vout.end());
+    }
+    merged.vout.push_back(MakeFeeOutput(COIN / 100));
+
+    r.wallet->transactionRemovedFromMempool(r.aggregate, MemPoolRemovalReason::BLOCK);
+    r.wallet->transactionRemovedFromMempool(child, MemPoolRemovalReason::BLOCK);
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MakeTransactionRef(merged)}};
+    const CTransactionRef& block_tx{block.block.vtx[0]};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+    r.wallet->blockDisconnected(block.Info());
+    const CWalletTx* wtx = r.wallet->GetWalletTx(r.aggregate->GetHash());
+    const CWalletTx* child_wtx = r.wallet->GetWalletTx(child->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_REQUIRE(child_wtx != nullptr);
+    BOOST_REQUIRE(wtx->state<TxStateInactive>());
+    BOOST_REQUIRE(child_wtx->state<TxStateInactive>());
+
+    r.wallet->transactionAddedToMempool(block_tx);
+    BOOST_CHECK(wtx->InMempool());
+    BOOST_CHECK(child_wtx->InMempool());
+    BOOST_CHECK(CachedTxIsTrusted(*r.wallet, *wtx));
+    BOOST_CHECK(CachedTxIsTrusted(*r.wallet, *child_wtx));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 98 * COIN);
+    BOOST_CHECK(!r.wallet->AbandonTransaction(r.aggregate->GetHash()));
+    BOOST_CHECK(!r.wallet->AbandonTransaction(child->GetHash()));
+
+    r.wallet->transactionRemovedFromMempool(block_tx, MemPoolRemovalReason::EXPIRY);
+    BOOST_CHECK(wtx->state<TxStateInactive>());
+    BOOST_CHECK(child_wtx->state<TxStateInactive>());
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 0);
+    BOOST_REQUIRE(r.wallet->AbandonTransaction(r.aggregate->GetHash()));
+    BOOST_CHECK(wtx->isAbandoned());
+    BOOST_CHECK(child_wtx->isAbandoned());
+    BOOST_CHECK(!r.wallet->IsSpent(r.coin_outpoint));
+}
+
 // CandidatePool::PickForAggregate leaves a picked cover candidate in the pool,
 // so two senders can aggregate the same candidate C. When the other sender's
 // aggregate (C plus its own half) is mined, the block tx shares C's output

@@ -1646,6 +1646,43 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 for (const uint256& spender : conflicted) {
                     MarkConflicted(conf->confirmed_block_hash, conf->confirmed_block_height, spender);
                 }
+            } else {
+                // A mempool tx that merges sends of ours (see IsMergedInto)
+                // is there under its own hash, which none of those sends
+                // carries. Typically it is a block tx back in the mempool
+                // after its block was disconnected, but any such tx counts,
+                // and it can leave the mempool again (expiry, eviction, a
+                // conflict). Each send merged into it follows it into and out
+                // of the mempool: in it, the send is trusted and cannot be
+                // abandoned (an abandoned one stops being so, as any tx
+                // re-entering the mempool does); out of it, it is unconfirmed
+                // until abandoned, like any send that left the mempool. A
+                // send still in the mempool under its own hash stays there.
+                const bool in_mempool{std::holds_alternative<TxStateInMempool>(tx_state)};
+                std::set<uint256> moved;
+                for (const CTxIn& txin : tx.vin) {
+                    const auto range = mapTxSpends.equal_range(txin.prevout);
+                    for (auto it_spend = range.first; it_spend != range.second; ++it_spend) {
+                        const uint256& spender = it_spend->second;
+                        if (spender == tx.GetHash()) continue;
+                        const auto wit = mapWallet.find(spender);
+                        if (wit == mapWallet.end()) continue;
+                        const CWalletTx& wtx = wit->second;
+                        const bool follows{in_mempool ? !wtx.InMempool() && !wtx.isConfirmed() && !wtx.isConflicted()
+                                                      : wtx.InMempool() && !chain().isInMempool(spender)};
+                        if (follows && IsMergedInto(*wtx.tx, tx)) moved.insert(spender);
+                    }
+                }
+                if (!moved.empty()) {
+                    WalletBatch batch(GetDatabase(), /*_fFlushOnClose=*/false);
+                    for (const uint256& h : moved) {
+                        CWalletTx& wtx = mapWallet.at(h);
+                        wtx.m_state = in_mempool ? TxState{TxStateInMempool{}} : TxState{TxStateInactive{}};
+                        wtx.MarkDirty();
+                        batch.WriteTx(wtx);
+                        NotifyTransactionChanged(h, CT_UPDATED);
+                    }
+                }
             }
 
             // Without fUpdate (only ScanForWalletTransactions passes that, and
@@ -2758,6 +2795,12 @@ void CWallet::ResubmitWalletTransactions(bool relay, bool force)
         for (auto& [txid, wtx] : mapWallet) {
             // Only rebroadcast unconfirmed txs
             if (!wtx.isUnconfirmed()) continue;
+
+            // An output-storage send in the mempool only through a mempool tx
+            // that merges it (see AddToWalletIfInvolvingMe) is relayed as
+            // part of that tx; submitted on its own it conflicts with it.
+            if (IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) && wtx.tx->IsBLSCT() &&
+                wtx.InMempool() && !chain().isInMempool(txid)) continue;
 
             // Attempt to rebroadcast all txes more than 5 minutes older than
             // the last block, or all txs if forcing.
