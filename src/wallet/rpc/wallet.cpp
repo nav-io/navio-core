@@ -416,9 +416,6 @@ static RPCHelpMan createwallet()
             }
 
             if (descriptors && !blsct) {
-#ifndef USE_SQLITE
-                throw JSONRPCError(RPC_WALLET_ERROR, "Compiled without sqlite support (required for descriptor wallets)");
-#endif
                 flags |= WALLET_FLAG_DESCRIPTORS;
             }
             if (!request.params[7].isNull() && request.params[7].get_bool()) {

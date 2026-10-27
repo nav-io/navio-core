@@ -28,7 +28,6 @@ class CMasterKey;
 class CWallet;
 class CWalletTx;
 class CWalletOutput;
-struct WalletContext;
 
 /**
  * Overview of wallet database classes:
@@ -40,8 +39,6 @@ struct WalletContext;
  * - SQLiteDatabase represents a wallet database.
  * - SQLiteBatch is a low-level database batch update.
  */
-
-static const bool DEFAULT_FLUSHWALLET = true;
 
 /** Error statuses for the wallet database.
  * Values are in order of severity. When multiple errors occur, the most severe (highest value) will be returned.
@@ -349,9 +346,6 @@ private:
     std::unique_ptr<DatabaseBatch> m_batch;
     WalletDatabase& m_database;
 };
-
-//! Compacts BDB state so that wallet.dat is self-contained (if there are changes)
-void MaybeCompactWalletDB(WalletContext& context);
 
 bool LoadKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);
 bool LoadCryptedKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr);

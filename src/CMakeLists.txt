@@ -4,11 +4,6 @@
 
 include(AddWindowsResources)
 
-# Wire USE_SQLITE: enabled whenever the wallet (and therefore SQLite3) is enabled.
-if(ENABLE_WALLET)
-  set(USE_SQLITE 1)
-endif()
-
 # Wire ENABLE_ZMQ from the WITH_ZMQ option.
 if(WITH_ZMQ)
   set(ENABLE_ZMQ 1)
