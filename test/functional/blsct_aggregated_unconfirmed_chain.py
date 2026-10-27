@@ -38,7 +38,8 @@ whether the reimport keeps full transactions or outputs only. An
 output-storage sender keeps one send leg per plain send. A send of it merged
 with another sender's send returns to the mempool with the block tx when that
 block is disconnected: still trusted, not abandonable, and not rebroadcast on
-its own.
+its own. A full-tx sender's send merged with another sender's send reports its
+own fee on the block tx, not the other sender's too.
 """
 
 from collections import Counter
@@ -473,6 +474,34 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         self.sync_blocks()
         n1.syncwithvalidationinterfacequeue()
         assert_equal(plain_outputs.gettransaction(control_txid)["confirmations"], 1)
+
+        # The block tx carries one fee output for every sender it merged, so
+        # the full-tx sender that replaces its send with it reports the fee
+        # its own send paid, not the other sender's too.
+        self.log.info("Merge a plain send of the full-tx sender with another sender's send")
+        balance_before = Decimal(str(plain_full.getbalances()["mine"]["trusted"]))
+        mempool_before = set(n1.getrawmempool())
+        plain_full.sendtoblsctaddress(dest, SEND_AMOUNT)
+        (own_txid,) = set(n1.getrawmempool()) - mempool_before
+        own_fee = Decimal(str(plain_full.gettransaction(own_txid)["fee"]))
+        producer.sendtoblsctaddress(dest, SEND_AMOUNT)
+        other_txid = (set(n1.getrawmempool()) - mempool_before - {own_txid}).pop()
+        other_fee = Decimal(str(producer.gettransaction(other_txid)["fee"]))
+        self.generate_blsct_blocks(n1, producer_addr, 1)
+        self.sync_blocks()
+        block_txids = n1.getblock(n1.getbestblockhash())["tx"]
+        assert_equal(len(block_txids), 2)
+        mixed_merged = block_txids[1]
+        n1.syncwithvalidationinterfacequeue()
+        assert_raises_rpc_error(-5, "Invalid or non-wallet transaction id", plain_full.gettransaction, own_txid)
+        merged = plain_full.gettransaction(mixed_merged)
+        self.log.info(f"full-tx sender: merged with another sender: amount={merged['amount']} fee={merged['fee']} other sender's fee={other_fee}")
+        assert_equal(Decimal(str(merged["fee"])), own_fee)
+        assert_equal(Decimal(str(merged["amount"])), -SEND_AMOUNT)
+        assert_equal([(d["category"], Decimal(str(d["amount"])), Decimal(str(d["fee"]))) for d in merged["details"]], [("send", -SEND_AMOUNT, own_fee)])
+        sends = [e for e in plain_full.listtransactions("*", 100000, 0, True) if e["txid"] == mixed_merged]
+        assert_equal([(e["category"], Decimal(str(e["amount"])), Decimal(str(e["fee"]))) for e in sends], [("send", -SEND_AMOUNT, own_fee)])
+        assert_equal(self.assert_balance_matches_coins(plain_full, "full-tx sender after the mixed block"), balance_before - SEND_AMOUNT + own_fee)
 
 
 if __name__ == "__main__":

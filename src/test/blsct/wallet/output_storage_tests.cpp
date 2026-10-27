@@ -2025,4 +2025,255 @@ BOOST_FIXTURE_TEST_CASE(output_storage_fee_only_send_not_merged, TestingSetup)
     BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
 }
 
+// A wallet holding full transactions replaces its sends with the block tx a
+// staker merged them into. That block tx carries one fee output for every
+// sender it merged, so its fee is not this wallet's: the send it reports
+// keeps the fee its replaced send paid, and sends to others what that send
+// did. The block fee used to be reported whole, moving the other senders'
+// fees out of the amount sent into this wallet's fee. What the wallet paid
+// survives a reload, and stays out of the fields gettransaction lists.
+BOOST_FIXTURE_TEST_CASE(full_tx_merged_block_reports_own_fee, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/false, /*output_storage=*/false);
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    AddFeeOutput(r);
+    const CAmount own_fee{r.aggregate->GetBLSCTFee()};
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    r.wallet->transactionAddedToMempool(r.aggregate);
+    const auto amounts = [&](const CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(r.wallet->cs_wallet) {
+        std::list<COutputEntry> received, sent;
+        CAmount fee;
+        CachedTxGetAmounts(*r.wallet, wtx, received, sent, fee, ISMINE_ALL, /*include_change=*/false);
+        BOOST_REQUIRE_EQUAL(sent.size(), 1U);
+        return std::make_pair(sent.front().amount, fee);
+    };
+    const auto [own_sent, fee] = amounts(*r.wallet->GetWalletTx(r.aggregate->GetHash()));
+    BOOST_REQUIRE_EQUAL(fee, own_fee);
+
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MakeMergedBlockTx(r, COIN)}};
+    const CTransactionRef& block_tx{block.block.vtx[0]};
+    BOOST_REQUIRE(block_tx->GetBLSCTFee() != own_fee);
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+
+    BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash()) == nullptr);
+    const CWalletTx* wtx = r.wallet->GetWalletTx(block_tx->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_CHECK(wtx->m_own_fee == own_fee);
+    const auto [merged_sent, merged_fee] = amounts(*wtx);
+    BOOST_CHECK_EQUAL(merged_fee, own_fee);
+    BOOST_CHECK_EQUAL(merged_sent, own_sent);
+
+    DataStream stream;
+    stream << *wtx;
+    CWalletTx loaded{nullptr, TxStateInactive{}};
+    stream >> loaded;
+    BOOST_CHECK(loaded.m_own_fee == own_fee);
+    BOOST_CHECK(loaded.mapValue.empty());
+
+    // A malformed or out-of-range stored value is left out: the whole fee is
+    // reported.
+    for (const std::string& stored : {std::string{"x"}, std::string{"-1"}, ToString(MAX_MONEY + 1)}) {
+        BOOST_TEST_CONTEXT("ownfee " << stored)
+        {
+            CWalletTx corrupt{wtx->tx, TxStateInactive{}};
+            corrupt.mapValue["ownfee"] = stored;
+            DataStream corrupt_stream;
+            corrupt_stream << corrupt;
+            CWalletTx corrupt_loaded{nullptr, TxStateInactive{}};
+            corrupt_stream >> corrupt_loaded;
+            BOOST_CHECK(!corrupt_loaded.m_own_fee);
+        }
+    }
+}
+
+// When the block tx also spends a coin of ours that none of the replaced
+// sends spends (a send the wallet holds no record of), the replaced sends'
+// fees are not all this wallet paid, and the share that send paid cannot be
+// told. No own fee is recorded, so the whole block fee is reported.
+BOOST_FIXTURE_TEST_CASE(full_tx_merged_block_unrecorded_own_input, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/false, /*output_storage=*/false);
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    AddFeeOutput(r);
+
+    CMutableTransaction funding;
+    funding.nVersion |= CTransaction::BLSCT_MARKER;
+    funding.vout.push_back(blsct::CreateOutput(r.address, 10 * COIN, "second coin").out);
+    BOOST_REQUIRE(r.wallet->AddToWallet(MakeTransactionRef(funding), TxStateConfirmed{InsecureRand256(), 1, 0}));
+    const COutPoint second_coin{funding.vout[0].GetHash()};
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    r.wallet->transactionAddedToMempool(r.aggregate);
+
+    CMutableTransaction merged{*MakeMergedBlockTx(r, COIN)};
+    merged.vin.emplace_back(second_coin);
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MakeTransactionRef(merged)}};
+    const CTransactionRef& block_tx{block.block.vtx[0]};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+
+    BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash()) == nullptr);
+    const CWalletTx* wtx = r.wallet->GetWalletTx(block_tx->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_CHECK(!wtx->m_own_fee);
+    std::list<COutputEntry> received, sent;
+    CAmount fee;
+    CachedTxGetAmounts(*r.wallet, *wtx, received, sent, fee, ISMINE_ALL, /*include_change=*/false);
+    BOOST_CHECK_EQUAL(fee, block_tx->GetBLSCTFee());
+}
+
+//! Two sends of `r.wallet`, recorded and in the mempool, each paying its own
+//! fee: the first spends the wallet's coin, the second the first's change.
+//! Both changes go to the change account and add up to the coin, so a block tx
+//! merging the two has change outputs equal to its debit unless it leaves out
+//! the first change, which it spends itself.
+static std::pair<CTransactionRef, CTransactionRef> RecordOwnSendChain(const OwnAggregate& r) EXCLUSIVE_LOCKS_REQUIRED(r.wallet->cs_wallet, r.cover_wallet->cs_wallet)
+{
+    const auto change_address = std::get<blsct::DoublePublicKey>(r.wallet->GetBLSCTKeyMan()->GetNewDestination(blsct::CHANGE_ACCOUNT).value());
+    const auto payee = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    CMutableTransaction first;
+    first.nVersion |= CTransaction::BLSCT_MARKER;
+    first.vin.emplace_back(r.coin_outpoint);
+    first.vout.push_back(blsct::CreateOutput(change_address, 60 * COIN, "first change").out);
+    first.vout.push_back(blsct::CreateOutput(payee, 39 * COIN, "first payment").out);
+    first.vout.push_back(MakeFeeOutput(COIN / 100));
+    CMutableTransaction second;
+    second.nVersion |= CTransaction::BLSCT_MARKER;
+    second.vin.emplace_back(COutPoint{first.vout[0].GetHash()});
+    second.vout.push_back(blsct::CreateOutput(change_address, 40 * COIN, "second change").out);
+    second.vout.push_back(blsct::CreateOutput(payee, 19 * COIN, "second payment").out);
+    second.vout.push_back(MakeFeeOutput(3 * COIN / 100));
+    const std::pair<CTransactionRef, CTransactionRef> sends{MakeTransactionRef(first), MakeTransactionRef(second)};
+    for (const CTransactionRef& send : {sends.first, sends.second}) {
+        BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(send, {}, {}));
+        r.wallet->transactionAddedToMempool(send);
+    }
+    return sends;
+}
+
+//! The block tx a staker builds merging `txs` with another sender's send: the
+//! inputs and non-fee outputs of them all, and one fee output of `fee`.
+static CTransactionRef MergeWithOtherSender(const OwnAggregate& r, const std::vector<CTransactionRef>& txs, CAmount fee) EXCLUSIVE_LOCKS_REQUIRED(r.cover_wallet->cs_wallet)
+{
+    const auto other_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    CMutableTransaction merged;
+    merged.nVersion |= CTransaction::BLSCT_MARKER;
+    for (const CTransactionRef& tx : txs) {
+        merged.vin.insert(merged.vin.end(), tx->vin.begin(), tx->vin.end());
+        for (const CTxOut& out : tx->vout) {
+            if (!out.IsFee()) merged.vout.push_back(out);
+        }
+    }
+    merged.vin.emplace_back(COutPoint{InsecureRand256()});
+    merged.vout.push_back(blsct::CreateOutput(other_address, COIN, "other sender").out);
+    merged.vout.push_back(MakeFeeOutput(fee));
+    return MakeTransactionRef(merged);
+}
+
+// A chain of our sends merged with another sender's send: the block tx
+// replaces both sends, and its debit leaves out the input of the second that
+// spends the first's change, which the block tx creates. The sends account for
+// all of it, so the wallet's fee is the fees both sends paid.
+BOOST_FIXTURE_TEST_CASE(full_tx_merged_block_own_chain_fee, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/false, /*output_storage=*/false);
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    const auto [first, second] = RecordOwnSendChain(r);
+    const CAmount own_fee{first->GetBLSCTFee() + second->GetBLSCTFee()};
+
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MergeWithOtherSender(r, {first, second}, 5 * COIN / 100)}};
+    const CTransactionRef& block_tx{block.block.vtx[0]};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+
+    BOOST_CHECK(r.wallet->GetWalletTx(first->GetHash()) == nullptr);
+    BOOST_CHECK(r.wallet->GetWalletTx(second->GetHash()) == nullptr);
+    const CWalletTx* wtx = r.wallet->GetWalletTx(block_tx->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_CHECK(wtx->m_own_fee == own_fee);
+    std::list<COutputEntry> received, sent;
+    CAmount fee;
+    CachedTxGetAmounts(*r.wallet, *wtx, received, sent, fee, ISMINE_ALL, /*include_change=*/false);
+    BOOST_CHECK_EQUAL(fee, own_fee);
+}
+
+// A block tx that replaced our sends, unconfirmed again after a reorg, which
+// the next staker merges with another sender's send: the new block tx replaces
+// it, and what we paid is still the fee it recorded as ours, not its whole fee.
+// The first send's change is an intermediate of the replaced block tx; counted
+// as its change, it made the change match the debit, so no fee was ours. (The
+// node keeps such a block tx, which spends an output it creates, out of its
+// mempool, so it is not put back there here.)
+BOOST_FIXTURE_TEST_CASE(full_tx_remerged_block_keeps_own_fee, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/false, /*output_storage=*/false);
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    const auto [first, second] = RecordOwnSendChain(r);
+    const CAmount own_fee{first->GetBLSCTFee() + second->GetBLSCTFee()};
+
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MergeWithOtherSender(r, {first, second}, 5 * COIN / 100)}};
+    const CTransactionRef& block_tx{block.block.vtx[0]};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+    const CWalletTx* wtx = r.wallet->GetWalletTx(block_tx->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_REQUIRE(wtx->m_own_fee == own_fee);
+    r.wallet->blockDisconnected(block.Info());
+    BOOST_REQUIRE(!wtx->isConfirmed());
+
+    const TestBlock next_block{{MergeWithOtherSender(r, {block_tx}, 7 * COIN / 100)}};
+    const CTransactionRef& next_block_tx{next_block.block.vtx[0]};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, next_block.Info());
+
+    BOOST_CHECK(r.wallet->GetWalletTx(block_tx->GetHash()) == nullptr);
+    const CWalletTx* next_wtx = r.wallet->GetWalletTx(next_block_tx->GetHash());
+    BOOST_REQUIRE(next_wtx != nullptr);
+    BOOST_CHECK(next_wtx->m_own_fee == own_fee);
+    std::list<COutputEntry> received, sent;
+    CAmount fee;
+    CachedTxGetAmounts(*r.wallet, *next_wtx, received, sent, fee, ISMINE_ALL, /*include_change=*/false);
+    BOOST_CHECK_EQUAL(fee, own_fee);
+}
+
+// The wallet holds our send and an aggregate merging it that it saw before
+// either was mined, and a block tx merges that aggregate: both are replaced,
+// spending our coin once between them. The send paid its fee as part of the
+// aggregate's, which holds no own fee, so the aggregate's whole fee is ours,
+// and the coin both spend is debited once.
+BOOST_FIXTURE_TEST_CASE(full_tx_merged_block_counts_nested_send_once, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/false, /*output_storage=*/false);
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    AddFeeOutput(r);
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    r.wallet->transactionAddedToMempool(r.aggregate);
+    const CTransactionRef outer{MakeMergedBlockTx(r, COIN)};
+    r.wallet->transactionAddedToMempool(outer);
+    const CWalletTx* outer_wtx = r.wallet->GetWalletTx(outer->GetHash());
+    BOOST_REQUIRE(outer_wtx != nullptr);
+    BOOST_REQUIRE(!outer_wtx->m_own_fee);
+
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MergeWithOtherSender(r, {outer}, 7 * COIN / 100)}};
+    const CTransactionRef& block_tx{block.block.vtx[0]};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+
+    BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash()) == nullptr);
+    BOOST_CHECK(r.wallet->GetWalletTx(outer->GetHash()) == nullptr);
+    const CWalletTx* wtx = r.wallet->GetWalletTx(block_tx->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_CHECK(wtx->m_own_fee == outer->GetBLSCTFee());
+    std::list<COutputEntry> received, sent;
+    CAmount fee;
+    CachedTxGetAmounts(*r.wallet, *wtx, received, sent, fee, ISMINE_ALL, /*include_change=*/false);
+    BOOST_CHECK_EQUAL(fee, outer->GetBLSCTFee());
+}
+
 BOOST_AUTO_TEST_SUITE_END()

@@ -1821,6 +1821,61 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             }
         }
 
+        // The sends of ours the staker merged into this block tx are replaced
+        // by it below, and its fee covers every sender it merged. Keep what
+        // this wallet paid: the fees of the replaced sends, each counted as
+        // CachedTxGetAmounts counts it (wallet/receive depends on this module,
+        // so it is not called here): its own fee if it has one, else its
+        // whole fee, and only when it debits us more than our change it
+        // returns, which leaves out a cover half the wallet only served. A
+        // replaced send merged into another replaced one, such as a block tx
+        // back in the mempool, paid its fee through that one. That holds only
+        // if those sends account for all the block tx debits from us; an
+        // input of ours that none of them spends paid a share of the fee we
+        // cannot tell, so the whole fee stays ours.
+        std::optional<CAmount> own_fee;
+        if (!vHashToZap.empty()) {
+            std::vector<const CWalletTx*> merged_txs;
+            for (const uint256& hash : std::set<uint256>(vHashToZap.begin(), vHashToZap.end())) {
+                const auto it = mapWallet.find(hash);
+                if (it != mapWallet.end() && IsMergedInto(*it->second.tx, tx)) merged_txs.push_back(&it->second);
+            }
+            std::set<uint256> block_created;
+            for (const Outid& out_id : tx.GetOutputIds()) block_created.insert(out_id.ToUint256());
+            const blsct::KeyMan* blsct_man{GetBLSCTKeyMan()};
+            std::set<uint256> debited;
+            CAmount merged_debit{0};
+            CAmount merged_fee{0};
+            for (const CWalletTx* merged : merged_txs) {
+                // Inputs spending outputs the block tx creates are internal
+                // to it, as GetDebit() counts the block tx's own debit, and an
+                // input several replaced sends spend is debited once.
+                for (const CTxIn& txin : merged->tx->vin) {
+                    if (!block_created.contains(txin.prevout.hash) && debited.insert(txin.prevout.hash).second) {
+                        merged_debit += GetDebit(txin, ISMINE_ALL);
+                    }
+                }
+                // Of two sends merged into each other, the lower hash counts.
+                const auto within = [&](const CWalletTx* other) {
+                    return other != merged && IsMergedInto(*merged->tx, *other->tx) &&
+                           (!IsMergedInto(*other->tx, *merged->tx) || other->GetHash() < merged->GetHash());
+                };
+                if (std::any_of(merged_txs.begin(), merged_txs.end(), within)) continue;
+                std::set<uint256> spent_in_tx;
+                for (const CTxIn& txin : merged->tx->vin) spent_in_tx.insert(txin.prevout.hash);
+                const CAmount debit{GetDebit(*merged->tx, ISMINE_ALL)};
+                CAmount change{0};
+                for (size_t i = 0; i < merged->tx->vout.size(); ++i) {
+                    const CTxOut& txout = merged->tx->vout[i];
+                    if (!txout.tokenId.IsNull() || !txout.HasBLSCTRangeProof()) continue;
+                    if (spent_in_tx.contains(merged->tx->GetOutputId(i).ToUint256())) continue;
+                    if (blsct_man && blsct_man->OutputIsChange(txout)) change += merged->GetBLSCTRecoveryData(i).amount;
+                }
+                if (debit > 0 && debit != change) merged_fee += merged->m_own_fee.value_or(merged->tx->GetBLSCTFee());
+            }
+            if (!merged_txs.empty() && merged_debit == GetDebit(tx, ISMINE_ALL)) own_fee = merged_fee;
+        }
+
         std::vector<uint256> vHashOut;
 
         if (vHashToZap.size() > 0 && ZapSelectTx(vHashToZap, vHashOut) != DBErrors::LOAD_OK) {
@@ -1879,7 +1934,12 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             // Block disconnection override an abandoned tx as unconfirmed
             // which means user may have to call abandontransaction again
             TxState tx_state = std::visit([](auto&& s) -> TxState { return s; }, state);
-            CWalletTx* wtx = AddToWallet(MakeTransactionRef(tx), tx_state, /*update_wtx=*/nullptr, /*fFlushOnClose=*/false, rescanning_old_block);
+            const auto record_own_fee = [&](CWalletTx& wtx, bool) {
+                if (!own_fee) return false;
+                wtx.m_own_fee = own_fee;
+                return true;
+            };
+            CWalletTx* wtx = AddToWallet(MakeTransactionRef(tx), tx_state, record_own_fee, /*fFlushOnClose=*/false, rescanning_old_block);
             if (!wtx) {
                 // Can only be nullptr if there was a db write error (missing db, read-only db or a db engine internal writing error).
                 // As we only store arriving transaction in this process, and we don't want an inconsistent state, let's throw an error.

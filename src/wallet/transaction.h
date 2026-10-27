@@ -21,6 +21,7 @@
 #include <bitset>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <utility>
 #include <variant>
@@ -348,6 +349,7 @@ public:
      *     "n"               - serialized nOrderPos value
      *     "timesmart"       - serialized nTimeSmart value
      *     "ownhalf"         - serialized m_own_half_outputs value
+     *     "ownfee"          - serialized m_own_fee value
      *     "spent"           - serialized vfSpent value that existed prior to
      *                         2014 (removed in commit 93a18a3)
      */
@@ -379,6 +381,14 @@ public:
      * outputs (see TxTrustCoversOutput).
      */
     std::set<uint256> m_own_half_outputs;
+    /**
+     * The part of this BLSCT tx's fee that this wallet paid, recorded when the
+     * tx is a block tx a staker merged this wallet's sends into, the wallet
+     * replaced those sends with it, and they account for all the tx debits
+     * from this wallet. The block tx carries one fee output for every merged
+     * sender. Unset for every other tx, whose whole fee is reported.
+     */
+    std::optional<CAmount> m_own_fee;
     int64_t nOrderPos; //!< position in ordered transaction list
     std::multimap<int64_t, CWalletTx*>::const_iterator m_it_wtxOrdered;
 
@@ -409,6 +419,7 @@ public:
         nTimeSmart = 0;
         fFromMe = false;
         m_own_half_outputs.clear();
+        m_own_fee.reset();
         fChangeCached = false;
         nChangeCached = 0;
         nOrderPos = -1;
@@ -451,6 +462,9 @@ public:
         if (!m_own_half_outputs.empty()) {
             mapValueCopy["ownhalf"] = Join(m_own_half_outputs, ",", [](const uint256& hash) { return hash.GetHex(); });
         }
+        if (m_own_fee) {
+            mapValueCopy["ownfee"] = ToString(*m_own_fee);
+        }
 
         std::vector<uint8_t> dummy_vector1; //!< Used to be vMerkleBranch
         std::vector<uint8_t> dummy_vector2; //!< Used to be vtxPrev
@@ -485,12 +499,19 @@ public:
                 if (hex.size() == 2 * uint256::size() && IsHex(hex)) m_own_half_outputs.insert(uint256S(hex));
             }
         }
+        if (const auto it_of = mapValue.find("ownfee"); it_of != mapValue.end()) {
+            // A malformed or out-of-range entry is left out: the tx's whole
+            // fee is reported.
+            const auto own_fee{ToIntegral<CAmount>(it_of->second)};
+            if (own_fee && MoneyRange(*own_fee)) m_own_fee = own_fee;
+        }
 
         mapValue.erase("fromaccount");
         mapValue.erase("spent");
         mapValue.erase("n");
         mapValue.erase("timesmart");
         mapValue.erase("ownhalf");
+        mapValue.erase("ownfee");
     }
 
     void SetTx(CTransactionRef arg)
