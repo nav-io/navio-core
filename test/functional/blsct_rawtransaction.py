@@ -87,6 +87,10 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.test_deriveblsctnonce(wallet1, wallet2, address1, address2)
         self.test_getblsctrecoverydatawithnonce(wallet1, wallet2, address1, address2)
         self.test_integration_workflow(wallet1, wallet2, address1, address2)
+        self.test_simulaterawtransaction(wallet1, wallet2, address1, address2)
+        # The simulation test restarts node0, so the old wallet1 proxy holds a
+        # stale RPC cookie.
+        wallet1 = self.nodes[0].get_wallet_rpc("wallet1")
         self.test_nft_output(wallet1, wallet2, address1, address2)
 
     def _find_output_by_message(self, recovery_data, message):
@@ -516,6 +520,87 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         assert_greater_than(balance2, initial_balance2)
 
         self.log.info("Complete BLSCT raw transaction workflow test passed")
+
+    def test_simulaterawtransaction(self, wallet1, wallet2, address1, address2):
+        """simulaterawtransaction must credit BLSCT outputs by their recovered amount"""
+        self.log.info("Testing simulaterawtransaction on a BLSCT transaction")
+
+        amount = Decimal("0.05")
+        raw_tx = wallet1.createblsctrawtransaction([], [{"address": address2, "amount": int(amount * COIN), "memo": "Simulate test"}])
+        signed_tx = wallet1.signblsctrawtransaction(wallet1.fundblsctrawtransaction(raw_tx))
+
+        # A BLSCT output's nValue is zero, so reading it credits nothing: the
+        # recipient would see no change and the sender would lose its change.
+        recipient_change = wallet2.simulaterawtransaction([signed_tx])["balance_change"]
+        assert_equal(recipient_change, amount)
+        self.assert_simulation_matches_broadcast(lambda: signed_tx, wallet1, wallet2)
+
+        # Token and staking transactions come from the wallet's own send RPCs,
+        # which commit and broadcast in one go. With -walletbroadcast=0 they
+        # stay out of the mempool, so their inputs are still unspent for the
+        # simulation and the hex can be broadcast by hand afterwards.
+        token_id = wallet1.createtoken({"name": "Simulate"}, 1000)["tokenId"]
+        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        wallet1.minttoken(token_id, address1, 1)
+        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        self.restart_node(0, extra_args=["-walletbroadcast=0"])
+        self.nodes[0].loadwallet("wallet1")
+        wallet1 = self.nodes[0].get_wallet_rpc("wallet1")
+        self.connect_nodes(0, 1)
+
+        self.log.info("simulaterawtransaction counts a staked commitment as the wallet's own")
+        stake_amount = Decimal("200")
+        # The stake stays in the wallet, so only the fee leaves it.
+        self.assert_simulation_matches_broadcast(lambda: self.unsent_tx_hex(wallet1, lambda: wallet1.stakelock(stake_amount)), wallet1)
+        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+
+        self.log.info("simulaterawtransaction debits a spent staked commitment")
+        self.assert_simulation_matches_broadcast(lambda: self.unsent_tx_hex(wallet1, lambda: wallet1.stakeunlock(stake_amount / 2)), wallet1)
+        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+
+        self.log.info("simulaterawtransaction leaves token outputs out of the NAV change")
+        token_tx = self.assert_simulation_matches_broadcast(lambda: self.unsent_tx_hex(wallet1, lambda: wallet1.sendtokentoblsctaddress(token_id, address2, 0.5)), wallet1, wallet2)
+        # The recipient gets only tokens, so its NAV balance does not move.
+        assert_equal(wallet2.simulaterawtransaction([token_tx])["balance_change"], 0)
+
+        # Later tests expect node0 to broadcast its wallet's sends again.
+        self.restart_node(0)
+        self.nodes[0].loadwallet("wallet1")
+        self.connect_nodes(0, 1)
+
+        self.log.info("simulaterawtransaction tests passed")
+
+    def unsent_tx_hex(self, wallet, send):
+        """Run a send RPC on a -walletbroadcast=0 node and return the hex of the transaction it stored"""
+        known = {tx["txid"] for tx in wallet.listtransactions("*", 100000, 0, True)}
+        send()
+        new = {tx["txid"] for tx in wallet.listtransactions("*", 100000, 0, True)} - known
+        assert_equal(len(new), 1)
+        tx_hex = wallet.gettransaction(new.pop())["hex"]
+        assert_raises_rpc_error(-5, None, self.nodes[0].getmempoolentry, self.nodes[0].decoderawtransaction(tx_hex)["txid"])
+        return tx_hex
+
+    def nav_total(self, wallet):
+        """Every NAV balance bucket a broadcast can move between, staked commitments included"""
+        mine = wallet.getbalances()["mine"]
+        return sum(mine[bucket] for bucket in ("trusted", "untrusted_pending", "immature", "staked_commitment_balance", "pending_staked_commitment_balance"))
+
+    def assert_simulation_matches_broadcast(self, make_tx, *wallets):
+        """Simulate the tx make_tx returns in each wallet, broadcast it and check each NAV balance moved by the simulated change"""
+        # Read the balances before make_tx runs: a wallet send RPC marks its
+        # inputs spent in the wallet even when it does not broadcast.
+        before = [self.nav_total(wallet) for wallet in wallets]
+        tx_hex = make_tx()
+        simulated = [wallet.simulaterawtransaction([tx_hex])["balance_change"] for wallet in wallets]
+        self.nodes[0].sendrawtransaction(tx_hex)
+        self.sync_mempools()
+        # Each wallet learns of the transaction through its node's validation
+        # interface queue, which sendrawtransaction does not wait for.
+        for node in self.nodes:
+            node.syncwithvalidationinterfacequeue()
+        for wallet, change, balance in zip(wallets, simulated, before):
+            assert_equal(self.nav_total(wallet) - balance, change)
+        return tx_hex
 
     def test_nft_output(self, wallet1, wallet2, address1, address2):
         """An output's token_id names an NFT as "<collection>#<id>"."""
