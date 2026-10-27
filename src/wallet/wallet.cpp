@@ -2980,7 +2980,15 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
         // TODO: if we expect the failure to be long term or permanent, instead delete wtx from the wallet and return failure.
     }
 
-    if (tx->IsBLSCT()) MirrorBlsctBroadcast(*tx);
+    if (!tx->IsBLSCT()) return;
+    // The tx is broadcast by now, so the commit succeeded; throwing would
+    // fail the caller and invite a resend of a tx already out. The sync
+    // callbacks record the same spends and outputs once the tx reaches them.
+    try {
+        MirrorBlsctBroadcast(*tx);
+    } catch (const std::runtime_error& e) {
+        WalletLogPrintf("%s: %s was broadcast, but recording its spends failed: %s\n", __func__, tx->GetHash().ToString(), e.what());
+    }
 }
 
 bool CWallet::RecordBroadcastTransaction(CTransactionRef tx, const std::vector<CTxOut>& own_half_outputs, mapValue_t mapValue)
