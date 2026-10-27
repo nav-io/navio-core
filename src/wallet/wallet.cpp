@@ -2136,14 +2136,30 @@ void CWallet::blockDisconnected(const interfaces::BlockInfo& block)
         SyncTransaction(ptx, TxStateInactive{/*abandoned=*/index == 0});
 
         for (const CTxIn& tx_in : ptx->vin) {
-            // No other wallet transactions conflicted with this transaction
+            // No wallet transaction spends this input
             if (!mapTxSpends.contains(tx_in.prevout)) continue;
 
             std::pair<TxSpends::const_iterator, TxSpends::const_iterator> range = mapTxSpends.equal_range(tx_in.prevout);
 
-            // For all of the spends that conflict with this transaction
+            // For all of the wallet's spends of this transaction's inputs
             for (TxSpends::const_iterator _it = range.first; _it != range.second; ++_it) {
                 CWalletTx& wtx = mapWallet.find(_it->second)->second;
+
+                // A send the staker merged into this block tx was confirmed by
+                // this block under another hash (see AddToWalletIfInvolvingMe),
+                // so syncing the block tx above did not reach it. Every send of
+                // a merged chain spends an input of the block tx, so each is
+                // found here. It returns to unconfirmed, as a tx of this block
+                // under its own hash does.
+                if (const auto* conf = wtx.state<TxStateConfirmed>(); conf && conf->confirmed_block_hash == block.hash) {
+                    RecursiveUpdateTxState(wtx.GetHash(), [&](CWalletTx& tx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
+                        const auto* tx_conf = tx.state<TxStateConfirmed>();
+                        if (!tx_conf || tx_conf->confirmed_block_hash != block.hash) return TxUpdate::UNCHANGED;
+                        tx.m_state = TxStateInactive{};
+                        return TxUpdate::NOTIFY_CHANGED;
+                    });
+                    continue;
+                }
 
                 if (!wtx.isConflicted()) continue;
 
