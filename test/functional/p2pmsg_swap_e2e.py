@@ -48,7 +48,11 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         taker_n, maker_n = self.nodes[0], self.nodes[1]
         self.connect_nodes(0, 1)
 
-        taker_n.createwallet(wallet_name="taker", blsct=True)
+        # An output-storage taker (the BLSCT default, pinned here): recording
+        # the swap mirrors its received token output into the wallet's outputs
+        # (MirrorBlsctBroadcast), where only TxTrustCoversOutput keeps it
+        # unspendable until the swap confirms.
+        taker_n.createwallet(wallet_name="taker", blsct=True, storage_output=True)
         maker_n.createwallet(wallet_name="maker", blsct=True)
         taker = taker_n.get_wallet_rpc("taker")
         maker = maker_n.get_wallet_rpc("maker")
@@ -134,6 +138,11 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         trusted = trusted_before - Decimal(quote["sell_cost"]) / one
         assert_equal(Decimal(str(balances["trusted"])), trusted)
         assert_equal(taker.gettokenbalance(tid), 0)
+        # Nor can the received token be spent yet, though the wallet holds NAV
+        # for the fee: it is the taker's only coin of the token.
+        fill = Decimal(quote["fill"]) / one
+        assert_raises_rpc_error(-6, "Not enough funds available", taker.sendtokentoblsctaddress,
+                                tid, taker.getnewaddress(label="", address_type="blsct"), fill)
 
         # A chained NAV send of the whole trusted balance needs the swap's
         # change: the other coins alone fall short of it.
@@ -159,8 +168,10 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         assert_equal(taker_n.getrawmempool(), [])
         block_prevouts = {vin["outid"] for tx in taker_n.getblock(blocks[0], 2)["tx"] for vin in tx["vin"] if "outid" in vin}
         assert swap_prevouts <= block_prevouts, "swap not in the mined block"
-        # Once the swap confirms, the received token is trusted too.
-        assert_equal(Decimal(str(taker.gettokenbalance(tid))), Decimal(quote["fill"]) / one)
+        # Once the swap confirms, the received token is trusted and spendable
+        # too.
+        assert_equal(Decimal(str(taker.gettokenbalance(tid))), fill)
+        taker.sendtokentoblsctaddress(tid, taker.getnewaddress(label="", address_type="blsct"), fill)
 
         self.log.info("two-node RFQ atomic swap confirmed on-chain OK")
 
