@@ -129,10 +129,14 @@ static void EnsureTransparentCoinbaseAllowed(const JSONRPCRequest& request, cons
     // block built around a transparent coinbase script fails that check
     // ("failed-signature-check") and can never be mined here. The BLSCT
     // miner is no general replacement: ContextualCheckBlockHeader rejects a
-    // proof-of-work block above nLastPOWHeight ("late proof of work").
-    const Consensus::Params& consensus{EnsureAnyChainman(request.context).GetConsensus()};
+    // proof-of-work block above nLastPOWHeight ("late proof of work"), so it
+    // is only offered while the next block can still be one.
+    ChainstateManager& chainman{EnsureAnyChainman(request.context)};
+    const Consensus::Params& consensus{chainman.GetConsensus()};
     if (consensus.fBLSCT) {
-        throw JSONRPCError(RPC_MISC_ERROR, strprintf("This network only supports confidential (BLSCT) transactions; a block paying a transparent coinbase is always rejected here, so %s is not available. Blocks above height %d must be proof-of-stake; up to that height, generatetoblsctaddress can mine proof-of-work blocks instead.", method, consensus.nLastPOWHeight));
+        const int tip_height{WITH_LOCK(cs_main, return chainman.ActiveChain().Height())};
+        const std::string pow_hint{tip_height < consensus.nLastPOWHeight ? "; up to that height, generatetoblsctaddress can mine proof-of-work blocks instead." : "."};
+        throw JSONRPCError(RPC_MISC_ERROR, strprintf("This network only supports confidential (BLSCT) transactions; a block paying a transparent coinbase is always rejected here, so %s is not available. Blocks above height %d must be proof-of-stake%s", method, consensus.nLastPOWHeight, pow_hint));
     }
 }
 
@@ -235,7 +239,7 @@ static RPCHelpMan generatetoblsctaddress()
         RPCExamples{"\nGenerate 11 blocks to myaddress\n" + HelpExampleCli("generatetoaddress", "11 \"myaddress\"") + "If you are using the " PACKAGE_NAME " wallet, you can get a new address to send the newly generated nav to with:\n" + HelpExampleCli("getnewaddress", "")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             const int num_blocks{request.params[0].getInt<int>()};
-            const uint64_t max_tries{request.params[2].isNull() ? DEFAULT_MAX_TRIES : request.params[2].getInt<int>()};
+            const auto max_tries{self.Arg<uint64_t>(2)};
 
             // Identity keys decode fine but make the coinbase anyone-can-spend,
             // so the block reward would be claimable by whoever sees it first.
@@ -270,7 +274,7 @@ static RPCHelpMan generatetoaddress()
             EnsureTransparentCoinbaseAllowed(request, self.m_name);
 
             const int num_blocks{request.params[0].getInt<int>()};
-            const uint64_t max_tries{request.params[2].isNull() ? DEFAULT_MAX_TRIES : request.params[2].getInt<int>()};
+            const auto max_tries{self.Arg<uint64_t>(2)};
 
             CTxDestination destination = DecodeDestination(request.params[1].get_str());
             if (!IsValidDestination(destination)) {

@@ -256,6 +256,16 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         height = node.getblockcount()
         self.generatetoblsctaddress(node, 1, wallet.getnewaddress(label="", address_type="blsct"))
         assert_equal(node.getblockcount(), height + 1)
+        assert_raises_rpc_error(
+            -1,
+            "JSON integer out of range",
+            self.generatetoblsctaddress,
+            node,
+            1,
+            wallet.getnewaddress(label="", address_type="blsct"),
+            -1,
+        )
+        assert_equal(node.getblockcount(), height + 1)
 
         assert_raises_rpc_error(
             -1,
