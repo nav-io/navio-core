@@ -162,6 +162,10 @@ class WalletMnemonicTest(BitcoinTestFramework):
         # exists to have an older seed imported later
         assert "mnemonic" not in result_blank
         assert_equal(node.get_wallet_rpc("test_blank").getwalletinfo().get("birthtime", 0), 0)
+        # with no keys there is no audit key to dump: a wallet error, not
+        # the keyman's internal exception
+        assert_raises_rpc_error(-37, "Wallet has no BLSCT audit key (blank wallet); use setblsctseed to initialize",
+                                node.get_wallet_rpc("test_blank").getblsctauditkey)
 
         self.log.info("Test BLSCT wallet with private keys disabled holds no seed")
         result_nopriv = node.createwallet(wallet_name="test_nopriv", blsct=True, disable_private_keys=True)
@@ -173,6 +177,7 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert_raises_rpc_error(-37, no_seed_msg, w_nopriv.getblsctseed)
         assert_raises_rpc_error(-4, no_seed_msg, w_nopriv.dumpmnemonic)
         assert_raises_rpc_error(-4, "This wallet has no available keys", w_nopriv.getnewaddress)
+        assert_raises_rpc_error(-37, "Wallet has no BLSCT audit key (private keys are disabled)", w_nopriv.getblsctauditkey)
         node.unloadwallet("test_nopriv")
         node.loadwallet("test_nopriv")
         w_nopriv = node.get_wallet_rpc("test_nopriv")
