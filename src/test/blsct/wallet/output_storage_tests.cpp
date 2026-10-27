@@ -916,7 +916,8 @@ BOOST_FIXTURE_TEST_CASE(output_storage_rescan_keeps_confirmed_spend, TestingSetu
 //! an aggregate in the shape sendtoblsctaddress broadcasts by default: the
 //! wallet's own half (coin -> change) combined with a cover half (the cover
 //! wallet's coin -> back to the cover wallet, or with `cover_pays_wallet` to
-//! the wallet itself).
+//! the wallet itself). Both wallets use output storage unless `output_storage`
+//! is false, in which case they hold the coins' full transactions.
 struct OwnAggregate {
     static constexpr CAmount change_amount{99 * COIN};
     static constexpr CAmount cover_amount{5 * COIN};
@@ -931,13 +932,14 @@ struct OwnAggregate {
     CTransactionRef aggregate;
 };
 
-static OwnAggregate MakeOwnAggregate(interfaces::Chain* chain, bool cover_pays_wallet = false)
+static OwnAggregate MakeOwnAggregate(interfaces::Chain* chain, bool cover_pays_wallet = false, bool output_storage = true)
 {
     OwnAggregate r;
+    const uint64_t flags{WALLET_FLAG_BLSCT | (output_storage ? WALLET_FLAG_BLSCT_OUTPUT_STORAGE : 0)};
     r.wallet = std::make_shared<CWallet>(chain, "", CreateMockableWalletDatabase());
-    r.wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+    r.wallet->InitWalletFlags(flags);
     r.cover_wallet = std::make_shared<CWallet>(chain, "", CreateMockableWalletDatabase());
-    r.cover_wallet->InitWalletFlags(WALLET_FLAG_BLSCT | WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
+    r.cover_wallet->InitWalletFlags(flags);
 
     LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
     auto blsct_km = r.wallet->GetOrCreateBLSCTKeyMan();
@@ -951,12 +953,20 @@ static OwnAggregate MakeOwnAggregate(interfaces::Chain* chain, bool cover_pays_w
     r.address = address;
     const auto cover_address = std::get<blsct::DoublePublicKey>(cover_km->GetNewDestination(0).value());
 
-    const CTxOut coin = blsct::CreateOutput(address, 100 * COIN, "coin").out;
-    r.coin_outpoint = COutPoint(coin.GetHash());
-    BOOST_REQUIRE(r.wallet->AddToWallet(r.coin_outpoint, std::make_shared<const CTxOut>(coin), TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false));
-    const CTxOut cover_coin = blsct::CreateOutput(cover_address, 5 * COIN, "cover coin").out;
-    r.cover_coin_outpoint = COutPoint(cover_coin.GetHash());
-    BOOST_REQUIRE(r.cover_wallet->AddToWallet(r.cover_coin_outpoint, std::make_shared<const CTxOut>(cover_coin), TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false));
+    const auto add_coin = [&](CWallet& wallet, const CTxOut& coin) {
+        const COutPoint outpoint(coin.GetHash());
+        if (output_storage) {
+            BOOST_REQUIRE(wallet.AddToWallet(outpoint, std::make_shared<const CTxOut>(coin), TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false));
+        } else {
+            CMutableTransaction funding;
+            funding.nVersion |= CTransaction::BLSCT_MARKER;
+            funding.vout.push_back(coin);
+            BOOST_REQUIRE(wallet.AddToWallet(MakeTransactionRef(funding), TxStateConfirmed{InsecureRand256(), 1, 0}));
+        }
+        return outpoint;
+    };
+    r.coin_outpoint = add_coin(*r.wallet, blsct::CreateOutput(address, 100 * COIN, "coin").out);
+    r.cover_coin_outpoint = add_coin(*r.cover_wallet, blsct::CreateOutput(cover_address, 5 * COIN, "cover coin").out);
 
     CMutableTransaction mtx;
     mtx.nVersion |= CTransaction::BLSCT_MARKER;
@@ -1224,6 +1234,36 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_record_failure, TestingSetu
     BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
     BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash()) != nullptr);
     BOOST_CHECK(r.wallet->GetWalletOutput(r.change_outpoint) != nullptr);
+}
+
+// The same failed write on a wallet holding full transactions, whose coin
+// selection reads mapWallet (AvailableCoins) rather than mapOutputs.
+BOOST_FIXTURE_TEST_CASE(full_tx_own_aggregate_record_failure, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/false, /*output_storage=*/false);
+    const auto selectable = [&]() EXCLUSIVE_LOCKS_REQUIRED(r.wallet->cs_wallet) {
+        const auto coins = AvailableCoins(*r.wallet).All();
+        return std::any_of(coins.begin(), coins.end(), [&](const COutput& c) { return c.outpoint == r.coin_outpoint; });
+    };
+    {
+        LOCK(r.wallet->cs_wallet);
+        BOOST_REQUIRE(selectable());
+    }
+
+    GetMockableDatabase(*r.wallet).m_pass = false;
+    bool recorded{true};
+    BOOST_CHECK_NO_THROW(recorded = r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_CHECK(!recorded);
+    GetMockableDatabase(*r.wallet).m_pass = true;
+
+    LOCK(r.wallet->cs_wallet);
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK(!selectable());
+
+    r.wallet->transactionAddedToMempool(r.aggregate);
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash()) != nullptr);
 }
 
 // The own half's outputs that the trust covers are part of the wallet record
