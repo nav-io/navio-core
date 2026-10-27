@@ -15,3 +15,11 @@ Mining and mempool
   longer hold at the new tip (for example a mint of a token whose supply cap
   that block reached) are evicted, like transactions whose inputs the block
   spent. Only transactions touching a token the block changed are checked.
+
+Wallet
+------
+
+- A wallet transaction evicted this way is now marked conflicted with the
+  block that caused the eviction (`confirmations` -1), so the coins it spent
+  are available again without `abandontransaction`. If that block is
+  disconnected, the transaction returns to unconfirmed.
