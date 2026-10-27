@@ -458,4 +458,68 @@ BOOST_FIXTURE_TEST_CASE(hdchain_survives_a_serialization_round_trip, BasicTestin
     BOOST_CHECK(chain == reloaded);
 }
 
+// An audit key is a view key followed by the public spend key. Either half
+// failing to decode to a usable key must fail the import rather than store
+// whatever SetVch left behind (the identity point, or a view key reduced mod
+// the group order), and must leave no view key behind.
+BOOST_FIXTURE_TEST_CASE(audit_key_import_rejects_invalid_keys, TestingSetup)
+{
+    auto source = MakeBLSCTWallet(m_node.chain.get());
+    std::vector<unsigned char> view_vch;
+    std::vector<unsigned char> spend_vch;
+    {
+        LOCK(source->cs_wallet);
+        auto km = source->GetOrCreateBLSCTKeyMan();
+        view_vch = km->GetPrivateViewKey().GetScalar().GetVch();
+        spend_vch = km->GetPublicSpendingKey().GetVch();
+    }
+
+    const auto import = [&](const std::vector<unsigned char>& view, const std::vector<unsigned char>& spend) {
+        auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+        wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT | wallet::WALLET_FLAG_DISABLE_PRIVATE_KEYS);
+        LOCK(wallet->cs_wallet);
+        auto km = wallet->GetOrCreateBLSCTKeyMan();
+        std::vector<unsigned char> audit_key{view};
+        audit_key.insert(audit_key.end(), spend.begin(), spend.end());
+        BOOST_REQUIRE_EQUAL(audit_key.size(), 80U);
+        const bool ok = km->SetupGeneration(audit_key, blsct::IMPORT_VIEW_KEY);
+        BOOST_CHECK_EQUAL(km->fViewKeyDefined, ok);
+        BOOST_CHECK_EQUAL(blsct::DecodeAuditKey(audit_key).has_value(), ok);
+        if (ok) {
+            BOOST_CHECK(km->GetPrivateViewKey().GetScalar().GetVch() == view);
+            BOOST_CHECK(km->GetPublicSpendingKey().GetVch() == spend);
+        }
+        return ok;
+    };
+
+    BOOST_CHECK(import(view_vch, spend_vch));
+
+    // Spend key, every flag bit set: not a valid compressed encoding.
+    BOOST_CHECK(!import(view_vch, std::vector<unsigned char>(spend_vch.size(), 0xff)));
+
+    // Spend key, a well-formed encoding of the identity, which no real spend
+    // key is.
+    std::vector<unsigned char> identity(spend_vch.size(), 0);
+    identity[0] = 0xc0;
+    BOOST_CHECK(!import(view_vch, identity));
+
+    // Spend key, a point on the curve (x = 4, the smaller y) that is not in
+    // the prime-order subgroup: the cofactor is not 1, so such points exist
+    // and decode unless the subgroup check runs.
+    std::vector<unsigned char> off_subgroup(spend_vch.size(), 0);
+    off_subgroup[0] = 0x80;
+    off_subgroup.back() = 0x04;
+    BlstG1Point on_curve;
+    BOOST_REQUIRE(on_curve.SetVchUnchecked(off_subgroup));
+    BOOST_REQUIRE(!BlstG1Point{}.SetVch(off_subgroup));
+    BOOST_CHECK(!import(view_vch, off_subgroup));
+
+    // View key not below the group order: SetVch would silently reduce it to
+    // a different key than the one the audit key names.
+    BOOST_CHECK(!import(std::vector<unsigned char>(view_vch.size(), 0xff), spend_vch));
+
+    // View key zero.
+    BOOST_CHECK(!import(std::vector<unsigned char>(view_vch.size(), 0), spend_vch));
+}
+
 BOOST_AUTO_TEST_SUITE_END()

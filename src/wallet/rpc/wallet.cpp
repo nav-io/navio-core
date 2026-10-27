@@ -3,6 +3,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/wallet/keyman.h>
 #include <core_io.h>
 #include <key_io.h>
 #include <rpc/server.h>
@@ -456,6 +457,11 @@ static RPCHelpMan createwallet()
                 seed = ParseHex(request.params[10].get_str());
 
                 if (seed.size() == 80) {
+                    // Refused here rather than by SetupGeneration, which runs
+                    // only once the wallet database exists.
+                    if (!blsct::DecodeAuditKey(seed)) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid audit key: the view key or the spend key is not a valid key");
+                    }
                     type = blsct::IMPORT_VIEW_KEY;
                     flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
                 } else if (seed.size() != 32) {
