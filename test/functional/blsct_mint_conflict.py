@@ -9,7 +9,9 @@ Mempool validation checks each tx's token predicates against the chain only,
 so two mints that together exceed a token's supply cap are both accepted.
 Block assembly must skip the second one during package selection (and use the
 space for other transactions), and once the first one confirms the second one
-must be evicted from the mempool.
+must be evicted from the mempool. The wallet that created the evicted mint
+marks it conflicted, so the coins it spent become spendable again, and
+unconflicted once the block that caused the eviction is disconnected.
 """
 
 from decimal import Decimal
@@ -77,6 +79,7 @@ class BlsctMintConflictTest(BitcoinTestFramework):
         # The issuer's wallet may fund the second mint from the first one's
         # change. Either way the second mint can only be mined after the first
         # and fails there; the payer's transfer is independent of both.
+        token_outputs = {out["hash"] for m in mints for out in node.getrawtransaction(m, True)["vout"] if out.get("tokenId") == token_id}
         assert_equal(node.getmempoolentry(transfer)["depends"], [])
         assert not set(node.getmempoolentry(mints[0])["depends"]) & set(mints)
 
@@ -104,7 +107,7 @@ class BlsctMintConflictTest(BitcoinTestFramework):
             node.prioritisetransaction(txid=txid, fee_delta=COIN)
 
         self.log.info("Mining: one mint and the transfer are included, the over-cap mint is skipped")
-        self.generate_blsct_blocks(node, issuer_addr, 1)
+        (mint_block,) = self.generate_blsct_blocks(node, issuer_addr, 1)
         # Each mint is 1 token against a cap of 1, so a supply of exactly 1
         # means exactly one mint was mined.
         assert_equal(node.gettoken(token_id)["currentSupply"], 1 * COIN)
@@ -115,9 +118,30 @@ class BlsctMintConflictTest(BitcoinTestFramework):
         self.log.info("The over-cap mint is evicted from the mempool once the first one confirms")
         assert_equal(node.getrawmempool(), [])
 
+        self.log.info("The issuer's wallet marks the evicted mint conflicted and frees its inputs")
+        issuer = node.get_wallet_rpc("issuer")
+        node.syncwithvalidationinterfacequeue()
+        # The mined mint is recorded under the block's aggregated txid, so
+        # only the evicted one is still in the wallet under its own txid.
+        conflicted = {t["txid"] for t in issuer.listtransactions("*", 1000) if t["confirmations"] < 0}
+        (evicted,) = conflicted & set(mints)
+        assert_equal(issuer.gettransaction(evicted)["confirmations"], -1)
+        evicted_inputs = {vin["outid"] for vin in node.decoderawtransaction(issuer.gettransaction(evicted)["hex"])["vin"]}
+        # listunspent lists native coins only. The issuer's wallet may have
+        # funded the evicted mint with the mined one's outputs, its token
+        # output included; the token balance covers that one.
+        unspent = {u["outid"] for u in issuer.listunspent()}
+        assert evicted_inputs - token_outputs <= unspent, "the evicted mint's inputs are still counted as spent"
+        assert_equal(issuer.gettokenbalance(token_id), 1)
+
         self.log.info("Mining continues")
         self.generate_blsct_blocks(node, issuer_addr, 1)
         assert_equal(node.gettoken(token_id)["currentSupply"], 1 * COIN)
+
+        self.log.info("Disconnecting the block that caused the eviction makes the mint unconflicted again")
+        node.invalidateblock(mint_block)
+        node.syncwithvalidationinterfacequeue()
+        assert_equal(issuer.gettransaction(evicted)["confirmations"], 0)
 
 
 if __name__ == '__main__':

@@ -412,6 +412,13 @@ private:
      */
     int m_last_block_processed_height GUARDED_BY(cs_wallet) = -1;
 
+    /** Wallet txs with token-state predicates that the mempool evicted as
+     * CONFLICT: a connected block made a predicate fail (e.g. a sibling mint
+     * filled the token's supply cap). No input conflict reveals these to the
+     * wallet, so blockConnected() marks them conflicted with the next block
+     * it processes. Not persisted. */
+    std::vector<uint256> m_pending_predicate_conflicts GUARDED_BY(cs_wallet);
+
     std::map<OutputType, ScriptPubKeyMan*> m_external_spk_managers;
     std::map<OutputType, ScriptPubKeyMan*> m_internal_spk_managers;
     std::unique_ptr<blsct::KeyMan> m_blsct_key_manager = nullptr;
