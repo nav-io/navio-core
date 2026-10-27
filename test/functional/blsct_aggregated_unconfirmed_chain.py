@@ -39,7 +39,9 @@ output-storage sender keeps one send leg per plain send. A send of it merged
 with another sender's send returns to the mempool with the block tx when that
 block is disconnected: still trusted, not abandonable, and not rebroadcast on
 its own. A full-tx sender's send merged with another sender's send reports its
-own fee on the block tx, not the other sender's too.
+own fee on the block tx, not the other sender's too. A wallet reimported after
+that block cannot split the block tx's fee, and flags it as possibly including
+other senders' fees.
 """
 
 from collections import Counter
@@ -502,6 +504,29 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         sends = [e for e in plain_full.listtransactions("*", 100000, 0, True) if e["txid"] == mixed_merged]
         assert_equal([(e["category"], Decimal(str(e["amount"])), Decimal(str(e["fee"]))) for e in sends], [("send", -SEND_AMOUNT, own_fee)])
         assert_equal(self.assert_balance_matches_coins(plain_full, "full-tx sender after the mixed block"), balance_before - SEND_AMOUNT + own_fee)
+        assert "fee_may_include_other_senders" not in merged
+        assert "fee_may_include_other_senders" not in sends[0]
+
+        # A wallet reimported after that block never saw the original sends,
+        # so it cannot split the block tx's fee: it reports the whole fee and
+        # says the fee may include other senders' fees. A block tx whose
+        # inputs are all ours (the plain chain) pays only our fees, and one
+        # with other wallets' inputs may include theirs even when, as with the
+        # aggregated chain's fee-0 cover halves, it does not.
+        for storage_output in (True, False):
+            self.log.info(f"Reimport the full-tx sender's seed after the mixed block (storage_output={storage_output})")
+            mixed_import = self.import_wallet(n1, f"plain_imported_mixed_{storage_output}", PLAIN_SEED_WIF, storage_output)
+            merged = mixed_import.gettransaction(mixed_merged)
+            self.log.info(f"reimport: amount={merged['amount']} fee={merged['fee']}")
+            assert_equal(Decimal(str(merged["fee"])), own_fee + other_fee)
+            assert_equal(Decimal(str(merged["amount"])) + Decimal(str(merged["fee"])), -SEND_AMOUNT + own_fee)
+            assert_equal(merged["fee_may_include_other_senders"], True)
+            assert_equal([d["fee_may_include_other_senders"] for d in merged["details"]], [True])
+            sends = [e for e in mixed_import.listtransactions("*", 100000, 0, True) if e["txid"] == mixed_merged]
+            assert_equal([e["fee_may_include_other_senders"] for e in sends], [True])
+            assert "fee_may_include_other_senders" not in mixed_import.gettransaction(full_merged)
+        (aggregated_send,) = [e for e in confirmed_import.listtransactions("*", 100000, 0, True) if e["category"] == "send"]
+        assert_equal(aggregated_send["fee_may_include_other_senders"], True)
 
 
 if __name__ == "__main__":
