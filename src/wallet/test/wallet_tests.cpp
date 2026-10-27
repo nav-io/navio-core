@@ -1034,6 +1034,44 @@ BOOST_FIXTURE_TEST_CASE(LoadSeedlessBlsctWalletFails, TestingSetup)
     }
 }
 
+BOOST_FIXTURE_TEST_CASE(FailedCreateWalletReleasesDatabase, TestingSetup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    const std::string name{"failed_create_blsct"};
+    bilingual_str error;
+    std::vector<bilingual_str> warnings;
+    DatabaseStatus status;
+
+    // A master seed of the wrong length makes the BLSCT key setup fail after
+    // CWallet::Create has already registered the wallet with the chain.
+    DatabaseOptions create_options;
+    create_options.require_create = true;
+    create_options.create_flags = WALLET_FLAG_BLSCT;
+    const std::vector<unsigned char> short_seed(31, 1);
+    auto created = wallet::CreateWallet(context, name, short_seed, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, create_options, status, error, warnings);
+    BOOST_CHECK(!created);
+    BOOST_CHECK(status == DatabaseStatus::FAILED_CREATE);
+    BOOST_CHECK_EQUAL(error.original, "Unable to generate initial blsct keys");
+    SyncWithValidationInterfaceQueue();
+
+    // The failed wallet must have been released, so loading it reaches the
+    // wallet's own check instead of finding the database still locked.
+    DatabaseOptions options;
+    options.require_existing = true;
+    error = {};
+    auto loaded = LoadWallet(context, name, /*load_on_start=*/std::nullopt, options, status, error, warnings);
+    BOOST_CHECK(!loaded);
+    BOOST_CHECK_MESSAGE(error.original.find("Unable to obtain an exclusive lock") == std::string::npos, error.original);
+    BOOST_CHECK_MESSAGE(error.original.find("BLSCT wallet has no seed") != std::string::npos, error.original);
+    if (loaded) {
+        RemoveWallet(context, loaded, /*load_on_start=*/std::nullopt);
+        TestUnloadWallet(std::move(loaded));
+    }
+}
+
 BOOST_FIXTURE_TEST_CASE(ZapSelectTx, TestChain100Setup)
 {
     m_args.ForceSetArg("-unsafesqlitesync", "1");
