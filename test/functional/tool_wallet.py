@@ -293,6 +293,19 @@ class ToolWalletTest(BitcoinTestFramework):
         assert_equal(shasum_before, shasum_after)
         self.log.debug('Wallet file shasum unchanged\n')
 
+    def test_tool_wallet_create_fails_on_existing_wallet(self):
+        self.log.info('Calling wallet tool create on a wallet that already exists, testing it fails')
+        foo_path = self.nodes[0].wallets_path / "foo"
+        foo_data = foo_path / self.wallet_data_filename
+        shasum_before = sha256sum_file(foo_data).hex()
+        # create used to print this error and still exit 0
+        self.assert_raises_tool_error(
+            "Failed to create database path '{}'. Database already exists.".format(foo_path),
+            '-wallet=foo',
+            'create',
+        )
+        assert_equal(shasum_before, sha256sum_file(foo_data).hex())
+
     def test_getwalletinfo_on_different_wallet(self):
         self.log.info('Starting node with arg -wallet=foo')
         self.start_node(0, ['-nowallet', '-wallet=foo'])
@@ -499,6 +512,7 @@ class ToolWalletTest(BitcoinTestFramework):
         self.test_tool_wallet_info()
         self.test_tool_wallet_info_after_transaction()
         self.test_tool_wallet_create_on_existing_wallet()
+        self.test_tool_wallet_create_fails_on_existing_wallet()
         self.test_getwalletinfo_on_different_wallet()
         if not self.options.descriptors:
             # Salvage is a legacy wallet only thing
