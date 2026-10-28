@@ -40,6 +40,8 @@
 #ifndef WIN32
 #include <csignal>
 #include <sys/wait.h>
+#else
+#include <windows.h>
 #endif
 
 #include <boost/test/unit_test.hpp>
@@ -1815,5 +1817,15 @@ BOOST_AUTO_TEST_CASE(clearshrink_test)
         // std::deque has no capacity() we can observe.
     }
 }
+
+#ifdef WIN32
+// The code page comes from the activeCodePage entry of the manifest that
+// add_windows_application_manifest() embeds. Without it, non-ASCII paths and
+// arguments are mangled through the system ANSI code page.
+BOOST_AUTO_TEST_CASE(windows_utf8_code_page)
+{
+    BOOST_CHECK_EQUAL(GetACP(), static_cast<UINT>(CP_UTF8));
+}
+#endif
 
 BOOST_AUTO_TEST_SUITE_END()
