@@ -622,14 +622,25 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         # clear with no range proof, so there is no recovered amount or gamma
         # for the wallet to fill in: pass them.
         nft_input = {"outid": nft_outid, "value": 1, "gamma": "00" * 32}
-        raw_tx = wallet1.createblsctrawtransaction([nft_input], outputs)
-        signed_tx = wallet1.signblsctrawtransaction(wallet1.fundblsctrawtransaction(raw_tx))
-        self.nodes[0].sendrawtransaction(signed_tx)
+
+        def make_nft_tx():
+            raw_tx = wallet1.createblsctrawtransaction([nft_input], outputs)
+            return wallet1.signblsctrawtransaction(wallet1.fundblsctrawtransaction(raw_tx))
+
+        # The NFT's plaintext value is not NAV: on a full-transaction wallet
+        # the sender's NAV moves by the fee alone and the recipient's not at all.
+        signed_tx = self.assert_simulation_matches_broadcast(make_nft_tx, wallet1, wallet2)
+        assert_equal(wallet2.simulaterawtransaction([signed_tx])["balance_change"], 0)
         self.generatetoblsctaddress(self.nodes[0], 1, address1)
         self.sync_all()
 
         assert_equal(wallet2.getnftbalance(collection), nft)
         assert_equal(wallet1.getnftbalance(collection), [])
+
+        # The wallet's own record of the send debits the fee and nothing more.
+        sent = wallet1.gettransaction(self.nodes[0].decoderawtransaction(signed_tx)["txid"])
+        assert_equal(sent["amount"], 0)
+        assert_greater_than(0, sent["fee"])
 
 
 if __name__ == '__main__':

@@ -9,3 +9,10 @@
   change (a transparent token output's value used to be added as NAV).
   Simulating a transaction with an out-of-range transparent output value now
   fails with an error instead of summing it.
+
+- On a wallet that stores full transactions (`storage_output=false`), an NFT
+  input is no longer debited as NAV. An NFT output carries its value in the
+  clear, and the wallet counted that value as NAV spent, so
+  `simulaterawtransaction` overstated the NAV leaving the wallet when it spent
+  an NFT, and `gettransaction` and `listtransactions` reported an NFT send's
+  `amount` as that value instead of zero (the fee was unaffected).
