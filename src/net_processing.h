@@ -8,6 +8,7 @@
 
 #include <net.h>
 #include <node/outkeys.h>
+#include <node/pir.h>
 #include <validationinterface.h>
 
 class AddrMan;
@@ -26,6 +27,8 @@ static const bool DEFAULT_PEERBLOOMFILTERS = false;
 static const bool DEFAULT_PEERBLOCKFILTERS = false;
 /** Default for -peeroutkeys: serve getoutkeys to peers (NODE_OUTKEYS). */
 static const bool DEFAULT_PEEROUTKEYS = false;
+/** Default for -peerpir: answer private output fetches (NODE_OUTKEYS_PIR). */
+static const bool DEFAULT_PEERPIR = false;
 /** Threshold for marking a node to be discouraged, e.g. disconnected and added to the discouragement filter. */
 static const int DISCOURAGEMENT_THRESHOLD{100};
 /** Maximum number of outstanding CMPCTBLOCK requests for the same block. */
@@ -77,6 +80,9 @@ public:
         //! Public ws:// or wss:// URL of that listener when it is behind a
         //! reverse proxy (-p2pwsexternal); empty when dialable directly.
         std::string ws_url;
+        //! Serve getpirhint/pirquery (-peerpir)
+        bool serve_pir{DEFAULT_PEERPIR};
+        node::PirServer::Options pir{};
     };
 
     static std::unique_ptr<PeerManager> make(CConnman& connman, AddrMan& addrman,
