@@ -3103,10 +3103,17 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
     // transaction being removed. It is erased before that CWalletTx goes
     // away, and handed to a remaining holder once the whole batch is gone.
     std::unordered_set<uint256, SaltedTxidHasher> orphaned_outputs;
+    // Output-storage wallets also record a local send in mapOutputs: its
+    // outputs get rows of their own and the rows it spent are marked spent by
+    // it. Forgetting the send has to undo both, or its change stays counted
+    // and its inputs stay spent with no transaction left to account for them.
+    std::vector<COutPoint> zapped_outputs;
+    std::vector<std::pair<COutPoint, uint256>> zapped_spends;
     for (const uint256& hash : vHashOut) {
         const auto& it = mapWallet.find(hash);
         wtxOrdered.erase(it->second.m_it_wtxOrdered);
         for (const auto& txin : it->second.tx->vin) {
+            zapped_spends.emplace_back(txin.prevout, hash);
             auto range = mapTxSpends.equal_range(txin.prevout);
             for (auto iter = range.first; iter != range.second; ++iter) {
                 if (iter->second == hash) {
@@ -3116,6 +3123,7 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
             }
         }
         for (const Outid& out_id : it->second.tx->GetOutputIds()) {
+            zapped_outputs.emplace_back(out_id);
             const auto idx = mapOutpointHashToWalletTx.find(out_id.ToUint256());
             if (idx != mapOutpointHashToWalletTx.end() && idx->second == &it->second) {
                 mapOutpointHashToWalletTx.erase(idx);
@@ -3138,6 +3146,27 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
             }
         }
     }
+    WalletBatch output_batch(GetDatabase());
+    bool output_db_error{false};
+    for (const auto& [prevout, hash] : zapped_spends) {
+        const auto it = mapOutputs.find(prevout);
+        // Only a spend the zapped transaction made; one recorded against
+        // another transaction (e.g. a block aggregate) still stands.
+        if (it == mapOutputs.end() || it->second.m_spent_by != hash) continue;
+        it->second.m_state_spent = TxStateInactive{};
+        it->second.m_spent_by.SetNull();
+        if (!output_batch.WriteOutput(prevout, it->second)) {
+            output_db_error = true;
+        }
+    }
+    for (const COutPoint& outpoint : zapped_outputs) {
+        // A remaining wallet transaction carrying the output still accounts
+        // for it.
+        if (mapOutpointHashToWalletTx.contains(outpoint.hash.ToUint256())) continue;
+        if (mapOutputs.erase(outpoint) && !output_batch.EraseOutput(outpoint)) {
+            output_db_error = true;
+        }
+    }
     // Notify only once the index is consistent again, since a handler may
     // look outputs up.
     for (const uint256& hash : vHashOut) {
@@ -3154,6 +3183,11 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
 
     if (nZapSelectTxRet != DBErrors::LOAD_OK)
         return nZapSelectTxRet;
+    if (output_db_error) {
+        // Memory already reflects the zap, so cached balances are stale too.
+        MarkDirty();
+        return DBErrors::CORRUPT;
+    }
 
     MarkDirty();
 
