@@ -282,7 +282,16 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     // only the small staking outputs are considered, producing oversized txs.
     coins_params.min_sum_amount = MAX_MONEY;
 
-    AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, nAmountLimit + COIN);
+    // A mint spends native coins for its fee only (gathered below): the
+    // minted amount comes from its predicate, not from inputs. Gathering the
+    // coins of the minted token as well swept the issuer's existing holdings
+    // of it into every mint after the first, to come back as token change.
+    // Until that mint confirmed they moved with it, and if it was never mined
+    // (dropped on a restart, or evicted when another mint filled the supply
+    // cap) the wallet kept counting them as spent by it.
+    if (type != CreateTransactionType::TX_MINT_TOKEN) {
+        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, nAmountLimit + COIN);
+    }
 
     // Whether this transaction must pull in the wallet's existing staked
     // commitments. Unstaking always must (the commitments are the funds being

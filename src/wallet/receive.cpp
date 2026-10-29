@@ -111,7 +111,7 @@ CAmount TxGetCredit(const CWallet& wallet, const CTransaction& tx, const isminef
         const CTxOut& txout = tx.vout[i];
         if (txout.tokenId != token_id) continue;
         if (spent_in_tx.contains(tx.GetOutputId(i).ToUint256())) continue;
-        nCredit += OutputGetCredit(wallet, txout, filter);
+        nCredit += OutputGetCredit(wallet, txout, filter, token_id);
         if (!MoneyRange(nCredit))
             throw std::runtime_error(std::string(__func__) + ": value out of range");
     }
