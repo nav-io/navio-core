@@ -2189,8 +2189,11 @@ CAmount CWallet::GetDebit(const CTxIn& txin, const isminefilter& filter, const T
             if (static_cast<size_t>(out_ix) < wtx->tx->vout.size()) {
                 if (wtx->tx->vout[out_ix].HasBLSCTRangeProof() && IsMine(wtx->tx->vout[out_ix]) & filter) {
                     return wtx->tx->vout[out_ix].tokenId == token_id ? wtx->GetBLSCTRecoveryData(txin.prevout).amount : 0;
-                } else if (IsMine(wtx->tx->vout[out_ix]) & filter)
-                    return wtx->tx->vout[out_ix].nValue;
+                } else if (IsMine(wtx->tx->vout[out_ix]) & filter) {
+                    // An NFT output lands here too: its value is in the clear,
+                    // with no range proof, and counts only toward its own token.
+                    return wtx->tx->vout[out_ix].tokenId == token_id ? wtx->tx->vout[out_ix].nValue : 0;
+                }
             }
         } else if (IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
             const auto mo = mapOutputs.find(txin.prevout);
