@@ -625,6 +625,20 @@ BOOST_AUTO_TEST_CASE(fixed_seeds_use_default_port)
     }
 }
 
+BOOST_AUTO_TEST_CASE(dns_seeds_are_navio_seeds)
+{
+    // Seeds left over from Bitcoin Core lead a node to another network's
+    // peers. Regtest's placeholder can never resolve.
+    for (const auto chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST, ChainType::BLSCTREGTEST}) {
+        const auto params{CreateChainParams(ArgsManager{}, chain)};
+        for (const std::string& seed : params->DNSSeeds()) {
+            BOOST_CHECK_MESSAGE(seed.ends_with(".nav.io.") || seed == "dummySeed.invalid.",
+                                ChainTypeToString(chain) << " DNS seed " << seed << " is not a Navio seed");
+        }
+    }
+    BOOST_CHECK(!CreateChainParams(ArgsManager{}, ChainType::MAIN)->DNSSeeds().empty());
+}
+
 // prior to PR #14728, this test triggers an undefined behavior
 BOOST_AUTO_TEST_CASE(ipv4_peer_with_ipv6_addrMe_test)
 {
